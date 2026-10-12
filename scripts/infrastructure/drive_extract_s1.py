@@ -1,15 +1,18 @@
 """
 Spike S1 (USER_DRIVE_INDEXING_RFC §18, §9): do the drive parser's child-process limits hold on the indexer's
 runtime? Every input goes through SubprocessContentExtractor with the given limits, each in a fresh measuring
-process, and the spike prints one JSON line per file and a summary: outcome, wall time, the child's peak RSS and
-the host process's peak RSS. It also probes whether the kernel enforces RLIMIT_AS at all (Cloud Run gen2 must) and,
+process, and the spike prints one JSON line per file and a summary: outcome, wall time, the child's peak RSS, the
+host process's peak RSS and the container cgroup's memory peak before and after the run (cgroup v2 `memory.peak`,
+v1 `memory.max_usage_in_bytes`). Only the cgroup sees what RSS misses: Cloud Run's disk is memory, so the PDF windows
+a split writes count against the instance. It also probes whether the kernel enforces RLIMIT_AS at all (Cloud Run gen2 must) and,
 where it does, the smallest address space the parser stack starts in (the floor the limit must clear).
 
 Run it where the indexer runs: a one-off Cloud Run Job from the indexer's image, gen2, the indexer's memory and CPU
 (plan task, OWNER). Locally (macOS) RLIMIT_AS is not enforced; the other numbers are indicative only.
 
 Inputs: the generated set (`--generate DIR`: Phase 0's ZIP member and size bombs, a sheet declaring 16384 x 1048576
-cells, a long sheet, an ODS with hostile repeat counts, a 2 000-page PDF and its page windows, 45 MB text and CSV
+cells, a long sheet, an ODS with hostile repeat counts, a 2 000-page PDF and its page windows, a 200-page PDF whose
+pages all draw one 8 MiB image (every window copies it), 45 MB text and CSV
 downloads, deeply nested HTML, a long DOCX, an encrypted PDF, tiny files for the child's start-up time), plus every
 file in `--inputs DIR` — put the Phase 0 originals there if they still exist (66 KB DOCX, 5 KB XLSX, 8.7 KB XLS,
 408 KB PDF). The kind comes from the name and the head, as the tick derives it (kind_of + sniff_kind).
@@ -57,6 +60,8 @@ def generate(target: Path, scale: float = 1.0) -> List[Path]:
                          'table:number-rows-repeated="1048576"><table:table-cell table:number-columns-repeated="16384">'
                          '<text:p>x</text:p></table:table-cell></table:table-row></table:table></office:spreadsheet>'))
     made.append(make_pdf(target / "pages_2000.pdf", [f"Page {i} of a long report" for i in range(int(2000 * scale))]))
+    made.append(_shared_resource_pdf(target / "shared_image_pages.pdf", pages=max(2, int(200 * scale)),
+                                     image_bytes=max(1024, int(8 * _MIB * scale))))
     made.append(encrypt_pdf(make_pdf(target / "plain.pdf", ["secret"]), target / "encrypted.pdf",
                             user_password="pw"))
     made.append(_big_text(target / "download_45mb.txt", int(45 * _MIB * scale)))
@@ -89,6 +94,34 @@ def _long_sheet(path: Path, rows: int) -> Path:
     for i in range(rows):
         sheet.append([i, f"row {i}", i * 1.5, "2026-01-01"])
     book.save(str(path))
+    return path
+
+
+def _shared_resource_pdf(path: Path, pages: int, image_bytes: int) -> Path:
+    """`pages` pages that all draw one image stream of `image_bytes` random bytes: small on disk, but a page window
+    carries its own copy of the image, so splitting multiplies it by the number of windows."""
+    from pypdf import PdfWriter
+    from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject, NumberObject, StreamObject
+
+    writer = PdfWriter()
+    image = StreamObject()
+    image.set_data(os.urandom(image_bytes))
+    width = 1024
+    image.update({NameObject("/Type"): NameObject("/XObject"), NameObject("/Subtype"): NameObject("/Image"),
+                  NameObject("/Width"): NumberObject(width),
+                  NameObject("/Height"): NumberObject(max(1, image_bytes // (3 * width))),
+                  NameObject("/ColorSpace"): NameObject("/DeviceRGB"),
+                  NameObject("/BitsPerComponent"): NumberObject(8)})
+    image_ref = writer._add_object(image)
+    for _ in range(pages):
+        page = writer.add_blank_page(612, 792)
+        page[NameObject("/Resources")] = DictionaryObject(
+            {NameObject("/XObject"): DictionaryObject({NameObject("/Im0"): image_ref})})
+        content = DecodedStreamObject()
+        content.set_data(b"q 100 0 0 100 0 0 cm /Im0 Do Q")
+        page[NameObject("/Contents")] = writer._add_object(content)
+    with open(path, "wb") as fh:
+        writer.write(fh)
     return path
 
 
@@ -169,16 +202,38 @@ def _peak_mib(who: int) -> float:
     return round(peak / (_MIB if sys.platform == "darwin" else 1024), 1)   # bytes on macOS, KiB on Linux
 
 
+def cgroup_memory_peak_bytes(root: Path = Path("/sys/fs/cgroup")) -> Optional[int]:
+    """The container's memory high-water mark (page cache and the in-memory disk included): cgroup v2, else v1,
+    else None (not Linux, or no cgroup memory controller visible)."""
+    for name in ("memory.peak", "memory/memory.max_usage_in_bytes"):
+        try:
+            return int((root / name).read_text().strip())
+        except (OSError, ValueError):
+            continue
+    return None
+
+
+def _mib_or_none(value: Optional[int]) -> Optional[float]:
+    return None if value is None else round(value / _MIB, 1)
+
+
 def _run_measured(path: Path, kind: str, args: argparse.Namespace, *, split: bool = False) -> Dict[str, Any]:
-    """One fresh process per file, so RUSAGE_CHILDREN is that file's child alone."""
+    """One fresh process per file, so RUSAGE_CHILDREN is that file's child alone. The cgroup peak is read around
+    it: a rise is this run's (the peak never falls, so an unchanged value means the run stayed below it)."""
     command = [sys.executable, str(Path(__file__).resolve()), "--one", str(path), "--kind", kind,
                "--memory-mib", str(args.memory_mib), "--cpu-s", str(args.cpu_s), "--wall-s", str(args.wall_s),
                "--file-mib", str(args.file_mib)] + (["--split"] if split else [])
+    before = cgroup_memory_peak_bytes()
     proc = subprocess.run(command, capture_output=True, text=True, timeout=args.wall_s + 120)
+    after = cgroup_memory_peak_bytes()
     lines = [line for line in proc.stdout.splitlines() if line.startswith("{")]
-    if not lines:
-        return {"file": path.name, "kind": kind, "status": "script_failed", "detail": proc.stderr[-300:]}
-    return dict(json.loads(lines[-1]))
+    if lines:
+        row = dict(json.loads(lines[-1]))
+    else:
+        row = {"file": path.name, "kind": kind, "status": "script_failed", "detail": proc.stderr[-300:]}
+    row["cgroup_peak_before_mib"] = _mib_or_none(before)
+    row["cgroup_peak_after_mib"] = _mib_or_none(after)
+    return row
 
 
 def run(paths: List[Path], args: argparse.Namespace) -> List[Dict[str, Any]]:
@@ -187,7 +242,7 @@ def run(paths: List[Path], args: argparse.Namespace) -> List[Dict[str, Any]]:
         kind = kind_for(path)
         rows.append(_run_measured(path, kind, args))
         print(json.dumps(rows[-1], ensure_ascii=False), flush=True)
-        if kind == "pdf" and path.name.startswith("pages_"):
+        if kind == "pdf" and path.name.startswith(("pages_", "shared_image_")):
             rows.append(_run_measured(path, kind, args, split=True))
             print(json.dumps(rows[-1], ensure_ascii=False), flush=True)
     return rows
@@ -215,11 +270,20 @@ def address_space_floor(path: Path, kind: str, args: argparse.Namespace, low: in
 def summary(rows: List[Dict[str, Any]], probe: Dict[str, Any], args: argparse.Namespace) -> str:
     head = (f"S1 on {probe['platform']}: RLIMIT_AS honoured={probe['rlimit_as_honoured']}; limits: "
             f"AS {args.memory_mib} MiB, CPU {args.cpu_s} s, wall {args.wall_s} s, file {args.file_mib} MiB")
-    lines = [head, f"{'file':38} {'kind':9} {'status':12} {'sec':>7} {'child MiB':>10} {'host MiB':>9}"]
+    lines = [head, f"{'file':38} {'kind':9} {'status':12} {'sec':>7} {'child MiB':>10} {'host MiB':>9} "
+                   f"{'cgroup peak MiB':>17}"]
     for row in rows:
         lines.append(f"{row['file'][:38]:38} {row['kind']:9} {row['status']:12} {row.get('seconds', 0):>7} "
-                     f"{row.get('child_peak_mib', 0):>10} {row.get('host_peak_mib', 0):>9}")
+                     f"{row.get('child_peak_mib', 0):>10} {row.get('host_peak_mib', 0):>9} "
+                     f"{_peak_change(row):>17}")
     return "\n".join(lines)
+
+
+def _peak_change(row: Dict[str, Any]) -> str:
+    before, after = row.get("cgroup_peak_before_mib"), row.get("cgroup_peak_after_mib")
+    if after is None:
+        return "n/a"
+    return f"{before}->{after}" if before != after else f"{after} (=)"
 
 
 def _parse(argv: Optional[List[str]] = None) -> argparse.Namespace:
