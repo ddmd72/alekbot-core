@@ -199,7 +199,10 @@ class DriveIndexingService:
             await self._repo.save_sync_state(replace(saved.state, last_error=ErrorCategory.RECONNECT_NEEDED))
             return TickResult("access_lost", summary)
         except (DriveThrottled, LLMRateLimitError, LLMUnavailableError) as exc:
-            delay = int(exc.retry_after_s) if isinstance(exc, DriveThrottled) else _backoff_s(state.systemic_failures)
+            delay = _backoff_s(state.systemic_failures)
+            if isinstance(exc, DriveThrottled):   # the provider's Retry-After first; a repeat backs off as well
+                retry_after = int(exc.retry_after_s)
+                delay = retry_after if state.systemic_failures == 0 else max(retry_after, delay)
             logger.warning(f"[DriveIndex] throttled for {user_id[:8]}: {exc}; continuing in {delay}s")
             await self._continue(user_id, tick_id, delay_seconds=delay)
             await self._repo.save_sync_state(replace(saved.state, last_error=ErrorCategory.THROTTLED,
