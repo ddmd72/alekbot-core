@@ -886,7 +886,8 @@ the reason: enrichment would also hand file content to claude.ai via MCP and to 
     not be read") and offers to list or open the folder; when `content_search` is false, say only names and metadata
     were searched;
   - when a folder card matches, search or list within it before answering "not found";
-  - for sums and totals over tables, open the file or use the compute intent with the file ref;
+  - for sums and totals over tables, open the file, then compute from the opened text (no intent takes a file ref
+    and computes);
   - a document is authoritative for its own contents (its terms, amounts, dates). It does not override memory about
     the user's current state: when they disagree, give both, citing the document's path and date (memory facts carry
     no date in the prompt today). Provisional until OQ-1;
@@ -1485,8 +1486,8 @@ this section wins; the text above was corrected where it was plainly false. Slic
   `name | kind | doc_type | description | doc_date | parties | amount` plus the lead text; a photograph
   `name | image | caption | key facets`. Brief and caption are model output from untrusted content: they reach Smart
   only inside the nonce-tagged wrapper, like names and chunks.
-- **`effective_date`** = the brief's `doc_date` when present, else the §3.1 order. Search guidance says that date
-  filters on parsed documents use the file date (D13).
+- **`effective_date`** = the brief's `doc_date` when present, else the §3.1 order (D13). The model is not told which
+  kind matches which date: the guidance is one distinction (§24.10).
 
 ### 24.5 Image triage and image reading
 - Every image record without a verdict at the current `TRIAGE_VERSION` is triage-due (class 2 on first sight,
@@ -1543,6 +1544,9 @@ this section wins; the text above was corrected where it was plainly false. Slic
 ### 24.10 Agent surface (D11)
 - The intents stay as they are. `search_files_in_drive`'s description and `drive_query` field description say that
   content questions put the subject, a phrase, a number or an amount in `drive_query`.
+- Dates are one distinction, the same sentence in the `drive_query` and `drive_date_from` descriptions: dates written
+  inside the document go in `drive_query`; the date filters only when the user limits when the file is dated. The
+  token keeps only the retry rule (a date filter that finds nothing is retried without it before "not found").
 - The §10.4 protocol lines go into Smart's protocol token (backed up first; `--apply` is run by the owner).
   `render_results` keeps the per-result facts and drops the standing guidance that moves to the token.
 - `capabilities.py` says the drive answers from content.
