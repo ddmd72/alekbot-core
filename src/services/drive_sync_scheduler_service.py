@@ -7,7 +7,7 @@ indexing on, or with a stored sync state (so an orphaned index always gets purge
 whose continuation is already queued. It also runs the two checks that must work while the drive
 queue is stuck: the staleness alert (§12.1) and the one reconnect notice per lost grant (§7.7, Δ6).
 It writes the two fan-out flags, through `update_sync_flags`, and a minimal sync state for an enabled
-user who has none (`create_sync_state_if_absent`): its `created_at` is the staleness baseline, so a user
+user with a working grant who has none (`create_sync_state_if_absent`): its `created_at` is the staleness baseline, so a user
 whose ticks never land is alerted too (§12.1). The tick onboards from it as from no state at all.
 
 Two passes: every user's tick is enqueued first, then the checks run. A notice goes through the
@@ -123,11 +123,17 @@ class DriveSyncSchedulerService:
                                                   deadline_seconds=TICK_DEADLINE_S,
                                                   dedup_key=tick_key(user_id, now))
             summary["enqueued"] += 1
-        if enabled and state is None:   # after the enqueue: a failed create never costs the user a tick
+        if enabled and state is None and await self._grant_works(user_id):
+            # after the enqueue, so a failed create never costs the user a tick; never under a lost grant, where the
+            # gate treats no state as nothing to do: a state then would restart the grace period and its notice
             minimal = DriveSyncState(user_id=user_id, created_at=now)
             state = minimal if await self._repo.create_sync_state_if_absent(minimal) \
                 else await self._repo.get_sync_state(user_id)
         return (user_id, profile, state) if enabled and state is not None else None
+
+    async def _grant_works(self, user_id: str) -> bool:
+        connection = await self._drive.connection(user_id)
+        return connection.connected and not connection.needs_reconnect
 
     async def _staleness(self, user_id: str, state: DriveSyncState, now: datetime) -> int:
         """Alert on the False->True transition only; clear when the criterion is false again (§12.1)."""

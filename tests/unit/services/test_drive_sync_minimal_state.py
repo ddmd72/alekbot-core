@@ -93,3 +93,32 @@ async def test_firestore_create_if_absent_is_a_document_create(mock_env_config):
     doc.create.side_effect = AlreadyExists("there")
     assert await repo.create_sync_state_if_absent(minimal) is False
     doc.set.assert_not_awaited()
+
+
+async def test_a_lost_grant_after_the_grace_purge_gets_no_new_state_and_no_second_notice(fan):
+    """Only a working connection gets a minimal state: a lost grant with no state is what the gate treats as nothing
+    to do, so the purge at the end of the grace period is not undone and the one notice is not sent again."""
+    from datetime import timedelta
+
+    from src.domain.drive_index_params import ACCESS_LOSS_TTL
+    from src.domain.user_drive import DriveConnection
+
+    await fan.repo.save_sync_state(DriveSyncState(user_id="u", root_item_id=ROOT, created_at=T0))
+    fan.drive.per_user["u"] = DriveConnection(connected=True, needs_reconnect=True)
+    await fan.svc.fan_out()
+    assert len(fan.notifier.calls) == 1
+    fan.clock.advance((ACCESS_LOSS_TTL + timedelta(days=1)).total_seconds())
+    await fan.repo.delete_sync_state("u")         # the tick's grace-period purge
+    for _ in range(3):
+        await fan.svc.fan_out()
+        fan.clock.advance(600)
+    assert await fan.repo.get_sync_state("u") is None
+    assert len(fan.notifier.calls) == 1
+
+
+async def test_a_disconnected_user_gets_no_minimal_state(fan):
+    from src.domain.user_drive import DriveConnection
+
+    fan.drive.per_user["u"] = DriveConnection(connected=False)
+    await fan.svc.fan_out()
+    assert await fan.repo.get_sync_state("u") is None
