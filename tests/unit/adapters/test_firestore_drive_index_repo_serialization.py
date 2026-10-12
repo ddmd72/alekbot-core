@@ -45,7 +45,8 @@ def full_record() -> DriveIndexRecord:
         brief=DocumentBrief(doc_type="contract", description="Supply contract", doc_date=T - timedelta(days=30),
                             parties=("ACME", "Иванов"), amount="1 250.00 EUR"),
         triage_verdict=TriageVerdict.PHOTO, triage_version=1, triaged_content_version="c1",
-        caption="a beach at sunset", defer_until=T + timedelta(hours=2), defer_priority=3, seen_epoch=7)
+        caption="a beach at sunset", defer_until=T + timedelta(hours=2), defer_priority=3, seen_epoch=7,
+        readme_pending=True, readme_item_id="RM1", readme_version="c7")
 
 
 def full_state() -> DriveSyncState:
