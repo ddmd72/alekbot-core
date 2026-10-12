@@ -151,6 +151,7 @@ class DriveSearchResult:
     folder_path: Optional[str] = None    # the folder the search was scoped to
     folder_lookup_truncated: bool = False  # folder_not_found, but a lookup page was full: "could not resolve"
     folder_not_indexed: bool = False     # the scope folder hides its contents (repository, generated, dense)
+    other_drive: bool = False            # disconnected because a different drive is connected now
     capped: bool = False                 # filters dropped candidates from a full (capped) stream page
     candidates: int = 0                  # how many visible candidates the filters were applied to
 
@@ -160,6 +161,7 @@ class _Gate:
     status: str                          # ok | disabled | disconnected
     reconnect_needed: bool = False
     rebuilding: bool = False             # ok, but a purge runs: no streams, the envelope says building
+    other_drive: bool = False            # disconnected: the connected drive is not the indexed one
 
 
 # ---------------------------------------------------------------------------------------------
@@ -183,7 +185,7 @@ def search_gate(enabled: bool, state: Optional[DriveSyncState], connection: Driv
             return _Gate(STATUS_DISCONNECTED)
         return _Gate(STATUS_OK, rebuilding=True)
     if state is not None and connection.drive_id and state.drive_id and connection.drive_id != state.drive_id:
-        return _Gate(STATUS_DISCONNECTED)
+        return _Gate(STATUS_DISCONNECTED, other_drive=True)
     return _Gate(STATUS_OK, reconnect_needed=connection.needs_reconnect)
 
 
@@ -412,6 +414,10 @@ def _render_card(card: DriveSearchCard) -> str:
     return wrap_untrusted(_card_body(card), nonce=card.nonce, ref=card.ref, path=card.path)
 
 
+_BUILDING_LINE = ("The index is still being built: do not say a file does not exist; say the index is not complete "
+                  "yet and offer to list the folder.")
+
+
 def _envelope_lines(result: DriveSearchResult) -> List[str]:
     env = result.envelope
     lines: List[str] = []
@@ -421,8 +427,7 @@ def _envelope_lines(result: DriveSearchResult) -> List[str]:
     else:
         lines.append("The index has not completed a first pass over the drive yet.")
     if env.building:
-        lines.append("The index is still being built: do not say a file does not exist; say the index is "
-                     "not complete yet and offer to list the folder.")
+        lines.append(_BUILDING_LINE)
     if env.refreshing:
         lines.append("The index is being refreshed for a new search model: this search matched file and folder "
                      "names and filters only, not their meaning, so a file named in other words may be missed.")
@@ -451,16 +456,24 @@ def render_results(result: DriveSearchResult) -> str:
     if result.status == STATUS_DISABLED:
         return ("Drive search is off: the user has not turned on drive indexing in the Cabinet. To find a "
                 "file now, browse folders with list_files_in_drive.")
+    if result.status == STATUS_DISCONNECTED and result.other_drive:
+        return ("Drive search is unavailable for now: a different drive is connected than the one that was "
+                "indexed. The old index is being removed and the connected drive will be indexed from the start; "
+                "until then, browse it with list_files_in_drive.")
     if result.status == STATUS_DISCONNECTED:
-        return ("Drive search is unavailable: the user's drive is not connected, or a different drive is "
-                "connected now. Ask them to connect it in the Cabinet.")
+        return ("Drive search is unavailable: the user's drive is not connected. Ask them to connect it in the "
+                "Cabinet.")
     wanted = _escape(result.request.folder or "")
+    # A folder missing while the index is still being built may just not be indexed yet.
+    building = [_BUILDING_LINE] if result.envelope.building else []
     if result.status == STATUS_FOLDER_NOT_FOUND and result.folder_lookup_truncated:
-        return (f"Could not resolve the folder '{wanted}': too many folders share its name. Pass the "
-                f"folder's drive:<id> ref (from list_files_in_drive) or a longer path from the top level.")
+        return "\n".join(building + [
+            f"Could not resolve the folder '{wanted}': too many folders share its name. Pass the "
+            f"folder's drive:<id> ref (from list_files_in_drive) or a longer path from the top level."])
     if result.status == STATUS_FOLDER_NOT_FOUND:
-        return (f"No folder matching '{wanted}' is in the index. Search without a folder, or list the "
-                f"drive with list_files_in_drive.")
+        return "\n".join(building + [
+            f"No folder matching '{wanted}' is in the index. Search without a folder, or list the "
+            f"drive with list_files_in_drive."])
     out: List[str] = [REFERENCE_REMINDER]
     if result.status == STATUS_AMBIGUOUS_FOLDER:
         out.append(f"Several folders match '{wanted}'. Ask the user which one, or search again with "

@@ -153,7 +153,7 @@ class DriveSearchService:
         gate = search_gate(enabled, state, connection, self._clock())
         if gate.status != STATUS_OK:
             return DriveSearchResult(status=gate.status, envelope=DriveSearchEnvelope(enabled=enabled),
-                                     request=request)
+                                     request=request, other_drive=gate.other_drive)
         if gate.rebuilding or state is None or not state.root_item_id:
             # Nothing stored yet, or a purge is deleting what was: say so instead of answering from it.
             envelope = DriveSearchEnvelope(building=True, reconnect_needed=gate.reconnect_needed)
