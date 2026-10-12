@@ -94,3 +94,7 @@ Method: subagent-driven (implementer → independent reviewer → coordinator ac
 - Deviations: none (byte-identical). Step 2's manual 1000-seed run: 1060 passed (reverted to 200 seeds, uncommitted).
 - Reviewer: APPROVED, round 1 (mutations in the policy and planner caught: 99 and 21 failures).
 - Note: the random pool never yields Δ16 generated dirs or dense trees; the Part F hostile-tree test covers them.
+
+### Task 11 — done
+- Commit `8da04bb`. `make check` (coordinator, worktree at the commit): 7414 passed, 3 skipped, 1 xfailed.
+- Deviations: none. Reviewer: APPROVED, round 1.
