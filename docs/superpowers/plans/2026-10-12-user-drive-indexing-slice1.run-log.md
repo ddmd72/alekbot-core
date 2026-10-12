@@ -44,3 +44,12 @@ Method: subagent-driven (implementer → independent reviewer → coordinator ac
   but the plan never defines `KINDS` and nothing imports it — left out. (2) RFC §5.1 lists `*.key` as secret-shaped
   and also iWork `.key` as kind_not_admitted; the plan's code settles it by mime (Keynote mime → not SECRET_NAME).
   Not in the Δ table; the reviewer suggests a Δ row for the record.
+
+### Task 4 — done
+- Commit `5ee9931`. `make check` (coordinator, worktree at the commit): 7028 passed, 3 skipped, 1 xfailed.
+- Deviations: code byte-identical. `src/assets/geo/README.md` written by the implementer from the plan's points (the
+  plan gives no text); the reviewer checked its facts against the code and the table.
+- **Skipped command (by rule):** `scripts/geo/build_place_table.py` was not run; `places_v1.tsv` untouched. Read-only
+  check through `load_place_rows`/`PlaceIndex`: 64 458 rows; Trastevere → Rome (Roma), central Porto → Porto,
+  Brooklyn → New York, Dolomites → Brixen (Bressanone), open sea → none.
+- Reviewer: APPROVED, round 1 (mutation-tested 6 breaks, each caught by one test).
