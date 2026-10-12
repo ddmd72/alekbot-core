@@ -16,7 +16,8 @@ repeats the header row, §8.3). Password-protected PDF/Office/EPUB/ODF → `encr
 Public interface:
     MARKITDOWN_CONVERTERS
     read_content(path, kind) -> ExtractionOutcome          # `extracted_by` is stamped by the parent
-    split_pdf_windows(path, pages_per_window, max_pages, out_dir) -> PdfSplit   # raises PdfSplitFailed
+    pdf_page_count(path) -> int                                   # raises PdfSplitFailed
+    cut_pdf_window(path, first_page, page_count, out_path) -> int   # pages written; raises PdfSplitFailed
     decode_text(data, cut) -> str
     subtitle_cues(text) -> str
     markdown_table(rows) -> Tuple[str, bool]
@@ -31,10 +32,12 @@ import io
 import os
 import re
 import zipfile
+from contextlib import contextmanager
 from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import Iterator
 
 from src.adapters.drive_parser.child import is_memory_failure
-from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus, PdfSplit, PdfSplitFailed
+from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus, PdfSplitFailed
 from src.domain.drive_index_params import MAX_SHEET_ROWS, MAX_TEXT_CHARS
 from src.utils.document_hardening import ArchiveTooLargeError, check_zip_container
 
@@ -98,36 +101,55 @@ def read_content(path: str, kind: str) -> ExtractionOutcome:
     return _finish(text, pages_total, truncated)
 
 
-def split_pdf_windows(path: str, pages_per_window: int, max_pages: int, out_dir: str) -> PdfSplit:
-    """Cut a PDF into windows of `pages_per_window` pages, written as `window-NNNN.pdf` in `out_dir`; pages past
-    `max_pages` are not cut (`truncated`). An owner-password-only PDF splits; a user password is `encrypted`."""
-    if pages_per_window < 1:
-        raise ValueError("pages_per_window must be at least 1")
-    from pypdf import PdfReader, PdfWriter
+def pdf_page_count(path: str) -> int:
+    """Pages of a PDF the reader may cut (§24.3). An owner-password-only PDF counts; a user password is
+    `encrypted`."""
+    with _pdf_failures():
+        return len(_open_pdf(path).pages)
 
-    try:
-        reader = PdfReader(path, strict=False)
-        if reader.is_encrypted and not reader.decrypt(""):
-            raise PdfSplitFailed(ExtractionStatus.ENCRYPTED, "user password")
+
+def cut_pdf_window(path: str, first_page: int, page_count: int, out_path: str) -> int:
+    """Write pages [first_page, first_page + page_count) of the PDF (0-based, clamped to its end) as one window PDF
+    at `out_path`; returns the pages written. One window per call: the reader cuts on demand, so at most
+    MODEL_IN_FLIGHT windows exist on disk at once (§24.3) — a window can carry a resource every page shares."""
+    with _pdf_failures():
+        from pypdf import PdfWriter
+
+        reader = _open_pdf(path)
         total = len(reader.pages)
-        limit = min(total, max(max_pages, 0))
-        paths: List[str] = []
-        for number, start in enumerate(range(0, limit, pages_per_window)):
-            writer = PdfWriter()
-            for index in range(start, min(start + pages_per_window, limit)):
-                writer.add_page(reader.pages[index])
-            target = os.path.join(out_dir, f"window-{number:04d}.pdf")
-            with open(target, "wb") as fh:
-                writer.write(fh)
-            paths.append(target)
+        if first_page < 0 or page_count < 1 or first_page >= total:
+            raise PdfSplitFailed(ExtractionStatus.ERROR, f"pages {first_page}+{page_count} outside 0..{total}")
+        last = min(first_page + page_count, total)
+        writer = PdfWriter()
+        for index in range(first_page, last):
+            writer.add_page(reader.pages[index])
+        with open(out_path, "wb") as fh:
+            writer.write(fh)
+        return last - first_page
+
+
+def _open_pdf(path: str) -> Any:
+    from pypdf import PdfReader
+
+    reader = PdfReader(path, strict=False)
+    if reader.is_encrypted and not reader.decrypt(""):
+        raise PdfSplitFailed(ExtractionStatus.ENCRYPTED, "user password")
+    return reader
+
+
+@contextmanager
+def _pdf_failures() -> Iterator[None]:
+    """A failure of the page-window ops as PdfSplitFailed with its outcome status; a memory failure propagates as
+    MemoryError so the child exits with its memory code."""
+    try:
+        yield
     except PdfSplitFailed:
         raise
-    except Exception as exc:
+    except Exception as exc:  # any parser failure on hostile input is this file's outcome, never the tick's
         if is_memory_failure(exc):
             raise MemoryError(str(exc)) from exc
         status = ExtractionStatus.UNSUPPORTED if _deterministic(exc) else ExtractionStatus.ERROR
         raise PdfSplitFailed(status, f"{type(exc).__name__}: {exc}"[:300]) from exc
-    return PdfSplit(paths=tuple(paths), pages_total=total, truncated=total > limit)
 
 
 # -- shared helpers -------------------------------------------------------------------------------------------------

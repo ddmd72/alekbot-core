@@ -60,7 +60,9 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   (`doc_type`, one-line `description`, `doc_date` → `effective_date` per D13, `parties`, `amount`) in structured output
   (`OUTPUT_FORMAT_DRIVE_READER`). Triage takes up to `TRIAGE_BATCH` thumbnails with the camera prior as text and
   returns per image `text` or `photo` + a caption of at most ten words. A 429/5xx/timeout or a missing prompt raises
-  `DriveModelUnavailable` (model work waits, nothing else does, `decisions/drive_model_outage_defers_model_work.md`);
+  `DriveModelUnavailable` (model work waits, nothing else does, `decisions/drive_model_outage_defers_model_work.md`),
+  carrying what was spent before it; the runner first halves a PDF window that timed out (once) or got HTTP 413
+  (down to one page), and the parser cuts each window on demand;
   calls are billed to the user's account through the runner's quota service. Prompts are owner-uploaded Firestore
   tokens; no fallback prompt.
 - DocPlanner (ASYNC, PERFORMANCE, intent `create_document`) — LLM → JSON layout spec →

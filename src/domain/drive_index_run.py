@@ -25,12 +25,13 @@ from enum import Enum
 from typing import Any, List, Mapping, Optional, Sequence, Tuple
 
 from .drive_extraction import READER, ExtractionStatus, chain_for
+from .drive_image_mime import MAX_VISION_IMAGE_BYTES
 from .drive_index import DriveChange, DriveIndexRecord, Priority, Reason, RecordState
 from .drive_index_params import MAX_CHUNKS_PER_USER
 from .drive_index_planner import schedule
 from .drive_index_policy import is_readme_name
 
-READER_IMAGE_MAX_BYTES = 5 * 1024 * 1024    # the vision input cap the original may be sent under (§24.5)
+READER_IMAGE_MAX_BYTES = MAX_VISION_IMAGE_BYTES   # the vision input cap the original may be sent under (§24.5)
 README_MAX_BYTES = 1024 * 1024              # a README is read for its lead text only (§5.2)
 _README_ORDER = (".md", ".markdown", ".txt", ".rst", "")
 _TABLE_KINDS = frozenset({"csv", "xlsx", "xls", "ods"})
