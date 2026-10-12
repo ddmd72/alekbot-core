@@ -172,13 +172,14 @@ class DriveIndexRepository(ABC):
     async def find_nearest_chunks(self, user_id: str, vector: Sequence[float], limit: int,
                                   kind: Optional[str] = None) -> List[Tuple[DriveChunk, float]]:
         """Chunk kNN under the user (+ kind) pre-filter; (chunk, cosine distance), nearest first. Not fenced.
-        `text` may be empty: windows are read with `get_chunks`."""
+        `text` and `content_terms` may be empty: windows are read with `get_chunks`."""
 
     @abstractmethod
     async def find_chunks_by_term(self, user_id: str, term: str, limit: int,
                                   kind: Optional[str] = None) -> List[DriveChunk]:
         """Chunks whose `content_terms` contain `term` (one array-contains query), ordered by
-        (item_id, generation, index). Not fenced. `text` may be empty: windows are read with `get_chunks`."""
+        (item_id, generation, index). Not fenced. `text` and `content_terms` may be empty: windows are read with
+        `get_chunks`."""
 
     @abstractmethod
     async def get_chunks(self, user_id: str, item_id: str, generation: int,
