@@ -658,8 +658,8 @@ FILE_MANAGEMENT = AgentDescriptor(
             ),
             "drive_kind": (
                 "search_files_in_drive: optional file type. A family covers every format of its kind: "
-                "spreadsheet (xlsx, xls, ods, csv), document (docx, doc, odt, rtf), presentation (pptx, ppt, "
-                "odp), photo (any image). Or one kind: pdf, docx, xlsx, markdown, text, csv, image, video, "
+                "spreadsheet (xlsx, xls, ods, csv), document (docx, doc, odt, rtf, pdf), word (docx, doc), "
+                "presentation (pptx, ppt, odp), photo (any image). Or one kind: pdf, docx, xlsx, markdown, text, csv, image, video, "
                 "audio, archive, code, folder, or a file extension such as 'jpg'. Other words are refused"
             ),
             "drive_date_from": (

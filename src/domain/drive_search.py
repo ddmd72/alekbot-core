@@ -56,12 +56,13 @@ KIND_NAMES: FrozenSet[str] = frozenset({
 # Words a user means as several kinds (plan Δ20). "all my spreadsheets" is the RFC's own example (§10.1).
 KIND_FAMILIES: Mapping[str, FrozenSet[str]] = {
     "spreadsheet": frozenset({"xlsx", "xls", "ods", "csv"}),
-    "document": frozenset({"docx", "doc", "odt", "rtf"}),
+    "document": frozenset({"docx", "doc", "odt", "rtf", "pdf"}),
+    "word": frozenset({"docx", "doc"}),
     "presentation": frozenset({"pptx", "ppt", "odp"}),
     "photo": frozenset({"image"}),
 }
 _KIND_ALIASES: Mapping[str, str] = {
-    "sheet": "spreadsheet", "excel": "spreadsheet", "word": "document", "docs": "document",
+    "sheet": "spreadsheet", "excel": "spreadsheet", "docs": "document",
     "slide": "presentation", "slides": "presentation", "picture": "photo",
 }
 
@@ -210,16 +211,14 @@ def canonical_kind(raw: Optional[str]) -> Optional[str]:
     text = (raw or "").strip().lower().lstrip(".")
     if not text:
         return None
-    known = _known_kind(text)
-    if known is not None:
-        return known
-    by_extension = kind_of(f"x.{text}", "", False)
-    if by_extension != "other":
-        return by_extension
-    if text.endswith("s"):
-        known = _known_kind(text[:-1])
+    # The word as given first, then without a plural "s" ("pdfs", "jpgs", "spreadsheets").
+    for word in (text, text[:-1]) if text.endswith("s") and len(text) > 1 else (text,):
+        known = _known_kind(word)
         if known is not None:
             return known
+        by_extension = kind_of(f"x.{word}", "", False)
+        if by_extension != "other":
+            return by_extension
     accepted = ", ".join(sorted(KIND_FAMILIES)) + ", " + ", ".join(sorted(KIND_NAMES))
     raise ValueError(f"'{raw}' is not a file type. Use one of: {accepted}, or a file extension such as 'jpg'")
 
