@@ -169,6 +169,9 @@ class DriveSearchService:
             if isinstance(found, DriveSearchResult):
                 return replace(found, request=request)
             folder = found
+            if hides_descendants(folder.record):   # nothing below it is carded: an empty walk is not "no match"
+                return DriveSearchResult(status=STATUS_OK, request=request, folder_path=folder.path,
+                                         folder_not_indexed=True)
         if folder is not None:
             subtree, complete = await self._walk(user_id, folder.record)
             if complete:

@@ -149,6 +149,7 @@ class DriveSearchResult:
     matched_at_least: bool = False       # matched_total is a lower bound (the fetch hit its cap)
     folder_path: Optional[str] = None    # the folder the search was scoped to
     folder_lookup_truncated: bool = False  # folder_not_found, but a lookup page was full: "could not resolve"
+    folder_not_indexed: bool = False     # the scope folder hides its contents (repository, generated, dense)
     capped: bool = False                 # filters dropped candidates from a full (capped) stream page
     candidates: int = 0                  # how many visible candidates the filters were applied to
 
@@ -466,6 +467,11 @@ def render_results(result: DriveSearchResult) -> str:
     scope = _scope_line(result)
     if scope:
         out.append(scope)
+    if result.folder_not_indexed:
+        out.append("The files inside this folder are not indexed (it is a code repository, generated files, a "
+                   "folder too large to index, or it is being removed), so this search cannot see them. Browse it "
+                   "with list_files_in_drive.")
+        return "\n".join(out)
     request = result.request
     if request.filter_only and result.matched_at_least and not result.cards:
         # The fetch cap, not the data, emptied the page (overnight review rev_31 F2).
