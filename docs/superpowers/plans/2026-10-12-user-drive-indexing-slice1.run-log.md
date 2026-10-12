@@ -328,3 +328,11 @@ order, substitution handling, OIDC audience, `main.py` names) matches the code. 
 - **No GCP credentials:** `GOOGLE_APPLICATION_CREDENTIALS=/opt/gcp-sa.json` points to a missing file,
   `gcloud auth list` shows no account, no `.env`. → Task 21's live read-only smoke run was not executed.
 - **No Gemini API key** in the environment → the optional real-embedding eval after Task 41 cannot be run.
+
+### Task 21 — done (live run skipped: no credentials)
+- Commit `819eea8` (script + test, byte-identical to the plan; no adaptation needed after R1–R6). `make check`
+  (reviewer, worktree at the commit): 7696 passed, 3 skipped, 1 xfailed.
+- Script verified read-only (no write method, no batch/transaction/set/update/delete; the test asserts it). Every
+  query it runs has a declared index. **Skipped:** the live run (see Environment limits) → Task 47 Step 2.
+- Reviewer (adversarial): APPROVED. MINOR plan test gaps, not required: tests only count queries (dropping the `kind`
+  argument from the three kind checks survives); no test on the CLI exit code (Task 47 gates on "exits 0").
