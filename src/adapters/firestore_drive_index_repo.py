@@ -33,8 +33,8 @@ Writes:
 Vectors: record queries, `get_records` and `find_nearest_cards` project the record fields, so they never load
 `card_vector`; only `card_vectors` reads it (its purpose). The kNN projection lists `card_distance` as well. Chunk
 reads likewise project the chunk fields (`chunk_distance` with the kNN); only `get_chunks_with_vectors` reads `vector`.
-The two search streams (`find_nearest_chunks`, `find_chunks_by_term`) leave out `text` as well: a widened page is
-up to FETCH_MAX chunks, and windows are read by id with `get_chunks`.
+The two search streams (`find_nearest_chunks`, `find_chunks_by_term`) leave out `text` and `content_terms` as well:
+a widened page is up to FETCH_MAX chunks, and windows are read by id with `get_chunks`.
 Chunk reads are never fenced: the search service compares each chunk's generation with its record (§7.4).
 Datetimes come back as plain tz-aware UTC datetimes, never DatetimeWithNanoseconds (see
 firestore_oauth_credentials_adapter.py: `.replace()` on one breaks write-back).
@@ -76,7 +76,9 @@ IN_VALUES_MAX = 30                                  # Firestore `in` limit (and 
 UNREAD_REASONS: Tuple[Reason, ...] = (Reason.TOO_LARGE, Reason.NO_TEXT, Reason.MACHINE_TEXT, Reason.USER_CHUNK_CAP)
 RECORD_FIELDS: Tuple[str, ...] = tuple(f.name for f in fields(DriveIndexRecord))
 CHUNK_FIELDS: Tuple[str, ...] = tuple(f.name for f in fields(DriveChunk))
-STREAM_FIELDS: Tuple[str, ...] = tuple(name for name in CHUNK_FIELDS if name != "text")   # search streams (port)
+# search streams (port): no text (windows read it by id) and no content_terms (up to 256 per chunk; the term stream
+# knows its term from its own query, review D-M3)
+STREAM_FIELDS: Tuple[str, ...] = tuple(name for name in CHUNK_FIELDS if name not in ("text", "content_terms"))
 _DOC_FIELDS: Tuple[str, ...] = tuple(f.name for f in fields(DriveSyncState) if f.name not in _FLAGS)
 STATE_FIELDS: Tuple[str, ...] = tuple(name for name in _DOC_FIELDS if name not in _LEASE)   # save_sync_state's
 
