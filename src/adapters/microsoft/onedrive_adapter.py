@@ -39,10 +39,11 @@ from urllib.parse import quote, unquote
 import aiohttp  # module import on purpose: tests patch aiohttp.ClientSession
 
 from ...domain.drive_index import DriveChange, DriveChanges, DriveChildrenPage
-from ...domain.drive_index_params import TICK_DEADLINE_S
+from ...domain.drive_index_params import DOWNLOAD_TIMEOUT_S, TICK_DEADLINE_S
 from ...domain.user_drive import (
     DriveAccessDenied,
     DriveConnection,
+    DriveFileTooLarge,
     DriveItem,
     DriveItemNotFoundError,
     DriveNameConflictError,
@@ -72,6 +73,13 @@ _THROTTLE_HINT_S = 60.0
 # Bound on one Graph call (aiohttp's default is 300 s), well under TICK_DEADLINE_S: a hanging call
 # ends as a TimeoutError instead of holding the user's tick (RFC Δ9, §8.2).
 GRAPH_CALL_TIMEOUT_S = 60.0
+# Streamed content reads (§8.1 step 3): chunk size, and the cap on one rendition. 5 MiB is the vision input cap of
+# the reader's providers (USER_DRIVE_RFC §4.6); a bigger rendition is no rendition.
+_DOWNLOAD_CHUNK = 64 * 1024
+THUMBNAIL_MAX_BYTES = 5 * 1024 * 1024
+# Graph's named sizes and custom `c{w}x{h}[_crop]`; anything else never reaches the URL.
+_THUMBNAIL_SIZE_RE = re.compile(
+    r"(?:small|medium|large|smallSquare|mediumSquare|largeSquare|c[1-9]\d{0,3}x[1-9]\d{0,3}(?:_crop)?)")
 # The App Folder item. Its parentReference.driveId is the drive id; the OAuth callback
 # (src/web/oauth_app.py, _read_drive_id) reads the same field of the same call, so the two compare equal.
 _APPROOT = "/me/drive/special/approot"
@@ -299,13 +307,75 @@ class OneDriveAdapter(UserDrivePort):
         async with aiohttp.ClientSession() as s:
             await self._call(s, user_id, "DELETE", f"/me/drive/items/{_q(item_id)}")
 
-    # -- content for the index (USER_DRIVE_INDEXING_RFC §8.1, §24.5): not built yet ----
+    # -- content for the index (USER_DRIVE_INDEXING_RFC §8.1, §24.5) -------------------------
 
     async def download_to_file(self, user_id: str, item_id: str, dest_path: str, max_bytes: int) -> int:
-        raise NotImplementedError("streamed download — plan part C")
+        """Stream the content to `dest_path`, chunk by chunk, never whole in memory. The stream is cut as soon
+        as it passes `max_bytes` (metadata can understate a size, §5.4); the partial file is the caller's."""
+        async with aiohttp.ClientSession() as s:
+            raw = await self._call(s, user_id, "GET", f"/me/drive/items/{_q(item_id)}")
+            url = raw.get("@microsoft.graph.downloadUrl")
+            if not url:
+                raise DriveItemNotFoundError(f"No downloadable content for item {item_id}")
+            written = 0
+            try:
+                # Pre-authenticated short-lived URL on another host: never send the bearer token there.
+                async with s.get(url, timeout=aiohttp.ClientTimeout(total=DOWNLOAD_TIMEOUT_S)) as resp:
+                    if resp.status != 200:
+                        logger.error(f"Drive download failed ({resp.status}) for item {item_id}")
+                        raise ValueError(f"Drive download failed ({resp.status})")
+                    # Plain writes: 64 KiB chunks to Cloud Run's in-memory /tmp cost microseconds.
+                    with open(dest_path, "wb") as fh:
+                        async for chunk in resp.content.iter_chunked(_DOWNLOAD_CHUNK):
+                            if written + len(chunk) > max_bytes:
+                                logger.warning(f"Drive download of item {item_id} passed {max_bytes} bytes; cut")
+                                raise DriveFileTooLarge(max_bytes)
+                            fh.write(chunk)
+                            written += len(chunk)
+            except asyncio.TimeoutError as exc:
+                logger.warning(f"Drive download of item {item_id} timed out after {written} bytes")
+                raise asyncio.TimeoutError("Drive download timed out") from exc
+            except aiohttp.ClientError as exc:
+                logger.warning(f"Drive download of item {item_id} transport failure: {type(exc).__name__}")
+                raise OSError(f"Drive download transport failure ({type(exc).__name__})") from exc
+            return written
 
     async def get_thumbnail(self, user_id: str, item_id: str, size: str) -> Optional[bytes]:
-        raise NotImplementedError("thumbnails — plan part C")
+        """One provider rendition: a standard size (`medium` = 176 px, `large` = 800 px) or a custom `c{w}x{h}`
+        (Graph scales it, HEIC included; we never decode). The set comes from `/thumbnails?select=<size>`, the
+        bytes from its pre-authenticated URL. None: no rendition, its URL gone, or bigger than the vision cap."""
+        if not _THUMBNAIL_SIZE_RE.fullmatch(size):
+            raise ValueError(f"Unknown thumbnail size {size!r}")
+        async with aiohttp.ClientSession() as s:
+            page = await self._call(s, user_id, "GET", f"/me/drive/items/{_q(item_id)}/thumbnails?select={size}")
+            sets = page.get("value") or []
+            rendition = sets[0].get(size) if sets and isinstance(sets[0], dict) else None
+            url = str(rendition.get("url") or "") if isinstance(rendition, dict) else ""
+            if not url.startswith("https://"):
+                if url:
+                    logger.warning(f"Drive thumbnail URL for item {item_id} is not https; ignored")
+                return None
+            try:
+                async with s.get(url, timeout=aiohttp.ClientTimeout(total=GRAPH_CALL_TIMEOUT_S)) as resp:
+                    if resp.status == 404:
+                        return None
+                    if resp.status != 200:
+                        logger.error(f"Drive thumbnail fetch failed ({resp.status}) for item {item_id}")
+                        raise ValueError(f"Drive thumbnail fetch failed ({resp.status})")
+                    data = bytearray()
+                    async for chunk in resp.content.iter_chunked(_DOWNLOAD_CHUNK):
+                        data.extend(chunk)
+                        if len(data) > THUMBNAIL_MAX_BYTES:
+                            logger.warning(f"Drive thumbnail {size} of item {item_id} exceeds "
+                                           f"{THUMBNAIL_MAX_BYTES} bytes; not used")
+                            return None
+                    return bytes(data)
+            except asyncio.TimeoutError as exc:
+                logger.warning(f"Drive thumbnail fetch for item {item_id} timed out")
+                raise asyncio.TimeoutError("Drive thumbnail fetch timed out") from exc
+            except aiohttp.ClientError as exc:
+                logger.warning(f"Drive thumbnail fetch for item {item_id} transport failure: {type(exc).__name__}")
+                raise OSError(f"Drive thumbnail transport failure ({type(exc).__name__})") from exc
 
     # -- change capture for the index (USER_DRIVE_INDEXING_RFC §4, §7.2) -------
 

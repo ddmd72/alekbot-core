@@ -31,6 +31,7 @@ Migration from Chat Completions to Responses API (2026-04):
 """
 
 import asyncio
+import base64
 import hashlib
 import json
 import os
@@ -59,6 +60,11 @@ from ..domain.exceptions import (
     LLMUnavailableError,
 )
 from ..utils.logger import logger
+
+
+def _default_filename(mime: str) -> str:
+    """A neutral name for a file part that carries none (the Responses API wants one for input_file)."""
+    return "document.pdf" if mime == "application/pdf" else "document"
 
 
 class OpenAIAdapter(LLMPort):
@@ -306,7 +312,8 @@ class OpenAIAdapter(LLMPort):
         create_kwargs: dict = dict(
             model=model_name,
             input=input_items,
-            store=True,  # Store responses in OpenAI dashboard for debugging/analysis
+            # Stored in the OpenAI dashboard for debugging, unless the caller forbids it (drive agents, §24.2).
+            store=request.allow_provider_storage,
         )
         if system_instruction:
             create_kwargs["instructions"] = system_instruction
@@ -557,32 +564,10 @@ class OpenAIAdapter(LLMPort):
                         "output": str(part.tool_response.get("response", "")),
                     })
                 elif part.file_data:
-                    mime = part.file_data.get("mime_type", "application/octet-stream")
-                    if mime.startswith("image/"):
-                        # Images: inline base64
-                        b64 = part.file_data.get("base64")
-                        if not b64 and "path" in part.file_data:
-                            try:
-                                import base64 as _b64
-                                with open(part.file_data["path"], "rb") as f:
-                                    b64 = _b64.b64encode(f.read()).decode("utf-8")
-                            except Exception as e:
-                                logger.error(f"[OpenAIAdapter] Failed to encode image: {e}")
-                        if b64:
-                            content_parts.append({
-                                "type": "input_image",
-                                "image_url": f"data:{mime};base64,{b64}",
-                            })
-                    elif "path" in part.file_data or "base64" in part.file_data:
-                        # Non-image files (PDF, DOCX etc.): upload via Files API → file_id
-                        file_id = await self._upload_file_for_input(part.file_data)
-                        if file_id:
-                            content_parts.append({
-                                "type": "input_file",
-                                "file_id": file_id,
-                            })
-                    elif "ref" in part.file_data:
+                    if "ref" in part.file_data:
                         logger.debug(f"[OpenAIAdapter] file ref '{part.file_data['ref']}' (no binary content)")
+                        continue
+                    content_parts.append(self._file_input_part(part.file_data))
 
             # Build item
             if content_parts:
@@ -636,33 +621,28 @@ class OpenAIAdapter(LLMPort):
 
         raise ValueError(f"[OpenAIAdapter] call_id not found for function '{tool_name}'")
 
-    async def _upload_file_for_input(self, file_data: dict) -> Optional[str]:
-        """Upload a file via OpenAI Files API for use in Responses API input.
-
-        Accepts file_data with 'path' (local temp file) or 'base64' (encoded bytes).
-        Returns file_id on success, None on failure.
-        """
-        try:
-            if "path" in file_data:
-                uploaded = await self.client.files.create(
-                    file=open(file_data["path"], "rb"),
-                    purpose="assistants",
-                )
-            elif "base64" in file_data:
-                import base64 as _b64
-                import io
-                raw_bytes = _b64.b64decode(file_data["base64"])
-                uploaded = await self.client.files.create(
-                    file=io.BytesIO(raw_bytes),
-                    purpose="assistants",
-                )
-            else:
-                return None
-            logger.info(f"[OpenAIAdapter] Uploaded file: {uploaded.id}")
-            return uploaded.id
-        except Exception as e:
-            logger.error(f"[OpenAIAdapter] File upload failed: {e}")
-            return None
+    @staticmethod
+    def _file_input_part(file_data: dict) -> dict:
+        """One file part, inline: an image as `input_image`, any other file as `input_file` with a filename and a
+        base64 data URL (USER_DRIVE_INDEXING_RFC §24.2: no Files API upload, which was never deleted). A part that
+        cannot be built raises LLMClientError: a request silently missing its file answers about nothing."""
+        mime = file_data.get("mime_type", "application/octet-stream")
+        b64 = file_data.get("base64")
+        if not b64 and "path" in file_data:
+            try:
+                with open(file_data["path"], "rb") as f:
+                    b64 = base64.b64encode(f.read()).decode("utf-8")
+            except OSError as e:
+                logger.error(f"[OpenAIAdapter] Cannot read file part ({mime}): {e}")
+                raise LLMClientError(f"file part unreadable ({mime})") from e
+        if not b64:
+            logger.error(f"[OpenAIAdapter] File part without content: keys={sorted(file_data)}")
+            raise LLMClientError(f"file part without content ({mime})")
+        if mime.startswith("image/"):
+            return {"type": "input_image", "image_url": f"data:{mime};base64,{b64}"}
+        name = file_data.get("name") or (os.path.basename(file_data["path"]) if "path" in file_data else "")
+        return {"type": "input_file", "filename": name or _default_filename(mime),
+                "file_data": f"data:{mime};base64,{b64}"}
 
     def _convert_tools(self, tools: List[Any]) -> List[dict]:
         """Convert domain tool definitions to Responses API format.

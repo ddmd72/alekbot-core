@@ -139,6 +139,10 @@ _DEFAULT_AGENT_TIERS: Dict[str, "PerformanceTier"] = {
     # specifically because ECO-quality crafting degrades the technique clusters
     # — text-heavy layouts, asset-set style-locking — the RFC identified as
     # needing real reasoning). See decisions/agent_tier_default_enforcement.md.
+    # Drive indexer agents (USER_DRIVE_INDEXING_RFC §24.2, §24.9): verbatim transcription and photo triage at
+    # ≈ $0.0006 a page. ECO = claude-haiku-5-5 / gpt-6-luna ($0.10 / $0.50 per million tokens).
+    "drive_reader": PerformanceTier.ECO,
+    "drive_triage": PerformanceTier.ECO,
     "image_generation": PerformanceTier.PERFORMANCE,
     "video_generation": PerformanceTier.PERFORMANCE,  # motion-prompt quality — same reasoning as image_generation
 }

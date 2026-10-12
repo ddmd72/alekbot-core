@@ -103,9 +103,11 @@ steps:
   # --min-instances=0: idle between ticks; a cold start costs nothing a background tick notices.
   # No --service-account override: Cloud Tasks mints each task's OIDC token for SERVICE_ACCOUNT_EMAIL
   #   (GcpTaskQueue), and /worker checks that same email — one identity, as for alek-bot-dev.
-  # Four secrets, exactly what indexer_main.py reads: GEMINI_API_KEY (card embeddings),
+  # Seven secrets, exactly what indexer_main.py reads: GEMINI_API_KEY (embeddings),
   #   MICROSOFT_TODO_CLIENT_ID/SECRET (drive token refresh; same app registration as Step 1),
-  #   SERVICE_ACCOUNT_EMAIL (the /worker gate + the identity of the tasks it enqueues).
+  #   SERVICE_ACCOUNT_EMAIL (the /worker gate + the identity of the tasks it enqueues),
+  #   ANTHROPIC_API_KEY / OPENAI_API_KEY (the drive reader and triage agents, Slice 2+4 §24.2: secrets, never
+  #   substitutions) and BILLING_SLACK_WEBHOOK_URL (the advisory daily budget alert of their billing).
   # DRIVE_INDEXER_URL is this service's own URL (continuations and nudge re-queues come back here, and
   #   the /worker gate pins the token audience to it). Empty on the first pass of the two-pass first
   #   deploy (Makefile, _INDEXER_URL): the service still starts and /worker answers 503.
@@ -127,7 +129,7 @@ steps:
       - "--max-instances=1"
       - "--timeout=1800"
       - "--set-env-vars=APP_ENV=development,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,DRIVE_INDEXER_URL=$_INDEXER_URL"
-      - "--set-secrets=GEMINI_API_KEY=GEMINI_API_KEY:latest,MICROSOFT_TODO_CLIENT_ID=MICROSOFT_TODO_CLIENT_ID:latest,MICROSOFT_TODO_CLIENT_SECRET=MICROSOFT_TODO_CLIENT_SECRET:latest,SERVICE_ACCOUNT_EMAIL=SERVICE_ACCOUNT_EMAIL:latest"
+      - "--set-secrets=GEMINI_API_KEY=GEMINI_API_KEY:latest,MICROSOFT_TODO_CLIENT_ID=MICROSOFT_TODO_CLIENT_ID:latest,MICROSOFT_TODO_CLIENT_SECRET=MICROSOFT_TODO_CLIENT_SECRET:latest,SERVICE_ACCOUNT_EMAIL=SERVICE_ACCOUNT_EMAIL:latest,ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,BILLING_SLACK_WEBHOOK_URL=BILLING_SLACK_WEBHOOK_URL:latest"
       # RFC Δ21. Ingress internal: the only caller is Cloud Tasks on drive-sync-dev, which counts as
       # internal (same project, default run.app URL). No internet request can reach the service or
       # take its single request slot (concurrency 1, max 1 instance) from a dispatch.

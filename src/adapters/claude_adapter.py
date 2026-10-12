@@ -120,6 +120,22 @@ def _make_strict(schema: Any) -> Any:
     return schema
 
 
+def _drop_document_citations(claude_messages: List[Dict[str, Any]]) -> None:
+    """Remove `citations` from every document block we built, including one nested in a tool_result: Anthropic
+    rejects citations next to output_config.format with a 400. raw_content blocks (SDK objects) are left alone."""
+    for msg in claude_messages:
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            nested = block.get("content") if block.get("type") == "tool_result" else None
+            for doc in [block, *(nested if isinstance(nested, list) else [])]:
+                if isinstance(doc, dict) and doc.get("type") == "document":
+                    doc.pop("citations", None)
+
+
 class ClaudeAdapter(LLMPort):
     """
     Adapter for Anthropic Claude API.
@@ -348,6 +364,9 @@ class ClaudeAdapter(LLMPort):
                 "schema": _make_strict(_nullable_to_union(response_schema)),
             }
             create_kwargs["output_config"] = _oc
+            # Citations and output_config.format are mutually exclusive (HTTP 400): a PDF read for
+            # structured output (the drive reader, USER_DRIVE_INDEXING_RFC §24.2) goes without them.
+            _drop_document_citations(claude_messages)
 
         # Always stream: Anthropic SDK requires streaming for requests >10 min
         # (multi-turn tool loops like consolidation regularly exceed this threshold).
