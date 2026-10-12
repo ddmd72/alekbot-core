@@ -56,7 +56,7 @@ def build_drive_model_extractors(*, parser: Any, users: UserRepository, account_
                                  alert_sink: Optional[AlertSinkPort] = None,
                                  ) -> Tuple[Dict[str, ContentExtractorPort], ImageTriagePort]:
     """The extractor registry and the triage port for DriveIndexingService. `parser` is the child-process parser
-    (a ContentExtractorPort with `split_pdf`)."""
+    (a ContentExtractorPort with `pdf_page_count` and `cut_pdf_window`)."""
     registry = build_drive_model_registry(keys)
     context_builder = AgentContextBuilder(registry, resilience_port=InMemoryProviderResilience())
     prompt_builder = PromptBuilder(repo=None, assembly_service=assembly_service)

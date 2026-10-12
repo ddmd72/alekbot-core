@@ -147,10 +147,15 @@ async def _measure_one(path: str, kind: str, args: argparse.Namespace) -> Dict[s
     row: Dict[str, Any] = {"file": os.path.basename(path), "kind": kind, "bytes": os.path.getsize(path)}
     if args.split:
         with tempfile.TemporaryDirectory() as out_dir:
-            try:
-                split = await extractor.split_pdf(path, 10, 200, out_dir)
-                row.update(status="split", windows=len(split.paths), pages_total=split.pages_total,
-                           truncated=split.truncated)
+            try:   # as the reader does: the page count, then one window at a time, removed once cut
+                pages_total = await extractor.pdf_page_count(path)
+                windows = 0
+                for first_page in range(0, min(pages_total, 200), 10):
+                    window = os.path.join(out_dir, "window.pdf")
+                    await extractor.cut_pdf_window(path, first_page, 10, window)
+                    os.remove(window)
+                    windows += 1
+                row.update(status="split", windows=windows, pages_total=pages_total, truncated=pages_total > 200)
             except PdfSplitFailed as exc:
                 row.update(status=exc.status.value, detail=exc.detail)
     else:

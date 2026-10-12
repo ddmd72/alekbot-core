@@ -4,9 +4,10 @@ DriveReaderRunner — the document reader agent as a ContentExtractorPort, on th
 
 Public interface:
     READER_VERSION = 1
-    PdfSplitter (Protocol): async split_pdf(path, pages_per_window, max_pages, out_dir) -> PdfSplit
+    PdfSplitter (Protocol): async pdf_page_count(path) -> int
+                            async cut_pdf_window(path, first_page, page_count, out_path) -> None
     DriveReaderRunner(context_builder, user_repo, prompt_builder, splitter, quota_service=None,
-                      file_budget_s=MODEL_FILE_BUDGET_S)
+                      file_budget_s=MODEL_FILE_BUDGET_S, temp_root=None)
         extractor_id -> READER, version -> READER_VERSION
         async extract(request) -> ExtractionOutcome      raises DriveModelUnavailable only
 
@@ -14,19 +15,22 @@ Per file it reads the user's UserBotConfig, builds the agent through AgentContex
 user's configuration, D7), sets the quota service and bills every call to `request.account_id` — the
 CompanionExtractorRunner pattern. No prompt-content store: verbatim scans are not copied into BigQuery (§24.2).
 
-A PDF is cut by the sandboxed parser (`split_pdf`, plan part A) into windows of MODEL_PAGES_PER_CALL pages, capped by
-the month's remaining pages and MODEL_EXTRACT_MAX_PAGES; the indexer process never parses it. Windows run at most
-MODEL_IN_FLIGHT at a time and join in page order. A window answered at the output limit is cut in half by the same
-splitter and read once more; a half or a single page still at the limit adds no text and sets `truncated`. At
+A PDF's pages are counted by the sandboxed parser, then read in windows of MODEL_PAGES_PER_CALL pages, capped by the
+month's remaining pages and MODEL_EXTRACT_MAX_PAGES; the indexer process never parses it. Windows run at most
+MODEL_IN_FLIGHT at a time and join in page order. Each window is cut by the parser only when its turn comes, read into
+memory and removed before the call, so at most MODEL_IN_FLIGHT window files exist on disk (a window can carry an image
+every page shares). A window answered at the output limit is cut in half from the source and read once more; a half
+or a single page still at the limit adds no text and sets `truncated`. At
 `file_budget_s` the windows done so far are kept and the rest cancelled (`truncated`). An image (the provider's
 rendition) is one call. Outcomes: text; no_text (the reader found none); error (the provider refused an input, its
-output stayed invalid, the splitter failed, or the budget ran out before any window finished — never `timeout`,
-which means a parser bomb); budget_exhausted (no pages left this month); unsupported / too_large (an image the
+output stayed invalid, or the budget ran out before any window finished — never `timeout`, which means a parser
+bomb); the parser's own status when it cannot count or cut the PDF (encrypted, timeout, memory, ...); budget_exhausted (no pages left this month); unsupported / too_large (an image the
 providers do not take).
 """
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import math
 import os
 import tempfile
@@ -38,7 +42,7 @@ from ..agents.drive_document_reader_agent import AGENT_TYPE, DriveDocumentReader
 from ..infrastructure.drive_model_call import DriveModelCallFailed
 from ..domain.agent import AgentConfig
 from ..domain.drive_extraction import (
-    READER, DriveModelUnavailable, ExtractionOutcome, ExtractionRequest, ExtractionStatus, PdfSplit, PdfSplitFailed,
+    READER, DriveModelUnavailable, ExtractionOutcome, ExtractionRequest, ExtractionStatus, PdfSplitFailed,
 )
 from ..domain.drive_image_mime import VISION_MIME_TYPES, image_mime
 from ..domain.drive_index import DocumentBrief
@@ -59,12 +63,17 @@ S = ExtractionStatus
 
 
 class PdfSplitter(Protocol):
-    async def split_pdf(self, path: str, pages_per_window: int, max_pages: int, out_dir: str) -> PdfSplit: ...
+    """The sandboxed parser's page-window ops (SubprocessContentExtractor); both raise PdfSplitFailed."""
+
+    async def pdf_page_count(self, path: str) -> int: ...
+
+    async def cut_pdf_window(self, path: str, first_page: int, page_count: int, out_path: str) -> None: ...
 
 
 @dataclass
 class _WindowRun:
     """What one window produced; each window task writes only its own (no state shared across tasks)."""
+    first_page: int
     pages: int
     text: str = ""
     brief: Optional[DocumentBrief] = None
@@ -88,13 +97,14 @@ class DriveReaderRunner(ContentExtractorPort):
 
     def __init__(self, context_builder: Any, user_repo: UserRepository, prompt_builder: PromptBuilderPort,
                  splitter: PdfSplitter, quota_service: Optional[QuotaService] = None,
-                 file_budget_s: float = MODEL_FILE_BUDGET_S) -> None:
+                 file_budget_s: float = MODEL_FILE_BUDGET_S, temp_root: Optional[str] = None) -> None:
         self._context_builder = context_builder
         self._user_repo = user_repo
         self._prompt_builder = prompt_builder
         self._splitter = splitter
         self._quota_service = quota_service
         self._file_budget_s = file_budget_s
+        self._temp_root = temp_root
 
     @property
     def extractor_id(self) -> str:
@@ -166,41 +176,43 @@ class DriveReaderRunner(ContentExtractorPort):
 
     async def _read_pdf(self, agent: DriveDocumentReaderAgent, request: ExtractionRequest) -> ExtractionOutcome:
         cap = min(request.max_model_pages, MODEL_EXTRACT_MAX_PAGES)
-        with tempfile.TemporaryDirectory(prefix="drive-reader-") as out_dir:
-            try:
-                split = await self._splitter.split_pdf(request.path, MODEL_PAGES_PER_CALL, cap, out_dir)
-            except PdfSplitFailed as exc:
-                # the sandboxed split's own verdict (encrypted, timeout, memory, ...) is the file's outcome (§24.3)
-                logger.warning(f"[DriveReader] split failed: {exc}")
-                return ExtractionOutcome(status=exc.status, detail=f"split failed: {exc.detail}")
-            except Exception as exc:
-                logger.warning(f"[DriveReader] split failed: {type(exc).__name__}: {exc}")
-                return ExtractionOutcome(status=S.ERROR, detail=f"split failed: {type(exc).__name__}")
-            if split.pages_total <= 0 or not split.paths:
-                return ExtractionOutcome(status=S.NO_TEXT, pages_total=split.pages_total, detail="no pages")
-            covered = min(split.pages_total, cap)
-            run = _FileRun([_WindowRun(pages=max(1, min(MODEL_PAGES_PER_CALL, covered - i * MODEL_PAGES_PER_CALL)))
-                            for i in range(len(split.paths))])
+        try:
+            pages_total = await self._splitter.pdf_page_count(request.path)
+        except PdfSplitFailed as exc:
+            # the sandboxed parser's own verdict (encrypted, timeout, memory, ...) is the file's outcome (§24.3)
+            logger.warning(f"[DriveReader] page count failed: {exc}")
+            return ExtractionOutcome(status=exc.status, detail=f"split failed: {exc.detail}")
+        except Exception as exc:
+            logger.warning(f"[DriveReader] page count failed: {type(exc).__name__}: {exc}")
+            return ExtractionOutcome(status=S.ERROR, detail=f"split failed: {type(exc).__name__}")
+        if pages_total <= 0:
+            return ExtractionOutcome(status=S.NO_TEXT, pages_total=max(pages_total, 0), detail="no pages")
+        covered = min(pages_total, cap)
+        run = _FileRun([_WindowRun(first_page=start, pages=min(MODEL_PAGES_PER_CALL, covered - start))
+                        for start in range(0, covered, MODEL_PAGES_PER_CALL)])
+        with tempfile.TemporaryDirectory(prefix="drive-reader-", dir=self._temp_root) as work:
             semaphore = asyncio.Semaphore(MODEL_IN_FLIGHT)
-            tasks = [asyncio.create_task(self._window(agent, request, path, i, run.windows[i], semaphore, out_dir))
-                     for i, path in enumerate(split.paths)]
+            tasks = [asyncio.create_task(self._window(agent, request, i, win, semaphore, work))
+                     for i, win in enumerate(run.windows)]
             done, pending = await asyncio.wait(tasks, timeout=self._file_budget_s,
                                                return_when=asyncio.FIRST_EXCEPTION)
             for task in pending:
                 task.cancel()
             await asyncio.gather(*pending, return_exceptions=True)
-            failures = [t.exception() for t in done if not t.cancelled() and t.exception() is not None]
-            unavailable = next((e for e in failures if isinstance(e, DriveModelUnavailable)), None)
-            if unavailable is not None:
-                raise unavailable
-            if failures:
-                first = failures[0]
-                if not isinstance(first, DriveModelCallFailed):
-                    logger.error(f"[DriveReader] window failed unexpectedly: {type(first).__name__}: {first}",
-                                 exc_info=first)
-                return ExtractionOutcome(status=S.ERROR, pages_total=split.pages_total,
-                                         pages_sent=run.total("pages_sent"), model_calls=run.total("calls"),
-                                         model_cost=run.total("cost"), detail=str(first))
+        failures = [t.exception() for t in done if not t.cancelled() and t.exception() is not None]
+        unavailable = next((e for e in failures if isinstance(e, DriveModelUnavailable)), None)
+        if unavailable is not None:
+            raise unavailable
+        if failures:
+            first = failures[0]
+            status, detail = S.ERROR, str(first)
+            if isinstance(first, PdfSplitFailed):   # a window the parser could not cut: its status (§24.3)
+                status, detail = first.status, f"split failed: {first.detail}"
+            elif not isinstance(first, DriveModelCallFailed):
+                logger.error(f"[DriveReader] window failed unexpectedly: {type(first).__name__}: {first}",
+                             exc_info=first)
+            return ExtractionOutcome(status=status, pages_total=pages_total, pages_sent=run.total("pages_sent"),
+                                     model_calls=run.total("calls"), model_cost=run.total("cost"), detail=detail)
         finished = [w for w in run.windows if w.finished]
         cut = len(run.windows) - len(finished)
         if cut:
@@ -208,38 +220,34 @@ class DriveReaderRunner(ContentExtractorPort):
                            f"{len(run.windows)} windows not read")
         text = "\n\n".join(w.text for w in finished if w.text)
         return self._outcome(
-            text, run.windows[0].brief, pages_total=split.pages_total, pages_sent=run.total("pages_sent"),
-            truncated=split.truncated or bool(cut) or any(w.truncated for w in run.windows),
+            text, run.windows[0].brief, pages_total=pages_total, pages_sent=run.total("pages_sent"),
+            truncated=pages_total > covered or bool(cut) or any(w.truncated for w in run.windows),
             calls=run.total("calls"), cost=run.total("cost"), timed_out=not finished,
             detail=f"windows={len(run.windows)} halves={run.total('halves')} cut={cut}")
 
-    async def _window(self, agent: DriveDocumentReaderAgent, request: ExtractionRequest, path: str, index: int,
-                      win: _WindowRun, semaphore: asyncio.Semaphore, out_dir: str) -> None:
+    async def _window(self, agent: DriveDocumentReaderAgent, request: ExtractionRequest, index: int,
+                      win: _WindowRun, semaphore: asyncio.Semaphore, work: str) -> None:
         async with semaphore:
-            reply = await self._call(agent, request, path, index, win, first=index == 0)
+            reply = await self._call(agent, request, work, index, win, win.first_page, win.pages, first=index == 0)
             if not reply.output_limited:
                 win.text, win.brief = reply.text, reply.brief
             elif win.pages <= 1:
                 logger.warning(f"[DriveReader] a single page hit the output limit (window {index + 1}); not indexed")
                 win.truncated = True
             else:
-                await self._halves(agent, request, path, index, win, out_dir)
+                await self._halves(agent, request, index, win, work)
             win.finished = True
 
-    async def _halves(self, agent: DriveDocumentReaderAgent, request: ExtractionRequest, path: str, index: int,
-                      win: _WindowRun, out_dir: str) -> None:
+    async def _halves(self, agent: DriveDocumentReaderAgent, request: ExtractionRequest, index: int,
+                      win: _WindowRun, work: str) -> None:
         """Cut an output-limited window in half once (§24.3); a half still at the limit adds no text."""
-        half_dir = os.path.join(out_dir, f"w{index + 1:03d}")
-        os.makedirs(half_dir, exist_ok=True)
-        try:
-            halves = await self._splitter.split_pdf(path, math.ceil(win.pages / 2), win.pages, half_dir)
-        except Exception as exc:
-            raise DriveModelCallFailed(f"split of window {index + 1} failed: {type(exc).__name__}") from exc
-        win.halves = len(halves.paths)
+        size = math.ceil(win.pages / 2)
+        halves = [(win.first_page + j * size, min(size, win.pages - j * size)) for j in range(2)]
+        win.halves = len(halves)
         texts: List[str] = []
-        for j, half in enumerate(halves.paths):
-            reply = await self._call(agent, request, half, index, win, first=index == 0 and j == 0,
-                                     pages=min(math.ceil(win.pages / 2), win.pages - j * math.ceil(win.pages / 2)))
+        for j, (first_page, pages) in enumerate(halves):
+            reply = await self._call(agent, request, work, index, win, first_page, pages,
+                                     first=index == 0 and j == 0)
             if reply.output_limited:
                 logger.warning(f"[DriveReader] half {j + 1} of window {index + 1} hit the output limit; not indexed")
                 win.truncated = True
@@ -249,11 +257,21 @@ class DriveReaderRunner(ContentExtractorPort):
                 win.brief = reply.brief
         win.text = "\n\n".join(t for t in texts if t)
 
-    async def _call(self, agent: DriveDocumentReaderAgent, request: ExtractionRequest, path: str, index: int,
-                    win: _WindowRun, first: bool, pages: Optional[int] = None) -> ReaderReply:
-        data = await asyncio.to_thread(Path(path).read_bytes)
+    async def _cut(self, request: ExtractionRequest, work: str, first_page: int, pages: int) -> bytes:
+        """One window, cut on demand from the source and removed once read: the call holds it in memory only."""
+        out = os.path.join(work, f"pages-{first_page + 1:04d}-{pages:03d}.pdf")
+        try:
+            await self._splitter.cut_pdf_window(request.path, first_page, pages, out)
+            return await asyncio.to_thread(Path(out).read_bytes)
+        finally:
+            with contextlib.suppress(FileNotFoundError):
+                os.remove(out)
+
+    async def _call(self, agent: DriveDocumentReaderAgent, request: ExtractionRequest, work: str, index: int,
+                    win: _WindowRun, first_page: int, pages: int, first: bool) -> ReaderReply:
+        data = await self._cut(request, work, first_page, pages)
         win.calls += 1
-        win.pages_sent += win.pages if pages is None else pages
+        win.pages_sent += pages
         reply = await agent.read(data=data, mime_type="application/pdf", file_name=f"window-{index + 1:03d}.pdf",
                                  first_window=first, account_id=request.account_id)
         win.cost += reply.cost
