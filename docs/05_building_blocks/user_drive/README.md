@@ -290,7 +290,9 @@ The drive is not part of `SearchEnrichmentService`:
   --folder scripts/memory/drive_live --user zz-synthetic-<date> --query …` indexes a local folder of real files with
   the real tick, parser, reader, triage and the live Firestore repository under the synthetic id, prints each query's
   result as Smart reads it, then turns indexing off so the production purge removes everything, and fails if anything
-  is left. It refuses any id that does not start with `zz-synthetic-`.
+  is left. It refuses any id that does not start with `zz-synthetic-`, and refuses to start unless the drive queue
+  (`drive-sync-dev`) is PAUSED: the owner pauses it before and resumes it after (the fan-out would otherwise tick the
+  synthetic user live); the script prints the resume command when it ends.
 
 ---
 

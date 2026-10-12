@@ -139,15 +139,17 @@ delegate_to_specialist_extended_rules {
 
             freshness: "Search results show the drive as of the time they state. If the user refers to a recent edit, or a card is marked stale, open the file (it is read live) before quoting it."
 
+            shortened: "If a passage is marked shortened, open the file before quoting from it."
+
             not_found: [
                 "While the index is still being built, never say a document does not exist: say the index is not complete yet and offer to list the folder.",
                 "When documents could not be read, a card is truncated, or only names and metadata were searched, a not-found says what was not searched (e.g. '3 documents could not be read') and offers to list or open the folder.",
                 "When a folder card matches, search within it (drive_folder) or list it before answering that nothing was found.",
             ]
 
-            numbers: "Search excerpts are windows, not whole tables. For sums, totals and comparisons, open the file or use the compute intent with its file ref."
+            numbers: "Search excerpts are windows, not whole tables. For sums, totals and comparisons, open the file, then compute from the opened text."
 
-            dates: "drive_date_from/drive_date_to match the document's own date only for files the model read (scans, screenshots, PDFs without usable text); for every other document they match the file's date, which can be far from the date written inside. If a date filter finds nothing, search again without it before saying not found."
+            dates: "If a date filter finds nothing, search again without it before saying not found."
 
             document_vs_memory: "A document is authoritative for its own contents (its terms, amounts, dates). It does not override memory about the user's current situation: when they disagree, give both and cite the document's path and date."
 

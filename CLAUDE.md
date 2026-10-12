@@ -591,9 +591,10 @@ retried only if no send was attempted) and nudges after each Step 1 mutation. Ca
 (photo date, camera, offline `place_name`), plus the brief or caption below; OS/lock artefacts get no card;
 dot-folders, `.git`/`pyvenv.cfg` folders, `node_modules`/`__pycache__`/`site-packages` and dense trees collapse to one
 card. **Content (Slice 2+4, §24):** the §5.1 document kinds are read on the indexer through `ContentExtractorPort`:
-the child-process parser first (`SubprocessContentExtractor`, rlimits), then — on no text, low density, garbage text
-or a parser error — the document reader agent (`drive_reader`), which returns verbatim text and a brief whose
-`doc_date` becomes `effective_date` (D13; parsed documents keep the file date). Every image is triaged in thumbnail
+the child-process parser first (`SubprocessContentExtractor`, rlimits); PDFs go on to the document reader agent
+(`drive_reader`) when the parser finds no text, low density or garbage text, or fails (other kinds stay with the
+parser's outcome). The reader returns verbatim text and a brief whose `doc_date` becomes `effective_date` (D13;
+parsed documents keep the file date). Every image is triaged in thumbnail
 batches (`drive_triage`): text goes to the reader, a photograph gets a caption. Both agents run on Claude Haiku 5.5 or
 GPT by `agent_providers` (D7), billed to the user, within monthly page and image budgets on the sync state; a model
 outage defers only model work (`model_backoff_until`). Audio and video stay metadata-only. Text is chunked into
@@ -607,8 +608,8 @@ in a document, freshness, honest not-found, totals, document vs memory, versions
 `PROTOCOL_AGENT_SELECTION`; the results carry per-result facts only. Not in `SearchEnrichmentService`. Opt-out purges
 at once; lost access keeps the index 30 days. Rebuild one user: `scripts/infrastructure/drive_index_rebuild.py`. Eval:
 `venv/bin/python -m scripts.validation.drive_eval` (G1 and G2 over a committed fixture with file bytes made by
-`make_fixtures.py`, real embeddings, parser, reader and triage; bars in `tests/fixtures/drive_eval/bars.json` pin
-tree, gold and bytes; `--record` only deliberately; any lost case fails); G3 (does Smart search the drive when it
+`make_fixtures.py`, real embeddings, parser, reader and triage on the indexer's model registry; bars in
+`tests/fixtures/drive_eval/bars.json` pin tree, gold, bytes and the reader's provider; `--record` only deliberately; any lost case fails); G3 (does Smart search the drive when it
 should): `python -m scripts.validation.drive_eval.smart_dry_run`, owner-run, bars in `bars_g3.json`. Decisions:
 `decisions/drive_*.md`.
 

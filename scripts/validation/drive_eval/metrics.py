@@ -81,7 +81,7 @@ def recall(outcomes: Sequence[CaseOutcome]) -> Dict[str, Dict[str, float]]:
 
 def make_bars(table: Mapping[str, Mapping[str, float]], outcomes: Sequence[CaseOutcome], k: int,
               embedding_space: str, recorded_at: str, tree_sha256: str, gold_sha256: str,
-              files_sha256: Optional[str] = None) -> Dict[str, Any]:
+              files_sha256: Optional[str] = None, reader_provider: Optional[str] = None) -> Dict[str, Any]:
     bars: Dict[str, Any] = {
         "k": k,
         "embedding_space": embedding_space,
@@ -93,11 +93,14 @@ def make_bars(table: Mapping[str, Mapping[str, float]], outcomes: Sequence[CaseO
     }
     if files_sha256 is not None:
         bars["files_sha256"] = files_sha256
+    if reader_provider is not None:
+        bars["reader_provider"] = reader_provider   # the reader's transcriptions decide the content hits
     return bars
 
 
 def bar_mismatch(bars: Mapping[str, Any], k: int, tree_sha256: str, gold_sha256: str,
-                 case_ids: Sequence[str], files_sha256: Optional[str] = None) -> List[str]:
+                 case_ids: Sequence[str], files_sha256: Optional[str] = None,
+                 reader_provider: Optional[str] = None) -> List[str]:
     """Why these bars cannot judge this run (empty: they can). Added and removed cases are named."""
     reasons: List[str] = []
     if bars.get("k") != k:
@@ -106,6 +109,9 @@ def bar_mismatch(bars: Mapping[str, Any], k: int, tree_sha256: str, gold_sha256:
         reasons.append("tree.json changed since the bars were recorded")
     if files_sha256 is not None and bars.get("files_sha256") != files_sha256:
         reasons.append("the fixture files (or a content template) changed since the bars were recorded")
+    if reader_provider is not None and bars.get("reader_provider") != reader_provider:
+        reasons.append(f"the bars were recorded with the reader on {bars.get('reader_provider')}, this run reads "
+                       f"with {reader_provider}")
     if bars.get("gold_sha256") != gold_sha256:
         recorded = set(bars.get("cases", {}))
         now = set(case_ids)

@@ -612,7 +612,8 @@ FILE_MANAGEMENT = AgentDescriptor(
             "fresh the index is. drive_query is required "
             "unless the request is filter-only: for filter-only requests (\"files I saved this week\", \"all my "
             "spreadsheets\") leave drive_query empty and set only the filters. "
-            'Context: {"drive_query": "<name words, or a place or subject>", "drive_folder": "<path or drive:<id>>", '
+            'Context: {"drive_query": "<name words, a place or subject, or words, a number or an amount to find '
+            'inside>", "drive_folder": "<path or drive:<id>>", '
             '"drive_kind": "<type>", "drive_date_from": "YYYY-MM-DD", "drive_date_to": "YYYY-MM-DD"}'
         ),
     },
@@ -656,8 +657,8 @@ FILE_MANAGEMENT = AgentDescriptor(
                 "transliteration and typos are tolerated), a place or subject the user mentioned ('Rome', "
                 "'lease'), or what to find inside the documents: a phrase, a number, an amount or an invoice "
                 "number as the user wrote it ('notice period', 'INV-2024-417', '1 250,00'). No type words "
-                "('photos', 'documents': use drive_kind) and no dates to filter by (use drive_date_from / "
-                "drive_date_to); a date the user quotes from inside a document may stay. Leave EMPTY only for "
+                "('photos', 'documents': use drive_kind). Dates written inside the document go in drive_query; use "
+                "the date filters only when the user limits when the file is dated. Leave EMPTY only for "
                 "filter-only requests such as 'files I saved this week' or 'all my spreadsheets'"
             ),
             "drive_folder": (
@@ -672,8 +673,8 @@ FILE_MANAGEMENT = AgentDescriptor(
             ),
             "drive_date_from": (
                 "search_files_in_drive: optional earliest date, YYYY-MM-DD, inclusive. The date is when a photo "
-                "was taken, the document's own date for scans and other files read by a model, otherwise when "
-                "the file was last changed"
+                "was taken, otherwise when the file is dated. Dates written inside the document go in "
+                "drive_query; use the date filters only when the user limits when the file is dated."
             ),
             "drive_date_to": (
                 "search_files_in_drive: optional latest date, YYYY-MM-DD, inclusive (the whole day counts)"
