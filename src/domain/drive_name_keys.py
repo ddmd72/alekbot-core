@@ -2,7 +2,7 @@
 Lexical name keys for the name stream (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §3.2, §10.1 step 3a).
 
 NFC + casefold tokens split on separators (any Unicode punctuation, apostrophe look-alikes included) and
-on case and digit boundaries. Each token gets variants as extra keys: the token without its accents,
+on case and digit boundaries. Each token gets variants as extra keys: the token without its Latin accents,
 Cyrillic<->Latin transliterations (a Russian-style one both ways, and the Ukrainian national one, so
 "kyiv" finds "Київ"), and character trigrams. Exact and partial names, transliteration and typos are
 where a cosine over the card vector is weak. Records and queries are keyed by the same functions.
@@ -35,8 +35,8 @@ _UK_TO_LAT = {
     "щ": "shch", "ь": "", "ю": "iu", "я": "ia",
 }
 _UK_INITIAL = {"є": "ye", "ї": "yi", "й": "y", "ю": "yu", "я": "ya"}
-# Letters, not accented ones: stripping their mark would make another letter.
-_KEEP_MARKS = frozenset("йї")
+# Latin letters NFKD does not decompose: written out as their usual unaccented spelling.
+_LATIN_FOLDS = {"œ": "oe", "æ": "ae", "ø": "o", "ł": "l", "ß": "ss"}
 # Greedy, longest first. Approximate by design: trigrams absorb the rest.
 _LAT_TO_CYR: List[Tuple[str, str]] = sorted([
     ("shch", "щ"), ("zh", "ж"), ("kh", "х"), ("ts", "ц"), ("ch", "ч"), ("sh", "ш"), ("yu", "ю"), ("ya", "я"),
@@ -67,13 +67,16 @@ def _is_cyrillic(token: str) -> bool:
 
 
 def _strip_accents(token: str) -> str:
-    """NFKD with the combining marks dropped (é→e, ё→е, ﬁ→fi), except on й and ї."""
+    """Latin letters only: NFKD with the combining marks dropped (é→e, ñ→n, ç→c, ﬁ→fi), plus _LATIN_FOLDS
+    (œ→oe). Other scripts are left alone: in Cyrillic й, ё and ї are letters of their own."""
     out = []
     for ch in token:
-        if ch in _KEEP_MARKS:
-            out.append(ch)
-        else:
+        if ch in _LATIN_FOLDS:
+            out.append(_LATIN_FOLDS[ch])
+        elif unicodedata.name(ch, "").startswith("LATIN"):
             out.extend(c for c in unicodedata.normalize("NFKD", ch) if not unicodedata.combining(c))
+        else:
+            out.append(ch)
     return unicodedata.normalize("NFC", "".join(out)).casefold()
 
 

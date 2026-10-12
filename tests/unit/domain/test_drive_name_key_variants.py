@@ -109,3 +109,47 @@ def test_ukrainian_spelling_adds_no_trigrams_so_unrelated_names_stay_below_the_f
 
 def test_unaccented_spelling_keeps_trigrams_for_typos():
     assert name_match(name_keys("Déclaration fiscale.pdf"), query_name_keys("declaraton")) is not None
+
+
+@pytest.mark.parametrize("name,query", [
+    # Spanish: á é í ó ú ü ñ
+    ("Mamá.jpg", "mama"), ("Café.txt", "cafe"), ("Martín.pdf", "martin"), ("Canción.mp3", "cancion"),
+    ("Perú viaje.jpg", "peru viaje"), ("Pingüino.png", "pinguino"), ("Año nuevo.jpg", "ano nuevo"),
+    ("Mañana.docx", "manana"),
+    # French: à â é è ê ë î ï ô ù û ü ÿ ç œ æ
+    ("Voilà.txt", "voila"), ("Château.jpg", "chateau"), ("Été.jpg", "ete"), ("Mère.pdf", "mere"),
+    ("Fête.png", "fete"), ("Noël.jpg", "noel"), ("Île de Ré.jpg", "ile de re"), ("Maïs.txt", "mais"),
+    ("Hôtel.pdf", "hotel"), ("Où.txt", "ou"), ("Août.jpg", "aout"), ("Capharnaüm.mkv", "capharnaum"),
+    ("L'Haÿ-les-Roses.jpg", "hay les roses"), ("Garçon.docx", "garcon"), ("Cœur.pdf", "coeur"),
+    ("Œuvre complète.pdf", "oeuvre complete"), ("Lætitia.jpg", "laetitia"),
+    # other Latin letters NFKD does not decompose
+    ("Øresund.jpg", "oresund"), ("Łódź.jpg", "lodz"), ("Straße.pdf", "strasse"),
+])
+def test_spanish_and_french_names_are_found_unaccented(name, query):
+    assert _finds(name, query)
+
+
+@pytest.mark.parametrize("name,query", [("Cœur.pdf", "cœur"), ("Año.pdf", "año"), ("Été.jpg", "été")])
+def test_the_accented_original_key_stays(name, query):
+    assert f"w:{query}" in name_keys(name)
+    assert _finds(name, query)
+
+
+def test_a_cyrillic_name_gets_no_stripped_keys():
+    # й, ё and ї are letters, not accented и, е and і: only the token and its Latin transliterations.
+    for name in ("Мой отчёт", "Київ", "Ёжик йод їжа"):
+        cyrillic_whole = {k for k in name_keys(name) if k.startswith("w:") and not k[2:].isascii()}
+        assert cyrillic_whole == {f"w:{t}" for t in name.casefold().split()}
+
+
+@pytest.mark.parametrize("name,query", [
+    ("¿Qué pasa?.txt", "que pasa"), ("¡Hola!.txt", "hola"), ("Notes…draft.md", "notes draft"),
+    ("Col·lecció.pdf", "col leccio"), ("«Guerre» et paix.pdf", "guerre et paix"),
+])
+def test_spanish_and_typographic_punctuation_separate_words(name, query):
+    assert _finds(name, query)
+
+
+@pytest.mark.parametrize("name,query", [("Résumé.pdf", "resume"), ("Resume.pdf", "résumé")])
+def test_the_unaccented_spelling_covers_the_query_both_ways(name, query):
+    assert covers_query(name_keys(name), query_token_groups(query))
