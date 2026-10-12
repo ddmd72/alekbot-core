@@ -97,7 +97,15 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   + 100 s wait inside the agent's 120 s timeout → success-shaped "still running, check with a listing"; a
   provider `TimeoutError` inside a mutation is a failure, not "still running". Delete/replace post a localised
   `notify_raw` receipt, or a "did not complete" notice if they fail after "still running" was answered. Vision only JPEG/PNG/GIF/WebP + PDF (HEIC refused). Refs persist via
-  `history_context["drive_context"]`. No search in step 1.
+  `history_context["drive_context"]`. Eighth drive intent `search_files_in_drive` (SYNC, zero-LLM; Step 2 Slice 1,
+  USER_DRIVE_INDEXING_RFC §10.4): `DriveSearchService` over the opt-in index, finds files and folders by name, kind,
+  date, folder, photo facets and place (no file content yet). Context fields `drive_query`, `drive_folder`,
+  `drive_kind`, `drive_date_from`, `drive_date_to` — names no other intent uses, because the delegate tool keeps the
+  first description seen per field name. An empty `drive_query` is a filter-only request; `drive_kind` is a format
+  or a family (`spreadsheet`, `document`, `presentation`, `photo`; plan Δ20), anything else is refused. Results come
+  inside a nonce-tagged, escaped `<drive_document>` wrapper (the same one `open_file_from_drive` text now uses; its
+  vision and video results carry the reference-material reminder too) with a
+  coverage envelope (`building`, `index_as_of`, `reconnect_needed`). Indexing off → `disabled`, read uncached.
 - Notes / Proactive Self-Reminders (PERFORMANCE, OpenAI, intent `manage_self_reminders`) — deferred
   instructions the system writes to itself that fire autonomously as new conversations. Two-field model:
   `text` (≤15-word label) + `instruction` (self-contained execution context). Tools: create/update/delete
