@@ -542,3 +542,10 @@ order, substitution handling, OIDC audience, `main.py` names) matches the code. 
 ### Task 38 (Part E gate) — run by the coordinator
 - `make check` in a clean worktree at `f2a5ff5` (Parts A–E + all fixes so far): see next line.
   **8018 passed, 3 skipped, 1 xfailed — green.** No failures (the plan's skeleton-era failures are gone with Parts A–D merged).
+
+### Task 37 — done
+- Commit `f2a5ff5` (identical to the plan diff). `make check` (reviewer, worktree): 8018 passed. Reviewer: APPROVED,
+  no findings; every claim in the line verified true for Slice 1 after the fixes; the label matches the Cabinet.
+- **OWNER (optional):** the `drive_query` field description says "words of the file or folder name"; if Smart leaves
+  a place ("Rome") out of `drive_query`, "photos from Rome in August" returns every August photo. Adding "or a place"
+  to that description would rule it out.
