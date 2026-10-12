@@ -274,6 +274,10 @@ class LLMRequest(BaseModel):
     use_grounding: bool = False       # Request native search grounding; adapter decides how to implement
     use_code_execution: bool = False  # Request sandboxed Python code execution; Gemini only, others ignore
     thinking: Optional[str] = None    # Thinking effort: "low" | "medium" | "high". None = disabled.
+    # False: the provider must not keep the request or response after serving it. OpenAI honours it as
+    # `store=false` (its Responses API otherwise stores both for the dashboard); the drive agents send verbatim
+    # scans of the user's files (USER_DRIVE_INDEXING_RFC §24.2). Adapters without such an option ignore it.
+    allow_provider_storage: bool = True
     # Request timeout in seconds. When set, adapters wrap their SDK call in
     # asyncio.wait_for(timeout=request.timeout). The OpenAI adapter additionally
     # honors it at the SDK level (per-request with_options) and disables retries,

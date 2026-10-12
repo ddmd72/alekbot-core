@@ -186,6 +186,22 @@ class AgentProviderStrategy:
             "required_capabilities": [],
             "fallback": "gemini"
         },
+        # Drive indexer agents (USER_DRIVE_INDEXING_RFC §24.2, D7): a PDF window or an image in, structured JSON out.
+        # The provider is a configuration switch between the two that take inline file bytes (Gemini's adapter
+        # does not); the pick is checked live on the owner's files. No fallback: a second model's transcription
+        # was never checked, and an outage defers model work instead (§24.8).
+        "drive_reader": {
+            "default_provider": "claude",
+            "allowed_providers": ["claude", "openai"],
+            "required_capabilities": ["vision"],
+            "fallback": None,
+        },
+        "drive_triage": {
+            "default_provider": "claude",
+            "allowed_providers": ["claude", "openai"],
+            "required_capabilities": ["vision"],
+            "fallback": None,
+        },
         # Image generation: text-LLM axis (prompt-crafting call) — see
         # resolve_image_generation_context() below for the image-rendering axis,
         # which uses the SAME resolved provider name against a separate registry.

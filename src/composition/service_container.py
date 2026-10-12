@@ -355,8 +355,8 @@ class ServiceContainer:
             if self.file_storage else None
         )
         # A second stateless CompositeAdapter instance is deliberate here: the assembly
-        # service's own CompositeAdapter is a local inside _init_assembly_service and that
-        # method may return None — widening its return for skills would couple two
+        # service's own CompositeAdapter is a local inside build_prompt_assembly_service and
+        # _init_assembly_service may return None — widening its return for skills would couple two
         # unrelated features.
         self.skill_service = SkillService(
             repository=skill_repository,
@@ -472,42 +472,9 @@ class ServiceContainer:
         """Returns (assembly_service, profile_repo). Both None on failure."""
         logger.info("🔐 Initializing Prompt Design System v3 (optional)...")
         try:
-            from ..adapters.security.regex_adapter import RegexSecurityAdapter
-            from ..adapters.security.composite_adapter import CompositeAdapter
-            from ..adapters.prompt_v3.firestore_token_repository import FirestoreTokenRepository
-            from ..adapters.prompt_v3.firestore_blueprint_repository import FirestoreBlueprintRepository
-            from ..adapters.prompt_v3.firestore_agent_profile_repository import FirestoreAgentProfileRepository
-            from ..services.prompt_v3.prompt_assembly_service import PromptAssemblyService
-            from ..services.prompt_v3.context_formatter import ContextFormatter
-            from ..services.prompt_v3.biographical_formatter import BiographicalFactsFormatter
+            from .prompt_assembly_setup import build_prompt_assembly_service
 
-            security_port = CompositeAdapter(
-                adapters=[RegexSecurityAdapter()],
-                strategy="worst_case",
-            )
-            token_repo = FirestoreTokenRepository(
-                db=db_client,
-                system_collection=f"{env_config.domain_prompt_tokens_collection}_system",
-                user_collection=f"{env_config.domain_prompt_tokens_collection}_user",
-                security_port=security_port,
-            )
-            blueprint_repo = FirestoreBlueprintRepository(
-                db=db_client,
-                collection_name=env_config.domain_prompt_blueprints_collection,
-            )
-            profile_repo = FirestoreAgentProfileRepository(
-                db=db_client,
-                profiles_collection=env_config.domain_prompt_profiles_collection,
-                overrides_collection=env_config.domain_prompt_overrides_collection,
-            )
-            service = PromptAssemblyService(
-                token_repo=token_repo,
-                blueprint_repo=blueprint_repo,
-                profile_repo=profile_repo,
-                security_port=security_port,
-                formatter=ContextFormatter(),
-                bio_formatter=BiographicalFactsFormatter(),
-            )
+            service, profile_repo = build_prompt_assembly_service(db_client, env_config)
             logger.info("✅ Prompt Design System v3 initialized successfully")
             return service, profile_repo
         except ImportError as e:

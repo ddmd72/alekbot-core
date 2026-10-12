@@ -658,3 +658,64 @@ NOTE_AFTER_TOOL_RESULT_SURVIVES_CONVERSION = ContractRule(
         ),
     },
 )
+
+
+# ---- Drive document reader (USER_DRIVE_INDEXING_RFC §24.2) -------------------------------------------------------
+
+def _claude_document_blocks(kw: dict) -> list:
+    """Every `document` block of the converted messages, including one nested in a tool_result."""
+    blocks = []
+    for msg in kw.get("messages") or []:
+        for block in msg.get("content") if isinstance(msg.get("content"), list) else []:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "document":
+                blocks.append(block)
+            if block.get("type") == "tool_result" and isinstance(block.get("content"), list):
+                blocks.extend(b for b in block["content"] if isinstance(b, dict) and b.get("type") == "document")
+    return blocks
+
+
+def _openai_input_files(kw: dict) -> list:
+    return [part for item in kw.get("input") or [] if isinstance(item.get("content"), list)
+            for part in item["content"] if isinstance(part, dict) and part.get("type") == "input_file"]
+
+
+STRUCTURED_OUTPUT_PDF_SENDS_NO_CITATIONS = ContractRule(
+    name="STRUCTURED_OUTPUT_PDF_SENDS_NO_CITATIONS",
+    description=(
+        "A PDF sent together with a response_schema: Anthropic rejects citations with output_config.format "
+        "(HTTP 400), so no document block may enable them when the request carries output_config.format. "
+        "Input: the captured messages.stream kwargs."
+    ),
+    validators={
+        "claude": lambda kw: (
+            _true("format" in (kw.get("output_config") or {}), "Claude: output_config.format missing"),
+            _true(_claude_document_blocks(kw), "Claude: no document block was sent"),
+            _true(all("citations" not in b for b in _claude_document_blocks(kw)),
+                  "Claude: a document block enables citations next to output_config.format"),
+        ),
+    },
+)
+
+PDF_FILE_INPUT_IS_INLINE = ContractRule(
+    name="PDF_FILE_INPUT_IS_INLINE",
+    description=(
+        "A PDF part goes inline with the request, never through a stored upload: OpenAI gets an input_file "
+        "with a filename and file_data as a base64 data URL (no file_id, no Files API object left behind); "
+        "Claude gets a document block with a base64 source. Input: the captured SDK call kwargs."
+    ),
+    validators={
+        "openai": lambda kw: (
+            _true(_openai_input_files(kw), "OpenAI: no input_file part was sent"),
+            _true(all(p.get("filename") and str(p.get("file_data", "")).startswith("data:application/pdf;base64,")
+                      and "file_id" not in p for p in _openai_input_files(kw)),
+                  "OpenAI: input_file must carry filename + a base64 data URL and no file_id"),
+        ),
+        "claude": lambda kw: _true(
+            _claude_document_blocks(kw) and all(b["source"]["type"] == "base64"
+                                                 for b in _claude_document_blocks(kw)),
+            "Claude: the PDF must be a document block with a base64 source",
+        ),
+    },
+)
