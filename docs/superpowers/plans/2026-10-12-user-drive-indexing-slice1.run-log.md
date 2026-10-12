@@ -103,3 +103,15 @@ Method: subagent-driven (implementer → independent reviewer → coordinator ac
 - Commit `b1402fb`. `make check` (coordinator, worktree at the commit): 7418 passed, 3 skipped, 1 xfailed.
 - Deviations: none. Reviewer: APPROVED, round 1. The existing `test_callback_saves_credentials_under_drive_provider`
   now passes through the best-effort path and logs one harmless "Drive id not read at connect" WARNING.
+
+### Task 13 — done (with skipped commands, by rule)
+- Commit `e394b4f` (sanitiser script + guard test, byte-identical to the plan). `make check` (coordinator, worktree
+  at the commit): 7444 passed, 3 skipped, 1 xfailed.
+- **Skipped (raw S0a reports with PII exist only on the owner's machine; fixtures pre-committed in `a9e8a24`):**
+  - Step 4: `venv/bin/python scripts/onedrive/sanitize_delta_fixtures.py --source ../alekbot-core/scripts/memory`
+  - Step 6 (determinism): the same command twice + `git diff --exit-code tests/fixtures/onedrive_delta`
+  - Step 7: fixtures not re-added (already tracked, unchanged).
+  The sanitiser was run only with `--help`. Step 5's read-only PII greps on the committed fixtures: all clean (the
+  `git config user.name` grep is meaningless here — not the owner's name in this container).
+- Step 2 note: 24 of 26 tests already passed before the script existed (they read the pre-committed fixtures).
+- Reviewer: APPROVED, round 1. **OWNER:** the determinism check (Step 6) can only be run on your machine.
