@@ -779,7 +779,8 @@ runs a plain Firestore query on `user_id` + `kind` / `effective_date` (one per m
 `effective_date` descending, limit `K`, with no kNN and no threshold, and says how many matched (a lower bound when
 the fetch hit its cap). A request with no name words and no filter is **refused** with a correction, never answered
 with the newest files (RFC Δ36). The manifest field description tells Smart to put name words, a place or a subject
-in `drive_query` (the delegate's `query` is not read for search), never type words or dates.
+in `drive_query` (the delegate's `query` is not read for search), never type words or dates (Slice 2+4: dates
+written inside a document do go in it, §24.10).
 0. Read the opt-in flag, `DriveSyncState` and the credentials state from Firestore, never from the agent cache. Off →
    `disabled`. No credentials → `disconnected`. `needs_reconnect` with `now ≥ access_lost_at + ACCESS_LOSS_TTL`
    → `disconnected` (the purge has begun). A purge in progress, or the TTL passed on a connected drive → no results,
