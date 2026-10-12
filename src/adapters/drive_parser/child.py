@@ -94,17 +94,18 @@ def dispatch(request: Dict[str, Any]) -> Dict[str, Any]:
         outcome = read_content(str(request["path"]), str(request["kind"]))
         return {"status": outcome.status.value, "text": outcome.text, "pages_total": outcome.pages_total,
                 "truncated": outcome.truncated, "detail": outcome.detail}
-    if op == "split_pdf":
-        from src.adapters.drive_parser.readers import split_pdf_windows
+    if op in ("pdf_page_count", "cut_pdf_window"):
+        from src.adapters.drive_parser.readers import cut_pdf_window, pdf_page_count
         from src.domain.drive_extraction import PdfSplitFailed
 
         try:
-            split = split_pdf_windows(str(request["path"]), int(request["pages_per_window"]),
-                                      int(request["max_pages"]), str(request["out_dir"]))
+            if op == "pdf_page_count":
+                return {"status": "text", "pages_total": pdf_page_count(str(request["path"]))}
+            pages = cut_pdf_window(str(request["path"]), int(request["first_page"]), int(request["page_count"]),
+                                   str(request["out_path"]))
+            return {"status": "text", "pages": pages}
         except PdfSplitFailed as exc:
             return {"status": exc.status.value, "detail": exc.detail}
-        return {"status": "text", "paths": list(split.paths), "pages_total": split.pages_total,
-                "truncated": split.truncated}
     return {"status": "error", "detail": f"unknown op {op!r}"}
 
 

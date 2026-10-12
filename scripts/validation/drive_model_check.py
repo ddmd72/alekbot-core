@@ -9,7 +9,7 @@ on the owner's real files; nothing is billed to an account and nothing is writte
 
 read    Every PDF and image directly in <folder> (files the owner copied out of the drive, or the c2048x2048
         renditions saved by scripts/onedrive/probe_renditions.py) through DriveReaderRunner. PDFs are cut by the
-        child-process parser (SubprocessContentExtractor.split_pdf), as on the indexer.
+        child-process parser (SubprocessContentExtractor.cut_pdf_window), as on the indexer.
 triage  The renditions saved by probe_renditions.py (`<n>_<size>.<ext>`), per size, in batches of TRIAGE_BATCH
         through DriveTriageRunner: the 176 px vs 800 px question of §24.5.
 

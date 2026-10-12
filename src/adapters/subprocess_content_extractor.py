@@ -13,17 +13,19 @@ indexer service (`scripts/infrastructure/drive_extract_s1.py`).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import shutil
 import signal
+import stat
 import sys
 import tempfile
 import time
 from typing import Any, Dict, Mapping, Optional, Tuple
 
 from src.domain.drive_extraction import (
-    PARSER, ExtractionOutcome, ExtractionRequest, ExtractionStatus, PdfSplit, PdfSplitFailed,
+    PARSER, ExtractionOutcome, ExtractionRequest, ExtractionStatus, PdfSplitFailed,
 )
 from src.domain.drive_index_params import EXTRACT_WALL_TIMEOUT_S, MAX_TEXT_CHARS
 from src.domain.drive_index_policy import size_cap
@@ -32,7 +34,7 @@ from src.utils.logger import logger
 
 EXTRACT_MEMORY_LIMIT_BYTES = 1024 * 1024 * 1024    # RLIMIT_AS of the child (S1 placeholder; indexer has 2 GiB)
 EXTRACT_CPU_LIMIT_S = 90                           # RLIMIT_CPU soft limit (S1 placeholder; below the wall clock)
-EXTRACT_FILE_LIMIT_BYTES = 64 * 1024 * 1024        # RLIMIT_FSIZE: the result, a PDF window, the stderr file
+EXTRACT_FILE_LIMIT_BYTES = 64 * 1024 * 1024        # RLIMIT_FSIZE: the result, one PDF window, the stderr file
 CHILD_MODULE = "src.adapters.drive_parser.child"
 # The child's exit codes (drive_parser/child.py). Mirrored, not imported: a top-level adapter imports no other
 # adapter module (REQ-ARCH-08); a test pins the two in step.
@@ -50,7 +52,8 @@ _STDERR_TAIL = 400
 
 
 class SubprocessContentExtractor(ContentExtractorPort):
-    """The `parser` link of every extractor chain; also cuts routed PDFs into page windows for the reader."""
+    """The `parser` link of every extractor chain; also counts a routed PDF's pages and cuts its page windows for
+    the reader, one window per call (§24.3)."""
 
     VERSION = 1
 
@@ -94,15 +97,31 @@ class SubprocessContentExtractor(ContentExtractorPort):
             return self._outcome(status or ExtractionStatus.ERROR, detail=detail)
         return self._from_result(result)
 
-    async def split_pdf(self, path: str, pages_per_window: int, max_pages: int, out_dir: str) -> PdfSplit:
-        """Window PDFs in `out_dir`, cut by the sandboxed child (§24.3); the caller owns `out_dir` and its files.
-        Raises PdfSplitFailed with the outcome status when the PDF cannot be cut."""
-        result, status, detail = await self._run({"op": "split_pdf", "path": path,
-                                                  "pages_per_window": pages_per_window, "max_pages": max_pages,
-                                                  "out_dir": out_dir})
-        if status is not None or result is None:
-            raise PdfSplitFailed(status or ExtractionStatus.ERROR, detail)
-        return self._split_from_result(result, out_dir)
+    async def pdf_page_count(self, path: str) -> int:
+        """Pages of the PDF, counted by the sandboxed child (§24.3). Raises PdfSplitFailed with the outcome status
+        when the PDF cannot be read."""
+        result = await self._pdf_op({"op": "pdf_page_count", "path": path})
+        pages = result.get("pages_total")
+        if not isinstance(pages, int) or isinstance(pages, bool) or pages < 0:
+            logger.warning("[DriveExtract] page count result has an invalid shape")
+            raise PdfSplitFailed(ExtractionStatus.ERROR, "invalid page count")
+        return pages
+
+    async def cut_pdf_window(self, path: str, first_page: int, page_count: int, out_path: str) -> None:
+        """One window PDF at `out_path` (pages [first_page, first_page + page_count), 0-based, clamped to the end),
+        cut by the sandboxed child (§24.3). The caller owns `out_path` and removes it; cutting one window per model
+        call keeps at most MODEL_IN_FLIGHT windows on disk. Raises PdfSplitFailed with the outcome status."""
+        await self._pdf_op({"op": "cut_pdf_window", "path": path, "first_page": first_page,
+                            "page_count": page_count, "out_path": out_path})
+        try:
+            regular = stat.S_ISREG(os.lstat(out_path).st_mode)   # lstat: a link is not the window
+        except OSError:
+            regular = False
+        if not regular:
+            logger.warning("[DriveExtract] cut result is not a regular window file")
+            with contextlib.suppress(OSError):
+                os.unlink(out_path)
+            raise PdfSplitFailed(ExtractionStatus.ERROR, "invalid window")
 
     # -- child process ----------------------------------------------------------------------------------------------
 
@@ -193,24 +212,18 @@ class SubprocessContentExtractor(ContentExtractorPort):
                                  pages_total=pages_total, truncated=truncated, extracted_by=self.stamp,
                                  detail=str(result.get("detail", ""))[:300])
 
-    @staticmethod
-    def _split_from_result(result: Dict[str, Any], out_dir: str) -> PdfSplit:
-        status = result.get("status")
-        if status != ExtractionStatus.TEXT.value:
+    async def _pdf_op(self, payload: Mapping[str, Any]) -> Dict[str, Any]:
+        """The child's result of a page-window op, or PdfSplitFailed with the outcome status."""
+        result, status, detail = await self._run(payload)
+        if status is not None or result is None:
+            raise PdfSplitFailed(status or ExtractionStatus.ERROR, detail)
+        if result.get("status") != ExtractionStatus.TEXT.value:
             try:
-                failed = ExtractionStatus(status)
+                failed = ExtractionStatus(result.get("status"))
             except ValueError:
                 failed = ExtractionStatus.ERROR
             raise PdfSplitFailed(failed, str(result.get("detail", ""))[:300])
-        paths = result.get("paths")
-        pages_total = result.get("pages_total")
-        root = os.path.realpath(out_dir)
-        if (not isinstance(paths, list) or not isinstance(pages_total, int)
-                or not all(isinstance(p, str) and os.path.dirname(os.path.realpath(p)) == root
-                           and os.path.isfile(p) for p in paths)):
-            logger.warning("[DriveExtract] split result names files outside its window directory")
-            raise PdfSplitFailed(ExtractionStatus.ERROR, "invalid split result")
-        return PdfSplit(paths=tuple(paths), pages_total=pages_total, truncated=bool(result.get("truncated")))
+        return result
 
 
 def _child_env(workdir: str) -> Dict[str, str]:
