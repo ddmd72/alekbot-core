@@ -2,7 +2,8 @@
 
 All Cloud Scheduler jobs for Alek-Core. Managed via `cloudbuild-dev.yaml` using the `describe && update || create` pattern (idempotent on every deploy).
 
-Region: `us-central1`. Attempt deadline: `60s` for all `/worker` jobs.
+Region: `us-central1`. Attempt deadline: `60s` for most `/worker` jobs; `start_daily_email_review` and
+`start_drive_sync` use `180s` and `repair_email_embeddings` uses `300s` (`cloudbuild-dev.yaml`).
 
 ## Two deadlines, do not confuse them
 
@@ -22,6 +23,7 @@ Task types whose `NotificationSLA` can exceed 10 minutes must therefore pass
 |-----------|-------------|-------------------|
 | `execute_reminder` | 1500s (REMINDER × PERFORMANCE) | 1620s |
 | `daily_email_review` | 1500s (DAILY_DIGEST) | 1620s |
+| `drive_sync` | no new work after 8 min (`TICK_START_BUDGET`) | 1800s (`TICK_DEADLINE_S`) |
 | everything else | ≤ 600s | Cloud Tasks default |
 
 The value is derived, not hardcoded: `dispatch_deadline_s(kind)` in
@@ -29,6 +31,10 @@ The value is derived, not hardcoded: `dispatch_deadline_s(kind)` in
 overrides and adds 2 minutes of handler headroom, clamped to the Cloud Tasks maximum of
 1800s (which is also this service's Cloud Run request timeout). Raising a budget in
 `NOTIFICATION_SLA` therefore raises its transport automatically.
+
+`drive_sync` is the exception: it is not a notification kind, so every enqueue (fan-out, continuation, nudge,
+toggle) passes `TICK_DEADLINE_S` directly, on its own queue (see Start Drive Sync below). A manual
+`gcloud tasks create-http-task` sets no deadline and gets the 600s default.
 
 Both budgets were unreachable from the day they were written until 2026-08-15 — see
 `docs/04_solution_strategy/decisions/grok_revival_2026_08.md`.
@@ -157,7 +163,7 @@ service:
 | **Queue** | `drive-sync-dev` (Cloud Tasks, `us-central1`), provisioned in `cloudbuild-dev.yaml` with `describe → update \|\| create` |
 | **Concurrency** | `max-concurrent-dispatches=1`, `max-dispatches-per-second=1` — a CPU/memory knob for the indexer instance; the per-user Firestore lease is the correctness mechanism (§7.1). Raising it is an extension (§14). The app never calls `create_queue_if_not_exists` on it (that would create it with concurrency 5). |
 | **Retry** | `max-attempts=3`, backoff 60 s → 600 s. Only an unhandled exception answers 500; every handled tick outcome is 200 and the tick enqueues its own continuation. |
-| **Target** | `alek-bot-indexer-dev` `POST /worker` (`indexer_main.py`): `--ingress=internal` (Cloud Tasks in the same project counts as internal), plus the in-app OIDC check with the audience pinned to the service URL, failing closed on Cloud Run without `SERVICE_ACCOUNT_EMAIL` (plan Δ21). A manual `drive_sync` goes through the queue: `gcloud tasks create-http-task --queue=drive-sync-dev --location=us-central1 --url=<indexer URL>/worker --oidc-service-account-email=<SA> --body-content='{"task_type":"drive_sync","user_id":"<id>"}' --header=Content-Type:application/json`. |
+| **Target** | `alek-bot-indexer-dev` `POST /worker` (`indexer_main.py`): `--ingress=internal` (Cloud Tasks in the same project counts as internal), plus the in-app OIDC check with the audience pinned to the service URL, failing closed on Cloud Run without `SERVICE_ACCOUNT_EMAIL` (plan Δ21). A manual `drive_sync` goes through the queue: `gcloud tasks create-http-task --queue=drive-sync-dev --location=us-central1 --url=<indexer URL>/worker --oidc-service-account-email=<SA> --body-content='{"task_type":"drive_sync","user_id":"<id>"}' --header=Content-Type:application/json`. It gets the 600 s default deadline, not 1800 s. `<indexer URL>` must be the URL in `INDEXER_URL_DEV`: the audience is pinned, so another run.app URL form of the same service gets 401. |
 | **IAM prerequisite** | `cloudbuild-dev.yaml` creates and updates the queue, so the Cloud Build service account needs `roles/cloudtasks.queueAdmin` (granted once by the owner; nothing in the repo created queues from Cloud Build before). The tasks' OIDC identity is the same SA the main queue already uses, so enqueueing needs no new grant. |
 | **dispatch_deadline** | 1800 s (`TICK_DEADLINE_S`) on every `drive_sync` enqueue: fan-out, continuation, nudge, toggle |
 | **Producers** | the fan-out above; `UserDriveService` nudges after each bot mutation (`{user_id}:nudge:{mutation_id}`); the Cabinet toggle (`{user_id}:toggle:{ts}`); the indexer's own continuations (`{user_id}:cont:{tick_id}`) |
