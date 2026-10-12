@@ -386,7 +386,8 @@ USER_DRIVE_INDEXING_RFC §24 adds model calls and chunk storage to the indexer. 
    (`firestore_utils/backup_prompt_layer.py` into `scripts/memory/`), check the mirror for drift
    (`python firestore_utils/snapshot_pull.py --check`), dry-run the upload, then `--apply` (owner only;
    [prompts_snapshot/README.md](../../prompts_snapshot/README.md)).
-5. **Indexes.** The chunk collection `development_drive_index_chunks` needs its composite indexes
+5. **Indexes.** The chunk collection `development_drive_index_chunks` needs its composite indexes, and the records
+   collection the `unread` counts' composites (three of them carry `triage_verdict`, for images triaged as text)
    (`make deploy-indexes PROJECT_ID=<PROJECT_ID>`) and its vector indexes on the chunk vector under `user_id` and
    `user_id + kind` (`PROJECT_ID=<PROJECT_ID> scripts/infrastructure/create_drive_vector_indexes.sh`). Wait for
    `READY`, then run the smoke check, which now also runs the chunk queries.

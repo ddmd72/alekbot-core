@@ -26,7 +26,8 @@ from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Optional, Seq
 
 from ..domain.drive_card import card_text
 from ..domain.drive_content_search import (
-    ContentHit, WindowRequest, budget_windows, matched_label, pool_nearest, pool_terms, window_indexes,
+    ContentHit, WindowRequest, budget_windows, matched_label, pool_nearest, pool_terms, selective_term_hits,
+    window_indexes,
 )
 from ..domain.drive_content_terms import query_terms
 from ..domain.drive_index import DriveChunk, DriveIndexRecord, DriveSyncState, EpochPhase, Priority, RecordState, Scope
@@ -169,25 +170,29 @@ class _Fetch:
 
 @dataclass
 class _Content:
-    """The content streams of one search: records pooled per stream (best first) and each record's window anchor."""
+    """The content streams of one search: records pooled per stream (best first), each record's window anchor, and
+    the selective query terms (the windows are trimmed around them)."""
     nearest: List[DriveIndexRecord] = field(default_factory=list)
     terms: List[DriveIndexRecord] = field(default_factory=list)
     anchors: Dict[str, DriveChunk] = field(default_factory=dict)
     full: bool = False
+    selective: Tuple[str, ...] = ()
 
     @classmethod
-    def of(cls, nearest: List[ContentHit], terms: List[ContentHit], full: bool) -> "_Content":
+    def of(cls, nearest: List[ContentHit], terms: List[ContentHit], full: bool,
+           selective: Sequence[str] = ()) -> "_Content":
         anchors = {h.record.item_id: h.chunk for h in nearest}
-        # an exact-term chunk holds the number or code the user asked for: it anchors the window
+        # a selective term's chunk holds the number or code the user asked for: it anchors the window
         anchors.update({h.record.item_id: h.chunk for h in terms})
-        return cls([h.record for h in nearest], [h.record for h in terms], anchors, full)
+        return cls([h.record for h in nearest], [h.record for h in terms], anchors, full, tuple(selective))
 
 
 @dataclass
 class _TermPages:
-    """Each query term's page, kept across the widening: only a term whose page was full is read again."""
+    """Each query term's first page. A term is read once: a page that was not full is complete, and a full one makes
+    the term non-selective (selective_term_hits), so the widening has nothing to read again."""
     pages: Dict[str, List[DriveChunk]] = field(default_factory=dict)
-    full: Set[str] = field(default_factory=set)
+    limit: int = 0
 
 
 class DriveSearchService:
@@ -302,8 +307,7 @@ class DriveSearchService:
         # The filters saw only the streams' pages: past a full page, a matching file may exist (§10.2 honesty).
         capped = full_page and stats.filtered < stats.visible
         card_side = {r.item_id for r in nearest} | set(scores)
-        cards = await self._with_content(user_id, self._cards(ranked, paths, stats), card_side, content, terms,
-                                         stats)
+        cards = await self._with_content(user_id, self._cards(ranked, paths, stats), card_side, content, stats)
         return DriveSearchResult(status=STATUS_OK, cards=cards, request=request,
                                  folder_path=folder.path if folder else None, capped=capped,
                                  candidates=len(stats.candidates) if capped else 0)
@@ -388,8 +392,7 @@ class DriveSearchService:
         ranked = self._covered_first(fused, request.query, stats)
         # matched by card: the cards a user-wide card page would hold, or a name match (§10.2)
         card_side = {r.item_id for r in by_distance[:CARD_FETCH]} | set(scores)
-        cards = await self._with_content(user_id, self._cards(ranked, paths, stats), card_side, content, terms,
-                                         stats)
+        cards = await self._with_content(user_id, self._cards(ranked, paths, stats), card_side, content, stats)
         return DriveSearchResult(status=STATUS_OK, cards=cards, request=request, folder_path=folder.path)
 
     # ------------------------------------------------------------------------------------------
@@ -447,44 +450,49 @@ class DriveSearchService:
     async def _term_hits(self, user_id: str, terms: Sequence[str], limit: int, kind: Optional[str],
                          pages: _TermPages, stats: _Stats) -> None:
         """The exact-term stream (§24.6): one array-contains query per term, in parallel, never one
-        array-contains-any (it returns the first matches by id, so a common term would hide a rare one). A term
-        already read whose page was not full is complete and is not read again on the widening."""
-        due = [t for t in terms if t not in pages.pages or t in pages.full]
+        array-contains-any (it returns the first matches by id, so a common term would hide a rare one). Each term
+        is read once, at the first page size: a page that was not full is complete, and a full one leaves the term
+        out (selective_term_hits, review D-M2), so the widening does not read it again."""
+        due = [t for t in terms if t not in pages.pages]
         if not due:
             return
-        found = await asyncio.gather(*(self._repo.find_chunks_by_term(user_id, t, limit, kind) for t in due))
+        pages.limit = pages.limit or limit
+        found = await asyncio.gather(*(self._repo.find_chunks_by_term(user_id, t, pages.limit, kind) for t in due))
         stats.term_queries += len(due)
         for term, chunks in zip(due, found):
             pages.pages[term] = list(chunks)
-            if len(chunks) >= limit:
-                pages.full.add(term)
-            else:
-                pages.full.discard(term)
         stats.term = sum(len(c) for c in pages.pages.values())
 
     async def _pool_content(self, user_id: str, chunk_hits: Sequence[Tuple[DriveChunk, float]],
                             term_pages: _TermPages, terms: Sequence[str], chunk_full: bool,
                             stats: _Stats) -> _Content:
         """Fence both content streams against the records read now (§7.4) and pool each to one hit per record
-        before fusion (§17.6)."""
-        ids = {c.item_id for c, _ in chunk_hits} | {c.item_id for page in term_pages.pages.values() for c in page}
+        before fusion (§17.6); only the selective terms' hits take part (review D-M2)."""
+        selective = selective_term_hits(term_pages.pages, term_pages.limit)
+        ids = {c.item_id for c, _ in chunk_hits} | {c.item_id for page in selective.values() for c in page}
         records = await self._repo.get_records(user_id, sorted(ids)) if ids else {}
         nearest = pool_nearest(chunk_hits, records)
-        by_term = pool_terms(term_pages.pages, records, terms)
+        kept_terms = [t for t in terms if t in selective]
+        by_term = pool_terms(selective, records, kept_terms)
         stats.chunk_kept, stats.term_kept = len(nearest), len(by_term)
-        return _Content.of(nearest, by_term, chunk_full or bool(term_pages.full))
+        return _Content.of(nearest, by_term, chunk_full, kept_terms)
 
     async def _content_in_memory(self, user_id: str, readable: Sequence[DriveIndexRecord],
                                  vector: Optional[List[float]], terms: Sequence[str], stats: _Stats) -> _Content:
         """A folder's readable chunks, ranked in memory (§10.1 Folder): read by id at each record's readable
-        generation (so fenced by construction), scored as they arrive; vectors are not kept."""
+        generation (so fenced by construction), scored as they arrive; vectors are not kept. Only what ranks is read:
+        never the text (windows read it by id), the terms only for a query with terms, the vectors only with a query
+        vector — refreshing with no terms reads nothing."""
         hits: List[Tuple[DriveChunk, float]] = []
         by_term: Dict[str, List[DriveChunk]] = {t: [] for t in terms}
+        if vector is None and not terms:
+            return _Content()
         for i in range(0, len(readable), _WALK_PARALLEL):
             batch = readable[i:i + _WALK_PARALLEL]
             rows = await asyncio.gather(*(
                 self._repo.get_chunks_with_vectors(user_id, r.item_id, int(r.indexed_generation or 0),
-                                                   range(r.chunk_count)) for r in batch))
+                                                   range(r.chunk_count), text=False, terms=bool(terms),
+                                                   vectors=vector is not None) for r in batch))
             for row in rows:
                 for chunk, chunk_vector in row:
                     if vector is not None:
@@ -494,13 +502,15 @@ class DriveSearchService:
                             by_term[term].append(chunk)
         records = {r.item_id: r for r in readable}
         nearest = pool_nearest(hits, records)
-        pooled_terms = pool_terms(by_term, records, terms)
+        selective = selective_term_hits(by_term, CONTENT_TERM_FETCH)   # the user-wide stream's rule (D-M2)
+        kept_terms = [t for t in terms if t in selective]
+        pooled_terms = pool_terms(selective, records, kept_terms)
         stats.chunk, stats.term = len(hits), sum(len(c) for c in by_term.values())
         stats.chunk_kept, stats.term_kept = len(nearest), len(pooled_terms)
-        return _Content.of(nearest, pooled_terms, False)
+        return _Content.of(nearest, pooled_terms, False, kept_terms)
 
     async def _with_content(self, user_id: str, cards: Tuple[DriveSearchCard, ...], card_side: Set[str],
-                            content: _Content, terms: Sequence[str], stats: _Stats) -> Tuple[DriveSearchCard, ...]:
+                            content: _Content, stats: _Stats) -> Tuple[DriveSearchCard, ...]:
         """`matched` for every card and, for content hits, the window: the anchor chunk and its neighbours read
         by id from stored text (§10.2), fitted in rank order into WINDOW_CHARS_TOTAL. Stream reads may leave `text`
         empty, so the window is always read here."""
@@ -509,7 +519,7 @@ class DriveSearchService:
             self._repo.get_chunks(user_id, c.item_id, content.anchors[c.item_id].generation,
                                   window_indexes(content.anchors[c.item_id].index)) for c in anchored))
         fitted = budget_windows([WindowRequest(content.anchors[c.item_id].index, chunks)
-                                 for c, chunks in zip(anchored, read)], terms, WINDOW_CHARS_TOTAL)
+                                 for c, chunks in zip(anchored, read)], content.selective, WINDOW_CHARS_TOTAL)
         windows = {c.item_id: w for c, w in zip(anchored, fitted)}
         stats.windows = sum(1 for w in fitted if w.text)
         stats.window_chars = sum(len(w.text) for w in fitted)
@@ -553,9 +563,11 @@ class DriveSearchService:
     async def _fuse(self, streams: List[List[DriveIndexRecord]], request: DriveSearchRequest,
                     kinds: FrozenSet[str], folder: Optional[_Folder], ancestry: _Ancestry,
                     stats: _Stats) -> Tuple[List[DriveIndexRecord], Dict[str, str]]:
-        """Filter each stream, pool it to one hit per record, then RRF on item_id (§10.1 step 4)."""
+        """Filter each stream, pool it to one hit per record, then RRF on item_id (§10.1 step 4). The ancestors of
+        every stream's records load in one pass first: per stream, they took one sequential round each."""
         stats.visible = stats.filtered = 0
         stats.candidates = set()
+        await ancestry.load([rec for stream in streams for rec in stream])
         pooled: List[List[DriveIndexRecord]] = []
         paths: Dict[str, str] = {}
         for stream in streams:

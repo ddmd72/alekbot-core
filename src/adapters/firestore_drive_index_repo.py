@@ -33,8 +33,8 @@ Writes:
 Vectors: record queries, `get_records` and `find_nearest_cards` project the record fields, so they never load
 `card_vector`; only `card_vectors` reads it (its purpose). The kNN projection lists `card_distance` as well. Chunk
 reads likewise project the chunk fields (`chunk_distance` with the kNN); only `get_chunks_with_vectors` reads `vector`.
-The two search streams (`find_nearest_chunks`, `find_chunks_by_term`) leave out `text` as well: a widened page is
-up to FETCH_MAX chunks, and windows are read by id with `get_chunks`.
+The two search streams (`find_nearest_chunks`, `find_chunks_by_term`) leave out `text` and `content_terms` as well:
+a widened page is up to FETCH_MAX chunks, and windows are read by id with `get_chunks`.
 Chunk reads are never fenced: the search service compares each chunk's generation with its record (§7.4).
 Datetimes come back as plain tz-aware UTC datetimes, never DatetimeWithNanoseconds (see
 firestore_oauth_credentials_adapter.py: `.replace()` on one breaks write-back).
@@ -76,7 +76,9 @@ IN_VALUES_MAX = 30                                  # Firestore `in` limit (and 
 UNREAD_REASONS: Tuple[Reason, ...] = (Reason.TOO_LARGE, Reason.NO_TEXT, Reason.MACHINE_TEXT, Reason.USER_CHUNK_CAP)
 RECORD_FIELDS: Tuple[str, ...] = tuple(f.name for f in fields(DriveIndexRecord))
 CHUNK_FIELDS: Tuple[str, ...] = tuple(f.name for f in fields(DriveChunk))
-STREAM_FIELDS: Tuple[str, ...] = tuple(name for name in CHUNK_FIELDS if name != "text")   # search streams (port)
+# search streams (port): no text (windows read it by id) and no content_terms (up to 256 per chunk; the term stream
+# knows its term from its own query, review D-M3)
+STREAM_FIELDS: Tuple[str, ...] = tuple(name for name in CHUNK_FIELDS if name not in ("text", "content_terms"))
 _DOC_FIELDS: Tuple[str, ...] = tuple(f.name for f in fields(DriveSyncState) if f.name not in _FLAGS)
 STATE_FIELDS: Tuple[str, ...] = tuple(name for name in _DOC_FIELDS if name not in _LEASE)   # save_sync_state's
 
@@ -443,29 +445,36 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
                  .order_by("item_id").limit(limit))
         return await self._read(query)
 
-    def unread_count_queries(self, user_id: str, kinds: AbstractSet[str]) -> List[Any]:
+    def unread_count_queries(self, user_id: str, kinds: AbstractSet[str],
+                             triaged: AbstractSet[str] = frozenset()) -> List[Any]:
         """The count queries of `count_unread`: one per unread class — failed, pending without a readable generation,
         and one per metadata_only reason — each with one `kind in [...]` filter of at most IN_VALUES_MAX kinds, so a
-        query never exceeds Firestore's disjunction limit. Folders are excluded by kind ("folder" is no content kind).
-        Not a port method: the smoke script runs them directly."""
-        wanted = sorted(set(kinds))
+        query never exceeds Firestore's disjunction limit; the triaged kinds (not also in `kinds`) get the same
+        classes with `triage_verdict == text` (§24.5, review D-M4). Folders are excluded by kind ("folder" is no
+        content kind). Not a port method: the smoke script runs them directly."""
+        documents = sorted(set(kinds))
+        images = sorted(set(triaged) - set(kinds))
+        verdict = (("triage_verdict", "==", TriageVerdict.TEXT.value),)
         classes = ([(("state", "==", RecordState.FAILED.value),),
                     (("state", "==", RecordState.PENDING.value), ("indexed_generation", "==", None))]
                    + [(("state", "==", RecordState.METADATA_ONLY.value), ("reason", "==", reason.value))
                       for reason in UNREAD_REASONS])
         queries = []
-        for part in _chunks(wanted, IN_VALUES_MAX):
-            for filters in classes:
-                query = self._user_query(user_id)
-                for field_path, op, value in filters:
-                    query = query.where(filter=FieldFilter(field_path, op, value))
-                queries.append(query.where(filter=FieldFilter("kind", "in", list(part))))
+        for wanted, extra in ((documents, ()), (images, verdict)):
+            for part in _chunks(wanted, IN_VALUES_MAX):
+                for filters in classes:
+                    query = self._user_query(user_id)
+                    for field_path, op, value in (*filters, *extra):
+                        query = query.where(filter=FieldFilter(field_path, op, value))
+                    queries.append(query.where(filter=FieldFilter("kind", "in", list(part))))
         return queries
 
-    async def count_unread(self, user_id: str, kinds: AbstractSet[str]) -> int:
-        """Count aggregations over the unread classes (six per 30 kinds), summed; never a scan. The classes are
-        disjoint (by state, then by reason), so the sum counts each record once."""
-        queries = self.unread_count_queries(user_id, kinds)
+    async def count_unread(self, user_id: str, kinds: AbstractSet[str],
+                           triaged: AbstractSet[str] = frozenset()) -> int:
+        """Count aggregations over the unread classes (six per 30 kinds, for the documents and for the text images),
+        summed; never a scan. The classes are disjoint (by state, then by reason; a kind in one list only), so the
+        sum counts each record once."""
+        queries = self.unread_count_queries(user_id, kinds, triaged)
         if not queries:
             return 0
         return sum(await asyncio.gather(*(self._count(q) for q in queries)))
@@ -625,9 +634,14 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
         docs = await self._get_chunk_docs(user_id, item_id, generation, indexes, list(CHUNK_FIELDS))
         return [chunk_from_doc(d) for d in docs]
 
-    async def get_chunks_with_vectors(self, user_id: str, item_id: str, generation: int,
-                                      indexes: Sequence[int]) -> List[Tuple[DriveChunk, List[float]]]:
-        docs = await self._get_chunk_docs(user_id, item_id, generation, indexes, [*CHUNK_FIELDS, CHUNK_VECTOR])
+    async def get_chunks_with_vectors(self, user_id: str, item_id: str, generation: int, indexes: Sequence[int], *,
+                                      text: bool = True, terms: bool = True,
+                                      vectors: bool = True) -> List[Tuple[DriveChunk, List[float]]]:
+        skipped = {name for name, wanted in (("text", text), ("content_terms", terms)) if not wanted}
+        paths = [name for name in CHUNK_FIELDS if name not in skipped] + ([CHUNK_VECTOR] if vectors else [])
+        docs = await self._get_chunk_docs(user_id, item_id, generation, indexes, paths)
+        if not vectors:
+            return [(chunk_from_doc(d), []) for d in docs]
         return [(chunk_from_doc(d), [float(x) for x in d[CHUNK_VECTOR]]) for d in docs if d.get(CHUNK_VECTOR)]
 
     async def readable_chunk_total(self, user_id: str) -> int:
