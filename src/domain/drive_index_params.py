@@ -58,6 +58,8 @@ MAX_SHEET_ROWS = 5_000
 CARD_LEAD_CHARS = 2_000
 CHUNK_FETCH = 300
 FOLDER_INMEM_CHUNKS = 2_000
+WINDOW_CHARS_TOTAL = 12_000                 # all content windows of one result set (≈ 3-4k tokens): best chunks
+                                            # first, neighbours in rank order while it lasts (§10.2)
 CONTENT_TERM_QUERIES = 8                    # one array-contains query per query term, at most this many
 CONTENT_TERM_FETCH = 100
 MODEL_EXTRACT_DENSITY = 200                 # chars per page below which a PDF is routed to the reader (§9)

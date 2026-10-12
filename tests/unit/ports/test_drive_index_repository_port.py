@@ -12,6 +12,7 @@ _EXPECTED = {
     "filter_records", "card_vectors", "has_record_in",
     # chunks (Slice 2, §24.6): records and chunks stay in one repository
     "write_chunks", "delete_chunks_except", "find_nearest_chunks", "find_chunks_by_term", "get_chunks",
+    "get_chunks_with_vectors",   # folder-scoped chunk ranking in memory (§10.1 Folder; arbiter-accepted delta)
     "readable_chunk_total", "chunks_page", "delete_user_chunks",
 }
 

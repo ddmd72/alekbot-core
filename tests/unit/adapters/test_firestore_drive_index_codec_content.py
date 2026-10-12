@@ -1,16 +1,15 @@
-"""FirestoreDriveIndexRepository codec for the Slice 2+4 fields (USER_DRIVE_INDEXING_RFC §3.2, §3.5, §24.4, §24.7),
-and the chunk methods it does not implement yet."""
-from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock
+"""FirestoreDriveIndexRepository codec for the Slice 2+4 fields (USER_DRIVE_INDEXING_RFC §3.2, §3.5, §24.4, §24.7).
 
-import pytest
+The chunk methods are implemented (§24.6) and tested in test_firestore_drive_index_chunks.py."""
+from datetime import datetime, timedelta, timezone
+
 from google.api_core.datetime_helpers import DatetimeWithNanoseconds
 
 from src.adapters.firestore_drive_index_repo import (
-    FirestoreDriveIndexRepository, record_from_doc, record_to_doc, state_from_doc, state_to_doc,
+    record_from_doc, record_to_doc, state_from_doc, state_to_doc,
 )
 from src.domain.drive_index import (
-    DocumentBrief, DriveChunk, DriveIndexRecord, DriveSyncState, Reason, RecordState, TriageVerdict,
+    DocumentBrief, DriveIndexRecord, DriveSyncState, Reason, RecordState, TriageVerdict,
 )
 
 T = datetime(2026, 10, 12, 9, 15, 30, 250000, tzinfo=timezone.utc)
@@ -92,28 +91,6 @@ class TestStateCodec:
         state = state_from_doc("u", {"user_id": "u", "epoch": 1})
         assert (state.model_backoff_until, state.model_failures, state.usage_month, state.model_pages_used,
                 state.triage_images_used) == (None, 0, "", 0, 0)
-
-
-class TestChunkMethodsNotBuilt:
-    """Part D replaces these; until then the class stays instantiable and fails loudly if called."""
-
-    @pytest.fixture
-    def repo(self, mock_env_config):
-        return FirestoreDriveIndexRepository(MagicMock(), mock_env_config)
-
-    @pytest.mark.parametrize("call", [
-        lambda r: r.write_chunks([DriveChunk("u", "i", 1, 0, "t", 0, 1, "pdf")], [[1.0]]),
-        lambda r: r.delete_chunks_except("u", "i", None),
-        lambda r: r.find_nearest_chunks("u", [1.0], 5),
-        lambda r: r.find_chunks_by_term("u", "1250", 5),
-        lambda r: r.get_chunks("u", "i", 1, [0]),
-        lambda r: r.readable_chunk_total("u"),
-        lambda r: r.chunks_page("u", None, 5),
-        lambda r: r.delete_user_chunks("u", 5),
-    ])
-    async def test_raises_not_implemented(self, repo, call):
-        with pytest.raises(NotImplementedError):
-            await call(repo)
 
 
 def test_the_sdk_encodes_the_content_fields():

@@ -14,7 +14,7 @@ Public interface:
     resolve_chain(rec, lookup, root_item_id) -> Optional[(path, ancestor_ids)]
     normalize_path(path) -> str;  path_match(candidate, wanted) -> Optional[str]
     cosine_distance(a, b) -> float
-    is_unread(rec, admitted) -> bool
+    is_unread(rec, admitted=None) -> bool;  content_admitted() -> bool
     escape_text(text) -> str;  wrap_untrusted(text, *, nonce, ref, path) -> str
     render_results(result) -> str
     make_card(rec, path, summary, nonce) / rank_names(recs, scores) / cover_first(fused, groups)
@@ -28,9 +28,9 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timezone
 from typing import Callable, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Tuple
 
-from .drive_index import DriveIndexRecord, DriveSyncState, Reason, RecordState, Scope
+from .drive_index import DriveIndexRecord, DriveSyncState, Reason, RecordState, Scope, TriageVerdict
 from .drive_index_params import ACCESS_LOSS_TTL
-from .drive_index_policy import ADMITTED_KINDS, kind_of
+from .drive_index_policy import Admission, admission, kind_of
 from .drive_name_keys import covers_query, query_name_keys
 from .user_drive import DriveConnection, DriveItem, make_drive_ref
 
@@ -40,7 +40,9 @@ STATUS_DISCONNECTED = "disconnected"
 STATUS_AMBIGUOUS_FOLDER = "ambiguous_folder"
 STATUS_FOLDER_NOT_FOUND = "folder_not_found"
 
-MATCHED_CARD = "card"   # Slice 2 adds "content" and "card+content"
+MATCHED_CARD = "card"              # found by its card: the card kNN or the name stream
+MATCHED_CONTENT = "content"        # found by its chunks: the chunk kNN or the exact-term stream (§24.6)
+MATCHED_BOTH = "card+content"
 
 UNREAD_COUNTER = "unread"   # DriveSyncState.counters key the tick fills from is_unread (Slice 2)
 
@@ -155,6 +157,8 @@ class DriveSearchCard:
     also_at: Tuple[str, ...] = ()
     content_hash: Optional[str] = None
     nonce: str = ""
+    window: str = ""                     # content hits: the best chunk and its neighbours (§10.2), untrusted text
+    window_shortened: bool = False       # the window budget trimmed the best chunk or left a neighbour out
 
     def drive_item(self) -> DriveItem:
         """The Step 1 item, built only now that a path is derived (§3.1)."""
@@ -166,7 +170,7 @@ class DriveSearchCard:
 class DriveSearchEnvelope:
     """The coverage envelope (§10.2): what the answer can and cannot claim."""
     enabled: bool = True
-    content_search: bool = False         # Slice 1: names and metadata only
+    content_search: bool = False         # the policy admits content: chunk and exact-term streams ran (§24.6)
     building: bool = False
     refreshing: bool = False             # cards are in another embedding space: names and filters only (§12.3)
     reconnect_needed: bool = False
@@ -380,10 +384,26 @@ def cosine_distance(a: Sequence[float], b: Sequence[float]) -> float:
     return 1.0 if na == 0 or nb == 0 else 1.0 - dot / (na * nb)
 
 
-def is_unread(rec: DriveIndexRecord, admitted: FrozenSet[str] = ADMITTED_KINDS) -> bool:
+def content_admitted() -> bool:
+    """Whether the policy reads any kind's content (ADMITTED_KINDS or TRIAGED_KINDS, read at call time): then
+    search runs the content streams and the envelope says `content_search`. Per policy, not per user: a user whose
+    documents are not read yet is told so by `unread` and `building`, never by "only names were searched"."""
+    return any(admission(kind) is not Admission.NONE for kind in KIND_NAMES)
+
+
+def _content_kind(rec: DriveIndexRecord, admitted: Optional[FrozenSet[str]]) -> bool:
+    if admitted is not None:
+        return rec.kind in admitted
+    granted = admission(rec.kind)
+    # An image is a document only once triage said it shows text (§24.5); photographs are never unread.
+    return granted is Admission.CONTENT or (granted is Admission.TRIAGE and rec.triage_verdict is TriageVerdict.TEXT)
+
+
+def is_unread(rec: DriveIndexRecord, admitted: Optional[FrozenSet[str]] = None) -> bool:
     """A document of an admitted kind whose content is not searchable (§10.2 `unread`). Photos, code,
-    archives and other kinds that are not admitted never count."""
-    if rec.is_folder or rec.kind not in admitted:
+    archives and other kinds that are not admitted never count. `admitted` None reads the policy now
+    (`admission`), so the Slice 2+4 flip is seen without a re-import."""
+    if rec.is_folder or not _content_kind(rec, admitted):
         return False
     if rec.state is RecordState.PENDING:
         return rec.indexed_generation is None
@@ -439,11 +459,14 @@ def _card_body(card: DriveSearchCard) -> str:
     lines = [card.summary, f"path: {card.path or '/'}", f"date: {_day(card.effective_date)}"]
     lines.append(f"index: {card.state}" + (f" ({card.reason})" if card.reason else ""))
     if card.stale:
-        lines.append("stale: the file changed after it was indexed; open it before quoting")
+        lines.append("stale: the file changed after it was indexed")
     if card.truncated:
         lines.append("truncated: only the beginning of the file was indexed")
     if card.also_at:
         lines.append("identical copies also at: " + "; ".join(card.also_at))
+    if card.window:
+        lines.append("matching passage (shortened):" if card.window_shortened else "matching passage:")
+        lines.append(card.window)
     return "\n".join(lines)
 
 
@@ -451,21 +474,23 @@ def _render_card(card: DriveSearchCard) -> str:
     return wrap_untrusted(_card_body(card), nonce=card.nonce, ref=card.ref, path=card.path)
 
 
-_BUILDING_LINE = ("The index is still being built: do not say a file does not exist; say the index is not complete "
-                  "yet and offer to list the folder.")
+_BUILDING_LINE = "The index is still being built: some files and folders may not be in it yet."
 
 
 def _envelope_lines(result: DriveSearchResult) -> List[str]:
     env = result.envelope
     lines: List[str] = []
     if env.index_as_of is not None:
-        lines.append(f"The index reflects the drive as of {env.index_as_of:%Y-%m-%d %H:%M} UTC. If the user "
-                     f"refers to a recent change, open the file (it is read live) before answering.")
+        lines.append(f"The index reflects the drive as of {env.index_as_of:%Y-%m-%d %H:%M} UTC.")
     else:
         lines.append("The index has not completed a first pass over the drive yet.")
     if env.building:
         lines.append(_BUILDING_LINE)
-    if env.refreshing:
+    if env.refreshing and env.content_search:
+        lines.append("The index is being refreshed for a new search model: this search matched file and folder "
+                     "names, filters and exact numbers and codes in the text only, not meaning, so a file "
+                     "described in other words may be missed.")
+    elif env.refreshing:
         lines.append("The index is being refreshed for a new search model: this search matched file and folder "
                      "names and filters only, not their meaning, so a file named in other words may be missed.")
     if not env.content_search:
@@ -481,6 +506,14 @@ def _envelope_lines(result: DriveSearchResult) -> List[str]:
     return lines
 
 
+def _streams(env: DriveSearchEnvelope) -> str:
+    """The streams whose pages the filters saw (the `capped` hedge, §10.2, §24.6). No vector stream runs while
+    refreshing (§12.3)."""
+    if env.content_search:
+        return "name and exact-term" if env.refreshing else "name, meaning and content"
+    return "name" if env.refreshing else "name and meaning"
+
+
 def _scope_line(result: DriveSearchResult) -> Optional[str]:
     if result.folder_path is None:
         return None
@@ -489,7 +522,9 @@ def _scope_line(result: DriveSearchResult) -> Optional[str]:
 
 
 def render_results(result: DriveSearchResult) -> str:
-    """The text Smart reads. Until the Slice 2 protocol token, the envelope guidance is said here."""
+    """The text Smart reads: per-result facts only. Standing guidance on how to use them (open a stale or recent
+    file before quoting, never say "does not exist" while building, name what was not searched) is in Smart's
+    protocol token (§10.4, §24.10)."""
     if result.status == STATUS_DISABLED:
         return ("Drive search is off: the user has not turned on drive indexing in the Cabinet. To find a "
                 "file now, browse folders with list_files_in_drive.")
@@ -543,7 +578,7 @@ def render_results(result: DriveSearchResult) -> str:
             total = f"at least {result.matched_total}" if result.matched_at_least else str(result.matched_total)
             out.append(f"{total} files and folders match the filters; showing the newest {shown}.")
     if result.capped:
-        streams = "name" if result.envelope.refreshing else "name and meaning"   # no card stream while refreshing
+        streams = _streams(result.envelope)
         out.append(f"The filters were applied to the best {result.candidates} {streams} matches only, not to "
                    f"every file, so more files may match.")
         if not result.cards:

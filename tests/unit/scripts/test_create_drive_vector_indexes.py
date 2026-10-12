@@ -30,11 +30,12 @@ def _run(tmp_path, *answers):
     return proc, calls
 
 
-@pytest.mark.parametrize("answers", [("ok", "ok"), ("exists", "exists"), ("exists", "ok")])
+# Four indexes: two card vector indexes, then two chunk vector indexes (§24.6).
+@pytest.mark.parametrize("answers", [("ok",) * 4, ("exists",) * 4, ("exists", "ok", "exists", "ok")])
 def test_created_or_already_existing_is_success(tmp_path, answers):
     proc, calls = _run(tmp_path, *answers)
     assert proc.returncode == 0, proc.stderr
-    assert len(calls) == 2
+    assert len(calls) == 4
 
 
 def test_any_other_failure_stops_with_a_non_zero_exit(tmp_path):
@@ -47,3 +48,10 @@ def test_any_other_failure_stops_with_a_non_zero_exit(tmp_path):
 def test_a_failure_on_the_second_index_fails_the_run(tmp_path):
     proc, _ = _run(tmp_path, "ok", "denied")
     assert proc.returncode != 0
+
+
+def test_a_failure_on_the_last_chunk_index_fails_the_run(tmp_path):
+    proc, calls = _run(tmp_path, "ok", "ok", "ok", "denied")
+    assert proc.returncode != 0
+    assert len(calls) == 4
+    assert "PERMISSION_DENIED" in proc.stderr

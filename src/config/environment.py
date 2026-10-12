@@ -355,6 +355,14 @@ class EnvironmentConfig:
         return f"{self.firestore_collection_prefix}drive_index_records"
 
     @property
+    def drive_index_chunks_collection(self) -> str:
+        """
+        User-drive index chunks, children of a record (USER_DRIVE_INDEXING_RFC §3.3, §24.6).
+        Dev: development_drive_index_chunks
+        """
+        return f"{self.firestore_collection_prefix}drive_index_chunks"
+
+    @property
     def drive_sync_state_collection(self) -> str:
         """
         User-drive sync state, one per user (USER_DRIVE_INDEXING_RFC §3.5).
