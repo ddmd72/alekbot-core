@@ -9,8 +9,11 @@ the path), and `tests/unit/services/test_drive_index_hostile_tree.py` runs the r
 holds the G1 cases: a query and filters as Smart would send them, the expected paths, the case type, and an
 optional `k` (`"k": 1` means the file must come first). Every person, organisation and number in it is fictional.
 
-Optional per-case keys: `min_hits` lowers the bar for a case with more right answers than K (a place case is a hit
-with 5 of a trip's photos in its top K: the rest of the top K is the trip's folder and other right answers);
+Place cases are shaped as the manifest tells Smart to call: the place in drive_query and `drive_kind=photo`
+("Porto" + photo), so the top K is photos only. Their `*-type-word` twins keep the type word in drive_query
+("photos from Porto") and are `known_hard`.
+Optional per-case keys: `min_hits` lowers the bar for a case with more right answers than K (a type-word place case
+would be a hit with 5 of a trip's photos in its top K: the rest is the trip's folder and other right answers);
 `known_hard` (a reason) marks a case that is run and reported but guards nothing, such as the "photos" + August
 variant that puts a type word in drive_query instead of `drive_kind`. Case type `semantic` holds queries that share
 no name key with their target (cross-language or by subject: "договоры" for `Super important agreement.pdf`,
