@@ -1,9 +1,12 @@
-"""Parent lookups (USER_DRIVE_INDEXING_RFC §3.4, §8.2). Delta mode has no later full enumeration to settle a record
-whose parent lookup keeps failing, so it is retried at RETRY_CAP, never deleted on a transient failure."""
+"""Parent lookups and parked records (USER_DRIVE_INDEXING_RFC §3.4, §8.2, §12.3). Delta mode has no later full
+enumeration to settle a record whose parent lookup keeps failing, so it is retried at RETRY_CAP, never deleted on
+a transient failure; a record parked under an unresolved parent holds no card and does not block an upgrade."""
+from src.domain import drive_card
 from src.domain import drive_index_planner as planner
 from src.domain.drive_index import DriveChange, DriveIndexRecord, Priority, RecordState, Scope
 from src.domain.drive_index_params import MAX_ATTEMPTS, RETRY_CAP
 from src.domain.user_drive import DriveAccessDenied, DriveItemNotFoundError
+from src.services import drive_indexing_service as svc_mod
 
 from .drive_index_fakes import ROOT
 from .test_drive_indexing_service import World
@@ -101,3 +104,34 @@ async def _photos_waiting_for_their_probe(w):
     await w.settle(max_ticks=100)
     assert w.rec(f).probe_pending and w.rec(f).scope is Scope.UNRESOLVED
     return f
+
+
+class TestParkedRecords:
+
+    async def test_a_record_parked_under_an_unresolved_parent_holds_no_card(self, monkeypatch):
+        """A card bump re-plans the children under their unresolved parent; each is parked, and its card goes."""
+        w = World(page_size=2000)
+        f = await _photos_waiting_for_their_probe(w)
+        monkeypatch.setattr(drive_card, "CARD_VERSION", 2)
+        monkeypatch.setattr(planner, "CARD_VERSION", 2)
+        monkeypatch.setattr(svc_mod, "CURRENT_VERSIONS", {"policy": 1, "card": 2, "geo_table": 1})
+        await w.settle(max_ticks=100)
+        kids = [r for r in w.repo.records.values() if r.parent_id == f]
+        parked = [r for r in kids if r.state is RecordState.UNRESOLVED and r.due_at is None]
+        assert len(parked) == len(kids) == 610
+        assert not any(r.has_card or r.card_hash for r in parked)
+        assert not ({r.item_id for r in parked} & w.carded())
+
+    async def test_a_stale_parked_record_does_not_block_an_upgrade(self, monkeypatch):
+        w = World(page_size=2000)
+        f = await _photos_waiting_for_their_probe(w)
+        target = {"policy": 2, "card": 1, "geo_table": 1}
+        monkeypatch.setattr(planner, "POLICY_VERSION", 2)
+        monkeypatch.setattr(svc_mod, "CURRENT_VERSIONS", target)
+        parked = DriveIndexRecord(user_id="u", item_id="zz_parked", parent_id=f, name="late.pdf", kind="pdf",
+                                  scope=Scope.UNRESOLVED, state=RecordState.UNRESOLVED, policy_version=1,
+                                  seen_epoch=1)
+        await w.repo.upsert_records([parked])
+        await w.settle(max_ticks=100)
+        assert planner.stale_versions(w.rec("zz_parked")) and w.rec("zz_parked").due_at is None
+        assert dict((await w.repo.get_sync_state("u")).applied_versions) == target

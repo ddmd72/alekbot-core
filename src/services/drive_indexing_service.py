@@ -519,8 +519,11 @@ class DriveIndexingService:
         if parent is not None or rec.parent_id == state.root_item_id:
             rec = replace(rec, attempts=0)   # resolved: the next step (a probe) counts its own attempts (§8.2)
             if parent is not None and parent.scope is Scope.UNRESOLVED:
-                await self._commit(user_id, [replace(rec, due_at=None, priority=None)], set())
-                return True   # waits for its parent's own resolution or probe; the parent's rescope re-classifies it
+                # parked: waits for its parent's own resolution or probe, whose rescope re-classifies it. An
+                # unresolved record is not card-eligible, and parked it is never due to drop its card (§3.4).
+                await self._commit(user_id, [replace(rec, has_card=False, card_hash=None, due_at=None, priority=None)],
+                                   set())
+                return True
             await self._commit_plan(user_id, plan_observation(change_from_record(rec), rec, parent, None, ctx, parent,
                                                               observed=False))
             return True
@@ -745,8 +748,9 @@ class DriveIndexingService:
             if rec.state is RecordState.DELETING or not stale_versions(rec):
                 continue
             if rec.state is RecordState.UNRESOLVED and rec.due_at is None:
-                found = True
-                continue   # parked under an unresolved parent, whose rescope re-plans it; scheduling only re-parks it
+                # parked under an unresolved parent, whose rescope re-plans it under the current versions; scheduling
+                # it only re-parks it, and it holds no card, so it does not keep the versions from applying
+                continue
             parent = await self._parent_of(user_id, rec, ctx)
             self._fold(_as_maintenance(plan_observation(change_from_record(rec), rec, parent, None, ctx, parent,
                                                         observed=False)),
