@@ -420,3 +420,20 @@ order, substitution handling, OIDC audience, `main.py` names) matches the code. 
 - MINOR test gaps (queued with the next small test batch): database name, place lookup wiring, first-deploy log level.
 - Out of scope note: Graph token refresh now runs in two processes; a refresh in flight during a disconnect can
   re-save a deleted credentials document (Step 1 `graph_auth.refresh` race).
+- Reviewer (system context + security): **APPROVED**. All three diffs byte-identical; YAML 12 steps in the planned
+  order; `bash -n` clean; every gcloud flag confirmed with `--help` (SDK 570); `make check` 7790 passed. Ingress
+  `internal` + `allUsers` invoker + in-app OIDC judged sound (no widening vs IAM gating); that Cloud Tasks counts as
+  internal could not be re-verified offline → Task 47's live checks. Queue/scheduler/resource settings consistent with
+  the tick deadline and the lease. Nothing deployed or changed in GCP.
+- **OWNER:** F1 — indexer deploys before main, so an indexer startup failure blocks main hotfixes (the 503 this avoids
+  exists only on the first deploy's second pass); F2 — a later `make deploy` from a checkout whose `.env` lacks
+  `INDEXER_URL_DEV` silently disables indexing on both services and, since the staleness alert lives in the fan-out,
+  nothing alerts (optional Makefile guard); F6 — Slice 3's main → indexer `/extract` call will be refused by internal
+  ingress (main has no VPC egress).
+- Docs (passed to Task 45): `SCHEDULERS.md` "60 s for all /worker jobs" is stale and the deadlines table lacks
+  `drive_sync` (1800 s); a manual `create-http-task` gets the 600 s default deadline. No test pins the provisioning
+  settings (accepted by the plan).
+
+### Task 29 (Part D gate) — run by the coordinator
+- `ruff check indexer_main.py`: clean. `grep DRIVE_INDEXER_URL src/config/settings.py`: no match. Provider-name grep in
+  `drive_sync_scheduler_service.py` / `indexer_worker_app.py`: no match. `make check`: see below.
