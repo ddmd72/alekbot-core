@@ -527,3 +527,11 @@ order, substitution handling, OIDC audience, `main.py` names) matches the code. 
   while building, no "0 match" line.
 - Review: round 1 CHANGES REQUIRED (exact path refused; three render guards unpinned), round 2 APPROVED (31 killed,
   2 equivalent/optional survivors).
+
+### Fix R11 (Cabinet status resilience = P5; test gaps from rev_34/35/27) — done
+- Commit `9170788`. `make check` (reviewer, worktree): 8005 passed. Reviewer: APPROVED; every new test kills its
+  mutation; the two bug tests fail on the parent.
+- `/api/drive/status` reads the index block in its own try (ERROR log, block omitted) → Connect/Disconnect/Reconnect
+  survive any indexing read failure; Task 36's JS shows only the toggle under `data.indexing && …`.
+- Task 47 note: while the `oldest_due_at` index is still building (first deploy), every Cabinet load logs one ERROR
+  (may page the Errors-dev policy). NIT: `drive_indexing_set` docstring still promises an enqueue with no queue.
