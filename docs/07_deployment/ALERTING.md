@@ -3,10 +3,10 @@
 GCP Monitoring alert policies for the `alek-bot-dev` Cloud Run service. **gcloud-managed, NOT in
 git** — this doc describes what exists and why; the live source of truth is the GCP project.
 
-**The drive indexer (`alek-bot-indexer-dev`) is a second Cloud Run service.** A policy whose filter names
-`service_name="alek-bot-dev"` does not see its tick errors or `/worker` 5xx: widening policies 1–2 to it (or adding
-its own) is a step of the indexer's first deploy ([README.md](README.md) → Drive Indexer Service); record the result
-here. Its staleness alert is separate: the fan-out posts it to the ops webhook (USER_DRIVE_INDEXING_RFC §12.1).
+**The drive indexer (`alek-bot-indexer-dev`) is a second Cloud Run service.** "Errors-dev" and "Worker non-2xx"
+filter on `resource.labels.service_name=("alek-bot-dev" OR "alek-bot-indexer-dev")` since the indexer's first deploy
+(2026-10-12), so its tick errors and `/worker` failures page too. A new service needs the same widening. Its staleness
+alert is separate: the fan-out posts it to the ops webhook (USER_DRIVE_INDEXING_RFC §12.1).
 
 All policies route to one Slack notification channel **#alerts-dev** (channel id stored in GCP /
 `.env`, never committed). Each has `notificationRateLimit` 1/hour + `autoClose` 24h.
