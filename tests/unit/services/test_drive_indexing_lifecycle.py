@@ -7,7 +7,7 @@ from src.domain.drive_index import CURRENT_VERSIONS, EpochPhase, ErrorCategory
 from src.domain.drive_index_params import ACCESS_LOSS_TTL
 from src.domain.user_drive import DriveConnection, DriveThrottled
 
-from .test_drive_indexing_service import World
+from .test_drive_indexing_service import EXTRACTOR_VERSIONS, World
 
 
 class TestNewStateStartsApplied:
@@ -26,7 +26,7 @@ class TestNewStateStartsApplied:
         w.repo.records_page = counting
         await w.settle()
         st = await w.repo.get_sync_state("u")
-        assert dict(st.applied_versions) == dict(CURRENT_VERSIONS)
+        assert dict(st.applied_versions) == {**CURRENT_VERSIONS, **EXTRACTOR_VERSIONS}
         assert pages == []
 
 

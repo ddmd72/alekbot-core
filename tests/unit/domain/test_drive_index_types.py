@@ -38,7 +38,7 @@ def test_sync_state_starts_idle_without_cursor():
 
 
 def test_versions_are_ints_keyed_by_name():
-    assert set(CURRENT_VERSIONS) == {"policy", "card", "geo_table", "name_keys"}
+    assert set(CURRENT_VERSIONS) == {"policy", "card", "geo_table", "name_keys", "extraction", "triage"}
     assert all(isinstance(v, int) and v >= 1 for v in CURRENT_VERSIONS.values())
 
 

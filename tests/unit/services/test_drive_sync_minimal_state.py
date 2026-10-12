@@ -10,7 +10,7 @@ from src.domain.drive_search import DriveSearchRequest
 from src.services.drive_search_service import DriveSearchService
 
 from .drive_index_fakes import ROOT, T0
-from .test_drive_indexing_service import World
+from .test_drive_indexing_service import EXTRACTOR_VERSIONS, World
 from .test_drive_sync_scheduler_service import env  # noqa: F401  (the scheduler test environment)
 
 
@@ -61,7 +61,7 @@ async def test_a_tick_onboards_from_a_minimal_state_and_keeps_its_date():
     await w.settle()
     state = await w.repo.get_sync_state("u")
     assert state.created_at == created and state.epoch == 1 and state.epoch_phase is EpochPhase.IDLE
-    assert dict(state.applied_versions) == dict(CURRENT_VERSIONS) and state.root_item_id == ROOT
+    assert dict(state.applied_versions) == {**CURRENT_VERSIONS, **EXTRACTOR_VERSIONS} and state.root_item_id == ROOT
     assert doc in w.carded()
 
 
