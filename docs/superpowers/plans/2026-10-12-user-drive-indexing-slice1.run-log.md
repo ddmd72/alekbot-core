@@ -124,3 +124,11 @@ Method: subagent-driven (implementer → independent reviewer → coordinator ac
   fixture has audio, per ΔB4).
 - Log ordering note: the run-log commit titled "Task 13" lands after `51a7cbc` because log entries are committed
   only while no implementer runs (avoids `.git/index.lock` races).
+
+### Task 15 — done
+- Commits `deba493` (plan-marked reviewer-approved edit of three tests in `tests/unit/adapters/test_onedrive_adapter.py`,
+  review_B; applied verbatim, reviewer confirmed byte-identical via `patch` + `cmp`) and `7b15be6` (implementation).
+- `make check` (coordinator, worktree at `7b15be6`): 7508 passed, 3 skipped, 1 xfailed.
+- Step 4 before the test edit: exactly the three pre-approved tests failed (DriveAccessDenied / DriveThrottled /
+  DriveAccessDenied); no other existing test failed.
+- Reviewer: APPROVED, round 1. Part B complete.
