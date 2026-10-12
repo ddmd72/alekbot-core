@@ -668,3 +668,96 @@ scratch path (nothing recorded or committed): index settled in 1 tick, 2 481 car
   docstrings); no secrets/PII/stray artefacts; the only pre-existing tests edited are the three the plan approved
   (Tasks 15, 32, 34) plus recorded reviewer decisions; none weakened.
 - → final cleanup R14 (N1, N2 and the queued comment/doc fixes C1–C5; C6 to the reviewer).
+
+### Fix R14 (final cleanup) — done
+- Commits `815805d` (one INFO line in the silent re-listing `except` + test; "Graph" out of two domain docstrings +
+  tests; doc/docstring corrections C1–C5) and `d38591c` (reviewer-approved docstring-only edit of the pre-existing
+  `tests/unit/infrastructure/test_agent_manifest_drive.py`). Reviewer: APPROVED.
+- **Final `make check` (coordinator, clean worktree at `d38591c`): 8116 passed, 3 skipped, 1 xfailed — green.**
+
+---
+
+# Summary for the morning (owner + Task 47)
+
+## Done
+- **Plan Tasks 0–46: all done**, each implementer → independent reviewer → acceptance (`make check` green). 136
+  commits on the branch, all pushed; no PR, nothing merged, `main` untouched. Baseline 6934 → **8116 passed** tests.
+- **Review method was tightened mid-run (your request):** from Task 18 every review has an adversarial pass and a
+  system-context pass that challenges the plan's premises; Tasks 0–17 got a retrospective adversarial review; a
+  premise/integration audit covered the whole plan; a final whole-branch review closed the run.
+- **Review-driven fixes R1–R14** (each with failing-first tests and its own review). The ones that mattered:
+  - deleted repo resurrected (BLOCKER, R1); tick undoing saved progress on a systemic error, dropped observations,
+    nudges not class 0, a zero-delay continuation spin (R2); a single rejected card stalling all cards, and the first
+    fix for it inverting §8.2 (R2b);
+  - account switch never detected when the connect-time `drive_id` read failed → stuck forever (R3, verified end to
+    end); stale tick releasing the new holder's lease (R4);
+  - reconnect notice lost whenever the user's agents were not loaded (R8, verified with the real coordinator) or
+    repeated after a cut-off request (R7);
+  - fuzzy name search missing targets behind common trigrams (P1, R10) and "folder is empty" lies on capped pages;
+  - Cabinet losing the whole drive card (Connect/Reconnect) on any indexing read failure (R11);
+  - eval runner building requests differently from production and ignoring throttle backoff (R13);
+  - deploy doc pausing the fan-out job without ever resuming it (Task 45).
+- Existing-test edits: only those the plan pre-approved (Tasks 15, 32, 34) plus recorded reviewer decisions (R3, R4,
+  R10, rev_31, final C6) — each justified in this log; none weakened.
+
+## Not done / blocked (environment, by rule)
+- **No GCP credentials** → Task 21's live read-only smoke run not executed. **No Gemini key** → the real-embedding eval
+  not run. Task 13's sanitiser not run (raw S0a reports only on your machine; fixtures pre-committed); its
+  determinism check (Step 6) is yours. Task 27's local startup smoke failed on missing default credentials.
+- Places table not rebuilt (by rule).
+
+## Eval
+- Real run: **not done** (no key). Offline run with fake embeddings (informational): **32/37 = 0.865**; every name /
+  kind / folder / filter / version case hits (both `k:1` cases first); misses are the four `place-*` cases (need real
+  embeddings) and `date-rome-august` — which **may miss even with Gemini** (date filtered after the 1 000-card vector
+  cut). No bars recorded or committed.
+
+## For Task 47 (deploy + live acceptance)
+- Follow `docs/07_deployment/README.md` → "Drive Indexer Service" (two-pass first deploy; one-time
+  `roles/cloudtasks.queueAdmin` for the Cloud Build SA; set `INDEXER_URL_DEV` between passes; **resume** the
+  `alek-bot-dev-start-drive-sync` job after a deploy if you paused it).
+- Run `make deploy-indexes` and `scripts/infrastructure/create_drive_vector_indexes.sh`, wait for READY, then the
+  read-only smoke `scripts/infrastructure/drive_index_smoke.py` (Task 21).
+- Real eval: `venv/bin/python -m scripts.validation.drive_eval --record --bars /tmp/bars.json --report /tmp/report.json`
+  first into a scratch path, review, then record `tests/fixtures/drive_eval/bars.json`.
+- Notes: while the `oldest_due_at` index builds, each Cabinet load logs one ERROR (Errors-dev policy may page); the
+  first-pass log lines are INFO (fan-out) / WARNING (indexer startup) / ERROR (a `drive_sync` reaching an unconfigured
+  indexer — none expected); a manual `create-http-task` must use the `INDEXER_URL_DEV` URL form (else 401) and gets
+  the 600 s default deadline; verify Cloud Tasks passes internal ingress (premise audit P11: a probe `drive_sync` for a
+  disabled user should log a 200 `disabled`); verify the alert policies cover the indexer service (P10); Task 47
+  Step 3 expects a WARNING that is INFO (P12); Step 7 expects "records per state" the card does not show (rev_36 F2).
+- The plan file and this run log are tracked only on this branch; the plan says to remove the plan before the PR.
+
+## Owner decisions (consolidated; details in the sections above)
+1. **Card cap erases the structural reason** (retro F2/F4, MAJOR): capped repos re-opened/re-listed on re-emission,
+   released dense folder gets the "repository" card. Separate cap flag / never evict folder cards / derive from scope.
+2. **Place names** (MAJOR): ~1/3 of towns photographed at their own centre get another place's name (Monaco → Nice);
+   re-tune Δ7 and drop city districts — needs a table rebuild on your machine.
+3. **Embedding-space change never detected** (RFC §12.3, no Δ).
+4. **Accent folding** ("resume" ≠ `Résumé.pdf`); Ukrainian transliteration; separators `’ — – %`; Δ16 roots carded
+   "repository"; dense-tree card text re-embedded every tick (live child count).
+5. **Unfenced stale tick** (R4 owner part + Task 44 review): a tick that outlives its lease can still write its cursor
+   and records and can **purge**, deleting the new holder's lease; RFC §7.1 still says "a holder never outlives its
+   lease".
+6. **Escaping of opened drive text** (P3): entities can be written back via `save_file_to_drive`; drop escaping on the
+   unwrapped vision/video labels either way. **D2 scope:** prefetch to DocPlanner/Pdf/Html delivers drive text
+   unwrapped (Δ row or Slice 3).
+7. **Nudges for indexing-off users** (P6) — accept and reword RFC §7.1, or inject the flag read.
+8. **Empty request** (P4): reworded now; refuse it or not. **Date filters cut at UTC midnight** (P14).
+9. **Reconnect notice is at most once** (R7 trade-off); `NotifyResult` cannot tell "nothing sent" from "sent, then
+   failed" (rev_22 F3).
+10. **Token endpoint:** every non-`invalid_grant` refresh failure is a flat 60 s throttle forever (shared `graph_auth`
+    with To Do); `flag_reconnect` read-modify-write can restore an old grant; the token POST has no own timeout.
+11. **A delta link answering 404** (not 410) — needs a spike; a policy bump re-lists every repo once.
+12. **Indexer shutdown on Python ≥ 3.12.1** (Task 27 F1): the graceful timeout never applies → a deploy mid-tick holds
+    the lease ~31 min.
+13. **Deploy:** indexer deploys before main (an indexer startup failure blocks main hotfixes); a `make deploy` from a
+    checkout without `INDEXER_URL_DEV` silently disables indexing (no alert); Slice 3's main → indexer `/extract`
+    will be refused by internal ingress; prune ~25 index entries for deleted unprefixed collections before
+    `make deploy-indexes` (Δ22).
+14. **Cabinet UX:** per-state counters (RFC §6); reconnect hint shown with search off; toggle shown with no indexer
+    (first deploy pass) → "building" forever; "kept 30 days" hint after the purge.
+15. **Search/eval:** `drive_query` description could mention places; lock files (`~$…`) rank first for "ред3";
+    the `document` family excludes PDFs; RFC §10.4 says body quotes are escaped (code escapes `& < >` only — Δ row).
+16. Separate suggested tasks (outside this plan): midnight-UTC flake in `test_firestore_account_repo_lock_free.py`;
+    Gmail reconnect notice sent before agents are loaded (same bug as R8).
