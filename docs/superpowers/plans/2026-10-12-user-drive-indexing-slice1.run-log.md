@@ -115,3 +115,12 @@ Method: subagent-driven (implementer → independent reviewer → coordinator ac
   `git config user.name` grep is meaningless here — not the owner's name in this container).
 - Step 2 note: 24 of 26 tests already passed before the script existed (they read the pre-committed fixtures).
 - Reviewer: APPROVED, round 1. **OWNER:** the determinism check (Step 6) can only be run on your machine.
+
+### Task 14 — done
+- Commit `51a7cbc`. `make check` (coordinator, worktree at the commit): 7497 passed, 3 skipped, 1 xfailed.
+- Deviations: none (every block verbatim, placed where the plan says). `make check-types` informational count
+  unchanged (61, none in the touched files).
+- Reviewer: APPROVED, round 1 (20 adapter mutations, 19 caught; removing `"audio"` from `_FACETS` survives — no
+  fixture has audio, per ΔB4).
+- Log ordering note: the run-log commit titled "Task 13" lands after `51a7cbc` because log entries are committed
+  only while no implementer runs (avoids `.git/index.lock` races).
