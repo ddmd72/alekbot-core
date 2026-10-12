@@ -235,7 +235,7 @@ def _page_count(reader: Any) -> int:
         try:
             reader.get_page(0)                       # flattens the tree (pypdf's public way in)
         except IndexError:
-            pass
+            return 0                                 # the tree holds no page
     return max(len(reader.flattened_pages or ()), 0)
 
 
