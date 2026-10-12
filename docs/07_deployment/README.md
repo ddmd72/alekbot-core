@@ -394,6 +394,14 @@ USER_DRIVE_INDEXING_RFC §24 adds model calls and chunk storage to the indexer. 
 6. **Cost.** A page read by the model costs about $0.0006 on Haiku 5.5 or GPT-6 Luna; the monthly budget bounds a user
    at about $3 (§24.9). The calls are billed to the user's account and appear in `billing_daily_summary`; the tick
    summary line carries `model_pages`, `model_calls`, `triage_images` and `model_cost`.
+7. **Live check, with the drive queue paused** (§22 step 2, §24.12). The main service's fan-out enqueues a tick for
+   every user with a sync state, the check's synthetic user included, so a live tick would race the check. Pause the
+   queue, run the check, resume it:
+   `gcloud tasks queues pause drive-sync-dev --location=us-central1 --project=<PROJECT_ID>`, then
+   `venv/bin/python -m scripts.validation.drive_eval.live_check --folder scripts/memory/drive_live --user
+   zz-synthetic-<yyyymmdd> --query …`, then `gcloud tasks queues resume drive-sync-dev --location=us-central1
+   --project=<PROJECT_ID>`. The script refuses to start unless the queue reads PAUSED, never pauses or resumes it
+   itself, and prints the resume command when it ends. Ticks queued meanwhile run after the resume.
 
 **Rebuild one user's index.** `venv/bin/python scripts/infrastructure/drive_index_rebuild.py --user <USER_ID>` is a
 dry run; add `--apply` to mark the sync state `purging` under the user's lease (refused while a tick runs: retry in a

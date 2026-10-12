@@ -62,14 +62,19 @@ def build_drive_model_registry(keys: Mapping[str, Optional[str]]) -> ProviderReg
     return registry
 
 
+def build_drive_context_builder(keys: Mapping[str, Optional[str]]) -> AgentContextBuilder:
+    """The indexer's context builder: the drive model registry with a process-local breaker, nothing else. The drive
+    eval builds its runners on it too, so it measures the models the indexer calls."""
+    return AgentContextBuilder(build_drive_model_registry(keys), resilience_port=InMemoryProviderResilience())
+
+
 def build_drive_model_extractors(*, parser: Any, users: UserRepository, account_repo: AccountRepository,
                                  assembly_service: Any, keys: Mapping[str, Optional[str]],
                                  alert_sink: Optional[AlertSinkPort] = None,
                                  ) -> Tuple[Dict[str, ContentExtractorPort], ImageTriagePort]:
     """The extractor registry and the triage port for DriveIndexingService. `parser` is the child-process parser
     (a ContentExtractorPort with `pdf_page_count` and `cut_pdf_window`)."""
-    registry = build_drive_model_registry(keys)
-    context_builder = AgentContextBuilder(registry, resilience_port=InMemoryProviderResilience())
+    context_builder = build_drive_context_builder(keys)
     prompt_builder = _DrivePromptBuilder(repo=None, assembly_service=assembly_service)
     quota = FirestoreQuotaService(account_repo, alert_sink=alert_sink)
     splitter: PdfSplitter = parser

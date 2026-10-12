@@ -9,10 +9,16 @@ and triage): `search_files_in_drive`, `open_file_from_drive`, `list_files_in_dri
 ref. Other read-only delegations (memory, web, mail, maps, compute) run for real on their own models, as in the A/B
 dry run. Everything that writes is answered "accepted, not executed" and never runs.
 
-Metric: the search-initiated rate (a case searched when Smart delegated `search_files_in_drive` at least once). On
-the positives it is barred (bars_g3.json); on the negatives (chit-chat, memory, web, general questions) it is
-reported. One LLM sample per case is noisy (decisions/directive_applicability_gate.md § Variance), so the bar is the
-positive rate over `--repeats` runs, not a per-case rule.
+Metrics:
+- the search-initiated rate (a case searched when Smart delegated `search_files_in_drive` at least once). On the
+  positives it is barred (bars_g3.json); on the negatives (chit-chat, memory, web, general questions) it is reported;
+- the date-expectation rate: every case says where its date belongs (`expect`): `date_in_query` (a date written inside
+  the document: Smart searched with a non-empty drive_query and set no date filter on any search), `date_filter` (the
+  user limits when the file is dated: some search set drive_date_from or drive_date_to), `none` (no search set a date
+  filter). It is read from the fields of Smart's actual search calls, over every case, and barred.
+One LLM sample per case is noisy (decisions/directive_applicability_gate.md § Variance), so a bar is the Wilson lower
+confidence bound (z = 1.96, the 95% two-sided interval's lower end) of the rate recorded over `--repeats` runs, and a
+run is judged only against bars recorded with the same `--repeats`.
 
 OWNER-run: real Smart calls on the owner's account (cents per run). Answers can quote the owner's memory, so the
 report goes to the gitignored scripts/memory/drive_g3/.
@@ -26,6 +32,7 @@ import argparse
 import asyncio
 import hashlib
 import json
+import math
 import os
 import sys
 from dataclasses import dataclass, field
@@ -53,6 +60,9 @@ POSITIVE_CATEGORIES = frozenset({"find", "content", "knowledge_base", "ocr", "ve
 NEGATIVE_CATEGORIES = frozenset({"chit_chat", "memory", "web", "general"})
 LANGS = frozenset({"en", "ru", "uk", "es", "fr"})
 MIN_PER_SET = 10
+EXPECTATIONS = ("date_in_query", "date_filter", "none")
+WILSON_Z = 1.96   # the 95% two-sided Wilson interval; its lower end is the bar
+_DATE_FILTERS = ("drive_date_from", "drive_date_to")
 DRIVE_READ_INTENTS: FrozenSet[str] = frozenset({
     Intent.SEARCH_FILES_IN_DRIVE, Intent.OPEN_FILE_FROM_DRIVE, Intent.LIST_FILES_IN_DRIVE,
 })
@@ -87,6 +97,8 @@ def validate_g3(gold: Sequence[Mapping[str, Any]]) -> None:
             problems.append(f"{cid}: no text")
         if case.get("lang") not in LANGS:
             problems.append(f"{cid}: unknown lang {case.get('lang')!r}")
+        if case.get("expect") not in EXPECTATIONS:
+            problems.append(f"{cid}: expect must be one of {', '.join(EXPECTATIONS)}, not {case.get('expect')!r}")
     for kind in SETS:
         if sum(1 for c in gold if c.get("set") == kind) < MIN_PER_SET:
             problems.append(f"fewer than {MIN_PER_SET} {kind} cases")
@@ -181,32 +193,82 @@ def searched(calls: Sequence[Mapping[str, Any]]) -> bool:
     return any(c["intent"] == Intent.SEARCH_FILES_IN_DRIVE for c in calls)
 
 
+def _searches(calls: Sequence[Mapping[str, Any]]) -> List[Mapping[str, Any]]:
+    return [c.get("context") or {} for c in calls if c["intent"] == Intent.SEARCH_FILES_IN_DRIVE]
+
+
+def _date_filtered(context: Mapping[str, Any]) -> bool:
+    return any(str(context.get(key) or "").strip() for key in _DATE_FILTERS)
+
+
+def expectation_met(expect: str, calls: Sequence[Mapping[str, Any]]) -> bool:
+    """Whether Smart's search calls put the date where the case expects it (see the module docstring)."""
+    searches = _searches(calls)
+    if expect == "date_filter":
+        return any(_date_filtered(c) for c in searches)
+    if expect == "date_in_query":
+        return (any(str(c.get("drive_query") or "").strip() for c in searches)
+                and not any(_date_filtered(c) for c in searches))
+    return not any(_date_filtered(c) for c in searches)
+
+
 # -- scores and bars -------------------------------------------------------------------------------------------------
 
 def score(rows: Sequence[Mapping[str, Any]]) -> Dict[str, Dict[str, float]]:
-    """{scope: {runs, searched, rate}} for each set and each `set:category`."""
+    """{scope: {runs, searched, rate}} for each set and each `set:category`; for rows scored on their date
+    expectation, also `expect` and `expect:<expectation>` (there `searched` counts the expectation hits)."""
     groups: Dict[str, List[bool]] = {}
     for row in rows:
         for scope in (row["set"], f"{row['set']}:{row['category']}"):
             groups.setdefault(scope, []).append(bool(row["searched"]))
+        if "expect_hit" in row:
+            for scope in ("expect", f"expect:{row['expect']}"):
+                groups.setdefault(scope, []).append(bool(row["expect_hit"]))
     return {scope: {"runs": len(v), "searched": sum(v), "rate": sum(v) / len(v)} for scope, v in sorted(groups.items())}
+
+
+def wilson_lower_bound(hits: float, runs: float, z: float = WILSON_Z) -> float:
+    """The lower end of the Wilson score interval for hits/runs (0.0 with no runs)."""
+    if runs <= 0:
+        return 0.0
+    p = hits / runs
+    centre = p + z * z / (2 * runs)
+    spread = z * math.sqrt(p * (1 - p) / runs + z * z / (4 * runs * runs))
+    return max(0.0, (centre - spread) / (1 + z * z / runs))
+
+
+def _bound(table: Mapping[str, Mapping[str, float]], scope: str) -> float:
+    row = table.get(scope, {})
+    return wilson_lower_bound(float(row.get("searched", 0)), float(row.get("runs", 0)))
 
 
 def make_g3_bars(table: Mapping[str, Mapping[str, float]], gold_sha256: str, model: str, repeats: int,
                  recorded_at: str) -> Dict[str, Any]:
     return {"gold_sha256": gold_sha256, "smart_model": model, "repeats": repeats, "recorded_at": recorded_at,
+            "wilson_z": WILSON_Z,
             "positive_rate": table.get("positive", {}).get("rate", 0.0),
+            "positive_bar": _bound(table, "positive"),
+            "expect_rate": table.get("expect", {}).get("rate", 0.0),
+            "expect_bar": _bound(table, "expect"),
             "negative_rate_reported": table.get("negative", {}).get("rate", 0.0)}
 
 
-def judge(table: Mapping[str, Mapping[str, float]], bars: Mapping[str, Any], gold_sha256: str, model: str) -> str:
-    """"pass" or "regression"; G3Error when the bars cannot judge this run."""
+def judge(table: Mapping[str, Mapping[str, float]], bars: Mapping[str, Any], gold_sha256: str, model: str, *,
+          repeats: int) -> str:
+    """"pass" or "regression" (a rate below its recorded lower bound); G3Error when the bars cannot judge this run."""
     if bars.get("gold_sha256") != gold_sha256:
         raise G3Error("gold_g3.json changed since the G3 bars were recorded — review it, then run with --record")
     if bars.get("smart_model") != model:
         raise G3Error(f"the bars were recorded with Smart on {bars.get('smart_model')}, this run is on {model}")
-    now = table.get("positive", {}).get("rate", 0.0)
-    return "regression" if now < float(bars["positive_rate"]) - _EPS else "pass"
+    if bars.get("repeats") != repeats:
+        raise G3Error(f"the bars were recorded with --repeats {bars.get('repeats')}, this run has {repeats}")
+    for key in ("positive_bar", "expect_bar"):
+        if key not in bars:
+            raise G3Error(f"the bars have no {key} (recorded before the lower-bound bars) — run with --record")
+    positive = table.get("positive", {}).get("rate", 0.0)
+    expect = table.get("expect", {}).get("rate", 0.0)
+    below = positive < float(bars["positive_bar"]) - _EPS or expect < float(bars["expect_bar"]) - _EPS
+    return "regression" if below else "pass"
 
 
 # -- the owner's run ---------------------------------------------------------------------------------------------------
@@ -298,11 +360,12 @@ async def _run(args: argparse.Namespace) -> int:
             async with RequestContext(user_id=user_id, account_id=account_id):
                 response = await smart.execute(msg)
             row = {"id": case["id"], "set": case["set"], "category": case["category"], "repeat": repeat,
-                   "searched": searched(dispatcher.calls), "calls": list(dispatcher.calls),
-                   "answer": str(response.result)[:4000]}
+                   "searched": searched(dispatcher.calls), "expect": case["expect"],
+                   "expect_hit": expectation_met(case["expect"], dispatcher.calls),
+                   "calls": list(dispatcher.calls), "answer": str(response.result)[:4000]}
             rows.append(row)
-            print(f"{'S' if row['searched'] else '-'} [{case['set'][:3]}] {case['id']}: "
-                  f"{[c['intent'] for c in row['calls']]}")
+            print(f"{'S' if row['searched'] else '-'}{'+' if row['expect_hit'] else '!'} [{case['set'][:3]}] "
+                  f"{case['id']} ({case['expect']}): {[c['intent'] for c in row['calls']]}")
     model = ",".join(sorted(models))
     table = score(rows)
     for scope, line in table.items():
@@ -318,7 +381,8 @@ async def _run(args: argparse.Namespace) -> int:
         return EXIT_OK
     if not args.bars.exists():
         raise G3Error(f"no bars at {args.bars}; run with --record first")
-    verdict = judge(table, json.loads(args.bars.read_text(encoding="utf-8")), gold_sha, model)
+    verdict = judge(table, json.loads(args.bars.read_text(encoding="utf-8")), gold_sha, model,
+                    repeats=args.repeats)
     print(f"verdict: {verdict}")
     return EXIT_OK if verdict == "pass" else EXIT_REGRESSION
 

@@ -37,7 +37,8 @@ it (a one-page PDF with a text layer for `.pdf` names), so the 600 invoices and 
 file the indexer would read has bytes (`test_drive_eval_fixture_files.py`).
 
 `files/` is made by `scripts/validation/drive_eval/make_fixtures.py` and **committed**, not generated per run: Chromium
-renders differently across machines and versions, and `bars.json` pins every served byte (`files_sha256`). Regenerating
+renders differently across machines and versions, and `bars.json` pins every served byte (`files_sha256`) and the
+reader's provider (`reader_provider`: bars recorded with Claude cannot judge a GPT run). Regenerating
 is a deliberate fixture change, followed by `--record`. The set: DOCX (the `Договор_ред1..3` family, now with differing
 amounts and notice periods), PDFs with a text layer (one two-column, one table-heavy), a broken-font Cyrillic PDF
 (fonts with no Unicode map, so text extraction yields `(cid:N)`), two scans with no text layer (UA, ES), a photographed
@@ -53,5 +54,9 @@ per `G1`, `G2` and `ocr`.
 
 `gold_g3.json` drives the Smart dry run (`smart_dry_run.py`): positives where the answer is in the fixture documents
 (content, knowledge base, OCR, a version family, and memory-vs-document conflicts) and negatives (chit-chat, memory,
-web and general questions). The metric is how often Smart calls `search_files_in_drive`; `bars_g3.json` holds the
-positive rate, the negative rate is reported. A `note` says what a right answer looks like for the owner's review.
+web and general questions). The metrics are how often Smart calls `search_files_in_drive`, and how often its search
+calls put the date where the case's `expect` says (`date_in_query`: a date written inside the document stays in
+`drive_query` and no date filter is set; `date_filter`: the user limits when the file is dated; `none`: no date
+filter). `bars_g3.json` holds the positive and expectation rates and their Wilson lower bounds (z = 1.96), which are
+the bars; the negative rate is reported. A run is judged only against bars recorded with the same `--repeats`. A
+`note` says what a right answer looks like for the owner's review.

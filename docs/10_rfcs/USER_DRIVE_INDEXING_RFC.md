@@ -779,7 +779,8 @@ runs a plain Firestore query on `user_id` + `kind` / `effective_date` (one per m
 `effective_date` descending, limit `K`, with no kNN and no threshold, and says how many matched (a lower bound when
 the fetch hit its cap). A request with no name words and no filter is **refused** with a correction, never answered
 with the newest files (RFC Δ36). The manifest field description tells Smart to put name words, a place or a subject
-in `drive_query` (the delegate's `query` is not read for search), never type words or dates.
+in `drive_query` (the delegate's `query` is not read for search), never type words or dates (Slice 2+4: dates
+written inside a document do go in it, §24.10).
 0. Read the opt-in flag, `DriveSyncState` and the credentials state from Firestore, never from the agent cache. Off →
    `disabled`. No credentials → `disconnected`. `needs_reconnect` with `now ≥ access_lost_at + ACCESS_LOSS_TTL`
    → `disconnected` (the purge has begun). A purge in progress, or the TTL passed on a connected drive → no results,
@@ -886,7 +887,8 @@ the reason: enrichment would also hand file content to claude.ai via MCP and to 
     not be read") and offers to list or open the folder; when `content_search` is false, say only names and metadata
     were searched;
   - when a folder card matches, search or list within it before answering "not found";
-  - for sums and totals over tables, open the file or use the compute intent with the file ref;
+  - for sums and totals over tables, open the file, then compute from the opened text (no intent takes a file ref
+    and computes);
   - a document is authoritative for its own contents (its terms, amounts, dates). It does not override memory about
     the user's current state: when they disagree, give both, citing the document's path and date (memory facts carry
     no date in the prompt today). Provisional until OQ-1;
@@ -1490,8 +1492,8 @@ this section wins; the text above was corrected where it was plainly false. Slic
   `name | kind | doc_type | description | doc_date | parties | amount` plus the lead text; a photograph
   `name | image | caption | key facets`. Brief and caption are model output from untrusted content: they reach Smart
   only inside the nonce-tagged wrapper, like names and chunks.
-- **`effective_date`** = the brief's `doc_date` when present, else the §3.1 order. Search guidance says that date
-  filters on parsed documents use the file date (D13).
+- **`effective_date`** = the brief's `doc_date` when present, else the §3.1 order (D13). The model is not told which
+  kind matches which date: the guidance is one distinction (§24.10).
 
 ### 24.5 Image triage and image reading
 - Every image record without a verdict at the current `TRIAGE_VERSION` is triage-due (class 2 on first sight,
@@ -1549,6 +1551,9 @@ this section wins; the text above was corrected where it was plainly false. Slic
 ### 24.10 Agent surface (D11)
 - The intents stay as they are. `search_files_in_drive`'s description and `drive_query` field description say that
   content questions put the subject, a phrase, a number or an amount in `drive_query`.
+- Dates are one distinction, the same sentence in the `drive_query` and `drive_date_from` descriptions: dates written
+  inside the document go in `drive_query`; the date filters only when the user limits when the file is dated. The
+  token keeps only the retry rule (a date filter that finds nothing is retried without it before "not found").
 - The §10.4 protocol lines go into Smart's protocol token (backed up first; `--apply` is run by the owner).
   `render_results` keeps the per-result facts and drops the standing guidance that moves to the token.
 - `capabilities.py` says the drive answers from content.
@@ -1563,7 +1568,9 @@ this section wins; the text above was corrected where it was plainly false. Slic
   two-column PDFs); OCR-labelled G1/G2 cases lose their expected-miss label. Bars are recorded with the real reader and
   real embeddings; unit tests use fakes.
 - G3: a Smart dry run (the `ab_agent_models.py` scaffolding) in which the drive read intents run for real against the
-  fixture index; positives and a negative set; the search-initiated rate is recorded.
+  fixture index; positives and a negative set; the search-initiated rate is recorded. Each case also says where its
+  date belongs (`expect`: `date_in_query`, `date_filter` or `none`), scored from the fields of Smart's search calls as
+  its own rate. The bars are the Wilson lower bounds (z = 1.96) of the recorded rates, judged only at equal repeats.
 
 ### 24.12 Acceptance
 §17 and §24.11 green; the eval meets its recorded bars (G1, G2, OCR-labelled, G3 positives; the G3 negative rate
@@ -1581,3 +1588,16 @@ scan, a broken-font Cyrillic PDF, a screenshot and a photo folder, each found by
 | `TRIAGE_IMAGES_PER_MONTH` | 20 000 | ≈ 1 250 triage calls |
 | `TRIAGE_BATCH` | 16 | §15 |
 | Thumbnail size / reader rendition | 176 or 800 px / S0g | Live check / spike |
+
+### 24.14 Known limits
+- **The parser sandbox is resource isolation, not code-execution containment.** The child process bounds memory, CPU,
+  file size and wall time, and starts with an allowlisted environment, but it runs as the same user on the same host:
+  a parser exploit with code execution could read the parent's environment through `/proc/<ppid>/environ` and reach
+  the metadata server for the service account's token. Accepted for a single-owner deployment parsing the owner's own
+  files. *Trigger to revisit:* a code-execution CVE in a parser the child loads (markitdown and its converters,
+  pdfminer/pdfplumber, openpyxl, python-pptx, mammoth, lxml), or indexing files of untrusted users (multi-tenant
+  growth); the answer then is a separate parser service with its own identity (§9's "separate service" adapter).
+- **A tick that ends with `LeaseLost` loses its model usage.** The month's page and image counters live on the sync
+  state, and a tick without its lease cannot write it, so the model calls of that one tick are not counted against
+  the monthly budgets (they are still billed to the account per call). Bounded to one tick's work
+  (`MODEL_IN_FLIGHT` windows and the triage batches of one tick); the next tick counts from the last saved state.
