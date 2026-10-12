@@ -624,3 +624,18 @@ scratch path (nothing recorded or committed): index settled in 1 tick, 2 481 car
   `max(pause, queued delay)`, stop after `MAX_THROTTLED = 6` consecutive throttled ticks (≈ 31 min of backoff — the
   code comment's "about an hour" is corrected in the docs batch). Offline eval re-run at `34318ca`: identical 32/37,
   same per-case results.
+
+### Tasks 43 / 44 (docs) — fix rounds running
+- Task 43 `cd71362` → review: CHANGES REQUIRED (the records repeated RFC §7.1's "lease = start + deadline + margin, so a
+  holder never outlives it", which R4 and the retrospective disproved; thumbnail triage attributed to Slice 2, RFC §5.3
+  says Slice 4) → fixed in `94cb243`, re-review running.
+- Task 44 `86a097b` → review: CHANGES REQUIRED. **New OWNER item from it:** a stale tick that outlives its lease can
+  still **purge** (`_DriveSwitched` → `delete_sync_state`), which deletes the whole state document **including the new
+  holder's lease**; the holder's next save recreates the state without a lease → a third tick can run alongside. Same
+  root as the open "fence a stale tick's other writes" item (R4 OWNER part); RFC §7.1 line ~429 still says "a holder
+  never outlives its lease" (RFC not edited overnight).
+- **Task 43 — done:** `cd71362` + `94cb243`; round 2 APPROVED, every changed statement verified against the code;
+  `make check` 8113 passed. Records are 49–60 lines (CLAUDE.md convention, over the plan's 24–26; accepted).
+- Task 45 `04a48f9` committed (review running); its implementer also applied the review notes to `SCHEDULERS.md`.
+  Gaps outside its scope noted: `.env.example` lacks an `INDEXER_URL_DEV` placeholder; `SCHEDULERS.md` line 9 says a
+  scheduler call "never runs an agent" (the drive fan-out can run the formatter for a reconnect notice).
