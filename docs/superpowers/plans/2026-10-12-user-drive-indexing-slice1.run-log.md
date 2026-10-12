@@ -88,3 +88,9 @@ Method: subagent-driven (implementer → independent reviewer → coordinator ac
      masks it. Worth two new tests as a follow-up (not added: beyond the task's scope).
 - Plan-code notes: `except DriveItemNotFoundError:` in the re-listing path does not log (Global Constraint "every
   except logs"); `TickResult` is a second public class in the service file (part of the plan's interface).
+
+### Task 10 — done
+- Commit `b677cf7`. `make check` (coordinator, worktree at the commit): 7409 passed, 3 skipped, 1 xfailed.
+- Deviations: none (byte-identical). Step 2's manual 1000-seed run: 1060 passed (reverted to 200 seeds, uncommitted).
+- Reviewer: APPROVED, round 1 (mutations in the policy and planner caught: 99 and 21 failures).
+- Note: the random pool never yields Δ16 generated dirs or dense trees; the Part F hostile-tree test covers them.
