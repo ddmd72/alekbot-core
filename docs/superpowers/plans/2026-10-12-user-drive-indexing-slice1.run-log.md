@@ -275,3 +275,24 @@ order, substitution handling, OIDC audience, `main.py` names) matches the code. 
   catch `Exception` or propagate — unchanged). Docs: embedding_system README §2.3, `src/adapters/CLAUDE.md`.
 - Accepted residual: a configuration 400 (invalid API key) backs cards off one by one (non-terminal; memory search
   breaks at the same time). **OWNER/doc:** RFC §8.2 has no explicit row for a card refused with a 400.
+
+### Fix R3 (OneDrive adapter) — done
+- Commits `dcf9ab3` (round 1), `754a3a1` (reviewer edit of two pre-existing tests), `ce483bb` + `2c86ef9` (round 2).
+  `make check` (reviewer, at `2c86ef9`): 7664 passed, 3 skipped, 1 xfailed. `dcf9ab3` alone was red (2 tests) and was
+  pushed only with `754a3a1`.
+- drive F1: page cursors carry `drive_id` + `root_id`; a mismatch with the fresh App Folder read raises
+  `DriveResyncRequired` before the old URL is followed (old cursors without the keys still work). **Verified end to
+  end** (real adapter + real tick, connect-time `drive_id` read failed, A's deltaLink answering 400): purge, then a
+  clean onboarding of B; the parent commit looped on `error`. drive F3: token-endpoint timeout → `DriveThrottled`.
+  drive F6: test. Per-call timeout `GRAPH_CALL_TIMEOUT_S = 60` on `_call`.
+- **Reviewer decision on existing tests** (`tests/unit/adapters/test_onedrive_delta_wire.py`): both encoded the old
+  cursor format that F1 changes on purpose → edited by the reviewer (`754a3a1`): the exact-equality check now includes
+  the binding (stricter); the fresh-approot test uses an unbound cursor, all assertions kept.
+- Round 1 mapped every transport error/timeout to `DriveThrottled` — **coordinator brief error** (I called it "the
+  systemic class the report proposes"). RFC §8.2 classifies by the call: item calls are per-item. Round 2: timeouts
+  stay `TimeoutError`, other `aiohttp.ClientError` → `OSError` (both per-item in the tick); the feed backs off
+  exponentially via the generic handler; the token endpoint stays systemic. Step 1 answers "Drive operation failed:
+  OSError/TimeoutError." (never "not connected" / "still running").
+- Notes: a feed network failure shows `last_error=INTERNAL` (as before R3; changing it alters Task 36's Cabinet text);
+  download/upload chunk requests and the `graph_auth` token POST keep aiohttp's 300 s default (pre-existing); a 410
+  restart cursor carries no binding (narrow gap, accepted).
