@@ -466,3 +466,28 @@ order, substitution handling, OIDC audience, `main.py` names) matches the code. 
 - System context checked: Smart sees the intent, companions' allowlists exclude it; the `drive_*` names collide with
   nothing so their descriptions reach the model; the four allowlisted collisions are live. MINOR: the old test
   module's docstring still says search is unavailable (→ Task 46 docs sweep).
+
+### Task 31 — committed `019c069` (byte-identical); review: CHANGES REQUIRED → fix batch R10
+- `make check` (reviewer, worktree): 7921 passed. **rev_31 F1 MAJOR = premise audit P1 confirmed and reproduced**
+  (160 trigram-sharing fillers: "leese agrement", "Догов", "contrsto" all miss — `name_kept=0 fused=50
+  widened=False`). **F2 MAJOR:** a filter-only folder search capped by the fetch limit says "No matching files or
+  folders" — Smart would tell the user the folder is empty. F3 (never guess: a full folder-name page still accepted a
+  single match), F4 (subtree walk reads up to 16× `FOLDER_INMEM_CARDS`), F5 test gaps (M3: widening not pinned to
+  once — unbounded loop on a full `FETCH_MAX` page). Gate uncached, Δ20 families and RRF + Δ17 tie-break confirmed.
+- Reviewer decision on an existing test: `TestScale::test_one_query_per_whole_token_key_plus_one_for_the_rest` pins
+  Δ17's single "rest" call that P1 shows to be wrong → reviewer-approved stricter edit, applied with R10.
+- **Plan text affected by the P1 fix (owner):** the Δ17 row ("one query for the remaining keys"), Part E notes, and
+  Task 44's README line describe the old shape. Remaining limit: the 8 single trigram calls follow query order, so a
+  misspelled first token uses slots; a trigram held by > 100 lower-id files still crowds its own page.
+
+### Task 33 — done
+- Commit `dcda59d` (byte-identical). `make check` (reviewer, worktree): 7945 passed, 3 skipped, 1 xfailed.
+  Reviewer: APPROVED, nothing BLOCKER/MAJOR; 18/21 mutations killed. Step 1 intents untouched.
+- Existing test `test_unknown_intent_lists_no_search`: passes, name now stale (it reaches "not available"); reviewer:
+  no edit (cosmetic; the rule covers failing tests).
+- **OWNER:** F1 (P3 in real code): escaped HTML/code text can be written back; and the vision/video labels are
+  escaped although they are not wrapped (`R&amp;D` may be quoted to the user) — drop `escape_text` there whichever P3
+  option is chosen. F3: RFC §10.4/D2 "every delivery of file text carries the reminder" — two paths are outside Δ11:
+  (a) the coordinator's prefetch resolves `drive:` refs into `file_content` for DocPlanner/PdfGenerator/HtmlPage with
+  no wrapper; (b) file names from search go into history `drive_context` as raw JSON (the Step 1 mechanism). Add a Δ
+  narrowing D2, or schedule (a). P4: the overnight fix only rewords the all-empty case (R10); refusing it stays open.
