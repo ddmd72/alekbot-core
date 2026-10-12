@@ -28,6 +28,7 @@ Public interface:
     is_stale(state, oldest_edit_due_at, now) -> bool
     stale_versions(rec, *, embedding_space=None) -> bool
     reembed_in_space(rec, embedding_space) -> DriveIndexRecord
+    chunks_reembedded(rec, generation, embedding_space, now) -> DriveIndexRecord           (§12.3)
     extractor_stale(rec, versions) -> bool / reextraction_due(rec) -> DriveIndexRecord      (§9, §12.3)
     readme_read(rec, item_id, version, lead_text, now) -> DriveIndexRecord                  (§5.2)
 """
@@ -246,7 +247,7 @@ def _observable(rec: DriveIndexRecord) -> Tuple[Any, ...]:
             rec.fs_modified_at, rec.effective_date, rec.place_name, rec.geo_table_version, rec.policy_version,
             rec.probe_pending, rec.rescope_pending, rec.reobserve_pending, rec.probed_child_count, rec.card_capped,
             rec.card_refused, rec.name_keys_version, rec.indexed_generation, rec.lead_text, rec.brief, rec.caption,
-            rec.dirty_since, rec.readme_pending, rec.readme_item_id, rec.readme_version)
+            rec.dirty_since, rec.readme_pending, rec.readme_item_id, rec.readme_version, rec.chunk_reembed_pending)
 
 
 def _build(change: DriveChange, cls: Classification, existing: Optional[DriveIndexRecord],
@@ -258,14 +259,17 @@ def _build(change: DriveChange, cls: Classification, existing: Optional[DriveInd
     if cls.state is RecordState.METADATA_ONLY and not cls.content_kept:
         # entering metadata_only clears the readable generation (the service collects its chunks) and what the
         # content gave the card (§3.4); a content demotion that stands keeps its own fields, and a repository root
-        # that stays one keeps its README's lead text (§5.2)
-        base = replace(base, indexed_generation=None, brief=None)
+        # that stays one keeps its README's lead text (§5.2). Decided from metadata, it carries no extraction stamp:
+        # nothing was read, so a later observation that admits the file again reads it (a rename away and back)
+        base = replace(base, indexed_generation=None, brief=None, extraction_version=0, extracted_by=None,
+                       chunk_space="", chunk_reembed_pending=False)
         if not (existing is not None and repository_root(existing) and _repository(change, cls)):
             base = replace(base, lead_text="", readme_pending=False, readme_item_id=None, readme_version="")
     if admission(cls.kind) is not Admission.TRIAGE:
         base = replace(base, caption="")
     if cls.state is not RecordState.PENDING:
-        base = replace(base, dirty_since=None, defer_until=None, defer_priority=None)
+        # no content work is left: its quiet period, deferral and started attempt end with it
+        base = replace(base, dirty_since=None, defer_until=None, defer_priority=None, attempt_started_at=None)
     rec = replace(
         base, parent_id=change.parent_id, name=change.name, is_folder=change.is_folder,
         size_bytes=change.size_bytes, mime_type=change.mime_type, web_url=change.web_url,
@@ -455,11 +459,14 @@ def _quiet_period(rec: DriveIndexRecord, existing: Optional[DriveIndexRecord], n
     per-file attempts (§8.2); a nudge is the bot's own atomic write, so it is never in a quiet period."""
     if rec.state is not RecordState.PENDING:
         return rec
+    new_version = existing is not None and existing.content_version != rec.content_version
+    if new_version:
+        # a new edit restarts the work: its attempts and any deferral of the old version end
+        rec = replace(rec, attempts=0, defer_until=None, defer_priority=None)
     if nudged:
         return replace(rec, dirty_since=None)
-    if existing is not None and existing.content_version != rec.content_version:
-        # a new edit restarts the work: its attempts and any deferral of the old version end
-        return replace(rec, dirty_since=rec.dirty_since or now, attempts=0, defer_until=None, defer_priority=None)
+    if new_version:
+        return replace(rec, dirty_since=rec.dirty_since or now)
     return rec
 
 
@@ -520,6 +527,8 @@ def _works(rec: DriveIndexRecord, first_seen: bool, now: datetime) -> List[Tuple
         works.append((Priority.FIRST_SEEN, now))   # §7.8 class 2: "re-observed subtrees"
     if rec.readme_pending:
         works.append((Priority.MAINTENANCE, now))  # an enrichment of the repository card (§5.2)
+    if rec.chunk_reembed_pending and rec.indexed_generation is not None:
+        works.append((Priority.MAINTENANCE, now))  # readable chunks in another embedding space (§12.3)
     if _card_due(rec):
         works.append((Priority.FIRST_SEEN if first_seen else Priority.EDIT, now))
     if content_due(rec) or triage_due(rec):
@@ -591,6 +600,8 @@ def stale_versions(rec: DriveIndexRecord, *, embedding_space: Optional[str] = No
         return True
     if embedding_space is not None and rec.has_card and rec.embedding_space != embedding_space:
         return True
+    if embedding_space is not None and rec.indexed_generation is not None and rec.chunk_space != embedding_space:
+        return True   # readable chunks embedded in another space
     if (rec.has_card or rec.card_hash is not None) and rec.card_version != CARD_VERSION:   # carded, or refused
         return True
     if rec.extraction_version > 0 and rec.extraction_version != EXTRACTION_VERSION:       # content read before
@@ -625,10 +636,21 @@ def readme_read(rec: DriveIndexRecord, item_id: Optional[str], version: str, lea
 
 def reembed_in_space(rec: DriveIndexRecord, embedding_space: str) -> DriveIndexRecord:
     """A card embedded in another space is due again (§12.3): its hash is cleared, so the card is scheduled like any
-    changed card; the old vector stays until the new one replaces it."""
+    changed card; the old vector stays until the new one replaces it. Readable chunks in another space are due to be
+    embedded again from their stored text, into a new generation, with no download and no extraction; the old
+    generation serves until the new one commits (§7.4)."""
     if rec.has_card and rec.embedding_space != embedding_space:
-        return replace(rec, card_hash=None)
+        rec = replace(rec, card_hash=None)
+    if rec.indexed_generation is not None and rec.chunk_space != embedding_space:
+        rec = replace(rec, chunk_reembed_pending=True)
     return rec
+
+
+def chunks_reembedded(rec: DriveIndexRecord, generation: int, embedding_space: str,
+                      now: datetime) -> DriveIndexRecord:
+    """The re-embedded generation becomes readable in `embedding_space`; the caller collects every other one."""
+    return schedule(replace(rec, indexed_generation=generation, chunk_space=embedding_space,
+                            chunk_reembed_pending=False), now, first_seen=not rec.has_card)
 
 
 def access_action(enabled: bool, state: Optional[DriveSyncState], connection: DriveConnection,
@@ -679,17 +701,21 @@ def _defer(rec: DriveIndexRecord, until: datetime, priority: int, now: datetime)
     return schedule(replace(rec, defer_until=until, defer_priority=priority), now, first_seen=not rec.has_card)
 
 
-def deferred(rec: DriveIndexRecord, until: datetime, now: datetime, *, maintenance: bool = False) -> DriveIndexRecord:
+def deferred(rec: DriveIndexRecord, until: datetime, now: datetime, *, maintenance: bool = False,
+             priority: Optional[int] = None) -> DriveIndexRecord:
     """Hold the record's model work until `until`, still pending (§24.7, §24.8): a spent monthly budget waits for
     next_month_start in class 3 (`maintenance=True`); a model outage waits for `model_backoff_until` in the class it
-    was due in."""
+    was due in. A started run is in the retry class (generation_started): its caller passes `priority`, the class
+    the run started from, so a deferral never moves an edit behind first-seen work."""
     if maintenance:
-        priority = int(Priority.MAINTENANCE)
+        cls = int(Priority.MAINTENANCE)
+    elif priority is not None:
+        cls = priority
     elif rec.priority is not None:
-        priority = rec.priority
+        cls = rec.priority
     else:
-        priority = int(Priority.EDIT if rec.has_card else Priority.FIRST_SEEN)
-    return _defer(rec, until, priority, now)
+        cls = int(Priority.EDIT if rec.has_card else Priority.FIRST_SEEN)
+    return _defer(rec, until, cls, now)
 
 
 def next_month_start(now: datetime) -> datetime:
@@ -713,11 +739,12 @@ def _settled(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
 
 
 def indexed(rec: DriveIndexRecord, *, outcome: ExtractionOutcome, generation: int, chunk_count: int,
-            now: datetime) -> DriveIndexRecord:
-    """The fence's one record write (§7.4): `generation` becomes readable for this content version. The caller
-    then collects every other generation. `outcome.truncated` must include the chunker's cut (§5.4). A brief's
-    date becomes the effective date (D13)."""
+            now: datetime, chunk_space: str = "") -> DriveIndexRecord:
+    """The fence's one record write (§7.4): `generation` becomes readable for this content version, its chunks
+    embedded in `chunk_space`. The caller then collects every other generation. `outcome.truncated` must include the
+    chunker's cut (§5.4). A brief's date becomes the effective date (D13)."""
     done = replace(rec, state=RecordState.INDEXED, reason=None, indexed_generation=generation,
+                   chunk_space=chunk_space, chunk_reembed_pending=False,
                    indexed_version=rec.content_version, extraction_version=EXTRACTION_VERSION,
                    extracted_by=outcome.extracted_by, text_chars=len(outcome.text), pages_total=outcome.pages_total,
                    chunk_count=chunk_count, truncated=outcome.truncated,
@@ -736,7 +763,7 @@ def demoted(rec: DriveIndexRecord, reason: Reason, now: datetime, *, outcome: Op
     text = outcome.text if outcome is not None else ""
     brief = outcome.brief if outcome is not None else None
     done = replace(rec, state=RecordState.METADATA_ONLY, reason=reason, indexed_generation=None,
-                   extraction_version=EXTRACTION_VERSION,
+                   chunk_space="", chunk_reembed_pending=False, extraction_version=EXTRACTION_VERSION,
                    extracted_by=outcome.extracted_by if outcome is not None else rec.extracted_by,
                    text_chars=len(text), pages_total=outcome.pages_total if outcome is not None else 0,
                    truncated=outcome.truncated if outcome is not None else False,
@@ -774,7 +801,7 @@ def triaged(rec: DriveIndexRecord, result: TriageResult, now: datetime) -> Drive
                   triaged_content_version=rec.content_version, attempts=0, defer_until=None, defer_priority=None)
     if result.verdict is TriageVerdict.PHOTO:
         photo = replace(rec, state=RecordState.METADATA_ONLY, reason=Reason.PHOTOGRAPH, caption=result.caption,
-                        indexed_generation=None, lead_text="", brief=None, dirty_since=None,
+                        indexed_generation=None, chunk_space="", chunk_reembed_pending=False, lead_text="", brief=None, dirty_since=None,
                         effective_date=_effective(change_from_record(rec), None, rec.effective_date or now))
         return schedule(photo, now, first_seen=first_seen)
     state = RecordState.INDEXED if _indexed_now(rec) else RecordState.PENDING
