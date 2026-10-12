@@ -63,3 +63,40 @@ class TestSuccessfulTickClearsLastError:
         assert (await w.repo.get_sync_state("u")).last_error is ErrorCategory.THROTTLED
         await w.tick()
         assert (await w.repo.get_sync_state("u")).last_error is None
+
+
+class TestRegainAfterTheGracePeriod:
+
+    async def _lost_past_ttl(self):
+        w = World()
+        a = w.drive.add("a.pdf")
+        b = w.drive.add("b.pdf")
+        await w.settle()
+        assert w.carded() == {a, b}
+        w.drive.connection_state = DriveConnection(connected=False)
+        assert (await w.tick()).status == "access_lost"
+        w.clock.advance(ACCESS_LOSS_TTL.total_seconds() + 60)
+        return w, a, b
+
+    async def test_regain_after_the_ttl_purges_then_rebuilds_from_epoch_one(self):
+        w, a, b = await self._lost_past_ttl()
+        w.drive.connection_state = DriveConnection(connected=True, drive_id="d1")
+        embedded = len(w.emb.calls)
+        await w.settle()
+        st = await w.repo.get_sync_state("u")
+        assert st.epoch == 1 and st.epoch_phase is EpochPhase.IDLE and st.initial_enumeration_done
+        assert st.access_lost_at is None and not st.purging
+        assert w.carded() == {a, b} and len(w.emb.calls) - embedded == 2
+
+    async def test_purge_past_the_ttl_then_a_later_regain_rebuilds(self):
+        w, a, b = await self._lost_past_ttl()
+        before = len(w.queue.tasks)
+        assert (await w.tick()).status == "purged"
+        assert w.repo.records == {} and await w.repo.get_sync_state("u") is None
+        assert w.queue.tasks[before:] == []            # nothing to continue while access is lost
+        w.clock.advance(timedelta(days=2).total_seconds())
+        w.drive.connection_state = DriveConnection(connected=True, drive_id="d1")
+        await w.settle()
+        st = await w.repo.get_sync_state("u")
+        assert st.epoch == 1 and st.epoch_phase is EpochPhase.IDLE
+        assert w.carded() == {a, b}
