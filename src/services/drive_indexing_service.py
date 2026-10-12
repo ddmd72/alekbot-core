@@ -487,8 +487,10 @@ class DriveIndexingService:
             return True
         files = {k.item_id for k in kids if not k.is_folder}
         dying = [_dying(k, now) for k in kids if k.is_folder and k.state is not RecordState.DELETING]
+        if not files and not dying:
+            return False   # its children are folders already deleting: their own steps do the work, uncharged here
         await self._commit(user_id, dying, files)
-        budget.cascade_ops -= len(kids)
+        budget.cascade_ops -= len(files) + len(dying)
         summary["deleted"] = summary.get("deleted", 0) + len(files)
         return True
 

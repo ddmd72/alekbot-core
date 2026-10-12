@@ -151,3 +151,23 @@ class TestRelistingOnlyWalkableFolders:
         await w.settle()
         assert listed == []
         assert not w.rec(site).reobserve_pending and w.rec(site).reobserve_cursor is None
+
+
+class TestCascadeBudget:
+
+    async def test_a_cascade_step_that_writes_nothing_costs_no_budget(self, monkeypatch):
+        """A deleted folder whose children are folders already deleting writes nothing on its step; the budget it
+        would have charged belongs to the steps that remove files."""
+        w = await _onboarded()
+        top = w.drive.add("Archive", folder=True)
+        subs = [w.drive.add(f"y{i}", parent=top, folder=True) for i in range(3)]
+        files = [w.drive.add(f"f{i}{j}.pdf", parent=s) for i, s in enumerate(subs) for j in range(2)]
+        await w.settle()
+        now = w.clock.now
+        dying = [replace(w.rec(i), state=RecordState.DELETING, has_card=False, card_hash=None,
+                         due_at=now - timedelta(seconds=10 - n), priority=int(Priority.CASCADE))
+                 for n, i in enumerate([top, *subs])]
+        await w.repo.upsert_records(dying)
+        monkeypatch.setattr(svc_mod, "CASCADE_OPS_PER_TICK", 6)
+        await w.tick()
+        assert [f for f in files if w.rec(f) is not None] == []
