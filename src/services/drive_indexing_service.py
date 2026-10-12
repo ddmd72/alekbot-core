@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
@@ -23,7 +24,7 @@ from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 from ..domain.drive_card import card_eligible, card_hash, card_text
 from ..domain.drive_index import (
     CURRENT_VERSIONS, DriveChange, DriveChanges, DriveIndexRecord, DriveSyncState, EpochPhase, ErrorCategory,
-    FolderProbe, Nudge, Priority, RecordState, Scope,
+    FolderProbe, LeaseLost, Nudge, Priority, RecordState, Scope,
 )
 from ..domain.drive_index_params import (
     CASCADE_OPS_PER_TICK, EMBED_IN_FLIGHT, ITEM_CALLS_PER_TICK, LEASE_MARGIN, MAINTENANCE_SHARE,
@@ -59,7 +60,8 @@ _GATE_RECHECK_S = 5.0   # the opt-out flag is re-read before a write batch at mo
 
 @dataclass
 class TickResult:
-    status: str                               # disabled | busy | purging | purged | access_lost | done | throttled | error
+    status: str                               # disabled | busy | purging | purged | access_lost | done | throttled |
+                                              # error | lease_lost
     summary: Dict[str, int] = field(default_factory=dict)
 
 
@@ -86,6 +88,24 @@ class _Continuation:
 
     def request(self, delay_s: int = 0) -> None:
         self.delay_s = delay_s
+
+
+@dataclass(frozen=True)
+class _Lease:
+    """The lease this tick holds. Every sync-state write names `owner`; no write starts once the clock reaches
+    `until - LEASE_MARGIN` (§7.1 fencing)."""
+    owner: str
+    until: datetime
+    clock: Callable[[], datetime]
+
+    def check(self) -> None:
+        if self.clock() >= self.until - LEASE_MARGIN:
+            raise LeaseLost(f"own lease ends at {self.until.isoformat()}")
+
+
+# Per tick (each Cloud Tasks request runs in its own task, hence its own context), so a write deep in a step is
+# fenced by the lease of the tick that runs it.
+_TICK_LEASE: ContextVar[Optional[_Lease]] = ContextVar("drive_tick_lease", default=None)
 
 
 @dataclass
@@ -157,6 +177,7 @@ class DriveIndexingService:
             return TickResult("busy")
         summary: Dict[str, int] = {}
         cont = _Continuation()
+        token = _TICK_LEASE.set(_Lease(tick_id, lease.lease_until or now + _lease_span(), self._clock))
         try:
             state = lease if lease.created_at is not None else replace(lease, created_at=now)
             if state.epoch == 0 and state.cursor is None and not state.applied_versions:
@@ -168,14 +189,19 @@ class DriveIndexingService:
                 return await self._purge(user_id, state, action, enabled, summary, cont)
             if action is AccessAction.RECORD_LOSS:
                 if state.access_lost_at is None:
-                    await self._repo.save_sync_state(replace(state, access_lost_at=now))
+                    await self._save_state(replace(state, access_lost_at=now))
                     logger.warning(f"[DriveIndex] access lost for {user_id[:8]}; grace period started")
                 return TickResult("access_lost")
             if action is AccessAction.RESUME_AFTER_REGAIN:
                 state = replace(state, access_lost_at=None)
                 logger.info(f"[DriveIndex] access regained for {user_id[:8]}; continuing from the cursor")
             return await self._run(user_id, state, nudge, now, enabled, summary, cont)
+        except LeaseLost as exc:
+            # another tick holds the lease, or this one's is ending: it carries on from the last saved state
+            logger.info(f"[DriveIndex] tick for {user_id[:8]} stopped, its lease is gone: {exc}")
+            return TickResult("lease_lost", summary)
         finally:
+            _TICK_LEASE.reset(token)
             await self._repo.release_lease(user_id, tick_id)
             if cont.delay_s is not None:
                 await self._continue(user_id, tick_id, delay_seconds=cont.delay_s)
@@ -201,9 +227,11 @@ class DriveIndexingService:
             state = replace(state, continuation_enqueued_at=now if more else None, last_error=None,
                             systemic_failures=0,
                             last_success_at=now if (progressed or not more) else state.last_success_at)
-            await self._repo.save_sync_state(state)
+            await self._save_state(state)
             self._log(user_id, "continued" if more else "done", summary, budget)
             return TickResult("done", summary)
+        except LeaseLost:
+            raise   # nothing more may be written, not even the error
         except _OptedOut:
             logger.info(f"[DriveIndex] indexing turned off mid-tick for {user_id[:8]}; result dropped")
             # The next tick's gate purges. Without it a lost toggle task leaves the purge to a fan-out that skips
@@ -216,7 +244,7 @@ class DriveIndexingService:
         except DriveReauthRequired:
             flagged = await self._drive.flag_reconnect(user_id)
             logger.warning(f"[DriveIndex] refresh rejected for {user_id[:8]} (flag set now: {flagged})")
-            await self._repo.save_sync_state(replace(saved.state, last_error=ErrorCategory.RECONNECT_NEEDED))
+            await self._save_state(replace(saved.state, last_error=ErrorCategory.RECONNECT_NEEDED))
             return TickResult("access_lost", summary)
         except (DriveThrottled, LLMRateLimitError, LLMUnavailableError) as exc:
             delay = _backoff_s(state.systemic_failures)
@@ -225,7 +253,7 @@ class DriveIndexingService:
                 delay = retry_after if state.systemic_failures == 0 else max(retry_after, delay)
             logger.warning(f"[DriveIndex] throttled for {user_id[:8]}: {exc}; continuing in {delay}s")
             cont.request(delay)
-            await self._repo.save_sync_state(replace(saved.state, last_error=ErrorCategory.THROTTLED,
+            await self._save_state(replace(saved.state, last_error=ErrorCategory.THROTTLED,
                                                      continuation_enqueued_at=now,
                                                      systemic_failures=state.systemic_failures + 1))
             return TickResult("throttled", summary)
@@ -235,7 +263,7 @@ class DriveIndexingService:
             delay = _backoff_s(state.systemic_failures)
             logger.error(f"[DriveIndex] tick failed for {user_id[:8]}: {exc}; continuing in {delay}s", exc_info=True)
             cont.request(delay)
-            await self._repo.save_sync_state(replace(saved.state, last_error=category, continuation_enqueued_at=now,
+            await self._save_state(replace(saved.state, last_error=category, continuation_enqueued_at=now,
                                                      systemic_failures=state.systemic_failures + 1))
             return TickResult("error", summary)
 
@@ -272,7 +300,7 @@ class DriveIndexingService:
                 logger.warning(f"[DriveIndex] cursor expired for {user_id[:8]}; epoch {state.epoch + 1}")
                 state = replace(state, cursor=exc.restart_cursor, epoch=state.epoch + 1,
                                 epoch_phase=EpochPhase.ENUMERATING, round_complete=False, round_started_at=now)
-                await self._repo.save_sync_state(state)
+                await self._save_state(state)
                 saved.state = state
                 continue
             if state.drive_id and page.drive_id and page.drive_id != state.drive_id:
@@ -284,7 +312,7 @@ class DriveIndexingService:
             if page.complete:
                 phase = EpochPhase.SWEEPING if state.epoch_phase is EpochPhase.ENUMERATING else state.epoch_phase
                 state = replace(state, round_complete=True, observed_as_of=state.round_started_at, epoch_phase=phase)
-            await self._repo.save_sync_state(state)   # the cursor is the page's progress marker: written last
+            await self._save_state(state)   # the cursor is the page's progress marker: written last
             saved.state = state
             summary["pages"] = summary.get("pages", 0) + 1
             if page.complete:
@@ -386,6 +414,7 @@ class DriveIndexingService:
                       card_vectors: Optional[Dict[str, List[float]]] = None) -> None:
         if not writes and not deletes:
             return
+        _fence()
         await self._recheck_gate(user_id)
         for start in range(0, len(writes), RECORD_WRITE_BATCH):
             await self._repo.upsert_records(writes[start:start + RECORD_WRITE_BATCH], card_vectors)
@@ -795,13 +824,15 @@ class DriveIndexingService:
                      summary: Dict[str, int], cont: _Continuation) -> TickResult:
         """Durable: `purging` is written before the first delete, so a purge always finishes (review A M1)."""
         if not state.purging:
-            await self._repo.save_sync_state(replace(state, purging=True))
+            await self._save_state(replace(state, purging=True))
         budget = _Budget(started=self._monotonic(), monotonic=self._monotonic)
         while budget.time_left():
+            _fence()
             deleted = await self._repo.delete_user_records(user_id, RECORD_WRITE_BATCH)
             summary["purged"] = summary.get("purged", 0) + deleted
             if deleted == 0:
-                await self._repo.delete_sync_state(user_id)
+                _fence()
+                await self._repo.delete_sync_state(user_id, _owner())
                 logger.info(f"[DriveIndex] index purged for {user_id[:8]} ({action.value})")
                 if enabled and action is not AccessAction.PURGE_EXPIRED:
                     cont.request()   # onboarding of the connected drive starts now
@@ -819,6 +850,10 @@ class DriveIndexingService:
             return True
         # backed-off work waits for its due_at; a folder that stepped aside is due right after this tick
         return bool(await self._repo.due_records(user_id, now + _STEP_ASIDE, 1))
+
+    async def _save_state(self, state: DriveSyncState) -> None:
+        _fence()
+        await self._repo.save_sync_state(state, _owner())
 
     def _upgrade_due(self, state: DriveSyncState) -> bool:
         """The version constants or the embedding space differ from what the index was last verified under."""
@@ -868,6 +903,18 @@ class DriveIndexingService:
     def _log(user_id: str, end: str, summary: Dict[str, int], budget: _Budget) -> None:
         elapsed = budget.monotonic() - budget.started
         logger.info(f"[DriveIndex] tick user={user_id[:8]} end={end} {summary} duration={elapsed:.1f}s")
+
+
+def _fence() -> None:
+    """No write once this tick's lease is about to end (§7.1): a tick that outlives it stops instead."""
+    lease = _TICK_LEASE.get()
+    if lease is not None:
+        lease.check()
+
+
+def _owner() -> Optional[str]:
+    lease = _TICK_LEASE.get()
+    return lease.owner if lease is not None else None
 
 
 def _upgrade_waiting(state: DriveSyncState) -> bool:

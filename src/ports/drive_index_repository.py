@@ -8,6 +8,10 @@ lease, except `stale_alerted` and `reconnect_notified`, which only the fan-out w
 `update_sync_flags`; `save_sync_state` must leave those two untouched. It also leaves the lease
 (`lease_owner`, `lease_until`) untouched: only `acquire_lease` and `release_lease` write it, so a tick
 that outlived its lease cannot write it back and then release the new holder's.
+Fencing (§7.1): `save_sync_state` and `delete_sync_state` apply atomically and only while `owner` holds the
+stored lease; `owner=None` is a write outside any tick and applies only while no lease holder is stored (a
+missing state counts as one with none). Anything else raises `drive_index.LeaseLost` and writes nothing, so a tick that
+outlived its lease cannot purge or overwrite the state of the tick that took over.
 """
 from abc import ABC, abstractmethod
 from datetime import datetime
@@ -25,8 +29,8 @@ class DriveIndexRepository(ABC):
         """The user's sync state, or None if nothing was ever stored."""
 
     @abstractmethod
-    async def save_sync_state(self, state: DriveSyncState) -> None:
-        """Write the whole state except the fan-out flags and the lease. Callers hold the lease."""
+    async def save_sync_state(self, state: DriveSyncState, owner: Optional[str] = None) -> None:
+        """Write the whole state except the fan-out flags and the lease, fenced by `owner` (LeaseLost)."""
 
     @abstractmethod
     async def update_sync_flags(self, user_id: str, *, stale_alerted: Optional[bool] = None,
@@ -34,8 +38,9 @@ class DriveIndexRepository(ABC):
         """Field-level update of the fan-out's flags; a missing state is left missing."""
 
     @abstractmethod
-    async def delete_sync_state(self, user_id: str) -> None:
-        """Remove the state (end of a purge); the lease goes with it."""
+    async def delete_sync_state(self, user_id: str, owner: Optional[str] = None) -> None:
+        """Remove the state (end of a purge), fenced by `owner` (LeaseLost); the lease goes with it. A missing state
+        is a no-op."""
 
     @abstractmethod
     async def acquire_lease(self, user_id: str, owner: str, now: datetime, until: datetime, *,

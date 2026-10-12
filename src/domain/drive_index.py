@@ -89,6 +89,10 @@ class ErrorCategory(str, Enum):
     INTERNAL = "internal"
 
 
+class LeaseLost(Exception):
+    """A sync-state write by a tick that no longer holds the user's lease (§7.1): refused, nothing written."""
+
+
 def record_key(user_id: str, item_id: str) -> str:
     return f"{user_id}:{item_id}"
 

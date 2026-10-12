@@ -11,7 +11,7 @@ from dataclasses import replace
 from datetime import datetime
 from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
-from ..domain.drive_index import DriveIndexRecord, DriveSyncState, RecordState
+from ..domain.drive_index import DriveIndexRecord, DriveSyncState, LeaseLost, RecordState
 from ..ports.drive_index_repository import DriveIndexRepository
 
 
@@ -20,6 +20,13 @@ def _cosine_distance(a: Sequence[float], b: Sequence[float]) -> float:
     na = math.sqrt(sum(x * x for x in a))
     nb = math.sqrt(sum(y * y for y in b))
     return 1.0 if na == 0 or nb == 0 else 1.0 - dot / (na * nb)
+
+
+def _fence(current: Optional[DriveSyncState], owner: Optional[str], user_id: str) -> None:
+    """The port's fence: the stored lease holder (None for a missing state) must be `owner`."""
+    held = current.lease_owner if current is not None else None
+    if held != owner:
+        raise LeaseLost(f"sync state of {user_id[:8]} is held by {held!r}, not {owner!r}")
 
 
 class InMemoryDriveIndexRepository(DriveIndexRepository):
@@ -34,13 +41,15 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
     async def get_sync_state(self, user_id: str) -> Optional[DriveSyncState]:
         return self.states.get(user_id)
 
-    async def save_sync_state(self, state: DriveSyncState) -> None:
+    async def save_sync_state(self, state: DriveSyncState, owner: Optional[str] = None) -> None:
         """Keeps the stored fan-out flags and the stored lease: only their own methods write them."""
-        current = self.states.get(state.user_id)
-        flags = (current.stale_alerted, current.reconnect_notified) if current else (False, False)
-        lease = (current.lease_owner, current.lease_until) if current else (None, None)
-        self.states[state.user_id] = replace(state, stale_alerted=flags[0], reconnect_notified=flags[1],
-                                             lease_owner=lease[0], lease_until=lease[1])
+        async with self._lock:
+            current = self.states.get(state.user_id)
+            _fence(current, owner, state.user_id)
+            flags = (current.stale_alerted, current.reconnect_notified) if current else (False, False)
+            lease = (current.lease_owner, current.lease_until) if current else (None, None)
+            self.states[state.user_id] = replace(state, stale_alerted=flags[0], reconnect_notified=flags[1],
+                                                 lease_owner=lease[0], lease_until=lease[1])
 
     async def update_sync_flags(self, user_id: str, *, stale_alerted: Optional[bool] = None,
                                 reconnect_notified: Optional[bool] = None) -> None:
@@ -53,8 +62,13 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
             current = replace(current, reconnect_notified=reconnect_notified)
         self.states[user_id] = current
 
-    async def delete_sync_state(self, user_id: str) -> None:
-        self.states.pop(user_id, None)
+    async def delete_sync_state(self, user_id: str, owner: Optional[str] = None) -> None:
+        async with self._lock:
+            current = self.states.get(user_id)
+            if current is None:
+                return
+            _fence(current, owner, user_id)
+            del self.states[user_id]
 
     async def acquire_lease(self, user_id: str, owner: str, now: datetime, until: datetime, *,
                             create: bool) -> Optional[DriveSyncState]:

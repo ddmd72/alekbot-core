@@ -23,8 +23,9 @@ Writes:
     - `save_sync_state` never writes `lease_owner`/`lease_until` either: the lease is taken and released in
       transactions by `acquire_lease`/`release_lease` only (a creating `acquire_lease` writes it with the new
       state). A tick that outlived its lease would otherwise write it back and then release the new holder's.
-    - `delete_sync_state` (a purge) deletes the whole state document, so the lease fields go with it. That delete
-      is not fenced by the lease (an open owner item).
+    - `save_sync_state` and `delete_sync_state` (a purge, the whole document, the lease with it) run in a
+      transaction that reads `lease_owner` first and writes only when it is the caller's `owner` (None for a missing
+      document); otherwise LeaseLost and nothing is written (§7.1 fencing).
 
 Vectors: record queries, `get_records` and `find_nearest_cards` project the record fields, so they never load
 `card_vector`; only `card_vectors` reads it (its purpose). The kNN projection lists `card_distance` as well.
@@ -48,8 +49,8 @@ from google.cloud.firestore_v1.vector import Vector
 
 from ..config.environment import EnvironmentConfig
 from ..domain.drive_index import (
-    ContentClass, DriveIndexRecord, DriveSyncState, EpochPhase, ErrorCategory, Priority, Reason, RecordState, Scope,
-    record_key,
+    ContentClass, DriveIndexRecord, DriveSyncState, EpochPhase, ErrorCategory, LeaseLost, Priority, Reason,
+    RecordState, Scope, record_key,
 )
 from ..domain.drive_index_params import NAME_QUERY_KEYS_MAX, RECORD_WRITE_BATCH
 from ..ports.drive_index_repository import DriveIndexRepository
@@ -146,6 +147,19 @@ def _chunks(items: Sequence[Any], size: int = RECORD_WRITE_BATCH) -> List[Sequen
     return [items[i:i + size] for i in range(0, len(items), size)]
 
 
+async def _fence(ref: Any, transaction: Any, owner: Optional[str], user_id: str, *,
+                 missing_ok: bool = False) -> bool:
+    """Read the stored lease holder in the transaction; raise LeaseLost unless it is `owner` (None for a missing
+    document, or any owner with `missing_ok`). Returns whether the document exists."""
+    snap = await ref.get(transaction=transaction)
+    if not snap.exists and missing_ok:
+        return False
+    held = (snap.to_dict() or {}).get("lease_owner") if snap.exists else None
+    if held != owner:
+        raise LeaseLost(f"sync state of {user_id[:8]} is held by {held!r}, not {owner!r}")
+    return bool(snap.exists)
+
+
 # -- the adapter ----------------------------------------------------------------------------------
 
 class FirestoreDriveIndexRepository(DriveIndexRepository):
@@ -162,10 +176,17 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
         snap = await self._states.document(user_id).get()
         return state_from_doc(user_id, snap.to_dict()) if snap.exists else None
 
-    async def save_sync_state(self, state: DriveSyncState) -> None:
+    async def save_sync_state(self, state: DriveSyncState, owner: Optional[str] = None) -> None:
         doc = state_to_doc(state)
-        await self._states.document(state.user_id).set({name: doc[name] for name in STATE_FIELDS},
-                                                       merge=list(STATE_FIELDS))
+        data = {name: doc[name] for name in STATE_FIELDS}
+        ref = self._states.document(state.user_id)
+
+        @firestore.async_transactional
+        async def _save(transaction: Any) -> None:
+            await _fence(ref, transaction, owner, state.user_id)
+            transaction.set(ref, data, merge=list(STATE_FIELDS))
+
+        await _save(self._db.transaction())
 
     async def update_sync_flags(self, user_id: str, *, stale_alerted: Optional[bool] = None,
                                 reconnect_notified: Optional[bool] = None) -> None:
@@ -181,8 +202,15 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
         except NotFound:
             logger.debug(f"[DriveIndex] no sync state for {user_id[:8]}; flags {sorted(changes)} not written")
 
-    async def delete_sync_state(self, user_id: str) -> None:
-        await self._states.document(user_id).delete()
+    async def delete_sync_state(self, user_id: str, owner: Optional[str] = None) -> None:
+        ref = self._states.document(user_id)
+
+        @firestore.async_transactional
+        async def _delete(transaction: Any) -> None:
+            if await _fence(ref, transaction, owner, user_id, missing_ok=True):
+                transaction.delete(ref)
+
+        await _delete(self._db.transaction())
 
     async def acquire_lease(self, user_id: str, owner: str, now: datetime, until: datetime, *,
                             create: bool) -> Optional[DriveSyncState]:
