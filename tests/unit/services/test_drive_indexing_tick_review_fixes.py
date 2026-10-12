@@ -1,0 +1,283 @@
+"""Review fixes R2 of the tick (retro_tick.md F1, F2, F3, F6) and the two RFC behaviours it found unpinned (F8a, F8b)."""
+from dataclasses import replace
+
+import aiohttp
+import pytest
+
+from src.domain import drive_card
+from src.domain import drive_index_planner as planner
+from src.domain.drive_index import ErrorCategory, Nudge, Priority, Reason, RecordState
+from src.domain.user_drive import (
+    DriveAccessDenied, DriveConnection, DriveNotConnectedError, DriveReauthRequired, DriveThrottled,
+)
+from src.services import drive_indexing_service as svc_mod
+
+from .test_drive_indexing_service import World
+
+
+class _Runaway(BaseException):
+    """Escapes the tick's catch-all, so a loop that never ends fails the test instead of hanging it."""
+
+
+def _fail_on_call(w, n_fail, exc):
+    """`get_changes` raises `exc` on its n-th call (counted across ticks)."""
+    orig = w.drive.get_changes
+    calls = {"n": 0}
+
+    async def flaky(user_id, cursor):
+        calls["n"] += 1
+        if calls["n"] == n_fail:
+            raise exc
+        return await orig(user_id, cursor)
+
+    w.drive.get_changes = flaky
+
+
+class TestSystemicErrorKeepsObserveProgress:
+    """F1: a systemic error mid-observe must not roll back the cursor/epoch observe saved page by page."""
+
+    @pytest.mark.parametrize("exc, status, category", [
+        (DriveThrottled(retry_after_s=30), "throttled", ErrorCategory.THROTTLED),
+        (DriveReauthRequired("refresh rejected"), "access_lost", ErrorCategory.RECONNECT_NEEDED),
+        (ValueError("graph 5xx"), "error", ErrorCategory.PROVIDER_ERROR),
+    ])
+    async def test_error_on_page_three_keeps_page_progress(self, exc, status, category):
+        w = World(page_size=5)
+        for i in range(40):
+            w.drive.add(f"f{i}.pdf")
+        _fail_on_call(w, 3, exc)
+        assert (await w.tick()).status == status
+        st = await w.repo.get_sync_state("u")
+        assert st.cursor == "full:10", st.cursor
+        assert st.epoch == 1
+        assert st.last_error is category
+
+    async def test_throttle_still_counts_the_failure_and_marks_the_continuation(self):
+        w = World(page_size=5)
+        for i in range(40):
+            w.drive.add(f"f{i}.pdf")
+        _fail_on_call(w, 3, DriveThrottled(retry_after_s=30))
+        await w.tick()
+        st = await w.repo.get_sync_state("u")
+        assert st.systemic_failures == 1 and st.continuation_enqueued_at == w.clock.now
+
+    async def test_onboarding_liveness_under_periodic_throttling(self):
+        """Graph throttles every 4th page call: onboarding still finishes."""
+        w = World(page_size=5)
+        for i in range(60):
+            w.drive.add(f"f{i}.pdf")
+        orig = w.drive.get_changes
+        calls = {"n": 0}
+
+        async def throttle_fourth(user_id, cursor):
+            calls["n"] += 1
+            if calls["n"] % 4 == 0:
+                raise DriveThrottled(retry_after_s=1)
+            return await orig(user_id, cursor)
+
+        w.drive.get_changes = throttle_fourth
+        for _ in range(40):
+            await w.tick()
+            w.clock.advance(5)
+        st = await w.repo.get_sync_state("u")
+        assert st.initial_enumeration_done, (st.cursor, st.epoch_phase)
+
+
+def _photos_world():
+    """A settled folder of 10 that grows to 610 and is renamed: the feed re-emits it and a probe is needed."""
+    w = World(page_size=1000)
+    top = w.drive.add("Photos", folder=True)
+    for i in range(10):
+        w.drive.add(f"p{i}.jpg", parent=top)
+    return w, top
+
+
+class TestSystemicErrorInsideInlineProbe:
+    """F2: the inline density probe's errors are classified, not charged to the item."""
+
+    async def test_disconnect_during_inline_probe_does_not_lose_the_observation(self):
+        w, top = _photos_world()
+        await w.settle()
+        for i in range(10, 610):
+            w.drive.add(f"p{i}.jpg", parent=top)
+        w.drive.rename(top, "Holiday")
+        orig = w.drive.list_children_changes
+        fired = {"n": 0}
+
+        async def gone_once(user_id, folder_id, limit, cursor=None):
+            if not fired["n"]:
+                fired["n"] = 1
+                raise DriveNotConnectedError("credentials removed mid-tick")
+            return await orig(user_id, folder_id, limit, cursor)
+
+        w.drive.list_children_changes = gone_once
+        first = await w.tick()
+        assert first.status == "error" and "skipped" not in first.summary
+        assert w.rec(top).name == "Photos"   # the page was not applied: its cursor did not move
+        w.clock.advance(3600)
+        await w.settle(max_ticks=100)
+        assert w.rec(top).name == "Holiday"
+        assert w.rec(top).child_count == 610
+
+    async def test_throttle_during_inline_probe_ends_the_tick(self):
+        w, top = _photos_world()
+        await w.settle()
+        for i in range(10, 610):
+            w.drive.add(f"p{i}.jpg", parent=top)
+        w.drive.rename(top, "Holiday")
+
+        async def throttled(user_id, folder_id, limit, cursor=None):
+            raise DriveThrottled(retry_after_s=30)
+
+        w.drive.list_children_changes = throttled
+        res = await w.tick()
+        assert res.status == "throttled" and "skipped" not in res.summary
+
+    async def test_transport_error_during_inline_probe_leaves_the_folder_probe_pending(self):
+        w, top = _photos_world()
+        await w.settle()
+        for i in range(10, 610):
+            w.drive.add(f"p{i}.jpg", parent=top)
+        w.drive.rename(top, "Holiday")
+
+        async def disconnected(user_id, folder_id, limit, cursor=None):
+            raise aiohttp.ServerDisconnectedError()
+
+        w.drive.list_children_changes = disconnected
+        res = await w.tick()
+        assert "skipped" not in res.summary
+        rec = w.rec(top)
+        assert rec.name == "Holiday" and rec.probe_pending
+
+
+class TestNudgedItemsAreClassZero:
+    """F3: items named in a nudge are class 0 (§7.8), even when first seen."""
+
+    async def test_nudged_new_file_is_class_zero(self):
+        w = World()
+        await w.settle()
+        item = w.drive.add("note.md")
+        w.drive.log.pop()   # delta has not caught up yet
+
+        async def no_work(user_id, state, now, budget, summary):
+            return state
+
+        w.svc._work_off = no_work
+        await w.tick(Nudge("m2", (item,)))
+        assert w.rec(item).priority == int(Priority.EDIT)
+
+    async def test_file_first_seen_through_delta_stays_class_two(self):
+        w = World()
+        await w.settle()
+        item = w.drive.add("note.md")
+
+        async def no_work(user_id, state, now, budget, summary):
+            return state
+
+        w.svc._work_off = no_work
+        await w.tick()
+        assert w.rec(item).priority == int(Priority.FIRST_SEEN)
+
+
+class TestUpgradePassDoesNotSpin:
+    """F6: a pass that restarts because its stale records cannot be worked yet must not chain zero-delay ticks."""
+
+    async def test_card_bump_with_a_backed_off_stale_record_does_not_spin(self, monkeypatch):
+        """A reopened repository's re-listing keeps failing, so the folder backs off (due later) while it still
+        carries a card of the old CARD_VERSION. Every pass finds it stale and restarts, and nothing is due now:
+        no continuation may follow until its backoff ends."""
+        w = World()
+        site = w.drive.add("site", folder=True)
+        for i in range(3):
+            w.drive.add(f"a{i}.py", parent=site)
+        git = w.drive.add(".git", parent=site, folder=True)
+        w.drive.add("doc.pdf")
+        await w.settle()
+        assert site in w.carded()
+
+        async def denied(user_id, folder_id, limit, cursor=None):
+            raise DriveAccessDenied("listing refused")
+
+        w.drive.list_children_changes = denied
+        w.drive.delete(git)
+        await w.settle()
+        assert w.rec(site).reobserve_pending and w.rec(site).due_at > w.clock.now
+        monkeypatch.setattr(drive_card, "CARD_VERSION", 2)
+        monkeypatch.setattr(planner, "CARD_VERSION", 2)
+        monkeypatch.setattr(svc_mod, "CURRENT_VERSIONS", {"policy": 1, "card": 2, "geo_table": 1})
+        zero_delay_chain = 0
+        longest = 0
+        for _ in range(30):
+            before = len(w.queue.tasks)
+            await w.tick()
+            conts = [t for t in w.queue.tasks[before:] if ":cont:" in (t["key"] or "")]
+            if not conts:
+                break
+            delay = max(t["delay"] for t in conts)
+            zero_delay_chain = zero_delay_chain + 1 if delay == 0 else 0
+            longest = max(longest, zero_delay_chain)
+            w.clock.advance(max(1, delay))
+        else:
+            pytest.fail("the continuation chain never ended")
+        assert longest < 5, longest
+
+    async def test_only_a_pass_mid_way_continues_on_versions_alone(self, monkeypatch):
+        """With nothing due, a version difference continues the tick only while a pass is mid-way."""
+        w = World()
+        for i in range(5):
+            w.drive.add(f"f{i}.pdf")
+        await w.settle()
+        monkeypatch.setattr(svc_mod, "CURRENT_VERSIONS", {"policy": 1, "card": 1, "geo_table": 2})
+        st = await w.repo.get_sync_state("u")
+        assert await w.svc._has_more("u", replace(st, upgrade_cursor="i00003"), w.clock.now)
+        assert not await w.svc._has_more("u", replace(st, upgrade_cursor=None), w.clock.now)
+
+
+class TestRfcBehaviourPinned:
+    """F8 (a), (b): required behaviour that no test pinned."""
+
+    async def test_page_from_another_drive_purges_and_onboards(self):
+        """§7.1 step 1: credentials carry no drive id, so only the page's drive_id reveals the switch."""
+        w = World()
+        a = w.drive.add("a.pdf")
+        await w.settle()
+        w.drive.connection_state = DriveConnection(connected=True, drive_id="")
+        orig = w.drive.get_changes
+
+        async def other_drive(user_id, cursor):
+            return replace(await orig(user_id, cursor), drive_id="d2")
+
+        w.drive.get_changes = other_drive
+        res = await w.tick()
+        assert res.status == "purged" and w.repo.records == {}
+        await w.settle()
+        st = await w.repo.get_sync_state("u")
+        assert st.drive_id == "d2" and w.rec(a) is not None
+
+    async def test_probe_budget_spent_children_held_unresolved_then_resolved(self, monkeypatch):
+        """§3.6: one item call per tick for two dense folders. The second waits probe_pending and its children
+        are held unresolved, never looped over; both end DENSE_TREE with no child records."""
+        monkeypatch.setattr(svc_mod, "ITEM_CALLS_PER_TICK", 1)
+        w = World(page_size=2000)
+        big = [w.drive.add(f"big{j}", folder=True) for j in range(2)]
+        for j, b in enumerate(big):
+            for i in range(510):
+                w.drive.add(f"p{j}_{i}.bin", parent=b)
+        orig_due = w.repo.due_records
+        calls = {"n": 0}
+
+        async def bounded_due(user_id, now, limit):
+            calls["n"] += 1
+            if calls["n"] > 500:   # the real path needs a few dozen at most
+                raise _Runaway("due loop never ended")
+            return await orig_due(user_id, now, limit)
+
+        w.repo.due_records = bounded_due
+        await w.tick()
+        held = [r for r in w.repo.records.values() if r.parent_id in big and r.state is RecordState.UNRESOLVED]
+        pending = [b for b in big if w.rec(b).probe_pending]
+        assert pending, "the probe budget was not spent on the first tick"
+        assert held and all(r.due_at is None for r in held if r.parent_id in pending)
+        await w.settle(max_ticks=100)
+        assert all(w.rec(b).reason is Reason.DENSE_TREE for b in big)
+        assert sum(1 for r in w.repo.records.values() if r.parent_id in big) == 0

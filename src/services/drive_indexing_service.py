@@ -38,7 +38,8 @@ from ..domain.drive_index_policy import is_marker_child, probe_from_children
 from ..domain.drive_task_keys import DRIVE_SYNC_TASK, continuation_key, nudge_key, tick_payload
 from ..domain.exceptions import LLMRateLimitError, LLMUnavailableError
 from ..domain.user_drive import (
-    DriveAccessDenied, DriveItemNotFoundError, DriveReauthRequired, DriveResyncRequired, DriveThrottled,
+    DriveAccessDenied, DriveItemNotFoundError, DriveNotConnectedError, DriveReauthRequired, DriveResyncRequired,
+    DriveThrottled,
 )
 from ..ports.drive_index_repository import DriveIndexRepository
 from ..ports.embedding_service import EmbeddingService
@@ -66,6 +67,13 @@ class _OptedOut(Exception):
 
 class _DriveSwitched(Exception):
     """A page came from another drive than the stored one (§7.1 step 1): purge and start fresh."""
+
+
+@dataclass
+class _Saved:
+    """The sync state as last written during this tick. A systemic error writes its fields onto this, never
+    onto the tick-start copy, so the cursor and epoch observe already saved survive (retro_tick F1)."""
+    state: DriveSyncState
 
 
 @dataclass
@@ -152,10 +160,11 @@ class DriveIndexingService:
         budget = _Budget(started=self._monotonic(), monotonic=self._monotonic)
         self._gate_checked[user_id] = budget.started   # the gate just read the flag
         state = replace(state, continuation_enqueued_at=None)
+        saved = _Saved(state)
         try:
             if nudge is not None:
                 await self._observe_nudge(user_id, state, nudge, now, budget, summary)
-            state = await self._observe(user_id, state, now, budget, summary)
+            state = await self._observe(user_id, state, now, budget, summary, saved)
             if state.round_complete:
                 state = await self._work_off(user_id, state, now, budget, summary)
             more = await self._has_more(user_id, state, now)
@@ -179,13 +188,13 @@ class DriveIndexingService:
         except DriveReauthRequired:
             flagged = await self._drive.flag_reconnect(user_id)
             logger.warning(f"[DriveIndex] refresh rejected for {user_id[:8]} (flag set now: {flagged})")
-            await self._repo.save_sync_state(replace(state, last_error=ErrorCategory.RECONNECT_NEEDED))
+            await self._repo.save_sync_state(replace(saved.state, last_error=ErrorCategory.RECONNECT_NEEDED))
             return TickResult("access_lost", summary)
         except (DriveThrottled, LLMRateLimitError, LLMUnavailableError) as exc:
             delay = int(exc.retry_after_s) if isinstance(exc, DriveThrottled) else _backoff_s(state.systemic_failures)
             logger.warning(f"[DriveIndex] throttled for {user_id[:8]}: {exc}; continuing in {delay}s")
             await self._continue(user_id, tick_id, delay_seconds=delay)
-            await self._repo.save_sync_state(replace(state, last_error=ErrorCategory.THROTTLED,
+            await self._repo.save_sync_state(replace(saved.state, last_error=ErrorCategory.THROTTLED,
                                                      continuation_enqueued_at=now,
                                                      systemic_failures=state.systemic_failures + 1))
             return TickResult("throttled", summary)
@@ -195,7 +204,7 @@ class DriveIndexingService:
             delay = _backoff_s(state.systemic_failures)
             logger.error(f"[DriveIndex] tick failed for {user_id[:8]}: {exc}; continuing in {delay}s", exc_info=True)
             await self._continue(user_id, tick_id, delay_seconds=delay)
-            await self._repo.save_sync_state(replace(state, last_error=category, continuation_enqueued_at=now,
+            await self._repo.save_sync_state(replace(saved.state, last_error=category, continuation_enqueued_at=now,
                                                      systemic_failures=state.systemic_failures + 1))
             return TickResult("error", summary)
 
@@ -215,10 +224,10 @@ class DriveIndexingService:
             except _PER_ITEM_ERRORS as exc:
                 logger.warning(f"[DriveIndex] nudge read failed for {user_id[:8]}: {exc}")
         if changes:
-            await self._apply(user_id, self._ctx(user_id, state, now), changes, budget, summary)
+            await self._apply(user_id, self._ctx(user_id, state, now), changes, budget, summary, nudged=True)
 
     async def _observe(self, user_id: str, state: DriveSyncState, now: datetime, budget: _Budget,
-                       summary: Dict[str, int]) -> DriveSyncState:
+                       summary: Dict[str, int], saved: _Saved) -> DriveSyncState:
         if state.round_complete or state.round_started_at is None:
             state = replace(state, round_complete=False, round_started_at=now)
         resynced = False
@@ -233,6 +242,7 @@ class DriveIndexingService:
                 state = replace(state, cursor=exc.restart_cursor, epoch=state.epoch + 1,
                                 epoch_phase=EpochPhase.ENUMERATING, round_complete=False, round_started_at=now)
                 await self._repo.save_sync_state(state)
+                saved.state = state
                 continue
             if state.drive_id and page.drive_id and page.drive_id != state.drive_id:
                 raise _DriveSwitched()
@@ -244,6 +254,7 @@ class DriveIndexingService:
                 phase = EpochPhase.SWEEPING if state.epoch_phase is EpochPhase.ENUMERATING else state.epoch_phase
                 state = replace(state, round_complete=True, observed_as_of=state.round_started_at, epoch_phase=phase)
             await self._repo.save_sync_state(state)   # the cursor is the page's progress marker: written last
+            saved.state = state
             summary["pages"] = summary.get("pages", 0) + 1
             if page.complete:
                 break
@@ -260,11 +271,12 @@ class DriveIndexingService:
                            phase=state.epoch_phase, now=now, place_of=self._place_of)
 
     async def _apply(self, user_id: str, ctx: PlanContext, changes: Sequence[DriveChange], budget: _Budget,
-                     summary: Dict[str, int], *, relisting: bool = False) -> None:
+                     summary: Dict[str, int], *, relisting: bool = False, nudged: bool = False) -> None:
         """Apply observations in feed order against an in-page view; one write batch at the end.
 
         `relisting`: the changes are a re-listing of a never-stored subtree, so every new normal folder
-        among them needs its own re-listing (§5.2)."""
+        among them needs its own re-listing (§5.2). `nudged`: the items are named in a nudge, so a card
+        they are due for is class 0 even when first seen (§7.8)."""
         ids = [c.item_id for c in changes]
         cache: Dict[str, Optional[DriveIndexRecord]] = dict(await self._repo.get_records(user_id, ids))
         parent_ids = {c.parent_id for c in changes if c.parent_id} | {
@@ -280,7 +292,9 @@ class DriveIndexingService:
                 previous_parent = cache.get(existing.parent_id) if existing is not None else None
                 probe = await self._maybe_probe(user_id, change, parent, existing, ctx, budget)
                 plan = plan_observation(change, existing, parent, probe, ctx, previous_parent)
-            except DriveThrottled:
+            except (DriveNotConnectedError, DriveThrottled, _OptedOut) as exc:   # systemic: ends the tick (§8.2)
+                logger.warning(f"[DriveIndex] observation of item {change.item_id} hit a systemic error for "
+                               f"{user_id[:8]}: {type(exc).__name__}; the page is not applied")
                 raise
             except Exception as exc:   # one bad item never stalls the user's index (§8.2)
                 logger.error(f"[DriveIndex] observation of item {change.item_id} failed for {user_id[:8]}: {exc}",
@@ -291,6 +305,9 @@ class DriveIndexingService:
                     and plan.upsert.scope is Scope.NORMAL):
                 plan = replace(plan, upsert=schedule(replace(plan.upsert, reobserve_pending=True), ctx.now,
                                                      first_seen=True))
+            if (nudged and plan.upsert is not None and plan.upsert.due_at is not None
+                    and card_eligible(plan.upsert) and plan.upsert.card_hash != card_hash(plan.upsert)):
+                plan = replace(plan, upsert=schedule(plan.upsert, ctx.now, first_seen=False))
             self._fold(plan, cache, writes, deletes)
         await self._commit(user_id, list(writes.values()), deletes)
         summary["observed"] = summary.get("observed", 0) + len(changes)
@@ -325,6 +342,12 @@ class DriveIndexingService:
             page = await self._drive.list_children_changes(user_id, folder_id, limit=PROBE_CHILDREN)
         except _PER_ITEM_ERRORS as exc:
             logger.warning(f"[DriveIndex] density probe failed for {user_id[:8]}: {exc}")
+            return None
+        except (DriveNotConnectedError, DriveThrottled) as exc:
+            logger.warning(f"[DriveIndex] density probe hit a systemic error for {user_id[:8]}: {type(exc).__name__}")
+            raise   # the caller ends the tick
+        except Exception as exc:   # any other provider failure is a failed probe: the folder waits (retro_tick F2)
+            logger.warning(f"[DriveIndex] density probe failed for {user_id[:8]}: {type(exc).__name__}: {exc}")
             return None
         return probe_from_children(page.changes)
 
@@ -690,8 +713,8 @@ class DriveIndexingService:
     async def _has_more(self, user_id: str, state: DriveSyncState, now: datetime) -> bool:
         if not state.round_complete or state.epoch_phase is EpochPhase.SWEEPING:
             return True
-        if dict(state.applied_versions) != dict(CURRENT_VERSIONS):
-            return True
+        if dict(state.applied_versions) != dict(CURRENT_VERSIONS) and state.upgrade_cursor is not None:
+            return True   # a pass is mid-way; a restarted pass waits for due work or the fan-out (retro_tick F6)
         return bool(await self._repo.due_records(user_id, now, 1))   # backed-off work waits for its due_at
 
     async def _continue(self, user_id: str, tick_id: str, delay_seconds: int = 0) -> None:
