@@ -229,7 +229,7 @@ async def run_eval(tree_path: Path, gold_path: Path, bars_path: Path, report_pat
                                   max_ticks=max_ticks, throttle_pause_s=throttle_pause_s)
     if not indexed.records.get("carded"):
         raise EvalError("the index settled with no card; nothing to measure")
-    search = DriveSearchService(repo, embeddings, _EnabledUsers(), drive, clock=clock)
+    search = DriveSearchService(repo, embeddings, _EnabledUsers(), drive, clock=clock, embedding_space=embedding_space)
     run = await run_cases(search, drive, gold)
     table = recall(run.outcomes)
     now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")

@@ -193,6 +193,7 @@ class ServiceContainer:
             self.drive_search_service = DriveSearchService(
                 repo=self.drive_index_repo, embeddings=self.embedding_service,
                 users=FirestoreUserRepository(db_client, env_config, account_repo), drive=self.user_drive,
+                embedding_space=GeminiEmbeddingAdapter.EMBEDDING_SPACE,
             )
 
         self.notes_adapter = FirestoreAgentNoteAdapter(db_client, env_config)

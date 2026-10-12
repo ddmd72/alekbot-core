@@ -133,6 +133,7 @@ class DriveSearchEnvelope:
     enabled: bool = True
     content_search: bool = False         # Slice 1: names and metadata only
     building: bool = False
+    refreshing: bool = False             # cards are in another embedding space: names and filters only (§12.3)
     reconnect_needed: bool = False
     index_as_of: Optional[datetime] = None
     unread: int = 0
@@ -422,6 +423,9 @@ def _envelope_lines(result: DriveSearchResult) -> List[str]:
     if env.building:
         lines.append("The index is still being built: do not say a file does not exist; say the index is "
                      "not complete yet and offer to list the folder.")
+    if env.refreshing:
+        lines.append("The index is being refreshed for a new search model: this search matched file and folder "
+                     "names and filters only, not their meaning, so a file named in other words may be missed.")
     if not env.content_search:
         lines.append("Only file and folder names and metadata (type, dates, photo details, place) were "
                      "searched, not what the files contain.")

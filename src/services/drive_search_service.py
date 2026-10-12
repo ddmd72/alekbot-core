@@ -8,7 +8,7 @@ query first (Δ17) -> widen once -> collapse duplicates -> top K with the covera
 no I/O is in `src/domain/drive_search.py`; this class reads and calls it.
 
 Public interface:
-    DriveSearchService(repo, embeddings, users, drive, *, clock, nonce, monotonic)
+    DriveSearchService(repo, embeddings, users, drive, *, clock, nonce, monotonic, embedding_space)
     await search(user_id, request) -> DriveSearchResult
     await indexing_status(user_id) -> DriveIndexingStatus     # Cabinet (§6)
 """
@@ -114,7 +114,10 @@ class _Folder:
 class DriveSearchService:
     def __init__(self, repo: DriveIndexRepository, embeddings: EmbeddingService, users: UserRepository,
                  drive: UserDrivePort, *, clock: Callable[[], datetime] = _utcnow,
-                 nonce: Callable[[], str] = _nonce, monotonic: Callable[[], float] = time.monotonic) -> None:
+                 nonce: Callable[[], str] = _nonce, monotonic: Callable[[], float] = time.monotonic,
+                 embedding_space: Optional[str] = None) -> None:
+        """`embedding_space` is the space query vectors are embedded in (the adapter's EMBEDDING_SPACE). The
+        card stream runs only while the index's cards are in it (§12.3); None does not check."""
         self._repo = repo
         self._embeddings = embeddings
         self._users = users
@@ -122,6 +125,7 @@ class DriveSearchService:
         self._clock = clock
         self._nonce = nonce
         self._monotonic = monotonic
+        self._space = embedding_space
 
     # ------------------------------------------------------------------------------------------
     # Search
@@ -155,11 +159,12 @@ class DriveSearchService:
             envelope = DriveSearchEnvelope(building=True, reconnect_needed=gate.reconnect_needed)
             return DriveSearchResult(status=STATUS_OK, envelope=envelope, request=request,
                                      matched_total=0 if request.filter_only else None)
-        envelope, result = await asyncio.gather(self._envelope(user_id, state, gate.reconnect_needed),
-                                                self._body(user_id, request, state, stats))
+        use_cards = self._space is None or state.cards_in_space(self._space)
+        envelope, result = await asyncio.gather(self._envelope(user_id, state, gate.reconnect_needed, use_cards),
+                                                self._body(user_id, request, state, use_cards, stats))
         return replace(result, envelope=envelope)
 
-    async def _body(self, user_id: str, request: DriveSearchRequest, state: DriveSyncState,
+    async def _body(self, user_id: str, request: DriveSearchRequest, state: DriveSyncState, use_cards: bool,
                     stats: _Stats) -> DriveSearchResult:
         kinds = kinds_for(request.kind)
         ancestry = _Ancestry(self._repo, user_id, state.root_item_id)
@@ -176,14 +181,15 @@ class DriveSearchService:
             subtree, complete = await self._walk(user_id, folder.record)
             if complete:
                 stats.scope = "folder-memory"
-                return await self._in_memory(user_id, request, kinds, folder, subtree, ancestry, stats)
+                return await self._in_memory(user_id, request, kinds, folder, subtree, ancestry, use_cards, stats)
             stats.scope = "folder-wide"
         if request.filter_only:
             return await self._filter_only(user_id, request, kinds, folder, ancestry, stats)
-        return await self._ranked(user_id, request, kinds, folder, ancestry, stats)
+        return await self._ranked(user_id, request, kinds, folder, ancestry, use_cards, stats)
 
     async def _ranked(self, user_id: str, request: DriveSearchRequest, kinds: FrozenSet[str],
-                      folder: Optional[_Folder], ancestry: _Ancestry, stats: _Stats) -> DriveSearchResult:
+                      folder: Optional[_Folder], ancestry: _Ancestry, use_cards: bool,
+                      stats: _Stats) -> DriveSearchResult:
         keys = query_name_keys(request.query)
         members: List[Optional[str]] = list(sorted(kinds)) or [None]   # a family: one card kNN per member kind
         name_kind = members[0] if len(members) == 1 else None          # names: a family is a post-filter (Δ20)
@@ -191,7 +197,7 @@ class DriveSearchService:
         card_fetch, name_fetch = CARD_FETCH, NAME_FETCH
         while True:
             (vector, nearest, card_full), (named, name_full) = await asyncio.gather(
-                self._nearest(user_id, request.query, vector, card_fetch, members),
+                self._nearest(user_id, request.query, vector, card_fetch, members, use_cards),
                 self._name_candidates(user_id, keys, name_fetch, name_kind, stats))
             stats.card, stats.name = len(nearest), len(named)
             scores = {r.item_id: s for r in named if (s := name_match(r.name_tokens, keys)) is not None}
@@ -234,7 +240,7 @@ class DriveSearchService:
                                  folder_path=folder.path if folder else None)
 
     async def _in_memory(self, user_id: str, request: DriveSearchRequest, kinds: FrozenSet[str],
-                         folder: _Folder, subtree: List[DriveIndexRecord], ancestry: _Ancestry,
+                         folder: _Folder, subtree: List[DriveIndexRecord], ancestry: _Ancestry, use_cards: bool,
                          stats: _Stats) -> DriveSearchResult:
         """A folder whose subtree fits FOLDER_INMEM_CARDS: rank its cards in memory (§10.1 Folder)."""
         ancestry.seed(subtree)
@@ -246,11 +252,13 @@ class DriveSearchService:
             stats.fused = len(kept)
             return DriveSearchResult(status=STATUS_OK, cards=self._cards(kept, paths, stats), request=request,
                                      matched_total=len(kept), folder_path=folder.path)
-        vector, vectors = await asyncio.gather(
-            self._embeddings.get_embedding(request.query, task_type="RETRIEVAL_QUERY"),
-            self._repo.card_vectors(user_id, [r.item_id for r in pool if r.has_card]))
-        by_distance = sorted((r for r in pool if r.item_id in vectors),
-                             key=lambda r: (cosine_distance(vector, vectors[r.item_id]), r.item_id))
+        by_distance: List[DriveIndexRecord] = []
+        if use_cards:
+            vector, vectors = await asyncio.gather(
+                self._embeddings.get_embedding(request.query, task_type="RETRIEVAL_QUERY"),
+                self._repo.card_vectors(user_id, [r.item_id for r in pool if r.has_card]))
+            by_distance = sorted((r for r in pool if r.item_id in vectors),
+                                 key=lambda r: (cosine_distance(vector, vectors[r.item_id]), r.item_id))
         keys = query_name_keys(request.query)
         scores = {r.item_id: s for r in pool if (s := name_match(r.name_tokens, keys)) is not None}
         stats.name, stats.name_kept = len(pool), len(scores)
@@ -265,9 +273,12 @@ class DriveSearchService:
     # ------------------------------------------------------------------------------------------
 
     async def _nearest(self, user_id: str, query: str, vector: Optional[List[float]], limit: int,
-                       kinds: Sequence[Optional[str]]) -> Tuple[List[float], List[DriveIndexRecord], bool]:
+                       kinds: Sequence[Optional[str]],
+                       use_cards: bool) -> Tuple[Optional[List[float]], List[DriveIndexRecord], bool]:
         """Card kNN (§10.1 step 2), one per kind, merged nearest first; the query is embedded once per search
-        (step 1). Returns (vector, records, any page full)."""
+        (step 1). Off while the cards are in another embedding space. Returns (vector, records, any page full)."""
+        if not use_cards:
+            return None, [], False
         if vector is None:
             vector = await self._embeddings.get_embedding(query, task_type="RETRIEVAL_QUERY")
         pages = await asyncio.gather(*(self._repo.find_nearest_cards(user_id, vector, limit, k) for k in kinds))
@@ -495,9 +506,11 @@ class DriveSearchService:
     # Envelope and status
     # ------------------------------------------------------------------------------------------
 
-    async def _envelope(self, user_id: str, state: DriveSyncState, reconnect_needed: bool) -> DriveSearchEnvelope:
+    async def _envelope(self, user_id: str, state: DriveSyncState, reconnect_needed: bool,
+                        use_cards: bool) -> DriveSearchEnvelope:
         return DriveSearchEnvelope(
             building=await self._building(user_id, state), reconnect_needed=reconnect_needed,
+            refreshing=not use_cards,
             index_as_of=state.observed_as_of, unread=int(state.counters.get(UNREAD_COUNTER, 0)),
             index_full=int(state.counters.get("carded", 0)) >= MAX_CARD_RECORDS_PER_USER,
         )
