@@ -6,7 +6,7 @@ from pathlib import Path
 
 _DIR = Path(__file__).resolve().parents[2] / "fixtures" / "drive_eval"
 _CASE_TYPES = {"exact", "partial", "translit", "misspelled", "kind", "date", "place", "folder", "filter_only",
-               "version_family"}
+               "version_family", "semantic"}
 # Per-format kinds of the policy (§5.1) and the drive-kind families of plan Δ20.
 _KINDS = {"pdf", "docx", "doc", "pptx", "ppt", "xlsx", "xls", "odt", "ods", "odp", "csv", "markdown", "text",
           "html", "image", "audio", "video", "archive", "code",
@@ -52,7 +52,7 @@ def test_gold_cases_are_well_formed():
     assert len(ids) == len(set(ids))
     for c in gold:
         assert c["case"] in _CASE_TYPES, c["id"]
-        assert c["goal"] == "G1" and c["lang"] in {"en", "ru", "uk", "es"}, c["id"]
+        assert c["goal"] == "G1" and c["lang"] in {"en", "ru", "uk", "es", "fr"}, c["id"]
         assert c["expected_paths"] and len(set(c["expected_paths"])) == len(c["expected_paths"]), c["id"]
         assert set(c["filters"]) <= {"kind", "date_from", "date_to", "folder"}, c["id"]
         assert c["filters"].get("kind") in _KINDS | {None}, c["id"]
