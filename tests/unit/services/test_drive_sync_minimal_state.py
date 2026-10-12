@@ -1,6 +1,8 @@
 """The fan-out gives every enabled user a sync state (USER_DRIVE_INDEXING_RFC §7.1, §12.1): a minimal one, created only
 if none exists, dated by the fan-out. Staleness then covers a user whose ticks never land (indexer unreachable,
 401/404/503), and the tick, search and the Cabinet treat that state exactly like no state yet."""
+import pytest
+
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.domain.drive_index import CURRENT_VERSIONS, DriveSyncState, EpochPhase
 from src.domain.drive_index_params import STALE_ALERT_AFTER
@@ -9,34 +11,39 @@ from src.services.drive_search_service import DriveSearchService
 
 from .drive_index_fakes import ROOT, T0
 from .test_drive_indexing_service import World
-from .test_drive_sync_scheduler_service import env  # noqa: F401  (fixture)
+from .test_drive_sync_scheduler_service import env  # noqa: F401  (the scheduler test environment)
 
 
-async def test_an_enabled_user_without_a_state_gets_a_minimal_one(env):
-    await env.svc.fan_out()
-    state = await env.repo.get_sync_state("u")
-    assert state == DriveSyncState(user_id="u", created_at=env.clock.now)
+@pytest.fixture
+def fan(env):  # noqa: F811
+    return env
 
 
-async def test_an_existing_state_is_never_replaced(env):
-    await env.repo.save_sync_state(DriveSyncState(user_id="u", epoch=4, cursor="c", created_at=T0))
-    env.clock.advance(3600)
-    await env.svc.fan_out()
-    state = await env.repo.get_sync_state("u")
+async def test_an_enabled_user_without_a_state_gets_a_minimal_one(fan):
+    await fan.svc.fan_out()
+    state = await fan.repo.get_sync_state("u")
+    assert state == DriveSyncState(user_id="u", created_at=fan.clock.now)
+
+
+async def test_an_existing_state_is_never_replaced(fan):
+    await fan.repo.save_sync_state(DriveSyncState(user_id="u", epoch=4, cursor="c", created_at=T0))
+    fan.clock.advance(3600)
+    await fan.svc.fan_out()
+    state = await fan.repo.get_sync_state("u")
     assert (state.epoch, state.cursor, state.created_at) == (4, "c", T0)
 
 
-async def test_a_disabled_user_gets_no_state(env):
-    env.users.enabled["u"] = False
-    await env.svc.fan_out()
-    assert await env.repo.get_sync_state("u") is None
+async def test_a_disabled_user_gets_no_state(fan):
+    fan.users.enabled["u"] = False
+    await fan.svc.fan_out()
+    assert await fan.repo.get_sync_state("u") is None
 
 
-async def test_ticks_that_never_land_raise_one_staleness_alert(env):
+async def test_ticks_that_never_land_raise_one_staleness_alert(fan):
     for _ in range(int(STALE_ALERT_AFTER.total_seconds() // 600) + 6):
-        await env.svc.fan_out()
-        env.clock.advance(600)
-    assert len(env.alerts.posts) == 1 and "never" in env.alerts.posts[0]
+        await fan.svc.fan_out()
+        fan.clock.advance(600)
+    assert len(fan.alerts.posts) == 1 and "never" in fan.alerts.posts[0]
 
 
 async def test_create_if_absent_reports_whether_it_wrote():
