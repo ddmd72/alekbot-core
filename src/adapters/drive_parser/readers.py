@@ -5,8 +5,10 @@ They run only inside the sandboxed child process (`drive_parser.child`), never i
 parser here may amplify a small file into gigabytes (§9, Phase 0). Parser libraries are imported inside the
 functions, so they load after the child has applied its limits.
 
-Every admitted kind has a named reader (§5.1): markitdown's allowlisted converters (Phase 0,
-`src/utils/document_hardening.build_markitdown`) for PDF, DOCX, PPTX, EPUB, MSG and HTML; charset detection for the
+Every admitted kind has a named reader (§5.1): pdfminer.six for PDF, called directly (markitdown 0.1.8's PdfConverter
+runs pdfplumber first and falls back to pdfminer on any exception: two engines, one of them unpinned by intent);
+markitdown's allowlisted converters (Phase 0, `src/utils/document_hardening.build_markitdown`) for DOCX, PPTX, EPUB,
+MSG and HTML; charset detection for the
 text kinds, VTT/SRT reduced to cue text; `striprtf` for RTF; the stdlib `email` parser for EML; ODF `content.xml`
 through `defusedxml`; XLSX/XLS/CSV/ODS as Markdown tables capped at MAX_SHEET_ROWS rows per sheet (the chunker
 repeats the header row, §8.3). Password-protected PDF/Office/EPUB/ODF → `encrypted`.
@@ -39,7 +41,6 @@ from src.utils.document_hardening import ArchiveTooLargeError, check_zip_contain
 # kind -> markitdown converter class (all registered by build_markitdown; a test keeps the two in step). Called
 # directly with the sniffed kind: no magika guess, no fall-through to another converter.
 MARKITDOWN_CONVERTERS: Mapping[str, Tuple[str, str, str]] = {
-    "pdf": ("PdfConverter", ".pdf", "application/pdf"),
     "docx": ("DocxConverter", ".docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
     "pptx": ("PptxConverter", ".pptx",
              "application/vnd.openxmlformats-officedocument.presentationml.presentation"),
@@ -220,7 +221,10 @@ def _read_pdf(path: str, kind: str) -> _Read:
         if is_memory_failure(exc):
             raise
         pages_total = 0
-    return _read_markitdown(path, kind), pages_total, False
+    from pdfminer.high_level import extract_text
+
+    with open(path, "rb") as fh:
+        return str(extract_text(fh) or ""), pages_total, False
 
 
 def _page_count(reader: Any) -> int:

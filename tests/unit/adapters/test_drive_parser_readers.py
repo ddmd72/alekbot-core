@@ -792,3 +792,31 @@ def test_owner_password_pdf_page_count_ignores_a_lying_count(tmp_path, lie):
 ])
 def test_very_short_legacy_texts_decode_to_plausible_words(text, encoding):
     assert decode_text(text.encode(encoding)) == text
+
+
+# =============================================================================
+# The PDF text engine is pdfminer.six, called directly: markitdown 0.1.8's PdfConverter goes through pdfplumber
+# first and falls back on any exception (review A, M pins)
+# =============================================================================
+
+def test_pdf_text_comes_from_pdfminer_not_markitdowns_pdf_converter(tmp_path, monkeypatch):
+    from markitdown import converters
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("markitdown's PdfConverter must not read drive PDFs")
+
+    monkeypatch.setattr(converters.PdfConverter, "convert", refuse)
+    outcome = _read(make_pdf(tmp_path / "a.pdf", ["Invoice INV-2041 total 1250.00 EUR"]), "pdf")
+    assert outcome.status is ExtractionStatus.TEXT
+    assert "Invoice INV-2041" in outcome.text
+
+
+def test_a_memory_failure_inside_pdfminer_is_not_swallowed(tmp_path, monkeypatch):
+    import pdfminer.high_level
+
+    def exhausted(*args, **kwargs):
+        raise MemoryError("pdfminer")
+
+    monkeypatch.setattr(pdfminer.high_level, "extract_text", exhausted)
+    with pytest.raises(MemoryError):
+        _read(make_pdf(tmp_path / "a.pdf", ["text"]), "pdf")
