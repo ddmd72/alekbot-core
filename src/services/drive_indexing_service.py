@@ -512,6 +512,7 @@ class DriveIndexingService:
         """An unresolved record: its parent may be stored by now; else ask the provider once (§3.4)."""
         parent = await self._parent_of(user_id, rec, ctx)
         if parent is not None or rec.parent_id == state.root_item_id:
+            rec = replace(rec, attempts=0)   # resolved: the next step (a probe) counts its own attempts (§8.2)
             if parent is not None and parent.scope is Scope.UNRESOLVED:
                 await self._commit(user_id, [replace(rec, due_at=None, priority=None)], set())
                 return True   # waits for its parent's own resolution or probe; the parent's rescope re-classifies it
