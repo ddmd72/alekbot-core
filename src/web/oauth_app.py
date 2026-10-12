@@ -830,9 +830,12 @@ def create_oauth_blueprint(
         indexer's change feed reports (OneDriveAdapter.get_changes, `_APPROOT`; a test pins both), so
         both sides compare the same string. Best effort: "" only
         skips the check, so a failure here never fails the connect."""
+        import aiohttp
+
         try:
-            async with session.get(_ONEDRIVE_APPROOT,
-                                   headers={"Authorization": f"Bearer {access_token}"}) as resp:
+            # Its own timeout: the session default (5 min) would hold the OAuth callback on a hung Graph call.
+            async with session.get(_ONEDRIVE_APPROOT, headers={"Authorization": f"Bearer {access_token}"},
+                                   timeout=aiohttp.ClientTimeout(total=10)) as resp:
                 if not resp.ok:
                     logger.warning(f"⚠️ Drive id not read at connect ({resp.status})")
                     return ""
