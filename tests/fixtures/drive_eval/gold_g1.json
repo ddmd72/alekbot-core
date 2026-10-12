@@ -48,5 +48,10 @@
   {"id": "family-latest-dogovor", "case": "version_family", "query": "договор последняя версия", "lang": "ru", "goal": "G1", "filters": {}, "expected_paths": ["Contracts/Договор_ред1.docx", "Contracts/Договор_ред2.docx", "Contracts/Договор_ред3.docx"]},
   {"id": "semantic-agreements-ru", "case": "semantic", "query": "договоры", "lang": "ru", "goal": "G1", "filters": {}, "expected_paths": ["Inbox/Super important agreement.pdf"]},
   {"id": "semantic-lease-en", "case": "semantic", "query": "the lease", "lang": "en", "goal": "G1", "filters": {}, "expected_paths": ["Contracts/Contrato de alquiler 2026.pdf"]},
-  {"id": "semantic-travel-fr", "case": "semantic", "query": "itinéraire du voyage", "lang": "fr", "goal": "G1", "filters": {}, "expected_paths": ["Notes/Plan de viaje Roma.md"]}
+  {"id": "semantic-travel-fr", "case": "semantic", "query": "itinéraire du voyage", "lang": "fr", "goal": "G1", "filters": {}, "expected_paths": ["Notes/Plan de viaje Roma.md"]},
+  {"id": "ocr-semantic-electricity-bill", "case": "semantic", "query": "рахунок за електроенергію", "lang": "uk", "goal": "G1", "filters": {}, "expected_paths": ["Scans/Scan_0012.pdf"], "ocr": true},
+  {"id": "ocr-semantic-train-ticket", "case": "semantic", "query": "billete tren Madrid", "lang": "es", "goal": "G1", "filters": {}, "expected_paths": ["Screenshots/Captura de pantalla 2026-03-09 184410.png"], "ocr": true},
+  {"id": "ocr-semantic-cafe-receipt", "case": "semantic", "query": "чек из кафе", "lang": "ru", "goal": "G1", "filters": {}, "expected_paths": ["Scans/IMG_4912.jpg"], "ocr": true},
+  {"id": "ocr-semantic-broken-font-invoice", "case": "semantic", "query": "резервное копирование продление домена", "lang": "ru", "goal": "G1", "filters": {}, "expected_paths": ["Finance/Счёт-фактура №1847.pdf"], "ocr": true},
+  {"id": "ocr-date-document-date", "case": "date", "query": "електроенергія", "lang": "uk", "goal": "G1", "filters": {"date_from": "2026-03-01", "date_to": "2026-03-31"}, "expected_paths": ["Scans/Scan_0012.pdf"], "ocr": true}
 ]

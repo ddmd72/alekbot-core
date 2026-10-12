@@ -173,6 +173,17 @@ SmartAgent reads file_data from metadata --> attaches as MessagePart
 Tool response NOT saved to history (content is ephemeral)
 ```
 
+**The drive index reads files another way** ([USER_DRIVE_INDEXING_RFC.md](../../10_rfcs/USER_DRIVE_INDEXING_RFC.md)
+§9, §24.3). The indexer service never calls `FileConversionService` or `convert_file_to_text`: it streams a drive file
+to a temp file (`UserDrivePort.download_to_file`, capped by kind) and hands it to `ContentExtractorPort.extract`, which
+returns an `ExtractionOutcome` (`text`, `no_text`, `unsupported`, `too_large`, `encrypted`, `timeout`, `memory`,
+`error`, `budget_exhausted`; pages, truncation, the brief) and never raises for a per-file failure. Two
+implementations are chained per kind by `EXTRACTOR_CHAINS`: `SubprocessContentExtractor` (`parser`) runs markitdown
+with the Phase 0 allowlist and the RTF, EML, ODF and VTT readers in a child process under memory, CPU and wall-clock
+limits, and `DriveReaderRunner` (`reader`) sends what the parser cannot read (scans, images, broken-font PDFs) to the
+document reader agent. Chat uploads, `open_file` and `open_file_from_drive` keep the path above until Slice 3 moves
+them onto the port; until then, the same file can read differently in chat and in a search window.
+
 ### 2.3 Specialist File Injection
 
 ```

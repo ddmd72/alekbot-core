@@ -8,8 +8,13 @@ The user's long-term file area: their OneDrive App Folder, behind the provider-n
   history see only `drive:<item_id>` refs and `[Drive: …]` labels, never a provider name.
 - **Step 2, Slice 1** ([USER_DRIVE_INDEXING_RFC.md](../../10_rfcs/USER_DRIVE_INDEXING_RFC.md)): an opt-in index
   that finds a file or folder by name (exact, partial, transliterated, misspelled), kind, date, folder, photo facets
-  and place. **No file content is read in Slice 1.** Content search (Slice 2), one extraction path (Slice 3) and the
-  model extractor for scans and images (Slice 4) are not built.
+  and place.
+- **Step 2, Slice 2+4** (RFC §24, one slice by owner decision D6): the index reads what the files say. Documents are
+  parsed in a sandboxed child process; scans, screenshots, images with text and PDFs the parser cannot read go to a
+  model (Claude Haiku 5.5 or GPT); every image is triaged first, and photographs get a short caption. Smart answers a
+  clause, an amount or a date from the documents and searches the drive on its own when the answer may be there.
+  One extraction path for chat uploads and `open_file_from_drive` (Slice 3) and audio/video transcripts are not built
+  ([decision](../../04_solution_strategy/decisions/drive_audio_video_deferred.md)).
 
 The drive is the source of truth; the index is a disposable mirror. Everything in it can be rebuilt from the drive.
 
@@ -28,12 +33,16 @@ Cloud Tasks queue drive-sync-dev (max-concurrent-dispatches=1)
   → alek-bot-indexer-dev /worker (indexer_main.py; ingress internal + OIDC, RFC Δ21)
       → DriveIndexingService.tick(user_id, nudge)
           gate → lease → observe (nudged items, then delta pages) → work off due records → continue
-          → UserDrivePort (get_changes / get_change / list_children_changes)
-          → GeminiEmbeddingAdapter (card vectors)
-          → FirestoreDriveIndexRepository ({prefix}drive_index_records, {prefix}drive_sync_state)
+          → UserDrivePort (get_changes / get_change / list_children_changes; download_to_file, get_thumbnail)
+          → ContentExtractorPort: SubprocessContentExtractor (parser, child process) → DriveReaderRunner
+              (DriveDocumentReaderAgent, only when the §9 router sends a file on)
+          → ImageTriagePort: DriveTriageRunner (DriveImageTriageAgent, batches of thumbnails)
+          → GeminiEmbeddingAdapter (card and chunk vectors)
+          → FirestoreDriveIndexRepository ({prefix}drive_index_records, {prefix}drive_index_chunks,
+              {prefix}drive_sync_state)
 
 Smart → delegate_to_specialist(search_files_in_drive) → FileManagementAgent
-  → DriveSearchService → FirestoreDriveIndexRepository (card kNN, name keys, filters)
+  → DriveSearchService → FirestoreDriveIndexRepository (card kNN, name keys, chunk kNN, content terms, filters)
 ```
 
 Deploy units, queue, scheduler job and the two-pass first deploy: [docs/07_deployment/README.md](../../07_deployment/README.md)
@@ -44,8 +53,10 @@ Deploy units, queue, scheduler job and the two-pass first deploy: [docs/07_deplo
 | Port | Adapter(s) | Slice 1 role |
 |---|---|---|
 | `UserDrivePort` | `OneDriveAdapter` | Step 1 CRUD, plus `get_changes` (delta), `get_change`, paged `list_children_changes(limit, cursor)`, `connection`, `flag_reconnect` |
-| `DriveIndexRepository` | `FirestoreDriveIndexRepository`, `InMemoryDriveIndexRepository` | records, sync state, lease, card kNN, name keys, filter queries. The in-memory one runs the tests and the eval |
-| `EmbeddingService` | `GeminiEmbeddingAdapter` (`gemini-embedding-2/768`) | card vectors, query vectors |
+| `DriveIndexRepository` | `FirestoreDriveIndexRepository`, `InMemoryDriveIndexRepository` | records, chunks, sync state, lease, card and chunk kNN, name keys, content terms, filter queries. The in-memory one runs the tests and the eval |
+| `EmbeddingService` | `GeminiEmbeddingAdapter` (`gemini-embedding-2/768`) | card and chunk vectors, query vectors |
+| `ContentExtractorPort` (Slice 2+4) | `SubprocessContentExtractor` (`parser`), `DriveReaderRunner` (`reader`) | one downloaded file to text; chained per kind by `EXTRACTOR_CHAINS` |
+| `ImageTriagePort` (Slice 2+4) | `DriveTriageRunner` | text or photograph per thumbnail, with a caption |
 | `TaskQueue` | `GcpTaskQueue` (second instance) | bound to `drive-sync-dev` and the indexer's `/worker`; built only when `DRIVE_INDEXER_URL` is set |
 | `AlertSinkPort` | `SlackWebhookAdapter` (the ops sink) | the fan-out's staleness alert |
 
@@ -95,9 +106,42 @@ tick does, tested without Firestore, Graph or a clock.
 - **Name keys** (`drive_name_keys.py`): NFC + casefold tokens split on any Unicode punctuation (curly quotes, dashes,
   `%` included), with variant keys for the accent-stripped Latin spelling, the Russian-style and the Ukrainian national
   transliterations, and trigrams (RFC Δ38). `resume` finds `Résumé.pdf`, `kyiv` finds `Київ.jpg`.
-- **Versions** (`CURRENT_VERSIONS`: policy, card, geo table, name keys) and the embedding space are stamped on each
+- **Versions** (`CURRENT_VERSIONS`: policy, card, geo table, name keys, and from Slice 2+4 extraction and triage) and
+  the embedding space are stamped on each
   record; when one changes, the upgrade pass re-plans stale records in class 3 after the due work, and the space
   change re-embeds cards while search answers from names and filters only (RFC Δ25, Δ30, Δ31).
+
+---
+
+## 3a. Content (Slice 2+4)
+
+Design: RFC §24 (it overrides older RFC text where they disagree). Decisions: the model extractor and its two agents
+([decision](../../04_solution_strategy/decisions/drive_model_extractor_agents.md)), model outages
+([decision](../../04_solution_strategy/decisions/drive_model_outage_defers_model_work.md)), the document date
+([decision](../../04_solution_strategy/decisions/drive_document_date_effective_date.md)).
+
+- **Admission.** `POLICY_VERSION` 2 admits the §5.1 document kinds with a named extractor (PDF, DOCX, PPTX, XLSX/XLS,
+  ODF, EPUB, HTML, Markdown, text, CSV, JSON, RTF, MSG, EML, VTT/SRT); `doc`, `ppt`, `mhtml` and iWork stay
+  metadata-only, and so do audio and video. Every image enters triage first. The upgrade pass makes the Slice 1
+  records due in class 3, bounded by the maintenance share.
+- **Extraction.** A due record is downloaded (streamed, capped by kind) and read by the parser in a child process with
+  memory, CPU and wall-clock limits. The §9 router sends a PDF on to the reader when the parser found no text, too
+  little text per page, garbage text (e.g. `(cid:N)` from a font without a Unicode map) or failed; a timeout or a
+  memory kill is a bomb and is never sent on. The reader gets the PDF in page windows of `MODEL_PAGES_PER_CALL` and
+  returns verbatim text; the first window also returns the brief (type, one line, the document's date, parties,
+  amount). The brief and the lead text go into the card; the brief's date becomes `effective_date` (D13).
+- **Images.** Triage reads provider thumbnails in batches of `TRIAGE_BATCH`, with the camera facet as a prior: `text`
+  sends the image to the reader (as the provider's large rendition), `photo` makes it `metadata_only / photograph`
+  with a caption of at most ten words; no thumbnail is a photograph without a caption. A folder of holiday photos
+  costs ⌈n / `TRIAGE_BATCH`⌉ triage calls and no reader call.
+- **Chunks.** Text is chunked (`drive_chunker.py`) into `{prefix}drive_index_chunks`, keyed by the record's
+  generation: search returns a chunk only when its generation is the record's `indexed_generation` (the read fence,
+  §7.4). Each chunk carries `content_terms` (`drive_content_terms.py`): amounts in one canonical form, digit runs and
+  ids without separators, dates in ISO form, so `1 250,00 €` in a scan and `1250` in a question meet.
+- **Budgets and failures.** Per user and calendar month: `MODEL_EXTRACT_PAGES_PER_MONTH` pages to the reader and
+  `TRIAGE_IMAGES_PER_MONTH` images to triage; over either, the work waits as `pending` for the next month. A model
+  outage (429, 5xx, timeout, a missing prompt) sets `model_backoff_until` and defers model work only. Calls are
+  billed to the user's account; the tick summary carries `model_pages`, `model_calls`, `triage_images`, `model_cost`.
 
 ---
 
@@ -150,7 +194,8 @@ Lease, queue and service: [decisions/drive_indexer_lease_queue_service.md](../..
 
 `search_files_in_drive` (SYNC, FileManagement; context fields `drive_query`, `drive_folder`, `drive_kind`,
 `drive_date_from`, `drive_date_to`) calls `DriveSearchService.search`. Search reads only `drive_query`, never the
-delegate's `query`; the field takes name words or a place or subject, no type words or dates.
+delegate's `query`; the field takes name words, a place or subject, or what to find inside the documents (a phrase, a
+number, an amount), no type words or date filters.
 - Step 0 reads the opt-in flag, sync state and connection uncached: `disabled`, `disconnected` (a different drive
   connected says so and that it is being indexed), or results marked `reconnect_needed`. While a purge runs, a
   connected drive gets no results and `building`.
@@ -163,6 +208,10 @@ delegate's `query`; the field takes name words or a place or subject, no type wo
   name covers every query token rank first (RFC Δ17). No cosine threshold; `K = 8` and Smart's judgement bound the
   output. Fewer than K results with a full page widens the fetch once, to 1 000: at most 18 parallel queries per
   round (17 name, 1 kNN; a kind family runs one kNN per member kind), 36 with the widening.
+- **Content streams (Slice 2+4).** A chunk kNN (fenced, max-pooled to one hit per record, before fusion) and the
+  content exact-token stream (one `array-contains` query per query term, pooled per record) join the card and name
+  streams in RRF. A content hit's card shows a window: the best chunk and its neighbours. The envelope says
+  `content_search` and counts `unread` documents (admitted kinds whose content is not searchable).
 - **Capped hedge (RFC Δ37).** When a stream page was full and the kind, date or folder filters dropped candidates,
   the answer says the filters saw only the best N matches; with no survivor it never says "No matching files" but
   how to search all files.
@@ -212,12 +261,20 @@ The drive is not part of `SearchEnrichmentService`:
 - **Cabinet.** `/api/drive/status` reads the indexing block in its own try: on failure it logs ERROR and leaves the
   block out, so Connect, Disconnect and Reconnect always show. The block carries `available` (a drive queue is
   wired; the switch is hidden when false unless search is on), `access_lost_at` and `index_kept` (the "kept about 30
-  days" hint shows only while an index is kept), and the card lists every non-zero counter (RFC Δ44).
+  days" hint shows only while an index is kept), and the card lists every non-zero counter (RFC Δ44). From Slice 2+4
+  it also returns `readable_chunks` and this month's `model_pages_month` / `triage_images_month` with their limits;
+  the disclosure names the model providers (Anthropic or OpenAI) that read scans, images and hard PDFs.
 - **Eval.** `venv/bin/python -m scripts.validation.drive_eval` indexes a synthetic drive
-  (`tests/fixtures/drive_eval/tree.json`) with the real tick and real embeddings (`GEMINI_API_KEY` from `.env`), runs
-  the gold cases (`gold_g1.json`) through the real search, and fails when recall@8 falls below the recorded bars or
-  when any case that hit when the bars were recorded misses now (`bars.json`, written by the first owner-reviewed
-  run). A case may set `min_hits` (a trip's photos) or `known_hard` (reported, in no bar); `semantic` cases reach their
+  (`tests/fixtures/drive_eval/tree.json`, with file bytes in `files/` made by `make_fixtures.py`) with the real tick,
+  real embeddings (`GEMINI_API_KEY` from `.env`) and the real parser, reader and triage (`content_wiring.py`: model
+  keys and the Firestore prompts; `DRIVE_EVAL_PROVIDER=openai` for the GPT leg), runs the gold cases (`gold_g1.json`
+  finds a file, `gold_g2.json` answers from content: the expected substring must be in the card's window) through the
+  real search, and fails when recall@8 falls below the recorded bars or when any case that hit when the bars were
+  recorded misses now (`bars.json`, written by the first owner-reviewed run; it pins the tree, the gold and every
+  served byte). Scopes: per case type, `G1`, `G2` and `ocr`. **G3**
+  (`python -m scripts.validation.drive_eval.smart_dry_run`, owner-run) runs the real Smart on `gold_g3.json` with the
+  drive reads answered from the fixture index and measures how often it searches the drive: barred on positives,
+  reported on negatives (chit-chat, memory, web, general). A case may set `min_hits` (a trip's photos) or `known_hard` (reported, in no bar); `semantic` cases reach their
   file only through the card stream and miss offline with fake embeddings (RFC Δ45). `--record` re-records the bars;
   do that only for a deliberate change, and review the misses it prints first.
 - **Rebuild.** `scripts/infrastructure/drive_index_rebuild.py --user <user_id>` (dry run) / `--apply`: takes the
@@ -228,6 +285,11 @@ The drive is not part of `SearchEnrichmentService`:
   index still there and keep it.
 - **Smoke.** `scripts/infrastructure/drive_index_smoke.py <user_id>` runs every repository read once against live
   Firestore and names any missing index; it writes nothing.
+- **Live check** (before a deploy that changes extraction or search). `python -m scripts.validation.drive_eval.live_check
+  --folder scripts/memory/drive_live --user zz-synthetic-<date> --query …` indexes a local folder of real files with
+  the real tick, parser, reader, triage and the live Firestore repository under the synthetic id, prints each query's
+  result as Smart reads it, then turns indexing off so the production purge removes everything, and fails if anything
+  is left. It refuses any id that does not start with `zz-synthetic-`.
 
 ---
 
@@ -236,6 +298,9 @@ The drive is not part of `SearchEnrichmentService`:
 | Piece | File |
 |---|---|
 | Domain model, parameters | `src/domain/drive_index.py`, `src/domain/drive_index_params.py` |
+| Extraction contract, router, content terms, chunker, text gate (Slice 2+4) | `src/domain/drive_extraction.py`, `drive_content_terms.py`, `drive_chunker.py`, `drive_text_gate.py`, `drive_sniff.py` |
+| Content ports, parser, model agents and runners (Slice 2+4) | `src/ports/content_extractor_port.py`, `image_triage_port.py`; `src/adapters/subprocess_content_extractor.py`; `src/agents/drive_document_reader_agent.py`, `drive_image_triage_agent.py`; `src/composition/drive_reader_runner.py`, `drive_triage_runner.py` |
+| Smart's drive guidance | `prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy` (`drive_specialist`) |
 | Policy, planner, card, name keys, task keys | `src/domain/drive_index_policy.py`, `drive_index_planner.py`, `drive_card.py`, `drive_name_keys.py`, `drive_task_keys.py` |
 | Place lookup | `src/domain/place_lookup.py`, `src/adapters/geo_place_table.py`, `src/assets/geo/` |
 | Search result, wrapper; Cabinet status | `src/domain/drive_search.py`, `src/domain/drive_indexing_status.py` |

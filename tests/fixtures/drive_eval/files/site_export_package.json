@@ -1,0 +1,8 @@
+{
+  "name": "site-export",
+  "version": "1.4.2",
+  "private": true,
+  "description": "Static export of the community garden site",
+  "scripts": {"build": "vite build", "preview": "vite preview"},
+  "dependencies": {"react": "^19.0.0"}
+}
