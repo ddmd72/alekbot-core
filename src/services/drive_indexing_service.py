@@ -146,6 +146,9 @@ class DriveIndexingService:
         summary: Dict[str, int] = {}
         try:
             state = lease if lease.created_at is not None else replace(lease, created_at=now)
+            if state.epoch == 0 and state.cursor is None and not state.applied_versions:
+                # nothing stored yet: onboarding builds every record under the current versions (§12.3)
+                state = replace(state, applied_versions=dict(CURRENT_VERSIONS))
             action = access_action(enabled, state, connection, now)   # facts may have moved before the lease
             if action in (AccessAction.PURGE_OPT_OUT, AccessAction.PURGE_EXPIRED,
                           AccessAction.PURGE_DRIVE_SWITCH, AccessAction.PURGE_THEN_RESTART):
