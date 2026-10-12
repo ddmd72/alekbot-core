@@ -254,8 +254,8 @@ class DriveIndexingService:
             logger.warning(f"[DriveIndex] throttled for {user_id[:8]}: {exc}; continuing in {delay}s")
             cont.request(delay)
             await self._save_state(replace(saved.state, last_error=ErrorCategory.THROTTLED,
-                                                     continuation_enqueued_at=now,
-                                                     systemic_failures=state.systemic_failures + 1))
+                                           continuation_enqueued_at=now,
+                                           systemic_failures=state.systemic_failures + 1))
             return TickResult("throttled", summary)
         except Exception as exc:
             category = ErrorCategory.PROVIDER_ERROR if isinstance(exc, (DriveAccessDenied, ValueError)) \
@@ -264,7 +264,7 @@ class DriveIndexingService:
             logger.error(f"[DriveIndex] tick failed for {user_id[:8]}: {exc}; continuing in {delay}s", exc_info=True)
             cont.request(delay)
             await self._save_state(replace(saved.state, last_error=category, continuation_enqueued_at=now,
-                                                     systemic_failures=state.systemic_failures + 1))
+                                           systemic_failures=state.systemic_failures + 1))
             return TickResult("error", summary)
 
     # ------------------------------------------------------------------------------------------
