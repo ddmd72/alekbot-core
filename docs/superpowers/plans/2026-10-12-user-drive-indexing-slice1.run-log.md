@@ -59,3 +59,9 @@ Method: subagent-driven (implementer → independent reviewer → coordinator ac
 - Deviations: none. Reviewer: APPROVED, round 1.
 - Note: the plan's `DriveResyncRequired` docstring in `src/domain/user_drive.py` says "(Graph 410)" — a provider name
   outside the allowed files, docstring only. Kept verbatim; owner may neutralise it ("cursor expired, HTTP 410").
+
+### Task 6 — done
+- Commit `b91aab2`. `make check` (coordinator, worktree at the commit): 7095 passed, 3 skipped, 1 xfailed.
+- Deviations: none (byte-identical). Reviewer: APPROVED, round 1.
+- Note: the task's Interfaces line lists `ObservationPlan(..., reobserve)` but the plan's code has no `reobserve`
+  field (consistent with Δ18; nothing reads it). Stale wording in the plan only.
