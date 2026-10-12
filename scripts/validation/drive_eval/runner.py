@@ -37,7 +37,7 @@ EVAL_USER = "eval-user"
 EVAL_START = datetime(2026, 10, 11, 12, 0, tzinfo=timezone.utc)
 MAX_TICKS = 400
 MAX_ERRORS = 3
-MAX_THROTTLED = 6     # consecutive throttled ticks; the service's backoff makes that about an hour of waiting
+MAX_THROTTLED = 6     # consecutive throttled ticks; the service's backoff makes that about half an hour of its backoff (60+120+240+480+960 s)
 
 EXIT_OK = 0
 EXIT_REGRESSION = 1
