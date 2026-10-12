@@ -72,22 +72,22 @@ def image(cv="c1", **kw):
     return ch("IMG_1.jpg", item_id="img", cv=cv, mime_type="image/jpeg", **kw)
 
 
-# -- Slice 1 stays as it was -------------------------------------------------------------------------------------
+# -- a kind the flip leaves out stays as Slice 1 had it (doc and video: no extractor, §5.1, §24.1) ---------------
 
 class TestNothingAdmitted:
     def test_a_document_stays_metadata_only(self):
-        rec = observe(ch())
+        rec = observe(ch("contract.doc"))
         assert (rec.state, rec.reason) == (RecordState.METADATA_ONLY, Reason.KIND_NOT_ADMITTED)
         assert not content_due(rec) and not triage_due(rec)
         assert (rec.due_at, rec.priority) == (NOW, Priority.FIRST_SEEN)   # its card, as before
 
-    def test_an_image_stays_metadata_only(self):
-        rec = observe(image())
+    def test_a_video_stays_metadata_only(self):   # media the flip does not triage
+        rec = observe(ch("clip.mp4", item_id="vid", mime_type="video/mp4"))
         assert rec.reason is Reason.KIND_NOT_ADMITTED and not triage_due(rec)
 
     def test_a_content_change_sets_no_quiet_period(self):
-        rec = stored(ch())
-        edited = observe(ch(cv="c2", modified=NOW), rec)
+        rec = stored(ch("contract.doc"))
+        edited = observe(ch("contract.doc", cv="c2", modified=NOW), rec)
         assert edited.dirty_since is None and edited.due_at is None
 
 

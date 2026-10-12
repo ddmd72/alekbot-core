@@ -1,4 +1,5 @@
-"""Content admission (USER_DRIVE_INDEXING_RFC §5.1, §5.3, §24.1): empty until the flip, read at call time."""
+"""Content admission (USER_DRIVE_INDEXING_RFC §5.1, §5.3, §24.1): the Slice 2+4 sets since the flip, read at call
+time."""
 import pytest
 
 from src.domain import drive_index_policy as policy
@@ -13,13 +14,20 @@ from src.domain.drive_index_policy import (
 ALL_KINDS = sorted(set(policy._EXT_KIND.values()) | {"other", "folder"})
 
 
-class TestSliceOneIsUnchanged:
-    def test_nothing_is_triaged_yet(self):
-        assert TRIAGED_KINDS == frozenset()
+# What every kind gets after the flip (§5.1, §24.1), spelled out independently of the sets under test.
+_CONTENT = {"pdf", "docx", "pptx", "xlsx", "xls", "odt", "ods", "odp", "epub", "html", "markdown", "text", "csv",
+            "json", "rtf", "msg", "eml", "subtitles"}
+
+
+class TestAfterTheFlip:
+    def test_every_image_is_triaged(self):
+        assert TRIAGED_KINDS == frozenset({"image"})
 
     @pytest.mark.parametrize("kind", ALL_KINDS)
-    def test_every_kind_is_metadata_only(self, kind):
-        assert admission(kind) is Admission.NONE
+    def test_each_kind_gets_its_admission(self, kind):
+        expected = (Admission.CONTENT if kind in _CONTENT else Admission.TRIAGE if kind == "image"
+                    else Admission.NONE)
+        assert admission(kind) is expected
 
 
 class TestAdmission:

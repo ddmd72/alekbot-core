@@ -99,6 +99,9 @@ class TestCappedAndRefreshing:
 
 class TestPolicyAtCallTime:
     def test_content_admitted_follows_the_policy(self, monkeypatch):
+        assert content_admitted()   # the flip (§24.1)
+        monkeypatch.setattr(policy, "ADMITTED_KINDS", frozenset())
+        monkeypatch.setattr(policy, "TRIAGED_KINDS", frozenset())
         assert not content_admitted()
         monkeypatch.setattr(policy, "ADMITTED_KINDS", frozenset({"pdf"}))
         assert content_admitted()
@@ -108,6 +111,7 @@ class TestPolicyAtCallTime:
 
     def test_is_unread_reads_the_policy_now(self, monkeypatch):
         pending = DriveIndexRecord(user_id="u", item_id="p", kind="pdf", state=RecordState.PENDING)
+        monkeypatch.setattr(policy, "ADMITTED_KINDS", frozenset())
         assert not is_unread(pending)
         monkeypatch.setattr(policy, "ADMITTED_KINDS", policy.SLICE2_CONTENT_KINDS)
         assert is_unread(pending)

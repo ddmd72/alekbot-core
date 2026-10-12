@@ -115,6 +115,7 @@ async def test_content_streams_do_not_run_while_nothing_is_admitted(monkeypatch)
     await settle_metadata(w, monkeypatch)
     await index(w, scan, ["Invoice INV-2024/0012"], [await query_vector(w, "INV-2024/0012")])
     monkeypatch.setattr(policy, "ADMITTED_KINDS", frozenset())
+    monkeypatch.setattr(policy, "TRIAGED_KINDS", frozenset())   # since the flip images are triaged (§24.1)
     result = await w.search("INV-2024/0012")
     assert w.repo.chunk_limits == [] and w.repo.term_calls == [] and w.repo.window_calls == []
     assert not result.envelope.content_search and all(c.window == "" for c in result.cards)

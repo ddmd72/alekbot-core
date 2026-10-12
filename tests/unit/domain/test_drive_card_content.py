@@ -1,5 +1,5 @@
 """Card text with content (USER_DRIVE_INDEXING_RFC §8.5, §24.4): the brief, a caption and the lead text are appended
-only when present, so every Slice 1 card keeps its text and hash."""
+only when present, so every Slice 1 card keeps its text; its hash moves with the CARD_VERSION 2 bump (§24.1)."""
 import hashlib
 from datetime import datetime, timezone
 
@@ -43,8 +43,8 @@ class TestSliceOneCardsUnchanged:
 
     @pytest.mark.parametrize("record,text", SLICE1)
     def test_hash(self, record, text):
-        assert CARD_VERSION == 1
-        assert card_hash(record) == hashlib.sha256(f"1\n{text}".encode("utf-8")).hexdigest()[:32]
+        assert CARD_VERSION == 2   # the flip re-embeds every card once (§24.1, §12.3)
+        assert card_hash(record) == hashlib.sha256(f"2\n{text}".encode("utf-8")).hexdigest()[:32]
 
 
 BRIEF = DocumentBrief(doc_type="invoice", description="Рахунок за оренду офісу",
