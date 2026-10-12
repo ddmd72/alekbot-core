@@ -26,9 +26,8 @@ Writes:
     - `delete_sync_state` (a purge) deletes the whole state document, so the lease fields go with it. That delete
       is not fenced by the lease (an open owner item).
 
-Vectors: record queries and `get_records` project the record fields, so they never load `card_vector`. Two reads
-do load it: `card_vectors` (its purpose) and `find_nearest_cards`, whose kNN results are full documents (the
-vector is ignored when the record is parsed).
+Vectors: record queries, `get_records` and `find_nearest_cards` project the record fields, so they never load
+`card_vector`; only `card_vectors` reads it (its purpose). The kNN projection lists `card_distance` as well.
 Datetimes come back as plain tz-aware UTC datetimes, never DatetimeWithNanoseconds (see
 firestore_oauth_credentials_adapter.py: `.replace()` on one breaks write-back).
 """
@@ -377,7 +376,8 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
         query = self._user_query(user_id)
         if kind is not None:
             query = query.where(filter=FieldFilter("kind", "==", kind))
-        nearest = query.find_nearest(vector_field=CARD_VECTOR, query_vector=Vector([float(x) for x in vector]),
+        # the distance comes back under a projection only when its name is selected too (verified live 2026-10-12)
+        nearest = query.select([*RECORD_FIELDS, CARD_DISTANCE]).find_nearest(vector_field=CARD_VECTOR, query_vector=Vector([float(x) for x in vector]),
                                      limit=limit, distance_measure=DistanceMeasure.COSINE,
                                      distance_result_field=CARD_DISTANCE)
         hits: List[Tuple[DriveIndexRecord, float]] = []
