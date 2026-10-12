@@ -20,3 +20,14 @@ def test_os_artefacts_are_kept_without_card_or_name_keys(name):
 def test_other_dot_names_keep_their_card():
     rec = observe(ch("a", ".gitignore")).upsert
     assert rec.reason is Reason.DOT_NAME and card_eligible(rec) and rec.name_tokens
+
+
+@pytest.mark.parametrize("name", [".~lock.Договор_ред3.odt#", ".~lock.budget.xlsx#"])
+def test_libreoffice_lock_files_are_os_artefacts(name):
+    assert item_rule(DriveChange(item_id="i", name=name)) is Reason.OS_ARTIFACT
+    rec = observe(ch("a", name)).upsert
+    assert not card_eligible(rec) and rec.name_tokens == ()
+
+
+def test_a_dot_tilde_name_without_the_lock_shape_stays_a_dot_name():
+    assert item_rule(DriveChange(item_id="i", name=".~lock.notes")) is Reason.DOT_NAME

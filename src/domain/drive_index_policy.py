@@ -41,7 +41,7 @@ _MEDIA_KINDS: FrozenSet[str] = frozenset({"image", "audio", "video"})
 ADMITTED_KINDS: FrozenSet[str] = frozenset()   # Slice 2 admits the §5.1 document kinds (policy_version bump)
 
 _SECRET_PATTERNS = ("id_rsa*", "id_ed25519*", "*.pem", "*.p12", "*.pfx", "*.kdbx", "*.keychain*")
-_OS_PATTERNS = ("~$*", "thumbs.db", "desktop.ini", ".ds_store", "*.tmp")
+_OS_PATTERNS = ("~$*", ".~lock.*#", "thumbs.db", "desktop.ini", ".ds_store", "*.tmp")   # .~lock: LibreOffice
 # Kept as records, never searchable: no card and no name keys (§3.4 lets a reason withhold the card).
 _UNSEARCHABLE_REASONS: FrozenSet[Reason] = frozenset({Reason.OS_ARTIFACT})
 _MARKERS = frozenset({".git", "pyvenv.cfg"})
