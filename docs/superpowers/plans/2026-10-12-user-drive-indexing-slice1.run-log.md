@@ -601,3 +601,19 @@ scratch path (nothing recorded or committed): index settled in 1 tick, 2 481 car
   cut) — **OWNER**: accept as a recorded limit or adjust the case, after the real run.
 - Note: for "ред3" the top result is the Office lock file `~$Договор_ред3.docx` (carded per RFC §5.1); the expected
   file is still in the top 8 — **OWNER** may want lock files excluded from cards.
+
+### Task 42 — done
+- Commit `80905eb` (byte-identical). `make check` (reviewer, worktree): 8083 passed. Reviewer: APPROVED.
+  Every (scope, reason) row checked against RFC §5.1/§5.2/§5.5/§3.4 and Δ16 (not against the code): all correct.
+  Real tick end to end (3 267 observations, 2 481 cards, 0 errors; no embedding inside an opaque root); late `.git`
+  converges to one new embedding also with the parent re-emitted, nested folders, and a card cap of 10. 12 targeted
+  policy/planner mutations killed by this file alone.
+- MINOR: the "nothing inside an opaque root is carded" check reads the record's own scope only (a one-level re-scope
+  mutation survives here but 22 property/tick tests catch it) — optional ancestor-walk test (code in the review).
+  **OWNER (= retro domain F11):** Δ16 roots are carded "`node_modules | repository`" / "`__pycache__ | repository`",
+  so "my repositories" matches them; a "generated files" label needs a `CARD_VERSION` bump.
+
+### Fix R12 (small batch: disclosure fragments, eval metrics, fixture drive) — done
+- Commit `29c3b0d`. `make check` (reviewer, worktree): 8098 passed. Reviewer: APPROVED. Code fix: `bar_mismatch`
+  reports a reason when the bars' `recall` lacks `overall` (no verdict instead of a pass). The rest are new tests
+  killing the named mutations. NIT for docs: `drive_eval/__main__.py` exit-2 docstring omits this cause.
