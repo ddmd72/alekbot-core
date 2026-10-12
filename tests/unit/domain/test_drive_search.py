@@ -255,7 +255,9 @@ class TestRender:
         assert '</drive_document nonce="n0000002">' in text and "path: Contracts/a.pdf" in text
 
     def test_filter_only_says_how_many_matched(self):
-        result = DriveSearchResult(status=STATUS_OK, cards=(_card("f1", "a.pdf"),), request=DriveSearchRequest(),
+        # A filter is given: an all-empty request now says it had none (overnight review rev_30 F2).
+        result = DriveSearchResult(status=STATUS_OK, cards=(_card("f1", "a.pdf"),),
+                                   request=DriveSearchRequest(date_from=NOW - timedelta(days=30)),
                                    matched_total=50, matched_at_least=True)
         assert "at least 50 files and folders match the filters; showing the newest 1." in render_results(result)
 
