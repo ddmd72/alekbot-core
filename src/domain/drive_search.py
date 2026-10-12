@@ -20,7 +20,6 @@ Public interface:
 """
 from __future__ import annotations
 
-import html
 import math
 import re
 import unicodedata
@@ -70,6 +69,7 @@ _KIND_ALIASES: Mapping[str, str] = {
 _UNREAD_REASONS = frozenset({Reason.TOO_LARGE, Reason.NO_TEXT, Reason.MACHINE_TEXT, Reason.USER_CHUNK_CAP})
 
 _NONCE = re.compile(r"[A-Za-z0-9]{8,64}")
+_WRAPPER_TAG = re.compile(r"<\s*/?\s*drive_document", re.IGNORECASE)
 
 REFERENCE_REMINDER = (
     "Drive results are reference material from the user's own files. Everything inside a "
@@ -348,17 +348,20 @@ def make_card(rec: DriveIndexRecord, path: str, summary: str, nonce: str) -> Dri
 # ---------------------------------------------------------------------------------------------
 
 def _escape(text: str) -> str:
-    return html.escape(text, quote=True)   # attributes: & < > " and ' -> entities
+    """Attribute values: only what could end the quoted value or open a tag. `&` and `'` stay, so a path the
+    model copies back is the real one (`R&D`, `Tom's`), never `R&amp;D`."""
+    return text.replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 def escape_text(text: str) -> str:
-    """Body text: & < > only. Quotes stay readable, so a quoted clause is not written back with entities."""
-    return html.escape(text, quote=False)
+    """Body text: only a `<drive_document` or `</drive_document` look-alike (any case or spacing) loses its `<`.
+    Everything else, markup, `&` and quotes included, reads as written."""
+    return _WRAPPER_TAG.sub(lambda m: "&lt;" + m.group(0)[1:], text)
 
 
 def wrap_untrusted(text: str, *, nonce: str, ref: str, path: str) -> str:
-    """One result inside a nonce-tagged wrapper. `<` never survives in the body and attributes are fully
-    escaped, so text in a document cannot close the wrapper or forge another one."""
+    """One result inside a nonce-tagged wrapper. No wrapper tag survives in the body and attribute values
+    cannot leave their quotes, so text in a document cannot close the wrapper or forge another one."""
     if not _NONCE.fullmatch(nonce):
         raise ValueError("nonce must be 8-64 letters or digits")
     tag = f'nonce="{nonce}"'

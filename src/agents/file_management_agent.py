@@ -35,7 +35,7 @@ import aiofiles
 from ..agents.base_agent import BaseAgent
 from ..domain.agent import AgentMessage, AgentResponse, AgentConfig, AgentIntent, AgentStatus
 from ..domain.drive_search import (
-    REFERENCE_REMINDER, REFERENCE_REMINDER_ATTACHED, escape_text, render_results, request_from_fields,
+    REFERENCE_REMINDER, REFERENCE_REMINDER_ATTACHED, render_results, request_from_fields,
     wrap_untrusted,
 )
 from ..domain.language import LanguageCode
@@ -582,7 +582,7 @@ class FileManagementAgent(BaseAgent):
                 async with aiofiles.open(tmp_path, "wb") as f:
                     await f.write(data)
                 # The model reads an attached PDF or image natively: the reminder travels with it (D2).
-                return self._ok(message, f"{REFERENCE_REMINDER_ATTACHED}\n{escape_text(drive_label(item))} is "
+                return self._ok(message, f"{REFERENCE_REMINDER_ATTACHED}\n{drive_label(item)} is "
                                          f"attached. You can see and analyse it directly.",
                                 [item], metadata={"file_data": {"path": tmp_path, "mime_type": mime}})
             if mime.startswith("video/"):
@@ -595,7 +595,7 @@ class FileManagementAgent(BaseAgent):
                     channel_id_override=message.context.get("origin_channel_id"),
                     platform_override=message.context.get("origin_platform"),
                 )
-                return self._ok(message, f"{REFERENCE_REMINDER_ATTACHED}\n{escape_text(drive_label(item))} has "
+                return self._ok(message, f"{REFERENCE_REMINDER_ATTACHED}\n{drive_label(item)} has "
                                          f"been sent to the user as a file.", [item])
         except DriveFileTooLargeError as e:
             return self._ok(message, f"'{item.path}' is {format_size(item.size_bytes)}; files above "
