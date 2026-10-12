@@ -64,7 +64,8 @@ class TestStatus:
             "connected": True, "provider": "OneDrive", "needs_reconnect": False,
             "indexing": {"enabled": True, "counters": {"metadata_only": 40, "carded": 39},
                          "last_success_at": NOW.isoformat(), "last_error": "throttled",
-                         "index_as_of": NOW.isoformat(), "index_full": False, "building": True},
+                         "index_as_of": NOW.isoformat(), "index_full": False, "building": True,
+                         "available": False, "access_lost_at": None, "index_kept": True},
         }
 
     async def test_needs_reconnect(self):
