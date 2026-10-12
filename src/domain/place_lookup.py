@@ -2,10 +2,10 @@
 Offline place names from a bundled city table (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §5.3; plan Δ7).
 The nearest place within PLACE_MAX_DISTANCE_KM names a photo, unless a much heavier place lies within
 PLACE_PREFER_RADIUS_KM: weight at least PLACE_PREFER_WEIGHT_FACTOR times the nearest's, and either in the nearest
-place's country or with the photo inside its own footprint (PLACE_FOOTPRINT_K * sqrt(weight) km, capped at
-PLACE_PREFER_RADIUS_KM). Then the heaviest such place wins: a photo in a Porto parish is "Porto", one in Torrent
-"Valencia", one in Trastevere "Rome" although the Vatican City row is nearer; Monaco is never "Nice", Kehl never
-"Strasbourg". Candidates come from a 1-degree grid: the three latitude rows around the point, and as many longitude
+place's country, or with the photo inside its own footprint (PLACE_FOOTPRINT_K * sqrt(weight) km) and outside the
+nearest place's. Then the heaviest such place wins: a photo in a Porto parish is "Porto", one in Torrent "Valencia",
+one in Trastevere "Rome" although the Vatican City row is nearer; Monaco is never "Nice", Kehl never "Strasbourg",
+Brazzaville never "Kinshasa". Candidates come from a 1-degree grid: the three latitude rows around the point, and as many longitude
 cells as PLACE_MAX_DISTANCE_KM spans at that latitude.
 """
 from __future__ import annotations
@@ -21,7 +21,8 @@ _KM_PER_DEGREE = 111.32
 # Both measured over the bundled table by scripts/geo/measure_place_preference.py (numbers in src/assets/geo/README.md).
 PLACE_PREFER_WEIGHT_FACTOR = 3.0
 # A row is a point, not a city's extent: the footprint lets a city reach across a border only near its own centre
-# (an enclave like the Vatican), never over a separate border town (Kehl, Monaco).
+# and only where the nearest place's own footprint does not hold the photo (an enclave like the Vatican), never
+# over a separate border town or city (Kehl, Monaco, Brazzaville).
 PLACE_FOOTPRINT_K = 0.0015
 
 
@@ -80,8 +81,8 @@ class PlaceIndex:
         return self._choose(candidates)
 
     def footprint_km(self, row: PlaceRow) -> float:
-        """How far from its row a place reaches across a border: k * sqrt(weight), capped at the prefer radius."""
-        return min(PLACE_PREFER_RADIUS_KM, self._footprint_k * math.sqrt(max(row.weight, 0)))
+        """How far from its row a place holds a photo across a border: k * sqrt(weight) km."""
+        return self._footprint_k * math.sqrt(max(row.weight, 0))
 
     def _candidates(self, lat: float, lon: float) -> List[Tuple[float, PlaceRow]]:
         """(distance km, row) of every place within PLACE_MAX_DISTANCE_KM."""
@@ -97,12 +98,13 @@ class PlaceIndex:
 
     def _choose(self, candidates: Sequence[Tuple[float, PlaceRow]]) -> PlaceRow:
         """The nearest place, or the heaviest one within PLACE_PREFER_RADIUS_KM that outweighs it by the factor and
-        is in its country or has the photo inside its footprint (§5.3)."""
-        _, nearest = min(candidates, key=lambda c: (c[0], -c[1].weight))
+        is in its country, or holds the photo in its footprint while the nearest place's footprint does not (§5.3)."""
+        nearest_d, nearest = min(candidates, key=lambda c: (c[0], -c[1].weight))
         floor = nearest.weight * self._prefer_weight_factor
+        crossable = nearest_d > self.footprint_km(nearest)
         heavier = [c for c in candidates
                    if c[0] <= PLACE_PREFER_RADIUS_KM and c[1].weight >= floor and c[1].weight > nearest.weight
-                   and (c[1].country == nearest.country or c[0] <= self.footprint_km(c[1]))]
+                   and (c[1].country == nearest.country or (crossable and c[0] <= self.footprint_km(c[1])))]
         if not heavier:
             return nearest
         return max(heavier, key=lambda c: (c[1].weight, -c[0]))[1]

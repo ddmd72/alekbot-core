@@ -32,58 +32,53 @@ How the table is read: `src/adapters/geo_place_table.py` loads it into `PlaceRow
 `PLACE_PREFER_RADIUS_KM` (15 km) of the photo names it instead when both hold:
 
 - its `weight` is at least `PLACE_PREFER_WEIGHT_FACTOR` (3) times the nearest place's, and
-- it is in the **nearest place's country**, or the photo lies inside its own **footprint**,
-  `PLACE_FOOTPRINT_K` (0.0015) × √weight km, capped at 15 km.
+- it is in the **nearest place's country**, or the photo lies inside its own **footprint** and outside
+  the nearest place's. A footprint is `PLACE_FOOTPRINT_K` (0.0015) × √weight km.
 
 Of several, the heaviest wins. So a photo in a suburb gets the city's name (Torrent is "Valencia"), and a
-city reaches across a border only near its own centre: a row is a point, not the city's extent, and
-without the footprint every point in Trastevere, nearer to the Vatican City row than to Rome's, would
-be "Vatican City". Rome's footprint is 4.0 km, Strasbourg's 1.4 km (Kehl, 5.3 km away, stays "Kehl"),
-Nice's 0.9 km (Monaco stays "Monaco"). The result reads `"Rome (Roma), Italy"`; the local name is
-omitted when it equals the English one.
+city reaches across a border only near its own centre and only where the nearest place's own footprint
+does not hold the photo: a row is a point, not the city's extent, and without the footprint every point
+in Trastevere, nearer to the Vatican City row than to Rome's, would be "Vatican City". Footprints: Rome
+4.0 km, Strasbourg 1.4 km (Kehl, 5.3 km away, stays "Kehl"), Nice 0.9 km (Monaco stays "Monaco"),
+Vatican City 0.07 km, Brazzaville 3.7 km (so Kinshasa's 10.4 km never takes it). The result reads
+`"Rome (Roma), Italy"`; the local name is omitted when it equals the English one.
 
 Both constants were picked with `scripts/geo/measure_place_preference.py` (read-only, offline) on the
-table built 2026-10-12, 64 458 places, against the 16 expected cases below. "Self-name" counts places
-whose own centre is named after themselves; "cross-border" counts places whose own centre is named
-after a place in another country.
+table built 2026-10-12, 64 458 places, against the 17 expected cases in
+`scripts/geo/expected_places.py` (the one list; `tests/unit/adapters/test_geo_expected_places.py` pins
+it). "Self-name" counts places whose own centre is named after themselves; "cross-border" counts places
+whose own centre is named after a place in another country. A place's own centre is always inside its
+own footprint, so neither number moves with k: k is chosen by the expected cases.
 
 Factor, at k = 0.0015:
 
 | Rule | Self-name | Cross-border | Expected cases missed |
 |---|---|---|---|
-| before: heaviest within 15 km, any country | 29 240 (45.4%) | 603 | St. Peter's, Monaco, Vaduz, San Marino, Gibraltar, Kehl |
-| factor 1 | 29 519 (45.8%) | 5 | Vaduz ("Schaan"), San Marino ("Serravalle"), Kehl ("Offenburg") |
-| factor 1.5 | 33 390 (51.8%) | 5 | San Marino |
-| factor 2 | 36 257 (56.2%) | 5 | San Marino |
-| factor 2.5 | 38 571 (59.8%) | 5 | none |
-| **factor 3** | **40 432 (62.7%)** | **5** | **none** |
-| factor 3.5 | 42 032 (65.2%) | 5 | Brooklyn ("Brooklyn") |
-| factor 10 | 51 349 (79.7%) | 4 | Brooklyn |
-| factor 50 | 59 498 (92.3%) | 4 | Brooklyn, Torrent ("Torrent") |
+| before: heaviest within 15 km, any country | 29 240 (45.4%) | 603 | St. Peter's, Monaco, Vaduz, San Marino, Gibraltar, Kehl, Brazzaville |
+| factor 1 | 29 521 (45.8%) | 0 | Vaduz ("Schaan"), San Marino ("Serravalle"), Kehl ("Offenburg") |
+| factor 1.5 | 33 392 (51.8%) | 0 | San Marino |
+| factor 2 | 36 259 (56.3%) | 0 | San Marino |
+| factor 2.5 | 38 573 (59.8%) | 0 | none |
+| **factor 3** | **40 435 (62.7%)** | **0** | **none** |
+| factor 3.5 | 42 035 (65.2%) | 0 | Brooklyn ("Brooklyn") |
+| factor 10 | 51 351 (79.7%) | 0 | Brooklyn |
+| factor 50 | 59 502 (92.3%) | 0 | Brooklyn, Torrent ("Torrent") |
 
-k, at factor 3:
+k, at factor 3 (self-name 40 435, 62.7%, and cross-border 0 for every k):
 
-| k | Self-name | Cross-border | Expected cases missed |
-|---|---|---|---|
-| 0 (no footprint) | 40 435 (62.7%) | 0 | Trastevere ("Vatican City") |
-| 0.001 | 40 435 (62.7%) | 0 | Trastevere |
-| 0.0013 | 40 433 (62.7%) | 3 | Trastevere |
-| **0.0015** | **40 432 (62.7%)** | **5** | **none** |
-| 0.00175 | 40 432 (62.7%) | 5 | none |
-| 0.002 | 40 430 (62.7%) | 8 | St. Peter's Square ("Rome") |
-| 0.003 | 40 427 (62.7%) | 22 | St. Peter's Square |
-| 0.006 | 40 402 (62.7%) | 66 | St. Peter's Square, Kehl ("Strasbourg") |
-| 0.01 | 40 366 (62.6%) | 122 | St. Peter's Square, Kehl |
+| k | Expected cases missed |
+|---|---|
+| 0 (no footprint), 0.001, 0.0013 | Trastevere ("Vatican City") |
+| **0.0015**, 0.00175 | **none** |
+| 0.002, 0.003 | St. Peter's Square ("Rome") |
+| 0.006, 0.01 | none (the Vatican's own footprint now holds St. Peter's), but a larger k lets every big city reach farther over a small foreign neighbour |
 
 Factor 3 is the largest that keeps Brooklyn → New York (New York weighs 3.2 times Brooklyn). k must
 reach Trastevere (3.4 km from the Rome row: k ≥ 0.0013) and stop short of St. Peter's Square (4.7 km:
-k < 0.0018); 0.0015 is the middle. A rebuilt table can move these numbers: re-run the script.
+k < 0.0018) while the Vatican's own footprint is smaller than its distance to the square; 0.0015 is
+the smallest value in that window. A rebuilt table can move these numbers: re-run the script.
 
-The five cross-border names left at these settings, all megacity footprints over a neighbour across a
-border: Brazzaville → Kinshasa, Aflao (Ghana) → Lomé (Togo), Si Chiang Mai (Thailand) → Vientiane
-(Laos), San Tin and Sheung Shui (Hong Kong) → Shenzhen.
-
-Expected results on the built table (pinned by `tests/unit/adapters/test_geo_place_table_expected_places.py`):
+Expected results on the built table:
 
 | Photo taken in | Place name |
 |---|---|
@@ -99,6 +94,7 @@ Expected results on the built table (pinned by `tests/unit/adapters/test_geo_pla
 | Gibraltar | Gibraltar, Gibraltar (not Algeciras) |
 | Kehl | Kehl, Germany (not Strasbourg) |
 | Geneva | Geneva (Genf), Switzerland |
+| Brazzaville | Brazzaville, Republic of the Congo (not Kinshasa) |
 | the Dolomites (Plose) | Brixen (Bressanone), Italy |
 | open sea | no place |
 
