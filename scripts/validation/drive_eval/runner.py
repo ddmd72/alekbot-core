@@ -21,7 +21,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.domain.drive_index_params import K
 from src.domain.drive_index_planner import PlaceOf
-from src.domain.drive_search import DriveSearchRequest
+from src.domain.drive_search import DriveSearchRequest, request_from_fields
 from src.domain.user import UserBotConfig, UserProfile
 from src.domain.user_drive import parse_drive_ref
 from src.ports.embedding_service import EmbeddingService
@@ -37,6 +37,7 @@ EVAL_USER = "eval-user"
 EVAL_START = datetime(2026, 10, 11, 12, 0, tzinfo=timezone.utc)
 MAX_TICKS = 400
 MAX_ERRORS = 3
+MAX_THROTTLED = 6     # consecutive throttled ticks; the service's backoff makes that about an hour of waiting
 
 EXIT_OK = 0
 EXIT_REGRESSION = 1
@@ -119,6 +120,10 @@ def validate_gold(gold: Sequence[Dict[str, Any]], paths: Sequence[str], k: int =
         case_k = case.get("k", k)
         if not isinstance(case_k, int) or not 1 <= case_k <= k:
             problems.append(f"{cid}: k must be an integer in 1..{k}")
+        try:
+            request_for(case)   # what production would refuse (an unknown kind, reversed dates) is a gold bug
+        except ValueError as exc:
+            problems.append(f"{cid}: {exc}")
     if problems:
         raise EvalError("malformed gold file: " + "; ".join(problems))
 
@@ -128,11 +133,13 @@ async def index_fixture(drive: FixtureDrive, repo: InMemoryDriveIndexRepository,
                         max_ticks: int = MAX_TICKS, throttle_pause_s: float = 30.0,
                         monotonic: Callable[[], float] = time.monotonic) -> IndexOutcome:
     """Tick until no continuation is pending, as the drive queue would."""
-    service = DriveIndexingService(drive, repo, embeddings, _RecordingQueue(), _EnabledUsers(),
+    queue = _RecordingQueue()
+    service = DriveIndexingService(drive, repo, embeddings, queue, _EnabledUsers(),
                                    place_of, embedding_space, clock=clock, monotonic=monotonic)
     statuses: Counter[str] = Counter()
     summary: Counter[str] = Counter()
     errors = 0
+    throttled = 0
     for tick in range(1, max_ticks + 1):
         result = await service.tick(EVAL_USER)
         statuses[result.status] += 1
@@ -142,7 +149,14 @@ async def index_fixture(drive: FixtureDrive, repo: InMemoryDriveIndexRepository,
             if errors >= MAX_ERRORS:
                 raise EvalError(f"{errors} ticks ended in error; see the [DriveIndex] log lines")
         if result.status == "throttled":
-            await asyncio.sleep(throttle_pause_s)
+            throttled += 1
+            if throttled >= MAX_THROTTLED:
+                raise EvalError(f"{throttled} consecutive ticks were throttled; the quota is busy, run again later")
+            # Wait as long as the service asked (its backoff or the provider's retry-after), never less than the pause.
+            queued = queue.tasks[-1]["delay"] if queue.tasks else 0
+            await asyncio.sleep(max(throttle_pause_s, queued))
+        else:
+            throttled = 0
         state = await repo.get_sync_state(EVAL_USER)
         if state is None:
             raise EvalError(f"tick {tick} left no sync state (status {result.status})")
@@ -153,25 +167,11 @@ async def index_fixture(drive: FixtureDrive, repo: InMemoryDriveIndexRepository,
     raise EvalError(f"the index did not settle in {max_ticks} ticks")
 
 
-def _parse_filter_date(value: Optional[str], end_of_day: bool) -> Optional[datetime]:
-    """Gold dates are ISO dates or datetimes; a bare `date_to` means the whole of that day."""
-    if not value:
-        return None
-    bare = len(value) == 10
-    dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    dt = dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
-    if bare and end_of_day:
-        dt += timedelta(days=1, microseconds=-1)
-    return dt
-
-
 def request_for(case: Dict[str, Any]) -> DriveSearchRequest:
+    """The request exactly as FileManagementAgent._search_drive builds it; raises ValueError where it refuses."""
     filters = case.get("filters") or {}
-    return DriveSearchRequest(
-        query=case.get("query", ""), folder=filters.get("folder") or None, kind=filters.get("kind") or None,
-        date_from=_parse_filter_date(filters.get("date_from"), end_of_day=False),
-        date_to=_parse_filter_date(filters.get("date_to"), end_of_day=True),
-    )
+    return request_from_fields(case.get("query"), filters.get("folder"), filters.get("kind"),
+                               filters.get("date_from"), filters.get("date_to"))
 
 
 def _card_paths(card: Any, drive: FixtureDrive) -> List[str]:
@@ -241,7 +241,7 @@ async def run_eval(tree_path: Path, gold_path: Path, bars_path: Path, report_pat
     if run.errors:
         report["verdict"] = "search_errors"   # never recorded as a bar, never a pass
     elif record and run.refused:
-        report["verdict"] = "unrecordable"    # a case the service refused (e.g. an unknown kind) is a gold bug
+        report["verdict"] = "unrecordable"    # a case the service refused (e.g. a folder not found) is a gold bug
     elif record:
         bars_path.parent.mkdir(parents=True, exist_ok=True)
         bars = make_bars(table, run.outcomes, K, embedding_space, now_iso, tree_sha, gold_sha)
