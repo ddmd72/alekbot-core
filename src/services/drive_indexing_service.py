@@ -632,6 +632,7 @@ class DriveIndexingService:
         outcomes = await asyncio.gather(*(embed(r) for r in to_embed), return_exceptions=True)
         results: List[Tuple[DriveIndexRecord, List[float]]] = []
         refused: List[DriveIndexRecord] = []
+        systemic: Optional[BaseException] = None
         for rec, outcome in zip(to_embed, outcomes):
             if isinstance(outcome, LLMClientError) and outcome.http_status == 400:
                 # A definite bad-input refusal of this card text: the record backs off alone (premise_audit P9).
@@ -641,10 +642,9 @@ class DriveIndexingService:
                 continue
             if isinstance(outcome, BaseException):
                 # Anything else — quota, 5xx, other 4xx, network, unknown, cancellation — is systemic: the tick
-                # ends and backs off with `attempts` untouched (§8.2).
-                logger.warning(f"[DriveIndex] card embedding failed for {user_id[:8]}: "
-                               f"{type(outcome).__name__}: {outcome}; ending the tick")
-                raise outcome
+                # ends and backs off with `attempts` untouched (§8.2), after the batch's other outcomes are kept.
+                systemic = systemic or outcome
+                continue
             results.append(outcome)
         fresh = await self._repo.get_records(user_id, [rec.item_id for rec in to_embed])
         written: List[DriveIndexRecord] = []
@@ -669,6 +669,10 @@ class DriveIndexingService:
         await self._commit(user_id, written, set(), vectors)
         summary["cards"] = summary.get("cards", 0) + len(vectors)
         summary["evicted"] = summary.get("evicted", 0) + evicted
+        if systemic is not None:
+            logger.warning(f"[DriveIndex] card embedding failed for {user_id[:8]}: "
+                           f"{type(systemic).__name__}: {systemic}; {len(vectors)} cards kept, ending the tick")
+            raise systemic
 
     async def _release_card_cap(self, user_id: str, state: DriveSyncState, now: datetime,
                                 summary: Dict[str, int]) -> None:

@@ -1,10 +1,10 @@
 """Card embedding outcomes in the tick (USER_DRIVE_INDEXING_RFC §8.2, §12.3): a card the provider keeps refusing
-becomes terminal."""
+becomes terminal, and a systemic failure mid-batch keeps the vectors already obtained."""
 from src.domain import drive_card
 from src.domain import drive_index_planner as planner
 from src.domain.drive_index import RecordState
 from src.domain.drive_index_params import MAX_ATTEMPTS, RETRY_CAP
-from src.domain.exceptions import LLMClientError
+from src.domain.exceptions import LLMClientError, LLMServerError
 from src.services import drive_indexing_service as svc_mod
 
 from .test_drive_indexing_service import World
@@ -118,3 +118,46 @@ class TestRefusedCardBecomesTerminal:
         del w.emb.get_embedding                  # the provider accepts the new card builder's text
         await w.settle()
         assert bad in w.carded() and w.rec(bad).state is RecordState.METADATA_ONLY and len(refused) == MAX_ATTEMPTS
+
+
+class TestSystemicEmbeddingFailureKeepsTheBatch:
+
+    async def test_one_poison_card_does_not_discard_the_other_vectors(self):
+        """A 5xx is systemic (§8.2) and ends the tick, but the vectors the batch already holds are committed."""
+        w = World(page_size=500)
+        for i in range(50):
+            w.drive.add(f"doc{i:02d}.pdf")
+        poison = w.drive.add("doc00 poison.pdf")
+        real = w.emb.get_embedding
+
+        async def emb(text, task_type="RETRIEVAL_DOCUMENT"):
+            if "poison" in text:
+                raise LLMServerError("500 Internal error", http_status=500)
+            return await real(text, task_type)
+
+        w.emb.get_embedding = emb
+        result = await w.tick()
+        assert result.status in ("error", "throttled")
+        assert len(w.carded()) == 50 and poison not in w.carded()
+        assert all(w.rec(i).has_card for i in w.carded())
+        assert w.rec(poison).attempts == 0       # systemic: attempts untouched
+
+    async def test_refusals_in_a_systemically_failed_batch_are_recorded(self):
+        w = World(page_size=500)
+        for i in range(5):
+            w.drive.add(f"doc{i}.pdf")
+        refused_item = w.drive.add("refused.pdf")
+        w.drive.add("poison.pdf")
+        real = w.emb.get_embedding
+
+        async def emb(text, task_type="RETRIEVAL_DOCUMENT"):
+            if text.startswith("poison"):
+                raise LLMServerError("500 Internal error", http_status=500)
+            if text.startswith("refused"):
+                raise LLMClientError("400 INVALID_ARGUMENT", http_status=400)
+            return await real(text, task_type)
+
+        w.emb.get_embedding = emb
+        await w.tick()
+        assert w.rec(refused_item).attempts == 1 and w.rec(refused_item).due_at > w.clock.now
+        assert len(w.carded()) == 5
