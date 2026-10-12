@@ -14,13 +14,19 @@ import pytest
 from scripts.validation.drive_eval.fixture_drive import FixtureDrive, item_id_for
 from scripts.validation.drive_eval.runner import EVAL_USER, EvalClock, index_fixture
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
-from src.domain.drive_index import Reason, Scope
+from src.domain.drive_extraction import PARSER, ExtractionOutcome, ExtractionStatus
+from src.domain.drive_index import Reason, RecordState, Scope
 
 from ..scripts.drive_eval_samples import fake_content
 from .drive_index_fakes import FakeEmbeddings
 
 _TREE = Path(__file__).resolve().parents[2] / "fixtures" / "drive_eval" / "tree.json"
 N, OR, IO = Scope.NORMAL, Scope.OPAQUE_ROOT, Scope.INSIDE_OPAQUE
+_DOCX = "Договор_ред3.docx"
+_DOCX_TEXT = ("Договір оренди нежитлового приміщення № 3. Орендодавець передає, а орендар приймає у тимчасове "
+              "користування офісне приміщення загальною площею 48 квадратних метрів. Орендна плата становить "
+              "1 250 євро на місяць і сплачується до п'ятого числа кожного місяця. Договір діє до 31 грудня 2026 "
+              "року. Сторони можуть розірвати договір, письмово повідомивши іншу сторону за тридцять днів. ") * 3
 
 EXPECTED = {
     # a repository: one card for the root; its folders stay lightweight; its files get no record (§5.2)
@@ -62,8 +68,7 @@ EXPECTED = {
     "Thumbs.db": (N, Reason.OS_ARTIFACT),
     # a nested archive and ordinary files: an archive and audio stay metadata only; documents and images are read
     "Archive/site-backup.zip": (N, Reason.KIND_NOT_ADMITTED),
-    # the fake parser reads the OOXML package's raw bytes, which the text gate calls machine text (§5.5 class 3)
-    "Contracts/Договор_ред3.docx": (N, Reason.MACHINE_TEXT),
+    "Contracts/Договор_ред3.docx": (N, None),          # a real DOCX: the parser reads its text, indexed (§24.1)
     "Photos/WhatsApp/IMG-20251120-WA0001.jpg": (N, Reason.PHOTOGRAPH),   # no rendition: a photograph (§24.5)
     "Media/voice memo.m4a": (N, Reason.KIND_NOT_ADMITTED),
 }
@@ -75,8 +80,11 @@ def indexed():
 
     async def run():
         repo = InMemoryDriveIndexRepository()
+        content = fake_content()
+        # the fake parser decodes raw bytes; a DOCX gets the text a real parser reads from it (§8.1)
+        content["extractors"][PARSER].outcomes[_DOCX] = ExtractionOutcome(status=ExtractionStatus.TEXT, text=_DOCX_TEXT)
         out = await index_fixture(FixtureDrive.from_file(_TREE), repo, FakeEmbeddings(), lambda lat, lon: None,
-                                  "fake/8", EvalClock(), throttle_pause_s=0, **fake_content())
+                                  "fake/8", EvalClock(), throttle_pause_s=0, **content)
         return repo, out
 
     return asyncio.run(run())
@@ -92,6 +100,12 @@ def test_scope_and_reason(indexed, path):
         assert rec is not None, f"{path} has no record"
         assert (rec.scope, rec.reason) == EXPECTED[path]
         assert rec.has_card is (rec.scope is not Scope.INSIDE_OPAQUE and rec.reason is not Reason.OS_ARTIFACT)
+
+
+def test_a_docx_is_indexed(indexed):
+    repo, _ = indexed
+    rec = repo.records[(EVAL_USER, item_id_for("Contracts/" + _DOCX))]
+    assert rec.state is RecordState.INDEXED and rec.indexed_generation is not None and rec.chunk_count > 0
 
 
 def test_nothing_inside_an_opaque_root_is_carded_and_nothing_failed(indexed):
