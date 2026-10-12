@@ -59,7 +59,8 @@ class World:
                                             clock=self.clock, monotonic=self.clock.monotonic)
         counter = itertools.count(1)
         self.search_svc = DriveSearchService(self.repo, self.emb, self.users, self.drive, clock=self.clock,
-                                             nonce=lambda: f"nonce{next(counter):04d}")
+                                             nonce=lambda: f"nonce{next(counter):04d}",
+                                             embedding_space="test-space/8")
 
     async def settle(self, max_ticks=50):
         for _ in range(max_ticks):

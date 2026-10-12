@@ -68,7 +68,8 @@ async def test_a_tick_onboards_from_a_minimal_state_and_keeps_its_date():
 async def test_the_cabinet_and_search_say_building_for_a_minimal_state():
     w = World()
     await w.repo.create_sync_state_if_absent(DriveSyncState(user_id="u", created_at=T0))
-    search = DriveSearchService(w.repo, w.emb, w.users, w.drive, clock=w.clock, nonce=lambda: "n")
+    search = DriveSearchService(w.repo, w.emb, w.users, w.drive, clock=w.clock, nonce=lambda: "n",
+                                embedding_space="test-space/8")
     status = await search.indexing_status("u")
     assert status.enabled and status.building
     result = await search.search("u", DriveSearchRequest(query="a"))

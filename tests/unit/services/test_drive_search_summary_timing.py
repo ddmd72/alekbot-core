@@ -15,7 +15,7 @@ async def test_the_summary_line_carries_the_elapsed_milliseconds(monkeypatch):
     await w.settle()
     ticks = itertools.count(start=10.0, step=0.25)   # each reading 250 ms after the previous one
     svc = DriveSearchService(w.repo, w.emb, w.users, w.drive, clock=w.clock, nonce=lambda: "nonce0001",
-                             monotonic=lambda: next(ticks))
+                             monotonic=lambda: next(ticks), embedding_space="test-space/8")
     log = MagicMock()
     monkeypatch.setattr(search_mod, "logger", log)
     from src.domain.drive_search import DriveSearchRequest
