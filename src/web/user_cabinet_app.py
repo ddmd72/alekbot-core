@@ -10,6 +10,10 @@ from ..services.invite_code_service import InviteCodeService
 from ..services.session_service import SessionService
 from ..services.google_oauth_service import GoogleOAuthService
 from ..services.email_indexing_service import EmailIndexingService
+from ..services.drive_search_service import DriveSearchService
+from ..domain.drive_index_params import TICK_DEADLINE_S
+from ..domain.drive_indexing_status import DriveIndexingStatus
+from ..domain.drive_task_keys import DRIVE_SYNC_TASK, tick_payload, toggle_key
 from ..ports.user_repository import UserRepository
 from ..ports.repository import FactRepository
 from ..ports.embedding_service import EmbeddingService
@@ -54,6 +58,8 @@ def create_user_cabinet_blueprint(
     recurrence_port: Optional[RecurrencePort] = None,
     twilio_verify_client: Optional[Any] = None,
     user_drive: Optional[UserDrivePort] = None,
+    drive_search_service: Optional[DriveSearchService] = None,
+    drive_task_queue: Optional[TaskQueue] = None,
 ) -> Blueprint:
     """
     Create and configure the User Cabinet Blueprint.
@@ -1254,18 +1260,92 @@ def create_user_cabinet_blueprint(
     # User drive (USER_DRIVE_RFC §4.1)
     # =========================================================================
 
+    def _iso(value: Optional[datetime]) -> Optional[str]:
+        return value.isoformat() if value else None
+
+    def _indexing_json(status: DriveIndexingStatus) -> dict:
+        """The index block of the drive card (USER_DRIVE_INDEXING_RFC §6): an error is a category, never
+        a raw message."""
+        return {
+            "enabled": status.enabled,
+            "counters": dict(status.counters),
+            "last_success_at": _iso(status.last_success_at),
+            "last_error": status.last_error,
+            "index_as_of": _iso(status.index_as_of),
+            "index_full": status.index_full,
+            "building": status.building,
+        }
+
     @bp.route("/api/drive/status", methods=["GET"])
     @auth_required
     async def drive_status():
-        """The user's drive connection."""
+        """The user's drive connection; with indexing wired, the index too (USER_DRIVE_INDEXING_RFC §6)."""
         if not user_drive:
             return jsonify({"connected": False, "provider": ""}), 200
         try:
-            return jsonify({"connected": await user_drive.is_connected(g.user_id),
-                            "provider": user_drive.display_name}), 200
+            connection = await user_drive.connection(g.user_id)
+            body: dict = {
+                "connected": connection.connected,
+                "provider": user_drive.display_name,
+                # The grant was rejected on refresh (§7.7): still stored, but only a reconnect helps.
+                "needs_reconnect": connection.connected and connection.needs_reconnect,
+            }
+            if drive_search_service is not None:
+                body["indexing"] = _indexing_json(await drive_search_service.indexing_status(g.user_id))
+            return jsonify(body), 200
         except Exception as exc:
             logger.error(f"Error fetching drive status: {exc}", exc_info=True)
             return jsonify({"error": "Internal server error"}), 500
+
+    @bp.route("/api/drive/indexing", methods=["GET"])
+    @auth_required
+    async def drive_indexing_get():
+        """Whether drive indexing (search over the drive) is on for the authenticated user."""
+        try:
+            user = await user_repo.get_user(g.user_id)
+            if not user:
+                return jsonify({"error": "User not found"}), 404
+            return jsonify({"enabled": user.config.drive_indexing_enabled}), 200
+        except Exception as exc:
+            logger.error(f"Error fetching drive indexing setting: {exc}", exc_info=True)
+            return jsonify({"error": "Internal server error"}), 500
+
+    @bp.route("/api/drive/indexing", methods=["PUT"])
+    @auth_required
+    async def drive_indexing_set():
+        """Turn drive indexing on or off. Body: {"enabled": bool}.
+
+        Off purges the index (an explicit request, §6); search reads the flag uncached, so the index is
+        hidden at once. Either way a `drive_sync` task is enqueued under a toggle key (plan Δ2): the
+        tick's gate purges or starts onboarding without waiting for the next scheduler round."""
+        try:
+            body = await request.get_json(force=True) or {}
+            enabled = body.get("enabled")
+            if not isinstance(enabled, bool):
+                return jsonify({"error": "enabled (bool) required"}), 400
+            user = await user_repo.get_user(g.user_id)
+            if not user:
+                return jsonify({"error": "User not found"}), 404
+            user.config.drive_indexing_enabled = enabled
+            await user_repo.update_user(user)
+        except Exception as exc:
+            logger.error(f"Error updating drive indexing setting: {exc}", exc_info=True)
+            return jsonify({"error": "Internal server error"}), 500
+        queued = False
+        if drive_task_queue is not None:
+            try:
+                await drive_task_queue.enqueue_worker_task(
+                    DRIVE_SYNC_TASK, tick_payload(g.user_id), deadline_seconds=TICK_DEADLINE_S,
+                    dedup_key=toggle_key(g.user_id, datetime.now(timezone.utc)))
+                queued = True
+            except Exception as exc:
+                # The flag is saved; the scheduler fan-out reaches the user within TICK_INTERVAL.
+                logger.error(f"Drive indexing toggle saved but the sync task was not queued: {exc}",
+                             exc_info=True)
+        else:
+            logger.warning("Drive indexing toggled with no drive queue wired; the scheduler will pick it up")
+        logger.info(f"🗂️ Drive indexing {'on' if enabled else 'off'} for user={g.user_id[:8]} (queued={queued})")
+        return jsonify({"enabled": enabled, "queued": queued}), 200
 
     @bp.route("/api/drive/disconnect", methods=["DELETE"])
     @auth_required
