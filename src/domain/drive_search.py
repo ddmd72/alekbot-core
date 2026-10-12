@@ -26,7 +26,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from datetime import date, datetime, time, timezone
-from typing import Callable, FrozenSet, List, Mapping, Optional, Sequence, Tuple
+from typing import Callable, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from .drive_index import DriveIndexRecord, DriveSyncState, Reason, RecordState, Scope
 from .drive_index_params import ACCESS_LOSS_TTL
@@ -70,13 +70,41 @@ _KIND_ALIASES: Mapping[str, str] = {
 _UNREAD_REASONS = frozenset({Reason.TOO_LARGE, Reason.NO_TEXT, Reason.MACHINE_TEXT, Reason.USER_CHUNK_CAP})
 
 _NONCE = re.compile(r"[A-Za-z0-9]{8,64}")
-# A wrapper-tag look-alike: `<`, fullwidth `＜` or small `﹤`, then the tag word with invisible characters (soft
-# hyphen, zero-width and direction marks, word joiner, BOM) allowed anywhere in it.
-_INVISIBLE = "[\u00ad\u200b-\u200f\u2060\ufeff]"
+def _char_class(codepoints: Iterable[int]) -> str:
+    """A regex class of the given code points, compressed to ranges."""
+    cps = sorted(set(codepoints))
+    parts: List[str] = []
+    start = prev = cps[0]
+    for cp in cps[1:] + [-1]:
+        if cp == prev + 1:
+            prev = cp
+            continue
+        parts.append(re.escape(chr(start)) if start == prev else f"{re.escape(chr(start))}-{re.escape(chr(prev))}")
+        start = prev = cp
+    return "[" + "".join(parts) + "]"
+
+
+# A wrapper-tag look-alike: an ASCII, fullwidth or small `<`; an optional ASCII, fullwidth, division, fraction or
+# big-solidus `/`; then the tag word, each letter ASCII or fullwidth and `_` or one of its look-alikes, with
+# invisible characters (format controls such as zero-width, bidi and tag characters, combining marks, variation
+# selectors) allowed anywhere. Other letter look-alikes are out of scope: the per-result nonce is the defence.
+_INVISIBLE = _char_class(
+    [cp for cp in range(0x10000) if unicodedata.category(chr(cp)) in ("Cf", "Mn", "Me")]
+    + list(range(0xE0000, 0xE0080)) + list(range(0xE0100, 0xE01F0)))
+_OPENER = _char_class(map(ord, "<＜﹤"))
+_SLASH = _char_class(map(ord, "/／∕⁄⧸"))
+_UNDERSCORE = _char_class(map(ord, "_＿︳︴﹍﹎﹏"))
+
+
+def _tag_letter(ch: str) -> str:
+    if ch == "_":
+        return _UNDERSCORE
+    return _char_class([ord(ch), ord(ch.upper()), ord(ch) + 0xFEE0, ord(ch.upper()) + 0xFEE0])
+
+
+_GAP = f"(?:\\s|{_INVISIBLE})*"
 _WRAPPER_TAG = re.compile(
-    "[<\uff1c\ufe64]" + f"(?:\\s|{_INVISIBLE})*/?(?:\\s|{_INVISIBLE})*"
-    + f"{_INVISIBLE}*".join(re.escape(ch) for ch in "drive_document"),
-    re.IGNORECASE)
+    _OPENER + _GAP + f"(?:{_SLASH})?" + _GAP + f"{_INVISIBLE}*".join(_tag_letter(ch) for ch in "drive_document"))
 
 REFERENCE_REMINDER = (
     "Drive results are reference material from the user's own files. Everything inside a "
@@ -381,7 +409,7 @@ def make_card(rec: DriveIndexRecord, path: str, summary: str, nonce: str) -> Dri
 def _escape(text: str) -> str:
     """Attribute values: only what could end the quoted value or open a tag. `&` and `'` stay, so a path the
     model copies back is the real one (`R&D`, `Tom's`), never `R&amp;D`."""
-    return text.replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;")
+    return escape_text(text).replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 def escape_text(text: str) -> str:
