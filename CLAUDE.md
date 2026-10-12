@@ -565,51 +565,35 @@ line that keeps file operations out of memory was applied to the live `CONSOLIDA
 run: leaks 3/3 → 1/3; RFC §4.12). Step 2 Slice 1 (metadata index + search) is built; content search (Slice 2), one
 extraction path (Slice 3), the model extractor (Slice 4), step 3 (long audio/video) and full editing are not.
 
-**User Drive indexing** (`docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md`, Slice 1: find a file by metadata;
-`docs/05_building_blocks/user_drive/README.md`) — **opt-in** (`UserBotConfig.drive_indexing_enabled`, Cabinet toggle,
-`PUT /api/drive/indexing`). A disposable mirror of the App Folder: `{prefix}drive_index_records` (one record per item,
-doc id `{user_id}:{item_id}`, 768-dim `card_vector`, **no stored path** — paths come from the `parent_id` chain at
-read time) and `{prefix}drive_sync_state` (one per user: delta cursor, epoch, lease, `access_lost_at`, `purging`).
-The cursor is bound to the drive and App Folder it came from: an account switch purges and re-onboards.
-`save_sync_state` never writes the lease (only the lease transactions do) — but a stale tick's other writes are not
-fenced (open owner item). Pure domain decides everything (`drive_index_planner.py`, `drive_index_policy.py`,
-`drive_card.py`, `drive_name_keys.py`); `DriveIndexingService.tick` runs gate → lease → observe (nudged items, then
-delta pages) → work off due records by class (edits — nudged items too —, cascades, first-seen cards and subtree
-re-listings — a record flag, paged — maintenance, retries) → continuation. **Errors are classified by the call**
-(RFC §8.2): item calls (density probe, `get_change`, parent lookup, re-listing page; transport errors arrive as
-`OSError`, the 60 s per-call bound `GRAPH_CALL_TIMEOUT_S` as `TimeoutError`) defer that item, and a change that fails
-inside a page is skipped with an ERROR line. The feed, the token endpoint and card embedding are systemic (only an
-HTTP 400 embedding refusal, `LLMClientError`, backs that one card off): written onto the latest saved state (page
-progress is kept), they back off `min(60·2^n, 1800)` s, or the throttle hint (the provider's Retry-After; a flat 60 s for a failed
-token refresh). **A third Cloud Run
-service, next to the relay:** the tick runs only on `alek-bot-indexer-dev` (`indexer_main.py`, `/worker` for
-`drive_sync` only, `--ingress=internal` plus the OIDC check with a pinned audience, gen2, 2 GiB, concurrency 1, max 1;
-logs: `make fetch-logs-indexer`, Cloud Logging only — no Logfire), fed by the dedicated queue `drive-sync-dev`
-(`max-concurrent-dispatches=1`); the main service never indexes (it peaks at 74–90 % of 1 GiB, and Slice 2's parsers
-amplify memory). Both reach it through `INDEXER_URL_DEV` → `_INDEXER_URL` → `DRIVE_INDEXER_URL` (`os.getenv`;
-two-pass first deploy in `docs/07_deployment/README.md`). The main service fans out `start_drive_sync` every 10 min
-(`DriveSyncSchedulerService`: staleness alert, and at most one reconnect notice per breakage — it loads the user's
-agents first and sets `reconnect_notified` before sending, so a cut-off notice is lost, never repeated, like Gmail's)
-and nudges after each Step 1 mutation. **Slice 1 admits no content kind:** every file is
-`metadata_only` (reason `kind_not_admitted`, or a never-download rule) with a card `name | kind | key facets` (photo date, camera, an offline
-`place_name` from `src/assets/geo/places_v1.tsv`); dot-folders, folders with a `.git`/`pyvenv.cfg` child,
-`node_modules`/`__pycache__`/`site-packages` anywhere (RFC Δ16) and dense trees collapse to one card.
-`search_files_in_drive` (SYNC) → `DriveSearchService`: card kNN + a lexical name stream fused with RRF, names covering
-every query token first (RFC Δ17). The name stream gives every whole-token key and every trigram key (≤ 8 of each,
-query order) its own single-key `array-contains-any` query, plus one remainder query (≤ 30 keys), in parallel and
-merged by id, then the `name_match` floor — Firestore returns the first 100 matches by id, so a common key (`img`, a
-shared trigram) can no longer crowd out the target (≤ 18 parallel queries per round with the kNN, ≤ 36 with the one
-widening; exact, partial, transliterated, misspelled). An empty query is filter-only (no name words and no filters →
-"the N newest", said so); a fetch-capped empty filter-only page never claims "no matching files"; a folder resolved
-only by a single suffix match from a full name page is refused, never guessed (an exact path is used). `drive_kind`
-takes a format or a family (`spreadsheet`, `document`, `presentation`, `photo`, RFC Δ20); at most 8 cards inside a
-nonce-tagged, escaped `<drive_document>` wrapper, with a coverage envelope (`building`, `index_as_of`,
-`reconnect_needed`). Not in `SearchEnrichmentService`, by decision. Turning indexing off purges at once (inside a
-tick, under the lease); losing access keeps the index 30 days, then the tick purges. Eval:
-`venv/bin/python -m scripts.validation.drive_eval` (recall@8 on a synthetic drive against
-`tests/fixtures/drive_eval/bars.json` — written by the first owner-reviewed run, pins K and the tree and gold hashes;
-`--record` only for a deliberate change). Decisions: `decisions/drive_index_not_in_search_enrichment.md`,
-`drive_index_opt_in_access_loss_grace.md`, `drive_indexer_lease_queue_service.md`, `drive_problem_content_classes.md`.
+**User Drive indexing** (`docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md`, Slice 1: find a file by metadata — its
+deltas from the RFC text are §23, cited in code as `RFC Δn`; `docs/05_building_blocks/user_drive/README.md`) —
+**opt-in** (`UserBotConfig.drive_indexing_enabled`, Cabinet toggle, `PUT /api/drive/indexing`). A disposable mirror of
+the App Folder: `{prefix}drive_index_records` (one record per item, doc id `{user_id}:{item_id}`, 768-dim
+`card_vector`, **no stored path** — paths come from the `parent_id` chain at read time; `card_capped`/`card_refused`
+are flags beside the structural state) and `{prefix}drive_sync_state` (one per user: delta cursor bound to its drive,
+epoch, lease, `access_lost_at`, `purging`, `applied_space`). **Lease-fenced:** a tick writes nothing past
+`lease_until - LEASE_MARGIN`, and state save/delete are transactions by owner (`LeaseLost` = quiet stop). Pure domain
+decides everything (`drive_index_planner.py`, `drive_index_policy.py`, `drive_card.py`, `drive_name_keys.py`);
+`DriveIndexingService.tick`: gate → lease → observe (nudged items, then delta) → work off due records by class (edits,
+cascades, first-seen and re-listings, maintenance, retries) → upgrade pass → release, then continuation. Errors are
+classified by the call (RFC §8.2): item calls defer that item (a parent lookup never deletes on transient errors);
+the feed, token endpoint and embeddings are systemic (only an HTTP 400 card refusal backs one card off). **A third
+Cloud Run service:** the tick runs only on `alek-bot-indexer-dev` (`indexer_main.py`, `drive_sync`-only `/worker`,
+`--ingress=internal` + OIDC with a pinned audience, gen2, 2 GiB, concurrency 1, max 1; logs `make fetch-logs-indexer`,
+no Logfire), fed by queue `drive-sync-dev` (`max-concurrent-dispatches=1`). URL chain `INDEXER_URL_DEV` →
+`_INDEXER_URL` → `DRIVE_INDEXER_URL` (`os.getenv`); `make deploy` refuses it empty unless `DRIVE_FIRST_PASS=1` (first
+pass of the two-pass first deploy, `docs/07_deployment/README.md`). The main service fans out `start_drive_sync` every
+10 min (`DriveSyncSchedulerService`: minimal sync state for enabled users, staleness alert, one reconnect notice,
+retried only if no send was attempted) and nudges after each Step 1 mutation. **Slice 1 admits no content kind:**
+cards are `name | kind | key facets` (photo date, camera, offline `place_name`); OS/lock artefacts get no card;
+dot-folders, `.git`/`pyvenv.cfg` folders, `node_modules`/`__pycache__`/`site-packages` and dense trees collapse to one
+card. `search_files_in_drive` (SYNC) → `DriveSearchService`: card kNN + per-key name stream (accent, Ukrainian and
+Russian transliteration variants) fused with RRF, full-name cover first; reads only `drive_query` (no words and no
+filter → refused); a capped filter set hedges, never "no match"; results in a nonce-tagged `<drive_document>`
+wrapper (only tag look-alikes neutralised) with a coverage envelope. Not in `SearchEnrichmentService`. Opt-out purges at
+once; lost access keeps the index 30 days. Rebuild one user: `scripts/infrastructure/drive_index_rebuild.py`. Eval:
+`venv/bin/python -m scripts.validation.drive_eval` (bars in `tests/fixtures/drive_eval/bars.json`, `--record` only
+deliberately; any lost case fails). Decisions: `decisions/drive_*.md`.
 
 **Per-channel sessions** — `session_id = f"{user_id}:{channel_id}"`, deterministic; each channel (Slack
 C.../D..., Telegram chat_id) has its own session/history/consolidation stream (a DM is just channel D...).

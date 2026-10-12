@@ -74,8 +74,21 @@ mocks cannot detect translation regressions) + contract validators in
   fans out N parallel single-content calls via `asyncio.gather`. Throttle: process-local
   `asyncio.Semaphore` (`GEMINI_EMBED_CONCURRENCY=20`). Transient 429/503 mapped to typed `LLMError`
   and retried via the shared `retry_async` executor (see `decisions/typed_retry_policy.md`); any other
-  4xx → `LLMClientError(http_status=code)`, other 5xx → `LLMServerError`, neither retried.
+  4xx → `LLMClientError(http_status=code)`, other 5xx → `LLMServerError`, neither retried. The client has a 30 s
+  HTTP timeout (`HttpOptions(timeout=30_000)`, milliseconds); a timeout maps to `LLMUnavailableError`, like a 503.
+  `EMBEDDING_SPACE` (`"gemini-embedding-2/768"`) is a class attribute composition injects into the drive index, which
+  re-embeds cards when it changes (USER_DRIVE_INDEXING_RFC Δ1, Δ25).
   See `docs/05_building_blocks/embedding_system/README.md`.
+- **Microsoft Graph (`src/adapters/microsoft/`)** — the token POST in `graph_auth.py` has its own 30 s
+  `ClientTimeout` (aiohttp's default is 300 s); `invalid_grant`, `interaction_required` and `consent_required` raise
+  `GraphReauthRequired` (a `ValueError` subclass, so To Do is unchanged; the drive maps it to `DriveReauthRequired`).
+  `OneDriveAdapter.get_changes`: a 404 on a stored delta cursor is `DriveResyncRequired` like a 410; the cursor is
+  bound to the drive and App Folder that served it. Every Graph call is bounded by `GRAPH_CALL_TIMEOUT_S` (60 s).
+- **Firestore vector queries with a projection** — `select([...])` before `find_nearest(...)` silently drops the
+  distance result field unless its name is in the select list (verified live 2026-10-12;
+  `FirestoreDriveIndexRepository.find_nearest_cards`).
+- **`GcpTaskQueue`** — `CloudTasksClient` is synchronous gRPC (20 s default timeout): every enqueue runs
+  `create_task` in `asyncio.to_thread`, never on the event loop.
 - **PromptCacheStrategy** — transparent prompt caching via proxy pattern. Agents declare their
   type; strategy resolves cache config; `CachingLLMProxy` wraps the provider. Agents never
   import or reference `PromptCacheConfig`. See `docs/10_rfcs/HEXAGONAL_PROMPT_CACHING_RFC.md`.

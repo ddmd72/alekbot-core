@@ -315,12 +315,17 @@ URL silently disables indexing in the live environment, with no alert.
 
 0. **Once:** the Cloud Build service account needs `roles/cloudtasks.queueAdmin`
    ([SCHEDULERS.md](SCHEDULERS.md) § Start Drive Sync).
-   **Indexes first.** They are declared for the `development_` collections only (RFC Δ22). `make deploy-indexes`
-   creates the composite indexes from `config/firestore.indexes.json`. `deploy_firestore_indexes.py` skips vector
-   entries, so the two `card_vector` indexes come from
-   `PROJECT_ID=<PROJECT_ID> scripts/infrastructure/create_drive_vector_indexes.sh` (`COLLECTION_PREFIX` defaults
-   to `development_`). Wait until every new index is `READY`: the tick's own `due_records` query needs them, not only
-   search. This prints the ones still building:
+   **Indexes first.** Only the drive indexes are new: eleven composites and two `card_vector` vector indexes on
+   `development_drive_index_records` (RFC Δ22). **In dev they already exist and are `READY` (created 2026-10-12, all
+   13)**, so this step is a check there; on a fresh database, create them. `make deploy-indexes` issues every entry of
+   `config/firestore.indexes.json` (an existing one answers "already exists"; read the output, not only the exit
+   code) and skips vector entries; the two `card_vector` indexes come from
+   `scripts/infrastructure/create_drive_vector_indexes.sh` (`COLLECTION_PREFIX` defaults to `development_`). Both
+   need the project id passed explicitly: `.env` has `GOOGLE_CLOUD_PROJECT`, not `PROJECT_ID`, so run
+   `make deploy-indexes PROJECT_ID=<PROJECT_ID>` (or `python scripts/infrastructure/deploy_firestore_indexes.py
+   config/firestore.indexes.json <PROJECT_ID>`) and `PROJECT_ID=<PROJECT_ID> scripts/infrastructure/create_drive_vector_indexes.sh`.
+   Wait until every new index is `READY`: the tick's own `due_records` query needs them, not only search. This prints
+   the ones still building:
    ```bash
    gcloud firestore indexes composite list --database=us-production --project=<PROJECT_ID> \
      --format='table(name.basename(), state)' | grep -v READY
@@ -348,6 +353,21 @@ URL silently disables indexing in the live environment, with no alert.
      --format='value(schedule,state)'                                 # 3-59/10 * * * *  ENABLED
    curl -s -o /dev/null -w '%{http_code}\n' -X POST "<indexer URL>/worker" -d '{}'   # 404 (ingress), never 2xx/5xx
    ```
+5. **Write round trip under a synthetic user.** The unit suite runs the Firestore repository against a stubbed SDK
+   only, so before indexing is turned on for anyone, exercise the real writes once under a user id that is not a real
+   user (e.g. `smoke-drive-<date>`): `save_sync_state` and `upsert_records` with a few records (one with a card
+   vector), read them back with `get_records`, `due_records`, `find_by_name_keys` and `find_nearest_cards`, compare
+   with the same calls on `InMemoryDriveIndexRepository`, then purge (`delete_user_records` until it returns 0, then
+   `delete_sync_state`) and check that nothing is left under that user id. Use a throwaway script outside the repo
+   (or under `scripts/memory/`); it must never touch a real user's documents.
+6. **Alert policies cover the indexer.** The policies in [ALERTING.md](ALERTING.md) were written for `alek-bot-dev`.
+   Check each policy's filter: any filter on `resource.labels.service_name="alek-bot-dev"` misses
+   `alek-bot-indexer-dev`, so its tick errors (`severity>=ERROR`) and `/worker` 5xx would never page. Widen those
+   filters to the indexer too (or add its own policy) and note it in ALERTING.md.
+
+**Rebuild one user's index.** `venv/bin/python scripts/infrastructure/drive_index_rebuild.py --user <USER_ID>` is a
+dry run; add `--apply` to mark the sync state `purging` under the user's lease (refused while a tick runs: retry in a
+few minutes). The next tick purges the index and re-onboards from epoch 1 (USER_DRIVE_INDEXING_RFC §12.2).
 
 **Logs.** The indexer has no Logfire telemetry: Cloud Logging only. A tick that ends `done` or `continued` logs one
 `[DriveIndex] tick user=… end=… {…} duration=…` line on the indexer, not on the main service, so `make fetch-logs`
