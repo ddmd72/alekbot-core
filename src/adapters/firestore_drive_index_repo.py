@@ -39,7 +39,7 @@ import asyncio
 from dataclasses import fields, replace
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import AbstractSet, Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from google.api_core.exceptions import AlreadyExists, NotFound
 from google.cloud import firestore
@@ -504,3 +504,9 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
 
     async def delete_user_chunks(self, user_id: str, limit: int) -> int:
         raise NotImplementedError("chunk storage — plan part D")
+
+    async def chunk_capped(self, user_id: str, limit: int) -> List[DriveIndexRecord]:
+        raise NotImplementedError("chunk-cap release query — plan part D")
+
+    async def count_unread(self, user_id: str, kinds: AbstractSet[str]) -> int:
+        raise NotImplementedError("unread count — plan part D")

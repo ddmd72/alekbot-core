@@ -6,7 +6,8 @@ from dataclasses import replace
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from src.domain.drive_extraction import (
-    PARSER, DriveModelUnavailable, ExtractionOutcome, ExtractionRequest, ExtractionStatus, TriageImage, TriageResult,
+    PARSER, DriveModelUnavailable, ExtractionOutcome, ExtractionRequest, ExtractionStatus, TriageBatchOutcome, TriageImage,
+    TriageResult,
 )
 from src.domain.drive_index import TriageVerdict
 from src.domain.user_drive import DriveFileTooLarge, DriveItemNotFoundError
@@ -59,16 +60,17 @@ class FakeExtractor(ContentExtractorPort):
 
 class FakeTriage(ImageTriagePort):
     """Verdicts scripted by item id as (verdict, caption); unscripted images are photographs captioned "a photo".
-    `unavailable=True` raises DriveModelUnavailable. Every batch is recorded."""
+    `unavailable=True` raises DriveModelUnavailable. Every batch is recorded and costs one call at `cost_per_call`."""
 
     def __init__(self, verdicts: Optional[Mapping[str, Tuple[TriageVerdict, str]]] = None,
-                 default: TriageVerdict = TriageVerdict.PHOTO) -> None:
+                 default: TriageVerdict = TriageVerdict.PHOTO, cost_per_call: float = 0.0) -> None:
+        self.cost_per_call = cost_per_call
         self.verdicts: Dict[str, Tuple[TriageVerdict, str]] = dict(verdicts or {})
         self.default = default
         self.calls: List[List[TriageImage]] = []
         self.unavailable = False
 
-    async def triage(self, user_id: str, account_id: str, images: Sequence[TriageImage]) -> List[TriageResult]:
+    async def triage(self, user_id: str, account_id: str, images: Sequence[TriageImage]) -> TriageBatchOutcome:
         self.calls.append(list(images))
         if self.unavailable:
             raise DriveModelUnavailable("scripted outage")
@@ -77,7 +79,8 @@ class FakeTriage(ImageTriagePort):
             verdict, caption = self.verdicts.get(
                 image.item_id, (self.default, "a photo" if self.default is TriageVerdict.PHOTO else ""))
             results.append(TriageResult(item_id=image.item_id, verdict=verdict, caption=caption))
-        return results
+        return TriageBatchOutcome(results=tuple(results), model_calls=1 if images else 0,
+                                  model_cost=self.cost_per_call if images else 0.0)
 
 
 class FakeContentDrive(FakeDrive):

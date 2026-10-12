@@ -28,18 +28,21 @@ Public interface:
     is_stale(state, oldest_edit_due_at, now) -> bool
     stale_versions(rec, *, embedding_space=None) -> bool
     reembed_in_space(rec, embedding_space) -> DriveIndexRecord
+    extractor_stale(rec, versions) -> bool / reextraction_due(rec) -> DriveIndexRecord      (§9, §12.3)
+    readme_read(rec, item_id, version, lead_text, now) -> DriveIndexRecord                  (§5.2)
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import Any, Callable, List, Optional, Tuple
+from typing import Any, Callable, List, Mapping, Optional, Tuple
 
 from .drive_card import (
-    card_eligible, card_hash, content_hash_of, effective_date, photo_location, structurally_card_eligible,
+    card_eligible, card_hash, content_hash_of, effective_date, photo_location, repository_root,
+    structurally_card_eligible,
 )
-from .drive_extraction import ExtractionOutcome, TriageResult
+from .drive_extraction import ExtractionOutcome, TriageResult, chain_for
 from .drive_index import (
     CARD_VERSION, EXTRACTION_VERSION, GEO_TABLE_VERSION, NAME_KEYS_VERSION, POLICY_VERSION, TRIAGE_VERSION,
     ContentClass, DocumentBrief, DriveChange, DriveIndexRecord, DriveSyncState, EpochPhase, FolderProbe, Priority,
@@ -52,7 +55,7 @@ from .drive_index_params import (
 )
 from .drive_index_policy import (
     Admission, admission, card_rank_of, content_class_of, density_still_valid, is_dense, is_dot_name,
-    is_generated_dir, is_marker_child, item_rule, kind_of, searchable, size_cap,
+    is_generated_dir, is_marker_child, is_readme_name, item_rule, kind_of, readme_readable, searchable, size_cap,
 )
 from .drive_name_keys import name_keys
 from .user_drive import DriveConnection
@@ -243,7 +246,7 @@ def _observable(rec: DriveIndexRecord) -> Tuple[Any, ...]:
             rec.fs_modified_at, rec.effective_date, rec.place_name, rec.geo_table_version, rec.policy_version,
             rec.probe_pending, rec.rescope_pending, rec.reobserve_pending, rec.probed_child_count, rec.card_capped,
             rec.card_refused, rec.name_keys_version, rec.indexed_generation, rec.lead_text, rec.brief, rec.caption,
-            rec.dirty_since)
+            rec.dirty_since, rec.readme_pending, rec.readme_item_id, rec.readme_version)
 
 
 def _build(change: DriveChange, cls: Classification, existing: Optional[DriveIndexRecord],
@@ -254,8 +257,11 @@ def _build(change: DriveChange, cls: Classification, existing: Optional[DriveInd
     probed = cls.density_count or carried
     if cls.state is RecordState.METADATA_ONLY and not cls.content_kept:
         # entering metadata_only clears the readable generation (the service collects its chunks) and what the
-        # content gave the card (§3.4); a content demotion that stands keeps its own fields
-        base = replace(base, indexed_generation=None, lead_text="", brief=None)
+        # content gave the card (§3.4); a content demotion that stands keeps its own fields, and a repository root
+        # that stays one keeps its README's lead text (§5.2)
+        base = replace(base, indexed_generation=None, brief=None)
+        if not (existing is not None and repository_root(existing) and _repository(change, cls)):
+            base = replace(base, lead_text="", readme_pending=False, readme_item_id=None, readme_version="")
     if admission(cls.kind) is not Admission.TRIAGE:
         base = replace(base, caption="")
     if cls.state is not RecordState.PENDING:
@@ -275,7 +281,34 @@ def _build(change: DriveChange, cls: Classification, existing: Optional[DriveInd
     )
     # A capped record keeps its cap until a release decides again (§5.4); one that can hold no card drops it.
     rec = replace(rec, card_capped=rec.card_capped and structurally_card_eligible(rec))
+    if _readme_due(existing, rec):
+        rec = replace(rec, readme_pending=True)
     return replace(rec, card_refused=_refusal_stands(existing, rec))
+
+
+def _repository(change: DriveChange, cls: Classification) -> bool:
+    return (change.is_folder and cls.scope is Scope.OPAQUE_ROOT and cls.reason is Reason.OPAQUE_ROOT
+            and not is_generated_dir(change.name))
+
+
+def _readme_due(existing: Optional[DriveIndexRecord], rec: DriveIndexRecord) -> bool:
+    """A repository root reads its README when it becomes one, when its child count moves (a README added, removed
+    or renamed) or under a new policy; only once text content is admitted (§5.2)."""
+    if not repository_root(rec) or not readme_readable():
+        return False
+    return (existing is None or not repository_root(existing) or existing.child_count != rec.child_count
+            or existing.policy_version != POLICY_VERSION)
+
+
+def _readme_touched(change: DriveChange, parent: Optional[DriveIndexRecord],
+                    now: datetime) -> Tuple[DriveIndexRecord, ...]:
+    """A README directly inside a repository root changed: the root reads it again (§5.2). Its own record is never
+    kept (files inside an opaque root get none)."""
+    if (parent is None or change.is_folder or change.parent_id != parent.item_id or not repository_root(parent)
+            or parent.readme_pending or not is_readme_name(change.name) or not readme_readable()
+            or change.content_version == parent.readme_version):
+        return ()
+    return (schedule(replace(parent, readme_pending=True), now, first_seen=not parent.has_card),)
 
 
 def _effective(change: DriveChange, brief: Optional[DocumentBrief], now: datetime) -> datetime:
@@ -304,7 +337,7 @@ def _reopened_marker_parent(parent: DriveIndexRecord, ctx: PlanContext) -> Drive
                   state=RecordState.UNRESOLVED if big else RecordState.METADATA_ONLY,
                   reason=None if big else Reason.FOLDER, probe_pending=big, probed_child_count=0,
                   rescope_pending=True, cascade_cursor=None, reobserve_pending=True, reobserve_cursor=None,
-                  attempts=0)
+                  attempts=0, lead_text="", readme_pending=False, readme_item_id=None, readme_version="")
     return schedule(rec, ctx.now, first_seen=False)
 
 
@@ -373,9 +406,10 @@ def _plan(change: DriveChange, existing: Optional[DriveIndexRecord], parent: Opt
     effective_parent = parent
     if (is_marker_child(change.name) and parent is not None and parent.is_folder
             and parent.scope is Scope.NORMAL):
-        closed = schedule(replace(parent, scope=Scope.OPAQUE_ROOT, reason=Reason.OPAQUE_ROOT,
-                                  rescope_pending=True, cascade_cursor=None, reobserve_pending=False,
-                                  reobserve_cursor=None), ctx.now, first_seen=False)
+        closing = replace(parent, scope=Scope.OPAQUE_ROOT, reason=Reason.OPAQUE_ROOT, rescope_pending=True,
+                          cascade_cursor=None, reobserve_pending=False, reobserve_cursor=None)
+        closing = replace(closing, readme_pending=_readme_due(parent, closing))
+        closed = schedule(closing, ctx.now, first_seen=False)
         effective_parent = closed
         if reopened is not None and reopened.item_id == parent.item_id:
             reopened = None   # the folder closed again in the same observation
@@ -384,6 +418,7 @@ def _plan(change: DriveChange, existing: Optional[DriveIndexRecord], parent: Opt
     pscope = parent_scope(change.parent_id, effective_parent, ctx.root_item_id)
     cls = classify(change, pscope, probe, existing)
     if not cls.stored:
+        parent_updates += _readme_touched(change, effective_parent, ctx.now)
         return ObservationPlan(delete_item_id=existing.item_id if existing else None, parent_updates=parent_updates)
 
     revived = existing is not None and existing.state is RecordState.DELETING
@@ -483,6 +518,8 @@ def _works(rec: DriveIndexRecord, first_seen: bool, now: datetime) -> List[Tuple
         works.append((Priority.CASCADE, now))
     if rec.reobserve_pending:
         works.append((Priority.FIRST_SEEN, now))   # §7.8 class 2: "re-observed subtrees"
+    if rec.readme_pending:
+        works.append((Priority.MAINTENANCE, now))  # an enrichment of the repository card (§5.2)
     if _card_due(rec):
         works.append((Priority.FIRST_SEEN if first_seen else Priority.EDIT, now))
     if content_due(rec) or triage_due(rec):
@@ -498,9 +535,15 @@ def _has_work(rec: DriveIndexRecord) -> bool:
     return bool(_works(rec, first_seen=False, now=datetime.min))   # whether any work exists; its time is unused
 
 
+def _card_attempts(rec: DriveIndexRecord) -> int:
+    """A card outcome ends the card's refusal count; while content or triage work is pending, `attempts` counts that
+    work's per-file failures (§8.2), so a card write never restarts them."""
+    return rec.attempts if content_due(rec) or triage_due(rec) else 0
+
+
 def with_card(rec: DriveIndexRecord, hash_: str, embedding_space: str, now: datetime) -> DriveIndexRecord:
     done = replace(rec, card_hash=hash_, has_card=True, card_refused=False, card_version=CARD_VERSION,
-                   embedding_space=embedding_space, attempts=0)
+                   embedding_space=embedding_space, attempts=_card_attempts(rec))
     return schedule(done, now, first_seen=False)
 
 
@@ -509,7 +552,7 @@ def card_refused(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
     left to the structure. The record keeps no card, and `card_hash` names the refused text, so the same text is not
     tried again; a new text (a rename, a facet change, a new card builder) gets a fresh try."""
     return schedule(replace(rec, card_refused=True, has_card=False, card_hash=card_hash(rec),
-                            card_version=CARD_VERSION, attempts=0), now, first_seen=False)
+                            card_version=CARD_VERSION, attempts=_card_attempts(rec)), now, first_seen=False)
 
 
 def without_card(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
@@ -555,6 +598,29 @@ def stale_versions(rec: DriveIndexRecord, *, embedding_space: Optional[str] = No
     if rec.triage_verdict is not None and rec.triage_version != TRIAGE_VERSION:
         return True
     return photo_location(rec.facets) is not None and rec.geo_table_version != GEO_TABLE_VERSION
+
+
+def extractor_stale(rec: DriveIndexRecord, versions: Mapping[str, int]) -> bool:
+    """§9, §12.3: the content was decided by a link (`extracted_by` = "id@version") that is no longer in the chain
+    for the record's kind, or no longer at that version. `versions` maps each wired extractor id to its version."""
+    if not rec.extracted_by:
+        return False
+    link, _, version = rec.extracted_by.rpartition("@")
+    return link not in chain_for(rec.kind) or str(versions.get(link, "")) != version
+
+
+def reextraction_due(rec: DriveIndexRecord) -> DriveIndexRecord:
+    """Its content outcome no longer stands (§9): planned again, it is pending; a readable generation keeps serving
+    until the new one commits (§7.4). Only `extraction_version` moves: the outcome was decided under other rules."""
+    return replace(rec, extraction_version=0)
+
+
+def readme_read(rec: DriveIndexRecord, item_id: Optional[str], version: str, lead_text: str,
+                now: datetime) -> DriveIndexRecord:
+    """The repository root's README was read, found absent or given up on (§5.2): its lead text is the card's."""
+    return schedule(replace(rec, readme_pending=False, readme_item_id=item_id, readme_version=version,
+                            lead_text=lead_text.strip()[:CARD_LEAD_CHARS], attempts=0), now,
+                    first_seen=not rec.has_card)
 
 
 def reembed_in_space(rec: DriveIndexRecord, embedding_space: str) -> DriveIndexRecord:

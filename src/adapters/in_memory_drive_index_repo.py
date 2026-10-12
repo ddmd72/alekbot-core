@@ -9,9 +9,10 @@ import asyncio
 import math
 from dataclasses import replace
 from datetime import datetime
-from typing import Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import AbstractSet, Dict, List, Mapping, Optional, Sequence, Tuple
 
-from ..domain.drive_index import DriveChunk, DriveIndexRecord, DriveSyncState, LeaseLost, RecordState
+from ..domain.drive_index import DriveChunk, DriveIndexRecord, DriveSyncState, LeaseLost, Reason, RecordState
+from ..domain.drive_search import is_unread
 from ..ports.drive_index_repository import DriveIndexRepository
 
 
@@ -167,6 +168,16 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
         capped = [r for r in self._user(user_id) if r.card_capped]
         capped.sort(key=lambda r: (r.card_rank, -(r.modified_at.timestamp() if r.modified_at else 0.0)))
         return capped[:limit]
+
+    async def chunk_capped(self, user_id: str, limit: int) -> List[DriveIndexRecord]:
+        refused = [r for r in self._user(user_id)
+                   if r.state is RecordState.METADATA_ONLY and r.reason is Reason.USER_CHUNK_CAP]
+        refused.sort(key=lambda r: (r.card_rank, -(r.modified_at.timestamp() if r.modified_at else 0.0), r.item_id))
+        return refused[:limit]
+
+    async def count_unread(self, user_id: str, kinds: AbstractSet[str]) -> int:
+        admitted = frozenset(kinds)
+        return sum(1 for r in self._user(user_id) if is_unread(r, admitted))
 
     async def count_by_state(self, user_id: str) -> Dict[str, int]:
         counts: Dict[str, int] = {}
