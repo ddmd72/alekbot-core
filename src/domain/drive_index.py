@@ -229,6 +229,8 @@ class DriveSyncState:
     continuation_enqueued_at: Optional[datetime] = None
     applied_versions: Mapping[str, int] = field(default_factory=dict)
     target_versions: Mapping[str, int] = field(default_factory=dict)
+    applied_space: str = ""                   # the embedding space every card is in (§12.3); "" before onboarding
+    target_space: str = ""                    # the space the running upgrade pass moves cards to
     upgrade_cursor: Optional[str] = None
     upgrade_found_stale: bool = False
     observed_as_of: Optional[datetime] = None
@@ -239,3 +241,7 @@ class DriveSyncState:
     stale_alerted: bool = False
     reconnect_notified: bool = False          # plan Δ6
     counters: Mapping[str, int] = field(default_factory=dict)
+
+    def cards_in_space(self, embedding_space: str) -> bool:
+        """The card stream answers queries embedded in `embedding_space`: no card is left in another space."""
+        return self.applied_space == embedding_space

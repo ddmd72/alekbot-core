@@ -32,8 +32,8 @@ from ..domain.drive_index_params import (
 )
 from ..domain.drive_index_planner import (
     AccessAction, ObservationPlan, PlaceOf, PlanContext, access_action, capped, card_refused, change_from_record,
-    needs_probe, parent_scope, plan_observation, released, schedule, stale_versions, with_card, with_retry,
-    without_card,
+    needs_probe, parent_scope, plan_observation, reembed_in_space, released, schedule, stale_versions, with_card,
+    with_retry, without_card,
 )
 from ..domain.drive_index_policy import is_marker_child, probe_from_children
 from ..domain.drive_task_keys import DRIVE_SYNC_TASK, continuation_key, nudge_key, tick_payload
@@ -161,7 +161,7 @@ class DriveIndexingService:
             state = lease if lease.created_at is not None else replace(lease, created_at=now)
             if state.epoch == 0 and state.cursor is None and not state.applied_versions:
                 # nothing stored yet: onboarding builds every record under the current versions (§12.3)
-                state = replace(state, applied_versions=dict(CURRENT_VERSIONS))
+                state = replace(state, applied_versions=dict(CURRENT_VERSIONS), applied_space=self._space)
             action = access_action(enabled, state, connection, now)   # facts may have moved before the lease
             if action in (AccessAction.PURGE_OPT_OUT, AccessAction.PURGE_EXPIRED,
                           AccessAction.PURGE_DRIVE_SWITCH, AccessAction.PURGE_THEN_RESTART):
@@ -743,9 +743,9 @@ class DriveIndexingService:
         A pass that left stale records (scheduled, backing off, or parked) is not repeated until due work has run
         or the target versions change: a record stuck in backoff must not cost a full read of the index per tick."""
         target = dict(CURRENT_VERSIONS)
-        if _upgrade_waiting(state) and dict(state.target_versions) == target:
+        if _upgrade_waiting(state) and dict(state.target_versions) == target and state.target_space == self._space:
             return state
-        while dict(state.applied_versions) != target and budget.time_left() and budget.maintenance_allowed():
+        while self._upgrade_due(state) and budget.time_left() and budget.maintenance_allowed():
             started = self._monotonic()
             state = await self._upgrade_page(user_id, state, target, now, summary)
             budget.maintenance_s += self._monotonic() - started
@@ -755,25 +755,27 @@ class DriveIndexingService:
 
     async def _upgrade_page(self, user_id: str, state: DriveSyncState, target: Dict[str, int], now: datetime,
                             summary: Dict[str, int]) -> DriveSyncState:
-        if dict(state.target_versions) != target:
-            state = replace(state, target_versions=target, upgrade_cursor=None, upgrade_found_stale=False)
+        if dict(state.target_versions) != target or state.target_space != self._space:
+            state = replace(state, target_versions=target, target_space=self._space, upgrade_cursor=None,
+                            upgrade_found_stale=False)
         ctx = self._ctx(user_id, state, now)
         page = await self._repo.records_page(user_id, state.upgrade_cursor, _DUE_PAGE)
         writes: Dict[str, DriveIndexRecord] = {}
         deletes: Set[str] = set()
         found = state.upgrade_found_stale   # a stale record this pass left stale (its work is due, or blocked)
         for rec in page:
-            if rec.state is RecordState.DELETING or not stale_versions(rec):
+            if rec.state is RecordState.DELETING or not stale_versions(rec, embedding_space=self._space):
                 continue
             if rec.state is RecordState.UNRESOLVED and rec.due_at is None:
                 # parked under an unresolved parent, whose rescope re-plans it under the current versions; scheduling
                 # it only re-parks it, and it holds no card, so it does not keep the versions from applying
                 continue
             parent = await self._parent_of(user_id, rec, ctx)
-            self._fold(_as_maintenance(plan_observation(change_from_record(rec), rec, parent, None, ctx, parent,
+            current = reembed_in_space(rec, self._space)
+            self._fold(_as_maintenance(plan_observation(change_from_record(rec), current, parent, None, ctx, parent,
                                                         observed=False)),
                        {}, writes, deletes)
-            if rec.item_id not in deletes and stale_versions(writes.get(rec.item_id, rec)):
+            if rec.item_id not in deletes and stale_versions(writes.get(rec.item_id, rec), embedding_space=self._space):
                 found = True
         await self._commit(user_id, list(writes.values()), deletes)
         summary["upgraded"] = summary.get("upgraded", 0) + len(writes)
@@ -781,8 +783,9 @@ class DriveIndexingService:
             return replace(state, upgrade_cursor=page[-1].item_id, upgrade_found_stale=found)
         if found:   # scheduling is not completion: the next pass verifies once due work has run
             return replace(state, upgrade_cursor=None, upgrade_found_stale=True)
-        logger.info(f"[DriveIndex] versions {target} applied for {user_id[:8]}")
-        return replace(state, applied_versions=target, upgrade_cursor=None, upgrade_found_stale=False)
+        logger.info(f"[DriveIndex] versions {target} in {self._space} applied for {user_id[:8]}")
+        return replace(state, applied_versions=target, applied_space=self._space, upgrade_cursor=None,
+                       upgrade_found_stale=False)
 
     # ------------------------------------------------------------------------------------------
     # Purge, continuation, helpers
@@ -810,13 +813,16 @@ class DriveIndexingService:
                         upgrade_wrote: bool = False) -> bool:
         if not state.round_complete or state.epoch_phase is EpochPhase.SWEEPING:
             return True
-        if dict(state.applied_versions) != dict(CURRENT_VERSIONS) and (state.upgrade_cursor is not None
-                                                                         or upgrade_wrote):
+        if self._upgrade_due(state) and (state.upgrade_cursor is not None or upgrade_wrote):
             # a pass is mid-way, or this tick's pass wrote (re-stamped or scheduled) and the verification pass
             # runs in-chain; a restarted pass that wrote nothing waits for due work or the fan-out (retro_tick F6)
             return True
         # backed-off work waits for its due_at; a folder that stepped aside is due right after this tick
         return bool(await self._repo.due_records(user_id, now + _STEP_ASIDE, 1))
+
+    def _upgrade_due(self, state: DriveSyncState) -> bool:
+        """The version constants or the embedding space differ from what the index was last verified under."""
+        return dict(state.applied_versions) != dict(CURRENT_VERSIONS) or state.applied_space != self._space
 
     async def _continue(self, user_id: str, tick_id: str, delay_seconds: int = 0) -> None:
         name = await self._queue.enqueue_worker_task(DRIVE_SYNC_TASK, tick_payload(user_id),

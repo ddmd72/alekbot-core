@@ -16,7 +16,8 @@ Public interface:
     with_retry(rec, now) -> DriveIndexRecord
     access_action(enabled, state, connection, now) -> AccessAction
     is_stale(state, oldest_edit_due_at, now) -> bool
-    stale_versions(rec) -> bool
+    stale_versions(rec, *, embedding_space=None) -> bool
+    reembed_in_space(rec, embedding_space) -> DriveIndexRecord
 """
 from __future__ import annotations
 
@@ -391,13 +392,24 @@ def with_retry(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
     return replace(rec, attempts=attempts, due_at=now + backoff(attempts), priority=int(Priority.RETRY))
 
 
-def stale_versions(rec: DriveIndexRecord) -> bool:
-    """Decided, keyed or carded under an older constant (§12.3)."""
+def stale_versions(rec: DriveIndexRecord, *, embedding_space: Optional[str] = None) -> bool:
+    """Decided, keyed or carded under an older constant (§12.3); with `embedding_space`, a card embedded in another
+    space is stale too."""
     if rec.policy_version != POLICY_VERSION or rec.name_keys_version != NAME_KEYS_VERSION:
+        return True
+    if embedding_space is not None and rec.has_card and rec.embedding_space != embedding_space:
         return True
     if (rec.has_card or rec.card_hash is not None) and rec.card_version != CARD_VERSION:   # carded, or refused
         return True
     return photo_location(rec.facets) is not None and rec.geo_table_version != GEO_TABLE_VERSION
+
+
+def reembed_in_space(rec: DriveIndexRecord, embedding_space: str) -> DriveIndexRecord:
+    """A card embedded in another space is due again (§12.3): its hash is cleared, so the card is scheduled like any
+    changed card; the old vector stays until the new one replaces it."""
+    if rec.has_card and rec.embedding_space != embedding_space:
+        return replace(rec, card_hash=None)
+    return rec
 
 
 def access_action(enabled: bool, state: Optional[DriveSyncState], connection: DriveConnection,
