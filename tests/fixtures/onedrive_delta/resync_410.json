@@ -1,0 +1,15 @@
+{
+ "_meta": {
+  "scenario": "SYNTHETIC: never observed in S0a; the documented 410 shape"
+ },
+ "status": 410,
+ "headers": {
+  "Location": "https://graph.microsoft.com/v1.0/me/drive/special/approot/delta?token=tok-resync"
+ },
+ "body": {
+  "error": {
+   "code": "resyncChangesApplyDifferences",
+   "message": "Resync required. Replace any local items with the server's version."
+  }
+ }
+}

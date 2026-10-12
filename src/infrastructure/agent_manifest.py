@@ -76,7 +76,9 @@ class Intent:
     OPEN_FILE           = "open_file"
     DELETE_FILE         = "delete_file"
     # The user's drive — long-term file area (USER_DRIVE_RFC §3, §4.4). The store is in the name.
-    # No search intent in step 1: search does not work inside the App Folder (RFC §7, A6).
+    # Search runs over our own index of the drive (USER_DRIVE_INDEXING_RFC §10): the provider's
+    # search does not work inside the App Folder (USER_DRIVE_RFC §7, A6).
+    SEARCH_FILES_IN_DRIVE  = "search_files_in_drive"
     SAVE_FILE_TO_DRIVE     = "save_file_to_drive"
     LIST_FILES_IN_DRIVE    = "list_files_in_drive"
     OPEN_FILE_FROM_DRIVE   = "open_file_from_drive"
@@ -543,6 +545,7 @@ FILE_MANAGEMENT = AgentDescriptor(
         Intent.CREATE_FOLDER_IN_DRIVE: ExecutionMode.SYNC,
         Intent.UPDATE_FILE_IN_DRIVE:   ExecutionMode.SYNC,
         Intent.DELETE_FILE_FROM_DRIVE: ExecutionMode.SYNC,
+        Intent.SEARCH_FILES_IN_DRIVE:  ExecutionMode.SYNC,
     },
     # Reads files itself; the coordinator must not download a `file_ref` first (USER_DRIVE_RFC §4.4).
     prefetch_file_ref=False,
@@ -600,6 +603,16 @@ FILE_MANAGEMENT = AgentDescriptor(
             "gets a notice with what was deleted. "
             'Requires: context={"file_ref": "drive:<id>"}'
         ),
+        Intent.SEARCH_FILES_IN_DRIVE: (
+            "Find files and folders on the user's drive by name (exact, partial, transliterated or misspelled), "
+            "type, date, folder, photo details and place. Use it when the answer may be in the user's files, "
+            "and before saying a file is not there. Returns cards with drive:<id> refs for "
+            "open_file_from_drive, and says how complete and how fresh the index is. drive_query is required "
+            "unless the request is filter-only: for filter-only requests (\"files I saved this week\", \"all my "
+            "spreadsheets\") leave drive_query empty and set only the filters. "
+            'Context: {"drive_query": "<name words, or a place or subject>", "drive_folder": "<path or drive:<id>>", '
+            '"drive_kind": "<type>", "drive_date_from": "YYYY-MM-DD", "drive_date_to": "YYYY-MM-DD"}'
+        ),
     },
     context_schemas={
         Intent.OPEN_FILE: {
@@ -632,6 +645,35 @@ FILE_MANAGEMENT = AgentDescriptor(
             "source_ref": "Optional. Ref of a file whose content replaces the whole file",
         },
         Intent.DELETE_FILE_FROM_DRIVE: {"file_ref": "drive:<id> ref of the file or folder"},
+        # Field names no other intent uses: the delegate tool keeps the first description seen per name
+        # (base_agent._build_delegate_tool_declaration), USER_DRIVE_INDEXING_RFC §10.4.
+        Intent.SEARCH_FILES_IN_DRIVE: {
+            "drive_query": (
+                "search_files_in_drive: REQUIRED unless the request is filter-only; the `query` field is not read "
+                "for search. The words of the file or folder name as the user said them (any language; "
+                "transliteration and typos are tolerated), or a place or subject the user mentioned ('Rome', "
+                "'lease'). No type words ('photos', 'documents': use drive_kind) and no dates (use drive_date_from "
+                "/ drive_date_to). Leave EMPTY only for filter-only requests such as 'files I saved this week' or "
+                "'all my spreadsheets'"
+            ),
+            "drive_folder": (
+                "search_files_in_drive: optional folder to search within, with its subfolders: a drive:<id> ref "
+                "of a folder or its path, e.g. 'Contracts/2026'. Omit to search the whole drive"
+            ),
+            "drive_kind": (
+                "search_files_in_drive: optional file type. A family covers every format of its kind: "
+                "spreadsheet (xlsx, xls, ods, csv), document (docx, doc, odt, rtf, pdf), word (docx, doc), "
+                "presentation (pptx, ppt, odp), photo (any image). Or one kind: pdf, docx, xlsx, markdown, text, csv, image, video, "
+                "audio, archive, code, folder, or a file extension such as 'jpg'. Other words are refused"
+            ),
+            "drive_date_from": (
+                "search_files_in_drive: optional earliest date, YYYY-MM-DD, inclusive. The date is when a photo "
+                "was taken, otherwise when the file was last changed"
+            ),
+            "drive_date_to": (
+                "search_files_in_drive: optional latest date, YYYY-MM-DD, inclusive (the whole day counts)"
+            ),
+        },
     },
     internal=False,
 )

@@ -9,7 +9,8 @@ when a create hits a taken name.
 from abc import ABC, abstractmethod
 from typing import List, Optional
 
-from src.domain.user_drive import DriveItem
+from src.domain.drive_index import DriveChange, DriveChanges, DriveChildrenPage
+from src.domain.user_drive import DriveConnection, DriveItem
 
 
 class UserDrivePort(ABC):
@@ -67,3 +68,30 @@ class UserDrivePort(ABC):
     @abstractmethod
     async def delete(self, user_id: str, item_id: str) -> None:
         """Delete a file or folder (the provider keeps it recoverable)."""
+
+    # -- change capture for the index (USER_DRIVE_INDEXING_RFC §4) --------------------------
+
+    @abstractmethod
+    async def get_changes(self, user_id: str, cursor: Optional[str]) -> DriveChanges:
+        """One page of the change feed from `cursor` (None: a full enumeration from scratch).
+        Raises DriveResyncRequired when the cursor expired, DriveThrottled when the provider keeps
+        throttling, DriveReauthRequired when the refresh token is rejected."""
+
+    @abstractmethod
+    async def get_change(self, user_id: str, item_id: str) -> DriveChange:
+        """One item as an observation; an item that no longer exists comes back with deleted=True."""
+
+    @abstractmethod
+    async def list_children_changes(self, user_id: str, folder_id: str, limit: int,
+                                    cursor: Optional[str] = None) -> DriveChildrenPage:
+        """One page (at most `limit`) of a folder's direct children as observations, starting at `cursor`
+        (None: the first page). `next_cursor` is None on the last page. Raises DriveItemNotFoundError
+        when the folder is gone."""
+
+    @abstractmethod
+    async def connection(self, user_id: str) -> DriveConnection:
+        """Connected?, refresh rejected earlier?, and the connected drive's id (§10.1 step 0)."""
+
+    @abstractmethod
+    async def flag_reconnect(self, user_id: str) -> bool:
+        """Mark the stored grant as needing a reconnect; True only on the False->True transition (§7.7)."""

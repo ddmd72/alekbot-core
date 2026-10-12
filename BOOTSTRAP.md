@@ -61,6 +61,11 @@ make deploy-indexes       # python scripts/infrastructure/deploy_firestore_index
 
 Index builds are asynchronous — vector search returns errors until they finish (minutes).
 
+`deploy_firestore_indexes.py` skips vector entries. The drive index's vector indexes are created by
+`scripts/infrastructure/create_drive_vector_indexes.sh` (see `docs/07_deployment/README.md` → Drive Indexer Service).
+Both take the project id explicitly: `.env` holds `GOOGLE_CLOUD_PROJECT`, not `PROJECT_ID`, so pass
+`PROJECT_ID=<PROJECT_ID>` to the make target and the script.
+
 ---
 
 ## 5. Test & lint

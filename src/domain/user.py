@@ -304,6 +304,10 @@ class UserBotConfig(BaseModel):
     gmail_daily_review: bool = False
     gmail_daily_review_hour: int = 9
 
+    # User drive indexing (USER_DRIVE_INDEXING_RFC §6): off until the user turns it on in the Cabinet;
+    # turning it off purges the index. Read uncached by the tick's gate and by search.
+    drive_indexing_enabled: bool = False
+
     # Deep Research: two-pass mode (second pass = critic reviews first result)
     deep_research_second_pass: bool = False
     

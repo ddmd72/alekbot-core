@@ -4,6 +4,7 @@ GCP Cloud Tasks Adapter
 
 Concrete TaskQueue implementation for Google Cloud Tasks.
 """
+import asyncio
 import json
 import hashlib
 import datetime
@@ -49,6 +50,11 @@ class GcpTaskQueue(TaskQueue):
 
         logger.info(f"📬 GcpTaskQueue initialized (queue: {queue_name}, location: {location})")
 
+    async def _create_task(self, request: Dict[str, Any]) -> Any:
+        """The client is synchronous gRPC (20 s default timeout): off the loop, so a slow Cloud Tasks answer
+        never stalls every other request of the process."""
+        return await asyncio.to_thread(self.client.create_task, request=request)
+
     async def enqueue_slack_event(
         self,
         event_data: Dict[str, Any],
@@ -93,7 +99,7 @@ class GcpTaskQueue(TaskQueue):
                 )
                 task["schedule_time"] = timestamp
 
-            response = self.client.create_task(
+            response = await self._create_task(
                 request={
                     "parent": self.queue_path,
                     "task": task
@@ -200,7 +206,7 @@ class GcpTaskQueue(TaskQueue):
                     "service_account_email": self.service_account_email
                 }
 
-            response = self.client.create_task(
+            response = await self._create_task(
                 request={"parent": self.queue_path, "task": task}
             )
 
@@ -258,7 +264,7 @@ class GcpTaskQueue(TaskQueue):
                 )
                 task["schedule_time"] = timestamp
 
-            response = self.client.create_task(
+            response = await self._create_task(
                 request={"parent": self.queue_path, "task": task}
             )
 
@@ -317,7 +323,7 @@ class GcpTaskQueue(TaskQueue):
                 )
                 task["schedule_time"] = timestamp
 
-            response = self.client.create_task(
+            response = await self._create_task(
                 request={"parent": self.queue_path, "task": task}
             )
 
@@ -353,7 +359,7 @@ class GcpTaskQueue(TaskQueue):
                     "service_account_email": self.service_account_email
                 }
 
-            response = self.client.create_task(
+            response = await self._create_task(
                 request={"parent": self.queue_path, "task": task}
             )
 
@@ -420,7 +426,7 @@ class GcpTaskQueue(TaskQueue):
                 task["schedule_time"] = timestamp
 
             try:
-                response = self.client.create_task(
+                response = await self._create_task(
                     request={"parent": self.queue_path, "task": task}
                 )
             except AlreadyExists:
@@ -463,7 +469,7 @@ class GcpTaskQueue(TaskQueue):
                     "service_account_email": self.service_account_email
                 }
 
-            response = self.client.create_task(
+            response = await self._create_task(
                 request={"parent": self.queue_path, "task": task}
             )
 
@@ -500,7 +506,7 @@ class GcpTaskQueue(TaskQueue):
                     "service_account_email": self.service_account_email
                 }
 
-            response = self.client.create_task(
+            response = await self._create_task(
                 request={"parent": self.queue_path, "task": task}
             )
 

@@ -370,6 +370,7 @@ class UserNotificationService:
             timeout_ms=effective_timeout_ms,
         )
 
+        sent = False
         try:
             async with RequestContext(user_id=user_id, account_id=account_id):
                 response = await self._coordinator.route_message(message)
@@ -399,6 +400,7 @@ class UserNotificationService:
                 # RENDERED length (after link resolution + formatting), so a body
                 # that fits raw but overflows once [N] anchors expand into full
                 # links is threaded instead of truncated.
+                sent = True
                 await self._send_answer_text(response_channel, channel_info, text, link_list)
                 logger.info(
                     f"📬 [Notification] Sent to {channel_info.platform} "
@@ -429,9 +431,10 @@ class UserNotificationService:
                         logger.warning("[Notification] Failed to save history: %s", exc)
 
             if rich_content:
+                sent = True
                 await response_channel.send_rich_content(rich_content)
 
-            return NotifyResult(delivered=True, agent_status=AgentStatus.SUCCESS)
+            return NotifyResult(delivered=True, agent_status=AgentStatus.SUCCESS, sent=sent)
 
         except Exception as exc:
             logger.error(
@@ -444,6 +447,7 @@ class UserNotificationService:
                 delivered=False,
                 agent_status=AgentStatus.FAILED,
                 error=str(exc),
+                sent=sent,
             )
 
     async def notify_document_link(

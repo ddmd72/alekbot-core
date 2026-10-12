@@ -40,6 +40,7 @@ class FirestoreOAuthCredentialsAdapter(OAuthCredentialsPort):
             "scopes": creds.scopes,
             "email_address": creds.email_address,
             "needs_reconnect": creds.needs_reconnect,
+            "drive_id": creds.drive_id,
         }
 
     @staticmethod
@@ -59,6 +60,7 @@ class FirestoreOAuthCredentialsAdapter(OAuthCredentialsPort):
             scopes=data["scopes"],
             email_address=data["email_address"],
             needs_reconnect=bool(data.get("needs_reconnect", False)),
+            drive_id=str(data.get("drive_id") or ""),
         )
 
     async def get_credentials(

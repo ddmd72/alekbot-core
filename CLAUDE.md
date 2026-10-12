@@ -153,7 +153,7 @@ Full per-agent detail (mechanics, intents, tiers, gotchas) lives in
 | DocGenerator | BALANCED | `generate_docx_code` (internal) | Node.js script → DOCX |
 | PdfGenerator | BALANCED | `create_pdf` | HTML+CSS → Puppeteer → PDF |
 | HtmlPageGenerator | PERFORMANCE (**Grok**) | `create_html_page` | full HTML+CSS+JS; Unsplash placeholders |
-| FileManagement | zero-LLM | `open_file`, `delete_file`, 7 × `*_drive` | GCS uploads + the user's drive |
+| FileManagement | zero-LLM | `open_file`, `delete_file`, 7 × `*_drive`, `search_files_in_drive` | GCS uploads + the user's drive and its opt-in index |
 | Notes / Self-Reminders | PERFORMANCE (OpenAI) | `manage_self_reminders` | autonomous deferred firing |
 | Tasks | — | `manage_user_tasks` | MicrosoftToDo (GoogleTasks frozen) |
 | Consolidation | PERFORMANCE (Claude) | — | background memory formation (see below) |
@@ -232,9 +232,11 @@ stale `running` jobs.
   `deep_research_polling`, `fire_due_reminders`,
   `execute_reminder`, `setup_microsoft_todo`, `reindex_task_list`, `renew_task_subscriptions`,
   `renew_all_task_subscriptions`, `start_daily_email_review`, `daily_email_review`,
-  `billing_daily_summary`, `repair_email_embeddings`. Full reference: `docs/07_deployment/SCHEDULERS.md`.
+  `billing_daily_summary`, `repair_email_embeddings`, `start_drive_sync`. Full reference:
+  `docs/07_deployment/SCHEDULERS.md`.
   `task_type=telegram_update` is intercepted in `/worker` **before** reaching `WorkerHandler` (routed
-  straight to the Telegram adapter, main.py) — it is not in the dispatch list above.
+  straight to the Telegram adapter, main.py) — it is not in the dispatch list above. `drive_sync` is not a
+  main-service task at all: the drive queue delivers it to the indexer service's `/worker` (`indexer_main.py`).
   **`agent_execution` is claimed by Cloud Tasks task name** (`{prefix}worker_task_dedup`, TTL 30 min):
   Cloud Tasks is at-least-once, and a redelivered task is skipped (200 `duplicate`). A raising attempt
   releases its claim, so the 500 retry still runs. `/worker` logs the `X-CloudTasks-*` headers. See
@@ -546,7 +548,7 @@ in **bytes** — NAME_MAX is 255 bytes and a Cyrillic character costs 2. See
 lives at most 5 minutes per provider key, so a disconnect reaches every instance within 5 minutes. The model and
 history see only `drive:<opaque id>` refs and `[Drive: …]` labels with decoded paths — no provider name. Graph
 paths came back raw in the spike; the adapter unquotes (no-op on raw) and strips both `/drive/root:` and
-`/drives/<id>/root:` prefixes. Seven drive intents on `FILE_MANAGEMENT` (`save_file_to_drive`, `list_files_in_drive`,
+`/drives/<id>/root:` prefixes. Seven Step 1 drive intents on `FILE_MANAGEMENT` (`save_file_to_drive`, `list_files_in_drive`,
 `open_file_from_drive`, `move_file_in_drive`, `create_folder_in_drive`, `update_file_in_drive`,
 `delete_file_from_drive`), store in the name; mutations refuse a ref from the other store, reads are lenient;
 `save_file_to_drive` refuses a `drive:` source and also writes text the bot composed (`text`+`name`: md/txt/csv/json/yaml/html/svg/xml, UTF-8, ≤ 5 MiB, RFC §4.7.1). `FILE_MANAGEMENT.prefetch_file_ref=False` (the coordinator no longer
@@ -557,10 +559,41 @@ onto a taken name ("A file with that name already exists there.") refused. Mutat
 `asyncio.shield`; the agent has a 120 s timeout and waits 100 s, otherwise answers success-shaped "still running"
 (check with a listing) — never a false "failed", but a provider `TimeoutError` inside a mutation is a failure;
 delete/replace post a localised `notify_raw` receipt, or a "did not complete" notice if they fail after "still running" was answered. Vision only for JPEG/PNG/GIF/WebP and PDF (HEIC refused). Refs
-survive turns via `history_context["drive_context"]` (full_text only, never consolidated). **No search in step 1**
-(spike A6: search does not work inside the App Folder) — browsing folders only. The `Trivial_Exclusions` line that
-keeps file operations out of memory was applied to the live `CONSOLIDATION_TAXONOMY` on 2026-10-10 (dry run: leaks
-3/3 → 1/3; RFC §4.12). Step 2 (indexing + search), step 3 (long audio/video) and full editing are not built.
+survive turns via `history_context["drive_context"]` (full_text only, never consolidated). Provider search does not
+work inside the App Folder (spike A6), so finding files goes through our own index (below). The `Trivial_Exclusions`
+line that keeps file operations out of memory was applied to the live `CONSOLIDATION_TAXONOMY` on 2026-10-10 (dry
+run: leaks 3/3 → 1/3; RFC §4.12). Step 2 Slice 1 (metadata index + search) is built; content search (Slice 2), one
+extraction path (Slice 3), the model extractor (Slice 4), step 3 (long audio/video) and full editing are not.
+
+**User Drive indexing** (`docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md`, Slice 1: find a file by metadata — its
+deltas from the RFC text are §23, cited in code as `RFC Δn`; `docs/05_building_blocks/user_drive/README.md`) —
+**opt-in** (`UserBotConfig.drive_indexing_enabled`, Cabinet toggle, `PUT /api/drive/indexing`). A disposable mirror of
+the App Folder: `{prefix}drive_index_records` (one record per item, doc id `{user_id}:{item_id}`, 768-dim
+`card_vector`, **no stored path** — paths come from the `parent_id` chain at read time; `card_capped`/`card_refused`
+are flags beside the structural state) and `{prefix}drive_sync_state` (one per user: delta cursor bound to its drive,
+epoch, lease, `access_lost_at`, `purging`, `applied_space`). **Lease-fenced:** a tick writes nothing past
+`lease_until - LEASE_MARGIN`, and state save/delete are transactions by owner (`LeaseLost` = quiet stop). Pure domain
+decides everything (`drive_index_planner.py`, `drive_index_policy.py`, `drive_card.py`, `drive_name_keys.py`);
+`DriveIndexingService.tick`: gate → lease → observe (nudged items, then delta) → work off due records by class (edits,
+cascades, first-seen and re-listings, maintenance, retries) → upgrade pass → release, then continuation. Errors are
+classified by the call (RFC §8.2): item calls defer that item (a parent lookup never deletes on transient errors);
+the feed, token endpoint and embeddings are systemic (only an HTTP 400 card refusal backs one card off). **A third
+Cloud Run service:** the tick runs only on `alek-bot-indexer-dev` (`indexer_main.py`, `drive_sync`-only `/worker`,
+`--ingress=internal` + OIDC with a pinned audience, gen2, 2 GiB, concurrency 1, max 1; logs `make fetch-logs-indexer`,
+no Logfire), fed by queue `drive-sync-dev` (`max-concurrent-dispatches=1`). URL chain `INDEXER_URL_DEV` →
+`_INDEXER_URL` → `DRIVE_INDEXER_URL` (`os.getenv`); `make deploy` refuses it empty unless `DRIVE_FIRST_PASS=1` (first
+pass of the two-pass first deploy, `docs/07_deployment/README.md`). The main service fans out `start_drive_sync` every
+10 min (`DriveSyncSchedulerService`: minimal sync state for enabled users, staleness alert, one reconnect notice,
+retried only if no send was attempted) and nudges after each Step 1 mutation. **Slice 1 admits no content kind:**
+cards are `name | kind | key facets` (photo date, camera, offline `place_name`); OS/lock artefacts get no card;
+dot-folders, `.git`/`pyvenv.cfg` folders, `node_modules`/`__pycache__`/`site-packages` and dense trees collapse to one
+card. `search_files_in_drive` (SYNC) → `DriveSearchService`: card kNN + per-key name stream (accent, Ukrainian and
+Russian transliteration variants) fused with RRF, full-name cover first; reads only `drive_query` (no words and no
+filter → refused); a capped filter set hedges, never "no match"; results in a nonce-tagged `<drive_document>`
+wrapper (only tag look-alikes neutralised) with a coverage envelope. Not in `SearchEnrichmentService`. Opt-out purges at
+once; lost access keeps the index 30 days. Rebuild one user: `scripts/infrastructure/drive_index_rebuild.py`. Eval:
+`venv/bin/python -m scripts.validation.drive_eval` (bars in `tests/fixtures/drive_eval/bars.json`, `--record` only
+deliberately; any lost case fails). Decisions: `decisions/drive_*.md`.
 
 **Per-channel sessions** — `session_id = f"{user_id}:{channel_id}"`, deterministic; each channel (Slack
 C.../D..., Telegram chat_id) has its own session/history/consolidation stream (a DM is just channel D...).
@@ -876,6 +909,8 @@ the local file** — far faster and cheaper than repeated remote `gcloud logging
 - `make logs-tail` — live tail (`make logs-perf` = perf lines only)
 - Cloud Run Jobs (e.g. deep research): `make fetch-logs-job [K]` → `alek_debug_job.log`;
   `make logs-job`; `make logs-execution EXECUTION=<name>`
+- Drive indexer (`alek-bot-indexer-dev`, the `[DriveIndex]` tick lines): `make fetch-logs-indexer [K]` →
+  `alek_debug_indexer.log`; `make logs-indexer`
 
 ### Step 2 — Two data sources. Pick by what you need; do NOT conflate them.
 

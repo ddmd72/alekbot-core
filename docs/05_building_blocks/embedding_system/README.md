@@ -64,8 +64,10 @@ Cloud Run bursts and parallel write-path embedding calls. Bump
 `GEMINI_EMBED_CONCURRENCY` if you upgrade to Tier 3 or migrate to Vertex AI.
 
 The retry path matches `genai_errors.ClientError` with `code=429` or the
-literal string `RESOURCE_EXHAUSTED`. Other failure modes propagate
-immediately.
+literal string `RESOURCE_EXHAUSTED` (and a 503). Other failure modes propagate
+immediately, typed where the SDK gives a status: any other 4xx as
+`LLMClientError` with `http_status` (a 400 is a refusal of that one input, so
+the drive indexer backs off only that card), other 5xx as `LLMServerError`.
 
 ---
 

@@ -4,7 +4,7 @@ Routing probe for the drive intents (docs/10_rfcs/USER_DRIVE_RFC.md §7).
 Runs the REAL Smart on fixed phrasings; every delegation is captured and answered with
 a stub, nothing executes. Two-turn scenarios seed the previous exchange into Smart's
 loaded history. Each scenario runs --runs times.
-Step 1 has no search intent (spike A6); an unknown *drive* intent from Smart counts as a miss.
+Any drive intent outside DRIVE_INTENTS (Step 1's seven plus Step 2's search_files_in_drive) counts as a miss.
 
     python scripts/validation/drive_routing_probe.py --runs 3
 """
@@ -42,7 +42,7 @@ from src.infrastructure.delegation_engine import DelegationEngine, ToolResult  #
 LEASE = '[File: "lease_2026.pdf" (1.2MB)]'
 DRIVE_INTENTS = {
     "save_file_to_drive", "list_files_in_drive", "open_file_from_drive", "move_file_in_drive",
-    "create_folder_in_drive", "update_file_in_drive", "delete_file_from_drive",
+    "create_folder_in_drive", "update_file_in_drive", "delete_file_from_drive", "search_files_in_drive",
 }
 
 

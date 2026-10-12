@@ -1,0 +1,180 @@
+{
+ "_meta": {
+  "scenario": "a non-empty folder deleted: a tombstone per descendant (OneDrive personal)",
+  "source": "20261011222430",
+  "folder_id": "ABCDEF0000000001!i0011",
+  "child_id": "ABCDEF0000000001!i0012"
+ },
+ "pages": [
+  {
+   "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#Collection(microsoft.graph.driveItem)",
+   "@odata.nextLink": "https://graph.microsoft.com/v1.0/me/drive/special/approot/delta?$top=3&token=tok0004",
+   "value": [
+    {
+     "createdDateTime": "2026-10-10T15:45:10Z",
+     "eTag": "\"{aaaaaaaa-0000-4000-a000-000000000001},2\"",
+     "id": "ABCDEF0000000001!i0001",
+     "lastModifiedDateTime": "2026-10-10T15:45:11Z",
+     "name": "Alek-bot",
+     "webUrl": "https://onedrive.example.invalid/item/0001",
+     "isAuthoritative": false,
+     "size": 242957,
+     "createdBy": {
+      "application": {
+       "displayName": "Alek-bot"
+      },
+      "user": {
+       "email": "redacted",
+       "id": "ABCDEF0000000001",
+       "displayName": "Owner"
+      }
+     },
+     "lastModifiedBy": {
+      "application": {
+       "displayName": "Alek-bot"
+      },
+      "user": {
+       "email": "redacted",
+       "id": "ABCDEF0000000001",
+       "displayName": "Owner"
+      }
+     },
+     "parentReference": {
+      "driveType": "personal",
+      "driveId": "ABCDEF0000000001",
+      "id": "ABCDEF0000000001!i0002",
+      "path": "/drive/root:/folder-0001",
+      "siteId": "aaaaaaaa-0000-4000-a000-000000000002"
+     },
+     "fileSystemInfo": {
+      "createdDateTime": "2026-10-10T15:45:10Z",
+      "lastModifiedDateTime": "2026-10-10T15:45:11Z"
+     },
+     "folder": {
+      "childCount": 3,
+      "view": {}
+     },
+     "shared": {
+      "scope": "users",
+      "owner": {
+       "user": {
+        "email": "redacted",
+        "id": "ABCDEF0000000001",
+        "displayName": "Owner"
+       }
+      }
+     },
+     "specialFolder": {
+      "name": "appRoot"
+     }
+    },
+    {
+     "id": "ABCDEF0000000001!i0011",
+     "webUrl": "https://onedrive.example.invalid/item/0010",
+     "isAuthoritative": false,
+     "size": 0,
+     "parentReference": {
+      "driveType": "personal",
+      "driveId": "ABCDEF0000000001",
+      "id": "ABCDEF0000000001!i0013",
+      "siteId": "aaaaaaaa-0000-4000-a000-000000000002"
+     },
+     "deleted": {
+      "state": "deleted"
+     },
+     "fileSystemInfo": {},
+     "folder": {
+      "childCount": 0,
+      "view": {}
+     }
+    },
+    {
+     "id": "ABCDEF0000000001!i0012",
+     "webUrl": "https://onedrive.example.invalid/item/0011",
+     "cTag": "\"c:{aaaaaaaa-0000-4000-a000-000000000011},-1\"",
+     "isAuthoritative": false,
+     "size": 0,
+     "parentReference": {
+      "driveType": "personal",
+      "driveId": "ABCDEF0000000001",
+      "id": "ABCDEF0000000001!i0011",
+      "siteId": "aaaaaaaa-0000-4000-a000-000000000002"
+     },
+     "deleted": {
+      "state": "deleted"
+     },
+     "file": {
+      "hashes": {
+       "quickXorHash": "ZmFrZS1oYXNoLTAwMDAwMDA5LQ=="
+      }
+     },
+     "fileSystemInfo": {}
+    }
+   ]
+  },
+  {
+   "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#Collection(microsoft.graph.driveItem)",
+   "@odata.deltaLink": "https://graph.microsoft.com/v1.0/me/drive/special/approot/delta?$top=3&token=tok0005",
+   "value": [
+    {
+     "createdDateTime": "2026-10-10T15:45:10Z",
+     "eTag": "\"{aaaaaaaa-0000-4000-a000-000000000001},2\"",
+     "id": "ABCDEF0000000001!i0001",
+     "lastModifiedDateTime": "2026-10-10T15:45:11Z",
+     "name": "Alek-bot",
+     "webUrl": "https://onedrive.example.invalid/item/0001",
+     "isAuthoritative": false,
+     "size": 242957,
+     "createdBy": {
+      "application": {
+       "displayName": "Alek-bot"
+      },
+      "user": {
+       "email": "redacted",
+       "id": "ABCDEF0000000001",
+       "displayName": "Owner"
+      }
+     },
+     "lastModifiedBy": {
+      "application": {
+       "displayName": "Alek-bot"
+      },
+      "user": {
+       "email": "redacted",
+       "id": "ABCDEF0000000001",
+       "displayName": "Owner"
+      }
+     },
+     "parentReference": {
+      "driveType": "personal",
+      "driveId": "ABCDEF0000000001",
+      "id": "ABCDEF0000000001!i0002",
+      "path": "/drive/root:/folder-0001",
+      "siteId": "aaaaaaaa-0000-4000-a000-000000000002"
+     },
+     "fileSystemInfo": {
+      "createdDateTime": "2026-10-10T15:45:10Z",
+      "lastModifiedDateTime": "2026-10-10T15:45:11Z"
+     },
+     "folder": {
+      "childCount": 3,
+      "view": {}
+     },
+     "shared": {
+      "scope": "users",
+      "owner": {
+       "user": {
+        "email": "redacted",
+        "id": "ABCDEF0000000001",
+        "displayName": "Owner"
+       }
+      }
+     },
+     "specialFolder": {
+      "name": "appRoot"
+     }
+    }
+   ]
+  }
+ ]
+}

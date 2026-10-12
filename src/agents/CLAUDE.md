@@ -97,7 +97,21 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   + 100 s wait inside the agent's 120 s timeout → success-shaped "still running, check with a listing"; a
   provider `TimeoutError` inside a mutation is a failure, not "still running". Delete/replace post a localised
   `notify_raw` receipt, or a "did not complete" notice if they fail after "still running" was answered. Vision only JPEG/PNG/GIF/WebP + PDF (HEIC refused). Refs persist via
-  `history_context["drive_context"]`. No search in step 1.
+  `history_context["drive_context"]`. Eighth drive intent `search_files_in_drive` (SYNC, zero-LLM; Step 2 Slice 1,
+  USER_DRIVE_INDEXING_RFC §10.4): `DriveSearchService` over the opt-in index, finds files and folders by name, kind,
+  date, folder, photo facets and place (no file content yet). Context fields `drive_query`, `drive_folder`,
+  `drive_kind`, `drive_date_from`, `drive_date_to` — names no other intent uses, because the delegate tool keeps the
+  first description seen per field name. Search reads only `drive_query`, never the delegate's `query`; it takes
+  name words or a place or subject, no type words or dates. No name words plus a filter is filter-only; no name words
+  and no filter is refused with a correction (RFC Δ36). `drive_kind` is a format, an extension, a plural or a family
+  (`spreadsheet`, `document` incl. PDF, `word`, `presentation`, `photo`; RFC Δ20), anything else is refused. A
+  folder whose contents are not indexed (repository, generated, dense) says so and points to `list_files_in_drive`.
+  Results come inside a nonce-tagged `<drive_document>` wrapper (only wrapper-tag look-alikes are neutralised, so
+  `R&D` paths read as written; RFC Δ34; the same wrapper carries `open_file_from_drive` text, and its vision and video
+  results carry the reference-material reminder with the label unescaped) with a coverage envelope (`building`,
+  `refreshing`, `index_as_of`, `reconnect_needed`); filters over a capped candidate set hedge instead of "no match".
+  Indexing off → `disabled`, read uncached. A `drive:` ref prefetched by the coordinator for DocPlanner, PdfGenerator
+  or HtmlPageGenerator still arrives raw (wrapper in Slice 3, RFC Δ35).
 - Notes / Proactive Self-Reminders (PERFORMANCE, OpenAI, intent `manage_self_reminders`) — deferred
   instructions the system writes to itself that fire autonomously as new conversations. Two-field model:
   `text` (≤15-word label) + `instruction` (self-contained execution context). Tools: create/update/delete

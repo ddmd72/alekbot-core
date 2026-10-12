@@ -1,9 +1,12 @@
 from google import genai
 from google.genai import errors as genai_errors
+from google.genai import types as genai_types
 import asyncio
+import httpx
 import os
 from typing import List
 from ..domain.exceptions import (
+    LLMClientError,
     LLMRateLimitError,
     LLMServerError,
     LLMUnavailableError,
@@ -23,6 +26,9 @@ _DEFAULT_CONCURRENCY = 20
 
 _MODEL = "gemini-embedding-2"
 _OUTPUT_DIM = 768  # Matryoshka truncation from native 3072; preserves existing Firestore indexes.
+# google-genai sends with no HTTP timeout by default, so a hung connection held its worker thread forever.
+# Milliseconds (HttpOptions.timeout); applied to connect, read, write and pool alike.
+_HTTP_TIMEOUT_MS = 30_000
 
 # v2 protocol: task_type is no longer a config parameter. Task is signalled by an
 # instruction prefix on the input text. The public adapter API still accepts task_type
@@ -49,11 +55,18 @@ def _apply_task_prefix(text: str, task_type: str) -> str:
 class GeminiEmbeddingAdapter(EmbeddingService):
     """Adapter: Gemini-specific embedding implementation (v2 model, 768-dim)."""
 
+    # The vector space every embedding of this adapter lives in. Composition injects it into the
+    # drive index, which stamps it on each card (USER_DRIVE_INDEXING_RFC §12.3; RFC Δ1: a class
+    # attribute, not a port member). A model, dimension or task-prefix (_TASK_PREFIXES) change alters
+    # every vector and must change this string.
+    EMBEDDING_SPACE = f"{_MODEL}/{_OUTPUT_DIM}"
+
     def __init__(self, api_key: str):
         if not api_key:
             raise ValueError("GEMINI_API_KEY is required for GeminiEmbeddingAdapter")
         self.api_key = api_key
-        self.client = genai.Client(api_key=api_key)
+        self.client = genai.Client(api_key=api_key,
+                                   http_options=genai_types.HttpOptions(timeout=_HTTP_TIMEOUT_MS))
         concurrency = int(os.getenv("GEMINI_EMBED_CONCURRENCY", str(_DEFAULT_CONCURRENCY)))
         self._semaphore = asyncio.Semaphore(concurrency)
         logger.info(f"[GeminiEmbedding] concurrency cap = {concurrency}, model = {_MODEL}")
@@ -76,9 +89,12 @@ class GeminiEmbeddingAdapter(EmbeddingService):
                     config={"output_dimensionality": _OUTPUT_DIM},
                 )
             except genai_errors.ClientError as exc:
-                if getattr(exc, "code", None) == 429 or "RESOURCE_EXHAUSTED" in str(exc):
+                code = getattr(exc, "code", None)
+                if code == 429 or "RESOURCE_EXHAUSTED" in str(exc):
                     raise LLMRateLimitError(str(exc), http_status=429) from exc
-                raise
+                # Other 4xx — deterministic, not retried. Typed with its status so a caller can tell a
+                # per-input refusal (400) from a config failure (401/403/404) without importing the SDK.
+                raise LLMClientError(str(exc), http_status=code) from exc
             except genai_errors.ServerError as exc:
                 code = getattr(exc, "code", None)
                 if code == 503:
@@ -88,6 +104,10 @@ class GeminiEmbeddingAdapter(EmbeddingService):
                     # path); propagates so the caller degrades gracefully.
                     raise LLMServerError(str(exc), http_status=code) from exc
                 raise
+            except httpx.TimeoutException as exc:
+                # No round trip completed: the same transient class as a 503, so it is retried here and the
+                # drive tick stops as systemic (USER_DRIVE_INDEXING_RFC §8.2).
+                raise LLMUnavailableError(f"Embedding request timed out ({type(exc).__name__})") from exc
 
         async with self._semaphore:
             return await retry_async(
