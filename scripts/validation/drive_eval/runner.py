@@ -301,8 +301,10 @@ async def run_eval(tree_path: Path, gold_path: Union[Path, Sequence[Path]], bars
                    embeddings: EmbeddingService, embedding_space: str, place_of: PlaceOf, record: bool,
                    max_ticks: int = MAX_TICKS, throttle_pause_s: float = 30.0,
                    extractors: Optional[Mapping[str, ContentExtractorPort]] = None,
-                   triage: Optional[ImageTriagePort] = None) -> Dict[str, Any]:
-    """Index, search, score, then record or compare. Returns the report (also written to report_path)."""
+                   triage: Optional[ImageTriagePort] = None,
+                   reader_provider: Optional[str] = None) -> Dict[str, Any]:
+    """Index, search, score, then record or compare. Returns the report (also written to report_path).
+    `reader_provider` (the CLI's real run) is stamped into the bars, and bars from another reader cannot judge."""
     drive = FixtureDrive.from_file(tree_path)
     golds = gold_paths(gold_path)
     gold = load_gold(golds)
@@ -314,7 +316,7 @@ async def run_eval(tree_path: Path, gold_path: Union[Path, Sequence[Path]], bars
             raise EvalError(f"no bars at {bars_path}; run with --record first")
         bars = json.loads(bars_path.read_text(encoding="utf-8"))
         guarded_ids = [case["id"] for case in gold if "known_hard" not in case]
-        mismatch = bar_mismatch(bars, K, tree_sha, gold_sha, guarded_ids, files_sha)
+        mismatch = bar_mismatch(bars, K, tree_sha, gold_sha, guarded_ids, files_sha, reader_provider)
         if mismatch:
             raise EvalError("; ".join(mismatch) + " — review the change, then run with --record")
     clock = EvalClock()
@@ -333,7 +335,7 @@ async def run_eval(tree_path: Path, gold_path: Union[Path, Sequence[Path]], bars
     table = recall(guarded)
     now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
     report: Dict[str, Any] = {
-        "generated_at": now_iso, "embedding_space": embedding_space, "k": K,
+        "generated_at": now_iso, "embedding_space": embedding_space, "k": K, "reader_provider": reader_provider,
         "tree": str(tree_path), "gold": [str(g) for g in golds], "items": len(drive.paths()),
         "index": {"ticks": indexed.ticks, "statuses": indexed.statuses, "summary": indexed.summary,
                   "records": indexed.records, "downloads": len(drive.downloads),
@@ -347,7 +349,7 @@ async def run_eval(tree_path: Path, gold_path: Union[Path, Sequence[Path]], bars
         report["verdict"] = "unrecordable"    # a case the service refused (e.g. a folder not found) is a gold bug
     elif record:
         bars_path.parent.mkdir(parents=True, exist_ok=True)
-        bars = make_bars(table, guarded, K, embedding_space, now_iso, tree_sha, gold_sha, files_sha)
+        bars = make_bars(table, guarded, K, embedding_space, now_iso, tree_sha, gold_sha, files_sha, reader_provider)
         bars_path.write_text(json.dumps(bars, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         report["verdict"] = "recorded"
     else:

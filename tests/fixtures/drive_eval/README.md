@@ -37,7 +37,8 @@ it (a one-page PDF with a text layer for `.pdf` names), so the 600 invoices and 
 file the indexer would read has bytes (`test_drive_eval_fixture_files.py`).
 
 `files/` is made by `scripts/validation/drive_eval/make_fixtures.py` and **committed**, not generated per run: Chromium
-renders differently across machines and versions, and `bars.json` pins every served byte (`files_sha256`). Regenerating
+renders differently across machines and versions, and `bars.json` pins every served byte (`files_sha256`) and the
+reader's provider (`reader_provider`: bars recorded with Claude cannot judge a GPT run). Regenerating
 is a deliberate fixture change, followed by `--record`. The set: DOCX (the `Договор_ред1..3` family, now with differing
 amounts and notice periods), PDFs with a text layer (one two-column, one table-heavy), a broken-font Cyrillic PDF
 (fonts with no Unicode map, so text extraction yields `(cid:N)`), two scans with no text layer (UA, ES), a photographed
