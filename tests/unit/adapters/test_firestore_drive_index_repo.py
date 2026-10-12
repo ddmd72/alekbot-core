@@ -11,7 +11,7 @@ from google.cloud import firestore
 from google.cloud.firestore_v1.base_vector_query import DistanceMeasure
 from google.cloud.firestore_v1.vector import Vector
 
-from src.adapters.firestore_drive_index_repo import RECORD_FIELDS, STATE_FIELDS, state_to_doc
+from src.adapters.firestore_drive_index_repo import CARD_DISTANCE, RECORD_FIELDS, STATE_FIELDS, state_to_doc
 from src.domain.drive_index import DriveIndexRecord, DriveSyncState, Priority
 
 from tests.unit.adapters.firestore_drive_fakes import (
@@ -50,8 +50,10 @@ class TestSyncState:
     async def test_save_merges_every_field_but_the_flags(self, repo, db):
         await repo.save_sync_state(DriveSyncState(user_id="u", epoch=3, stale_alerted=True))
         doc = db.cols[STATES].docs["u"]
-        data, merge = doc.set.call_args.args[0], doc.set.call_args.kwargs["merge"]
-        assert merge == list(STATE_FIELDS) and set(data) == set(STATE_FIELDS)
+        assert doc.get.call_args.kwargs["transaction"] is db.tx      # the fenced write (§7.1) reads in the transaction
+        ref, data = db.tx.set.call_args.args
+        merge = db.tx.set.call_args.kwargs["merge"]
+        assert ref is doc and merge == list(STATE_FIELDS) and set(data) == set(STATE_FIELDS)
         assert "stale_alerted" not in data and "reconnect_notified" not in data
         assert data["epoch"] == 3
 
@@ -70,8 +72,10 @@ class TestSyncState:
         doc.set.assert_not_awaited()
 
     async def test_delete(self, repo, db):
+        doc = db.cols[STATES].document("u")
+        doc.get = AsyncMock(return_value=snap(state_to_doc(DriveSyncState(user_id="u", epoch=2)), "u"))
         await repo.delete_sync_state("u")
-        db.cols[STATES].docs["u"].delete.assert_awaited_once()
+        db.tx.delete.assert_called_once_with(doc)                    # in the fencing transaction (§7.1)
 
     async def test_list_user_ids_reads_names_only(self, repo, db):
         db.cols[STATES].respond = lambda ops: [snap({}, "u2"), snap({}, "u1")]
@@ -314,7 +318,8 @@ class TestSearchReads:
         assert [(r.item_id, d) for r, d in hits] == [("a", 0.25)]
         (ops,) = executed(db)
         assert ops[0] == ("where", "user_id", "==", "u")
-        kind, kw = ops[1]
+        assert ops[1] == ("select", (*RECORD_FIELDS, CARD_DISTANCE))   # the projection comes before the search
+        kind, kw = ops[2]
         assert kind == "find_nearest" and kw == {
             "vector_field": "card_vector", "query_vector": Vector([1.0, 0.0]), "limit": 50,
             "distance_measure": DistanceMeasure.COSINE, "distance_result_field": "card_distance"}

@@ -34,7 +34,8 @@ def full_record() -> DriveIndexRecord:
         reason=Reason.EXTRACT_ERROR, content_version="c1", modified_at=T, fs_modified_at=T - timedelta(days=1),
         effective_date=T - timedelta(days=2), place_name="Rome / Roma", geo_table_version=1, policy_version=2,
         extraction_version=3, card_version=4, embedding_space="gemini-embedding-2/768", card_hash="h",
-        has_card=True, card_rank=1, name_tokens=("t:abc", "w:a"), content_hash="q:10",
+        has_card=True, card_capped=True, card_refused=True, card_rank=1, name_tokens=("t:abc", "w:a"),
+        name_keys_version=6, content_hash="q:10",
         dirty_since=T - timedelta(hours=1), due_at=T + timedelta(minutes=5), priority=4, attempts=2,
         attempt_started_at=T - timedelta(minutes=1), probe_pending=True, rescope_pending=True, cascade_cursor="K",
         probed_child_count=600, reobserve_pending=True, reobserve_cursor="next-page", index_generation=5,
@@ -47,7 +48,8 @@ def full_state() -> DriveSyncState:
         user_id="u1", drive_id="D1", root_item_id="R", cursor="cur", round_complete=True, round_started_at=T,
         epoch=2, epoch_phase=EpochPhase.SWEEPING, initial_enumeration_done=True, purging=True,
         created_at=T - timedelta(days=3), lease_owner="tick", lease_until=T + timedelta(minutes=31), continuation_enqueued_at=T,
-        applied_versions={"policy": 1}, target_versions={"policy": 2}, upgrade_cursor="I9", upgrade_found_stale=True,
+        applied_versions={"policy": 1}, target_versions={"policy": 2}, applied_space="old/768",
+        target_space="new/3072", upgrade_cursor="I9", upgrade_found_stale=True,
         observed_as_of=T, access_lost_at=T, last_success_at=T, last_error=ErrorCategory.THROTTLED,
         stale_alerted=True, reconnect_notified=True, systemic_failures=2, counters={"indexed": 3})
 
@@ -175,9 +177,11 @@ class TestWriteEncoding:
         assert "facets" in sent[0].update_mask.field_paths
         assert sent[0].update.fields["facets"].map_value.fields == {}
 
-    async def test_save_sync_state_never_masks_the_flags(self, sdk):
-        repo, sent = sdk
-        await repo.save_sync_state(full_state())
+    async def test_save_sync_state_never_masks_the_flags(self, tx_sdk):
+        """The save is a fenced transaction (§7.1): the holder's write is encoded by the SDK's transaction."""
+        repo, stored, sent, _ = tx_sdk
+        stored["u1"] = state_to_doc(full_state())
+        await repo.save_sync_state(full_state(), full_state().lease_owner)
         mask = set(sent[0].update_mask.field_paths)
         assert mask == set(STATE_FIELDS)
         assert "stale_alerted" not in mask and "reconnect_notified" not in mask
