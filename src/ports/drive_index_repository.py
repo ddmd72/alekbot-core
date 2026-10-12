@@ -5,7 +5,9 @@ Records and the per-user sync state; chunks join in Slice 2. Batching and transa
 adapter's business. Card vectors travel with record writes but never inside the domain record.
 Ownership of DriveSyncState fields: the tick writes everything through `save_sync_state` under the
 lease, except `stale_alerted` and `reconnect_notified`, which only the fan-out writes, through
-`update_sync_flags`; `save_sync_state` must leave those two untouched.
+`update_sync_flags`; `save_sync_state` must leave those two untouched. It also leaves the lease
+(`lease_owner`, `lease_until`) untouched: only `acquire_lease` and `release_lease` write it, so a tick
+that outlived its lease cannot write it back and then release the new holder's.
 """
 from abc import ABC, abstractmethod
 from datetime import datetime
@@ -24,7 +26,7 @@ class DriveIndexRepository(ABC):
 
     @abstractmethod
     async def save_sync_state(self, state: DriveSyncState) -> None:
-        """Write the whole state except the fan-out flags. Callers hold the lease."""
+        """Write the whole state except the fan-out flags and the lease. Callers hold the lease."""
 
     @abstractmethod
     async def update_sync_flags(self, user_id: str, *, stale_alerted: Optional[bool] = None,

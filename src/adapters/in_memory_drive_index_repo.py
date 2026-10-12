@@ -35,9 +35,12 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
         return self.states.get(user_id)
 
     async def save_sync_state(self, state: DriveSyncState) -> None:
+        """Keeps the stored fan-out flags and the stored lease: only their own methods write them."""
         current = self.states.get(state.user_id)
         flags = (current.stale_alerted, current.reconnect_notified) if current else (False, False)
-        self.states[state.user_id] = replace(state, stale_alerted=flags[0], reconnect_notified=flags[1])
+        lease = (current.lease_owner, current.lease_until) if current else (None, None)
+        self.states[state.user_id] = replace(state, stale_alerted=flags[0], reconnect_notified=flags[1],
+                                             lease_owner=lease[0], lease_until=lease[1])
 
     async def update_sync_flags(self, user_id: str, *, stale_alerted: Optional[bool] = None,
                                 reconnect_notified: Optional[bool] = None) -> None:

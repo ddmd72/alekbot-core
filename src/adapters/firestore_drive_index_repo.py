@@ -20,7 +20,9 @@ Writes:
       kept. A given vector adds both to the merge list; a record with has_card=False lists them with DELETE_FIELD.
     - `save_sync_state` merges every state field except `stale_alerted` and `reconnect_notified`; only
       `update_sync_flags` writes those two, with `update`, so a missing state stays missing.
-    - The lease is taken and released in transactions.
+    - `save_sync_state` never writes `lease_owner`/`lease_until` either: the lease is taken and released in
+      transactions by `acquire_lease`/`release_lease` only (a creating `acquire_lease` writes it with the new
+      state). A tick that outlived its lease would otherwise write it back and then release the new holder's.
 
 Vectors: record queries and `get_records` project the record fields, so they never load `card_vector`. Two reads
 do load it: `card_vectors` (its purpose) and `find_nearest_cards`, whose kNN results are full documents (the
@@ -57,8 +59,10 @@ HAS_CARD_VECTOR = "has_card_vector"
 CARD_DISTANCE = "card_distance"
 _TS_MIN = datetime(1, 1, 1, tzinfo=timezone.utc)   # Firestore's smallest timestamp: `>=` it excludes nulls
 _FLAGS = ("stale_alerted", "reconnect_notified")
+_LEASE = ("lease_owner", "lease_until")
 RECORD_FIELDS: Tuple[str, ...] = tuple(f.name for f in fields(DriveIndexRecord))
-STATE_FIELDS: Tuple[str, ...] = tuple(f.name for f in fields(DriveSyncState) if f.name not in _FLAGS)
+_DOC_FIELDS: Tuple[str, ...] = tuple(f.name for f in fields(DriveSyncState) if f.name not in _FLAGS)
+STATE_FIELDS: Tuple[str, ...] = tuple(name for name in _DOC_FIELDS if name not in _LEASE)   # save_sync_state's
 
 
 # -- serialization ------------------------------------------------------------------------------
@@ -126,8 +130,9 @@ def record_from_doc(data: Mapping[str, Any]) -> DriveIndexRecord:
 
 
 def state_to_doc(state: DriveSyncState) -> Dict[str, Any]:
-    """Every state field except the fan-out flags (their only writer is update_sync_flags)."""
-    return {name: _plain(getattr(state, name)) for name in STATE_FIELDS}
+    """Every state field except the fan-out flags (their only writer is update_sync_flags). Includes the lease,
+    which only a creating `acquire_lease` writes from here; `save_sync_state` sends just STATE_FIELDS."""
+    return {name: _plain(getattr(state, name)) for name in _DOC_FIELDS}
 
 
 def state_from_doc(user_id: str, data: Mapping[str, Any]) -> DriveSyncState:
@@ -157,7 +162,9 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
         return state_from_doc(user_id, snap.to_dict()) if snap.exists else None
 
     async def save_sync_state(self, state: DriveSyncState) -> None:
-        await self._states.document(state.user_id).set(state_to_doc(state), merge=list(STATE_FIELDS))
+        doc = state_to_doc(state)
+        await self._states.document(state.user_id).set({name: doc[name] for name in STATE_FIELDS},
+                                                       merge=list(STATE_FIELDS))
 
     async def update_sync_flags(self, user_id: str, *, stale_alerted: Optional[bool] = None,
                                 reconnect_notified: Optional[bool] = None) -> None:
@@ -192,7 +199,7 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
             if snap.exists:
                 transaction.update(ref, {"lease_owner": owner, "lease_until": until})
             else:
-                transaction.set(ref, state_to_doc(taken))
+                transaction.set(ref, {**state_to_doc(taken), "lease_owner": owner, "lease_until": until})
             return taken
 
         return await _take(self._db.transaction())
