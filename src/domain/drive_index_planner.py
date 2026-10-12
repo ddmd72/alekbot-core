@@ -427,6 +427,7 @@ def _plan(change: DriveChange, existing: Optional[DriveIndexRecord], parent: Opt
 
     revived = existing is not None and existing.state is RecordState.DELETING
     rec = _build(change, cls, existing, ctx, observed)
+    rec = _kind_changed(rec, existing)
     rec = _quiet_period(rec, existing, ctx.now, nudged)
     if existing is not None and rec.is_folder and existing.scope is not rec.scope:
         rec = replace(rec, rescope_pending=True, cascade_cursor=None)
@@ -451,6 +452,16 @@ def _plan(change: DriveChange, existing: Optional[DriveIndexRecord], parent: Opt
         return ObservationPlan(upsert=stamped, parent_updates=parent_updates)
     first_seen = existing is None or not existing.has_card
     return ObservationPlan(upsert=schedule(rec, ctx.now, first_seen=first_seen), parent_updates=parent_updates)
+
+
+def _kind_changed(rec: DriveIndexRecord, existing: Optional[DriveIndexRecord]) -> DriveIndexRecord:
+    """A content kind change (a backed-off `.jpg` renamed to `x.pdf`) is another extractor chain: its work starts
+    fresh, like a new version (§8.2, arbiter R1-4). The attempts, the started attempt, the backoff and any deferral
+    counted the old kind's work (content, triage or its rendition retries); a triage verdict stays, bound to the
+    content version as always."""
+    if existing is None or existing.kind == rec.kind:
+        return rec
+    return replace(rec, attempts=0, attempt_started_at=None, defer_until=None, defer_priority=None)
 
 
 def _quiet_period(rec: DriveIndexRecord, existing: Optional[DriveIndexRecord], now: datetime,
