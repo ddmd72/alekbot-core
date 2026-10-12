@@ -248,3 +248,16 @@ order, substitution handling, OIDC audience, `main.py` names) matches the code. 
 - **Task 47 notes:** P10 (alert policies are scoped to `alek-bot-dev`; verify they cover the indexer), P11 (add a
   probe `drive_sync` task to prove Cloud Tasks passes internal ingress), P12 (Step 3 expects a WARNING Task 24 logs
   at INFO), P13 (Δ11 says Task 21, it is Task 33).
+
+### Fix R2 (tick) — done
+- Commits `24ad1e4` (round 1) and `79a53f8` (round 2). `make check` (reviewer, at `79a53f8`): 7623 passed, 3 skipped,
+  1 xfailed. `24ad1e4` alone was red (3 existing tests) and was pushed only together with `79a53f8`.
+- tick F1 fixed (a `_Saved` holder: systemic handlers write onto the latest saved state; incl. right after a 410).
+  F2: `_apply` re-raises not-connected / throttled / opt-out; other probe errors → failed probe (`probe_pending`).
+  F3: nudged items scheduled class 0. F8: tests for the per-page drive switch and probe budget + parking.
+- F6 round 1 broke three existing tests (`test_every_version_bump_completes_and_applies[policy|geo_table]`,
+  `test_version_bump_restamps_and_applies_after_clean_pass`). **Reviewer decision: the tests are right** (they pin
+  plan-intended in-chain verification after a version bump), the fix was wrong; tests untouched. Round 2: continue
+  on a version difference while a pass is mid-way **or** this tick's upgrade wrote anything; `_upgrade_page` skips
+  parked `UNRESOLVED` records with no due time (the remaining spin: 30 back-to-back ticks → 2, then converges).
+- Review: round 1 CHANGES REQUIRED, round 2 APPROVED (mutations killed; one equivalent survivor).
