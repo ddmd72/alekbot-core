@@ -32,6 +32,10 @@ Supported task_types:
   - repair_email_embeddings       → run one batch of EmailEmbeddingRepairService (re-embed indexed emails
                                      where embedding_pending=True after transient API failures)
   - video_generation_polling      → poll VideoGenerationPort job, deliver via deliver_video()
+  - start_drive_sync              → fan-out: DriveSyncSchedulerService enqueues one drive_sync tick per
+                                     user on the drive queue (the indexer service runs it), raises the
+                                     staleness alert and the one reconnect notice (USER_DRIVE_INDEXING_RFC
+                                     §7.1, §12.1; plan Δ5, Δ6)
 """
 
 from __future__ import annotations
@@ -53,6 +57,7 @@ if TYPE_CHECKING:
     from ..services.file_link_service import FileLinkService
     from ..services.short_link_service import ShortLinkService
     from ..services.companion_extraction_service import CompanionExtractionService
+    from ..services.drive_sync_scheduler_service import DriveSyncSchedulerService
 
 from ..domain.cloud_task_delivery import CloudTaskDelivery
 from ..domain.complexity_settings import resolve_complexity_settings
@@ -115,6 +120,7 @@ class WorkerHandler:
         short_link_service: "Optional[ShortLinkService]" = None,
         companion_extraction: "Optional[CompanionExtractionService]" = None,
         oauth_credentials: "Optional[OAuthCredentialsPort]" = None,
+        drive_sync_scheduler: "Optional[DriveSyncSchedulerService]" = None,
     ) -> None:
         self._agent_worker = agent_worker_handler
         self._email_indexing = email_indexing_service
@@ -141,6 +147,7 @@ class WorkerHandler:
         self._email_embedding_repair = email_embedding_repair
         self._companion_extraction = companion_extraction
         self._oauth_credentials = oauth_credentials
+        self._drive_sync_scheduler = drive_sync_scheduler
 
     async def handle(
         self, payload: dict, delivery: Optional[CloudTaskDelivery] = None,
@@ -199,6 +206,8 @@ class WorkerHandler:
             return await self._handle_billing_daily_summary()
         elif task_type == "repair_email_embeddings":
             return await self._handle_repair_email_embeddings()
+        elif task_type == "start_drive_sync":
+            return await self._handle_start_drive_sync()
         return None  # unknown task_type — caller handles fallback
 
     # ------------------------------------------------------------------
@@ -704,6 +713,21 @@ class WorkerHandler:
             )
         logger.info(f"[Worker] renew_all_task_subscriptions: enqueued {len(user_ids)} renewal tasks")
         return {"status": "ok", "enqueued": len(user_ids)}, 200
+
+    # ------------------------------------------------------------------
+    # Drive index fan-out
+    # ------------------------------------------------------------------
+
+    async def _handle_start_drive_sync(self) -> Tuple[dict, int]:
+        """Cloud Scheduler, every TICK_INTERVAL: one drive_sync tick per user (delegates, plan Δ5).
+
+        Unconfigured (no DRIVE_INDEXER_URL, e.g. the first pass of the two-pass first deploy) answers
+        200, not the 501 other fan-outs use: the job fires every 10 minutes, and a 5xx request log is
+        ERROR severity, which the error alert policy would page on until the second pass."""
+        if not self._drive_sync_scheduler:
+            logger.info("[Worker] start_drive_sync: drive indexing not configured; skipped")
+            return {"status": "disabled"}, 200
+        return await self._drive_sync_scheduler.fan_out(), 200
 
     # ------------------------------------------------------------------
     # Self-reminders: fire_due_reminders
