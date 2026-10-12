@@ -292,23 +292,51 @@ def _read_eml(path: str, kind: str) -> _Read:
 
 
 def _read_xlsx(path: str, kind: str) -> _Read:
+    """Rows are read at most _MAX_TABLE_COLUMNS + 1 wide (a cell in column XFD must not pad every row to 16384
+    values), each sheet is rendered as soon as it is read, and reading stops once MAX_TEXT_CHARS characters are
+    collected: what the parser holds stays near the text cap whatever the sheet declares."""
     import openpyxl
 
     book = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    blocks: List[str] = []
+    collected = 0
+    truncated = False
     try:
-        sheets: List[Tuple[str, List[Sequence[Any]], bool]] = []
         for sheet in book.worksheets:
+            if collected >= MAX_TEXT_CHARS:
+                truncated = True
+                break
             sheet.reset_dimensions()                  # a declared A1:XFD1048576 must not pad every row
             rows: List[Sequence[Any]] = []
-            for row in sheet.iter_rows(values_only=True):
-                if any(value is not None and str(value).strip() for value in row):
-                    rows.append(row)
+            for row in sheet.iter_rows(max_col=_MAX_TABLE_COLUMNS + 1, values_only=True):
+                if row.count(None) == len(row):
+                    continue                          # C speed: a missing row is a full tuple of None
+                values = _trim_row(row)
+                texts = [str(value) for value in values if value is not None]
+                if not any(text.strip() for text in texts):
+                    continue
+                rows.append(values)
+                collected += sum(len(text) + 3 for text in texts)     # "| " separators included
                 if len(rows) > MAX_SHEET_ROWS:
                     break
-            sheets.append((sheet.title, rows, False))
+                if collected >= MAX_TEXT_CHARS:
+                    truncated = True
+                    break
+            table, cut = markdown_table(rows)
+            truncated = truncated or cut
+            if table:
+                blocks.append(f"## {sheet.title}\n\n{table}")
     finally:
         book.close()
-    return _sheets_text(sheets)
+    return "\n\n".join(blocks), 0, truncated
+
+
+def _trim_row(row: Sequence[Any]) -> Sequence[Any]:
+    """The row without its trailing empty cells (iter_rows pads every row to max_col)."""
+    end = len(row)
+    while end and row[end - 1] is None:
+        end -= 1
+    return row[:end]
 
 
 def _read_xls(path: str, kind: str) -> _Read:
