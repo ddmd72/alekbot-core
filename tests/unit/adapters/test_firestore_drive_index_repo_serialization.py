@@ -107,7 +107,8 @@ class TestStateSerialization:
 
     def test_doc_excludes_fanout_flags(self):
         doc = state_to_doc(full_state())
-        assert set(doc) == set(STATE_FIELDS)
+        assert set(doc) == {f.name for f in fields(DriveSyncState)} - {"stale_alerted", "reconnect_notified"}
+        assert set(STATE_FIELDS) == set(doc) - {"lease_owner", "lease_until"}   # save_sync_state's (review R4)
         assert "stale_alerted" not in doc and "reconnect_notified" not in doc
         assert doc["epoch_phase"] == "sweeping" and doc["last_error"] == "throttled"
         assert doc["purging"] is True and doc["systemic_failures"] == 2 and doc["created_at"] == T - timedelta(days=3)
