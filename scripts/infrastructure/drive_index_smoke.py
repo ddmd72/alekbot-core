@@ -1,0 +1,89 @@
+"""
+Read-only smoke run of FirestoreDriveIndexRepository against live Firestore (USER_DRIVE_INDEXING_RFC §12.5).
+
+Runs every read query of the repository once for one user id, so a missing or still-building index fails here with
+Firestore's FAILED_PRECONDITION (and its index link) instead of on the first tick. Writes nothing. Empty results are
+fine: index selection happens before any document is read. Run it after `make deploy-indexes` and
+create_drive_vector_indexes.sh report READY, and before indexing is turned on for anyone.
+
+Usage (project and credentials from the environment / ADC, collections from APP_ENV, default development):
+    python scripts/infrastructure/drive_index_smoke.py <user_id>
+Exit code: 0 when every query ran, 1 otherwise.
+"""
+import argparse
+import asyncio
+import os
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Awaitable, Callable, List, Tuple
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from src.adapters.firestore_drive_index_repo import FirestoreDriveIndexRepository  # noqa: E402
+from src.domain.drive_index import Priority  # noqa: E402
+
+_VECTOR = [1.0] + [0.0] * 767   # any non-zero 768-dim vector
+
+
+def checks(repo: FirestoreDriveIndexRepository, user_id: str) -> List[Tuple[str, Callable[[], Awaitable[object]]]]:
+    """Every read the tick and the search issue, each once. The two within-rank eviction queries run directly:
+    `lowest_ranked_carded` reaches them only when a carded record exists."""
+    now = datetime.now(timezone.utc)
+    dated, undated = repo.eviction_rank_queries(user_id, 3)
+    return [
+        ("get_sync_state", lambda: repo.get_sync_state(user_id)),
+        ("list_sync_user_ids", lambda: repo.list_sync_user_ids()),
+        ("get_records", lambda: repo.get_records(user_id, ["smoke-item"])),
+        ("due_records", lambda: repo.due_records(user_id, now, 10)),
+        *[(f"oldest_due_at[{p.name}]", (lambda p=p: repo.oldest_due_at(user_id, int(p)))) for p in Priority],
+        ("children", lambda: repo.children(user_id, "smoke-parent", "a", 5)),
+        ("records_page", lambda: repo.records_page(user_id, "a", 5)),
+        ("records_seen_before", lambda: repo.records_seen_before(user_id, 1, 5)),
+        ("count_carded", lambda: repo.count_carded(user_id)),
+        ("count_by_state", lambda: repo.count_by_state(user_id)),
+        ("lowest_ranked_carded", lambda: repo.lowest_ranked_carded(user_id)),
+        ("eviction: oldest dated within a rank", lambda: dated.get()),
+        ("eviction: undated within a rank", lambda: undated.get()),
+        ("card_capped", lambda: repo.card_capped(user_id, 5)),
+        ("find_nearest_cards", lambda: repo.find_nearest_cards(user_id, _VECTOR, 5)),
+        ("find_nearest_cards[kind]", lambda: repo.find_nearest_cards(user_id, _VECTOR, 5, kind="pdf")),
+        ("find_by_name_keys", lambda: repo.find_by_name_keys(user_id, ["w:smoke"], 5)),
+        ("find_by_name_keys[kind]", lambda: repo.find_by_name_keys(user_id, ["w:smoke"], 5, kind="pdf")),
+        ("filter_records", lambda: repo.filter_records(user_id, None, None, None, 5)),
+        ("filter_records[kind+dates]",
+         lambda: repo.filter_records(user_id, "pdf", now - timedelta(days=7), now, 5)),
+        ("card_vectors", lambda: repo.card_vectors(user_id, ["smoke-item"])),
+    ]
+
+
+async def run_smoke(repo: FirestoreDriveIndexRepository, user_id: str) -> List[Tuple[str, str]]:
+    """Run every check; return (name, error) for each one that raised."""
+    failures: List[Tuple[str, str]] = []
+    for name, call in checks(repo, user_id):
+        try:
+            await call()
+            print(f"✅ {name}")
+        except Exception as exc:   # report every failure, then fail the run
+            print(f"❌ {name}: {type(exc).__name__}: {exc}")
+            failures.append((name, f"{type(exc).__name__}: {exc}"))
+    return failures
+
+
+async def _main(user_id: str) -> int:
+    from google.cloud import firestore
+
+    from src.config.environment import EnvironmentConfig
+
+    env = EnvironmentConfig()
+    db = firestore.AsyncClient(project=os.getenv("GOOGLE_CLOUD_PROJECT") or None, database=env.firestore_database_id)
+    repo = FirestoreDriveIndexRepository(db, env)
+    failures = await run_smoke(repo, user_id)
+    print(f"{len(failures)} of {len(checks(repo, user_id))} queries failed" if failures else "All queries ran.")
+    return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("user_id", help="user whose index the queries read (any id; an empty index is fine)")
+    sys.exit(asyncio.run(_main(parser.parse_args().user_id)))
