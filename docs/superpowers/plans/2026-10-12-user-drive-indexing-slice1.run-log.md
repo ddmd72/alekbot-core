@@ -76,3 +76,15 @@ Method: subagent-driven (implementer → independent reviewer → coordinator ac
 - Reviewer notes for Part C parity: in-memory `lowest_ranked_carded` sorts a missing `modified_at` as newest
   (`inf`) while `card_capped` sorts it as oldest (`0.0`); `filter_records` drops undated records even without a date
   bound; `find_by_name_keys` does not enforce the 30-key cap (callers do, Δ17).
+
+### Task 9 — done
+- Commit `048a3e0`. `make check` (coordinator, worktree at the commit): 7149 passed, 3 skipped, 1 xfailed.
+- Deviations: none (all four blocks byte-identical). Reviewer: APPROVED, round 1 (mutation-tested).
+- **OWNER — two tick paths without a test** (the plan's verbatim code is correct, but nothing pins it; Task 10's
+  property suite also passes under both mutations):
+  1. per-page `drive_id` mismatch → `_DriveSwitched` → purge (§7.1 step 1): replacing the `raise` with `pass` keeps
+     all Task 9 + Task 10 tests green. `test_drive_switch_purges_then_onboards` only covers the connection-level switch.
+  2. the Δ15 round gate on work-off (`if state.round_complete:` → `if True:`) also stays green; today the time budget
+     masks it. Worth two new tests as a follow-up (not added: beyond the task's scope).
+- Plan-code notes: `except DriveItemNotFoundError:` in the re-listing path does not log (Global Constraint "every
+  except logs"); `TickResult` is a second public class in the service file (part of the plan's interface).
