@@ -122,3 +122,28 @@ async def test_one_kind_is_still_one_prefiltered_knn():
     await w.settle()
     await w.search_svc.search("u", DriveSearchRequest(query="a", kind="pdf"))
     assert w.repo.card_kinds == ["pdf"]
+
+
+async def test_a_family_merges_its_member_knn_pages_by_distance():
+    """The nearest card is an xlsx added last (the highest item id, the alphabetically later kind): the merged
+    card stream puts it first. No name shares a key with the query, so the card stream alone orders the result."""
+    w = _world()
+
+    async def emb(text, task_type="RETRIEVAL_DOCUMENT"):
+        w.emb.calls.append(text)
+        if task_type == "RETRIEVAL_QUERY":
+            return [1.0] + [0.0] * 7
+        if "target" in text:
+            return [1.0, 0.05] + [0.0] * 6
+        if "near" in text:
+            return [1.0, 0.5] + [0.0] * 6
+        return [0.2, 1.0] + [0.0] * 6
+    w.emb.get_embedding = emb
+    w.drive.add("far one.csv")
+    w.drive.add("near two.csv")
+    w.drive.add("far three.ods")
+    w.drive.add("target four.xlsx")
+    await w.settle()
+    result = await w.search("quarterly", kind="spreadsheet")
+    assert w.repo.name_keys and not any(c.name.startswith("quarterly") for c in result.cards)
+    assert [c.name for c in result.cards][:2] == ["target four.xlsx", "near two.csv"]
