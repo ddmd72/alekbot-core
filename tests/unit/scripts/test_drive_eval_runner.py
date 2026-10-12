@@ -218,11 +218,14 @@ def test_cli_records_then_passes_with_the_production_wiring_faked(tmp_path, monk
         def __init__(self, api_key):
             super().__init__()
 
+    from src.domain.drive_extraction import PARSER, READER
+    from ..services.drive_content_fakes import FakeExtractor, FakeTriage
+
     content_builds = []
 
     def _content():
         content_builds.append(True)
-        return None, None
+        return {PARSER: FakeExtractor(), READER: FakeExtractor(READER)}, FakeTriage()
 
     monkeypatch.setattr(cli, "load_dotenv", lambda *a, **k: None)   # never read the developer's .env here
     monkeypatch.setattr(content_wiring, "build_real_content", _content)

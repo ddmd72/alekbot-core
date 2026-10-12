@@ -95,19 +95,25 @@ def window_indexes(index: int) -> Tuple[int, ...]:
 
 def window_text(chunks: Sequence[DriveChunk]) -> str:
     """Join a window's chunks in index order. Adjacent chunks overlap (CHUNK_OVERLAP, §8.4): the repeated text is
-    cut by the character offsets; a missing neighbour leaves a visible gap marker."""
+    cut by the character offsets; a missing neighbour leaves a visible gap marker. Adjacent chunks that do not
+    overlap are separated only by the whitespace the chunker leaves out of every span, and a continued table's
+    chunk carries its repeated header in front of its span (drive_chunker): both join without a gap marker."""
     ordered = sorted(chunks, key=lambda c: c.index)
     if not ordered:
         return ""
     parts = [ordered[0].text]
     for prev, cur in zip(ordered, ordered[1:]):
         overlap = prev.char_end - cur.char_start
+        prefix = len(cur.text) - (cur.char_end - cur.char_start)   # > 0: a repeated table header
+        body = cur.text[prefix:] if prefix > 0 and overlap <= 0 else cur.text
         if cur.index != prev.index + 1:
             parts.append(_GAP + cur.text)
         elif 0 < overlap <= len(cur.text):
             parts.append(cur.text[overlap:])
-        elif overlap <= 0:
-            parts.append(cur.text if overlap == 0 else _GAP + cur.text)
+        elif overlap == 0:
+            parts.append(body)
+        elif overlap < 0:
+            parts.append(("\n" if overlap == -1 else "\n\n") + body)   # only whitespace lies between them
         else:
             parts.append(_GAP + cur.text)   # offsets that do not fit the text: never cut blindly
     return "".join(parts)

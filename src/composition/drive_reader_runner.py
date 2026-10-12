@@ -38,7 +38,7 @@ from ..agents.drive_document_reader_agent import AGENT_TYPE, DriveDocumentReader
 from ..infrastructure.drive_model_call import DriveModelCallFailed
 from ..domain.agent import AgentConfig
 from ..domain.drive_extraction import (
-    READER, DriveModelUnavailable, ExtractionOutcome, ExtractionRequest, ExtractionStatus, PdfSplit,
+    READER, DriveModelUnavailable, ExtractionOutcome, ExtractionRequest, ExtractionStatus, PdfSplit, PdfSplitFailed,
 )
 from ..domain.drive_image_mime import VISION_MIME_TYPES, image_mime
 from ..domain.drive_index import DocumentBrief
@@ -169,6 +169,10 @@ class DriveReaderRunner(ContentExtractorPort):
         with tempfile.TemporaryDirectory(prefix="drive-reader-") as out_dir:
             try:
                 split = await self._splitter.split_pdf(request.path, MODEL_PAGES_PER_CALL, cap, out_dir)
+            except PdfSplitFailed as exc:
+                # the sandboxed split's own verdict (encrypted, timeout, memory, ...) is the file's outcome (§24.3)
+                logger.warning(f"[DriveReader] split failed: {exc}")
+                return ExtractionOutcome(status=exc.status, detail=f"split failed: {exc.detail}")
             except Exception as exc:
                 logger.warning(f"[DriveReader] split failed: {type(exc).__name__}: {exc}")
                 return ExtractionOutcome(status=S.ERROR, detail=f"split failed: {type(exc).__name__}")
