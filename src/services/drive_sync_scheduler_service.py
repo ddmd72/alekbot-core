@@ -13,7 +13,8 @@ formatter agent (up to its 120 s SLA), so running checks first would let one slo
 later user's tick past the scheduler's attempt deadline.
 
 Public interface:
-    DriveSyncSchedulerService(repo, queue, drive, users, connected_users, notifier, alert_sink, *, clock)
+    DriveSyncSchedulerService(repo, queue, drive, users, connected_users, notifier, alert_sink, *, clock,
+                              ensure_agents)
     await fan_out() -> Dict[str, int]
 """
 from __future__ import annotations
@@ -65,7 +66,8 @@ class DriveSyncSchedulerService:
     def __init__(self, repo: DriveIndexRepository, queue: TaskQueue, drive: UserDrivePort,
                  users: UserRepository, connected_users: Callable[[], Awaitable[List[str]]],
                  notifier: Optional["UserNotificationService"], alert_sink: Optional[AlertSinkPort], *,
-                 clock: Callable[[], datetime] = _utcnow) -> None:
+                 clock: Callable[[], datetime] = _utcnow,
+                 ensure_agents: Optional[Callable[[str], Awaitable[Any]]] = None) -> None:
         self._repo = repo
         self._queue = queue
         self._drive = drive
@@ -74,6 +76,7 @@ class DriveSyncSchedulerService:
         self._notifier = notifier
         self._alert_sink = alert_sink
         self._clock = clock
+        self._ensure_agents = ensure_agents
 
     async def fan_out(self) -> Dict[str, int]:
         """One pass over every candidate. A failure for one user is logged and never stops the rest."""
@@ -155,6 +158,11 @@ class DriveSyncSchedulerService:
         if self._notifier is None:
             logger.warning(f"[DriveSync] drive needs reconnect for {user_id[:8]}; no notifier configured")
             return 0
+        # The formatter agent is only registered while the user's agents are loaded (cold start or idle
+        # eviction otherwise answers "Unknown recipient"), like every other /worker path that notifies.
+        # Before the flag: a failed load leaves it down, `fan_out` logs it and the next fan-out retries.
+        if self._ensure_agents is not None:
+            await self._ensure_agents(user_id)
         # The flag goes up BEFORE the send (Gmail precedent, WorkerHandler._flag_gmail_reconnect): a request
         # cancelled after the message left (scheduler attempt deadline, deploy SIGTERM) must not repeat it.
         # It comes down again only when nothing can have been sent. CancelledError is not an Exception.

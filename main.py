@@ -718,6 +718,7 @@ async def main():
                 oauth_credentials=oauth_credentials_port,
                 notifier=notification_service,
                 alert_sink=_alert_webhook,
+                ensure_agents=agent_factory.ensure_agents_for_user,
             )
 
         # Worker handler — dispatches Cloud Tasks to appropriate handlers

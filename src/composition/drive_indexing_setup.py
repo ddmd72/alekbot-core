@@ -12,7 +12,7 @@ nudges and runs no fan-out, and nothing else changes.
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING, Any, Awaitable, List, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, List, Mapping, Optional
 
 from ..adapters.firestore_drive_index_repo import FirestoreDriveIndexRepository
 from ..adapters.gcp_task_queue import GcpTaskQueue
@@ -71,11 +71,14 @@ def build_place_lookup() -> PlaceOf:
 def build_drive_sync_scheduler(*, repo: DriveIndexRepository, queue: TaskQueue, drive: UserDrivePort,
                                users: UserRepository, oauth_credentials: OAuthCredentialsPort,
                                notifier: Optional["UserNotificationService"],
-                               alert_sink: Optional[AlertSinkPort]) -> DriveSyncSchedulerService:
+                               alert_sink: Optional[AlertSinkPort],
+                               ensure_agents: Optional[Callable[[str], Awaitable[Any]]] = None,
+                               ) -> DriveSyncSchedulerService:
     """The `start_drive_sync` fan-out (plan Δ5, Δ6). The provider name stays here, in composition:
     the service only sees a callable listing the users with stored drive credentials."""
     def connected_users() -> Awaitable[List[str]]:
         return oauth_credentials.list_users_by_provider(ONEDRIVE_PROVIDER)
 
     return DriveSyncSchedulerService(repo=repo, queue=queue, drive=drive, users=users,
-                                     connected_users=connected_users, notifier=notifier, alert_sink=alert_sink)
+                                     connected_users=connected_users, notifier=notifier, alert_sink=alert_sink,
+                                     ensure_agents=ensure_agents)
