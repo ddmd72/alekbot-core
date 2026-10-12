@@ -140,6 +140,8 @@ class DriveIndexingService:
         if lease is None:
             if nudge is not None:
                 await self._requeue_nudge(user_id, nudge)
+            else:
+                await self._requeue_busy(user_id, tick_id)
             return TickResult("busy")
         summary: Dict[str, int] = {}
         try:
@@ -790,6 +792,19 @@ class DriveIndexingService:
         await self._queue.enqueue_worker_task(DRIVE_SYNC_TASK, tick_payload(user_id, again),
                                               delay_seconds=NUDGE_RETRY_DELAY_S, deadline_seconds=TICK_DEADLINE_S,
                                               dedup_key=nudge_key(user_id, nudge.mutation_id, again.attempt))
+
+    async def _requeue_busy(self, user_id: str, tick_id: str) -> None:
+        """A tick that finds the lease busy comes back once per holder: a continuation can be dispatched while the
+        tick that enqueued it still holds the lease, and that tick has already saved its continuation marker, so
+        the fan-out skips the user (§7.1). One key per holder dedups redeliveries and every other busy tick."""
+        holder = await self._repo.get_sync_state(user_id)
+        owner = holder.lease_owner if holder is not None and holder.lease_owner else tick_id
+        name = await self._queue.enqueue_worker_task(DRIVE_SYNC_TASK, tick_payload(user_id),
+                                                     delay_seconds=NUDGE_RETRY_DELAY_S,
+                                                     deadline_seconds=TICK_DEADLINE_S,
+                                                     dedup_key=continuation_key(user_id, f"busy-{owner}"))
+        logger.info(f"[DriveIndex] lease busy for {user_id[:8]}; "
+                    f"{'retrying in ' + str(NUDGE_RETRY_DELAY_S) + 's' if name else 'a retry is already queued'}")
 
     async def _recheck_gate(self, user_id: str) -> None:
         """Before a write batch (§7.1): an opt-out during the tick drops the in-flight result."""
