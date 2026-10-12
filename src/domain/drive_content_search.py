@@ -171,9 +171,24 @@ def _trim(text: str, limit: int, terms: Sequence[str]) -> str:
     return piece
 
 
+def _fair_share(sizes: Sequence[int], total: int) -> int:
+    """The largest per-chunk length `c` with Σ min(size, c) <= total: no chunk is cut while all fit, and a cut takes
+    only from the chunks longer than what the shorter ones leave (water-filling, review D minor)."""
+    if not sizes or sum(sizes) <= total:
+        return max(sizes, default=0)
+    left, count = total, len(sizes)
+    for size in sorted(sizes):
+        if size * count > left:
+            return max(1, left // count)
+        left -= size
+        count -= 1
+    return max(1, left)
+
+
 def budget_windows(requests: Sequence[WindowRequest], terms: Sequence[str], total: int) -> List[Window]:
     """Fit every content hit's window into `total` characters (§10.2). Each hit with a stored best chunk keeps it,
-    trimmed around its query term to an equal share when the best chunks alone would not fit; then neighbours are
+    trimmed around its query term only when the best chunks alone would not fit, and then only down to the share
+    the shorter ones leave (`_fair_share`); then neighbours are
     added in rank order, each whole, until one does not fit — after that no lower hit gets one, so a better hit
     never has less context than a worse one. A hit whose best chunk is gone (collected meanwhile) gets no window."""
     anchors: Dict[int, DriveChunk] = {}
@@ -181,7 +196,7 @@ def budget_windows(requests: Sequence[WindowRequest], terms: Sequence[str], tota
         anchor = next((c for c in request.chunks if c.index == request.anchor_index and c.text), None)
         if anchor is not None:
             anchors[i] = anchor
-    share = max(1, total // len(anchors)) if anchors else 0
+    share = _fair_share([len(a.text) for a in anchors.values()], total)
     best = {i: _trim(a.text, share, [t for t in terms if t in a.content_terms]) for i, a in anchors.items()}
     trimmed = {i for i, a in anchors.items() if best[i] != a.text}
     remaining = total - sum(len(t) for t in best.values())
