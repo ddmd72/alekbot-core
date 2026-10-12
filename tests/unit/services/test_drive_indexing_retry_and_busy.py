@@ -4,7 +4,6 @@ from datetime import timedelta
 from src.domain.drive_index_params import NUDGE_RETRY_DELAY_S
 from src.domain.user_drive import DriveThrottled
 from src.services import drive_indexing_service as svc_mod
-from src.services.drive_sync_scheduler_service import DriveSyncSchedulerService
 
 from .test_drive_indexing_service import World
 
@@ -67,9 +66,8 @@ class TestBusyTickComesBack:
         assert requeued[0]["payload"] == {"user_id": "u"}
 
     async def test_a_continuation_racing_its_parent_is_not_lost(self):
-        """The continuation is enqueued while its tick still holds the lease. With more than one dispatch slot it
-        runs at once, finds the lease busy, and must come back: the parent already saved its continuation marker,
-        so the fan-out skips the user."""
+        """With more than one dispatch slot a continuation runs at once. It is enqueued only after its tick released
+        the lease (§7.1), so it takes the lease and works; the busy path is not needed and the chain finishes."""
         w = World(page_size=10)
         for i in range(60):
             w.drive.add(f"doc{i:02d}.pdf")
@@ -91,17 +89,10 @@ class TestBusyTickComesBack:
 
         w.queue.enqueue_worker_task = enqueue
         await w.svc.tick("u")
-        assert concurrent[0].status == "busy"
-        sched = DriveSyncSchedulerService(w.repo, w.queue, w.drive, w.users, _ids, None, None, clock=w.clock)
-        assert (await sched.fan_out())["enqueued"] == 0       # the marker the parent saved
-        delayed = [t for t in w.queue.tasks if t["delay"] == NUDGE_RETRY_DELAY_S]
-        assert len(delayed) == 1
+        assert concurrent[0].status == "done"
+        assert not [t for t in w.queue.tasks if "busy-" in (t["key"] or "")]
         w.drive.get_changes = real_changes
         w.queue.enqueue_worker_task = real_enqueue
         w.clock.advance(NUDGE_RETRY_DELAY_S)
         await w.settle()
         assert len(w.carded()) == 60
-
-
-async def _ids():
-    return ["u"]
