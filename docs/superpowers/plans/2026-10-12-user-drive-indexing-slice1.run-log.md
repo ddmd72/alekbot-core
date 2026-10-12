@@ -151,3 +151,10 @@ bugs, races/redelivery, Firestore limits, logs/PII, mutation testing) and classi
 **PLAN-BUG with a local fix** (fix + a NEW failing-first test; existing tests untouched), **OWNER** (design decision,
 logged here). Tasks 0–17 get a retrospective adversarial review in three read-only areas (domain, tick, drive +
 storage); results and the fixes they lead to are logged below.
+
+### Task 18 — done
+- Commit `b892ab8`. `make check` (coordinator, worktree at the commit): 7583 passed, 3 skipped, 1 xfailed.
+- Deviations: none (plan diff applied on base blob 29a7868; result byte-identical). `make deploy-indexes` NOT run.
+- Reviewer (adversarial): APPROVED, round 1, no findings. gcloud flag syntax checked against local `--help`;
+  11 mutations, 2 survivors with no behaviour change. Pre-existing observation: the script lowercases scope to
+  `collection_group` (gcloud wants `collection-group`) — no current index uses that scope.
