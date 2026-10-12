@@ -89,9 +89,10 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
 
     async def upsert_records(self, records: Sequence[DriveIndexRecord],
                              card_vectors: Optional[Mapping[str, Sequence[float]]] = None) -> None:
+        stuck = [rec.item_id for rec in records if rec.due_at is not None and rec.priority is None]
+        if stuck:   # never ordered by due_records; refused whole, before any write (as the Firestore adapter)
+            raise ValueError(f"records due without a priority: {stuck[:5]}")
         for rec in records:
-            if rec.due_at is not None and rec.priority is None:
-                raise ValueError(f"record {rec.item_id} is due without a priority")   # never ordered by due_records
             key = (rec.user_id, rec.item_id)
             self.records[key] = rec
             if card_vectors and rec.item_id in card_vectors:
