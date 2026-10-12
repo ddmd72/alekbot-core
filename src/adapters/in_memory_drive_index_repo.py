@@ -175,9 +175,10 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
         refused.sort(key=lambda r: (r.card_rank, -(r.modified_at.timestamp() if r.modified_at else 0.0), r.item_id))
         return refused[:limit]
 
-    async def count_unread(self, user_id: str, kinds: AbstractSet[str]) -> int:
+    async def count_unread(self, user_id: str, kinds: AbstractSet[str],
+                           triaged: AbstractSet[str] = frozenset()) -> int:
         admitted = frozenset(kinds)
-        return sum(1 for r in self._user(user_id) if is_unread(r, admitted))
+        return sum(1 for r in self._user(user_id) if is_unread(r, admitted, frozenset(triaged)))
 
     async def count_by_state(self, user_id: str) -> Dict[str, int]:
         counts: Dict[str, int] = {}
@@ -254,11 +255,13 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
         return [self.chunks[(user_id, item_id, generation, i)][0] for i in sorted(set(indexes))
                 if (user_id, item_id, generation, i) in self.chunks]
 
-    async def get_chunks_with_vectors(self, user_id: str, item_id: str, generation: int,
-                                      indexes: Sequence[int]) -> List[Tuple[DriveChunk, List[float]]]:
+    async def get_chunks_with_vectors(self, user_id: str, item_id: str, generation: int, indexes: Sequence[int], *,
+                                      text: bool = True, terms: bool = True,
+                                      vectors: bool = True) -> List[Tuple[DriveChunk, List[float]]]:
         rows = [self.chunks[(user_id, item_id, generation, i)] for i in sorted(set(indexes))
                 if (user_id, item_id, generation, i) in self.chunks]
-        return [(c, list(v)) for c, v in rows]
+        return [(replace(c, text=c.text if text else "", content_terms=c.content_terms if terms else ()),
+                 list(v) if vectors else []) for c, v in rows]
 
     async def readable_chunk_total(self, user_id: str) -> int:
         return sum(r.chunk_count for r in self._user(user_id) if r.indexed_generation is not None)

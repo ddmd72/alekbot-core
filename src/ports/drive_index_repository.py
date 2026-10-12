@@ -122,10 +122,12 @@ class DriveIndexRepository(ABC):
         modified_at (release, §5.4)."""
 
     @abstractmethod
-    async def count_unread(self, user_id: str, kinds: AbstractSet[str]) -> int:
-        """Documents of a kind in `kinds` whose content is not searchable (§10.2 `unread`, drive_search.is_unread):
-        not folders, and `pending` without an `indexed_generation`, or `failed`, or `metadata_only` for too_large,
-        no_text, machine_text or user_chunk_cap (count aggregation queries)."""
+    async def count_unread(self, user_id: str, kinds: AbstractSet[str],
+                           triaged: AbstractSet[str] = frozenset()) -> int:
+        """Documents of a kind in `kinds`, and images of a kind in `triaged` whose `triage_verdict` is `text`, whose
+        content is not searchable (§10.2 `unread`, drive_search.is_unread): not folders, and `pending` without an
+        `indexed_generation`, or `failed`, or `metadata_only` for too_large, no_text, machine_text or user_chunk_cap
+        (count aggregation queries). A kind in both lists counts as a document."""
 
     @abstractmethod
     async def count_by_state(self, user_id: str) -> Dict[str, int]:
@@ -172,13 +174,14 @@ class DriveIndexRepository(ABC):
     async def find_nearest_chunks(self, user_id: str, vector: Sequence[float], limit: int,
                                   kind: Optional[str] = None) -> List[Tuple[DriveChunk, float]]:
         """Chunk kNN under the user (+ kind) pre-filter; (chunk, cosine distance), nearest first. Not fenced.
-        `text` may be empty: windows are read with `get_chunks`."""
+        `text` and `content_terms` may be empty: windows are read with `get_chunks`."""
 
     @abstractmethod
     async def find_chunks_by_term(self, user_id: str, term: str, limit: int,
                                   kind: Optional[str] = None) -> List[DriveChunk]:
         """Chunks whose `content_terms` contain `term` (one array-contains query), ordered by
-        (item_id, generation, index). Not fenced. `text` may be empty: windows are read with `get_chunks`."""
+        (item_id, generation, index). Not fenced. `text` and `content_terms` may be empty: windows are read with
+        `get_chunks`."""
 
     @abstractmethod
     async def get_chunks(self, user_id: str, item_id: str, generation: int,
@@ -186,9 +189,12 @@ class DriveIndexRepository(ABC):
         """The chunks among `indexes` of one generation that exist, by index (a hit's neighbour window, §10.2)."""
 
     @abstractmethod
-    async def get_chunks_with_vectors(self, user_id: str, item_id: str, generation: int,
-                                      indexes: Sequence[int]) -> List[Tuple[DriveChunk, List[float]]]:
-        """`get_chunks` with each chunk's vector, by index (folder-scoped chunk ranking in memory, §10.1)."""
+    async def get_chunks_with_vectors(self, user_id: str, item_id: str, generation: int, indexes: Sequence[int], *,
+                                      text: bool = True, terms: bool = True,
+                                      vectors: bool = True) -> List[Tuple[DriveChunk, List[float]]]:
+        """`get_chunks` with each chunk's vector, by index (folder-scoped chunk ranking in memory, §10.1). A field
+        not asked for is not read: `text` / `content_terms` come back empty, and the vector as [] (the ranking
+        reads only what it ranks with)."""
 
     @abstractmethod
     async def readable_chunk_total(self, user_id: str) -> int:

@@ -209,9 +209,10 @@ number, an amount), no type words or date filters.
   output. Fewer than K results with a full page widens the fetch once, to 1 000: at most 18 parallel queries per
   round (17 name, 1 kNN; a kind family runs one kNN per member kind), 36 with the widening.
 - **Content streams (Slice 2+4).** A chunk kNN (fenced, max-pooled to one hit per record, before fusion) and the
-  content exact-token stream (one `array-contains` query per query term, pooled per record) join the card and name
-  streams in RRF. A content hit's card shows a window: the best chunk and its neighbours. The envelope says
-  `content_search` and counts `unread` documents (admitted kinds whose content is not searchable).
+  content exact-token stream (one `array-contains` query per maximal query term — ISO date, canonical amount, joined
+  id; a term whose first page is full is not selective and is left out) join the card and name streams in RRF. A
+  content hit's card shows a window: the best chunk and its neighbours. The envelope says `content_search` and counts
+  `unread` documents (admitted kinds, and images triaged as text, whose content is not searchable).
 - **Capped hedge (RFC Δ37).** When a stream page was full and the kind, date or folder filters dropped candidates,
   the answer says the filters saw only the best N matches; with no survivor it never says "No matching files" but
   how to search all files.
