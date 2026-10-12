@@ -92,7 +92,8 @@ REFERENCE_REMINDER_ATTACHED = (
 
 @dataclass(frozen=True)
 class DriveSearchRequest:
-    """§10.1 input. An empty query is a filter-only request: no kNN, newest first."""
+    """§10.1 input. A query with no name words (empty, or punctuation only) is a filter-only request: no kNN,
+    newest first."""
     query: str = ""
     folder: Optional[str] = None
     kind: Optional[str] = None
@@ -101,7 +102,7 @@ class DriveSearchRequest:
 
     @property
     def filter_only(self) -> bool:
-        return not self.query.strip()
+        return not query_name_keys(self.query)
 
 
 @dataclass(frozen=True)
@@ -268,7 +269,7 @@ NOTHING_TO_SEARCH = (
 def require_search_terms(request: DriveSearchRequest) -> None:
     """Refuse a request with no name words and no filter (§10.1): it would only list the newest files, which
     reads as an answer to whatever the user asked."""
-    if query_name_keys(request.query):
+    if not request.filter_only:
         return
     if request.folder or request.kind or request.date_from or request.date_to:
         return
