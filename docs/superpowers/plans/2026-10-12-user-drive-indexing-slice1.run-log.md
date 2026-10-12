@@ -307,3 +307,10 @@ order, substitution handling, OIDC audience, `main.py` names) matches the code. 
   ::test_doc_excludes_fanout_flags` asserted `set(state_to_doc(...)) == set(STATE_FIELDS)`, i.e. that what is
   serialised equals what a save writes; F2 separates them on purpose. Edited to two exact (stronger) pins.
 - OWNER part (fencing a stale tick's other writes) not done.
+
+### Fix R5 (eval fixture, Porto) — done
+- Commit `f1e2b9c`. `make check` (reviewer): 7672 passed, 3 skipped, 1 xfailed. The Task 0 OWNER item above is
+  **resolved**: `IMG_6202..6206` latitudes → 41.1585..41.1609 (+0.0006 step), longitudes and `gold_g1.json` untouched.
+  New test: every `Photos/Porto/*` photo resolves to "Porto, Portugal" (failed on the parent). All six cards now carry
+  "place Porto, Portugal". The plan file (lines ~306–310) still shows the old latitudes — left as is (plan text).
+- `place-porto-ru` ("фото из Порту") still depends on search matching Cyrillic "Порту" to "Porto".
