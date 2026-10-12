@@ -69,3 +69,10 @@ Method: subagent-driven (implementer → independent reviewer → coordinator ac
 ### Task 7 — done
 - Commit `50f534b`. `make check` (coordinator, worktree at the commit): 7098 passed, 3 skipped, 1 xfailed.
 - Deviations: none (byte-identical). Reviewer: APPROVED, round 1.
+
+### Task 8 — done
+- Commit `57414b7`. `make check` (coordinator, worktree at the commit): 7109 passed, 3 skipped, 1 xfailed.
+- Deviations: none (byte-identical). Reviewer: APPROVED, round 1.
+- Reviewer notes for Part C parity: in-memory `lowest_ranked_carded` sorts a missing `modified_at` as newest
+  (`inf`) while `card_capped` sorts it as oldest (`0.0`); `filter_records` drops undated records even without a date
+  bound; `find_by_name_keys` does not enforce the 30-key cap (callers do, Δ17).
