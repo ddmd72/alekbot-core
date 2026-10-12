@@ -333,7 +333,8 @@ def _read_eml(path: str, kind: str) -> _Read:
 def _read_xlsx(path: str, kind: str) -> _Read:
     """Rows are read at most _MAX_TABLE_COLUMNS + 1 wide (a cell in column XFD must not pad every row to 16384
     values), each sheet is rendered as soon as it is read, and reading stops once MAX_TEXT_CHARS characters are
-    collected: what the parser holds stays near the text cap whatever the sheet declares."""
+    collected: what the parser holds stays near the text cap whatever the sheet declares. A value or a declared
+    dimension past the read bound is content the text does not hold: the outcome is `truncated` (arbiter R1-3)."""
     import openpyxl
 
     book = openpyxl.load_workbook(path, read_only=True, data_only=True)
@@ -345,7 +346,10 @@ def _read_xlsx(path: str, kind: str) -> _Read:
             if collected >= MAX_TEXT_CHARS:
                 truncated = True
                 break
+            bound = _MAX_TABLE_COLUMNS + 1
+            truncated = truncated or (sheet.max_column or 0) > bound   # the declared dimension
             sheet.reset_dimensions()                  # a declared A1:XFD1048576 must not pad every row
+            past_bound = _watch_far_cells(sheet, bound)
             rows: List[Sequence[Any]] = []
             missing: Optional[Sequence[Any]] = None
             for row in sheet.iter_rows(max_col=_MAX_TABLE_COLUMNS + 1, values_only=True):
@@ -366,12 +370,31 @@ def _read_xlsx(path: str, kind: str) -> _Read:
                     truncated = True
                     break
             table, cut = markdown_table(rows)
-            truncated = truncated or cut
+            truncated = truncated or cut or past_bound[0]
             if table:
                 blocks.append(f"## {sheet.title}\n\n{table}")
     finally:
         book.close()
     return "\n\n".join(blocks), 0, truncated
+
+
+def _watch_far_cells(sheet: Any, bound: int) -> List[bool]:
+    """A flag set once any row of `sheet` holds a cell past column `bound`. iter_rows(max_col=bound) drops those
+    cells without a trace, so the sheet's row builder is wrapped: it receives every parsed cell of a row (already in
+    memory; nothing is padded) before cutting it to `bound`. openpyxl's `_get_row` is private, so openpyxl is pinned
+    (requirements.txt) and tests/unit/adapters/test_drive_parser_xlsx_wide_truncation.py fails if the hook stops
+    seeing cells."""
+    seen = [False]
+    build_row = sheet._get_row
+
+    def _get_row(row: Sequence[Mapping[str, Any]], min_col: int = 1, max_col: Optional[int] = None,
+                 values_only: bool = False) -> Any:
+        if not seen[0] and any(int(cell.get("column") or 0) > bound for cell in row):
+            seen[0] = True
+        return build_row(row, min_col, max_col, values_only)
+
+    sheet._get_row = _get_row
+    return seen
 
 
 def _trim_row(row: Sequence[Any]) -> Sequence[Any]:
