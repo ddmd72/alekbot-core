@@ -779,3 +779,16 @@ def test_owner_password_pdf_page_count_ignores_a_lying_count(tmp_path, lie):
     outcome = _read(lying, "pdf")
     assert outcome.status is ExtractionStatus.TEXT
     assert outcome.pages_total == 2
+
+
+# =============================================================================
+# Short legacy texts: a decoding that mixes scripts in a word or inverts letter case loses the tie (review A, m)
+# =============================================================================
+
+@pytest.mark.parametrize("text,encoding", [
+    ("Résumé", "cp1252"),                               # cp1251 reads it as "Rйsumй"
+    ("Оплата 500 грн", "koi8_u"),                       # cp1251 reads it as "пРМБФБ 500 ЗТО"
+    ("Привет, как дела?", "koi8_r"),
+])
+def test_very_short_legacy_texts_decode_to_plausible_words(text, encoding):
+    assert decode_text(text.encode(encoding)) == text
