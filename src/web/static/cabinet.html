@@ -3439,11 +3439,10 @@
 
       document.addEventListener("DOMContentLoaded", init);
 
+      // Numeric entities built from the char code: no entity literal in the source that an editor could decode
+      // back into the raw character (which is how this function once became a no-op).
       function escapeHtml(str) {
-        return (str || "")
-          .replace(/&/g, "&")
-          .replace(/</g, "<")
-          .replace(/>/g, ">");
+        return String(str ?? "").replace(/[&<>"']/g, (c) => "&#" + c.charCodeAt(0) + ";");
       }
 
       async function logout() {
