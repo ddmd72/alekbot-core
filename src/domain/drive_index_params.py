@@ -26,7 +26,8 @@ FOLDER_INMEM_CARDS = 1_000
 CASCADE_OPS_PER_TICK = 2_000
 NAME_MIN_TRIGRAMS = 3
 NAME_QUERY_KEYS_MAX = 30                    # Firestore array-contains-any limit
-NAME_KEY_QUERIES = 8                        # whole-token keys queried one by one before the trigram query (plan Δ17)
+NAME_KEY_QUERIES = 8                        # whole-token keys, and trigram keys, each queried one by one (at most
+                                            # this many of each) before one query with the rest (plan Δ17, P1)
 STALE_ALERT_AFTER = timedelta(hours=2)
 ACCESS_LOSS_TTL = timedelta(days=30)
 LEASE_MARGIN = timedelta(minutes=1)         # lease_until = start + TICK_DEADLINE + margin (§7.1)

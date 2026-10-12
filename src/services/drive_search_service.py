@@ -2,9 +2,9 @@
 DriveSearchService — find the user's drive files by name and metadata
 (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §10.1, §10.2; Slice 1: no content stream).
 
-Gate (uncached) -> folder scope -> card kNN + name stream (one query per whole-token key, plan Δ17) ->
-read-time visibility -> kind, date and folder post-filters -> RRF -> names that cover the query first
-(Δ17) -> widen once -> collapse duplicates -> top K with the coverage envelope. Every decision that needs
+Gate (uncached) -> folder scope -> card kNN + name stream (one query per whole-token and trigram key,
+plan Δ17) -> read-time visibility -> kind, date and folder post-filters -> RRF -> names that cover the
+query first (Δ17) -> widen once -> collapse duplicates -> top K with the coverage envelope. Every decision that needs
 no I/O is in `src/domain/drive_search.py`; this class reads and calls it.
 
 Public interface:
@@ -261,13 +261,16 @@ class DriveSearchService:
 
     async def _name_candidates(self, user_id: str, keys: Sequence[str], limit: int, kind: Optional[str],
                                stats: _Stats) -> Tuple[List[DriveIndexRecord], bool]:
-        """The name stream's pool (§10.1 step 3a, plan Δ17): one query per whole-token key, in query order
-        and at most NAME_KEY_QUERIES of them, plus one any-key query for the rest (trigrams), in parallel.
-        A record sharing a whole query token held by at most `limit` records is always in the pool; a
-        common token (`img`) can no longer crowd out a rare one (`4912`). Returns (records, any page full)."""
+        """The name stream's pool (§10.1 step 3a, plan Δ17): one query per whole-token key and one per
+        trigram key, each in query order and at most NAME_KEY_QUERIES of each kind, plus one any-key query
+        for the remaining keys (at most NAME_QUERY_KEYS_MAX), all in parallel. A record sharing a query key
+        held by at most `limit` records is always in the pool: a common key (`img`, `ent`) can no longer
+        crowd out a rare one (`4912`), and a query that reaches its target only through trigrams (every
+        token misspelled, a prefix) still finds it (premise audit P1). Returns (records, any page full)."""
         whole = [k for k in keys if k.startswith("w:")][:NAME_KEY_QUERIES]
-        rest = [k for k in keys if k not in whole]
-        batches = [[k] for k in whole] + ([rest] if rest else [])
+        grams = [k for k in keys if k.startswith("t:")][:NAME_KEY_QUERIES]
+        rest = [k for k in keys if k not in whole and k not in grams]
+        batches = [[k] for k in whole + grams] + ([rest] if rest else [])
         pages = await asyncio.gather(*(self._repo.find_by_name_keys(user_id, b, limit, kind) for b in batches))
         stats.name_queries += len(batches)
         merged: Dict[str, DriveIndexRecord] = {}
@@ -354,7 +357,8 @@ class DriveSearchService:
         """By `drive:` ref, or by path after NFC + casefold: root-anchored descent first, then folders named
         like the last segment anywhere (one exact path wins, else one suffix match). Several matches are
         returned as candidates, never guessed (§10.1). Nothing found while a lookup page was full is "could
-        not resolve", not "not in the index"."""
+        not resolve", not "not in the index"; so is a single match from a full name page, since another
+        match may lie past the page."""
         item_id = parse_drive_ref(wanted)
         if item_id is not None:
             rec = (await self._repo.get_records(user_id, [item_id])).get(item_id)
@@ -371,6 +375,7 @@ class DriveSearchService:
         anchored, descent_complete = await self._descend(user_id, ancestry.root_item_id, segments)
         matches = await self._as_folders(anchored, ancestry)
         page_full = not descent_complete
+        guessed = False   # one match taken from a full name page: another may sit past it (rev_31 F3)
         if not matches:
             keys = [k for k in query_name_keys(segments[-1]) if k.startswith("w:")]
             named, page_full_by_name = (await self._name_candidates(user_id, keys, NAME_FETCH, "folder", _Stats())
@@ -380,9 +385,10 @@ class DriveSearchService:
             exact = [f for f in candidates if path_match(f.path, wanted) == "exact"]
             suffix = [f for f in candidates if path_match(f.path, wanted) == "suffix"]
             matches = exact or suffix
-        if len(matches) == 1:
+            guessed = page_full_by_name and len(matches) == 1
+        if len(matches) == 1 and not guessed:
             return matches[0]
-        if not matches:
+        if not matches or guessed:
             return DriveSearchResult(status=STATUS_FOLDER_NOT_FOUND, folder_lookup_truncated=page_full)
         cards = tuple(make_card(f.record, f.path, card_text(f.record), self._nonce())
                       for f in sorted(matches, key=lambda f: f.path)[:K])
@@ -423,14 +429,22 @@ class DriveSearchService:
             level = [r.item_id for r in found]
         return found, True
 
-    async def _children_of(self, user_id: str, parent_id: str, cap: int) -> List[DriveIndexRecord]:
-        """A folder's direct children, paged, at most `cap` of them."""
+    async def _children_of(self, user_id: str, parent_id: str, cap: int,
+                           budget: Optional[List[int]] = None) -> List[DriveIndexRecord]:
+        """A folder's direct children, paged, at most `cap` of them. `budget` (one mutable count shared by
+        parallel listings) is checked before each page and charged after it; at zero the listing stops."""
         out: List[DriveIndexRecord] = []
         after: Optional[str] = None
         while len(out) < cap:
             want = min(_CHILD_PAGE, cap - len(out))
+            if budget is not None:
+                if budget[0] <= 0:
+                    break
+                want = min(want, budget[0])
             page = await self._repo.children(user_id, parent_id, after, want)
             out.extend(page)
+            if budget is not None:
+                budget[0] -= len(page)
             if len(page) < want:
                 break
             after = page[-1].item_id
@@ -438,15 +452,17 @@ class DriveSearchService:
 
     async def _walk(self, user_id: str, folder: DriveIndexRecord) -> Tuple[List[DriveIndexRecord], bool]:
         """The folder's subtree, level by level, up to _WALK_PARALLEL folders listed at once, never entering
-        an opaque or deleting folder; stops once more than FOLDER_INMEM_CARDS records are read. Returns
-        (records, complete)."""
+        an opaque or deleting folder; stops once more than FOLDER_INMEM_CARDS records are read. One budget is
+        shared by every listing and checked before each page, so the walk overshoots by at most one page
+        per parallel listing (rev_31 F4). Returns (records, complete)."""
         out: List[DriveIndexRecord] = []
+        budget = [FOLDER_INMEM_CARDS + 1]   # records left to read before the walk is known incomplete
         level = [folder.item_id]
         while level:
             below: List[str] = []
             for i in range(0, len(level), _WALK_PARALLEL):
                 cap = FOLDER_INMEM_CARDS - len(out) + 1
-                pages = await asyncio.gather(*(self._children_of(user_id, pid, cap)
+                pages = await asyncio.gather(*(self._children_of(user_id, pid, cap, budget)
                                                for pid in level[i:i + _WALK_PARALLEL]))
                 for page in pages:
                     out.extend(page)

@@ -444,10 +444,22 @@ def render_results(result: DriveSearchResult) -> str:
     scope = _scope_line(result)
     if scope:
         out.append(scope)
-    if result.request.filter_only and result.matched_total is not None:
+    request = result.request
+    if request.filter_only and result.matched_at_least and not result.cards:
+        # The fetch cap, not the data, emptied the page (overnight review rev_31 F2).
+        out.append("None of the newest files this search could read passed the filters here; that does not "
+                   "mean there are none. Browse the folder with list_files_in_drive, or narrow the dates.")
+        return "\n".join(out)
+    # While building, a zero count would state a non-existence the envelope forbids (rev_30 F3).
+    zero_while_building = result.envelope.building and result.matched_total == 0
+    if request.filter_only and result.matched_total is not None and not zero_while_building:
         shown = len(result.cards)
-        total = f"at least {result.matched_total}" if result.matched_at_least else str(result.matched_total)
-        out.append(f"{total} files and folders match the filters; showing the newest {shown}.")
+        if not (request.folder or request.kind or request.date_from or request.date_to):
+            out.append(f"No name words or filters were given: these are the {shown} newest files and folders "
+                       f"in the drive.")   # nothing to match (rev_30 F2)
+        else:
+            total = f"at least {result.matched_total}" if result.matched_at_least else str(result.matched_total)
+            out.append(f"{total} files and folders match the filters; showing the newest {shown}.")
     if not result.cards:
         out.append("No matching files or folders.")
         return "\n".join(out)
