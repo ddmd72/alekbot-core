@@ -563,3 +563,20 @@ order, substitution handling, OIDC audience, `main.py` names) matches the code. 
   "Indexing in progress…" indefinitely while access is lost → show the reconnect hint only when search is on (wording
   needed, 4 languages). F4 — `queued:false` ignored (first deploy pass: "starts shortly" while nothing runs).
   F5 — "kept for about 30 days" hint persists after the purge (status has no `access_lost_at`).
+
+### Task 40 — done
+- Commit `e04f1a2` (byte-identical). `make check` (reviewer, worktree): 8028 passed. Reviewer: APPROVED.
+  Hit rule matches Task 0's gold schema; bars pin K, tree and gold hashes (any change → no verdict); regressions are
+  strict per scope (no tolerance); nothing writes bars implicitly.
+- Small gaps → R12: F1 (no test pins "no tolerance" — a 0.2 tolerance survives), F2 (a case that missed at record time
+  and still misses is not "lost"), F3 (a bars file with a missing/empty `recall` map passes at any recall → add a
+  mismatch reason).
+
+### Task 39 — done
+- Commit `5004252` (byte-identical). `make check` (reviewer, worktree): 8023 passed. Reviewer: APPROVED, no IMPL.
+- Fidelity verified empirically: the real adapter's `_to_change` on the Graph-shaped raw of all 3 266 fixture items
+  gives the same `DriveChange` as `FixtureDrive` (bar two fields nothing reads); delta/children/`get_change` contracts
+  match; the real tick over an S0a-shaped feed (page sizes 200/50) and shuffled orders produced the same 2 491
+  records with 0 differences → the eval measures the real tick, not a fixture artefact.
+- Gaps → R12: `fs_modified` (generate/explicit/naive), id stability across processes (pin one id), `video` /
+  `photo: {}` / size facets. Docstring says "root on every round"; S0a has it on every page (no effect, wording).
