@@ -14,8 +14,9 @@ from typing import Any, Mapping, Optional, Tuple
 POLICY_VERSION = 1
 CARD_VERSION = 1
 GEO_TABLE_VERSION = 1
+NAME_KEYS_VERSION = 1                         # the name-stream keyer (drive_name_keys); a change re-keys (§12.3)
 CURRENT_VERSIONS: Mapping[str, int] = {"policy": POLICY_VERSION, "card": CARD_VERSION,
-                                       "geo_table": GEO_TABLE_VERSION}
+                                       "geo_table": GEO_TABLE_VERSION, "name_keys": NAME_KEYS_VERSION}
 
 
 class Scope(str, Enum):
@@ -178,6 +179,7 @@ class DriveIndexRecord:
     card_refused: bool = False                # the provider refused the text `card_hash` names (§8.2); state stays
     card_rank: int = 3
     name_tokens: Tuple[str, ...] = ()
+    name_keys_version: int = 0
     content_hash: Optional[str] = None
     # scheduling (§7.3, §7.8)
     dirty_since: Optional[datetime] = None

@@ -29,7 +29,7 @@ from .drive_card import (
     card_eligible, card_hash, content_hash_of, effective_date, photo_location, structurally_card_eligible,
 )
 from .drive_index import (
-    CARD_VERSION, GEO_TABLE_VERSION, POLICY_VERSION, ContentClass, DriveChange, DriveIndexRecord,
+    CARD_VERSION, GEO_TABLE_VERSION, NAME_KEYS_VERSION, POLICY_VERSION, ContentClass, DriveChange, DriveIndexRecord,
     DriveSyncState, EpochPhase, FolderProbe, Priority, Reason, RecordState, Scope,
 )
 from .drive_index_params import ACCESS_LOSS_TTL, DENSE_FOLDER_CHILDREN, RETRY_BASE, RETRY_CAP, STALE_ALERT_AFTER
@@ -179,7 +179,7 @@ def _observable(rec: DriveIndexRecord) -> Tuple[Any, ...]:
             dict(rec.facets), rec.kind, rec.scope, rec.state, rec.reason, rec.content_version, rec.modified_at,
             rec.fs_modified_at, rec.effective_date, rec.place_name, rec.geo_table_version, rec.policy_version,
             rec.probe_pending, rec.rescope_pending, rec.reobserve_pending, rec.probed_child_count, rec.card_capped,
-            rec.card_refused)
+            rec.card_refused, rec.name_keys_version)
 
 
 def _build(change: DriveChange, cls: Classification, existing: Optional[DriveIndexRecord],
@@ -197,7 +197,7 @@ def _build(change: DriveChange, cls: Classification, existing: Optional[DriveInd
         fs_modified_at=change.fs_modified_at, effective_date=effective_date(change, ctx.now),
         place_name=place_name, geo_table_version=geo_version, policy_version=POLICY_VERSION,
         card_rank=card_rank_of(cls.content_class),
-        name_tokens=name_keys(change.name) if searchable(cls.reason) else (),
+        name_tokens=name_keys(change.name) if searchable(cls.reason) else (), name_keys_version=NAME_KEYS_VERSION,
         content_hash=content_hash_of(change), probe_pending=cls.probe_pending, probed_child_count=probed,
         seen_epoch=_stamp(existing, ctx, observed),
     )
@@ -392,8 +392,8 @@ def with_retry(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
 
 
 def stale_versions(rec: DriveIndexRecord) -> bool:
-    """Decided or carded under an older constant (§12.3)."""
-    if rec.policy_version != POLICY_VERSION:
+    """Decided, keyed or carded under an older constant (§12.3)."""
+    if rec.policy_version != POLICY_VERSION or rec.name_keys_version != NAME_KEYS_VERSION:
         return True
     if (rec.has_card or rec.card_hash is not None) and rec.card_version != CARD_VERSION:   # carded, or refused
         return True
