@@ -662,6 +662,8 @@ async def main():
             recurrence_port=container.recurrence_adapter,
             twilio_verify_client=twilio_verify_client,
             user_drive=container.user_drive,
+            drive_search_service=container.drive_search_service,
+            drive_task_queue=container.drive_task_queue,
         )
 
         # Services for WorkerHandler — wrap ports so the handler never imports ports directly

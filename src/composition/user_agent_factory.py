@@ -113,6 +113,7 @@ if TYPE_CHECKING:
     from ..domain.user import UserBotConfig
     from ..services.skill_service import SkillService
     from ..services.user_drive_service import UserDriveService
+    from ..services.drive_search_service import DriveSearchService
     from ..services.localization_service import LocalizationService
     from ..ports.language_service_port import LanguageServicePort
 
@@ -187,6 +188,7 @@ class UserAgentFactory(AgentFactoryPort):
         user_drive_service: Optional["UserDriveService"] = None,
         localization: Optional["LocalizationService"] = None,
         language_service: Optional["LanguageServicePort"] = None,
+        drive_search_service: Optional["DriveSearchService"] = None,
     ) -> None:
         self.config = config
         self.env_config = env_config
@@ -228,6 +230,7 @@ class UserAgentFactory(AgentFactoryPort):
         self.skill_service = skill_service
         self.long_turn_registry = long_turn_registry
         self.user_drive_service = user_drive_service
+        self.drive_search_service = drive_search_service
         self.localization = localization
         self.language_service = language_service
 
@@ -843,6 +846,7 @@ class UserAgentFactory(AgentFactoryPort):
             drive_service=self.user_drive_service,
             localization=self.localization,
             language_service=self.language_service,
+            drive_search=self.drive_search_service,
         )
 
     def _build_domain_researcher(self, user_id: str, ctx: _UserContext) -> DomainResearcherAgent:
