@@ -314,3 +314,17 @@ order, substitution handling, OIDC audience, `main.py` names) matches the code. 
   New test: every `Photos/Porto/*` photo resolves to "Porto, Portugal" (failed on the parent). All six cards now carry
   "place Porto, Portugal". The plan file (lines ~306–310) still shows the old latitudes — left as is (plan text).
 - `place-porto-ru` ("фото из Порту") still depends on search matching Cyrillic "Порту" to "Porto".
+
+### Fix R6 (pinning tests, retro domain F15 + tick F8 c–j) — done
+- Commits `4109ab1` (22 new tests in two new files, no `src/` change) and `2901f5c` (round 2: the reviewer's exact
+  one-line change, applied by the coordinator — the maintenance-share test pinned `_DUE_PAGE`; the reviewer verified
+  the new assertion passes on HEAD and with `_DUE_PAGE = 64` and still kills M22).
+- All 20 named mutants killed, each by its own test; **no test failed on HEAD → no further bug found**.
+  `make check` (reviewer, worktree at `4109ab1`): 7694 passed, 3 skipped, 1 xfailed.
+- Left open (INFO): a partial M7 mutant (dropping only the `card_eligible` half of the `_embed_cards` re-check)
+  survives; a record made `INSIDE_OPAQUE` by a rescope in the same batch would pin it.
+
+### Environment limits (logged by rule, not worked around)
+- **No GCP credentials:** `GOOGLE_APPLICATION_CREDENTIALS=/opt/gcp-sa.json` points to a missing file,
+  `gcloud auth list` shows no account, no `.env`. → Task 21's live read-only smoke run was not executed.
+- **No Gemini API key** in the environment → the optional real-embedding eval after Task 41 cannot be run.
