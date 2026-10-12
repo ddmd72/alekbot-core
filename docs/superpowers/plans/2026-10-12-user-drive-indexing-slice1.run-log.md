@@ -491,3 +491,22 @@ order, substitution handling, OIDC audience, `main.py` names) matches the code. 
   (a) the coordinator's prefetch resolves `drive:` refs into `file_content` for DocPlanner/PdfGenerator/HtmlPage with
   no wrapper; (b) file names from search go into history `drive_context` as raw JSON (the Step 1 mechanism). Add a Δ
   narrowing D2, or schedule (a). P4: the overnight fix only rewords the all-empty case (R10); refusing it stays open.
+
+### Task 34 — committed `226dffb`; review: CHANGES REQUIRED → fix R11
+- `make check` (reviewer, worktree): 7959 passed. Source and new tests byte-identical; the plan-approved edit of
+  `tests/unit/web/test_user_cabinet_app_drive.py` confirmed byte-identical to Step 4 (3 hunks, nothing weakened).
+- **F1 MAJOR = premise audit P5 confirmed:** any failure of the indexing read (Firestore blip, building index,
+  unparsable state during a rolling upgrade) makes `/api/drive/status` 500, and the Cabinet then renders no drive card
+  at all — Connect/Disconnect/Reconnect vanish for every drive user (Step 1 regression). → R11 (own try).
+  Test gaps F2–F4 (index block while disconnected; unique toggle keys; flag saved before enqueue) → R11.
+- **OWNER (F5):** with no indexer (`DRIVE_INDEXER_URL` empty, e.g. the first deploy pass) the toggle is still shown;
+  turning it on does nothing and the status says `building` forever. Gate the block on the queue, or accept for the
+  owner-only deploy window (R11 only fixes the false log text).
+
+### Task 35 — done
+- Commit `8af1a1d` (byte-identical). `make check` (reviewer, worktree): 7964 passed, 3 skipped, 1 xfailed.
+  Reviewer (system context): APPROVED. Boot path, per-user build/eviction, Step 1 unchanged without drive/index;
+  Review Focus 4 confirmed (flag read uncached through the only `UserRepository` impl; a warm agent still answers
+  `disabled` after the toggle); Cabinet gets the same instances; query and card embeddings share model/space.
+- Test gap F1 (`users=None` survives → every search would raise) → added to R11. **OWNER (F3):** search is built
+  even without the drive queue (local dev, first deploy pass) → "building" forever if indexing is turned on then.
