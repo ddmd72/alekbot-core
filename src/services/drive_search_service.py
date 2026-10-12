@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 from typing import Callable, Dict, FrozenSet, Iterable, List, Optional, Sequence, Set, Tuple, Union
 
 from ..domain.drive_card import card_text
-from ..domain.drive_index import DriveIndexRecord, DriveSyncState, EpochPhase, Priority, RecordState
+from ..domain.drive_index import DriveIndexRecord, DriveSyncState, EpochPhase, Priority, RecordState, Scope
 from ..domain.drive_index_params import (
     CARD_FETCH, FETCH_MAX, FOLDER_INMEM_CARDS, K, MAX_CARD_RECORDS_PER_USER, NAME_FETCH, NAME_KEY_QUERIES, RRF_K,
 )
@@ -47,6 +47,10 @@ _WALK_PARALLEL = 16   # folders listed at once, per level of a subtree walk
 _EPOCH = datetime.min.replace(tzinfo=timezone.utc)
 
 Chain = Optional[Tuple[str, Tuple[str, ...]]]   # (path, ancestor ids) or None when hidden
+
+
+def _not_indexed(folder_name: str) -> DriveSearchResult:
+    return DriveSearchResult(status=STATUS_OK, folder_path=folder_name, folder_not_indexed=True)
 
 
 def _utcnow() -> datetime:
@@ -100,6 +104,19 @@ class _Ancestry:
             for item_id in frontier:
                 self.cache[item_id] = found.get(item_id)
             frontier = {r.parent_id for r in found.values() if self._missing(r.parent_id)}
+
+    def hidden_above(self, rec: DriveIndexRecord) -> bool:
+        """An ancestor (loaded) hides its contents: opaque, inside an opaque subtree, or being deleted."""
+        parent_id, seen = rec.parent_id, {rec.item_id}
+        while parent_id and parent_id != self.root_item_id and parent_id not in seen and len(seen) <= MAX_CHAIN_DEPTH:
+            parent = self.cache.get(parent_id)
+            if parent is None:
+                return False
+            if hides_descendants(parent):
+                return True
+            seen.add(parent_id)
+            parent_id = parent.parent_id
+        return False
 
     def chain(self, rec: DriveIndexRecord, *, require_card: bool = True) -> Chain:
         return resolve_chain(rec, self.cache.get, self.root_item_id, require_card=require_card)
@@ -395,6 +412,8 @@ class DriveSearchService:
             if rec is None or not rec.is_folder:
                 return DriveSearchResult(status=STATUS_FOLDER_NOT_FOUND)
             await ancestry.load([rec])
+            if rec.scope is Scope.INSIDE_OPAQUE or rec.state is RecordState.DELETING or ancestry.hidden_above(rec):
+                return _not_indexed(rec.name)
             chain = ancestry.chain(rec, require_card=False)
             if chain is None:
                 return DriveSearchResult(status=STATUS_FOLDER_NOT_FOUND)
@@ -402,7 +421,9 @@ class DriveSearchService:
         segments = [p.strip() for p in wanted.replace("\\", "/").split("/") if p.strip()]
         if not segments:
             return DriveSearchResult(status=STATUS_FOLDER_NOT_FOUND)
-        anchored, descent_complete = await self._descend(user_id, ancestry.root_item_id, segments)
+        anchored, descent_complete, hider = await self._descend(user_id, ancestry.root_item_id, segments)
+        if not anchored and hider is not None:
+            return _not_indexed(hider.name)   # the path runs into a folder whose contents are not indexed
         matches = await self._as_folders(anchored, ancestry)
         page_full = not descent_complete
         guessed = False   # one suffix match from a full name page: another may sit past it (rev_31 F3)
@@ -433,13 +454,15 @@ class DriveSearchService:
                 out.append(_Folder(rec, chain[0]))
         return out
 
-    async def _descend(self, user_id: str, root_item_id: str,
-                       segments: Sequence[str]) -> Tuple[List[DriveIndexRecord], bool]:
+    async def _descend(self, user_id: str, root_item_id: str, segments: Sequence[str]
+                       ) -> Tuple[List[DriveIndexRecord], bool, Optional[DriveIndexRecord]]:
         """Match the path segment by segment from the drive's root through `children`, reading at most
-        FOLDER_INMEM_CARDS records. Returns (matching folders, the descent read everything it needed)."""
+        FOLDER_INMEM_CARDS records. Returns (matching folders, the descent read everything it needed, a folder
+        hiding its contents that a middle segment matched)."""
         level = [root_item_id]
         budget = FOLDER_INMEM_CARDS
         found: List[DriveIndexRecord] = []
+        hider: Optional[DriveIndexRecord] = None
         for depth, segment in enumerate(segments):
             want = normalize_path(segment)
             last = depth == len(segments) - 1
@@ -448,16 +471,18 @@ class DriveSearchService:
                 kids = await self._children_of(user_id, parent_id, budget + 1)
                 budget -= len(kids)
                 if budget < 0:
-                    return [], False
+                    return [], False, hider
                 for kid in kids:
                     if not kid.is_folder or normalize_path(kid.name) != want:
                         continue
-                    if record_visible(kid, require_card=False) and (last or not hides_descendants(kid)):
+                    if not last and kid.scope is not Scope.UNRESOLVED and hides_descendants(kid):
+                        hider = hider or kid
+                    elif record_visible(kid, require_card=False):
                         found.append(kid)
             if not found:
-                return [], True
+                return [], True, hider
             level = [r.item_id for r in found]
-        return found, True
+        return found, True, hider
 
     async def _children_of(self, user_id: str, parent_id: str, cap: int,
                            budget: Optional[List[int]] = None) -> List[DriveIndexRecord]:
