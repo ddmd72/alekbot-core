@@ -120,6 +120,13 @@ def validate_gold(gold: Sequence[Dict[str, Any]], paths: Sequence[str], k: int =
         case_k = case.get("k", k)
         if not isinstance(case_k, int) or not 1 <= case_k <= k:
             problems.append(f"{cid}: k must be an integer in 1..{k}")
+        elif "min_hits" in case:
+            most = min(len(case.get("expected_paths", [])), case_k)
+            min_hits = case["min_hits"]
+            if isinstance(min_hits, bool) or not isinstance(min_hits, int) or not 1 <= min_hits < most:
+                problems.append(f"{cid}: min_hits must be an integer in 1..{most - 1} (fewer than its K hits)")
+        if "known_hard" in case and not (isinstance(case["known_hard"], str) and case["known_hard"].strip()):
+            problems.append(f"{cid}: known_hard must say why the case is hard")
         try:
             request_for(case)   # what production would refuse (an unknown kind, reversed dates) is a gold bug
         except ValueError as exc:
@@ -199,9 +206,13 @@ async def run_cases(search: DriveSearchService, drive: FixtureDrive, gold: Seque
             run.refused += result.status != "ok"
             top = [_card_paths(card, drive) for card in list(result.cards)[:case_k]]
             covered = {path for group in top for path in group}
-            hit = result.status == "ok" and case_hit(case["expected_paths"], covered, case_k)
+            hit = result.status == "ok" and case_hit(case["expected_paths"], covered, case_k, case.get("min_hits"))
             missing = [p for p in case["expected_paths"] if p not in covered]
             row.update(status=result.status, k=case_k, top=top, hit=hit, missing=missing)
+        if "min_hits" in case:
+            row["min_hits"] = case["min_hits"]
+        if "known_hard" in case:
+            row["known_hard"] = case["known_hard"]
         run.cases.append(row)
         run.outcomes.append(CaseOutcome(case["id"], case["case"], bool(row["hit"])))
     return run
@@ -220,7 +231,8 @@ async def run_eval(tree_path: Path, gold_path: Path, bars_path: Path, report_pat
         if not bars_path.exists():
             raise EvalError(f"no bars at {bars_path}; run with --record first")
         bars = json.loads(bars_path.read_text(encoding="utf-8"))
-        mismatch = bar_mismatch(bars, K, tree_sha, gold_sha, [case["id"] for case in gold])
+        guarded_ids = [case["id"] for case in gold if "known_hard" not in case]
+        mismatch = bar_mismatch(bars, K, tree_sha, gold_sha, guarded_ids)
         if mismatch:
             raise EvalError("; ".join(mismatch) + " — review the change, then run with --record")
     clock = EvalClock()
@@ -229,9 +241,13 @@ async def run_eval(tree_path: Path, gold_path: Path, bars_path: Path, report_pat
                                   max_ticks=max_ticks, throttle_pause_s=throttle_pause_s)
     if not indexed.records.get("carded"):
         raise EvalError("the index settled with no card; nothing to measure")
-    search = DriveSearchService(repo, embeddings, _EnabledUsers(), drive, clock=clock, embedding_space=embedding_space)
+    search = DriveSearchService(repo, embeddings, _EnabledUsers(), drive, clock=clock,
+                                embedding_space=embedding_space)
     run = await run_cases(search, drive, gold)
-    table = recall(run.outcomes)
+    # A known-hard case is run and reported, but guards nothing: it is in no bar and never a lost case.
+    hard = {case["id"] for case in gold if "known_hard" in case}
+    guarded = [o for o in run.outcomes if o.case_id not in hard]
+    table = recall(guarded)
     now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
     report: Dict[str, Any] = {
         "generated_at": now_iso, "embedding_space": embedding_space, "k": K,
@@ -239,6 +255,7 @@ async def run_eval(tree_path: Path, gold_path: Path, bars_path: Path, report_pat
         "index": {"ticks": indexed.ticks, "statuses": indexed.statuses, "summary": indexed.summary,
                   "records": indexed.records},
         "recall": table, "search_errors": run.errors, "refused": run.refused, "cases": run.cases,
+        "known_hard": {o.case_id: o.hit for o in run.outcomes if o.case_id in hard},
     }
     if run.errors:
         report["verdict"] = "search_errors"   # never recorded as a bar, never a pass
@@ -246,7 +263,7 @@ async def run_eval(tree_path: Path, gold_path: Path, bars_path: Path, report_pat
         report["verdict"] = "unrecordable"    # a case the service refused (e.g. a folder not found) is a gold bug
     elif record:
         bars_path.parent.mkdir(parents=True, exist_ok=True)
-        bars = make_bars(table, run.outcomes, K, embedding_space, now_iso, tree_sha, gold_sha)
+        bars = make_bars(table, guarded, K, embedding_space, now_iso, tree_sha, gold_sha)
         bars_path.write_text(json.dumps(bars, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         report["verdict"] = "recorded"
     else:
@@ -254,8 +271,9 @@ async def run_eval(tree_path: Path, gold_path: Path, bars_path: Path, report_pat
         # An embedding change is judged against the same bars (§17.8); the report names both spaces.
         report["bars_embedding_space"] = bars.get("embedding_space")
         report["regressions"] = regressions(table, bars)
-        report["lost_cases"] = lost_cases(run.outcomes, bars)
-        report["verdict"] = "regression" if report["regressions"] else "pass"
+        report["lost_cases"] = lost_cases(guarded, bars)
+        # One case that hit when the bars were recorded and misses now fails the run (§17.8: no tolerance).
+        report["verdict"] = "regression" if report["regressions"] or report["lost_cases"] else "pass"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return report

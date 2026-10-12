@@ -60,7 +60,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"{scope:<16} {int(row['hits']):>3}/{int(row['cases']):<3} recall@{report['k']} = {row['recall']:.3f}")
     for case in report["cases"]:
         if not case["hit"]:
-            print(f"  miss {case['id']} [{case['case']}] {case['query']!r} status={case['status']} "
+            hard = f" (known hard: {case['known_hard']})" if case.get("known_hard") else ""
+            print(f"  miss {case['id']} [{case['case']}] {case['query']!r} status={case['status']}{hard} "
                   f"missing={case.get('missing', [])}")
     if report.get("bars_embedding_space") not in (None, report["embedding_space"]):
         print(f"note: bars were recorded in {report['bars_embedding_space']}, this run embeds in "

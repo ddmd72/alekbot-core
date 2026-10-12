@@ -3,7 +3,9 @@ Recall@K and the recorded bars (USER_DRIVE_INDEXING_RFC §17.8). Pure.
 
 A case is a hit when every expected path is among the paths of its top K cards; a case with more than
 K expected paths is a hit when K of them are (plan Task 0). A case may ask for a smaller K (`"k": 1`:
-the file must come first). A collapsed duplicate card covers its own path and its `also_at` paths.
+the file must come first), or for fewer hits (`"min_hits": 5`: five of a trip's twelve photos, when the
+rest of its top K is the trip's folder and other right answers). A collapsed duplicate card covers its own
+path and its `also_at` paths.
 
 Bars pin what they were measured on: K, the tree and the gold file (by SHA-256), and each case's
 outcome. A change to any of them gives no verdict until the bars are recorded again.
@@ -11,11 +13,11 @@ outcome. A change to any of them gives no verdict until the bars are recorded ag
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Mapping, Sequence, Set
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Set
 
 OVERALL = "overall"
 CASE_TYPES = frozenset({"exact", "partial", "translit", "misspelled", "kind", "date", "place", "folder",
-                        "filter_only", "version_family"})
+                        "filter_only", "version_family", "semantic"})
 _EPS = 1e-9
 
 
@@ -26,9 +28,9 @@ class CaseOutcome:
     hit: bool
 
 
-def case_hit(expected: Sequence[str], covered: Set[str], k: int) -> bool:
+def case_hit(expected: Sequence[str], covered: Set[str], k: int, min_hits: Optional[int] = None) -> bool:
     found = sum(1 for path in expected if path in covered)
-    return found >= min(len(expected), k)
+    return found >= (min_hits if min_hits is not None else min(len(expected), k))
 
 
 def recall(outcomes: Sequence[CaseOutcome]) -> Dict[str, Dict[str, float]]:
