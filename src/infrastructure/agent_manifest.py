@@ -607,9 +607,10 @@ FILE_MANAGEMENT = AgentDescriptor(
             "Find files and folders on the user's drive by name (exact, partial, transliterated or misspelled), "
             "type, date, folder, photo details and place. Use it when the answer may be in the user's files, "
             "and before saying a file is not there. Returns cards with drive:<id> refs for "
-            "open_file_from_drive, and says how complete and how fresh the index is. For filter-only requests "
-            "(\"files I saved this week\", \"all my spreadsheets\") leave drive_query empty and set only the "
-            'filters. Optional: context={"drive_query": "<name words>", "drive_folder": "<path or drive:<id>>", '
+            "open_file_from_drive, and says how complete and how fresh the index is. drive_query is required "
+            "unless the request is filter-only: for filter-only requests (\"files I saved this week\", \"all my "
+            "spreadsheets\") leave drive_query empty and set only the filters. "
+            'Context: {"drive_query": "<name words, or a place or subject>", "drive_folder": "<path or drive:<id>>", '
             '"drive_kind": "<type>", "drive_date_from": "YYYY-MM-DD", "drive_date_to": "YYYY-MM-DD"}'
         ),
     },
@@ -648,9 +649,12 @@ FILE_MANAGEMENT = AgentDescriptor(
         # (base_agent._build_delegate_tool_declaration), USER_DRIVE_INDEXING_RFC §10.4.
         Intent.SEARCH_FILES_IN_DRIVE: {
             "drive_query": (
-                "search_files_in_drive: words of the file or folder name, as the user said them (any language; "
-                "transliteration and typos are tolerated). Leave EMPTY for filter-only requests such as "
-                "'files I saved this week' or 'all my spreadsheets'"
+                "search_files_in_drive: REQUIRED unless the request is filter-only; the `query` field is not read "
+                "for search. The words of the file or folder name as the user said them (any language; "
+                "transliteration and typos are tolerated), or a place or subject the user mentioned ('Rome', "
+                "'lease'). No type words ('photos', 'documents': use drive_kind) and no dates (use drive_date_from "
+                "/ drive_date_to). Leave EMPTY only for filter-only requests such as 'files I saved this week' or "
+                "'all my spreadsheets'"
             ),
             "drive_folder": (
                 "search_files_in_drive: optional folder to search within, with its subfolders: a drive:<id> ref "

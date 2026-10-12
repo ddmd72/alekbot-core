@@ -8,6 +8,7 @@ Public interface:
     DriveSearchRequest, DriveSearchCard, DriveSearchEnvelope, DriveSearchResult
     search_gate(enabled, state, connection, now) -> gate (.status, .reconnect_needed, .rebuilding)
     request_from_fields(query, folder, kind, date_from, date_to) -> DriveSearchRequest
+    require_search_terms(request)       raises ValueError when there is nothing to search for
     canonical_kind(raw) -> Optional[str];  kinds_for(kind) -> FrozenSet[str]     (plan Δ20)
     record_visible(rec) / hides_descendants(rec) / in_date_range(rec, request)
     resolve_chain(rec, lookup, root_item_id) -> Optional[(path, ancestor_ids)]
@@ -30,7 +31,7 @@ from typing import Callable, FrozenSet, List, Mapping, Optional, Sequence, Tuple
 from .drive_index import DriveIndexRecord, DriveSyncState, Reason, RecordState, Scope
 from .drive_index_params import ACCESS_LOSS_TTL
 from .drive_index_policy import ADMITTED_KINDS, kind_of
-from .drive_name_keys import covers_query
+from .drive_name_keys import covers_query, query_name_keys
 from .user_drive import DriveConnection, DriveItem, make_drive_ref
 
 STATUS_OK = "ok"
@@ -243,6 +244,23 @@ def request_from_fields(query: Optional[str], folder: Optional[str], kind: Optio
         scope = ""   # "/" is the whole drive: no folder scope
     return DriveSearchRequest(query=(query or "").strip(), folder=scope or None,
                               kind=canonical_kind(kind), date_from=start, date_to=end)
+
+
+NOTHING_TO_SEARCH = (
+    "Nothing to search for: put the name words, place or subject in drive_query (the `query` field is not read "
+    "for search), or set a filter (drive_kind, drive_date_from / drive_date_to, drive_folder). For the newest "
+    "files set drive_date_from."
+)
+
+
+def require_search_terms(request: DriveSearchRequest) -> None:
+    """Refuse a request with no name words and no filter (§10.1): it would only list the newest files, which
+    reads as an answer to whatever the user asked."""
+    if query_name_keys(request.query):
+        return
+    if request.folder or request.kind or request.date_from or request.date_to:
+        return
+    raise ValueError(NOTHING_TO_SEARCH)
 
 
 def in_date_range(rec: DriveIndexRecord, request: DriveSearchRequest) -> bool:

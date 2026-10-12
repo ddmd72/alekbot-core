@@ -35,7 +35,7 @@ import aiofiles
 from ..agents.base_agent import BaseAgent
 from ..domain.agent import AgentMessage, AgentResponse, AgentConfig, AgentIntent, AgentStatus
 from ..domain.drive_search import (
-    REFERENCE_REMINDER, REFERENCE_REMINDER_ATTACHED, render_results, request_from_fields,
+    REFERENCE_REMINDER, REFERENCE_REMINDER_ATTACHED, render_results, request_from_fields, require_search_terms,
     wrap_untrusted,
 )
 from ..domain.language import LanguageCode
@@ -615,6 +615,7 @@ class FileManagementAgent(BaseAgent):
             request = request_from_fields(payload.get("drive_query"), payload.get("drive_folder"),
                                           payload.get("drive_kind"), payload.get("drive_date_from"),
                                           payload.get("drive_date_to"))
+            require_search_terms(request)
         except ValueError as e:
             return self._fail(message, str(e))
         result = await self._drive_search.search(user_id, request)

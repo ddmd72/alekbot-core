@@ -21,7 +21,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.domain.drive_index_params import K
 from src.domain.drive_index_planner import PlaceOf
-from src.domain.drive_search import DriveSearchRequest, request_from_fields
+from src.domain.drive_search import DriveSearchRequest, request_from_fields, require_search_terms
 from src.domain.user import UserBotConfig, UserProfile
 from src.domain.user_drive import parse_drive_ref
 from src.ports.embedding_service import EmbeddingService
@@ -170,8 +170,10 @@ async def index_fixture(drive: FixtureDrive, repo: InMemoryDriveIndexRepository,
 def request_for(case: Dict[str, Any]) -> DriveSearchRequest:
     """The request exactly as FileManagementAgent._search_drive builds it; raises ValueError where it refuses."""
     filters = case.get("filters") or {}
-    return request_from_fields(case.get("query"), filters.get("folder"), filters.get("kind"),
-                               filters.get("date_from"), filters.get("date_to"))
+    request = request_from_fields(case.get("query"), filters.get("folder"), filters.get("kind"),
+                                  filters.get("date_from"), filters.get("date_to"))
+    require_search_terms(request)
+    return request
 
 
 def _card_paths(card: Any, drive: FixtureDrive) -> List[str]:
