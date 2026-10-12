@@ -35,6 +35,13 @@ _UK_TO_LAT = {
     "щ": "shch", "ь": "", "ю": "iu", "я": "ia",
 }
 _UK_INITIAL = {"є": "ye", "ї": "yi", "й": "y", "ю": "yu", "я": "ya"}
+# Function words a query carries and a file name rarely does (en/ru/uk). Query side only: they would block the
+# "covers every query token" tie-break and take whole-token query slots. Records keep every token.
+_QUERY_STOPWORDS = frozenset({
+    "a", "an", "the", "of", "from", "my", "in", "on", "at", "for", "and", "with", "to",
+    "и", "в", "во", "на", "с", "со", "из", "от", "по", "для", "о", "об", "у", "к", "мой", "моя", "моё", "мое", "мои",
+    "і", "й", "з", "із", "зі", "від", "до", "та", "мій", "моє", "мої",
+})
 # Latin letters NFKD does not decompose: written out as their usual unaccented spelling.
 _LATIN_FOLDS = {"œ": "oe", "æ": "ae", "ø": "o", "ł": "l", "ß": "ss", "đ": "d", "ð": "d", "þ": "th", "ı": "i", "ħ": "h"}
 # Greedy, longest first. Approximate by design: trigrams absorb the rest.
@@ -166,8 +173,15 @@ def name_keys(name: str) -> Tuple[str, ...]:
     return tuple(sorted(_ordered_keys(_tokens(name))))
 
 
+def _query_tokens(query: str) -> List[str]:
+    """The query's tokens without function words; a query made only of them keeps them all."""
+    tokens = _tokens(query)
+    content = [t for t in tokens if t not in _QUERY_STOPWORDS]
+    return content or tokens
+
+
 def query_name_keys(query: str) -> Tuple[str, ...]:
-    return tuple(_ordered_keys(_tokens(query))[:NAME_QUERY_KEYS_MAX])
+    return tuple(_ordered_keys(_query_tokens(query))[:NAME_QUERY_KEYS_MAX])
 
 
 def name_match(record_keys: Sequence[str], query_keys: Sequence[str]) -> Optional[int]:
@@ -182,7 +196,7 @@ def name_match(record_keys: Sequence[str], query_keys: Sequence[str]) -> Optiona
 
 def query_token_groups(query: str) -> Tuple[FrozenSet[str], ...]:
     """One group per query token: its whole-token key and its variants' (plan Δ17)."""
-    return tuple(frozenset(f"w:{t}" for t in [token, *_variants(token)]) for token in _tokens(query))
+    return tuple(frozenset(f"w:{t}" for t in [token, *_variants(token)]) for token in _query_tokens(query))
 
 
 def covers_query(record_keys: Sequence[str], groups: Sequence[FrozenSet[str]]) -> bool:
