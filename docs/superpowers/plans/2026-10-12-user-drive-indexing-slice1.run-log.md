@@ -394,3 +394,29 @@ order, substitution handling, OIDC audience, `main.py` names) matches the code. 
   both sides normalise the same variable; fail-closed on Cloud Run via `K_SERVICE`. 15/17 mutations killed, 2 harmless.
 - Operational note for Task 47: a manual `create-http-task` with a different run.app URL form than `INDEXER_URL_DEV`
   gets 401.
+
+### Fix R8 (reconnect notice needs loaded agents; builder/container test gaps) — done
+- Commit `9f6e402`. `make check` (reviewer, worktree): 7790 passed, 3 skipped, 1 xfailed. Reviewer: APPROVED.
+- `ensure_agents` (keyword-only) on `DriveSyncSchedulerService` and `build_drive_sync_scheduler`, awaited after the
+  notifier guard and before the flag; `main.py` passes `agent_factory.ensure_agents_for_user`. **Verified end to end**
+  with the real coordinator, registry, notification service and factory load/evict: old code → "Unknown recipient",
+  0 notices, flag stuck; fixed → delivered on cold start and after idle eviction.
+- Optional gap (N1): no test pins that agents are loaded only when a notice is due (moving the call to the top would
+  build every enabled user's agents every 10 min); the current code is correct.
+
+### Task 28 — committed `7f1d557` (provisioning, files only; review running)
+
+### Task 27 — done
+- Commit `ae68478` (byte-identical). `make check` (reviewer, worktree): 7785 passed, 3 skipped, 1 xfailed.
+  Reviewer (system context): APPROVED. Boot traced against `main.py`/`relay_main.py`/`job_main.py`: every env read is
+  provided by Task 28's container; `places_v1.tsv` reaches the image; `build_app()` 0.4 s / ~156 MB. No telemetry
+  (as the relay; the indexer makes no LLM calls → ticks visible in Cloud Logging only, not Logfire).
+- **Skipped (environment):** Step 5 local startup smoke — no default GCP credentials.
+- **OWNER (F1, latent):** the docstring's "Hypercorn waits 8 s, then cancels the tick; its `finally` releases the
+  lease" holds on Python 3.11 (the current `python:3.11-slim` image), and only by accident (`asyncio.run` cancelling
+  leftovers). On Python ≥ 3.12.1 Hypercorn waits for connections to close and the graceful timeout never applies
+  (probe: `serve` still running at 15 s) → after a base-image bump a deploy mid-tick is SIGKILLed and the lease stays
+  held ~31 min (ticks answer `busy`; no data loss). Fix: run `serve` as a task, bound the wait, cancel and await.
+- MINOR test gaps (queued with the next small test batch): database name, place lookup wiring, first-deploy log level.
+- Out of scope note: Graph token refresh now runs in two processes; a refresh in flight during a disconnect can
+  re-save a deleted credentials document (Step 1 `graph_auth.refresh` race).
