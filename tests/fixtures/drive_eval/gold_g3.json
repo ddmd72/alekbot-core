@@ -13,6 +13,8 @@
   {"id": "p-cv", "set": "positive", "category": "find", "lang": "fr", "text": "Où est le CV de Camille ?"},
   {"id": "p-rent-alicante", "set": "positive", "category": "memory_vs_document", "lang": "en", "text": "How much rent do I pay for the flat in Alicante?", "note": "The lease says 950 EUR; memory may hold another figure. A document is authoritative for its own terms: give both, with the document's path and date (§10.4)."},
   {"id": "p-boiler-warranty", "set": "positive", "category": "memory_vs_document", "lang": "en", "text": "What's my boiler warranty number?", "note": "Only the note on the drive holds it."},
+  {"id": "p-invoice-due-date", "set": "positive", "category": "content", "lang": "ru", "text": "Какой счёт мне нужно было оплатить до 15.02.2026?", "note": "The date is written inside the document (Счёт-фактура № 1847): it belongs in drive_query, not in a date filter."},
+  {"id": "p-contracts-january", "set": "positive", "category": "find", "lang": "en", "text": "Which contracts did I save in January 2026?", "note": "The user limits when the files are dated: drive_date_from / drive_date_to, drive_query empty or the subject only."},
   {"id": "n-hello", "set": "negative", "category": "chit_chat", "lang": "en", "text": "Hi! How's your day going?"},
   {"id": "n-joke", "set": "negative", "category": "chit_chat", "lang": "ru", "text": "Расскажи короткий анекдот про программистов."},
   {"id": "n-thanks", "set": "negative", "category": "chit_chat", "lang": "uk", "text": "Дякую, це все на сьогодні."},
