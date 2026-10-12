@@ -189,10 +189,16 @@ class _Content:
 
 @dataclass
 class _TermPages:
-    """Each query term's first page. A term is read once: a page that was not full is complete, and a full one makes
-    the term non-selective (selective_term_hits), so the widening has nothing to read again."""
+    """Each query term's latest page, kept across the widening. Selectivity is decided on the first page
+    (selective_term_hits, arbiter R1-2): a term whose full first page spans many files is `non_selective` and never
+    read again; a selective term whose page was full (`full`) is read again, wider, on the widening; a page that was
+    not full is complete."""
     pages: Dict[str, List[DriveChunk]] = field(default_factory=dict)
-    limit: int = 0
+    non_selective: Set[str] = field(default_factory=set)
+    full: Set[str] = field(default_factory=set)
+
+    def selective(self) -> Dict[str, List[DriveChunk]]:
+        return {t: c for t, c in self.pages.items() if t not in self.non_selective}
 
 
 class DriveSearchService:
@@ -452,30 +458,37 @@ class DriveSearchService:
         """The exact-term stream (§24.6): one array-contains query per term, in parallel, never one
         array-contains-any (it returns the first matches by id, so a common term would hide a rare one). Each term
         is read once, at the first page size: a page that was not full is complete, and a full one leaves the term
-        out (selective_term_hits, review D-M2), so the widening does not read it again."""
-        due = [t for t in terms if t not in pages.pages]
+        out when it spans many files (selective_term_hits, review D-M2, arbiter R1-2) and is never read again; the
+        widening reads again only a selective term whose page was full."""
+        due = [t for t in terms if t not in pages.pages or t in pages.full]
         if not due:
             return
-        pages.limit = pages.limit or limit
-        found = await asyncio.gather(*(self._repo.find_chunks_by_term(user_id, t, pages.limit, kind) for t in due))
+        found = await asyncio.gather(*(self._repo.find_chunks_by_term(user_id, t, limit, kind) for t in due))
         stats.term_queries += len(due)
         for term, chunks in zip(due, found):
+            if term not in pages.pages and term not in selective_term_hits({term: chunks}, limit):
+                pages.non_selective.add(term)
             pages.pages[term] = list(chunks)
+            if term not in pages.non_selective and len(chunks) >= limit:
+                pages.full.add(term)
+            else:
+                pages.full.discard(term)
         stats.term = sum(len(c) for c in pages.pages.values())
 
     async def _pool_content(self, user_id: str, chunk_hits: Sequence[Tuple[DriveChunk, float]],
                             term_pages: _TermPages, terms: Sequence[str], chunk_full: bool,
                             stats: _Stats) -> _Content:
         """Fence both content streams against the records read now (§7.4) and pool each to one hit per record
-        before fusion (§17.6); only the selective terms' hits take part (review D-M2)."""
-        selective = selective_term_hits(term_pages.pages, term_pages.limit)
+        before fusion (§17.6); only the selective terms' hits take part (review D-M2, arbiter R1-2). A selective
+        term whose page was full leaves the streams `full`: the widening reads it again."""
+        selective = term_pages.selective()
         ids = {c.item_id for c, _ in chunk_hits} | {c.item_id for page in selective.values() for c in page}
         records = await self._repo.get_records(user_id, sorted(ids)) if ids else {}
         nearest = pool_nearest(chunk_hits, records)
         kept_terms = [t for t in terms if t in selective]
         by_term = pool_terms(selective, records, kept_terms)
         stats.chunk_kept, stats.term_kept = len(nearest), len(by_term)
-        return _Content.of(nearest, by_term, chunk_full, kept_terms)
+        return _Content.of(nearest, by_term, chunk_full or bool(term_pages.full), kept_terms)
 
     async def _content_in_memory(self, user_id: str, readable: Sequence[DriveIndexRecord],
                                  vector: Optional[List[float]], terms: Sequence[str], stats: _Stats) -> _Content:
