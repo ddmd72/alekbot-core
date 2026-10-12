@@ -2,7 +2,8 @@
 - the trigram-only name case shares no whole token with its target, only trigrams above the floor;
 - an accent case reaches its target through an unaccented whole-token key;
 - a semantic case is out of the name stream's reach: no key of the query matches its target's name;
-- place cases accept min_hits right answers; the "photos" date variant is labelled known-hard."""
+- a place case calls as the manifest says (the place in drive_query, drive_kind=photo, no min_hits); its
+  type-word twin is known-hard and accepts min_hits; the "photos" date variant is labelled known-hard."""
 import json
 from pathlib import Path
 
@@ -44,9 +45,23 @@ def test_semantic_cases_are_out_of_the_name_streams_reach():
             assert name_match(name_keys(_name(path)), query_name_keys(case["query"])) is None, case["id"]
 
 
-def test_place_cases_accept_min_hits_and_the_photos_variant_is_known_hard():
+def test_place_cases_call_as_the_manifest_says_and_their_type_word_twins_are_known_hard():
+    """A place goes in drive_query and the type in drive_kind (agent_manifest drive_query); the old
+    type-word shape stays as a known-hard `*-type-word` twin with the same answers."""
     gold = _gold()
-    assert all(c.get("min_hits") == 5 for c in gold.values() if c["case"] == "place")
+    type_words = {"photo", "photos", "фото", "фотографии"}
+    place = {cid: c for cid, c in gold.items() if c["case"] == "place"}
+    calls = {cid: c for cid, c in place.items() if not cid.endswith("-type-word")}
+    twins = {cid: c for cid, c in place.items() if cid.endswith("-type-word")}
+    assert len(calls) >= 4 and set(twins) == {f"{cid}-type-word" for cid in calls}
+    for cid, case in calls.items():
+        assert case["filters"] == {"kind": "photo"}, cid
+        assert "min_hits" not in case and "known_hard" not in case, cid
+        assert not set(case["query"].casefold().split()) & type_words, cid
+        twin = twins[f"{cid}-type-word"]
+        assert twin["filters"] == {} and twin["min_hits"] == 5 and twin["known_hard"].strip(), cid
+        assert twin["expected_paths"] == case["expected_paths"] and twin["lang"] == case["lang"], cid
+        assert set(twin["query"].casefold().split()) & type_words, cid
     assert "date-rome-august" not in gold
     assert gold["date-rome-august-photos-word"]["known_hard"]
     assert gold["date-rome-august-photo-filter"]["query"] == "" and gold["date-rome-august-photo-filter"][
