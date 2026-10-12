@@ -6,10 +6,10 @@ Wire tests for the OneDriveAdapter review fixes R3 (USER_DRIVE_INDEXING_RFC §4,
   restarts the enumeration, so the restart page carries the fresh drive id (Part A's per-page check).
 - retro_drive_storage F3: a token-endpoint timeout is systemic (DriveThrottled), never per-item.
 - retro_drive_storage F6: fs_modified_at comes from fileSystemInfo, not the server timestamp.
-- retro_tick F2 (adapter part): an aiohttp transport error is systemic (DriveThrottled), never a raw
-  per-item error; Step 1 callers still get a "failed" answer.
+- retro_tick F2 (adapter part): an aiohttp transport error leaves the adapter as an OSError, the per-item class
+  of §8.2 (the tick decides by the call's scope), never a raw aiohttp error; Step 1 callers get a "failed" answer.
 - premise_audit P8 (adapter part): every Graph call is bounded by GRAPH_CALL_TIMEOUT_S, well under
-  TICK_DEADLINE_S, and a timeout is the same systemic class.
+  TICK_DEADLINE_S, and a timeout stays a TimeoutError (per-item on a call about one item, §8.2).
 
 Mock boundary: aiohttp.ClientSession (docs/how_to/ADAPTER_WIRE_TESTING.md), never UserDrivePort.
 """
@@ -31,6 +31,7 @@ from src.domain.user_drive import DriveNotConnectedError, DriveResyncRequired, D
 from src.infrastructure.agent_manifest import Intent
 from src.ports.file_storage_port import FileStoragePort
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
+from src.services.drive_indexing_service import _PER_ITEM_ERRORS
 from src.services.file_conversion_service import FileConversionService
 from src.services.user_drive_service import UserDriveService
 from src.adapters.microsoft.onedrive_adapter import ONEDRIVE_PROVIDER, OneDriveAdapter
@@ -181,7 +182,7 @@ class TestFsModifiedAt:
         assert effective_date(c, datetime(2000, 1, 1, tzinfo=timezone.utc)) == august
 
 
-# -- F2 (adapter part): transport errors are systemic ------------------------------------------------
+# -- F2 (adapter part): transport errors are per-call (OSError), classified by the tick (§8.2) ------
 
 def _transport_errors():
     return [aiohttp.ServerDisconnectedError(), aiohttp.ClientPayloadError("cut"),
@@ -190,43 +191,57 @@ def _transport_errors():
 
 class TestTransportErrors:
     @pytest.mark.parametrize("error", _transport_errors(), ids=lambda e: type(e).__name__)
-    async def test_transport_error_on_a_read_is_systemic(self, error):
+    async def test_transport_error_on_a_read_is_per_item(self, error):
         adapter = _adapter()
         with patch("aiohttp.ClientSession", return_value=_session([error])), \
-                pytest.raises(DriveThrottled) as exc:
+                pytest.raises(OSError) as exc:
             await adapter.get_change("u1", "X!1")
-        assert exc.value.retry_after_s == 60.0
-        assert not isinstance(exc.value, DriveNotConnectedError)
+        assert type(exc.value) is OSError and exc.value.__cause__ is error
+        assert isinstance(exc.value, _PER_ITEM_ERRORS)
+        assert not isinstance(exc.value, (DriveThrottled, DriveNotConnectedError))
 
-    async def test_transport_error_while_reading_the_body_is_systemic(self):
+    async def test_transport_error_while_reading_the_body_is_per_item(self):
         adapter = _adapter()
         broken = _resp({})
         broken.json = AsyncMock(side_effect=aiohttp.ClientPayloadError("body cut"))
-        with patch("aiohttp.ClientSession", return_value=_session([broken])), pytest.raises(DriveThrottled):
+        with patch("aiohttp.ClientSession", return_value=_session([broken])), pytest.raises(OSError) as exc:
             await adapter.list_children_changes("u1", "F!1", limit=10)
+        assert type(exc.value) is OSError and isinstance(exc.value.__cause__, aiohttp.ClientPayloadError)
 
-    async def test_transport_error_on_the_delta_page_is_systemic(self):
+    async def test_transport_error_on_the_delta_page_is_an_os_error(self):
+        # The feed is drive-wide: the tick's generic handler continues with exponential backoff (§8.2).
         adapter = _adapter()
         session = _session([_resp(APPROOT), aiohttp.ServerDisconnectedError()])
-        with patch("aiohttp.ClientSession", return_value=session), pytest.raises(DriveThrottled):
+        with patch("aiohttp.ClientSession", return_value=session), pytest.raises(OSError) as exc:
             await adapter.get_changes("u1", None)
+        assert type(exc.value) is OSError and isinstance(exc.value.__cause__, aiohttp.ServerDisconnectedError)
 
-    async def test_transport_error_on_a_mutation_is_systemic(self):
+    async def test_transport_error_on_a_mutation_is_an_os_error(self):
         adapter = _adapter()
         session = _session(delete=[aiohttp.ServerDisconnectedError()])
-        with patch("aiohttp.ClientSession", return_value=session), pytest.raises(DriveThrottled):
+        with patch("aiohttp.ClientSession", return_value=session), pytest.raises(OSError) as exc:
             await adapter.delete("u1", "X!1")
+        assert type(exc.value) is OSError and isinstance(exc.value.__cause__, aiohttp.ServerDisconnectedError)
 
     async def test_transport_log_line_carries_no_query(self):
         adapter = _adapter()
         cursor = f"{_GRAPH}/me/drive/items/F/children?$skiptoken=SECRETISH"
         with patch("aiohttp.ClientSession", return_value=_session([aiohttp.ServerDisconnectedError()])), \
-                patch("src.adapters.microsoft.onedrive_adapter.logger") as log, pytest.raises(DriveThrottled):
+                patch("src.adapters.microsoft.onedrive_adapter.logger") as log, pytest.raises(OSError) as exc:
             await adapter.list_children_changes("u1", "F", limit=10, cursor=cursor)
         logged = " ".join(str(c.args[0]) for c in log.warning.call_args_list)
         assert logged and "SECRETISH" not in logged
+        assert "SECRETISH" not in str(exc.value)   # the tick logs the exception text too
 
-    async def test_step1_caller_answers_failed_not_disconnected(self):
+    @pytest.mark.parametrize("intent,payload", [
+        (Intent.LIST_FILES_IN_DRIVE, {"folder": ""}),
+        (Intent.DELETE_FILE_FROM_DRIVE, {"file_ref": "drive:X!1"}),   # a shielded mutation: never "still running"
+    ], ids=["read", "mutation"])
+    @pytest.mark.parametrize("error,answer", [
+        (aiohttp.ServerDisconnectedError(), "Drive operation failed: OSError."),
+        (asyncio.TimeoutError(), "Drive operation failed: TimeoutError."),
+    ], ids=["transport", "timeout"])
+    async def test_step1_caller_answers_failed_not_disconnected(self, intent, payload, error, answer):
         # Real adapter → real UserDriveService → FileManagementAgent (the Step 1 chain).
         adapter = _adapter()
         localization = MagicMock()
@@ -241,12 +256,13 @@ class TestTransportErrors:
         msg = MagicMock(spec=AgentMessage)
         msg.task_id = "t1"
         msg.intent = AgentIntent.QUERY
-        msg.payload = {"intent": Intent.LIST_FILES_IN_DRIVE, "folder": ""}
+        msg.payload = {"intent": intent, **payload}
         msg.context = {"user_id": "u1", "account_id": "a1", "origin_channel_id": "C1", "origin_platform": "slack"}
-        with patch("aiohttp.ClientSession", return_value=_session([aiohttp.ServerDisconnectedError()])):
+        with patch("aiohttp.ClientSession", return_value=_session([error])):
             resp = await agent.execute(msg)
         assert resp.status == AgentStatus.FAILED
         assert resp.error.startswith("Drive operation failed")
+        assert resp.error == answer
         assert "not connected" not in resp.error
 
 
@@ -275,9 +291,11 @@ class TestPerCallTimeout:
 
     @pytest.mark.parametrize("error", [asyncio.TimeoutError(), aiohttp.ServerTimeoutError("read timed out")],
                              ids=["total", "socket"])
-    async def test_a_call_that_times_out_is_systemic(self, error):
+    async def test_a_call_that_times_out_stays_a_timeout(self, error):
         adapter = _adapter()
         with patch("aiohttp.ClientSession", return_value=_session([error])), \
-                pytest.raises(DriveThrottled) as exc:
+                pytest.raises(asyncio.TimeoutError) as exc:
             await adapter.get_change("u1", "X!1")
-        assert exc.value.retry_after_s == 60.0
+        assert type(exc.value) is asyncio.TimeoutError and exc.value.__cause__ is error
+        assert isinstance(exc.value, _PER_ITEM_ERRORS)
+        assert not isinstance(exc.value, (DriveThrottled, DriveNotConnectedError))
