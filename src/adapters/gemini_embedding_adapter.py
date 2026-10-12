@@ -4,6 +4,7 @@ import asyncio
 import os
 from typing import List
 from ..domain.exceptions import (
+    LLMClientError,
     LLMRateLimitError,
     LLMServerError,
     LLMUnavailableError,
@@ -76,9 +77,12 @@ class GeminiEmbeddingAdapter(EmbeddingService):
                     config={"output_dimensionality": _OUTPUT_DIM},
                 )
             except genai_errors.ClientError as exc:
-                if getattr(exc, "code", None) == 429 or "RESOURCE_EXHAUSTED" in str(exc):
+                code = getattr(exc, "code", None)
+                if code == 429 or "RESOURCE_EXHAUSTED" in str(exc):
                     raise LLMRateLimitError(str(exc), http_status=429) from exc
-                raise
+                # Other 4xx — deterministic, not retried. Typed with its status so a caller can tell a
+                # per-input refusal (400) from a config failure (401/403/404) without importing the SDK.
+                raise LLMClientError(str(exc), http_status=code) from exc
             except genai_errors.ServerError as exc:
                 code = getattr(exc, "code", None)
                 if code == 503:

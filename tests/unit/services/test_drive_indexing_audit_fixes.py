@@ -6,7 +6,12 @@ import pytest
 from src.domain import drive_index_planner as planner
 from src.domain.drive_index import Priority, RecordState
 from src.domain.drive_index_params import TICK_START_BUDGET
-from src.domain.exceptions import LLMClientError, LLMRateLimitError
+from src.domain.exceptions import (
+    LLMClientError,
+    LLMRateLimitError,
+    LLMServerError,
+    LLMUnavailableError,
+)
 
 from .drive_index_fakes import FakeEmbeddings
 from .test_drive_indexing_service import World
@@ -176,3 +181,27 @@ class TestOneRefusedCardDoesNotStallTheUser:
         assert result.status == "throttled"
         assert not (set(good) & w.carded())
         assert w.rec(bad).attempts == 0
+
+
+class TestSystemicEmbeddingErrorsMoveNoRecord:
+    """P9 round 2: only a definite bad-input refusal (LLMClientError 400) backs a card off alone. Every other
+    embedding error is systemic (RFC §8.2, Systemic row): the tick ends with `last_error` set, `attempts` untouched,
+    and nothing of the batch is written."""
+
+    @pytest.mark.parametrize("exc", [
+        LLMUnavailableError("503", http_status=503),
+        LLMServerError("500", http_status=500),
+        LLMServerError("502", http_status=502),
+        LLMClientError("403 PERMISSION_DENIED", http_status=403),
+        RuntimeError("unmapped SDK or network error"),
+    ], ids=["unavailable-503", "server-500", "server-502", "client-403", "unknown-runtime"])
+    async def test_systemic_error_moves_no_record(self, exc):
+        w = World()
+        w.svc._embeddings = _RefusingEmbeddings(exc)
+        good = [w.drive.add(f"doc{i}.pdf") for i in range(4)]
+        bad = w.drive.add("refused.pdf")
+        result = await w.tick()
+        assert result.status in ("throttled", "error")
+        assert (await w.repo.get_sync_state("u")).last_error is not None
+        assert w.rec(bad).attempts == 0
+        assert not ((set(good) | {bad}) & w.carded())

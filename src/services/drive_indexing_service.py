@@ -36,7 +36,7 @@ from ..domain.drive_index_planner import (
 )
 from ..domain.drive_index_policy import is_marker_child, probe_from_children
 from ..domain.drive_task_keys import DRIVE_SYNC_TASK, continuation_key, nudge_key, tick_payload
-from ..domain.exceptions import LLMRateLimitError, LLMUnavailableError
+from ..domain.exceptions import LLMClientError, LLMRateLimitError, LLMUnavailableError
 from ..domain.user_drive import (
     DriveAccessDenied, DriveItemNotFoundError, DriveNotConnectedError, DriveReauthRequired, DriveResyncRequired,
     DriveThrottled,
@@ -627,16 +627,18 @@ class DriveIndexingService:
         results: List[Tuple[DriveIndexRecord, List[float]]] = []
         refused: List[DriveIndexRecord] = []
         for rec, outcome in zip(to_embed, outcomes):
-            if isinstance(outcome, (LLMRateLimitError, LLMUnavailableError)):
-                logger.warning(f"[DriveIndex] embedding throttled for {user_id[:8]}: {outcome}")
-                raise outcome   # systemic: the tick backs off (§8.2)
-            if isinstance(outcome, BaseException) and not isinstance(outcome, Exception):
-                raise outcome   # cancellation and the like are never an item's fault
-            if isinstance(outcome, Exception):   # one card text refused: that record backs off alone (premise_audit P9)
-                logger.warning(f"[DriveIndex] card embedding failed for item {rec.item_id} of {user_id[:8]}: "
-                               f"{type(outcome).__name__}: {outcome}; backing off")
+            if isinstance(outcome, LLMClientError) and outcome.http_status == 400:
+                # A definite bad-input refusal of this card text: the record backs off alone (premise_audit P9).
+                logger.warning(f"[DriveIndex] card embedding refused for item {rec.item_id} of {user_id[:8]}: "
+                               f"{outcome}; backing off")
                 refused.append(rec)
                 continue
+            if isinstance(outcome, BaseException):
+                # Anything else — quota, 5xx, other 4xx, network, unknown, cancellation — is systemic: the tick
+                # ends and backs off with `attempts` untouched (§8.2).
+                logger.warning(f"[DriveIndex] card embedding failed for {user_id[:8]}: "
+                               f"{type(outcome).__name__}: {outcome}; ending the tick")
+                raise outcome
             results.append(outcome)
         fresh = await self._repo.get_records(user_id, [rec.item_id for rec in to_embed])
         written: List[DriveIndexRecord] = []

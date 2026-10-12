@@ -73,7 +73,8 @@ mocks cannot detect translation regressions) + contract validators in
   `SEMANTIC_SIMILARITY`→passthrough; unknown→`ValueError`). No true batch — `get_embeddings_batch`
   fans out N parallel single-content calls via `asyncio.gather`. Throttle: process-local
   `asyncio.Semaphore` (`GEMINI_EMBED_CONCURRENCY=20`). Transient 429/503 mapped to typed `LLMError`
-  and retried via the shared `retry_async` executor (see `decisions/typed_retry_policy.md`).
+  and retried via the shared `retry_async` executor (see `decisions/typed_retry_policy.md`); any other
+  4xx → `LLMClientError(http_status=code)`, other 5xx → `LLMServerError`, neither retried.
   See `docs/05_building_blocks/embedding_system/README.md`.
 - **PromptCacheStrategy** — transparent prompt caching via proxy pattern. Agents declare their
   type; strategy resolves cache config; `CachingLLMProxy` wraps the provider. Agents never
