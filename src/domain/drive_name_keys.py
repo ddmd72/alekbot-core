@@ -139,7 +139,7 @@ def _variants(token: str) -> Dict[str, bool]:
         bases.append(stripped)
     out: Dict[str, bool] = {}
     for base in bases:
-        for variant, grams in ((base, True), (_translit(base), base is token), (_translit_uk(base), False)):
+        for variant, grams in ((base, True), (_translit(base), base == token), (_translit_uk(base), False)):
             if variant and variant != token:
                 out[variant] = out.get(variant, False) or grams
     return out
