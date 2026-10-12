@@ -101,6 +101,10 @@ class MicrosoftGraphTokenProvider:
             token_expiry=datetime.now(timezone.utc) + timedelta(seconds=payload.get("expires_in", 3600)),
             scopes=creds.scopes,
             email_address=creds.email_address,
+            # Rebuilt on every refresh, so the connected drive's id must be carried over
+            # (USER_DRIVE_INDEXING_RFC §10.1 step 0). needs_reconnect is not: a refresh that
+            # succeeded is the proof it no longer holds.
+            drive_id=creds.drive_id,
         )
         await self._oauth.save_credentials(new_creds)
         logger.info(f"🔄 MS token refreshed ({self._provider}) for user {creds.user_id[:8]}")
