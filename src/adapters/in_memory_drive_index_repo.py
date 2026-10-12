@@ -175,9 +175,10 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
         refused.sort(key=lambda r: (r.card_rank, -(r.modified_at.timestamp() if r.modified_at else 0.0), r.item_id))
         return refused[:limit]
 
-    async def count_unread(self, user_id: str, kinds: AbstractSet[str]) -> int:
+    async def count_unread(self, user_id: str, kinds: AbstractSet[str],
+                           triaged: AbstractSet[str] = frozenset()) -> int:
         admitted = frozenset(kinds)
-        return sum(1 for r in self._user(user_id) if is_unread(r, admitted))
+        return sum(1 for r in self._user(user_id) if is_unread(r, admitted, frozenset(triaged)))
 
     async def count_by_state(self, user_id: str) -> Dict[str, int]:
         counts: Dict[str, int] = {}

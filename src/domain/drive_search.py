@@ -14,7 +14,7 @@ Public interface:
     resolve_chain(rec, lookup, root_item_id) -> Optional[(path, ancestor_ids)]
     normalize_path(path) -> str;  path_match(candidate, wanted) -> Optional[str]
     cosine_distance(a, b) -> float
-    is_unread(rec, admitted=None) -> bool;  content_admitted() -> bool
+    is_unread(rec, admitted=None, triaged=None) -> bool;  content_admitted() -> bool
     escape_text(text) -> str;  wrap_untrusted(text, *, nonce, ref, path) -> str
     render_results(result) -> str
     make_card(rec, path, summary, nonce) / rank_names(recs, scores) / cover_first(fused, groups)
@@ -391,19 +391,23 @@ def content_admitted() -> bool:
     return any(admission(kind) is not Admission.NONE for kind in KIND_NAMES)
 
 
-def _content_kind(rec: DriveIndexRecord, admitted: Optional[FrozenSet[str]]) -> bool:
+def _content_kind(rec: DriveIndexRecord, admitted: Optional[FrozenSet[str]],
+                  triaged: Optional[FrozenSet[str]]) -> bool:
     if admitted is not None:
-        return rec.kind in admitted
+        return rec.kind in admitted or (rec.kind in (triaged or frozenset())
+                                        and rec.triage_verdict is TriageVerdict.TEXT)
     granted = admission(rec.kind)
     # An image is a document only once triage said it shows text (§24.5); photographs are never unread.
     return granted is Admission.CONTENT or (granted is Admission.TRIAGE and rec.triage_verdict is TriageVerdict.TEXT)
 
 
-def is_unread(rec: DriveIndexRecord, admitted: Optional[FrozenSet[str]] = None) -> bool:
-    """A document of an admitted kind whose content is not searchable (§10.2 `unread`). Photos, code,
-    archives and other kinds that are not admitted never count. `admitted` None reads the policy now
-    (`admission`), so the Slice 2+4 flip is seen without a re-import."""
-    if rec.is_folder or not _content_kind(rec, admitted):
+def is_unread(rec: DriveIndexRecord, admitted: Optional[FrozenSet[str]] = None,
+              triaged: Optional[FrozenSet[str]] = None) -> bool:
+    """A document of an admitted kind, or an image of a `triaged` kind that triage found to show text (§24.5), whose
+    content is not searchable (§10.2 `unread`). Photos, code, archives and other kinds that are not admitted never
+    count. `admitted` None reads the policy now (`admission`, both lists), so the Slice 2+4 flip is seen without a
+    re-import; with `admitted` given, only the kinds in `triaged` are triaged (review D-M4)."""
+    if rec.is_folder or not _content_kind(rec, admitted, triaged):
         return False
     if rec.state is RecordState.PENDING:
         return rec.indexed_generation is None
