@@ -510,3 +510,20 @@ order, substitution handling, OIDC audience, `main.py` names) matches the code. 
   `disabled` after the toggle); Cabinet gets the same instances; query and card embeddings share model/space.
 - Test gap F1 (`users=None` survives → every search would raise) → added to R11. **OWNER (F3):** search is built
   even without the drive queue (local dev, first deploy pass) → "building" forever if indexing is turned on then.
+
+### Fix R10 (search batch: P1, rev_31 F1–F5, rev_30 F2/F3/F5) — done
+- Commits `4eaa7ee` (fixes + new tests), `e2d3c34` (rev_31-approved stricter edit of `TestScale::
+  test_one_query_per_whole_token_key_plus_one_for_the_rest`), `5e5e8db` (reviewer-approved: `TestRender::
+  test_filter_only_says_how_many_matched` pinned the old wording for a request with NO filters — its request now has a
+  date filter, assertion unchanged), `9c35922` (round 2). `make check` (reviewer, at `9c35922`): 7995 passed.
+- **P1 fixed:** whole-token and trigram keys each get their own single-key query (≤ 8 each, in query order) + one
+  remainder call (≤ 30 keys); "leese agrement", "Догов", "contrsto" now found among 160 trigram-sharing fillers.
+  Cost: ≤ 18 parallel queries per round (≤ 36 with the one widening), ≈ 19.8k projected reads worst case (~$0.006);
+  served by the declared `name_tokens` indexes. A widened round can decode ~17k docs on 1 vCPU → watch the log line.
+- Folder-scope honesty: a fetch-capped empty page no longer says "No matching files or folders" (points to
+  `list_files_in_drive`); a single *suffix* folder match from a full name page is refused (never guess), a single
+  exact path is used; the subtree walk honours `FOLDER_INMEM_CARDS` with one shared budget; widening at most once
+  (pinned — unbounded loop otherwise). All-empty request: "No name words or filters were given: the N newest…";
+  while building, no "0 match" line.
+- Review: round 1 CHANGES REQUIRED (exact path refused; three render guards unpinned), round 2 APPROVED (31 killed,
+  2 equivalent/optional survivors).
