@@ -535,3 +535,10 @@ order, substitution handling, OIDC audience, `main.py` names) matches the code. 
   survive any indexing read failure; Task 36's JS shows only the toggle under `data.indexing && …`.
 - Task 47 note: while the `oldest_due_at` index is still building (first deploy), every Cabinet load logs one ERROR
   (may page the Errors-dev policy). NIT: `drive_indexing_set` docstring still promises an enqueue with no queue.
+
+### Task 36 — committed `34aed96` (review running)
+### Task 37 — committed `f2a5ff5` (review running)
+
+### Task 38 (Part E gate) — run by the coordinator
+- `make check` in a clean worktree at `f2a5ff5` (Parts A–E + all fixes so far): see next line.
+  **8018 passed, 3 skipped, 1 xfailed — green.** No failures (the plan's skeleton-era failures are gone with Parts A–D merged).
