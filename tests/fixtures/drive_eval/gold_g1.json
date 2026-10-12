@@ -42,7 +42,7 @@
   {"id": "filter-march-2026", "case": "filter_only", "query": "", "lang": "en", "goal": "G1", "filters": {"date_from": "2026-03-01", "date_to": "2026-03-31"}, "expected_paths": ["Photos/Porto/IMG_6201.HEIC", "Photos/Porto/IMG_6202.HEIC", "Photos/Porto/IMG_6203.HEIC", "Photos/Porto/IMG_6204.HEIC", "Photos/Porto/IMG_6205.HEIC", "Photos/Porto/IMG_6206.HEIC", "Finance/invoice_2026_03.xlsx"]},
   {"id": "filter-video", "case": "filter_only", "query": "", "lang": "en", "goal": "G1", "filters": {"kind": "video"}, "expected_paths": ["Media/Recording 2026-10-14 09-41-27.webm"]},
   {"id": "family-latest-dogovor", "case": "version_family", "query": "договор последняя версия", "lang": "ru", "goal": "G1", "filters": {}, "expected_paths": ["Contracts/Договор_ред1.docx", "Contracts/Договор_ред2.docx", "Contracts/Договор_ред3.docx"]},
-  {"id": "semantic-agreements-ru", "case": "semantic", "query": "файлы про договоры", "lang": "ru", "goal": "G1", "filters": {}, "expected_paths": ["Inbox/Super important agreement.pdf"]},
-  {"id": "semantic-lease-es", "case": "semantic", "query": "documents about the lease", "lang": "en", "goal": "G1", "filters": {}, "expected_paths": ["Contracts/Contrato de alquiler 2026.pdf"]},
+  {"id": "semantic-agreements-ru", "case": "semantic", "query": "договоры", "lang": "ru", "goal": "G1", "filters": {}, "expected_paths": ["Inbox/Super important agreement.pdf"]},
+  {"id": "semantic-lease-en", "case": "semantic", "query": "the lease", "lang": "en", "goal": "G1", "filters": {}, "expected_paths": ["Contracts/Contrato de alquiler 2026.pdf"]},
   {"id": "semantic-travel-fr", "case": "semantic", "query": "itinéraire du voyage", "lang": "fr", "goal": "G1", "filters": {}, "expected_paths": ["Notes/Plan de viaje Roma.md"]}
 ]

@@ -52,3 +52,12 @@ def test_place_cases_accept_min_hits_and_the_photos_variant_is_known_hard():
     assert gold["date-rome-august-photo-filter"]["query"] == "" and gold["date-rome-august-photo-filter"][
         "filters"]["kind"] == "photo"
     assert gold["date-rome-august-rome"]["query"] == "Rome"
+
+
+def test_semantic_queries_hold_no_type_words():
+    """drive_query takes name words or a place or subject, never a type word (that is drive_kind)."""
+    type_words = {"file", "files", "document", "documents", "photo", "photos", "файлы", "файл", "документы", "фото",
+                  "fichier", "fichiers", "documentos", "archivos"}
+    for case in _gold().values():
+        if case["case"] == "semantic":
+            assert not set(case["query"].casefold().split()) & type_words, case["id"]
