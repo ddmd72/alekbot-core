@@ -62,7 +62,7 @@ def build_real_content() -> Tuple[Dict[str, ContentExtractorPort], ImageTriagePo
         users = _EvalUsers(provider)
         parser = SubprocessContentExtractor()
         reader = DriveReaderRunner(context_builder=container.context_builder, user_repo=users,
-                                   prompt_builder=prompt_builder, parser=parser, quota_service=None)
+                                   prompt_builder=prompt_builder, splitter=parser, quota_service=None)
         triage = DriveTriageRunner(context_builder=container.context_builder, user_repo=users,
                                    prompt_builder=prompt_builder, quota_service=None)
     except Exception as exc:   # noqa: BLE001 — any setup failure is "no verdict", never a silent fallback
