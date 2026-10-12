@@ -2,6 +2,8 @@
 USER_DRIVE_INDEXING_RFC §10.1, §10.2)."""
 from datetime import datetime, timezone
 
+import pytest
+
 from src.domain.drive_index import DriveIndexRecord, DriveSyncState, RecordState, Scope
 from src.domain.drive_search import (
     STATUS_OK, DriveSearchEnvelope, DriveSearchRequest, DriveSearchResult, in_date_range, make_card,
@@ -55,6 +57,12 @@ class TestBuildingFilterOnly:
                                    request=DriveSearchRequest(), matched_total=0)
         assert "newest 0" not in render_results(result)
 
+    def test_building_with_matches_still_says_how_many_matched(self):
+        result = DriveSearchResult(status=STATUS_OK, cards=(card("f1"),),
+                                   envelope=DriveSearchEnvelope(building=True),
+                                   request=DriveSearchRequest(kind="spreadsheet"), matched_total=3)
+        assert "3 files and folders match" in render_results(result)
+
 
 # --- rev_31 F2: a capped filter-only page with no survivors is not "no matches" ----------------------
 
@@ -65,6 +73,24 @@ class TestFilterOnlyHonesty:
         text = render_results(result)
         assert "No matching files or folders" not in text and "match the filters" not in text
         assert "does not mean there are none" in text and "list_files_in_drive" in text
+
+    def test_an_uncapped_filter_only_zero_still_says_no_matches(self):
+        result = DriveSearchResult(status=STATUS_OK, request=DriveSearchRequest(kind="pdf"), matched_total=0)
+        text = render_results(result)
+        assert "0 files and folders match the filters" in text and "No matching files or folders." in text
+        assert "does not mean there are none" not in text
+
+    @pytest.mark.parametrize("request_", [
+        DriveSearchRequest(folder="Work"),
+        DriveSearchRequest(date_from=datetime(2025, 1, 1, tzinfo=timezone.utc)),
+        DriveSearchRequest(date_to=datetime(2025, 12, 31, tzinfo=timezone.utc)),
+    ])
+    def test_each_filter_alone_still_says_how_many_matched(self, request_):
+        result = DriveSearchResult(status=STATUS_OK, cards=(card("f1"),), request=request_, matched_total=5,
+                                   folder_path="Work" if request_.folder else None)
+        text = render_results(result)
+        assert "5 files and folders match the filters; showing the newest 1." in text
+        assert "No name words or filters were given" not in text
 
 
 # --- rev_30 F5: dates and the gate guard (test gaps) --------------------------------------------------

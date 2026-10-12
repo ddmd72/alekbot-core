@@ -119,6 +119,36 @@ class TestFolderLookupNeverGuesses:
         result = await w.search("march", folder="Taxes/2025")
         assert result.status == STATUS_OK and paths(result) == ["Finance/Taxes/2025/march.pdf"]
 
+    async def test_single_exact_path_match_from_a_full_name_page_is_used(self, monkeypatch):
+        """An exact full path is unique in a drive: one exact match is not a guess even when the name page
+        was full. The root descent is cut by its budget, so only the name lookup can find the folder
+        (review R10 F-a)."""
+        w = World(page_size=10_000)
+        taxes = w.drive.add("Taxes", folder=True)
+        t = w.drive.add("2025", parent=taxes, folder=True)          # lowest '2025' id: inside the capped page
+        w.drive.add("march.pdf", parent=t)
+        for i in range(4):
+            w.drive.add("2025", parent=w.drive.add(f"Project {i}", folder=True), folder=True)
+        w.drive.add("march.pdf")
+        await w.settle()
+        monkeypatch.setattr(search_mod, "FOLDER_INMEM_CARDS", 3)   # the root has more children: descent cut
+        monkeypatch.setattr(search_mod, "NAME_FETCH", 2)           # the name page for 'w:2025' is full
+        result = await w.search("march", folder="Taxes/2025")
+        assert result.status == STATUS_OK and paths(result) == ["Taxes/2025/march.pdf"]
+
+    async def test_single_suffix_match_with_a_cut_descent_and_a_full_name_page_is_refused(self, monkeypatch):
+        w = World(page_size=10_000)
+        fin = w.drive.add("Finance", folder=True)
+        t = w.drive.add("2025", parent=w.drive.add("Taxes", parent=fin, folder=True), folder=True)
+        w.drive.add("march.pdf", parent=t)
+        for i in range(4):
+            w.drive.add("2025", parent=w.drive.add(f"Project {i}", folder=True), folder=True)
+        await w.settle()
+        monkeypatch.setattr(search_mod, "FOLDER_INMEM_CARDS", 3)
+        monkeypatch.setattr(search_mod, "NAME_FETCH", 2)
+        result = await w.search("march", folder="Taxes/2025")
+        assert result.status == STATUS_FOLDER_NOT_FOUND and result.folder_lookup_truncated
+
 
 # --- F4: the subtree walk stops after FOLDER_INMEM_CARDS records (§10.1 Folder) ---------------------
 

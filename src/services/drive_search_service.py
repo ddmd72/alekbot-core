@@ -357,8 +357,8 @@ class DriveSearchService:
         """By `drive:` ref, or by path after NFC + casefold: root-anchored descent first, then folders named
         like the last segment anywhere (one exact path wins, else one suffix match). Several matches are
         returned as candidates, never guessed (§10.1). Nothing found while a lookup page was full is "could
-        not resolve", not "not in the index"; so is a single match from a full name page, since another
-        match may lie past the page."""
+        not resolve", not "not in the index"; so is a single *suffix* match from a full name page, since
+        another match may lie past the page. One exact path is unique in a drive, so it is used even then."""
         item_id = parse_drive_ref(wanted)
         if item_id is not None:
             rec = (await self._repo.get_records(user_id, [item_id])).get(item_id)
@@ -375,7 +375,7 @@ class DriveSearchService:
         anchored, descent_complete = await self._descend(user_id, ancestry.root_item_id, segments)
         matches = await self._as_folders(anchored, ancestry)
         page_full = not descent_complete
-        guessed = False   # one match taken from a full name page: another may sit past it (rev_31 F3)
+        guessed = False   # one suffix match from a full name page: another may sit past it (rev_31 F3)
         if not matches:
             keys = [k for k in query_name_keys(segments[-1]) if k.startswith("w:")]
             named, page_full_by_name = (await self._name_candidates(user_id, keys, NAME_FETCH, "folder", _Stats())
@@ -385,7 +385,7 @@ class DriveSearchService:
             exact = [f for f in candidates if path_match(f.path, wanted) == "exact"]
             suffix = [f for f in candidates if path_match(f.path, wanted) == "suffix"]
             matches = exact or suffix
-            guessed = page_full_by_name and len(matches) == 1
+            guessed = page_full_by_name and not exact and len(matches) == 1
         if len(matches) == 1 and not guessed:
             return matches[0]
         if not matches or guessed:
