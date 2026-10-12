@@ -5,11 +5,14 @@ Measures the "heavier place names the photo" preference of PlaceIndex over the b
 
 For each PLACE_PREFER_WEIGHT_FACTOR candidate (at the current PLACE_FOOTPRINT_K) and each PLACE_FOOTPRINT_K candidate
 (at the current factor) it reports:
-  self-name    places whose own centre is named after themselves (a lookup at a town's own coordinates should
-               rarely say another town)
-  cross-border places whose own centre is named after a place in another country (must be 0)
-  expected     the expected results in scripts/geo/expected_places.py (Trastevere is Rome, Torrent is Valencia, ...)
-and lists a sample of the cross-border cases left at the current factor and k, to be judged by eye.
+  self-name           places whose own centre is named after themselves (a lookup at a town's own coordinates
+                      should rarely say another town)
+  centre crossed      places whose own centre is named after a place in another country (0 by construction under
+                      the current rule: a centre is inside its own footprint, so no border is crossed there)
+  off-centre crossed  lookups 2 km north of each centre where the preference crossed a border (the chosen place's
+                      country is not the nearest place's)
+  expected            the cases in scripts/geo/expected_places.py (Trastevere is Rome, Torrent is Valencia, ...)
+and lists the border crossings left at the current factor and k, to be judged by eye.
 
 The baseline row is the rule before the same-country and weight-factor conditions: the heaviest place within
 PLACE_PREFER_RADIUS_KM, from any country.
@@ -21,7 +24,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
-from typing import List, Optional, Sequence, Tuple
+from typing import List, NamedTuple, Optional, Sequence, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -45,18 +48,38 @@ class _Baseline(PlaceIndex):
         return min(candidates, key=lambda c: c[0])[1]
 
 
-def _measure(index: PlaceIndex, rows: Sequence[PlaceRow]) -> Tuple[int, List[Tuple[PlaceRow, PlaceRow]], List[str]]:
+_OFF_CENTRE_KM = 2.0
+
+
+class _Result(NamedTuple):
+    self_named: int
+    centre_crossed: List[Tuple[PlaceRow, PlaceRow]]                 # (origin row, the place it is named after)
+    off_centre_crossed: List[Tuple[PlaceRow, PlaceRow, PlaceRow]]   # (origin row, nearest place, chosen place)
+    misses: List[str]
+
+
+def _measure(index: PlaceIndex, rows: Sequence[PlaceRow]) -> _Result:
+    """Centre: a lookup at each place's own coordinates. Off-centre: a lookup _OFF_CENTRE_KM north of it, counted
+    when the preference crossed a border (the chosen place's country is not the nearest place's): that is the rule
+    at work, while comparing with the origin row's country would measure border geography."""
     self_named = 0
-    crossed: List[Tuple[PlaceRow, PlaceRow]] = []
+    centre_crossed: List[Tuple[PlaceRow, PlaceRow]] = []
+    off_crossed: List[Tuple[PlaceRow, PlaceRow, PlaceRow]] = []
     for row in rows:
         got = index.resolve(row.lat, row.lon)
         if got is row:
             self_named += 1
         elif got is not None and got.country != row.country:
-            crossed.append((row, got))
+            centre_crossed.append((row, got))
+        candidates = index._candidates(min(90.0, row.lat + _OFF_CENTRE_KM / 111.32), row.lon)
+        if candidates:
+            nearest = min(candidates, key=lambda c: (c[0], -c[1].weight))[1]
+            chosen = index._choose(candidates)
+            if chosen.country != nearest.country:
+                off_crossed.append((row, nearest, chosen))
     misses = [f"{where}: {index.lookup(lat, lon)!r}" for where, lat, lon, want in EXPECTED_PLACES
               if index.lookup(lat, lon) != want]
-    return self_named, crossed, misses
+    return _Result(self_named, centre_crossed, off_crossed, misses)
 
 
 def _floats(text: str) -> List[float]:
@@ -75,21 +98,24 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     total = len(rows)
     print(f"{total} places; current PLACE_PREFER_WEIGHT_FACTOR = {PLACE_PREFER_WEIGHT_FACTOR:g}, "
           f"PLACE_FOOTPRINT_K = {PLACE_FOOTPRINT_K:g}\n")
-    print(f"{'rule':<20}{'self-name':>20}{'cross-border':>14}  expected")
+    print(f"{'rule':<20}{'self-name':>20}{'centre crossed':>16}{'off-centre crossed':>20}  expected")
     runs: List[Tuple[str, PlaceIndex]] = [("baseline", _Baseline(rows))]
     runs += [(f"factor {f:g}", PlaceIndex(rows, prefer_weight_factor=f)) for f in _floats(args.factors)]
     runs += [(f"k {k:g}", PlaceIndex(rows, footprint_k=k)) for k in _floats(args.ks)]
     for label, index in runs:
-        self_named, crossed, misses = _measure(index, rows)
-        print(f"{label:<20}{self_named:>8} ({100 * self_named / total:5.1f}%){len(crossed):>14}  "
-              f"{len(EXPECTED_PLACES) - len(misses)}/{len(EXPECTED_PLACES)}")
-        for miss in misses:
+        r = _measure(index, rows)
+        print(f"{label:<20}{r.self_named:>8} ({100 * r.self_named / total:5.1f}%){len(r.centre_crossed):>16}"
+              f"{len(r.off_centre_crossed):>20}  {len(EXPECTED_PLACES) - len(r.misses)}/{len(EXPECTED_PLACES)}")
+        for miss in r.misses:
             print(f"{'':<22}miss  {miss}")
-    _, crossed, _ = _measure(PlaceIndex(rows), rows)
-    print(f"\ncross-border at the current settings: {len(crossed)}")
-    step = max(1, len(crossed) // max(args.sample, 1))
-    for row, got in crossed[::step][:args.sample]:
-        print(f"  {row.name_en}, {row.country} ({row.weight}) -> {got.name_en}, {got.country} ({got.weight})")
+    r = _measure(PlaceIndex(rows), rows)
+    print(f"\ncentre crossed at the current settings: {len(r.centre_crossed)}")
+    for row, got in r.centre_crossed[:args.sample]:
+        print(f"  {row.name_en}, {row.country} -> {got.name_en}, {got.country}")
+    print(f"off-centre crossed at the current settings ({_OFF_CENTRE_KM:g} km north): {len(r.off_centre_crossed)}")
+    for row, nearest, chosen in r.off_centre_crossed[:args.sample]:
+        print(f"  north of {row.name_en}: nearest {nearest.name_en}, {nearest.country} ({nearest.weight}) -> "
+              f"{chosen.name_en}, {chosen.country} ({chosen.weight})")
     return 0
 
 

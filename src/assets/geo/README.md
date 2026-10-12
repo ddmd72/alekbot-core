@@ -46,37 +46,56 @@ Vatican City 0.07 km, Brazzaville 3.7 km (so Kinshasa's 10.4 km never takes it).
 Both constants were picked with `scripts/geo/measure_place_preference.py` (read-only, offline) on the
 table built 2026-10-12, 64 458 places, against the 17 expected cases in
 `scripts/geo/expected_places.py` (the one list; `tests/unit/adapters/test_geo_expected_places.py` pins
-it). "Self-name" counts places whose own centre is named after themselves; "cross-border" counts places
-whose own centre is named after a place in another country. A place's own centre is always inside its
-own footprint, so neither number moves with k: k is chosen by the expected cases.
+it). Three counts:
+
+- **Self-name**: places whose own centre is named after themselves.
+- **Centre crossed**: places whose own centre is named after a place in another country. It is 0 by
+  construction under the footprint rule: a place's centre is inside its own footprint, so the
+  preference never crosses a border there. It only measures the rule before this one.
+- **Off-centre crossed**: lookups 2 km north of each centre where the preference crossed a border (the
+  chosen place's country is not the nearest place's). This is the count that moves with k.
 
 Factor, at k = 0.0015:
 
-| Rule | Self-name | Cross-border | Expected cases missed |
-|---|---|---|---|
-| before: heaviest within 15 km, any country | 29 240 (45.4%) | 603 | St. Peter's, Monaco, Vaduz, San Marino, Gibraltar, Kehl, Brazzaville |
-| factor 1 | 29 521 (45.8%) | 0 | Vaduz ("Schaan"), San Marino ("Serravalle"), Kehl ("Offenburg") |
-| factor 1.5 | 33 392 (51.8%) | 0 | San Marino |
-| factor 2 | 36 259 (56.3%) | 0 | San Marino |
-| factor 2.5 | 38 573 (59.8%) | 0 | none |
-| **factor 3** | **40 435 (62.7%)** | **0** | **none** |
-| factor 3.5 | 42 035 (65.2%) | 0 | Brooklyn ("Brooklyn") |
-| factor 10 | 51 351 (79.7%) | 0 | Brooklyn |
-| factor 50 | 59 502 (92.3%) | 0 | Brooklyn, Torrent ("Torrent") |
+| Rule | Self-name | Centre crossed | Off-centre crossed | Expected cases missed |
+|---|---|---|---|---|
+| before: heaviest within 15 km, any country | 29 240 (45.4%) | 603 | 635 | St. Peter's, Monaco, Vaduz, San Marino, Gibraltar, Kehl, Brazzaville |
+| factor 1 | 29 521 (45.8%) | 0 | 4 | Vaduz ("Schaan"), San Marino ("Serravalle"), Kehl ("Offenburg") |
+| factor 1.5 | 33 392 (51.8%) | 0 | 4 | San Marino |
+| factor 2 | 36 259 (56.3%) | 0 | 4 | San Marino |
+| factor 2.5 | 38 573 (59.8%) | 0 | 4 | none |
+| **factor 3** | **40 435 (62.7%)** | **0** | **4** | **none** |
+| factor 3.5 | 42 035 (65.2%) | 0 | 4 | Brooklyn ("Brooklyn") |
+| factor 10 | 51 351 (79.7%) | 0 | 4 | Brooklyn |
+| factor 50 | 59 502 (92.3%) | 0 | 4 | Brooklyn, Torrent ("Torrent") |
 
-k, at factor 3 (self-name 40 435, 62.7%, and cross-border 0 for every k):
+k, at factor 3 (self-name 40 435, 62.7%, and centre crossed 0 for every k):
 
-| k | Expected cases missed |
-|---|---|
-| 0 (no footprint), 0.001, 0.0013 | Trastevere ("Vatican City") |
-| **0.0015**, 0.00175 | **none** |
-| 0.002, 0.003 | St. Peter's Square ("Rome") |
-| 0.006, 0.01 | none (the Vatican's own footprint now holds St. Peter's), but a larger k lets every big city reach farther over a small foreign neighbour |
+| k | Off-centre crossed | Expected cases missed |
+|---|---|---|
+| 0 (no footprint) | 0 | Trastevere ("Vatican City") |
+| 0.001 | 0 | Trastevere |
+| 0.0013 | 2 | Trastevere |
+| **0.0015** | **4** | **none** |
+| 0.00175 | 6 | none |
+| 0.002 | 8 | St. Peter's Square ("Rome") |
+| 0.003 | 23 | St. Peter's Square |
+| 0.006 | 48 | none (the Vatican's own footprint now holds St. Peter's) |
+| 0.01 | 70 | none |
 
 Factor 3 is the largest that keeps Brooklyn → New York (New York weighs 3.2 times Brooklyn). k must
-reach Trastevere (3.4 km from the Rome row: k ≥ 0.0013) and stop short of St. Peter's Square (4.7 km:
-k < 0.0018) while the Vatican's own footprint is smaller than its distance to the square; 0.0015 is
-the smallest value in that window. A rebuilt table can move these numbers: re-run the script.
+reach Trastevere (3.4 km from the Rome row: k ≥ 0.0013); 0.0015 is the smallest measured value that
+passes every case, and border crossings grow with k from there. A rebuilt table can move these
+numbers: re-run the script.
+
+The four border crossings left at these settings, 2 km north of the named place:
+
+| Nearest place | Named after |
+|---|---|
+| Aflao, Ghana | Lomé, Togo |
+| Sheung Shui, Hong Kong | Shenzhen, China |
+| Şūr Bāhir, Palestinian Territory | Jerusalem, Israel |
+| Wadi al-Joz, Palestinian Territory (north of the Jerusalem row) | Jerusalem, Israel |
 
 Expected results on the built table:
 
