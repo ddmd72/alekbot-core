@@ -34,6 +34,7 @@ from ..domain.drive_index_params import (
     CARD_FETCH, CHUNK_FETCH, CONTENT_TERM_FETCH, CONTENT_TERM_QUERIES, FETCH_MAX, FOLDER_INMEM_CARDS,
     FOLDER_INMEM_CHUNKS, K, MAX_CARD_RECORDS_PER_USER, NAME_FETCH, NAME_KEY_QUERIES, RRF_K, WINDOW_CHARS_TOTAL,
 )
+from ..domain.drive_index_planner import usage_now
 from ..domain.drive_indexing_status import DriveIndexingStatus
 from ..domain.drive_name_keys import covers_query, name_match, query_name_keys, query_token_groups
 from ..domain.drive_search import (
@@ -756,10 +757,13 @@ class DriveSearchService:
         enabled = bool(profile is not None and profile.config.drive_indexing_enabled)
         if state is None:
             return DriveIndexingStatus(enabled=enabled, counters={}, building=enabled)
+        pages, images = usage_now(state, self._clock())   # a new month reads as zero before the tick resets it
         return DriveIndexingStatus(
             enabled=enabled, counters=dict(state.counters), last_success_at=state.last_success_at,
             last_error=state.last_error.value if state.last_error else None, index_as_of=state.observed_as_of,
             index_full=int(state.counters.get("carded", 0)) >= MAX_CARD_RECORDS_PER_USER,
             building=enabled and (state.purging or not state.root_item_id or await self._building(user_id, state)),
             access_lost_at=state.access_lost_at, purging=state.purging,
+            readable_chunks=await self._repo.readable_chunk_total(user_id),
+            model_pages_month=pages, triage_images_month=images,
         )

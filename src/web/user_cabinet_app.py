@@ -11,7 +11,7 @@ from ..services.session_service import SessionService
 from ..services.google_oauth_service import GoogleOAuthService
 from ..services.email_indexing_service import EmailIndexingService
 from ..services.drive_search_service import DriveSearchService
-from ..domain.drive_index_params import TICK_DEADLINE_S
+from ..domain.drive_index_params import MODEL_EXTRACT_PAGES_PER_MONTH, TICK_DEADLINE_S, TRIAGE_IMAGES_PER_MONTH
 from ..domain.drive_indexing_status import DriveIndexingStatus
 from ..domain.drive_task_keys import DRIVE_SYNC_TASK, tick_payload, toggle_key
 from ..ports.user_repository import UserRepository
@@ -1279,6 +1279,12 @@ def create_user_cabinet_blueprint(
             "building": status.building,
             "access_lost_at": _iso(status.access_lost_at),
             "index_kept": status.index_kept(datetime.now(timezone.utc)),
+            # Slice 2+4 (§6, §24.7): readable chunks and this month's model usage against its budgets
+            "readable_chunks": status.readable_chunks,
+            "model_pages_month": status.model_pages_month,
+            "model_pages_limit": MODEL_EXTRACT_PAGES_PER_MONTH,
+            "triage_images_month": status.triage_images_month,
+            "triage_images_limit": TRIAGE_IMAGES_PER_MONTH,
         }
 
     @bp.route("/api/drive/status", methods=["GET"])

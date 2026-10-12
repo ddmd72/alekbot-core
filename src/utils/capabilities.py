@@ -115,7 +115,8 @@ Connect your drive in the Cabinet. Then:
 - "Remember this file" — I keep it in your drive's Inbox, or in the folder you name, under a clear name
 - "Write this down as a note" — I create a text file (md, txt, csv, json, html and similar) in your drive
 - "What's in Meetings?" — I browse your folders
-- "Find the lease contract", "photos from Rome last August", "all my spreadsheets" — I search your drive by name (typos and transliteration are fine), type, date, folder and where a photo was taken. Turn on "Search my drive" in the Cabinet first; for now I search names and details, not what is inside the files
+- "Find the lease contract", "photos from Rome last August", "all my spreadsheets" — I search your drive by name (typos and transliteration are fine), type, date, folder and where a photo was taken. Turn on "Search my drive" in the Cabinet first
+- "What's the notice period in my lease?", "how much was the March electricity bill?", "find invoice INV-2024-417" — I answer from what is written in your documents, and I read scans, screenshots and photographed receipts too; I tell you which file the answer came from
 - Open, rename, move, create folders; add a line to a note; replace a file with a new version
 - Delete a file or a whole folder — I post a note in chat with what was deleted; it stays in your drive's recycle bin
 Chat attachments are temporary; the drive is where files are kept.

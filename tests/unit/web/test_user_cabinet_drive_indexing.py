@@ -57,7 +57,8 @@ class TestStatus:
     async def test_connected_with_the_index_block(self):
         status = DriveIndexingStatus(enabled=True, counters={"metadata_only": 40, "carded": 39},
                                      last_success_at=NOW, last_error="throttled", index_as_of=NOW,
-                                     index_full=False, building=True)
+                                     index_full=False, building=True,
+                                     readable_chunks=17, model_pages_month=230, triage_images_month=41)
         async with _app(_drive(), _search(status)).test_client() as client:
             body = await (await client.get("/api/drive/status", headers=_AUTH)).get_json()
         assert body == {
@@ -65,7 +66,9 @@ class TestStatus:
             "indexing": {"enabled": True, "counters": {"metadata_only": 40, "carded": 39},
                          "last_success_at": NOW.isoformat(), "last_error": "throttled",
                          "index_as_of": NOW.isoformat(), "index_full": False, "building": True,
-                         "available": False, "access_lost_at": None, "index_kept": True},
+                         "available": False, "access_lost_at": None, "index_kept": True,
+                         "readable_chunks": 17, "model_pages_month": 230, "model_pages_limit": 5000,
+                         "triage_images_month": 41, "triage_images_limit": 20000},
         }
 
     async def test_needs_reconnect(self):

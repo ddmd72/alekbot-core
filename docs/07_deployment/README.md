@@ -365,6 +365,35 @@ URL silently disables indexing in the live environment, with no alert.
    `alek-bot-indexer-dev`, so its tick errors (`severity>=ERROR`) and `/worker` 5xx would never page. Widen those
    filters to the indexer too (or add its own policy) and note it in ALERTING.md.
 
+### Slice 2+4 — content, scans and images (owner steps)
+
+USER_DRIVE_INDEXING_RFC §24 adds model calls and chunk storage to the indexer. Before the deploy that ships it:
+
+1. **Spikes, recorded in the RFC (§18).** S1 (child-process limits hold on the indexer for the Phase 0 bomb set; peak
+   RSS with a 45 MB download; cold start) before the parser ships; S0g (Graph custom renditions `c{w}x{h}` for App
+   Folder items, legible receipt text, HEIC) before the reader reads images; S3 (`find_nearest` cost and latency at
+   10k and 50k chunks under a `user_id` filter) before the slice ships.
+2. **Model keys on the indexer.** The reader and triage agents call Claude (default) or OpenAI, so the indexer mounts
+   `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` from Secret Manager (`--set-secrets` in `cloudbuild-dev.yaml`, the same
+   secret names the main service mounts). They are never Cloud Build substitutions. The runtime service account
+   already reads them for the main service; check it once with
+   `gcloud secrets get-iam-policy ANTHROPIC_API_KEY --project=<PROJECT_ID>`.
+3. **Prompts.** The `drive_reader` and `drive_triage` tokens, blueprints and profiles are uploaded by the owner
+   (`docs/how_to/NEW_AGENT_PLAYBOOK.md`; never from an agent session). Without them every model call fails as a model
+   outage (logged ERROR): parsed documents are still indexed, scans and images wait.
+4. **Smart's drive guidance.** The `drive_specialist` block of `PROTOCOL_AGENT_SELECTION`
+   (`prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy`): back up the prompt layer
+   (`firestore_utils/backup_prompt_layer.py` into `scripts/memory/`), check the mirror for drift
+   (`python firestore_utils/snapshot_pull.py --check`), dry-run the upload, then `--apply` (owner only;
+   [prompts_snapshot/README.md](../../prompts_snapshot/README.md)).
+5. **Indexes.** The chunk collection `development_drive_index_chunks` needs its composite indexes
+   (`make deploy-indexes PROJECT_ID=<PROJECT_ID>`) and its vector indexes on the chunk vector under `user_id` and
+   `user_id + kind` (`PROJECT_ID=<PROJECT_ID> scripts/infrastructure/create_drive_vector_indexes.sh`). Wait for
+   `READY`, then run the smoke check, which now also runs the chunk queries.
+6. **Cost.** A page read by the model costs about $0.0006 on Haiku 5.5 or GPT-6 Luna; the monthly budget bounds a user
+   at about $3 (§24.9). The calls are billed to the user's account and appear in `billing_daily_summary`; the tick
+   summary line carries `model_pages`, `model_calls`, `triage_images` and `model_cost`.
+
 **Rebuild one user's index.** `venv/bin/python scripts/infrastructure/drive_index_rebuild.py --user <USER_ID>` is a
 dry run; add `--apply` to mark the sync state `purging` under the user's lease (refused while a tick runs: retry in a
 few minutes). The next tick purges the index and re-onboards from epoch 1 (USER_DRIVE_INDEXING_RFC §12.2).

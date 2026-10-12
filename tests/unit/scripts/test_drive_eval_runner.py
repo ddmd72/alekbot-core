@@ -204,8 +204,10 @@ async def test_a_new_embedding_space_is_judged_against_the_old_bars(tmp_path):
 
 
 def test_cli_records_then_passes_with_the_production_wiring_faked(tmp_path, monkeypatch, capsys):
-    """The CLI builds GeminiEmbeddingAdapter and the place table; both are swapped here (no network)."""
+    """The CLI builds GeminiEmbeddingAdapter, the place table and the real content ports (§24.11); all three are
+    swapped here (no network, no model calls)."""
     from scripts.validation.drive_eval import __main__ as cli
+    from scripts.validation.drive_eval import content_wiring
     import src.adapters.gemini_embedding_adapter as gemini_mod
     import src.adapters.geo_place_table as geo_mod
     from src.domain.place_lookup import PlaceRow
@@ -216,7 +218,14 @@ def test_cli_records_then_passes_with_the_production_wiring_faked(tmp_path, monk
         def __init__(self, api_key):
             super().__init__()
 
+    content_builds = []
+
+    def _content():
+        content_builds.append(True)
+        return None, None
+
     monkeypatch.setattr(cli, "load_dotenv", lambda *a, **k: None)   # never read the developer's .env here
+    monkeypatch.setattr(content_wiring, "build_real_content", _content)
     monkeypatch.setenv("GEMINI_API_KEY", "offline")
     monkeypatch.setattr(gemini_mod, "GeminiEmbeddingAdapter", _Adapter)
     monkeypatch.setattr(geo_mod, "load_place_rows", lambda path=None: [PlaceRow(41.9, 12.5, "Rome", "Roma", "Italy")])
@@ -224,6 +233,7 @@ def test_cli_records_then_passes_with_the_production_wiring_faked(tmp_path, monk
     argv = ["--tree", str(tree), "--gold", str(gold), "--bars", str(bars), "--report", str(report)]
     assert cli.main(argv + ["--record"]) == EXIT_OK
     assert cli.main(argv) == EXIT_OK and "verdict: pass" in capsys.readouterr().out
+    assert len(content_builds) == 2   # every run, record or compare, builds the content ports
 
     from scripts.validation.drive_eval import runner
     from src.domain.drive_search import DriveSearchResult

@@ -2,9 +2,13 @@
 Eval runner: index the fixture with the real tick, then run every gold case through the real search.
 
 Production pieces: DriveIndexingService, DriveSearchService, InMemoryDriveIndexRepository (the second
-DriveIndexRepository implementation), the injected embeddings and place lookup. Harness pieces: the
-fixture drive, a queue that only records continuations (the runner itself plays the queue by ticking
-again), a user store with indexing on, and a clock that moves one minute per tick.
+DriveIndexRepository implementation), the injected embeddings and place lookup, and from Slice 2+4 the injected
+extractors (parser and reader) and image triage. Harness pieces: the fixture drive, a queue that only records
+continuations (the runner itself plays the queue by ticking again), a user store with indexing on, and a clock that
+moves one minute per tick.
+
+G1 cases score the paths of the top K cards; G2 cases (§24.11) also need their expected substring in the window
+of the card that holds the path. Requests are built by production's `request_from_fields` (R13).
 """
 from __future__ import annotations
 
@@ -16,7 +20,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Union
 
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.domain.drive_index_params import K
@@ -24,13 +28,17 @@ from src.domain.drive_index_planner import PlaceOf
 from src.domain.drive_search import DriveSearchRequest, request_from_fields, require_search_terms
 from src.domain.user import UserBotConfig, UserProfile
 from src.domain.user_drive import parse_drive_ref
+from src.ports.content_extractor_port import ContentExtractorPort
+from src.ports.drive_index_repository import DriveIndexRepository
 from src.ports.embedding_service import EmbeddingService
+from src.ports.image_triage_port import ImageTriagePort
 from src.services.drive_indexing_service import DriveIndexingService
 from src.services.drive_search_service import DriveSearchService
 
 from .fixture_drive import FixtureDrive
 from .metrics import (
-    CASE_TYPES, CaseOutcome, bar_mismatch, case_hit, lost_cases, make_bars, recall, regressions,
+    CASE_TYPES, CaseOutcome, bar_mismatch, case_hit, expected_substrings, lost_cases, make_bars, recall, regressions,
+    substring_hit,
 )
 
 EVAL_USER = "eval-user"
@@ -38,6 +46,9 @@ EVAL_START = datetime(2026, 10, 11, 12, 0, tzinfo=timezone.utc)
 MAX_TICKS = 400
 MAX_ERRORS = 3
 MAX_THROTTLED = 6     # consecutive throttled ticks; the service's backoff makes that about half an hour of its backoff (60+120+240+480+960 s)
+
+GOALS = frozenset({"G1", "G2"})
+WINDOW_REPORT_CHARS = 400
 
 EXIT_OK = 0
 EXIT_REGRESSION = 1
@@ -85,7 +96,7 @@ class _EnabledUsers:
 
 @dataclass
 class IndexOutcome:
-    repo: InMemoryDriveIndexRepository
+    repo: DriveIndexRepository
     ticks: int
     statuses: Dict[str, int]
     summary: Dict[str, int]
@@ -102,6 +113,41 @@ class EvalRun:
 
 def sha256_of(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def gold_paths(gold: Union[Path, Sequence[Path]]) -> List[Path]:
+    return [gold] if isinstance(gold, Path) else list(gold)
+
+
+def gold_sha256(paths: Sequence[Path]) -> str:
+    """One file: its own SHA-256 (as Slice 1's bars pinned it); several: one hash over all of them, in order."""
+    if len(paths) == 1:
+        return sha256_of(paths[0])
+    digest = hashlib.sha256()
+    for path in paths:
+        digest.update(path.name.encode("utf-8") + b"\0" + path.read_bytes() + b"\0")
+    return digest.hexdigest()
+
+
+def load_gold(paths: Sequence[Path]) -> List[Dict[str, Any]]:
+    gold: List[Dict[str, Any]] = []
+    for path in paths:
+        gold.extend(json.loads(path.read_text(encoding="utf-8")))
+    return gold
+
+
+def _substring_problems(case: Dict[str, Any]) -> List[str]:
+    cid, wanted = case.get("id"), case.get("expected_substring")
+    if case.get("goal", "G1") not in GOALS:
+        return [f"{cid}: goal must be one of {sorted(GOALS)}"]
+    if wanted is None:
+        return [f"{cid}: a G2 case needs expected_substring"] if case.get("goal") == "G2" else []
+    if isinstance(wanted, str):
+        return [] if wanted.strip() else [f"{cid}: expected_substring is empty"]
+    if isinstance(wanted, dict) and wanted and all(isinstance(v, str) and v.strip() for v in wanted.values()):
+        stray = sorted(set(wanted) - set(case.get("expected_paths", [])))
+        return [f"{cid}: expected_substring names {stray}, not expected paths"] if stray else []
+    return [f"{cid}: expected_substring must be a string or a {{path: string}} map"]
 
 
 def validate_gold(gold: Sequence[Dict[str, Any]], paths: Sequence[str], k: int = K) -> None:
@@ -127,6 +173,9 @@ def validate_gold(gold: Sequence[Dict[str, Any]], paths: Sequence[str], k: int =
                 problems.append(f"{cid}: min_hits must be an integer in 1..{most - 1} (fewer than its K hits)")
         if "known_hard" in case and not (isinstance(case["known_hard"], str) and case["known_hard"].strip()):
             problems.append(f"{cid}: known_hard must say why the case is hard")
+        if "ocr" in case and not isinstance(case["ocr"], bool):
+            problems.append(f"{cid}: ocr must be true or false")
+        problems += _substring_problems(case)
         try:
             request_for(case)   # what production would refuse (an unknown kind, reversed dates) is a gold bug
         except ValueError as exc:
@@ -135,20 +184,30 @@ def validate_gold(gold: Sequence[Dict[str, Any]], paths: Sequence[str], k: int =
         raise EvalError("malformed gold file: " + "; ".join(problems))
 
 
-async def index_fixture(drive: FixtureDrive, repo: InMemoryDriveIndexRepository, embeddings: EmbeddingService,
+async def index_fixture(drive: FixtureDrive, repo: DriveIndexRepository, embeddings: EmbeddingService,
                         place_of: PlaceOf, embedding_space: str, clock: EvalClock, *,
                         max_ticks: int = MAX_TICKS, throttle_pause_s: float = 30.0,
-                        monotonic: Callable[[], float] = time.monotonic) -> IndexOutcome:
-    """Tick until no continuation is pending, as the drive queue would."""
+                        monotonic: Callable[[], float] = time.monotonic,
+                        extractors: Optional[Mapping[str, ContentExtractorPort]] = None,
+                        triage: Optional[ImageTriagePort] = None,
+                        user_id: str = EVAL_USER, users: Optional[Any] = None) -> IndexOutcome:
+    """Tick until no continuation is pending, as the drive queue would. `extractors` and `triage` are the content
+    ports the indexer service is built with (parser and reader, §24.2); the CLI passes the real ones. `user_id` and
+    `users` let the live check index under its synthetic user."""
     queue = _RecordingQueue()
-    service = DriveIndexingService(drive, repo, embeddings, queue, _EnabledUsers(),
-                                   place_of, embedding_space, clock=clock, monotonic=monotonic)
+    content: Dict[str, Any] = {}
+    if extractors is not None:
+        content["extractors"] = extractors
+    if triage is not None:
+        content["triage"] = triage
+    service = DriveIndexingService(drive, repo, embeddings, queue, users or _EnabledUsers(),
+                                   place_of, embedding_space, clock=clock, monotonic=monotonic, **content)
     statuses: Counter[str] = Counter()
     summary: Counter[str] = Counter()
     errors = 0
     throttled = 0
     for tick in range(1, max_ticks + 1):
-        result = await service.tick(EVAL_USER)
+        result = await service.tick(user_id)
         statuses[result.status] += 1
         summary.update(result.summary)
         if result.status == "error":
@@ -164,11 +223,11 @@ async def index_fixture(drive: FixtureDrive, repo: InMemoryDriveIndexRepository,
             await asyncio.sleep(max(throttle_pause_s, queued))
         else:
             throttled = 0
-        state = await repo.get_sync_state(EVAL_USER)
+        state = await repo.get_sync_state(user_id)
         if state is None:
             raise EvalError(f"tick {tick} left no sync state (status {result.status})")
         if state.continuation_enqueued_at is None and state.round_complete:
-            records = await repo.count_by_state(EVAL_USER)
+            records = await repo.count_by_state(user_id)
             return IndexOutcome(repo, tick, dict(statuses), dict(summary), records)
         clock.advance(60)
     raise EvalError(f"the index did not settle in {max_ticks} ticks")
@@ -189,6 +248,20 @@ def _card_paths(card: Any, drive: FixtureDrive) -> List[str]:
     return [own] + [str(p).strip("/") for p in getattr(card, "also_at", ()) or ()]
 
 
+def _windows(cards: Sequence[Any], drive: FixtureDrive) -> Dict[str, str]:
+    """{path: the content window its card showed}: a collapsed duplicate shows its window for every copy."""
+    out: Dict[str, str] = {}
+    for card in cards:
+        window = str(getattr(card, "window", "") or "")
+        for path in _card_paths(card, drive):
+            out.setdefault(path, window)
+    return out
+
+
+def case_labels(case: Dict[str, Any]) -> tuple:
+    return (case.get("goal", "G1"),) + (("ocr",) if case.get("ocr") else ())
+
+
 async def run_cases(search: DriveSearchService, drive: FixtureDrive, gold: Sequence[Dict[str, Any]],
                     k: int = K) -> EvalRun:
     run = EvalRun()
@@ -204,41 +277,51 @@ async def run_cases(search: DriveSearchService, drive: FixtureDrive, gold: Seque
             row.update(status=f"exception: {type(exc).__name__}: {exc}", top=[], hit=False)
         else:
             run.refused += result.status != "ok"
-            top = [_card_paths(card, drive) for card in list(result.cards)[:case_k]]
+            cards = list(result.cards)[:case_k]
+            top = [_card_paths(card, drive) for card in cards]
             covered = {path for group in top for path in group}
             hit = result.status == "ok" and case_hit(case["expected_paths"], covered, case_k, case.get("min_hits"))
             missing = [p for p in case["expected_paths"] if p not in covered]
             row.update(status=result.status, k=case_k, top=top, hit=hit, missing=missing)
-        if "min_hits" in case:
-            row["min_hits"] = case["min_hits"]
-        if "known_hard" in case:
-            row["known_hard"] = case["known_hard"]
+            wanted = expected_substrings(case["expected_paths"], case.get("expected_substring"))
+            if wanted:
+                windows = _windows(cards, drive)
+                found = substring_hit(wanted, windows)
+                row.update(path_hit=hit, substring_hit=found, hit=hit and found,
+                           windows={p: windows.get(p, "")[:WINDOW_REPORT_CHARS] for p in wanted})
+        for key in ("min_hits", "known_hard", "ocr", "goal"):
+            if key in case:
+                row[key] = case[key]
         run.cases.append(row)
-        run.outcomes.append(CaseOutcome(case["id"], case["case"], bool(row["hit"])))
+        run.outcomes.append(CaseOutcome(case["id"], case["case"], bool(row["hit"]), case_labels(case)))
     return run
 
 
-async def run_eval(tree_path: Path, gold_path: Path, bars_path: Path, report_path: Path, *,
+async def run_eval(tree_path: Path, gold_path: Union[Path, Sequence[Path]], bars_path: Path, report_path: Path, *,
                    embeddings: EmbeddingService, embedding_space: str, place_of: PlaceOf, record: bool,
-                   max_ticks: int = MAX_TICKS, throttle_pause_s: float = 30.0) -> Dict[str, Any]:
+                   max_ticks: int = MAX_TICKS, throttle_pause_s: float = 30.0,
+                   extractors: Optional[Mapping[str, ContentExtractorPort]] = None,
+                   triage: Optional[ImageTriagePort] = None) -> Dict[str, Any]:
     """Index, search, score, then record or compare. Returns the report (also written to report_path)."""
     drive = FixtureDrive.from_file(tree_path)
-    gold = json.loads(gold_path.read_text(encoding="utf-8"))
+    golds = gold_paths(gold_path)
+    gold = load_gold(golds)
     validate_gold(gold, drive.paths())
-    tree_sha, gold_sha = sha256_of(tree_path), sha256_of(gold_path)
+    tree_sha, gold_sha, files_sha = sha256_of(tree_path), gold_sha256(golds), drive.content_sha256()
     bars: Optional[Dict[str, Any]] = None
     if not record:
         if not bars_path.exists():
             raise EvalError(f"no bars at {bars_path}; run with --record first")
         bars = json.loads(bars_path.read_text(encoding="utf-8"))
         guarded_ids = [case["id"] for case in gold if "known_hard" not in case]
-        mismatch = bar_mismatch(bars, K, tree_sha, gold_sha, guarded_ids)
+        mismatch = bar_mismatch(bars, K, tree_sha, gold_sha, guarded_ids, files_sha)
         if mismatch:
             raise EvalError("; ".join(mismatch) + " — review the change, then run with --record")
     clock = EvalClock()
     repo = InMemoryDriveIndexRepository()
     indexed = await index_fixture(drive, repo, embeddings, place_of, embedding_space, clock,
-                                  max_ticks=max_ticks, throttle_pause_s=throttle_pause_s)
+                                  max_ticks=max_ticks, throttle_pause_s=throttle_pause_s,
+                                  extractors=extractors, triage=triage)
     if not indexed.records.get("carded"):
         raise EvalError("the index settled with no card; nothing to measure")
     search = DriveSearchService(repo, embeddings, _EnabledUsers(), drive, clock=clock,
@@ -251,9 +334,10 @@ async def run_eval(tree_path: Path, gold_path: Path, bars_path: Path, report_pat
     now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
     report: Dict[str, Any] = {
         "generated_at": now_iso, "embedding_space": embedding_space, "k": K,
-        "tree": str(tree_path), "gold": str(gold_path), "items": len(drive.paths()),
+        "tree": str(tree_path), "gold": [str(g) for g in golds], "items": len(drive.paths()),
         "index": {"ticks": indexed.ticks, "statuses": indexed.statuses, "summary": indexed.summary,
-                  "records": indexed.records},
+                  "records": indexed.records, "downloads": len(drive.downloads),
+                  "thumbnails": len(drive.thumbnail_calls)},
         "recall": table, "search_errors": run.errors, "refused": run.refused, "cases": run.cases,
         "known_hard": {o.case_id: o.hit for o in run.outcomes if o.case_id in hard},
     }
@@ -263,7 +347,7 @@ async def run_eval(tree_path: Path, gold_path: Path, bars_path: Path, report_pat
         report["verdict"] = "unrecordable"    # a case the service refused (e.g. a folder not found) is a gold bug
     elif record:
         bars_path.parent.mkdir(parents=True, exist_ok=True)
-        bars = make_bars(table, guarded, K, embedding_space, now_iso, tree_sha, gold_sha)
+        bars = make_bars(table, guarded, K, embedding_space, now_iso, tree_sha, gold_sha, files_sha)
         bars_path.write_text(json.dumps(bars, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         report["verdict"] = "recorded"
     else:

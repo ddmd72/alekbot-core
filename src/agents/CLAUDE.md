@@ -50,6 +50,19 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
 - EmailClassification — shared ServiceContainer singleton, called by EmailIndexingService (not agents);
   tool-calling triage, extracts fact sentences. OUTPUT_FORMAT exception: markdown-block extraction in
   `_parse_response()` (see inline comment).
+- DriveDocumentReader (`drive_reader`, ECO: Claude Haiku 5.5 by default, GPT by `agent_providers`; USER_DRIVE_INDEXING_RFC
+  §24.2–§24.4) and DriveImageTriage (`drive_triage`, ECO, same switch; §24.5) — the drive index's two model calls, on
+  the indexer service only. No manifest descriptor (`can_handle` false), no tools, no history, no biography: like
+  `EmailClassificationAgent` they are not routed to, and like the companion extractors they are built per call with
+  the user's own configuration by a runner in `composition/` (`DriveReaderRunner` implements `ContentExtractorPort`,
+  `DriveTriageRunner` implements `ImageTriagePort`; services/ cannot import agents/). The reader takes one PDF window
+  (`MODEL_PAGES_PER_CALL` pages) or one image rendition and returns verbatim text, plus on the first window a brief
+  (`doc_type`, one-line `description`, `doc_date` → `effective_date` per D13, `parties`, `amount`) in structured output
+  (`OUTPUT_FORMAT_DRIVE_READER`). Triage takes up to `TRIAGE_BATCH` thumbnails with the camera prior as text and
+  returns per image `text` or `photo` + a caption of at most ten words. A 429/5xx/timeout or a missing prompt raises
+  `DriveModelUnavailable` (model work waits, nothing else does, `decisions/drive_model_outage_defers_model_work.md`);
+  calls are billed to the user's account through the runner's quota service. Prompts are owner-uploaded Firestore
+  tokens; no fallback prompt.
 - DocPlanner (ASYNC, PERFORMANCE, intent `create_document`) — LLM → JSON layout spec →
   fire-and-forget delegate to DocGenerator → DeliveryItem("file_upload").
 - DocGenerator (internal, BALANCED, intent `generate_docx_code`) — LLM writes Node.js script →
@@ -97,12 +110,14 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   + 100 s wait inside the agent's 120 s timeout → success-shaped "still running, check with a listing"; a
   provider `TimeoutError` inside a mutation is a failure, not "still running". Delete/replace post a localised
   `notify_raw` receipt, or a "did not complete" notice if they fail after "still running" was answered. Vision only JPEG/PNG/GIF/WebP + PDF (HEIC refused). Refs persist via
-  `history_context["drive_context"]`. Eighth drive intent `search_files_in_drive` (SYNC, zero-LLM; Step 2 Slice 1,
-  USER_DRIVE_INDEXING_RFC §10.4): `DriveSearchService` over the opt-in index, finds files and folders by name, kind,
-  date, folder, photo facets and place (no file content yet). Context fields `drive_query`, `drive_folder`,
+  `history_context["drive_context"]`. Eighth drive intent `search_files_in_drive` (SYNC, zero-LLM; Step 2,
+  USER_DRIVE_INDEXING_RFC §10.4, §24.10): `DriveSearchService` over the opt-in index, finds files and folders by name,
+  kind, date, folder, photo facets and place, and since Slice 2+4 by content — a phrase, a number or an amount inside a
+  document, a scan or a screenshot; a content hit shows the window it matched. Context fields `drive_query`, `drive_folder`,
   `drive_kind`, `drive_date_from`, `drive_date_to` — names no other intent uses, because the delegate tool keeps the
   first description seen per field name. Search reads only `drive_query`, never the delegate's `query`; it takes
-  name words or a place or subject, no type words or dates. No name words plus a filter is filter-only; no name words
+  name words, a place or subject, or the content words to find, no type words or date filters (a date quoted from
+  inside a document may stay). No name words plus a filter is filter-only; no name words
   and no filter is refused with a correction (RFC Δ36). `drive_kind` is a format, an extension, a plural or a family
   (`spreadsheet`, `document` incl. PDF, `word`, `presentation`, `photo`; RFC Δ20), anything else is refused. A
   folder whose contents are not indexed (repository, generated, dense) says so and points to `list_files_in_drive`.
@@ -111,7 +126,8 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   results carry the reference-material reminder with the label unescaped) with a coverage envelope (`building`,
   `refreshing`, `index_as_of`, `reconnect_needed`); filters over a capped candidate set hedge instead of "no match".
   Indexing off → `disabled`, read uncached. A `drive:` ref prefetched by the coordinator for DocPlanner, PdfGenerator
-  or HtmlPageGenerator still arrives raw (wrapper in Slice 3, RFC Δ35).
+  or HtmlPageGenerator still arrives raw (wrapper in Slice 3, RFC Δ35). The results carry per-result facts; Smart's
+  standing drive guidance is the `drive_specialist` block of `PROTOCOL_AGENT_SELECTION` (D11).
 - Notes / Proactive Self-Reminders (PERFORMANCE, OpenAI, intent `manage_self_reminders`) — deferred
   instructions the system writes to itself that fire autonomously as new conversations. Two-field model:
   `text` (≤15-word label) + `instruction` (self-contained execution context). Tools: create/update/delete
