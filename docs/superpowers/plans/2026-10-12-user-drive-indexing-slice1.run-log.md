@@ -296,3 +296,14 @@ order, substitution handling, OIDC audience, `main.py` names) matches the code. 
 - Notes: a feed network failure shows `last_error=INTERNAL` (as before R3; changing it alters Task 36's Cabinet text);
   download/upload chunk requests and the `graph_auth` token POST keep aiohttp's 300 s default (pre-existing); a 410
   restart cursor carries no binding (narrow gap, accepted).
+
+### Fix R4 (lease) — done
+- Commits `a2ddf04` (fix) and `9ec49f9` (reviewer-approved edit of one pre-existing test). `make check` (reviewer):
+  7671 passed, 3 skipped, 1 xfailed.
+- `save_sync_state` no longer writes `lease_owner`/`lease_until` in either repository (`STATE_FIELDS` excludes them;
+  the create path of `acquire_lease` writes them; in-memory keeps the stored lease). A stale tick can no longer
+  release the new holder's lease. Create / take / renew / release / purge paths verified.
+- **Reviewer decision on an existing test:** `test_firestore_drive_index_repo_serialization.py::TestStateSerialization
+  ::test_doc_excludes_fanout_flags` asserted `set(state_to_doc(...)) == set(STATE_FIELDS)`, i.e. that what is
+  serialised equals what a save writes; F2 separates them on purpose. Edited to two exact (stronger) pins.
+- OWNER part (fencing a stale tick's other writes) not done.
