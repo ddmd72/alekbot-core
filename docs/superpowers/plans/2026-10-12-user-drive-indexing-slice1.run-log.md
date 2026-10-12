@@ -648,3 +648,11 @@ scratch path (nothing recorded or committed): index settled in 1 tick, 2 481 car
   run). Two MINOR wording fixes queued for the final cleanup ("every file is metadata_only" — reason may be a
   never-download rule; a failed token refresh backs off a flat 60 s, not the provider's delay — same root as owner
   item 8, `graph_auth`). Pre-existing: CLAUDE.md's `WorkerHandler` list lacks `video_generation_polling`.
+- **Task 45 — done:** `04a48f9` + `fdadf64`. Round 1 CHANGES REQUIRED: **F1 MAJOR** — the doc paused the
+  `alek-bot-dev-start-drive-sync` job "until the branch is merged" but never resumed it, and a deploy does not resume
+  a paused job (`describe && update http || create`) → the fan-out (and with it the staleness alert) would stay off
+  silently; F2 `roles/cloudtasks.queueAdmin` grant only in prose; F3 `.env.example` lacked `INDEXER_URL_DEV` (added,
+  empty); F4 stale "never runs an agent". Round 2 APPROVED, `make check` 8113 passed. **OWNER (F5, pre-existing):**
+  BOOTSTRAP §4 credits `make deploy-indexes` with vector indexes; only the drive's vector script is named.
+
+**All plan Tasks 0–46 are done.** Final whole-branch review running.
