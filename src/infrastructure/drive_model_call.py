@@ -14,6 +14,7 @@ Two outcomes, decided by what the failure says about the input:
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 
 from ..domain.drive_extraction import DriveModelUnavailable
 from ..domain.exceptions import LLMClientError, LLMError
@@ -29,7 +30,10 @@ _REQUIRED_SECTIONS = ("cognitive_process {", "output_format {")
 
 
 class DriveModelCallFailed(Exception):
-    """The provider will not read this input, or its answer stayed unusable: a per-file failure (§24.8)."""
+    """The provider will not read this input, or its answer stayed unusable: a per-file failure (§24.8). The agent
+    sets the calls it made and their cost (its ledger) before raising it."""
+    model_calls: int = 0
+    model_cost: float = 0.0
 
 
 def classify_model_error(exc: BaseException, agent_type: str) -> Exception:
@@ -47,6 +51,20 @@ def classify_model_error(exc: BaseException, agent_type: str) -> Exception:
     else:
         logger.error(f"[{agent_type}] unexpected failure ({type(exc).__name__}): {exc}", exc_info=exc)
     return DriveModelUnavailable(f"{type(exc).__name__}: {str(exc)[:200]}")
+
+
+@dataclass
+class CallCounter:
+    """LLM calls one agent method made, parse retries and correction turns included (§24.9 tick summary)."""
+    calls: int = 0
+
+
+def with_usage(exc: Exception, counter: CallCounter, cost: float) -> Exception:
+    """`exc` (DriveModelCallFailed or DriveModelUnavailable) with the calls made and their cost from the ledger, so
+    the runner counts what a failed read or batch spent."""
+    setattr(exc, "model_calls", counter.calls)
+    setattr(exc, "model_cost", cost)
+    return exc
 
 
 async def build_drive_prompt(prompt_builder: PromptBuilderPort, agent_type: str) -> str:

@@ -4,10 +4,11 @@ DriveDocumentReaderAgent — reads one PDF window or one image for the drive ind
 
 Public interface:
     AGENT_TYPE = "drive_reader"
-    ReaderReply(text, brief, output_limited, cost)
+    ReaderReply(text, brief, output_limited, cost, calls)
     DriveDocumentReaderAgent(config, execution_context, prompt_builder, thinking=None)
         .read(data=, mime_type=, file_name=, first_window=, account_id=) -> ReaderReply
-            raises DriveModelCallFailed (this input) or DriveModelUnavailable (the model, now)
+            raises DriveModelCallFailed (this input) or DriveModelUnavailable (the model, now), each carrying the
+            calls made and their cost (`model_calls`, `model_cost`, from the ledger)
 
 The file goes in as bytes; out comes the verbatim text and, for the first window only, the brief. Structured output
 per the standard (src/adapters/CLAUDE.md): OUTPUT_FORMAT_DRIVE_READER token + response_schema +
@@ -35,7 +36,9 @@ from ..ports.llm_port import AgentExecutionContext, LLMRequest, Message, Message
 from ..ports.prompt_builder_port import PromptBuilderPort
 from ..utils.logger import logger
 from .base_agent import BaseAgent
-from ..infrastructure.drive_model_call import DriveModelCallFailed, build_drive_prompt, classify_model_error
+from ..infrastructure.drive_model_call import (
+    CallCounter, DriveModelCallFailed, build_drive_prompt, classify_model_error, with_usage,
+)
 
 AGENT_TYPE = "drive_reader"
 
@@ -93,6 +96,7 @@ class ReaderReply:
     brief: Optional[DocumentBrief] = None
     output_limited: bool = False      # stopped at the output limit: the runner splits the window (§24.3)
     cost: float = 0.0                 # USD, already billed to the account
+    calls: int = 1                    # LLM calls made, the parse retry included
 
 
 class DriveDocumentReaderAgent(BaseAgent):
@@ -119,27 +123,30 @@ class DriveDocumentReaderAgent(BaseAgent):
     async def read(self, *, data: bytes, mime_type: str, file_name: str, first_window: bool,
                    account_id: str) -> ReaderReply:
         """One call, billed to `account_id` as its own execution (§24.9)."""
+        counter = CallCounter()
         with self._execution_billing_scope(account_id) as ledger:
             try:
-                reply = await self._read(data, mime_type, file_name, first_window)
+                reply = await self._read(data, mime_type, file_name, first_window, counter)
             except Exception as exc:
-                mapped = classify_model_error(exc, AGENT_TYPE)
+                mapped = with_usage(classify_model_error(exc, AGENT_TYPE), counter, ledger.cost())
                 if mapped is exc:
                     raise
                 raise mapped from exc
             finally:
                 await self._flush_billing()
-            return replace(reply, cost=ledger.cost())
+            return replace(reply, cost=ledger.cost(), calls=counter.calls)
 
     # -- implementation -----------------------------------------------------------------------------------------
 
-    async def _read(self, data: bytes, mime_type: str, file_name: str, first_window: bool) -> ReaderReply:
+    async def _read(self, data: bytes, mime_type: str, file_name: str, first_window: bool,
+                    counter: CallCounter) -> ReaderReply:
         system = await self._system_prompt()
         file_part = MessagePart(file_data={"base64": base64.b64encode(data).decode("ascii"), "mime_type": mime_type,
                                            "name": file_name})
         history: List[Message] = [Message(role="user", parts=[
             file_part, MessagePart(text=_TASK_FIRST if first_window else _TASK_LATER)])]
         for attempt in range(DRIVE_READER.max_parse_retries + 1):
+            counter.calls += 1
             response = await self._call_llm(LLMRequest(
                 model_name=self._model_name,
                 system_instruction=system,
