@@ -12,12 +12,16 @@ work inside the App Folder (empty, then 401 from Substrate Search; RFC §7 A6).
 
 Change capture for the index (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §4, §7.2): `get_changes`
 pages the App Folder's delta feed, which spike S0a confirmed under Files.ReadWrite.AppFolder.
-The cursor is this module's own JSON (`{"url", "full"}`), opaque to every caller.
+The cursor is this module's own JSON (`{"url", "full", "drive_id", "root_id"}`), opaque to every
+caller. A page's cursor names the drive and App Folder that served it: a cursor from another drive (a
+reconnect to another account) or from a re-created App Folder is never followed, the enumeration
+restarts instead (a cursor without the binding, written before it existed, is followed as before).
 
 Errors (§4): a rejected refresh is DriveReauthRequired (a DriveNotConnectedError); a 401 that
 survives a successful forced refresh is DriveAccessDenied for that operation, never a lost grant
 (spike A6); 429/503 still failing after the retries here is DriveThrottled; a 410 on the change
-feed is DriveResyncRequired.
+feed is DriveResyncRequired. A transport failure (any aiohttp.ClientError) or a call that outlives
+GRAPH_CALL_TIMEOUT_S is DriveThrottled too: systemic for the tick, a plain failure for Step 1 callers.
 """
 from __future__ import annotations
 
@@ -63,6 +67,9 @@ _UNKNOWN_PARENT = "…"
 # Provider-transport default (also used for a failed token refresh): a Retry-After that is missing or
 # an HTTP date. The tick continues after it (Part A keeps its own default for LLM errors).
 _THROTTLE_HINT_S = 60.0
+# Bound on one Graph call (aiohttp's default is 300 s), well under TICK_DEADLINE_S: a hanging call
+# ends as DriveThrottled instead of holding the user's tick (premise_audit P8).
+GRAPH_CALL_TIMEOUT_S = 60.0
 # The App Folder item. Its parentReference.driveId is the drive id; the OAuth callback
 # (src/web/oauth_app.py, _read_drive_id) reads the same field of the same call, so the two compare equal.
 _APPROOT = "/me/drive/special/approot"
@@ -113,8 +120,15 @@ def _is_graph_url(url: Optional[str]) -> bool:
     return bool(url) and (str(url).startswith("/") or str(url).startswith(_GRAPH + "/"))
 
 
-def _encode_cursor(url: str, full: bool) -> str:
-    return json.dumps({"url": url, "full": full}, separators=(",", ":"))
+def _encode_cursor(url: str, full: bool, drive_id: Optional[str] = None, root_id: Optional[str] = None) -> str:
+    """A restart cursor carries no binding (its URL is the current grant's own feed); a page's cursor
+    carries the drive and App Folder that served the page."""
+    data: Dict[str, Any] = {"url": url, "full": full}
+    if drive_id is not None:
+        data["drive_id"] = drive_id
+    if root_id is not None:
+        data["root_id"] = root_id
+    return json.dumps(data, separators=(",", ":"))
 
 
 def _parse_time(value: Any) -> Optional[datetime]:
@@ -279,13 +293,23 @@ class OneDriveAdapter(UserDrivePort):
     async def get_changes(self, user_id: str, cursor: Optional[str]) -> DriveChanges:
         """One delta page. None starts a full enumeration of the App Folder; every page of an
         enumeration (onboarding or after a 410) reports full_enumeration, a deltaLink round does not."""
-        url, full = self._decode_cursor(cursor)
+        url, full, bound_drive, bound_root = self._decode_cursor(cursor)
         async with aiohttp.ClientSession() as s:
             # Read fresh, never from the 5-minute cache, so the root and the page always come from
             # the same token: a cached root with a new grant's page would give a wrong root_item_id.
             # A reconnect itself is noticed by connection() (it drops both caches). One GET per page.
             self._root_cache.pop(user_id, None)
             root = await self._root_raw(s, user_id)
+            drive_id = str((root.get("parentReference") or {}).get("driveId", ""))
+            root_id = str(root.get("id", ""))
+            if (bound_drive and drive_id and bound_drive != drive_id) or \
+                    (bound_root and root_id and bound_root != root_id):
+                # Never follow it: Graph may refuse it with something other than 410, which would fail
+                # every tick before the per-page drive check runs (retro F1). The restart page carries
+                # the fresh drive id, so the tick sees the switch.
+                logger.warning(f"Drive change cursor belongs to another drive or App Folder for user "
+                               f"{user_id[:8]}; restarting enumeration")
+                raise DriveResyncRequired(_encode_cursor(_DELTA_START, True))
             try:
                 page = await self._call(s, user_id, "GET", url)
             except _CursorGone as exc:
@@ -293,9 +317,9 @@ class OneDriveAdapter(UserDrivePort):
                 raise DriveResyncRequired(_encode_cursor(str(restart), True)) from exc
         next_link, delta_link = page.get("@odata.nextLink"), page.get("@odata.deltaLink")
         if next_link:
-            new_cursor, complete = _encode_cursor(str(next_link), full), False
+            new_cursor, complete = _encode_cursor(str(next_link), full, drive_id, root_id), False
         elif delta_link:
-            new_cursor, complete = _encode_cursor(str(delta_link), False), True
+            new_cursor, complete = _encode_cursor(str(delta_link), False, drive_id, root_id), True
         else:
             logger.error("Drive delta page carried neither a nextLink nor a deltaLink")
             raise ValueError("Drive delta page without a continuation link")
@@ -304,8 +328,8 @@ class OneDriveAdapter(UserDrivePort):
             cursor=new_cursor,
             complete=complete,
             full_enumeration=full,
-            drive_id=str((root.get("parentReference") or {}).get("driveId", "")),
-            root_item_id=str(root.get("id", "")),
+            drive_id=drive_id,
+            root_item_id=root_id,
         )
 
     async def get_change(self, user_id: str, item_id: str) -> DriveChange:
@@ -358,20 +382,23 @@ class OneDriveAdapter(UserDrivePort):
         return True
 
     @staticmethod
-    def _decode_cursor(cursor: Optional[str]) -> Tuple[str, bool]:
-        """(url, full). A cursor this module cannot read restarts as a full enumeration."""
+    def _decode_cursor(cursor: Optional[str]) -> Tuple[str, bool, Optional[str], Optional[str]]:
+        """(url, full, drive_id, root_id); a binding absent from the cursor is None (unknown). A cursor
+        this module cannot read restarts as a full enumeration."""
         if cursor is None:
-            return _DELTA_START, True
+            return _DELTA_START, True, None, None
         try:
             data = json.loads(cursor)
             url, full = data["url"], data["full"]
-        except (ValueError, TypeError, KeyError) as exc:
+            drive_id, root_id = data.get("drive_id"), data.get("root_id")
+        except (ValueError, TypeError, KeyError, AttributeError) as exc:
             logger.warning(f"Drive change cursor unreadable ({type(exc).__name__}); restarting enumeration")
             raise DriveResyncRequired(_encode_cursor(_DELTA_START, True)) from exc
-        if not isinstance(url, str) or not isinstance(full, bool) or not _is_graph_url(url):
+        if not isinstance(url, str) or not isinstance(full, bool) or not _is_graph_url(url) \
+                or not isinstance(drive_id, (str, type(None))) or not isinstance(root_id, (str, type(None))):
             logger.warning("Drive change cursor malformed or outside Graph; restarting enumeration")
             raise DriveResyncRequired(_encode_cursor(_DELTA_START, True))
-        return url, full
+        return url, full, drive_id, root_id
 
     # -- transport ----------------------------------------------------------
 
@@ -381,10 +408,10 @@ class OneDriveAdapter(UserDrivePort):
         except GraphReauthRequired as exc:
             logger.warning(f"Drive token refresh rejected for user {user_id[:8]}; reconnect needed")
             raise DriveReauthRequired("Drive access expired; reconnect needed") from exc
-        except (ValueError, aiohttp.ClientError) as exc:
-            # The token endpoint failed (5xx, network) but did not reject the grant: systemic, so the
-            # tick ends and retries later (§8.2), never charged to the item being read.
-            logger.warning(f"Drive token refresh failed for user {user_id[:8]}: {exc}")
+        except (ValueError, aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            # The token endpoint failed (5xx, network, timeout) but did not reject the grant: systemic,
+            # so the tick ends and retries later (§8.2), never charged to the item being read.
+            logger.warning(f"Drive token refresh failed for user {user_id[:8]}: {type(exc).__name__} {exc}")
             raise DriveThrottled(_THROTTLE_HINT_S) from exc
         if headers is None:
             raise DriveNotConnectedError(f"No drive credentials for user {user_id[:8]}")
@@ -400,48 +427,55 @@ class OneDriveAdapter(UserDrivePort):
             headers = await self._headers(user_id)
             if content_type:
                 headers = {**headers, "Content-Type": content_type}
-            kwargs: Dict[str, Any] = {"headers": headers}
+            kwargs: Dict[str, Any] = {"headers": headers,
+                                      "timeout": aiohttp.ClientTimeout(total=GRAPH_CALL_TIMEOUT_S)}
             if json is not None:
                 kwargs["json"] = json
             if data is not None:
                 kwargs["data"] = data
-            async with getattr(s, method.lower())(url, **kwargs) as resp:
-                status = resp.status
-                if status == 401:
-                    if refreshed:
-                        # The refresh succeeded, so the grant is alive: this operation is refused
-                        # (spike A6: the App Folder answers 401 to calls it does not support).
-                        logger.warning(f"Drive {method} {_where(path)}: 401 after a successful token refresh")
-                        raise DriveAccessDenied(f"Drive {method} refused after a token refresh")
-                    refreshed = True
-                    # The token provider dedupes forced refreshes itself; no invalidate here.
-                    await self._headers(user_id, force_refresh=True)  # next attempt uses the fresh token
-                    continue
-                if status in (429, 503):
-                    if throttled < _RETRIES:
-                        delay = _retry_after(resp.headers.get("Retry-After"), throttled)
-                        throttled += 1
-                        logger.warning(f"Drive {method} throttled ({status}); retrying in {delay:.0f}s")
-                        await asyncio.sleep(delay)
+            try:
+                async with getattr(s, method.lower())(url, **kwargs) as resp:
+                    status = resp.status
+                    if status == 401:
+                        if refreshed:
+                            # The refresh succeeded, so the grant is alive: this operation is refused
+                            # (spike A6: the App Folder answers 401 to calls it does not support).
+                            logger.warning(f"Drive {method} {_where(path)}: 401 after a successful token refresh")
+                            raise DriveAccessDenied(f"Drive {method} refused after a token refresh")
+                        refreshed = True
+                        # The token provider dedupes forced refreshes itself; no invalidate here.
+                        await self._headers(user_id, force_refresh=True)  # next attempt uses the fresh token
                         continue
-                    hint = _retry_after_hint(resp.headers.get("Retry-After"))
-                    logger.warning(f"Drive {method} {_where(path)} still throttled ({status}) after "
-                                   f"{_RETRIES} retries; retry after {hint:.0f}s")
-                    raise DriveThrottled(hint)
-                if status == 410:
-                    logger.warning(f"Drive {method} {_where(path)}: 410 Gone (change cursor expired)")
-                    raise _CursorGone(resp.headers.get("Location"))
-                if status == 404:
-                    raise DriveItemNotFoundError(f"Drive item not found: {_where(path)}")
-                if status == 409:
-                    raise DriveNameConflictError(f"Drive name taken: {path}")
-                if status == 204:
-                    return {}
-                if not resp.ok:
-                    body = await resp.text()
-                    logger.error(f"Drive {method} {_where(path)} failed ({status}): {body[:300]}")
-                    raise ValueError(f"Drive {method} failed ({status})")
-                return dict(await resp.json())
+                    if status in (429, 503):
+                        if throttled < _RETRIES:
+                            delay = _retry_after(resp.headers.get("Retry-After"), throttled)
+                            throttled += 1
+                            logger.warning(f"Drive {method} throttled ({status}); retrying in {delay:.0f}s")
+                            await asyncio.sleep(delay)
+                            continue
+                        hint = _retry_after_hint(resp.headers.get("Retry-After"))
+                        logger.warning(f"Drive {method} {_where(path)} still throttled ({status}) after "
+                                       f"{_RETRIES} retries; retry after {hint:.0f}s")
+                        raise DriveThrottled(hint)
+                    if status == 410:
+                        logger.warning(f"Drive {method} {_where(path)}: 410 Gone (change cursor expired)")
+                        raise _CursorGone(resp.headers.get("Location"))
+                    if status == 404:
+                        raise DriveItemNotFoundError(f"Drive item not found: {_where(path)}")
+                    if status == 409:
+                        raise DriveNameConflictError(f"Drive name taken: {path}")
+                    if status == 204:
+                        return {}
+                    if not resp.ok:
+                        body = await resp.text()
+                        logger.error(f"Drive {method} {_where(path)} failed ({status}): {body[:300]}")
+                        raise ValueError(f"Drive {method} failed ({status})")
+                    return dict(await resp.json())
+            except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+                # A transport failure or a call past GRAPH_CALL_TIMEOUT_S: systemic, so the tick ends and
+                # retries later (§8.2), never charged to the item; a Step 1 call reports a failure.
+                logger.warning(f"Drive {method} {_where(path)} transport failure: {type(exc).__name__}")
+                raise DriveThrottled(_THROTTLE_HINT_S) from exc
 
     async def _session_upload(self, s: aiohttp.ClientSession, user_id: str, path: str,
                               body: Dict[str, Any], data: bytes) -> Dict[str, Any]:
