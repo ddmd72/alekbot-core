@@ -74,10 +74,20 @@ class TestReplanKeepsSeenEpoch:
         assert plan.upsert.scope is Scope.NORMAL and plan.upsert.seen_epoch == 1
 
     def test_unchanged_replan_while_enumerating_does_not_stamp(self):
-        stored = folder_rec("f", "Docs", seen_epoch=1)
+        # the stored record is what a plan builds, so the re-plan takes the unchanged branch, not _build
+        seen = DriveChange(item_id="f", name="Docs", parent_id=ROOT, is_folder=True, child_count=3)
+        stored = plan_observation(seen, None, None, None, ctx(epoch=1, phase=EpochPhase.ENUMERATING)).upsert
+        assert stored.seen_epoch == 1
         plan = plan_observation(change_from_record(stored), stored, None, None,
                                 ctx(epoch=2, phase=EpochPhase.ENUMERATING), observed=False)
-        assert plan.upsert is None or plan.upsert.seen_epoch == 1
+        assert plan.upsert is None, "a re-plan of an unchanged record stamped it as seen"
+
+    def test_unchanged_observation_while_enumerating_still_stamps(self):
+        seen = DriveChange(item_id="f", name="Docs", parent_id=ROOT, is_folder=True, child_count=3)
+        stored = plan_observation(seen, None, None, None, ctx(epoch=1, phase=EpochPhase.ENUMERATING)).upsert
+        plan = plan_observation(change_from_record(stored), stored, None, None,
+                                ctx(epoch=2, phase=EpochPhase.ENUMERATING))
+        assert plan.upsert == replace(stored, seen_epoch=2)   # only the stamp changed: the unchanged branch
 
     def test_observation_still_stamps(self):
         parent = folder_rec("p", "Docs", seen_epoch=2)

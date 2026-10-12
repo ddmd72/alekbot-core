@@ -1,7 +1,9 @@
 """Tick-level twins of the retrospective review fixes of Part A (retro_domain.md F1, F10)."""
+from dataclasses import replace
+
 import pytest
 
-from src.domain.drive_index import DriveChange, DriveIndexRecord, Priority, RecordState, Scope
+from src.domain.drive_index import DriveChange, DriveIndexRecord, Priority, Reason, RecordState, Scope
 from src.services import drive_indexing_service as svc_mod
 
 from .test_drive_indexing_service import World
@@ -51,3 +53,44 @@ class TestSweepSpanningTicks:
         assert w.rec("zz-ghost") is None, "a record gone from the drive survived the sweep"
         assert all(w.rec(f"g{i}") is None for i in range(3))
         assert w.rec(docs) is not None
+
+    @staticmethod
+    def _stale_fillers(w, docs):
+        for i in range(3):   # stale records ahead of the ghost, so the sweep spans ticks
+            w.repo.records[("u", f"g{i}")] = DriveIndexRecord(
+                user_id="u", item_id=f"g{i}", name=f"g{i}.bin", parent_id=docs, kind="other",
+                scope=Scope.NORMAL, state=RecordState.METADATA_ONLY, policy_version=1, seen_epoch=1)
+
+    async def test_ghost_upgraded_mid_sweep_is_still_swept(self, monkeypatch):
+        monkeypatch.setattr(svc_mod, "CASCADE_OPS_PER_TICK", 2)
+        w = World()
+        docs = w.drive.add("Docs", folder=True)
+        w.drive.add("a.pdf", parent=docs)
+        await w.settle()
+        self._stale_fillers(w, docs)
+        w.repo.records[("u", "zz-ghost")] = DriveIndexRecord(
+            user_id="u", item_id="zz-ghost", name="ghost.pdf", parent_id=docs, kind="pdf",
+            scope=Scope.NORMAL, state=RecordState.METADATA_ONLY, reason=Reason.KIND_NOT_ADMITTED,
+            policy_version=0, seen_epoch=1)
+        state = await w.repo.get_sync_state("u")
+        await w.repo.save_sync_state(replace(state, applied_versions={"policy": 0, "card": 1, "geo_table": 1}))
+        w.drive.resync_next = True   # 410: epoch 2 enumerates the drive, the ghost is not in it
+        await w.settle()
+        assert w.rec("zz-ghost") is None, "a record gone from the drive survived the sweep via the upgrade re-plan"
+        assert all(w.rec(f"g{i}") is None for i in range(3))
+
+    async def test_ghost_released_from_card_cap_mid_sweep_is_still_swept(self, monkeypatch):
+        monkeypatch.setattr(svc_mod, "CASCADE_OPS_PER_TICK", 2)
+        w = World()
+        docs = w.drive.add("Docs", folder=True)
+        w.drive.add("a.pdf", parent=docs)
+        await w.settle()
+        self._stale_fillers(w, docs)
+        w.repo.records[("u", "zz-ghost")] = DriveIndexRecord(
+            user_id="u", item_id="zz-ghost", name="ghost.pdf", parent_id=docs, kind="pdf",
+            scope=Scope.NORMAL, state=RecordState.METADATA_ONLY, reason=Reason.USER_CARD_CAP,
+            policy_version=1, seen_epoch=1)
+        w.drive.resync_next = True   # 410: epoch 2 enumerates the drive, the ghost is not in it
+        await w.settle()
+        assert w.rec("zz-ghost") is None, "a record gone from the drive survived the sweep via the card-cap release"
+        assert all(w.rec(f"g{i}") is None for i in range(3))
