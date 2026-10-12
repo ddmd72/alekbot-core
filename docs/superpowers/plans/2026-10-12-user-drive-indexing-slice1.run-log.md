@@ -32,3 +32,7 @@ Method: subagent-driven (implementer → independent reviewer → coordinator ac
 - Side finding (not this plan): `tests/unit/adapters/test_firestore_account_repo_lock_free.py` captures `NOW` at
   import, so a full run crossing midnight UTC fails 6 tests. Seen once in the reviewer's run, green on rerun. Queued
   as a separate suggested task, untouched here.
+
+### Task 2 — done
+- Commit `cc2b2d3`. `make check` (coordinator, worktree at the commit): 6957 passed, 3 skipped, 1 xfailed.
+- Deviations: none (byte-identical to the plan). Reviewer: APPROVED, round 1.
