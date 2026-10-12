@@ -23,3 +23,12 @@ Method: subagent-driven (implementer → independent reviewer → coordinator ac
   (expect all six) are reachable for 1 of 6 only. Left verbatim (the gold file is written before the code and is not
   the implementer's to bend). Suggested fix: latitudes ≈ 41.1585..41.1609 (+0.0006 step) **before** the first
   `--record` of bars in Task 47.
+
+### Task 1 — done
+- Commit `9e6985d`. `make check` (coordinator, clean worktree at the commit): 6947 passed, 3 skipped, 1 xfailed.
+- Deviations: none (all three files byte-identical to the plan).
+- Reviewer: APPROVED, round 1. `drive_index.py` holds 14 public classes as the plan specifies; the reviewer accepted
+  it (existing domain model modules do the same).
+- Side finding (not this plan): `tests/unit/adapters/test_firestore_account_repo_lock_free.py` captures `NOW` at
+  import, so a full run crossing midnight UTC fails 6 tests. Seen once in the reviewer's run, green on rerun. Queued
+  as a separate suggested task, untouched here.
