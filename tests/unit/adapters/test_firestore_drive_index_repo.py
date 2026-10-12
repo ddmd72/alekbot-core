@@ -248,8 +248,8 @@ class TestRecordReads:
 
     async def test_card_capped_best_rank_then_newest(self, repo, db):
         await repo.card_capped("u", 7)
-        assert executed(db) == [[("where", "user_id", "==", "u"), ("where", "state", "==", "metadata_only"),
-                                 ("where", "reason", "==", "user_card_cap"), ("order_by", "card_rank", "ASCENDING"),
+        assert executed(db) == [[("where", "user_id", "==", "u"), ("where", "card_capped", "==", True),
+                                 ("order_by", "card_rank", "ASCENDING"),
                                  ("order_by", "modified_at", "DESCENDING"), ("limit", 7), PROJECTION]]
 
 

@@ -201,7 +201,7 @@ class TestObservation:
     def test_card_cap_survives_reobservation(self):
         stored = capped(observe(ch("a", "x.py")).upsert, NOW)
         rec = observe(ch("a", "x2.py"), stored).upsert
-        assert rec.reason is Reason.USER_CARD_CAP and rec.due_at is None
+        assert rec.card_capped and rec.reason is Reason.KIND_NOT_ADMITTED and rec.due_at is None
 
     def test_place_resolved_once_and_kept(self):
         calls = []

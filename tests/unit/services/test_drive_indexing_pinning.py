@@ -105,7 +105,7 @@ class TestCardEviction:
         newcomer = w.drive.add("c9.py")
         await w.settle()
         assert w.carded() == set(codes)
-        assert w.rec(newcomer).reason is Reason.USER_CARD_CAP
+        assert w.rec(newcomer).card_capped and w.rec(newcomer).reason is Reason.KIND_NOT_ADMITTED
         assert all(w.rec(c).reason is Reason.KIND_NOT_ADMITTED for c in codes)
 
 

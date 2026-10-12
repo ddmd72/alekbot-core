@@ -57,7 +57,7 @@ def test_eligibility():
     assert card_eligible(_rec(scope=Scope.INSIDE_OPAQUE)) is False
     assert card_eligible(_rec(scope=Scope.UNRESOLVED, state=RecordState.UNRESOLVED)) is False
     assert card_eligible(_rec(state=RecordState.DELETING)) is False
-    assert card_eligible(_rec(reason=Reason.USER_CARD_CAP)) is False
+    assert card_eligible(_rec(card_capped=True)) is False
 
 
 def test_effective_date_prefers_taken_then_fs_then_server_then_fallback():

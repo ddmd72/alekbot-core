@@ -65,7 +65,7 @@ async def test_eviction_candidate_is_highest_rank_oldest():
 
 async def test_capped_newest_first_and_counts():
     repo = InMemoryDriveIndexRepository()
-    capped = dict(state=RecordState.METADATA_ONLY, reason=Reason.USER_CARD_CAP)
+    capped = dict(state=RecordState.METADATA_ONLY, reason=Reason.KIND_NOT_ADMITTED, card_capped=True)
     await repo.upsert_records([rec("a", modified_at=NOW - timedelta(days=1), **capped),
                                rec("b", modified_at=NOW, **capped), rec("c", state=RecordState.METADATA_ONLY)])
     assert [r.item_id for r in await repo.card_capped("u", 10)] == ["b", "a"]

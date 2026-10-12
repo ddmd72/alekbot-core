@@ -270,11 +270,12 @@ async def test_card_cap_evicts_lower_rank_and_releases(w, monkeypatch):
     doc = w.drive.add("contract.pdf")
     await w.settle()
     assert doc in w.carded() and len(w.carded()) == 3
-    capped = [c for c in codes if w.rec(c).reason is Reason.USER_CARD_CAP]
-    assert len(capped) == 1
+    capped = [c for c in codes if w.rec(c).card_capped]
+    assert len(capped) == 1 and w.rec(capped[0]).reason is Reason.KIND_NOT_ADMITTED
     w.drive.delete(doc)
     await w.settle()
-    assert w.rec(capped[0]).reason is Reason.KIND_NOT_ADMITTED and capped[0] in w.carded()
+    assert not w.rec(capped[0]).card_capped and w.rec(capped[0]).reason is Reason.KIND_NOT_ADMITTED
+    assert capped[0] in w.carded()
 
 
 async def test_budget_exhaustion_enqueues_exactly_one_continuation():
