@@ -219,3 +219,32 @@ R1–R5 (implementer → adversarial reviewer → acceptance), each with NEW fai
 9. `flag_reconnect` read-modify-write can restore an old grant if the user reconnects in between (drive F5): needs a
    field-level conditional write on `OAuthCredentialsPort`, or accept and correct Task 14's text.
 10. Fencing a stale tick's other writes (drive F2 OWNER part).
+
+### Fix R1 (planner/domain) — done
+- Commits `ab1d18b` (source fixes + new failing-first tests) and `0124398` (round 2: two test gaps the reviewer found).
+  `make check` (reviewer, at `0124398`): 7605 passed, 3 skipped, 1 xfailed.
+- domain F1 BLOCKER fixed (`_marker_left` ignores a `DELETING` old parent; planner + tick tests, both page orders).
+  F3: new `Classification.density_reset` flag (justified deviation: `density_count=0` already means "keep anchor").
+  F10: keyword-only `plan_observation(..., observed=True)`; the five re-plan sites pass `observed=False`.
+  F13: offset-less timestamps read as UTC. F14: `_lon_cells` widens the longitude scan above ~63°; below 62.5°
+  results are unchanged. `GEO_TABLE_VERSION` not bumped (nothing stored yet).
+- Review round 1: CHANGES REQUIRED (upgrade/release re-plan paths unpinned; one vacuous test). Round 2: APPROVED,
+  12/12 mutants killed. No existing test failed or was edited.
+
+## Premise and integration audit of the whole plan — results
+
+No BLOCKER. Everything Tasks 20–46 assume about existing code (names, signatures, env vars, collections, deploy
+order, substitution handling, OIDC audience, `main.py` names) matches the code. Findings and their handling:
+- **P1 MAJOR → fix after Task 31:** Firestore `array-contains-any` returns the first 100 matches by id, so all
+  trigram/translit keys in one capped query make "contarto" / "leese agrement" / "Догов" return the 100 oldest
+  trigram-sharing files, not the target. Gold set cannot see it (every fuzzy case keeps one exact token).
+- **P2, P8 (tick part), P9 → fix R2b** on the committed tick; **P8 adapter part → R3**.
+- **P4** (empty query + no filters → silent "8 newest files") → fix after Task 33; **P5** (`/api/drive/status` 500s
+  when indexing status fails, hiding Connect/Reconnect — a Step 1 regression) → fix after Task 34; **P7** (Quart
+  cancels the fan-out request at scheduler disconnect, a delivered reconnect notice can repeat) → fix after Task 22.
+- **OWNER:** P3 (escaping `& < >` in opened drive text: a "fix and save" can write entities back into the file),
+  P6 (nudges are sent for users with indexing off, waking the indexer; RFC §7.1 says nothing is enqueued for them),
+  P14 (date filters cut at UTC midnight, not the user's timezone).
+- **Task 47 notes:** P10 (alert policies are scoped to `alek-bot-dev`; verify they cover the indexer), P11 (add a
+  probe `drive_sync` task to prove Cloud Tasks passes internal ingress), P12 (Step 3 expects a WARNING Task 24 logs
+  at INFO), P13 (Δ11 says Task 21, it is Task 33).
