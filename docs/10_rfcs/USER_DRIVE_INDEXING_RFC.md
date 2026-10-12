@@ -1581,3 +1581,16 @@ scan, a broken-font Cyrillic PDF, a screenshot and a photo folder, each found by
 | `TRIAGE_IMAGES_PER_MONTH` | 20 000 | ≈ 1 250 triage calls |
 | `TRIAGE_BATCH` | 16 | §15 |
 | Thumbnail size / reader rendition | 176 or 800 px / S0g | Live check / spike |
+
+### 24.14 Known limits
+- **The parser sandbox is resource isolation, not code-execution containment.** The child process bounds memory, CPU,
+  file size and wall time, and starts with an allowlisted environment, but it runs as the same user on the same host:
+  a parser exploit with code execution could read the parent's environment through `/proc/<ppid>/environ` and reach
+  the metadata server for the service account's token. Accepted for a single-owner deployment parsing the owner's own
+  files. *Trigger to revisit:* a code-execution CVE in a parser the child loads (markitdown and its converters,
+  pdfminer/pdfplumber, openpyxl, python-pptx, mammoth, lxml), or indexing files of untrusted users (multi-tenant
+  growth); the answer then is a separate parser service with its own identity (§9's "separate service" adapter).
+- **A tick that ends with `LeaseLost` loses its model usage.** The month's page and image counters live on the sync
+  state, and a tick without its lease cannot write it, so the model calls of that one tick are not counted against
+  the monthly budgets (they are still billed to the account per call). Bounded to one tick's work
+  (`MODEL_IN_FLIGHT` windows and the triage batches of one tick); the next tick counts from the last saved state.
