@@ -53,3 +53,9 @@ Method: subagent-driven (implementer → independent reviewer → coordinator ac
   check through `load_place_rows`/`PlaceIndex`: 64 458 rows; Trastevere → Rome (Roma), central Porto → Porto,
   Brooklyn → New York, Dolomites → Brixen (Bressanone), open sea → none.
 - Reviewer: APPROVED, round 1 (mutation-tested 6 breaks, each caught by one test).
+
+### Task 5 — done
+- Commit `186c653`. `make check` (coordinator, worktree at the commit): 7033 passed, 3 skipped, 1 xfailed.
+- Deviations: none. Reviewer: APPROVED, round 1.
+- Note: the plan's `DriveResyncRequired` docstring in `src/domain/user_drive.py` says "(Graph 410)" — a provider name
+  outside the allowed files, docstring only. Kept verbatim; owner may neutralise it ("cursor expired, HTTP 410").
