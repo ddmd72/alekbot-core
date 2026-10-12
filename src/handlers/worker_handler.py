@@ -884,8 +884,10 @@ class WorkerHandler:
         Only the transition notifies — the daily review and the auto-index keep
         hitting the dead token every day until the user reconnects, and that must
         not become a daily message. A reconnect saves fresh credentials, which
-        clears the flag, so the next breakage notifies again. Best-effort: a
-        failure here is logged, never raised into the task.
+        clears the flag, so the next breakage notifies again. The flag goes up
+        before the notice and comes down when no send was attempted (no channel,
+        a formatter failure, `notify` raising), so the next failing run tells the
+        user then. Best-effort: a failure here is logged, never raised into the task.
         """
         if not self._oauth_credentials:
             logger.warning("[Worker] Gmail grant revoked but oauth_credentials not configured")
@@ -897,7 +899,11 @@ class WorkerHandler:
             creds.needs_reconnect = True
             await self._oauth_credentials.save_credentials(creds)
             logger.warning(f"[Worker] Gmail marked needs_reconnect for {user_id[:8]}")
-            await self._notification.notify(
+        except Exception as exc:
+            logger.error(f"[Worker] Gmail reconnect flag failed for {user_id[:8]}: {exc}", exc_info=True)
+            return
+        try:
+            result = await self._notification.notify(
                 kind=NotificationKind.DOCUMENT_DELIVERY,
                 user_id=user_id,
                 account_id=account_id,
@@ -910,7 +916,25 @@ class WorkerHandler:
                 ),
             )
         except Exception as exc:
-            logger.error(f"[Worker] Gmail reconnect flag/notice failed for {user_id[:8]}: {exc}", exc_info=True)
+            logger.error(f"[Worker] Gmail reconnect notice raised for {user_id[:8]}: {exc}", exc_info=True)
+            await self._unflag_gmail_reconnect(user_id)
+            return
+        if not result.delivered and not result.sent:
+            logger.warning(f"[Worker] Gmail reconnect notice for {user_id[:8]} not sent "
+                           f"({result.agent_status.value}, {result.error}); retried on the next failing run")
+            await self._unflag_gmail_reconnect(user_id)
+
+    async def _unflag_gmail_reconnect(self, user_id: str) -> None:
+        """Take the flag down again after a notice that reached nobody. Re-read first: a reconnect saved while
+        the formatter ran carries fresh tokens and no flag, and must not be overwritten by the stale copy."""
+        try:
+            creds = await self._oauth_credentials.get_credentials(user_id, "gmail")
+            if creds is None or not creds.needs_reconnect:
+                return
+            creds.needs_reconnect = False
+            await self._oauth_credentials.save_credentials(creds)
+        except Exception as exc:
+            logger.error(f"[Worker] Gmail reconnect flag rollback failed for {user_id[:8]}: {exc}", exc_info=True)
 
     async def _handle_start_daily_email_review(self) -> Tuple[dict, int]:
         """
