@@ -562,4 +562,5 @@ class DriveSearchService:
             last_error=state.last_error.value if state.last_error else None, index_as_of=state.observed_as_of,
             index_full=int(state.counters.get("carded", 0)) >= MAX_CARD_RECORDS_PER_USER,
             building=enabled and (state.purging or not state.root_item_id or await self._building(user_id, state)),
+            access_lost_at=state.access_lost_at, purging=state.purging,
         )
