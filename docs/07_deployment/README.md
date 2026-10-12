@@ -308,7 +308,9 @@ file exists) and passes `SERVICE_URL_DEV`, the relay URL and `INDEXER_URL_DEV` a
 Without it the build ships empty values into the live environment and breaks OAuth and voice. A second working copy
 has no `.env` of its own: link the main checkout's file first (`ln -s ../alekbot-core/.env .env`). Before every
 deploy, check what will be sent with `make -n deploy | grep -o -- '--substitutions=[^ ]*'`. Every value must be
-non-empty, except `_INDEXER_URL` on the first pass below.
+non-empty, except `_INDEXER_URL` on the first pass below. `make deploy` itself refuses to start when
+`SERVICE_URL_DEV` is empty, and when `INDEXER_URL_DEV` is empty unless `DRIVE_FIRST_PASS=1` is set: an empty indexer
+URL silently disables indexing in the live environment, with no alert.
 
 0. **Once:** the Cloud Build service account needs `roles/cloudtasks.queueAdmin`
    ([SCHEDULERS.md](SCHEDULERS.md) § Start Drive Sync).
@@ -324,8 +326,9 @@ non-empty, except `_INDEXER_URL` on the first pass below.
    ```
    Then run the read-only smoke check, which runs every repository query once and names any missing index:
    `venv/bin/python scripts/infrastructure/drive_index_smoke.py <DEV_USER_ID>`.
-1. **Deploy once.** `make deploy` creates the queue, `alek-bot-indexer-dev` and the scheduler job. Both services
-   ship with an empty `DRIVE_INDEXER_URL` on this pass (expected; the log lines are listed above).
+1. **Deploy once.** `DRIVE_FIRST_PASS=1 make deploy` creates the queue, `alek-bot-indexer-dev` and the scheduler
+   job. Both services ship with an empty `DRIVE_INDEXER_URL` on this pass (expected; the log lines are listed
+   above). The flag is for this pass only; never set it in `.env`.
 2. **Read the indexer's URL back.** It is stable once the service exists:
    ```bash
    gcloud run services describe alek-bot-indexer-dev --region=us-central1 --format='value(status.url)'
