@@ -8,6 +8,7 @@ Public interface:
     ContentHit(record, chunk, score)                       a record's best chunk in one stream
     chunk_readable(chunk, record) -> bool                  the §7.4 fence
     pool_nearest(hits, records) -> List[ContentHit]        chunk kNN pooled per record, nearest first
+    selective_term_hits(term_hits, limit) -> Dict[str, Sequence[DriveChunk]]   terms whose page was not full
     pool_terms(term_hits, records, terms) -> List[ContentHit]   exact-term hits pooled per record, most terms first
     window_indexes(index) -> Tuple[int, ...]               the window around a hit: index ± 1
     window_text(chunks) -> str                             the window's chunks joined without their overlap
@@ -55,6 +56,16 @@ def pool_nearest(hits: Sequence[Tuple[DriveChunk, float]],
             continue
         pooled[chunk.item_id] = ContentHit(record, chunk, distance)
     return list(pooled.values())
+
+
+def selective_term_hits(term_hits: Mapping[str, Sequence[DriveChunk]],
+                        limit: int) -> Dict[str, Sequence[DriveChunk]]:
+    """The terms that select (§24.6, review D-M2): a term whose first page came back full (`limit` chunks or more)
+    is held by more chunks than one page shows, and the page is ordered by item_id — ranking its files would rank by
+    id, and anchoring their windows on it would show the common term, not the passage asked about. Such a term takes
+    no part in the fusion or the windows, and is not read again on the widening. A page that was not full is
+    complete."""
+    return {term: chunks for term, chunks in term_hits.items() if len(chunks) < limit}
 
 
 def pool_terms(term_hits: Mapping[str, Sequence[DriveChunk]], records: Mapping[str, DriveIndexRecord],
