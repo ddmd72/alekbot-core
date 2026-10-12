@@ -644,3 +644,7 @@ scratch path (nothing recorded or committed): index settled in 1 tick, 2 481 car
   finished a round (counters are `{}` until a round settles) → use the `index purged` log line only. Also: the module
   docstring of `firestore_drive_index_repo.py` (lines 23–25) omits that `delete_sync_state` removes the lease.
 - Task 46 `c9c0098` committed (review running).
+- **Task 46 — done:** `c9c0098`; APPROVED (every added claim in both CLAUDE.md files verified; probe edit parses, not
+  run). Two MINOR wording fixes queued for the final cleanup ("every file is metadata_only" — reason may be a
+  never-download rule; a failed token refresh backs off a flat 60 s, not the provider's delay — same root as owner
+  item 8, `graph_auth`). Pre-existing: CLAUDE.md's `WorkerHandler` list lacks `video_generation_polling`.
