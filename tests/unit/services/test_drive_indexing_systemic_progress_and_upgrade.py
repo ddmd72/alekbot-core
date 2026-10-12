@@ -8,13 +8,13 @@ import pytest
 from src.domain import drive_card
 from src.domain import drive_index_planner as planner
 from src.domain.drive_index_params import RETRY_CAP
-from src.domain.drive_index import ErrorCategory, Nudge, Priority, Reason, RecordState
+from src.domain.drive_index import CARD_VERSION, CURRENT_VERSIONS, ErrorCategory, Nudge, Priority, Reason, RecordState
 from src.domain.user_drive import (
     DriveAccessDenied, DriveConnection, DriveNotConnectedError, DriveReauthRequired, DriveThrottled,
 )
 from src.services import drive_indexing_service as svc_mod
 
-from .test_drive_indexing_service import World
+from .test_drive_indexing_service import EXTRACTOR_VERSIONS, World
 
 
 class _Runaway(BaseException):
@@ -230,9 +230,9 @@ class TestUpgradePassDoesNotSpin:
         w.drive.delete(git)
         await w.settle()
         assert w.rec(site).reobserve_pending and w.rec(site).due_at > w.clock.now
-        monkeypatch.setattr(drive_card, "CARD_VERSION", 2)
-        monkeypatch.setattr(planner, "CARD_VERSION", 2)
-        monkeypatch.setattr(svc_mod, "CURRENT_VERSIONS", {"policy": 1, "card": 2, "geo_table": 1})
+        monkeypatch.setattr(drive_card, "CARD_VERSION", CARD_VERSION + 1)
+        monkeypatch.setattr(planner, "CARD_VERSION", CARD_VERSION + 1)
+        monkeypatch.setattr(svc_mod, "CURRENT_VERSIONS", {**CURRENT_VERSIONS, "card": CARD_VERSION + 1})
         zero_delay_chain = 0
         longest = 0
         for _ in range(30):
@@ -324,11 +324,12 @@ class TestRfcBehaviourPinned:
 
 
 def _bumped_card(monkeypatch):
-    monkeypatch.setattr(drive_card, "CARD_VERSION", 2)
-    monkeypatch.setattr(planner, "CARD_VERSION", 2)
-    target = {"policy": 1, "card": 2, "geo_table": 1}
+    """CARD_VERSION + 1; returns the map the service applies once clean (with the extractor keys, CORE-DELTA 5)."""
+    monkeypatch.setattr(drive_card, "CARD_VERSION", CARD_VERSION + 1)
+    monkeypatch.setattr(planner, "CARD_VERSION", CARD_VERSION + 1)
+    target = {**CURRENT_VERSIONS, "card": CARD_VERSION + 1}
     monkeypatch.setattr(svc_mod, "CURRENT_VERSIONS", target)
-    return target
+    return {**target, **EXTRACTOR_VERSIONS}
 
 
 async def _run_chain(w, max_ticks):

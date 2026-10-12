@@ -6,7 +6,7 @@ right.
 from src.domain import drive_card
 from src.domain import drive_index_planner as planner
 from src.domain.drive_card import card_text
-from src.domain.drive_index import DriveChanges, EpochPhase, ErrorCategory, Reason
+from src.domain.drive_index import CARD_VERSION, CURRENT_VERSIONS, DriveChanges, EpochPhase, ErrorCategory, Reason
 from src.domain.drive_index_params import MAX_ATTEMPTS, RETRY_CAP, TICK_START_BUDGET
 from src.domain.drive_index_planner import PlanContext, plan_observation
 from src.domain.user_drive import DriveAccessDenied, DriveResyncRequired, DriveThrottled
@@ -25,9 +25,9 @@ def _conts(w, since=0):
 
 
 def _bump_card_version(monkeypatch):
-    monkeypatch.setattr(drive_card, "CARD_VERSION", 2)
-    monkeypatch.setattr(planner, "CARD_VERSION", 2)
-    monkeypatch.setattr(svc_mod, "CURRENT_VERSIONS", {"policy": 1, "card": 2, "geo_table": 1})
+    monkeypatch.setattr(drive_card, "CARD_VERSION", CARD_VERSION + 1)
+    monkeypatch.setattr(planner, "CARD_VERSION", CARD_VERSION + 1)
+    monkeypatch.setattr(svc_mod, "CURRENT_VERSIONS", {**CURRENT_VERSIONS, "card": CARD_VERSION + 1})
 
 
 class TestRelistingRetryBudget:
@@ -66,9 +66,9 @@ class TestVersionUpgradeVerification:
         _bump_card_version(monkeypatch)
         result = await w.tick()
         assert result.summary.get("upgraded") == 3
-        assert dict((await w.repo.get_sync_state("u")).applied_versions)["card"] == 1
+        assert dict((await w.repo.get_sync_state("u")).applied_versions)["card"] == CARD_VERSION
         await w.settle()
-        assert dict((await w.repo.get_sync_state("u")).applied_versions)["card"] == 2
+        assert dict((await w.repo.get_sync_state("u")).applied_versions)["card"] == CARD_VERSION + 1
 
 
 class TestMaintenanceShare:
