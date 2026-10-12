@@ -11,7 +11,7 @@ Public interface:
     plan_observation(change, existing, parent, probe, ctx, previous_parent=None, *, observed=True) -> ObservationPlan
     change_from_record(rec) -> DriveChange
     schedule(rec, now, *, first_seen) -> DriveIndexRecord
-    with_card(rec, card_hash, embedding_space, now) / without_card(rec, now) / capped(rec, now)
+    with_card(rec, card_hash, embedding_space, now) / without_card(rec, now) / capped(rec, now) / released(rec, now)
     card_refused(rec, now) -> DriveIndexRecord
     with_retry(rec, now) -> DriveIndexRecord
     access_action(enabled, state, connection, now) -> AccessAction
@@ -25,7 +25,9 @@ from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any, Callable, List, Optional, Tuple
 
-from .drive_card import card_eligible, card_hash, content_hash_of, effective_date, photo_location
+from .drive_card import (
+    card_eligible, card_hash, content_hash_of, effective_date, photo_location, structurally_card_eligible,
+)
 from .drive_index import (
     CARD_VERSION, GEO_TABLE_VERSION, POLICY_VERSION, ContentClass, DriveChange, DriveIndexRecord,
     DriveSyncState, EpochPhase, FolderProbe, Priority, Reason, RecordState, Scope,
@@ -176,17 +178,12 @@ def _observable(rec: DriveIndexRecord) -> Tuple[Any, ...]:
     return (rec.parent_id, rec.name, rec.is_folder, rec.size_bytes, rec.mime_type, rec.web_url, rec.child_count,
             dict(rec.facets), rec.kind, rec.scope, rec.state, rec.reason, rec.content_version, rec.modified_at,
             rec.fs_modified_at, rec.effective_date, rec.place_name, rec.geo_table_version, rec.policy_version,
-            rec.probe_pending, rec.rescope_pending, rec.reobserve_pending, rec.probed_child_count)
+            rec.probe_pending, rec.rescope_pending, rec.reobserve_pending, rec.probed_child_count, rec.card_capped)
 
 
 def _build(change: DriveChange, cls: Classification, existing: Optional[DriveIndexRecord],
            ctx: PlanContext, observed: bool = True) -> DriveIndexRecord:
     base = existing or DriveIndexRecord(user_id=ctx.user_id, item_id=change.item_id)
-    reason = cls.reason
-    # A capped record keeps its cap until a release decides again (§5.4); re-observation must not lift it.
-    if (existing is not None and existing.reason is Reason.USER_CARD_CAP
-            and cls.state is RecordState.METADATA_ONLY and cls.scope in (Scope.NORMAL, Scope.OPAQUE_ROOT)):
-        reason = Reason.USER_CARD_CAP
     place_name, geo_version = _place(change, existing, ctx.place_of)
     carried = existing.probed_child_count if existing and not cls.probe_pending and not cls.density_reset else 0
     probed = cls.density_count or carried
@@ -194,7 +191,7 @@ def _build(change: DriveChange, cls: Classification, existing: Optional[DriveInd
         base, parent_id=change.parent_id, name=change.name, is_folder=change.is_folder,
         size_bytes=change.size_bytes, mime_type=change.mime_type, web_url=change.web_url,
         child_count=change.child_count, facets=dict(change.facets), kind=cls.kind,
-        content_class=cls.content_class, scope=cls.scope, state=cls.state, reason=reason,
+        content_class=cls.content_class, scope=cls.scope, state=cls.state, reason=cls.reason,
         content_version=change.content_version, modified_at=change.modified_at,
         fs_modified_at=change.fs_modified_at, effective_date=effective_date(change, ctx.now),
         place_name=place_name, geo_table_version=geo_version, policy_version=POLICY_VERSION,
@@ -202,6 +199,8 @@ def _build(change: DriveChange, cls: Classification, existing: Optional[DriveInd
         content_hash=content_hash_of(change), probe_pending=cls.probe_pending, probed_child_count=probed,
         seen_epoch=_stamp(existing, ctx, observed),
     )
+    # A capped record keeps its cap until a release decides again (§5.4); one that can hold no card drops it.
+    rec = replace(rec, card_capped=rec.card_capped and structurally_card_eligible(rec))
     if _refusal_stands(existing, rec):
         rec = replace(rec, state=RecordState.FAILED)
     return rec
@@ -368,11 +367,16 @@ def without_card(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
 
 
 def capped(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
-    """No card headroom for this record (§5.4): metadata only, card dropped. A deleting record is left alone."""
+    """No card headroom for this record (§5.4): the card is dropped and withheld; scope, state and reason stay what
+    the structure says, so a capped repository stays opaque. A deleting record is left alone."""
     if rec.state is RecordState.DELETING:
         return rec
-    return schedule(replace(rec, state=RecordState.METADATA_ONLY, reason=Reason.USER_CARD_CAP, card_hash=None,
-                            has_card=False), now, first_seen=False)
+    return schedule(replace(rec, card_capped=True, card_hash=None, has_card=False), now, first_seen=False)
+
+
+def released(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
+    """Card headroom came back (§5.4): the cap is lifted and the card is due."""
+    return schedule(replace(rec, card_capped=False), now, first_seen=True)
 
 
 def backoff(attempts: int) -> timedelta:

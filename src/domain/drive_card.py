@@ -96,6 +96,10 @@ def card_hash(rec: DriveIndexRecord) -> str:
 
 def card_eligible(rec: DriveIndexRecord) -> bool:
     """A record carries a card unless it is unresolved, inside an opaque root, deleting or capped (§3.4, §5.2)."""
+    return structurally_card_eligible(rec) and not rec.card_capped
+
+
+def structurally_card_eligible(rec: DriveIndexRecord) -> bool:
+    """What the structure allows, before the card cap (§5.4) has its say."""
     return (rec.scope in (Scope.NORMAL, Scope.OPAQUE_ROOT)
-            and rec.state not in (RecordState.UNRESOLVED, RecordState.DELETING)
-            and rec.reason is not Reason.USER_CARD_CAP)
+            and rec.state not in (RecordState.UNRESOLVED, RecordState.DELETING))

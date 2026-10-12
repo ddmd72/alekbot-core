@@ -174,6 +174,7 @@ class DriveIndexRecord:
     embedding_space: str = ""
     card_hash: Optional[str] = None
     has_card: bool = False
+    card_capped: bool = False                 # no card headroom (§5.4): withholds the card, state and reason stay
     card_rank: int = 3
     name_tokens: Tuple[str, ...] = ()
     content_hash: Optional[str] = None

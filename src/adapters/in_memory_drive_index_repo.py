@@ -11,7 +11,7 @@ from dataclasses import replace
 from datetime import datetime
 from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
-from ..domain.drive_index import DriveIndexRecord, DriveSyncState, Reason, RecordState
+from ..domain.drive_index import DriveIndexRecord, DriveSyncState, RecordState
 from ..ports.drive_index_repository import DriveIndexRepository
 
 
@@ -138,8 +138,7 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
                                              r.item_id))[0]
 
     async def card_capped(self, user_id: str, limit: int) -> List[DriveIndexRecord]:
-        capped = [r for r in self._user(user_id)
-                  if r.state is RecordState.METADATA_ONLY and r.reason is Reason.USER_CARD_CAP]
+        capped = [r for r in self._user(user_id) if r.card_capped]
         capped.sort(key=lambda r: (r.card_rank, -(r.modified_at.timestamp() if r.modified_at else 0.0)))
         return capped[:limit]
 

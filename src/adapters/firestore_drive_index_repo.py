@@ -344,9 +344,7 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
 
     async def card_capped(self, user_id: str, limit: int) -> List[DriveIndexRecord]:
         """Best card_rank first, then newest modified_at; a missing date sorts last (null is lowest) (§5.4)."""
-        query = (self._user_query(user_id)
-                 .where(filter=FieldFilter("state", "==", RecordState.METADATA_ONLY.value))
-                 .where(filter=FieldFilter("reason", "==", Reason.USER_CARD_CAP.value))
+        query = (self._user_query(user_id).where(filter=FieldFilter("card_capped", "==", True))
                  .order_by("card_rank").order_by("modified_at", direction=firestore.Query.DESCENDING).limit(limit))
         return await self._read(query)
 

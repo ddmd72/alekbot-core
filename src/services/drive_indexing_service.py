@@ -32,7 +32,8 @@ from ..domain.drive_index_params import (
 )
 from ..domain.drive_index_planner import (
     AccessAction, ObservationPlan, PlaceOf, PlanContext, access_action, capped, card_refused, change_from_record,
-    needs_probe, parent_scope, plan_observation, schedule, stale_versions, with_card, with_retry, without_card,
+    needs_probe, parent_scope, plan_observation, released, schedule, stale_versions, with_card, with_retry,
+    without_card,
 )
 from ..domain.drive_index_policy import is_marker_child, probe_from_children
 from ..domain.drive_task_keys import DRIVE_SYNC_TASK, continuation_key, nudge_key, tick_payload
@@ -404,7 +405,7 @@ class DriveIndexingService:
             state = replace(state, upgrade_found_stale=False)   # the work may have cleared what the pass left
         if stopped_class is None:
             state = await self._upgrade_step(user_id, state, now, budget, summary)
-            await self._release_card_cap(user_id, state, now, summary)
+            await self._release_card_cap(user_id, now, summary)
         return state
 
     async def _sweep(self, user_id: str, state: DriveSyncState, now: datetime, budget: _Budget,
@@ -720,22 +721,17 @@ class DriveIndexingService:
                            f"{type(systemic).__name__}: {systemic}; {len(vectors)} cards kept, ending the tick")
             raise systemic
 
-    async def _release_card_cap(self, user_id: str, state: DriveSyncState, now: datetime,
-                                summary: Dict[str, int]) -> None:
+    async def _release_card_cap(self, user_id: str, now: datetime, summary: Dict[str, int]) -> None:
         """Headroom releases capped records best rank first (§5.4: a document before a non-document)."""
         headroom = MAX_CARD_RECORDS_PER_USER - await self._repo.count_carded(user_id)
         if headroom <= 0:
             return
-        released = await self._repo.card_capped(user_id, min(headroom, _DUE_PAGE))
-        if not released:
+        capped_recs = await self._repo.card_capped(user_id, min(headroom, _DUE_PAGE))
+        if not capped_recs:
             return
-        ctx = self._ctx(user_id, state, now)
-        for rec in released:
-            parent = await self._parent_of(user_id, rec, ctx)
-            plan = plan_observation(change_from_record(rec), replace(rec, reason=None), parent, None, ctx, parent,
-                                    observed=False)
-            await self._commit_plan(user_id, _as_maintenance(plan))
-        summary["released"] = summary.get("released", 0) + len(released)
+        # the structural reason was never touched by the cap, so lifting the flag is the whole decision
+        await self._commit(user_id, [_maintenance(released(rec, now)) for rec in capped_recs], set())
+        summary["released"] = summary.get("released", 0) + len(capped_recs)
 
     # -- version upgrades (§12.3) --------------------------------------------------------------
 
@@ -887,6 +883,10 @@ def _relisted(folder: DriveIndexRecord, next_cursor: Optional[str], now: datetim
 
 def _as_maintenance(plan: ObservationPlan) -> ObservationPlan:
     """Upgrade and release work runs in class 3 (§7.8, §12.3)."""
-    if plan.upsert is None or plan.upsert.due_at is None:
+    if plan.upsert is None:
         return plan
-    return replace(plan, upsert=replace(plan.upsert, priority=int(Priority.MAINTENANCE)))
+    return replace(plan, upsert=_maintenance(plan.upsert))
+
+
+def _maintenance(rec: DriveIndexRecord) -> DriveIndexRecord:
+    return rec if rec.due_at is None else replace(rec, priority=int(Priority.MAINTENANCE))

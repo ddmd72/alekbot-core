@@ -98,7 +98,7 @@ class DriveIndexRepository(ABC):
 
     @abstractmethod
     async def card_capped(self, user_id: str, limit: int) -> List[DriveIndexRecord]:
-        """metadata_only / user_card_cap records, best card_rank first, then newest modified_at (release, §5.4)."""
+        """Records with `card_capped`, best card_rank first, then newest modified_at (release, §5.4)."""
 
     @abstractmethod
     async def count_by_state(self, user_id: str) -> Dict[str, int]:
