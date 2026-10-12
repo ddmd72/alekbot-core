@@ -310,7 +310,9 @@ has no `.env` of its own: link the main checkout's file first (`ln -s ../alekbot
 deploy, check what will be sent with `make -n deploy | grep -o -- '--substitutions=[^ ]*'`. Every value must be
 non-empty, except `_INDEXER_URL` on the first pass below.
 
-0. **Indexes first.** They are declared for the `development_` collections only (plan Δ22). `make deploy-indexes`
+0. **Once:** the Cloud Build service account needs `roles/cloudtasks.queueAdmin`
+   ([SCHEDULERS.md](SCHEDULERS.md) § Start Drive Sync).
+   **Indexes first.** They are declared for the `development_` collections only (plan Δ22). `make deploy-indexes`
    creates the composite indexes from `config/firestore.indexes.json`. `deploy_firestore_indexes.py` skips vector
    entries, so the two `card_vector` indexes come from
    `PROJECT_ID=<PROJECT_ID> scripts/infrastructure/create_drive_vector_indexes.sh` (`COLLECTION_PREFIX` defaults
@@ -353,6 +355,9 @@ behaviour (§8.2), not an incident, unless the same item repeats on every tick.
 **Until the branch is merged**, a `make deploy` from another branch removes `start_drive_sync` from the main service
 while the scheduler job keeps firing. Pause the job first:
 `gcloud scheduler jobs pause alek-bot-dev-start-drive-sync --location=us-central1`.
+After the next deploy from this branch, resume it:
+`gcloud scheduler jobs resume alek-bot-dev-start-drive-sync --location=us-central1`. A deploy does not resume a
+paused job.
 
 ## Cost Optimization
 

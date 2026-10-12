@@ -8,8 +8,8 @@ Region: `us-central1`. Attempt deadline: `60s` for most `/worker` jobs; `start_d
 ## Two deadlines, do not confuse them
 
 The Scheduler attempt deadline above bounds only the **fan-out** call — the tick that
-claims due work and enqueues Cloud Tasks. It returns in milliseconds and never runs an
-agent.
+claims due work and enqueues Cloud Tasks. It usually returns in seconds; `start_drive_sync`
+may post a reconnect notice through the formatter agent (hence 180s).
 
 The work itself runs under the **Cloud Tasks `dispatch_deadline`** of the task the tick
 enqueued, and that is a different number with a different failure mode. Left unset,
