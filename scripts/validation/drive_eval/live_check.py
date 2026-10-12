@@ -7,8 +7,17 @@ ticks again, so the production purge removes the synthetic user's records, chunk
 nothing is left. Real model and embedding calls (cents); live Firestore writes under the synthetic id only. Keep the
 folder and the report in the gitignored scripts/memory/.
 
+OWNER STEP — pause the drive queue first, resume it after. The main service's fan-out enqueues a tick for every user
+with a stored sync state, the synthetic one included, and the nudges do the same; a live indexer tick would race this
+check's tick for the user's lease and purge an index whose user does not exist. The script never pauses or resumes
+the queue itself: it reads the queue's state (Cloud Tasks API; the project from GOOGLE_CLOUD_PROJECT, the queue name
+and location as composition/drive_indexing_setup.py derives them), refuses unless it is PAUSED, and prints the resume
+command when it ends, whatever the outcome. Ticks queued meanwhile run after the resume.
+
+    gcloud tasks queues pause drive-sync-dev --location=us-central1 --project=<PROJECT_ID>
     venv/bin/python -m scripts.validation.drive_eval.live_check --folder scripts/memory/drive_live \\
         --user zz-synthetic-20261014 --query "electricity bill" --query "рахунок 1 205,28"
+    gcloud tasks queues resume drive-sync-dev --location=us-central1 --project=<PROJECT_ID>
 """
 from __future__ import annotations
 
@@ -43,6 +52,30 @@ _EXIF_TAKEN, _EXIF_MAKE, _EXIF_MODEL, _EXIF_IFD = 36867, 271, 272, 0x8769
 
 class LiveCheckError(RuntimeError):
     """The check refused to run or found something left after the purge."""
+
+
+def queue_command(verb: str, queue_path: str) -> str:
+    """The gcloud command that pauses or resumes the queue at `projects/{p}/locations/{l}/queues/{q}`."""
+    _, project, _, location, _, queue = queue_path.split("/")
+    return f"gcloud tasks queues {verb} {queue} --location={location} --project={project}"
+
+
+def check_drive_queue(settings: Mapping[str, Any], client: Any) -> str:
+    """The drive queue's path, once its state reads PAUSED; LiveCheckError otherwise (the owner pauses it, never the
+    script). `client` is a Cloud Tasks client (`get_queue(name=...)`)."""
+    from src.composition.drive_indexing_setup import DRIVE_QUEUE_LOCATION, drive_queue_name
+
+    project = (settings.get("GOOGLE_CLOUD_PROJECT") or "").strip()
+    if not project:
+        raise LiveCheckError("GOOGLE_CLOUD_PROJECT is not set (.env): cannot check that the drive queue is paused")
+    queue_path = (f"projects/{project}/locations/{DRIVE_QUEUE_LOCATION}/queues/"
+                  f"{drive_queue_name(settings['ENVIRONMENT_CONFIG'])}")
+    state = client.get_queue(name=queue_path).state
+    state_name = getattr(state, "name", str(state))
+    if state_name != "PAUSED":
+        raise LiveCheckError(f"the drive queue {queue_path} is {state_name}, not PAUSED: a live indexer tick would "
+                             f"race the check. Pause it first: {queue_command('pause', queue_path)}")
+    return queue_path
 
 
 def _photo_facets(path: Path) -> Dict[str, Any]:
@@ -164,7 +197,7 @@ def _query(text: str) -> Dict[str, Any]:
 
 async def _main(args: argparse.Namespace) -> int:
     """Real Firestore, embeddings and content ports: the owner's run."""
-    from google.cloud import firestore
+    from google.cloud import firestore, tasks_v2
 
     from src.adapters.gemini_embedding_adapter import GeminiEmbeddingAdapter
     from src.composition.drive_indexing_setup import build_drive_index_repository, build_place_lookup
@@ -172,21 +205,26 @@ async def _main(args: argparse.Namespace) -> int:
 
     from . import content_wiring
 
-    db = firestore.AsyncClient(database=os.getenv("FIRESTORE_DATABASE", "us-production"))
-    repo = build_drive_index_repository(db, load_settings()["ENVIRONMENT_CONFIG"])
-    extractors, triage = content_wiring.build_real_content()
-    report = await live_check(args.folder, args.user, [_query(q) for q in args.query], repo=repo,
-                              embeddings=GeminiEmbeddingAdapter(api_key=os.environ["GEMINI_API_KEY"]),
-                              embedding_space=GeminiEmbeddingAdapter.EMBEDDING_SPACE,
-                              place_of=build_place_lookup(), extractors=extractors, triage=triage)
-    print(f"indexed: {report.indexed}\nsummary: {report.summary}")
-    for answer in report.answers:
-        print(f"\n=== {answer['query']['query']!r} → {answer['status']}\n{answer['text']}")
-    out = args.report or Path("scripts/memory") / f"drive_live_check_{args.user}.json"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(report.__dict__, ensure_ascii=False, indent=1, default=str), encoding="utf-8")
-    print(f"\npurged: {report.purged} (report: {out})")
-    return 0
+    settings = load_settings()
+    queue_path = check_drive_queue(settings, tasks_v2.CloudTasksClient())   # before any Firestore read or write
+    try:
+        db = firestore.AsyncClient(database=os.getenv("FIRESTORE_DATABASE", "us-production"))
+        repo = build_drive_index_repository(db, settings["ENVIRONMENT_CONFIG"])
+        extractors, triage = content_wiring.build_real_content()
+        report = await live_check(args.folder, args.user, [_query(q) for q in args.query], repo=repo,
+                                  embeddings=GeminiEmbeddingAdapter(api_key=os.environ["GEMINI_API_KEY"]),
+                                  embedding_space=GeminiEmbeddingAdapter.EMBEDDING_SPACE,
+                                  place_of=build_place_lookup(), extractors=extractors, triage=triage)
+        print(f"indexed: {report.indexed}\nsummary: {report.summary}")
+        for answer in report.answers:
+            print(f"\n=== {answer['query']['query']!r} → {answer['status']}\n{answer['text']}")
+        out = args.report or Path("scripts/memory") / f"drive_live_check_{args.user}.json"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(report.__dict__, ensure_ascii=False, indent=1, default=str), encoding="utf-8")
+        print(f"\npurged: {report.purged} (report: {out})")
+        return 0
+    finally:
+        print(f"\nThe drive queue is still paused. Resume it now: {queue_command('resume', queue_path)}")
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
