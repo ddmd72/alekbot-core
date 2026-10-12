@@ -347,3 +347,14 @@ order, substitution handling, OIDC audience, `main.py` names) matches the code. 
 - **OWNER (F3):** the plan's premise "a formatter failure may have reached the user" is false when the agent returns
   non-success (`notify` returns before sending), so one transient Quick failure means no reconnect notice for that
   breakage. Accept at-most-once (as Gmail does) or add a "sent anything" field to `NotifyResult`.
+
+### Task 23 — done
+- Commit `001a45a` (byte-identical). `make check` (reviewer, worktree): 7738 passed, 3 skipped, 1 xfailed.
+  Reviewer (adversarial + system context): APPROVED, no required fixes; 10/16 mutations killed, 6 harmless survivors.
+- **OWNER (premise audit P6, confirmed as a fact):** nudges go to users with indexing off. Cost per bot write: one
+  Cloud Tasks create, maybe an indexer cold start, one slot on the concurrency-1 queue; the tick answers `disabled`
+  before the lease and writes nothing (and if an orphaned state exists, the nudge purges it sooner). The reviewer reads
+  RFC §7.1's "nothing is enqueued for a user with indexing off" as about the tick's own follow-ups → ambiguity, not a
+  clear divergence. No local fix (the service has no access to the flag). Options: (a) accept and reword §7.1 step 0
+  (reviewer's recommendation); (b) inject `UserRepository` or a `should_nudge` predicate (one Firestore read per
+  mutation); (c) the agent-cached flag (not recommended, up to ~1 h stale).
