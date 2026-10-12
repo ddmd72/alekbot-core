@@ -24,9 +24,9 @@ anthropic==0.121.0
 openai==2.53.0
 python-dotenv
 aiohttp
-beautifulsoup4  # HTML → plain text extraction for Gmail email bodies
+beautifulsoup4==4.15.0  # HTML → plain text for Gmail email bodies; markitdown's HTML/EPUB/DOCX path (drive parser)
 aiofiles  # Async file I/O for Claude vision support
-markitdown[all]  # File-to-text conversion: DOCX, XLSX, YouTube, audio + image description in docs
+markitdown[all]==0.1.8  # File-to-text conversion: DOCX, XLSX, YouTube, audio + image description in docs
 # Drive parser (USER_DRIVE_INDEXING_RFC §5.1, §24.3), imported directly by the sandboxed child: pinned so the
 # extraction a record was indexed with (`extracted_by`) does not drift with each image build. Bumps are deliberate:
 # a changed output for the same file is a SubprocessContentExtractor.VERSION bump.
@@ -36,7 +36,16 @@ defusedxml==0.7.1  # ODF content.xml / manifest and EPUB encryption.xml, no enti
 charset-normalizer==3.4.4  # text kinds that are not UTF-8 (CP1251, UTF-16 without BOM)
 xlrd==2.0.2  # legacy XLS, row-capped (markitdown's converter reads every row)
 olefile==0.47  # encrypted OOXML is an OLE2 package with an EncryptedPackage stream
-openpyxl>=3.1.0  # CSV → xlsx conversion in RichContentService
+# The engines under markitdown's converters, at the resolution of markitdown 0.1.8 on 2026-10-13. PDF text is
+# pdfminer.six called directly; pdfplumber serves only markitdown's own PdfConverter (chat uploads).
+pdfminer.six==20260107  # PDF text layer
+pdfplumber==0.11.10  # markitdown 0.1.8's PdfConverter reads with it first (not on the drive path)
+mammoth==1.11.0  # DOCX → HTML under markitdown's DocxConverter
+python-pptx==1.0.2  # PPTX under markitdown's PptxConverter
+lxml==6.1.3  # XML under python-pptx, python-docx and openpyxl
+markdownify==1.2.3  # HTML → Markdown under markitdown's HTML, EPUB and DOCX converters
+magika==0.6.3  # imported with markitdown (its start-up memory counts against the child's RLIMIT_AS)
+openpyxl==3.1.5  # XLSX in the drive parser; CSV → xlsx conversion in RichContentService
 python-docx>=1.1.0  # Markdown → docx conversion in RichContentService
 playwright>=1.40.0  # HTML → PNG rendering for widget rich content (ENABLE_HTML_RENDERER)
 google-cloud-secret-manager

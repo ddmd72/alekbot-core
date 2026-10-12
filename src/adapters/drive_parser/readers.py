@@ -5,8 +5,10 @@ They run only inside the sandboxed child process (`drive_parser.child`), never i
 parser here may amplify a small file into gigabytes (§9, Phase 0). Parser libraries are imported inside the
 functions, so they load after the child has applied its limits.
 
-Every admitted kind has a named reader (§5.1): markitdown's allowlisted converters (Phase 0,
-`src/utils/document_hardening.build_markitdown`) for PDF, DOCX, PPTX, EPUB, MSG and HTML; charset detection for the
+Every admitted kind has a named reader (§5.1): pdfminer.six for PDF, called directly (markitdown 0.1.8's PdfConverter
+runs pdfplumber first and falls back to pdfminer on any exception: two engines, one of them unpinned by intent);
+markitdown's allowlisted converters (Phase 0, `src/utils/document_hardening.build_markitdown`) for DOCX, PPTX, EPUB,
+MSG and HTML; charset detection for the
 text kinds, VTT/SRT reduced to cue text; `striprtf` for RTF; the stdlib `email` parser for EML; ODF `content.xml`
 through `defusedxml`; XLSX/XLS/CSV/ODS as Markdown tables capped at MAX_SHEET_ROWS rows per sheet (the chunker
 repeats the header row, §8.3). Password-protected PDF/Office/EPUB/ODF → `encrypted`.
@@ -39,7 +41,6 @@ from src.utils.document_hardening import ArchiveTooLargeError, check_zip_contain
 # kind -> markitdown converter class (all registered by build_markitdown; a test keeps the two in step). Called
 # directly with the sniffed kind: no magika guess, no fall-through to another converter.
 MARKITDOWN_CONVERTERS: Mapping[str, Tuple[str, str, str]] = {
-    "pdf": ("PdfConverter", ".pdf", "application/pdf"),
     "docx": ("DocxConverter", ".docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
     "pptx": ("PptxConverter", ".pptx",
              "application/vnd.openxmlformats-officedocument.presentationml.presentation"),
@@ -55,6 +56,7 @@ _CSV_SNIFF_CHARS = 4096
 # Legacy code pages of the languages the bot serves (uk, ru, en, es, fr), in tie-break order.
 _PREFERRED_LEGACY = ("cp1251", "cp1252", "cp1250", "koi8_u", "koi8_r", "iso8859_15", "latin_1")
 _CHAOS_MARGIN = 0.1
+_PLAUSIBILITY_SAMPLE_BYTES = 4096
 _ODF = {
     "office": "urn:oasis:names:tc:opendocument:xmlns:office:1.0",
     "text": "urn:oasis:names:tc:opendocument:xmlns:text:1.0",
@@ -212,14 +214,29 @@ def _read_pdf(path: str, kind: str) -> _Read:
         reader = PdfReader(path, strict=False)
         if reader.is_encrypted and not reader.decrypt(""):
             raise _Encrypted("user password")
-        pages_total = len(reader.pages)
+        pages_total = _page_count(reader)
     except _Encrypted:
         raise
     except Exception as exc:  # pypdf cannot count a damaged file pdfminer may still read; density then is unknown
         if is_memory_failure(exc):
             raise
         pages_total = 0
-    return _read_markitdown(path, kind), pages_total, False
+    from pdfminer.high_level import extract_text
+
+    with open(path, "rb") as fh:
+        return str(extract_text(fh) or ""), pages_total, False
+
+
+def _page_count(reader: Any) -> int:
+    """Pages found by walking the page tree. pypdf answers `len(reader.pages)` of an encrypted file from the root's
+    `/Count`, which a file can set to anything (negative, a billion); the walk is bounded by pypdf's page-tree
+    limits."""
+    if reader.flattened_pages is None:
+        try:
+            reader.get_page(0)                       # flattens the tree (pypdf's public way in)
+        except IndexError:
+            return 0                                 # the tree holds no page
+    return max(len(reader.flattened_pages or ()), 0)
 
 
 def _read_converter(path: str, kind: str) -> _Read:
@@ -292,23 +309,55 @@ def _read_eml(path: str, kind: str) -> _Read:
 
 
 def _read_xlsx(path: str, kind: str) -> _Read:
+    """Rows are read at most _MAX_TABLE_COLUMNS + 1 wide (a cell in column XFD must not pad every row to 16384
+    values), each sheet is rendered as soon as it is read, and reading stops once MAX_TEXT_CHARS characters are
+    collected: what the parser holds stays near the text cap whatever the sheet declares."""
     import openpyxl
 
     book = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    blocks: List[str] = []
+    collected = 0
+    truncated = False
     try:
-        sheets: List[Tuple[str, List[Sequence[Any]], bool]] = []
         for sheet in book.worksheets:
+            if collected >= MAX_TEXT_CHARS:
+                truncated = True
+                break
             sheet.reset_dimensions()                  # a declared A1:XFD1048576 must not pad every row
             rows: List[Sequence[Any]] = []
-            for row in sheet.iter_rows(values_only=True):
-                if any(value is not None and str(value).strip() for value in row):
-                    rows.append(row)
+            missing: Optional[Sequence[Any]] = None
+            for row in sheet.iter_rows(max_col=_MAX_TABLE_COLUMNS + 1, values_only=True):
+                if row is missing:
+                    continue                          # openpyxl yields one shared tuple for every absent row
+                if row.count(None) == len(row):
+                    missing = row
+                    continue
+                values = _trim_row(row)
+                texts = [str(value) for value in values if value is not None]
+                if not any(text.strip() for text in texts):
+                    continue
+                rows.append(values)
+                collected += sum(len(text) + 3 for text in texts)     # "| " separators included
                 if len(rows) > MAX_SHEET_ROWS:
                     break
-            sheets.append((sheet.title, rows, False))
+                if collected >= MAX_TEXT_CHARS:
+                    truncated = True
+                    break
+            table, cut = markdown_table(rows)
+            truncated = truncated or cut
+            if table:
+                blocks.append(f"## {sheet.title}\n\n{table}")
     finally:
         book.close()
-    return _sheets_text(sheets)
+    return "\n\n".join(blocks), 0, truncated
+
+
+def _trim_row(row: Sequence[Any]) -> Sequence[Any]:
+    """The row without its trailing empty cells (iter_rows pads every row to max_col)."""
+    end = len(row)
+    while end and row[end - 1] is None:
+        end -= 1
+    return row[:end]
 
 
 def _read_xls(path: str, kind: str) -> _Read:
@@ -549,7 +598,30 @@ def _guess_encoding(data: bytes) -> str:
     near = [m for m in matches if m.encoding in _PREFERRED_LEGACY and m.chaos <= best.chaos + _CHAOS_MARGIN]
     if not near:
         return str(best.encoding)
-    return str(max(near, key=lambda m: (m.coherence, -_PREFERRED_LEGACY.index(m.encoding))).encoding)
+    sample = data[:_PLAUSIBILITY_SAMPLE_BYTES]
+    return str(max(near, key=lambda m: (-_implausible_words(sample.decode(m.encoding, errors="replace")),
+                                        m.coherence, -_PREFERRED_LEGACY.index(m.encoding))).encoding)
+
+
+def _implausible_words(text: str) -> int:
+    """Words no language writes: Latin and Cyrillic letters in one word ("Rйsumй": CP1252 read as CP1251), or a
+    lowercase letter followed by a capital ("пРМБФБ": KOI8 read as CP1251, which swaps the case). ASCII decodes
+    the same in every candidate, so a real "iPhone" costs all of them alike."""
+    count = 0
+    latin = cyrillic = inverted = False
+    previous_lower = False
+    for char in text + " ":
+        if not char.isalpha():
+            count += (latin and cyrillic) or inverted
+            latin = cyrillic = inverted = previous_lower = False
+            continue
+        if "\u0400" <= char <= "\u04ff":
+            cyrillic = True
+        elif char < "\u0250":
+            latin = True
+        inverted = inverted or (previous_lower and char.isupper())
+        previous_lower = char.islower()
+    return count
 
 
 def _decode(data: bytes, encoding: str, cut: bool, errors: str) -> str:

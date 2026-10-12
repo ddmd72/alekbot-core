@@ -673,3 +673,150 @@ def test_short_legacy_texts_prefer_the_common_code_page(text, encoding):
 def test_a_real_cjk_text_is_not_forced_into_a_legacy_code_page():
     text = "这是一个关于房屋租赁合同的测试文件，其中包含租金和付款日期。" * 3
     assert decode_text(text.encode("gb18030")) == text
+
+
+# =============================================================================
+# XLSX stays bounded: columns capped while reading, sheets rendered one by one, reading stops at the text cap
+# (review A, M xlsx)
+# =============================================================================
+
+def _wide_xlsx(path, rows):
+    """`rows` rows, each with a value in column A and one in the last column Excel allows (XFD)."""
+    import openpyxl
+
+    book = openpyxl.Workbook()
+    sheet = book.active
+    sheet.title = "Wide"
+    for index in range(1, rows + 1):
+        sheet.cell(row=index, column=1, value=f"r{index}")
+        sheet.cell(row=index, column=16384, value="far")
+    book.save(str(path))
+    return path
+
+
+def test_xlsx_with_a_far_right_cell_reads_in_bounded_memory(tmp_path):
+    import tracemalloc
+
+    path = _wide_xlsx(tmp_path / "wide.xlsx", 600)
+    tracemalloc.start()
+    try:
+        outcome = _read(path, "xlsx")
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert outcome.status is ExtractionStatus.TEXT
+    assert "| r600 |" in outcome.text and "far" not in outcome.text
+    assert peak < 40 * 1024 * 1024        # 600 rows padded to 16384 columns would hold ~80 MB of row tuples
+
+
+class _RowSpy:
+    """Counts the rows each sheet's iter_rows hands out."""
+
+    def __init__(self, monkeypatch):
+        from openpyxl.worksheet._read_only import ReadOnlyWorksheet
+
+        self.rows = {}
+        original = ReadOnlyWorksheet.iter_rows
+        spy = self
+
+        def counting(sheet, *args, **kwargs):
+            spy.rows.setdefault(sheet.title, 0)
+            for row in original(sheet, *args, **kwargs):
+                spy.rows[sheet.title] += 1
+                yield row
+
+        monkeypatch.setattr(ReadOnlyWorksheet, "iter_rows", counting)
+
+
+def test_xlsx_stops_reading_sheets_once_the_text_cap_is_reached(tmp_path, monkeypatch):
+    monkeypatch.setattr(readers, "MAX_TEXT_CHARS", 300)
+    spy = _RowSpy(monkeypatch)
+    rows = [(f"line {i} " + "x" * 40,) for i in range(20)]
+    path = make_xlsx(tmp_path / "many.xlsx", [("First", rows), ("Second", rows), ("Third", rows)])
+    outcome = _read(path, "xlsx")
+    assert outcome.truncated is True
+    assert outcome.text.startswith("## First")
+    assert "Second" not in spy.rows and "Third" not in spy.rows
+
+
+def test_xlsx_stops_reading_rows_of_a_sheet_once_the_text_cap_is_reached(tmp_path, monkeypatch):
+    monkeypatch.setattr(readers, "MAX_TEXT_CHARS", 300)
+    spy = _RowSpy(monkeypatch)
+    path = make_xlsx(tmp_path / "long.xlsx", [("Only", [(f"line {i} " + "x" * 40,) for i in range(200)])])
+    outcome = _read(path, "xlsx")
+    assert outcome.truncated is True
+    assert spy.rows["Only"] < 20
+
+
+def test_xlsx_value_in_the_first_column_past_the_cap_marks_truncated(tmp_path, monkeypatch):
+    import openpyxl
+
+    monkeypatch.setattr(readers, "_MAX_TABLE_COLUMNS", 3)
+    book = openpyxl.Workbook()
+    book.active.append(["a", "b", "c", "d"])
+    book.save(str(tmp_path / "w.xlsx"))
+    outcome = _read(tmp_path / "w.xlsx", "xlsx")
+    assert outcome.truncated is True
+    assert "| a | b | c |" in outcome.text and "d" not in outcome.text.split("\n", 2)[2]
+
+
+def test_xlsx_narrow_sheet_is_not_marked_truncated(tmp_path):
+    path = make_xlsx(tmp_path / "n.xlsx", [("S", [("Item", "Cost"), ("Rent", 1200)])])
+    assert _read(path, "xlsx").truncated is False
+
+
+# =============================================================================
+# An encrypted PDF's page count comes from its page tree, never its /Count (review A, m)
+# =============================================================================
+
+@pytest.mark.parametrize("lie", [b"/Count 9\n", b"/Count -1", b"/Count 0\n"])
+def test_owner_password_pdf_page_count_ignores_a_lying_count(tmp_path, lie):
+    plain = make_pdf(tmp_path / "a.pdf", ["first page", "second page"])
+    restricted = encrypt_pdf(plain, tmp_path / "restricted.pdf", user_password="").read_bytes()
+    assert restricted.count(b"/Count 2\n") == 1
+    lying = tmp_path / "lying.pdf"
+    lying.write_bytes(restricted.replace(b"/Count 2\n", lie))
+    outcome = _read(lying, "pdf")
+    assert outcome.status is ExtractionStatus.TEXT
+    assert outcome.pages_total == 2
+
+
+# =============================================================================
+# Short legacy texts: a decoding that mixes scripts in a word or inverts letter case loses the tie (review A, m)
+# =============================================================================
+
+@pytest.mark.parametrize("text,encoding", [
+    ("Résumé", "cp1252"),                               # cp1251 reads it as "Rйsumй"
+    ("Оплата 500 грн", "koi8_u"),                       # cp1251 reads it as "пРМБФБ 500 ЗТО"
+    ("Привет, как дела?", "koi8_r"),
+])
+def test_very_short_legacy_texts_decode_to_plausible_words(text, encoding):
+    assert decode_text(text.encode(encoding)) == text
+
+
+# =============================================================================
+# The PDF text engine is pdfminer.six, called directly: markitdown 0.1.8's PdfConverter goes through pdfplumber
+# first and falls back on any exception (review A, M pins)
+# =============================================================================
+
+def test_pdf_text_comes_from_pdfminer_not_markitdowns_pdf_converter(tmp_path, monkeypatch):
+    from markitdown import converters
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("markitdown's PdfConverter must not read drive PDFs")
+
+    monkeypatch.setattr(converters.PdfConverter, "convert", refuse)
+    outcome = _read(make_pdf(tmp_path / "a.pdf", ["Invoice INV-2041 total 1250.00 EUR"]), "pdf")
+    assert outcome.status is ExtractionStatus.TEXT
+    assert "Invoice INV-2041" in outcome.text
+
+
+def test_a_memory_failure_inside_pdfminer_is_not_swallowed(tmp_path, monkeypatch):
+    import pdfminer.high_level
+
+    def exhausted(*args, **kwargs):
+        raise MemoryError("pdfminer")
+
+    monkeypatch.setattr(pdfminer.high_level, "extract_text", exhausted)
+    with pytest.raises(MemoryError):
+        _read(make_pdf(tmp_path / "a.pdf", ["text"]), "pdf")
