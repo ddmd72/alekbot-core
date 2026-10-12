@@ -549,3 +549,17 @@ order, substitution handling, OIDC audience, `main.py` names) matches the code. 
 - **OWNER (optional):** the `drive_query` field description says "words of the file or folder name"; if Smart leaves
   a place ("Rome") out of `drive_query`, "photos from Rome in August" returns every August photo. Adding "or a place"
   to that description would rule it out.
+
+### Task 36 — done
+- Commit `34aed96` (byte-identical). `make check` (reviewer, worktree): 8018 passed. Reviewer: APPROVED.
+- Checked in headless Chromium over 10 payloads × 4 languages + toggle flows: no XSS (no server string reaches
+  `innerHTML`; `last_error` whitelisted), a missing or partial `indexing` block is handled (R11), every backend error
+  category localised, toggle revert on failure. All seven RFC §6 disclosure clauses present and correct in meaning in
+  en/uk/fr/es. The card's JS has no committed behaviour test (string/key tests only) — accepted by the plan.
+- Test gap F1 (two disclosure clauses not pinned by unique fragments) → small test batch R12.
+- **OWNER:** F2 — RFC §6 asks for "records per state"; the card shows carded (+ pending/failed when non-zero), no Δ
+  covers it, and Task 47 Step 7 expects per-state counts. F3 — after a revoked grant the user turns search off: the
+  card still says "Search still answers from the stored index" (false; index purged), and turning search back on shows
+  "Indexing in progress…" indefinitely while access is lost → show the reconnect hint only when search is on (wording
+  needed, 4 languages). F4 — `queued:false` ignored (first deploy pass: "starts shortly" while nothing runs).
+  F5 — "kept for about 30 days" hint persists after the purge (status has no `access_lost_at`).
