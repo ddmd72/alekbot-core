@@ -98,3 +98,8 @@ Method: subagent-driven (implementer → independent reviewer → coordinator ac
 ### Task 11 — done
 - Commit `8da04bb`. `make check` (coordinator, worktree at the commit): 7414 passed, 3 skipped, 1 xfailed.
 - Deviations: none. Reviewer: APPROVED, round 1.
+
+### Task 12 — done
+- Commit `b1402fb`. `make check` (coordinator, worktree at the commit): 7418 passed, 3 skipped, 1 xfailed.
+- Deviations: none. Reviewer: APPROVED, round 1. The existing `test_callback_saves_credentials_under_drive_provider`
+  now passes through the best-effort path and logs one harmless "Drive id not read at connect" WARNING.
