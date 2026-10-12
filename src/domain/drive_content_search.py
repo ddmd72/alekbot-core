@@ -8,7 +8,8 @@ Public interface:
     ContentHit(record, chunk, score)                       a record's best chunk in one stream
     chunk_readable(chunk, record) -> bool                  the §7.4 fence
     pool_nearest(hits, records) -> List[ContentHit]        chunk kNN pooled per record, nearest first
-    selective_term_hits(term_hits, limit) -> Dict[str, Sequence[DriveChunk]]   terms whose page was not full
+    selective_term_hits(term_hits, limit, max_files) -> Dict[str, Sequence[DriveChunk]]   terms that select:
+                                                           page not full, or full from few distinct files
     pool_terms(term_hits, records, terms) -> List[ContentHit]   exact-term hits pooled per record, most terms first
     window_indexes(index) -> Tuple[int, ...]               the window around a hit: index ± 1
     window_text(chunks) -> str                             the window's chunks joined without their overlap
@@ -22,6 +23,7 @@ from typing import Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 from .drive_content_terms import content_terms
 from .drive_index import DriveChunk, DriveIndexRecord, RecordState
+from .drive_index_params import TERM_NONSELECTIVE_FILES
 from .drive_search import MATCHED_BOTH, MATCHED_CARD, MATCHED_CONTENT
 
 _GAP = "\n[…]\n"   # between chunks that are not adjacent (a neighbour is missing)
@@ -58,14 +60,16 @@ def pool_nearest(hits: Sequence[Tuple[DriveChunk, float]],
     return list(pooled.values())
 
 
-def selective_term_hits(term_hits: Mapping[str, Sequence[DriveChunk]],
-                        limit: int) -> Dict[str, Sequence[DriveChunk]]:
-    """The terms that select (§24.6, review D-M2): a term whose first page came back full (`limit` chunks or more)
-    is held by more chunks than one page shows, and the page is ordered by item_id — ranking its files would rank by
-    id, and anchoring their windows on it would show the common term, not the passage asked about. Such a term takes
-    no part in the fusion or the windows, and is not read again on the widening. A page that was not full is
-    complete."""
-    return {term: chunks for term, chunks in term_hits.items() if len(chunks) < limit}
+def selective_term_hits(term_hits: Mapping[str, Sequence[DriveChunk]], limit: int,
+                        max_files: int = TERM_NONSELECTIVE_FILES) -> Dict[str, Sequence[DriveChunk]]:
+    """The terms that select (§24.6, review D-M2, arbiter R1-2). A term whose first page came back full (`limit`
+    chunks or more) AND spans more than `max_files` distinct files is held by more files than one page shows, and the
+    page is ordered by item_id — ranking its files would rank by id, and anchoring their windows on it would show the
+    common term, not the passage asked about. Such a term takes no part in the fusion, the windows or the trimming,
+    and is not read again on the widening. A page that was not full is complete; a full page from few files (an IBAN
+    in every chunk of one contract) is the files the user asked for, and still selects."""
+    return {term: chunks for term, chunks in term_hits.items()
+            if len(chunks) < limit or len({c.item_id for c in chunks}) <= max_files}
 
 
 def pool_terms(term_hits: Mapping[str, Sequence[DriveChunk]], records: Mapping[str, DriveIndexRecord],

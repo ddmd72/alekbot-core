@@ -62,6 +62,11 @@ WINDOW_CHARS_TOTAL = 12_000                 # all content windows of one result 
                                             # first, neighbours in rank order while it lasts (§10.2)
 CONTENT_TERM_QUERIES = 8                    # one array-contains query per query term, at most this many
 CONTENT_TERM_FETCH = 100
+TERM_NONSELECTIVE_FILES = 8                 # a query term whose FULL first term page spans more distinct files than
+                                            # this is non-selective: the page is an id-ordered slice of many files,
+                                            # so it is dropped from fusion, anchoring, trimming and widening. A full
+                                            # page from few files (an IBAN in every chunk of one contract) still
+                                            # selects (§24.6, arbiter R1-2)
 MODEL_EXTRACT_DENSITY = 200                 # chars per page below which a PDF is routed to the reader (§9)
 MODEL_EXTRACT_GARBAGE = 0.05                # share of unreadable characters above which it is routed
 MODEL_EXTRACT_MAX_PAGES = 200
