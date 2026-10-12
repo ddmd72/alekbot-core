@@ -33,7 +33,7 @@ ACCESS_LOSS_TTL = timedelta(days=30)
 LEASE_MARGIN = timedelta(minutes=1)         # lease_until = start + TICK_DEADLINE + margin (§7.1)
 NUDGE_RETRY_DELAY_S = 60                    # a live lease ends within TICK_DEADLINE: at most ~31 retries
 PLACE_MAX_DISTANCE_KM = 50.0                # RFC Δ7
-PLACE_PREFER_RADIUS_KM = 15.0               # within it the heaviest place names a photo (RFC Δ7)
+PLACE_PREFER_RADIUS_KM = 15.0               # a heavier place within it may name a photo (RFC Δ39)
 RRF_K = 60
 SYSTEMIC_BACKOFF_BASE_S = 60                # continuation delay after a systemic error, doubled per failure
 SYSTEMIC_BACKOFF_CAP_S = 1800               # = 3 x TICK_INTERVAL

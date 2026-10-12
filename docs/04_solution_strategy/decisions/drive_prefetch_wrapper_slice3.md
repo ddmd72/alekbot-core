@@ -19,6 +19,7 @@ every file-to-text conversion onto one extraction path.
 
 **Residual risk:** a hostile document on the drive reaches a document-generating specialist without the reminder.
 Their LLM calls carry no tools (DocPlanner's one hand-off is the DOCX code generator), so injected text can at worst
-shape the document they produce.
+shape what they produce: DocGenerator's output is code that runs (sandboxed, no network or file system), and
+HtmlPageGenerator's output is a page with JS that the user opens.
 
 **Trigger to revisit:** Slice 3, or any specialist with tools beyond producing a document gaining `prefetch_file_ref`.

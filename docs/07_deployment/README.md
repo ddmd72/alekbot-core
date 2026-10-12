@@ -281,8 +281,8 @@ the Cabinet hides the drive card only when the adapter itself is absent (To Do k
 [decision](../04_solution_strategy/decisions/drive_indexer_lease_queue_service.md)). It is `indexer_main.py` on the
 same image: a `/worker` that serves `drive_sync` only (plus `/health`), gen2, 2 GiB, concurrency 1, timeout 1800 s,
 min 0, max 1. **Ingress is internal** and the in-app OIDC check stays: a request from outside Google's network gets
-404 before it reaches the app, and on Cloud Run the check fails closed when `SERVICE_ACCOUNT_EMAIL` is unset (plan
-RFC Δ21). The token audience is pinned to the indexer's own URL (`{url}` or `{url}/worker`), so a manual task sent to a
+404 before it reaches the app, and on Cloud Run the check fails closed when `SERVICE_ACCOUNT_EMAIL` is unset (RFC
+Δ21). The token audience is pinned to the indexer's own URL (`{url}` or `{url}/worker`), so a manual task sent to a
 run.app URL form other than the one in `INDEXER_URL_DEV` gets 401. The main service (1 GiB) never indexes. The
 scheduler job `alek-bot-dev-start-drive-sync` sends it `start_drive_sync` every 10 minutes (minutes 3, 13, …), and
 it fans out one `drive_sync` per user; it also nudges after bot writes, and the Cabinet toggle enqueues one. All of

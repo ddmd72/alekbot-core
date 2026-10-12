@@ -6,8 +6,8 @@
 `request_from_fields` in `src/domain/drive_search.py`, `effective_date` in `src/domain/drive_card.py`.
 
 **Decision:** A date-only `drive_date_from` / `drive_date_to` is a whole UTC day, and `effective_date` is compared as
-stored. **Verified fact:** Graph's `photo.takenDateTime` is the camera's local wall clock labelled `Z`, not UTC. On
-IMG_6172 the EXIF/Spotlight time was 13:13:40 UTC and Graph returned 15:13:40Z, the local wall clock. So a photo's
+stored. **Verified fact:** Graph's `photo.takenDateTime` is the camera's local wall clock labelled `Z`, not UTC. On a
+test photo, Graph returned the EXIF capture time as written by the camera, with the user's UTC offset not applied. So a photo's
 stored date already reads as the user's local time, and the UTC cut gives the day the user means. Only true-UTC
 fallbacks (`fileSystemInfo.lastModifiedDateTime`, the server time) are off by the user's offset, which matters only
 for a file saved within that many hours of midnight.
