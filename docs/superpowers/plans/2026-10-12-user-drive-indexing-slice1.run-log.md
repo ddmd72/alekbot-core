@@ -158,3 +158,21 @@ storage); results and the fixes they lead to are logged below.
 - Reviewer (adversarial): APPROVED, round 1, no findings. gcloud flag syntax checked against local `--help`;
   11 mutations, 2 survivors with no behaviour change. Pre-existing observation: the script lowercases scope to
   `collection_group` (gcloud wants `collection-group`) — no current index uses that scope.
+
+### Task 19 — done
+- Commit `34f163c`. `make check` (coordinator, worktree at the commit): 7586 passed, 3 skipped, 1 xfailed.
+- Deviations: none. Reviewer (adversarial): APPROVED, round 1. Every repository query, incl. Part E's search and
+  Task 22's `oldest_due_at`, is backed by a declared index; vector entries 768-dim, matching the Gemini adapter.
+- F1 MINOR (test gap, not required): `_required_index` treats a range filter without `order_by` as needing no
+  composite index; a future such query would pass the test and fail in production.
+- **OWNER (before Task 47):** `make deploy-indexes` creates every entry in `config/firestore.indexes.json`, incl.
+  ~25 older entries for the unprefixed collections deleted on 2026-05-31; Δ22 says those only burn quota. Decide
+  whether to prune them from the file before the deploy.
+
+## Second review change (after Task 19, on the user's request)
+
+The reviewer prompt now also has a **system-context pass**: read the live code around the diff (callers, port
+implementations, Firestore fields, task types, DI, dedup, OIDC, notifications, deploy substitutions), look for
+regressions of Step 1 drive / To Do / Gmail and startup, and **challenge the plan's premises** (each Δ and design
+decision the task relies on, checked against code, RFC and spike data). A separate read-only **premise audit** of the
+whole plan (Δ1–Δ22, part decisions, integration assumptions of Tasks 22–46) runs in parallel.
