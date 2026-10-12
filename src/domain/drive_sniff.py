@@ -56,8 +56,10 @@ _BOMS = (b"\xef\xbb\xbf", b"\xff\xfe", b"\xfe\xff")
 
 def sniff_kind(head: bytes, declared_kind: str) -> str:
     """The kind the head proves, else the declared kind when the head is compatible with it, else `other`."""
-    if b"%PDF-" in head[:1024]:                      # the PDF header may follow up to 1 KiB of junk
+    if head.startswith(b"%PDF-"):
         return "pdf"
+    if declared_kind in ("pdf", "other") and b"%PDF-" in head[:1024]:
+        return "pdf"                                 # up to 1 KiB of junk before the header; a text naming it is text
     if head.startswith((b"PK\x03\x04", b"PK\x05\x06")):
         return _zip_kind(head, declared_kind)
     if head.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
