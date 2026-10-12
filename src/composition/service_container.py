@@ -53,8 +53,11 @@ from ..adapters.firestore_task_config_repository import FirestoreTaskConfigRepos
 from ..adapters.firestore_task_search_index import FirestoreTaskSearchIndex
 from ..adapters.microsoft import OneDriveAdapter
 from ..adapters.microsoft.todo_adapter import MicrosoftToDoAdapter
+from ..ports.drive_index_repository import DriveIndexRepository
+from ..ports.task_queue import TaskQueue
 from ..ports.user_drive_port import UserDrivePort
 from ..services.user_drive_service import UserDriveService
+from .drive_indexing_setup import build_drive_index_repository, build_drive_task_queue
 from ..services.task_indexing_service import TaskIndexingService
 from ..adapters.gcs_file_storage_adapter import GcsFileStorageAdapter
 from ..adapters.gcs_media_adapter import GcsMediaAdapter
@@ -162,15 +165,23 @@ class ServiceContainer:
         # functional only once the user has connected it in the Cabinet. The adapter and the
         # service exist together or not at all: conversion reads and the agent's mutations hang
         # off this one pair.
+        # The drive index (USER_DRIVE_INDEXING_RFC §4, §13) hangs off the same pair: its repository
+        # (search, Cabinet counters, the fan-out) and the drive queue to the indexer service, which
+        # carries the fan-out's ticks and UserDriveService's nudges. The queue is None until
+        # DRIVE_INDEXER_URL is set (drive_indexing_setup.build_drive_task_queue).
         self.user_drive: Optional[UserDrivePort] = None
         self.user_drive_service: Optional[UserDriveService] = None
+        self.drive_index_repo: Optional[DriveIndexRepository] = None
+        self.drive_task_queue: Optional[TaskQueue] = None
         if config.get("MICROSOFT_TODO_CLIENT_ID") and config.get("MICROSOFT_TODO_CLIENT_SECRET"):
             self.user_drive = OneDriveAdapter(
                 oauth_credentials=self.oauth_credentials,
                 client_id=config["MICROSOFT_TODO_CLIENT_ID"],
                 client_secret=config["MICROSOFT_TODO_CLIENT_SECRET"],
             )
-            self.user_drive_service = UserDriveService(self.user_drive)
+            self.drive_index_repo = build_drive_index_repository(db_client, env_config)
+            self.drive_task_queue = build_drive_task_queue(config, env_config)
+            self.user_drive_service = UserDriveService(self.user_drive, nudge_queue=self.drive_task_queue)
 
         self.notes_adapter = FirestoreAgentNoteAdapter(db_client, env_config)
         self.recurrence_adapter = DateutilRecurrenceAdapter()
