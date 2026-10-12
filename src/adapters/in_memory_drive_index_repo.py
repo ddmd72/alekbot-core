@@ -254,6 +254,12 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
         return [self.chunks[(user_id, item_id, generation, i)][0] for i in sorted(set(indexes))
                 if (user_id, item_id, generation, i) in self.chunks]
 
+    async def get_chunks_with_vectors(self, user_id: str, item_id: str, generation: int,
+                                      indexes: Sequence[int]) -> List[Tuple[DriveChunk, List[float]]]:
+        rows = [self.chunks[(user_id, item_id, generation, i)] for i in sorted(set(indexes))
+                if (user_id, item_id, generation, i) in self.chunks]
+        return [(c, list(v)) for c, v in rows]
+
     async def readable_chunk_total(self, user_id: str) -> int:
         return sum(r.chunk_count for r in self._user(user_id) if r.indexed_generation is not None)
 

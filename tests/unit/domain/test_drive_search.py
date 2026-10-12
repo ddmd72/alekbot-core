@@ -237,7 +237,9 @@ class TestRender:
         text = render_results(DriveSearchResult(status=STATUS_OK, envelope=env,
                                                 request=DriveSearchRequest(query="lease")))
         assert text.startswith(REFERENCE_REMINDER)
-        assert "do not say a file does not exist" in text
+        # The building fact stays; the standing guidance moved to Smart's protocol token (§10.4, §24.10)
+        assert "The index is still being built: some files and folders may not be in it yet." in text
+        assert "do not say a file does not exist" not in text
         assert "Only file and folder names and metadata" in text
         assert "as of 2026-10-11 12:00 UTC" in text
         assert "reconnect the drive" in text and "3 documents could not be read" in text

@@ -131,7 +131,10 @@ class TestGate:
     async def test_enabled_before_the_first_tick_is_building(self, w):
         result = await w.search("lease")
         assert result.status == STATUS_OK and result.cards == () and result.envelope.building
-        assert "do not say a file does not exist" in render_results(result)
+        text = render_results(result)
+        # The building fact stays; the standing guidance moved to Smart's protocol token (§10.4, §24.10)
+        assert "The index is still being built: some files and folders may not be in it yet." in text
+        assert "do not say a file does not exist" not in text
 
 
 # --- envelope (§10.2) ---------------------------------------------------------------------------
