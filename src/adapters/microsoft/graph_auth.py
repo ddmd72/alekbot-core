@@ -24,6 +24,9 @@ CACHE_TTL = timedelta(minutes=5)  # owner decision (USER_DRIVE_RFC §4.2): disco
 # Token-endpoint error codes only a new sign-in clears: a dead grant, MFA or Conditional Access asking for
 # interaction, consent withdrawn. Retrying them only repeats the refusal (USER_DRIVE_INDEXING_RFC §7.7).
 _REAUTH_ERRORS = ("invalid_grant", "interaction_required", "consent_required")
+# Own bound on the token POST (aiohttp's default is 300 s): a hanging endpoint ends as a TimeoutError well
+# inside a Graph call's budget. Callers keep their mapping of it (the drive: a systemic throttle).
+TOKEN_POST_TIMEOUT_S = 30.0
 
 
 class GraphReauthRequired(ValueError):
@@ -94,7 +97,8 @@ class MicrosoftGraphTokenProvider:
             "scope": self._scope,
         }
         async with aiohttp.ClientSession() as session:
-            async with session.post(_TOKEN_URL, data=data) as resp:
+            async with session.post(_TOKEN_URL, data=data,
+                                    timeout=aiohttp.ClientTimeout(total=TOKEN_POST_TIMEOUT_S)) as resp:
                 if resp.status != 200:
                     body = await resp.text()
                     logger.error(f"MS token refresh failed ({self._provider}, {resp.status}): {body[:300]}")
