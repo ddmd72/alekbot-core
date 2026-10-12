@@ -189,9 +189,12 @@ class DriveIndexRepository(ABC):
         """The chunks among `indexes` of one generation that exist, by index (a hit's neighbour window, §10.2)."""
 
     @abstractmethod
-    async def get_chunks_with_vectors(self, user_id: str, item_id: str, generation: int,
-                                      indexes: Sequence[int]) -> List[Tuple[DriveChunk, List[float]]]:
-        """`get_chunks` with each chunk's vector, by index (folder-scoped chunk ranking in memory, §10.1)."""
+    async def get_chunks_with_vectors(self, user_id: str, item_id: str, generation: int, indexes: Sequence[int], *,
+                                      text: bool = True, terms: bool = True,
+                                      vectors: bool = True) -> List[Tuple[DriveChunk, List[float]]]:
+        """`get_chunks` with each chunk's vector, by index (folder-scoped chunk ranking in memory, §10.1). A field
+        not asked for is not read: `text` / `content_terms` come back empty, and the vector as [] (the ranking
+        reads only what it ranks with)."""
 
     @abstractmethod
     async def readable_chunk_total(self, user_id: str) -> int:
