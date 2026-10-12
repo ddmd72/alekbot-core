@@ -335,12 +335,13 @@ class DriveSearchService:
 
     def _cards(self, ranked: Sequence[DriveIndexRecord], paths: Dict[str, str],
                stats: _Stats) -> Tuple[DriveSearchCard, ...]:
-        """Collapse identical files (same content hash) into one card with `also_at`, then cut at K."""
+        """Collapse identical files (same content hash) into one card with `also_at`, then cut at K. Empty files
+        all share one hash, so only files with content collapse."""
         cards: List[DriveSearchCard] = []
         by_hash: Dict[str, int] = {}
         for rec in ranked:
             path = paths[rec.item_id]
-            same_as = rec.content_hash
+            same_as = rec.content_hash if rec.size_bytes > 0 else None
             if same_as and same_as in by_hash:
                 first = by_hash[same_as]
                 cards[first] = replace(cards[first], also_at=cards[first].also_at + (path,))
