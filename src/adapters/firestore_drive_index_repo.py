@@ -634,9 +634,14 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
         docs = await self._get_chunk_docs(user_id, item_id, generation, indexes, list(CHUNK_FIELDS))
         return [chunk_from_doc(d) for d in docs]
 
-    async def get_chunks_with_vectors(self, user_id: str, item_id: str, generation: int,
-                                      indexes: Sequence[int]) -> List[Tuple[DriveChunk, List[float]]]:
-        docs = await self._get_chunk_docs(user_id, item_id, generation, indexes, [*CHUNK_FIELDS, CHUNK_VECTOR])
+    async def get_chunks_with_vectors(self, user_id: str, item_id: str, generation: int, indexes: Sequence[int], *,
+                                      text: bool = True, terms: bool = True,
+                                      vectors: bool = True) -> List[Tuple[DriveChunk, List[float]]]:
+        skipped = {name for name, wanted in (("text", text), ("content_terms", terms)) if not wanted}
+        paths = [name for name in CHUNK_FIELDS if name not in skipped] + ([CHUNK_VECTOR] if vectors else [])
+        docs = await self._get_chunk_docs(user_id, item_id, generation, indexes, paths)
+        if not vectors:
+            return [(chunk_from_doc(d), []) for d in docs]
         return [(chunk_from_doc(d), [float(x) for x in d[CHUNK_VECTOR]]) for d in docs if d.get(CHUNK_VECTOR)]
 
     async def readable_chunk_total(self, user_id: str) -> int:

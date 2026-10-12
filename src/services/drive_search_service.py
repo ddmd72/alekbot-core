@@ -480,14 +480,19 @@ class DriveSearchService:
     async def _content_in_memory(self, user_id: str, readable: Sequence[DriveIndexRecord],
                                  vector: Optional[List[float]], terms: Sequence[str], stats: _Stats) -> _Content:
         """A folder's readable chunks, ranked in memory (§10.1 Folder): read by id at each record's readable
-        generation (so fenced by construction), scored as they arrive; vectors are not kept."""
+        generation (so fenced by construction), scored as they arrive; vectors are not kept. Only what ranks is read:
+        never the text (windows read it by id), the terms only for a query with terms, the vectors only with a query
+        vector — refreshing with no terms reads nothing."""
         hits: List[Tuple[DriveChunk, float]] = []
         by_term: Dict[str, List[DriveChunk]] = {t: [] for t in terms}
+        if vector is None and not terms:
+            return _Content()
         for i in range(0, len(readable), _WALK_PARALLEL):
             batch = readable[i:i + _WALK_PARALLEL]
             rows = await asyncio.gather(*(
                 self._repo.get_chunks_with_vectors(user_id, r.item_id, int(r.indexed_generation or 0),
-                                                   range(r.chunk_count)) for r in batch))
+                                                   range(r.chunk_count), text=False, terms=bool(terms),
+                                                   vectors=vector is not None) for r in batch))
             for row in rows:
                 for chunk, chunk_vector in row:
                     if vector is not None:
