@@ -47,7 +47,7 @@ def _count_upgrade_pages(w):
 class TestRefusedCardBecomesTerminal:
 
     async def test_upgrade_passes_stop_once_the_refused_card_is_terminal(self, monkeypatch):
-        """After a CARD_VERSION bump one card is refused on every attempt. It turns failed after MAX_ATTEMPTS,
+        """After a CARD_VERSION bump one card is refused on every attempt. It is refused for good after MAX_ATTEMPTS,
         the bump applies, and the fan-out's quiet ticks read no upgrade page any more."""
         w = World(page_size=500)
         for i in range(300):
@@ -69,7 +69,8 @@ class TestRefusedCardBecomesTerminal:
         assert len(refused) == MAX_ATTEMPTS
         assert per_tick[-6:] == [0] * 6, per_tick
         rec = w.rec(bad)
-        assert rec.state is RecordState.FAILED and not rec.has_card and bad not in w.carded()
+        assert rec.card_refused and rec.state is RecordState.METADATA_ONLY and not rec.has_card
+        assert bad not in w.carded()
         assert rec.card_version == 2 and not planner.stale_versions(rec) and rec.due_at is None
 
     async def test_a_backed_off_stale_record_costs_no_pass_per_quiet_tick(self, monkeypatch):
@@ -97,14 +98,15 @@ class TestRefusedCardBecomesTerminal:
         for _ in range(MAX_ATTEMPTS + 2):
             await w.settle()
             w.clock.advance(RETRY_CAP.total_seconds())
-        assert len(refused) == MAX_ATTEMPTS and w.rec(bad).state is RecordState.FAILED
+        assert len(refused) == MAX_ATTEMPTS and w.rec(bad).card_refused
+        assert w.rec(bad).state is RecordState.METADATA_ONLY
         w.drive.reemit(bad)                      # delta re-emits unchanged items often (§7.2)
         await w.settle()
         assert len(refused) == MAX_ATTEMPTS
-        assert w.rec(bad).state is RecordState.FAILED
+        assert w.rec(bad).card_refused and w.rec(bad).state is RecordState.METADATA_ONLY
         w.drive.rename(bad, "renamed.pdf")       # a new card text gets a fresh try
         await w.settle()
-        assert bad in w.carded() and w.rec(bad).state is RecordState.METADATA_ONLY
+        assert bad in w.carded() and not w.rec(bad).card_refused and w.rec(bad).state is RecordState.METADATA_ONLY
 
     async def test_a_card_builder_bump_retries_a_terminal_refusal(self, monkeypatch):
         w = World()
@@ -113,11 +115,12 @@ class TestRefusedCardBecomesTerminal:
         for _ in range(MAX_ATTEMPTS + 2):
             await w.settle()
             w.clock.advance(RETRY_CAP.total_seconds())
-        assert w.rec(bad).state is RecordState.FAILED
+        assert w.rec(bad).card_refused and w.rec(bad).state is RecordState.METADATA_ONLY
         _bump_card_version(monkeypatch)
         del w.emb.get_embedding                  # the provider accepts the new card builder's text
         await w.settle()
         assert bad in w.carded() and w.rec(bad).state is RecordState.METADATA_ONLY and len(refused) == MAX_ATTEMPTS
+        assert not w.rec(bad).card_refused
 
 
 class TestSystemicEmbeddingFailureKeepsTheBatch:

@@ -45,11 +45,11 @@ class TestTerminalRefusalBindsOneText:
         bad = w.drive.add("weird.pdf")
         refused = _refusing(w, "weird")
         await _cycles(w, MAX_ATTEMPTS + 2)
-        assert w.rec(bad).state is RecordState.FAILED and len(refused) == MAX_ATTEMPTS
+        assert w.rec(bad).card_refused and len(refused) == MAX_ATTEMPTS
         w.drive.rename(bad, "weird-v2.pdf")      # still refused by the provider
         await _cycles(w, MAX_ATTEMPTS + 2)
         assert [t for t in refused if t.startswith("weird-v2")] == [card_text(w.rec(bad))] * MAX_ATTEMPTS
-        assert w.rec(bad).state is RecordState.FAILED
+        assert w.rec(bad).card_refused and w.rec(bad).state is RecordState.METADATA_ONLY
 
     async def test_the_last_refusal_of_a_text_that_changed_meanwhile_is_not_terminal(self):
         w = World()
@@ -62,7 +62,7 @@ class TestTerminalRefusalBindsOneText:
         _refusing(w, "weird", rename_on_last)
         await _cycles(w, MAX_ATTEMPTS + 2)
         rec = w.rec(bad)
-        assert rec.state is not RecordState.FAILED
+        assert rec.state is not RecordState.FAILED and not rec.card_refused
         assert bad in w.carded() and rec.has_card
 
 

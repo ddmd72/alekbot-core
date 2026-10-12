@@ -206,4 +206,4 @@ class TestSystemicEmbeddingErrorsMoveNoRecord:
         assert w.rec(bad).attempts == 0
         assert bad not in w.carded() and set(good) <= w.carded()
         assert w.rec(bad).priority != int(Priority.RETRY) and w.rec(bad).due_at <= w.clock.now
-        assert w.rec(bad).state is not RecordState.FAILED
+        assert w.rec(bad).state is not RecordState.FAILED and not w.rec(bad).card_refused
