@@ -210,7 +210,9 @@ number, an amount), no type words or date filters.
   round (17 name, 1 kNN; a kind family runs one kNN per member kind), 36 with the widening.
 - **Content streams (Slice 2+4).** A chunk kNN (fenced, max-pooled to one hit per record, before fusion) and the
   content exact-token stream (one `array-contains` query per maximal query term — ISO date, canonical amount, joined
-  id; a term whose first page is full is not selective and is left out) join the card and name streams in RRF. A
+  id; a term whose first page is full AND spans more than 8 distinct files is not selective and is left out, while a
+  full page from few files — an IBAN in every chunk of one contract — still selects) join the card and name streams
+  in RRF. A
   content hit's card shows a window: the best chunk and its neighbours. The envelope says `content_search` and counts
   `unread` documents (admitted kinds, and images triaged as text, whose content is not searchable).
 - **Capped hedge (RFC Δ37).** When a stream page was full and the kind, date or folder filters dropped candidates,
