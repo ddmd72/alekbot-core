@@ -580,7 +580,8 @@ re-listings — a record flag, paged — maintenance, retries) → continuation.
 `OSError`, the 60 s per-call bound `GRAPH_CALL_TIMEOUT_S` as `TimeoutError`) defer that item, and a change that fails
 inside a page is skipped with an ERROR line. The feed, the token endpoint and card embedding are systemic (only an
 HTTP 400 embedding refusal, `LLMClientError`, backs that one card off): written onto the latest saved state (page
-progress is kept), they back off `min(60·2^n, 1800)` s, or the provider's delay when throttled. **A third Cloud Run
+progress is kept), they back off `min(60·2^n, 1800)` s, or the throttle hint (the provider's Retry-After; a flat 60 s for a failed
+token refresh). **A third Cloud Run
 service, next to the relay:** the tick runs only on `alek-bot-indexer-dev` (`indexer_main.py`, `/worker` for
 `drive_sync` only, `--ingress=internal` plus the OIDC check with a pinned audience, gen2, 2 GiB, concurrency 1, max 1;
 logs: `make fetch-logs-indexer`, Cloud Logging only — no Logfire), fed by the dedicated queue `drive-sync-dev`
@@ -590,7 +591,7 @@ two-pass first deploy in `docs/07_deployment/README.md`). The main service fans 
 (`DriveSyncSchedulerService`: staleness alert, and at most one reconnect notice per breakage — it loads the user's
 agents first and sets `reconnect_notified` before sending, so a cut-off notice is lost, never repeated, like Gmail's)
 and nudges after each Step 1 mutation. **Slice 1 admits no content kind:** every file is
-`metadata_only / kind_not_admitted` with a card `name | kind | key facets` (photo date, camera, an offline
+`metadata_only` (reason `kind_not_admitted`, or a never-download rule) with a card `name | kind | key facets` (photo date, camera, an offline
 `place_name` from `src/assets/geo/places_v1.tsv`); dot-folders, folders with a `.git`/`pyvenv.cfg` child,
 `node_modules`/`__pycache__`/`site-packages` anywhere (plan Δ16) and dense trees collapse to one card.
 `search_files_in_drive` (SYNC) → `DriveSearchService`: card kNN + a lexical name stream fused with RRF, names covering

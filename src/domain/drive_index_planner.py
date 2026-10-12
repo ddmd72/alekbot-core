@@ -1,6 +1,6 @@
 """
 Drive index planner (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §3.6, §5.2, §7). Pure: every decision the
-tick makes lives here and is tested without Firestore, Graph or a clock. The service fetches, calls
+tick makes lives here and is tested without Firestore, the drive provider or a clock. The service fetches, calls
 these functions and writes what they return.
 
 Public interface:

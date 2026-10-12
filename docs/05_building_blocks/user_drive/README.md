@@ -68,7 +68,7 @@ tick does, tested without Firestore, Graph or a clock.
   item). These include the cursor, the records, and a purge's deletion of the whole state document, lease included.
   A subtree that must be listed again (a folder leaving an opaque root, or restored after a delete) is a flag on the
   folder's own record (`reobserve_pending`, `reobserve_cursor`), worked page by page in class 2 (plan Δ18).
-- **Policy (§5).** Slice 1 admits no content kind: every file is `metadata_only / kind_not_admitted` with a card.
+- **Policy (§5).** Slice 1 admits no content kind: every file is `metadata_only` (reason `kind_not_admitted`, or a never-download rule) with a card.
   Dot-names, secret-shaped names (`id_rsa*`, `*.kdbx`, …), OS artefacts and remote/package/malware items keep a card
   with their reason. A dot-folder, a folder with a `.git` or `pyvenv.cfg` child, a `node_modules`, `__pycache__` or
   `site-packages` folder anywhere (plan Δ16), or a dense tree (more than 500 children, mostly neither document nor
@@ -108,7 +108,8 @@ classified by what the call is about (§8.2):
   one budget (`ITEM_CALLS_PER_TICK` = 20, plan Δ9) and also stop once the tick's time is spent. A change that fails inside a page is skipped and logged at ERROR, and
   the page still applies. A card whose embedding is refused with HTTP 400 backs off alone.
 - **Systemic.** The delta feed, the token endpoint, any other embedding error and the repository end the tick. A
-  throttled drive waits the delay it names; anything else backs off `min(60·2^n, 1800)` s. The error is written onto
+  throttled drive waits the throttle hint (the provider's Retry-After; a flat 60 s for a failed token refresh);
+  anything else backs off `min(60·2^n, 1800)` s. The error is written onto
   the state as last saved, so progress saved page by page is kept.
 
 Indexing turned off mid-tick drops the in-flight result and enqueues a continuation, whose gate purges.
@@ -169,8 +170,9 @@ The drive is not part of `SearchEnrichmentService`:
   (`bars.json`, written by the first owner-reviewed run). `--record` re-records them; do that only for a deliberate
   change, and review the misses it prints first.
 - **Rebuild.** Turning indexing off, waiting until the purge has run, then on again purges and re-onboards. The
-  purge shows as the indexer's `index purged` line, and `/api/drive/status` then returns empty `indexing.counters`;
-  the Cabinet hides the counters as soon as indexing is off, so it does not show it. A quick off/on can find the
+  purge shows only as the indexer's `index purged` line. Empty `indexing.counters` in `/api/drive/status` is not a
+  sign of it (the counters stay empty until a round settles), and the Cabinet hides the counters as soon as indexing
+  is off. A quick off/on can find the
   index still there and keep it: the toggle tick then sees indexing on with a state stored and proceeds.
 
 ---

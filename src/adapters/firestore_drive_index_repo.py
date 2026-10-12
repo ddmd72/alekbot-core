@@ -23,6 +23,8 @@ Writes:
     - `save_sync_state` never writes `lease_owner`/`lease_until` either: the lease is taken and released in
       transactions by `acquire_lease`/`release_lease` only (a creating `acquire_lease` writes it with the new
       state). A tick that outlived its lease would otherwise write it back and then release the new holder's.
+    - `delete_sync_state` (a purge) deletes the whole state document, so the lease fields go with it. That delete
+      is not fenced by the lease (an open owner item).
 
 Vectors: record queries and `get_records` project the record fields, so they never load `card_vector`. Two reads
 do load it: `card_vectors` (its purpose) and `find_nearest_cards`, whose kNN results are full documents (the

@@ -4,7 +4,8 @@ CLI for the drive search eval. Real embeddings (GEMINI_API_KEY from .env) and th
     venv/bin/python -m scripts.validation.drive_eval [--record] [--report PATH]
 
 Exit codes: 0 pass or recorded, 1 recall fell below a recorded bar, 2 no verdict (malformed gold, did
-not settle, no bars, bars from another K/tree/gold, a search raised, or --record with a refused case).
+not settle, no bars, bars without an `overall` recall, bars from another K/tree/gold, a search raised, or
+--record with a refused case).
 Run it when chat is quiet: about 2,500 embedding calls share the Gemini quota with the bot.
 """
 from __future__ import annotations

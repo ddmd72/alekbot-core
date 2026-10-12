@@ -302,7 +302,8 @@ def is_text_file(name: str, mime_type: str) -> bool:
 
 
 class DriveResyncRequired(Exception):
-    """The change cursor expired (Graph 410): restart from `restart_cursor` as a full enumeration (§7.5)."""
+    """A full resync is required (cursor expired, HTTP 410): restart from `restart_cursor` as a full
+    enumeration (§7.5)."""
 
     def __init__(self, restart_cursor: str) -> None:
         super().__init__("Drive change cursor expired; full enumeration required")

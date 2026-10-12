@@ -571,7 +571,8 @@ class DriveIndexingService:
             page = await self._drive.list_children_changes(user_id, folder.item_id, limit=RELIST_PAGE,
                                                            cursor=folder.reobserve_cursor)
         except DriveItemNotFoundError:
-            await self._commit(user_id, [_relisted(folder, None, ctx.now)], set())   # gone: its tombstone follows
+            logger.info(f"[DriveIndex] re-listing target gone for {user_id[:8]}; its tombstone follows")
+            await self._commit(user_id, [_relisted(folder, None, ctx.now)], set())
             return True
         except _PER_ITEM_ERRORS as exc:
             if folder.attempts + 1 >= MAX_ATTEMPTS:
