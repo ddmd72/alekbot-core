@@ -176,3 +176,46 @@ implementations, Firestore fields, task types, DI, dedup, OIDC, notifications, d
 regressions of Step 1 drive / To Do / Gmail and startup, and **challenge the plan's premises** (each Δ and design
 decision the task relies on, checked against code, RFC and spike data). A separate read-only **premise audit** of the
 whole plan (Δ1–Δ22, part decisions, integration assumptions of Tasks 22–46) runs in parallel.
+
+### Task 20 — done
+- Commit `d2f94bb`. Script written, checked only with a stub `gcloud` (never run). `make check` (reviewer, at HEAD
+  with the commit): 7586 passed, 3 skipped, 1 xfailed.
+- Reviewer (adversarial + system context): APPROVED, round 1. MINOR plan notes: the script exits 0 when both creates
+  fail (`|| echo`, no `-e`) — caught later by Task 21's smoke and Task 45/47's READY check; no test ties the script to
+  the JSON's `card_vector` entries.
+
+## Retrospective adversarial review of Tasks 0–17 — results
+
+Reports (three areas, read-only, mutation-tested in throwaway worktrees): domain 1 BLOCKER / 6 MAJOR / 8 MINOR;
+tick 0 / 5 / 3; drive + storage 0 / 1 / 5. Full reports are summarised below; fixes run as review-driven fix tasks
+R1–R5 (implementer → adversarial reviewer → acceptance), each with NEW failing-first tests.
+
+| Fix | Area | Findings fixed |
+|---|---|---|
+| R1 | planner/domain | domain F1 BLOCKER (deleted repo resurrected when its tombstone precedes `.git`'s), F3 (density anchor survives clean-and-refill → never re-probed), F10 (`seen_epoch` re-stamp lets a gone record survive a sweep), F13 (offset-less takenDateTime → naive date), F14 (place grid misses > 63° lat) |
+| R2 | tick | tick F1 (systemic error handlers overwrite the cursor/epoch saved by observe), F2 (systemic error inside inline probe dropped as one bad item), F3 (nudged items not class 0, RFC §7.8), F6 (continuation loop); tests for the per-page drive switch and probe parking |
+| R3 | adapter | drive F1 (cursor not tied to drive/App Folder → stuck forever after account switch or re-created folder), F3 (token timeout charged to an item), F6 (test gap), tick F2 adapter part (`aiohttp.ClientError`) |
+| R4 | repositories | drive F2 (`save_sync_state` writes the lease back; a stale tick releases the new holder's lease) |
+| R5 | eval fixture | domain F6 / Task 0 note: Porto latitudes |
+
+**Owner decisions from the retrospective (not fixed overnight):**
+1. **Card cap erases the structural reason** (domain F2 = tick F4, MAJOR, reproduced): `capped()` overwrites `reason`
+   with `USER_CARD_CAP`; a capped repo is re-opened and re-listed on every re-emission, a capped repo whose `.git` is
+   deleted stays opaque forever, a released dense folder gets the "repository" card. Options: a separate cap flag;
+   never evict folder cards; derive the structural reason from scope.
+2. **Place names** (domain F4, MAJOR): on the bundled table 6 411 of 18 753 towns photographed at their own centre get
+   another place's name, 116 across a border (Monaco → Nice, Vaduz → Feldkirch, Versailles → "Paris 15 Vaugirard").
+   Re-tune Δ7 (radius/weight) and exclude city districts in the builder — needs a table rebuild on your machine.
+3. **Embedding space never compared** (domain F5, MAJOR): RFC §12.3's re-embed-on-model-change path is missing, no Δ
+   covers it.
+4. **Accent folding** (domain F7, MAJOR): "resume" misses `Résumé.pdf`; cheap now, a re-key later.
+5. Tokenisation (domain F8: `’ — – %` glue tokens), Ukrainian transliteration (F9), generated-dir cards labelled
+   "repository" (F11), dense-tree card text re-embedded every tick because it contains the live child count (F12).
+6. **A delta link answering 404** (tick F5): if the App Folder is deleted and Graph answers 404 rather than 410, every
+   tick fails; R3's root-id check covers the re-created-folder case, the plain 404 needs a spike.
+7. A policy bump re-lists every repository once (tick F7) — converges; accept or tie the marker to its own version.
+8. Token endpoint: every non-`invalid_grant` refresh failure becomes `DriveThrottled(60)` (drive F4) — an expired
+   client secret means a tick per minute per user forever; `graph_auth` is shared with To Do, so not changed overnight.
+9. `flag_reconnect` read-modify-write can restore an old grant if the user reconnects in between (drive F5): needs a
+   field-level conditional write on `OAuthCredentialsPort`, or accept and correct Task 14's text.
+10. Fencing a stale tick's other writes (drive F2 OWNER part).
