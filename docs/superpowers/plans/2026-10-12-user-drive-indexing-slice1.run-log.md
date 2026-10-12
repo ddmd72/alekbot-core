@@ -132,3 +132,7 @@ Method: subagent-driven (implementer → independent reviewer → coordinator ac
 - Step 4 before the test edit: exactly the three pre-approved tests failed (DriveAccessDenied / DriveThrottled /
   DriveAccessDenied); no other existing test failed.
 - Reviewer: APPROVED, round 1. Part B complete.
+
+### Task 16 — done
+- Commit `a9ba722`. `make check` (coordinator, worktree at the commit): 7511 passed, 3 skipped, 1 xfailed.
+- Deviations: none. Reviewer: APPROVED, round 1.
