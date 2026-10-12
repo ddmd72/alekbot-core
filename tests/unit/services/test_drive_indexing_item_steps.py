@@ -4,7 +4,7 @@ from dataclasses import replace
 from datetime import timedelta
 
 from src.domain import drive_index_planner as planner
-from src.domain.drive_index import DriveChange, DriveIndexRecord, Priority, Reason, RecordState, Scope
+from src.domain.drive_index import DriveChange, DriveIndexRecord, Priority, RecordState, Scope
 from src.domain.drive_index_params import MAX_ATTEMPTS, RETRY_CAP
 from src.services import drive_indexing_service as svc_mod
 
