@@ -1547,11 +1547,17 @@
           "drive.index_off_confirm": "Turn off drive search? The index will be deleted; your files stay on the drive.",
           "drive.needs_reconnect": "Reconnect required",
           "drive.reconnect_hint": "Access to your drive expired. Search still answers from the stored index, but nothing new is indexed until you reconnect.",
+          "drive.reconnect_hint_neutral": "Access to your drive expired. Reconnect it so the bot can work with your files again.",
           "drive.reconnect": "Reconnect drive",
           "drive.index_searchable": "Searchable items",
           "drive.index_kept_hint": "Your drive is disconnected. The index is kept for about 30 days in case it comes back; turn search off to delete it now.",
           "drive.index_pending": "Waiting",
           "drive.index_failed": "Could not be read",
+          "drive.index_indexed": "Indexed",
+          "drive.index_metadata_only": "Name and details only",
+          "drive.index_unresolved": "Being located",
+          "drive.index_unread": "Not read yet",
+          "drive.index_deleting": "Being removed",
           "drive.index_building": "Indexing in progress…",
           "drive.index_full": "Index full: some files are not searchable",
           "drive.index_last_sync": "Last sync",
@@ -1641,11 +1647,17 @@
           "drive.index_off_confirm": "Вимкнути пошук на диску? Індекс буде видалено; файли на диску залишаться.",
           "drive.needs_reconnect": "Потрібне перепідключення",
           "drive.reconnect_hint": "Доступ до диска закінчився. Пошук і далі відповідає зі збереженого індексу, але нічого нового не індексується, доки ти не перепідключиш диск.",
+          "drive.reconnect_hint_neutral": "Доступ до диска закінчився. Перепідключи його, щоб бот знову міг працювати з твоїми файлами.",
           "drive.reconnect": "Перепідключити диск",
           "drive.index_searchable": "Елементів для пошуку",
           "drive.index_kept_hint": "Диск відключено. Індекс зберігається близько 30 днів на випадок, якщо диск повернеться; вимкни пошук, щоб видалити його зараз.",
           "drive.index_pending": "В очікуванні",
           "drive.index_failed": "Не вдалося прочитати",
+          "drive.index_indexed": "Проіндексовано",
+          "drive.index_metadata_only": "Лише назва й відомості",
+          "drive.index_unresolved": "Визначається розташування",
+          "drive.index_unread": "Ще не прочитано",
+          "drive.index_deleting": "Видаляються",
           "drive.index_building": "Триває індексація…",
           "drive.index_full": "Індекс заповнений: частина файлів недоступна для пошуку",
           "drive.index_last_sync": "Остання синхронізація",
@@ -1735,11 +1747,17 @@
           "drive.index_off_confirm": "Désactiver la recherche dans le disque ? L'index sera supprimé ; tes fichiers restent sur le disque.",
           "drive.needs_reconnect": "Reconnexion requise",
           "drive.reconnect_hint": "L'accès à ton disque a expiré. La recherche répond toujours depuis l'index enregistré, mais rien de nouveau n'est indexé tant que tu ne te reconnectes pas.",
+          "drive.reconnect_hint_neutral": "L'accès à ton disque a expiré. Reconnecte-le pour que le bot puisse de nouveau travailler avec tes fichiers.",
           "drive.reconnect": "Reconnecter le disque",
           "drive.index_searchable": "Éléments consultables",
           "drive.index_kept_hint": "Ton disque est déconnecté. L'index est conservé environ 30 jours au cas où il reviendrait ; désactive la recherche pour le supprimer maintenant.",
           "drive.index_pending": "En attente",
           "drive.index_failed": "Illisibles",
+          "drive.index_indexed": "Indexés",
+          "drive.index_metadata_only": "Nom et détails seulement",
+          "drive.index_unresolved": "Localisation en cours",
+          "drive.index_unread": "Pas encore lus",
+          "drive.index_deleting": "Suppression en cours",
           "drive.index_building": "Indexation en cours…",
           "drive.index_full": "Index plein : certains fichiers ne sont pas consultables",
           "drive.index_last_sync": "Dernière synchronisation",
@@ -1829,11 +1847,17 @@
           "drive.index_off_confirm": "¿Desactivar la búsqueda en el disco? El índice se borrará; tus archivos siguen en el disco.",
           "drive.needs_reconnect": "Reconexión necesaria",
           "drive.reconnect_hint": "El acceso a tu disco ha caducado. La búsqueda sigue respondiendo desde el índice guardado, pero no se indexa nada nuevo hasta que vuelvas a conectarlo.",
+          "drive.reconnect_hint_neutral": "El acceso a tu disco ha caducado. Vuelve a conectarlo para que el bot pueda trabajar de nuevo con tus archivos.",
           "drive.reconnect": "Reconectar disco",
           "drive.index_searchable": "Elementos buscables",
           "drive.index_kept_hint": "Tu disco está desconectado. El índice se conserva unos 30 días por si vuelve; desactiva la búsqueda para borrarlo ahora.",
           "drive.index_pending": "En espera",
           "drive.index_failed": "No se pudieron leer",
+          "drive.index_indexed": "Indexados",
+          "drive.index_metadata_only": "Solo nombre y detalles",
+          "drive.index_unresolved": "Ubicándose",
+          "drive.index_unread": "Aún sin leer",
+          "drive.index_deleting": "Eliminándose",
           "drive.index_building": "Indexación en curso…",
           "drive.index_full": "Índice lleno: algunos archivos no se pueden buscar",
           "drive.index_last_sync": "Última sincronización",
@@ -2218,7 +2242,7 @@
         list.innerHTML = _remindersData.map(r => {
           const due = r.due ? new Date(r.due).toLocaleString(undefined, {dateStyle:"medium",timeStyle:"short"}) : "—";
           const rec = r.recurrence ? `🔁 ${esc(r.recurrence_label || r.recurrence)}` : "once";
-          const instr = (r.instruction || "").replace(/\n/g, "<br>");
+          const instr = esc(r.instruction || "").replace(/\n/g, "<br>");
           return `<div style="background:var(--bg-hover);border-radius:var(--radius-sm);padding:14px;margin-bottom:10px">
             <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
               <div style="flex:1">
@@ -2227,15 +2251,15 @@
                 <div style="font-size:13px;color:var(--text-subtle);margin-top:6px;line-height:1.5">${instr}</div>
               </div>
               <div style="display:flex;gap:6px;flex-shrink:0">
-                <button class="btn btn-secondary" style="padding:4px 10px;font-size:13px" onclick="editReminder('${r.note_id}')">Edit</button>
-                <button class="btn btn-danger" style="padding:4px 10px;font-size:13px" onclick="deleteReminder('${r.note_id}')">Delete</button>
+                <button class="btn btn-secondary" style="padding:4px 10px;font-size:13px" data-note-id="${escapeHtml(r.note_id)}" onclick="editReminder(this.dataset.noteId)">Edit</button>
+                <button class="btn btn-danger" style="padding:4px 10px;font-size:13px" data-note-id="${escapeHtml(r.note_id)}" onclick="deleteReminder(this.dataset.noteId)">Delete</button>
               </div>
             </div>
           </div>`;
         }).join("");
       }
 
-      function esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
+      function esc(s) { return escapeHtml(s); }
 
       function showReminderForm(note) {
         document.getElementById("rem-edit-id").value = note ? note.note_id : "";
@@ -2553,7 +2577,7 @@
         document.getElementById("domain-chips").innerHTML = chips
           .map(
             (c) =>
-              `<button id="chip-${c.value}" onclick="setDomainFilter('${c.value}')" class="chip ${c.value === browseDomain ? "active" : ""}">${c.label}</button>`,
+              `<button id="chip-${escapeHtml(c.value)}" data-domain="${escapeHtml(c.value)}" onclick="setDomainFilter(this.dataset.domain)" class="chip ${c.value === browseDomain ? "active" : ""}">${escapeHtml(c.label)}</button>`,
           )
           .join("");
       }
@@ -2592,7 +2616,7 @@
 
           <div class="integration-status">
             <div class="status-dot ${linked ? "connected" : "disconnected"}"></div>
-            <span>${linked ? `${t("platform.connected")}: ${linkedId}` : t("platform.not_connected")}</span>
+            <span>${linked ? `${t("platform.connected")}: ${escapeHtml(linkedId)}` : t("platform.not_connected")}</span>
           </div>
 
           <div class="integration-actions">
@@ -2806,7 +2830,7 @@
           ? `<a href="/auth/connect-gmail" class="btn btn-black">${t("gmail.reconnect")}</a>
              <button onclick="disconnectGmail()" class="btn btn-secondary">${t("platform.disconnect")}</button>`
           : `<button onclick="triggerGmailIndex()" class="btn btn-primary" ${indexActive ? "disabled" : ""}>${indexActive ? t("platform.indexing") : t("platform.index_emails")}</button>
-             ${indexActive && activeJobId ? `<button onclick="cancelGmailIndex('${activeJobId}', this)" class="btn btn-secondary">${t("platform.cancel")}</button>` : ""}
+             ${indexActive && activeJobId ? `<button data-job-id="${escapeHtml(activeJobId)}" onclick="cancelGmailIndex(this.dataset.jobId, this)" class="btn btn-secondary">${t("platform.cancel")}</button>` : ""}
              <button onclick="disconnectGmail()" class="btn btn-secondary">${t("platform.disconnect")}</button>`;
 
         container.innerHTML = `
@@ -3017,11 +3041,14 @@
           ? t("drive.needs_reconnect")
           : linked ? t("platform.connected") : t("platform.not_connected");
         const statusDotClass = needsReconnect ? "needs-reconnect" : linked ? "connected" : "disconnected";
+        // "Search still answers from the stored index" holds only while search is on and an index is kept (§7.7).
+        const searchKeepsIndex = !!(data.indexing && data.indexing.enabled && data.indexing.index_kept);
         const reconnectHtml = needsReconnect
-          ? `<div style="margin-bottom:16px; padding:12px 16px; border-radius:12px; border:1px solid var(--accent-danger); color:var(--accent-danger); font-size:14px;">${t("drive.reconnect_hint")}</div>`
+          ? `<div style="margin-bottom:16px; padding:12px 16px; border-radius:12px; border:1px solid var(--accent-danger); color:var(--accent-danger); font-size:14px;">${searchKeepsIndex ? t("drive.reconnect_hint") : t("drive.reconnect_hint_neutral")}</div>`
           : "";
         // While disconnected the index is kept (D3); the off switch stays reachable so the user can delete it.
-        const indexingHtml = data.indexing && (linked || data.indexing.enabled)
+        // With no drive queue (first deploy pass) the switch is offered only to turn search off.
+        const indexingHtml = data.indexing && (linked || data.indexing.enabled) && (data.indexing.available || data.indexing.enabled)
           ? renderDriveIndexing(data.indexing, linked)
           : "";
         const actionButtons = !linked
@@ -3057,17 +3084,35 @@
       // DriveSyncState.last_error categories (USER_DRIVE_INDEXING_RFC §3.5); shown localised, never raw.
       const DRIVE_ERROR_CATEGORIES = ["reconnect_needed", "throttled", "provider_error", "internal"];
 
+      // DriveSyncState.counters keys (records per state, §6), in display order; a key not listed shows raw.
+      const DRIVE_COUNTER_LABELS = {
+        carded: "drive.index_searchable",
+        indexed: "drive.index_indexed",
+        metadata_only: "drive.index_metadata_only",
+        pending: "drive.index_pending",
+        unresolved: "drive.index_unresolved",
+        unread: "drive.index_unread",
+        failed: "drive.index_failed",
+        deleting: "drive.index_deleting",
+      };
+
       function renderDriveIndexing(ix, linked) {
         const enabled = !!ix.enabled;
         const c = ix.counters || {};
         const num = (v) => Number(v) || 0;
         let details = "";
         if (enabled && !linked) {
-          details = `<div style="font-size:13px; color:var(--text-muted); margin-top:10px;">${t("drive.index_kept_hint")}</div>`;
+          details = ix.index_kept
+            ? `<div style="font-size:13px; color:var(--text-muted); margin-top:10px;">${t("drive.index_kept_hint")}</div>`
+            : "";
         } else if (enabled) {
           const counts = [`${t("drive.index_searchable")}: ${num(c.carded)}`];
-          if (num(c.pending)) counts.push(`${t("drive.index_pending")}: ${num(c.pending)}`);
-          if (num(c.failed)) counts.push(`${t("drive.index_failed")}: ${num(c.failed)}`);
+          const known = Object.keys(DRIVE_COUNTER_LABELS);
+          const keys = known.concat(Object.keys(c).filter((k) => !known.includes(k)));
+          for (const key of keys) {
+            if (key === "carded" || !num(c[key])) continue;
+            counts.push(`${DRIVE_COUNTER_LABELS[key] ? t(DRIVE_COUNTER_LABELS[key]) : escapeHtml(key)}: ${num(c[key])}`);
+          }
           const last = ix.last_success_at
             ? new Date(ix.last_success_at).toLocaleString()
             : t("drive.index_never");
@@ -3199,18 +3244,18 @@
           });
           if (!res.ok) throw new Error("Could not create invite");
           const data = await res.json();
-          const deepLink = `${window.location.origin}/join?code=${data.code}`;
+          const deepLink = `${window.location.origin}/join?code=${encodeURIComponent(data.code)}`;
           const expiry = new Date(data.expires_at).toLocaleString();
           const el = document.getElementById("generated-code-container");
           el.classList.remove("hidden");
           el.innerHTML = `
         <div class="invite-code-box reveal">
           <p style="margin-bottom:8px; font-weight:600; color:var(--text-main);">Share this code</p>
-          <div class="code-display">${data.code}</div>
+          <div class="code-display">${escapeHtml(data.code)}</div>
           <p style="font-size: 14px; margin-bottom: 24px;">Valid until ${expiry}</p>
           
           <div class="invite-link-wrapper">
-            <input type="text" id="deep-link-input" value="${deepLink}" readonly style="flex:1; background:transparent; border:none; padding:12px 20px; font-size:16px; outline:none; color:var(--text-main);" />
+            <input type="text" id="deep-link-input" value="${escapeHtml(deepLink)}" readonly style="flex:1; background:transparent; border:none; padding:12px 20px; font-size:16px; outline:none; color:var(--text-main);" />
             <button onclick="copyDeepLink()" class="btn btn-black" style="padding: 10px 24px;">Copy Link</button>
           </div>
         </div>`;
@@ -3243,7 +3288,7 @@
             .map(
               (c) => `
             <tr>
-              <td><span style="font-family: ui-monospace, SFMono-Regular, monospace; font-weight: 600;">${c.code}</span></td>
+              <td><span style="font-family: ui-monospace, SFMono-Regular, monospace; font-weight: 600;">${escapeHtml(c.code)}</span></td>
               <td><span class="status-badge ${c.is_valid ? "active" : "used"}">${c.is_valid ? "Active" : "Used"}</span></td>
               <td>${new Date(c.created_at).toLocaleDateString()}</td>
               <td>${c.used_at ? new Date(c.used_at).toLocaleDateString() : "—"}</td>
@@ -3379,7 +3424,8 @@
             ? `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`
             : `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>`;
 
-        toast.innerHTML = `${icon} <span>${msg}</span>`;
+        toast.innerHTML = `${icon} <span></span>`;
+        toast.querySelector("span").textContent = msg;
         container.appendChild(toast);
 
         // Animate in
@@ -3394,11 +3440,10 @@
 
       document.addEventListener("DOMContentLoaded", init);
 
+      // Numeric entities built from the char code: no entity literal in the source that an editor could decode
+      // back into the raw character (which is how this function once became a no-op).
       function escapeHtml(str) {
-        return (str || "")
-          .replace(/&/g, "&")
-          .replace(/</g, "<")
-          .replace(/>/g, ">");
+        return String(str ?? "").replace(/[&<>"']/g, (c) => "&#" + c.charCodeAt(0) + ";");
       }
 
       async function logout() {

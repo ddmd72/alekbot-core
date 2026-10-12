@@ -58,14 +58,17 @@ _VOICE_RELAY_URL = $(patsubst https://%,wss://%,$(VOICE_RELAY_URL_DEV))
 # roles/cloudtasks.queueAdmin to create/update drive-sync-dev (SCHEDULERS.md §
 # Start Drive Sync). Two-pass first deploy: alek-bot-indexer-dev has no URL until
 # it exists, so
-#   1. `make deploy` — creates the queue, the indexer (before the main service)
-#      and the scheduler job; the main service gets an empty DRIVE_INDEXER_URL
-#      (no nudges, start_drive_sync answers "disabled") and the indexer's /worker
-#      answers 503;
+#   1. `DRIVE_FIRST_PASS=1 make deploy` — creates the queue, the indexer (after
+#      the main service) and the scheduler job; the main service gets an empty
+#      DRIVE_INDEXER_URL (no nudges, start_drive_sync answers "disabled") and the
+#      indexer's /worker answers 503;
 #   2. `gcloud run services describe alek-bot-indexer-dev --region=us-central1
 #      --format='value(status.url)'` and put it in .env as INDEXER_URL_DEV
 #      (the https:// form, no trailing slash);
 #   3. `make deploy` again.
+# Every other deploy refuses to run with INDEXER_URL_DEV empty: an empty value
+# disables indexing in the live environment without any alert (a checkout
+# without the real .env, a key lost in an edit).
 _INDEXER_URL = $(INDEXER_URL_DEV)
 
 # Default entry count for log reads
@@ -238,6 +241,14 @@ check: lint typecheck test-unit ## CI gate: ruff lint + mypy (domain/ports) + un
 # ============================================================================
 
 deploy: ## Build + deploy to Cloud Run (the single live environment)
+	@if [ -z "$(SERVICE_URL_DEV)" ]; then \
+		echo "❌ SERVICE_URL_DEV is empty: deploy from a checkout with the real .env (docs/07_deployment/README.md)"; \
+		exit 1; fi
+	@if [ -z "$(INDEXER_URL_DEV)" ] && [ "$(DRIVE_FIRST_PASS)" != "1" ]; then \
+		echo "❌ INDEXER_URL_DEV is empty: drive indexing would be disabled. Set it in .env, or run"; \
+		echo "   DRIVE_FIRST_PASS=1 make deploy for the first pass of the two-pass first deploy"; \
+		echo "   (docs/07_deployment/README.md § Indexer URL)."; \
+		exit 1; fi
 	@echo "🚀 Build + deploy to Cloud Run ($(SERVICE_NAME))..."
 	gcloud builds submit --config=cloudbuild-dev.yaml \
 		--substitutions=_SERVICE_URL=$(SERVICE_URL_DEV),_OAUTH_REDIRECT_URI=$(SERVICE_URL_DEV)/auth/callback,_VOICE_RELAY_URL=$(_VOICE_RELAY_URL),_INDEXER_URL=$(_INDEXER_URL) .

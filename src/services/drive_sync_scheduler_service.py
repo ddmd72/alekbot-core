@@ -29,7 +29,6 @@ from ..domain.drive_index_params import TICK_DEADLINE_S
 from ..domain.drive_index_planner import is_stale
 from ..domain.drive_task_keys import DRIVE_SYNC_TASK, tick_key, tick_payload
 from ..domain.notification_kind import NotificationKind
-from ..domain.notify_result import NotifyResult
 from ..domain.user_drive import DriveConnection
 from ..ports.alert_sink import AlertSinkPort
 from ..ports.drive_index_repository import DriveIndexRepository
@@ -55,13 +54,6 @@ _CONTINUATION_FRESH = timedelta(seconds=TICK_DEADLINE_S)
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
-
-
-def _nothing_sent(result: NotifyResult) -> bool:
-    """True only when `notify` stopped before any agent call or send: no channel to deliver to. Any
-    other undelivered outcome may already have reached the user (text sent, then rich content failed)."""
-    error = result.error or ""
-    return error == "no_channel" or error.startswith("channel_factory_returned_none")
 
 
 class DriveSyncSchedulerService:
@@ -157,8 +149,8 @@ class DriveSyncSchedulerService:
 
     async def _reconnect_notice(self, user_id: str, profile: Any, state: DriveSyncState,
                                 connection: DriveConnection) -> int:
-        """One notice per lost grant (§7.7, plan Δ6). Retried on the next fan-out only when nothing can
-        have been sent (no channel) or `notify` raised before sending; any other attempt sets the flag,
+        """One notice per lost grant (§7.7, plan Δ6). Retried on the next fan-out when no send was attempted
+        (no channel, a formatter failure, `notify` raising); once a send was attempted the flag stays up,
         delivered or not, because a partial delivery would otherwise repeat every 10 minutes. A good
         grant again clears the flag."""
         if connection.connected and not connection.needs_reconnect:
@@ -188,13 +180,13 @@ class DriveSyncSchedulerService:
                          f"next fan-out")
             await self._repo.update_sync_flags(user_id, reconnect_notified=False)
             raise
-        if not result.delivered and _nothing_sent(result):
+        if not result.delivered and not result.sent:
             await self._repo.update_sync_flags(user_id, reconnect_notified=False)
-            logger.warning(f"[DriveSync] reconnect notice for {user_id[:8]} had no channel ({result.error}); "
-                           f"retried on the next fan-out")
+            logger.warning(f"[DriveSync] reconnect notice for {user_id[:8]} not sent ({result.agent_status.value}, "
+                           f"{result.error}); retried on the next fan-out")
             return 0
         if not result.delivered:
-            logger.warning(f"[DriveSync] reconnect notice for {user_id[:8]} not confirmed delivered "
+            logger.warning(f"[DriveSync] reconnect notice for {user_id[:8]} sent but not confirmed delivered "
                            f"({result.agent_status.value}, {result.error}); not retried")
             return 0
         logger.info(f"[DriveSync] reconnect notice sent to {user_id[:8]}")

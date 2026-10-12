@@ -1265,15 +1265,20 @@ def create_user_cabinet_blueprint(
 
     def _indexing_json(status: DriveIndexingStatus) -> dict:
         """The index block of the drive card (USER_DRIVE_INDEXING_RFC §6): an error is a category, never
-        a raw message."""
+        a raw message. `available` is false on a deployment with no drive queue (the first deploy pass),
+        where turning search on would show "building" forever; `index_kept` gates the "kept about 30 days"
+        and "search still answers" lines (§7.7)."""
         return {
             "enabled": status.enabled,
+            "available": drive_task_queue is not None,
             "counters": dict(status.counters),
             "last_success_at": _iso(status.last_success_at),
             "last_error": status.last_error,
             "index_as_of": _iso(status.index_as_of),
             "index_full": status.index_full,
             "building": status.building,
+            "access_lost_at": _iso(status.access_lost_at),
+            "index_kept": status.index_kept(datetime.now(timezone.utc)),
         }
 
     @bp.route("/api/drive/status", methods=["GET"])
