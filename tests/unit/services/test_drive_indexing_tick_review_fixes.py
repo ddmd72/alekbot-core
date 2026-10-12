@@ -391,7 +391,9 @@ class TestUpgradePassSkipsParkedRecords:
         assert ticks < 30, ticks
         parked = [r for r in w.repo.records.values()
                   if r.parent_id == f and r.state is RecordState.UNRESOLVED and r.due_at is None]
-        assert parked and all(planner.stale_versions(r) for r in parked)   # the scenario: stale and parked
+        # the scenario: parked under the waiting folder; parking dropped their old cards, so nothing of them is
+        # stale and the pass has nothing to re-schedule into a re-park
+        assert parked and not any(r.has_card or r.card_hash or planner.stale_versions(r) for r in parked)
         w.drive.list_children_changes = orig
         await _converge_with_fanout(w, target)
         assert not [r for r in w.repo.records.values() if planner.stale_versions(r)]
