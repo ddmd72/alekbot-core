@@ -97,3 +97,57 @@ class TestParentLookupExhaustionParks:
         await _seed_unresolved(w, "kid", "plan.pdf", "orphan", folder=False, due=False)
         await _ticks(w, 2)
         assert w.rec("orphan") is None and w.rec("kid") is None
+
+
+class TestRelistingOnlyWalkableFolders:
+
+    async def test_policy_bump_over_a_repository_lists_no_opaque_folder(self, monkeypatch):
+        w = World(page_size=200)
+        w.drive.add("Notes.pdf")
+        repo = w.drive.add("myproject", folder=True)
+        w.drive.add("README.md", parent=repo)
+        for d in range(10):
+            sub = w.drive.add(f"pkg{d}", parent=repo, folder=True)
+            inner = w.drive.add("inner", parent=sub, folder=True)
+            for f in range(30):
+                w.drive.add(f"mod{f}.py", parent=sub)
+                w.drive.add(f"deep{f}.py", parent=inner)
+        w.drive.add(".git", parent=repo, folder=True)
+        await w.settle()
+        assert w.rec(repo).scope is Scope.OPAQUE_ROOT
+        monkeypatch.setattr(planner, "POLICY_VERSION", 2)
+        monkeypatch.setattr(svc_mod, "CURRENT_VERSIONS", {"policy": 2, "card": 1, "geo_table": 1})
+        wasted = []
+        real_list = w.drive.list_children_changes
+
+        async def listing(user_id, folder_id, limit, cursor=None):
+            if w.rec(folder_id).scope is not Scope.NORMAL:
+                wasted.append(w.drive.items[folder_id].name)
+            return await real_list(user_id, folder_id, limit, cursor)
+
+        w.drive.list_children_changes = listing
+        await w.settle(max_ticks=200)
+        assert w.rec(repo).scope is Scope.OPAQUE_ROOT
+        assert wasted == []
+        assert not [r for r in w.repo.records.values() if r.reobserve_pending]
+
+    async def test_reobserve_step_skips_an_opaque_folder_without_a_call(self):
+        w = await _onboarded()
+        site = w.drive.add("site", folder=True)
+        w.drive.add(".git", parent=site, folder=True)
+        await w.settle()
+        rec = w.rec(site)
+        assert rec.scope is Scope.OPAQUE_ROOT
+        await w.repo.upsert_records([replace(rec, reobserve_pending=True, reobserve_cursor="200",
+                                             due_at=w.clock.now, priority=int(Priority.FIRST_SEEN))])
+        listed = []
+        real_list = w.drive.list_children_changes
+
+        async def listing(user_id, folder_id, limit, cursor=None):
+            listed.append(folder_id)
+            return await real_list(user_id, folder_id, limit, cursor)
+
+        w.drive.list_children_changes = listing
+        await w.settle()
+        assert listed == []
+        assert not w.rec(site).reobserve_pending and w.rec(site).reobserve_cursor is None

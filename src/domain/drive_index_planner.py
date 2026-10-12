@@ -72,6 +72,7 @@ class ObservationPlan:
 
 
 EMPTY = ObservationPlan()
+_OPAQUE = (Scope.OPAQUE_ROOT, Scope.INSIDE_OPAQUE)
 
 
 class AccessAction(str, Enum):
@@ -277,7 +278,8 @@ def plan_observation(change: DriveChange, existing: Optional[DriveIndexRecord], 
     if (is_marker_child(change.name) and parent is not None and parent.is_folder
             and parent.scope is Scope.NORMAL):
         closed = schedule(replace(parent, scope=Scope.OPAQUE_ROOT, reason=Reason.OPAQUE_ROOT,
-                                  rescope_pending=True, cascade_cursor=None), ctx.now, first_seen=False)
+                                  rescope_pending=True, cascade_cursor=None, reobserve_pending=False,
+                                  reobserve_cursor=None), ctx.now, first_seen=False)
         effective_parent = closed
         if reopened is not None and reopened.item_id == parent.item_id:
             reopened = None   # the folder closed again in the same observation
@@ -297,6 +299,9 @@ def plan_observation(change: DriveChange, existing: Optional[DriveIndexRecord], 
     if revived and rec.is_folder:
         # descendants the cascade already removed come back (§7.6)
         rec = replace(rec, reobserve_pending=True, reobserve_cursor=None, attempts=0)
+    if rec.reobserve_pending and rec.scope in _OPAQUE:
+        # an opaque folder's subtree is never stored (§5.2); an unresolved one keeps it until its probe decides
+        rec = replace(rec, reobserve_pending=False, reobserve_cursor=None)
 
     if existing is not None and not revived and _observable(existing) == _observable(rec):
         stamped = existing

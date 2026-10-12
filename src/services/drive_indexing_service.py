@@ -581,6 +581,9 @@ class DriveIndexingService:
     async def _reobserve_step(self, user_id: str, folder: DriveIndexRecord, ctx: PlanContext, budget: _Budget,
                               summary: Dict[str, int]) -> bool:
         """One page of a never-stored subtree (§5.2): bounded per item call, resumable by a page cursor."""
+        if folder.scope in (Scope.OPAQUE_ROOT, Scope.INSIDE_OPAQUE):
+            await self._commit(user_id, [_relisted(folder, None, ctx.now)], set())   # nothing of it is stored
+            return True
         if not budget.item_call_allowed():
             return False
         budget.item_calls -= 1
