@@ -21,10 +21,14 @@ from ...utils.logger import logger
 _TOKEN_URL = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token"
 _REFRESH_MARGIN = timedelta(minutes=5)
 CACHE_TTL = timedelta(minutes=5)  # owner decision (USER_DRIVE_RFC §4.2): disconnect/reconnect seen within 5 min
+# Token-endpoint error codes only a new sign-in clears: a dead grant, MFA or Conditional Access asking for
+# interaction, consent withdrawn. Retrying them only repeats the refusal (USER_DRIVE_INDEXING_RFC §7.7).
+_REAUTH_ERRORS = ("invalid_grant", "interaction_required", "consent_required")
 
 
 class GraphReauthRequired(ValueError):
-    """The refresh token is no longer accepted (expired, revoked): the user must reconnect."""
+    """The refresh token is no longer accepted (expired, revoked, a sign-in or consent is required):
+    the user must reconnect."""
 
 
 class MicrosoftGraphTokenProvider:
@@ -94,7 +98,7 @@ class MicrosoftGraphTokenProvider:
                 if resp.status != 200:
                     body = await resp.text()
                     logger.error(f"MS token refresh failed ({self._provider}, {resp.status}): {body[:300]}")
-                    if "invalid_grant" in body:
+                    if any(code in body for code in _REAUTH_ERRORS):
                         raise GraphReauthRequired(f"MS token refresh rejected ({self._provider}): reconnect needed")
                     raise ValueError(f"MS token refresh failed ({resp.status}): {body}")
                 payload = await resp.json()
