@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.adapters.firestore_drive_index_repo import FirestoreDriveIndexRepository  # noqa: E402
 from src.domain.drive_index import Priority  # noqa: E402
-from src.domain.drive_index_policy import SLICE2_CONTENT_KINDS  # noqa: E402
+from src.domain.drive_index_policy import SLICE2_CONTENT_KINDS, SLICE2_TRIAGED_KINDS  # noqa: E402
 
 _VECTOR = [1.0] + [0.0] * 767   # any non-zero 768-dim vector
 
@@ -30,8 +30,8 @@ _VECTOR = [1.0] + [0.0] * 767   # any non-zero 768-dim vector
 def checks(repo: FirestoreDriveIndexRepository, user_id: str) -> List[Tuple[str, Callable[[], Awaitable[object]]]]:
     """Every read the tick and the search issue, each once. The two within-rank eviction queries run directly:
     `lowest_ranked_carded` reaches them only when a carded record exists. The chunk page runs with a cursor, which
-    uses the same index as the first page. The unread counts run one by one, over the content kinds the flip admits,
-    so a missing index is named per query."""
+    uses the same index as the first page. The unread counts run one by one, over the content kinds the flip admits
+    and the kinds it triages (text images), so a missing index is named per query."""
     now = datetime.now(timezone.utc)
     dated, undated = repo.eviction_rank_queries(user_id, 3)
     return [
@@ -51,7 +51,7 @@ def checks(repo: FirestoreDriveIndexRepository, user_id: str) -> List[Tuple[str,
         ("card_capped", lambda: repo.card_capped(user_id, 5)),
         ("chunk_capped", lambda: repo.chunk_capped(user_id, 5)),
         *[(f"count_unread[{n}]", (lambda q=q: q.count(alias="n").get()))
-          for n, q in enumerate(repo.unread_count_queries(user_id, SLICE2_CONTENT_KINDS))],
+          for n, q in enumerate(repo.unread_count_queries(user_id, SLICE2_CONTENT_KINDS, SLICE2_TRIAGED_KINDS))],
         ("find_nearest_cards", lambda: repo.find_nearest_cards(user_id, _VECTOR, 5)),
         ("find_nearest_cards[kind]", lambda: repo.find_nearest_cards(user_id, _VECTOR, 5, kind="pdf")),
         ("find_by_name_keys", lambda: repo.find_by_name_keys(user_id, ["w:smoke"], 5)),

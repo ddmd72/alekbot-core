@@ -357,7 +357,8 @@ class DriveIndexingService:
         is left out: the Cabinet lists only non-zero counters and every reader defaults to 0."""
         counters = dict(await self._repo.count_by_state(user_id))
         content = {"chunks": await self._repo.readable_chunk_total(user_id),
-                   UNREAD_COUNTER: await self._repo.count_unread(user_id, policy.ADMITTED_KINDS)}
+                   UNREAD_COUNTER: await self._repo.count_unread(user_id, policy.ADMITTED_KINDS,
+                                                                   policy.TRIAGED_KINDS)}
         counters.update({k: v for k, v in content.items() if v})
         return counters
 

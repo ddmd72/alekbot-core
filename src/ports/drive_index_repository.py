@@ -122,10 +122,12 @@ class DriveIndexRepository(ABC):
         modified_at (release, §5.4)."""
 
     @abstractmethod
-    async def count_unread(self, user_id: str, kinds: AbstractSet[str]) -> int:
-        """Documents of a kind in `kinds` whose content is not searchable (§10.2 `unread`, drive_search.is_unread):
-        not folders, and `pending` without an `indexed_generation`, or `failed`, or `metadata_only` for too_large,
-        no_text, machine_text or user_chunk_cap (count aggregation queries)."""
+    async def count_unread(self, user_id: str, kinds: AbstractSet[str],
+                           triaged: AbstractSet[str] = frozenset()) -> int:
+        """Documents of a kind in `kinds`, and images of a kind in `triaged` whose `triage_verdict` is `text`, whose
+        content is not searchable (§10.2 `unread`, drive_search.is_unread): not folders, and `pending` without an
+        `indexed_generation`, or `failed`, or `metadata_only` for too_large, no_text, machine_text or user_chunk_cap
+        (count aggregation queries). A kind in both lists counts as a document."""
 
     @abstractmethod
     async def count_by_state(self, user_id: str) -> Dict[str, int]:

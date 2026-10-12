@@ -445,29 +445,36 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
                  .order_by("item_id").limit(limit))
         return await self._read(query)
 
-    def unread_count_queries(self, user_id: str, kinds: AbstractSet[str]) -> List[Any]:
+    def unread_count_queries(self, user_id: str, kinds: AbstractSet[str],
+                             triaged: AbstractSet[str] = frozenset()) -> List[Any]:
         """The count queries of `count_unread`: one per unread class — failed, pending without a readable generation,
         and one per metadata_only reason — each with one `kind in [...]` filter of at most IN_VALUES_MAX kinds, so a
-        query never exceeds Firestore's disjunction limit. Folders are excluded by kind ("folder" is no content kind).
-        Not a port method: the smoke script runs them directly."""
-        wanted = sorted(set(kinds))
+        query never exceeds Firestore's disjunction limit; the triaged kinds (not also in `kinds`) get the same
+        classes with `triage_verdict == text` (§24.5, review D-M4). Folders are excluded by kind ("folder" is no
+        content kind). Not a port method: the smoke script runs them directly."""
+        documents = sorted(set(kinds))
+        images = sorted(set(triaged) - set(kinds))
+        verdict = (("triage_verdict", "==", TriageVerdict.TEXT.value),)
         classes = ([(("state", "==", RecordState.FAILED.value),),
                     (("state", "==", RecordState.PENDING.value), ("indexed_generation", "==", None))]
                    + [(("state", "==", RecordState.METADATA_ONLY.value), ("reason", "==", reason.value))
                       for reason in UNREAD_REASONS])
         queries = []
-        for part in _chunks(wanted, IN_VALUES_MAX):
-            for filters in classes:
-                query = self._user_query(user_id)
-                for field_path, op, value in filters:
-                    query = query.where(filter=FieldFilter(field_path, op, value))
-                queries.append(query.where(filter=FieldFilter("kind", "in", list(part))))
+        for wanted, extra in ((documents, ()), (images, verdict)):
+            for part in _chunks(wanted, IN_VALUES_MAX):
+                for filters in classes:
+                    query = self._user_query(user_id)
+                    for field_path, op, value in (*filters, *extra):
+                        query = query.where(filter=FieldFilter(field_path, op, value))
+                    queries.append(query.where(filter=FieldFilter("kind", "in", list(part))))
         return queries
 
-    async def count_unread(self, user_id: str, kinds: AbstractSet[str]) -> int:
-        """Count aggregations over the unread classes (six per 30 kinds), summed; never a scan. The classes are
-        disjoint (by state, then by reason), so the sum counts each record once."""
-        queries = self.unread_count_queries(user_id, kinds)
+    async def count_unread(self, user_id: str, kinds: AbstractSet[str],
+                           triaged: AbstractSet[str] = frozenset()) -> int:
+        """Count aggregations over the unread classes (six per 30 kinds, for the documents and for the text images),
+        summed; never a scan. The classes are disjoint (by state, then by reason; a kind in one list only), so the
+        sum counts each record once."""
+        queries = self.unread_count_queries(user_id, kinds, triaged)
         if not queries:
             return 0
         return sum(await asyncio.gather(*(self._count(q) for q in queries)))
