@@ -17,7 +17,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
-from src.domain.drive_index import DriveIndexRecord, DriveSyncState
+from src.domain.drive_index import DriveIndexRecord, DriveSyncState, RecordState
 
 
 class DriveIndexRepository(ABC):
@@ -84,6 +84,10 @@ class DriveIndexRepository(ABC):
     @abstractmethod
     async def oldest_due_at(self, user_id: str, priority: int) -> Optional[datetime]:
         """The earliest due_at among records of one priority class, or None."""
+
+    @abstractmethod
+    async def has_record_in(self, user_id: str, state: RecordState, priority: int) -> bool:
+        """Whether any record is in `state` at priority class `priority` (one limit-1 equality query)."""
 
     @abstractmethod
     async def children(self, user_id: str, parent_id: str, after_item_id: Optional[str],

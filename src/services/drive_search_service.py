@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 from typing import Callable, Dict, FrozenSet, Iterable, List, Optional, Sequence, Set, Tuple, Union
 
 from ..domain.drive_card import card_text
-from ..domain.drive_index import DriveIndexRecord, DriveSyncState, EpochPhase, Priority
+from ..domain.drive_index import DriveIndexRecord, DriveSyncState, EpochPhase, Priority, RecordState
 from ..domain.drive_index_params import (
     CARD_FETCH, FETCH_MAX, FOLDER_INMEM_CARDS, K, MAX_CARD_RECORDS_PER_USER, NAME_FETCH, NAME_KEY_QUERIES, RRF_K,
 )
@@ -503,11 +503,16 @@ class DriveSearchService:
         )
 
     async def _building(self, user_id: str, state: DriveSyncState) -> bool:
-        """The set of items may be incomplete (§10.2): an epoch not idle, or a first-seen or re-listing
-        record due (class 2, plan Δ18) — one limit-1 query, never a counter. Edits and cascades do not count."""
+        """The set of items may be incomplete (§10.2): an epoch not idle, a first-seen or re-listing record
+        due (class 2, plan Δ18), or an unresolved record being resolved at CASCADE priority — limit-1 queries,
+        never a counter. Edits and other cascades do not count; nor does an unresolved record waiting on a
+        RETRY-class lookup or parked, or a parent that is never found would keep `building` true for good."""
         if state.epoch_phase is not EpochPhase.IDLE:
             return True
-        return await self._repo.oldest_due_at(user_id, int(Priority.FIRST_SEEN)) is not None
+        first_seen, resolving = await asyncio.gather(
+            self._repo.oldest_due_at(user_id, int(Priority.FIRST_SEEN)),
+            self._repo.has_record_in(user_id, RecordState.UNRESOLVED, int(Priority.CASCADE)))
+        return first_seen is not None or resolving
 
     async def indexing_status(self, user_id: str) -> DriveIndexingStatus:
         """The Cabinet card (§6): counters, last sync, error category, index full, building."""

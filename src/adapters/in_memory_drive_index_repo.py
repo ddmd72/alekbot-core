@@ -135,6 +135,9 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
         dates = [r.due_at for r in self._user(user_id) if r.priority == priority and r.due_at is not None]
         return min(dates) if dates else None
 
+    async def has_record_in(self, user_id: str, state: RecordState, priority: int) -> bool:
+        return any(r.state is state and r.priority == priority for r in self._user(user_id))
+
     async def children(self, user_id: str, parent_id: str, after_item_id: Optional[str],
                        limit: int) -> List[DriveIndexRecord]:
         kids = sorted((r for r in self._user(user_id) if r.parent_id == parent_id), key=lambda r: r.item_id)

@@ -324,6 +324,12 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
         recs = await self._read(query)
         return recs[0].due_at if recs else None
 
+    async def has_record_in(self, user_id: str, state: RecordState, priority: int) -> bool:
+        query = (self._user_query(user_id).where(filter=FieldFilter("state", "==", state.value))
+                 .where(filter=FieldFilter("priority", "==", int(priority)))
+                 .select([FieldPath.document_id()]).limit(1))
+        return bool(await query.get())
+
     async def children(self, user_id: str, parent_id: str, after_item_id: Optional[str],
                        limit: int) -> List[DriveIndexRecord]:
         query = self._user_query(user_id).where(filter=FieldFilter("parent_id", "==", parent_id))
