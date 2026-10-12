@@ -99,7 +99,8 @@ def _timed_out(exc: BaseException) -> bool:
 
 
 async def build_drive_prompt(prompt_builder: PromptBuilderPort, agent_type: str) -> str:
-    """The Firestore prompt, or DriveModelUnavailable (logged ERROR): §24.2 treats a missing prompt as an outage."""
+    """The Firestore prompt, or DriveModelUnavailable (logged ERROR): §24.2 treats a missing prompt as an outage. A
+    rejected assembly is evicted from the builder's cache (`invalidate_cache()`)."""
     try:
         prompt = await prompt_builder.build_for_agent(agent_type=agent_type, user_id=None, account_id=None,
                                                       include_biographical=False, include_directives=False)
@@ -109,5 +110,8 @@ async def build_drive_prompt(prompt_builder: PromptBuilderPort, agent_type: str)
     missing = [s for s in _REQUIRED_SECTIONS if s not in (prompt or "")]
     if missing:
         logger.error(f"[{agent_type}] prompt is missing sections {missing}: profile, blueprint or tokens not uploaded")
+        # The builder cached this assembly: drop it, so the prompt is assembled afresh once the missing part is
+        # uploaded instead of failing until the cache expires.
+        prompt_builder.invalidate_cache()
         raise DriveModelUnavailable(f"prompt for {agent_type} incomplete")
     return prompt
