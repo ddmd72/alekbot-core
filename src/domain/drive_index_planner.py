@@ -8,7 +8,7 @@ Public interface:
     parent_scope(parent_id, parent, root_item_id) -> Optional[Scope]
     needs_probe(change, pscope, previous) -> bool
     classify(change, pscope, probe, previous) -> Classification
-    plan_observation(change, existing, parent, probe, ctx) -> ObservationPlan
+    plan_observation(change, existing, parent, probe, ctx, previous_parent=None, *, observed=True) -> ObservationPlan
     change_from_record(rec) -> DriveChange
     schedule(rec, now, *, first_seen) -> DriveIndexRecord
     with_card(rec, card_hash, embedding_space, now) / without_card(rec, now) / capped(rec, now)
@@ -60,6 +60,7 @@ class Classification:
     content_class: ContentClass
     probe_pending: bool = False
     density_count: int = 0       # childCount the density decision was taken at (0: none taken)
+    density_reset: bool = False  # decided by size alone: an earlier density anchor no longer stands (retro F3)
 
 
 @dataclass(frozen=True)
@@ -142,7 +143,7 @@ def classify(change: DriveChange, pscope: Optional[Scope], probe: Optional[Folde
                      density_count=previous.probed_child_count)
         if change.child_count > DENSE_FOLDER_CHILDREN:
             return c(Scope.UNRESOLVED, RecordState.UNRESOLVED, None, probe_pending=True)
-        return c(Scope.NORMAL, RecordState.METADATA_ONLY, Reason.FOLDER)
+        return c(Scope.NORMAL, RecordState.METADATA_ONLY, Reason.FOLDER, density_reset=True)
     rule = item_rule(change)
     if rule is not None:
         return c(Scope.NORMAL, RecordState.METADATA_ONLY, rule)
@@ -177,7 +178,7 @@ def _observable(rec: DriveIndexRecord) -> Tuple[Any, ...]:
 
 
 def _build(change: DriveChange, cls: Classification, existing: Optional[DriveIndexRecord],
-           ctx: PlanContext) -> DriveIndexRecord:
+           ctx: PlanContext, observed: bool = True) -> DriveIndexRecord:
     base = existing or DriveIndexRecord(user_id=ctx.user_id, item_id=change.item_id)
     reason = cls.reason
     # A capped record keeps its cap until a release decides again (§5.4); re-observation must not lift it.
@@ -185,7 +186,8 @@ def _build(change: DriveChange, cls: Classification, existing: Optional[DriveInd
             and cls.state is RecordState.METADATA_ONLY and cls.scope in (Scope.NORMAL, Scope.OPAQUE_ROOT)):
         reason = Reason.USER_CARD_CAP
     place_name, geo_version = _place(change, existing, ctx.place_of)
-    probed = cls.density_count or (existing.probed_child_count if existing and not cls.probe_pending else 0)
+    carried = existing.probed_child_count if existing and not cls.probe_pending and not cls.density_reset else 0
+    probed = cls.density_count or carried
     return replace(
         base, parent_id=change.parent_id, name=change.name, is_folder=change.is_folder,
         size_bytes=change.size_bytes, mime_type=change.mime_type, web_url=change.web_url,
@@ -196,8 +198,13 @@ def _build(change: DriveChange, cls: Classification, existing: Optional[DriveInd
         place_name=place_name, geo_table_version=geo_version, policy_version=POLICY_VERSION,
         card_rank=card_rank_of(cls.content_class), name_tokens=name_keys(change.name),
         content_hash=content_hash_of(change), probe_pending=cls.probe_pending, probed_child_count=probed,
-        seen_epoch=ctx.epoch,
+        seen_epoch=_stamp(existing, ctx, observed),
     )
+
+
+def _stamp(existing: Optional[DriveIndexRecord], ctx: PlanContext, observed: bool) -> int:
+    """Only an observation stamps the epoch (§7.5); a re-plan of a stored record keeps its own (retro F10)."""
+    return ctx.epoch if observed or existing is None else existing.seen_epoch
 
 
 def _reopened_marker_parent(parent: DriveIndexRecord, ctx: PlanContext) -> DriveIndexRecord:
@@ -222,16 +229,21 @@ def _marker_left(change: DriveChange, existing: Optional[DriveIndexRecord],
         return False
     if not (previous_parent.scope is Scope.OPAQUE_ROOT and previous_parent.reason is Reason.OPAQUE_ROOT):
         return False
+    if previous_parent.state is RecordState.DELETING:
+        return False   # a dying folder is never re-opened: its tombstone was already applied (retro F1)
     return change.deleted or change.parent_id != existing.parent_id or not is_marker_child(change.name)
 
 
 def plan_observation(change: DriveChange, existing: Optional[DriveIndexRecord], parent: Optional[DriveIndexRecord],
                      probe: Optional[FolderProbe], ctx: PlanContext,
-                     previous_parent: Optional[DriveIndexRecord] = None) -> ObservationPlan:
+                     previous_parent: Optional[DriveIndexRecord] = None, *,
+                     observed: bool = True) -> ObservationPlan:
     """One feed entry (or a re-observed record) -> what to write. Idempotent: the last occurrence wins (§7.2).
 
     `parent` is the record of change.parent_id; `previous_parent` that of existing.parent_id (for a
-    deletion, a move or a rename of a marker child). The root is neither."""
+    deletion, a move or a rename of a marker child). The root is neither. `observed=False`: a re-plan of a
+    stored record (rescope, resolution, probe, upgrade, release), which keeps the record's seen_epoch so a
+    sweep still removes it when the drive no longer has it (§7.5)."""
     if change.item_id == ctx.root_item_id:
         return EMPTY
     reopened: Optional[DriveIndexRecord] = None
@@ -246,7 +258,7 @@ def plan_observation(change: DriveChange, existing: Optional[DriveIndexRecord], 
         if existing.is_folder:
             dying = replace(existing, state=RecordState.DELETING, rescope_pending=False, probe_pending=False,
                             reobserve_pending=False, reobserve_cursor=None, has_card=False, card_hash=None,
-                            seen_epoch=ctx.epoch)   # invariant: a deleting record carries no card
+                            seen_epoch=_stamp(existing, ctx, observed))   # invariant: a deleting record carries no card
             return ObservationPlan(upsert=schedule(dying, ctx.now, first_seen=False), parent_updates=_some(reopened))
         return ObservationPlan(delete_item_id=existing.item_id, parent_updates=_some(reopened))
 
@@ -267,7 +279,7 @@ def plan_observation(change: DriveChange, existing: Optional[DriveIndexRecord], 
         return ObservationPlan(delete_item_id=existing.item_id if existing else None, parent_updates=parent_updates)
 
     revived = existing is not None and existing.state is RecordState.DELETING
-    rec = _build(change, cls, existing, ctx)
+    rec = _build(change, cls, existing, ctx, observed)
     if existing is not None and rec.is_folder and existing.scope is not rec.scope:
         rec = replace(rec, rescope_pending=True, cascade_cursor=None)
         if existing.scope in (Scope.OPAQUE_ROOT, Scope.INSIDE_OPAQUE) and rec.scope is Scope.NORMAL:
@@ -278,7 +290,7 @@ def plan_observation(change: DriveChange, existing: Optional[DriveIndexRecord], 
 
     if existing is not None and not revived and _observable(existing) == _observable(rec):
         stamped = existing
-        if ctx.phase is EpochPhase.ENUMERATING and existing.seen_epoch < ctx.epoch:
+        if observed and ctx.phase is EpochPhase.ENUMERATING and existing.seen_epoch < ctx.epoch:
             stamped = replace(existing, seen_epoch=ctx.epoch)
         if existing.due_at is None and _has_work(existing):
             # nothing observable changed, but a version constant did (§12.3): the card is stale (review A B1)

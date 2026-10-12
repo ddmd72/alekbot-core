@@ -461,7 +461,8 @@ class DriveIndexingService:
         if probe is None:   # out of attempts: classify without a probe, i.e. not dense (§8.2)
             probe = FolderProbe(marker_found=False, class_counts={}, sampled=0)
         parent = await self._parent_of(user_id, rec, ctx)
-        plan = plan_observation(change_from_record(rec), replace(rec, attempts=0), parent, probe, ctx, parent)
+        plan = plan_observation(change_from_record(rec), replace(rec, attempts=0), parent, probe, ctx, parent,
+                                observed=False)
         await self._commit_plan(user_id, plan)
         return True
 
@@ -473,7 +474,8 @@ class DriveIndexingService:
             if parent is not None and parent.scope is Scope.UNRESOLVED:
                 await self._commit(user_id, [replace(rec, due_at=None, priority=None)], set())
                 return True   # waits for its parent's own resolution or probe; the parent's rescope re-classifies it
-            await self._commit_plan(user_id, plan_observation(change_from_record(rec), rec, parent, None, ctx, parent))
+            await self._commit_plan(user_id, plan_observation(change_from_record(rec), rec, parent, None, ctx, parent,
+                                                              observed=False))
             return True
         if budget.item_calls <= 0:
             return False
@@ -515,7 +517,7 @@ class DriveIndexingService:
             if kid.state is RecordState.DELETING:
                 continue   # on its way out; re-observing a stored record must never revive it
             current = cache.get(folder.item_id) or folder   # a marker child may have changed the folder already
-            plan = plan_observation(change_from_record(kid), kid, current, None, ctx, current)
+            plan = plan_observation(change_from_record(kid), kid, current, None, ctx, current, observed=False)
             self._fold(plan, cache, writes, deletes)
         budget.cascade_ops -= max(len(kids), 1)
         current = cache.get(folder.item_id) or folder
@@ -617,7 +619,8 @@ class DriveIndexingService:
         ctx = self._ctx(user_id, state, now)
         for rec in released:
             parent = await self._parent_of(user_id, rec, ctx)
-            plan = plan_observation(change_from_record(rec), replace(rec, reason=None), parent, None, ctx, parent)
+            plan = plan_observation(change_from_record(rec), replace(rec, reason=None), parent, None, ctx, parent,
+                                    observed=False)
             await self._commit_plan(user_id, _as_maintenance(plan))
         summary["released"] = summary.get("released", 0) + len(released)
 
@@ -650,7 +653,8 @@ class DriveIndexingService:
                 continue
             found = True
             parent = await self._parent_of(user_id, rec, ctx)
-            self._fold(_as_maintenance(plan_observation(change_from_record(rec), rec, parent, None, ctx, parent)),
+            self._fold(_as_maintenance(plan_observation(change_from_record(rec), rec, parent, None, ctx, parent,
+                                                        observed=False)),
                        {}, writes, deletes)
         await self._commit(user_id, list(writes.values()), deletes)
         summary["upgraded"] = summary.get("upgraded", 0) + len(writes)

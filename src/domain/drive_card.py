@@ -5,7 +5,7 @@ Card text and its hash (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §8.5). Pure ove
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, List, Mapping, Optional, Tuple
 
 from .drive_index import CARD_VERSION, DriveChange, DriveIndexRecord, Reason, RecordState, Scope
@@ -26,9 +26,11 @@ def _parse_dt(value: Any) -> Optional[datetime]:
     if not isinstance(value, str) or not value:
         return None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
+    # an offset-less timestamp is read as UTC, so it compares with the aware datetimes stored (retro F13)
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
 
 
 def photo_location(facets: Mapping[str, Any]) -> Optional[Tuple[float, float]]:

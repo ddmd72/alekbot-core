@@ -1,7 +1,8 @@
 """
 Offline place names from a bundled city table (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §5.3; plan Δ7).
 Within PLACE_PREFER_RADIUS_KM the heaviest place wins (a photo in Porto is "Porto", not the parish it was taken in);
-farther out, the nearest place within PLACE_MAX_DISTANCE_KM. Candidates come from a 1-degree grid (3x3 cells).
+farther out, the nearest place within PLACE_MAX_DISTANCE_KM. Candidates come from a 1-degree grid: the three
+latitude rows around the point, and as many longitude cells as PLACE_MAX_DISTANCE_KM spans at that latitude.
 """
 from __future__ import annotations
 
@@ -12,6 +13,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 from .drive_index_params import PLACE_MAX_DISTANCE_KM, PLACE_PREFER_RADIUS_KM
 
 _EARTH_KM = 6371.0
+_KM_PER_DEGREE = 111.32
 
 
 @dataclass(frozen=True)
@@ -31,6 +33,17 @@ def _km(a_lat: float, a_lon: float, b_lat: float, b_lon: float) -> float:
     return 2 * _EARTH_KM * math.asin(math.sqrt(h))
 
 
+def _lon_cells(lat: float, co: int) -> List[int]:
+    """Longitude cells within PLACE_MAX_DISTANCE_KM of a point in cell `co`; a degree of longitude narrows
+    towards the poles, so above ~63 degrees a 3x3 grid misses candidates (retro F14). The span is taken at the
+    poleward edge of the search disc; near a pole every cell is scanned, each once."""
+    edge = min(90.0, abs(lat) + PLACE_MAX_DISTANCE_KM / _KM_PER_DEGREE)
+    width_km = _KM_PER_DEGREE * math.cos(math.radians(edge))
+    span = 180 if width_km <= 0 else min(180, math.ceil(PLACE_MAX_DISTANCE_KM / width_km))
+    cells = {(co + do + 180) % 360 - 180 for do in range(-span, span + 1)}   # wraps across the antimeridian
+    return sorted(cells)
+
+
 class PlaceIndex:
     def __init__(self, rows: Sequence[PlaceRow]) -> None:
         self._cells: Dict[Tuple[int, int], List[PlaceRow]] = {}
@@ -43,8 +56,7 @@ class PlaceIndex:
         candidates: List[Tuple[float, PlaceRow]] = []
         cl, co = math.floor(lat), math.floor(lon)
         for dl in (-1, 0, 1):
-            for do in (-1, 0, 1):
-                cell_lon = (co + do + 180) % 360 - 180   # wraps across the antimeridian
+            for cell_lon in _lon_cells(lat, co):
                 for row in self._cells.get((cl + dl, cell_lon), ()):
                     d = _km(lat, lon, row.lat, row.lon)
                     if d <= PLACE_MAX_DISTANCE_KM:
