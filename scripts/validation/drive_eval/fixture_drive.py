@@ -200,3 +200,11 @@ class FixtureDrive(UserDrivePort):
 
     async def delete(self, user_id: str, item_id: str) -> None:
         raise NotImplementedError("the eval drive serves indexing reads only")
+
+    # -- content for the index (USER_DRIVE_INDEXING_RFC §8.1, §24.5): eval file bytes come later --
+
+    async def download_to_file(self, user_id: str, item_id: str, dest_path: str, max_bytes: int) -> int:
+        raise NotImplementedError("eval file bytes — plan part E")
+
+    async def get_thumbnail(self, user_id: str, item_id: str, size: str) -> Optional[bytes]:
+        raise NotImplementedError("eval file bytes — plan part E")

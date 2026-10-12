@@ -8,9 +8,19 @@ Public interface:
     parent_scope(parent_id, parent, root_item_id) -> Optional[Scope]
     needs_probe(change, pscope, previous) -> bool
     classify(change, pscope, probe, previous) -> Classification
-    plan_observation(change, existing, parent, probe, ctx, previous_parent=None, *, observed=True) -> ObservationPlan
+    plan_observation(change, existing, parent, probe, ctx, previous_parent=None, *, observed=True,
+                     nudged=False) -> ObservationPlan
     change_from_record(rec) -> DriveChange
     schedule(rec, now, *, first_seen) -> DriveIndexRecord
+    content_due(rec, now=None) -> bool / triage_due(rec, now=None) -> bool
+    valid_verdict(rec, content_version) -> Optional[TriageVerdict]
+    generation_started(rec, now) / indexed(rec, *, outcome, generation, chunk_count, now)
+    deferred(rec, until, now, *, maintenance=False) / next_month_start(now) -> datetime
+    demoted(rec, reason, now, *, outcome=None, chunk_count=0) / content_retry(rec, reason, now)
+    triaged(rec, result, now) -> DriveIndexRecord;  attempt_crashed(rec, now) -> bool
+    month_key(now) / usage_now(state, now) / with_usage(state, now, *, pages=0, images=0)
+    model_available(state, now) / model_outage(state, now) / model_recovered(state)
+    can_start_file(elapsed_s, *, routed) -> bool
     with_card(rec, card_hash, embedding_space, now) / without_card(rec, now) / capped(rec, now) / released(rec, now)
     card_refused(rec, now) -> DriveIndexRecord
     with_retry(rec, now) -> DriveIndexRecord
@@ -22,21 +32,27 @@ Public interface:
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, Callable, List, Optional, Tuple
 
 from .drive_card import (
     card_eligible, card_hash, content_hash_of, effective_date, photo_location, structurally_card_eligible,
 )
+from .drive_extraction import ExtractionOutcome, TriageResult
 from .drive_index import (
-    CARD_VERSION, GEO_TABLE_VERSION, NAME_KEYS_VERSION, POLICY_VERSION, ContentClass, DriveChange, DriveIndexRecord,
-    DriveSyncState, EpochPhase, FolderProbe, Priority, Reason, RecordState, Scope,
+    CARD_VERSION, EXTRACTION_VERSION, GEO_TABLE_VERSION, NAME_KEYS_VERSION, POLICY_VERSION, TRIAGE_VERSION,
+    ContentClass, DocumentBrief, DriveChange, DriveIndexRecord, DriveSyncState, EpochPhase, FolderProbe, Priority,
+    Reason, RecordState, Scope, TriageVerdict,
 )
-from .drive_index_params import ACCESS_LOSS_TTL, DENSE_FOLDER_CHILDREN, RETRY_BASE, RETRY_CAP, STALE_ALERT_AFTER
+from .drive_index_params import (
+    ACCESS_LOSS_TTL, CARD_LEAD_CHARS, DENSE_FOLDER_CHILDREN, DOWNLOAD_TIMEOUT_S, EMBED_FILE_BUDGET_S,
+    EXTRACT_WALL_TIMEOUT_S, FILE_START_MARGIN_S, MAX_ATTEMPTS, MAX_DEFER, MODEL_BACKOFF_BASE_S, MODEL_BACKOFF_CAP_S,
+    MODEL_FILE_BUDGET_S, QUIET, RETRY_BASE, RETRY_CAP, STALE_ALERT_AFTER, TICK_DEADLINE_S,
+)
 from .drive_index_policy import (
-    ADMITTED_KINDS, card_rank_of, content_class_of, density_still_valid, is_dense, is_dot_name,
-    is_generated_dir, is_marker_child, item_rule, kind_of, searchable,
+    Admission, admission, card_rank_of, content_class_of, density_still_valid, is_dense, is_dot_name,
+    is_generated_dir, is_marker_child, item_rule, kind_of, searchable, size_cap,
 )
 from .drive_name_keys import name_keys
 from .user_drive import DriveConnection
@@ -65,6 +81,7 @@ class Classification:
     probe_pending: bool = False
     density_count: int = 0       # childCount the density decision was taken at (0: none taken)
     density_reset: bool = False  # decided by size alone: an earlier density anchor no longer stands (§5.2)
+    content_kept: bool = False   # the previous content outcome stands at this content and extraction version
 
 
 @dataclass(frozen=True)
@@ -72,10 +89,18 @@ class ObservationPlan:
     upsert: Optional[DriveIndexRecord] = None
     delete_item_id: Optional[str] = None
     parent_updates: Tuple[DriveIndexRecord, ...] = ()   # the old and/or the new parent of a marker child
+    # the item whose chunks (every generation) the service deletes before writing the plan (§3.4, §7.6): the plan
+    # drops its readable generation, or deletes a record that ever started an index run
+    collect_chunks: Optional[str] = None
 
 
 EMPTY = ObservationPlan()
 _OPAQUE = (Scope.OPAQUE_ROOT, Scope.INSIDE_OPAQUE)
+# metadata_only reasons decided by reading the content (§3.4, §8.2): they stand until the content or the extractor
+# changes, so a rename never re-reads a scan. KIND_NOT_ADMITTED here is an `unsupported` outcome or a sniffed kind
+# the policy refuses (§8.1 step 4); one from metadata alone carries no extraction_version and never stands.
+_CONTENT_REASONS = frozenset({Reason.NO_TEXT, Reason.MACHINE_TEXT, Reason.ENCRYPTED, Reason.TOO_LARGE,
+                              Reason.USER_CHUNK_CAP, Reason.KIND_NOT_ADMITTED})
 
 
 class AccessAction(str, Enum):
@@ -152,9 +177,46 @@ def classify(change: DriveChange, pscope: Optional[Scope], probe: Optional[Folde
     rule = item_rule(change)
     if rule is not None:
         return c(Scope.NORMAL, RecordState.METADATA_ONLY, rule)
-    if kind in ADMITTED_KINDS:
-        return c(Scope.NORMAL, RecordState.PENDING, None)
-    return c(Scope.NORMAL, RecordState.METADATA_ONLY, Reason.KIND_NOT_ADMITTED)
+    adm = admission(kind)
+    if adm is Admission.TRIAGE:
+        verdict = valid_verdict(previous, change.content_version)
+        if verdict is TriageVerdict.PHOTO:
+            return c(Scope.NORMAL, RecordState.METADATA_ONLY, Reason.PHOTOGRAPH)
+        if verdict is None:
+            return c(Scope.NORMAL, RecordState.PENDING, None)   # triage due (§24.5)
+    elif adm is Admission.CONTENT:
+        if change.size_bytes > size_cap(kind):
+            return c(Scope.NORMAL, RecordState.METADATA_ONLY, Reason.TOO_LARGE)
+    else:
+        return c(Scope.NORMAL, RecordState.METADATA_ONLY, Reason.KIND_NOT_ADMITTED)
+    if previous is not None and _outcome_stands(previous, change.content_version):
+        return c(Scope.NORMAL, previous.state, previous.reason, content_kept=True)
+    return c(Scope.NORMAL, RecordState.PENDING, None)
+
+
+def valid_verdict(rec: Optional[DriveIndexRecord], content_version: str) -> Optional[TriageVerdict]:
+    """The triage verdict that still holds: taken at the current TRIAGE_VERSION on this content version (§5.3)."""
+    if (rec is None or rec.triage_verdict is None or rec.triage_version != TRIAGE_VERSION
+            or rec.triaged_content_version != content_version):
+        return None
+    return rec.triage_verdict
+
+
+def _indexed_now(rec: DriveIndexRecord) -> bool:
+    """Readable chunks built from this content version by the current extraction rules."""
+    return (rec.indexed_generation is not None and rec.indexed_version == rec.content_version
+            and rec.extraction_version == EXTRACTION_VERSION)
+
+
+def _outcome_stands(previous: DriveIndexRecord, content_version: str) -> bool:
+    """A content outcome (indexed, failed, or a content demotion) decided at this content version under the
+    current extraction rules (§3.4, §8.2): kept, so a rename or a policy re-plan never re-reads the file."""
+    if previous.content_version != content_version or previous.extraction_version != EXTRACTION_VERSION:
+        return False
+    if previous.state is RecordState.INDEXED:
+        return _indexed_now(previous)
+    return previous.state is RecordState.FAILED or (previous.state is RecordState.METADATA_ONLY
+                                                    and previous.reason in _CONTENT_REASONS)
 
 
 def change_from_record(rec: DriveIndexRecord) -> DriveChange:
@@ -180,7 +242,8 @@ def _observable(rec: DriveIndexRecord) -> Tuple[Any, ...]:
             dict(rec.facets), rec.kind, rec.scope, rec.state, rec.reason, rec.content_version, rec.modified_at,
             rec.fs_modified_at, rec.effective_date, rec.place_name, rec.geo_table_version, rec.policy_version,
             rec.probe_pending, rec.rescope_pending, rec.reobserve_pending, rec.probed_child_count, rec.card_capped,
-            rec.card_refused, rec.name_keys_version)
+            rec.card_refused, rec.name_keys_version, rec.indexed_generation, rec.lead_text, rec.brief, rec.caption,
+            rec.dirty_since)
 
 
 def _build(change: DriveChange, cls: Classification, existing: Optional[DriveIndexRecord],
@@ -189,13 +252,21 @@ def _build(change: DriveChange, cls: Classification, existing: Optional[DriveInd
     place_name, geo_version = _place(change, existing, ctx.place_of)
     carried = existing.probed_child_count if existing and not cls.probe_pending and not cls.density_reset else 0
     probed = cls.density_count or carried
+    if cls.state is RecordState.METADATA_ONLY and not cls.content_kept:
+        # entering metadata_only clears the readable generation (the service collects its chunks) and what the
+        # content gave the card (§3.4); a content demotion that stands keeps its own fields
+        base = replace(base, indexed_generation=None, lead_text="", brief=None)
+    if admission(cls.kind) is not Admission.TRIAGE:
+        base = replace(base, caption="")
+    if cls.state is not RecordState.PENDING:
+        base = replace(base, dirty_since=None, defer_until=None, defer_priority=None)
     rec = replace(
         base, parent_id=change.parent_id, name=change.name, is_folder=change.is_folder,
         size_bytes=change.size_bytes, mime_type=change.mime_type, web_url=change.web_url,
         child_count=change.child_count, facets=dict(change.facets), kind=cls.kind,
         content_class=cls.content_class, scope=cls.scope, state=cls.state, reason=cls.reason,
         content_version=change.content_version, modified_at=change.modified_at,
-        fs_modified_at=change.fs_modified_at, effective_date=effective_date(change, ctx.now),
+        fs_modified_at=change.fs_modified_at, effective_date=_effective(change, base.brief, ctx.now),
         place_name=place_name, geo_table_version=geo_version, policy_version=POLICY_VERSION,
         card_rank=card_rank_of(cls.content_class),
         name_tokens=name_keys(change.name) if searchable(cls.reason) else (), name_keys_version=NAME_KEYS_VERSION,
@@ -205,6 +276,13 @@ def _build(change: DriveChange, cls: Classification, existing: Optional[DriveInd
     # A capped record keeps its cap until a release decides again (§5.4); one that can hold no card drops it.
     rec = replace(rec, card_capped=rec.card_capped and structurally_card_eligible(rec))
     return replace(rec, card_refused=_refusal_stands(existing, rec))
+
+
+def _effective(change: DriveChange, brief: Optional[DocumentBrief], now: datetime) -> datetime:
+    """The document's own date while a brief holds one (D13), else the §3.1 order."""
+    if brief is not None and brief.doc_date is not None:
+        return brief.doc_date
+    return effective_date(change, now)
 
 
 def _refusal_stands(existing: Optional[DriveIndexRecord], rec: DriveIndexRecord) -> bool:
@@ -249,13 +327,30 @@ def _marker_left(change: DriveChange, existing: Optional[DriveIndexRecord],
 def plan_observation(change: DriveChange, existing: Optional[DriveIndexRecord], parent: Optional[DriveIndexRecord],
                      probe: Optional[FolderProbe], ctx: PlanContext,
                      previous_parent: Optional[DriveIndexRecord] = None, *,
-                     observed: bool = True) -> ObservationPlan:
+                     observed: bool = True, nudged: bool = False) -> ObservationPlan:
     """One feed entry (or a re-observed record) -> what to write. Idempotent: the last occurrence wins (§7.2).
 
     `parent` is the record of change.parent_id; `previous_parent` that of existing.parent_id (for a
     deletion, a move or a rename of a marker child). The root is neither. `observed=False`: a re-plan of a
     stored record (rescope, resolution, probe, upgrade, release), which keeps the record's seen_epoch so a
-    sweep still removes it when the drive no longer has it (§7.5)."""
+    sweep still removes it when the drive no longer has it (§7.5). `nudged=True`: the bot's own atomic write
+    (§7.1 step 1), read with QUIET = 0, so its content is due at once (§7.3)."""
+    return _collecting(_plan(change, existing, parent, probe, ctx, previous_parent, observed, nudged), existing)
+
+
+def _collecting(plan: ObservationPlan, existing: Optional[DriveIndexRecord]) -> ObservationPlan:
+    if existing is None:
+        return plan
+    deleted = plan.delete_item_id == existing.item_id and (existing.indexed_generation is not None
+                                                           or existing.index_generation > 0)
+    dropped = (plan.upsert is not None and existing.indexed_generation is not None
+               and plan.upsert.indexed_generation is None)
+    return replace(plan, collect_chunks=existing.item_id) if deleted or dropped else plan
+
+
+def _plan(change: DriveChange, existing: Optional[DriveIndexRecord], parent: Optional[DriveIndexRecord],
+          probe: Optional[FolderProbe], ctx: PlanContext, previous_parent: Optional[DriveIndexRecord],
+          observed: bool, nudged: bool) -> ObservationPlan:
     if change.item_id == ctx.root_item_id:
         return EMPTY
     reopened: Optional[DriveIndexRecord] = None
@@ -293,6 +388,7 @@ def plan_observation(change: DriveChange, existing: Optional[DriveIndexRecord], 
 
     revived = existing is not None and existing.state is RecordState.DELETING
     rec = _build(change, cls, existing, ctx, observed)
+    rec = _quiet_period(rec, existing, ctx.now, nudged)
     if existing is not None and rec.is_folder and existing.scope is not rec.scope:
         rec = replace(rec, rescope_pending=True, cascade_cursor=None)
         if existing.scope in (Scope.OPAQUE_ROOT, Scope.INSIDE_OPAQUE) and rec.scope is Scope.NORMAL:
@@ -318,6 +414,51 @@ def plan_observation(change: DriveChange, existing: Optional[DriveIndexRecord], 
     return ObservationPlan(upsert=schedule(rec, ctx.now, first_seen=first_seen), parent_updates=parent_updates)
 
 
+def _quiet_period(rec: DriveIndexRecord, existing: Optional[DriveIndexRecord], now: datetime,
+                  nudged: bool) -> DriveIndexRecord:
+    """§7.3: a content change on a stored record waiting for content marks it dirty (once) and restarts its
+    per-file attempts (§8.2); a nudge is the bot's own atomic write, so it is never in a quiet period."""
+    if rec.state is not RecordState.PENDING:
+        return rec
+    if nudged:
+        return replace(rec, dirty_since=None)
+    if existing is not None and existing.content_version != rec.content_version:
+        # a new edit restarts the work: its attempts and any deferral of the old version end
+        return replace(rec, dirty_since=rec.dirty_since or now, attempts=0, defer_until=None, defer_priority=None)
+    return rec
+
+
+def _held(rec: DriveIndexRecord, now: Optional[datetime]) -> bool:
+    return now is not None and rec.defer_until is not None and now < rec.defer_until
+
+
+def content_due(rec: DriveIndexRecord, now: Optional[datetime] = None) -> bool:
+    """An index run is due (§8.1): pending, its content admitted (a content kind, or an image with a valid `text`
+    verdict), and not yet indexed at this content version under the current extraction rules. A crashed or
+    retried run is still due; an indexed record is not. With `now`: and not deferred past `now`."""
+    if rec.state is not RecordState.PENDING or _indexed_now(rec) or _held(rec, now):
+        return False
+    adm = admission(rec.kind)
+    return adm is Admission.CONTENT or (adm is Admission.TRIAGE
+                                        and valid_verdict(rec, rec.content_version) is TriageVerdict.TEXT)
+
+
+def triage_due(rec: DriveIndexRecord, now: Optional[datetime] = None) -> bool:
+    """An image waits for a verdict at the current TRIAGE_VERSION on its content version (§24.5). With `now`: and
+    not deferred past `now`."""
+    return (rec.state is RecordState.PENDING and admission(rec.kind) is Admission.TRIAGE
+            and valid_verdict(rec, rec.content_version) is None and not _held(rec, now))
+
+
+def _content_due_at(rec: DriveIndexRecord, now: datetime) -> datetime:
+    """§7.3: an edit waits until untouched for QUIET or dirty for MAX_DEFER; anything not dirty (first sight, a
+    nudge, an upgrade, a release) is due at once."""
+    if rec.dirty_since is None:
+        return now
+    bound = rec.dirty_since + MAX_DEFER
+    return min(rec.modified_at + QUIET, bound) if rec.modified_at is not None else bound
+
+
 def _card_due(rec: DriveIndexRecord) -> bool:
     return card_eligible(rec) and rec.card_hash != card_hash(rec)
 
@@ -327,27 +468,34 @@ def _card_drop_due(rec: DriveIndexRecord) -> bool:
 
 
 def schedule(rec: DriveIndexRecord, now: datetime, *, first_seen: bool) -> DriveIndexRecord:
-    """Sets due_at/priority from the work the record still carries (§7.8); clears them when none is left."""
-    works = _works(rec, first_seen)
+    """Sets due_at/priority from the work the record still carries (§7.8); clears them when none is left. Several
+    works: the earliest due time and the most urgent class."""
+    works = _works(rec, first_seen, now)
     if not works:
         return replace(rec, due_at=None, priority=None)
-    return replace(rec, due_at=now, priority=int(min(works)))
+    return replace(rec, due_at=min(at for _, at in works), priority=int(min(p for p, _ in works)))
 
 
-def _works(rec: DriveIndexRecord, first_seen: bool) -> List[Priority]:
-    works: List[Priority] = []
+def _works(rec: DriveIndexRecord, first_seen: bool, now: datetime) -> List[Tuple[Priority, datetime]]:
+    works: List[Tuple[Priority, datetime]] = []
     if (rec.probe_pending or rec.rescope_pending or rec.state is RecordState.DELETING
             or rec.state is RecordState.UNRESOLVED or _card_drop_due(rec)):
-        works.append(Priority.CASCADE)
+        works.append((Priority.CASCADE, now))
     if rec.reobserve_pending:
-        works.append(Priority.FIRST_SEEN)   # §7.8 class 2: "re-observed subtrees"
+        works.append((Priority.FIRST_SEEN, now))   # §7.8 class 2: "re-observed subtrees"
     if _card_due(rec):
-        works.append(Priority.FIRST_SEEN if first_seen else Priority.EDIT)
+        works.append((Priority.FIRST_SEEN if first_seen else Priority.EDIT, now))
+    if content_due(rec) or triage_due(rec):
+        at = _content_due_at(rec, now)
+        cls = Priority.FIRST_SEEN if first_seen else Priority.EDIT
+        if rec.defer_until is not None:   # a deferral survives any re-scheduling until the work ends
+            at = max(at, rec.defer_until)
+        works.append((Priority(rec.defer_priority) if rec.defer_priority is not None else cls, at))
     return works
 
 
 def _has_work(rec: DriveIndexRecord) -> bool:
-    return bool(_works(rec, first_seen=False))
+    return bool(_works(rec, first_seen=False, now=datetime.min))   # whether any work exists; its time is unused
 
 
 def with_card(rec: DriveIndexRecord, hash_: str, embedding_space: str, now: datetime) -> DriveIndexRecord:
@@ -402,6 +550,10 @@ def stale_versions(rec: DriveIndexRecord, *, embedding_space: Optional[str] = No
         return True
     if (rec.has_card or rec.card_hash is not None) and rec.card_version != CARD_VERSION:   # carded, or refused
         return True
+    if rec.extraction_version > 0 and rec.extraction_version != EXTRACTION_VERSION:       # content read before
+        return True
+    if rec.triage_verdict is not None and rec.triage_version != TRIAGE_VERSION:
+        return True
     return photo_location(rec.facets) is not None and rec.geo_table_version != GEO_TABLE_VERSION
 
 
@@ -446,3 +598,161 @@ def is_stale(state: DriveSyncState, oldest_edit_due_at: Optional[datetime], now:
     if now - since > STALE_ALERT_AFTER:
         return True
     return oldest_edit_due_at is not None and now - oldest_edit_due_at > STALE_ALERT_AFTER
+
+
+# -- index runs (§8.1, §8.2, §7.4) ---------------------------------------------------------------------------------
+
+def generation_started(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
+    """Step 2 of §8.1, persisted before the first chunk write: a new generation, so a retry never reuses a crashed
+    run's. The content is due again when the run would count as crashed (attempt_crashed), in the retry class."""
+    return _defer(replace(rec, index_generation=rec.index_generation + 1, attempt_started_at=now),
+                  now + timedelta(seconds=TICK_DEADLINE_S), int(Priority.RETRY), now)
+
+
+def _defer(rec: DriveIndexRecord, until: datetime, priority: int, now: datetime) -> DriveIndexRecord:
+    return schedule(replace(rec, defer_until=until, defer_priority=priority), now, first_seen=not rec.has_card)
+
+
+def deferred(rec: DriveIndexRecord, until: datetime, now: datetime, *, maintenance: bool = False) -> DriveIndexRecord:
+    """Hold the record's model work until `until`, still pending (§24.7, §24.8): a spent monthly budget waits for
+    next_month_start in class 3 (`maintenance=True`); a model outage waits for `model_backoff_until` in the class it
+    was due in."""
+    if maintenance:
+        priority = int(Priority.MAINTENANCE)
+    elif rec.priority is not None:
+        priority = rec.priority
+    else:
+        priority = int(Priority.EDIT if rec.has_card else Priority.FIRST_SEEN)
+    return _defer(rec, until, priority, now)
+
+
+def next_month_start(now: datetime) -> datetime:
+    """The UTC month boundary a spent monthly budget waits for (§24.7)."""
+    utc = now.astimezone(timezone.utc)
+    year, month = (utc.year + 1, 1) if utc.month == 12 else (utc.year, utc.month + 1)
+    return datetime(year, month, 1, tzinfo=timezone.utc)
+
+
+def attempt_crashed(rec: DriveIndexRecord, now: datetime) -> bool:
+    """A run started a whole tick deadline ago with no outcome: the instance died during it (§8.2)."""
+    return (rec.attempt_started_at is not None
+            and now - rec.attempt_started_at >= timedelta(seconds=TICK_DEADLINE_S))
+
+
+def _settled(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
+    """A content outcome is terminal: the quiet period and the attempt end (§7.3, §8.2); the card may be due, in
+    class 0 for a record that already has one (§7.8)."""
+    return schedule(replace(rec, dirty_since=None, attempts=0, attempt_started_at=None, defer_until=None,
+                            defer_priority=None), now, first_seen=not rec.has_card)
+
+
+def indexed(rec: DriveIndexRecord, *, outcome: ExtractionOutcome, generation: int, chunk_count: int,
+            now: datetime) -> DriveIndexRecord:
+    """The fence's one record write (§7.4): `generation` becomes readable for this content version. The caller
+    then collects every other generation. `outcome.truncated` must include the chunker's cut (§5.4). A brief's
+    date becomes the effective date (D13)."""
+    done = replace(rec, state=RecordState.INDEXED, reason=None, indexed_generation=generation,
+                   indexed_version=rec.content_version, extraction_version=EXTRACTION_VERSION,
+                   extracted_by=outcome.extracted_by, text_chars=len(outcome.text), pages_total=outcome.pages_total,
+                   chunk_count=chunk_count, truncated=outcome.truncated,
+                   lead_text=outcome.text.strip()[:CARD_LEAD_CHARS], brief=outcome.brief,
+                   effective_date=_effective(change_from_record(rec), outcome.brief, rec.effective_date or now))
+    return _settled(done, now)
+
+
+def demoted(rec: DriveIndexRecord, reason: Reason, now: datetime, *, outcome: Optional[ExtractionOutcome] = None,
+            chunk_count: int = 0) -> DriveIndexRecord:
+    """A deterministic content outcome (§8.2): metadata_only, no retry. The readable generation goes (the caller
+    collects its chunks). `outcome` is what the extraction produced: a machine_text card keeps its lead text (§5.5),
+    and a user_chunk_cap refusal keeps the would-be `chunk_count` so its release can test headroom (§5.4)."""
+    if reason not in _CONTENT_REASONS:
+        raise ValueError(f"{reason.value} is not a content outcome")
+    text = outcome.text if outcome is not None else ""
+    brief = outcome.brief if outcome is not None else None
+    done = replace(rec, state=RecordState.METADATA_ONLY, reason=reason, indexed_generation=None,
+                   extraction_version=EXTRACTION_VERSION,
+                   extracted_by=outcome.extracted_by if outcome is not None else rec.extracted_by,
+                   text_chars=len(text), pages_total=outcome.pages_total if outcome is not None else 0,
+                   truncated=outcome.truncated if outcome is not None else False,
+                   chunk_count=chunk_count if reason is Reason.USER_CHUNK_CAP else 0,
+                   lead_text=text.strip()[:CARD_LEAD_CHARS] if reason is Reason.MACHINE_TEXT else "", brief=brief,
+                   effective_date=_effective(change_from_record(rec), brief, rec.effective_date or now))
+    return _settled(done, now)
+
+
+_FAILED_REASONS = frozenset({Reason.EXTRACT_TIMEOUT, Reason.EXTRACT_MEMORY, Reason.EXTRACT_ERROR,
+                             Reason.DOWNLOAD_ERROR, Reason.EMBED_TIMEOUT})
+
+
+def content_retry(rec: DriveIndexRecord, reason: Reason, now: datetime) -> DriveIndexRecord:
+    """A per-file transient outcome or a crashed run (§8.2): back off in the retry class; at MAX_ATTEMPTS the record
+    is `failed` with `reason` and keeps its previous readable generation, served as stale (§3.4)."""
+    if reason not in _FAILED_REASONS:
+        raise ValueError(f"{reason.value} is not a per-file failure")
+    attempts = rec.attempts + 1
+    if attempts >= MAX_ATTEMPTS:
+        return _settled(replace(rec, state=RecordState.FAILED, reason=reason,
+                                extraction_version=EXTRACTION_VERSION), now)
+    return _defer(replace(rec, attempts=attempts, attempt_started_at=None), now + backoff(attempts),
+                  int(Priority.RETRY), now)
+
+
+def triaged(rec: DriveIndexRecord, result: TriageResult, now: datetime) -> DriveIndexRecord:
+    """Store a verdict for this content version (§24.5). A photograph is metadata_only with its caption; text makes
+    the content due for the reader, unless this version is already indexed. The reader's work keeps the class the
+    triage had: an edit stays class 0, anything else is class 2 (the tick moves upgrades to class 3)."""
+    if result.item_id != rec.item_id:
+        raise ValueError(f"verdict for {result.item_id} applied to {rec.item_id}")
+    first_seen = rec.priority != int(Priority.EDIT)
+    rec = replace(rec, triage_verdict=result.verdict, triage_version=TRIAGE_VERSION,
+                  triaged_content_version=rec.content_version, attempts=0, defer_until=None, defer_priority=None)
+    if result.verdict is TriageVerdict.PHOTO:
+        photo = replace(rec, state=RecordState.METADATA_ONLY, reason=Reason.PHOTOGRAPH, caption=result.caption,
+                        indexed_generation=None, lead_text="", brief=None, dirty_since=None,
+                        effective_date=_effective(change_from_record(rec), None, rec.effective_date or now))
+        return schedule(photo, now, first_seen=first_seen)
+    state = RecordState.INDEXED if _indexed_now(rec) else RecordState.PENDING
+    return schedule(replace(rec, state=state, reason=None, caption=""), now, first_seen=first_seen)
+
+
+def can_start_file(elapsed_s: float, *, routed: bool) -> bool:
+    """§24.3 / §7.1: a file starts only if its worst case still ends before the tick deadline. `routed`: it may
+    go to the reader (a PDF or an information-bearing image)."""
+    worst = (DOWNLOAD_TIMEOUT_S + EXTRACT_WALL_TIMEOUT_S + (MODEL_FILE_BUDGET_S if routed else 0)
+             + EMBED_FILE_BUDGET_S + FILE_START_MARGIN_S)
+    return elapsed_s + worst < TICK_DEADLINE_S
+
+
+# -- model usage and outages on the sync state (§24.7, §24.8) -------------------------------------------------------
+
+def month_key(now: datetime) -> str:
+    """The calendar month (UTC) monthly budgets are counted in."""
+    return now.astimezone(timezone.utc).strftime("%Y-%m")
+
+
+def usage_now(state: DriveSyncState, now: datetime) -> Tuple[int, int]:
+    """(pages sent to the reader, images sent to triage) this month; a new month starts at zero."""
+    if state.usage_month != month_key(now):
+        return 0, 0
+    return state.model_pages_used, state.triage_images_used
+
+
+def with_usage(state: DriveSyncState, now: datetime, *, pages: int = 0, images: int = 0) -> DriveSyncState:
+    used_pages, used_images = usage_now(state, now)
+    return replace(state, usage_month=month_key(now), model_pages_used=used_pages + pages,
+                   triage_images_used=used_images + images)
+
+
+def model_available(state: DriveSyncState, now: datetime) -> bool:
+    return state.model_backoff_until is None or now >= state.model_backoff_until
+
+
+def model_outage(state: DriveSyncState, now: datetime) -> DriveSyncState:
+    """A model outage defers model work only (§24.8), with the §7.7 doubling backoff."""
+    failures = state.model_failures + 1
+    delay = min(MODEL_BACKOFF_BASE_S * 2 ** (failures - 1), MODEL_BACKOFF_CAP_S)
+    return replace(state, model_failures=failures, model_backoff_until=now + timedelta(seconds=delay))
+
+
+def model_recovered(state: DriveSyncState) -> DriveSyncState:
+    return replace(state, model_failures=0, model_backoff_until=None)

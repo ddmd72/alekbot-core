@@ -8,7 +8,7 @@ import hashlib
 from datetime import datetime, timezone
 from typing import Any, List, Mapping, Optional, Tuple
 
-from .drive_index import CARD_VERSION, DriveChange, DriveIndexRecord, Reason, RecordState, Scope
+from .drive_index import CARD_VERSION, DocumentBrief, DriveChange, DriveIndexRecord, Reason, RecordState, Scope
 from .drive_index_policy import is_generated_dir, searchable
 
 _KIND_LABEL = {
@@ -99,12 +99,29 @@ def _opaque_label(rec: DriveIndexRecord) -> str:
     return "generated files" if is_generated_dir(rec.name) else "repository"
 
 
+def _brief_segments(brief: Optional[DocumentBrief]) -> List[str]:
+    if brief is None:
+        return []
+    out = [p for p in (brief.doc_type, brief.description) if p]
+    if brief.doc_date is not None:
+        out.append(brief.doc_date.date().isoformat())
+    if brief.parties:
+        out.append("parties: " + ", ".join(brief.parties))
+    if brief.amount:
+        out.append(brief.amount)
+    return out
+
+
 def card_text(rec: DriveIndexRecord) -> str:
+    """§24.4: `name | kind | brief | caption | key facets | lead text`, each content segment only when present, so a
+    record without them keeps its Slice 1 text and hash."""
     if rec.is_folder:
         if rec.scope is Scope.OPAQUE_ROOT:
             return f"{rec.name} | {_opaque_label(rec)}"
         return f"{rec.name} | folder"
-    return " | ".join([rec.name, _KIND_LABEL.get(rec.kind, "file"), *_key_facets(rec)])
+    return " | ".join([rec.name, _KIND_LABEL.get(rec.kind, "file"), *_brief_segments(rec.brief),
+                       *([rec.caption] if rec.caption else []), *_key_facets(rec),
+                       *([rec.lead_text] if rec.lead_text else [])])
 
 
 def card_hash(rec: DriveIndexRecord) -> str:

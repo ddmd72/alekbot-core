@@ -7,10 +7,11 @@ from __future__ import annotations
 
 import fnmatch
 import os
+from enum import Enum
 from typing import Dict, FrozenSet, Optional, Sequence
 
 from .drive_index import ContentClass, DriveChange, FolderProbe, Reason
-from .drive_index_params import DENSE_FOLDER_CHILDREN
+from .drive_index_params import DENSE_FOLDER_CHILDREN, MAX_DOWNLOAD_BYTES, MAX_SHEET_DOWNLOAD_BYTES
 
 _EXT_KIND: Dict[str, str] = {
     ".pdf": "pdf", ".docx": "docx", ".doc": "doc", ".pptx": "pptx", ".ppt": "ppt", ".xlsx": "xlsx",
@@ -39,6 +40,23 @@ _DOCUMENT_KINDS: FrozenSet[str] = frozenset({
 _MEDIA_KINDS: FrozenSet[str] = frozenset({"image", "audio", "video"})
 
 ADMITTED_KINDS: FrozenSet[str] = frozenset()   # Slice 2 admits the §5.1 document kinds (policy_version bump)
+TRIAGED_KINDS: FrozenSet[str] = frozenset()    # Slice 4: every image enters triage first (§5.3, §24.5)
+
+# The values the Slice 2+4 flip sets ADMITTED_KINDS and TRIAGED_KINDS to (§5.1, §24.1), together with the
+# POLICY_VERSION bump. Each content kind has a named extractor; doc, ppt, mhtml and iwork have none and stay out.
+SLICE2_CONTENT_KINDS: FrozenSet[str] = frozenset({
+    "pdf", "docx", "pptx", "xlsx", "xls", "odt", "ods", "odp", "epub", "html", "markdown", "text", "csv", "json",
+    "rtf", "msg", "eml", "subtitles",
+})
+SLICE2_TRIAGED_KINDS: FrozenSet[str] = frozenset({"image"})
+_SHEET_KINDS: FrozenSet[str] = frozenset({"xlsx", "xls"})
+
+
+class Admission(str, Enum):
+    """What the policy lets the indexer do with a kind's content (§5.1, §5.3)."""
+    NONE = "none"          # metadata only (kind_not_admitted)
+    CONTENT = "content"    # downloaded and extracted
+    TRIAGE = "triage"      # a thumbnail is triaged first; only a `text` verdict admits the content
 
 _SECRET_PATTERNS = ("id_rsa*", "id_ed25519*", "*.pem", "*.p12", "*.pfx", "*.kdbx", "*.keychain*")
 _OS_PATTERNS = ("~$*", ".~lock.*#", "thumbs.db", "desktop.ini", ".ds_store", "*.tmp")   # .~lock: LibreOffice
@@ -65,6 +83,20 @@ def kind_of(name: str, mime: str, is_folder: bool) -> str:
     if mime.startswith("video/"):
         return "video"
     return "other"
+
+
+def admission(kind: str) -> Admission:
+    """Read at call time, so a test (or the flip) that rebinds ADMITTED_KINDS / TRIAGED_KINDS is seen."""
+    if kind in ADMITTED_KINDS:
+        return Admission.CONTENT
+    if kind in TRIAGED_KINDS:
+        return Admission.TRIAGE
+    return Admission.NONE
+
+
+def size_cap(kind: str) -> int:
+    """Download cap by kind, checked on metadata before any download (§5.4, §15): sheets amplify most (Phase 0)."""
+    return MAX_SHEET_DOWNLOAD_BYTES if kind in _SHEET_KINDS else MAX_DOWNLOAD_BYTES
 
 
 def content_class_of(kind: str) -> ContentClass:

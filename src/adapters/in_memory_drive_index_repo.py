@@ -11,7 +11,7 @@ from dataclasses import replace
 from datetime import datetime
 from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
-from ..domain.drive_index import DriveIndexRecord, DriveSyncState, LeaseLost, RecordState
+from ..domain.drive_index import DriveChunk, DriveIndexRecord, DriveSyncState, LeaseLost, RecordState
 from ..ports.drive_index_repository import DriveIndexRepository
 
 
@@ -34,6 +34,8 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
         self.records: Dict[Tuple[str, str], DriveIndexRecord] = {}
         self.vectors: Dict[Tuple[str, str], List[float]] = {}
         self.states: Dict[str, DriveSyncState] = {}
+        # (user_id, item_id, generation, index) -> (chunk, vector)
+        self.chunks: Dict[Tuple[str, str, int, int], Tuple[DriveChunk, List[float]]] = {}
         self._lock = asyncio.Lock()
 
     # -- sync state --------------------------------------------------------------------------
@@ -207,3 +209,50 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
 
     async def card_vectors(self, user_id: str, item_ids: Sequence[str]) -> Dict[str, List[float]]:
         return {i: self.vectors[(user_id, i)] for i in item_ids if (user_id, i) in self.vectors}
+
+    # -- chunks ------------------------------------------------------------------------------
+
+    def _user_chunks(self, user_id: str, kind: Optional[str] = None) -> List[Tuple[DriveChunk, List[float]]]:
+        rows = [(c, v) for k, (c, v) in sorted(self.chunks.items()) if k[0] == user_id]
+        return [(c, v) for c, v in rows if kind is None or c.kind == kind]
+
+    async def write_chunks(self, chunks: Sequence[DriveChunk], vectors: Sequence[Sequence[float]]) -> None:
+        if len(chunks) != len(vectors):
+            raise ValueError(f"{len(chunks)} chunks but {len(vectors)} vectors")
+        for chunk, vector in zip(chunks, vectors):
+            self.chunks[(chunk.user_id, chunk.item_id, chunk.generation, chunk.index)] = (chunk, list(vector))
+
+    async def delete_chunks_except(self, user_id: str, item_id: str, keep_generation: Optional[int]) -> int:
+        doomed = [k for k in self.chunks if k[0] == user_id and k[1] == item_id and k[2] != keep_generation]
+        for key in doomed:
+            del self.chunks[key]
+        return len(doomed)
+
+    async def find_nearest_chunks(self, user_id: str, vector: Sequence[float], limit: int,
+                                  kind: Optional[str] = None) -> List[Tuple[DriveChunk, float]]:
+        scored = [(c, _cosine_distance(vector, v)) for c, v in self._user_chunks(user_id, kind)]
+        scored.sort(key=lambda pair: pair[1])
+        return scored[:limit]
+
+    async def find_chunks_by_term(self, user_id: str, term: str, limit: int,
+                                  kind: Optional[str] = None) -> List[DriveChunk]:
+        return [c for c, _ in self._user_chunks(user_id, kind) if term in c.content_terms][:limit]
+
+    async def get_chunks(self, user_id: str, item_id: str, generation: int,
+                         indexes: Sequence[int]) -> List[DriveChunk]:
+        return [self.chunks[(user_id, item_id, generation, i)][0] for i in sorted(set(indexes))
+                if (user_id, item_id, generation, i) in self.chunks]
+
+    async def readable_chunk_total(self, user_id: str) -> int:
+        return sum(r.chunk_count for r in self._user(user_id) if r.indexed_generation is not None)
+
+    async def chunks_page(self, user_id: str, after: Optional[Tuple[str, int, int]],
+                          limit: int) -> List[DriveChunk]:
+        rows = [c for c, _ in self._user_chunks(user_id)]
+        return [c for c in rows if after is None or (c.item_id, c.generation, c.index) > after][:limit]
+
+    async def delete_user_chunks(self, user_id: str, limit: int) -> int:
+        keys = sorted(k for k in self.chunks if k[0] == user_id)[:limit]
+        for key in keys:
+            del self.chunks[key]
+        return len(keys)

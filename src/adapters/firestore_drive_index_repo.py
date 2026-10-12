@@ -50,8 +50,8 @@ from google.cloud.firestore_v1.vector import Vector
 
 from ..config.environment import EnvironmentConfig
 from ..domain.drive_index import (
-    ContentClass, DriveIndexRecord, DriveSyncState, EpochPhase, ErrorCategory, LeaseLost, Priority, Reason,
-    RecordState, Scope, record_key,
+    ContentClass, DocumentBrief, DriveChunk, DriveIndexRecord, DriveSyncState, EpochPhase, ErrorCategory, LeaseLost,
+    Priority, Reason, RecordState, Scope, TriageVerdict, record_key,
 )
 from ..domain.drive_index_params import NAME_QUERY_KEYS_MAX, RECORD_WRITE_BATCH
 from ..ports.drive_index_repository import DriveIndexRepository
@@ -72,6 +72,8 @@ STATE_FIELDS: Tuple[str, ...] = tuple(name for name in _DOC_FIELDS if name not i
 
 def _plain(value: Any) -> Any:
     """Firestore-encodable copy: enums as values, mappings as dicts, tuples as lists (recursively)."""
+    if isinstance(value, DocumentBrief):
+        return {f.name: _plain(getattr(value, f.name)) for f in fields(DocumentBrief)}
     if isinstance(value, Enum):
         return value.value
     if isinstance(value, Mapping):
@@ -98,6 +100,14 @@ def _int_map(value: Any) -> Dict[str, int]:
     return {str(k): int(v) for k, v in (value or {}).items()}
 
 
+def _brief(value: Any) -> Optional[DocumentBrief]:
+    if not value:
+        return None
+    return DocumentBrief(doc_type=value.get("doc_type", ""), description=value.get("description", ""),
+                         doc_date=_dt(value.get("doc_date")), parties=tuple(value.get("parties") or ()),
+                         amount=value.get("amount", ""))
+
+
 _RECORD_READERS: Dict[str, Callable[[Any], Any]] = {
     "facets": lambda v: dict(v or {}),
     "content_class": ContentClass,
@@ -105,9 +115,11 @@ _RECORD_READERS: Dict[str, Callable[[Any], Any]] = {
     "state": RecordState,
     "reason": _optional(Reason),
     "modified_at": _dt, "fs_modified_at": _dt, "effective_date": _dt,
-    "dirty_since": _dt, "due_at": _dt, "attempt_started_at": _dt,
+    "dirty_since": _dt, "due_at": _dt, "attempt_started_at": _dt, "defer_until": _dt,
     "name_tokens": lambda v: tuple(v or ()),
-    "priority": _optional(int),
+    "priority": _optional(int), "defer_priority": _optional(int),
+    "brief": _brief,
+    "triage_verdict": _optional(TriageVerdict),
 }
 
 _STATE_READERS: Dict[str, Callable[[Any], Any]] = {
@@ -118,6 +130,7 @@ _STATE_READERS: Dict[str, Callable[[Any], Any]] = {
     "round_started_at": _dt, "lease_until": _dt, "continuation_enqueued_at": _dt,
     "observed_as_of": _dt, "access_lost_at": _dt, "last_success_at": _dt,
     "stale_alerted": bool, "reconnect_notified": bool,
+    "model_backoff_until": _dt, "model_failures": int, "model_pages_used": int, "triage_images_used": int,
 }
 
 
@@ -461,3 +474,33 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
                 if data and data.get(CARD_VECTOR) is not None:
                     vectors[data["item_id"]] = [float(x) for x in data[CARD_VECTOR]]
         return vectors
+
+    # -- chunks: not built yet (plan part D replaces these) ----------------------------------
+
+    async def write_chunks(self, chunks: Sequence[DriveChunk], vectors: Sequence[Sequence[float]]) -> None:
+        raise NotImplementedError("chunk storage — plan part D")
+
+    async def delete_chunks_except(self, user_id: str, item_id: str, keep_generation: Optional[int]) -> int:
+        raise NotImplementedError("chunk storage — plan part D")
+
+    async def find_nearest_chunks(self, user_id: str, vector: Sequence[float], limit: int,
+                                  kind: Optional[str] = None) -> List[Tuple[DriveChunk, float]]:
+        raise NotImplementedError("chunk storage — plan part D")
+
+    async def find_chunks_by_term(self, user_id: str, term: str, limit: int,
+                                  kind: Optional[str] = None) -> List[DriveChunk]:
+        raise NotImplementedError("chunk storage — plan part D")
+
+    async def get_chunks(self, user_id: str, item_id: str, generation: int,
+                         indexes: Sequence[int]) -> List[DriveChunk]:
+        raise NotImplementedError("chunk storage — plan part D")
+
+    async def readable_chunk_total(self, user_id: str) -> int:
+        raise NotImplementedError("chunk storage — plan part D")
+
+    async def chunks_page(self, user_id: str, after: Optional[Tuple[str, int, int]],
+                          limit: int) -> List[DriveChunk]:
+        raise NotImplementedError("chunk storage — plan part D")
+
+    async def delete_user_chunks(self, user_id: str, limit: int) -> int:
+        raise NotImplementedError("chunk storage — plan part D")

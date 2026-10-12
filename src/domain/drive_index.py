@@ -15,6 +15,8 @@ POLICY_VERSION = 1
 CARD_VERSION = 1
 GEO_TABLE_VERSION = 1
 NAME_KEYS_VERSION = 1                         # the name-stream keyer (drive_name_keys); a change re-keys (§12.3)
+EXTRACTION_VERSION = 1                        # chunker, text gate, content_terms normaliser (§12.3, §24.6)
+TRIAGE_VERSION = 1                            # image triage prompt and verdict rules (§5.3, §24.5)
 CURRENT_VERSIONS: Mapping[str, int] = {"policy": POLICY_VERSION, "card": CARD_VERSION,
                                        "geo_table": GEO_TABLE_VERSION, "name_keys": NAME_KEYS_VERSION}
 
@@ -57,6 +59,13 @@ class Reason(str, Enum):
     EXTRACT_ERROR = "extract_error"
     DOWNLOAD_ERROR = "download_error"
     EMBED_TIMEOUT = "embed_timeout"
+    PHOTOGRAPH = "photograph"                 # an image triaged as a photograph (§24.5)
+
+
+class TriageVerdict(str, Enum):
+    """What an image shows (§5.3): text to read, or a photograph to caption."""
+    TEXT = "text"
+    PHOTO = "photo"
 
 
 class ContentClass(str, Enum):
@@ -150,6 +159,31 @@ class Nudge:
 
 
 @dataclass(frozen=True)
+class DocumentBrief:
+    """What the reader says a document is (§24.4, D8). Model output from untrusted content: shown only inside the
+    untrusted wrapper. `doc_date` becomes the record's effective date (D13)."""
+    doc_type: str = ""
+    description: str = ""
+    doc_date: Optional[datetime] = None
+    parties: Tuple[str, ...] = ()
+    amount: str = ""                          # value and currency as one display string, e.g. "1 250.00 EUR"
+
+
+@dataclass(frozen=True)
+class DriveChunk:
+    """A child of a record (§3.3). Readable only while `generation == record.indexed_generation` (§7.4)."""
+    user_id: str
+    item_id: str
+    generation: int
+    index: int
+    text: str
+    char_start: int
+    char_end: int
+    kind: str
+    content_terms: Tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class DriveIndexRecord:
     """One per drive item the sync keeps (§3.2). Content fields stay at their defaults in Slice 1."""
     user_id: str
@@ -191,6 +225,10 @@ class DriveIndexRecord:
     priority: Optional[int] = None
     attempts: int = 0
     attempt_started_at: Optional[datetime] = None
+    # content work held back (a retry backoff, a started run, a spent budget, a model outage): due no earlier than
+    # `defer_until`, in class `defer_priority`, until the work completes or the content changes (§8.2, §24.7, §24.8)
+    defer_until: Optional[datetime] = None
+    defer_priority: Optional[int] = None
     # pending structural work (§5.2, §7.6); each flag makes the record due
     probe_pending: bool = False
     rescope_pending: bool = False
@@ -207,6 +245,13 @@ class DriveIndexRecord:
     pages_total: int = 0
     chunk_count: int = 0
     truncated: bool = False
+    lead_text: str = ""                       # first CARD_LEAD_CHARS of the extracted text, for the card (§8.5)
+    brief: Optional[DocumentBrief] = None     # model-read documents only (§24.4)
+    # image triage (§5.3, §24.5); a verdict holds for the content version it was taken on
+    triage_verdict: Optional[TriageVerdict] = None
+    triage_version: int = 0
+    triaged_content_version: str = ""
+    caption: str = ""                         # photographs only, at most ten words
     seen_epoch: int = 0
 
     @property
@@ -245,6 +290,12 @@ class DriveSyncState:
     stale_alerted: bool = False
     reconnect_notified: bool = False          # the fan-out told the user once (RFC Δ6)
     counters: Mapping[str, int] = field(default_factory=dict)
+    # model work (§24.7, §24.8): an outage defers only model work; usage is counted per calendar month (UTC)
+    model_backoff_until: Optional[datetime] = None
+    model_failures: int = 0                   # consecutive model outages, for the backoff
+    usage_month: str = ""                     # "YYYY-MM" the two counters below belong to
+    model_pages_used: int = 0
+    triage_images_used: int = 0
 
     def cards_in_space(self, embedding_space: str) -> bool:
         """The card stream answers queries embedded in `embedding_space`: no card is left in another space."""
