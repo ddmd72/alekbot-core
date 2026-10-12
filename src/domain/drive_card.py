@@ -112,10 +112,18 @@ def _brief_segments(brief: Optional[DocumentBrief]) -> List[str]:
     return out
 
 
+def repository_root(rec: DriveIndexRecord) -> bool:
+    """A folder made opaque by a marker child (`.git`, `pyvenv.cfg`): its card reads `repository` (§5.2, RFC Δ33)."""
+    return (rec.is_folder and rec.scope is Scope.OPAQUE_ROOT and rec.reason is Reason.OPAQUE_ROOT
+            and not is_generated_dir(rec.name))
+
+
 def card_text(rec: DriveIndexRecord) -> str:
     """§24.4: `name | kind | brief | caption | key facets | lead text`, each content segment only when present, so a
     record without them keeps its Slice 1 text and hash."""
     if rec.is_folder:
+        if repository_root(rec) and rec.lead_text:
+            return f"{rec.name} | repository | {rec.lead_text}"   # its README's lead text (§5.2)
         if rec.scope is Scope.OPAQUE_ROOT:
             return f"{rec.name} | {_opaque_label(rec)}"
         return f"{rec.name} | folder"

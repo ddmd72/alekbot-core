@@ -252,6 +252,10 @@ class DriveIndexRecord:
     triage_version: int = 0
     triaged_content_version: str = ""
     caption: str = ""                         # photographs only, at most ten words
+    # a repository root's README (§5.2): its lead text is the root's `lead_text`; read again while pending
+    readme_pending: bool = False
+    readme_item_id: Optional[str] = None
+    readme_version: str = ""                  # the README's content_version the lead text was read from
     seen_epoch: int = 0
 
     @property

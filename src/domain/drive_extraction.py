@@ -3,7 +3,7 @@ Content extraction contract (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §9, §24.2
 
 Public interface:
     ExtractionStatus, ExtractionRequest, ExtractionOutcome, PdfSplit, PdfSplitFailed, TriageImage, TriageResult,
-    DriveModelUnavailable
+    TriageBatchOutcome, DriveModelUnavailable
     PARSER, READER, EXTRACTOR_CHAINS, chain_for(kind) -> Tuple[str, ...]
     garbage_share(text) -> float
     model_route(outcome, kind) -> Optional[str]
@@ -63,6 +63,8 @@ class ExtractionOutcome:
     brief: Optional[DocumentBrief] = None
     extracted_by: str = ""       # "id@version" of the link that produced `text`
     detail: str = ""             # for the log line only, never shown to the user
+    model_calls: int = 0         # reader calls made for this file (tick summary, §24.9)
+    model_cost: float = 0.0      # their cost in USD, already billed to the account (§24.9)
 
 
 @dataclass(frozen=True)
@@ -101,6 +103,14 @@ class TriageResult:
     item_id: str
     verdict: TriageVerdict
     caption: str = ""            # photographs only
+
+
+@dataclass(frozen=True)
+class TriageBatchOutcome:
+    """One triage call's answer: one result per image given, and what the model work cost (tick summary, §24.9)."""
+    results: Tuple[TriageResult, ...]
+    model_calls: int = 0         # triage calls made for this batch (a refused batch is split, §24.5)
+    model_cost: float = 0.0      # their cost in USD, already billed to the account
 
 
 # (cid:N) runs from fonts without a Unicode map, replacement characters, and UTF-8 read as Latin-1 (Ð/Ñ/Ã + a C1 or

@@ -48,12 +48,17 @@ class TestFakeExtractor:
 
 class TestFakeTriage:
     async def test_scripted_and_default_verdicts(self):
-        tr = FakeTriage({"a": (TriageVerdict.TEXT, "")})
+        tr = FakeTriage({"a": (TriageVerdict.TEXT, "")}, cost_per_call=0.002)
         images = [TriageImage("a", b"1", "image/jpeg", False), TriageImage("b", b"2", "image/jpeg", True)]
-        results = await tr.triage("u", "acc", images)
-        assert [(r.item_id, r.verdict, r.caption) for r in results] == [("a", TriageVerdict.TEXT, ""),
-                                                                         ("b", TriageVerdict.PHOTO, "a photo")]
+        outcome = await tr.triage("u", "acc", images)
+        assert [(r.item_id, r.verdict, r.caption) for r in outcome.results] == [("a", TriageVerdict.TEXT, ""),
+                                                                                 ("b", TriageVerdict.PHOTO, "a photo")]
+        assert (outcome.model_calls, outcome.model_cost) == (1, 0.002)
         assert tr.calls == [images]
+
+    async def test_empty_batch_costs_nothing(self):
+        outcome = await FakeTriage(cost_per_call=0.002).triage("u", "acc", [])
+        assert (outcome.results, outcome.model_calls, outcome.model_cost) == ((), 0, 0.0)
 
     async def test_outage(self):
         tr = FakeTriage()

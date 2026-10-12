@@ -117,6 +117,16 @@ def is_dot_name(name: str) -> bool:
     return name.startswith(".")
 
 
+def is_readme_name(name: str) -> bool:
+    """`README`, `README.md`, `readme.txt`, ...: the file whose lead text a repository card carries (§5.2)."""
+    return os.path.splitext(name)[0].casefold() == "readme"
+
+
+def readme_readable() -> bool:
+    """A README is read like any document (§5.2), so only once text content is admitted (Slice 2+4)."""
+    return admission("markdown") is Admission.CONTENT or admission("text") is Admission.CONTENT
+
+
 def is_marker_child(name: str) -> bool:
     return name in _MARKERS
 

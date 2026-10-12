@@ -17,7 +17,7 @@ outlived its lease cannot purge or overwrite the state of the tick that took ove
 """
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import AbstractSet, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from src.domain.drive_index import DriveChunk, DriveIndexRecord, DriveSyncState, RecordState
 
@@ -115,6 +115,17 @@ class DriveIndexRepository(ABC):
     @abstractmethod
     async def card_capped(self, user_id: str, limit: int) -> List[DriveIndexRecord]:
         """Records with `card_capped`, best card_rank first, then newest modified_at (release, §5.4)."""
+
+    @abstractmethod
+    async def chunk_capped(self, user_id: str, limit: int) -> List[DriveIndexRecord]:
+        """Records refused by the chunk cap (`metadata_only` / `user_chunk_cap`), best card_rank first, then newest
+        modified_at (release, §5.4)."""
+
+    @abstractmethod
+    async def count_unread(self, user_id: str, kinds: AbstractSet[str]) -> int:
+        """Documents of a kind in `kinds` whose content is not searchable (§10.2 `unread`, drive_search.is_unread):
+        not folders, and `pending` without an `indexed_generation`, or `failed`, or `metadata_only` for too_large,
+        no_text, machine_text or user_chunk_cap (count aggregation queries)."""
 
     @abstractmethod
     async def count_by_state(self, user_id: str) -> Dict[str, int]:
