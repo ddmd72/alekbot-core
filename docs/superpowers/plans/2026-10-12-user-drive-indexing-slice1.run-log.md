@@ -65,3 +65,7 @@ Method: subagent-driven (implementer → independent reviewer → coordinator ac
 - Deviations: none (byte-identical). Reviewer: APPROVED, round 1.
 - Note: the task's Interfaces line lists `ObservationPlan(..., reobserve)` but the plan's code has no `reobserve`
   field (consistent with Δ18; nothing reads it). Stale wording in the plan only.
+
+### Task 7 — done
+- Commit `50f534b`. `make check` (coordinator, worktree at the commit): 7098 passed, 3 skipped, 1 xfailed.
+- Deviations: none (byte-identical). Reviewer: APPROVED, round 1.
