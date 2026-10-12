@@ -2242,7 +2242,7 @@
         list.innerHTML = _remindersData.map(r => {
           const due = r.due ? new Date(r.due).toLocaleString(undefined, {dateStyle:"medium",timeStyle:"short"}) : "—";
           const rec = r.recurrence ? `🔁 ${esc(r.recurrence_label || r.recurrence)}` : "once";
-          const instr = (r.instruction || "").replace(/\n/g, "<br>");
+          const instr = esc(r.instruction || "").replace(/\n/g, "<br>");
           return `<div style="background:var(--bg-hover);border-radius:var(--radius-sm);padding:14px;margin-bottom:10px">
             <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
               <div style="flex:1">
@@ -2251,15 +2251,15 @@
                 <div style="font-size:13px;color:var(--text-subtle);margin-top:6px;line-height:1.5">${instr}</div>
               </div>
               <div style="display:flex;gap:6px;flex-shrink:0">
-                <button class="btn btn-secondary" style="padding:4px 10px;font-size:13px" onclick="editReminder('${r.note_id}')">Edit</button>
-                <button class="btn btn-danger" style="padding:4px 10px;font-size:13px" onclick="deleteReminder('${r.note_id}')">Delete</button>
+                <button class="btn btn-secondary" style="padding:4px 10px;font-size:13px" data-note-id="${escapeHtml(r.note_id)}" onclick="editReminder(this.dataset.noteId)">Edit</button>
+                <button class="btn btn-danger" style="padding:4px 10px;font-size:13px" data-note-id="${escapeHtml(r.note_id)}" onclick="deleteReminder(this.dataset.noteId)">Delete</button>
               </div>
             </div>
           </div>`;
         }).join("");
       }
 
-      function esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
+      function esc(s) { return escapeHtml(s); }
 
       function showReminderForm(note) {
         document.getElementById("rem-edit-id").value = note ? note.note_id : "";
@@ -2577,7 +2577,7 @@
         document.getElementById("domain-chips").innerHTML = chips
           .map(
             (c) =>
-              `<button id="chip-${c.value}" onclick="setDomainFilter('${c.value}')" class="chip ${c.value === browseDomain ? "active" : ""}">${c.label}</button>`,
+              `<button id="chip-${escapeHtml(c.value)}" data-domain="${escapeHtml(c.value)}" onclick="setDomainFilter(this.dataset.domain)" class="chip ${c.value === browseDomain ? "active" : ""}">${escapeHtml(c.label)}</button>`,
           )
           .join("");
       }
@@ -2616,7 +2616,7 @@
 
           <div class="integration-status">
             <div class="status-dot ${linked ? "connected" : "disconnected"}"></div>
-            <span>${linked ? `${t("platform.connected")}: ${linkedId}` : t("platform.not_connected")}</span>
+            <span>${linked ? `${t("platform.connected")}: ${escapeHtml(linkedId)}` : t("platform.not_connected")}</span>
           </div>
 
           <div class="integration-actions">
@@ -2830,7 +2830,7 @@
           ? `<a href="/auth/connect-gmail" class="btn btn-black">${t("gmail.reconnect")}</a>
              <button onclick="disconnectGmail()" class="btn btn-secondary">${t("platform.disconnect")}</button>`
           : `<button onclick="triggerGmailIndex()" class="btn btn-primary" ${indexActive ? "disabled" : ""}>${indexActive ? t("platform.indexing") : t("platform.index_emails")}</button>
-             ${indexActive && activeJobId ? `<button onclick="cancelGmailIndex('${activeJobId}', this)" class="btn btn-secondary">${t("platform.cancel")}</button>` : ""}
+             ${indexActive && activeJobId ? `<button data-job-id="${escapeHtml(activeJobId)}" onclick="cancelGmailIndex(this.dataset.jobId, this)" class="btn btn-secondary">${t("platform.cancel")}</button>` : ""}
              <button onclick="disconnectGmail()" class="btn btn-secondary">${t("platform.disconnect")}</button>`;
 
         container.innerHTML = `
@@ -3244,18 +3244,18 @@
           });
           if (!res.ok) throw new Error("Could not create invite");
           const data = await res.json();
-          const deepLink = `${window.location.origin}/join?code=${data.code}`;
+          const deepLink = `${window.location.origin}/join?code=${encodeURIComponent(data.code)}`;
           const expiry = new Date(data.expires_at).toLocaleString();
           const el = document.getElementById("generated-code-container");
           el.classList.remove("hidden");
           el.innerHTML = `
         <div class="invite-code-box reveal">
           <p style="margin-bottom:8px; font-weight:600; color:var(--text-main);">Share this code</p>
-          <div class="code-display">${data.code}</div>
+          <div class="code-display">${escapeHtml(data.code)}</div>
           <p style="font-size: 14px; margin-bottom: 24px;">Valid until ${expiry}</p>
           
           <div class="invite-link-wrapper">
-            <input type="text" id="deep-link-input" value="${deepLink}" readonly style="flex:1; background:transparent; border:none; padding:12px 20px; font-size:16px; outline:none; color:var(--text-main);" />
+            <input type="text" id="deep-link-input" value="${escapeHtml(deepLink)}" readonly style="flex:1; background:transparent; border:none; padding:12px 20px; font-size:16px; outline:none; color:var(--text-main);" />
             <button onclick="copyDeepLink()" class="btn btn-black" style="padding: 10px 24px;">Copy Link</button>
           </div>
         </div>`;
@@ -3288,7 +3288,7 @@
             .map(
               (c) => `
             <tr>
-              <td><span style="font-family: ui-monospace, SFMono-Regular, monospace; font-weight: 600;">${c.code}</span></td>
+              <td><span style="font-family: ui-monospace, SFMono-Regular, monospace; font-weight: 600;">${escapeHtml(c.code)}</span></td>
               <td><span class="status-badge ${c.is_valid ? "active" : "used"}">${c.is_valid ? "Active" : "Used"}</span></td>
               <td>${new Date(c.created_at).toLocaleDateString()}</td>
               <td>${c.used_at ? new Date(c.used_at).toLocaleDateString() : "—"}</td>
@@ -3424,7 +3424,8 @@
             ? `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`
             : `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>`;
 
-        toast.innerHTML = `${icon} <span>${msg}</span>`;
+        toast.innerHTML = `${icon} <span></span>`;
+        toast.querySelector("span").textContent = msg;
         container.appendChild(toast);
 
         // Animate in
