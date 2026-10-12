@@ -20,8 +20,10 @@ remote MCP server and the companions, so enrichment would hand file content to c
 - `SearchEnrichmentService` has no dependency on the drive index repository or on `DriveSearchService`. The remote
   MCP tool `get_user_context` and the companion context assembler go through enrichment, so neither sees drive
   content unless an agent on its path delegates the intent.
-- Search results (cards with `drive:<id>` refs) and file text from `open_file_from_drive` reach the model only inside
-  the escaped, nonce-tagged reference-material wrapper (D2, RFC §10.4), never presented as memory.
+- Search results (cards with `drive:<id>` refs) and the converted file text from `open_file_from_drive` are wrapped
+  in the escaped, nonce-tagged reference-material wrapper (D2, RFC §10.4), never presented as memory. A PDF or
+  image the model reads natively travels with the reference-material reminder and an escaped label instead; a video
+  is sent to the user as a file, and the model gets only that reminder and label (`FileManagementAgent._open_drive`).
 
 **Consequences:**
 - A request that could be answered from a document costs one tool round-trip when Smart decides to search; a request

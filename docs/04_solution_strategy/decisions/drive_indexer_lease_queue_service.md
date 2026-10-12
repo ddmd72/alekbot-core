@@ -6,8 +6,12 @@
 
 **Decision:**
 - **One writer per user is a lease.** A tick takes `DriveSyncState.lease_until` in a Firestore transaction, set to
-  start + `TICK_DEADLINE` + a margin, so a holder never outlives it. A tick that finds a live lease answers `busy`;
-  a nudge that finds one re-enqueues itself under a new key.
+  start + `TICK_DEADLINE` + a margin (31 min). The lease is sized so that a tick normally ends inside it: no new
+  work starts after `TICK_START_BUDGET` (8 min). A tick that still outlives it (a hung await, or Cloud Run answering
+  504 at its timeout without cancelling the coroutine) can no longer overwrite or release the next holder's lease
+  (fix R4, below). Its other writes (the delta cursor, records) are not fenced: that is an open owner item
+  ([run log](../../superpowers/plans/2026-10-12-user-drive-indexing-slice1.run-log.md), Fix R4, "OWNER part … not
+  done"). A tick that finds a live lease answers `busy`; a nudge that finds one re-enqueues itself under a new key.
 - **Own queue** `drive-sync-{suffix}`, `max-concurrent-dispatches=1`, deadline 1800 s, dedup keys per family
   (scheduler bucket, continuation, nudge, toggle). Concurrency 1 caps memory; correctness comes from the lease.
 - **Own service** `alek-bot-indexer-{suffix}` (`indexer_main.py`, same image, gen2, 2 GiB, concurrency 1,
@@ -28,9 +32,10 @@
   concurrency 5): one dispatch at a time, one per second, three attempts with 60–600 s backoff. The 1800 s deadline
   is per task: every `drive_sync` enqueue passes `deadline_seconds=TICK_DEADLINE_S`. A manual
   `gcloud tasks create-http-task` without it gets Cloud Tasks' 600 s default.
-- Callers: the main service's `start_drive_sync` fan-out (`DriveSyncSchedulerService`) and the nudges from
-  `UserDriveService` mutations; the indexer enqueues its own continuations and nudge re-queues
-  (`DRIVE_INDEXER_URL`, read with `os.getenv`; unset, there is no drive queue: no fan-out enqueues, no nudges).
+- Callers: the main service's `start_drive_sync` fan-out (`DriveSyncSchedulerService`), the nudges from
+  `UserDriveService` mutations and the Cabinet toggle (`PUT /api/drive/indexing`); the indexer enqueues its own
+  continuations and nudge re-queues (`DRIVE_INDEXER_URL`, read with `os.getenv`; unset, there is no drive queue: no
+  fan-out enqueues, no nudges, and the toggle saves the flag, enqueues nothing and logs a WARNING).
 - Ingress and identity (`src/web/indexer_worker_app.py`): only Cloud Tasks on the same project reaches the service.
   The `/worker` OIDC check verifies signature, the service-account email and an audience pinned to the indexer's own
   URL (`{url}` or `{url}/worker`), and fails closed on Cloud Run without `SERVICE_ACCOUNT_EMAIL`. A manual task whose
@@ -46,7 +51,9 @@
 - *A Cloud Run Job per tick:* a cold container per user every 10 minutes for work that fits a 30-minute task
   ([`cloud_tasks_vs_jobs.md`](cloud_tasks_vs_jobs.md)).
 
-**Trigger to revisit:** ticks wait past `STALE_ALERT_AFTER` as users grow (raise `maxConcurrentDispatches`).
+**Trigger to revisit:** ticks wait past `STALE_ALERT_AFTER` as users grow. Raise `maxConcurrentDispatches` together
+with the indexer's `--max-instances`: the service runs `--concurrency=1 --max-instances=1`, so a second dispatch alone
+finds no free instance and is retried with backoff (memory per tick stays bounded by `--concurrency=1`).
 
 **See also:** [worker_oidc_and_docx_sandbox.md](worker_oidc_and_docx_sandbox.md) (the main service's `/worker` OIDC
 check, whose audience stays unpinned), [drive_index_opt_in_access_loss_grace.md](drive_index_opt_in_access_loss_grace.md)

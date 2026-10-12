@@ -17,8 +17,8 @@
 
 **What Slice 1 builds** (`src/domain/drive_index_policy.py`, `src/domain/drive_index_planner.py`):
 - `ADMITTED_KINDS` is empty, so no file is downloaded and every file is metadata-only. Chunks, the chunk caps,
-  extraction, the content-stage signals (magic bytes, text quality, zero yield, thumbnail triage) and the quiet period
-  arrive with Slice 2 (plan Δ12). Of Layer 0, Slice 1 has the per-user card cap
+  extraction, the content-stage signals (magic bytes, text quality, zero yield) and the quiet period arrive with
+  Slice 2 (plan Δ12); thumbnail triage and OCR with Slice 4. Of Layer 0, Slice 1 has the per-user card cap
   (`MAX_CARD_RECORDS_PER_USER`), admitted by `card_rank_of`: documents, then media, then other files, then folders.
 - Metadata rules: never-download item rules (dot names, secret-file names, OS artefacts, remote items, packages,
   malware) and kinds by extension, so archives, disk images, logs and data dumps stay metadata-only by kind.
