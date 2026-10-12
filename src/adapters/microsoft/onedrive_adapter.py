@@ -9,23 +9,37 @@ provider name stays inside this module and the OAuth edge.
 
 `search` implements the port, but step 1 does not expose it to the model: search does not
 work inside the App Folder (empty, then 401 from Substrate Search; RFC §7 A6).
+
+Change capture for the index (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §4, §7.2): `get_changes`
+pages the App Folder's delta feed, which spike S0a confirmed under Files.ReadWrite.AppFolder.
+The cursor is this module's own JSON (`{"url", "full"}`), opaque to every caller.
+
+Errors (§4): a rejected refresh is DriveReauthRequired (a DriveNotConnectedError); a 401 that
+survives a successful forced refresh is DriveAccessDenied for that operation, never a lost grant
+(spike A6); 429/503 still failing after the retries here is DriveThrottled; a 410 on the change
+feed is DriveResyncRequired.
 """
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import time
+from dataclasses import replace
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote, unquote
 
 import aiohttp  # module import on purpose: tests patch aiohttp.ClientSession
 
+from ...domain.drive_index import DriveChange, DriveChanges, DriveChildrenPage
 from ...domain.user_drive import (
+    DriveConnection,
     DriveItem,
     DriveItemNotFoundError,
     DriveNameConflictError,
     DriveNotConnectedError,
+    DriveResyncRequired,
     join_drive_path,
 )
 from ...ports.oauth_credentials_port import OAuthCredentialsPort
@@ -42,6 +56,12 @@ _ROOT_TTL_S = 300.0
 _RETRIES = 3
 _MAX_RETRY_AFTER_S = 30.0
 _UNKNOWN_PARENT = "…"
+# The App Folder item. Its parentReference.driveId is the drive id; the OAuth callback
+# (src/web/oauth_app.py, _read_drive_id) reads the same field of the same call, so the two compare equal.
+_APPROOT = "/me/drive/special/approot"
+_DELTA_START = f"{_APPROOT}/delta?$top=200"   # S0a: $top paginates delta
+# Facets stored raw on the record (§3.2); `hashes` comes from file.hashes.
+_FACETS = ("photo", "image", "video", "audio", "location", "remoteItem", "package", "malware")
 # Graph writes the same location two ways: '/drive/root:/…' (GET, children, PUT, PATCH, approot)
 # and '/drives/<drive-id>/root:/…' (POST create-folder responses). Strip either prefix (RFC §7).
 _ROOT_PREFIX_RE = re.compile(r"^(?:/drive|/drives/[^/]+)/root:")
@@ -64,6 +84,66 @@ def _retry_after(value: Optional[str], attempt: int) -> float:
     except ValueError:
         seconds = float(2 ** attempt)
     return min(max(seconds, 0.0), _MAX_RETRY_AFTER_S)
+
+
+def _where(path: str) -> str:
+    """A call's path for logs: no query string (delta links carry long opaque tokens)."""
+    return path.split("?", 1)[0]
+
+
+def _is_graph_url(url: Optional[str]) -> bool:
+    """A cursor or Location target the bearer token may be sent to."""
+    return bool(url) and (str(url).startswith("/") or str(url).startswith(_GRAPH + "/"))
+
+
+def _encode_cursor(url: str, full: bool) -> str:
+    return json.dumps({"url": url, "full": full}, separators=(",", ":"))
+
+
+def _parse_time(value: Any) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        logger.warning(f"Drive timestamp not ISO 8601: {str(value)[:40]}")
+        return None
+
+
+def _to_change(raw: Dict[str, Any]) -> DriveChange:
+    """A Graph driveItem as an observation (§3.1). A tombstone may carry cTag, size, the folder facet
+    and the parent (S0a), but only its id is relied on."""
+    item_id = str(raw.get("id", ""))
+    if "deleted" in raw:
+        # is_folder=False on purpose: the planner decides file vs folder from the existing record.
+        return DriveChange(item_id=item_id, deleted=True)
+    file = raw.get("file") or {}
+    folder = raw.get("folder")
+    facets: Dict[str, Any] = {key: raw[key] for key in _FACETS if key in raw}
+    if file.get("hashes"):
+        facets["hashes"] = dict(file["hashes"])
+    return DriveChange(
+        item_id=item_id,
+        parent_id=str((raw.get("parentReference") or {}).get("id", "")),
+        name=str(raw.get("name", "")),
+        is_folder=folder is not None,
+        size_bytes=int(raw.get("size") or 0),
+        mime_type=str(file.get("mimeType", "")),
+        content_version="" if folder is not None else str(raw.get("cTag") or ""),
+        modified_at=_parse_time(raw.get("lastModifiedDateTime")),
+        fs_modified_at=_parse_time((raw.get("fileSystemInfo") or {}).get("lastModifiedDateTime")),
+        web_url=str(raw.get("webUrl", "")),
+        child_count=int((folder or {}).get("childCount") or 0),
+        facets=facets,
+    )
+
+
+class _CursorGone(ValueError):
+    """410 Gone: the change cursor expired. A ValueError, so a Step 1 call keeps its old mapping."""
+
+    def __init__(self, location: Optional[str]) -> None:
+        super().__init__("Drive change cursor expired (410)")
+        self.location = location
 
 
 class OneDriveAdapter(UserDrivePort):
@@ -177,6 +257,105 @@ class OneDriveAdapter(UserDrivePort):
         async with aiohttp.ClientSession() as s:
             await self._call(s, user_id, "DELETE", f"/me/drive/items/{_q(item_id)}")
 
+    # -- change capture for the index (USER_DRIVE_INDEXING_RFC §4, §7.2) -------
+
+    async def get_changes(self, user_id: str, cursor: Optional[str]) -> DriveChanges:
+        """One delta page. None starts a full enumeration of the App Folder; every page of an
+        enumeration (onboarding or after a 410) reports full_enumeration, a deltaLink round does not."""
+        url, full = self._decode_cursor(cursor)
+        async with aiohttp.ClientSession() as s:
+            # Read fresh, never from the 5-minute cache, so the root and the page always come from
+            # the same token: a cached root with a new grant's page would give a wrong root_item_id.
+            # A reconnect itself is noticed by connection() (it drops both caches). One GET per page.
+            self._root_cache.pop(user_id, None)
+            root = await self._root_raw(s, user_id)
+            try:
+                page = await self._call(s, user_id, "GET", url)
+            except _CursorGone as exc:
+                restart = exc.location if _is_graph_url(exc.location) else _DELTA_START
+                raise DriveResyncRequired(_encode_cursor(str(restart), True)) from exc
+        next_link, delta_link = page.get("@odata.nextLink"), page.get("@odata.deltaLink")
+        if next_link:
+            new_cursor, complete = _encode_cursor(str(next_link), full), False
+        elif delta_link:
+            new_cursor, complete = _encode_cursor(str(delta_link), False), True
+        else:
+            logger.error("Drive delta page carried neither a nextLink nor a deltaLink")
+            raise ValueError("Drive delta page without a continuation link")
+        return DriveChanges(
+            changes=tuple(_to_change(raw) for raw in page.get("value", [])),
+            cursor=new_cursor,
+            complete=complete,
+            full_enumeration=full,
+            drive_id=str((root.get("parentReference") or {}).get("driveId", "")),
+            root_item_id=str(root.get("id", "")),
+        )
+
+    async def get_change(self, user_id: str, item_id: str) -> DriveChange:
+        """An item that is gone (deleted, or moved out of the App Folder: S0a saw 404 itemNotFound)
+        comes back as a deletion."""
+        async with aiohttp.ClientSession() as s:
+            try:
+                raw = await self._call(s, user_id, "GET", f"/me/drive/items/{_q(item_id)}")
+            except DriveItemNotFoundError:
+                return DriveChange(item_id=item_id, deleted=True)
+        return _to_change(raw)
+
+    async def list_children_changes(self, user_id: str, folder_id: str, limit: int,
+                                    cursor: Optional[str] = None) -> DriveChildrenPage:
+        """One page of a folder's children: `$top=limit`; `next_cursor` is Graph's nextLink, None on the
+        last page. A cursor that does not point at Graph is never followed: the listing restarts."""
+        url = f"/me/drive/items/{_q(folder_id)}/children?$top={limit}"
+        if cursor is not None:
+            if _is_graph_url(cursor):
+                url = cursor
+            else:
+                logger.warning("Drive listing cursor points outside Graph; restarting the listing")
+        async with aiohttp.ClientSession() as s:
+            page = await self._call(s, user_id, "GET", url)
+        next_link = page.get("@odata.nextLink")
+        return DriveChildrenPage(changes=tuple(_to_change(raw) for raw in page.get("value", [])),
+                                 next_cursor=str(next_link) if next_link else None)
+
+    async def connection(self, user_id: str) -> DriveConnection:
+        """Read on every tick (the gate). When the stored access token is not the one cached here, the
+        grant changed under this process (a reconnect, maybe to another account, or a refresh by the
+        other service): drop the token and root caches, so the next call reads the new grant at once."""
+        creds = await self._oauth.get_credentials(user_id, ONEDRIVE_PROVIDER)
+        cached = self._tokens.cached_token(user_id)
+        if creds is None or (cached is not None and cached != creds.access_token):
+            self._tokens.invalidate(user_id)
+            self._root_cache.pop(user_id, None)
+        if creds is None:
+            return DriveConnection(connected=False)
+        return DriveConnection(connected=True, needs_reconnect=creds.needs_reconnect, drive_id=creds.drive_id)
+
+    async def flag_reconnect(self, user_id: str) -> bool:
+        """Get, then save with the flag set (Gmail precedent, decisions/gmail_grant_revoked_reconnect.md:
+        no port change for an atomic set). A reconnect saves fresh credentials, which clears it."""
+        creds = await self._oauth.get_credentials(user_id, ONEDRIVE_PROVIDER)
+        if creds is None or creds.needs_reconnect:
+            return False
+        await self._oauth.save_credentials(replace(creds, needs_reconnect=True))
+        logger.warning(f"Drive marked needs_reconnect for user {user_id[:8]}")
+        return True
+
+    @staticmethod
+    def _decode_cursor(cursor: Optional[str]) -> Tuple[str, bool]:
+        """(url, full). A cursor this module cannot read restarts as a full enumeration."""
+        if cursor is None:
+            return _DELTA_START, True
+        try:
+            data = json.loads(cursor)
+            url, full = data["url"], data["full"]
+        except (ValueError, TypeError, KeyError) as exc:
+            logger.warning(f"Drive change cursor unreadable ({type(exc).__name__}); restarting enumeration")
+            raise DriveResyncRequired(_encode_cursor(_DELTA_START, True)) from exc
+        if not isinstance(url, str) or not isinstance(full, bool) or not _is_graph_url(url):
+            logger.warning("Drive change cursor malformed or outside Graph; restarting enumeration")
+            raise DriveResyncRequired(_encode_cursor(_DELTA_START, True))
+        return url, full
+
     # -- transport ----------------------------------------------------------
 
     async def _headers(self, user_id: str, *, force_refresh: bool = False) -> Dict[str, str]:
@@ -219,15 +398,18 @@ class OneDriveAdapter(UserDrivePort):
                     logger.warning(f"Drive {method} throttled ({status}); retrying in {delay:.0f}s")
                     await asyncio.sleep(delay)
                     continue
+                if status == 410:
+                    logger.warning(f"Drive {method} {_where(path)}: 410 Gone (change cursor expired)")
+                    raise _CursorGone(resp.headers.get("Location"))
                 if status == 404:
-                    raise DriveItemNotFoundError(f"Drive item not found: {path}")
+                    raise DriveItemNotFoundError(f"Drive item not found: {_where(path)}")
                 if status == 409:
                     raise DriveNameConflictError(f"Drive name taken: {path}")
                 if status == 204:
                     return {}
                 if not resp.ok:
                     body = await resp.text()
-                    logger.error(f"Drive {method} {path} failed ({status}): {body[:300]}")
+                    logger.error(f"Drive {method} {_where(path)} failed ({status}): {body[:300]}")
                     raise ValueError(f"Drive {method} failed ({status})")
                 return dict(await resp.json())
 
@@ -256,7 +438,7 @@ class OneDriveAdapter(UserDrivePort):
         cached = self._root_cache.get(user_id)
         if cached and time.monotonic() - cached[0] < _ROOT_TTL_S:
             return cached[1]
-        raw = await self._call(s, user_id, "GET", "/me/drive/special/approot")
+        raw = await self._call(s, user_id, "GET", _APPROOT)
         self._root_cache[user_id] = (time.monotonic(), raw)
         return raw
 

@@ -42,6 +42,12 @@ class MicrosoftGraphTokenProvider:
     def invalidate(self, user_id: str) -> None:
         self._cache.pop(user_id, None)
 
+    def cached_token(self, user_id: str) -> Optional[str]:
+        """The access token cached for the user, fresh or not (None when nothing is cached).
+        Lets an adapter notice that the stored grant changed under it (a reconnect elsewhere)."""
+        cached = self._cache.get(user_id)
+        return cached[0] if cached else None
+
     def _fresh(self, user_id: str, *, fetched_since: Optional[datetime] = None) -> Optional[str]:
         """The cached token when it is still usable; with `fetched_since`, only one fetched at or after it."""
         cached = self._cache.get(user_id)
