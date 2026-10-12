@@ -1,6 +1,8 @@
 from google import genai
 from google.genai import errors as genai_errors
+from google.genai import types as genai_types
 import asyncio
+import httpx
 import os
 from typing import List
 from ..domain.exceptions import (
@@ -24,6 +26,9 @@ _DEFAULT_CONCURRENCY = 20
 
 _MODEL = "gemini-embedding-2"
 _OUTPUT_DIM = 768  # Matryoshka truncation from native 3072; preserves existing Firestore indexes.
+# google-genai sends with no HTTP timeout by default, so a hung connection held its worker thread forever.
+# Milliseconds (HttpOptions.timeout); applied to connect, read, write and pool alike.
+_HTTP_TIMEOUT_MS = 30_000
 
 # v2 protocol: task_type is no longer a config parameter. Task is signalled by an
 # instruction prefix on the input text. The public adapter API still accepts task_type
@@ -60,7 +65,8 @@ class GeminiEmbeddingAdapter(EmbeddingService):
         if not api_key:
             raise ValueError("GEMINI_API_KEY is required for GeminiEmbeddingAdapter")
         self.api_key = api_key
-        self.client = genai.Client(api_key=api_key)
+        self.client = genai.Client(api_key=api_key,
+                                   http_options=genai_types.HttpOptions(timeout=_HTTP_TIMEOUT_MS))
         concurrency = int(os.getenv("GEMINI_EMBED_CONCURRENCY", str(_DEFAULT_CONCURRENCY)))
         self._semaphore = asyncio.Semaphore(concurrency)
         logger.info(f"[GeminiEmbedding] concurrency cap = {concurrency}, model = {_MODEL}")
@@ -98,6 +104,10 @@ class GeminiEmbeddingAdapter(EmbeddingService):
                     # path); propagates so the caller degrades gracefully.
                     raise LLMServerError(str(exc), http_status=code) from exc
                 raise
+            except httpx.TimeoutException as exc:
+                # No round trip completed: the same transient class as a 503, so it is retried here and the
+                # drive tick stops as systemic (USER_DRIVE_INDEXING_RFC §8.2).
+                raise LLMUnavailableError(f"Embedding request timed out ({type(exc).__name__})") from exc
 
         async with self._semaphore:
             return await retry_async(

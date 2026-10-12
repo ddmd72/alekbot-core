@@ -20,7 +20,7 @@ restarts instead (a cursor without the binding, written before it existed, is fo
 Errors (§4): a rejected refresh is DriveReauthRequired (a DriveNotConnectedError); a 401 that
 survives a successful forced refresh is DriveAccessDenied for that operation, never a lost grant
 (spike A6); 429/503 still failing after the retries here is DriveThrottled; a 410 on the change
-feed is DriveResyncRequired. A call that outlives GRAPH_CALL_TIMEOUT_S is a TimeoutError and any other
+feed, or a 404 on a stored change cursor, is DriveResyncRequired. A call that outlives GRAPH_CALL_TIMEOUT_S is a TimeoutError and any other
 transport failure (an aiohttp.ClientError) an OSError: the tick classifies them by what the call is about
 (§8.2: per-item on a call about one item, systemic on the change feed), Step 1 reports a plain failure.
 A failed token refresh is drive-wide, so it stays DriveThrottled.
@@ -317,6 +317,13 @@ class OneDriveAdapter(UserDrivePort):
             except _CursorGone as exc:
                 restart = exc.location if _is_graph_url(exc.location) else _DELTA_START
                 raise DriveResyncRequired(_encode_cursor(str(restart), True)) from exc
+            except DriveItemNotFoundError as exc:
+                # A stored link Graph no longer knows is as dead as a 410 one (§7.5). Not on the delta start
+                # itself: restarting would ask for the same URL again, every tick.
+                if cursor is None or url == _DELTA_START:
+                    raise
+                logger.warning(f"Drive change cursor not found (404) for user {user_id[:8]}; restarting enumeration")
+                raise DriveResyncRequired(_encode_cursor(_DELTA_START, True)) from exc
         next_link, delta_link = page.get("@odata.nextLink"), page.get("@odata.deltaLink")
         if next_link:
             new_cursor, complete = _encode_cursor(str(next_link), full, drive_id, root_id), False
