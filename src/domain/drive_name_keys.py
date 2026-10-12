@@ -122,15 +122,16 @@ def _trigrams(token: str) -> List[str]:
 
 def _variants(token: str) -> Dict[str, bool]:
     """The token's other spellings (not the token itself), in key order: unaccented, then transliterations.
-    The value says whether the spelling also gets trigrams. The Ukrainian one does not: a third script form
-    of every trigram would lift unrelated Cyrillic names over the NAME_MIN_TRIGRAMS floor."""
+    The value says whether the spelling also gets trigrams: only the unaccented form and the Russian-style
+    transliteration of the token as written. A third script form of one shared trigram (Ukrainian, or the
+    transliteration of the unaccented form) would lift unrelated names over the NAME_MIN_TRIGRAMS floor."""
     bases = [token]
     stripped = _strip_accents(token)
     if stripped != token:
         bases.append(stripped)
     out: Dict[str, bool] = {}
     for base in bases:
-        for variant, grams in ((base, True), (_translit(base), True), (_translit_uk(base), False)):
+        for variant, grams in ((base, True), (_translit(base), base is token), (_translit_uk(base), False)):
             if variant and variant != token:
                 out[variant] = out.get(variant, False) or grams
     return out
