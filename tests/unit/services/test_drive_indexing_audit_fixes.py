@@ -179,14 +179,14 @@ class TestOneRefusedCardDoesNotStallTheUser:
         bad = w.drive.add("refused.pdf")
         result = await w.tick()
         assert result.status == "throttled"
-        assert not (set(good) & w.carded())
+        assert set(good) <= w.carded() and bad not in w.carded()   # the batch's other vectors are kept (§8.2)
         assert w.rec(bad).attempts == 0
 
 
 class TestSystemicEmbeddingErrorsMoveNoRecord:
     """P9 round 2: only a definite bad-input refusal (LLMClientError 400) backs a card off alone. Every other
-    embedding error is systemic (RFC §8.2, Systemic row): the tick ends with `last_error` set, `attempts` untouched,
-    and nothing of the batch is written."""
+    embedding error is systemic (RFC §8.2, Systemic row): the tick ends with `last_error` set, and the failing record
+    is not moved: no card, `attempts` untouched, not backed off. The batch's other vectors are kept."""
 
     @pytest.mark.parametrize("exc", [
         LLMUnavailableError("503", http_status=503),
@@ -204,4 +204,6 @@ class TestSystemicEmbeddingErrorsMoveNoRecord:
         assert result.status in ("throttled", "error")
         assert (await w.repo.get_sync_state("u")).last_error is not None
         assert w.rec(bad).attempts == 0
-        assert not ((set(good) | {bad}) & w.carded())
+        assert bad not in w.carded() and set(good) <= w.carded()
+        assert w.rec(bad).priority != int(Priority.RETRY) and w.rec(bad).due_at <= w.clock.now
+        assert w.rec(bad).state is not RecordState.FAILED
