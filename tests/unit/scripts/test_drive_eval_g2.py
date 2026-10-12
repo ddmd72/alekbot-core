@@ -15,7 +15,7 @@ from scripts.validation.drive_eval.runner import EvalError, run_cases, run_eval,
 from src.domain.drive_search import DriveSearchResult
 
 from ..services.drive_index_fakes import FakeEmbeddings
-from .drive_eval_samples import GOLD, MANIFEST, rome
+from .drive_eval_samples import GOLD, MANIFEST, fake_content, rome
 
 LEASE = "Contracts/Lease agreement — Porto.pdf"
 LEASE_COPY = "Inbox/Lease agreement — Porto.pdf"
@@ -141,7 +141,8 @@ async def test_two_gold_files_make_one_run_and_one_gold_hash(tmp_path):
     g1.write_text(json.dumps(GOLD[:2], ensure_ascii=False), encoding="utf-8")
     g2.write_text(json.dumps(GOLD[2:], ensure_ascii=False), encoding="utf-8")
     report = await run_eval(tree, [g1, g2], tmp_path / "bars.json", tmp_path / "r.json", embeddings=FakeEmbeddings(),
-                            embedding_space="fake/8", place_of=rome, record=True, throttle_pause_s=0)
+                            embedding_space="fake/8", place_of=rome, record=True, throttle_pause_s=0,
+                            **fake_content())
     bars = json.loads((tmp_path / "bars.json").read_text(encoding="utf-8"))
     assert len(report["cases"]) == len(GOLD) and set(bars["cases"]) == {c["id"] for c in GOLD}
     assert bars["gold_sha256"] == runner.gold_sha256([g1, g2]) != runner.sha256_of(g1)
@@ -150,7 +151,8 @@ async def test_two_gold_files_make_one_run_and_one_gold_hash(tmp_path):
     g2.write_text(json.dumps(GOLD[2:3], ensure_ascii=False), encoding="utf-8")
     with pytest.raises(EvalError, match="the gold files changed"):
         await run_eval(tree, [g1, g2], tmp_path / "bars.json", tmp_path / "r.json", embeddings=FakeEmbeddings(),
-                       embedding_space="fake/8", place_of=rome, record=False, throttle_pause_s=0)
+                       embedding_space="fake/8", place_of=rome, record=False, throttle_pause_s=0,
+                       **fake_content())
 
 
 def test_the_cli_reads_both_committed_gold_files_by_default():

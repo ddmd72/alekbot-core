@@ -3,7 +3,9 @@
 The real tick runs over the eval fixture (tests/fixtures/drive_eval/tree.json) through the eval's FixtureDrive,
 imported as a namespace package like tests/unit/validation/test_price_consensus.py. Every listed path has the
 (scope, reason) the RFC prescribes; a path mapped to None must have no record at all. Content-stage classes
-(machine text, bombs, encrypted files) are Slice 2 and are not in this table.
+(machine text, bombs, encrypted files) are Slice 2 and are not in this table; since the flip (§24.1) the tick runs
+with the fake content ports (tests/unit/services/drive_content_fakes.py), so an admitted file shows the outcome of
+its content run.
 """
 from pathlib import Path
 
@@ -14,6 +16,7 @@ from scripts.validation.drive_eval.runner import EVAL_USER, EvalClock, index_fix
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.domain.drive_index import Reason, Scope
 
+from ..scripts.drive_eval_samples import fake_content
 from .drive_index_fakes import FakeEmbeddings
 
 _TREE = Path(__file__).resolve().parents[2] / "fixtures" / "drive_eval" / "tree.json"
@@ -48,19 +51,20 @@ EXPECTED = {
     "Dumps/site-mirror": (OR, Reason.DENSE_TREE),
     "Dumps/site-mirror/page-000.bin": None,
     "Vault": (N, Reason.FOLDER),                       # 800 small notes: documents, never dense
-    "Vault/note-799.md": (N, Reason.KIND_NOT_ADMITTED),
+    "Vault/note-799.md": (N, None),                    # a note with text: indexed (§24.1)
     "Archive/Invoices 2024": (N, Reason.FOLDER),       # 600 PDFs
     "Archive/Camera roll": (N, Reason.FOLDER),         # 1 000 photos: media, never dense
-    "Archive/Camera roll/IMG_0417.HEIC": (N, Reason.KIND_NOT_ADMITTED),
+    "Archive/Camera roll/IMG_0417.HEIC": (N, Reason.PHOTOGRAPH),   # no rendition: a photograph (§24.5)
     # never-download names (§5.1): they keep a card with their reason, except OS and lock artefacts (record only)
     "Keys/id_rsa": (N, Reason.SECRET_NAME),
     "Keys/backup.kdbx": (N, Reason.SECRET_NAME),
     "~$Договор_ред3.docx": (N, Reason.OS_ARTIFACT),
     "Thumbs.db": (N, Reason.OS_ARTIFACT),
-    # a nested archive and ordinary files: metadata only in Slice 1
+    # a nested archive and ordinary files: an archive and audio stay metadata only; documents and images are read
     "Archive/site-backup.zip": (N, Reason.KIND_NOT_ADMITTED),
-    "Contracts/Договор_ред3.docx": (N, Reason.KIND_NOT_ADMITTED),
-    "Photos/WhatsApp/IMG-20251120-WA0001.jpg": (N, Reason.KIND_NOT_ADMITTED),
+    # the fake parser reads the OOXML package's raw bytes, which the text gate calls machine text (§5.5 class 3)
+    "Contracts/Договор_ред3.docx": (N, Reason.MACHINE_TEXT),
+    "Photos/WhatsApp/IMG-20251120-WA0001.jpg": (N, Reason.PHOTOGRAPH),   # no rendition: a photograph (§24.5)
     "Media/voice memo.m4a": (N, Reason.KIND_NOT_ADMITTED),
 }
 
@@ -72,7 +76,7 @@ def indexed():
     async def run():
         repo = InMemoryDriveIndexRepository()
         out = await index_fixture(FixtureDrive.from_file(_TREE), repo, FakeEmbeddings(), lambda lat, lon: None,
-                                  "fake/8", EvalClock(), throttle_pause_s=0)
+                                  "fake/8", EvalClock(), throttle_pause_s=0, **fake_content())
         return repo, out
 
     return asyncio.run(run())

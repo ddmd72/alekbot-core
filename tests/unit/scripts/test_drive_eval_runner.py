@@ -16,7 +16,8 @@ from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.domain.drive_index import CURRENT_VERSIONS, Reason, Scope
 
 from ..services.drive_index_fakes import FakeEmbeddings
-from .drive_eval_samples import GOLD, MANIFEST, rome
+from ..services.test_drive_indexing_service import EXTRACTOR_VERSIONS
+from .drive_eval_samples import GOLD, MANIFEST, fake_content, rome
 
 
 def _write(tmp_path, gold=GOLD, manifest=MANIFEST):
@@ -29,7 +30,7 @@ def _write(tmp_path, gold=GOLD, manifest=MANIFEST):
 async def _eval(tmp_path, record, gold=GOLD, manifest=MANIFEST):
     tree, gold_path, bars, report = _write(tmp_path, gold, manifest)
     return await run_eval(tree, gold_path, bars, report, embeddings=FakeEmbeddings(), embedding_space="fake/8",
-                          place_of=rome, record=record, throttle_pause_s=0)
+                          place_of=rome, record=record, throttle_pause_s=0, **fake_content())
 
 
 def _bars(tmp_path):
@@ -46,11 +47,12 @@ def test_bare_date_to_covers_the_whole_day():
 async def test_index_settles_with_the_real_tick():
     repo = InMemoryDriveIndexRepository()
     out = await index_fixture(FixtureDrive(MANIFEST), repo, FakeEmbeddings(), rome, "fake/8", EvalClock(),
-                              throttle_pause_s=0)
+                              throttle_pause_s=0, **fake_content())
     assert out.statuses.get("error", 0) == 0 and out.ticks >= 1
     assert await repo.due_records(EVAL_USER, datetime.max.replace(tzinfo=timezone.utc), 1) == []
     state = await repo.get_sync_state(EVAL_USER)
-    assert state.continuation_enqueued_at is None and dict(state.applied_versions) == dict(CURRENT_VERSIONS)
+    assert state.continuation_enqueued_at is None
+    assert dict(state.applied_versions) == {**CURRENT_VERSIONS, **EXTRACTOR_VERSIONS}
 
     def rec(path):
         return repo.records.get((EVAL_USER, item_id_for(path)))
@@ -73,7 +75,7 @@ async def test_the_runner_keeps_ticking_until_no_continuation_is_pending():
 
     repo = InMemoryDriveIndexRepository()
     out = await index_fixture(FixtureDrive(MANIFEST, page_size=50), repo, FakeEmbeddings(), rome, "fake/8",
-                              EvalClock(), throttle_pause_s=0, monotonic=slow)
+                              EvalClock(), throttle_pause_s=0, monotonic=slow, **fake_content())
     assert out.ticks > 1 and out.statuses.get("error", 0) == 0
     state = await repo.get_sync_state(EVAL_USER)
     assert state.continuation_enqueued_at is None and state.initial_enumeration_done
