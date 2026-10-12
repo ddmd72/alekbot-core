@@ -333,3 +333,22 @@ def test_content_types_proves_an_ooxml_package_not_odf():
 def test_a_zip_under_a_non_zip_kind_is_still_an_archive(declared):
     data = _zip_entries([("_rels/.rels", b"<x/>", _D)], streamed=True)
     assert sniff_kind(_head(data), declared) == "archive"
+
+
+# =============================================================================
+# A PDF header past offset 0 counts only for a declared pdf or other (review A, m)
+# =============================================================================
+
+@pytest.mark.parametrize("declared", ["markdown", "text", "csv", "html", "docx"])
+def test_text_mentioning_a_pdf_header_keeps_its_kind(declared):
+    head = b"# PDF notes\n\nEvery PDF starts with a header like %PDF-1.7 followed by a binary comment.\n"
+    assert sniff_kind(head, declared) != "pdf"
+
+
+@pytest.mark.parametrize("declared", ["pdf", "other"])
+def test_pdf_header_after_junk_counts_for_pdf_and_other(declared):
+    assert sniff_kind(b"\r\n\x00junk" * 20 + b"%PDF-1.4\n", declared) == "pdf"
+
+
+def test_pdf_header_at_offset_zero_wins_whatever_the_declared_kind():
+    assert sniff_kind(b"%PDF-1.7\nhello", "markdown") == "pdf"
