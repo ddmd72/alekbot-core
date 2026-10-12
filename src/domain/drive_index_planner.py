@@ -178,7 +178,8 @@ def _observable(rec: DriveIndexRecord) -> Tuple[Any, ...]:
     return (rec.parent_id, rec.name, rec.is_folder, rec.size_bytes, rec.mime_type, rec.web_url, rec.child_count,
             dict(rec.facets), rec.kind, rec.scope, rec.state, rec.reason, rec.content_version, rec.modified_at,
             rec.fs_modified_at, rec.effective_date, rec.place_name, rec.geo_table_version, rec.policy_version,
-            rec.probe_pending, rec.rescope_pending, rec.reobserve_pending, rec.probed_child_count, rec.card_capped)
+            rec.probe_pending, rec.rescope_pending, rec.reobserve_pending, rec.probed_child_count, rec.card_capped,
+            rec.card_refused)
 
 
 def _build(change: DriveChange, cls: Classification, existing: Optional[DriveIndexRecord],
@@ -201,14 +202,12 @@ def _build(change: DriveChange, cls: Classification, existing: Optional[DriveInd
     )
     # A capped record keeps its cap until a release decides again (§5.4); one that can hold no card drops it.
     rec = replace(rec, card_capped=rec.card_capped and structurally_card_eligible(rec))
-    if _refusal_stands(existing, rec):
-        rec = replace(rec, state=RecordState.FAILED)
-    return rec
+    return replace(rec, card_refused=_refusal_stands(existing, rec))
 
 
 def _refusal_stands(existing: Optional[DriveIndexRecord], rec: DriveIndexRecord) -> bool:
-    """A refused card stays failed while the card text is the one refused (§8.2)."""
-    return (existing is not None and existing.state is RecordState.FAILED and not existing.has_card
+    """A refused card stays refused while the card text is the one refused (§8.2)."""
+    return (existing is not None and existing.card_refused and not existing.has_card
             and existing.card_hash is not None and card_eligible(rec) and existing.card_hash == card_hash(rec))
 
 
@@ -349,16 +348,16 @@ def _has_work(rec: DriveIndexRecord) -> bool:
 
 
 def with_card(rec: DriveIndexRecord, hash_: str, embedding_space: str, now: datetime) -> DriveIndexRecord:
-    done = replace(rec, card_hash=hash_, has_card=True, card_version=CARD_VERSION, embedding_space=embedding_space,
-                   attempts=0)
+    done = replace(rec, card_hash=hash_, has_card=True, card_refused=False, card_version=CARD_VERSION,
+                   embedding_space=embedding_space, attempts=0)
     return schedule(done, now, first_seen=False)
 
 
 def card_refused(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
-    """The provider refused this card text MAX_ATTEMPTS times: terminal, `failed` (§8.2). The record keeps no card,
-    and `card_hash` names the refused text, so the same text is not tried again; a new text (a rename, a facet
-    change, a new card builder) gets a fresh try."""
-    return schedule(replace(rec, state=RecordState.FAILED, has_card=False, card_hash=card_hash(rec),
+    """The provider refused this card text MAX_ATTEMPTS times: terminal (§8.2), flagged `card_refused` with the state
+    left to the structure. The record keeps no card, and `card_hash` names the refused text, so the same text is not
+    tried again; a new text (a rename, a facet change, a new card builder) gets a fresh try."""
+    return schedule(replace(rec, card_refused=True, has_card=False, card_hash=card_hash(rec),
                             card_version=CARD_VERSION, attempts=0), now, first_seen=False)
 
 
@@ -371,7 +370,8 @@ def capped(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
     the structure says, so a capped repository stays opaque. A deleting record is left alone."""
     if rec.state is RecordState.DELETING:
         return rec
-    return schedule(replace(rec, card_capped=True, card_hash=None, has_card=False), now, first_seen=False)
+    return schedule(replace(rec, card_capped=True, card_refused=False, card_hash=None, has_card=False), now,
+                    first_seen=False)
 
 
 def released(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:

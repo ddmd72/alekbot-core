@@ -175,6 +175,7 @@ class DriveIndexRecord:
     card_hash: Optional[str] = None
     has_card: bool = False
     card_capped: bool = False                 # no card headroom (§5.4): withholds the card, state and reason stay
+    card_refused: bool = False                # the provider refused the text `card_hash` names (§8.2); state stays
     card_rank: int = 3
     name_tokens: Tuple[str, ...] = ()
     content_hash: Optional[str] = None

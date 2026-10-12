@@ -702,7 +702,7 @@ class DriveIndexingService:
                 continue
             if now_rec.attempts + 1 >= MAX_ATTEMPTS and card_text(now_rec) == card_text(rec):
                 logger.warning(f"[DriveIndex] card for item {rec.item_id} of {user_id[:8]} refused {MAX_ATTEMPTS} "
-                               f"times; the record is failed until its card text changes")
+                               f"times; no card until its card text changes")
                 written.append(card_refused(now_rec, now))
             else:
                 written.append(with_retry(now_rec, now))
