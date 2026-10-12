@@ -36,7 +36,7 @@ _UK_TO_LAT = {
 }
 _UK_INITIAL = {"є": "ye", "ї": "yi", "й": "y", "ю": "yu", "я": "ya"}
 # Latin letters NFKD does not decompose: written out as their usual unaccented spelling.
-_LATIN_FOLDS = {"œ": "oe", "æ": "ae", "ø": "o", "ł": "l", "ß": "ss"}
+_LATIN_FOLDS = {"œ": "oe", "æ": "ae", "ø": "o", "ł": "l", "ß": "ss", "đ": "d", "ð": "d", "þ": "th", "ı": "i", "ħ": "h"}
 # Greedy, longest first. Approximate by design: trigrams absorb the rest.
 _LAT_TO_CYR: List[Tuple[str, str]] = sorted([
     ("shch", "щ"), ("zh", "ж"), ("kh", "х"), ("ts", "ц"), ("ch", "ч"), ("sh", "ш"), ("yu", "ю"), ("ya", "я"),
@@ -67,16 +67,24 @@ def _is_cyrillic(token: str) -> bool:
 
 
 def _strip_accents(token: str) -> str:
-    """Latin letters only: NFKD with the combining marks dropped (é→e, ñ→n, ç→c, ﬁ→fi), plus _LATIN_FOLDS
-    (œ→oe). Other scripts are left alone: in Cyrillic й, ё and ї are letters of their own."""
+    """Latin letters only: NFKD with the combining marks dropped (é→e, ñ→n, ç→c, ﬁ→fi), including a mark NFC
+    leaves as its own code point (casefold("İ") is "i" + U+0307), plus _LATIN_FOLDS (œ→oe). Other scripts are
+    left alone: in Cyrillic й, ё and ї are letters of their own."""
     out = []
+    after_latin = False
     for ch in token:
-        if ch in _LATIN_FOLDS:
+        if unicodedata.combining(ch):
+            if not after_latin:
+                out.append(ch)
+        elif ch in _LATIN_FOLDS:
             out.append(_LATIN_FOLDS[ch])
+            after_latin = True
         elif unicodedata.name(ch, "").startswith("LATIN"):
             out.extend(c for c in unicodedata.normalize("NFKD", ch) if not unicodedata.combining(c))
+            after_latin = True
         else:
             out.append(ch)
+            after_latin = False
     return unicodedata.normalize("NFC", "".join(out)).casefold()
 
 
