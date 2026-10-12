@@ -580,3 +580,24 @@ order, substitution handling, OIDC audience, `main.py` names) matches the code. 
   records with 0 differences → the eval measures the real tick, not a fixture artefact.
 - Gaps → R12: `fs_modified` (generate/explicit/naive), id stability across processes (pin one id), `video` /
   `photo: {}` / size facets. Docstring says "root on every round"; S0a has it on every page (no effect, wording).
+
+### Task 41 — done (fix R13 queued)
+- Commit `4094ccc` (byte-identical). `make check` (reviewer, worktree): 8046 passed. Reviewer: APPROVED.
+- → R13: F1 the runner builds requests with its own parser instead of production's `request_from_fields` (an unknown
+  kind surfaces only after indexing ≈ 2 500 Gemini calls; `date_from > date_to` would be recorded as a bar;
+  `folder: "/"` disagrees); F2 throttled ticks sleep a fixed 30 s ignoring the service's backoff, no cap (Gemini 429s
+  could burn quota for hours); F3 test gaps (`also_at`, `k = 0`, `status == "ok"`, `MAX_ERRORS`).
+
+## Eval (offline, informational — NOT the real run)
+No Gemini key here, so the real-embedding eval (Task 47 Step 1) was not run. The Task 41 reviewer ran the real
+`tree.json` + `gold_g1.json` through `run_eval` with the tests' fake embeddings and the real place table, into a
+scratch path (nothing recorded or committed): index settled in 1 tick, 2 481 cards, 0 errors.
+- **Recall@8 32/37 = 0.865.** 100 %: exact 6/6 (both `k:1` cases first: `exact-img4912`, `exact-img0417`), partial
+  5/5, translit 4/4, misspelled 4/4, kind 3/3, folder 4/4, filter_only 3/3, version_family 1/1. date 2/3, place 0/4.
+- Repeated with 6 salted hashing embedders: all 32 hits held every time → they come from the name stream and filters.
+- **Misses that look like real bugs: none.** Misses that need real embeddings: the four `place-*` cases (the place is
+  only in the card text). `date-rome-august` may miss **even with Gemini**: the date filter runs after the vector
+  search, whose pool is capped at 1 000 of ~2 481 cards and ~1 030 photo cards compete (RFC §10.1 filters after the
+  cut) — **OWNER**: accept as a recorded limit or adjust the case, after the real run.
+- Note: for "ред3" the top result is the Office lock file `~$Договор_ред3.docx` (carded per RFC §5.1); the expected
+  file is still in the top 8 — **OWNER** may want lock files excluded from cards.
