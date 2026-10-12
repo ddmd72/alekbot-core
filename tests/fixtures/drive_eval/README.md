@@ -9,6 +9,16 @@ the path), and `tests/unit/services/test_drive_index_hostile_tree.py` runs the r
 holds the G1 cases: a query and filters as Smart would send them, the expected paths, the case type, and an
 optional `k` (`"k": 1` means the file must come first). Every person, organisation and number in it is fictional.
 
+Optional per-case keys: `min_hits` lowers the bar for a case with more right answers than K (a place case is a hit
+with 5 of a trip's photos in its top K: the rest of the top K is the trip's folder and other right answers);
+`known_hard` (a reason) marks a case that is run and reported but guards nothing, such as the "photos" + August
+variant that puts a type word in drive_query instead of `drive_kind`. Case type `semantic` holds queries that share
+no name key with their target (cross-language or by subject: "файлы про договоры" for `Super important
+agreement.pdf`), so only the card stream can find them; with offline fake embeddings they are expected misses.
+The `translit-accent-*` cases reach accented names (`Résumé`, `Cœur`, `año`) by their unaccented keys, and
+`misspelled-trigram-only` reaches its target through trigrams alone. Any case that hit when the bars were recorded
+and misses now fails the run.
+
 The `Договор_ред1..3` dates contradict their version names on purpose: ред2 is the newest, so a "latest version"
 answer cannot be read off the name alone (§10.4). The bulk folders are the scale cases: 1 000 `IMG_NNNN.HEIC` next
 to an exact `IMG_4912.jpg`, 600 invoices next to `invoice_2026_03.xlsx`, an 800-note vault that must stay normal,

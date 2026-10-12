@@ -96,7 +96,11 @@
     {"path": "Inbox/sales_regions_2026.xlsx", "folder": false, "mime": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "size": 41000, "fs_modified": "2026-05-05T11:00:00Z", "facets": {}},
     {"path": "Inbox/Quarterly review.pptx", "folder": false, "mime": "application/vnd.openxmlformats-officedocument.presentationml.presentation", "size": 2400000, "fs_modified": "2026-07-01T15:00:00Z", "facets": {}},
     {"path": "Media/Recording 2026-10-14 09-41-27.webm", "folder": false, "mime": "video/webm", "size": 14200000, "fs_modified": "2026-10-14T07:42:10Z", "facets": {"video": {"duration": 93000, "width": 1280, "height": 720}, "photo": {}}},
-    {"path": "Media/voice memo.m4a", "folder": false, "mime": "audio/mp4", "size": 1500000, "fs_modified": "2026-06-18T08:00:00Z", "facets": {}}
+    {"path": "Media/voice memo.m4a", "folder": false, "mime": "audio/mp4", "size": 1500000, "fs_modified": "2026-06-18T08:00:00Z", "facets": {}},
+    {"path": "Inbox/Super important agreement.pdf", "folder": false, "mime": "application/pdf", "size": 205000, "fs_modified": "2024-06-03T10:00:00Z", "facets": {}},
+    {"path": "Inbox/Résumé.pdf", "folder": false, "mime": "application/pdf", "size": 98000, "fs_modified": "2024-03-04T10:00:00Z", "facets": {}},
+    {"path": "Notes/Cœur.pdf", "folder": false, "mime": "application/pdf", "size": 64000, "fs_modified": "2024-04-02T10:00:00Z", "facets": {}},
+    {"path": "Notes/Fiestas del año.md", "folder": false, "mime": "text/markdown", "size": 2100, "fs_modified": "2024-07-15T10:00:00Z", "facets": {}}
   ],
   "generate": [
     {"folder": "Projects/alek-site/src", "pattern": "module_{n:02d}.py", "count": 30, "mime": "text/x-python", "size": 3000, "fs_modified": "2026-05-01T10:00:00Z", "facets_template": {}},
