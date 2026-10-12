@@ -19,8 +19,10 @@ A PDF's pages are counted by the sandboxed parser, then read in windows of MODEL
 month's remaining pages and MODEL_EXTRACT_MAX_PAGES; the indexer process never parses it. Windows run at most
 MODEL_IN_FLIGHT at a time and join in page order. Each window is cut by the parser only when its turn comes, read into
 memory and removed before the call, so at most MODEL_IN_FLIGHT window files exist on disk (a window can carry an image
-every page shares). A window answered at the output limit is cut in half from the source and read once more; a half
-or a single page still at the limit adds no text and sets `truncated`. At
+every page shares). A window answered at the output limit, or whose call timed out, is cut in half from the source
+and read once more; a half or a single page still at the limit adds no text and sets `truncated`, and one that times
+out again is a model outage. A window the provider refuses as too large (HTTP 413) is halved down to one page; a
+single page still too large fails the file. At
 `file_budget_s` the windows done so far are kept and the rest cancelled (`truncated`). An image (the provider's
 rendition) is one call. Outcomes: text; no_text (the reader found none); error (the provider refused an input, its
 output stayed invalid, or the budget ran out before any window finished — never `timeout`, which means a parser
@@ -39,7 +41,7 @@ from pathlib import Path
 from typing import Any, List, Optional, Protocol
 
 from ..agents.drive_document_reader_agent import AGENT_TYPE, DriveDocumentReaderAgent, ReaderReply
-from ..infrastructure.drive_model_call import DriveModelCallFailed
+from ..infrastructure.drive_model_call import DriveInputTooLarge, DriveModelCallFailed, DriveModelTimedOut
 from ..domain.agent import AgentConfig
 from ..domain.drive_extraction import (
     READER, DriveModelUnavailable, ExtractionOutcome, ExtractionRequest, ExtractionStatus, PdfSplitFailed,
@@ -231,34 +233,53 @@ class DriveReaderRunner(ContentExtractorPort):
     async def _window(self, agent: DriveDocumentReaderAgent, request: ExtractionRequest, index: int,
                       win: _WindowRun, semaphore: asyncio.Semaphore, work: str) -> None:
         async with semaphore:
-            reply = await self._call(agent, request, work, index, win, win.first_page, win.pages, first=index == 0)
-            if not reply.output_limited:
-                win.text, win.brief = reply.text, reply.brief
-            elif win.pages <= 1:
-                logger.warning(f"[DriveReader] a single page hit the output limit (window {index + 1}); not indexed")
-                win.truncated = True
-            else:
-                await self._halves(agent, request, index, win, work)
+            texts = await self._piece(agent, request, work, index, win, win.first_page, win.pages,
+                                      brief=index == 0, may_halve=True)
+            win.text = "\n\n".join(t for t in texts if t)
             win.finished = True
 
-    async def _halves(self, agent: DriveDocumentReaderAgent, request: ExtractionRequest, index: int,
-                      win: _WindowRun, work: str) -> None:
-        """Cut an output-limited window in half once (§24.3); a half still at the limit adds no text."""
-        size = math.ceil(win.pages / 2)
-        halves = [(win.first_page + j * size, min(size, win.pages - j * size)) for j in range(2)]
-        win.halves = len(halves)
-        texts: List[str] = []
-        for j, (first_page, pages) in enumerate(halves):
-            reply = await self._call(agent, request, work, index, win, first_page, pages,
-                                     first=index == 0 and j == 0)
-            if reply.output_limited:
-                logger.warning(f"[DriveReader] half {j + 1} of window {index + 1} hit the output limit; not indexed")
-                win.truncated = True
-                continue
-            texts.append(reply.text)
-            if j == 0:
+    async def _piece(self, agent: DriveDocumentReaderAgent, request: ExtractionRequest, work: str, index: int,
+                     win: _WindowRun, first_page: int, pages: int, *, brief: bool, may_halve: bool) -> List[str]:
+        """The text of pages [first_page, first_page + pages), in page order (§24.3):
+        - output limit, or a timeout: halved once (`may_halve`); a half or a single page still at the limit adds no
+          text and sets `truncated`; a half or a single page that times out again is a model outage;
+        - HTTP 413: halved, down to one page; a single page still too large fails the file (`error`).
+        `brief`: this piece starts the document, so it asks for the brief (the first piece that answers sets it)."""
+        try:
+            reply = await self._call(agent, request, work, index, win, first_page, pages, first=brief)
+        except DriveInputTooLarge:
+            if pages <= 1:
+                raise
+            logger.warning(f"[DriveReader] window {index + 1} pages {first_page + 1}+{pages} too large (413); halved")
+            return await self._halves(agent, request, work, index, win, first_page, pages, brief=brief,
+                                      may_halve=may_halve)
+        except DriveModelTimedOut:
+            if pages <= 1 or not may_halve:
+                raise
+            logger.warning(f"[DriveReader] window {index + 1} pages {first_page + 1}+{pages} timed out; halved")
+            return await self._halves(agent, request, work, index, win, first_page, pages, brief=brief,
+                                      may_halve=False)
+        if not reply.output_limited:
+            if brief and win.brief is None:
                 win.brief = reply.brief
-        win.text = "\n\n".join(t for t in texts if t)
+            return [reply.text]
+        if pages <= 1 or not may_halve:
+            logger.warning(f"[DriveReader] window {index + 1} pages {first_page + 1}+{pages} hit the output limit; "
+                           f"not indexed")
+            win.truncated = True
+            return []
+        return await self._halves(agent, request, work, index, win, first_page, pages, brief=brief, may_halve=False)
+
+    async def _halves(self, agent: DriveDocumentReaderAgent, request: ExtractionRequest, work: str, index: int,
+                      win: _WindowRun, first_page: int, pages: int, *, brief: bool, may_halve: bool) -> List[str]:
+        """Both halves of a piece, each cut from the source, read one after the other."""
+        left = math.ceil(pages / 2)
+        win.halves += 2
+        texts = await self._piece(agent, request, work, index, win, first_page, left, brief=brief,
+                                  may_halve=may_halve)
+        texts += await self._piece(agent, request, work, index, win, first_page + left, pages - left, brief=False,
+                                   may_halve=may_halve)
+        return texts
 
     async def _cut(self, request: ExtractionRequest, work: str, first_page: int, pages: int) -> bytes:
         """One window, cut on demand from the source and removed once read: the call holds it in memory only."""
