@@ -466,7 +466,7 @@ def _kind_changed(rec: DriveIndexRecord, existing: Optional[DriveIndexRecord]) -
     content version as always."""
     if existing is None or existing.kind == rec.kind:
         return rec
-    return replace(rec, attempts=0, attempt_started_at=None, defer_until=None, defer_priority=None)
+    return replace(rec, attempts=0, attempt_started_at=None, defer_until=None, defer_priority=None, model_outages=0)
 
 
 def _quiet_period(rec: DriveIndexRecord, existing: Optional[DriveIndexRecord], now: datetime,
@@ -478,7 +478,7 @@ def _quiet_period(rec: DriveIndexRecord, existing: Optional[DriveIndexRecord], n
     new_version = existing is not None and existing.content_version != rec.content_version
     if new_version:
         # a new edit restarts the work: its attempts and any deferral of the old version end
-        rec = replace(rec, attempts=0, defer_until=None, defer_priority=None)
+        rec = replace(rec, attempts=0, defer_until=None, defer_priority=None, model_outages=0)
     if nudged:
         return replace(rec, dirty_since=None)
     if new_version:
@@ -758,7 +758,7 @@ def _settled(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
     """A content outcome is terminal: the quiet period and the attempt end (§7.3, §8.2); the card may be due, in
     class 0 for a record that already has one (§7.8)."""
     return schedule(replace(rec, dirty_since=None, attempts=0, attempt_started_at=None, defer_until=None,
-                            defer_priority=None), now, first_seen=not rec.has_card)
+                            defer_priority=None, model_outages=0), now, first_seen=not rec.has_card)
 
 
 def indexed(rec: DriveIndexRecord, *, outcome: ExtractionOutcome, generation: int, chunk_count: int,
@@ -811,6 +811,20 @@ def content_retry(rec: DriveIndexRecord, reason: Reason, now: datetime) -> Drive
                                 extraction_version=EXTRACTION_VERSION), now)
     return _defer(replace(rec, attempts=attempts, attempt_started_at=None), now + backoff(attempts),
                   int(Priority.RETRY), now)
+
+
+def outage_charged(rec: DriveIndexRecord, until: datetime, now: datetime, extracted_by: str) -> DriveIndexRecord:
+    """The reader failed as an outage while reading this file (final review F1-1): a 5xx it always gets, an unexpected
+    adapter error, a one-page window that always times out look like an outage, and each retry re-reads (and bills)
+    the windows before it. The outage is charged to the file: below MAX_ATTEMPTS it waits for the model backoff
+    `until` in class 3, behind other due work; the MAX_ATTEMPTS-th is a counted per-file failure, `failed` with
+    extract_error under `extracted_by` (the reader's link), so a new reader version or a new version of the file gets
+    a fresh try."""
+    outages = rec.model_outages + 1
+    if outages >= MAX_ATTEMPTS:
+        return _settled(replace(rec, state=RecordState.FAILED, reason=Reason.EXTRACT_ERROR, extracted_by=extracted_by,
+                                extraction_version=EXTRACTION_VERSION), now)
+    return deferred(replace(rec, model_outages=outages, attempt_started_at=None), until, now, maintenance=True)
 
 
 def triaged(rec: DriveIndexRecord, result: TriageResult, now: datetime) -> DriveIndexRecord:
