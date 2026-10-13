@@ -1158,7 +1158,7 @@ substitutions (deploy-substitution trap).
 | Fan-out, staleness check, reconnect notice (scheduler task on the main service) | service, delegated to by the handler | `services/drive_sync_scheduler_service.py`; `handlers/worker_handler.py` only delegates (RFC Δ5) |
 | Intent, protocol, capability | agents / manifest | `file_management_agent.py`, `agent_manifest.py`, Smart protocol token |
 | Opt-in toggle, status, Reconnect | web | Cabinet app, `/api/drive/indexing`, `/api/drive/status` |
-| Place-name resolution (bundled reverse-geocoding table → `place_name` facet) | domain + adapter | `domain/place_lookup.py` (pure lookup), `adapters/geo_place_table.py` (loads `src/assets/geo/places_v1.tsv`), injected into the tick by composition; `geo_table_version` stamped |
+| Place-name resolution (bundled reverse-geocoding table → `place_name` facet) | domain + adapter | `domain/place_lookup.py` (pure lookup), `adapters/geo_place_table.py` (loads `src/assets/geo/places_v2.tsv` and `countries_v2.tsv`, geo table v2, §25.4.3), injected into the tick by composition; `geo_table_version` stamped |
 | Wiring (second `TaskQueue`, repository, place lookup, fan-out) | composition | `composition/drive_indexing_setup.py`, `service_container.py`; the indexer builds its own in `indexer_main.py` |
 | Rebuild one user's index | ops script | `scripts/infrastructure/drive_index_rebuild.py` (§12.2) |
 

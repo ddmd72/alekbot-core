@@ -6,8 +6,8 @@ import pytest
 
 from src.domain.drive_card import card_hash
 from src.domain.drive_index import (
-    POLICY_VERSION, ContentClass, DriveChange, DriveIndexRecord, DriveSyncState, EpochPhase, FolderProbe, Priority,
-    Reason, RecordState, Scope,
+    GEO_TABLE_VERSION, POLICY_VERSION, ContentClass, DriveChange, DriveIndexRecord, DriveSyncState, EpochPhase,
+    FolderProbe, Priority, Reason, RecordState, Scope,
 )
 from src.domain.drive_index_planner import (
     AccessAction, PlanContext, access_action, capped, change_from_record, classify, is_stale, needs_probe,
@@ -212,7 +212,8 @@ class TestObservation:
 
         photo = ch("a", "IMG.HEIC", facets={"location": {"latitude": 41.9, "longitude": 12.5}})
         stored = observe(photo, c=ctx(place_of=place_of)).upsert
-        assert stored.place_name == "Rome (Roma), Italy" and stored.geo_table_version == 1
+        # stamped with the current geo table (§25.4.8: v2); the constant itself is pinned in test_place_forms_v2
+        assert stored.place_name == "Rome (Roma), Italy" and stored.geo_table_version == GEO_TABLE_VERSION
         observe(replace(photo, name="IMG2.HEIC"), stored, c=ctx(place_of=place_of))
         assert len(calls) == 1
 

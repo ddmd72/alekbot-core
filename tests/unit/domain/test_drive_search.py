@@ -109,7 +109,9 @@ class TestKinds:
         ("spreadsheet", "spreadsheet", {"xlsx", "xls", "ods", "csv"}),
         ("Spreadsheets", "spreadsheet", {"xlsx", "xls", "ods", "csv"}),
         ("excel", "spreadsheet", {"xlsx", "xls", "ods", "csv"}),
-        ("documents", "document", {"docx", "doc", "odt", "rtf", "pdf"}), ("word", "word", {"docx", "doc"}),
+        # D23, §25.5.5: Markdown and text are documents
+        ("documents", "document", {"docx", "doc", "odt", "rtf", "pdf", "markdown", "text"}),
+        ("word", "word", {"docx", "doc"}),
         ("slides", "presentation", {"pptx", "ppt", "odp"}), ("photos", "photo", {"image"}),
         ("pictures", "photo", {"image"}), ("images", "image", {"image"}),
     ])
