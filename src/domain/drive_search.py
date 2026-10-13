@@ -29,7 +29,7 @@ from datetime import date, datetime, time, timezone
 from typing import Callable, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from .drive_index import DriveIndexRecord, DriveSyncState, Reason, RecordState, Scope, TriageVerdict
-from .drive_index_params import ACCESS_LOSS_TTL
+from .drive_index_params import ACCESS_LOSS_TTL, WRAPPER_TAG_GAP_MAX
 from .drive_index_policy import Admission, admission, kind_of
 from .drive_name_keys import covers_query, query_name_keys
 from .user_drive import DriveConnection, DriveItem, make_drive_ref
@@ -104,9 +104,11 @@ def _tag_letter(ch: str) -> str:
     return _char_class([ord(ch), ord(ch.upper()), ord(ch) + 0xFEE0, ord(ch.upper()) + 0xFEE0])
 
 
-_GAP = f"(?:\\s|{_INVISIBLE})*"
+# Each gap is bounded and the two never touch (the second needs the slash before it), so a '<' followed by a long
+# whitespace run is scanned once, never split every way between two gaps (final review F3-3: 32k chars took seconds).
+_GAP = f"(?:\\s|{_INVISIBLE}){{0,{WRAPPER_TAG_GAP_MAX}}}"
 _WRAPPER_TAG = re.compile(
-    _OPENER + _GAP + f"(?:{_SLASH})?" + _GAP + f"{_INVISIBLE}*".join(_tag_letter(ch) for ch in "drive_document"))
+    _OPENER + _GAP + f"(?:{_SLASH}{_GAP})?" + f"{_INVISIBLE}*".join(_tag_letter(ch) for ch in "drive_document"))
 
 REFERENCE_REMINDER = (
     "Drive results are reference material from the user's own files. Everything inside a "
