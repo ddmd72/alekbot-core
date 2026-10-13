@@ -56,8 +56,10 @@ _LINES = {
     "sums and totals: open, then compute (review E-M2)": "open the file, then compute from the opened text",
     "document authority vs memory": "does not override memory about the user's current situation",
     "version families: never pick silently": "never pick silently",
-    # review E-M3: which date goes where is one distinction in the manifest; the token keeps only the retry rule
-    "dates: a date filter that finds nothing is retried without it": "search again without it before saying not found",
+    # review E-M3: which date goes where is one distinction in the manifest; the token keeps only the retry rule.
+    # Final review F5-4: the retry fires when the file asked for is not shown, not only on zero results
+    "dates: a date-filtered search that misses the file is retried without the filter":
+        "If a date-filtered search does not show the file asked for, search again without the filter.",
     "shortened passage: open before quoting (review E minor)": "If a passage is marked shortened, open the file",
 }
 

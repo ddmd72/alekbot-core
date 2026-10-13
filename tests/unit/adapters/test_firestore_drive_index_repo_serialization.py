@@ -47,7 +47,8 @@ def full_record() -> DriveIndexRecord:
                             parties=("ACME", "Иванов"), amount="1 250.00 EUR"),
         triage_verdict=TriageVerdict.PHOTO, triage_version=1, triaged_content_version="c1",
         caption="a beach at sunset", defer_until=T + timedelta(hours=2), defer_priority=3, seen_epoch=7,
-        readme_pending=True, readme_item_id="RM1", readme_version="c7")
+        readme_pending=True, readme_item_id="RM1", readme_version="c7", chunks_refused_space="new-space/3072",
+        model_outages=2, model_read_at=T - timedelta(hours=3))
 
 
 def full_state() -> DriveSyncState:
@@ -60,7 +61,7 @@ def full_state() -> DriveSyncState:
         observed_as_of=T, access_lost_at=T, last_success_at=T, last_error=ErrorCategory.THROTTLED,
         stale_alerted=True, reconnect_notified=True, systemic_failures=2, counters={"indexed": 3},
         model_backoff_until=T + timedelta(minutes=10), model_failures=3, usage_month="2026-10", model_pages_used=40,
-        triage_images_used=12)
+        triage_images_used=12, upgrade_parked_month="2026-10")
 
 
 def stored(value):
@@ -96,7 +97,8 @@ class TestRecordSerialization:
 
     def test_read_datetimes_are_plain_utc(self):
         back = record_from_doc(stored(record_to_doc(full_record())))
-        for name in ("modified_at", "fs_modified_at", "effective_date", "dirty_since", "due_at", "attempt_started_at"):
+        for name in ("modified_at", "fs_modified_at", "effective_date", "dirty_since", "due_at", "attempt_started_at",
+                     "model_read_at"):
             value = getattr(back, name)
             assert type(value) is datetime and value.utcoffset() == timedelta(0), name
 

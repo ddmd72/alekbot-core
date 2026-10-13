@@ -74,10 +74,24 @@ async def test_every_record_query_has_a_declared_index(repo, db):
 
 
 def test_indexes_are_declared_for_the_live_collection_only():
-    # 19 composites (incl. the readable-chunk sum's, §24.6; chunk_capped's and count_unread's three, §5.4, §10.2;
-    # count_unread's three for images triaged as text, review D-M4) + 2 vector entries
-    assert len(_declared_indexes()) == 21
+    # 21 composites (incl. the readable-chunk sum's, §24.6; chunk_capped's and count_unread's three, §5.4, §10.2;
+    # count_unread's three for images triaged as text, review D-M4; the not-read-yet count's two, documents and text
+    # images, final review F5-2) + 2 vector entries
+    assert len(_declared_indexes()) == 23
     assert _declared_indexes("drive_index_records") == []   # RFC Δ22: the unprefixed collections were deleted
+
+
+async def test_the_not_read_yet_counts_have_their_composites(repo, db):
+    """count_unread(pending=True) adds `card_capped == False` to the pending class (final review F5-2): one count
+    per kind list, documents and text images, each served by a composite of exactly its equality fields."""
+    await repo.count_unread("u", {"pdf", "docx"}, {"jpg"}, pending=True)
+    queries = executed(db)
+    assert len(queries) == 2
+    declared = _declared_indexes()
+    for ops in queries:
+        assert ("where", "card_capped", "==", False) in ops, ops
+        fields = {op[1] for op in ops if op[0] == "where"}
+        assert any({path for path, _ in i} == fields for i in declared), ops
 
 
 def _deploy_commands():
@@ -96,9 +110,13 @@ def _deploy_commands():
 def test_deploy_creates_the_drive_composites_and_leaves_the_vectors_to_their_script():
     drive = [c for c in _deploy_commands() if "--collection-group=development_drive_index_records" in c]
     declared = [i for i in _declared_indexes() if not any(mode == "VECTOR" for _, mode in i)]
-    # +1 readable_chunk_total's sum, +1 chunk_capped, +3 count_unread, +3 count_unread over text images (review D-M4);
-    # the 2 vector entries: create_drive_vector_indexes.sh
-    assert len(drive) == len(declared) == 19
+    # +1 readable_chunk_total's sum, +1 chunk_capped, +3 count_unread, +3 count_unread over text images (review D-M4),
+    # +2 the not-read-yet count over documents and text images (F5-2); the 2 vector entries: create_drive_vector_indexes.sh
+    assert len(drive) == len(declared) == 21
+    not_read_yet = [c for c in drive if "--field-config=field-path=card_capped,order=ascending" in c
+                    and "--field-config=field-path=indexed_generation,order=ascending" in c]
+    assert len(not_read_yet) == 2
+    assert sum("--field-config=field-path=triage_verdict,order=ascending" in c for c in not_read_yet) == 1
     readable_sum = [c for c in drive if "--field-config=field-path=chunk_count,order=ascending" in c]
     assert len(readable_sum) == 1
     name_stream = [c for c in drive if "--field-config=field-path=name_tokens,array-config=contains" in c]
