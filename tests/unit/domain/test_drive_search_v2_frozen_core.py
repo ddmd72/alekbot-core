@@ -1,15 +1,19 @@
 """Search v2 frozen core (USER_DRIVE_INDEXING_RFC §25.13): the types, label sets, `k:` table, version constants,
 parameters and verbatim texts the plan parts are written against. Pins the surface only — no behaviour."""
+import re
+import typing
 from dataclasses import FrozenInstanceError, fields
 from datetime import date, datetime, timezone
+from pathlib import Path
 
 import pytest
 
 from src.domain import drive_index_params as P
 from src.domain import drive_search_texts as T
 from src.domain.drive_enrichment import (
-    DriveHintDoc, DriveProfile, EnrichContext, EnrichJob, HintItem, HintType, HoldReason, InitialBuild, JobState,
-    KeyValue, ModelUsageMonth, PhotoDescription, PhotoObject, ProfileDate, ProfileEntity, ProfileSource, UsageClass,
+    JOB_USAGE_CLASS, UNGROUNDED, USD_CAPS, DriveHintDoc, DriveProfile, EnrichContext, EnrichJob, HintItem, HintType,
+    HoldReason, InitialBuild, JobState, KeyValue, ModelUsageMonth, PhotoDescription, PhotoObject, ProfileDate,
+    ProfileEntity, ProfileSource, UsageClass,
 )
 from src.domain.drive_enrichment_calls import (
     HintReply, HintRequest, ModelReplyStatus, ProfileInput, ProfileLabels, ProfileReply, ProfileRequest, TriageReply,
@@ -17,19 +21,35 @@ from src.domain.drive_enrichment_calls import (
 )
 from src.domain.drive_index import (
     CURRENT_VERSIONS, KEYS_VERSION, MIGRATION_GATE_KEY, PASSAGES_VERSION, PROFILE_VERSION, SEARCH_V2_VERSIONS,
-    DriveChunk, RecordState, Scope, TriageVerdict,
+    DriveChunk, DriveIndexRecord, DriveSyncState, RecordState, Scope, TriageVerdict,
 )
 from src.domain.drive_index_lean import DriveChunkLean, DriveHintLean, DriveRecordLean
 from src.domain.drive_labels import (
     DATE_LABELS, DOC_TYPES, ENTITY_TYPES, KIND_WORDS, LIFE_DOMAINS, PHOTO_KIND_WORDS, VALUE_LABELS,
 )
-from src.domain.drive_match import Concept, KeyFamily, MatchTier, QueryConcepts, SourceClass
+from src.domain.drive_match import FAMILY_SOURCE_CLASS, Concept, KeyFamily, MatchTier, QueryConcepts, SourceClass
+from src.domain.drive_search import KIND_NAMES
 
 NOW = datetime(2026, 10, 13, tzinfo=timezone.utc)
 
 
+RFC = (Path(__file__).resolve().parents[3] / "docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md").read_text(encoding="utf-8")
+
+
 def names(cls):
     return [f.name for f in fields(cls)]
+
+
+def rfc_quote(after: str, until: str) -> str:
+    """The RFC text between two markers, line wraps joined with a space (the RFC wraps at 120 columns)."""
+    start = RFC.index(after) + len(after)
+    return re.sub(r"\s*\n\s*", " ", RFC[start:RFC.index(until, start)])
+
+
+def rfc_label_set(name: str) -> tuple:
+    match = re.search(r"`" + name + r"`(?: \(\d+\))?: `([^`]+)`", RFC)
+    assert match, name
+    return tuple(w.strip() for w in re.sub(r"\s+", " ", match.group(1)).split(","))
 
 
 class TestVersions:
@@ -65,6 +85,12 @@ class TestLabels:
             "account_number", "iban", "card_number_masked", "policy_number", "contract_number", "customer_number",
             "reference", "tax_id", "phone", "amount_total", "amount_due", "price", "other_id")
 
+    @pytest.mark.parametrize("name, value", [("DOC_TYPES", DOC_TYPES), ("LIFE_DOMAINS", LIFE_DOMAINS),
+                                             ("DATE_LABELS", DATE_LABELS), ("ENTITY_TYPES", ENTITY_TYPES),
+                                             ("VALUE_LABELS", VALUE_LABELS)])
+    def test_equal_to_the_rfc_text(self, name, value):
+        assert value == rfc_label_set(name)
+
     def test_unstable_labels_stay_out(self):
         assert "personal_record" not in DOC_TYPES and "issuer" not in ENTITY_TYPES + VALUE_LABELS
 
@@ -76,7 +102,7 @@ class TestKindTable:
         (("xlsx", "xls", "ods", "csv"), ("spreadsheet", "table", "hoja de cálculo", "таблица", "таблиця")),
         (("pptx", "ppt", "odp"), ("presentation", "slides", "presentación", "презентация", "презентація")),
         (("markdown", "text"), ("note", "text", "nota", "заметка", "нотатка")),
-        (("html",), ("web page", "página web", "веб-страница", "веб-сторінка")),
+        (("html", "mhtml"), ("web page", "página web", "веб-страница", "веб-сторінка")),
         (("eml", "msg"), ("email", "mail", "correo", "письмо", "лист")),
         (("epub",), ("book", "e-book", "libro", "книга")),
         (("video",), ("video", "vídeo", "видео", "відео")),
@@ -94,8 +120,11 @@ class TestKindTable:
 
     def test_no_other_kinds(self):
         assert set(KIND_WORDS) == {"image", "pdf", "docx", "doc", "odt", "rtf", "xlsx", "xls", "ods", "csv", "pptx",
-                                   "ppt", "odp", "markdown", "text", "html", "eml", "msg", "epub", "video", "audio",
-                                   "archive", "folder"}
+                                   "ppt", "odp", "markdown", "text", "html", "mhtml", "eml", "msg", "epub", "video",
+                                   "audio", "archive", "folder"}
+
+    def test_every_key_is_a_kind_the_policy_assigns(self):
+        assert set(KIND_WORDS) <= KIND_NAMES
 
 
 class TestEnums:
@@ -110,7 +139,8 @@ class TestEnums:
         assert [c.value for c in UsageClass] == ["reader", "triage", "profile", "passage"]
 
     def test_reply_status(self):
-        assert [s.value for s in ModelReplyStatus] == ["ok", "refused", "failed", "stopped_at_cap", "unavailable"]
+        assert [s.value for s in ModelReplyStatus] == ["ok", "refused", "failed", "invalid", "stopped_at_cap",
+                                                       "unavailable"]
 
     def test_tiers_best_first(self):
         assert [t.value for t in MatchTier] == ["about", "mentioned", "translated", "labelled", "related"]
@@ -120,8 +150,26 @@ class TestEnums:
                                                    "automatic_record"]
 
     def test_key_families(self):
-        assert [f.value for f in KeyFamily] == ["w:", "n:", "m:", "y:", "e:", "v:", "k:", "lw:", "tw:", "dw:", "lv:",
-                                                "pw:", "l:"]
+        assert [f.value for f in KeyFamily] == ["w:", "n:", "m:", "y:", "e:", "pe:", "v:", "k:", "lw:", "tw:", "dw:",
+                                                "lv:", "pw:", "l:"]
+
+    def test_family_source_classes(self):
+        """A key's class follows from its prefix alone: photo objects are `pe:`, automatic (review M3)."""
+        verified = {KeyFamily.ENTITY, KeyFamily.VALUE, KeyFamily.YEAR, KeyFamily.MONTH, KeyFamily.KIND}
+        automatic = {KeyFamily.LABEL_WORD, KeyFamily.TOPIC_WORD, KeyFamily.DOMAIN_WORD, KeyFamily.VALIDITY_WORD,
+                     KeyFamily.PHOTO_WORD, KeyFamily.PHOTO_ENTITY}
+        assert {f for f, c in FAMILY_SOURCE_CLASS.items() if c is SourceClass.VERIFIED_RECORD} == verified
+        assert {f for f, c in FAMILY_SOURCE_CLASS.items() if c is SourceClass.AUTOMATIC_RECORD} == automatic
+        assert set(FAMILY_SOURCE_CLASS) == set(KeyFamily) - {KeyFamily.WORD, KeyFamily.NUMBER, KeyFamily.LABEL}
+
+    def test_no_prefix_is_a_prefix_of_another(self):
+        values = [f.value for f in KeyFamily]
+        assert not [(a, b) for a in values for b in values if a != b and b.startswith(a)]
+
+    def test_job_usage_classes_and_caps(self):
+        assert JOB_USAGE_CLASS == {"profile": "profile", "passages": "passage"}
+        assert USD_CAPS == {"reader": P.READER_USD_PER_MONTH, "triage": P.TRIAGE_USD_PER_MONTH,
+                            "profile": P.PROFILE_USD_PER_MONTH, "passage": P.PASSAGE_USD_PER_MONTH}
 
     def test_states_compare_as_plain_strings(self):
         """Record fields hold states as `str` (§25.13.2): the enums are str-valued."""
@@ -147,16 +195,21 @@ class TestTypes:
         (ModelUsageMonth, ["reader_usd", "triage_usd", "profile_usd", "passage_usd", "fallback_usd", "calls",
                            "daily"]),
         (InitialBuild, ["allowance_usd", "spent_usd", "opened_at", "closed_at"]),
-        (DriveRecordLean, ["item_id", "parent_id", "kind", "effective_date", "about_keys", "name_tokens", "state",
+        (DriveRecordLean, ["item_id", "parent_id", "name", "kind", "effective_date", "about_keys", "name_tokens", "state",
                            "scope", "has_card", "indexed_generation", "content_hash", "valid_until"]),
         (DriveChunkLean, ["user_id", "item_id", "generation", "index", "kind"]),
         (DriveHintLean, ["user_id", "item_id", "generation", "index", "kind", "hint_keys"]),
         (QueryConcepts, ["concepts", "ignored", "cut"]),
         (Concept, ["word", "about_keys", "word_keys", "hint_keys", "is_number"]),
         (ProfileRequest, ["user_id", "account_id", "item_id", "kind", "name", "input", "previous"]),
-        (ProfileReply, ["status", "profile", "model", "usd", "fallback_used"]),
+        (ProfileReply, ["status", "profile", "model", "usd", "fallback_usd"]),
         (HintRequest, ["user_id", "account_id", "item_id", "chunks", "title", "what_it_is"]),
-        (HintReply, ["status", "items_by_index", "model", "usd", "fallback_used"]),
+        (HintReply, ["status", "items_by_index", "model", "usd", "fallback_usd", "outcome_by_index"]),
+        (ProfileInput, ["head", "tail", "headings", "child_names"]),
+        (ProfileLabels, ["doc_type", "life_domains", "valid_until"]),
+        (TriageResultV2, ["item_id", "verdict", "photo"]),
+        (TriageReply, ["status", "results", "model", "usd", "fallback_usd", "model_calls", "capped_item_ids",
+                       "refused_item_ids"]),
     ])
     def test_fields(self, cls, expected):
         assert names(cls) == expected
@@ -175,10 +228,11 @@ class TestTypes:
             profile.title = "x"  # type: ignore[misc]
 
     def test_hint_doc_and_lean_types_construct(self):
+        assert HintItem("Rome", "keyword", "en Roma").evidence_start == UNGROUNDED == -1
         item = HintItem("Rome", HintType.KEYWORD.value, "reserva en Roma", 13, 28)
         doc = DriveHintDoc("u", "i", 2, 0, "pdf", "h", (item,), ("w:rome",), PASSAGES_VERSION)
         assert doc.items[0].evidence_end - doc.items[0].evidence_start == len(item.evidence)
-        lean = DriveRecordLean("i", "p", "pdf", NOW, ("e:rome",), ("w:rome",), RecordState.INDEXED, Scope.NORMAL,
+        lean = DriveRecordLean("i", "p", "entry.pdf", "pdf", NOW, ("e:rome",), ("w:rome",), RecordState.INDEXED, Scope.NORMAL,
                                True, 2, "q:1", None)
         assert lean.state is RecordState.INDEXED
         assert DriveHintLean("u", "i", 2, 0, "pdf", ("w:rome",)).hint_keys == ("w:rome",)
@@ -194,18 +248,63 @@ class TestTypes:
         req = ProfileRequest("u", "a", "i", "pdf", "entry.pdf", ProfileInput(head="text"),
                              ProfileLabels("ticket", ("travel",), date(2026, 5, 12)))
         assert req.input.tail == "" and req.previous is not None
-        reply = ProfileReply(ModelReplyStatus.OK, None, "gpt-6-luna", 0.0008, False)
-        assert reply.status is ModelReplyStatus.OK
-        hints = HintReply(ModelReplyStatus.REFUSED, {}, "gpt-6-luna", 0.0, False)
+        reply = ProfileReply(ModelReplyStatus.OK, None, "gpt-6-luna", 0.0008)
+        assert reply.status is ModelReplyStatus.OK and reply.fallback_usd == 0.0
+        hints = HintReply(ModelReplyStatus.OK, {0: (HintItem("Rome", "keyword", "en Roma"),)}, "gpt-6-luna", 0.0004,
+                          0.0, {0: ModelReplyStatus.OK, 1: ModelReplyStatus.REFUSED})
+        assert hints.outcome_by_index[1] is ModelReplyStatus.REFUSED and 1 not in hints.items_by_index
         assert HintRequest("u", "a", "i", [(0, "text"), (1, "more")], "t", "w").chunks[1] == (1, "more")
-        assert hints.items_by_index == {}
-        triage = TriageReply((TriageResultV2("i", TriageVerdict.PHOTO, PhotoDescription("a fountain")),),
-                             "gpt-6-luna", 0.001, False)
-        assert triage.results[0].photo is not None and triage.model_calls == 0
+        triage = TriageReply(ModelReplyStatus.OK,
+                             (TriageResultV2("i", TriageVerdict.PHOTO, PhotoDescription("a fountain")),),
+                             "gpt-6-luna", 0.001, capped_item_ids=("j",))
+        assert triage.results[0].photo is not None and triage.model_calls == 0 and triage.refused_item_ids == ()
 
     def test_query_concepts_construct(self):
         concept = Concept("rome", ("e:rome",), ("w:rome",), ("w:rome",), False)
         assert QueryConcepts((concept,), ("all",), ()).concepts[0].word == "rome"
+
+
+_DT = typing.Optional[datetime]
+_STRS = typing.Tuple[str, ...]
+
+
+class TestFieldTypes:
+    """Types as §25.13.2 / §25.2.1 name them (review MINOR 15): a field cannot change type silently."""
+
+    @pytest.mark.parametrize("cls, expected", [
+        (DriveRecordLean, {"effective_date": _DT, "valid_until": _DT, "about_keys": _STRS, "name": str,
+                           "state": RecordState, "scope": Scope, "indexed_generation": typing.Optional[int]}),
+        (ProfileDate, {"label": str, "iso": date}),
+        (ProfileLabels, {"valid_until": typing.Optional[date]}),
+        (HintItem, {"evidence_start": int, "evidence_end": int}),
+        (ModelUsageMonth, {"daily": typing.Mapping[str, typing.Tuple[float, float]], "calls": int}),
+        (InitialBuild, {"opened_at": _DT, "closed_at": _DT}),
+        (EnrichContext, {"now": datetime, "caps_usd": typing.Mapping[str, float], "initial_open": bool}),
+        (ProfileReply, {"status": ModelReplyStatus, "profile": typing.Optional[DriveProfile], "fallback_usd": float}),
+        (HintReply, {"outcome_by_index": typing.Mapping[int, ModelReplyStatus]}),
+        (DriveSyncState, {"model_backoff_by_agent": typing.Mapping[str, datetime]}),
+        (DriveChunk, {"word_keys": _STRS, "keys_version": int}),
+        (DriveIndexRecord, {
+            "profile": typing.Optional[DriveProfile], "valid_until": _DT, "profile_source": typing.Optional[str],
+            "profile_input_fingerprint": typing.Optional[str], "profile_fingerprint": typing.Optional[str],
+            "profile_version": int, "profiled_content_version": str, "profile_state": str, "profile_defer_until": _DT,
+            "profile_parked_month": str, "profile_hold": typing.Optional[str], "profile_hold_version": str,
+            "profile_attempts": int, "passages_state": str, "passages_defer_until": _DT, "passages_parked_month": str,
+            "passages_hold": typing.Optional[str], "passages_hold_version": str, "passages_attempts": int,
+            "passages_generation": typing.Optional[int], "passages_next_index": int, "passages_done_at": _DT,
+            "enrich_ready": bool, "enrich_wake_at": _DT, "effective_day": str, "keys_pending": bool,
+            "keys_version": int, "keys_capped": bool, "about_keys": _STRS, "place_forms": _STRS,
+            "photo_description": str, "photo_objects": typing.Tuple[PhotoObject, ...], "photo_scene": str,
+            "visible_text": str, "readme_excerpt": str, "readme_excerpt_version": str}),
+    ])
+    def test_types(self, cls, expected):
+        hints = typing.get_type_hints(cls)
+        assert {name: hints[name] for name in expected} == expected
+
+    def test_record_v2_defaults_are_neutral(self):
+        rec = DriveIndexRecord(user_id="u", item_id="i")
+        assert (rec.profile_state, rec.passages_state) == (JobState.NONE.value, JobState.NONE.value)
+        assert rec.caption == "" and rec.lead_text == ""   # kept until P3/P5 retire or reuse them
 
 
 class TestChunkFields:
@@ -238,6 +337,19 @@ class TestParameters:
         assert (P.CARD_RENDER_MAX, P.RESULT_CHARS_MAX) == (700, 16_000)
         assert (P.WINDOW_PAD, P.WINDOW_MAX, P.WINDOW_CHARS_TOTAL_V2) == (300, 900, 5000)
         assert (P.GROUP_LINES, P.GROUP_READ_MAX, P.CONCEPT_KEYS_MAX) == (6, 1000, 30)
+
+    def test_shared_caps(self):
+        """Caps more than one part reads (review M6): §25.2.6, §25.3, §25.4.1-§25.4.4, §25.5.1."""
+        assert (P.PROFILE_ENTITIES_MAX, P.ENTITY_FORMS_MAX, P.PROFILE_KEY_VALUES_MAX, P.PROFILE_DATES_MAX,
+                P.PROFILE_TOPICS_MAX, P.PROFILE_WORD_LIST_MAX) == (12, 8, 12, 5, 8, 24)
+        assert (P.HINT_KEYWORDS_MAX, P.HINT_QUESTIONS_MAX, P.HINT_EVIDENCE_WORDS_MAX) == (12, 3, 12)
+        assert (P.PHOTO_DESCRIPTION_CHARS, P.PHOTO_OBJECTS_MAX, P.PHOTO_OBJECT_FORMS_MAX, P.PHOTO_SCENE_WORDS,
+                P.PHOTO_VISIBLE_TEXT_CHARS) == (240, 8, 6, 6, 200)
+        assert (P.PROFILE_HEAD_CHARS, P.PROFILE_TAIL_CHARS, P.PROFILE_HEADINGS_CHARS, P.PROFILE_HEADINGS_MIN_TEXT,
+                P.PROFILE_EPUB_BODY_CHARS, P.PROFILE_SHEET_ROWS) == (6000, 1500, 1500, 20_000, 3000, 20)
+        assert (P.README_EXCERPT_HEAD_CHARS, P.README_EXCERPT_TAIL_CHARS, P.README_CHILD_NAMES) == (6000, 1500, 200)
+        assert P.PHRASE_RUN_MAX == 3
+        assert (P.PROFILER_TIMEOUT_S, P.PASSAGES_TIMEOUT_S, P.TRIAGE_TIMEOUT_S) == (60, 60, 120)
 
     def test_byte_batches_fit_a_firestore_request(self):
         assert P.WRITE_BATCH_BYTES < 10 * 1024 * 1024
@@ -291,18 +403,17 @@ class TestTexts:
         footers = (T.FOOTER_EXACT, T.FOOTER_NO_CONJUNCTION, T.ABSENT_LINE, T.WITHOUT_LINE, T.WITHOUT_AT_LEAST_LINE)
         assert not any("final" in text.lower() for text in footers)
 
-    def test_manifest_texts(self):
-        assert T.DRIVE_QUERY_DESCRIPTION.startswith("search_files_in_drive: REQUIRED unless the request is filter-only")
-        assert "a time span ('last year', '2023–2024') goes in drive_date_from / drive_date_to, not in the words" in (
-            T.DRIVE_QUERY_DESCRIPTION)
-        assert T.DRIVE_QUERY_DESCRIPTION.endswith("Leave EMPTY only for filter-only requests.")
+    def test_manifest_texts_equal_the_rfc(self):
+        """Character-equal to §25.13.6 (review MINOR 15): guards code and RFC against drifting apart."""
+        assert T.DRIVE_QUERY_DESCRIPTION == rfc_quote('Manifest (D25), `drive_query`: "', '" `drive_date_from`')
+        assert T.DRIVE_DATE_FROM_DESCRIPTION == rfc_quote('`drive_date_from`: "', '" `drive_date_to`')
+        assert T.DRIVE_DATE_TO_DESCRIPTION == rfc_quote('`drive_date_to`: "', '" `drive_kind`')
         assert "document (docx, doc, odt, rtf, pdf, markdown, text)" in T.DRIVE_KIND_DESCRIPTION
-        assert T.DRIVE_DATE_FROM_DESCRIPTION == (
-            "search_files_in_drive: optional earliest date, YYYY-MM-DD, inclusive: a photo's taken date, otherwise "
-            "the date written in the document when the index found one, otherwise the file's date. Use it for a "
-            "time span the user gives.")
 
-    def test_protocol_tiers_line(self):
-        assert T.PROTOCOL_TIERS_LINE.startswith("Drive results say how each file matched.")
-        assert T.PROTOCOL_TIERS_LINE.endswith("so you can tell whether the word was phrasing or the subject.")
-        assert "'Related by meaning only' lines are guesses." in T.PROTOCOL_TIERS_LINE
+    def test_protocol_tiers_line_equals_the_rfc(self):
+        assert T.PROTOCOL_TIERS_LINE == rfc_quote('Protocol `tiers` line: "', '"\n')
+
+    def test_d29_footer_and_migration_lines_equal_the_rfc(self):
+        assert T.ABSENT_LINE.format(word="vaccination") + " " + T.WITHOUT_LINE.format(word="vaccination", count=3) == (
+            rfc_quote("A blocked concept: `", "`"))
+        assert T.MIGRATION_LINE == rfc_quote("Migration: `", "`")

@@ -36,6 +36,13 @@ VALUE_LABELS: Tuple[str, ...] = (
 
 # The `k:` table (§25.13.5): the record's kind names in en, es, fr, uk and ru, written by the keyer at index time and
 # passed through §25.2.4's forms there. Keyed by `drive_index_policy.kind_of` kinds. Index side only.
+# Decisions (recorded in §25.13.5, review MINOR 11):
+#   - a multi-word entry ("hoja de cálculo", "web page") is ONE phrase key, its tokens' form (b) joined with "_" as
+#     `e:` phrases are; never per-token keys (no `k:de`, no `k:page`); the query emits `k:` for its 1-3 token runs;
+#   - `mhtml` is a web page (the `html` row); kinds with no row (subtitles, json, code, log, data_dump, database,
+#     disk_image, executable, iwork, other) get no `k:` words;
+#   - French words are those of the table (several coincide with en/es); more is a later KEYS_VERSION bump;
+#   - photo words go to images whose verdict is `photo` only (§25.2.4's reading; owner to confirm).
 KIND_WORDS: Mapping[str, Tuple[str, ...]] = {
     "image": ("image", "picture", "imagen"),
     "pdf": ("pdf",),
@@ -53,6 +60,7 @@ KIND_WORDS: Mapping[str, Tuple[str, ...]] = {
     "markdown": ("note", "text", "nota", "заметка", "нотатка"),
     "text": ("note", "text", "nota", "заметка", "нотатка"),
     "html": ("web page", "página web", "веб-страница", "веб-сторінка"),
+    "mhtml": ("web page", "página web", "веб-страница", "веб-сторінка"),
     "eml": ("email", "mail", "correo", "письмо", "лист"),
     "msg": ("email", "mail", "correo", "письмо", "лист"),
     "epub": ("book", "e-book", "libro", "книга"),

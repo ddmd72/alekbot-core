@@ -7,12 +7,17 @@ a verbatim evidence quote (§25.4.2); a photo description is enriched triage (§
 verified against the text or shown as automatic (P5). Labels take values from `drive_labels`; states and labels are
 plain strings on the record (§25.13.2), the enums below name the allowed values.
 
+Several public classes in one module, by decision: the frozen core groups its value types by subject, as
+`drive_index` and `drive_extraction` do, so a part reads its whole contract in one file (CLAUDE.md's one-class rule
+is waived here on purpose).
+
 Public interface:
     JobState, HoldReason, ProfileSource, HintType, UsageClass, EnrichJob
     ProfileDate, ProfileEntity, KeyValue, DriveProfile
     PhotoObject, PhotoDescription
-    HintItem, DriveHintDoc
+    HintItem, DriveHintDoc, UNGROUNDED
     EnrichContext, ModelUsageMonth, InitialBuild
+    JOB_USAGE_CLASS (EnrichJob -> UsageClass), USD_CAPS (UsageClass -> monthly dollars)
 """
 from __future__ import annotations
 
@@ -21,12 +26,18 @@ from datetime import date, datetime
 from enum import Enum
 from typing import Mapping, Optional, Tuple
 
+from .drive_index_params import (
+    PASSAGE_USD_PER_MONTH, PROFILE_USD_PER_MONTH, READER_USD_PER_MONTH, TRIAGE_USD_PER_MONTH,
+)
+
 
 class JobState(str, Enum):
-    """The state of one enrichment job of a record (§25.4.5): the profile job and the passage-hint job each have one."""
+    """The state of one enrichment job of a record (§25.4.5): the profile job and the passage-hint job each have one.
+    An agent-type model backoff is NOT a job state (§25.4.6 reading, review MINOR 2): the job stays `ready` and the
+    backoff gates the enrichment queue read; `deferred` is the refresh cooldown only."""
     CURRENT = "current"       # nothing to do
     READY = "ready"           # work is due
-    DEFERRED = "deferred"     # an agent-type backoff or the cooldown: `*_defer_until`
+    DEFERRED = "deferred"     # the refresh cooldown is not over: `*_defer_until`
     PARKED = "parked"         # the month's cap and the initial build are spent, for the current version
     HELD = "held"             # a hold recorded for the current version and fingerprint (passages: generation)
     NONE = "none"             # the policy gives the kind no such job, or there is nothing readable
@@ -132,12 +143,13 @@ class PhotoDescription:
 @dataclass(frozen=True)
 class HintItem:
     """One passage keyword or question (§25.2.2): `type` is a `HintType` value; `evidence` is the verbatim quote and
-    `[evidence_start, evidence_end)` its span in the chunk text, stored by grounding (§25.4.2)."""
+    `[evidence_start, evidence_end)` its span in the chunk text, set by grounding (§25.4.2). A model reply carries
+    ungrounded items: both span ends are UNGROUNDED (-1) until `drive_hints.ground` sets them."""
     text: str
     type: str
     evidence: str
-    evidence_start: int
-    evidence_end: int
+    evidence_start: int = -1
+    evidence_end: int = -1
 
 
 @dataclass(frozen=True)
@@ -188,3 +200,16 @@ class InitialBuild:
     spent_usd: float = 0.0
     opened_at: Optional[datetime] = None
     closed_at: Optional[datetime] = None
+
+
+UNGROUNDED = -1                               # HintItem span ends before grounding
+
+# Which monthly class pays for a job (§25.4.5); the reader and triage classes have no enrichment job.
+JOB_USAGE_CLASS: Mapping[str, str] = {EnrichJob.PROFILE.value: UsageClass.PROFILE.value,
+                                      EnrichJob.PASSAGES.value: UsageClass.PASSAGE.value}
+
+# The monthly dollar cap per class (§25.4.5): `EnrichContext.caps_usd`, the planner and the Cabinet read this one map.
+USD_CAPS: Mapping[str, float] = {UsageClass.READER.value: READER_USD_PER_MONTH,
+                                 UsageClass.TRIAGE.value: TRIAGE_USD_PER_MONTH,
+                                 UsageClass.PROFILE.value: PROFILE_USD_PER_MONTH,
+                                 UsageClass.PASSAGE.value: PASSAGE_USD_PER_MONTH}

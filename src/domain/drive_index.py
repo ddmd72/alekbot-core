@@ -11,6 +11,8 @@ from datetime import datetime
 from enum import Enum, IntEnum
 from typing import Any, Mapping, Optional, Tuple
 
+from .drive_enrichment import DriveProfile, PhotoObject
+
 POLICY_VERSION = 2                            # 2: the Slice 2+4 kinds admitted (§24.1)
 CARD_VERSION = 2                              # 2: brief, caption and lead text in the card (§24.4)
 GEO_TABLE_VERSION = 1
@@ -285,6 +287,44 @@ class DriveIndexRecord:
     readme_item_id: Optional[str] = None
     readme_version: str = ""                  # the README's content_version the lead text was read from
     seen_epoch: int = 0
+    # -- Search v2 (§25.2.1, frozen in §25.13.2): neutral defaults; written from P5 on. States are JobState values,
+    # holds HoldReason values, `profile_source` a ProfileSource value. `lead_text` (above) is v2's machine-text lead.
+    profile: Optional[DriveProfile] = None
+    valid_until: Optional[datetime] = None    # verified dates[valid_until], else dates[due]: 00:00 UTC of that date
+    profile_source: Optional[str] = None
+    profile_input_fingerprint: Optional[str] = None
+    profile_fingerprint: Optional[str] = None
+    profile_version: int = 0
+    profiled_content_version: str = ""
+    profile_state: str = "none"
+    profile_defer_until: Optional[datetime] = None
+    profile_parked_month: str = ""            # "YYYY-MM"
+    profile_hold: Optional[str] = None
+    profile_hold_version: str = ""            # "<PROFILE_VERSION>:<profile_input_fingerprint>"
+    profile_attempts: int = 0
+    passages_state: str = "none"
+    passages_defer_until: Optional[datetime] = None
+    passages_parked_month: str = ""
+    passages_hold: Optional[str] = None       # only "failed"
+    passages_hold_version: str = ""           # "<PASSAGES_VERSION>:<indexed_generation>"
+    passages_attempts: int = 0
+    passages_generation: Optional[int] = None
+    passages_next_index: int = 0
+    passages_done_at: Optional[datetime] = None
+    enrich_ready: bool = False                # derived by the planner: any job `ready`
+    enrich_wake_at: Optional[datetime] = None # derived: the earliest `*_defer_until` of a `deferred` job
+    effective_day: str = ""                   # derived: effective_date as "YYYY-MM-DD" (the queue's order)
+    keys_pending: bool = False
+    keys_version: int = 0
+    keys_capped: bool = False                 # a key cap cut this record's or its chunks' keys (§25.2.6: "keys cut")
+    about_keys: Tuple[str, ...] = ()          # computed only by about_keys_of(rec) (§25.4.9)
+    place_forms: Tuple[str, ...] = ()         # the spellings of place_name its keys were made from
+    photo_description: str = ""               # enriched triage, photographs only (§25.4.3); replaces caption
+    photo_objects: Tuple[PhotoObject, ...] = ()
+    photo_scene: str = ""
+    visible_text: str = ""
+    readme_excerpt: str = ""                  # a collapsed folder's README profile input (§25.3)
+    readme_excerpt_version: str = ""          # the README content version it came from
 
     @property
     def stale(self) -> bool:
@@ -331,6 +371,9 @@ class DriveSyncState:
     usage_month: str = ""                     # "YYYY-MM" the two counters below belong to
     model_pages_used: int = 0
     triage_images_used: int = 0
+    # Search v2 (§25.4.6): one model backoff per agent type (agent type -> until); `model_backoff_until` keeps its v1
+    # meaning for the reader and triage
+    model_backoff_by_agent: Mapping[str, datetime] = field(default_factory=dict)
 
     def cards_in_space(self, embedding_space: str) -> bool:
         """The card stream answers queries embedded in `embedding_space`: no card is left in another space."""

@@ -2160,7 +2160,7 @@ fusion and the contract failed.
 | `profile_state`, `profile_defer_until`, `profile_parked_month`, `profile_hold`, `profile_hold_version`, `profile_attempts` | The profile job's state (§25.4.5): `current`, `ready`, `deferred`, `parked`, `held`, `none`; its defer time, parked month, hold reason (`refused` / `failed`) and the `PROFILE_VERSION` and fingerprint the hold or park was recorded under (`profile_hold_version` = `"<version>:<fingerprint>"`); charged failures |
 | `passages_state`, `passages_defer_until`, `passages_parked_month`, `passages_hold`, `passages_hold_version`, `passages_attempts`, `passages_generation`, `passages_next_index`, `passages_done_at` | The passage-hint job's state, same values; `passages_hold` is only `failed` (a refused chunk gets no hints, it never holds the file); the generation it is working on and the next chunk index to send (resume); when it last finished (cooldown) |
 | `enrich_ready`, `enrich_wake_at`, `effective_day` | Derived by the planner: any job `ready`; the earliest defer time of any `deferred` job; `effective_date` as a `YYYY-MM-DD` string (the queue's order) |
-| `keys_pending`, `keys_version` | Keys work due (a `KEYS_VERSION` bump, a missing key set): scheduled in the content `_works` at class 3 like `chunk_reembed_pending`, never budgeted, parked or held; the keyer version every key of the record and its readable chunks were made under |
+| `keys_pending`, `keys_version`, `keys_capped` | Keys work due (a `KEYS_VERSION` bump, a missing key set): scheduled in the content `_works` at class 3 like `chunk_reembed_pending`, never budgeted, parked or held; the keyer version every key of the record and its readable chunks were made under; a key cap cut the record's or its chunks' keys (§25.2.6, "keys cut") |
 | `about_keys` | The record's keys (§25.2.4), recomputed only by `about_keys_of(rec)` (§25.4.9) |
 | `place_forms` | The spellings of `place_name` its keys were made from (English, local, geo table v2's alternate names, the country's names, the nearest large city's), written with `place_name` |
 | `photo_description`, `photo_objects`, `photo_scene`, `visible_text` | Enriched triage (§25.4.3), photographs only; they replace `caption` |
@@ -2240,9 +2240,12 @@ stores the whole set and a query ORs it, so any shared form matches.
 - `y:` **years** — `y:YYYY` of every verified date and of `effective_date` (records); a 4-digit number from 1900 to
   2099 in a query also emits `y:`.
 - `e:` **entity phrases** — a named thing's spelling (an entity's `printed`, `name` and `forms`; the photo place's
-  `place_forms`; a photo object's names): a single-token name gets its full form set; a multi-token phrase joins each
-  token's form (b) with `_` (articles kept: phrases are built before function words are dropped), one key per script
-  variant: "Le Havre" → `e:le_havr`; "Нью-Йорке" → `e:нью_йорк`.
+  `place_forms`): a single-token name gets its full form set; a multi-token phrase joins each token's form (b) with
+  `_` (articles kept: phrases are built before function words are dropped), one key per script variant: "Le Havre" →
+  `e:le_havr`; "Нью-Йорке" → `e:нью_йорк`.
+- `pe:` **photo-object phrases** — a photo object's `name` and `forms`, built exactly as `e:` phrases; the query emits
+  `pe:` beside `e:`. A family of its own so a key's source class follows from its prefix and tiers are decided on lean
+  records (Part 0 review M3).
 - `v:` **values** — a verified key value's canonical form; a verified date's ISO form.
 - `k:` **kind** — the forms of the record's kind names in en, es, fr, uk and ru (the table in §25.13.5; "photo" words
   for images whose triage verdict is `photo`), written by the keyer at index time; a fixed table of format names, on
@@ -2257,12 +2260,12 @@ stores the whole set and a query ORs it, so any shared form matches.
   (`NAME_KEYS_VERSION` 2); trigrams and the existing variants stay; trigrams never count as coverage.
 
 **Where keys live.** `word_keys` (chunk) = `w:`, `n:`, `m:` of its text. `about_keys` (record) = `e:`, `v:`, `y:`, `m:`,
-`k:`, `lw:`, `tw:`, `dw:`, `lv:`, `pw:`, `l:`. `hint_keys` (hint document) = `w:` of grounded keywords. Which source
+`k:`, `lw:`, `tw:`, `dw:`, `lv:`, `pw:`, `pe:`, `l:`. `hint_keys` (hint document) = `w:` of grounded keywords. Which source
 gave an about key is recomputed at render time (`about_sources(rec)`, using `place_forms`); it is not stored.
 
-**Source classes** (they decide the tier, §25.5.4): **verified record** — name keys, `e:` (entities, place, photo
-objects excepted), `v:`, `y:`, `m:`, `k:`; **passage words** — `word_keys`; **translation** — `hint_keys`; **automatic
-record** — `lw:`, `tw:`, `dw:`, `lv:`, `pw:` and photo-object `e:` keys.
+**Source classes** (they decide the tier, §25.5.4): **verified record** — name keys, `e:` (entities, place), `v:`,
+`y:`, `m:`, `k:`; **passage words** — `word_keys`; **translation** — `hint_keys`; **automatic record** — `lw:`, `tw:`,
+`dw:`, `lv:`, `pw:`, `pe:` (`drive_match.FAMILY_SOURCE_CLASS`).
 
 #### 25.2.5 Firestore indexes (`config/firestore.indexes.json`, `development_` collections)
 - **Records:** `user_id + about_keys (CONTAINS) + effective_date DESC`; `user_id + kind + about_keys (CONTAINS) +
@@ -2428,7 +2431,7 @@ re-extracts every parser-decided record (all parser kinds); in the migration it 
 | `none` | `PROFILE_POLICY` gives the kind no profile (no doc2query), or the record has no readable generation and no `readme_excerpt` |
 | `held` | `profile_hold` is set **and** `profile_hold_version` equals `"<PROFILE_VERSION>:<profile_input_fingerprint>"` (passages: `passages_hold_version` = `"<PASSAGES_VERSION>:<indexed_generation>"`) |
 | `parked` | the month's cap for the class and the initial-build balance are spent, recorded under the current version (`profile_parked_month` = the month) |
-| `deferred` | an agent-type backoff, or the cooldown (`PROFILE_REFRESH_COOLDOWN` / `PASSAGE_REFRESH_COOLDOWN`) not over: `*_defer_until` |
+| `deferred` | the cooldown (`PROFILE_REFRESH_COOLDOWN` / `PASSAGE_REFRESH_COOLDOWN`) not over: `*_defer_until`. An agent-type model backoff is **not** a job state: the job stays `ready` and the backoff (`model_backoff_by_agent`) gates the enrichment queue read (§25.4.6; Part 0 review MINOR 2) |
 | `ready` | work is due: no profile, `profile_fingerprint`/`profile_version` differ from the current input fingerprint and version, a new content version; passages: `passages_version` or generation differs, or `passages_next_index` < the chunks to hint |
 | `current` | nothing to do |
 
@@ -2631,7 +2634,7 @@ passage words, translation, automatic record. A file's tier is decided by the we
 3. **By translation** (automatic): as Mentioned in, but at least one concept is covered only by the same chunk's hint
    document's `hint_keys`. Shown with the window around that keyword's stored evidence span.
 4. **Labelled** (automatic): at least one concept is covered only by automatic-record keys (`lw:`, `tw:`, `dw:`, `lv:`,
-   `pw:`, photo-object `e:`), the others by any class.
+   `pw:`, `pe:`), the others by any class.
 5. **Related by meaning only:** `meaning ≥ Z_RELATED`; or a name over the `name_match` floor that does not cover the
    query ("similar name"). At most 3 lines.
 Each file is shown once, in its best tier. One test per combination of classes is required.
@@ -2934,6 +2937,7 @@ common-word allowance (F-D); time spans to the date fields (F-E); verified and a
 | `CARD_RENDER_MAX` / `RESULT_CHARS_MAX` | 700 / 16 000 | §25.5.6 |
 | `WINDOW_PAD` / `WINDOW_MAX` / `WINDOW_CHARS_TOTAL` | 300 / 900 / 5 000 | |
 | `GROUP_LINES` / `GROUP_READ_MAX` | 6 / 1 000 | |
+| Shared caps (named in `drive_index_params`) | profile lists 12 entities × 8 forms, 12 values, 5 dates, 8 + 8 topics, word lists 24; hints 12 keywords, 3 questions, evidence 12 words; photos 240 chars, 8 objects × 6 forms, scene 6 words, visible text 200; input head 6 000, tail 1 500, headings 1 500 over 20 000, EPUB 3 000, 20 rows per sheet; README excerpt 6 000 + 1 500, 200 child names; phrase runs ≤ 3; timeouts 60 / 60 / 120 s | §25.2.6, §25.3, §25.4 (Part 0 review M6) |
 | Retired | `RRF_K`, `CONTENT_TERM_QUERIES`, `CONTENT_TERM_FETCH`, `TERM_NONSELECTIVE_FILES`, `MODEL_EXTRACT_PAGES_PER_MONTH`, `TRIAGE_IMAGES_PER_MONTH`; `K` only for filter-only listings and folder candidates; `CARD_LEAD_CHARS` only for machine text | §25.9 |
 
 ### 25.13 Appendix: frozen interfaces and the decomposition
@@ -2941,8 +2945,9 @@ The plan's **Part 0 (frozen core)** commits §25.13.1–§25.13.6 as domain type
 behaviour and `make check` green, before any parallel work.
 
 #### 25.13.1 Ports
-`DriveIndexRepository` gains (Firestore and `InMemoryDriveIndexRepository`, with parity tests on order, limits and
-cursors):
+`DriveIndexRepository` gains, as abstract methods (Firestore and `InMemoryDriveIndexRepository`, stubbed with
+`NotImplementedError` by Part 0 and implemented by P2 with parity tests on order, limits and cursors; ordering, cursor
+and date conventions in the port's docstrings):
 ```
 find_by_about_keys(user_id, keys: Sequence[str], limit: int, *, kind: Optional[str] = None,
                    date_from: Optional[datetime] = None, date_to: Optional[datetime] = None,
@@ -2951,14 +2956,17 @@ find_expiring(user_id, keys: Sequence[str], after_date: date, limit: int) -> Lis
 find_chunks_by_word_keys(user_id, keys: Sequence[str], limit: int,
                          after_item_id: Optional[str] = None) -> List[DriveChunkLean]   # item, generation, index
 get_chunk_keys(user_id, ids: Sequence[ChunkId]) -> Dict[ChunkId, Tuple[str, ...]]
-find_hints_by_keys(user_id, keys: Sequence[str], limit: int) -> List[DriveHintLean]
+find_hints_by_keys(user_id, keys: Sequence[str], limit: int,
+                   after_item_id: Optional[str] = None) -> List[DriveHintLean]                 # item, generation, index
+get_hint_keys(user_id, ids: Sequence[ChunkId]) -> Dict[ChunkId, Tuple[str, ...]]
 find_nearest_hints(user_id, vector: Sequence[float], limit: int, kind: Optional[str] = None
                    ) -> List[Tuple[DriveHintLean, float]]
 get_hints(user_id, item_id: str, generation: int) -> List[DriveHintDoc]
+get_hints_with_vectors(user_id, item_id: str, generation: int) -> List[Tuple[DriveHintDoc, List[float]]]  # keys pass
 write_hints(docs: Sequence[DriveHintDoc], vectors: Sequence[Sequence[float]]) -> None   # byte-sized batches
 delete_hints_except(user_id, item_id: str, keep_generation: Optional[int]) -> int
 delete_user_hints(user_id, limit: int) -> int
-hints_page(user_id, after: Optional[Tuple[str, int, int]], limit: int) -> List[DriveHintLean]
+hints_page(user_id, after: Optional[ChunkId], limit: int) -> List[DriveHintLean]
 enrich_queue(user_id, limit: int) -> List[DriveIndexRecord]                     # enrich_ready, effective_day DESC
 enrich_wakeups(user_id, now: datetime, limit: int) -> List[DriveIndexRecord]
 count_by_job_state(user_id, kinds: AbstractSet[str]) -> Dict[str, Dict[str, int]]   # job -> state -> count
@@ -2967,20 +2975,28 @@ get_records_lean(user_id, item_ids: Sequence[str]) -> Dict[str, DriveRecordLean]
 get_model_usage(user_id, month: str) -> ModelUsageMonth
 add_model_usage(user_id, month: str, day: str, cls: str, usd: float, fallback_usd: float, calls: int) -> None
 get_initial_build(user_id) -> InitialBuild
-spend_initial_build(user_id, usd: float, now: datetime) -> InitialBuild
+spend_initial_build(user_id, usd: float, now: datetime) -> Tuple[InitialBuild, float]   # (after, usd covered)
 close_initial_build(user_id, now: datetime) -> None
 ```
 Model ports (in `ports/`):
 ```
 DocumentProfilerPort.profile(request: ProfileRequest) -> ProfileReply
 PassageHintPort.hints(request: HintRequest) -> HintReply
-ImageTriagePort.triage(...) -> TriageReply            # v2 reply: verdict, PhotoDescription per image
+ImageTriagePort.triage(...) -> TriageReply            # v2 reply (P3 switches the port)
+ModelReplyStatus: ok | refused | failed | invalid | stopped_at_cap | unavailable   # §25.4.6 table in its docstring
 ProfileRequest(user_id, account_id, item_id, kind, name, input: ProfileInput, previous: Optional[ProfileLabels])
-ProfileReply(status: ok | refused | failed | stopped_at_cap | unavailable, profile: Optional[DriveProfile],
-             model: str, usd: float, fallback_used: bool)
+ProfileInput(head: str, tail: str, headings: Tuple[str, ...], child_names: Tuple[str, ...])
+ProfileLabels(doc_type: str, life_domains: Tuple[str, ...], valid_until: Optional[date])
+ProfileReply(status, profile: Optional[DriveProfile], model: str, usd: float, fallback_usd: float)
 HintRequest(user_id, account_id, item_id, chunks: Sequence[Tuple[int, str]], title: str, what_it_is: str)
-HintReply(status, items_by_index: Mapping[int, Sequence[HintItem]], model: str, usd: float, fallback_used: bool)
+HintReply(status, items_by_index: Mapping[int, Sequence[HintItem]], model: str, usd: float, fallback_usd: float,
+          outcome_by_index: Mapping[int, ModelReplyStatus])        # items of `ok` chunks only, kept whatever status
+TriageReply(status, results: Tuple[TriageResultV2, ...], model: str, usd: float, fallback_usd: float,
+            model_calls: int, capped_item_ids: Tuple[str, ...], refused_item_ids: Tuple[str, ...])
+TriageResultV2(item_id, verdict: TriageVerdict, photo: Optional[PhotoDescription])
 ```
+Every model port reports outages as a status, never an exception. `invalid` (charged, no backoff) is split from
+`failed` (charged, backoff), and the fallback's share is in dollars, not a flag (Part 0 review M1, M2, MINOR 7, 8).
 
 #### 25.13.2 Types (frozen dataclasses in `domain/`)
 ```
@@ -2992,7 +3008,7 @@ ProfileDate(label: str, iso: date)          ProfileEntity(name: str, type: str, 
 KeyValue(label: str, printed: str, canonical: str)
 PhotoDescription(description: str, objects: Tuple[PhotoObject, ...], scene: str, visible_text: str)
 PhotoObject(name: str, forms: Tuple[str, ...])
-HintItem(text: str, type: str, evidence: str, evidence_start: int, evidence_end: int)
+HintItem(text: str, type: str, evidence: str, evidence_start: int = -1, evidence_end: int = -1)   # -1: ungrounded
 DriveHintDoc(user_id, item_id, generation: int, index: int, kind: str, chunk_text_hash: str,
              items: Tuple[HintItem, ...], hint_keys: Tuple[str, ...], passages_version: int)
 EnrichContext(now: datetime, month_usd: Mapping[str, float], caps_usd: Mapping[str, float],
@@ -3000,7 +3016,7 @@ EnrichContext(now: datetime, month_usd: Mapping[str, float], caps_usd: Mapping[s
 ModelUsageMonth(reader_usd, triage_usd, profile_usd, passage_usd, fallback_usd: float, calls: int,
                 daily: Mapping[str, Tuple[float, float]])
 InitialBuild(allowance_usd: float, spent_usd: float, opened_at: Optional[datetime], closed_at: Optional[datetime])
-DriveRecordLean(item_id, parent_id, kind, effective_date, about_keys, name_tokens, state, scope, has_card,
+DriveRecordLean(item_id, parent_id, name, kind, effective_date, about_keys, name_tokens, state, scope, has_card,
                 indexed_generation, content_hash, valid_until)
 DriveChunkLean(user_id, item_id, generation: int, index: int, kind: str)
 DriveHintLean(user_id, item_id, generation: int, index: int, kind: str, hint_keys: Tuple[str, ...])
@@ -3008,8 +3024,13 @@ QueryConcepts(concepts: Tuple[Concept, ...], ignored: Tuple[str, ...], cut: Tupl
 Concept(word: str, about_keys: Tuple[str, ...], word_keys: Tuple[str, ...], hint_keys: Tuple[str, ...],
         is_number: bool)
 ```
-Record and chunk fields: §25.2.1, §25.2.2 (types as named there; states are `str`). `CURRENT_VERSIONS` gains
-`"keys"`, `"profile"`, `"passages"`; the migration gate tests `"keys" in applied_versions`.
+Record and chunk fields: §25.2.1, §25.2.2 (types as named there; states are `str`), added by Part 0 with neutral
+defaults and codec support (`caption` and `content_terms` stay until P3/P5 retire them), plus the sync state's
+`model_backoff_by_agent: Mapping[str, datetime]` (§25.4.6). `valid_until` is stored as 00:00 UTC of the printed date.
+The version constants are defined beside `CURRENT_VERSIONS` (`SEARCH_V2_VERSIONS`); **P5** adds `"keys"`,
+`"profile"`, `"passages"` to `CURRENT_VERSIONS` behind the migration gate (adding them earlier would start the v1
+upgrade pass); the gate tests `"keys" in applied_versions`. Shared caps and input slices are in
+`drive_index_params` (§25.12's block); `JOB_USAGE_CLASS` and `USD_CAPS` map jobs and classes to the monthly caps.
 
 #### 25.13.3 Lean projections
 Records for streams: the `DriveRecordLean` fields. Chunks for streams: `user_id`, `item_id`, `generation`, `index`,
@@ -3031,6 +3052,12 @@ presentation, slides, presentación, презентация, презентац�
 html → web page, página web, веб-страница, веб-сторінка; eml/msg → email, mail, correo, письмо, лист; epub → book,
 e-book, libro, книга; video → video, vídeo, видео, відео; audio → audio, recording, grabación, запись, запис; archive
 → archive, zip, archivo, архив, архів; folder → folder, carpeta, папка. All passed through §25.2.4's forms.
+
+Decisions (Part 0 review MINOR 11): a multi-word entry is one phrase key (tokens' form (b) joined with `_`, as `e:`),
+never per-token keys; the query emits `k:` for its 1–3 token runs. `mhtml` takes the `html` row; the kinds without a
+row (subtitles, json, code, log, data_dump, database, disk_image, executable, iwork, other) get no `k:` words. The
+French words are those of the table; more is a later `KEYS_VERSION` bump. The photo words (photo, foto, фото,
+світлина) go only to images whose verdict is `photo` (§25.2.4's reading; owner to confirm).
 
 #### 25.13.6 Verbatim texts (render, manifest, protocol)
 A complete synthetic result:
@@ -3078,8 +3105,14 @@ inside (a phrase, a number, an amount, an id). For 'everything about X' put X. A
 ('photos', 'PDF', 'spreadsheet'); a time span ('last year', '2023–2024') goes in drive_date_from / drive_date_to, not
 in the words. Leave EMPTY only for filter-only requests." `drive_date_from`: "search_files_in_drive: optional earliest
 date, YYYY-MM-DD, inclusive: a photo's taken date, otherwise the date written in the document when the index found one,
-otherwise the file's date. Use it for a time span the user gives." `drive_kind`: the v1 text with "document (docx,
-doc, odt, rtf, pdf, markdown, text)".
+otherwise the file's date. Use it for a time span the user gives." `drive_date_to`: "search_files_in_drive: optional
+latest date, YYYY-MM-DD, inclusive (the whole day counts): a photo's taken date, otherwise the date written in the
+document when the index found one, otherwise the file's date. Use it for a time span the user gives." `drive_kind`:
+the v1 text with "document (docx, doc, odt, rtf, pdf, markdown, text)".
+
+Only these strings are frozen (`drive_search_texts`): the example's lines, the D29, footer and migration lines, the
+manifest field texts and the tiers line. The other coverage parts and match sources, the card's `index:` line, the
+intent's capability description and plural forms are P6's, in the same style.
 
 Protocol `tiers` line: "Drive results say how each file matched. 'About' and 'mentioned in' are exact: the file's own
 name, details, place or text holds the words, in their spellings and word forms. 'By translation' and 'labelled' are
@@ -3133,3 +3166,11 @@ words, so you can tell whether the word was phrasing or the subject."
   `test_create_drive_vector_indexes*.py`.
 - **Model wiring:** `tests/unit/composition/test_drive_model_setup*.py`, `test_drive_model_provider_strategy.py`,
   `test_drive_model_fallback_strategy.py`; `BaseAgent` failover tests (`LLMFallbackClientError`).
+- **Part 0 scaffolds, meant to flip:** `test_drive_search_v2_frozen_core.py::TestVersions::test_v2_keys_are_not_current_yet`
+  (P5) and `TestParameters::test_v1_values_still_in_use_are_unchanged` (P3, P6);
+  `test_drive_search_v2_ports.py::TestModelPorts::test_image_triage_port_is_unchanged` (P3) and
+  `TestRepositoryV2Methods::test_both_adapters_stub_them_until_p2` (P2).
+- **Part 0 itself broke** (record and state fixtures, port contract): `test_firestore_drive_index_repo_serialization.py`
+  (both `test_fixture_sets_every_field`), `test_firestore_drive_index_codec_types.py::
+  test_state_timestamp_reads_back_as_plain_utc_datetime[model_backoff_by_agent]`,
+  `test_drive_index_repository_port.py::test_abstract_methods_are_exactly_the_contract`.

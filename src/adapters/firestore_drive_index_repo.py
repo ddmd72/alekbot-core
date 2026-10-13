@@ -33,8 +33,9 @@ Writes:
 Vectors: record queries, `get_records` and `find_nearest_cards` project the record fields, so they never load
 `card_vector`; only `card_vectors` reads it (its purpose). The kNN projection lists `card_distance` as well. Chunk
 reads likewise project the chunk fields (`chunk_distance` with the kNN); only `get_chunks_with_vectors` reads `vector`.
-The two search streams (`find_nearest_chunks`, `find_chunks_by_term`) leave out `text` and `content_terms` as well:
-a widened page is up to FETCH_MAX chunks, and windows are read by id with `get_chunks`.
+The two search streams (`find_nearest_chunks`, `find_chunks_by_term`) leave out `text`, `content_terms` and the v2
+chunk keys (`word_keys`, `keys_version`) as well: a widened page is up to FETCH_MAX chunks, and windows are read by id
+with `get_chunks`.
 Chunk reads are never fenced: the search service compares each chunk's generation with its record (§7.4).
 Errors: Firestore's transient errors (DeadlineExceeded, ServiceUnavailable, InternalServerError, Aborted,
 ResourceExhausted) and FailedPrecondition (a composite index missing or still building, logged ERROR) leave every
@@ -47,8 +48,8 @@ from __future__ import annotations
 import asyncio
 import functools
 import inspect
-from dataclasses import fields, replace
-from datetime import datetime, timezone
+from dataclasses import fields, is_dataclass, replace
+from datetime import date, datetime, timezone
 from enum import Enum
 from typing import AbstractSet, Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
@@ -63,12 +64,16 @@ from google.cloud.firestore_v1.field_path import FieldPath
 from google.cloud.firestore_v1.vector import Vector
 
 from ..config.environment import EnvironmentConfig
+from ..domain.drive_enrichment import (
+    DriveHintDoc, DriveProfile, InitialBuild, KeyValue, ModelUsageMonth, PhotoObject, ProfileDate, ProfileEntity,
+)
 from ..domain.drive_index import (
     ContentClass, DocumentBrief, DriveChunk, DriveIndexRecord, DriveIndexStoreUnavailable, DriveSyncState, EpochPhase,
     ErrorCategory, LeaseLost, Priority, Reason, RecordState, Scope, TriageVerdict, record_key,
 )
+from ..domain.drive_index_lean import ChunkId, DriveChunkLean, DriveHintLean, DriveRecordLean
 from ..domain.drive_index_params import NAME_QUERY_KEYS_MAX, RECORD_WRITE_BATCH
-from ..ports.drive_index_repository import DriveIndexRepository
+from ..ports.drive_index_repository import SEARCH_V2_PENDING, DriveIndexRepository
 from ..utils.logger import logger
 
 CARD_VECTOR = "card_vector"
@@ -86,7 +91,10 @@ RECORD_FIELDS: Tuple[str, ...] = tuple(f.name for f in fields(DriveIndexRecord))
 CHUNK_FIELDS: Tuple[str, ...] = tuple(f.name for f in fields(DriveChunk))
 # search streams (port): no text (windows read it by id) and no content_terms (up to 256 per chunk; the term stream
 # knows its term from its own query, review D-M3)
-STREAM_FIELDS: Tuple[str, ...] = tuple(name for name in CHUNK_FIELDS if name not in ("text", "content_terms"))
+# Search v2 chunk keys (§25.2.2) are not read by the v1 streams either (§25.13.3: no keys): up to 900 per chunk
+CHUNK_KEY_FIELDS: Tuple[str, ...] = ("word_keys", "keys_version")
+STREAM_FIELDS: Tuple[str, ...] = tuple(name for name in CHUNK_FIELDS
+                                       if name not in ("text", "content_terms") + CHUNK_KEY_FIELDS)
 _DOC_FIELDS: Tuple[str, ...] = tuple(f.name for f in fields(DriveSyncState) if f.name not in _FLAGS)
 STATE_FIELDS: Tuple[str, ...] = tuple(name for name in _DOC_FIELDS if name not in _LEASE)   # save_sync_state's
 
@@ -94,9 +102,12 @@ STATE_FIELDS: Tuple[str, ...] = tuple(name for name in _DOC_FIELDS if name not i
 # -- serialization ------------------------------------------------------------------------------
 
 def _plain(value: Any) -> Any:
-    """Firestore-encodable copy: enums as values, mappings as dicts, tuples as lists (recursively)."""
-    if isinstance(value, DocumentBrief):
-        return {f.name: _plain(getattr(value, f.name)) for f in fields(DocumentBrief)}
+    """Firestore-encodable copy: dataclasses (a brief, a profile, photo objects) as maps, enums as values, mappings as
+    dicts, tuples as lists (recursively), a `date` (a profile date, Firestore has no date type) as "YYYY-MM-DD"."""
+    if is_dataclass(value) and not isinstance(value, type):
+        return {f.name: _plain(getattr(value, f.name)) for f in fields(value)}
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value.isoformat()
     if isinstance(value, Enum):
         return value.value
     if isinstance(value, Mapping):
@@ -131,6 +142,36 @@ def _brief(value: Any) -> Optional[DocumentBrief]:
                          amount=value.get("amount", ""))
 
 
+def _strs(value: Any) -> Tuple[str, ...]:
+    return tuple(str(v) for v in (value or ()))
+
+
+def _photo_objects(value: Any) -> Tuple[PhotoObject, ...]:
+    return tuple(PhotoObject(name=v.get("name", ""), forms=_strs(v.get("forms"))) for v in (value or ()))
+
+
+def _profile(value: Any) -> Optional[DriveProfile]:
+    """A stored profile (§25.2.1); missing lists read as empty, so a later field added to the profile reads back."""
+    if not value:
+        return None
+    return DriveProfile(
+        title=value.get("title", ""), what_it_is=value.get("what_it_is", ""), language=value.get("language", ""),
+        doc_type=value.get("doc_type", ""), life_domains=_strs(value.get("life_domains")),
+        dates=tuple(ProfileDate(label=d.get("label", ""), iso=date.fromisoformat(d["iso"]))
+                    for d in value.get("dates") or ()),
+        entities=tuple(ProfileEntity(name=e.get("name", ""), type=e.get("type", ""), printed=e.get("printed", ""),
+                                     forms=_strs(e.get("forms"))) for e in value.get("entities") or ()),
+        key_values=tuple(KeyValue(label=k.get("label", ""), printed=k.get("printed", ""),
+                                  canonical=k.get("canonical", "")) for k in value.get("key_values") or ()),
+        topics=_strs(value.get("topics")), topics_native=_strs(value.get("topics_native")),
+        topic_words=_strs(value.get("topic_words")), label_words=_strs(value.get("label_words")),
+        domain_words=_strs(value.get("domain_words")), validity_words=_strs(value.get("validity_words")))
+
+
+def _dt_map(value: Any) -> Dict[str, datetime]:
+    return {str(k): v for k, v in ((k, _dt(v)) for k, v in (value or {}).items()) if v is not None}
+
+
 _RECORD_READERS: Dict[str, Callable[[Any], Any]] = {
     "facets": lambda v: dict(v or {}),
     "content_class": ContentClass,
@@ -143,6 +184,12 @@ _RECORD_READERS: Dict[str, Callable[[Any], Any]] = {
     "priority": _optional(int), "defer_priority": _optional(int),
     "brief": _brief,
     "triage_verdict": _optional(TriageVerdict),
+    # Search v2 (§25.2.1)
+    "profile": _profile, "photo_objects": _photo_objects,
+    "valid_until": _dt, "profile_defer_until": _dt, "passages_defer_until": _dt, "passages_done_at": _dt,
+    "enrich_wake_at": _dt,
+    "about_keys": _strs, "place_forms": _strs,
+    "passages_generation": _optional(int),
 }
 
 _STATE_READERS: Dict[str, Callable[[Any], Any]] = {
@@ -154,6 +201,7 @@ _STATE_READERS: Dict[str, Callable[[Any], Any]] = {
     "observed_as_of": _dt, "access_lost_at": _dt, "last_success_at": _dt,
     "stale_alerted": bool, "reconnect_notified": bool,
     "model_backoff_until": _dt, "model_failures": int, "model_pages_used": int, "triage_images_used": int,
+    "model_backoff_by_agent": _dt_map,
 }
 
 
@@ -194,7 +242,8 @@ def chunk_from_doc(data: Mapping[str, Any]) -> DriveChunk:
     return DriveChunk(user_id=data["user_id"], item_id=data["item_id"], generation=int(data["generation"]),
                       index=int(data["index"]), text=data.get("text", ""), char_start=int(data.get("char_start", 0)),
                       char_end=int(data.get("char_end", 0)), kind=data.get("kind", ""),
-                      content_terms=tuple(data.get("content_terms") or ()))
+                      content_terms=tuple(data.get("content_terms") or ()),
+                      word_keys=tuple(data.get("word_keys") or ()), keys_version=int(data.get("keys_version", 0)))
 
 
 def _chunks(items: Sequence[Any], size: int = RECORD_WRITE_BATCH) -> List[Sequence[Any]]:
@@ -667,7 +716,8 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
     async def get_chunks_with_vectors(self, user_id: str, item_id: str, generation: int, indexes: Sequence[int], *,
                                       text: bool = True, terms: bool = True,
                                       vectors: bool = True) -> List[Tuple[DriveChunk, List[float]]]:
-        skipped = {name for name, wanted in (("text", text), ("content_terms", terms)) if not wanted}
+        skipped = {name for name, wanted in (("text", text), ("content_terms", terms), ("word_keys", terms))
+                   if not wanted}
         paths = [name for name in CHUNK_FIELDS if name not in skipped] + ([CHUNK_VECTOR] if vectors else [])
         docs = await self._get_chunk_docs(user_id, item_id, generation, indexes, paths)
         if not vectors:
@@ -700,12 +750,92 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
                 batch.delete(ref)
             await batch.commit()
 
+    # -- Search v2 (§25.13.1): implemented by P2 -----------------------------------------------------------------
+
+    async def find_by_about_keys(self, user_id: str, keys: Sequence[str], limit: int, *, kind: Optional[str] = None,
+                                 date_from: Optional[datetime] = None, date_to: Optional[datetime] = None,
+                                 after: Optional[str] = None) -> List[DriveRecordLean]:
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def find_expiring(self, user_id: str, keys: Sequence[str], after_date: date,
+                            limit: int) -> List[DriveRecordLean]:
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def find_chunks_by_word_keys(self, user_id: str, keys: Sequence[str], limit: int,
+                                       after_item_id: Optional[str] = None) -> List[DriveChunkLean]:
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def get_chunk_keys(self, user_id: str, ids: Sequence[ChunkId]) -> Dict[ChunkId, Tuple[str, ...]]:
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def find_hints_by_keys(self, user_id: str, keys: Sequence[str], limit: int,
+                                 after_item_id: Optional[str] = None) -> List[DriveHintLean]:
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def get_hint_keys(self, user_id: str, ids: Sequence[ChunkId]) -> Dict[ChunkId, Tuple[str, ...]]:
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def find_nearest_hints(self, user_id: str, vector: Sequence[float], limit: int,
+                                 kind: Optional[str] = None) -> List[Tuple[DriveHintLean, float]]:
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def get_hints(self, user_id: str, item_id: str, generation: int) -> List[DriveHintDoc]:
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def get_hints_with_vectors(self, user_id: str, item_id: str,
+                                     generation: int) -> List[Tuple[DriveHintDoc, List[float]]]:
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def write_hints(self, docs: Sequence[DriveHintDoc], vectors: Sequence[Sequence[float]]) -> None:
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def delete_hints_except(self, user_id: str, item_id: str, keep_generation: Optional[int]) -> int:
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def delete_user_hints(self, user_id: str, limit: int) -> int:
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def hints_page(self, user_id: str, after: Optional[ChunkId], limit: int) -> List[DriveHintLean]:
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def enrich_queue(self, user_id: str, limit: int) -> List[DriveIndexRecord]:
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def enrich_wakeups(self, user_id: str, now: datetime, limit: int) -> List[DriveIndexRecord]:
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def count_by_job_state(self, user_id: str, kinds: AbstractSet[str]) -> Dict[str, Dict[str, int]]:
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def keys_pending_page(self, user_id: str, after: Optional[str], limit: int) -> List[DriveIndexRecord]:
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def get_records_lean(self, user_id: str, item_ids: Sequence[str]) -> Dict[str, DriveRecordLean]:
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def get_model_usage(self, user_id: str, month: str) -> ModelUsageMonth:
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def add_model_usage(self, user_id: str, month: str, day: str, cls: str, usd: float, fallback_usd: float,
+                              calls: int) -> None:
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def get_initial_build(self, user_id: str) -> InitialBuild:
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def spend_initial_build(self, user_id: str, usd: float, now: datetime) -> Tuple[InitialBuild, float]:
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def close_initial_build(self, user_id: str, now: datetime) -> None:
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
 
 # Transient on Firestore's side: the same call may succeed later, so it is never one file's failure (§8.2).
 _TRANSIENT = (DeadlineExceeded, ServiceUnavailable, InternalServerError, Aborted, ResourceExhausted)
 # A query whose composite index is missing or still building (final review F4-2): no file's fault, and it does not heal
 # by itself — logged as an error, and systemic for the tick like a transient error, so no file is counted for it.
 _MISSING_INDEX = (FailedPrecondition,)
+
 
 
 def _store_errors(method: Callable[..., Any]) -> Callable[..., Any]:
@@ -722,6 +852,7 @@ def _store_errors(method: Callable[..., Any]) -> Callable[..., Any]:
             # the provider's message names the index to create (the smoke check and the deploy step print it)
             raise DriveIndexStoreUnavailable(f"{method.__name__}: {type(exc).__name__}: {exc}") from exc
     return run
+
 
 
 for _name, _method in list(vars(FirestoreDriveIndexRepository).items()):

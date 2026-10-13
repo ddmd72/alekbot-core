@@ -3,10 +3,13 @@ Drive match vocabulary — key families, source classes, tiers and query concept
 (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §25.2.4, §25.5.1, §25.5.4, frozen in §25.13.2). Pure data.
 
 The functions that build keys and concepts (`drive_keys`, P1) and decide tiers (`drive_tiers`, P6) are written
-against these names.
+against these names. Several public classes in one module, by decision: one vocabulary, read together (CLAUDE.md's
+one-class rule is waived here on purpose).
 
 Public interface:
     KeyFamily                   the key prefixes (§25.2.4)
+    FAMILY_SOURCE_CLASS         about-key family -> SourceClass (name keys are verified, word keys passage words,
+                                hint keys translation: by the field that holds them, not by prefix)
     SourceClass                 what a covering key proves (§25.2.4 "Source classes")
     MatchTier                   the result tiers, best first (§25.5.4)
     Concept, QueryConcepts      `drive_keys.query_concepts(drive_query)` (§25.5.1)
@@ -15,7 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Tuple
+from typing import Mapping, Tuple
 
 
 class KeyFamily(str, Enum):
@@ -24,7 +27,8 @@ class KeyFamily(str, Enum):
     NUMBER = "n:"          # number terms (the content-terms normaliser)
     MONTH = "m:"           # m:YYYY-MM
     YEAR = "y:"            # y:YYYY
-    ENTITY = "e:"          # entity phrases; photo place forms; photo object names
+    ENTITY = "e:"          # entity phrases (profile entities) and the photo place's forms: verified
+    PHOTO_ENTITY = "pe:"   # photo object names, keyed like `e:` phrases: automatic (review M3, RFC §25.2.4)
     VALUE = "v:"           # a verified key value's canonical form; a verified date's ISO form
     KIND = "k:"            # the kind words (drive_labels.KIND_WORDS)
     LABEL_WORD = "lw:"     # profile label_words
@@ -37,12 +41,24 @@ class KeyFamily(str, Enum):
 
 class SourceClass(str, Enum):
     """The class of key that covers a concept in a file; a file's tier is set by the weakest class it needs (§25.5.4).
-    Verified record: name keys, `e:` (photo objects excepted), `v:`, `y:`, `m:`, `k:`. Passage words: `word_keys`.
-    Translation: `hint_keys`. Automatic record: `lw:`, `tw:`, `dw:`, `lv:`, `pw:` and photo-object `e:`."""
+    Verified record: name keys, `e:`, `v:`, `y:`, `m:`, `k:`. Passage words: `word_keys`. Translation: `hint_keys`.
+    Automatic record: `lw:`, `tw:`, `dw:`, `lv:`, `pw:`, `pe:`. An about key's class follows from its prefix alone, so
+    tiers are decided on lean records."""
     VERIFIED_RECORD = "verified_record"
     PASSAGE_WORDS = "passage_words"
     TRANSLATION = "translation"
     AUTOMATIC_RECORD = "automatic_record"
+
+
+# The class of a key in a record's `about_keys`, by family (§25.2.4). `l:` keys are never queried: no class.
+FAMILY_SOURCE_CLASS: Mapping[KeyFamily, SourceClass] = {
+    KeyFamily.ENTITY: SourceClass.VERIFIED_RECORD, KeyFamily.VALUE: SourceClass.VERIFIED_RECORD,
+    KeyFamily.YEAR: SourceClass.VERIFIED_RECORD, KeyFamily.MONTH: SourceClass.VERIFIED_RECORD,
+    KeyFamily.KIND: SourceClass.VERIFIED_RECORD,
+    KeyFamily.LABEL_WORD: SourceClass.AUTOMATIC_RECORD, KeyFamily.TOPIC_WORD: SourceClass.AUTOMATIC_RECORD,
+    KeyFamily.DOMAIN_WORD: SourceClass.AUTOMATIC_RECORD, KeyFamily.VALIDITY_WORD: SourceClass.AUTOMATIC_RECORD,
+    KeyFamily.PHOTO_WORD: SourceClass.AUTOMATIC_RECORD, KeyFamily.PHOTO_ENTITY: SourceClass.AUTOMATIC_RECORD,
+}
 
 
 class MatchTier(str, Enum):
@@ -57,8 +73,8 @@ class MatchTier(str, Enum):
 @dataclass(frozen=True)
 class Concept:
     """One query concept and the keys it emits per stream (§25.5.1 step 5): `about_keys` for the record stream (`e:`,
-    `k:` and the automatic families, plus number and date families for a number), `word_keys` for chunk `word_keys`,
-    `hint_keys` for hint documents. Each list holds at most `CONCEPT_KEYS_MAX` keys."""
+    `pe:`, `k:` and the automatic families, plus number and date families for a number), `word_keys` for chunk
+    `word_keys`, `hint_keys` for hint documents. Each list holds at most `CONCEPT_KEYS_MAX` keys."""
     word: str
     about_keys: Tuple[str, ...]
     word_keys: Tuple[str, ...]

@@ -1,19 +1,21 @@
 """Search v2 port surface (USER_DRIVE_INDEXING_RFC §25.13.1): the two model ports and the repository additions.
-Names, async-ness and parameters are pinned: the plan parts are written against them. The repository additions are
-not abstract until P2 implements them in both adapters; until then they raise NotImplementedError."""
+Names, async-ness, parameters and their types are pinned: the plan parts are written against them. The repository
+additions are abstract; both adapters stub them with NotImplementedError until P2 implements them."""
 import inspect
 import typing
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from unittest.mock import MagicMock
 
 import pytest
 
+from src.adapters.firestore_drive_index_repo import FirestoreDriveIndexRepository
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.domain.drive_enrichment import DriveHintDoc, InitialBuild, ModelUsageMonth
 from src.domain.drive_enrichment_calls import HintReply, HintRequest, ProfileReply, ProfileRequest
 from src.domain.drive_index import DriveIndexRecord
 from src.domain.drive_index_lean import ChunkId, DriveChunkLean, DriveHintLean, DriveRecordLean
 from src.ports.document_profiler_port import DocumentProfilerPort
-from src.ports.drive_index_repository import DriveIndexRepository
+from src.ports.drive_index_repository import SEARCH_V2_PENDING, DriveIndexRepository
 from src.ports.image_triage_port import ImageTriagePort
 from src.ports.passage_hint_port import PassageHintPort
 
@@ -52,9 +54,11 @@ _V2_METHODS = {
     "find_expiring": (["user_id", "keys", "after_date", "limit"], {}),
     "find_chunks_by_word_keys": (["user_id", "keys", "limit", "after_item_id"], {"after_item_id": None}),
     "get_chunk_keys": (["user_id", "ids"], {}),
-    "find_hints_by_keys": (["user_id", "keys", "limit"], {}),
+    "find_hints_by_keys": (["user_id", "keys", "limit", "after_item_id"], {"after_item_id": None}),
+    "get_hint_keys": (["user_id", "ids"], {}),
     "find_nearest_hints": (["user_id", "vector", "limit", "kind"], {"kind": None}),
     "get_hints": (["user_id", "item_id", "generation"], {}),
+    "get_hints_with_vectors": (["user_id", "item_id", "generation"], {}),
     "write_hints": (["docs", "vectors"], {}),
     "delete_hints_except": (["user_id", "item_id", "keep_generation"], {}),
     "delete_user_hints": (["user_id", "limit"], {}),
@@ -77,8 +81,10 @@ _RETURNS = {
     "find_chunks_by_word_keys": typing.List[DriveChunkLean],
     "get_chunk_keys": typing.Dict[ChunkId, typing.Tuple[str, ...]],
     "find_hints_by_keys": typing.List[DriveHintLean],
+    "get_hint_keys": typing.Dict[ChunkId, typing.Tuple[str, ...]],
     "find_nearest_hints": typing.List[typing.Tuple[DriveHintLean, float]],
     "get_hints": typing.List[DriveHintDoc],
+    "get_hints_with_vectors": typing.List[typing.Tuple[DriveHintDoc, typing.List[float]]],
     "write_hints": type(None),
     "delete_hints_except": int,
     "delete_user_hints": int,
@@ -91,8 +97,26 @@ _RETURNS = {
     "get_model_usage": ModelUsageMonth,
     "add_model_usage": type(None),
     "get_initial_build": InitialBuild,
-    "spend_initial_build": InitialBuild,
+    "spend_initial_build": typing.Tuple[InitialBuild, float],
     "close_initial_build": type(None),
+}
+
+
+_SEQ = typing.Sequence[str]
+_PARAM_TYPES = {   # parameter types the parts rely on (review MINOR 15)
+    "find_by_about_keys": {"keys": _SEQ, "limit": int, "kind": typing.Optional[str],
+                           "date_from": typing.Optional[datetime], "after": typing.Optional[str]},
+    "find_expiring": {"after_date": date},
+    "get_chunk_keys": {"ids": typing.Sequence[ChunkId]},
+    "get_hint_keys": {"ids": typing.Sequence[ChunkId]},
+    "find_nearest_hints": {"vector": typing.Sequence[float]},
+    "write_hints": {"docs": typing.Sequence[DriveHintDoc], "vectors": typing.Sequence[typing.Sequence[float]]},
+    "delete_hints_except": {"keep_generation": typing.Optional[int]},
+    "hints_page": {"after": typing.Optional[ChunkId]},
+    "enrich_wakeups": {"now": datetime},
+    "count_by_job_state": {"kinds": typing.AbstractSet[str]},
+    "add_model_usage": {"month": str, "day": str, "cls": str, "usd": float, "fallback_usd": float, "calls": int},
+    "spend_initial_build": {"usd": float, "now": datetime},
 }
 
 
@@ -102,19 +126,23 @@ class TestRepositoryV2Methods:
         method = getattr(DriveIndexRepository, name)
         assert inspect.iscoroutinefunction(method)
         assert params(DriveIndexRepository, name) == _V2_METHODS[name]
-        assert typing.get_type_hints(method)["return"] == _RETURNS[name]
+        hints = typing.get_type_hints(method)
+        assert hints["return"] == _RETURNS[name]
+        assert {p: hints[p] for p in _PARAM_TYPES.get(name, {})} == _PARAM_TYPES.get(name, {})
 
     def test_about_query_filters_are_keyword_only(self):
         signature = inspect.signature(DriveIndexRepository.find_by_about_keys)
         assert all(signature.parameters[p].kind is inspect.Parameter.KEYWORD_ONLY
                    for p in ("kind", "date_from", "date_to", "after"))
 
-    def test_not_abstract_until_p2(self):
-        assert not set(_V2_METHODS) & set(DriveIndexRepository.__abstractmethods__)
+    def test_abstract(self):
+        """An adapter that forgets one cannot be instantiated (review MINOR 13)."""
+        assert set(_V2_METHODS) <= set(DriveIndexRepository.__abstractmethods__)
 
-    async def test_an_adapter_without_them_raises_not_implemented(self):
-        repo = InMemoryDriveIndexRepository()
-        with pytest.raises(NotImplementedError, match="Search v2 P2"):
-            await repo.find_by_about_keys("u", ["e:rome"], 10)
-        with pytest.raises(NotImplementedError, match="Search v2 P2"):
-            await repo.get_initial_build("u")
+    async def test_both_adapters_stub_them_until_p2(self, mock_env_config):
+        """Scaffold: P2 replaces the stubs (listed in §25.13.8)."""
+        for repo in (InMemoryDriveIndexRepository(), FirestoreDriveIndexRepository(MagicMock(), mock_env_config)):
+            with pytest.raises(NotImplementedError, match=SEARCH_V2_PENDING):
+                await repo.find_by_about_keys("u", ["e:rome"], 10)
+            with pytest.raises(NotImplementedError, match=SEARCH_V2_PENDING):
+                await repo.get_initial_build("u")
