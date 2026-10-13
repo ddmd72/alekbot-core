@@ -194,6 +194,7 @@ def test_tokens_split_like_name_keys_except_case_and_apostrophe():
         assert [t for t, _, _ in token_spans(text)] == _tokens(text), text
     assert [t for t, _, _ in token_spans("myFileName v2")] == ["myfilename", "v", "2"]
     assert [t for t, _, _ in token_spans("Пётр сім'я")] == ["петр", "сімʼя"]
+    assert [t for t, _, _ in token_spans("Пётр's ʼдім")] == ["петр", "s", "дім"]   # a Latin ' still separates
 
 
 def test_token_spans_point_into_the_original_text():

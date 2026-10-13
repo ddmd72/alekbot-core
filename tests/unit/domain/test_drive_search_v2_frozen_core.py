@@ -99,24 +99,34 @@ class TestKindTable:
     @pytest.mark.parametrize("kinds, words", [
         (("pdf",), ("pdf",)),
         (("docx", "doc", "odt", "rtf"), ("document", "documento", "документ")),
-        (("xlsx", "xls", "ods", "csv"), ("spreadsheet", "table", "hoja de cálculo", "таблица", "таблиця")),
-        (("pptx", "ppt", "odp"), ("presentation", "slides", "presentación", "презентация", "презентація")),
-        (("markdown", "text"), ("note", "text", "nota", "заметка", "нотатка")),
-        (("html", "mhtml"), ("web page", "página web", "веб-страница", "веб-сторінка")),
-        (("eml", "msg"), ("email", "mail", "correo", "письмо", "лист")),
-        (("epub",), ("book", "e-book", "libro", "книга")),
-        (("video",), ("video", "vídeo", "видео", "відео")),
-        (("audio",), ("audio", "recording", "grabación", "запись", "запис")),
+        (("xlsx", "xls", "ods", "csv"), ("spreadsheet", "table", "hoja de cálculo", "tableur", "таблица", "таблиця")),
+        (("pptx", "ppt", "odp"), ("presentation", "slides", "presentación", "présentation", "презентация",
+                                  "презентація")),
+        (("markdown", "text"), ("note", "text", "nota", "texte", "заметка", "нотатка")),
+        (("html", "mhtml"), ("web page", "página web", "page web", "веб-страница", "веб-сторінка")),
+        (("eml", "msg"), ("email", "mail", "correo", "courriel", "письмо", "лист")),
+        (("epub",), ("book", "e-book", "libro", "livre", "книга")),
+        (("video",), ("video", "vídeo", "vidéo", "видео", "відео")),
+        (("audio",), ("audio", "recording", "grabación", "enregistrement", "аудио", "аудіо", "аудиозапись",
+                      "аудіозапис")),
         (("archive",), ("archive", "zip", "archivo", "архив", "архів")),
-        (("folder",), ("folder", "carpeta", "папка")),
+        (("folder",), ("folder", "carpeta", "dossier", "папка")),
     ])
     def test_rows(self, kinds, words):
+        """§25.13.5 as revised by the P1 review (M7 + French words, KEYS_VERSION 2)."""
         for kind in kinds:
             assert KIND_WORDS[kind] == words
 
     def test_image_words_and_photo_words(self):
-        assert set(KIND_WORDS["image"]) == {"image", "picture", "imagen"}
-        assert PHOTO_KIND_WORDS == ("photo", "foto", "фото", "світлина")
+        """P1 review M7: the usual ru/uk/es/fr image and photo words."""
+        assert KIND_WORDS["image"] == ("image", "picture", "imagen", "изображение", "зображення", "картинка",
+                                       "illustration")
+        assert PHOTO_KIND_WORDS == ("photo", "foto", "фото", "світлина", "photograph", "photographie", "fotografía",
+                                    "fotografia", "фотография", "фотографія", "снимок", "знімок", "фотка")
+
+    def test_audio_row_has_no_bare_record_word(self):
+        """P1 review m3: the bare "запись"/"запис" stem covered every "записи", so the row says "аудиозапись"."""
+        assert not {"запись", "запис"} & set(KIND_WORDS["audio"])
 
     def test_no_other_kinds(self):
         assert set(KIND_WORDS) == {"image", "pdf", "docx", "doc", "odt", "rtf", "xlsx", "xls", "ods", "csv", "pptx",
@@ -150,17 +160,32 @@ class TestEnums:
                                                    "automatic_record"]
 
     def test_key_families(self):
-        assert [f.value for f in KeyFamily] == ["w:", "n:", "m:", "y:", "e:", "pe:", "v:", "k:", "lw:", "tw:", "dw:",
-                                                "lv:", "pw:", "l:"]
+        assert [f.value for f in KeyFamily] == ["w:", "x:", "n:", "m:", "y:", "e:", "ex:", "pe:", "v:", "k:", "lw:",
+                                                "tw:", "dw:", "lv:", "pw:", "pn:", "l:"]
 
     def test_family_source_classes(self):
-        """A key's class follows from its prefix alone: photo objects are `pe:`, automatic (review M3)."""
+        """A key's class follows from its prefix alone: photo objects are `pe:` and photo numbers `pn:`, automatic
+        (review M3); an entity skeleton `ex:` is a translation, never exact (P1 review M8)."""
         verified = {KeyFamily.ENTITY, KeyFamily.VALUE, KeyFamily.YEAR, KeyFamily.MONTH, KeyFamily.KIND}
         automatic = {KeyFamily.LABEL_WORD, KeyFamily.TOPIC_WORD, KeyFamily.DOMAIN_WORD, KeyFamily.VALIDITY_WORD,
-                     KeyFamily.PHOTO_WORD, KeyFamily.PHOTO_ENTITY}
+                     KeyFamily.PHOTO_WORD, KeyFamily.PHOTO_ENTITY, KeyFamily.PHOTO_NUMBER}
+        translation = {KeyFamily.ENTITY_TRANSLIT}
         assert {f for f, c in FAMILY_SOURCE_CLASS.items() if c is SourceClass.VERIFIED_RECORD} == verified
         assert {f for f, c in FAMILY_SOURCE_CLASS.items() if c is SourceClass.AUTOMATIC_RECORD} == automatic
-        assert set(FAMILY_SOURCE_CLASS) == set(KeyFamily) - {KeyFamily.WORD, KeyFamily.NUMBER, KeyFamily.LABEL}
+        assert {f for f, c in FAMILY_SOURCE_CLASS.items() if c is SourceClass.TRANSLATION} == translation
+        assert not {f for f, c in FAMILY_SOURCE_CLASS.items() if c is SourceClass.PASSAGE_WORDS}
+        # `x:` lives in chunks and names only (never an about key); `w:`/`n:` are not record families; `l:` is never
+        # queried.
+        assert set(FAMILY_SOURCE_CLASS) == set(KeyFamily) - {KeyFamily.WORD, KeyFamily.TRANSLIT, KeyFamily.NUMBER,
+                                                             KeyFamily.LABEL}
+
+    def test_skeletons_are_translations_wherever_they_live(self):
+        """P1 review M8: a transliteration-only match is "By translation", never exact, in chunks and names too."""
+        from src.domain.drive_keys import source_class_of_name_key, source_class_of_word_key
+        assert source_class_of_word_key("x:barselon") is SourceClass.TRANSLATION
+        assert source_class_of_name_key("x:barselon") is SourceClass.TRANSLATION
+        assert source_class_of_word_key("w:barcelona") is SourceClass.PASSAGE_WORDS
+        assert source_class_of_name_key("w:barcelona") is SourceClass.VERIFIED_RECORD
 
     def test_no_prefix_is_a_prefix_of_another(self):
         values = [f.value for f in KeyFamily]
@@ -326,7 +351,7 @@ class TestParameters:
                 P.PASSAGE_USD_PER_MONTH) == (4, 3, 4, 20)
         assert (P.INITIAL_BUILD_USD, P.FALLBACK_ALERT_SHARE) == (40, 0.5)
         assert (P.ENRICH_SHARE, P.ENRICH_IN_FLIGHT, P.PASSAGE_IN_FLIGHT, P.ENRICH_FILE_BUDGET_S) == (0.4, 3, 2, 300)
-        assert (P.WORD_KEYS_PER_CHUNK, P.HINT_KEYS_PER_CHUNK, P.ABOUT_KEYS_PER_RECORD) == (900, 60, 600)
+        assert (P.WORD_KEYS_PER_CHUNK, P.HINT_KEYS_PER_CHUNK, P.ABOUT_KEYS_PER_RECORD) == (1500, 60, 600)  # P1 B2
         assert (P.WRITE_BATCH_BYTES, P.README_SCAN_CHILDREN, P.MAX_CONCEPTS) == (6_000_000, 1000, 8)
         assert (P.ABOUT_FETCH, P.WORD_FETCH, P.HINT_FETCH, P.WORD_FILES_MAX) == (500, 300, 300, 60)
         assert (P.CARD_FETCH, P.CHUNK_FETCH) == (50, 300)
