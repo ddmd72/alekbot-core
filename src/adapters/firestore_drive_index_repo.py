@@ -36,18 +36,25 @@ reads likewise project the chunk fields (`chunk_distance` with the kNN); only `g
 The two search streams (`find_nearest_chunks`, `find_chunks_by_term`) leave out `text` and `content_terms` as well:
 a widened page is up to FETCH_MAX chunks, and windows are read by id with `get_chunks`.
 Chunk reads are never fenced: the search service compares each chunk's generation with its record (§7.4).
+Errors: Firestore's transient errors (DeadlineExceeded, ServiceUnavailable, InternalServerError, Aborted,
+ResourceExhausted) leave every public method as DriveIndexStoreUnavailable, which the tick treats as systemic (§8.2);
+any other error keeps its type.
 Datetimes come back as plain tz-aware UTC datetimes, never DatetimeWithNanoseconds (see
 firestore_oauth_credentials_adapter.py: `.replace()` on one breaks write-back).
 """
 from __future__ import annotations
 
 import asyncio
+import functools
+import inspect
 from dataclasses import fields, replace
 from datetime import datetime, timezone
 from enum import Enum
 from typing import AbstractSet, Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
-from google.api_core.exceptions import AlreadyExists, NotFound
+from google.api_core.exceptions import (
+    Aborted, AlreadyExists, DeadlineExceeded, InternalServerError, NotFound, ResourceExhausted, ServiceUnavailable,
+)
 from google.cloud import firestore
 from google.cloud.firestore import FieldFilter
 from google.cloud.firestore_v1.base_vector_query import DistanceMeasure
@@ -56,8 +63,8 @@ from google.cloud.firestore_v1.vector import Vector
 
 from ..config.environment import EnvironmentConfig
 from ..domain.drive_index import (
-    ContentClass, DocumentBrief, DriveChunk, DriveIndexRecord, DriveSyncState, EpochPhase, ErrorCategory, LeaseLost,
-    Priority, Reason, RecordState, Scope, TriageVerdict, record_key,
+    ContentClass, DocumentBrief, DriveChunk, DriveIndexRecord, DriveIndexStoreUnavailable, DriveSyncState, EpochPhase,
+    ErrorCategory, LeaseLost, Priority, Reason, RecordState, Scope, TriageVerdict, record_key,
 )
 from ..domain.drive_index_params import NAME_QUERY_KEYS_MAX, RECORD_WRITE_BATCH
 from ..ports.drive_index_repository import DriveIndexRepository
@@ -669,3 +676,23 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
             for ref in part:
                 batch.delete(ref)
             await batch.commit()
+
+
+# Transient on Firestore's side: the same call may succeed later, so it is never one file's failure (§8.2).
+_TRANSIENT = (DeadlineExceeded, ServiceUnavailable, InternalServerError, Aborted, ResourceExhausted)
+
+
+def _store_errors(method: Callable[..., Any]) -> Callable[..., Any]:
+    @functools.wraps(method)
+    async def run(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return await method(*args, **kwargs)
+        except _TRANSIENT as exc:
+            logger.warning(f"[DriveIndex] index store {method.__name__} failed: {type(exc).__name__}: {exc}")
+            raise DriveIndexStoreUnavailable(f"{method.__name__}: {type(exc).__name__}") from exc
+    return run
+
+
+for _name, _method in list(vars(FirestoreDriveIndexRepository).items()):
+    if not _name.startswith("_") and inspect.iscoroutinefunction(_method):
+        setattr(FirestoreDriveIndexRepository, _name, _store_errors(_method))
