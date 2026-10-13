@@ -3,7 +3,10 @@ pages a file's windows answered are counted against the month, and the outage th
 backoff. Resetting it with the usage let a dense PDF re-read its finished windows every base backoff."""
 import pytest
 
+from src.domain.drive_enrichment import PhotoDescription
+from src.domain.drive_enrichment_calls import ModelReplyStatus, TriageReply, TriageResultV2
 from src.domain.drive_extraction import DriveModelUnavailable, ExtractionOutcome, ExtractionStatus
+from src.domain.drive_index import TriageVerdict
 from src.domain.drive_index_params import MODEL_BACKOFF_BASE_S
 
 from .drive_content_world import ContentWorld, admitted  # noqa: F401  (fixture)
@@ -40,10 +43,14 @@ async def test_a_triage_outage_after_partial_usage_keeps_doubling():
     w = ContentWorld()
 
     async def partial(user_id, account_id, images):
-        raise DriveModelUnavailable("429 on the second half", images_sent=1, model_calls=1)
+        # triage v2 (§25.13.1): the outage is the reply's status; the first image was answered before it
+        first = TriageResultV2(item_id=images[0].item_id, verdict=TriageVerdict.PHOTO,
+                               photo=PhotoDescription(description="a photo"))
+        return TriageReply(status=ModelReplyStatus.UNAVAILABLE, results=(first,), model="m", usd=0.0, model_calls=1)
 
     w.triage.triage = partial
-    w.add_image("p.jpg")
+    for n in range(3):   # one answered per outage, so the second tick still has an image to triage
+        w.add_image(f"p{n}.jpg")
     await w.settle()
     w.clock.advance(MODEL_BACKOFF_BASE_S)
     await w.settle()

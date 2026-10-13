@@ -12,6 +12,7 @@ from src.agents.drive_document_reader_agent import AGENT_TYPE as READER_TYPE, Dr
 from src.agents.drive_image_triage_agent import AGENT_TYPE as TRIAGE_TYPE, DriveImageTriageAgent, TriageInput
 from src.domain.agent import AgentConfig
 from src.domain.billing import calculate_cost
+from src.domain.drive_enrichment import PhotoDescription
 from src.domain.drive_extraction import DriveModelUnavailable
 from src.domain.drive_index import TriageVerdict
 from src.domain.exceptions import (
@@ -89,8 +90,10 @@ async def _read(agent):
 
 _IMAGES = [TriageInput(index=1, data=b"\xff\xd8\xff", mime_type="image/jpeg", camera_prior=True),
            TriageInput(index=2, data=b"\x89PNG", mime_type="image/png", camera_prior=False)]
-_ANSWER = {"images": [{"index": 1, "verdict": "photo", "caption": "a beach"},
-                      {"index": 2, "verdict": "text", "caption": ""}]}
+_ANSWER = {"images": [{"index": 1, "verdict": "photo", "description": "a beach", "objects": [], "scene": "",
+                       "visible_text": ""},
+                      {"index": 2, "verdict": "text", "description": "", "objects": [], "scene": "",
+                       "visible_text": ""}]}
 
 
 @pytest.mark.parametrize("cause", [LLMUnavailableError("503", http_status=503),
@@ -116,8 +119,11 @@ async def test_the_failover_is_billed_at_gemini_flash_prices():
 async def test_a_triage_batch_fails_over_to_gemini_flash_with_its_images():
     agent, openai, gemini = _triage([LLMUnavailableError("503", http_status=503)], [reply(_ANSWER)])
     out = await agent.classify(_IMAGES, account_id="acc-1")
-    assert out.verdicts == {1: (TriageVerdict.PHOTO, "a beach"), 2: (TriageVerdict.TEXT, "")}
+    assert out.results == {1: (TriageVerdict.PHOTO, PhotoDescription(description="a beach")),
+                           2: (TriageVerdict.TEXT, None)}
     assert gemini.requests[0].model_name == "gemini-3.8-flash"
+    # triage v2 replies name the model that served and the fallback's share in dollars (§25.4.4, §25.13.1)
+    assert out.model == "gemini-3.8-flash" and out.fallback_usd == pytest.approx(out.usd) and out.usd > 0
     files = [p.file_data["mime_type"] for p in gemini.requests[0].messages[0].parts if p.file_data]
     assert files == ["image/jpeg", "image/png"]
 
@@ -163,10 +169,13 @@ async def test_a_triage_outage_on_both_is_a_model_outage():
         await agent.classify(_IMAGES, account_id="acc-1")
 
 
-async def test_a_gemini_refusal_on_failover_is_read_as_a_refusal_of_the_input():
-    """Recorded residual: a 400 the fallback raises is not wrapped by the base layer, so it is sorted like the
-    primary's own 400 (a refusal of this input). The schema and inline-bytes wire tests are what keep a systematic
-    Gemini 400 from happening; this test pins the behaviour so a change to it is a decision."""
+async def test_a_gemini_refusal_on_failover_is_a_charged_outage_not_a_refusal_of_the_input():
+    """The decision this test used to pin was taken (USER_DRIVE_INDEXING_RFC §25.4.4 N7, §25.4.6): the base layer
+    wraps a 400 the fallback raises in LLMFallbackClientError, and the drive reads it as a charged attempt retried on
+    the primary after the backoff — never as the primary's refusal of this input (the same bytes may be fine on
+    the primary)."""
     agent, _, _ = _reader([LLMUnavailableError("503", http_status=503)], [LLMClientError("bad", http_status=400)])
-    with pytest.raises(DriveInputRefused):
+    with pytest.raises(DriveModelUnavailable) as caught:
         await _read(agent)
+    assert caught.value.charges_file is True
+    assert not isinstance(caught.value, DriveInputRefused)

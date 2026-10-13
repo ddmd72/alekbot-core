@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import pytest
 
 from src.domain.drive_card import card_text
-from src.domain.drive_extraction import TriageBatchOutcome
+from src.domain.drive_enrichment_calls import ModelReplyStatus, TriageReply
 from src.domain.drive_index import Priority, Reason, RecordState, TriageVerdict
 from src.domain.drive_index_params import MAX_ATTEMPTS, QUIET, RETRY_CAP, TRIAGE_BATCH, TRIAGE_IMAGES_PER_MONTH, TRIAGE_THUMBNAIL_SIZE
 from src.domain.user_drive import DriveAccessDenied
@@ -94,11 +94,12 @@ async def test_a_thumbnail_error_backs_off_then_fails(w):
 
 
 async def test_a_missing_result_is_a_per_file_failure(w):
+    """An image the reply leaves unsettled (no result, not capped, not refused: triage v2, §25.13.1) is retried."""
     img = w.add_image("a.jpg")
 
     async def silent(user_id, account_id, images):
         w.triage.calls.append(list(images))
-        return TriageBatchOutcome(results=(), model_calls=1)
+        return TriageReply(status=ModelReplyStatus.INVALID, results=(), model="m", usd=0.0, model_calls=1)
     w.triage.triage = silent
     await w.settle()
     rec = w.rec(img)
