@@ -1557,6 +1557,13 @@ studies on the live index (private, `scripts/memory/`). Designed in §25.
   related tier was rejected for the same reason (counts on negatives invite crawling). The same rev adds topic and
   life-area words in four languages at index time and an allowance for words held by more than 30 % of the drive
   (§25.5.4), both inside D28.
+- **D30 No migration of v1 indexes: v2 starts from an empty index (owner, 2026-10-13).** The rollout pauses the queue,
+  deploys v2, purges every user's v1 index and re-indexes from scratch; nothing in v2 reads, upgrades or enriches a v1
+  record. *Consequences:* v2 code carries no v1→v2 upgrade path. The migration gate shrinks to a guard: a sync state
+  that has not been rebuilt under v2 runs no tick work and raises an ops alert, so a forgotten rebuild cannot bill v1
+  records. The rollback is the same in reverse: the tag plus a from-scratch v1 rebuild, with the v1 `content_terms`
+  indexes redeployed first if they were dropped. OQ-V9 is closed by this decision. The upgrade pass stays, for v2→v2.x
+  version bumps over stored text.
 
 ---
 
@@ -2904,7 +2911,7 @@ common-word allowance (F-D); time spans to the date fields (F-E); verified and a
   by an index-time document frequency, or the §14 full-text seam (per-user SQLite FTS5) for body words.
 - **OQ-V6 The long-document correction.** *Recommend:* start with §25.5.3's and tune it on the scale test.
 - **OQ-V8 HTML, e-mail and e-books in the `document` family.** *Recommend:* not now.
-- **OQ-V9 Migration without a rebuild.** *Recommend:* keep the rebuild (D24); reconsider if several large drives exist.
+- **OQ-V9 Migration without a rebuild.** *Closed by D30:* no migration; every user is re-indexed from scratch.
 - **OQ-V10 Profiles of the bot's own reports.** *Recommend:* yes; a narration preamble is a parser@2 follow-up.
 - Decided and closed: OQ-V4 (D27), OQ-V7 and OQ-V11 (D28, D29).
 - **Deferred extension, not v2 scope (D28):** a flash-lite key call on a weak fast pass only, never per search, never
