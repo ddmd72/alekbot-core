@@ -250,6 +250,12 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
                                   kind: Optional[str] = None) -> List[DriveChunk]:
         return [c for c, _ in self._user_chunks(user_id, kind) if term in c.content_terms][:limit]
 
+    async def find_next_file_with_term(self, user_id: str, term: str, after_item_id: str,
+                                       kind: Optional[str] = None) -> Optional[DriveChunk]:
+        later = [c for c, _ in self._user_chunks(user_id, kind)
+                 if c.item_id > after_item_id and term in c.content_terms]
+        return min(later, key=lambda c: (c.item_id, c.generation, c.index), default=None)
+
     async def get_chunks(self, user_id: str, item_id: str, generation: int,
                          indexes: Sequence[int]) -> List[DriveChunk]:
         return [self.chunks[(user_id, item_id, generation, i)][0] for i in sorted(set(indexes))
