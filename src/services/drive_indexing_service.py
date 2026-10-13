@@ -33,6 +33,7 @@ from ..domain import drive_index_policy as policy
 from ..domain.drive_card import card_eligible, card_hash, card_text, repository_root, structurally_card_eligible
 from ..domain.drive_chunker import chunk_text
 from ..domain.drive_content_terms import content_terms
+from ..domain.drive_enrichment_calls import ModelReplyStatus, TriageResultV2
 from ..domain.drive_extraction import (
     PARSER, READER, DriveModelUnavailable, ExtractionOutcome, ExtractionRequest, ExtractionStatus, TriageImage,
     TriageResult, chain_for, model_route,
@@ -40,6 +41,7 @@ from ..domain.drive_extraction import (
 from ..domain.drive_index import (
     CURRENT_VERSIONS, DriveChange, DriveChanges, DriveChunk, DriveIndexRecord, DriveIndexStoreUnavailable,
     DriveSyncState, EpochPhase, ErrorCategory, FolderProbe, LeaseLost, Nudge, Priority, Reason, RecordState, Scope,
+    TriageVerdict,
 )
 from ..domain.drive_index_params import (
     CASCADE_OPS_PER_TICK, EMBED_FILE_BUDGET_S, EMBED_IN_FLIGHT, ITEM_CALLS_PER_TICK, LEASE_MARGIN, MAINTENANCE_SHARE,
@@ -1601,25 +1603,33 @@ class DriveIndexingService:
             waiting[rec.item_id] = rec
         if images:
             try:
-                batch_outcome = await port.triage(user_id, self._account_ids.get(user_id, ""), images)
-            except DriveModelUnavailable as exc:
-                logger.warning(f"[DriveIndex] triage unavailable for {user_id[:8]}: {exc}; model work deferred")
-                _count_triage(models, summary, now, calls=exc.model_calls, cost=exc.model_cost,
-                              images=exc.images_sent, outage=True)
-                models.outage(now)   # after the usage, which leaves the backoff to this outage (C-M1, T-M2)
-                writes.extend(deferred(r, _backoff_until(models), now) for r in waiting.values())
-                summary["deferred"] = summary.get("deferred", 0) + len(waiting)
-            except Exception as exc:   # a refusal or unreadable output: per-file transient for the batch (§24.8)
+                reply = await port.triage(user_id, self._account_ids.get(user_id, ""), images)
+            except Exception as exc:   # the port reports outcomes as a status; anything raised is a per-file transient
                 logger.error(f"[DriveIndex] triage failed for {user_id[:8]}: {exc}", exc_info=True)
                 writes.extend(content_retry(r, Reason.EXTRACT_ERROR, now) for r in waiting.values())
             else:
-                _count_triage(models, summary, now, calls=batch_outcome.model_calls, cost=batch_outcome.model_cost,
-                              images=len(images))
-                by_id = {r.item_id: r for r in batch_outcome.results}
+                # Triage v2 reply (§25.13.1), read with the v1 effects until P5 writes the photo fields and the
+                # per-agent backoff: an outage defers what it left unsettled, a capped or refused image is a
+                # photograph without a caption, an unsettled image is a per-file retry.
+                outage = reply.status in (ModelReplyStatus.UNAVAILABLE, ModelReplyStatus.FAILED)
+                _count_triage(models, summary, now, calls=reply.model_calls, cost=reply.usd,
+                              images=len(reply.results) if outage else len(images), outage=outage)
+                if outage:
+                    logger.warning(f"[DriveIndex] triage unavailable for {user_id[:8]} ({reply.status.value}); "
+                                   f"model work deferred")
+                    models.outage(now)   # after the usage, which leaves the backoff to this outage (C-M1, T-M2)
+                by_id = {r.item_id: _v1_triage_result(r) for r in reply.results}
+                for item_id in (*reply.capped_item_ids, *reply.refused_item_ids):
+                    by_id.setdefault(item_id, TriageResult(item_id=item_id, verdict=TriageVerdict.PHOTO))
                 for item_id, rec in waiting.items():
                     result = by_id.get(item_id)
-                    writes.append(_verdict(rec, result, now) if result is not None
-                                  else content_retry(rec, Reason.EXTRACT_ERROR, now))
+                    if result is not None:
+                        writes.append(_verdict(rec, result, now))
+                    elif outage:
+                        writes.append(deferred(rec, _backoff_until(models), now))
+                        summary["deferred"] = summary.get("deferred", 0) + 1
+                    else:
+                        writes.append(content_retry(rec, Reason.EXTRACT_ERROR, now))
         await self._commit(user_id, writes, set(), before={r.item_id: r for r in batch})
         summary["triaged"] = summary.get("triaged", 0) + sum(1 for w in writes if w.triage_verdict is not None)
         for rec in gone:
@@ -1898,6 +1908,13 @@ def _maintenance(rec: DriveIndexRecord) -> DriveIndexRecord:
 
 def _maintenance_kept(rec: DriveIndexRecord, cls: Optional[int]) -> DriveIndexRecord:
     return _maintenance(rec) if cls == int(Priority.MAINTENANCE) else rec
+
+
+def _v1_triage_result(result: TriageResultV2) -> TriageResult:
+    """A v2 triage result as the v1 verdict the planner stores until P5 writes the photo fields (§25.4.3): the
+    description stands in for the caption."""
+    return TriageResult(item_id=result.item_id, verdict=result.verdict,
+                        caption=result.photo.description if result.photo is not None else "")
 
 
 def _verdict(rec: DriveIndexRecord, result: TriageResult, now: datetime) -> DriveIndexRecord:
