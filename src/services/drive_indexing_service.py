@@ -50,7 +50,7 @@ from ..domain.drive_index_params import (
 from ..domain.drive_index_planner import (
     AccessAction, ObservationPlan, PlaceOf, PlanContext, access_action, attempt_crashed, can_start_file, capped,
     card_refused, change_from_record, chunks_reembedded, content_due, content_retry, deferred, demoted,
-    extractor_stale, generation_started, indexed, model_available, model_outage, model_recovered, needs_probe,
+    drops_readable, extractor_stale, generation_started, indexed, model_available, model_outage, model_recovered, needs_probe,
     next_month_start, quiet_over,
     parent_scope, plan_observation, readme_read, reembed_in_space, reextraction_due, released, schedule,
     stale_versions, triage_due, triaged, usage_now, with_card, with_retry, with_usage, without_card,
@@ -549,8 +549,14 @@ class DriveIndexingService:
 
     async def _commit(self, user_id: str, writes: List[DriveIndexRecord], deletes: Set[str],
                       card_vectors: Optional[Dict[str, List[float]]] = None, *,
-                      collects: Optional[Set[str]] = None) -> None:
-        """`collects`: items whose chunks (every generation) go before the records are written (§3.4, §7.6)."""
+                      collects: Optional[Set[str]] = None,
+                      before: Optional[Mapping[str, DriveIndexRecord]] = None) -> None:
+        """`collects`: items whose chunks (every generation) go before the records are written (§3.4, §7.6).
+        `before`: the records the writes were derived from; a write that drops its readable generation collects it
+        (drops_readable, R3 F2-2), so a caller holding the record never has to remember to."""
+        if before:
+            dropped = {w.item_id for w in writes if drops_readable(before.get(w.item_id), w)}
+            collects = (collects or set()) | dropped if dropped else collects
         if not writes and not deletes and not collects:
             return
         _fence()
@@ -1468,7 +1474,7 @@ class DriveIndexingService:
             except (DriveNotConnectedError, DriveThrottled) as exc:
                 logger.warning(f"[DriveIndex] thumbnail of item {rec.item_id} hit a systemic error for "
                                f"{user_id[:8]}: {type(exc).__name__}")
-                await self._commit(user_id, writes, set())   # the verdicts already taken stay
+                await self._commit(user_id, writes, set(), before={r.item_id: r for r in batch})   # verdicts stay
                 raise
             except _PER_ITEM_ERRORS as exc:
                 logger.warning(f"[DriveIndex] thumbnail of item {rec.item_id} failed for {user_id[:8]}: "
@@ -1503,7 +1509,7 @@ class DriveIndexingService:
                     result = by_id.get(item_id)
                     writes.append(_verdict(rec, result, now) if result is not None
                                   else content_retry(rec, Reason.EXTRACT_ERROR, now))
-        await self._commit(user_id, writes, set())
+        await self._commit(user_id, writes, set(), before={r.item_id: r for r in batch})
         summary["triaged"] = summary.get("triaged", 0) + sum(1 for w in writes if w.triage_verdict is not None)
         for rec in gone:
             await self._item_gone(user_id, rec, rec.priority, ctx, budget, summary)
