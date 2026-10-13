@@ -1,5 +1,6 @@
 """The eval's reader and triage run on the indexer's model registry, not the main service's (review E minor,
-USER_DRIVE_INDEXING_RFC §24.2, §24.11): Claude and OpenAI only, a process-local breaker, and none of the main
+USER_DRIVE_INDEXING_RFC §24.2, §24.11): Claude and OpenAI only (no Gemini fallback: the eval passes no
+GEMINI_API_KEY), a process-local breaker, and none of the main
 service's wrappers (alerting proxy, prompt caching, the prompt-content store that would copy the fixture scans to
 BigQuery). The reader's provider is stamped into the G1/G2 bars and a run on another provider gets no verdict."""
 from types import SimpleNamespace
@@ -52,7 +53,7 @@ def test_build_real_content_uses_the_indexers_context_builder(monkeypatch):
     assert seen == [{"ANTHROPIC_API_KEY": "a-key", "OPENAI_API_KEY": "o-key"}]
 
 
-@pytest.mark.parametrize("env, provider", [("", "claude"), ("claude", "claude"), ("openai", "openai")])
+@pytest.mark.parametrize("env, provider", [("", "openai"), ("claude", "claude"), ("openai", "openai")])
 def test_the_reader_provider_of_a_run(monkeypatch, env, provider):
     monkeypatch.setenv("DRIVE_EVAL_PROVIDER", env)
     assert content_wiring.reader_provider() == provider

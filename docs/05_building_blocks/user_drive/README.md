@@ -700,11 +700,10 @@ change does not re-read anything already read: bump the reader's or triage's ver
 live check on the owner's photos, Claude Haiku 5.5 shifted the captions of a 16-image triage batch by one image in 1
 call of 5 (11 captions on the wrong files), Luna shifted none in 8 calls, at a third of the cost (the index mapping
 was verified correct; the shift is the model's). Per user, in order: the user document's
-`config.agent_providers["drive_reader"]` / `["drive_triage"]` (`claude`, `openai` or `gemini`), then the user's global
+`config.agent_providers["drive_reader"]` / `["drive_triage"]` (`claude` or `openai`), then the user's global
 `config.provider_preference` when it is one of those, then OpenAI (`AgentContextBuilder.resolve_provider_name`).
-`gemini` is allowed because it is the fallback (`allowed_providers`), but as a primary it resolves at ECO to
-`gemini-3.5-flash-lite`, which was never checked on these inputs — a global `provider_preference: "gemini"` moves the
-drive agents there too. To read with Claude (`claude-haiku-5-5`), set `config.agent_providers` to
+Gemini is the fallback only, never a primary: it is not in `allowed_providers`, because as a primary it would resolve
+at ECO to `gemini-3.5-flash-lite`, never checked on these inputs; a `"gemini"` setting is ignored. To read with Claude (`claude-haiku-5-5`), set `config.agent_providers` to
 `{"drive_reader": "claude"}` (add `"drive_triage": "claude"` for triage too) on the user's document in
 `{prefix}domain_users_v2`; there is no Cabinet control for it. The
 indexer reads the user document for every file and batch, so it applies from the next read, with no deploy, as long

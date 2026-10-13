@@ -199,7 +199,7 @@ class AgentProviderStrategy:
         # the one the live check (2026-10-13) found exact.
         "drive_reader": {
             "default_provider": "openai",
-            "allowed_providers": ["claude", "openai", "gemini"],
+            "allowed_providers": ["claude", "openai"],   # gemini is the fallback only, never a primary
             "required_capabilities": ["vision"],
             "fallback": "gemini",
             "fallback_tier": PerformanceTier.BALANCED,
@@ -209,7 +209,7 @@ class AgentProviderStrategy:
         # none in 8, at a third of the cost.
         "drive_triage": {
             "default_provider": "openai",
-            "allowed_providers": ["claude", "openai", "gemini"],
+            "allowed_providers": ["claude", "openai"],   # gemini is the fallback only, never a primary
             "required_capabilities": ["vision"],
             "fallback": "gemini",
             "fallback_tier": PerformanceTier.BALANCED,

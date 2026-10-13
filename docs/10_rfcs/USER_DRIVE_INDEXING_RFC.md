@@ -1555,9 +1555,9 @@ this section wins; the text above was corrected where it was plainly false. Slic
   (their API keys are indexer secrets, never Cloud Build substitutions; `GEMINI_API_KEY` is already there for
   embeddings); a user whose configuration names a primary without a key gets a model outage. The provider is
   resolved like any agent's (`AgentContextBuilder.resolve_provider_name`): the user's `agent_providers[agent type]`,
-  then the user's global `provider_preference` when it is an allowed provider, then the default. `gemini` is allowed
-  because it is the fallback; as a primary it resolves at ECO to `gemini-3.5-flash-lite`, never checked on these
-  inputs, so a global `provider_preference: "gemini"` would move the drive agents there (no user has one today).
+  then the user's global `provider_preference` when it is an allowed provider (`claude`, `openai`), then the default.
+  Gemini is the fallback only and not an allowed primary: as a primary it would resolve at ECO to
+  `gemini-3.5-flash-lite`, never checked on these inputs.
   **Fallback:** `BaseAgent._call_llm` re-serves a call that fails with a failover trigger (429, 5xx, timeout,
   network, open breaker) on Gemini; `fallback_tier` makes `AgentContextBuilder._build` resolve that model at
   BALANCED (`gemini-3.8-flash`, Gemini Flash, the owner's pick) instead of the agents' ECO (`gemini-3.5-flash-lite`);
