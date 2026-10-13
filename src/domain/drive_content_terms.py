@@ -1,11 +1,12 @@
 """
 Content exact-token stream keys (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §24.6). Pure; one normaliser for indexing
-and for the query, so `1 250,00 €` in a scan and `1250.00` in a question meet. A change bumps EXTRACTION_VERSION.
+and for the query, so `1 250,00 €` in a scan and `1250.00` in a question meet. A change bumps EXTRACTION_VERSION (Search v2: KEYS_VERSION, §25.4.8).
 
 Public interface:
     content_terms(text) -> Tuple[str, ...]   sorted, unique, at most CONTENT_TERMS_PER_CHUNK
     query_terms(query) -> Tuple[str, ...]    the query's maximal forms, most specific first
     clip_query(query, max_chars) -> str      at most max_chars of the query, never ending inside a token
+    term_spans(text) / query_term_spans(query)   the same, with each span's position and category (Search v2 keyer)
 
 Terms (the index side keeps every form; the query only the maximal form of each span, review D-M1 — and the integer of
 an amount with zero cents, the same value, arbiter R2 S-m2):
@@ -153,48 +154,64 @@ def _id_spans(text: str) -> Iterable[Tuple[int, int, str, List[str]]]:
             yield m.start(), m.end(), maximal, fragments
 
 
+TermSpan = Tuple[int, int, Tuple[str, ...], str]   # (start, end, forms, category: date | amount | group | id)
+
+
+def term_spans(text: str) -> Tuple[TermSpan, ...]:
+    """The index side with positions (Search v2 keyer, §25.2.4): every span with every form, maximal and fragment,
+    in text order. Spans may overlap; `content_terms` is the union of their forms (before its cap)."""
+    spans: List[TermSpan] = []
+    spans.extend((s, e, forms, "date") for s, e, forms in _date_spans(text))
+    spans.extend((s, e, forms, "amount") for s, e, forms in _amount_spans(text))
+    spans.extend((s, e, forms, "group") for s, e, forms in _group_spans(text))
+    for start, end, maximal, fragments in _id_spans(text):
+        forms = ((maximal,) if maximal else ()) + tuple(fragments)
+        if forms:
+            spans.append((start, end, forms, "id"))
+    return tuple(sorted(spans, key=lambda span: (span[0], span[1])))
+
+
 def _terms(text: str) -> Set[str]:
     """The index side: every form of every span, maximal and fragment."""
-    terms: Set[str] = set()
-    for _, _, forms in (*_date_spans(text), *_amount_spans(text), *_group_spans(text)):
-        terms.update(forms)
-    for _, _, maximal, fragments in _id_spans(text):
-        if maximal:
-            terms.add(maximal)
-        terms.update(fragments)
-    return terms
+    return {form for span in term_spans(text) for form in span[2]}
 
 
-def _maximal(text: str) -> Set[str]:
-    """The query side: each span's maximal form only, the first kind that claims a stretch of text winning — dates,
-    then amounts, then digit groups, then ids. A part of a span (a date's year, an amount's integer part, a run inside
-    an id) is a fragment: as a query it would match documents that share only that part — except a whole amount's
-    integer, which is the same value."""
+def query_term_spans(query: str) -> Tuple[TermSpan, ...]:
+    """The query side with positions: each claimed stretch with its maximal forms (possibly none: an id too short for
+    a form still claims its stretch), the first kind that claims a stretch of text winning — dates, then amounts,
+    then digit groups, then ids. A part of a span (a date's year, an amount's integer part, a run inside an id) is a
+    fragment: as a query it would match documents that share only that part — except a whole amount's integer,
+    which is the same value. In text order."""
     # The claimed stretches never overlap, so sorted by start they are sorted by end too: the only one that can
     # overlap [start, end) is the last one starting before `end` (bisect, not a scan of every claim: arbiter R2 S-m1).
     starts: List[int] = []
     ends: List[int] = []
-    terms: Set[str] = set()
+    claimed: List[TermSpan] = []
 
-    def claim(start: int, end: int, forms: Iterable[str]) -> None:
+    def claim(start: int, end: int, forms: Iterable[str], category: str) -> None:
         i = bisect_left(starts, end)
         if i > 0 and ends[i - 1] > start:
             return
         starts.insert(i, start)
         ends.insert(i, end)
-        terms.update(f for f in forms if f)
+        claimed.insert(i, (start, end, tuple(f for f in forms if f), category))
 
-    for start, end, forms in _date_spans(text):
-        claim(start, end, forms)
-    for start, end, forms in _amount_spans(text):
+    for start, end, forms in _date_spans(query):
+        claim(start, end, forms, "date")
+    for start, end, forms in _amount_spans(query):
         # zero cents are the integer's value: "1,250.00" also queries "1250" (arbiter R2 S-m2), the integer part
         # the index side stores for the same text; any other cents are another value and query their form only
-        claim(start, end, forms if forms[0].endswith(".00") else forms[:1])
-    for start, end, forms in _group_spans(text):
-        claim(start, end, forms)
-    for start, end, maximal, _ in _id_spans(text):
-        claim(start, end, (maximal,))
-    return terms
+        claim(start, end, forms if forms[0].endswith(".00") else forms[:1], "amount")
+    for start, end, forms in _group_spans(query):
+        claim(start, end, forms, "group")
+    for start, end, maximal, _ in _id_spans(query):
+        claim(start, end, (maximal,), "id")
+    return tuple(claimed)
+
+
+def _maximal(text: str) -> Set[str]:
+    """The query side: each claimed span's maximal forms (`query_term_spans`)."""
+    return {form for span in query_term_spans(text) for form in span[2]}
 
 
 def content_terms(text: str) -> Tuple[str, ...]:
