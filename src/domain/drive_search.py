@@ -163,11 +163,14 @@ class DriveSearchCard:
     stale: bool = False
     truncated: bool = False
     matched: str = MATCHED_CARD
+    name_matched: bool = False           # the name stream found it (its name holds the query's words), F5-8
     also_at: Tuple[str, ...] = ()
     content_hash: Optional[str] = None
     nonce: str = ""
     window: str = ""                     # content hits: the best chunk and its neighbours (§10.2), untrusted text
     date_source: Optional[str] = None    # DATE_TAKEN | DATE_WRITTEN | DATE_FILE; None without a date
+    passage_exact: bool = True           # the window's anchor holds a query term (exact-term stream); False: the
+                                         # chunk kNN's nearest passage only (F5-8)
     window_shortened: bool = False       # the window budget trimmed the best chunk (not: left a neighbour out)
 
     def drive_item(self) -> DriveItem:
@@ -482,10 +485,22 @@ def _day(value: Optional[datetime]) -> str:
     return value.date().isoformat() if value else "unknown"
 
 
-def _card_body(card: DriveSearchCard) -> str:
+def _matched_line(card: DriveSearchCard) -> str:
+    """What found the card (§10.2, F5-8): its name words, its card by meaning, its content."""
+    sides: List[str] = []
+    if card.matched in (MATCHED_CARD, MATCHED_BOTH):
+        sides.append("name" if card.name_matched else "similar name or details")
+    if card.matched in (MATCHED_CONTENT, MATCHED_BOTH):
+        sides.append("content")
+    return "matched: " + " and ".join(sides)
+
+
+def _card_body(card: DriveSearchCard, show_matched: bool = False) -> str:
     dated = f"{_day(card.effective_date)} ({card.date_source})" if card.effective_date and card.date_source \
         else _day(card.effective_date)
     lines = [card.summary, f"path: {card.path or '/'}", f"date: {dated}"]
+    if show_matched:
+        lines.append(_matched_line(card))
     lines.append(f"index: {card.state}" + (f" ({card.reason})" if card.reason else ""))
     if card.stale:
         lines.append("stale: the file changed after it was indexed")
@@ -494,13 +509,14 @@ def _card_body(card: DriveSearchCard) -> str:
     if card.also_at:
         lines.append("identical copies also at: " + "; ".join(card.also_at))
     if card.window:
-        lines.append("matching passage (shortened):" if card.window_shortened else "matching passage:")
+        label = "matching passage" if card.passage_exact else "nearest passage"
+        lines.append(f"{label} (shortened):" if card.window_shortened else f"{label}:")
         lines.append(card.window)
     return "\n".join(lines)
 
 
-def _render_card(card: DriveSearchCard) -> str:
-    return wrap_untrusted(_card_body(card), nonce=card.nonce, ref=card.ref, path=card.path)
+def _render_card(card: DriveSearchCard, show_matched: bool = False) -> str:
+    return wrap_untrusted(_card_body(card, show_matched), nonce=card.nonce, ref=card.ref, path=card.path)
 
 
 _BUILDING_LINE = "The index is still being built: some files and folders may not be in it yet."
@@ -617,7 +633,8 @@ def render_results(result: DriveSearchResult) -> str:
     if not result.cards:
         out.append("No matching files or folders.")
         return "\n".join(out)
-    out.extend(_render_card(c) for c in result.cards)
+    # a filter-only listing matched no words: nothing found it but the filters
+    out.extend(_render_card(c, show_matched=not request.filter_only) for c in result.cards)
     return "\n".join(out)
 
 

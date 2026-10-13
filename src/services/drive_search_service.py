@@ -315,7 +315,8 @@ class DriveSearchService:
         # The filters saw only the streams' pages: past a full page, a matching file may exist (§10.2 honesty).
         capped = full_page and stats.filtered < stats.visible
         card_side = {r.item_id for r in nearest} | set(scores)
-        cards = await self._with_content(user_id, self._cards(ranked, paths, stats), card_side, content, stats)
+        cards = await self._with_content(user_id, self._cards(ranked, paths, stats), card_side, set(scores), content,
+                                         stats)
         return DriveSearchResult(status=STATUS_OK, cards=cards, request=request,
                                  folder_path=folder.path if folder else None, capped=capped,
                                  candidates=len(stats.candidates) if capped else 0)
@@ -400,7 +401,8 @@ class DriveSearchService:
         ranked = self._covered_first(fused, request.query, stats)
         # matched by card: the cards a user-wide card page would hold, or a name match (§10.2)
         card_side = {r.item_id for r in by_distance[:CARD_FETCH]} | set(scores)
-        cards = await self._with_content(user_id, self._cards(ranked, paths, stats), card_side, content, stats)
+        cards = await self._with_content(user_id, self._cards(ranked, paths, stats), card_side, set(scores), content,
+                                         stats)
         return DriveSearchResult(status=STATUS_OK, cards=cards, request=request, folder_path=folder.path)
 
     # ------------------------------------------------------------------------------------------
@@ -548,10 +550,11 @@ class DriveSearchService:
         return _Content.of(nearest, pooled_terms, False, kept_terms)
 
     async def _with_content(self, user_id: str, cards: Tuple[DriveSearchCard, ...], card_side: Set[str],
-                            content: _Content, stats: _Stats) -> Tuple[DriveSearchCard, ...]:
-        """`matched` for every card and, for content hits, the window: the anchor chunk and its neighbours read
-        by id from stored text (§10.2), fitted in rank order into WINDOW_CHARS_TOTAL. Stream reads may leave `text`
-        empty, so the window is always read here."""
+                            name_side: Set[str], content: _Content, stats: _Stats) -> Tuple[DriveSearchCard, ...]:
+        """`matched` for every card (and whether the name stream found it) and, for content hits, the window: the
+        anchor chunk and its neighbours read by id from stored text (§10.2), fitted in rank order into
+        WINDOW_CHARS_TOTAL. Stream reads may leave `text` empty, so the window is always read here. A window anchored
+        by the chunk kNN alone is the nearest passage, not one holding the query's terms (F5-8)."""
         anchored = [c for c in cards if c.item_id in content.anchors]   # in rank order
         read = await asyncio.gather(*(
             self._repo.get_chunks(user_id, c.item_id, content.anchors[c.item_id].generation,
@@ -561,10 +564,12 @@ class DriveSearchService:
         windows = {c.item_id: w for c, w in zip(anchored, fitted)}
         stats.windows = sum(1 for w in fitted if w.text)
         stats.window_chars = sum(len(w.text) for w in fitted)
+        exact = {r.item_id for r in content.terms}
         out = []
         for card in cards:
             window = windows.get(card.item_id)
             out.append(replace(card, matched=matched_label(card.item_id in card_side, card.item_id in content.anchors),
+                               name_matched=card.item_id in name_side, passage_exact=card.item_id in exact,
                                window=window.text if window else "",
                                window_shortened=bool(window and window.text and window.shortened)))
         return tuple(out)
