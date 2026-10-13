@@ -1473,8 +1473,10 @@ this section wins; the text above was corrected where it was plainly false. Slic
   large image; the windows run with at most `MODEL_IN_FLIGHT` concurrent calls and their texts are joined in page
   order. A window answered at the output limit, or whose call timed out, is split in half (cut from the source) and
   retried once; a half or a single page still at the limit adds no text and sets `truncated`, and one that times out
-  again is a model outage. A window the provider refuses as too large (HTTP 413) is halved down to one page; a single
-  page still too large fails the file (`error`). An outage carries what the file spent before it (pages answered,
+  again is a model outage. A window the provider refuses (HTTP 413, 400 or 422) is halved down to one page; a single
+  page still refused is skipped, the rest of the file is read and indexed, and the outcome is `truncated` with the
+  refused pages counted (`pages_refused`, also in the log line). Only a file whose every page was refused is terminal:
+  `too_large` when any page was refused as too large (413), else `unsupported` (R3-P1). An outage carries what the file spent before it (pages answered,
   calls, cost), and the tick counts that before it records the outage. When the file's model time
   reaches `MODEL_FILE_BUDGET`, the windows done so far are indexed and the record is `truncated` — no file restarts
   forever. Pages past `MODEL_EXTRACT_MAX_PAGES` are not sent (`truncated`).
@@ -1535,7 +1537,7 @@ this section wins; the text above was corrected where it was plainly false. Slic
 | Outcome | Effect |
 |---|---|
 | Provider unavailable (429, 5xx, timeout, network), or a missing prompt | **Model outage, not a systemic error**: `model_backoff_until` on the sync state (the §7.7 backoff), records that need the model stay `pending` and are skipped until then; parser work, cards and cascades go on. |
-| The provider refuses one window or image (HTTP 400) | Per-file transient (§8.2); at `MAX_ATTEMPTS` → `failed / extract_error`. |
+| The provider refuses a window, page or image (HTTP 413, 400 or 422) | A window is halved down to one page (§24.3); a single page still refused is skipped and the file is indexed `truncated`, `pages_refused` counted. Terminal, never retried: every page of the PDF refused, or the image refused — `too_large` when a refusal was 413, else `unsupported` → `metadata_only / kind_not_admitted`. The same bytes get the same refusal, and a retry would bill every window read before it again (P-m5, R3-P1). A refusal raised before any HTTP exchange stays a per-file transient. |
 | Output that is not valid JSON after the parse retry | Per-file transient. |
 | The reader finds no text | `metadata_only / no_text` (deterministic). |
 | Monthly budget spent | `budget_exhausted`: `pending`, class 3, due at the month boundary. |

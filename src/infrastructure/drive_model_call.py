@@ -5,9 +5,11 @@ overrides; a prompt missing a section is an outage, never a fallback prompt).
 
 Two outcomes, decided by what the failure says about the input:
 - DriveModelCallFailed: this one input cannot be read now — the provider refused it (HTTP 400/413/422, a safety
-  refusal, a file part the adapter could not build) or the output stayed invalid after the parse retry. A per-file
-  transient for the tick; the runner turns it into an `error` outcome. Its DriveInputTooLarge case (413) first
-  halves a multi-page PDF window, down to one page.
+  refusal, a file part the adapter could not build) or the output stayed invalid after the parse retry. The runner
+  turns it into an `error` outcome (a per-file transient), except its two terminal cases (R2 P-m5): the same bytes
+  get the same answer, so a retry would only bill the file's windows again —
+  DriveInputTooLarge (413) first halves a multi-page PDF window, down to one page; a single page or an image still
+  refused is `too_large`; DriveInputRefused (400/422) is `unsupported`.
 - DriveModelUnavailable (domain): the model cannot be used now for anyone — 429, 5xx, timeout, network, an open
   breaker, an account-level 4xx (key, permission, model id), a missing prompt, or anything unexpected. The tick
   defers model work for the user and keeps parsing (§24.8), so a bug never burns a file's attempts. Its
@@ -28,6 +30,7 @@ from ..utils.logger import logger
 # A client error with one of these statuses is about the request's content, not the account (None: raised before
 # any HTTP exchange — a refusal or a part the adapter could not build).
 _PER_INPUT_STATUSES = frozenset({None, 400, 413, 422})
+_REFUSED_STATUSES = frozenset({400, 422})    # the provider read the request and refused this input: terminal
 # The assembled prompt must carry both sections of the blueprint; a profile or token missing from Firestore
 # assembles silently without them (§24.2: a missing prompt fails the call, no fallback prompt).
 _REQUIRED_SECTIONS = ("cognitive_process {", "output_format {")
@@ -43,6 +46,11 @@ class DriveModelCallFailed(Exception):
 class DriveInputTooLarge(DriveModelCallFailed):
     """HTTP 413: the request was too large for the provider. The reader halves a multi-page window, down to one page;
     a single page still too large fails the file (§24.3)."""
+
+
+class DriveInputRefused(DriveModelCallFailed):
+    """HTTP 400/422: the provider refused this input outright. Terminal for the file (`unsupported`, R2 P-m5); a
+    refusal raised before any HTTP exchange stays a plain DriveModelCallFailed (an adapter bug is not the file's)."""
 
 
 class DriveModelTimedOut(DriveModelUnavailable):
@@ -61,6 +69,9 @@ def classify_model_error(exc: BaseException, agent_type: str) -> Exception:
     if _timed_out(exc):
         logger.warning(f"[{agent_type}] model call timed out ({type(exc).__name__}): {str(exc)[:300]}")
         return DriveModelTimedOut(f"{type(exc).__name__}: {str(exc)[:200]}")
+    if isinstance(exc, LLMClientError) and exc.http_status in _REFUSED_STATUSES:
+        logger.warning(f"[{agent_type}] provider refused the input (http={exc.http_status}): {str(exc)[:300]}")
+        return DriveInputRefused(f"refused (http={exc.http_status})")
     if isinstance(exc, LLMClientError) and exc.http_status in _PER_INPUT_STATUSES:
         logger.warning(f"[{agent_type}] provider refused the input (http={exc.http_status}): {str(exc)[:300]}")
         return DriveModelCallFailed(f"refused (http={exc.http_status})")

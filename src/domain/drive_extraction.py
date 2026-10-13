@@ -65,6 +65,7 @@ class ExtractionOutcome:
     detail: str = ""             # for the log line only, never shown to the user
     model_calls: int = 0         # reader calls made for this file (tick summary, §24.9)
     model_cost: float = 0.0      # their cost in USD, already billed to the account (§24.9)
+    pages_refused: int = 0       # PDF pages the provider refused even alone (413/400/422), skipped (R3-P1)
 
 
 class PdfSplitFailed(Exception):

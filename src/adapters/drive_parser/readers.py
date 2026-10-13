@@ -120,9 +120,10 @@ def cut_pdf_window(path: str, first_page: int, page_count: int, out_path: str) -
         if first_page < 0 or page_count < 1 or first_page >= total:
             raise PdfSplitFailed(ExtractionStatus.ERROR, f"pages {first_page}+{page_count} outside 0..{total}")
         last = min(first_page + page_count, total)
+        pages = reader.flattened_pages or []           # the walked tree: `reader.pages[i]` answers from /Count too
         writer = PdfWriter()
         for index in range(first_page, last):
-            writer.add_page(reader.pages[index])
+            writer.add_page(pages[index])
         with open(out_path, "wb") as fh:
             writer.write(fh)
         return last - first_page
@@ -243,10 +244,28 @@ def _read_pdf(path: str, kind: str) -> _Read:
         if is_memory_failure(exc):
             raise
         pages_total = 0
-    from pdfminer.high_level import extract_text
+    text, truncated = _pdfminer_text(path)
+    return text, pages_total, truncated
 
-    with open(path, "rb") as fh:
-        return str(extract_text(fh) or ""), pages_total, False
+
+def _pdfminer_text(path: str) -> Tuple[str, bool]:
+    """pdfminer's extract_text, page by page: layout stops once MAX_TEXT_CHARS characters are out (R2 P-m6), so a
+    thousand dense pages never all go through layout for text the cap drops. `truncated` when a page was left."""
+    from pdfminer.converter import TextConverter
+    from pdfminer.layout import LAParams
+    from pdfminer.pdfinterp import PDFPageInterpreter, PDFResourceManager
+    from pdfminer.pdfpage import PDFPage
+
+    with open(path, "rb") as fh, io.StringIO() as output:
+        manager = PDFResourceManager(caching=True)
+        device = TextConverter(manager, output, codec="utf-8", laparams=LAParams())
+        interpreter = PDFPageInterpreter(manager, device)
+        pages = PDFPage.get_pages(fh, caching=True)
+        for page in pages:
+            interpreter.process_page(page)
+            if output.tell() >= MAX_TEXT_CHARS:      # StringIO's position: the characters written so far
+                return output.getvalue(), next(pages, None) is not None
+        return output.getvalue(), False
 
 
 def _page_count(reader: Any) -> int:
@@ -333,8 +352,9 @@ def _read_eml(path: str, kind: str) -> _Read:
 def _read_xlsx(path: str, kind: str) -> _Read:
     """Rows are read at most _MAX_TABLE_COLUMNS + 1 wide (a cell in column XFD must not pad every row to 16384
     values), each sheet is rendered as soon as it is read, and reading stops once MAX_TEXT_CHARS characters are
-    collected: what the parser holds stays near the text cap whatever the sheet declares. A value or a declared
-    dimension past the read bound is content the text does not hold: the outcome is `truncated` (arbiter R1-3)."""
+    collected: what the parser holds stays near the text cap whatever the sheet declares. A value past the read bound
+    is content the text does not hold: the outcome is `truncated` (arbiter R1-3). The declared dimension is not read
+    for that, nor is a formatted-empty cell: a sheet read in full is not `truncated` (R2 P-m3)."""
     import openpyxl
 
     book = openpyxl.load_workbook(path, read_only=True, data_only=True)
@@ -347,7 +367,6 @@ def _read_xlsx(path: str, kind: str) -> _Read:
                 truncated = True
                 break
             bound = _MAX_TABLE_COLUMNS + 1
-            truncated = truncated or (sheet.max_column or 0) > bound   # the declared dimension
             sheet.reset_dimensions()                  # a declared A1:XFD1048576 must not pad every row
             past_bound = _watch_far_cells(sheet, bound)
             rows: List[Sequence[Any]] = []
@@ -379,22 +398,28 @@ def _read_xlsx(path: str, kind: str) -> _Read:
 
 
 def _watch_far_cells(sheet: Any, bound: int) -> List[bool]:
-    """A flag set once any row of `sheet` holds a cell past column `bound`. iter_rows(max_col=bound) drops those
-    cells without a trace, so the sheet's row builder is wrapped: it receives every parsed cell of a row (already in
-    memory; nothing is padded) before cutting it to `bound`. openpyxl's `_get_row` is private, so openpyxl is pinned
-    (requirements.txt) and tests/unit/adapters/test_drive_parser_xlsx_wide_truncation.py fails if the hook stops
+    """A flag set once any row of `sheet` holds a value past column `bound` (a cell that only carries a style, or
+    blank text, is no content). iter_rows(max_col=bound) drops those cells without a trace, so the sheet's row
+    builder is wrapped: it receives every parsed cell of a row (already in memory; nothing is padded) before cutting
+    it to `bound`. openpyxl's `_get_row` is private, so openpyxl is pinned
+    (requirements.txt) and tests/unit/adapters/test_drive_parser_xlsx_far_cell_hook.py fails if the hook stops
     seeing cells."""
     seen = [False]
     build_row = sheet._get_row
 
     def _get_row(row: Sequence[Mapping[str, Any]], min_col: int = 1, max_col: Optional[int] = None,
                  values_only: bool = False) -> Any:
-        if not seen[0] and any(int(cell.get("column") or 0) > bound for cell in row):
+        if not seen[0] and any(int(cell.get("column") or 0) > bound and _holds_value(cell.get("value"))
+                               for cell in row):
             seen[0] = True
         return build_row(row, min_col, max_col, values_only)
 
     sheet._get_row = _get_row
     return seen
+
+
+def _holds_value(value: Any) -> bool:
+    return value is not None and (not isinstance(value, str) or bool(value.strip()))
 
 
 def _trim_row(row: Sequence[Any]) -> Sequence[Any]:
