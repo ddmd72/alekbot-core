@@ -208,9 +208,12 @@ class _Models:
     def outage(self, now: datetime) -> None:
         self.state = model_outage(self.state, now)
 
-    def used(self, now: datetime, *, calls: int, cost: float, pages: int = 0, images: int = 0) -> None:
-        """Model work went through: count it as the runner reports it, and an outage is over."""
-        self.state = model_recovered(with_usage(self.state, now, pages=pages, images=images))
+    def used(self, now: datetime, *, calls: int, cost: float, pages: int = 0, images: int = 0,
+             recovered: bool = True) -> None:
+        """Model work spent: count it as the runner reports it. `recovered`: it went through, so an outage is over;
+        the part spent before an outage ends nothing, and the outage's backoff keeps doubling (§24.8)."""
+        state = with_usage(self.state, now, pages=pages, images=images)
+        self.state = model_recovered(state) if recovered else state
         self.calls += calls
         self.cost += cost
 
@@ -223,19 +226,17 @@ class _Models:
 
 def _count_reader(models: _Models, summary: Dict[str, int], now: datetime, *, calls: int, cost: float,
                   pages: int, outage: bool = False) -> None:
-    """What the reader spent on one file — all of it, or the part before an `outage` (§24.7, §24.9). Before an
-    outage with nothing spent there is no `used`: it would reset the doubling backoff the outage then extends."""
-    if not outage or calls or cost or pages:
-        models.used(now, calls=calls, cost=cost, pages=pages)
+    """What the reader spent on one file — all of it, or the part before an `outage` (§24.7, §24.9). The part before
+    an outage never ends it: the doubling backoff the outage then extends stands."""
+    models.used(now, calls=calls, cost=cost, pages=pages, recovered=not outage)
     summary["model_calls"] = summary.get("model_calls", 0) + calls
     summary["model_pages"] = summary.get("model_pages", 0) + pages
 
 
 def _count_triage(models: _Models, summary: Dict[str, int], now: datetime, *, calls: int, cost: float,
                   images: int, outage: bool = False) -> None:
-    """What triage spent on one batch — all of it, or the part before an `outage` (§24.7, §24.9)."""
-    if not outage or calls or cost or images:
-        models.used(now, calls=calls, cost=cost, images=images)
+    """What triage spent on one batch — all of it, or the part before an `outage`, which never ends it (§24.7-§24.9)."""
+    models.used(now, calls=calls, cost=cost, images=images, recovered=not outage)
     summary["triage_calls"] = summary.get("triage_calls", 0) + calls
     summary["triage_images"] = summary.get("triage_images", 0) + images
 
@@ -1175,7 +1176,7 @@ class DriveIndexingService:
                 logger.warning(f"[DriveIndex] reader unavailable for {user_id[:8]}: {exc}; model work deferred")
                 _count_reader(models, summary, now, calls=exc.model_calls, cost=exc.model_cost, pages=exc.pages_sent,
                               outage=True)
-                models.outage(now)   # after the usage: `used` ends an outage, this one must stand (C-M1)
+                models.outage(now)   # after the usage, which leaves the backoff to this outage (C-M1, T-M2)
                 return None, deferred(_cleared(run), _backoff_until(models), now, priority=cls)
             except Exception as exc:   # the port reports per-file failures as outcomes; anything else is this file's
                 logger.error(f"[DriveIndex] {extractor_id} failed on item {run.item_id} of {user_id[:8]}: {exc}",
@@ -1457,7 +1458,7 @@ class DriveIndexingService:
                 logger.warning(f"[DriveIndex] triage unavailable for {user_id[:8]}: {exc}; model work deferred")
                 _count_triage(models, summary, now, calls=exc.model_calls, cost=exc.model_cost,
                               images=exc.images_sent, outage=True)
-                models.outage(now)   # after the usage: `used` ends an outage, this one must stand (C-M1)
+                models.outage(now)   # after the usage, which leaves the backoff to this outage (C-M1, T-M2)
                 writes.extend(deferred(r, _backoff_until(models), now) for r in waiting.values())
                 summary["deferred"] = summary.get("deferred", 0) + len(waiting)
             except Exception as exc:   # a refusal or unreadable output: per-file transient for the batch (§24.8)
