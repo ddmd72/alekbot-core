@@ -4,7 +4,7 @@
 the build differs from this text, §23 says how and why. **Slices 2 and 4 are one slice** (D6), designed in §24 and
 built (not live until its deploy); §24 overrides the text above where they disagree and was brought in line with the
 code in rev 3.15 and again, after the final cross-cutting review, in rev 3.16; rev 3.17 records the owner's model
-switch after the live check. **Search v2** (owner decisions D14–D27; set-query keys open, OQ-V11) is designed in §25, not built;
+switch after the live check. **Search v2** (owner decisions D14–D28) is designed in §25, not built;
 §25 overrides §5.5, §8.5, §10, §14, §15 and §24 where they disagree. Slice 3 not built. Phase 0 hardening merged (PR #57, §16).
 **Builds on:** [USER_DRIVE_RFC.md](USER_DRIVE_RFC.md) (Step 1, live: CRUD over the user's OneDrive App Folder).
 Replaces that RFC's §5 "Step 2" placeholder.
@@ -110,8 +110,9 @@ To Do mirror (`TaskSearchIndex`), `src/domain/rrf.py`, `TaskQueue.enqueue_worker
   the measured idf rule, proximity and commonness by files; an honest related tier and a coverage line per result
   instead of a "final" protocol line; dollar budgets that survive a purge, an initial-build allowance; README profiles for every collapsed folder; pre-registered bars; a migration gate and runbooks. Then the
   owner's decisions of the same day: no re-consent (D26), a one-time initial-build allowance of at least $20 (D27),
-  and the keying of set queries left open between a key-extraction call in search and a keys field filled by Smart
-  (OQ-V11); D25's manifest wording is the baseline either way.
+  and, after a measurement, D28: query keys from the deterministic normaliser with strict AND, synonyms and
+  translations written only at index time (doc2query, the profile's label words), no model and no keys field at query
+  time.
 
 **Owner decisions (2026-10-11)**
 - The App Folder is meant to become a real document store. It is empty only because the feature is being built.
@@ -1474,7 +1475,7 @@ everything about a city cost two dozen drive delegations and several hundred tho
 studies on the live index (private, `scripts/memory/`). Designed in §25.
 - **D14 Evidence tiers replace the ranked list.** RRF over four streams, the always-filled `K = 8`, cover-first and
   rev 3.8's "no cosine thresholds; `K` and Smart's judgement bound the output" are replaced by tiers — about and
-  mentioned in (exact), labelled (automatic, set queries), and at most three lines related by meaning only, above a
+  mentioned in (exact), labelled (automatic), and at most three lines related by meaning only, above a
   relative floor and labelled unverified — and a coverage line in every result (§25.5). *Reason:* every study measured the
   ranked list returning a full page of noise and almost never an honest "nothing"; Smart cannot judge eight
   same-looking cards and crawls instead.
@@ -1516,7 +1517,7 @@ studies on the live index (private, `scripts/memory/`). Designed in §25.
 - **D25 `drive_query` takes document types** ("tickets", "receipts", "contracts", "what expires"); file formats stay in
   `drive_kind`; the date-filter descriptions say the date is the one written in the document when the index found it.
   A change of the field descriptions, not a new field (§25.5.7). *Reason:* set queries ("all my tickets") cannot work
-  while the manifest tells Smart to keep type words out of the query. The baseline whichever way OQ-V11 is decided.
+  while the manifest tells Smart to keep type words out of the query.
 - **D26 No re-consent (owner).** Enrichment (profiles, passage hints, enriched triage) runs for every user with
   indexing on; there is no disclosure version and no acceptance step. The Cabinet disclosure text is corrected to name
   OpenAI (with `store=false`), the Gemini fallback and the Claude switch (§25.6). *Reason (owner):* a small, known user
@@ -1526,6 +1527,19 @@ studies on the live index (private, `scripts/memory/`). Designed in §25.
   (onboarding and the v2 rebuild), newest files first. Set at **$40**: at the caps the build costs about $41
   (§25.4.5), and $20 describes about 7 000 typical text files. *Reason:* the monthly caps would otherwise spread a
   large drive's first description over months.
+- **D28 Query keys: deterministic, strict AND; synonyms only at index time (owner, after a measurement).** No model at
+  query time and no keys field for Smart: a Router-like key-extraction call in search (option A) and an optional keys
+  field filled by Smart (option B) are both rejected, and D19 stands. A query's keys come from the one normaliser
+  (§25.2.4) after generic search words are removed; a concept found in no file is never dropped, so it blocks the exact
+  tiers and the result is an honest no-match (§25.5.4). Synonyms and translations are written at index time only:
+  passage hints (doc2query) and the profile's document-type and label words in en, es, uk and ru, which feed the
+  Labelled (automatic) tier; there is no hand synonym table. *Evidence* (the studies' golden sets, synthetic and
+  private; generic terms only): the query-time key models found a few more files but brought 1.5–2× the junk,
+  invented keys, and confused "a file named X" with "anything about X"; Smart left an optional keys field empty in
+  40 % of the calls that needed it; strict AND doubled the honest no-matches (3 of 8 → 6 of 8) with no recall loss on
+  content and synonym queries; doc2query reached content recall 1.00 at half the junk. *Deferred, not v2:* if G3 shows
+  synonym misses that matter, a flash-lite key call used only on a weak fast pass — never per search, never chosen by
+  Smart (§25.11).
 
 ---
 
@@ -2073,7 +2087,7 @@ Values in `src/domain/drive_index_params.py` unless named otherwise.
 
 ## 25. Search v2 (rev 3.19, designed 2026-10-13, not built)
 
-Owner decisions D14–D27 (§21); the keying of set queries is open (OQ-V11). Built on branch
+Owner decisions D14–D28 (§21). Built on branch
 `asm/drive-search-v2`, created from tag `drive-search-v1` (the Slice 2+4 tip after the GPT-6 Luna switch). There is
 no runtime dual implementation: v2 replaces the v1 search path, and the tag is the way back (§25.8). **Where this
 section and §5.5, §8.5, §10, §14, §15, §24.4, §24.5, §24.6, §24.7, §24.10 or §24.13 disagree, this section wins.** The
@@ -2103,7 +2117,7 @@ fusion and the contract failed.
   search makes no model call.
 - **P2 Evidence, stated per result.** A result says *why* it matched: the file is **about** the query (its own
   description, entities, values, place, kind or name), the query words are **mentioned in** one passage of it
-  (verbatim, close together), it is **labelled** with the asked type by the index (automatic, set queries only), or it
+  (verbatim, close together), it is **labelled** with the asked type by the index (automatic, through the profile's label words), or it
   is **related by meaning only** (unverified, at most three lines).
 - **P3 One normaliser.** The index and the query build every key (entity, value, year, word, name) with the same
   functions, inflection and plural rules included, so a form the index stores is a form a query can produce (§25.2.4).
@@ -2120,7 +2134,7 @@ fusion and the contract failed.
 #### 25.2.1 Record fields (added to §3.2)
 | Field | Meaning |
 |---|---|
-| `profile` | `DriveProfile` or `None` (§25.4.1): `title` (≤ 120 chars, the document's language); `what_it_is` (≤ 300 chars, English: what the file is, about what or whom, for what; it says so when the name misleads); `language` (ISO 639-1); `doc_type` (one of `DOC_TYPES`); `life_domains` (1–3 of `LIFE_DOMAINS`); `dates` (≤ 5 `{label ∈ DATE_LABELS, iso}`, verified); `entities` (≤ 12 `{name, type ∈ ENTITY_TYPES, printed, forms}`: `name` canonical in Latin script, `printed` exactly as in the text and verified, `forms` ≤ 8 other spellings — native script, en, es, fr, uk, ru — each ≤ 60 chars); `key_values` (≤ 12 `{label ∈ VALUE_LABELS, printed, canonical}`, verified); `topics` (≤ 8, English) and `topics_native` (≤ 8, the document's language) |
+| `profile` | `DriveProfile` or `None` (§25.4.1): `title` (≤ 120 chars, the document's language); `what_it_is` (≤ 300 chars, English: what the file is, about what or whom, for what; it says so when the name misleads); `language` (ISO 639-1); `doc_type` (one of `DOC_TYPES`); `life_domains` (1–3 of `LIFE_DOMAINS`); `dates` (≤ 5 `{label ∈ DATE_LABELS, iso}`, verified); `entities` (≤ 12 `{name, type ∈ ENTITY_TYPES, printed, forms}`: `name` canonical in Latin script, `printed` exactly as in the text and verified, `forms` ≤ 8 other spellings — native script, en, es, fr, uk, ru — each ≤ 60 chars); `key_values` (≤ 12 `{label ∈ VALUE_LABELS, printed, canonical}`, verified); `topics` (≤ 8, English) and `topics_native` (≤ 8, the document's language); `label_words` (≤ 24: the common names of its document type in English, Spanish, Ukrainian and Russian, singular and plural — e.g. a ticket's "ticket", "entrada", "квиток", "квитки", "билет", "билеты" — and, when `valid_until` is set, the words for "valid until" and "expires" in the same languages; automatic, not verifiable) |
 | `valid_until` | Top level, so it can be indexed (§25.2.5): the profile's verified `valid_until` date, else `None` |
 | `profile_source` | `model`, `template` (a deterministic profile: a note under `PROFILE_MIN_CHARS`, a script-rendered page, a machine-text file, §25.3) or `None` |
 | `profile_version`, `profile_fingerprint`, `profiled_content_version` | The profiler version; the hash of the profiler's **text input only** (the name, the kind, the text slices, `PROFILE_VERSION`; never the previous labels); the content version the profile was made from |
@@ -2151,7 +2165,8 @@ fusion and the contract failed.
   documents too, by `user_id` + `item_id` (+ `generation`).
 
 #### 25.2.3 The fixed label set (D15)
-Closed enums in `src/domain/drive_labels.py`, with a synonym table (§25.5.4); the model may not add values. Taken from
+Closed enums in `src/domain/drive_labels.py`; the model may not add values. There is no synonym table: the words a
+user may say for a label are written per file at index time, as the profile's `label_words` (D28). Taken from
 the round-2 profile study, where they labelled 38 synthetic documents correctly in both runs:
 - `DOC_TYPES` (31): `receipt, invoice, bill, bank_statement, payslip, tax_document, contract, insurance_policy,
   warranty, ticket, booking, certificate, id_document, medical_record, prescription, fine, letter, form, manual, book,
@@ -2198,14 +2213,19 @@ A token's key forms are the set of 1–3. No trigrams (they stay in the name str
 - `v:` **values and dates** — a verified key value's canonical form; a verified date's ISO form (`v:2024-03-15`).
 - `y:` **years** and `m:` **months** — the year and the `YYYY-MM` of every verified date and of `effective_date`
   (`y:2023`, `m:2023-03`). The one family for a year on a record; the query side reaches it (§25.5.1).
-- `k:` **kind** — the record's kind and its families (`k:image`, `k:photo`; `k:pdf`, `k:document`), so a kind word a
-  user says ("photos of Paris") is covered by the file's kind instead of matching nothing (§25.5.1).
-- `l:` **labels** — `l:type:<doc_type>`, `l:domain:<life_domain>` for each, `l:valid` when `valid_until` is set.
+- `k:` **kind** — the key forms of the record's kind names (the kind and its families, as `_KIND_LABEL` and
+  `KIND_FAMILIES` already name them, with their names in es, fr, uk and ru: "photo", "foto", "фото"; "pdf"), written
+  by the keyer at index time, so a format word a user says ("photos of Paris") is covered by the file's kind. A fixed
+  list of format names, written on the index side only; not a synonym table of meanings.
+- `lw:` **label words** — the key forms of the profile's `label_words` (§25.2.1): how the Labelled tier is reached
+  (§25.5.4). Automatic.
+- `l:` **labels** — `l:type:<doc_type>`, `l:domain:<life_domain>` for each, `l:valid` when `valid_until` is set:
+  stored for display and grouping of the Labelled tier; no query produces them.
 - **Name keys** (`name_tokens`, the name stream) gain the same `w:` key forms (`NAME_KEYS_VERSION` 2), so a name and
   the about keys are matched under one rule; trigrams and the existing variants stay.
 
 **Where keys live.** `word_keys` (chunk) = `w:` and `n:` of its text. `about_keys` (record) = `e:`, `v:`, `y:`, `m:`,
-`k:` and `l:` from its profile, place and photo fields, plus `w:` of the profile's `title`, `topics`, `topics_native`
+`k:`, `lw:` and `l:` from its profile, place and photo fields, plus `w:` of the profile's `title`, `topics`, `topics_native`
 and of the photo's description, scene and `visible_text` (with `n:` of `visible_text`), marked by source. `hint_keys`
 (hint document) = `w:` of grounded keywords not already in the chunk's `word_keys`. Which source gave an about key is
 recomputed at render time from the record's fields (`about_sources(rec)`, using `place_forms`), so it is not stored.
@@ -2553,14 +2573,17 @@ between "the query" and "the cards".
    about keys). A 4-digit number from 1900 to 2099 also gets `y:<n>`. A month name with a year ("March 2023",
    "березень 2023", "mars 2023", in the five month tables of `drive_content_terms`) becomes one **month concept**
    `m:2023-03`, with the `n:` forms of the month's dates for the text side: no longer an uncoverable word.
-4. **Word concepts:** the remaining tokens, minus function words (en, ru, uk, es, fr) and **generic words** ("all",
-   "files", "documents", "everything", "все", "файли", "документы", "todos", …), each with its `w:` key forms, the `e:`
-   keys of every run it belongs to, its synonym-table entries: a **type word** ("tickets", "квитанции", "facturas")
-   adds `l:type:<t>`, a **kind word** ("photos", "фото", "pdf", "scans", "screenshots", "video") adds `k:<kind>`.
-   Life-domain words never add `l:domain:` keys outside a set query (§25.5.4). At most 30 keys per concept (originals
-   first).
-5. At most `MAX_CONCEPTS` (8): numbers first, then words in query order. **Everything dropped is reported:** the
-   result's searched line names the ignored words (function, generic, past the limit).
+4. **Generic search words are removed before keying** (D28): function words (en, ru, uk, es, fr) and the words that
+   only say "search" ("documents", "files", "all", "everything", "всё про", "все", "усі", "файли", "документы",
+   "todo", "todos", …; one domain list, `drive_keys.GENERIC_WORDS`). Phrase runs (step 2) were built before, so a name
+   keeps its article.
+5. **Word concepts:** every remaining token, with its `w:` key forms and the `e:` keys of every run it belongs to — the
+   same key forms as on the index side, which match `w:`, `e:`, `k:` and `lw:` keys alike. Nothing is mapped at query
+   time: no type or kind table, no synonyms, no translation beyond the script transliterations of §25.2.4. At most 30
+   keys per concept (originals first).
+6. At most `MAX_CONCEPTS` (8): numbers first, then words in query order. **Everything removed is reported:** the
+   result's searched line names the ignored words (function, generic, past the limit). No other concept is ever
+   dropped: a concept that matches nothing stays and blocks (§25.5.4).
 
 The delegate's `query` sentence is still not read (D19).
 
@@ -2573,17 +2596,19 @@ The delegate's `query` sentence is still not read (D19).
   `w:барсе` → **Mentioned in**.
 - **"Barcelona trip"** → concepts *barcelona* (`w:barcelona`, its rough Cyrillic transliteration `w:барке`, `e:barcelona`)
   and *trip* (`w:trip`, `w:трип`); a Cyrillic place name is met through the stored spellings (`place_forms`, entity
-  `forms`), not through transliteration. Two concepts: both must be covered (§25.5.4). A photo is About only if its description or scene
-  says "trip"; otherwise it is not exact, and shows as **Related by meaning only** if it clears the floor. A travel
-  document mentioning both words in one passage → Mentioned in. Known limit, measured as an eval case: a two-word
-  query whose second word is a purpose rather than a subject narrows the exact tiers.
+  `forms`), not through transliteration. Two concepts: both must be covered (strict AND, §25.5.4). A photo is About only
+  if its description, scene or a passage hint says "trip"; a travel document mentioning both words in one passage is
+  Mentioned in. If no file holds "trip" at all, the exact tiers are empty and the result says "no file holds 'trip'"
+  — an honest no-match, with at most three lines related by meaning (the photos, if they clear the floor). Smart
+  then asks for the place alone if that is what the user meant.
 - **"Paris 2023"** → *paris* (`w:paris`, `w:парис`, `e:paris`) and the number *2023* (`n:2023`, `v:2023`, `y:2023`). A
   photo located in Paris and taken in 2023: `e:paris` (from `place_forms`) and `y:2023` (from `effective_date`) →
   About. A Cyrillic query "Париж 2023" → `e:париж`, met by the alternate name "Париж" in `place_forms`.
-- **"receipts"** → one concept, a type word: `w:receipt`, `l:type:receipt`. Under the interim rule of §25.5.4 (the
-  keying of set queries is open, OQ-V11) this is a set query: the files labelled `receipt` (the **Labelled** tier,
-  automatic), plus files whose name covers the word (About, "name"), plus passages mentioning it; the result states
-  how many text files are not described yet, whose labels are unknown.
+- **"all my receipts"** → "all" and "my" are removed; one concept *receipts*: key form `w:receipt`. A profiled
+  receipt holds `lw:receipt` (its label words "receipt", "receipts", "recibo", "чек", "чеки", "квитанція", … in key
+  form) → **Labelled** (automatic); a file named "Receipt …" → About ("name"); a note that says "receipt" →
+  Mentioned in. "квитанции" in the query meets the Russian label words of the same files. The result states how many
+  text files are not described yet, whose labels are unknown.
 
 #### 25.5.2 Candidate sources (in parallel; Firestore only; lean projections)
 - **About stream:** one `find_by_about_keys` per concept (`ABOUT_FETCH` 500, newest first; a date filter as a range in
@@ -2625,7 +2650,7 @@ The delegate's `query` sentence is still not read (D19).
 - **What it is, honestly:** the related tier is a guess. It is labelled "by meaning only, unverified", holds at most
   `RELATED_MAX` (3) lines, is never described as a match, and never makes a result "complete" or "not found".
 
-#### 25.5.4 Tiers and the label-set rule
+#### 25.5.4 Tiers, strict AND and the labelled tier
 Each file is shown once, in its best tier.
 1. **About** (exact): every concept is covered by the record's `about_keys` or name keys — the idf-weighted rule
    below — or its name covers every query token (`covers_query`). Shown with the source: `place (photo location)`,
@@ -2633,40 +2658,37 @@ Each file is shown once, in its best tier.
    description`, `seen in the photo (automatic)`, or `name`.
 2. **Mentioned in** (exact): one chunk of the readable generation covers the concepts (idf-weighted rule) by its
    `word_keys`, **and with two or more concepts the matched words lie within `PROXIMITY_CHARS` (400) of each other**
-   (`match_spans` on the stored text; a type concept may be covered by the record's `l:type:` key instead). A file
+   (`match_spans` on the stored text; a concept may instead be covered by the record's `lw:` or `k:` keys). A file
    whose co-occurrence is farther apart is not exact: it may still be Related.
-3. **Labelled** (automatic, set queries only, below).
+3. **Labelled** (automatic): every concept is covered, and at least one only by the profile's `lw:` label words
+   (below).
 4. **Related by meaning only** (unverified): `meaning ≥ Z_RELATED`; or a chunk covering the concepts only with
    `hint_keys` ("passage keywords: a translation or synonym the text does not spell"); or a name over the
    `name_match` floor that does not cover the query ("similar name"). At most `RELATED_MAX` lines: passage keywords,
    similar name, then by meaning.
 
-**The idf-weighted rule** (the round-2 study's measured rule, Q-05). A concept's weight is `log(1 + N / df)`, with
-`df` its file count from §25.5.2 (`N` the carded files; a concept whose count is "more than 60" takes `df` = 60). With
-one or two concepts, all must be covered. With three or more, the concepts covered must hold all of the weight except
-at most the single lowest-weight concept; the result then says which word was not matched in each such file.
+**Strict AND with the idf-weighted allowance (D28, Q-05).** A concept's document frequency `df` is the number of
+files that hold it in any key family (about, name, word or hint keys), counted from §25.5.2 (exact when the streams
+were exhausted, else "more than 60", taken as 60); its weight is `log(1 + N / df)` (`N` the carded files).
+- **Absent from every file (`df = 0`)** — the concept matched no key anywhere. It is never dropped and never forgiven:
+  every exact and labelled tier is empty, and the result says "no file holds '<word>'" (an honest no-match; at most
+  three related-by-meaning lines may follow). This is what makes "Barcelona trip" with no "trip" anywhere, or a
+  misspelled word, a no-match instead of a silent search for the other words.
+- **Low weight (`df > 0`)** — with one or two concepts, all must be covered in a file. With three or more, a file may
+  miss the single lowest-weight concept, and only that one, if it is held by some other file (so it is common, not
+  absent); the card says "not matched: <word>".
+- Within a concept the keys are OR (its key forms and variants); across concepts AND. Keys never filter.
 
-**Set queries ("all my tickets", "receipts 2024", "what expires"): open (OQ-V11).** Fixed either way: the profile
-labels stored as `l:` keys; D25's manifest wording (document-type words go in `drive_query`); labels never become a
-filter on their own; set results shown as the **Labelled** tier, "labelled <type> by the index (automatic); may be
-incomplete", never as exact. Open: how a query's words become keys — a key-extraction call inside the search
-(option A) or an optional keys field filled by Smart (option B), §25.11 OQ-V11; a measurement is running. Until it is
-decided, the deterministic rule below is the interim design and the fallback either option keeps (A's on a timeout,
-B's when Smart leaves the field empty). **The interim rule:** when every concept is a label word, a kind word, a year,
-a month or a generic word, and at least one is a label word:
-- the type and domain keys are matched with one `find_by_about_keys` on the first label, the other labels tested
-  client-side (an AND: "home insurance" = `l:domain:home` and `l:type:insurance_policy`); a year or month as an
-  `effective_date` range; "expires" and its synonyms (`l:valid`) by `find_expiring` from today, soonest first, with
-  documents already expired counted on one line;
-- shown as the **Labelled** tier: "labelled <type> by the index (automatic); may be incomplete", counted and grouped,
-  plus the count of text files not described yet (their labels are unknown) and of files whose kind gets no profile.
-- In any other query a type word is an ordinary concept with `l:type:` as an extra variant ("Rome tickets": about Rome
-  and covered by a `ticket` label or by the word in the text); domain words stay plain words. Labels never become a
-  filter on their own: in the round-2 study, mapping a specific request to its broad label turned honest negatives
-  into confident junk. The set filter is used without the judge that study paired it with; a judge stays D22's
-  trigger.
-- The synonym table (`drive_labels.LABEL_SYNONYMS`, en, uk, ru, es, fr, key-formed by §25.2.4) is maintained with the
-  enums; a word not in it is an ordinary concept.
+**The labelled tier and set queries.** "All my tickets", "receipts 2024", "what expires" need no special rule: after
+generic words are removed, their concepts are matched like any other, and a profiled file's `lw:` label words cover a
+type word in any of the four languages. A file covered through a label word is shown in the **Labelled** tier,
+"labelled <type> by the index (automatic); may be incomplete", never as exact; counted and grouped like About. When
+the concept a label word covers is a validity word ("expires", "caduca", "діє до"), that concept's about query runs on
+the `valid_until` composite from today, soonest first (`find_expiring`), and documents already expired are counted on
+one line. Years and months use `y:` and `m:` as everywhere. The result adds the count of text files not described yet
+(their label words are unknown) and of files whose kind gets no profile. Labels never become a filter on their own:
+in the round-2 study, mapping a specific request to its broad label turned honest negatives into confident junk. There
+is no query-time synonym table and no judge; a judge stays D22's trigger.
 
 #### 25.5.5 Filters, folder scope, the family fix
 - Kind, date and folder filters apply to every tier: the about stream takes kind and date in the query; the word and
@@ -2808,6 +2830,9 @@ Bars are recorded only if they meet these numbers; a miss is a design question, 
   values (ids, amounts, numeric and written-out dates); content-only answers; synonyms and translations; a misleading
   file name; a book as a long-document distractor; negatives (`expect_none`). Each case has `expect_tier` (`about`,
   `mentioned`, `labelled`, `related`, `none`) and, for broad cases, `exact_set`.
+- **Label words (measured, not a blocker):** on synthetic documents of every `DOC_TYPES` value in en, es, uk and ru,
+  how often the profile's `label_words` hold the forms a user types (singular and plural, the four languages), and the
+  Labelled-tier recall per language on class queries; reported with the bars, not barred.
 - **An incident-shaped case:** "everything about X" with more than `ABOUT_SHOWN` matches (photos with the place
   facet, documents naming X in another script, a note mentioning it) plus a book that mentions X once far from any
   other query word.
@@ -2887,10 +2912,11 @@ v1 reads v2 records without failing because v2 adds **no value to an enum v1 par
 | Per-file model metadata | None for parsed documents (D10) | A profile for every text file and every collapsed folder with a README (D15) |
 | Passage metadata | None | Grounded doc2query hint documents per chunk |
 | Photos | Ten-word caption | Description, objects, scene, visible text (keyed, automatic); place forms from geo table v2 |
-| Classes | Not answerable as a set | The label-set rule, shown as automatic |
+| Classes | Not answerable as a set | The profile's label words (en, es, uk, ru) and the Labelled tier, automatic |
 | Effective date | Brief date for reader-read files only | Profile date for every profiled document |
 | `document` family | docx, doc, odt, rtf, pdf | + markdown, text |
 | `drive_query` | "no type words" | document types allowed; formats in `drive_kind` (D25) |
+| Query keys | Name keys and number terms | One normaliser, generic words removed, strict AND; synonyms only at index time; no query-time model or keys field (D28) |
 | Budgets | Pages and images per month, on the sync state (reset by a purge) | Dollars per call class at the model that ran, in a usage document a purge keeps; an initial-build allowance |
 | Disclosure | Names Anthropic or OpenAI for scans and images | Names OpenAI (`store=false`), the Gemini fallback and the Claude switch; no re-consent (D26) |
 | Keyer change | `EXTRACTION_VERSION` bump re-bills scans | `KEYS_VERSION`: a new generation from stored text, no model call |
@@ -2949,26 +2975,15 @@ telemetry (OPS-11); the time budget and class (OPS-12); embedding volume (OPS-13
   by an index-time document frequency, or use the §14 full-text seam (per-user SQLite FTS5) for body words.
 - **OQ-V6 The long-document correction.** *Recommend:* start with the expected-maximum correction of §25.5.3 and tune
   its reference from the scale test.
-- **OQ-V7 Context and purpose words in two-word queries** ("Barcelona trip"). *Recommend:* keep the measured rule
-  (all of one or two concepts); if G2 shows such cases missing, allow a concept with zero about-document-frequency to
-  be ignored for About when the other concept is an entity or place, and say so in the result.
+- **OQ-V7** — decided: strict AND (D28); a concept absent from every file blocks.
 - **OQ-V8 HTML, e-mail and e-books in the `document` family.** *Recommend:* not now.
 - **OQ-V9 Migration without a rebuild** (OPS-9's trade-off, not a reversal of D24): the stored-text paths of §25.4.8
   plus the version bumps could migrate while the v1 generation keeps serving, without re-billing scans. *Recommend:*
   keep the rebuild (D24) for the owner's single-user index; reconsider if several users' drives are large by then.
-- **OQ-V11 How set and expansion queries become keys (owner; a measurement is running).** Both options keep D25's
-  manifest wording, the `l:` keys, the Labelled tier (automatic) and the rule that keys never filter: AND across
-  concepts, OR within a concept.
-  - **A: a key-extraction call inside the search**, Router-like (a fast ECO model, about 1 s, as the memory Router
-    extracts its keys): `drive_query` in, concepts with their variants out (synonyms, translations, document-type
-    words as `l:type:` keys, years and months), then the same tiers. Search stops being zero-LLM (amends D19): a
-    latency and an outage path per search, the interim deterministic rule as the fallback on a timeout or an outage,
-    and the query text sent to the provider at search time (§25.6 would say so).
-  - **B: an optional structured keys field filled by Smart** (concepts with variants, document types, years) next to
-    `drive_query`. No model call in search, but a new Smart field (amends D19's "no new fields") that Smart may fill
-    unevenly; empty, the interim rule applies.
-  *Recommend:* decide from the measurement (recall on class, synonym and cross-language cases; junk on negatives;
-  latency for A; how often Smart fills B correctly in G3).
+- **OQ-V11** — decided by the owner: D28 (neither a query-time key call nor a keys field).
+- **Deferred extension, not v2 scope (D28):** a flash-lite key-extraction call on a **weak fast pass only** (no exact
+  or labelled tier and no related line above the floor), never per search and never chosen by Smart; its keys are
+  variants within concepts, never filters. *Trigger:* G3 or the live check shows synonym misses that matter.
 - **OQ-V10 Profiles of the bot's own reports.** *Recommend:* yes; their narration preamble is a parser@2 follow-up if
   it pollutes profiles.
 
