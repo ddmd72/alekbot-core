@@ -16,11 +16,12 @@ read    Every PDF and image directly in <folder> (files the owner copied out of 
         5 MiB base64, Anthropic's per-image limit as its errors state it), include a JPEG just under 3.75 MiB: its
         row must read `text`, not `error`.
 triage  The renditions saved by probe_renditions.py (`<n>_<size>.<ext>`), per size, in batches of TRIAGE_BATCH
-        through DriveTriageRunner: the 176 px vs 800 px question of §24.5.
+        through DriveTriageRunner: the 176 px vs 800 px question of §24.5 (800 px chosen 2026-10-13).
 
 Prompts come from firestore_utils/uploads (assembled offline by the real PromptAssemblyService, so a prompt can be
 tried before it is uploaded) or, with --prompts firestore, from the live prompt collections (read-only).
-Keys: ANTHROPIC_API_KEY / OPENAI_API_KEY from .env. Output (file text, briefs, captions: PII) goes only to
+Keys: ANTHROPIC_API_KEY / OPENAI_API_KEY from .env. Each provider is measured alone: the drive agents' Gemini
+fallback never answers in another provider's column. Output (file text, briefs, captions: PII) goes only to
 scripts/memory/drive_model_check_<stamp>/ (gitignored); the console shows counts, seconds and cost.
 """
 from __future__ import annotations
@@ -261,9 +262,15 @@ async def check_triage(folder: Path, providers: Sequence[str], sizes: Sequence[s
     table: Dict[str, Dict[str, Any]] = {}
     totals: Dict[str, Any] = {}
     for provider in providers:
+        if provider not in registry.list_available():
+            print(f"[triage] {provider}: no API key, skipped", flush=True)
+            continue
+        # Only the provider under test: the drive agents' Gemini fallback must not answer in its column.
+        alone = ProviderRegistry()
+        alone.register(provider, registry.get(provider))
         for size, paths in groups.items():
             meter = CostMeter()
-            runner = DriveTriageRunner(_context_builder(registry), _Users(provider), PromptBuilder(repo=None, assembly_service=assembly),
+            runner = DriveTriageRunner(_context_builder(alone), _Users(provider), PromptBuilder(repo=None, assembly_service=assembly),
                                        quota_service=meter)
             images = [TriageImage(item_id=_RENDITION.match(p.name).group("item"),  # type: ignore[union-attr]
                                   thumbnail=p.read_bytes(), mime_type="", camera_prior=False) for p in paths]

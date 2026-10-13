@@ -110,7 +110,8 @@ class DriveDocumentReaderAgent(BaseAgent):
         self._thinking = thinking or DRIVE_READER.thinking
         self._system: Optional[str] = None
         self._system_lock = asyncio.Lock()
-        # Breaker accounting for the provider; the strategy has no fallback, so a failure is never re-served.
+        # Breaker accounting and the strategy's Gemini Flash fallback: a failure _call_llm fails over on is re-served
+        # there; an account-level 4xx is not (§24.8).
         self._set_execution_context(execution_context)
 
     async def can_handle(self, message: AgentMessage) -> bool:

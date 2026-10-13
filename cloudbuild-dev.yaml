@@ -103,7 +103,8 @@ steps:
   # --min-instances=0: idle between ticks; a cold start costs nothing a background tick notices.
   # No --service-account override: Cloud Tasks mints each task's OIDC token for SERVICE_ACCOUNT_EMAIL
   #   (GcpTaskQueue), and /worker checks that same email — one identity, as for alek-bot-dev.
-  # Seven secrets, exactly what indexer_main.py reads: GEMINI_API_KEY (embeddings),
+  # Seven secrets, exactly what indexer_main.py reads: GEMINI_API_KEY (embeddings, and the drive agents' Gemini
+  #   Flash fallback, §24.2 D7 rev 3.17),
   #   MICROSOFT_TODO_CLIENT_ID/SECRET (drive token refresh; same app registration as Step 1),
   #   SERVICE_ACCOUNT_EMAIL (the /worker gate + the identity of the tasks it enqueues),
   #   ANTHROPIC_API_KEY / OPENAI_API_KEY (the drive reader and triage agents, Slice 2+4 §24.2: secrets, never
