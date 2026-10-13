@@ -232,15 +232,19 @@ def _missable(word: str, allowance: Allowance) -> Optional[str]:
     return None
 
 
-def _score(match: FileMatch) -> Tuple[int, int]:
-    return len(match.missed), list(TIER_OF_RANK.values()).index(match.tier)
+def _score(match: FileMatch) -> Tuple[int, int, int]:
+    """Fewest misses, then the best tier, then the strongest covers overall (a Labelled file whose word is also a
+    grounded passage keyword shows that evidence)."""
+    return (len(match.missed), list(TIER_OF_RANK.values()).index(match.tier),
+            sum(CLASS_RANK[c.source_class] for c in match.covers))
 
 
 def _assign(file: FileKeys, concepts: Sequence[Concept], allowance: Allowance, records: Sequence[Optional[Cover]],
             cid: Optional[ChunkId], texts: Mapping[ChunkId, str],
             items: Mapping[ChunkId, Sequence[HintItem]]) -> Optional[FileMatch]:
     chunked = [chunk_cover(file, c, cid) if cid is not None else None for c in concepts]
-    mandatory, optional = [], []
+    mandatory: List[int] = []
+    optional: List[int] = []
     for i, (r, q) in enumerate(zip(records, chunked)):
         if q is not None and _rank(q) < _rank(r):
             (optional if r is not None or _missable(concepts[i].word, allowance) else mandatory).append(i)
@@ -270,7 +274,7 @@ def _assign(file: FileKeys, concepts: Sequence[Concept], allowance: Allowance, r
             continue
         if sum(1 for _, r in missed if r == MISSED_LOW_WEIGHT) > 1:
             continue
-        if not _near([chunked[i] for i in sorted(in_chunk) if chunked[i] is not None], text, hint_items):
+        if not _near([c for c in (chunked[i] for i in sorted(in_chunk)) if c is not None], text, hint_items):
             continue
         tier = TIER_OF_RANK[max(CLASS_RANK[c.source_class] for c in covers)]
         match = FileMatch(file.item_id, tier, tuple(covers), tuple(missed), cid if in_chunk else None)
@@ -283,7 +287,8 @@ def classify(file: FileKeys, concepts: Sequence[Concept], allowance: Allowance, 
              items: Mapping[ChunkId, Sequence[HintItem]]) -> Optional[FileMatch]:
     """The file's best tier among About, Mentioned in, By translation and Labelled, or None (strict AND failed, or a
     concept is absent). `texts` and `items` hold the chunk text and hint items of `chunks_needing_text`: a chunk
-    whose text is missing fails proximity. Fewest misses first, then the best tier; a tie keeps record-only covers."""
+    whose text is missing fails proximity. Fewest misses first, then the best tier, then the strongest covers; a full
+    tie keeps record-only covers."""
     if allowance.absent or not concepts:
         return None
     records = [record_cover(file, c) for c in concepts]

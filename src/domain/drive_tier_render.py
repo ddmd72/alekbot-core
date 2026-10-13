@@ -42,6 +42,13 @@ _NOTHING = "No matching files or folders."
 _ELLIPSIS = "…"
 
 
+def _one(text: str, count: int) -> str:
+    """The frozen templates say "files"; one file reads as one (plural forms are P6's, §25.13.6)."""
+    if count != 1:
+        return text
+    return text.replace("1 files match ", "1 file matches ").replace("(1 files)", "(1 file)")
+
+
 def _quoted(words: Sequence[str]) -> str:
     return ", ".join(f'"{w}"' for w in words)
 
@@ -214,9 +221,9 @@ def _footers(tiered: TieredResult, any_shown: bool, exact_shown: bool) -> List[s
         if tiered.without is not None:
             word = '", "'.join(tiered.absent + tiered.absent_in_scope)
             template = WITHOUT_AT_LEAST_LINE if tiered.without_at_least else WITHOUT_LINE
-            lines.append(template.format(word=word, count=tiered.without))
+            lines.append(_one(template.format(word=word, count=tiered.without), tiered.without))
     elif tiered.conjunction:
-        terms = ", ".join(CONJUNCTION_TERM.format(word=w, count=n) for w, n in tiered.conjunction)
+        terms = ", ".join(_one(CONJUNCTION_TERM.format(word=w, count=n), n) for w, n in tiered.conjunction)
         lines.append(FOOTER_NO_CONJUNCTION.format(terms=terms))
     elif exact_shown:
         lines.append(FOOTER_EXACT)
@@ -270,7 +277,8 @@ def render_tiered(result: DriveSearchResult) -> str:
     """The query result Smart reads (§25.13.6). Cards past RESULT_CHARS_MAX are cut from the lowest tier first and
     join its group lines (Related ones are dropped); the result then says it was shortened."""
     tiered = result.tiered
-    assert tiered is not None
+    if tiered is None:
+        raise ValueError("render_tiered needs a result with tiers")
     shown: Dict[MatchTier, List[DriveSearchCard]] = {t: [c for c in result.cards if c.tier == t.value]
                                                      for t in TIER_ORDER}
     moved: Dict[MatchTier, List[GroupMember]] = {t: [] for t in TIER_ORDER}

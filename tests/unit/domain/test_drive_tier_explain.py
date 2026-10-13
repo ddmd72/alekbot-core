@@ -40,7 +40,7 @@ def test_type_label_is_automatic():
     rec = RecordKeyInputs(kind="pdf", profile=DriveProfile("t", "w", "en", "receipt", label_words=("receipt",
                                                                                                       "receipts")))
     _, ex = _match(rec, "scan.pdf", "all my receipts")
-    assert ex.sources == ('type label "receipt" (automatic)',)
+    assert ex.sources == ('type label "receipts" (automatic)',)
 
 
 def test_passage_words_join_into_one_source_and_the_window_spans_them():

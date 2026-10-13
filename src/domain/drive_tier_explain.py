@@ -111,13 +111,15 @@ def _about_text(source: AboutSource, keys: Sequence[str]) -> str:
 
 
 def _record_source(cover: Cover, record: KeyedRecord) -> str:
+    """The first field that gave one of the cover's keys; a source whose shown word is the query word as typed wins
+    (a label list holds "медицинская запись" and "медицинские записи": the second is shown for "медицинские")."""
     sources = about_sources(record)
-    for key in cover.keys:
-        for source in sources.get(key, ()):
-            if source.source_class is cover.source_class:
-                text = _about_text(source, cover.keys)
-                return text + _ACROSS if cover.source_class is SourceClass.TRANSLATION else text
-    return f'"{cover.word}"'
+    found = [_about_text(s, cover.keys) for key in cover.keys for s in sources.get(key, ())
+             if s.source_class is cover.source_class]
+    if not found:
+        return f'"{cover.word}"'
+    text = next((t for t in found if f'"{cover.word}"' in t.casefold()), found[0])
+    return text + _ACROSS if cover.source_class is SourceClass.TRANSLATION else text
 
 
 def _hint_item(cover: Cover, items: Sequence[HintItem]) -> Optional[HintItem]:
