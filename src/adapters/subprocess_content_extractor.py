@@ -29,10 +29,10 @@ import stat
 import sys
 import tempfile
 import time
-from typing import Any, Dict, Mapping, Optional, Tuple
+from typing import IO, Any, Dict, Mapping, Optional, Tuple
 
 from src.domain.drive_extraction import (
-    PARSER, ExtractionOutcome, ExtractionRequest, ExtractionStatus, PdfSplitFailed,
+    PARSER, ExtractionOutcome, ExtractionRequest, ExtractionStatus, PdfSplitFailed, text_digest,
 )
 from src.domain.drive_index_params import EXTRACT_WALL_TIMEOUT_S, MAX_TEXT_CHARS
 from src.domain.drive_index_policy import size_cap
@@ -55,7 +55,7 @@ _FIXED_ENV = {"OMP_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1", "MKL_NUM_THRE
 _RESULT_MAX_BYTES = MAX_TEXT_CHARS * 6 + 1024 * 1024   # JSON of MAX_TEXT_CHARS characters, escapes included
 _CHILD_STATUSES = frozenset({ExtractionStatus.TEXT, ExtractionStatus.NO_TEXT, ExtractionStatus.UNSUPPORTED,
                              ExtractionStatus.TOO_LARGE, ExtractionStatus.ENCRYPTED, ExtractionStatus.ERROR})
-_STDERR_TAIL = 400
+_STDERR_TAIL = 400   # bytes of the child's stderr hashed into an `error` detail; the text itself is never logged
 
 
 class SubprocessContentExtractor(ContentExtractorPort):
@@ -140,15 +140,16 @@ class SubprocessContentExtractor(ContentExtractorPort):
             started = time.monotonic()
             try:
                 out = os.path.join(workdir, "result.json")
-                errors = os.path.join(workdir, "stderr.txt")
                 request = {**payload, "out": out, "memory_bytes": self._memory, "cpu_s": self._cpu,
                            "file_bytes": self._file_bytes}
-                returncode, timed_out = await self._spawn(request, workdir, errors)
-                status, detail = self._exit_status(returncode, timed_out)
+                with open(os.path.join(workdir, "stderr.txt"), "w+b") as errors:
+                    returncode, timed_out = await self._spawn(request, workdir, errors)
+                    status, detail = self._exit_status(returncode, timed_out)
+                    if status is ExtractionStatus.ERROR:
+                        # its length and a hash only: a parser's traceback can quote the document (R3 F3-5)
+                        detail = f"{detail}; {_stderr_digest(errors)}"
                 elapsed = time.monotonic() - started
                 if status is not None:
-                    if status is ExtractionStatus.ERROR:
-                        detail = f"{detail}; {_tail(errors)}"
                     logger.warning(f"[DriveExtract] {payload.get('op')} {payload.get('kind', 'pdf')}: "
                                    f"{status.value} ({detail}) after {elapsed:.1f}s")
                     return None, status, detail
@@ -160,13 +161,12 @@ class SubprocessContentExtractor(ContentExtractorPort):
             finally:
                 shutil.rmtree(workdir, ignore_errors=True)
 
-    async def _spawn(self, request: Mapping[str, Any], workdir: str, errors: str) -> Tuple[int, bool]:
-        with open(errors, "wb") as stderr:
-            proc = await asyncio.create_subprocess_exec(
-                self._python, "-B", "-E", "-s", "-m", self._module,
-                stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.DEVNULL, stderr=stderr,
-                env=_child_env(workdir), cwd=_REPO_ROOT, start_new_session=True,
-            )
+    async def _spawn(self, request: Mapping[str, Any], workdir: str, stderr: IO[bytes]) -> Tuple[int, bool]:
+        proc = await asyncio.create_subprocess_exec(
+            self._python, "-B", "-E", "-s", "-m", self._module,
+            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.DEVNULL, stderr=stderr,
+            env=_child_env(workdir), cwd=_REPO_ROOT, start_new_session=True,
+        )
         timed_out = False
         try:
             await asyncio.wait_for(proc.communicate(json.dumps(request).encode("utf-8")), timeout=self._wall)
@@ -259,10 +259,12 @@ def _load_result(path: str) -> Optional[Dict[str, Any]]:
     return data if isinstance(data, dict) else None
 
 
-def _tail(path: str) -> str:
+def _stderr_digest(stderr: IO[bytes]) -> str:
+    """`stderr <n> bytes #<hash of its tail>`, read through the parent's own descriptor (the child may rename or
+    replace the path). Never the text: a parser's traceback can quote the document (R3 F3-5)."""
     try:
-        with open(path, "rb") as fh:
-            fh.seek(max(0, os.path.getsize(path) - _STDERR_TAIL))
-            return fh.read().decode("utf-8", errors="replace").strip().replace("\n", " | ")
+        size = os.fstat(stderr.fileno()).st_size
+        stderr.seek(max(0, size - _STDERR_TAIL))
+        return f"stderr {size} bytes #{text_digest(stderr.read())}" if size else "stderr empty"
     except OSError:
-        return ""
+        return "stderr unreadable"

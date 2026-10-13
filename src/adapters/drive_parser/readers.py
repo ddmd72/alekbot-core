@@ -37,7 +37,7 @@ from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Mapping, Opti
 from typing import Iterator
 
 from src.adapters.drive_parser.child import is_memory_failure
-from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus, PdfSplitFailed
+from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus, PdfSplitFailed, failure_label
 from src.domain.drive_index_params import MAX_SHEET_ROWS, MAX_TEXT_CHARS
 from src.utils.document_hardening import ArchiveTooLargeError, check_zip_container
 
@@ -97,7 +97,7 @@ def read_content(path: str, kind: str) -> ExtractionOutcome:
         if is_memory_failure(exc):
             raise MemoryError(str(exc)) from exc
         status = ExtractionStatus.UNSUPPORTED if _deterministic(exc) else ExtractionStatus.ERROR
-        return ExtractionOutcome(status=status, detail=f"{type(exc).__name__}: {exc}"[:300])
+        return ExtractionOutcome(status=status, detail=failure_label(exc))   # never the message (R3 F3-5)
     return _finish(text, pages_total, truncated)
 
 
@@ -150,7 +150,7 @@ def _pdf_failures() -> Iterator[None]:
         if is_memory_failure(exc):
             raise MemoryError(str(exc)) from exc
         status = ExtractionStatus.UNSUPPORTED if _deterministic(exc) else ExtractionStatus.ERROR
-        raise PdfSplitFailed(status, f"{type(exc).__name__}: {exc}"[:300]) from exc
+        raise PdfSplitFailed(status, failure_label(exc)) from exc   # never the message (R3 F3-5)
 
 
 # -- shared helpers -------------------------------------------------------------------------------------------------
