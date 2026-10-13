@@ -138,7 +138,7 @@ _RECORD_READERS: Dict[str, Callable[[Any], Any]] = {
     "state": RecordState,
     "reason": _optional(Reason),
     "modified_at": _dt, "fs_modified_at": _dt, "effective_date": _dt,
-    "dirty_since": _dt, "due_at": _dt, "attempt_started_at": _dt, "defer_until": _dt,
+    "dirty_since": _dt, "due_at": _dt, "attempt_started_at": _dt, "defer_until": _dt, "model_read_at": _dt,
     "name_tokens": lambda v: tuple(v or ()),
     "priority": _optional(int), "defer_priority": _optional(int),
     "brief": _brief,

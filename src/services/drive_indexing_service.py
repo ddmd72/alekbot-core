@@ -19,6 +19,7 @@ without them ends the tick as an internal error (loud, retried with backoff, nev
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 import tempfile
 import time
@@ -61,7 +62,7 @@ from ..domain.drive_index_policy import (
 from ..domain.drive_index_run import (
     READER_IMAGE_MAX_BYTES, README_MAX_BYTES, RunStep, camera_prior, chunk_cap_refuses, chunk_released, file_suffix,
     gate_exempt, image_mime, no_rendition, original_fallback, outcome_step, reader_pages, readme_choice, releasable,
-    routed,
+    reread_cooldown_until, routed,
 )
 from ..domain.drive_search import UNREAD_COUNTER
 from ..domain.drive_sniff import SNIFF_HEAD_BYTES, sniff_kind
@@ -1109,6 +1110,9 @@ class DriveIndexingService:
                 outcome, final = await self._extract(user_id, run, path, kind, now, summary, models, cls)
         if final is None and outcome is not None and kind is not None:
             final = await self._read_text(user_id, run, outcome, kind, now, summary, mark)
+        if final is not None and outcome is not None and outcome.model_calls > 0 \
+                and final.state is not RecordState.PENDING:
+            final = replace(final, model_read_at=now)   # the reader settled it: its cooldown starts (F1-3)
         if final is not None:
             await self._end_run(user_id, run, final, cls, summary, mark, outcome=outcome)
 
@@ -1233,10 +1237,12 @@ class DriveIndexingService:
             logger.info(f"[DriveIndex] item {run.item_id} of {user_id[:8]} refused by the chunk cap "
                         f"({len(chunked.chunks)} chunks)")
             return demoted(run, Reason.USER_CHUNK_CAP, now, outcome=outcome, chunk_count=len(chunked.chunks))
+        keys = [_text_key(c.text) for c in chunked.chunks]
+        reused = await self._reusable_vectors(user_id, run)
+        missing = {k: c.text for k, c in zip(keys, chunked.chunks) if k not in reused}   # one call per distinct text
         started = self._monotonic()
         try:
-            vectors = await asyncio.wait_for(self._embed_texts([c.text for c in chunked.chunks]),
-                                             timeout=EMBED_FILE_BUDGET_S)
+            embedded = await asyncio.wait_for(self._embed_texts(list(missing.values())), timeout=EMBED_FILE_BUDGET_S)
         except asyncio.TimeoutError:
             logger.warning(f"[DriveIndex] embeddings of item {run.item_id} for {user_id[:8]} passed "
                            f"{EMBED_FILE_BUDGET_S}s")
@@ -1248,6 +1254,10 @@ class DriveIndexingService:
             logger.warning(f"[DriveIndex] a chunk of item {run.item_id} for {user_id[:8]} was refused: {exc}")
             return content_retry(run, Reason.EXTRACT_ERROR, now)
         summary["embed_ms"] = summary.get("embed_ms", 0) + int((self._monotonic() - started) * 1000)
+        fresh_vectors = dict(zip(missing, embedded))
+        vectors = [reused[k] if k in reused else fresh_vectors[k] for k in keys]
+        if len(keys) > len(missing):
+            summary["vectors_reused"] = summary.get("vectors_reused", 0) + sum(1 for k in keys if k in reused)
         generation = run.index_generation
         terms = await asyncio.to_thread(_terms_of, [c.text for c in chunked.chunks])
         chunks = [DriveChunk(user_id=user_id, item_id=run.item_id, generation=generation, index=i, text=c.text,
@@ -1273,6 +1283,16 @@ class DriveIndexingService:
         summary["chunks"] = summary.get("chunks", 0) + len(chunks)
         return indexed(fresh, outcome=replace(outcome, truncated=outcome.truncated or chunked.truncated),
                        generation=generation, chunk_count=len(chunks), now=now, chunk_space=self._space)
+
+    async def _reusable_vectors(self, user_id: str, run: DriveIndexRecord) -> Dict[str, List[float]]:
+        """The readable generation's vectors by chunk-text hash, when it is in this tick's embedding space (final
+        review F1-3): an edit embeds only its new or changed chunks. A vector from another space is never mixed in."""
+        readable = run.indexed_generation
+        if readable is None or run.chunk_count <= 0 or run.chunk_space != self._space:
+            return {}
+        stored = await self._repo.get_chunks_with_vectors(user_id, run.item_id, readable, range(run.chunk_count),
+                                                          terms=False)
+        return {_text_key(c.text): vector for c, vector in stored if c.text and vector}
 
     async def _embed_texts(self, texts: List[str]) -> List[List[float]]:
         """At most EMBED_IN_FLIGHT calls at once (§8.1 step 8). Any error but a 400 wins, so a quota error is never
@@ -1436,7 +1456,12 @@ class DriveIndexingService:
     def _model_hold(self, rec: DriveIndexRecord, now: datetime, models: _Models, *, cls: Optional[int] = None,
                     pages: int = 1) -> Optional[DriveIndexRecord]:
         """Model work waits, still pending, while the model is out (§24.8) or until a month has the `pages` the file
-        needs (reader_pages): it is never cut to what is left of this month (§24.7)."""
+        needs (reader_pages): it is never cut to what is left of this month (§24.7). A file the reader settled less
+        than MODEL_REREAD_COOLDOWN ago waits for it to end, in its class: the edits made meanwhile are read once, at
+        their newest version (final review F1-3)."""
+        cooled = reread_cooldown_until(rec)
+        if cooled is not None and now < cooled:
+            return deferred(_cleared(rec), cooled, now, priority=cls)
         if not models.available(now):
             return deferred(_cleared(rec), _backoff_until(models), now, priority=cls)
         if models.pages_left(now) < pages:
@@ -1843,6 +1868,11 @@ def _run_line(user_id: str, key: str, final: DriveIndexRecord, outcome: Optional
     return (f"[DriveIndex] run user={user_id[:8]} item={final.item_id} outcome={key} state={final.state.value} "
             f"reason={reason} extractor={extractor} attempts={final.attempts} pages={sent}/{total} "
             f"refused={refused} truncated={truncated}")
+
+
+def _text_key(text: str) -> str:
+    """A chunk's text hash: equal texts embed to the same vector in one space (F1-3)."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def _terms_of(texts: Sequence[str]) -> List[Tuple[str, ...]]:
