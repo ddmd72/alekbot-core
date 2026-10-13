@@ -3,8 +3,10 @@
 the summary BEFORE it records the outage, so the backoff still holds."""
 import pytest
 
+from src.domain.drive_enrichment import PhotoDescription
+from src.domain.drive_enrichment_calls import ModelReplyStatus, TriageReply, TriageResultV2
 from src.domain.drive_extraction import DriveModelUnavailable, ExtractionOutcome, ExtractionStatus
-from src.domain.drive_index import RecordState
+from src.domain.drive_index import RecordState, TriageVerdict
 from src.domain.drive_index_params import MODEL_BACKOFF_BASE_S
 
 from .drive_content_world import ContentWorld, admitted, prose  # noqa: F401  (fixture)
@@ -54,14 +56,18 @@ async def test_an_outage_with_nothing_spent_keeps_the_doubling_backoff(w):
 
 
 async def test_a_triage_outage_counts_the_images_answered_before_it(w):
+    """Triage v2 (§25.13.1): the outage is the reply's status, with the images answered before it as results."""
     async def partial(user_id, account_id, images):
-        raise DriveModelUnavailable("429 on the second half", images_sent=2, model_calls=3, model_cost=0.003)
+        answered = tuple(TriageResultV2(item_id=i.item_id, verdict=TriageVerdict.PHOTO,
+                                        photo=PhotoDescription(description="a photo")) for i in images[:2])
+        return TriageReply(status=ModelReplyStatus.UNAVAILABLE, results=answered, model="m", usd=0.003,
+                           model_calls=3)
 
     w.triage.triage = partial
-    for n in range(4):
-        w.add_image(f"p{n}.jpg")
+    ids = [w.add_image(f"p{n}.jpg") for n in range(4)]
     await w.settle()
     state = await w.repo.get_sync_state("u")
     assert state.triage_images_used == 2 and state.model_backoff_until is not None
     assert sum(r.model_cost for r in w.results) == pytest.approx(0.003)
     assert w.summary_total("triage_calls") == 3 and w.summary_total("triage_images") == 2
+    assert sum(w.rec(i).triage_verdict is not None for i in ids) == 2   # the answered half is kept, the rest waits

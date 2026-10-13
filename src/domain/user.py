@@ -143,6 +143,9 @@ _DEFAULT_AGENT_TIERS: Dict[str, "PerformanceTier"] = {
     # ≈ $0.0006 a page. ECO = claude-haiku-5-5 / gpt-6-luna ($0.10 / $0.50 per million tokens).
     "drive_reader": PerformanceTier.ECO,
     "drive_triage": PerformanceTier.ECO,
+    # Search v2 enrichment (USER_DRIVE_INDEXING_RFC §25.4.4): a profile per text file, passage hints per chunk.
+    "drive_profiler": PerformanceTier.ECO,
+    "drive_passages": PerformanceTier.ECO,
     "image_generation": PerformanceTier.PERFORMANCE,
     "video_generation": PerformanceTier.PERFORMANCE,  # motion-prompt quality — same reasoning as image_generation
 }

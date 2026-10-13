@@ -171,7 +171,9 @@ Full per-agent detail (mechanics, intents, tiers, gotchas) lives in
 | WebSearchLight | ECO (Gemini flash-lite) | `search_web_light` (internal, Lelik only) | one grounded lookup, ~2 s, spoken answer |
 | lelik_summarizer | ECO | none (not manifest-registered) | end-of-call transcript → plain-text summary; run by `CompanionExtractorRunner`, same slot `tutor_extractor` fills |
 | DriveDocumentReader | ECO (OpenAI `gpt-6-luna`, or Claude by `agent_providers`; fallback Gemini `gemini-3.8-flash`) | none (indexer only) | PDF window or image → verbatim text + brief; `ContentExtractorPort` via `DriveReaderRunner` |
-| DriveImageTriage | ECO (same switch and fallback) | none (indexer only) | 800 px thumbnail batch → text or photo + caption; `ImageTriagePort` via `DriveTriageRunner` |
+| DriveImageTriage | ECO (same switch and fallback) | none (indexer only) | 800 px thumbnail batch of 8 → text or photo + description, objects, scene, visible text (triage v2); `ImageTriagePort` via `DriveTriageRunner` |
+| DriveProfiler | ECO (same switch and fallback) | none (indexer only) | one text file's stored text → profile (type, life areas, dates, entities, values, topics, en/es/uk/ru word lists), verified against the text; `DocumentProfilerPort` via `DriveProfilerRunner` |
+| DrivePassages | ECO (same switch and fallback) | none (indexer only) | 2 chunks → keywords and questions with evidence quotes (doc2query), grounded in the chunk; `PassageHintPort` via `DrivePassageRunner` |
 
 **Long-running turns** — one absolute 25-min clock per chat turn (`domain/turn_clock.py`,
 `TurnClock` in a `ContextVar`; `use_turn_clock=True` only on Smart's top-level engine). At 90 s

@@ -380,8 +380,9 @@ class TestParameters:
         assert P.WRITE_BATCH_BYTES < 10 * 1024 * 1024
 
     def test_v1_values_still_in_use_are_unchanged(self):
-        """The two clashing names keep their v1 values until P3 / P6 replace them."""
-        assert (P.TRIAGE_BATCH, P.WINDOW_CHARS_TOTAL) == (16, 12_000)
+        """The two clashing names keep their v1 values until their part replaces them: P3 replaced TRIAGE_BATCH with
+        the v2 value (§25.4.3, §25.12: 8 photos per enriched call); WINDOW_CHARS_TOTAL waits for P6."""
+        assert (P.TRIAGE_BATCH, P.TRIAGE_BATCH_V2, P.WINDOW_CHARS_TOTAL) == (8, 8, 12_000)
 
 
 class TestTexts:

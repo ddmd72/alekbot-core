@@ -13,7 +13,7 @@ from src.domain.user import PerformanceTier, UserBotConfig
 from src.services.agent_context_builder import AgentContextBuilder, AgentProviderStrategy
 from src.services.provider_registry import ProviderRegistry
 
-AGENTS = ["drive_reader", "drive_triage"]
+AGENTS = ["drive_reader", "drive_triage", "drive_profiler", "drive_passages"]   # + Search v2 (§25.4.4)
 
 
 def _builder(monkeypatch, *, gemini=True):

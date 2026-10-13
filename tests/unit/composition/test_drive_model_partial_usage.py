@@ -12,6 +12,7 @@ from src.agents.drive_image_triage_agent import AGENT_TYPE as TRIAGE_TYPE, Drive
 from src.composition.drive_reader_runner import DriveReaderRunner
 from src.composition.drive_triage_runner import DriveTriageRunner
 from src.domain.agent import AgentConfig
+from src.domain.drive_enrichment_calls import ModelReplyStatus
 from src.domain.drive_extraction import DriveModelUnavailable, ExtractionRequest, TriageImage
 from src.domain.exceptions import LLMClientError, LLMRateLimitError
 from src.domain.user import UserBotConfig
@@ -74,9 +75,10 @@ def _triage_agent(script):
 
 async def test_triage_correction_turn_counts_two_calls():
     agent, _ = _triage_agent([reply({"images": []}),
-                              reply({"images": [{"index": 1, "verdict": "photo", "caption": "a cat"}]})])
+                              reply({"images": [{"index": 1, "verdict": "photo", "description": "a cat",
+                                                 "objects": [], "scene": "", "visible_text": ""}]})])
     out = await agent.classify([TriageInput(1, JPEG, "image/jpeg", False)], account_id="acc")
-    assert out.calls == 2 and out.cost == pytest.approx(2 * CALL_COST)
+    assert out.calls == 2 and out.usd == pytest.approx(2 * CALL_COST)   # triage v2 reports dollars as `usd`
 
 
 async def test_triage_outage_after_a_correction_turn_carries_the_spent_call():
@@ -149,14 +151,17 @@ async def test_triage_outage_after_a_halved_batch_carries_the_answered_half():
             return LLMClientError("bad image", http_status=400)
         first = request.messages[0].parts[0].text
         if first.startswith("Image 1:"):
-            return reply({"images": [{"index": i, "verdict": "photo", "caption": "x"} for i in (1, 2)]})
+            return reply({"images": [{"index": i, "verdict": "photo", "description": "x", "objects": [], "scene": "",
+                                      "visible_text": ""} for i in (1, 2)]})
         return LLMRateLimitError("429", http_status=429)
 
     llm = RoutedLLM(handler)
     runner = DriveTriageRunner(_contexts(llm), _users(), prompt_builder())
     images = [TriageImage(item_id=f"i{n}", thumbnail=JPEG, mime_type="image/jpeg", camera_prior=False)
               for n in range(4)]
-    with pytest.raises(DriveModelUnavailable) as failed:
-        await runner.triage("u", "a", images)
-    assert (failed.value.images_sent, failed.value.model_calls) == (2, 3)
-    assert failed.value.model_cost == pytest.approx(CALL_COST)
+    # triage v2 (§25.13.1): the outage is the reply's status, never an exception, and the answered half travels as
+    # results with the calls made and their cost
+    out = await runner.triage("u", "a", images)
+    assert out.status is ModelReplyStatus.UNAVAILABLE
+    assert ([r.item_id for r in out.results], out.model_calls) == (["i0", "i1"], 3)
+    assert out.usd == pytest.approx(CALL_COST)

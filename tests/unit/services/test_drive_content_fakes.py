@@ -1,6 +1,8 @@
 """The content fakes behave like the ports they stand in for (drive_content_fakes.py); plan parts test against them."""
 import pytest
 
+from src.domain.drive_enrichment import PhotoDescription
+from src.domain.drive_enrichment_calls import ModelReplyStatus
 from src.domain.drive_extraction import (
     READER, DriveModelUnavailable, ExtractionOutcome, ExtractionRequest, ExtractionStatus, TriageImage,
 )
@@ -47,24 +49,32 @@ class TestFakeExtractor:
 
 
 class TestFakeTriage:
+    """The fake answers as the triage v2 port does (USER_DRIVE_INDEXING_RFC §25.13.1): a TriageReply, an outage as a
+    status."""
+
     async def test_scripted_and_default_verdicts(self):
         tr = FakeTriage({"a": (TriageVerdict.TEXT, "")}, cost_per_call=0.002)
         images = [TriageImage("a", b"1", "image/jpeg", False), TriageImage("b", b"2", "image/jpeg", True)]
-        outcome = await tr.triage("u", "acc", images)
-        assert [(r.item_id, r.verdict, r.caption) for r in outcome.results] == [("a", TriageVerdict.TEXT, ""),
-                                                                                 ("b", TriageVerdict.PHOTO, "a photo")]
-        assert (outcome.model_calls, outcome.model_cost) == (1, 0.002)
+        reply = await tr.triage("u", "acc", images)
+        assert reply.status is ModelReplyStatus.OK
+        assert [(r.item_id, r.verdict, r.photo) for r in reply.results] == [
+            ("a", TriageVerdict.TEXT, None), ("b", TriageVerdict.PHOTO, PhotoDescription(description="a photo"))]
+        assert (reply.model_calls, reply.usd, reply.fallback_usd) == (1, 0.002, 0.0)
+        assert (reply.capped_item_ids, reply.refused_item_ids) == ((), ())
         assert tr.calls == [images]
 
     async def test_empty_batch_costs_nothing(self):
-        outcome = await FakeTriage(cost_per_call=0.002).triage("u", "acc", [])
-        assert (outcome.results, outcome.model_calls, outcome.model_cost) == ((), 0, 0.0)
+        reply = await FakeTriage(cost_per_call=0.002).triage("u", "acc", [])
+        assert (reply.status, reply.results, reply.model_calls, reply.usd) == (ModelReplyStatus.OK, (), 0, 0.0)
 
-    async def test_outage(self):
-        tr = FakeTriage()
+    async def test_outage_is_a_status_not_an_exception(self):
+        tr = FakeTriage(cost_per_call=0.002)
         tr.unavailable = True
-        with pytest.raises(DriveModelUnavailable):
-            await tr.triage("u", "a", [])
+        images = [TriageImage("a", b"1", "image/jpeg", False)]
+        reply = await tr.triage("u", "a", images)
+        assert (reply.status, reply.results, reply.model_calls, reply.usd) == (ModelReplyStatus.UNAVAILABLE, (), 0,
+                                                                               0.0)
+        assert tr.calls == [images]
 
 
 class TestFakeContentDrive:

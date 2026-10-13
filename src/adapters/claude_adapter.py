@@ -23,6 +23,7 @@ from ..domain.exceptions import (
     LLMClientError,
     LLMNetworkError,
     LLMRateLimitError,
+    LLMRefusalError,
     LLMServerError,
     LLMTimeoutError,
     LLMUnavailableError,
@@ -550,7 +551,7 @@ class ClaudeAdapter(LLMPort):
         explanation = getattr(details, "explanation", None)
         logger.error("[ClaudeAdapter] model %s declined: category=%s explanation=%s",
                      getattr(response, "model", "?"), category, explanation)
-        raise LLMClientError(f"refusal (category={category}): {explanation or 'no explanation'}")
+        raise LLMRefusalError(f"refusal (category={category}): {explanation or 'no explanation'}")
 
     def _thinking_off_param(self, model_name: str) -> Optional[dict]:
         """Lowest thinking setting for a model that thinks by default (longest prefix wins)."""
