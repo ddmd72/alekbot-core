@@ -263,6 +263,11 @@ stale `running` jobs.
   over-reported `fetch_url` (fixed 2026-07-30, so cost before that date is wrong too).
   `record_usage(model=…)` receives `dominant_model` as a label only. See
   `decisions/billing_per_model_pricing.md`.
+- **Usage legs never overlap.** `calculate_cost` bills `prompt_tokens`, `cache_read_tokens` and
+  `cache_creation_tokens` as disjoint legs. OpenAI's `cache_write_tokens` sits *inside*
+  `input_tokens`, so the adapter subtracts both cache legs. Until 2026-10-13 it subtracted only
+  reads, so written tokens were billed at 1× + 1.25× (OpenAI cost about 24% high since 2026-08-11).
+  See `decisions/billing_cache_write_and_voice_seconds.md`.
 - **Daily budget alert (advisory, never a gate).** `BillingAccount.daily_cost_limit` (default $5) →
   `increment_account_usage` returns `UsageIncrement`; `FirestoreQuotaService` posts to the ops sink
   (`AlertSinkPort`, `BILLING_SLACK_WEBHOOK_URL`) when the day *crosses* the limit — once per day, not
@@ -411,7 +416,10 @@ contradicted each other until 2026-09-28; see `decisions/lelik_delivery_single_s
     `voice_humor` and `voice_temperament` can be overridden; `voice_care` and
     `voice_call_manners` cannot. These are separate from Smart's `archetype`/`vibe`/`humor_engine`,
     so a text-persona override never reaches the voice.
-  - xAI audio is billed per second.
+  - xAI audio is billed per second. `billable_audio_seconds` on `response.done` is the session's
+    **running total**, so `XaiRealtimeAdapter` emits the increment. Summing the raw value billed a
+    4-minute call as 31 minutes until 2026-10-13
+    (`decisions/billing_cache_write_and_voice_seconds.md`).
 
 **Voice web transport** (`docs/10_rfcs/VOICE_WEB_TRANSPORT_RFC.md`) — a second call kind, a
 Cabinet call page over WebRTC, next to the Twilio phone path, sharing the same `VoiceSessionService`

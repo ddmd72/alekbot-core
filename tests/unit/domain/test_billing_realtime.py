@@ -94,3 +94,18 @@ def test_calculate_realtime_cost_prices_xai_text_input_and_ignores_token_legs_it
         "text_output_tokens": 1_000_000,
     }
     assert calculate_realtime_cost("grok-voice-think-fast-2.0", usage) == round(0.04 + 0.004, 6)
+
+
+def test_realtime_token_count_sums_token_legs_and_ignores_billed_seconds():
+    from src.domain.billing import realtime_token_count
+    usage = {
+        "audio_input_tokens": 3284, "audio_output_tokens": 4232,
+        "text_input_tokens": 247, "text_output_tokens": 453,
+        "billable_audio_seconds": 245,
+    }
+    assert realtime_token_count(usage) == 3284 + 4232 + 247 + 453
+
+
+def test_realtime_token_count_includes_openai_cached_leg():
+    from src.domain.billing import realtime_token_count
+    assert realtime_token_count({"audio_input_tokens": 10, "cached_tokens": 90}) == 100

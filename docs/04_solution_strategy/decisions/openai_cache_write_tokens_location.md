@@ -1,7 +1,7 @@
 # OpenAI `cache_write_tokens` lives in `input_tokens_details`, not `output_tokens_details`
 
 **Date:** 2026-08-11
-**Status:** Accepted
+**Status:** Accepted. Amended 2026-10-13: the written tokens are a *subset* of `input_tokens` and were billed twice until `billing_cache_write_and_voice_seconds.md`.
 **Related to:** `docs/10_rfcs/GPT_5_6_MIGRATION_RFC.md` §3.4 (closes its open caveat),
 `gpt_5_6_adoption.md`, `billing_per_model_pricing.md`
 
