@@ -133,7 +133,7 @@ class DriveReaderRunner(ContentExtractorPort):
             outcome = await self._read_image(agent, request)
         else:
             outcome = await self._read_pdf(agent, request)
-        logger.info(f"[DriveReader] user={request.user_id[:8]} kind={request.kind} status={outcome.status.value} "
+        logger.info(f"[DriveReader] user={request.user_id[:8]} item={request.item_id} kind={request.kind} status={outcome.status.value} "
                     f"pages={outcome.pages_sent}/{outcome.pages_total} calls={outcome.model_calls} "
                     f"cost=${outcome.model_cost:.4f} truncated={outcome.truncated} refused={outcome.pages_refused} "
                     f"{outcome.detail}")
