@@ -104,8 +104,9 @@ def row_of(result: DriveSearchResult, captured: Mapping[str, Any], drive: Fixtur
     if tiered is None:   # a filter-only listing: cards with no tier
         row["listing"] = True
         row["tiers"] = {}
-        for card in result.cards:
-            for path in _card_paths(card, drive):
+        row["cards"] = [_card_paths(card, drive) for card in result.cards]   # in order: v1's top-K rule
+        for paths in row["cards"]:
+            for path in paths:
                 row["tiers"][path] = v2_metrics.LISTING
         return row
     tiers: Dict[str, str] = {}

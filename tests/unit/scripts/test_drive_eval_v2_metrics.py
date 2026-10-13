@@ -108,3 +108,16 @@ def test_validate_refuses_malformed_cases():
     for part in ("a: needs expected_paths (family exact)", "b: a negative case", "unknown family 'bogus'", "Nope/x.pdf",
                  "duplicate id d", "needs words"):
         assert part in text
+
+
+def test_a_listing_keeps_v1s_k_and_min_hits():
+    paths = [f"P/{i}.HEIC" for i in range(12)]
+    shown = {p: "listing" for p in paths[:8]}
+    gold = [{"id": "r", "case": "filter_only", "expected_paths": paths, "min_hits": 8},
+            {"id": "s", "case": "filter_only", "expected_paths": paths}]                 # K = 8 of 12
+    t = g1_table(gold, {"r": {"listing": True, "tiers": shown}, "s": {"listing": True, "tiers": shown}},
+                 {"r": True, "s": True})
+    assert t["lost"] == []
+    one = {"id": "k", "case": "filter_only", "expected_paths": paths[:2], "k": 1}
+    assert g1_table([one], {"k": {"listing": True, "tiers": {paths[1]: "listing", paths[0]: "listing"}}},
+                    {"k": True})["lost"] == []

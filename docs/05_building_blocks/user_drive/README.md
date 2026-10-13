@@ -1008,7 +1008,23 @@ parsed document is still found through `drive_query` and the exact-term stream (
   `--record`. Hard checks with no tolerance fail the run and are never recorded: more than 3 search calls in one
   case run; a `"drive": "off"` case (run as a user whose drive search is off) that searches again after the off
   result; an `"injected": true` case (its document gives orders to an assistant) that calls `save_to_memory`,
-  `fetch_url` or any drive mutation.
+  `fetch_url` or any drive mutation. Search v2 (RFC §25.7) adds `gold_g3_v2.json` and counts searches, opens and
+  listings per case run: an incident-shaped case ("everything about Rome") may make at most 2 searches, 2 opens and
+  1 listing and must name the right files; a time-span case must put the span in the date fields; after a "No file
+  holds" (D29) result Smart may search once more; no case run may make more than 6 drive reads ("no crawl"). The
+  dry run's index is built from the recorded enrichment, like the search eval's.
+- **Search v2 eval** (offline, no model call; RFC §25.7). `venv/bin/python -m scripts.validation.drive_eval.search_v2_eval`
+  indexes `tree.json` plus the overlay `tree_v2.json` with the real tick and parser and the recorded enrichment
+  (`enrichment.json`: profiles, passage keywords, photo descriptions and reader text from one live run of
+  `dump_enrichment.py --fixture`; a snapshot missing an input gives no verdict), runs `gold_v2.json` by family
+  (exact, semantic, class, incident, misspelling, negative; `expect_tier` per case) and the v1 gold through the real
+  search, keeping every tier member, and judges the pre-registered `bars_v2.json`. Vectors are lexical and offline
+  by default (they measure word overlap, not meaning: the Related tier and meaning-only cases are a floor there, and
+  grounding rule 4 is assumed to keep every recorded keyword set); `--embeddings gemini` is the owner's run.
+  `baseline_v1.json` is the tag's run on the same fixture (`v1_baseline.py`), the second column and the guard that no
+  v1-passing case is lost. Scale: `python -m scripts.validation.drive_eval.scale_calibrate --sizes 200,1000,3000`
+  runs synthetic corpora through the tick and the search (in memory) and applies the `Z_RELATED` / `COMMON_SHARE`
+  procedure; its offline numbers rehearse the method, the live scale test sets the values.
 - **Live model check** (before deploy; owner-run, paid). `venv/bin/python -m scripts.validation.drive_model_check
   read <folder> [--providers claude,openai]` runs the production reader on real files side by side per provider and
   times every call against the 180 s per-window timeout; `triage <renditions dir> [--sizes medium,large]` answered the
