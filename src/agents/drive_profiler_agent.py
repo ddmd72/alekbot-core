@@ -41,8 +41,7 @@ from ..domain.drive_labels import DATE_LABELS, DOC_TYPES, ENTITY_TYPES, LIFE_DOM
 from ..domain.llm import FinishReason
 from ..infrastructure.agent_config import DRIVE_PROFILER
 from ..infrastructure.drive_model_call import (
-    CallCounter, DriveInputRefused, DriveOutputInvalid, build_drive_prompt, classify_model_error, ledger_spend,
-    with_usage,
+    CallCounter, DriveOutputInvalid, build_drive_prompt, classify_model_error, ledger_spend, safety_stop, with_usage,
 )
 from ..ports.llm_port import AgentExecutionContext, LLMRequest, Message, MessagePart
 from ..ports.prompt_builder_port import PromptBuilderPort
@@ -201,7 +200,7 @@ class DriveProfilerAgent(BaseAgent):
                 logger.warning(f"[{AGENT_TYPE}] output limit reached on item {request.item_id}")
                 return None, True
             if response.finish_reason is FinishReason.SAFETY:
-                raise DriveInputRefused("the provider's safety filter stopped the answer")
+                raise safety_stop(response, AGENT_TYPE)
             raw = response.text or ""
             try:
                 return _parse(raw, key_values, caps), False

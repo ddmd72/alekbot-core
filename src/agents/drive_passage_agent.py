@@ -32,8 +32,7 @@ from ..domain.drive_index_params import HINT_EVIDENCE_WORDS_MAX, HINT_KEYWORDS_M
 from ..domain.llm import FinishReason
 from ..infrastructure.agent_config import DRIVE_PASSAGES
 from ..infrastructure.drive_model_call import (
-    CallCounter, DriveInputRefused, DriveOutputInvalid, build_drive_prompt, classify_model_error, ledger_spend,
-    with_usage,
+    CallCounter, DriveOutputInvalid, build_drive_prompt, classify_model_error, ledger_spend, safety_stop, with_usage,
 )
 from ..ports.llm_port import AgentExecutionContext, LLMRequest, Message, MessagePart
 from ..ports.prompt_builder_port import PromptBuilderPort
@@ -166,7 +165,7 @@ class DrivePassageAgent(BaseAgent):
                 logger.warning(f"[{AGENT_TYPE}] output limit reached on {len(chunks)} passages")
                 return {by_label[k]: v for k, v in answered.items()}, (), True
             if response.finish_reason is FinishReason.SAFETY:
-                raise DriveInputRefused("the provider's safety filter stopped the answer")
+                raise safety_stop(response, AGENT_TYPE)
             raw = response.text or ""
             try:
                 for label, items in _parse(raw, set(by_label)).items():

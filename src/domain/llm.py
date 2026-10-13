@@ -326,6 +326,10 @@ class LLMResponse(BaseModel):
     usage_metadata: Optional[UsageMetadata] = None
     cache_metadata: Optional[CacheMetadata] = None
     grounding_metadata: Optional[Any] = None  # Gemini grounding metadata (Maps widget token, search sources)
+    # The fallback provider's name when BaseAgent._call_llm re-served the call there after a failover; None when the
+    # primary answered. A safety block the fallback returns as a response is then the fallback's verdict, not the
+    # primary's (USER_DRIVE_INDEXING_RFC §25.4.6, review M2).
+    served_by_fallback: Optional[str] = None
 
 
 def build_tool_turn(response: "LLMResponse", tool_results: List[Any]) -> List[Message]:

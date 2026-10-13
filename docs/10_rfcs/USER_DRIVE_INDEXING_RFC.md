@@ -1909,8 +1909,9 @@ rule, RRF and the window budget below are retired; the chunk kNN stays as one in
 re-served on the Gemini Flash fallback by `BaseAgent._call_llm`; only when that fails too (or there is no fallback:
 no `GEMINI_API_KEY`, a Gemini primary, an open Gemini breaker) does the call raise `BothProvidersUnavailableError`,
 which the table below reads by the **primary's** cause — so what is charged to a file is unchanged. A 4xx on the
-primary (an account error, a key, a permission, a model id) is not failed over. A 4xx the fallback raises is not
-wrapped and is sorted as if the primary had raised it (§24.14).
+primary (an account error, a key, a permission, a model id) is not failed over. A non-account 4xx the fallback raises
+is `LLMFallbackClientError`, carrying the fallback's name: a charged outage retried on the primary after the backoff,
+never a refusal of the input (Search v2, §25.4.4 N7; until then it was sorted as if the primary had raised it).
 
 `src/infrastructure/drive_model_call.py` sorts every failed call by what it says about the input:
 

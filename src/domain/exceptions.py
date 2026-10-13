@@ -64,6 +64,13 @@ class LLMAccountError(LLMClientError):
     """
 
 
+class LLMRefusalError(LLMClientError):
+    """The model declined the request for its content (Claude's safety classifier: HTTP 200 with
+    ``stop_reason="refusal"``), raised by the adapter before any answer is used. An ``LLMClientError`` for every
+    caller (no failover, alerted); the drive indexer reads it as a refusal of the input, not as invalid output
+    (USER_DRIVE_INDEXING_RFC §25.4.6, review m6)."""
+
+
 class LLMFallbackClientError(LLMClientError):
     """A non-failover client error raised by the FALLBACK provider after a failover (USER_DRIVE_INDEXING_RFC §25.4.4,
     review N7), with ``provider_name`` naming it. Every caller that catches ``LLMClientError`` sees it as before; the

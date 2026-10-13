@@ -13,23 +13,28 @@ Public interface:
 
 Grounding (the Doc2query-- idea, Gospodinov et al., ECIR 2023, with evidence anchoring in place of a learned relevance
 model):
-1. the evidence quote must occur in the chunk after NFC, casefold and whitespace collapse (surrounding quotes and
-   ellipses are not part of a quote); its span in the chunk text as stored is recorded;
+1. the evidence quote must occur in the chunk after NFC, casefold and whitespace collapse, on word boundaries
+   (surrounding quotes and ellipses are not part of a quote); it is a quote only with at least EVIDENCE_MIN_WORDS
+   words or EVIDENCE_MIN_CHARS characters, and at most HINT_EVIDENCE_WORDS_MAX words (review M3: "a" inside
+   "Confirmamos" grounded a hallucinated keyword); its span in the chunk text as stored is recorded;
 2. every number, date or id in the item (its `drive_content_terms` maximal forms) must be among the chunk's number
    terms — the normaliser maps "13 мая 2026" and "13 de mayo de 2026" to one date, so a term written in another
-   language or script is the same verified term;
+   language is the same verified term; an id written in another script ("Ф-150" for "F-150") passes when every digit
+   run of 3 or more is among the chunk's terms (review m5);
 3. a keyword whose forms are all among the chunk's `word_keys` adds no hint keys (a plain mention); hint keys are the
    other keywords' `w:` forms (`keyword_keys`, P1's `drive_keys.word_form_keys`), at most HINT_KEYS_PER_CHUNK,
    earliest first; questions add none;
 4. a set whose hint vector is further from the chunk's vector than PASSAGE_MIN_SIMILARITY is dropped whole
    (`drop_if_far`; the vectors are the caller's).
 Grounding proves the quote is in the passage, not that the keyword translates it: a hint match is automatic. At most
-HINT_KEYWORDS_MAX keywords and HINT_QUESTIONS_MAX questions are kept, the first of each; a repeated item is dropped.
+HINT_KEYWORDS_MAX keywords and HINT_QUESTIONS_MAX questions are kept, the first of each; a repeated item, a keyword
+over KEYWORD_MAX_CHARS or a question over QUESTION_MAX_CHARS characters is dropped (review m10).
 Reused items (§25.4.7) are grounded again against the new text, so their spans are recomputed.
 """
 from __future__ import annotations
 
 import hashlib
+import re
 import unicodedata
 from dataclasses import dataclass, replace
 from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
@@ -37,13 +42,20 @@ from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 from .drive_content_terms import content_terms, query_terms
 from .drive_enrichment import HintItem, HintType
 from .drive_index_params import (
-    HINT_KEYS_PER_CHUNK, HINT_KEYWORDS_MAX, HINT_QUESTIONS_MAX, PASSAGE_MIN_SIMILARITY, PASSAGE_REUSE_SHARE,
+    HINT_EVIDENCE_WORDS_MAX, HINT_KEYS_PER_CHUNK, HINT_KEYWORDS_MAX, HINT_QUESTIONS_MAX, PASSAGE_MIN_SIMILARITY,
+    PASSAGE_REUSE_SHARE,
 )
 
 KeywordKeys = Callable[[str], Sequence[str]]
 
 _QUOTE_EDGES = "\"'“”„«»‘’‚‹›`…. "
 _CAPS = {HintType.KEYWORD.value: HINT_KEYWORDS_MAX, HintType.QUESTION.value: HINT_QUESTIONS_MAX}
+EVIDENCE_MIN_WORDS = 3          # a quote is at least this many words ...
+EVIDENCE_MIN_CHARS = 12         # ... or at least this many characters (one long word)
+KEYWORD_MAX_CHARS = 60          # a keyword is a word or a short phrase, never a sentence
+QUESTION_MAX_CHARS = 200
+_TEXT_MAX = {HintType.KEYWORD.value: KEYWORD_MAX_CHARS, HintType.QUESTION.value: QUESTION_MAX_CHARS}
+_DIGIT_RUN = re.compile(r"\d{3,}")
 
 
 @dataclass(frozen=True)
@@ -75,14 +87,15 @@ def ground(chunk_text: str, items: Sequence[HintItem], *, chunk_word_keys: Optio
     hint_keys: List[str] = []
     for item in items:
         text = " ".join(item.text.split())
-        if item.type not in _CAPS or not text or (item.type, text.casefold()) in seen:
+        if (item.type not in _CAPS or not text or len(text) > _TEXT_MAX[item.type]
+                or (item.type, text.casefold()) in seen):
             invalid += 1
             continue
         span = _span(item.evidence, norm, positions)
         if span is None:
             evidence_drops += 1
             continue
-        if any(term not in terms for term in query_terms(text)):
+        if any(not _term_held(term, terms) for term in query_terms(text)):
             number_drops += 1
             continue
         if counts.get(item.type, 0) >= _CAPS[item.type]:
@@ -182,12 +195,36 @@ def _normalised(text: str) -> Tuple[str, List[int]]:
     return "".join(out), positions
 
 
+def _term_held(term: str, terms: Set[str]) -> bool:
+    """A number term of the item is the chunk's; an id in another script ("ф150" for "f150") is, when every digit
+    run of 3 or more of it is."""
+    if term in terms:
+        return True
+    runs = _DIGIT_RUN.findall(term)
+    return bool(runs) and any(c.isalpha() for c in term) and all(run in terms for run in runs)
+
+
 def _span(evidence: str, norm: str, positions: List[int]) -> Optional[Tuple[int, int]]:
+    """The quote's span on word boundaries, or None when it is not a quote (too short, too long, not there)."""
     needle = " ".join(unicodedata.normalize("NFD", evidence).casefold().split()).strip(_QUOTE_EDGES)
     needle = unicodedata.normalize("NFD", needle)
-    if not needle:
+    words = len(needle.split())
+    if not needle or words > HINT_EVIDENCE_WORDS_MAX or (
+            words < EVIDENCE_MIN_WORDS and len(unicodedata.normalize("NFC", needle)) < EVIDENCE_MIN_CHARS):
         return None
     at = norm.find(needle)
-    if at < 0:
-        return None
-    return positions[at], positions[at + len(needle) - 1] + 1
+    while at >= 0:
+        end = at + len(needle)
+        before = norm[at - 1] if at > 0 else " "
+        after = norm[end] if end < len(norm) else " "
+        if not _word_char(before, needle[0]) and not _word_char(after, needle[-1]):
+            return positions[at], positions[end - 1] + 1
+        at = norm.find(needle, at + 1)
+    return None
+
+
+def _word_char(neighbour: str, edge: str) -> bool:
+    """`neighbour` continues the word `edge` belongs to (a combining mark always does)."""
+    if unicodedata.combining(neighbour):
+        return True
+    return (neighbour.isalnum() or neighbour == "_") and (edge.isalnum() or edge == "_")

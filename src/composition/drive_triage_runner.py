@@ -10,8 +10,8 @@ Per call it builds the agent from the user's UserBotConfig through AgentContextB
 (no prompt-content store, §24.2). Images go in batches of TRIAGE_BATCH, each thumbnail under an opaque index 1..n.
 One `TriageResultV2` per image answered:
 - a thumbnail the providers do not take (type, or over MAX_VISION_IMAGE_BYTES) is never sent: `refused_item_ids`;
-- a batch stopped at the output cap, or refused by the primary (400/413/422, a safety stop), is halved down to the
-  image; an image still stopped / refused alone goes to `capped_item_ids` / `refused_item_ids` (no description);
+- a batch stopped at the output cap keeps the answers received and asks again, halved, for the rest; a batch refused
+  by the primary (400/413/422, a safety stop) is halved down to the image; an image still stopped / refused alone goes to `capped_item_ids` / `refused_item_ids` (no description);
 - output still invalid after the correction turn, an image left out or still disagreeing with its identical twin:
   unsettled (no result, retried), status `invalid`;
 - a 5xx, a timeout, an unexpected error or the fallback's refusal: `failed`, and no further call; an outage for
@@ -133,12 +133,16 @@ class DriveTriageRunner(ImageTriagePort):
         run.spent(answer.model, answer.usd, answer.fallback_usd, answer.calls)
         run.results.update(answer.results)
         if answer.output_limited:
-            if len(inputs) == 1:
+            left = [i for i in inputs if i.index not in answer.results]
+            if len(inputs) == 1 and left:
                 logger.warning("[DriveTriage] one image still at the output cap; no description")
                 run.capped.add(inputs[0].index)
                 run.charged.add(S.STOPPED_AT_CAP)
                 return
-            await self._halves(agent, inputs, account_id, run)
+            if len(left) == 1:
+                await self._batch(agent, left, account_id, run)
+            elif left:
+                await self._halves(agent, left, account_id, run)
             return
         if answer.missing:
             run.charged.add(S.INVALID)
