@@ -1,4 +1,5 @@
 import asyncio
+import base64
 from typing import List, Any, Optional, cast
 import httpx
 from google import genai
@@ -370,6 +371,14 @@ class GeminiAdapter(LLMPort):
                             mime_type=uploaded_file.mime_type
                         )))
                         logger.info(f"📎 [GeminiAdapter] Uploaded file: {uploaded_file.uri}")
+                    elif "base64" in p.file_data:
+                        # Inline bytes (the drive reader's PDF window or image, the triage's thumbnails): sent with
+                        # the request, never uploaded to the Files API. Dropping the part instead would let the
+                        # model answer about a file it never saw. Gemini caps an inline request at 20 MB.
+                        parts.append(types.Part.from_bytes(
+                            data=base64.b64decode(p.file_data["base64"]),
+                            mime_type=p.file_data["mime_type"],
+                        ))
                     elif "ref" in p.file_data:
                         logger.debug(f"[GeminiAdapter] file ref '{p.file_data['ref']}' (no binary content)")
                     else:

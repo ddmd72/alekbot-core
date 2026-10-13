@@ -72,6 +72,11 @@ mocks cannot detect translation regressions) + contract validators in
   - **GeminiAdapter sends no `temperature` / `top_p` / `top_k` / `thinking_budget`** (deprecated by
     Google 2026-10, hard 400 announced) — thinking is `thinking_level` only. See
     `decisions/gemini_sampling_params_removed.md`.
+  - **GeminiAdapter file parts:** `uri` (already uploaded), `path` (uploaded via the Files API), `base64` (sent inline
+    as `inline_data` bytes, `types.Part.from_bytes`; added 2026-10-13 for the drive agents' Gemini fallback — before,
+    a base64 part was dropped with an "Unsupported file_data format" warning and the model answered blind), `ref`
+    (label only). Gemini caps an inline request at 20 MB. Wire tests:
+    `tests/unit/adapters/test_gemini_adapter_inline_bytes_wire.py`.
 - **GeminiEmbeddingAdapter** — `gemini-embedding-2`, dim 768 (Matryoshka from native 3072; migrated
   from `-001` 2026-05-29). Legacy `task_type` → inline instruction prefix inside the adapter
   (`RETRIEVAL_DOCUMENT`→`"title: | text: …"`, `RETRIEVAL_QUERY`→`"task: search result | query: …"`,
