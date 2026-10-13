@@ -358,9 +358,10 @@ class DriveReaderRunner(ContentExtractorPort):
 
 
 def _failed_status(exc: DriveModelCallFailed) -> ExtractionStatus:
-    """A refusal the same bytes always get is terminal (R2 P-m5): retried, it would only bill the windows read
-    before it again. Too large (a single page or an image still refused with 413) → `too_large`; refused outright
-    (400/422) → `unsupported`. Anything else (invalid output, a safety stop) is a per-file transient, `error`."""
+    """A refusal the same bytes always get is terminal (R2 P-m5): retried, it would only bill again. Only an image
+    reaches here refused — a refused PDF page is skipped in `_piece` (R3-P1) — so: an image still refused with 413 →
+    `too_large`; refused outright (400/422) → `unsupported`. Anything else (invalid output, a safety stop, a half
+    that timed out again) is a per-file transient, `error`."""
     if isinstance(exc, DriveInputTooLarge):
         return S.TOO_LARGE
     if isinstance(exc, DriveInputRefused):

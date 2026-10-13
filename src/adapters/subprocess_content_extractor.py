@@ -7,12 +7,19 @@ allowlisted environment and a private temp directory removed afterwards. Parsers
 peaked at ~1.75 GB), so only a killed process bounds them. A kill is an outcome: `timeout` (wall clock, SIGXCPU) or
 `memory` (MemoryError, SIGKILL from the kernel); the indexer process never parses a byte.
 
-This is resource isolation, not code-execution containment. The child runs as the same user, in the same container
-and network as the indexer: code an exploited parser runs there can read the parent's environment through
-`/proc/<ppid>/environ` (the allowlist keeps credentials out of the child's own environment, not out of its reach),
-ask the metadata server for the service account's token, and reach the network. Accepted for a single-owner
-deployment (RFC known limits); a parser CVE with code execution, or users who do not trust one another, is the
-trigger for a real boundary (a separate sandboxed service or gVisor-style isolation without credentials).
+The deployment is multi-user (one whitelist, many users' files on one indexer), so the child also runs as an
+unprivileged user (R3 F3-1): `sandbox_user`, which the indexer passes from DRIVE_PARSER_USER — the Dockerfile creates
+that user and sets the variable, so the deployed indexer always sandboxes, and a configured user that is missing, is
+root, or cannot be switched to fails the start. The child gets that uid/gid and no supplementary groups, a per-run
+directory it owns (its TMPDIR and HOME), a read-only link of the source file in it, and writes its window there for
+the parent to collect. A child of another uid cannot read the parent's `/proc/<ppid>/environ` (the API keys, the
+Microsoft client secret), nor rewrite the app source or site-packages (root-owned, not world-writable: the image
+build checks it), nor reach another file's temp directory (root-only). Without a configured user (local development)
+the child runs as this process's own user, and the constructor says so in a WARNING.
+
+Still reachable from the child (residual, owner-accepted risk; RFC known limits): the metadata server, and with it the
+service account's token, and the network. Closing that needs a separate low-privilege parser service (its own
+service account) or gVisor-style isolation without credentials.
 
 The memory, CPU and file limits below are placeholders until spike S1 (§18) measures the Phase 0 bomb set on the
 indexer service (`scripts/infrastructure/drive_extract_s1.py`).
@@ -22,17 +29,19 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import errno
 import os
+import pwd
 import shutil
 import signal
 import stat
 import sys
 import tempfile
 import time
-from typing import Any, Dict, Mapping, Optional, Tuple
+from typing import IO, Any, Dict, Mapping, Optional, Tuple
 
 from src.domain.drive_extraction import (
-    PARSER, ExtractionOutcome, ExtractionRequest, ExtractionStatus, PdfSplitFailed,
+    PARSER, ExtractionOutcome, ExtractionRequest, ExtractionStatus, PdfSplitFailed, text_digest,
 )
 from src.domain.drive_index_params import EXTRACT_WALL_TIMEOUT_S, MAX_TEXT_CHARS
 from src.domain.drive_index_policy import size_cap
@@ -55,7 +64,10 @@ _FIXED_ENV = {"OMP_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1", "MKL_NUM_THRE
 _RESULT_MAX_BYTES = MAX_TEXT_CHARS * 6 + 1024 * 1024   # JSON of MAX_TEXT_CHARS characters, escapes included
 _CHILD_STATUSES = frozenset({ExtractionStatus.TEXT, ExtractionStatus.NO_TEXT, ExtractionStatus.UNSUPPORTED,
                              ExtractionStatus.TOO_LARGE, ExtractionStatus.ENCRYPTED, ExtractionStatus.ERROR})
-_STDERR_TAIL = 400
+# The environment variable naming the unprivileged user the child runs as (R3 F3-1). The Dockerfile sets it and
+# creates the user; indexer_main passes it as `sandbox_user`. Unset (local development): no sandbox user.
+PARSER_USER_ENV = "DRIVE_PARSER_USER"
+_STDERR_TAIL = 400   # bytes of the child's stderr hashed into an `error` detail; the text itself is never logged
 
 
 class SubprocessContentExtractor(ContentExtractorPort):
@@ -68,7 +80,9 @@ class SubprocessContentExtractor(ContentExtractorPort):
                  cpu_limit_s: int = EXTRACT_CPU_LIMIT_S, wall_timeout_s: float = EXTRACT_WALL_TIMEOUT_S,
                  file_limit_bytes: int = EXTRACT_FILE_LIMIT_BYTES, max_children: int = 1,
                  python: str = sys.executable, child_module: str = CHILD_MODULE,
-                 temp_root: Optional[str] = None) -> None:
+                 temp_root: Optional[str] = None, sandbox_user: Optional[str] = None) -> None:
+        # (uid, gid) the child runs as, or None: this process's own user (local development, logged as a WARNING)
+        self._sandbox = _resolve_sandbox(sandbox_user)
         self._memory = memory_limit_bytes
         self._cpu = cpu_limit_s
         self._wall = wall_timeout_s
@@ -140,15 +154,17 @@ class SubprocessContentExtractor(ContentExtractorPort):
             started = time.monotonic()
             try:
                 out = os.path.join(workdir, "result.json")
-                errors = os.path.join(workdir, "stderr.txt")
-                request = {**payload, "out": out, "memory_bytes": self._memory, "cpu_s": self._cpu,
+                staged, window = self._stage(payload, workdir)
+                request = {**staged, "out": out, "memory_bytes": self._memory, "cpu_s": self._cpu,
                            "file_bytes": self._file_bytes}
-                returncode, timed_out = await self._spawn(request, workdir, errors)
-                status, detail = self._exit_status(returncode, timed_out)
+                with open(os.path.join(workdir, "stderr.txt"), "w+b") as errors:
+                    returncode, timed_out = await self._spawn(request, workdir, errors)
+                    status, detail = self._exit_status(returncode, timed_out)
+                    if status is ExtractionStatus.ERROR:
+                        # its length and a hash only: a parser's traceback can quote the document (R3 F3-5)
+                        detail = f"{detail}; {_stderr_digest(errors)}"
                 elapsed = time.monotonic() - started
                 if status is not None:
-                    if status is ExtractionStatus.ERROR:
-                        detail = f"{detail}; {_tail(errors)}"
                     logger.warning(f"[DriveExtract] {payload.get('op')} {payload.get('kind', 'pdf')}: "
                                    f"{status.value} ({detail}) after {elapsed:.1f}s")
                     return None, status, detail
@@ -156,17 +172,48 @@ class SubprocessContentExtractor(ContentExtractorPort):
                 if result is None:
                     logger.warning(f"[DriveExtract] {payload.get('op')}: no valid result after {elapsed:.1f}s")
                     return None, ExtractionStatus.ERROR, "no valid result"
+                if window is not None:
+                    _collect_window(*window)
                 return result, None, ""
             finally:
                 shutil.rmtree(workdir, ignore_errors=True)
 
-    async def _spawn(self, request: Mapping[str, Any], workdir: str, errors: str) -> Tuple[int, bool]:
-        with open(errors, "wb") as stderr:
-            proc = await asyncio.create_subprocess_exec(
-                self._python, "-B", "-E", "-s", "-m", self._module,
-                stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.DEVNULL, stderr=stderr,
-                env=_child_env(workdir), cwd=_REPO_ROOT, start_new_session=True,
-            )
+    def _stage(self, payload: Mapping[str, Any], workdir: str
+               ) -> Tuple[Dict[str, Any], Optional[Tuple[str, str]]]:
+        """The request the child gets, and (where the child writes the window, where the caller wants it) for a cut.
+        Unsandboxed: the payload as given. Sandboxed (R3 F3-1): the child cannot enter the caller's root-only temp
+        directories, so the run directory becomes the child's, the source is linked into it read-only for the child's
+        group (copied when a link is impossible), and a window is written there and collected after the run."""
+        if self._sandbox is None:
+            return dict(payload), None
+        uid, gid = self._sandbox
+        os.chown(workdir, uid, gid)                                   # mode 0700 from mkdtemp: the child's alone
+        staged: Dict[str, Any] = dict(payload)
+        source = str(payload["path"])
+        linked = os.path.join(workdir, "source" + os.path.splitext(source)[1][:16])
+        try:
+            os.link(source, linked)
+        except OSError:                                               # another filesystem: a copy
+            shutil.copyfile(source, linked)
+        os.chown(linked, -1, gid)
+        os.chmod(linked, 0o440)                                       # readable, never writable, by the child
+        staged["path"] = linked
+        window = None
+        if "out_path" in payload:
+            staged["out_path"] = os.path.join(workdir, "window.pdf")
+            window = (staged["out_path"], str(payload["out_path"]))
+        return staged, window
+
+    async def _spawn(self, request: Mapping[str, Any], workdir: str, stderr: IO[bytes]) -> Tuple[int, bool]:
+        identity: Dict[str, Any] = {}
+        if self._sandbox is not None:   # no supplementary groups: root's would otherwise be inherited
+            identity = {"user": self._sandbox[0], "group": self._sandbox[1], "extra_groups": []}
+        proc = await asyncio.create_subprocess_exec(
+            self._python, "-B", "-E", "-s", "-m", self._module,
+            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.DEVNULL, stderr=stderr,
+            env=_child_env(workdir, sandboxed=self._sandbox is not None), cwd=_REPO_ROOT, start_new_session=True,
+            **identity,
+        )
         timed_out = False
         try:
             await asyncio.wait_for(proc.communicate(json.dumps(request).encode("utf-8")), timeout=self._wall)
@@ -233,12 +280,58 @@ class SubprocessContentExtractor(ContentExtractorPort):
         return result
 
 
-def _child_env(workdir: str) -> Dict[str, str]:
-    """Allowlisted: no credentials, no PYTHON* variables; TMPDIR is the call's own directory, removed after."""
+def _child_env(workdir: str, *, sandboxed: bool = False) -> Dict[str, str]:
+    """Allowlisted: no credentials, no PYTHON* variables; TMPDIR is the call's own directory, removed after. A
+    sandboxed child's HOME is that directory too: the parent's HOME belongs to another user."""
     env = {key: value for key in _SAFE_ENV_KEYS if (value := os.environ.get(key))}
     env.update(_FIXED_ENV)
     env["TMPDIR"] = workdir
+    if sandboxed:
+        env["HOME"] = workdir
     return env
+
+
+def _effective_uid() -> int:
+    return os.geteuid()
+
+
+def _resolve_sandbox(user: Optional[str]) -> Optional[Tuple[int, int]]:
+    """(uid, gid) of the parser user, or None when none is configured. A configured user that is missing, is root, or
+    that this process cannot switch to (it is not root) fails the start: never a silent fallback (R3 F3-1)."""
+    user = (user or "").strip()
+    if not user:
+        logger.warning(f"[DriveExtract] no parser user ({PARSER_USER_ENV} unset): parser children run as this "
+                       f"process's own user, with its privileges — local development only; the indexer image sets it")
+        return None
+    try:
+        entry = pwd.getpwnam(user)
+    except KeyError:
+        logger.error(f"[DriveExtract] parser user {user!r} does not exist in this container")
+        raise RuntimeError(f"parser user {user!r} does not exist in this container") from None
+    if entry.pw_uid == 0 or entry.pw_gid == 0:
+        logger.error(f"[DriveExtract] parser user {user!r} is root")
+        raise RuntimeError(f"parser user {user!r} is root: no sandbox")
+    if _effective_uid() != 0:
+        logger.error(f"[DriveExtract] switching the parser to {user!r} needs root")
+        raise RuntimeError(f"running the parser as {user!r} needs root")
+    logger.info(f"[DriveExtract] parser children run as {user} (uid {entry.pw_uid}, gid {entry.pw_gid})")
+    return entry.pw_uid, entry.pw_gid
+
+
+def _collect_window(written: str, wanted: str) -> None:
+    """Moves the window the sandboxed child wrote in its directory to where the caller wants it. Only a regular file
+    moves; anything else stays behind (removed with the directory), and the caller's own check refuses the cut."""
+    try:
+        if not stat.S_ISREG(os.lstat(written).st_mode):
+            return
+        try:
+            os.replace(written, wanted)
+        except OSError as exc:
+            if exc.errno != errno.EXDEV:
+                raise
+            shutil.copyfile(written, wanted)
+    except OSError as exc:
+        logger.warning(f"[DriveExtract] window not collected: {type(exc).__name__}")
 
 
 def _kill_group(pid: int) -> None:
@@ -249,20 +342,31 @@ def _kill_group(pid: int) -> None:
 
 
 def _load_result(path: str) -> Optional[Dict[str, Any]]:
+    """The child's result: a regular file only, opened without following a link and without blocking on a FIFO — the
+    child owns the directory (sandboxed) and could plant either for the parent to read."""
     try:
-        if os.path.getsize(path) > _RESULT_MAX_BYTES:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return None
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > _RESULT_MAX_BYTES:
             return None
-        with open(path, encoding="utf-8") as fh:
+        with os.fdopen(fd, encoding="utf-8", closefd=False) as fh:
             data = json.load(fh)
     except (OSError, ValueError):
         return None
+    finally:
+        os.close(fd)
     return data if isinstance(data, dict) else None
 
 
-def _tail(path: str) -> str:
+def _stderr_digest(stderr: IO[bytes]) -> str:
+    """`stderr <n> bytes #<hash of its tail>`, read through the parent's own descriptor (the child may rename or
+    replace the path). Never the text: a parser's traceback can quote the document (R3 F3-5)."""
     try:
-        with open(path, "rb") as fh:
-            fh.seek(max(0, os.path.getsize(path) - _STDERR_TAIL))
-            return fh.read().decode("utf-8", errors="replace").strip().replace("\n", " | ")
+        size = os.fstat(stderr.fileno()).st_size
+        stderr.seek(max(0, size - _STDERR_TAIL))
+        return f"stderr {size} bytes #{text_digest(stderr.read())}" if size else "stderr empty"
     except OSError:
-        return ""
+        return "stderr unreadable"
