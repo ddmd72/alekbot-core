@@ -271,3 +271,47 @@ async def test_provider_owned_turns_passes_untagged_replies_through_uncancelled(
     assert [e.type for e in events] == ["response_created", "audio_delta", "response_done"]
     assert events[2].payload["usage"] == _flatten_usage(_USAGE)
     assert ws.sent == []
+
+
+@pytest.mark.asyncio
+async def test_billable_audio_seconds_is_reported_as_the_delta_of_xais_running_session_total():
+    # Live probe 2026-10-13: xAI's billable_audio_seconds is the session's running total
+    # (7 -> 14 -> 23 s for three replies 7.6 s apart), while the token legs are per response.
+    # VoiceCallBuffer sums every response_done, so the adapter hands it the increment.
+    adapter, _ = await _opened([
+        _done("r1", {**_USAGE, "billable_audio_seconds": 7}),
+        _done("r2", {**_USAGE, "billable_audio_seconds": 14}),
+        _done("r3", {**_USAGE, "billable_audio_seconds": 23}),
+    ])
+
+    events = await _events(adapter)
+
+    seconds = [e.payload["usage"]["billable_audio_seconds"] for e in events]
+    assert seconds == [7, 7, 9]
+    assert sum(seconds) == 23
+    # Token legs pass through untouched: they are per response already.
+    assert all(e.payload["usage"]["audio_output_tokens"] == 994 for e in events)
+
+
+@pytest.mark.asyncio
+async def test_billable_audio_seconds_delta_never_goes_negative():
+    adapter, _ = await _opened([
+        _done("r1", {"billable_audio_seconds": 20}),
+        _done("r2", {"billable_audio_seconds": 18}),  # out-of-order or reset: bill nothing extra
+        {"type": "response.done", "response_id": "r3"},  # no usage at all
+        _done("r4", {"billable_audio_seconds": 25}),
+    ])
+
+    events = await _events(adapter)
+
+    assert [e.payload["usage"]["billable_audio_seconds"] for e in events] == [20, 0, 0, 5]
+
+
+@pytest.mark.asyncio
+async def test_billable_audio_seconds_running_total_is_per_adapter_instance():
+    # relay_main builds one adapter per call; a second call starts from zero.
+    first, _ = await _opened([_done("r1", {"billable_audio_seconds": 30})])
+    second, _ = await _opened([_done("r1", {"billable_audio_seconds": 4})])
+
+    assert (await _events(first))[0].payload["usage"]["billable_audio_seconds"] == 30
+    assert (await _events(second))[0].payload["usage"]["billable_audio_seconds"] == 4

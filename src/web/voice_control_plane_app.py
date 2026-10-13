@@ -54,7 +54,7 @@ from typing import TYPE_CHECKING, Awaitable, Callable, Optional, Set
 
 from quart import Blueprint, Response, jsonify, request
 
-from src.domain.billing import calculate_realtime_cost
+from src.domain.billing import calculate_realtime_cost, realtime_token_count
 from src.domain.llm import LLMRequest, LLMResponse, Message, MessagePart
 from src.domain.request_context import RequestContext
 from src.domain.voice_amd import is_voicemail
@@ -187,7 +187,7 @@ def create_voice_control_plane_blueprint(
                 try:
                     cost = calculate_realtime_cost(model, tokens) if isinstance(tokens, dict) else 0.0
                     logger.info(f"voice call {call_id}: model={model} tokens={tokens} cost={cost}")
-                    total_tokens = sum(tokens.values()) if isinstance(tokens, dict) else tokens
+                    total_tokens = realtime_token_count(tokens) if isinstance(tokens, dict) else tokens
                     await quota_service.record_usage(account_id, model, total_tokens, cost)
                 except Exception:
                     logger.error(

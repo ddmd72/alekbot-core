@@ -19,7 +19,7 @@ on its own"). The probe checked that assumption and the rest of the session shap
 | Event names | OpenAI GA names: `input_audio_buffer.speech_started/stopped/committed`, `conversation.item.input_audio_transcription.completed`, `response.output_audio.delta`, `response.output_audio_transcript.done`. `conversation.item.added`, not `.created`. |
 | `speech_started` timing | Prompt in 9/9 fresh-session runs (onset reported ~2 s into synthetic speech at default threshold 0.85). **Twice delivered late, batched with `speech_stopped`**, both when the model had just spoken. Watch in UAT: late onset = no mid-sentence barge-in. |
 | Formats | `audio/pcmu` (phone) and `audio/pcm` rate 24000 (web) both work. |
-| Usage | **Top-level `usage` on `response.done`** (not under `response`): OpenAI-shaped token details plus `output_audio_seconds` and `billable_audio_seconds`. A cancelled response still bills. |
+| Usage | **Top-level `usage` on `response.done`** (not under `response`): OpenAI-shaped token details plus `output_audio_seconds` and `billable_audio_seconds`. A cancelled response still bills. Token legs are per response; `billable_audio_seconds` is the session's running total (found 2026-10-13, `billing_cache_write_and_voice_seconds.md`). |
 | `reasoning.effort` | `high` or `none`. Time to first audio: none 0.79–0.82 s, high 1.05–1.45 s. |
 | Model default VAD | Without `turn_detection` in session.update: `speech_started` only, no commit. |
 
