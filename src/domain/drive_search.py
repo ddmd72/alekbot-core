@@ -35,6 +35,7 @@ from .drive_index import DriveIndexRecord, DriveSyncState, Reason, RecordState, 
 from .drive_index_params import ACCESS_LOSS_TTL, WRAPPER_TAG_GAP_MAX
 from .drive_index_policy import Admission, admission, kind_of
 from .drive_name_keys import covers_query, query_name_keys
+from .drive_tier_result import TieredResult
 from .user_drive import DriveConnection, DriveItem, make_drive_ref
 
 STATUS_OK = "ok"
@@ -176,6 +177,15 @@ class DriveSearchCard:
     passage_exact: bool = True           # the window's anchor holds a query term (exact-term stream); False: the
                                          # chunk kNN's nearest passage only (F5-8)
     window_shortened: bool = False       # the window budget trimmed the best chunk (not: left a neighbour out)
+    # Search v2 (§25.5.6): the tier the card is shown in (a MatchTier value; "" for a filter-only listing), how it
+    # matched (rendered sources, §25.13.6), the passage cut around the matched words or evidence, the query words it
+    # may miss ('"photo" (common)'), and whether a key cap cut its keys
+    tier: str = ""
+    sources: Tuple[str, ...] = ()
+    passage: str = ""
+    not_matched: Tuple[str, ...] = ()
+    keys_cut: bool = False
+    similar_name: bool = False           # Related: a name over the name_match floor that does not cover the query
 
     def drive_item(self) -> DriveItem:
         """The Step 1 item, built only now that a path is derived (§3.1)."""
@@ -213,6 +223,7 @@ class DriveSearchResult:
     other_drive: bool = False            # disconnected because a different drive is connected now
     capped: bool = False                 # filters dropped candidates from a full (capped) stream page
     candidates: int = 0                  # how many visible candidates the filters were applied to
+    tiered: Optional[TieredResult] = None   # Search v2: a query result's tiers, coverage and footers (§25.5.6)
 
 
 @dataclass(frozen=True)
@@ -591,7 +602,11 @@ def _scope_line(result: DriveSearchResult) -> Optional[str]:
 def render_results(result: DriveSearchResult) -> str:
     """The text Smart reads: per-result facts only. Standing guidance on how to use them (open a stale or recent
     file before quoting, never say "does not exist" while building, name what was not searched) is in Smart's
-    protocol token (§10.4, §24.10)."""
+    protocol token (§10.4, §24.10). A query result with tiers is rendered by `drive_tier_render` (Search v2,
+    §25.13.6); filter-only listings, folder outcomes and the gate keep this layout."""
+    if result.tiered is not None and result.status == STATUS_OK and not result.folder_not_indexed:
+        from .drive_tier_render import render_tiered   # it imports this module: imported at call time
+        return render_tiered(result)
     if result.status == STATUS_DISABLED:
         return ("Drive search is off for this user: they have not turned on drive indexing in the Cabinet. "
                 f"{_NOT_AGAIN} To find a file now, browse folders with list_files_in_drive.")
