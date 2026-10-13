@@ -37,8 +37,8 @@ from ..domain.drive_extraction import (
     TriageResult, chain_for, model_route,
 )
 from ..domain.drive_index import (
-    CURRENT_VERSIONS, DriveChange, DriveChanges, DriveChunk, DriveIndexRecord, DriveSyncState, EpochPhase,
-    ErrorCategory, FolderProbe, LeaseLost, Nudge, Priority, Reason, RecordState, Scope,
+    CURRENT_VERSIONS, DriveChange, DriveChanges, DriveChunk, DriveIndexRecord, DriveIndexStoreUnavailable,
+    DriveSyncState, EpochPhase, ErrorCategory, FolderProbe, LeaseLost, Nudge, Priority, Reason, RecordState, Scope,
 )
 from ..domain.drive_index_params import (
     CASCADE_OPS_PER_TICK, EMBED_FILE_BUDGET_S, EMBED_IN_FLIGHT, ITEM_CALLS_PER_TICK, LEASE_MARGIN, MAINTENANCE_SHARE,
@@ -115,9 +115,11 @@ class _ItemGone(Exception):
     "no content" or "no thumbnail"."""
 
 
-# What ends the tick when it escapes an index run (§8.2): the drive connection, a provider's throttling or outage, the
-# embedding provider's errors and a wiring error. Anything else is this file's: a counted per-file retry.
-_RUN_SYSTEMIC = (DriveNotConnectedError, DriveThrottled, DriveReauthRequired, LLMError, _NotWired)
+# What ends the tick when it escapes an index run or a re-embed (§8.2): the drive connection, a provider's throttling or
+# outage, the embedding provider's errors, a transient index-store error and a wiring error. Anything else is this
+# file's: a counted per-file retry.
+_RUN_SYSTEMIC = (DriveNotConnectedError, DriveThrottled, DriveReauthRequired, LLMError, DriveIndexStoreUnavailable,
+                 _NotWired)
 
 
 @dataclass
@@ -1273,11 +1275,13 @@ class DriveIndexingService:
                             summary: Dict[str, int]) -> bool:
         """§12.3: the readable chunks are in another embedding space. Their stored text is embedded again into a new
         generation, with no download and no extraction; the old generation serves until the new one commits under
-        the same fence as an index run (§7.4). Chunks that cannot be read back as stored send the file to a full
-        index run, and so does a per-file embedding failure, which that run counts (§8.2)."""
+        the same fence as an index run (§7.4). Any content state: a failed record's previous generation and a waiting
+        record's current one are served too (§3.4), and their content state, attempts and deferral are left as they
+        are (T-M1). Errors are classified like an index run's (§8.2): a systemic one ends the tick with the re-embed
+        still due; chunks that cannot be read back as stored, a per-file embedding failure or any other error send the
+        file to a full index run, which counts it."""
         if not budget.file_allowed(routed=False):
             return False
-        now = ctx.now
         readable = rec.indexed_generation
         if readable is None:
             return True
@@ -1291,6 +1295,30 @@ class DriveIndexingService:
         budget.files -= 1
         generation = rec.index_generation + 1
         await self._commit(user_id, [replace(rec, index_generation=generation)], set())   # never reused (§8.1 step 2)
+        mark = _RunMark()
+        try:
+            await self._reembed_run(user_id, rec, stored, generation, ctx, summary, mark)
+        except (LeaseLost, _OptedOut):
+            raise   # nothing more may be written; an opt-out purges anyway
+        except _RUN_SYSTEMIC as exc:
+            logger.warning(f"[DriveIndex] re-embedding item {rec.item_id} for {user_id[:8]} ended by "
+                           f"{type(exc).__name__}; it stays due")
+            raise
+        except Exception as exc:
+            if mark.committed:   # its debris is the sweep's (§7.5); the outcome stands and the tick goes on
+                logger.error(f"[DriveIndex] re-embedding item {rec.item_id} for {user_id[:8]} failed after its "
+                             f"outcome was committed: {type(exc).__name__}: {exc}", exc_info=True)
+                return True
+            logger.error(f"[DriveIndex] re-embedding item {rec.item_id} for {user_id[:8]} failed: "
+                         f"{type(exc).__name__}: {exc}; the file is read again", exc_info=True)
+            await self._reread(user_id, rec, ctx)
+        return True
+
+    async def _reembed_run(self, user_id: str, rec: DriveIndexRecord, stored: List[DriveChunk], generation: int,
+                           ctx: PlanContext, summary: Dict[str, int], mark: _RunMark) -> None:
+        """The re-embed once its generation is persisted; `mark` is set once its outcome is written."""
+        now = ctx.now
+        readable = rec.indexed_generation
         started = self._monotonic()
         try:
             vectors = await asyncio.wait_for(self._embed_texts([c.text for c in stored]), timeout=EMBED_FILE_BUDGET_S)
@@ -1298,13 +1326,15 @@ class DriveIndexingService:
             logger.warning(f"[DriveIndex] re-embedding item {rec.item_id} for {user_id[:8]} passed "
                            f"{EMBED_FILE_BUDGET_S}s; the file is read again")
             await self._reread(user_id, rec, ctx)
-            return True
+            mark.committed = True
+            return
         except LLMClientError as exc:
             if exc.http_status != 400:
                 raise   # systemic (§8.2)
             logger.warning(f"[DriveIndex] a chunk of item {rec.item_id} for {user_id[:8]} was refused: {exc}")
             await self._reread(user_id, rec, ctx)
-            return True
+            mark.committed = True
+            return
         summary["embed_ms"] = summary.get("embed_ms", 0) + int((self._monotonic() - started) * 1000)
         terms = await asyncio.to_thread(_terms_of, [c.text for c in stored])
         chunks = [replace(c, generation=generation, content_terms=t) for c, t in zip(stored, terms)]
@@ -1317,18 +1347,19 @@ class DriveIndexingService:
         if (fresh is None or fresh.content_version != rec.content_version or fresh.indexed_generation != readable
                 or fresh.index_generation != generation):
             logger.info(f"[DriveIndex] item {rec.item_id} of {user_id[:8]} changed while re-embedding; dropped")
+            mark.committed = True   # the record is newer than the re-embed: nothing may write over it
             _fence()
             await self._repo.delete_chunks_except(user_id, rec.item_id,
                                                   fresh.indexed_generation if fresh is not None else None)
-            return True
+            return
         done = chunks_reembedded(fresh, generation, self._space, now)
         if not (content_due(done) or triage_due(done)):   # waiting content keeps its own class and time (§7.8)
             done = _maintenance_kept(done, rec.priority)
         await self._commit(user_id, [done], set())
+        mark.committed = True
         _fence()
         await self._repo.delete_chunks_except(user_id, rec.item_id, generation)
         summary["reembedded"] = summary.get("reembedded", 0) + 1
-        return True
 
     async def _reread(self, user_id: str, rec: DriveIndexRecord, ctx: PlanContext) -> None:
         """The content no longer stands: planned again, the file is pending for a full index run (§9, §12.3)."""

@@ -103,6 +103,11 @@ class LeaseLost(Exception):
     """A sync-state write by a tick that no longer holds the user's lease (§7.1): refused, nothing written."""
 
 
+class DriveIndexStoreUnavailable(Exception):
+    """The index store failed transiently (a deadline, an outage, contention, a quota): systemic, it ends the tick and
+    is never counted against a file (§8.2). The repository adapter maps its backend's transient errors to it."""
+
+
 def record_key(user_id: str, item_id: str) -> str:
     return f"{user_id}:{item_id}"
 
