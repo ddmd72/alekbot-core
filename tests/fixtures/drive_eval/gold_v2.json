@@ -1,0 +1,864 @@
+[
+ {
+  "id": "ex-name-motor",
+  "family": "exact",
+  "sub": "name",
+  "lang": "en",
+  "query": "motor policy",
+  "filters": {},
+  "expected_paths": [
+   "Vehicle/Motor policy MP-2026-118204.pdf"
+  ],
+  "expect_tier": "about"
+ },
+ {
+  "id": "ex-value-invoice-number",
+  "family": "exact",
+  "sub": "value",
+  "lang": "en",
+  "query": "F-2026-0311",
+  "filters": {},
+  "expected_paths": [
+   "Piso/Factura F-2026-0311.pdf"
+  ],
+  "expect_tier": "about"
+ },
+ {
+  "id": "ex-value-inside",
+  "family": "exact",
+  "sub": "value",
+  "lang": "en",
+  "query": "HW-55812",
+  "filters": {},
+  "expected_paths": [
+   "Receipts/Example Hardware 2026-05-03.pdf"
+  ],
+  "expect_tier": "exact"
+ },
+ {
+  "id": "ex-value-booking-ref",
+  "family": "exact",
+  "sub": "value",
+  "lang": "en",
+  "query": "RM-55120",
+  "filters": {},
+  "expected_paths": [
+   "Travel/Бронь отеля.docx"
+  ],
+  "expect_tier": "exact"
+ },
+ {
+  "id": "ex-content-only",
+  "family": "exact",
+  "sub": "content_only",
+  "lang": "es",
+  "query": "alicatado",
+  "filters": {},
+  "expected_paths": [
+   "Piso/Factura F-2026-0311.pdf"
+  ],
+  "expect_tier": "mentioned"
+ },
+ {
+  "id": "ex-content-two-words",
+  "family": "exact",
+  "sub": "content_only",
+  "lang": "es",
+  "query": "grifería ducha",
+  "filters": {},
+  "expected_paths": [
+   "Piso/Factura F-2026-0311.pdf"
+  ],
+  "expect_tier": "mentioned"
+ },
+ {
+  "id": "ex-entity-body",
+  "family": "exact",
+  "sub": "entity",
+  "lang": "ru",
+  "query": "Иванов",
+  "filters": {},
+  "expected_paths": [
+   "Notes/Мысли о поездке.md"
+  ],
+  "expect_tier": "exact"
+ },
+ {
+  "id": "ex-place-article",
+  "family": "exact",
+  "sub": "article",
+  "lang": "en",
+  "query": "Le Havre",
+  "filters": {
+   "kind": "photo"
+  },
+  "expected_paths": [
+   "Photos/Le Havre/IMG_7001.HEIC"
+  ],
+  "expect_tier": "about"
+ },
+ {
+  "id": "ex-place-cyrillic",
+  "family": "exact",
+  "sub": "place",
+  "lang": "ru",
+  "query": "Гавр",
+  "filters": {},
+  "expected_paths": [
+   "Photos/Le Havre/IMG_7001.HEIC"
+  ],
+  "expect_tier": "about"
+ },
+ {
+  "id": "ex-place-inflected",
+  "family": "exact",
+  "sub": "inflection",
+  "lang": "ru",
+  "query": "Барселону",
+  "filters": {},
+  "expected_paths": [
+   "Photos/Barcelona 2024/IMG_7101.HEIC",
+   "Photos/Barcelona 2024/IMG_7102.HEIC",
+   "Notes/Мысли о поездке.md"
+  ],
+  "expect_tier": "exact"
+ },
+ {
+  "id": "ex-year-place",
+  "family": "exact",
+  "sub": "year_month",
+  "lang": "en",
+  "query": "Barcelona 2024",
+  "filters": {},
+  "expected_paths": [
+   "Photos/Barcelona 2024/IMG_7101.HEIC",
+   "Photos/Barcelona 2024/IMG_7102.HEIC"
+  ],
+  "expect_tier": "about"
+ },
+ {
+  "id": "ex-month-place",
+  "family": "exact",
+  "sub": "year_month",
+  "lang": "ru",
+  "query": "Рим август 2025",
+  "filters": {},
+  "expected_paths": [
+   "Photos/Rome 2025/IMG_5101.HEIC",
+   "Photos/Rome 2025/IMG_5102.HEIC",
+   "Photos/Rome 2025/IMG_5103.HEIC",
+   "Photos/Rome 2025/IMG_5104.HEIC",
+   "Photos/Rome 2025/IMG_5105.HEIC",
+   "Photos/Rome 2025/IMG_5106.HEIC",
+   "Photos/Rome 2025/IMG_5107.HEIC",
+   "Photos/Rome 2025/IMG_5108.HEIC",
+   "Photos/Rome 2025/IMG_5109.HEIC",
+   "Photos/Rome 2025/IMG_5110.HEIC",
+   "Photos/Rome 2025/IMG_5111.HEIC",
+   "Photos/Rome 2025/IMG_5112.HEIC"
+  ],
+  "expect_tier": "about",
+  "acceptable_paths": [
+   "Travel/Бронь отеля.docx",
+   "Notes/Plan de viaje Roma.md"
+  ]
+ },
+ {
+  "id": "ex-inflect-kyiv",
+  "family": "exact",
+  "sub": "inflection",
+  "lang": "uk",
+  "query": "Київ",
+  "filters": {},
+  "expected_paths": [
+   "Notes/Огляд квартири.md"
+  ],
+  "expect_tier": "mentioned"
+ },
+ {
+  "id": "ex-inflect-kharkiv",
+  "family": "exact",
+  "sub": "inflection",
+  "lang": "uk",
+  "query": "Харків",
+  "filters": {},
+  "expected_paths": [
+   "Notes/Огляд квартири.md"
+  ],
+  "expect_tier": "mentioned"
+ },
+ {
+  "id": "ex-inflect-ticket-uk",
+  "family": "exact",
+  "sub": "inflection",
+  "lang": "uk",
+  "query": "квиток",
+  "filters": {},
+  "expected_paths": [
+   "Notes/Огляд квартири.md"
+  ],
+  "expect_tier": "mentioned"
+ },
+ {
+  "id": "ex-inflect-house",
+  "family": "exact",
+  "sub": "inflection",
+  "lang": "en",
+  "query": "house",
+  "filters": {},
+  "expected_paths": [
+   "Notes/House hunting.md"
+  ],
+  "expect_tier": "mentioned",
+  "acceptable_paths": [
+   "Books/A Short History of Bridges.docx",
+   "Home"
+  ]
+ },
+ {
+  "id": "ex-inflect-lease",
+  "family": "exact",
+  "sub": "inflection",
+  "lang": "en",
+  "query": "lease",
+  "filters": {},
+  "expected_paths": [
+   "Notes/House hunting.md"
+  ],
+  "expect_tier": "mentioned",
+  "acceptable_paths": [
+   "Contracts/Lease agreement — Porto.pdf",
+   "Inbox/Lease agreement — Porto.pdf",
+   "Contracts/Contrato de alquiler 2026.pdf"
+  ]
+ },
+ {
+  "id": "ex-inflect-policy",
+  "family": "exact",
+  "sub": "inflection",
+  "lang": "en",
+  "query": "policy",
+  "filters": {},
+  "expected_paths": [
+   "Notes/House hunting.md",
+   "Vehicle/Motor policy MP-2026-118204.pdf"
+  ],
+  "expect_tier": "exact"
+ },
+ {
+  "id": "ex-name-cyrillic",
+  "family": "exact",
+  "sub": "name",
+  "lang": "uk",
+  "query": "абонемент",
+  "filters": {},
+  "expected_paths": [
+   "Спорт/Абонемент 2026.md"
+  ],
+  "expect_tier": "about"
+ },
+ {
+  "id": "ex-folder-scope",
+  "family": "exact",
+  "sub": "folder",
+  "lang": "es",
+  "query": "factura",
+  "filters": {
+   "folder": "Piso"
+  },
+  "expected_paths": [
+   "Piso/Factura F-2026-0311.pdf",
+   "Piso/Factura 2026-078.pdf"
+  ],
+  "expect_tier": "about"
+ },
+ {
+  "id": "ex-kind-word",
+  "family": "exact",
+  "sub": "kind_word",
+  "lang": "en",
+  "query": "pdf receipt",
+  "filters": {},
+  "expected_paths": [
+   "Receipts/Example Hardware 2026-05-03.pdf"
+  ],
+  "expect_tier": "exact",
+  "acceptable_paths": [
+   "Receipts/Ticket supermercado 2026-02-14.pdf"
+  ]
+ },
+ {
+  "id": "ex-date-written",
+  "family": "exact",
+  "sub": "date",
+  "lang": "es",
+  "query": "14/03/2025",
+  "filters": {},
+  "expected_paths": [
+   "Health/Informe laboratorio 2025-03.pdf"
+  ],
+  "expect_tier": "exact"
+ },
+ {
+  "id": "ex-amount",
+  "family": "exact",
+  "sub": "value",
+  "lang": "es",
+  "query": "1.031,40",
+  "filters": {},
+  "expected_paths": [
+   "Piso/Factura F-2026-0311.pdf"
+  ],
+  "expect_tier": "exact"
+ },
+ {
+  "id": "sem-cholesterol-ru",
+  "family": "semantic",
+  "sub": "cross_language",
+  "lang": "ru",
+  "query": "медицинские записи по холестерину",
+  "filters": {},
+  "expected_paths": [
+   "Health/Informe laboratorio 2025-03.pdf"
+  ],
+  "expect_tier": "labelled",
+  "note": "RFC §25.5.1 walk-through: label and topic words cover the Russian concepts"
+ },
+ {
+  "id": "sem-cholesterol-en",
+  "family": "semantic",
+  "sub": "cross_language",
+  "lang": "en",
+  "query": "cholesterol",
+  "filters": {},
+  "expected_paths": [
+   "Health/Informe laboratorio 2025-03.pdf"
+  ],
+  "expect_tier": "automatic"
+ },
+ {
+  "id": "sem-car-documents",
+  "family": "semantic",
+  "sub": "cross_language",
+  "lang": "en",
+  "query": "documents about the car",
+  "filters": {},
+  "expected_paths": [
+   "Vehicle/Motor policy MP-2026-118204.pdf",
+   "Vehicle/ITV 2025.pdf"
+  ],
+  "expect_tier": "labelled",
+  "note": "neither file says 'car': the vehicle life-area words carry it"
+ },
+ {
+  "id": "sem-flat-repair",
+  "family": "semantic",
+  "sub": "cross_language",
+  "lang": "en",
+  "query": "flat repair",
+  "filters": {},
+  "expected_paths": [
+   "Piso/Factura F-2026-0311.pdf",
+   "Piso/Factura 2026-078.pdf"
+  ],
+  "expect_tier": "automatic"
+ },
+ {
+  "id": "sem-blood-test",
+  "family": "semantic",
+  "sub": "translation",
+  "lang": "en",
+  "query": "blood test results",
+  "filters": {},
+  "expected_paths": [
+   "Health/Informe laboratorio 2025-03.pdf"
+  ],
+  "expect_tier": "automatic"
+ },
+ {
+  "id": "sem-washing-machine",
+  "family": "semantic",
+  "sub": "translation",
+  "lang": "en",
+  "query": "washing machine warranty",
+  "filters": {},
+  "expected_paths": [
+   "Home/Garantía lavadora.pdf"
+  ],
+  "expect_tier": "automatic"
+ },
+ {
+  "id": "sem-entity-latin",
+  "family": "semantic",
+  "sub": "translation",
+  "lang": "en",
+  "query": "Ivanov",
+  "filters": {},
+  "expected_paths": [
+   "Notes/Мысли о поездке.md"
+  ],
+  "expect_tier": "translated",
+  "note": "skeleton across scripts"
+ },
+ {
+  "id": "sem-kyiv-latin",
+  "family": "semantic",
+  "sub": "translation",
+  "lang": "en",
+  "query": "Kyiv",
+  "filters": {},
+  "expected_paths": [
+   "Notes/Огляд квартири.md"
+  ],
+  "expect_tier": "translated"
+ },
+ {
+  "id": "sem-barcelona-latin",
+  "family": "semantic",
+  "sub": "translation",
+  "lang": "en",
+  "query": "Barcelona",
+  "filters": {},
+  "expected_paths": [
+   "Photos/Barcelona 2024/IMG_7101.HEIC",
+   "Photos/Barcelona 2024/IMG_7102.HEIC",
+   "Notes/Мысли о поездке.md"
+  ],
+  "expect_tier": "any"
+ },
+ {
+  "id": "sem-rental-agreement",
+  "family": "semantic",
+  "sub": "synonym",
+  "lang": "en",
+  "query": "rental agreement",
+  "filters": {},
+  "expected_paths": [
+   "Contracts/Contrato de alquiler 2026.pdf"
+  ],
+  "expect_tier": "automatic",
+  "acceptable_paths": [
+   "Contracts/Lease agreement — Porto.pdf",
+   "Inbox/Lease agreement — Porto.pdf",
+   "Inbox/Super important agreement.pdf"
+  ]
+ },
+ {
+  "id": "sem-related-german",
+  "family": "semantic",
+  "sub": "related",
+  "lang": "de",
+  "query": "Brücken Geschichte",
+  "filters": {},
+  "expected_paths": [
+   "Books/A Short History of Bridges.docx"
+  ],
+  "expect_tier": "related",
+  "note": "no index word in German: only the meaning streams can find it (lexical vectors: expected miss)"
+ },
+ {
+  "id": "sem-related-dentist",
+  "family": "semantic",
+  "sub": "related",
+  "lang": "de",
+  "query": "Zahnarzt Termin",
+  "filters": {},
+  "expected_paths": [
+   "Photos/WhatsApp/IMG-20251120-WA0005.jpg"
+  ],
+  "expect_tier": "related",
+  "note": "German query, Russian screenshot: meaning only"
+ },
+ {
+  "id": "cls-receipts",
+  "family": "class",
+  "sub": "type",
+  "lang": "en",
+  "query": "all my receipts",
+  "filters": {},
+  "expected_paths": [
+   "Receipts/Ticket supermercado 2026-02-14.pdf",
+   "Receipts/Example Hardware 2026-05-03.pdf",
+   "Покупки/Аптека 21.04.txt",
+   "Scans/IMG_4912.jpg"
+  ],
+  "expect_tier": "labelled",
+  "acceptable_paths": [
+   "Scans/Scan_0013.pdf",
+   "Books/A Short History of Bridges.docx"
+  ]
+ },
+ {
+  "id": "cls-receipts-ru",
+  "family": "class",
+  "sub": "type",
+  "lang": "ru",
+  "query": "мои чеки",
+  "filters": {},
+  "expected_paths": [
+   "Receipts/Ticket supermercado 2026-02-14.pdf",
+   "Receipts/Example Hardware 2026-05-03.pdf",
+   "Покупки/Аптека 21.04.txt",
+   "Scans/IMG_4912.jpg"
+  ],
+  "expect_tier": "labelled",
+  "acceptable_paths": [
+   "Scans/Scan_0013.pdf"
+  ]
+ },
+ {
+  "id": "cls-expires",
+  "family": "class",
+  "sub": "validity",
+  "lang": "en",
+  "query": "what expires",
+  "filters": {},
+  "expected_paths": [
+   "Vehicle/Motor policy MP-2026-118204.pdf",
+   "Home/Garantía lavadora.pdf",
+   "Спорт/Абонемент 2026.md"
+  ],
+  "expect_tier": "labelled",
+  "acceptable_paths": [
+   "Vehicle/ITV 2025.pdf",
+   "Contracts/Contrato de alquiler 2026.pdf",
+   "Contracts/Lease agreement — Porto.pdf",
+   "Inbox/Lease agreement — Porto.pdf",
+   "Inbox/Super important agreement.pdf"
+  ]
+ },
+ {
+  "id": "cls-tickets",
+  "family": "class",
+  "sub": "type",
+  "lang": "en",
+  "query": "tickets",
+  "filters": {},
+  "expected_paths": [
+   "Screenshots/Captura de pantalla 2026-03-09 184410.png"
+  ],
+  "expect_tier": "labelled",
+  "acceptable_paths": [
+   "Books/A Short History of Bridges.docx",
+   "Notes/Огляд квартири.md",
+   "Travel/Бронь отеля.docx"
+  ]
+ },
+ {
+  "id": "cls-invoices-2026",
+  "family": "class",
+  "sub": "type_year",
+  "lang": "en",
+  "query": "invoices",
+  "filters": {
+   "date_from": "2026-01-01",
+   "date_to": "2026-12-31"
+  },
+  "expected_paths": [
+   "Piso/Factura F-2026-0311.pdf",
+   "Piso/Factura 2026-078.pdf",
+   "Finance/invoice_2026_03.xlsx",
+   "Finance/Счёт-фактура №1847.pdf"
+  ],
+  "expect_tier": "labelled",
+  "acceptable_paths": [
+   "Scans/Scan_0013.pdf",
+   "Scans/Scan_0012.pdf",
+   "Receipts/Example Hardware 2026-05-03.pdf",
+   "Receipts/Ticket supermercado 2026-02-14.pdf",
+   "Покупки/Аптека 21.04.txt"
+  ]
+ },
+ {
+  "id": "cls-medical",
+  "family": "class",
+  "sub": "type",
+  "lang": "en",
+  "query": "medical records",
+  "filters": {},
+  "expected_paths": [
+   "Health/Informe laboratorio 2025-03.pdf"
+  ],
+  "expect_tier": "labelled",
+  "acceptable_paths": [
+   "Photos/WhatsApp/IMG-20251120-WA0005.jpg"
+  ]
+ },
+ {
+  "id": "cls-insurance",
+  "family": "class",
+  "sub": "type_domain",
+  "lang": "en",
+  "query": "insurance documents",
+  "filters": {},
+  "expected_paths": [
+   "Vehicle/Motor policy MP-2026-118204.pdf"
+  ],
+  "expect_tier": "exact",
+  "acceptable_paths": [
+   "Books/A Short History of Bridges.docx",
+   "Notes/House hunting.md"
+  ]
+ },
+ {
+  "id": "mis-barcelona",
+  "family": "misspelling",
+  "sub": "absent",
+  "lang": "en",
+  "query": "Barcleona",
+  "filters": {},
+  "expected_paths": [],
+  "expect_tier": "none",
+  "expect_absent": [
+   "barcleona"
+  ]
+ },
+ {
+  "id": "mis-garantia",
+  "family": "misspelling",
+  "sub": "one_word",
+  "lang": "es",
+  "query": "garantai lavadora",
+  "filters": {},
+  "expected_paths": [
+   "Home/Garantía lavadora.pdf"
+  ],
+  "expect_tier": "any",
+  "expect_absent": [
+   "garantai"
+  ]
+ },
+ {
+  "id": "mis-abonement",
+  "family": "misspelling",
+  "sub": "translit",
+  "lang": "uk",
+  "query": "abonemnt",
+  "filters": {},
+  "expected_paths": [
+   "Спорт/Абонемент 2026.md"
+  ],
+  "expect_tier": "related",
+  "expect_absent": [
+   "abonemnt"
+  ]
+ },
+ {
+  "id": "mis-cholesterol",
+  "family": "misspelling",
+  "sub": "absent",
+  "lang": "es",
+  "query": "colesterl",
+  "filters": {},
+  "expected_paths": [],
+  "expect_tier": "none",
+  "expect_absent": [
+   "colesterl"
+  ]
+ },
+ {
+  "id": "neg-vaccination",
+  "family": "negative",
+  "sub": "d29",
+  "lang": "en",
+  "query": "vaccination certificate",
+  "filters": {},
+  "expected_paths": [],
+  "expect_tier": "none",
+  "expect_absent": [
+   "vaccination"
+  ]
+ },
+ {
+  "id": "neg-dog",
+  "family": "negative",
+  "sub": "absent",
+  "lang": "en",
+  "query": "dog vaccination",
+  "filters": {},
+  "expected_paths": [],
+  "expect_tier": "none",
+  "expect_absent": [
+   "dog",
+   "vaccination"
+  ]
+ },
+ {
+  "id": "neg-mortgage",
+  "family": "negative",
+  "sub": "absent",
+  "lang": "en",
+  "query": "mortgage statement",
+  "filters": {},
+  "expected_paths": [],
+  "expect_tier": "none"
+ },
+ {
+  "id": "neg-parking-fine",
+  "family": "negative",
+  "sub": "label_tempt",
+  "lang": "en",
+  "query": "parking fine",
+  "filters": {},
+  "expected_paths": [],
+  "expect_tier": "none"
+ },
+ {
+  "id": "neg-flight-barcelona",
+  "family": "negative",
+  "sub": "d29",
+  "lang": "en",
+  "query": "flight tickets Barcelona",
+  "filters": {},
+  "expected_paths": [],
+  "expect_tier": "none",
+  "expect_absent": [
+   "flight"
+  ]
+ },
+ {
+  "id": "neg-ipoteka",
+  "family": "negative",
+  "sub": "absent",
+  "lang": "ru",
+  "query": "ипотека",
+  "filters": {},
+  "expected_paths": [],
+  "expect_tier": "none",
+  "expect_absent": [
+   "ипотека"
+  ]
+ },
+ {
+  "id": "neg-home-address",
+  "family": "negative",
+  "sub": "label_tempt",
+  "lang": "en",
+  "query": "home address",
+  "filters": {},
+  "expected_paths": [],
+  "expect_tier": "none"
+ },
+ {
+  "id": "neg-wedding-plan",
+  "family": "negative",
+  "sub": "label_tempt",
+  "lang": "en",
+  "query": "wedding plan",
+  "filters": {},
+  "expected_paths": [],
+  "expect_tier": "none",
+  "expect_absent": [
+   "wedding"
+  ]
+ },
+ {
+  "id": "neg-car-claim",
+  "family": "negative",
+  "sub": "label_tempt",
+  "lang": "en",
+  "query": "car insurance claim",
+  "filters": {},
+  "expected_paths": [],
+  "expect_tier": "none"
+ },
+ {
+  "id": "neg-dentist-invoice",
+  "family": "negative",
+  "sub": "translation_tempt",
+  "lang": "en",
+  "query": "dentist invoice",
+  "filters": {},
+  "expected_paths": [],
+  "expect_tier": "none"
+ },
+ {
+  "id": "neg-colosseum-tickets",
+  "family": "negative",
+  "sub": "conjunction",
+  "lang": "en",
+  "query": "Colosseum tickets",
+  "filters": {},
+  "expected_paths": [],
+  "expect_tier": "none"
+ },
+ {
+  "id": "neg-pool-booking",
+  "family": "negative",
+  "sub": "translation_tempt",
+  "lang": "en",
+  "query": "swimming pool booking",
+  "filters": {},
+  "expected_paths": [],
+  "expect_tier": "none"
+ },
+ {
+  "id": "neg-electricity-2024",
+  "family": "negative",
+  "sub": "conjunction",
+  "lang": "en",
+  "query": "electricity bill 2024",
+  "filters": {},
+  "expected_paths": [],
+  "expect_tier": "none"
+ },
+ {
+  "id": "inc-rome",
+  "family": "incident",
+  "sub": "everything",
+  "lang": "en",
+  "query": "everything about Rome",
+  "filters": {},
+  "expected_paths": [
+   "Photos/Rome 2025/IMG_5101.HEIC",
+   "Photos/Rome 2025/IMG_5102.HEIC",
+   "Photos/Rome 2025/IMG_5103.HEIC",
+   "Photos/Rome 2025/IMG_5104.HEIC",
+   "Photos/Rome 2025/IMG_5105.HEIC",
+   "Photos/Rome 2025/IMG_5106.HEIC",
+   "Photos/Rome 2025/IMG_5107.HEIC",
+   "Photos/Rome 2025/IMG_5108.HEIC",
+   "Photos/Rome 2025/IMG_5109.HEIC",
+   "Photos/Rome 2025/IMG_5110.HEIC",
+   "Photos/Rome 2025/IMG_5111.HEIC",
+   "Photos/Rome 2025/IMG_5112.HEIC",
+   "Travel/Бронь отеля.docx",
+   "Notes/Weekend ideas.md"
+  ],
+  "expect_tier": "any",
+  "acceptable_paths": [
+   "Notes/Plan de viaje Roma.md",
+   "Books/A Short History of Bridges.docx"
+  ],
+  "note": "12 photos by place, a Russian booking naming Rome, an English note, the Spanish plan; the book mentions Rome once"
+ },
+ {
+  "id": "inc-rome-ru",
+  "family": "incident",
+  "sub": "everything",
+  "lang": "ru",
+  "query": "всё про Рим",
+  "filters": {},
+  "expected_paths": [
+   "Photos/Rome 2025/IMG_5101.HEIC",
+   "Photos/Rome 2025/IMG_5102.HEIC",
+   "Photos/Rome 2025/IMG_5103.HEIC",
+   "Photos/Rome 2025/IMG_5104.HEIC",
+   "Photos/Rome 2025/IMG_5105.HEIC",
+   "Photos/Rome 2025/IMG_5106.HEIC",
+   "Photos/Rome 2025/IMG_5107.HEIC",
+   "Photos/Rome 2025/IMG_5108.HEIC",
+   "Photos/Rome 2025/IMG_5109.HEIC",
+   "Photos/Rome 2025/IMG_5110.HEIC",
+   "Photos/Rome 2025/IMG_5111.HEIC",
+   "Photos/Rome 2025/IMG_5112.HEIC",
+   "Travel/Бронь отеля.docx"
+  ],
+  "expect_tier": "any",
+  "acceptable_paths": [
+   "Notes/Plan de viaje Roma.md",
+   "Notes/Weekend ideas.md",
+   "Books/A Short History of Bridges.docx"
+  ]
+ }
+]

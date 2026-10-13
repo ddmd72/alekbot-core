@@ -72,3 +72,29 @@ calls; a case marked `"drive": "off"` (positive only) runs as a user whose drive
 the off result says not to search again; a case marked `"injected": true` (positive only; the boiler note on the
 overlay gives orders to an assistant) makes no call to `save_to_memory`, `fetch_url` or a drive mutation. A `note`
 says what a right answer looks like for the owner's review.
+
+## Search v2 (RFC §25.7)
+
+`tree_v2.json` is an overlay on `tree.json` (files in `files_v2/`, made byte-deterministically by
+`make_fixtures_v2.py`, words in `fixture_texts_v2.py`): a Spanish lab report, receipts in three languages, documents
+with a validity date, English and Spanish car papers that never say "car", Spanish flat-repair invoices, a Russian
+hotel booking and an English note naming Rome beside the twelve Rome photos, notes holding inflected forms of the
+pinned normaliser groups, photos in Le Havre and Barcelona, and a long book that mentions Rome, tickets, a car,
+insurance, repairs and receipts once each, far apart. G1/G2 keep their pinned tree and bytes.
+
+`gold_v2.json` holds the v2 cases by family (`exact`, `semantic`, `class`, `incident`, `misspelling`, `negative`;
+`v2_metrics.py` states each pass rule), each with `expect_tier`, optional `acceptable_paths` (true matches that are
+not junk) and `expect_absent` (the words a D29 line must name). `bars_v2.json` holds §25.7's numbers, set before any
+run; no run writes it.
+
+`enrichment.json` is the recorded enrichment (F-22): the profiles, passage keywords, photo descriptions and reader
+transcriptions one live run of `dump_enrichment.py --fixture` returned (gpt-6-luna), keyed by their inputs, so
+`search_v2_eval.py` indexes the fixture with no model call. The 600 bulk invoices are profiled from a hand-written
+template (`fixture_texts_v2.BULK_PROFILES`), never recorded. A snapshot that misses an input gives no verdict.
+`baseline_v1.json` is the tag `drive-search-v1` run on the same drive, enrichment and vectors (`v1_baseline.py`):
+the v1 column of the report and the "every v1-passing case" guard.
+
+`gold_g3_v2.json` adds the Search v2 G3 cases to `gold_g3.json` (the dry run reads both, over tree + tree_g3 +
+tree_v2): the incident-shaped "everything about Rome" (at most 2 searches, 2 opens, 1 listing, and the answer names
+the photos and the booking), time spans that belong in the date fields, D29 cases (at most one search after a "No file
+holds" line), and set queries; `answer_must_include` lists the words a right answer holds (one of each group).

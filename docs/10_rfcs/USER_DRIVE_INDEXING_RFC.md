@@ -2994,37 +2994,49 @@ upgrade pass in an emergency; the indexer's deploy sets it from `DRIVE_UPGRADE_P
 `_DRIVE_UPGRADE_PASS` substitution, default on), because its `--set-env-vars` replaces every variable: a switch set
 with `gcloud run services update` alone turns back on at the next deploy (XC-7).
 
-**Rollout**
-1. Code on `asm/drive-search-v2`; the eval meets the bars; the caption-shift fix passes (§25.4.3).
-2. The owner backs up and uploads the profiler, passages and triage-v2 prompts and the Smart protocol token; the
-   manifest wording and the Cabinet sentence ship with the code.
-3. New composites and vector indexes `READY`; `drive_index_smoke.py` runs every new repository read once (a family
-   query included).
-4. Deploy main and indexer.
-5. **Rebuild, one user at a time, the owner first** (`drive_index_rebuild.py --user … --apply`): purge, then onboarding
+**Rollout** (the commands: `docs/07_deployment/README.md` § Search v2 — rollout and rollback; the order below was
+fixed by the cross-cutting operations review, XC-2)
+1. Code on `asm/drive-search-v2`; the eval meets the bars (`search_v2_eval.py`, `bars_v2.json`); G3 has no hard
+   failure; the caption-shift fix passes (§25.4.3).
+2. The owner backs up the prompt layer.
+3. New composites and vector indexes `READY` (`make deploy-indexes` does not create vector indexes:
+   `create_drive_vector_indexes.sh` too); the usage TTL; `drive_index_smoke.py` runs every new repository read once
+   (a family query included). Every v2 search, a gated one included, needs them.
+4. Pause the drive queue and the fan-out job; wait for a running v1 tick to release its lease (up to 30 minutes).
+5. The owner uploads the profiler, passages and triage-v2 prompts while paused (triage v2 with the v1 tokens fails
+   silently); the manifest wording and the Cabinet sentence ship with the code.
+6. Deploy main and indexer; check the queue and the job are still paused; upload the Smart protocol token.
+7. **Resume the queue and the job before any rebuild:** the purge is done by a tick.
+8. **Rebuild, one user at a time, the owner first** (`drive_index_rebuild.py --user … --apply`): purge, then onboarding
    under v2, the initial build spent newest-first. Sizing from the parameters: the enrichment share is ≈ 190 s per
    8-minute tick; with 3 files in flight and ≈ 40–90 s per text file (a profile and its passage calls, 2 in flight),
    ≈ 6–15 text files per tick, ≈ 40–100 an hour with ticks chained, so ≈ 1 000–2 400 a day: a few hundred text files in
    hours, a cap-sized drive in two to four weeks (measured in the scale test). Search is empty while the purge runs
-   and fills as onboarding proceeds (`building`); scans are re-read once. A stalled rebuild alerts: the fan-out also
+   and fills as onboarding proceeds (`building`); scans are re-read once. The advisory $5 daily-cost alert fires on
+   most days of a rebuild; embeddings are the owner's cost. A stalled rebuild alerts: the fan-out also
    fires when a user's enrichment has not moved for 24 h while jobs are `ready` and budget is left
    (`described_grew_at`: refreshed when the described count grows, when a run changes a record, or when no job is
    ready; P5 review MINOR 2: a quiet day before one new file, passage-only progress, or a delete plus an add is no
    stall). A v1 index's tick logs WARNING once per instance until the ops alert, INFO afterwards (MINOR 10).
-6. The owner's live check.
-7. After acceptance, drop the two `content_terms` composites.
+9. The owner's live check.
+10. After acceptance, drop the two `content_terms` composites.
 
-**Rollback** (to tag `drive-search-v1`)
-1. Pause the drive queue and the fan-out scheduler job.
-2. **Delete every user's hint documents** with v2's `delete_user_hints` (`drive_index_rebuild.py --hints-only
-   --apply`, v2 code, before the tag deploy): the tag's purge does not know `drive_index_hints`, which holds text
-   derived from the user's passages.
-3. Restore the backed-up v1 prompt tokens (triage v1 schema, the Smart protocol token).
-4. If the `content_terms` composites were dropped, `make deploy-indexes` from the tag and wait for `READY`.
-5. Deploy the tag (main and indexer).
-6. `drive_index_rebuild.py --user … --apply` for every user while the queue is paused, so the tag's first tick purges
-   before anything else and never starts an upgrade pass over v2 records.
+**Rollback** (to tag `drive-search-v1`; v1 never serves a v2 record)
+1. Pause the drive queue and the fan-out scheduler job; wait for the running tick.
+2. **Mark every user `purging` while v2 is still deployed** (`drive_index_rebuild.py --all-users --apply`): v2's search
+   answers "building", and the tag's first tick purges before anything else and never starts an upgrade pass over v2
+   records.
+3. **Delete every user's hint documents** with v2's `delete_user_hints` (`drive_index_rebuild.py --all-users
+   --hints-only --apply`, v2 code, before the tag deploy): the tag's purge does not know `drive_index_hints`, which
+   holds text derived from the user's passages.
+4. Restore the backed-up v1 prompt tokens (triage v1 schema, the Smart protocol token).
+5. If the `content_terms` composites were dropped, `make deploy-indexes` from the tag and wait for `READY`.
+6. Deploy the tag (main and indexer).
 7. Resume the queue and the scheduler job. The usage documents survive (the tag does not read them).
+8. Before any later roll-forward, `drive_initial_build_reset.py` reopens each user's initial build (no purge does).
+
+`DRIVE_UPGRADE_PASS=off`, set on the running indexer, does not survive the next `make deploy` (the indexer is
+deployed with `--set-env-vars`): set it again after each deploy while it is needed (XC-7).
 v1 reads v2 records because v2 adds no value to an enum v1 parses; new categories are new string fields.
 
 ### 25.9 Deltas: v1 (tag `drive-search-v1`) → v2

@@ -95,6 +95,7 @@ class FixtureDrive(UserDrivePort):
         self._paths: Dict[str, str] = {}                 # item_id -> path
         self._content: Dict[str, bytes] = {}             # item_id -> file bytes
         self._thumbnails: Dict[str, bytes] = {}          # item_id -> provider rendition
+        self._generated: Dict[str, Tuple[str, int]] = {}  # item_id -> (content_template, n) of a bulk member
         self.downloads: List[str] = []
         self.thumbnail_calls: List[Tuple[str, str]] = []
         for entry in manifest.get("items", []):
@@ -108,6 +109,8 @@ class FixtureDrive(UserDrivePort):
                     "fs_modified": gen.get("fs_modified", DEFAULT_FS_MODIFIED),
                     "facets": _format_strings(gen.get("facets_template") or {}, n),
                 }, render=(lambda t=template, k=n, f=name: render_template(t, k, f)) if template else None)
+                if template:
+                    self._generated[item_id_for(f"{gen['folder']}/{name}")] = (template, n)
         counts: Dict[str, int] = {}
         for change in self._items.values():
             counts[change.parent_id] = counts.get(change.parent_id, 0) + 1
@@ -164,6 +167,17 @@ class FixtureDrive(UserDrivePort):
 
     def path_of(self, item_id: str) -> Optional[str]:
         return self._paths.get(item_id)
+
+    def generated_member(self, item_id: str) -> Optional[Tuple[str, int]]:
+        """(content_template, n) of a file a generate entry rendered from a template, else None: the Search v2
+        replay gives these bulk members their template's hand-written profile (enrichment_replay.py)."""
+        return self._generated.get(item_id)
+
+    def set_content(self, path: str, data: bytes) -> None:
+        """Serve `data` as the bytes of the file at `path` (the scale corpora keep their bodies in memory)."""
+        item_id = item_id_for(path.strip("/"))
+        self._content[item_id] = data
+        self._items[item_id] = replace(self._items[item_id], size_bytes=len(data))
 
     def paths(self) -> List[str]:
         return [self._paths[i] for i in self._order]

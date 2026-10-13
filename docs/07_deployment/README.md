@@ -461,11 +461,14 @@ forward changes, each a code change plus a deploy:
   does not take over: a primary without a key fails the context build before any failover (`GEMINI_API_KEY` stays,
   embeddings need it); to turn the fallback off, set `"fallback": None` in the two drive entries of
   `AgentProviderStrategy.STRATEGIES`;
-- one user: turn their indexing off in the Cabinet; the purge removes chunks, records and sync state.
+- one user: turn their indexing off in the Cabinet; the purge removes hint documents (Search v2), then chunks,
+  records and sync state.
 
 **Rebuild one user's index.** `venv/bin/python scripts/infrastructure/drive_index_rebuild.py --user <USER_ID>` is a
 dry run; add `--apply` to mark the sync state `purging` under the user's lease (refused while a tick runs: retry in a
-few minutes). The next tick purges the index and re-onboards from epoch 1 (USER_DRIVE_INDEXING_RFC §12.2).
+few minutes). The next tick purges the index and re-onboards from epoch 1 (USER_DRIVE_INDEXING_RFC §12.2). Under
+Search v2 this is also the only migration (D30); `--all-users` visits every sync state and `--hints-only` deletes
+hint documents only (the rollback's step, below).
 
 **Logs.** The indexer has no Logfire telemetry: Cloud Logging only. A tick that ends `done` or `continued` logs one
 `[DriveIndex] tick user=… end=… {…} duration=…` line on the indexer, not on the main service, so `make fetch-logs`
@@ -484,20 +487,111 @@ After the next deploy from this branch, resume it:
 `gcloud scheduler jobs resume alek-bot-dev-start-drive-sync --location=us-central1`. A deploy does not resume a
 paused job.
 
-**Search v2 storage** (RFC §25.2.5, §25.4.5, §25.8 rollout step 3), before the v2 deploy:
-1. `make deploy-indexes` creates the new record, chunk and hint composites and the single-field exemptions
-   (`about_keys`, `profile`, the photo fields, `word_keys`, `hint_keys`, `items`, `hint_vector`, …);
-   `PROJECT_ID=<PROJECT_ID> scripts/infrastructure/create_drive_vector_indexes.sh` adds the two `hint_vector` indexes on
-   `development_drive_index_hints`. Wait until every index is `READY`.
-2. Turn on the TTL of the monthly usage documents (the `{user}:initial` document has no `expires_at` and never expires):
+### Search v2 — rollout and rollback (D30)
+
+USER_DRIVE_INDEXING_RFC §25.8, as amended by D30 (no migration of v1 indexes: every user is purged and re-indexed
+from scratch) and by the cross-cutting operations review. The steps run **in this order**; each says why. Every
+command reads its values from `.env`; the resource names are the ones this README already uses. One shell:
+
+```bash
+set -a; source .env; set +a          # GOOGLE_CLOUD_PROJECT, FIRESTORE_DATABASE, DEV_USER_ID
+REGION=us-central1 QUEUE=drive-sync-dev SYNC_JOB=alek-bot-dev-start-drive-sync INDEXER=alek-bot-indexer-dev
+PY=venv/bin/python
+```
+
+Other users' ids are never written here: `$PY scripts/infrastructure/drive_index_rebuild.py --all-users` (a dry run)
+lists every user with a sync state.
+
+**Gates, before anything runs** (§25.7, §25.4.3):
+- the search eval meets `bars_v2.json`: `$PY -m scripts.validation.drive_eval.search_v2_eval` (offline, exit 0), and
+  the owner's run with real vectors, `… search_v2_eval --embeddings gemini`;
+- G3 has no hard failure: `$PY -m scripts.validation.drive_eval.smart_dry_run --repeats 3` (owner-run, paid);
+- the caption-shift gate (§25.4.3: no description on the wrong image over ≥ 5 runs of the eval photo fixture, and
+  the owner's look) and the live model check of the new agents
+  (`$PY -m scripts.validation.drive_model_check profile|passages|triage …`).
+
+**Rollout**
+1. **Back up the prompt layer** (owner): `$PY firestore_utils/backup_prompt_layer.py` (into `scripts/memory/`). The
+   rollback restores the triage v1 tokens and `PROTOCOL_AGENT_SELECTION` from it; without it there is no way back.
+2. **Indexes, all `READY`, before any deploy.** `make deploy-indexes PROJECT_ID=$GOOGLE_CLOUD_PROJECT` creates the
+   record, chunk and hint composites and the single-field exemptions; it does **not** create vector indexes, so also
+   run `PROJECT_ID=$GOOGLE_CLOUD_PROJECT scripts/infrastructure/create_drive_vector_indexes.sh` (the two
+   `hint_vector` indexes). Wait until this prints nothing:
+   ```bash
+   gcloud firestore indexes composite list --database=$FIRESTORE_DATABASE --project=$GOOGLE_CLOUD_PROJECT \
+     --format='value(name,state)' | grep -v READY
+   ```
+   Then turn on the TTL of the monthly usage documents (the `{user}:initial` document has no `expires_at`):
    ```bash
    gcloud firestore fields ttls update expires_at --collection-group=development_drive_model_usage \
-     --enable-ttl --database=us-production --project=<PROJECT_ID>
+     --enable-ttl --database=$FIRESTORE_DATABASE --project=$GOOGLE_CLOUD_PROJECT
    ```
-3. `venv/bin/python scripts/infrastructure/drive_index_smoke.py <DEV_USER_ID>` runs every v2 read once (the widest
-   about query and a kind family's kNN included).
+   and run every v2 read once: `$PY scripts/infrastructure/drive_index_smoke.py $DEV_USER_ID`. Why first: every v2
+   search, a gated one included, runs the about, word and hint composites and `count_by_job_state`; before `READY`
+   each is `FailedPrecondition`, so every search fails.
+3. **Pause the drive queue and the fan-out job, then wait for the running tick.**
+   ```bash
+   gcloud tasks queues pause $QUEUE --location=$REGION --project=$GOOGLE_CLOUD_PROJECT
+   gcloud scheduler jobs pause $SYNC_JOB --location=$REGION --project=$GOOGLE_CLOUD_PROJECT
+   ```
+   A v1 tick already running keeps going on the old revision for up to 30 minutes and holds the user's lease: wait
+   until `make logs-indexer` shows its `[DriveIndex] tick … end=` line, or 30 minutes.
+4. **Upload the indexer prompts while paused** (owner; `docs/how_to/NEW_AGENT_PLAYBOOK.md`): the profiler, the
+   passages agent and triage v2 (tokens, blueprints, profiles from `firestore_utils/uploads/`). Why now: triage v2
+   with the v1 tokens fails silently — the schema is enforced, the reply parses, and images get stamped
+   `TRIAGE_VERSION` 2 with thin descriptions until the next bump.
+5. **Deploy main and the indexer:** `make deploy`. Then check that both are still paused (a deploy never resumes
+   them):
+   ```bash
+   gcloud tasks queues describe $QUEUE --location=$REGION --project=$GOOGLE_CLOUD_PROJECT --format='value(state)'
+   gcloud scheduler jobs describe $SYNC_JOB --location=$REGION --project=$GOOGLE_CLOUD_PROJECT --format='value(state)'
+   ```
+   Upload Smart's protocol token (`PROTOCOL_AGENT_SELECTION`, the `tiers` line) right after the main deploy
+   (§ Slice 2+4 step 8 for the commands). From here every v1 index is **gated** (D30): its ticks do no work and its
+   search answers from no v2 record, until that user's rebuild — rebuild promptly.
+6. **Resume the queue and the job BEFORE the rebuild.** The purge is done by a tick: with the queue paused it never
+   runs.
+   ```bash
+   gcloud tasks queues resume $QUEUE --location=$REGION --project=$GOOGLE_CLOUD_PROJECT
+   gcloud scheduler jobs resume $SYNC_JOB --location=$REGION --project=$GOOGLE_CLOUD_PROJECT
+   ```
+7. **Rebuild the owner first.** `$PY scripts/infrastructure/drive_index_rebuild.py --user $DEV_USER_ID` (the dry run
+   says "a v1 index awaiting its Search v2 rebuild (D30)"), then the same with `--apply`. The next tick purges hint
+   documents, chunks, records and the sync state (the usage and initial-build documents stay), and onboarding starts
+   under v2, the initial build spent newest-first. Watch `make logs-indexer`: `index purged`, the onboarding ticks,
+   `rebuild progress user=… described=n/m`, `initial build closed`; and the Cabinet's initial-build line.
+   **Expect** the account's advisory $5 daily-cost alert on most days of a rebuild (about $3–7 a day for 1 000–2 400
+   files, plus scans); embeddings are the owner's cost and are not billed to the user. The stall alert fires after
+   24 h without progress while jobs are ready and budget is left.
+8. **The owner's live check**, then every other user, one at a time: `… drive_index_rebuild.py --user <id> --apply`
+   with the ids from the `--all-users` dry run.
+9. **After acceptance**, drop the two `content_terms` chunk composites (`gcloud firestore indexes composite delete
+   <index name> --database=$FIRESTORE_DATABASE --project=$GOOGLE_CLOUD_PROJECT`, names from the list above). The
+   rollback then needs them recreated (step 5 below).
 
-The two `content_terms` chunk composites stay until the owner accepts v2 (§25.8 step 7).
+**Rollback** (to the tag `drive-search-v1`). The order keeps v1 from ever serving a v2 record:
+1. Pause the queue and the job (rollout step 3), and wait for the running tick.
+2. **Mark every user `purging` while v2 is still deployed:**
+   `$PY scripts/infrastructure/drive_index_rebuild.py --all-users --apply`. v2's search then answers "building";
+   nothing is purged yet (the queue is paused).
+3. **Delete every hint document:** `$PY scripts/infrastructure/drive_index_rebuild.py --all-users --hints-only`
+   (dry run: counts), then `--apply`. The tag's purge does not know `drive_index_hints`, and those documents hold
+   quotes of the users' passages: after the tag is deployed nothing would ever delete them.
+4. **Restore the v1 prompts** from the step-1 backup (owner): the triage v1 tokens and `PROTOCOL_AGENT_SELECTION`.
+5. **If the `content_terms` composites were dropped**, from a checkout of the tag: `make deploy-indexes
+   PROJECT_ID=$GOOGLE_CLOUD_PROJECT`, and wait for `READY`.
+6. **Deploy the tag**, main and indexer, from a checkout of `drive-search-v1` with the same `.env`
+   (`git worktree add ../alekbot-core-v1 drive-search-v1`, then `make deploy` there).
+7. **Resume the queue and the job.** The tag's first tick finds the state `purging`, purges and rebuilds under v1.
+   The usage documents survive; the tag does not read them.
+8. **Before any later roll-forward**, reset each user's initial build, which the first v2 build spent or closed and
+   no purge renews: `$PY scripts/infrastructure/drive_initial_build_reset.py --user <id>` (dry run: its state), then
+   `--apply` (default allowance $40, never under $20).
+
+**The emergency switch does not survive a deploy.** `DRIVE_UPGRADE_PASS=off` stops every upgrade pass:
+`gcloud run services update $INDEXER --update-env-vars DRIVE_UPGRADE_PASS=off --region=$REGION
+--project=$GOOGLE_CLOUD_PROJECT`. The next `make deploy` deploys the indexer with `--set-env-vars`, which replaces
+every variable, so the switch silently turns back on: set it again after each deploy while it is needed.
 
 ## Cost Optimization
 
