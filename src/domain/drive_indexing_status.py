@@ -1,7 +1,7 @@
 """
 DriveIndexingStatus — what the Cabinet shows about a user's drive index (USER_DRIVE_INDEXING_RFC §6):
-counters, freshness, the error category, the readable chunks (Slice 2+4), and Search v2's model dollars: this month's
-per class against its cap, and the initial build's progress (§25.4.5; the §24.7 page and image counters are retired).
+counters, freshness, the error category, the readable chunks (Slice 2+4), and Search v2's model dollars: what this
+month's cap of each class has paid (the initial build's dollars left out, XC-4), and the initial build's progress (§25.4.5; the §24.7 page and image counters are retired).
 Built by DriveSearchService.indexing_status, so the Cabinet and search derive `building` and `index_full` one way.
 Pure value object.
 """
@@ -31,6 +31,7 @@ class DriveIndexingStatus:
     initial_build_spent_usd: float = 0.0      # the initial build (D27): spent of its allowance, open or closed
     initial_build_allowance_usd: float = 0.0
     initial_build_closed: bool = False
+    awaiting_rebuild: bool = False            # a v1 index not rebuilt under v2 yet (D30): no tick work until then
 
     def index_kept(self, now: datetime) -> bool:
         """A stored index exists and is inside the access-loss grace period (§7.7): the only time the Cabinet

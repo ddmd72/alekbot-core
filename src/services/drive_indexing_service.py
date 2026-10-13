@@ -47,7 +47,7 @@ from ..domain import drive_enrich_plan as enrich
 from ..domain import drive_index_policy as policy
 from ..domain.drive_card import card_eligible, card_hash, card_text, collapsed_folder, structurally_card_eligible
 from ..domain.drive_chunker import chunk_text
-from ..domain.drive_enrich_plan import PASSAGES_AGENT, PROFILER_AGENT
+from ..domain.drive_enrich_plan import COVERAGE_COUNTERS, PASSAGES_AGENT, PROFILER_AGENT
 from ..domain.drive_enrichment import (
     DriveHintDoc, EnrichContext, EnrichJob, HintItem, InitialBuild, JobState, ModelUsageMonth, ProfileSource,
     UsageClass,
@@ -491,7 +491,8 @@ class DriveIndexingService:
                 state = replace(state, counters=await self._counters(user_id))   # settled: refresh
             if job_counts:
                 state = replace(state, counters={**{k: v for k, v in state.counters.items()
-                                                    if not k.startswith(("profile_", "passages_"))}, **job_counts})
+                                                    if not k.startswith(("profile_", "passages_", "coverage_"))},
+                                                 **job_counts})
             progressed = any(v for k, v in summary.items() if k != "pages")
             state = replace(models.onto(state), continuation_enqueued_at=now if more else None, last_error=None,
                             systemic_failures=0,
@@ -1457,7 +1458,8 @@ class DriveIndexingService:
                 logger.warning(f"[DriveIndex] reader unavailable for {user_id[:8]}: {exc}; model work deferred")
                 _count_reader(models, summary, now, calls=exc.model_calls, cost=exc.model_cost, pages=exc.pages_sent,
                               outage=True)
-                await self._spend_usd(user_id, UsageClass.READER.value, exc.model_cost, 0.0, exc.model_calls)
+                await self._spend_usd(user_id, UsageClass.READER.value, exc.model_cost, exc.model_fallback_cost,
+                                      exc.model_calls)   # the fallback's share reaches the fallback alert (XC-5)
                 models.outage(now)   # after the usage, which leaves the backoff to this outage (C-M1, T-M2)
                 await self._persist_usage(models)
                 if exc.model_calls > 0 and exc.charges_file:
@@ -1476,7 +1478,8 @@ class DriveIndexingService:
             if extractor_id == READER:
                 _count_reader(models, summary, now, calls=outcome.model_calls, cost=outcome.model_cost,
                               pages=outcome.pages_sent)
-                await self._spend_usd(user_id, UsageClass.READER.value, outcome.model_cost, 0.0, outcome.model_calls)
+                await self._spend_usd(user_id, UsageClass.READER.value, outcome.model_cost,
+                                      outcome.model_fallback_cost, outcome.model_calls)   # XC-5
                 await self._persist_usage(models)
         if outcome is None:   # an empty chain: no kind is admitted without an extractor (§5.1)
             raise _NotWired(f"no extractor chain for kind {kind}")
@@ -2543,8 +2546,11 @@ class DriveIndexingService:
         parked (D27) — and the index has settled (`settled`: no due work, nothing to enrich). Right after the
         enumeration no file has been read yet, so no record has a job at all: D27's own test would close the build
         before the content it describes was read (RFC §25.4.5, the note on D27)."""
-        counts = await self._repo.count_by_job_state(user_id, _ENRICH_KINDS)
+        counts, gaps = await asyncio.gather(self._repo.count_by_job_state(user_id, _ENRICH_KINDS),
+                                            self._repo.count_describe_gaps(user_id))
         flat = {f"{job}_{st}": n for job, states in counts.items() for st, n in states.items() if n}
+        # the coverage line's counts, read by search from the state (XC-9: no count query per search)
+        flat.update({COVERAGE_COUNTERS[gap]: n for gap, n in gaps.items() if n and gap in COVERAGE_COUNTERS})
         described = counts.get(EnrichJob.PROFILE.value, {}).get(JobState.CURRENT.value, 0)
         text_records = sum(n for st, n in counts.get(EnrichJob.PROFILE.value, {}).items()
                            if st != JobState.NONE.value)

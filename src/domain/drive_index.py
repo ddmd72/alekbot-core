@@ -27,7 +27,9 @@ TRIAGE_VERSION = 2                            # image triage prompt and verdict 
 # Search v2 (§25.4.8, frozen in §25.13.2). In CURRENT_VERSIONS since P5, behind the migration gate (§25.8 as amended
 # by D30): a sync state whose applied_versions lacks MIGRATION_GATE_KEY was built by v1 and is never upgraded — it runs
 # no tick work until the owner's from-scratch rebuild, whose onboarding stamps every key.
-KEYS_VERSION = 2                              # drive_keys and the drive_content_terms normaliser: re-keys from stored text
+KEYS_VERSION = 3                              # drive_keys and the drive_content_terms normaliser: re-keys from stored text
+                                              # 3: entity spellings the file does not print are `ef:` (xc F1), a Latin
+                                              # word's skeleton is `xl:`/`exl:` (F3), D31 label names (lw:/dw:)
 PROFILE_VERSION = 1                           # profiler prompt, schema, input rules, verification
 PASSAGES_VERSION = 1                          # doc2query prompt and grounding
 SEARCH_V2_VERSIONS: Mapping[str, int] = {"keys": KEYS_VERSION, "profile": PROFILE_VERSION,
@@ -320,6 +322,8 @@ class DriveIndexRecord:
     enrich_ready: bool = False               # derived by the planner: any job `ready`
     enrich_wake_at: Optional[datetime] = None # derived: the earliest `*_defer_until` of a `deferred` job
     effective_day: str = ""                   # derived: effective_date as "YYYY-MM-DD" (the queue's order)
+    describe_gap: str = ""                    # derived: what the coverage line counts this file as (§25.5.6, XC-3):
+                                              # "waiting" / "held" (no description yet), "no_passages", or ""
     keys_pending: bool = False
     keys_version: int = 0
     keys_capped: bool = False                 # a key cap cut this record's or its chunks' keys (§25.2.6: "keys cut")

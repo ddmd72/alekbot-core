@@ -1564,6 +1564,15 @@ studies on the live index (private, `scripts/memory/`). Designed in §25.
   records. The rollback is the same in reverse: the tag plus a from-scratch v1 rebuild, with the v1 `content_terms`
   indexes redeployed first if they were dropped. OQ-V9 is closed by this decision. The upgrade pass stays, for v2→v2.x
   version bumps over stored text.
+- **D31 Deterministic names of the fixed labels (arbiter, under the owner's delegation, 2026-10-13).** Every
+  `DOC_TYPES` and `LIFE_DOMAINS` value has a fixed table of its names in en, es, uk and ru, singular and plural
+  (`drive_labels.DOC_TYPE_NAMES`, `LIFE_DOMAIN_NAMES`; medical_record → "medical record(s)", "historial médico",
+  "медичний запис/записи", "медицинская запись/записи", …). The keyer writes the record's doc type's names as `lw:`
+  keys beside the profiler's `label_words`, and its life areas' names as `dw:` keys beside its `domain_words`, as the
+  `k:` kind table already is (`KEYS_VERSION` 3; a hash test pins the table). *Reason:* the P7 eval showed the model's
+  label words miss common forms ("медицинские записи" over a lab report), so a class query depended on what one
+  reply happened to write. The table names our own enum values the profiler chose for that file; it is not a
+  query-side synonym table, so D28 stands: a query word still meets only keys written for that file.
 
 ---
 
@@ -2216,7 +2225,8 @@ Every key is a short string with a family prefix. Index and query call the same 
 `NAME_KEYS_VERSION`): a hash of the form tables, and a hash of the keyer's output on a fixed multilingual fixture, so a
 change to a rule's code fails the pin too. Either fails unless the versions are bumped with it.
 
-**Tokens** (P1 review, `KEYS_VERSION` 2). The tokeniser:
+**Tokens** (P1 review, `KEYS_VERSION` 2; the cross-cutting review's F1, F3 and D31 are `KEYS_VERSION` 3). The
+tokeniser:
 - splits on Unicode punctuation, symbols, separators and controls, and on letter/digit boundaries; "ред3" → "ред", "3";
 - does **not** split on case: "iPhone", "PayPal", "McDonalds" are one token each (casefolded). The index also stores
   the case parts' forms ("phone" finds "iPhone"); a query word is never stood for by a part;
@@ -2278,7 +2288,10 @@ Each token gets a **set of native forms**, each of 3 letters or more; the index 
 
 **Families**
 - `w:` **words** — the native forms of a token (chunks, names): exact.
-- `x:` **skeletons** — one per word (chunks, names): a translation (§25.5.4).
+- `x:` **skeletons** — one per word (chunks, names): a translation (§25.5.4). The family records the script the word
+  came from (xc F3): `x:` for a Cyrillic word, `xl:` for a Latin one. A Latin query word reads only `x:` (it meets a
+  Latin word through its `w:` forms: the Cyrillic stem of a Latin word would join "Mario" and "Maria", "casa" and
+  "caso"); a Cyrillic query word reads both, so "Барселоне" still meets "Barcelona" and "kyiv" "Київ".
 - `n:` **number terms** — today's normaliser (`drive_content_terms`: amounts, numeric and written-out dates in five
   languages, ids, digit groups): index-side forms per chunk (the 256-term cap applies per chunk), maximal forms on the
   query side. Its rules now belong to `KEYS_VERSION` (§25.4.8).
@@ -2287,14 +2300,19 @@ Each token gets a **set of native forms**, each of 3 letters or more; the index 
   query emits only `m:`.
 - `y:` **years** — `y:YYYY` of every verified date and of `effective_date` (records); a 4-digit number from 1900 to
   2099 in a query also emits `y:`.
-- `e:` **entity phrases** — a named thing's spelling (an entity's `printed`, `name` and `forms`; the photo place's
-  `place_forms`):
+- `e:` **entity phrases** — a named thing's spelling the file prints (an entity's `printed`, and those of its `name`
+  and `forms` verification found in the text or the name, kept as the entity's `found`; the photo place's
+  `place_forms`). An entity spelling the profiler wrote that the file does not print is `ef:` (xc F1): the index's
+  own spelling, a translation, never exact, and its match line names what the file prints ('place "Барселона"
+  (spelling by the index; named in the file as "BARCELONA")'). The card text shows the printed spellings. Rules for
+  both families:
   - a single-token name gets its native form set;
   - a multi-token phrase joins each token's form (b) with `_`, articles kept: "Le Havre" → `e:le_havr`,
     "Нью-Йорке" → `e:нью_йорк`. A hyphen compound also gets its joined form ("Нью-Йорк" → `e:ньюйорк`);
   - a person or place of several words also keys its last word alone (the surname: "Сергей Иванов" is about
     "Иванову").
-- `ex:` **entity skeletons** — the same phrases built from each token's skeleton: a translation.
+- `ex:` **entity skeletons** — the same phrases built from each token's skeleton: a translation; `exl:` when every
+  token is Latin (xc F3, read only by a Cyrillic query word).
 - `pe:` **photo-object phrases** — a photo object's `name` and `forms`, built exactly as `e:` phrases; the query emits
   `pe:` beside `e:`. A family of its own so a key's source class follows from its prefix and tiers are decided on lean
   records (Part 0 review M3).
@@ -2311,6 +2329,8 @@ Each token gets a **set of native forms**, each of 3 letters or more; the index 
   `pn:` **photo numbers** — the number terms of `visible_text`. All automatic.
 - `l:` **labels** — `l:type:<doc_type>`, `l:domain:<domain>`, `l:valid`: stored for grouping and display; no query
   produces them.
+- **D31:** the record's doc type's fixed names (`DOC_TYPE_NAMES`) join its `lw:` keys after the profiler's
+  `label_words`, and its life areas' names (`LIFE_DOMAIN_NAMES`) its `dw:` keys after its `domain_words`.
 - **Name keys** (`name_tokens`, the name stream; `NAME_KEYS_VERSION` 2):
   - kept: the native `w:` forms (with case parts and compounds); the `x:` skeleton of each word; the `n:`/`y:` forms of
     digit tokens and of the name's number terms, with and without its extension; the trigrams (`t:`) of each token
@@ -2327,7 +2347,8 @@ not stored.
 **Source classes** (they decide the tier, §25.5.4):
 - **verified record** — name keys `w:`, `n:`, `y:`, and the record's `e:`, `v:`, `y:`, `m:`, `k:`;
 - **passage words** — `word_keys` `w:`, `n:`, `m:`;
-- **translation** — `hint_keys`, and every skeleton: `x:` in chunks and names, `ex:` in records;
+- **translation** — `hint_keys`, every skeleton (`x:`/`xl:` in chunks and names, `ex:`/`exl:` in records), and an
+  entity spelling the file does not print (`ef:`);
 - **automatic record** — `lw:`, `tw:`, `dw:`, `lv:`, `pw:`, `pe:`, `pn:`.
 
 The class follows from the prefix and the field (`drive_match.FAMILY_SOURCE_CLASS`,
@@ -2573,7 +2594,9 @@ about 6 500 typical text files (a profile and five passage chunks ≈ $0.003 eac
 **Fallback alert.** When the fallback served more than `FALLBACK_ALERT_SHARE` (50 %) of a user's model cost in a day
 (the `daily` map), the fan-out posts once that day to `AlertSinkPort`.
 
-**The Cabinet** shows dollars per class this month and the initial build's progress (spent / allowance, open or
+**The Cabinet** shows dollars per class this month — what each class's cap has paid, the initial build's dollars left
+out (XC-4) — the initial build's progress on its own line, and "waiting to be rebuilt" for a state the D30 gate holds
+(XC-8) (spent / allowance, open or
 closed) instead of pages and images (`model_usd_month`, `model_usd_caps`, `initial_build` in `/api/drive/status`). The
 reader's page clamp is derived from dollars: `MODEL_EXTRACT_PAGES_PER_MONTH` = the pages `READER_USD_PER_MONTH` pays
 at `READER_PAGE_USD_ESTIMATE`; only a file over it is cut to it, so no file waits for a month that could never pay for
@@ -2639,7 +2662,7 @@ pass the coverage line says the index is being re-keyed (§25.5.6). Profiles tou
 
 | Transition | Clears |
 |---|---|
-| A write that drops a readable generation (`drops_readable`) | `profile` and its fields, `valid_until`, `passages_*`; hints with the chunks; both jobs re-planned |
+| A write that drops a readable generation (`drops_readable`) | `profile` and its fields, `valid_until`, `passages_*`; hints with the chunks; both jobs re-planned. Kept (XC-6): the profile's refresh cooldown (`profile_defer_until`, also kept through a template write) and `passages_done_at` / `passages_version`, so a file whose text drops and comes back, or a note whose edits cross `PROFILE_MIN_CHARS`, is described at most once per cooldown |
 | Verdict `text` → `photo` | the profile and hints (as above) |
 | Verdict `photo` → `text`, or the kind leaving triage | the photo fields |
 | A new content version | `*_attempts` and holds (they are per version and fingerprint or generation); the profile is kept and re-verified until the new one |
@@ -2669,9 +2692,14 @@ duplicate collapse, the nonce wrapper and the refusal of an empty request.
      left in the words is removed, named in the ignored list, and never becomes a concept that D29 would block.
 
    A place-like word is not on either list ("como"), and neither is "list". A 1-letter word is ignored; a 2-letter
-   one is a concept (§25.2.4). A query left with no concept is a filter-only request; when it held generic words and
+   one is a concept (§25.2.4). Interrogative phrasing words ("what", "which", "how much/many", "сколько", "скільки",
+   "какой", "який", "cuánto", "qué", with their forms) are generic words (P7 eval). Time words are matched without
+   accents ("ano" as "año", xc F2). A query left with no concept is a filter-only request; when it held generic words and
    no filter is set ("todo", "files"), those words are searched as name words by the name stream alone, never by
-   content and never with a D29 line (P6 review m6).
+   content and never with a D29 line (P6 review m6); a query of function or time words only ("my", "mañana", "the
+   the", "où") has its ignored words of 2 letters or more searched that way (xc F2), and a name whose stem holds only
+   2-letter function words ("My.docx", "Où.txt") keys them exactly. A filter-only listing names the words it did
+   not search for.
 5. **Word concepts:** every remaining word. **Emitted keys per concept, uncut** (P1 review B1: coverage is tested on
    the whole list, so a word's coverage never depends on its neighbours):
    - word keys: `w:` native forms and `x:` skeletons;
@@ -2763,8 +2791,12 @@ passage words, translation, automatic record. A file's tier is decided by the we
      `about_keys`.
 
    A skeleton match crosses scripts or spellings ("Barcelona" in a Russian note, "hotel" against "хотел"). It is never
-   exact: it is shown with the window around the matched word, labelled "by spelling in another script (automatic)".
-   A native-script match and a stored spelling (an entity's or place's own form, `e:`) stay exact.
+   exact: it is shown with the window around the matched word, labelled "by spelling in another script (automatic)",
+   or "by another spelling (automatic)" when both words are Cyrillic ("Киев" / "Київ"). Two Latin words never meet
+   through a skeleton (`xl:`/`exl:` are read only by a Cyrillic query word, xc F3). A native-script match and a
+   spelling the file prints (an entity's verified spelling or a place's own form, `e:`) stay exact; an entity
+   spelling only the profiler wrote (`ef:`) is a translation (xc F1), shown as 'person "<spelling>" (spelling by the
+   index; named in the file as "<printed>")'.
 4. **Labelled** (automatic): at least one concept is covered only by automatic-record keys (`lw:`, `tw:`, `dw:`, `lv:`,
    `pw:`, `pe:`), the others by any class.
 5. **Related by meaning only:** `meaning ≥ Z_RELATED`; or a name over the `name_match_v2` floor that does not cover
@@ -2781,7 +2813,8 @@ Each file is shown once, in its best tier. One test per combination of classes i
   this scope holds" when the word exists outside it — **only when the scope was read**: a concept whose page was full
   and no scoped read covered it (a folder, a kind family, a date range on the name, word or hint streams) is never
   stated absent; the coverage line names it ("could not be checked in the whole scope", P6 review M1).
-- **Low weight** — with three or more concepts, a file may miss the single lowest-weight concept with `df > 0`.
+- **Low weight** — with three or more concepts, a file may miss the single lowest-weight concept with `df > 0`; never a
+  number or year concept ("electricity bill 2024" must not return a 2026 bill: P7 eval, as the m7 ruling for common).
 - **Common** — a concept held by more than `COMMON_SHARE` (30 %) of the carded files may also be missed (any number of
   concepts), and is named in the searched line ("ignored as common: <word>") and on the card ("not matched (common)").
   Absent and rare subject words still block, so honest negatives keep their strict-AND behaviour; the share is
@@ -2831,10 +2864,17 @@ coverage line, the tiers in order (About, Mentioned in, By translation, Labelled
   `unread`); `building`, `reading`, `refreshing`; a keys pass in progress; a full page; keys cut on a shown file;
   concepts cut past `MAX_CONCEPTS`; the index being rebuilt (a state not rebuilt under v2, §25.8); words whose full
   page no scoped read covered. **Never** folders, photos, audio, video or other kinds that hold no text: they are
-  not "not described". Counts come from `count_by_job_state` (refreshed by every tick that completes).
+  not "not described". A file already described (a profile, and a passage run finished once when its policy has
+  doc2query) is not counted while its re-description waits (XC-3): each record's derived `describe_gap` says what
+  it counts as, and the tick stores the three counts in the sync state's counters (`coverage_*`,
+  `count_describe_gaps`); search reads them and runs no count query (XC-9).
 - **Footers:** after non-empty exact tiers, "No other file is about or mentions all of these words."; when no file
   holds all concepts but each exists, "No file matches all of: <w1> (n1 files), <w2> (n2 files)."; when a concept is
-  absent, the D29 lines. None says "final".
+  absent, the D29 lines. None says "final". Whenever the coverage line is incomplete, each of them speaks of the
+  files searched: 'No searched file holds "<word>".', "No other searched file is about or mentions all of these
+  words.", "No searched file matches all of: …" (xc F4).
+- **Validity (xc F5):** every card of a file with `valid_until` carries `valid until: YYYY-MM-DD`; when its match came
+  through validity words, its date line is `date: <valid_until> (expires)` instead.
 
 #### 25.5.7 Agent surface (D11, D19, D25)
 - No new fields, no modes, no query-time model (D19, D28).
@@ -2943,12 +2983,16 @@ recorded only if they meet these numbers):
   `keys_capped`, `stopped_at_cap`; rebuild progress as described / text records.
 
 ### 25.8 Rollout, rebuild and rollback (runbooks)
-**The gate.** A sync state whose `applied_versions` lacks the key `keys` is **awaiting migration**: v2 runs no upgrade
-pass and no enrichment for it; new or edited files are indexed under v2 rules. Search has **no migration mode** (D30,
-P6 review M3): it never reads a record keyed by another keyer (`keys_version` not `KEYS_VERSION`), searches the v2
-records written so far, and the coverage line says "the index is being rebuilt for a new search format, so files not
-rebuilt yet are not searched". A fresh v2 onboarding stamps every key (as today), so new
-users are not caught. `DRIVE_UPGRADE_PASS` (`os.getenv`, default on) stops every upgrade pass in an emergency.
+**The gate.** A sync state whose `applied_versions` lacks the key `keys` is **awaiting migration**: v2 does no tick
+work for it at all (no observation, no content run, no upgrade pass, no enrichment) and the fan-out raises an ops
+alert once. Search has **no migration mode** (D30, P6 review M3, XC-1): it runs no stream at all — no query embedding,
+no read — and answers "The index is being rebuilt for a new search format, so nothing could be searched yet: this
+result says nothing about what the drive holds." with no tier, no count and no absence; a filter-only listing answers
+the same, never with v1 records. The Cabinet shows the state as waiting to be rebuilt (XC-8). A fresh v2 onboarding
+stamps every key (as today), so new users are not caught. `DRIVE_UPGRADE_PASS` (`os.getenv`, default on) stops every
+upgrade pass in an emergency; the indexer's deploy sets it from `DRIVE_UPGRADE_PASS_DEV` in `.env` (the
+`_DRIVE_UPGRADE_PASS` substitution, default on), because its `--set-env-vars` replaces every variable: a switch set
+with `gcloud run services update` alone turns back on at the next deploy (XC-7).
 
 **Rollout**
 1. Code on `asm/drive-search-v2`; the eval meets the bars; the caption-shift fix passes (§25.4.3).
@@ -3269,12 +3313,14 @@ Labelled (automatic) (showing 2 of 5):
 <drive_document …> Travel/Rome: 3 more labelled files (PDF, 2026-05) </drive_document …>
 Related by meaning only, unverified (1):
 <drive_document … path="Photos/IMG_2210.jpg"> IMG_2210.jpg | image | a square with a fountain at night | 2026-05-11 </drive_document …>
-No other file is about or mentions all of these words.
+No other searched file is about or mentions all of these words.
 ```
-A blocked concept: `No file holds "vaccination". Without "vaccination": 3 files match the other words.` An empty
-conjunction: `No file matches all of: "barcelona" (41 files), "trip" (2 files).` Migration: `The index is being
-migrated to a new search format: only names, meaning and filters were searched.` (superseded by D30: never rendered;
-a state not rebuilt under v2 shows the coverage part "the index is being rebuilt", §25.8).
+(The coverage line above is incomplete, so the footer speaks of the files searched; under "Coverage: complete." it
+reads "No other file is about or mentions all of these words.", xc F4.) A blocked concept: `No file holds
+"vaccination". Without "vaccination": 3 files match the other words.` (`No searched file holds …` under incomplete
+coverage). An empty conjunction: `No file matches all of: "barcelona" (41 files), "trip" (2 files).` Migration: `The
+index is being migrated to a new search format: only names, meaning and filters were searched.` (superseded by D30:
+never rendered; a state not rebuilt under v2 is not searched and answers `REBUILDING_LINE`, §25.8, XC-1).
 
 Manifest (D25), `drive_query`: "search_files_in_drive: REQUIRED unless the request is filter-only; the `query` field is
 not read for search. The subject in the user's words (any language): the words of a file or folder name, a place,

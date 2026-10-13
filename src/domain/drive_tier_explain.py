@@ -24,6 +24,7 @@ from .drive_index_params import WINDOW_MAX, WINDOW_PAD
 from .drive_key_sources import AboutField, AboutSource, KeyedRecord
 from .drive_keys import about_sources, family_keys, match_spans, name_keys_v2, token_spans, word_form_keys
 from .drive_match import SourceClass
+from .drive_name_keys import _is_cyrillic
 from .drive_search_texts import (
     MATCH_NAME, MATCH_PASSAGE_KEYWORD, MATCH_PLACE_IN_FILE, MATCH_TYPE_LABEL, MATCH_WORDS_IN_PASSAGE,
     NOT_MATCHED_COMMON,
@@ -32,12 +33,16 @@ from .drive_tiers import MISSED_COMMON, WHERE_CHUNK, WHERE_HINT, WHERE_NAME, Cov
 
 Span = Tuple[int, int]
 _ACROSS = ", by spelling in another script (automatic)"
+_OTHER_SPELLING = ", by another spelling (automatic)"     # a skeleton match within one script (Киев / Київ)
+_LATIN_SKELETONS = ("xl:", "exl:")
 _SPACES = re.compile(r"\s+")
 _ELLIPSIS = "…"
 
 # P6's match sources (§25.13.6 leaves them to P6, in the frozen ones' style)
 _MATCH_WORD_IN_PASSAGE = "word {words} in one passage"
 _MATCH_ENTITY = '{type} "{word}" (named in the file)'
+# an entity spelling the profiler wrote that the file does not print (`ef:`): the file's own spelling beside it (xc F1)
+_MATCH_ENTITY_FORM = '{type} "{word}" (spelling by the index; named in the file as "{printed}")'
 _MATCH_PHOTO_PLACE = 'place "{word}" (photo location)'
 _MATCH_VALUE = '{label} "{word}"'
 _MATCH_DATE = 'date "{word}" ({label})'
@@ -84,6 +89,9 @@ def _word_in(text: str, prefix: str, keys: Sequence[str]) -> str:
 
 def _about_text(source: AboutSource, keys: Sequence[str]) -> str:
     field, printed = source.field, source.printed
+    if field is AboutField.ENTITY_FORM:
+        kind = source.detail if source.detail and source.detail != "other" else "entity"
+        return _MATCH_ENTITY_FORM.format(type=kind, word=printed, printed=source.in_file)
     if field is AboutField.ENTITY:
         kind = source.detail if source.detail and source.detail != "other" else "entity"
         return (MATCH_PLACE_IN_FILE.format(word=printed) if kind == "place"
@@ -114,12 +122,23 @@ def _record_source(cover: Cover, record: KeyedRecord) -> str:
     """The first field that gave one of the cover's keys; a source whose shown word is the query word as typed wins
     (a label list holds "медицинская запись" and "медицинские записи": the second is shown for "медицинские")."""
     sources = about_sources(record)
-    found = [_about_text(s, cover.keys) for key in cover.keys for s in sources.get(key, ())
+    found = [(_about_text(s, cover.keys), s) for key in cover.keys for s in sources.get(key, ())
              if s.source_class is cover.source_class]
     if not found:
         return f'"{cover.word}"'
-    text = next((t for t in found if f'"{cover.word}"' in t.casefold()), found[0])
-    return text + _ACROSS if cover.source_class is SourceClass.TRANSLATION else text
+    text, source = next(((t, s) for t, s in found if f'"{cover.word}"' in t.casefold()), found[0])
+    if cover.source_class is SourceClass.TRANSLATION and source.field is not AboutField.ENTITY_FORM:
+        return text + _script_note(cover)
+    return text
+
+
+def _script_note(cover: Cover) -> str:
+    """A skeleton match's label: across scripts when the query word and the key's word are in different scripts
+    ("Barcelona" / "Барселоне"), another spelling within one ("Киев" / "Київ"). A Latin query word never reads a
+    Latin word's skeleton (xc F3), so a Latin query always crosses."""
+    latin_query = not _is_cyrillic(cover.word)
+    latin_key = any(k.startswith(_LATIN_SKELETONS) for k in cover.keys)
+    return _ACROSS if latin_query or latin_key else _OTHER_SPELLING
 
 
 def _hint_item(cover: Cover, items: Sequence[HintItem]) -> Optional[HintItem]:
@@ -138,14 +157,14 @@ def explain(match: FileMatch, record: KeyedRecord, name: str, text: Optional[str
     for cover in match.covers:
         if cover.where == WHERE_NAME:
             word = _name_word(name, cover.keys) or cover.word
-            sources.append(MATCH_NAME.format(word=word) + (_ACROSS if cover.source_class is SourceClass.TRANSLATION
-                                                           else ""))
+            sources.append(MATCH_NAME.format(word=word) + (_script_note(cover)
+                                                           if cover.source_class is SourceClass.TRANSLATION else ""))
         elif cover.where == WHERE_CHUNK:
             found = match_spans(text or "", cover.keys)
             printed = (text or "")[found[0][0]:found[0][1]] if found else cover.word
             spans.extend(found[:1])
             if cover.source_class is SourceClass.TRANSLATION:
-                sources.append(_MATCH_WORD_IN_PASSAGE.format(words=_quoted([printed])) + _ACROSS)
+                sources.append(_MATCH_WORD_IN_PASSAGE.format(words=_quoted([printed])) + _script_note(cover))
             else:
                 if passage_at is None:
                     passage_at = len(sources)

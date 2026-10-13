@@ -9,7 +9,10 @@ index time (P8). `LIFE_DOMAINS` is its own set, not `FactDomain`.
 Public interface:
     DOC_TYPES, LIFE_DOMAINS, DATE_LABELS, ENTITY_TYPES, VALUE_LABELS      (ordered tuples, as listed in §25.2.3)
     KIND_WORDS: kind -> words (the `k:` table, before §25.2.4's forms);  PHOTO_KIND_WORDS (images, verdict `photo`)
+    DOC_TYPE_NAMES, LIFE_DOMAIN_NAMES: label value -> its names (D31, keyed `lw:` / `dw:` at index time)
+    label_names_digest() -> str                  pinned by a test (a change is a KEYS_VERSION bump)
 """
+import hashlib
 from typing import Mapping, Tuple
 
 DOC_TYPES: Tuple[str, ...] = (
@@ -77,3 +80,97 @@ PHOTO_KIND_WORDS: Tuple[str, ...] = (
     "photo", "foto", "фото", "світлина", "photograph", "photographie", "fotografía", "fotografia", "фотография",
     "фотографія", "снимок", "знімок", "фотка",
 )
+
+
+# D31 (arbiter, 2026-10-13): the names of our own fixed labels in en, es, uk and ru, singular and plural, written by the
+# keyer beside the profiler's `label_words` (`lw:`, doc types) and `domain_words` (`dw:`, life areas), as the `k:` kind
+# table is. It names the enum values the profiler chose; it is NOT a query-side synonym table (D28 stands): a query
+# word still meets only what the index wrote for that file. A multi-word name is keyed per token (as label words are).
+DOC_TYPE_NAMES: Mapping[str, Tuple[str, ...]] = {
+    "receipt": ("receipt", "receipts", "recibo", "recibos", "квитанція", "квитанції", "чек",
+                "чеки", "квитанция", "квитанции"),
+    "invoice": ("invoice", "invoices", "factura", "facturas", "рахунок-фактура", "рахунки-фактури", "інвойс",
+                "інвойси", "счёт-фактура", "счета-фактуры", "инвойс", "инвойсы"),
+    "bill": ("bill", "bills", "utility bill", "factura", "facturas", "рахунок", "рахунки", "счёт", "счета"),
+    "bank_statement": ("bank statement", "bank statements", "extracto bancario", "extractos bancarios",
+                       "банківська виписка", "банківські виписки", "банковская выписка", "банковские выписки"),
+    "payslip": ("payslip", "payslips", "pay slip", "nómina", "nóminas", "розрахунковий лист", "розрахункові листи",
+                "расчётный лист", "расчётные листы"),
+    "tax_document": ("tax document", "tax documents", "tax return", "documento fiscal", "documentos fiscales",
+                     "declaración de la renta", "податкова декларація", "податкові декларації",
+                     "налоговая декларация", "налоговые декларации"),
+    "contract": ("contract", "contracts", "agreement", "agreements", "contrato", "contratos", "договір", "договори",
+                 "контракт", "контракти", "договор", "договоры", "контракты"),
+    "insurance_policy": ("insurance policy", "insurance policies", "insurance", "póliza de seguro", "pólizas de seguro",
+                         "seguro", "seguros", "страховий поліс", "страхові поліси", "страховка", "страховой полис",
+                         "страховые полисы"),
+    "warranty": ("warranty", "warranties", "guarantee", "garantía", "garantías", "гарантія", "гарантії",
+                 "гарантия", "гарантии"),
+    "ticket": ("ticket", "tickets", "entrada", "entradas", "billete", "billetes", "квиток", "квитки", "билет",
+               "билеты"),
+    "booking": ("booking", "bookings", "reservation", "reservations", "reserva", "reservas", "бронювання", "бронь",
+                "бронирование", "бронирования"),
+    "certificate": ("certificate", "certificates", "certificado", "certificados", "сертифікат", "сертифікати",
+                    "свідоцтво", "свідоцтва", "довідка", "довідки", "сертификат", "сертификаты", "свидетельство",
+                    "свидетельства", "справка", "справки"),
+    "id_document": ("identity document", "identity documents", "passport", "passports", "ID card", "ID cards",
+                    "documento de identidad", "documentos de identidad", "pasaporte", "pasaportes", "DNI",
+                    "посвідчення особи", "паспорт", "паспорти", "удостоверение личности", "паспорта"),
+    "medical_record": ("medical record", "medical records", "health record", "health records", "historial médico",
+                       "historiales médicos", "historia clínica", "informe médico", "informes médicos",
+                       "медичний запис", "медичні записи", "медична картка", "медичні картки",
+                       "медицинская запись", "медицинские записи", "медицинская карта", "медицинские карты"),
+    "prescription": ("prescription", "prescriptions", "receta médica", "recetas médicas", "рецепт", "рецепти",
+                     "рецепты"),
+    "fine": ("fine", "fines", "penalty", "penalties", "multa", "multas", "штраф", "штрафи", "штрафы"),
+    "letter": ("letter", "letters", "carta", "cartas", "лист", "листи", "письмо", "письма"),
+    "form": ("form", "forms", "formulario", "formularios", "бланк", "бланки", "анкета", "анкети", "анкеты"),
+    "manual": ("manual", "manuals", "user guide", "instructions", "manuales", "instrucciones", "інструкція",
+               "інструкції", "посібник", "посібники", "инструкция", "инструкции", "руководство", "руководства"),
+    "book": ("book", "books", "libro", "libros", "книга", "книги", "книжка", "книжки"),
+    "article": ("article", "articles", "artículo", "artículos", "стаття", "статті", "статья", "статьи"),
+    "report": ("report", "reports", "informe", "informes", "звіт", "звіти", "отчёт", "отчёты"),
+    "plan": ("plan", "plans", "planes", "план", "плани", "планы"),
+    "notes": ("note", "notes", "nota", "notas", "нотатка", "нотатки", "заметка", "заметки"),
+    "recipe": ("recipe", "recipes", "receta", "recetas", "рецепт", "рецепти", "рецепты"),
+    "newsletter": ("newsletter", "newsletters", "boletín", "boletines", "розсилка", "розсилки", "рассылка",
+                   "рассылки"),
+    "web_page": ("web page", "web pages", "página web", "páginas web", "веб-сторінка", "веб-сторінки",
+                 "веб-страница", "веб-страницы"),
+    "spreadsheet": ("spreadsheet", "spreadsheets", "hoja de cálculo", "hojas de cálculo", "таблиця", "таблиці",
+                    "таблица", "таблицы"),
+    "data": ("data", "dataset", "datasets", "datos", "conjunto de datos", "дані", "набір даних", "данные",
+             "набор данных"),
+    "presentation": ("presentation", "presentations", "presentación", "presentaciones", "презентація", "презентації",
+                     "презентация", "презентации"),
+    "other": (),
+}
+
+LIFE_DOMAIN_NAMES: Mapping[str, Tuple[str, ...]] = {
+    "finance": ("finance", "finances", "money", "finanzas", "dinero", "фінанси", "гроші", "финансы", "деньги"),
+    "health": ("health", "medical", "salud", "médico", "здоровʼя", "медицина", "здоровье"),
+    "travel": ("travel", "trip", "trips", "viaje", "viajes", "подорож", "подорожі", "поїздка", "поїздки",
+               "путешествие", "путешествия", "поездка", "поездки"),
+    "home": ("home", "house", "housing", "hogar", "casa", "vivienda", "дім", "житло", "квартира", "дом", "жильё"),
+    "vehicle": ("vehicle", "vehicles", "car", "cars", "vehículo", "vehículos", "coche", "coches", "автомобіль",
+                "автомобілі", "машина", "машини", "автомобиль", "автомобили", "машины"),
+    "work": ("work", "job", "employment", "trabajo", "empleo", "робота", "работа"),
+    "education": ("education", "school", "studies", "educación", "estudios", "escuela", "освіта", "навчання",
+                  "школа", "образование", "учёба"),
+    "legal_admin": ("legal", "administration", "paperwork", "trámites", "administración", "юридичні справи",
+                    "адміністративні справи", "юридические дела", "административные дела"),
+    "shopping": ("shopping", "purchase", "purchases", "compras", "compra", "покупка", "покупки"),
+    "leisure": ("leisure", "hobby", "hobbies", "entertainment", "ocio", "entretenimiento", "дозвілля", "хобі",
+                "розваги", "досуг", "хобби", "развлечения"),
+    "family": ("family", "families", "familia", "familias", "сімʼя", "родина", "семья"),
+    "tech": ("tech", "technology", "computer", "computers", "software", "tecnología", "informática", "технології",
+             "компʼютер", "технологии", "компьютер"),
+    "news_reference": ("news", "reference", "noticias", "referencia", "новини", "новости"),
+    "other": (),
+}
+
+
+def label_names_digest() -> str:
+    """SHA-256 of the D31 tables: a test pins it, so a change fails until KEYS_VERSION moves with it."""
+    tables = (sorted(DOC_TYPE_NAMES.items()), sorted(LIFE_DOMAIN_NAMES.items()))
+    return hashlib.sha256(repr(tables).encode("utf-8")).hexdigest()

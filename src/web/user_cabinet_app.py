@@ -1277,10 +1277,12 @@ def create_user_cabinet_blueprint(
             "index_as_of": _iso(status.index_as_of),
             "index_full": status.index_full,
             "building": status.building,
+            "awaiting_rebuild": status.awaiting_rebuild,   # D30: a v1 index waits for its v2 rebuild (XC-8)
             "access_lost_at": _iso(status.access_lost_at),
             "index_kept": status.index_kept(datetime.now(timezone.utc)),
-            # Slice 2+4 (§6): readable chunks. Search v2 (§25.4.5): this month's model dollars per class against its
-            # cap and the initial build's progress (the §24.7 page and image counters are retired)
+            # Slice 2+4 (§6): readable chunks. Search v2 (§25.4.5): what this month's cap of each class has paid (the
+            # initial build's dollars are its own line, XC-4) and the initial build's progress (the §24.7 page and
+            # image counters are retired)
             "readable_chunks": status.readable_chunks,
             "model_usd_month": {cls: round(float(usd), 4) for cls, usd in status.usd_month.items()},
             "model_usd_caps": dict(status.usd_caps),

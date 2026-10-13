@@ -12,9 +12,10 @@ candidate's coverage is tested on its about and name keys and the keys of the ch
 named (read by id), with the minimum window for two or more chunk-covered words. Files land in About, Mentioned in,
 By translation or Labelled by the weakest source class they need; Related holds at most RELATED_MAX files by meaning
 (a robust z per source over its pool, abstaining under MEANING_POOL_MIN files) or a similar name. Shown counts per
-tier, the rest grouped; the coverage line names what the search could not see. A sync state not rebuilt under v2
-(no `keys` in `applied_versions`, D30) is searched by names, meaning and filters only, and says so (the migration
-guard). No model call at search time (D19, D28). Decisions that need no I/O are in `drive_tiers`,
+tier, the rest grouped; the coverage line names what the search could not see (its enrichment counts are the ones
+the last tick stored, never counted per search). A sync state not rebuilt under v2 (no `keys` in `applied_versions`,
+D30) is not searched at all: the result says the index is being rebuilt and states nothing absent (XC-1). No model
+call at search time (D19, D28). Decisions that need no I/O are in `drive_tiers`,
 `drive_tier_pool`, `drive_tier_explain` and `drive_search`; this class reads and calls them.
 
 Public interface:
@@ -32,7 +33,8 @@ from datetime import date, datetime, timezone
 from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Set, Tuple, Union
 
 from ..domain.drive_card import card_text
-from ..domain.drive_enrichment import USD_CAPS, EnrichJob, HintItem, JobState, UsageClass
+from ..domain.drive_enrich_plan import COVERAGE_COUNTERS, GAP_HELD, GAP_NO_PASSAGES, GAP_WAITING
+from ..domain.drive_enrichment import USD_CAPS, HintItem, UsageClass
 from ..domain.drive_index import (
     KEYS_VERSION, MIGRATION_GATE_KEY, POLICY_VERSION, DriveIndexRecord, DriveSyncState, EpochPhase, Priority,
     RecordState, Scope,
@@ -52,7 +54,7 @@ from ..domain.drive_search import (
     MAX_CHAIN_DEPTH, NOT_READ_YET_COUNTER, STATUS_AMBIGUOUS_FOLDER, STATUS_FOLDER_NOT_FOUND, STATUS_OK, UNREAD_COUNTER,
     DriveSearchCard, DriveSearchEnvelope, DriveSearchRequest, DriveSearchResult, content_admitted, cosine_distance,
     hides_descendants, in_date_range, kinds_for, make_card, normalize_path, path_match, record_visible,
-    KIND_NAMES, render_results, resolve_chain, search_gate,
+    render_results, resolve_chain, search_gate,
 )
 from ..domain.drive_tier_explain import explain, not_matched, passage_window
 from ..domain.drive_tier_pool import (
@@ -79,14 +81,7 @@ _SHOWN: Mapping[MatchTier, int] = {MatchTier.ABOUT: ABOUT_SHOWN, MatchTier.MENTI
 _TIERS: Tuple[MatchTier, ...] = (MatchTier.ABOUT, MatchTier.MENTIONED, MatchTier.TRANSLATED, MatchTier.LABELLED)
 # Cards that show a passage when the match came from a chunk or a grounded keyword (P6 review m3: Labelled too)
 _PASSAGE_TIERS = frozenset({MatchTier.MENTIONED, MatchTier.TRANSLATED, MatchTier.LABELLED})
-# Text kinds whose enrichment jobs the coverage line counts (§25.5.6): never folders, photos (their jobs are `none`),
-# audio, video or other kinds that hold no text.
-_NO_TEXT_KINDS = frozenset({"folder", "audio", "video", "archive", "code", "log", "data_dump", "database",
-                            "executable", "disk_image", "other", "iwork"})
-_NO_PASSAGE_KINDS = frozenset({"epub", "xlsx", "xls", "ods", "csv", "json"})   # no doc2query by policy (§25.3)
-_NOT_DESCRIBED_STATES = (JobState.READY.value, JobState.DEFERRED.value, JobState.PARKED.value)
 _VALIDITY = KeyFamily.VALIDITY_WORD.value
-_ALL_KINDS = KIND_NAMES
 
 Chain = Optional[Tuple[str, Tuple[str, ...]]]   # (path, ancestor ids) or None when hidden
 Rec = Any   # a DriveIndexRecord or a DriveRecordLean: both carry the fields visibility, filters and coverage read
@@ -94,6 +89,11 @@ Rec = Any   # a DriveIndexRecord or a DriveRecordLean: both carry the fields vis
 
 def _not_indexed(folder_name: str) -> DriveSearchResult:
     return DriveSearchResult(status=STATUS_OK, folder_path=folder_name, folder_not_indexed=True)
+
+
+def _expiry_match(match: FileMatch) -> bool:
+    """The match came through validity words (a query for what expires): the card's date is the expiry date (F5)."""
+    return any(c.keys and all(k.startswith(_VALIDITY) for k in c.keys) for c in match.covers)
 
 
 def _filters(request: DriveSearchRequest) -> bool:
@@ -176,13 +176,10 @@ class _Pool:
     texts: Dict[ChunkId, str] = field(default_factory=dict)
     items: Dict[ChunkId, Tuple[HintItem, ...]] = field(default_factory=dict)
     items_read: Set[Tuple[str, int]] = field(default_factory=set)
-    stale_keys: bool = False        # the state is not rebuilt under v2: records of another keyer are never read (D30)
 
     def add(self, rec: Rec) -> bool:
-        """Keep a record; False (dropped) for a whole record keyed by another keyer while the index is rebuilt."""
+        """Keep a record (always kept: a state not rebuilt under v2 is never searched, XC-1)."""
         if isinstance(rec, DriveIndexRecord):
-            if self.stale_keys and rec.keys_version != KEYS_VERSION:
-                return False
             self.fulls[rec.item_id] = rec
             self.leans[rec.item_id] = rec
             return True
@@ -319,6 +316,15 @@ class DriveSearchService:
             envelope = DriveSearchEnvelope(building=True, reconnect_needed=gate.reconnect_needed)
             return DriveSearchResult(status=STATUS_OK, envelope=envelope, request=request,
                                      matched_total=0 if request.filter_only else None)
+        if MIGRATION_GATE_KEY not in state.applied_versions:
+            # D30: built by v1 and not rebuilt yet. Its records are keyed by another keyer, so no stream runs (no
+            # query embedding, no reads) and nothing is stated absent or counted: every word would read "No file
+            # holds" and a listing would serve v1 records (XC-1). The tick does no work on it either.
+            stats.mode = "awaiting_rebuild"
+            envelope = DriveSearchEnvelope(building=True, reconnect_needed=gate.reconnect_needed,
+                                           index_as_of=state.observed_as_of)
+            return DriveSearchResult(status=STATUS_OK, envelope=envelope, request=request, awaiting_rebuild=True,
+                                     matched_total=0 if request.filter_only else None)
         use_cards = state.cards_in_space(self._space)
         envelope, result = await asyncio.gather(self._envelope(user_id, state, gate.reconnect_needed, use_cards),
                                                 self._body(user_id, request, state, use_cards, stats))
@@ -377,13 +383,10 @@ class DriveSearchService:
         else:
             q = query_concepts(request.query)
         concepts = list(q.concepts)
-        # D30: a state not rebuilt under v2 has no migration mode — v1 records are never read; the v2 records written
-        # so far are searched and the coverage line says the index is being rebuilt (P6 review M3)
-        rebuilding = MIGRATION_GATE_KEY not in state.applied_versions
         stats.concepts, stats.ignored = len(concepts), len(q.ignored)
         with_content = content_admitted() and not names_only
         members: List[Optional[str]] = list(sorted(kinds)) or [None]   # a family: one kNN per member kind
-        pool = _Pool(hits=[ConceptHits() for _ in concepts], stale_keys=rebuilding)
+        pool = _Pool(hits=[ConceptHits() for _ in concepts])
         post = _PostFilters(single_kind=members[0] if len(members) == 1 else None, family=len(members) > 1,
                             dates=request.date_from is not None or request.date_to is not None,
                             folder=folder is not None and subtree is None)
@@ -449,11 +452,11 @@ class DriveSearchService:
         if not names_only and not blocked and not unchecked and not matches and len(concepts) >= 2:
             conjunction = tuple((c.word, len(s)) for c, s in zip(concepts, in_scope))
         keys_v = state.applied_versions.get(MIGRATION_GATE_KEY)
-        not_described, not_describable, no_passages = await self._job_counts(user_id)
+        not_described, not_describable, no_passages = self._job_counts(state)
         long_docs = sum(1 for i, r in pool.fulls.items()
                         if i in scope.passing and r.chunk_count > PASSAGE_MAX_CHUNKS_PER_FILE)
         coverage = CoverageFacts(
-            rebuilding=rebuilding, rekeying=keys_v is not None and int(keys_v) != KEYS_VERSION, full_page=page_full,
+            rekeying=keys_v is not None and int(keys_v) != KEYS_VERSION, full_page=page_full,
             keys_cut=sum(1 for c in built if c.keys_cut), cut=q.cut, not_described=not_described,
             not_describable=not_describable, no_passages=no_passages + long_docs, unchecked=tuple(unchecked),
             names_only=names_only)
@@ -917,7 +920,7 @@ class DriveSearchService:
         validity: Dict[str, datetime] = {}
         for item, match in matches.items():
             rec = pool.leans[item]
-            if any(c.keys and all(k.startswith(_VALIDITY) for k in c.keys) for c in match.covers):
+            if _expiry_match(match):
                 if count_expired and rec.valid_until is not None and rec.valid_until < start:
                     expired += 1
                     continue
@@ -1017,7 +1020,7 @@ class DriveSearchService:
             card = make_card(rec, scope.paths[item], card_text(rec), self._nonce())
             out.append(replace(card, tier=tier.value, sources=explained.sources, passage=passage,
                                not_matched=not_matched(match), keys_cut=rec.keys_capped,
-                               also_at=tuple(also_at.get(item, ()))))
+                               also_at=tuple(also_at.get(item, ())), expiry_match=_expiry_match(match)))
         return tuple(out)
 
     def _related_card(self, pool: _Pool, scope: _Scope, item: str, similar: bool) -> DriveSearchCard:
@@ -1025,21 +1028,15 @@ class DriveSearchService:
         card = make_card(rec, scope.paths[item], card_text(rec), self._nonce())
         return replace(card, tier=MatchTier.RELATED.value, similar_name=similar)
 
-    async def _job_counts(self, user_id: str) -> Tuple[int, int, int]:
-        """The coverage line's enrichment counts (§25.5.6): text files whose profile or passages job waits or is held
-        (per job; a file waiting on both counts once, so the larger count is named), and text files without passage
-        keywords by policy (books, sheets, data)."""
-        text_kinds = frozenset(k for k in _ALL_KINDS if k not in _NO_TEXT_KINDS)
-        counts, no_passage = await asyncio.gather(self._repo.count_by_job_state(user_id, text_kinds),
-                                                  self._repo.count_by_job_state(user_id, _NO_PASSAGE_KINDS))
+    @staticmethod
+    def _job_counts(state: DriveSyncState) -> Tuple[int, int, int]:
+        """The coverage line's enrichment counts (§25.5.6), as the last tick stored them (XC-9: no count query per
+        search): text files with no description yet whose job waits, or is held — a file already described whose
+        re-description waits is not one (XC-3) — and profiled books, sheets and data files (no passage keywords)."""
+        def count(gap: str) -> int:
+            return int(state.counters.get(COVERAGE_COUNTERS[gap], 0))
 
-        def total(job: str, states: Iterable[str]) -> int:
-            return sum(counts.get(job, {}).get(s, 0) for s in states)
-
-        jobs = (EnrichJob.PROFILE.value, EnrichJob.PASSAGES.value)
-        profiled = no_passage.get(EnrichJob.PROFILE.value, {})
-        return (max(total(j, _NOT_DESCRIBED_STATES) for j in jobs), max(total(j, (JobState.HELD.value,)) for j in jobs),
-                profiled.get(JobState.CURRENT.value, 0))
+        return count(GAP_WAITING), count(GAP_HELD), count(GAP_NO_PASSAGES)
 
     # ------------------------------------------------------------------------------------------
     # Filter-only listings (§10.1, unchanged)
@@ -1300,13 +1297,15 @@ class DriveSearchService:
         usage, build = await asyncio.gather(self._repo.get_model_usage(user_id, month_key(now)),
                                             self._repo.get_initial_build(user_id))
         return DriveIndexingStatus(
+            awaiting_rebuild=MIGRATION_GATE_KEY not in state.applied_versions and not state.purging,
             enabled=enabled, counters=dict(state.counters), last_success_at=state.last_success_at,
             last_error=state.last_error.value if state.last_error else None, index_as_of=state.observed_as_of,
             index_full=int(state.counters.get("carded", 0)) >= MAX_CARD_RECORDS_PER_USER,
             building=enabled and (state.purging or not state.root_item_id or await self._building(user_id, state)),
             access_lost_at=state.access_lost_at, purging=state.purging,
             readable_chunks=await self._repo.readable_chunk_total(user_id),
-            usd_month={c.value: float(getattr(usage, f"{c.value}_usd")) for c in UsageClass}, usd_caps=dict(USD_CAPS),
+            # what each month's cap has paid: the initial build's dollars are its own line, never against a cap (XC-4)
+            usd_month={c.value: usage.cap_usd(c.value) for c in UsageClass}, usd_caps=dict(USD_CAPS),
             initial_build_spent_usd=build.spent_usd, initial_build_allowance_usd=build.allowance_usd,
             initial_build_closed=build.closed_at is not None,
         )

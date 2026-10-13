@@ -408,6 +408,13 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
         due = [r for r in self._user(user_id) if r.enrich_wake_at is not None and r.enrich_wake_at <= now]
         return sorted(due, key=lambda r: (r.enrich_wake_at, r.item_id))[:limit]
 
+    async def count_describe_gaps(self, user_id: str) -> Dict[str, int]:
+        counts: Dict[str, int] = {}
+        for rec in self._user(user_id):
+            if rec.describe_gap:
+                counts[rec.describe_gap] = counts.get(rec.describe_gap, 0) + 1
+        return counts
+
     async def count_by_job_state(self, user_id: str, kinds: AbstractSet[str]) -> Dict[str, Dict[str, int]]:
         states = {s.value for s in JobState}
         counts: Dict[str, Dict[str, int]] = {job.value: {} for job in EnrichJob}

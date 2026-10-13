@@ -22,10 +22,11 @@ from .drive_search import (
 )
 from .drive_search_texts import (
     ABOUT_HEADING, ABSENT_IN_SCOPE_LINE, ABSENT_LINE, CONJUNCTION_TERM, COVERAGE_COMPLETE, COVERAGE_INCOMPLETE,
-    COVERAGE_NOT_DESCRIBABLE, COVERAGE_NOT_DESCRIBED, DATE_LINE, FOOTER_EXACT, FOOTER_NO_CONJUNCTION, GROUP_LINE,
-    KEYS_CUT, LABELLED_HEADING, MATCHED_LINE, MENTIONED_HEADING, PASSAGE_LINE, RELATED_HEADING,
-    RELATED_SMALL_NOTE, SEARCHED_COMMON, SEARCHED_IGNORED, SEARCHED_LINE, SHOWING, SHOWING_AT_LEAST, SIMILAR_NAME,
-    TRANSLATED_HEADING, WITHOUT_AT_LEAST_LINE, WITHOUT_LINE,
+    COVERAGE_NOT_DESCRIBABLE, COVERAGE_NOT_DESCRIBED, DATE_EXPIRES, DATE_LINE, FOOTER_EXACT, FOOTER_EXACT_SEARCHED,
+    FOOTER_NO_CONJUNCTION, FOOTER_NO_CONJUNCTION_SEARCHED, GROUP_LINE, KEYS_CUT, LABELLED_HEADING, MATCHED_LINE,
+    MENTIONED_HEADING, PASSAGE_LINE, RELATED_HEADING, RELATED_SMALL_NOTE, SEARCHED_ABSENT_IN_SCOPE_LINE,
+    SEARCHED_ABSENT_LINE, SEARCHED_COMMON, SEARCHED_IGNORED, SEARCHED_LINE, SHOWING, SHOWING_AT_LEAST, SIMILAR_NAME,
+    TRANSLATED_HEADING, VALID_UNTIL_LINE, WITHOUT_AT_LEAST_LINE, WITHOUT_LINE,
 )
 from .drive_tier_result import CoverageFacts, GroupMember, TierBlock, TieredResult
 
@@ -150,9 +151,16 @@ def card_body(card: DriveSearchCard) -> str:
     lines.extend(card.not_matched)
     if card.passage:
         lines.append(PASSAGE_LINE.format(text=card.passage))
+    until = card.valid_until.date().isoformat() if card.valid_until else ""
     day = _day(card)
-    if day:
-        lines.append(DATE_LINE.format(iso=day, source=card.date_source) if card.date_source else f"date: {day}")
+    if until and card.expiry_match:
+        # matched through validity words ("what expires"): the date that answers it is the expiry date (xc F5)
+        lines.append(DATE_LINE.format(iso=until, source=DATE_EXPIRES))
+    else:
+        if day:
+            lines.append(DATE_LINE.format(iso=day, source=card.date_source) if card.date_source else f"date: {day}")
+        if until:
+            lines.append(VALID_UNTIL_LINE.format(iso=until))
     lines.append(_index_line(card))
     if card.stale:
         lines.append("stale: the file changed after it was indexed")
@@ -214,20 +222,24 @@ def _heading(tier: MatchTier, tiered: TieredResult, block: TierBlock, shown: int
 
 # -- footers ---------------------------------------------------------------------------------------------------------
 
-def _footers(tiered: TieredResult, any_shown: bool, exact_shown: bool) -> List[str]:
+def _footers(tiered: TieredResult, any_shown: bool, exact_shown: bool, incomplete: bool = False) -> List[str]:
+    """The D29 lines and the footers. `incomplete`: the coverage line names something the search could not see, so
+    an absence or an exhaustive "no other file" is stated only over the files searched (xc F4)."""
     lines: List[str] = []
+    absent_line = SEARCHED_ABSENT_LINE if incomplete else ABSENT_LINE
+    in_scope_line = SEARCHED_ABSENT_IN_SCOPE_LINE if incomplete else ABSENT_IN_SCOPE_LINE
     if tiered.absent or tiered.absent_in_scope:
-        lines += [ABSENT_LINE.format(word=w) for w in tiered.absent]
-        lines += [ABSENT_IN_SCOPE_LINE.format(word=w) for w in tiered.absent_in_scope]
+        lines += [absent_line.format(word=w) for w in tiered.absent]
+        lines += [in_scope_line.format(word=w) for w in tiered.absent_in_scope]
         if tiered.without is not None:
             word = '", "'.join(tiered.absent + tiered.absent_in_scope)
             template = WITHOUT_AT_LEAST_LINE if tiered.without_at_least else WITHOUT_LINE
             lines.append(_one(template.format(word=word, count=tiered.without), tiered.without))
     elif tiered.conjunction:
         terms = ", ".join(_one(CONJUNCTION_TERM.format(word=w, count=n), n) for w, n in tiered.conjunction)
-        lines.append(FOOTER_NO_CONJUNCTION.format(terms=terms))
+        lines.append((FOOTER_NO_CONJUNCTION_SEARCHED if incomplete else FOOTER_NO_CONJUNCTION).format(terms=terms))
     elif exact_shown:
-        lines.append(FOOTER_EXACT)
+        lines.append(FOOTER_EXACT_SEARCHED if incomplete else FOOTER_EXACT)
     return lines
 
 
@@ -235,8 +247,8 @@ def _footers(tiered: TieredResult, any_shown: bool, exact_shown: bool) -> List[s
 
 def _render(result: DriveSearchResult, tiered: TieredResult, shown: Dict[MatchTier, List[DriveSearchCard]],
             moved: Dict[MatchTier, List[GroupMember]], cut: bool) -> str:
-    out: List[str] = [REFERENCE_REMINDER, *_envelope_lines(result), _searched_line(tiered),
-                      _coverage_line(tiered)]
+    coverage = _coverage_line(tiered)
+    out: List[str] = [REFERENCE_REMINDER, *_envelope_lines(result), _searched_line(tiered), coverage]
     for tier in TIER_ORDER:
         cards = shown.get(tier, [])
         if tier is MatchTier.RELATED:
@@ -260,7 +272,7 @@ def _render(result: DriveSearchResult, tiered: TieredResult, shown: Dict[MatchTi
         out.append(_EXPIRED_LINE.format(count=tiered.expired, files="file" if tiered.expired == 1 else "files"))
     any_shown = any(shown.get(t) for t in TIER_ORDER)
     exact_shown = bool(tiered.block(MatchTier.ABOUT) or tiered.block(MatchTier.MENTIONED))
-    footers = _footers(tiered, any_shown, exact_shown)
+    footers = _footers(tiered, any_shown, exact_shown, incomplete=coverage != COVERAGE_COMPLETE)
     out.extend(footers)
     if (not any_shown and not footers and not any(b.total for b in tiered.blocks)
             and not tiered.coverage.unchecked):

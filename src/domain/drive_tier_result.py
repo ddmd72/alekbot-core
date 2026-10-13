@@ -58,7 +58,8 @@ class CoverageFacts:
     cut: Tuple[str, ...] = ()       # words past MAX_CONCEPTS
     names_only: bool = False        # only names and metadata were searched (no content admitted, or only generic
                                     # words given)
-    rebuilding: bool = False        # the state is not rebuilt under v2 (D30): files not rebuilt are not searched
+    rebuilding: bool = False        # frozen-core field, never set since XC-1: a state not rebuilt under v2 (D30) is
+                                    # not searched at all (`DriveSearchResult.awaiting_rebuild`)
     unchecked: Tuple[str, ...] = () # words whose full page under a filter no scoped read covered (P6 review M1)
 
 

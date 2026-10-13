@@ -85,12 +85,14 @@ class ProfileDate:
 
 @dataclass(frozen=True)
 class ProfileEntity:
-    """A named thing; `type` from `drive_labels.ENTITY_TYPES`. Kept only when `printed` occurs in the text or the name;
-    `name` and `forms` are the spellings its `e:` keys are made from (§25.2.4)."""
+    """A named thing; `type` from `drive_labels.ENTITY_TYPES`. Kept only when `printed` occurs in the text or the name.
+    `found`: the spellings among `name` and `forms` that verification also found there. `printed` and `found` are keyed
+    `e:` (exact); the other spellings `ef:`, the index's own, never exact (§25.2.4, xc F1)."""
     name: str
     type: str
     printed: str
     forms: Tuple[str, ...] = ()
+    found: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

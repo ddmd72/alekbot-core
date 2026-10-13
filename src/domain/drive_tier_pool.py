@@ -7,7 +7,8 @@ Public interface:
     document_frequency(hits)    distinct files per concept, and whether a page was full (a lower bound)
     candidate_ids(concepts, in_scope, df, allowance, full) -> set   the files whose coverage is tested
     concept_trigrams(concept)   the name stream's trigram keys of a word: native and skeleton (similar names)
-    name_word_concepts(query)   a query of generic words only, as name-word concepts (P6 review m6)
+    name_word_concepts(query)   a query left with no concept, as name-word concepts (re-exported from drive_keys:
+                                P6 review m6, xc F2)
     tier_order_key(match, missed, meaning, effective_date, item_id)
 """
 from __future__ import annotations
@@ -18,10 +19,13 @@ from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 from .drive_index_lean import ChunkId
 from .drive_key_forms import query_skeletons
-from .drive_keys import GENERIC_WORDS, name_keys_v2, query_concepts
+from .drive_keys import name_word_concepts
 from .drive_match import Concept
 from .drive_name_keys import _strip_accents, _trigrams
 from .drive_tiers import Allowance
+
+__all__ = ["ConceptHits", "candidate_ids", "concept_trigrams", "document_frequency", "name_word_concepts",
+           "tier_order_key"]
 
 _EPOCH = datetime.min
 
@@ -74,18 +78,6 @@ def concept_trigrams(concept: Concept) -> Tuple[str, ...]:
     for skeleton in query_skeletons(concept.word):
         grams += _trigrams(skeleton)
     return tuple(dict.fromkeys("t:" + g for g in grams))
-
-
-def name_word_concepts(query: str) -> Tuple[Concept, ...]:
-    """The generic words of a query that has no concept ("todo", "files"), each as a name-word concept: its name keys
-    v2 without trigrams. Searched by name alone (P6 review m6)."""
-    out = []
-    for word in query_concepts(query).ignored:
-        if word in GENERIC_WORDS or _strip_accents(word) in GENERIC_WORDS:
-            keys = tuple(k for k in name_keys_v2(word) if not k.startswith("t:"))
-            if keys:
-                out.append(Concept(word=word, about_keys=(), word_keys=keys, hint_keys=(), is_number=False))
-    return tuple(out)
 
 
 def tier_order_key(missed: int, meaning: Optional[float], effective_date: Optional[datetime],

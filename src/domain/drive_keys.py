@@ -17,13 +17,18 @@ Public interface:
     fetch_batches(keys) -> ((key, ...), ...)   a key list cut into fetches of at most CONCEPT_KEYS_MAX (review B1)
     match_spans(text, keys) -> ((start, end), ...)    where any of a concept's word keys occurs in `text`
     name_keys_v2(name), query_name_keys_v2(query)     name keys v2 (NAME_KEYS_V2) and the name stream's query keys
+    name_word_concepts(query) -> (Concept, ...)       a query left with no concept, its words searched by name (xc F2)
     index_tables_digest(), golden_digest()     version pins: the tables, and the rules' output on a fixed fixture
     FUNCTION_WORDS, GENERIC_WORDS, TIME_WORDS, NAME_KEYS_V2
 
-Families (§25.2.4, review M8): native-script forms and stored spellings are `w:` (chunks, names) and `e:` (records):
-exact. A transliteration crosses scripts and spellings through ONE skeleton per word on the index — `x:` in chunks and
-names, `ex:` in records — and is a translation (the By-translation tier), never exact. A photo object's phrases are
-`pe:` and a photo's visible-text numbers `pn:`: automatic, so a key's class follows from its prefix alone.
+Families (§25.2.4, review M8): native-script forms and the spellings a file prints are `w:` (chunks, names) and `e:`
+(records): exact. An entity spelling the profiler wrote that the file does not print is `ef:`: a translation (xc F1).
+A transliteration crosses scripts and spellings through ONE skeleton per word on the index — `x:` (a Cyrillic word) or
+`xl:` (a Latin word) in chunks and names, `ex:` / `exl:` in records — and is a translation (the By-translation tier),
+never exact. A Latin query word never reads a Latin word's skeleton (`xl:`, `exl:`): two Latin words meeting through a
+Cyrillic stem ("Mario" and "Maria") are not a translation, and Latin-to-Latin spelling is the `w:` forms' job (xc F3).
+A photo object's phrases are `pe:` and a photo's visible-text numbers `pn:`: automatic, so a key's class follows from
+its prefix alone. The D31 tables name the profile's own doc type (`lw:`) and life areas (`dw:`) in four languages.
 """
 from __future__ import annotations
 
@@ -45,18 +50,18 @@ from .drive_index_params import (
     PROFILE_KEY_VALUES_MAX, PROFILE_WORD_LIST_MAX, QUERY_TERM_CHARS, WORD_KEYS_PER_CHUNK,
 )
 from .drive_key_forms import (
-    FORM_TABLES, Token, is_short_function_word, primary, query_skeletons, scan, skeleton_key, token_forms,
-    token_spans,
+    FORM_TABLES, SHORT_WORD_LETTERS, Token, is_short_function_word, primary, query_skeletons, scan, skeleton_key,
+    token_forms, token_spans,
 )
 from .drive_key_sources import AboutField, AboutSource, KeyedRecord, RecordKeyInputs
-from .drive_labels import KIND_WORDS, PHOTO_KIND_WORDS
+from .drive_labels import DOC_TYPE_NAMES, KIND_WORDS, LIFE_DOMAIN_NAMES, PHOTO_KIND_WORDS, label_names_digest
 from .drive_match import FAMILY_SOURCE_CLASS, Concept, KeyFamily, QueryConcepts, SourceClass
-from .drive_name_keys import _strip_accents, _trigrams
+from .drive_name_keys import _is_cyrillic, _strip_accents, _trigrams
 
 __all__ = [
     "FUNCTION_WORDS", "GENERIC_WORDS", "NAME_KEYS_V2", "TIME_WORDS", "about_keys_capped", "about_keys_of", "about_sources",
     "all_forms", "family_keys", "fetch_batches", "golden_digest", "index_tables_digest", "match_spans",
-    "name_keys_v2", "name_match_v2", "phrase_keys", "query_concepts", "query_name_keys_v2", "source_class_of_about_key",
+    "name_keys_v2", "name_match_v2", "name_word_concepts", "phrase_keys", "query_concepts", "query_name_keys_v2", "source_class_of_about_key",
     "source_class_of_name_key", "source_class_of_word_key", "token_forms", "token_spans", "word_form_keys",
     "word_keys", "word_keys_capped",
 ]
@@ -67,6 +72,9 @@ _W, _X, _N, _M, _Y = (KeyFamily.WORD.value, KeyFamily.TRANSLIT.value, KeyFamily.
 _E, _EX, _PE, _V, _K = (KeyFamily.ENTITY.value, KeyFamily.ENTITY_TRANSLIT.value, KeyFamily.PHOTO_ENTITY.value,
                         KeyFamily.VALUE.value, KeyFamily.KIND.value)
 _PN = KeyFamily.PHOTO_NUMBER.value
+_XL, _EXL, _EF = (KeyFamily.TRANSLIT_LATIN.value, KeyFamily.ENTITY_TRANSLIT_LATIN.value,
+                  KeyFamily.ENTITY_FORM.value)
+_LATIN_SKELETONS = frozenset({_XL, _EXL})
 # The record word families a query word is sent under besides `e:`/`ex:`/`k:`/`pe:`/`v:` (§25.5.1 step 5).
 _WORD_FAMILIES: Tuple[str, ...] = (KeyFamily.LABEL_WORD.value, KeyFamily.TOPIC_WORD.value,
                                    KeyFamily.DOMAIN_WORD.value, KeyFamily.VALIDITY_WORD.value,
@@ -118,7 +126,11 @@ find search show look give get need want please regarding concerning
 todo todos toda todas archivo archivos fichero ficheros documento documentos busca buscar encuentra encontrar
 muestra mostrar información informacion
 tout tous toute toutes fichier fichiers trouve trouver cherche chercher montre montrer
-""".split())
+what which much many сколько скільки какой какая какое какие каких каким какую який яка яке які якого якої яких
+якому cuánto cuánta cuántos cuántas cuanto cuanta cuantos cuantas qué cuál cuáles cuales
+""".split())   # the last line: interrogative phrasing words (P7 eval), ignored and named like the generic ones
+
+_TIME_PLAIN: FrozenSet[str] = frozenset(_strip_accents(w) for w in TIME_WORDS)   # "año" and "ano" alike (xc F2)
 
 _MONTH_YEAR = re.compile(rf"(?<![\w]){_MONTH},?\s+(?:(?:de|del)\s+)?(\d{{4}})(?!\d)", re.IGNORECASE)
 
@@ -133,18 +145,36 @@ def all_forms(token: str) -> Tuple[str, ...]:
 
 # -- families -------------------------------------------------------------------------------------------------------
 
-def _phrase(tokens: Sequence[str]) -> Tuple[List[str], List[str]]:
-    """(native strings, skeleton strings) of a named thing: one token gives its forms and its skeleton; several
-    join each token's form (b) — and each token's skeleton — with `_`. Articles are kept."""
+Skel = Tuple[str, bool]    # a skeleton string, and whether it comes from Latin words only (`xl:` / `exl:`, xc F3)
+
+
+def _latin_word(word: str) -> bool:
+    """A word whose skeleton is a Latin word's (the index keys it `xl:`): no Cyrillic letter in it."""
+    return not _is_cyrillic(word)
+
+
+def _skel_key(word: str, cyr_prefix: str, lat_prefix: str) -> Optional[str]:
+    """The index's skeleton key of one word, under the prefix of the script it came from (xc F3)."""
+    sk = skeleton_key(word)
+    if not sk:
+        return None
+    return (lat_prefix if _latin_word(word) else cyr_prefix) + sk
+
+
+def _phrase(tokens: Sequence[str]) -> Tuple[List[str], List[Skel]]:
+    """(native strings, skeletons) of a named thing: one token gives its forms and its skeleton; several join each
+    token's form (b) — and each token's skeleton — with `_`. Articles are kept. A skeleton is Latin when every token
+    is."""
     if not tokens:
         return [], []
+    latin = all(_latin_word(t) for t in tokens)
     if len(tokens) == 1:
         sk = skeleton_key(tokens[0])
-        return list(token_forms(tokens[0])), [sk] if sk else []
-    return ["_".join(primary(t) for t in tokens)], ["_".join(skeleton_key(t) or primary(t) for t in tokens)]
+        return list(token_forms(tokens[0])), [(sk, latin)] if sk else []
+    return ["_".join(primary(t) for t in tokens)], [("_".join(skeleton_key(t) or primary(t) for t in tokens), latin)]
 
 
-def _phrase_items(text: str, last_token: bool = False) -> Tuple[List[str], List[str]]:
+def _phrase_items(text: str, last_token: bool = False) -> Tuple[List[str], List[Skel]]:
     """A spelling's phrase strings; a spelling that is one hyphen compound also gives the joined word's, and a
     person's or place's spelling of several words also its last word's (review m8)."""
     toks = scan(text)
@@ -162,10 +192,15 @@ def _phrase_items(text: str, last_token: bool = False) -> Tuple[List[str], List[
     return list(dict.fromkeys(native)), list(dict.fromkeys(skel))
 
 
+def _skel_keys(skels: Sequence[Skel]) -> List[str]:
+    """Index-side entity skeleton keys: `exl:` for a Latin phrase, `ex:` otherwise."""
+    return [(_EXL if latin else _EX) + sk for sk, latin in skels]
+
+
 def phrase_keys(text: str) -> Tuple[str, ...]:
-    """`e:` (native) and `ex:` (skeleton) keys of a named thing's spelling (§25.2.4)."""
+    """`e:` (native) and `ex:` / `exl:` (skeleton) keys of a named thing's spelling (§25.2.4)."""
     native, skel = _phrase_items(text)
-    return tuple([_E + s for s in native] + [_EX + s for s in skel])
+    return tuple([_E + s for s in native] + _skel_keys(skel))
 
 
 def _token_word_forms(token: Token) -> List[str]:
@@ -214,13 +249,13 @@ def _text_items(text: str) -> List[Tuple[int, int, str]]:
     items: List[Tuple[int, int, str]] = []
     for token in scan(text):
         items += [(token.start, token.end, _W + f) for f in _token_word_forms(token)]
-        sk = skeleton_key(token.text)
+        sk = _skel_key(token.text, _X, _XL)
         if sk:
-            items.append((token.start, token.end, _X + sk))
+            items.append((token.start, token.end, sk))
         if token.compound:
-            sk = skeleton_key(token.compound)
+            sk = _skel_key(token.compound, _X, _XL)
             if sk:
-                items.append((token.start, token.compound_end, _X + sk))
+                items.append((token.start, token.compound_end, sk))
     spans = term_spans(text)
     kept_terms = set(capped_terms({f for span in spans for f in span[2]}))   # the normaliser's per-chunk cap
     for start, end, forms, category in spans:
@@ -266,17 +301,17 @@ def source_class_of_about_key(key: str) -> Optional[SourceClass]:
 
 
 def source_class_of_word_key(key: str) -> Optional[SourceClass]:
-    """A chunk key: `w:`, `n:`, `m:` are passage words; `x:` (a skeleton, across scripts) is a translation."""
+    """A chunk key: `w:`, `n:`, `m:` are passage words; `x:` / `xl:` (a skeleton, across scripts) a translation."""
     p = _prefix(key)
-    if p == _X:
+    if p in (_X, _XL):
         return SourceClass.TRANSLATION
     return SourceClass.PASSAGE_WORDS if p in (_W, _N, _M) else None
 
 
 def source_class_of_name_key(key: str) -> Optional[SourceClass]:
-    """A name key: `w:`, `n:`, `y:` are verified; `x:` a translation; trigrams (`t:`) never cover."""
+    """A name key: `w:`, `n:`, `y:` are verified; `x:` / `xl:` a translation; trigrams (`t:`) never cover."""
     p = _prefix(key)
-    if p == _X:
+    if p in (_X, _XL):
         return SourceClass.TRANSLATION
     return SourceClass.VERIFIED_RECORD if p in (_W, _N, _Y) else None
 
@@ -303,13 +338,14 @@ def _about_items(rec: KeyedRecord) -> List[_Item]:
     automatic families."""
     items: List[_Item] = []
 
-    def add(keys: Iterable[str], field: AboutField, detail: str, printed: str) -> None:
+    def add(keys: Iterable[str], field: AboutField, detail: str, printed: str, in_file: str = "") -> None:
         for key in keys:
-            items.append((key, AboutSource(field, detail, printed, source_class_of_about_key(key))))
+            items.append((key, AboutSource(field, detail, printed, source_class_of_about_key(key), in_file)))
 
-    def add_phrase(prefix: str, xprefix: str, text: str, field: AboutField, detail: str, last: bool = False) -> None:
+    def add_phrase(prefix: str, text: str, field: AboutField, detail: str, last: bool = False, *,
+                   skeletons: bool = False, in_file: str = "") -> None:
         native, skel = _phrase_items(text, last)
-        add([prefix + s for s in native] + ([xprefix + s for s in skel] if xprefix else []), field, detail, text)
+        add([prefix + s for s in native] + (_skel_keys(skel) if skeletons else []), field, detail, text, in_file)
 
     profile = rec.profile
     lab = KeyFamily.LABEL.value
@@ -324,15 +360,24 @@ def _about_items(rec: KeyedRecord) -> List[_Item]:
     if rec.kind == "image" and rec.triage_verdict is TriageVerdict.PHOTO:
         kind_words += PHOTO_KIND_WORDS
     for word in kind_words:
-        add_phrase(_K, "", word, AboutField.KIND, rec.kind)
+        add_phrase(_K, word, AboutField.KIND, rec.kind)
 
     if profile is not None:
         for entity in profile.entities[:PROFILE_ENTITIES_MAX]:
             last = entity.type in _LAST_TOKEN_ENTITY_TYPES
+            printed = dict.fromkeys(s for s in (entity.printed, *entity.found) if s)
             for spelling in dict.fromkeys((entity.name, entity.printed, *entity.forms[:ENTITY_FORMS_MAX])):
-                add_phrase(_E, _EX, spelling, AboutField.ENTITY, entity.type, last)
+                if not spelling:
+                    continue
+                if spelling in printed:
+                    # a spelling the file prints (verification found it): exact
+                    add_phrase(_E, spelling, AboutField.ENTITY, entity.type, last, skeletons=True)
+                else:
+                    # a spelling the profiler wrote and the file does not print: the index's, never exact (xc F1)
+                    add_phrase(_EF, spelling, AboutField.ENTITY_FORM, entity.type, last, skeletons=True,
+                               in_file=entity.printed)
     for place in rec.place_forms:
-        add_phrase(_E, _EX, place, AboutField.PLACE, "")
+        add_phrase(_E, place, AboutField.PLACE, "", skeletons=True)
     if profile is not None:
         for kv in profile.key_values[:PROFILE_KEY_VALUES_MAX]:
             forms = dict.fromkeys(_value_forms(kv.canonical) + _value_forms(kv.printed))
@@ -346,19 +391,26 @@ def _about_items(rec: KeyedRecord) -> List[_Item]:
         items.extend(_date_items(eff.year, eff.month, AboutField.EFFECTIVE_DATE, "", eff.isoformat()[:10]))
 
     if profile is not None:
-        lists = [(KeyFamily.LABEL_WORD.value, profile.label_words, AboutField.LABEL_WORD),
-                 (KeyFamily.TOPIC_WORD.value, profile.topic_words, AboutField.TOPIC_WORD),
-                 (KeyFamily.DOMAIN_WORD.value, profile.domain_words, AboutField.DOMAIN_WORD)]
+        # D31: the fixed names of the profile's own doc type and life areas join the model's words (after them)
+        type_names = DOC_TYPE_NAMES.get(profile.doc_type, ())
+        domain_names = [n for d in profile.life_domains for n in LIFE_DOMAIN_NAMES.get(d, ())]
+        lists = [(KeyFamily.LABEL_WORD.value, [*profile.label_words[:PROFILE_WORD_LIST_MAX], *type_names],
+                  AboutField.LABEL_WORD),
+                 (KeyFamily.TOPIC_WORD.value, list(profile.topic_words[:PROFILE_WORD_LIST_MAX]),
+                  AboutField.TOPIC_WORD),
+                 (KeyFamily.DOMAIN_WORD.value, [*profile.domain_words[:PROFILE_WORD_LIST_MAX], *domain_names],
+                  AboutField.DOMAIN_WORD)]
         if rec.valid_until is not None:
-            lists.append((KeyFamily.VALIDITY_WORD.value, profile.validity_words, AboutField.VALIDITY_WORD))
+            lists.append((KeyFamily.VALIDITY_WORD.value, list(profile.validity_words[:PROFILE_WORD_LIST_MAX]),
+                          AboutField.VALIDITY_WORD))
         for prefix, words, field in lists:
-            for word in words[:PROFILE_WORD_LIST_MAX]:
+            for word in words:
                 add(family_keys(prefix, [word]), field, "", word)
 
     objects = rec.photo_objects[:PHOTO_OBJECTS_MAX]
     for obj in objects:
         for spelling in dict.fromkeys((obj.name, *obj.forms[:PHOTO_OBJECT_FORMS_MAX])):
-            add_phrase(_PE, "", spelling, AboutField.PHOTO_OBJECT, "")
+            add_phrase(_PE, spelling, AboutField.PHOTO_OBJECT, "")
     pw = KeyFamily.PHOTO_WORD.value
     for detail, text in (("description", rec.photo_description), ("scene", rec.photo_scene),
                          *(("object", obj.name) for obj in objects), ("visible_text", rec.visible_text)):
@@ -377,8 +429,8 @@ def about_keys_capped(rec: KeyedRecord) -> Tuple[Tuple[str, ...], bool]:
 
 
 def about_keys_of(rec: KeyedRecord) -> Tuple[str, ...]:
-    """`about_keys` (§25.2.4): `e:`, `ex:`, `v:`, `y:`, `m:`, `k:`, `lw:`, `tw:`, `dw:`, `lv:`, `pw:`, `pe:`, `pn:`,
-    `l:`."""
+    """`about_keys` (§25.2.4): `e:`, `ef:`, `ex:`, `exl:`, `v:`, `y:`, `m:`, `k:`, `lw:`, `tw:`, `dw:`, `lv:`, `pw:`,
+    `pe:`, `pn:`, `l:`."""
     return about_keys_capped(rec)[0]
 
 
@@ -405,10 +457,12 @@ def _is_function(token: str) -> bool:
     return is_short_function_word(token) or token in FUNCTION_WORDS or _strip_accents(token) in FUNCTION_WORDS
 
 
+def _is_generic(token: str) -> bool:
+    return token in GENERIC_WORDS or _strip_accents(token) in GENERIC_WORDS
+
+
 def _is_removable(token: str) -> bool:
-    plain = _strip_accents(token)
-    return (_is_function(token) or token in GENERIC_WORDS or plain in GENERIC_WORDS or token in TIME_WORDS
-            or plain in TIME_WORDS)
+    return _is_function(token) or _is_generic(token) or _strip_accents(token) in _TIME_PLAIN
 
 
 def _overlaps(a: Span, b: Span) -> bool:
@@ -453,11 +507,11 @@ def _numbers(text: str) -> Tuple[List[Concept], List[Span]]:
     return concepts, [(s, e) for s, e, _ in found]
 
 
-def _runs(words: Sequence[str], i: int, j: int) -> Tuple[List[str], List[str]]:
+def _runs(words: Sequence[str], i: int, j: int) -> Tuple[List[str], List[Skel]]:
     """Native and skeleton phrase strings of the runs of 2..PHRASE_RUN_MAX tokens holding tokens i..j (a compound
     spans i..j), shorter first; a run ending in a function word names nothing and is skipped."""
     native: List[str] = []
-    skel: List[str] = []
+    skel: List[Skel] = []
     for length in range(max(2, j - i + 1), PHRASE_RUN_MAX + 1):
         for start in range(j - length + 1, i + 1):
             end = start + length
@@ -469,21 +523,33 @@ def _runs(words: Sequence[str], i: int, j: int) -> Tuple[List[str], List[str]]:
     return native, skel
 
 
-def _word_concept(word: str, run_native: Sequence[str], run_skel: Sequence[str]) -> Concept:
-    """§25.5.1 step 5, uncut: `w:` native forms and `x:` skeletons for chunks; `w:` native forms for hints; for
-    records `e:` forms and runs, `ex:` skeletons and runs, `k:` forms and runs, the word families, `pe:` forms and
-    runs, and `v:` of the word as typed (a value without digits, review M3)."""
+def _query_skel_keys(skels: Sequence[str], latin: bool, cyr_prefix: str, lat_prefix: str) -> List[str]:
+    """A query word's skeleton keys: a Latin word reads only Cyrillic words' skeletons (it meets a Latin word through
+    its `w:` forms, never through a Cyrillic stem: xc F3); a Cyrillic word reads both."""
+    prefixes = (cyr_prefix,) if latin else (cyr_prefix, lat_prefix)
+    return [p + s for s in skels for p in prefixes]
+
+
+def _word_concept(word: str, run_native: Sequence[str], run_skel: Sequence[Skel]) -> Concept:
+    """§25.5.1 step 5, uncut: `w:` native forms and `x:` (and, for a Cyrillic word, `xl:`) skeletons for chunks; `w:`
+    native forms for hints; for records `e:` and `ef:` forms and runs, `ex:` (`exl:`) skeletons and runs, `k:` forms
+    and runs, the word families, `pe:` forms and runs, and `v:` of the word as typed (a value without digits, review
+    M3)."""
     own = token_forms(word)
+    latin = _latin_word(word)
     skels = query_skeletons(word)
     about = [_E + f for f in own] + [_E + r for r in run_native]
-    about += [_EX + s for s in skels] + [_EX + r for r in run_skel]
+    about += [_EF + f for f in own] + [_EF + r for r in run_native]
+    about += _query_skel_keys(skels, latin, _EX, _EXL)
+    for run, run_latin in run_skel:
+        about += _query_skel_keys([run], run_latin, _EX, _EXL)
     about += [_K + f for f in own] + [_K + r for r in run_native]
     about += [fam + f for fam in _WORD_FAMILIES for f in own]
     about += [_PE + f for f in own] + [_PE + r for r in run_native]
     plain = "".join(ch for ch in _strip_accents(word) if ch.isalnum())
     if plain:
         about.append(_V + plain)
-    chunk = tuple(dict.fromkeys([_W + f for f in own] + [_X + s for s in skels]))
+    chunk = tuple(dict.fromkeys([_W + f for f in own] + _query_skel_keys(skels, latin, _X, _XL)))
     return Concept(word=word, about_keys=tuple(dict.fromkeys(about)), word_keys=chunk,
                    hint_keys=tuple(_W + f for f in own), is_number=False)
 
@@ -529,15 +595,17 @@ def query_concepts(drive_query: str) -> QueryConcepts:
 
 def name_keys_v2(name: str) -> Tuple[str, ...]:
     """Name keys v2 (§25.2.4, NAME_KEYS_VERSION 2): every token's native `w:` forms (with camelCase parts and hyphen
-    compounds), one `x:` skeleton per word, the `n:`/`y:` forms of digit tokens and of the name's number terms (with
-    and without its extension), and trigrams (`t:`) of each token and skeleton, which never cover."""
+    compounds), one skeleton per word (`x:` for a Cyrillic word, `xl:` for a Latin one, xc F3), the `n:`/`y:` forms of
+    digit tokens and of the name's number terms (with and without its extension), and trigrams (`t:`) of each token
+    and skeleton, which never cover. A name whose stem holds no keyed word, only 2-letter function words ("My.docx",
+    "Où.txt"), keys those words exactly, so a query of that word alone still finds it (xc F2)."""
     keys: Set[str] = set()
     for token in scan(name):
         keys.update(_W + f for f in _token_word_forms(token))
         for word in (token.text, token.compound):
             sk = skeleton_key(word) if word else None
             if sk:
-                keys.add(_X + sk)
+                keys.add((_XL if _latin_word(word) else _X) + sk)
                 keys.update("t:" + g for g in _trigrams(sk))
         keys.update("t:" + g for g in _trigrams(_strip_accents(token.text)))
         if token.text.isdigit() and len(token.text) >= _MIN_DIGITS:
@@ -546,7 +614,37 @@ def name_keys_v2(name: str) -> Tuple[str, ...]:
                 keys.add(_Y + token.text)
     stem = os.path.splitext(name)[0]
     keys.update(_N + t for t in (*content_terms(name), *content_terms(stem)))
+    stem_tokens = scan(stem)
+    if not any(_token_word_forms(t) for t in stem_tokens):
+        keys.update(_W + _short_form(t.text) for t in stem_tokens if _letters(t.text) == SHORT_WORD_LETTERS)
     return tuple(sorted(keys))
+
+
+def _letters(word: str) -> int:
+    return sum(ch.isalpha() for ch in word)
+
+
+def _short_form(word: str) -> str:
+    """A 2-letter word's exact key form: accents stripped from a Latin word (as `token_forms` does)."""
+    plain = _strip_accents(word)
+    return plain if _latin_word(plain) else word
+
+
+def name_word_concepts(query: str) -> Tuple[Concept, ...]:
+    """A query left with no concept, as name-word concepts searched by the name stream alone (P6 review m6, xc F2):
+    its generic words ("todo", "files") when it holds any, else every ignored word of 2 letters or more (a function or
+    time word: "My.docx", "Mañana.docx", the band "The The"). Each concept holds the name keys a name of that word has
+    (`w:`, `n:`, `y:`) and the word's query skeletons (`x:`, and `xl:` for a Cyrillic word); no trigram."""
+    ignored = [w for w in query_concepts(query).ignored if _letters(w) >= SHORT_WORD_LETTERS]
+    generic = [w for w in ignored if _is_generic(w)]
+    out = []
+    for word in generic or ignored:
+        whole = [k for k in name_keys_v2(word) if k.startswith((_W, _N, _Y))]
+        skels = _query_skel_keys(query_skeletons(word), _latin_word(word), _X, _XL)
+        keys = tuple(dict.fromkeys(whole + skels))
+        if keys:
+            out.append(Concept(word=word, about_keys=(), word_keys=keys, hint_keys=(), is_number=False))
+    return tuple(out)
 
 
 def query_name_keys_v2(query: str) -> Tuple[str, ...]:
@@ -580,6 +678,7 @@ def index_tables_digest() -> str:
         (PROFILE_ENTITIES_MAX, ENTITY_FORMS_MAX, PROFILE_KEY_VALUES_MAX, PROFILE_DATES_MAX, PROFILE_WORD_LIST_MAX,
          PHOTO_OBJECTS_MAX, PHOTO_OBJECT_FORMS_MAX, WORD_KEYS_PER_CHUNK, ABOUT_KEYS_PER_RECORD),
         sorted((k, v) for k, v in KIND_WORDS.items()), PHOTO_KIND_WORDS, [f.value for f in KeyFamily],
+        label_names_digest(),
         sorted(_MONTH_FORMS.items()), _MONTH_YEAR.pattern, CONTENT_TERMS_PER_CHUNK, _MIN_DIGITS, _GROUP_MIN_DIGITS,
         _AMOUNT.pattern, _DMY.pattern, _YMD.pattern, _ID.pattern, _GROUPS.pattern, _DAY_MONTH_YEAR.pattern,
         _MONTH_DAY_YEAR.pattern,

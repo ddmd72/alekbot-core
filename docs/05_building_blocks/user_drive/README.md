@@ -974,8 +974,10 @@ parsed document is still found through `drive_query` and the exact-term stream (
   block out, so Connect, Disconnect and Reconnect always show. The block carries `available` (a drive queue is
   wired; the switch is hidden when false unless search is on), `access_lost_at` and `index_kept` (the "kept about 30
   days" hint shows only while an index is kept), and the card lists every non-zero counter (RFC Δ44). From Slice 2+4
-  it also returns `readable_chunks`; from Search v2 (RFC §25.4.5) `model_usd_month` (this month's dollars per class),
-  `model_usd_caps` and `initial_build` (spent, allowance, closed), which replaced the retired page and image counters;
+  it also returns `readable_chunks`; from Search v2 (RFC §25.4.5) `model_usd_month` (what each class's monthly cap
+  has paid this month — the initial build's dollars are left out, XC-4), `model_usd_caps`, `initial_build` (spent,
+  allowance, closed), which replaced the retired page and image counters, and `awaiting_rebuild` (a v1 index the D30
+  gate holds: the card says it waits to be rebuilt, XC-8);
   the disclosure names the model providers (Anthropic or OpenAI) that read scans, images and hard PDFs, and Google
   (Gemini) for embeddings.
 - **Cost.** §4.13: the reader's pages are about $3 a user a month at most; triage, embeddings and Firestore are

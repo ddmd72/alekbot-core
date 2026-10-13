@@ -191,7 +191,8 @@ class DrivePassageAgent(BaseAgent):
 
 def _message(chunks: Sequence[Tuple[int, str]], title: str, what_it_is: str) -> str:
     about = " — ".join(p for p in (title.strip(), what_it_is.strip()) if p)
-    lines = [f"The file: {about}" if about else "The file has no description yet."]
+    # the profiler's description is model output a document can steer: data inside a tag, like the passages (xc m2)
+    lines = [f"<file_description>\n{about}\n</file_description>" if about else "The file has no description yet."]
     for label, (_, text) in enumerate(chunks, start=1):
         lines.append(f'<passage n="{label}">\n{text}\n</passage>')
     lines.append(_TASK.format(n=len(chunks), keywords=HINT_KEYWORDS_MAX, questions=HINT_QUESTIONS_MAX,
