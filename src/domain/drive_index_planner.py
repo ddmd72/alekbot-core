@@ -86,9 +86,6 @@ class PlanContext:
     phase: EpochPhase
     now: datetime
     place_of: PlaceOf
-    # Search v2 (§25.4.5): what the job plans decide with (the month's usage, the initial build). The tick runs the
-    # plans in `_commit` with it; None outside a tick (nothing parked).
-    enrich: Optional[Any] = None
 
 
 @dataclass(frozen=True)
