@@ -84,11 +84,17 @@ class DriveModelUnavailable(Exception):
     """The reader or the triage model cannot be used now (429, 5xx, timeout, a missing prompt): a model outage,
     handled by deferring model work only (§24.8). It carries what the file or batch spent before the outage — the
     pages (reader) or images (triage) the model answered, the calls made and their cost, already billed — so the
-    tick counts them against the month and the summary before it records the outage (§24.7, §24.9)."""
+    tick counts them against the month and the summary before it records the outage (§24.7, §24.8).
+
+    `charges_file` (final review F1-1, arbiter R3-x2-a): the failure may be this file's — a provider 5xx, a timeout of
+    a window that cannot be halved, an unexpected adapter error — so a reader outage that made a call for the file is
+    charged to it. False for what is the model's for everyone: a rate limit (429), an account-level error (key,
+    permission, model id, quota), a network failure, an open breaker."""
 
     def __init__(self, message: str = "", *, pages_sent: int = 0, images_sent: int = 0, model_calls: int = 0,
-                 model_cost: float = 0.0) -> None:
+                 model_cost: float = 0.0, charges_file: bool = True) -> None:
         super().__init__(message)
+        self.charges_file = charges_file
         self.pages_sent = pages_sent
         self.images_sent = images_sent
         self.model_calls = model_calls

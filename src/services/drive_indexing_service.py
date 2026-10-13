@@ -1193,8 +1193,9 @@ class DriveIndexingService:
                               outage=True)
                 models.outage(now)   # after the usage, which leaves the backoff to this outage (C-M1, T-M2)
                 await self._persist_usage(models)
-                if exc.model_calls > 0:
-                    # the reader called the model for this file and it failed as an outage: charged to the file,
+                if exc.model_calls > 0 and exc.charges_file:
+                    # the reader called the model for this file and it failed in a way that may be the file's (a 5xx,
+                    # a timeout, an unexpected error; never a rate limit or an account error): charged to the file,
                     # which waits behind other due work and fails at MAX_ATTEMPTS (F1-1)
                     charged = outage_charged(run, _backoff_until(models), now, f"{extractor_id}@{extractor.version}")
                     logger.warning(f"[DriveIndex] outage charged to item {run.item_id} of {user_id[:8]} "

@@ -215,7 +215,8 @@ class DriveReaderRunner(ContentExtractorPort):
         if unavailable is not None:
             # what the windows answered before the outage is spent and billed: the tick counts it (§24.7, §24.9)
             raise DriveModelUnavailable(str(unavailable), pages_sent=run.total("pages_sent"),
-                                        model_calls=run.total("calls"), model_cost=run.total("cost")) from unavailable
+                                        model_calls=run.total("calls"), model_cost=run.total("cost"),
+                                        charges_file=unavailable.charges_file) from unavailable
         if failures:
             first = failures[0]
             status, detail = S.ERROR, str(first)
