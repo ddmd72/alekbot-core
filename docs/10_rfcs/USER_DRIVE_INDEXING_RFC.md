@@ -2172,6 +2172,7 @@ fusion and the contract failed.
 | `place_forms` | The spellings of `place_name` its keys were made from (English, local, geo table v2's alternate names, the country's names, the nearest large city's), written with `place_name` |
 | `photo_description`, `photo_objects`, `photo_scene`, `visible_text` | Enriched triage (§25.4.3), photographs only; they replace `caption` |
 | `readme_excerpt`, `readme_excerpt_version` | A collapsed folder's README profile input (head 6 000 + tail 1 500 chars, ≤ 200 child names) and the README content version it came from |
+| `script_rendered` | Parser@2 flagged the page script-rendered (§25.3): `PROFILE_POLICY` gives it a `template` profile. Copied from `ExtractionOutcome.script_rendered` with the content (arbiter addition, P2) |
 | `lead_text` | Written only for `machine_text` demotions (2 000 chars): their card's only content signal; they have no chunks, so no double vote (§5.5 stays true) |
 
 Removed: `caption`. Kept: `brief` (the reader still writes it, §25.4.1). Retired in v2, left unread (the tag still reads
@@ -2332,16 +2333,19 @@ The class follows from the prefix and the field (`drive_match.FAMILY_SOURCE_CLAS
 `drive_keys.source_class_of_*_key`).
 
 #### 25.2.5 Firestore indexes (`config/firestore.indexes.json`, `development_` collections)
-- **Records:** `user_id + about_keys (CONTAINS) + effective_date DESC`; `user_id + kind + about_keys (CONTAINS) +
-  effective_date DESC` (single-kind filters only, §25.5.5); `user_id + about_keys (CONTAINS) + valid_until ASC`;
+- **Records:** `user_id + about_keys (CONTAINS) + effective_date DESC + item_id DESC`; `user_id + kind + about_keys
+  (CONTAINS) + effective_date DESC + item_id DESC` (single-kind filters only, §25.5.5; `item_id DESC` is the tie-break
+  the item-id cursor needs); `user_id + about_keys (CONTAINS) + valid_until ASC + item_id`;
   `user_id + enrich_ready + effective_day DESC + parent_id + item_id` (the enrichment queue);
-  `user_id + enrich_wake_at` (wake-ups); `user_id + profile_state + kind` and `user_id + passages_state + kind` (counts);
-  `user_id + keys_pending + item_id`; the card vector, name-token and filter-only composites stay.
+  `user_id + enrich_wake_at + item_id` (wake-ups); `user_id + profile_state + kind` and `user_id + passages_state +
+  kind` (counts, `kind in` batches of 30); `user_id + keys_pending + item_id`; the card vector, name-token and
+  filter-only composites stay.
 - **Chunks:** `user_id + word_keys (CONTAINS) + item_id + generation + index`; the chunk vector and generation
   composites stay.
-- **Hint documents:** `user_id + hint_keys (CONTAINS) + item_id`; `user_id + item_id + generation`; `user_id + item_id`
-  (`hints_page`); vector indexes on `hint_vector` under `user_id` and `user_id + kind` (the vector script gains them).
-  No `kind + hint_keys` composite (kind is post-filtered, §25.5.5).
+- **Hint documents:** `user_id + hint_keys (CONTAINS) + item_id + generation + index` (the stream's order);
+  `user_id + item_id + generation + index` (serves both `get_hints`, by generation, and `hints_page`); vector indexes
+  on `hint_vector` under `user_id` and `user_id + kind` (the vector script creates them). No `kind + hint_keys`
+  composite (kind is post-filtered, §25.5.5).
 - **Single-field exemptions:** `about_keys`, `profile`, `readme_excerpt`, `place_forms`, the photo fields on records;
   `word_keys` on chunks; `hint_keys`, `items`, `hint_vector` on hint documents.
 - **Kept until acceptance:** the two `content_terms` composites (rollback, §25.8).

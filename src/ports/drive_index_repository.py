@@ -23,8 +23,6 @@ from src.domain.drive_enrichment import DriveHintDoc, InitialBuild, ModelUsageMo
 from src.domain.drive_index import DriveChunk, DriveIndexRecord, DriveSyncState, RecordState
 from src.domain.drive_index_lean import ChunkId, DriveChunkLean, DriveHintLean, DriveRecordLean
 
-SEARCH_V2_PENDING = "Search v2 P2"   # what the adapters' stubs raise until P2 implements the §25.13.1 methods
-
 
 class DriveIndexRepository(ABC):
 
@@ -219,7 +217,8 @@ class DriveIndexRepository(ABC):
     async def chunks_page(self, user_id: str, after: Optional[Tuple[str, int, int]],
                           limit: int) -> List[DriveChunk]:
         """The user's chunks ordered by (item_id, generation, index), starting after the key `after` (the sweep's
-        chunk backstop, §7.5)."""
+        chunk backstop, §7.5). Ids only: `text`, `char_start`/`char_end`, `content_terms`, `word_keys` and
+        `keys_version` may come back empty (a v2 chunk carries up to 900 keys)."""
 
     @abstractmethod
     async def delete_user_chunks(self, user_id: str, limit: int) -> int:
@@ -227,17 +226,20 @@ class DriveIndexRepository(ABC):
 
 
     # -- Search v2 (§25.13.1) -----------------------------------------------------------------------------------
-    # Frozen signatures. Both adapters stub them with NotImplementedError(SEARCH_V2_PENDING) until P2 implements them
-    # (with parity tests on order, limits and cursors); nothing calls them before. Conventions:
+    # Frozen signatures, implemented by both adapters (parity tests on order, limits and cursors:
+    # tests/unit/adapters/test_drive_index_v2_parity.py). Conventions:
     #   - a "lean" read projects only the DriveRecordLean / DriveChunkLean / DriveHintLean fields (§25.13.3);
     #   - `valid_until` is stored as 00:00 UTC of the printed date; a `date` argument means 00:00 UTC of that date;
-    #   - an item-id cursor (`after`, `after_item_id`) starts strictly after that item; reads are never fenced.
+    #   - an item-id cursor (`after`, `after_item_id`) starts strictly after that item; reads are never fenced;
+    #   - a key list takes at most CONCEPT_KEYS_MAX (30) distinct keys, Firestore's limit for one query; more is a
+    #     ValueError (logged), never a silent cut: the caller splits its lists (§25.5.1).
 
     @abstractmethod
     async def find_by_about_keys(self, user_id: str, keys: Sequence[str], limit: int, *, kind: Optional[str] = None,
                                  date_from: Optional[datetime] = None, date_to: Optional[datetime] = None,
                                  after: Optional[str] = None) -> List[DriveRecordLean]:
-        """Records whose `about_keys` contain any of `keys` (at most 30), ordered by (effective_date DESC, item_id
+        """Records whose `about_keys` contain any of `keys` (at most CONCEPT_KEYS_MAX distinct; more is a ValueError),
+        ordered by (effective_date DESC, item_id
         DESC), records without an `effective_date` last; a single `kind` through its composite; `date_from` /
         `date_to` inclusive on `effective_date` (a record without one is then excluded). `after` is the item id of
         the previous page's last record: the page starts after that record's stored (effective_date, item_id); a
@@ -246,13 +248,15 @@ class DriveIndexRepository(ABC):
     @abstractmethod
     async def find_expiring(self, user_id: str, keys: Sequence[str], after_date: date,
                             limit: int) -> List[DriveRecordLean]:
-        """Records whose `about_keys` contain any of `keys` and whose `valid_until` >= 00:00 UTC of `after_date`,
+        """Records whose `about_keys` contain any of `keys` (at most CONCEPT_KEYS_MAX distinct; more is a ValueError)
+        and whose `valid_until` >= 00:00 UTC of `after_date`,
         ordered by (valid_until ASC, item_id ASC) (§25.5.4 validity words)."""
 
     @abstractmethod
     async def find_chunks_by_word_keys(self, user_id: str, keys: Sequence[str], limit: int,
                                        after_item_id: Optional[str] = None) -> List[DriveChunkLean]:
-        """Chunks whose `word_keys` contain any of `keys`, ordered by (item_id, generation, index), starting past every
+        """Chunks whose `word_keys` contain any of `keys` (at most CONCEPT_KEYS_MAX distinct; more is a ValueError),
+        ordered by (item_id, generation, index), starting past every
         chunk of the item `after_item_id` (§25.5.2)."""
 
     @abstractmethod
@@ -263,7 +267,8 @@ class DriveIndexRepository(ABC):
     @abstractmethod
     async def find_hints_by_keys(self, user_id: str, keys: Sequence[str], limit: int,
                                  after_item_id: Optional[str] = None) -> List[DriveHintLean]:
-        """Hint documents whose `hint_keys` contain any of `keys`, ordered by (item_id, generation, index), starting
+        """Hint documents whose `hint_keys` contain any of `keys` (at most CONCEPT_KEYS_MAX distinct; more is a
+        ValueError), ordered by (item_id, generation, index), starting
         past every hint document of the item `after_item_id` (§25.5.2, §25.5.6)."""
 
     @abstractmethod
@@ -335,7 +340,9 @@ class DriveIndexRepository(ABC):
     async def add_model_usage(self, user_id: str, month: str, day: str, cls: str, usd: float, fallback_usd: float,
                               calls: int) -> None:
         """Atomically add `usd` to the month's `<cls>_usd` (`cls` a UsageClass value), `fallback_usd` and `calls`
-        to theirs, and (usd, fallback_usd) to `daily[day]` ("YYYY-MM-DD")."""
+        to theirs, and (usd, fallback_usd) to `daily[day]` ("YYYY-MM-DD"). Not idempotent: a call that fails after
+        its write committed (an ambiguous timeout, DriveIndexStoreUnavailable) may have added, so a caller must not
+        retry it blindly; a retry over-counts (the safe direction: a cap closes early)."""
 
     @abstractmethod
     async def get_initial_build(self, user_id: str) -> InitialBuild:
@@ -346,7 +353,8 @@ class DriveIndexRepository(ABC):
     async def spend_initial_build(self, user_id: str, usd: float, now: datetime) -> Tuple[InitialBuild, float]:
         """Transactional: cover as much of `usd` as the allowance has left, opening the build at `now` if new and
         closing it at `now` when the allowance is spent; returns (the build after, the dollars covered). The rest of
-        `usd` belongs to the monthly class. A closed build covers 0 and writes nothing (D27)."""
+        `usd` belongs to the monthly class. A closed build covers 0 and writes nothing (D27). Not idempotent, like
+        `add_model_usage`: a caller must not retry it blindly after a store error."""
 
     @abstractmethod
     async def close_initial_build(self, user_id: str, now: datetime) -> None:

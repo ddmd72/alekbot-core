@@ -12,8 +12,8 @@ from google.cloud.firestore_v1.async_vector_query import AsyncVectorQuery
 from google.cloud.firestore_v1.vector import Vector
 
 from src.adapters.firestore_drive_index_repo import (
-    CHUNK_DISTANCE, CHUNK_FIELDS, CHUNK_VECTOR, STREAM_FIELDS, FirestoreDriveIndexRepository, chunk_from_doc,
-    chunk_key, chunk_to_doc,
+    CHUNK_DISTANCE, CHUNK_FIELDS, CHUNK_LEAN_FIELDS, CHUNK_VECTOR, STREAM_FIELDS, FirestoreDriveIndexRepository,
+    chunk_from_doc, chunk_key, chunk_to_doc,
 )
 from src.domain.drive_index import DriveChunk
 from src.domain.drive_index_params import RECORD_WRITE_BATCH
@@ -204,7 +204,7 @@ class TestChunksPage:
         (ops,) = executed(db, CHUNKS)
         assert ops == [("where", "user_id", "==", "u"), ("order_by", "item_id", "ASCENDING"),
                        ("order_by", "generation", "ASCENDING"), ("order_by", "index", "ASCENDING"),
-                       ("select", CHUNK_FIELDS), ("limit", 50)]
+                       ("select", CHUNK_LEAN_FIELDS), ("limit", 50)]   # ids only (review m3)
 
     async def test_starts_after_the_key(self, repo, db):
         await repo.chunks_page("u", ("a", 2, 9), 50)
