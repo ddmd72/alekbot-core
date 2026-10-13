@@ -61,7 +61,8 @@ async def test_reader_image_cap(tmp_path, size, sent):
 async def test_triage_never_sends_a_thumbnail_over_the_cap():
     def handler(request):
         n = sum(1 for p in request.messages[0].parts if p.file_data)
-        return reply({"images": [{"index": i, "verdict": "text", "caption": ""} for i in range(1, n + 1)]})
+        return reply({"images": [{"index": i, "verdict": "text", "description": "", "objects": [], "scene": "",
+                                  "visible_text": ""} for i in range(1, n + 1)]})
 
     llm = RoutedLLM(handler)
     users = AsyncMock()
@@ -75,7 +76,9 @@ async def test_triage_never_sends_a_thumbnail_over_the_cap():
     out = await runner.triage("u", "a", images)
     assert sum(1 for p in llm.requests[0].messages[0].parts if p.file_data) == 1
     verdicts = {r.item_id: r.verdict for r in out.results}
-    assert verdicts == {"small": TriageVerdict.TEXT, "big": TriageVerdict.PHOTO}   # big: photo without caption
+    # triage v2 (§25.13.1): the big one is never sent and is reported refused — no description; the tick keeps it a
+    # photograph without one
+    assert verdicts == {"small": TriageVerdict.TEXT} and out.refused_item_ids == ("big",)
 
 
 # =============================================================================

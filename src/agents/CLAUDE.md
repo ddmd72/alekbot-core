@@ -56,13 +56,14 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     Haiku 5.5 shifted a triage batch's captions by one image); a user's `agent_providers` switches either to Claude
     (`claude-haiku-5-5`), and so does the user's global `provider_preference` when the agent has no override.
     **Fallback: Gemini Flash** (`gemini-3.8-flash`) — `STRATEGIES` in `agent_context_builder.py` sets `fallback:
-    "gemini"` with `fallback_tier: BALANCED`, the only entries with that key: without it the fallback would resolve at
+    "gemini"` with `fallback_tier: BALANCED`, as the Search v2 enrichment agents do: without it the fallback would resolve at
     ECO, which on Gemini is flash-lite (D7 rev 3.17). Gemini is the fallback only: it is not in `allowed_providers`,
-    so no setting makes flash-lite the primary. A 4xx on the primary is not failed over; a 4xx
-    from Gemini on a failover call is sorted like the primary's own (`decisions/drive_model_outage_defers_model_work.md`).
+    so no setting makes flash-lite the primary. A 4xx on the primary is not failed over; a non-account 4xx from Gemini
+    on a failover call is `LLMFallbackClientError`, a charged outage retried on the primary (§25.4.4 N7), and so is a
+    safety block Gemini returns as a response (`served_by_fallback` on the response, `drive_model_call.safety_stop`).
     Thinking `low` unless the user's `agent_thinking` says otherwise; `allow_provider_storage=False` (OpenAI
     `store=false` only — not a zero-retention guarantee; Claude and Gemini have no such flag). Limits in `agent_config.py`
-    (`DRIVE_READER`: 180 s, 16 000 tokens; `DRIVE_TRIAGE`: 120 s, 4 096 tokens; one parse retry).
+    (`DRIVE_READER`: 180 s, 16 000 tokens; `DRIVE_TRIAGE`: 120 s, 8 192 tokens; one parse retry).
   - **Where they run:** on the indexer service only (`indexer_main.py` → `composition/drive_model_setup.py`), never on
     the main service. No manifest descriptor (`can_handle` false), no tools, no history, no biography, no user prompt
     overrides: like `EmailClassificationAgent` they are not routed to, and like the companion extractors they are
@@ -72,8 +73,11 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     sandboxed parser) or one image rendition and returns verbatim text, plus on the first window a brief (`doc_type`,
     one-line `description`, `doc_date` → `effective_date` per D13, `parties`, `amount`) in structured output
     (`OUTPUT_FORMAT_DRIVE_READER`); a reply stopped at the output limit is reported, never parsed. Triage takes up to
-    `TRIAGE_BATCH` (16) 800 px thumbnails under opaque indexes with the camera prior as text and returns per image `text` or
-    `photo` + a caption of at most ten words (`OUTPUT_FORMAT_DRIVE_TRIAGE`; missing indexes get one correction turn).
+    `TRIAGE_BATCH` (8) 800 px thumbnails, each after its "Image N" label with the camera prior as text, and returns per
+    image `text` or `photo` with a description, objects with their spellings, a scene and the visible text (triage v2,
+    §25.4.3; `OUTPUT_FORMAT_DRIVE_TRIAGE`); missing indexes, and byte-identical images given different verdicts, get
+    one correction turn. Its runner returns the v2 `TriageReply` (statuses, capped and refused ids, never an
+    exception).
   - **Failures** (`infrastructure/drive_model_call.py`): when the Gemini fallback fails too (or a non-failover error
     hits), a 429/5xx/timeout/account error or a missing prompt raises
     `DriveModelUnavailable` (model work waits, nothing else does,
@@ -83,10 +87,28 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     breaker never charges. The reader runner halves
     a window at the output limit or a timeout once (a half that times out again fails the file, `error`) and a
     413/400/422 down to one page; a single page still refused is skipped (file `truncated`, `pages_refused`), and only
-    a refusal of every page or of an image is terminal (`too_large` / `unsupported`). Triage halves only a refused
-    batch (down to the refused image, a photograph without a caption); any other failed triage call leaves its
-    images to a per-file retry. Calls are billed to the user's account through the runner's quota service. Prompts are
+    a refusal of every page or of an image is terminal (`too_large` / `unsupported`). Triage halves a refused batch
+    down to the refused image (`refused_item_ids`) and a batch stopped at the cap down to the image
+    (`capped_item_ids`); invalid output leaves its images unsettled for a per-file retry. Calls are billed to the user's account through the runner's quota service. Prompts are
     owner-uploaded Firestore tokens; no fallback prompt.
+- DriveProfiler (`drive_profiler`) and DrivePassages (`drive_passages`) — Search v2's index-time enrichment
+  (USER_DRIVE_INDEXING_RFC §25.3, §25.4.1, §25.4.2, §25.4.4).
+  - **Tier / provider:** as the reader without vision: ECO, default OpenAI (`gpt-6-luna`), Claude
+    (`claude-haiku-5-5`) by `agent_providers`, fallback Gemini Flash (`gemini-3.8-flash`, `fallback_tier: BALANCED`),
+    `allow_provider_storage=False`, thinking `low`. Limits in `agent_config.py` (`DRIVE_PROFILER` and
+    `DRIVE_PASSAGES`: 60 s, 4 096 tokens; one parse retry).
+  - **What they do:** the profiler describes one text file once from its own stored text (`drive_profile.profile_input`:
+    head, tail, headings, a collapsed folder's README and child names; never its path) into a `DriveProfile` — title,
+    `what_it_is`, `doc_type` / `life_domains` from the fixed label set, dates, entities, key values, topics and the
+    index-time word lists in en/es/uk/ru; the caller verifies it against the text (`drive_profile.verify`). The
+    passages agent writes, per chunk under an opaque index, keywords and questions each with an evidence quote; the
+    caller grounds them (`drive_hints.ground`: the quote verbatim on word boundaries, numbers among the chunk's terms).
+  - **Where they run:** on the indexer only, built per call by `DriveProfilerRunner` (`DocumentProfilerPort`) and
+    `DrivePassageRunner` (`PassageHintPort`) in `composition/` (`build_drive_models`). Every outcome is a
+    `ModelReplyStatus` (§25.4.6), never an exception, with the model that served, the cost and the fallback's share.
+    A profile stopped at the cap is asked once more with halved list caps; a passage batch stopped at the cap or
+    refused is halved down to the chunk. Prompts are owner-uploaded tokens (`COGNITIVE_PROCESS_` / `OUTPUT_FORMAT_`
+    `DRIVE_PROFILER`, `DRIVE_PASSAGES`); no fallback prompt.
 - DocPlanner (ASYNC, PERFORMANCE, intent `create_document`) — LLM → JSON layout spec →
   fire-and-forget delegate to DocGenerator → DeliveryItem("file_upload").
 - DocGenerator (internal, BALANCED, intent `generate_docx_code`) — LLM writes Node.js script →

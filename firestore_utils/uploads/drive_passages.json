@@ -1,0 +1,14 @@
+{
+  "agent_id": "drive_passages",
+  "blueprint_id": "drive_passages_agent_v1",
+  "tokens": {
+    "COGNITIVE_PROCESS_DRIVE_PASSAGES": {
+      "order": 10,
+      "non_overridable": true
+    },
+    "OUTPUT_FORMAT_DRIVE_PASSAGES": {
+      "order": 10,
+      "non_overridable": true
+    }
+  }
+}

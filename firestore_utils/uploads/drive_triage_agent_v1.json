@@ -1,0 +1,8 @@
+{
+  "blueprint_id": "drive_triage_agent_v1",
+  "outer_class": "DriveImageTriageAgent extends Agent",
+  "class_order": [
+    "cognitive_process",
+    "output_format"
+  ]
+}

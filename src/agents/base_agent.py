@@ -19,6 +19,9 @@ from ..domain.exceptions import (
     _ERROR_TYPE_LOG_LABEL,
     BothProvidersUnavailableError,
     FAILOVER_TRIGGER_TYPES,
+    LLMAccountError,
+    LLMClientError,
+    LLMFallbackClientError,
     LLMRateLimitError,
     LLMUnavailableError,
     ProviderBreakerOpenError,
@@ -27,6 +30,7 @@ from ..domain.exceptions import (
 )
 from ..domain.retry_policy import DEFAULT_RETRY_POLICY, NO_RETRY_POLICY, RetryPolicy
 from ..domain.turn_clock import CURRENT_TURN_CLOCK
+from ..domain.llm import LLMResponse as _LLMResponse
 from ..ports.llm_port import Message, MessagePart
 from ..ports.session_store import SessionStore
 from ..utils.logger import logger
@@ -1161,6 +1165,8 @@ class BaseAgent(ABC):
                         request=fallback_request
                     )
                     served_model = fallback_request.model_name
+                    if isinstance(response, _LLMResponse):   # a copy: the provider's object is not ours to change
+                        response = response.model_copy(update={"served_by_fallback": fallback_name or ""})
                     # Asymmetry by design — see method docstring step 5.
                 except failover_tuple as fb_e:
                     if resilience and fallback_name:
@@ -1185,6 +1191,19 @@ class BaseAgent(ABC):
                         fallback_name=fallback_name,
                         primary_cause=e,
                     ) from fb_e
+                except LLMClientError as fb_client_e:
+                    if isinstance(fb_client_e, LLMAccountError):
+                        raise   # the fallback's account: an outage for everyone, not a refusal
+                    # A refusal by the fallback is not the primary's refusal: name the provider that raised it
+                    # (USER_DRIVE_INDEXING_RFC §25.4.4, N7). Still an LLMClientError for every other caller.
+                    logger.warning(
+                        "llm_fallback_refused %s→%s http=%s: %s",
+                        primary_name, fallback_name, fb_client_e.http_status, str(fb_client_e)[:300],
+                    )
+                    raise LLMFallbackClientError(
+                        str(fb_client_e), http_status=fb_client_e.http_status,
+                        provider_name=fallback_name or "",
+                    ) from fb_client_e
         ledger = _EXECUTION_LEDGER.get()
         if response.usage_metadata and ledger is not None:
             m = response.usage_metadata

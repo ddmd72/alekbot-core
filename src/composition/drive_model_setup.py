@@ -3,9 +3,12 @@ The drive indexer's model wiring (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §24.2
 
 Builds, for `indexer_main.py` only: a ProviderRegistry with Claude and OpenAI (the primaries a user's configuration may
 pick) and Gemini (the drive agents' fallback, D7 rev 3.17), an AgentContextBuilder over it with a process-local breaker, the
-Firestore prompt builder, the quota service that bills each call to the user's account, and the two runners. The
-extractor registry is `{PARSER: parser, READER: reader runner}` (EXTRACTOR_CHAINS ids); the reader cuts PDFs with
-the same sandboxed parser.
+Firestore prompt builder, the quota service that bills each call to the user's account, and the runners: the reader
+and the triage, and Search v2's profiler and passage hints (§25.4.4), all over one context builder (one breaker per
+provider), one prompt builder and one quota service (`build_drive_models`). The extractor registry is
+`{PARSER: parser, READER: reader runner}` (EXTRACTOR_CHAINS ids); the reader cuts PDFs with the same sandboxed
+parser. `build_drive_model_extractors` keeps the v1 shape (extractors, triage) until the indexer wires the enrichment
+runners (P5).
 
 Deliberately absent: prompt caching (the prompts are below the providers' minimum cacheable size), the alerting
 proxy (a scan the provider refuses is a per-file outcome, not a Slack alert), the prompt-content store (verbatim
@@ -15,6 +18,7 @@ no fallback (a primary outage defers model work, §24.8).
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional, Tuple
 
 from ..adapters.claude_adapter import ClaudeAdapter
@@ -26,12 +30,16 @@ from ..domain.drive_extraction import PARSER, READER
 from ..ports.account_repository import AccountRepository
 from ..ports.alert_sink import AlertSinkPort
 from ..ports.content_extractor_port import ContentExtractorPort
+from ..ports.document_profiler_port import DocumentProfilerPort
 from ..ports.image_triage_port import ImageTriagePort
+from ..ports.passage_hint_port import PassageHintPort
 from ..ports.user_repository import UserRepository
 from ..services.agent_context_builder import AgentContextBuilder
 from ..services.prompt_builder import PromptBuilder
 from ..services.provider_registry import ProviderRegistry
 from ..utils.logger import logger
+from .drive_passage_runner import DrivePassageRunner
+from .drive_profiler_runner import DriveProfilerRunner
 from .drive_reader_runner import DriveReaderRunner, PdfSplitter
 from .drive_triage_runner import DriveTriageRunner
 
@@ -76,17 +84,37 @@ def build_drive_context_builder(keys: Mapping[str, Optional[str]]) -> AgentConte
     return AgentContextBuilder(build_drive_model_registry(keys), resilience_port=InMemoryProviderResilience())
 
 
-def build_drive_model_extractors(*, parser: Any, users: UserRepository, account_repo: AccountRepository,
-                                 assembly_service: Any, keys: Mapping[str, Optional[str]],
-                                 alert_sink: Optional[AlertSinkPort] = None,
-                                 ) -> Tuple[Dict[str, ContentExtractorPort], ImageTriagePort]:
-    """The extractor registry and the triage port for DriveIndexingService. `parser` is the child-process parser
-    (a ContentExtractorPort with `pdf_page_count` and `cut_pdf_window`)."""
+@dataclass(frozen=True)
+class DriveModels:
+    """Every drive model runner of the indexer, over one context builder, prompt builder and quota service."""
+    extractors: Dict[str, ContentExtractorPort]
+    triage: ImageTriagePort
+    profiler: DocumentProfilerPort
+    passages: PassageHintPort
+
+
+def build_drive_models(*, parser: Any, users: UserRepository, account_repo: AccountRepository,
+                       assembly_service: Any, keys: Mapping[str, Optional[str]],
+                       alert_sink: Optional[AlertSinkPort] = None) -> DriveModels:
+    """The indexer's model runners. `parser` is the child-process parser (a ContentExtractorPort with
+    `pdf_page_count` and `cut_pdf_window`)."""
     context_builder = build_drive_context_builder(keys)
     prompt_builder = _DrivePromptBuilder(repo=None, assembly_service=assembly_service)
     quota = FirestoreQuotaService(account_repo, alert_sink=alert_sink)
     splitter: PdfSplitter = parser
     reader = DriveReaderRunner(context_builder, users, prompt_builder, splitter, quota_service=quota)
-    triage = DriveTriageRunner(context_builder, users, prompt_builder, quota_service=quota)
-    return {PARSER: parser, READER: reader}, triage
+    return DriveModels(
+        extractors={PARSER: parser, READER: reader},
+        triage=DriveTriageRunner(context_builder, users, prompt_builder, quota_service=quota),
+        profiler=DriveProfilerRunner(context_builder, users, prompt_builder, quota_service=quota),
+        passages=DrivePassageRunner(context_builder, users, prompt_builder, quota_service=quota))
 
+
+def build_drive_model_extractors(*, parser: Any, users: UserRepository, account_repo: AccountRepository,
+                                 assembly_service: Any, keys: Mapping[str, Optional[str]],
+                                 alert_sink: Optional[AlertSinkPort] = None,
+                                 ) -> Tuple[Dict[str, ContentExtractorPort], ImageTriagePort]:
+    """The extractor registry and the triage port for DriveIndexingService (the v1 shape of `build_drive_models`)."""
+    models = build_drive_models(parser=parser, users=users, account_repo=account_repo,
+                                assembly_service=assembly_service, keys=keys, alert_sink=alert_sink)
+    return models.extractors, models.triage
