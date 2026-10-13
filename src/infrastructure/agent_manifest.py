@@ -30,6 +30,9 @@ To add a new specialist agent:
 """
 
 from ..domain.companion_config import CompanionConfig
+from ..domain.drive_search_texts import (
+    DRIVE_DATE_FROM_DESCRIPTION, DRIVE_DATE_TO_DESCRIPTION, DRIVE_KIND_DESCRIPTION, DRIVE_QUERY_DESCRIPTION,
+)
 from ..domain.voice_errand import TELL_ALEK_INTENT
 from .agent_registry import AgentDescriptor, ExecutionMode, FanoutSpec
 
@@ -605,15 +608,16 @@ FILE_MANAGEMENT = AgentDescriptor(
         ),
         Intent.SEARCH_FILES_IN_DRIVE: (
             "Find files and folders on the user's drive by name (exact, partial, transliterated or misspelled), "
-            "type, date, folder, photo details and place, and by what is written inside documents, scans and "
-            "screenshots: a subject, a phrase, a number or an amount. Use it when the answer may be in the user's "
-            "files, and before saying a file is not there. Returns cards with drive:<id> refs for "
-            "open_file_from_drive (a content match shows the passage it matched), and says how complete and how "
-            "fresh the index is. drive_query is required "
-            "unless the request is filter-only: for filter-only requests (\"files I saved this week\", \"all my "
-            "spreadsheets\") leave drive_query empty and set only the filters. "
-            'Context: {"drive_query": "<name words, a place or subject, or words, a number or an amount to find '
-            'inside>", "drive_folder": "<path or drive:<id>>", '
+            "type, date, folder, photo details and place, by what a document is (a ticket, a receipt, a contract, "
+            "what expires) and by what is written inside documents, scans and screenshots: a subject, a phrase, a "
+            "number or an amount. Use it when the answer may be in the user's files, and before saying a file is "
+            "not there. Returns cards with drive:<id> refs for open_file_from_drive, grouped by how they matched "
+            "(about, mentioned in, by translation, labelled, related by meaning), each with what matched and, for "
+            "a passage match, the passage; and says what the search covered and how fresh the index is. "
+            "drive_query is required unless the request is filter-only: for filter-only requests (\"files I saved "
+            "this week\", \"all my spreadsheets\") leave drive_query empty and set only the filters. "
+            'Context: {"drive_query": "<the subject, a document type or purpose, or words, a number or an amount to '
+            'find inside>", "drive_folder": "<path or drive:<id>>", '
             '"drive_kind": "<type>", "drive_date_from": "YYYY-MM-DD", "drive_date_to": "YYYY-MM-DD"}'
         ),
     },
@@ -651,34 +655,14 @@ FILE_MANAGEMENT = AgentDescriptor(
         # Field names no other intent uses: the delegate tool keeps the first description seen per name
         # (base_agent._build_delegate_tool_declaration), USER_DRIVE_INDEXING_RFC §10.4.
         Intent.SEARCH_FILES_IN_DRIVE: {
-            "drive_query": (
-                "search_files_in_drive: REQUIRED unless the request is filter-only; the `query` field is not read "
-                "for search. The words of the file or folder name as the user said them (any language; "
-                "transliteration and typos are tolerated), a place or subject the user mentioned ('Rome', "
-                "'lease'), or what to find inside the documents: a phrase, a number, an amount or an invoice "
-                "number as the user wrote it ('notice period', 'INV-2024-417', '1 250,00'). No type words "
-                "('photos', 'documents': use drive_kind). Dates written inside the document go in drive_query; use "
-                "the date filters only when the user limits when the file is dated. Leave EMPTY only for "
-                "filter-only requests such as 'files I saved this week' or 'all my spreadsheets'"
-            ),
+            "drive_query": DRIVE_QUERY_DESCRIPTION,   # Search v2 texts (USER_DRIVE_INDEXING_RFC §25.13.6, D25)
             "drive_folder": (
                 "search_files_in_drive: optional folder to search within, with its subfolders: a drive:<id> ref "
                 "of a folder or its path, e.g. 'Contracts/2026'. Omit to search the whole drive"
             ),
-            "drive_kind": (
-                "search_files_in_drive: optional file type. A family covers every format of its kind: "
-                "spreadsheet (xlsx, xls, ods, csv), document (docx, doc, odt, rtf, pdf), word (docx, doc), "
-                "presentation (pptx, ppt, odp), photo (any image). Or one kind: pdf, docx, xlsx, markdown, text, csv, image, video, "
-                "audio, archive, code, folder, or a file extension such as 'jpg'. Other words are refused"
-            ),
-            "drive_date_from": (
-                "search_files_in_drive: optional earliest date, YYYY-MM-DD, inclusive. The date is when a photo "
-                "was taken, otherwise when the file is dated. Dates written inside the document go in "
-                "drive_query; use the date filters only when the user limits when the file is dated."
-            ),
-            "drive_date_to": (
-                "search_files_in_drive: optional latest date, YYYY-MM-DD, inclusive (the whole day counts)"
-            ),
+            "drive_kind": DRIVE_KIND_DESCRIPTION,
+            "drive_date_from": DRIVE_DATE_FROM_DESCRIPTION,
+            "drive_date_to": DRIVE_DATE_TO_DESCRIPTION,
         },
     },
     internal=False,

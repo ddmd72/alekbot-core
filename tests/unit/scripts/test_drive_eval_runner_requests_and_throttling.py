@@ -66,7 +66,7 @@ class TestRequestsAreBuiltAsInProduction:
         assert request_for(case) == expected
 
     def test_slash_folder_is_the_whole_drive(self):
-        assert request_for({"query": "x", "filters": {"folder": "/"}}).folder is None
+        assert request_for({"query": "rome", "filters": {"folder": "/"}}).folder is None
 
     async def test_slash_folder_is_searchable_not_folder_not_found(self, tmp_path):
         whole = {**GOLD[0], "id": "whole", "filters": {"folder": "/"}}

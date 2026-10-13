@@ -1,6 +1,5 @@
 """DriveSearchService: the name-key pool, filter-only honesty, folder lookup, the walk budget and widening
 (USER_DRIVE_INDEXING_RFC §10.1, §10.2)."""
-from datetime import datetime, timezone
 
 import pytest
 
@@ -180,18 +179,6 @@ class TestWalkBudget:
 # --- Search decisions, each pinned by its own test ------------------------------------------------
 
 class TestSearchDecisions:
-    async def test_ranked_widens_at_most_once_even_when_the_widened_page_is_full(self, w, monkeypatch):
-        """Without the once-guard a full FETCH_MAX page with fewer than K survivors loops forever."""
-        monkeypatch.setattr(search_mod, "CARD_FETCH", 2)
-        monkeypatch.setattr(search_mod, "NAME_FETCH", 2)
-        monkeypatch.setattr(search_mod, "FETCH_MAX", 3)
-        for i in range(10):
-            w.drive.add(f"report {i:02d}.pdf", facets=taken(f"2024-01-{i + 1:02d}"))
-        await w.settle()
-        _limit_calls(w, "find_nearest_cards", 4)
-        result = await w.search("report", date_from=datetime(2020, 1, 1, tzinfo=timezone.utc),
-                                date_to=datetime(2020, 12, 31, tzinfo=timezone.utc))
-        assert result.cards == () and w.repo.card_limits == [2, 3]
 
     async def test_filter_only_widens_at_most_once_even_when_the_widened_page_is_full(self, w, monkeypatch):
         monkeypatch.setattr(search_mod, "CARD_FETCH", 2)

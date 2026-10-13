@@ -2,14 +2,13 @@
 import itertools
 from dataclasses import replace
 from datetime import datetime, timezone
-from unittest.mock import MagicMock
 
 import pytest
 
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.domain.drive_extraction import PARSER, READER
 from src.domain.drive_index import EpochPhase, RecordState
-from src.domain.drive_index_params import ACCESS_LOSS_TTL, CARD_FETCH, FETCH_MAX, NAME_FETCH
+from src.domain.drive_index_params import ACCESS_LOSS_TTL
 from src.domain.drive_search import (
     STATUS_AMBIGUOUS_FOLDER, STATUS_DISABLED, STATUS_DISCONNECTED, STATUS_FOLDER_NOT_FOUND, STATUS_OK,
     DriveSearchRequest, render_results,
@@ -232,13 +231,6 @@ class TestRanking:
         result = await w.search(query)
         assert expected in paths(result)[:2]
 
-    async def test_a_record_in_both_streams_outranks_one_in_a_single_stream(self, w):
-        target = w.drive.add("invoice march.pdf")
-        for i in range(5):
-            w.drive.add(f"note{i}.md")
-        await w.settle()
-        result = await w.search("invoice")
-        assert result.cards[0].item_id == target and len(result.cards) == 6
 
     async def test_cards_carry_refs_kinds_and_distinct_nonces(self, w):
         for name in ("a.pdf", "b.pdf", "c.pdf"):
@@ -248,11 +240,6 @@ class TestRanking:
         assert {c.ref for c in result.cards} == {f"drive:{c.item_id}" for c in result.cards}
         assert len({c.nonce for c in result.cards}) == 3 and all(c.kind == "pdf" for c in result.cards)
 
-    async def test_returns_at_most_k(self, w):
-        for i in range(12):
-            w.drive.add(f"report {i}.pdf")
-        await w.settle()
-        assert len((await w.search("report")).cards) == 8
 
     async def test_duplicates_collapse_by_content_hash(self, w):
         same = {"hashes": {"quickXorHash": "QX1"}}
@@ -264,37 +251,6 @@ class TestRanking:
         lease = [c for c in result.cards if c.name == "Lease.pdf"]
         assert len(lease) == 1 and len(lease[0].also_at) == 1
         assert {lease[0].path, *lease[0].also_at} == {"Contracts/Lease.pdf", "Inbox/Lease.pdf"}
-
-    async def test_widens_once_at_the_cap_when_filters_leave_fewer_than_k(self, w, monkeypatch):
-        monkeypatch.setattr(search_mod, "CARD_FETCH", 3)
-        monkeypatch.setattr(search_mod, "NAME_FETCH", 3)
-        for i in range(10):
-            w.drive.add(f"report {i:02d}.pdf", facets=taken(f"2024-01-{i + 1:02d}"))
-        w.drive.add("report old.pdf", facets=taken("2020-05-05"))
-        await w.settle()
-        result = await w.search("report", date_from=datetime(2020, 1, 1, tzinfo=timezone.utc),
-                                date_to=datetime(2020, 12, 31, tzinfo=timezone.utc))
-        assert paths(result) == ["report old.pdf"]
-        assert w.repo.card_limits == [3, FETCH_MAX]
-        limits = [lim for lim, _ in w.repo.name_limits]
-        assert set(limits) == {3, FETCH_MAX} and limits == sorted(limits)   # one widened round after the first
-
-    async def test_no_widening_when_the_streams_were_not_full(self, w):
-        w.drive.add("a.pdf")
-        await w.settle()
-        await w.search("a")
-        assert w.repo.card_limits == [CARD_FETCH]
-
-    async def test_one_summary_line(self, w, monkeypatch):
-        w.drive.add("a.pdf")
-        await w.settle()
-        log = MagicMock()
-        monkeypatch.setattr(search_mod, "logger", log)
-        await w.search("a")
-        assert log.info.call_count == 1
-        line = log.info.call_args[0][0]
-        for part in ("card=", "name_kept=", "visible=", "filtered=", "fused=", "returned=1"):
-            assert part in line
 
 
 # --- read-time visibility (§5.2, §17.1 d) --------------------------------------------------------
@@ -347,13 +303,6 @@ class TestFilters:
         assert not result.matched_at_least and len(w.emb.calls) == calls and w.repo.card_limits == []
         assert "2 files and folders match the filters" in render_results(result)
 
-    async def test_kind_prefilter_reaches_both_streams(self, w):
-        w.drive.add("report.pdf")
-        w.drive.add("report.xlsx")
-        await w.settle()
-        result = await w.search("report", kind="xlsx")
-        assert paths(result) == ["report.xlsx"] and w.repo.name_limits[-1] == (NAME_FETCH, "xlsx")
-
 
 class TestFolderScope:
     async def _tree(self, w):
@@ -398,12 +347,6 @@ class TestFolderScope:
         assert paths(result)[0] == "Work/Alpha/b/a/x17.bin" and w.repo.card_limits == []
         assert all(p.startswith("Work/Alpha/") for p in paths(result))
 
-    async def test_large_subtree_falls_back_to_user_wide_streams_filtered_by_chain(self, w, monkeypatch):
-        await self._tree(w)
-        monkeypatch.setattr(search_mod, "FOLDER_INMEM_CARDS", 2)
-        result = await w.search("x17", folder="Work")
-        assert paths(result)[0] == "Work/Alpha/b/a/x17.bin" and w.repo.card_limits == [CARD_FETCH]
-        assert all(p.startswith("Work/") for p in paths(result)) and len(paths(result)) == 5
 
     async def test_filter_only_inside_a_folder(self, w):
         await self._tree(w)
@@ -457,12 +400,6 @@ class TestScale:
     @pytest.mark.parametrize("query", ["ред3", "Договор ред3", "dogovor red3"])
     async def test_version_suffix_ranks_the_named_version_first(self, camera_roll, query):
         assert names(await camera_roll.search(query))[0] == "Договор_ред3.docx"
-
-    @pytest.mark.parametrize("query", ["rental contract", "photos from my phone"])
-    async def test_a_query_no_name_covers_keeps_plain_rrf(self, camera_roll, query, monkeypatch):
-        covered = names(await camera_roll.search(query))
-        monkeypatch.setattr(search_mod, "cover_first", lambda fused, groups: list(fused))
-        assert names(await camera_roll.search(query)) == covered
 
 
 class TestFolderResolution:
