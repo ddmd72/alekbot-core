@@ -124,10 +124,15 @@ class TestIdenticalImages:
         assert out.results[3][0] is PHOTO and out.results[2][0] is TEXT and out.missing == ()
         assert "identical images [1, 3]" in llm.requests[1].messages[-1].parts[0].text
 
-    async def test_still_different_after_the_correction_leaves_them_unsettled(self):
-        agent, _ = _agent([_answer(_photo(1), _text(2), _text(3)), _answer(_photo(1), _text(3))])
+    async def test_still_different_after_the_correction_settles_them_as_text(self):
+        # Review m1 (arbiter, 2026-10-13): twins still disagreeing after the one correction turn are settled as
+        # `text`, so the reader looks at them; they are no longer left unsettled to be retried every tick.
+        agent, llm = _agent([_answer(_photo(1), _text(2), _text(3)), _answer(_photo(1), _text(3))])
         out = await agent.classify(_images(3, same=(3,)), account_id="acc")
-        assert set(out.missing) == {1, 3} and set(out.results) == {2}
+        assert out.missing == () and set(out.results) == {1, 2, 3}
+        assert out.results[1][0] is TEXT and out.results[3][0] is TEXT and out.results[2][0] is TEXT
+        assert out.results[1][1] is None and out.results[3][1] is None
+        assert len(llm.requests) == 2
 
 
 class TestFailures:
