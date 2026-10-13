@@ -18,9 +18,12 @@ A photograph gets a description (at most PHOTO_DESCRIPTION_CHARS), objects with 
 each, a scene of a few words and the visible text, all automatic; a text image gets none. The caption-shift check
 (OQ-V1): byte-identical images in one batch must get the same verdict — when they do not, the answer is shifted, so
 their answers are dropped and asked again with the correction turn, which also asks for any index left out; images
-still missing or still disagreeing after it are reported in `missing` (unsettled, retried). Structured output per the
+still disagreeing after it are settled as `text` (the reader then looks at them at full size), images still missing
+are reported in `missing` (unsettled, retried). The check sees a shift across verdicts only; a shift among
+photographs is left to the "Image N" labels and the eval gate (OQ-V1). Structured output per the
 standard: OUTPUT_FORMAT_DRIVE_TRIAGE + response_schema + response_mime_type, json.loads, no regex fallback. A reply
-stopped at the output limit is reported (`output_limited`) for the runner to split the batch.
+stopped at the output limit is reported (`output_limited`), with the answers already received, for the runner to ask
+again for the rest.
 """
 from __future__ import annotations
 
@@ -40,8 +43,7 @@ from ..domain.drive_index_params import (
 from ..domain.llm import FinishReason
 from ..infrastructure.agent_config import DRIVE_TRIAGE
 from ..infrastructure.drive_model_call import (
-    CallCounter, DriveInputRefused, DriveOutputInvalid, build_drive_prompt, classify_model_error, ledger_spend,
-    with_usage,
+    CallCounter, DriveOutputInvalid, build_drive_prompt, classify_model_error, ledger_spend, safety_stop, with_usage,
 )
 from ..ports.llm_port import AgentExecutionContext, LLMRequest, Message, MessagePart
 from ..ports.prompt_builder_port import PromptBuilderPort
@@ -183,10 +185,11 @@ class DriveImageTriageAgent(BaseAgent):
                 timeout=DRIVE_TRIAGE.call_timeout_s,
             ), turn=attempt + 1)
             if response.finish_reason is FinishReason.MAX_TOKENS:
+                # the answers already received stay; the runner asks again only for the rest (review m2)
                 logger.warning(f"[{AGENT_TYPE}] output limit reached on {len(images)} images")
-                return {}, (), True
+                return results, (), True
             if response.finish_reason is FinishReason.SAFETY:
-                raise DriveInputRefused("the provider's safety filter stopped the answer")
+                raise safety_stop(response, AGENT_TYPE)
             raw = response.text or ""
             problems: List[str] = []
             try:
@@ -209,6 +212,10 @@ class DriveImageTriageAgent(BaseAgent):
             if left_out:
                 problems.append(f"left out indexes {left_out}")
             if attempt >= DRIVE_TRIAGE.max_parse_retries:
+                for index in shifted:
+                    # identical images still disagreeing: text, so the reader looks at them (review m1)
+                    results[index] = (TriageVerdict.TEXT, None)
+                missing = [i for i in wanted if i not in results]
                 if not results:
                     raise DriveOutputInvalid(f"no usable triage answer: {'; '.join(problems)}")
                 return results, tuple(missing), False

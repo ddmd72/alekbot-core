@@ -1608,9 +1608,13 @@ class DriveIndexingService:
                 logger.error(f"[DriveIndex] triage failed for {user_id[:8]}: {exc}", exc_info=True)
                 writes.extend(content_retry(r, Reason.EXTRACT_ERROR, now) for r in waiting.values())
             else:
-                # Triage v2 reply (§25.13.1), read with the v1 effects until P5 writes the photo fields and the
-                # per-agent backoff: an outage defers what it left unsettled, a capped or refused image is a
-                # photograph without a caption, an unsettled image is a per-file retry.
+                # Triage v2 reply (§25.13.1), read with v1's effects until P5 writes the photo fields and the
+                # per-agent backoff: a verdict is stored (the description standing in for the caption), a refused
+                # image is a photograph without a caption, a capped image is a per-file retry (a text scan must
+                # not become a permanent photograph), an outage defers what it left unsettled. Differences from v1,
+                # all §25.13.1's: an image left unanswered after the correction turn is a per-file retry (v1: a
+                # photograph without a caption); in an outage the images answered before it keep their verdicts
+                # (v1 deferred the whole batch).
                 outage = reply.status in (ModelReplyStatus.UNAVAILABLE, ModelReplyStatus.FAILED)
                 _count_triage(models, summary, now, calls=reply.model_calls, cost=reply.usd,
                               images=len(reply.results) if outage else len(images), outage=outage)
@@ -1619,7 +1623,7 @@ class DriveIndexingService:
                                    f"model work deferred")
                     models.outage(now)   # after the usage, which leaves the backoff to this outage (C-M1, T-M2)
                 by_id = {r.item_id: _v1_triage_result(r) for r in reply.results}
-                for item_id in (*reply.capped_item_ids, *reply.refused_item_ids):
+                for item_id in reply.refused_item_ids:
                     by_id.setdefault(item_id, TriageResult(item_id=item_id, verdict=TriageVerdict.PHOTO))
                 for item_id, rec in waiting.items():
                     result = by_id.get(item_id)

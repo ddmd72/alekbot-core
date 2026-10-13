@@ -40,9 +40,10 @@ from ..domain.billing import TokenLedger
 from ..domain.drive_enrichment_calls import ModelReplyStatus
 from ..domain.drive_extraction import DriveModelUnavailable
 from ..domain.exceptions import (
-    BothProvidersUnavailableError, LLMAccountError, LLMClientError, LLMError, LLMFallbackClientError, LLMServerError,
-    LLMTimeoutError, LLMUnavailableError, TranscriptLockedError,
+    BothProvidersUnavailableError, LLMAccountError, LLMClientError, LLMError, LLMFallbackClientError, LLMRefusalError,
+    LLMServerError, LLMTimeoutError, LLMUnavailableError, TranscriptLockedError,
 )
+from ..domain.llm import LLMResponse
 from ..ports.prompt_builder_port import PromptBuilderPort
 from ..utils.logger import logger
 
@@ -101,6 +102,10 @@ def classify_model_error(exc: BaseException, agent_type: str) -> Exception:
         logger.warning(f"[{agent_type}] fallback {exc.provider_name or '?'} refused the input "
                        f"(http={exc.http_status}): {str(exc)[:300]}")
         return DriveModelUnavailable(f"fallback refused (http={exc.http_status})", charges_file=True)
+    if isinstance(exc, LLMRefusalError):
+        # The model declined this content (Claude's safety classifier, HTTP 200): a refusal of the input (m6).
+        logger.warning(f"[{agent_type}] the model declined the input: {str(exc)[:300]}")
+        return DriveInputRefused("declined by the model")
     if isinstance(exc, LLMClientError) and exc.http_status == 413:
         logger.warning(f"[{agent_type}] provider refused the input as too large (http=413): {str(exc)[:300]}")
         return DriveInputTooLarge("refused (http=413)")
@@ -131,6 +136,18 @@ def _charges_file(exc: BaseException) -> bool:
     if isinstance(cause, (LLMServerError, LLMUnavailableError, LLMTimeoutError, asyncio.TimeoutError)):
         return True
     return not isinstance(cause, LLMError)
+
+
+def safety_stop(response: LLMResponse, agent_type: str) -> Exception:
+    """What a Search v2 agent raises for an answer the provider's safety filter stopped: the primary's refusal of the
+    input (DriveInputRefused), or — when the fallback served the call (Gemini returns its block as a response, so
+    LLMFallbackClientError never sees it) — a charged outage retried on the primary after the backoff
+    (§25.4.4 N7, §25.4.6; review M2)."""
+    if response.served_by_fallback:
+        logger.warning(f"[{agent_type}] fallback {response.served_by_fallback} blocked the answer (safety); "
+                       f"a charged attempt, retried on the primary")
+        return DriveModelUnavailable("fallback safety block", charges_file=True)
+    return DriveInputRefused("the provider's safety filter stopped the answer")
 
 
 @dataclass

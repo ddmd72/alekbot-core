@@ -306,9 +306,13 @@ async def check_triage(folder: Path, providers: Sequence[str], sizes: Sequence[s
                                    visible_text=r.photo.visible_text,
                                    objects=[{"name": o.name, "forms": list(o.forms)} for o in r.photo.objects])
                     table.setdefault(r.item_id, {})[f"{provider}/{size}"] = row
-                for item_id in (*batch.capped_item_ids, *batch.refused_item_ids):
-                    table.setdefault(item_id, {})[f"{provider}/{size}"] = {"verdict": "unsettled",
-                                                                          "status": batch.status.value}
+                labels = {**{i: "capped" for i in batch.capped_item_ids},
+                          **{i: "refused" for i in batch.refused_item_ids}}
+                answered = {r.item_id for r in batch.results}
+                for image in images[start:start + TRIAGE_BATCH]:
+                    if image.item_id not in answered:
+                        table.setdefault(image.item_id, {})[f"{provider}/{size}"] = {
+                            "verdict": labels.get(image.item_id, "unsettled"), "status": batch.status.value}
             totals[f"{provider}/{size}"] = {"images": len(images), "calls": meter.calls,
                                             "cost": round(meter.cost, 6), "timing": timing_summary(timer.calls)}
             print(f"[triage] {provider}/{size}: {len(images)} images, {meter.calls} calls, ${meter.cost:.4f}",

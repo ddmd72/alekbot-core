@@ -75,7 +75,7 @@ class ProfileOutput(str, Enum):
 
 
 class TemplateReason(str, Enum):
-    SHORT = "short"                       # under PROFILE_MIN_CHARS: never sent to a model (§25.6)
+    SHORT = "short"                       # a note under PROFILE_MIN_CHARS (§25.3)
     SCRIPT_RENDERED = "script_rendered"   # parser@2's flag (§25.3)
     MACHINE_TEXT = "machine_text"         # a machine_text demotion
 
@@ -111,20 +111,23 @@ TITLE_MAX_CHARS = 200
 WHAT_IT_IS_MAX_CHARS = 300
 _TEMPLATE_MACHINE_TEXT = "machine-generated text"
 _README_NAMES_MARK = "\n\n<<folder contents>>\n"
+_NOTE_KINDS = frozenset({"markdown", "text"})
+LIFE_DOMAINS_MAX = 3            # "one to three life areas" (§25.4.1)
 _README_TAIL_MARK = "\n\n<<…>>\n\n"
 
 
 def policy_of(kind: str, *, text_chars: int, triaged_text: bool = False, machine_text: bool = False,
               script_rendered: bool = False, readme: bool = False) -> KindPolicy:
     """The policy for one file. `text_chars`: its stored text length; `triaged_text`: an image triaged as text and read
-    by the reader (a scan: profiled as a document); `readme`: a collapsed folder with a README excerpt. A file under
-    PROFILE_MIN_CHARS, a script-rendered page and a machine-text demotion get a template, no model call."""
+    by the reader (a scan: profiled as a document); `readme`: a collapsed folder with a README excerpt. A note
+    (Markdown, plain text) under PROFILE_MIN_CHARS, a script-rendered page and a machine-text demotion get a template,
+    no model call; a short document of any other kind (a receipt, a ticket) is profiled (§25.3, review m4)."""
     if kind == "folder":
         return PROFILE_POLICY["folder"] if readme else NO_POLICY
     policy = _DOC if kind == "image" and triaged_text else PROFILE_POLICY.get(kind, NO_POLICY)
     if policy is NO_POLICY:
         return NO_POLICY
-    if machine_text or script_rendered or text_chars < PROFILE_MIN_CHARS:
+    if machine_text or script_rendered or (kind in _NOTE_KINDS and text_chars < PROFILE_MIN_CHARS):
         return TEMPLATE_POLICY
     return policy
 
@@ -181,6 +184,8 @@ def profile_input(record: DriveIndexRecord, chunks: Sequence[_HasSpan], kind: st
         return ProfileInput(head=head, tail=tail,
                             child_names=tuple(n for n in names.split("\n") if n)[:README_CHILD_NAMES])
     text = stored_text(chunks)
+    if not text.strip():
+        return None                           # nothing readable
     policy = record_policy(replace(record, kind=kind), text_chars=len(text.strip()))
     rule = policy.input_rule
     if policy.output in (ProfileOutput.NONE, ProfileOutput.TEMPLATE) or rule is InputRule.NONE:
@@ -263,7 +268,7 @@ def verify(profile: DriveProfile, chunks: Sequence[_HasText], name: str, *,
 
     doc_type = profile.doc_type if profile.doc_type in DOC_TYPES else "other"
     labels += doc_type != profile.doc_type
-    domains = _unique(d for d in profile.life_domains if d in LIFE_DOMAINS)
+    domains = _unique(d for d in profile.life_domains if d in LIFE_DOMAINS)[:LIFE_DOMAINS_MAX]
     labels += sum(1 for d in profile.life_domains if d not in LIFE_DOMAINS)
 
     entities: List[ProfileEntity] = []
@@ -448,9 +453,10 @@ def _occurs(printed: str, haystack: str) -> bool:
 
 
 def _verified_value(kv: KeyValue, terms: Set[str], haystack: str) -> Optional[str]:
-    """The value's normaliser form when one of its number terms is the text's, or when `printed` occurs verbatim
-    (then its first number term, else its casefolded spelling without spaces); None otherwise."""
-    candidates = list(query_terms(kv.canonical)) + list(query_terms(kv.printed))
+    """The value's normaliser form when the maximal number term of its `printed`, else of its `canonical`, is the
+    text's — never a fragment of it (review m7) — or when `printed` occurs verbatim (then its first number term, else
+    its casefolded spelling without spaces); None otherwise."""
+    candidates = [terms_[0] for terms_ in (query_terms(kv.printed), query_terms(kv.canonical)) if terms_]
     hit = next((t for t in candidates if t in terms), None)
     if hit is not None:
         return hit

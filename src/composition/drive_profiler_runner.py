@@ -8,7 +8,8 @@ Public interface:
 
 Per call it builds the agent from the user's configuration (provider, tier, thinking; D7) and bills to
 `request.account_id` (the DriveReaderRunner pattern; no prompt-content store: the file's text stays out of BigQuery).
-Key values are asked for only where `drive_profile.PROFILE_POLICY` gives the kind a full profile. Outcomes
+Key values are asked for only where `drive_profile.policy_of` gives the kind a full profile (a scan read by the reader,
+kind `image`, is a document). Outcomes
 (`ModelReplyStatus`, §25.4.6):
 - ok: the model's profile, unverified (the caller runs `drive_profile.verify`);
 - stopped_at_cap: the reply stopped at the output cap, asked once more with halved list caps, stopped again;
@@ -24,7 +25,8 @@ from typing import Any, Optional
 from ..agents.drive_profiler_agent import AGENT_TYPE, FULL_CAPS, DriveProfilerAgent
 from ..domain.drive_enrichment_calls import ModelReplyStatus, ProfileReply, ProfileRequest
 from ..domain.drive_extraction import DriveModelUnavailable
-from ..domain.drive_profile import PROFILE_POLICY, ProfileOutput
+from ..domain.drive_index_params import PROFILE_MIN_CHARS
+from ..domain.drive_profile import ProfileOutput, policy_of
 from ..infrastructure.drive_model_call import DriveModelCallFailed, reply_status
 from ..ports.document_profiler_port import DocumentProfilerPort
 from ..ports.prompt_builder_port import PromptBuilderPort
@@ -57,8 +59,10 @@ class DriveProfilerRunner(DocumentProfilerPort):
                                             prompt_builder=self._prompt_builder, quota_service=self._quota_service)
         except DriveModelUnavailable:
             return ProfileReply(status=ModelReplyStatus.UNAVAILABLE, profile=None, model="", usd=0.0)
-        policy = PROFILE_POLICY.get(request.kind)
-        key_values = policy is not None and policy.output is ProfileOutput.FULL
+        # the domain policy decides (review M1): an image here is a scan the reader read, profiled as a document
+        policy = policy_of(request.kind, text_chars=PROFILE_MIN_CHARS, triaged_text=request.kind == "image",
+                           readme=request.kind == "folder")
+        key_values = policy.output is ProfileOutput.FULL
         usd = fallback_usd = 0.0
         model = ""
         caps = FULL_CAPS

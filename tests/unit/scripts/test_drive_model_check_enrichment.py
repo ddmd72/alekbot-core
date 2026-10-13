@@ -97,3 +97,26 @@ async def test_triage_records_the_photo_fields(tmp_path):
     assert data["items"]["01"]["openai/large"] == {"verdict": "photo", "description": "a dog on a beach",
                                                    "scene": "beach", "visible_text": "",
                                                    "objects": [{"name": "dog", "forms": ["perro"]}]}
+
+
+async def test_triage_labels_capped_refused_and_unsettled_images(tmp_path):
+    """Review m9: capped and refused images carry their own label; images the reply left unsettled are listed too."""
+    folder = tmp_path / "s0g"
+    folder.mkdir()
+    (folder / "01_large.jpg").write_bytes(b"\xff\xd8\xff\xe0jpeg01")
+    (folder / "02_large.jpg").write_bytes(b"not an image")
+    (folder / "03_large.jpg").write_bytes(b"\xff\xd8\xff\xe0jpeg03")
+
+    def handler(request):
+        if any(p.text and p.text.startswith("Image 3") for p in request.messages[0].parts):
+            return reply({"images": []})
+        return reply(text='{"images": [', finish=__import__("src.domain.llm", fromlist=["FinishReason"])
+                     .FinishReason.MAX_TOKENS)
+
+    out = await check.run(["triage", str(folder), "--providers", "openai", "--sizes", "large"],
+                          registry=_registry(handler), assembly=check.local_assembly_service(_uploads(tmp_path)),
+                          memory=tmp_path / "memory")
+    items = json.loads((out / "triage" / "verdicts.json").read_text())["items"]
+    assert items["02"]["openai/large"]["verdict"] == "refused"
+    assert {items[k]["openai/large"]["verdict"] for k in ("01", "03")} <= {"capped", "unsettled"}
+    assert "unsettled" in {items[k]["openai/large"]["verdict"] for k in ("01", "03")}
