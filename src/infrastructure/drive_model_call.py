@@ -17,7 +17,10 @@ Two outcomes, decided by what the failure says about the input:
   breaker, an account-level 4xx (key, permission, model id), a missing prompt, or anything unexpected. The tick
   defers model work for the user and keeps parsing (§24.8), so a bug never burns a file's attempts. Its
   DriveModelTimedOut case first halves a multi-page PDF window once; a half that times out again is a per-file
-  failure (`error`), not an outage (T-M2b).
+  failure (`error`), not an outage (T-M2b). `charges_file` (F1-1) marks the outages that may still be the file's
+  own — a 5xx, a timeout, an unexpected error: a reader outage that called the model for a file is charged to that
+  file's `model_outages`, which fails it at MAX_ATTEMPTS. A 429, an account-level 4xx, a network failure or an open
+  breaker never charges a file.
 """
 from __future__ import annotations
 
