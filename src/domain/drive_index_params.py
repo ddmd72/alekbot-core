@@ -78,7 +78,7 @@ MODEL_EXTRACT_MAX_PAGES = 200
 MODEL_EXTRACT_PAGES_PER_MONTH = 5_000       # ≈ $3 per user per month on Haiku 5.5 (§24.9)
 MODEL_PAGES_PER_CALL = 10                   # far below the 100k-token price step (§24.3)
 MODEL_IN_FLIGHT = 4
-TRIAGE_BATCH = 16
+TRIAGE_BATCH = 8                            # Search v2 (§25.4.3): enriched triage, 8 photos per call (was 16)
 TRIAGE_IMAGES_PER_MONTH = 20_000
 TRIAGE_THUMBNAIL_SIZE = "large"             # Graph 800 px, chosen after the live check (2026-10-13): captions more
                                             # precise than at 176 px ("medium"). TRIAGE_VERSION is not bumped: images
@@ -92,7 +92,8 @@ MODEL_REREAD_COOLDOWN = timedelta(hours=24)  # a file the reader read is not rea
 
 # -- Search v2 (§25.12; defined by the frozen core, read from P1-P7 on) --------------------------------------------
 # Two names clash with a v1 value still in use: the v2 value carries a _V2 suffix until its part replaces the v1 one
-# (TRIAGE_BATCH: P3 triage v2; WINDOW_CHARS_TOTAL: P6 render). Retired v1 names (§25.12) stay until their readers go.
+# (WINDOW_CHARS_TOTAL: P6 render; TRIAGE_BATCH was replaced by P3). Retired v1 names (§25.12) stay until their readers
+# go.
 PROFILE_MIN_CHARS = 200                     # under it a note gets a template profile and no chunk/hint score (§25.3)
 PROFILE_REFRESH_COOLDOWN = timedelta(hours=24)
 PASSAGE_REFRESH_COOLDOWN = timedelta(hours=24)
@@ -100,7 +101,7 @@ PASSAGE_CHUNKS_PER_CALL = 2
 PASSAGE_MAX_CHUNKS_PER_FILE = 100           # ≈ 240 000 chars of a file get passage hints (D17 acknowledgement)
 PASSAGE_REUSE_SHARE = 0.8                   # share of a new chunk's paragraphs from one old chunk to reuse its hints
 PASSAGE_MIN_SIMILARITY = 0.5                # calibrated (§25.7)
-TRIAGE_BATCH_V2 = 8                         # replaces TRIAGE_BATCH (§25.4.3)
+TRIAGE_BATCH_V2 = TRIAGE_BATCH              # P3 replaced TRIAGE_BATCH with the v2 value (§25.4.3)
 PROFILER_OUTPUT_TOKENS = 4_096              # output caps: schema worst case + reasoning allowance (§25.4.4)
 PASSAGES_OUTPUT_TOKENS = 4_096              # for PASSAGE_CHUNKS_PER_CALL chunks
 TRIAGE_OUTPUT_TOKENS = 8_192                # for TRIAGE_BATCH_V2 photos
