@@ -18,16 +18,17 @@ takes effect at once.
 
 What a file or batch spent before the outage (pages answered, images, calls, cost — all already billed) is counted
 against the month and the tick summary, but it does not end the outage: the backoff keeps doubling. Only model work
-that goes through resets it. <!-- r2: T-M2a -->
+that goes through resets it.
 
 Not outages, because they are about the input, not the model:
 - a provider refusal (413, 400 or 422) of a PDF window halves it down to one page, and a single page still refused
-  is skipped: the rest of the file is indexed `truncated`, `pages_refused` counted <!-- r2: R3-P1 -->;
+  is skipped: the rest of the file is indexed `truncated`, `pages_refused` counted;
 - a refusal of every page of a PDF, or of an image, is terminal: `too_large` when a refusal was 413, else
-  `unsupported` (both `metadata_only`, no retry, no re-bill) <!-- r2: P-m5 -->; in triage the refused image is a
-  photograph without a caption;
+  `unsupported` (both `metadata_only`, no retry, no re-bill); in triage the refused image is a photograph without a
+  caption;
 - a window that timed out is halved once; a half that times out again is a counted per-file failure (`error`), since
-  the model is answering and these pages are too dense for it <!-- r2: T-M2b -->;
+  the model is answering and these pages are too dense for it (a single-page window or an image that times out is
+  an outage);
 - output that stays invalid after the parse retry is a per-file failure that backs off that file alone;
 - a monthly budget that runs out leaves the work `pending` until the month turns.
 

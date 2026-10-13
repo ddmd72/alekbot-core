@@ -70,10 +70,9 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   - **Failures** (`infrastructure/drive_model_call.py`): a 429/5xx/timeout/account error or a missing prompt raises
     `DriveModelUnavailable` (model work waits, nothing else does,
     `decisions/drive_model_outage_defers_model_work.md`), carrying what was spent before it. The reader runner halves
-    a window at the output limit or a timeout once (a half that times out again fails the file <!-- r2: T-M2b -->) and
-    a 413/400/422 down to one page; a single page still refused is skipped (file `truncated`, `pages_refused`
-    <!-- r2: R3-P1 -->), and only a refusal of every page or of an image is terminal (`too_large` / `unsupported`)
-    <!-- r2: P-m5 -->. Calls are billed to the user's account through the runner's quota service. Prompts are
+    a window at the output limit or a timeout once (a half that times out again fails the file, `error`) and a
+    413/400/422 down to one page; a single page still refused is skipped (file `truncated`, `pages_refused`), and only
+    a refusal of every page or of an image is terminal (`too_large` / `unsupported`). Calls are billed to the user's account through the runner's quota service. Prompts are
     owner-uploaded Firestore tokens; no fallback prompt.
 - DocPlanner (ASYNC, PERFORMANCE, intent `create_document`) — LLM → JSON layout spec →
   fire-and-forget delegate to DocGenerator → DeliveryItem("file_upload").
