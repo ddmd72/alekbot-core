@@ -123,7 +123,7 @@ runners in `src/composition/` because services may not import agents.
 - **Content fields (Slice 2+4)** on the same record: `indexed_generation` (the readable chunk generation, or none),
   `index_generation` (the last generation a run started), `indexed_version` (the content version it was read at),
   `chunk_count`, `chunk_space` (the embedding space of its chunks), `extraction_version`, `extracted_by`
-  (`parser@1` / `reader@1`), `truncated`, `text_chars`, `pages_total`, `lead_text` (the first 2 000 characters),
+  (`parser@2` / `reader@1`), `truncated`, `text_chars`, `pages_total`, `lead_text` (the first 2 000 characters),
   `brief` (from the reader), the triage `triage_verdict` / `triage_version` / `triaged_content_version` and `caption`,
   and the run bookkeeping `attempts`, `attempt_started_at`, `dirty_since`, `defer_until` / `defer_priority`. Three
   more bound the model and embedding spend: `model_outages` (reader outages charged to this content version, §4.10),
@@ -167,11 +167,14 @@ runners in `src/composition/` because services may not import agents.
   image dimensions, and video duration and dimensions; the lead text is the first 2 000 characters of an indexed
   document's text (also kept on a `machine_text` demotion). Opaque roots read `repository` (plus the README lead text),
   `hidden folder`, `generated files`, or `generated files (500+ items)` for a dense tree, the count bucketed so a
-  child coming or going does not re-embed it (RFC Δ33). The place name is resolved offline from
-  `src/assets/geo/places_v1.tsv` (GeoNames): the nearest place within 50 km, unless a place within 15 km weighs at
+  child coming or going does not re-embed it (RFC Δ33). The place name is resolved offline from geo table v2,
+  `src/assets/geo/places_v2.tsv` + `countries_v2.tsv` (GeoNames snapshot of 2026-10-13, hashes in
+  `places_v2.sources.json`; build and rules in `src/assets/geo/README.md`): the nearest place within 50 km, unless a place within 15 km weighs at
   least 3× as much and is in the same country or holds the photo inside its own footprint (RFC Δ39;
-  [residuals](../../04_solution_strategy/decisions/drive_place_name_residuals.md)). A card is re-embedded only when
-  its hash changes.
+  [residuals](../../04_solution_strategy/decisions/drive_place_name_residuals.md)). Search v2 (`GEO_TABLE_VERSION` 2,
+  RFC §25.4.3): `PlaceIndex.place()` also returns the place forms — the place's names in en, es, fr, uk, ru, its
+  country's names and the nearest place of 100 000+ people within 50 km — which P5 writes as `place_forms` with the
+  stamp (built, not yet written on records). A card is re-embedded only when its hash changes.
 - **Name keys** (`drive_name_keys.py`): NFC + casefold tokens split on any Unicode punctuation (curly quotes, dashes,
   `%` included), with variant keys for the accent-stripped Latin spelling, the Russian-style and the Ukrainian national
   transliterations, and trigrams (RFC Δ38). `resume` finds `Résumé.pdf`, `kyiv` finds `Київ.jpg`.
@@ -306,7 +309,15 @@ image `(reader)`, every other admitted kind `(parser)`.
   directory; one child at a time. Readers (`src/adapters/drive_parser/readers.py`): pdfminer.six for PDF text, laid
   out page by page and stopped once `MAX_TEXT_CHARS` is reached (`truncated` when a page was left; pypdf for the
   page count, walked from the page tree, and encryption);
-  markitdown's allowlisted converters for DOCX, PPTX, EPUB, MSG and HTML; openpyxl (XLSX) and xlrd (XLS) as Markdown
+  markitdown's allowlisted converters for DOCX, PPTX, EPUB and MSG; HTML by parser@2 (`drive_parser/html_text.py`,
+  RFC §25.3, Search v2): one BeautifulSoup parse, the content element converted in place with markdownify — the first
+  visible `<main>`, else the largest `<article>` holding half the body's text, else the body without its top-level
+  header, footer, nav and aside; hidden elements, scripts and option lists dropped; blocks of in-page links dropped
+  (an in-page link in a sentence keeps its text); external links as text plus domain; title, description, `og:*` and
+  language as plain lines at the head; `script_rendered` on the outcome for a page with a `<script>` and under 500
+  visible characters. A Markdown or text file is read as HTML only with `<!DOCTYPE`/`<html`/`<head`/`<body` or tag
+  names over 30 % of it, both outside code (badge READMEs, quoted HTML and `List<String>` stay as written), and keeps
+  its text if that path fails; openpyxl (XLSX) and xlrd (XLS) as Markdown
   tables of at most 1 024 columns and 5 000 rows per sheet, `truncated` when a value lies past either bound (for
   XLSX, a cell holding only a style, or the sheet's declared dimension, does not count); charset detection for text
   kinds; cue text for VTT/SRT; `striprtf`; the stdlib `email` parser; ODF `content.xml` through `defusedxml`. A
@@ -361,7 +372,7 @@ image `(reader)`, every other admitted kind `(parser)`.
     the file's — charges it to the file (`outage_charged`, §4.10).
 - **Outcome** (`outcome_step` in `src/domain/drive_index_run.py`): `text` goes on; `no_text`, `unsupported`,
   `too_large`, `encrypted` demote; `timeout`, `memory`, `error` retry; `budget_exhausted` waits for next month. See
-  the table in §4.10. `extracted_by` records the link that decided (`parser@1` or `reader@1`), so a new version of
+  the table in §4.10. `extracted_by` records the link that decided (`parser@2` or `reader@1`), so a new version of
   that link re-reads exactly the files it decided (§4.12).
 
 ### Step 5 (images) — triage
@@ -1032,7 +1043,7 @@ item id is the one in the file's `drive:` ref) answers most cases on its own:
 
 Then the indexer's logs (`make fetch-logs-indexer K=…`, grep the item id):
 - `[DriveIndex] run user=… item=<id> outcome=indexed|failed|demoted|retried|deferred state=… reason=…
-  extractor=parser@1|reader@1 attempts=… pages=<sent>/<total> refused=… truncated=…` — one INFO line per index
+  extractor=parser@2|reader@1 attempts=… pages=<sent>/<total> refused=… truncated=…` — one INFO line per index
   run, held and deferred runs included;
 - `[DriveReader] user=… item=<id> kind=… status=… pages=… calls=… cost=… truncated=… refused=…` — what the reader
   did with it;

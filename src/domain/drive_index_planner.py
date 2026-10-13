@@ -254,6 +254,8 @@ def change_from_record(rec: DriveIndexRecord) -> DriveChange:
 
 
 def _place(change: DriveChange, existing: Optional[DriveIndexRecord], place_of: PlaceOf) -> Tuple[Optional[str], int]:
+    # Search v2 (P5): PlaceOf becomes PlaceIndex.place and `place_forms` is written here with the GEO_TABLE_VERSION
+    # stamp; the early-return below keeps a stored place, so the stamp must never be written without its forms.
     loc = photo_location(change.facets)
     if loc is None:
         return None, 0

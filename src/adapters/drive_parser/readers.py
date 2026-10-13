@@ -13,9 +13,10 @@ text kinds, VTT/SRT reduced to cue text; `striprtf` for RTF; the stdlib `email` 
 through `defusedxml`; XLSX/XLS/CSV/ODS as Markdown tables capped at MAX_SHEET_ROWS rows per sheet (the chunker
 repeats the header row, §8.3). Password-protected PDF/Office/EPUB/ODF → `encrypted`.
 
-Parser@2 (§25.3, D23): HTML pages, and Markdown or text files that are HTML (a tag share over 5 %), go through
-`html_text.html_page_text` — content landmarks, no navigation or in-page links, metadata lines at the head — and a
-page whose text is under 1 % of its bytes comes back `script_rendered`.
+Parser@2 (§25.3, D23, review thresholds): HTML pages, and Markdown or text files that are HTML (`html_text.text_is_html`:
+a document marker or tags over 30 % outside code), go through `html_text.html_page_text` — the content landmark,
+no top-level boilerplate or in-page link blocks, metadata lines at the head — and a page with a <script> and under
+500 visible characters comes back `script_rendered`. A text kind whose HTML path fails keeps its decoded text.
 
 Public interface:
     MARKITDOWN_CONVERTERS
@@ -41,7 +42,7 @@ from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Mapping, Name
 from typing import Iterator, Union
 
 from src.adapters.drive_parser.child import is_memory_failure
-from src.adapters.drive_parser.html_text import HTML_TAG_SHARE_MIN, html_page_text, tag_share
+from src.adapters.drive_parser.html_text import html_page_text, text_is_html
 from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus, PdfSplitFailed, failure_label
 from src.domain.drive_index_params import MAX_SHEET_ROWS, MAX_TEXT_CHARS
 from src.utils.document_hardening import ArchiveTooLargeError, check_zip_container
@@ -303,17 +304,23 @@ def _read_converter(path: str, kind: str) -> _Read:
 
 def _read_html(path: str, kind: str) -> _PageRead:
     data, cut = _read_prefix(path)
-    text, script_rendered = html_page_text(decode_text(data, cut), len(data))
+    text, script_rendered = html_page_text(decode_text(data, cut))
     return _PageRead(text, 0, cut, script_rendered)
 
 
 def _read_text(path: str, kind: str) -> Union[_Read, _PageRead]:
-    """Text as decoded; a Markdown or text file that is an HTML page (tags over HTML_TAG_SHARE_MIN of it) goes
-    through the HTML converter whole (§25.3, parser@2)."""
+    """Text as decoded; a Markdown or text file that is HTML (`text_is_html`) goes through the HTML converter whole
+    (§25.3, parser@2). If that path fails, the file keeps its decoded text, as v1 stored it (review m3); a memory
+    failure still ends the child with its memory code."""
     data, cut = _read_prefix(path)
     text = decode_text(data, cut)
-    if kind in _HTML_CAPABLE_TEXT_KINDS and tag_share(text) > HTML_TAG_SHARE_MIN:
-        page, script_rendered = html_page_text(text, len(data))
+    if kind in _HTML_CAPABLE_TEXT_KINDS and text_is_html(text):
+        try:
+            page, script_rendered = html_page_text(text)
+        except Exception as exc:  # the HTML reading is an improvement over the text, never a new way to fail
+            if is_memory_failure(exc):
+                raise
+            return text, 0, cut
         return _PageRead(page, 0, cut, script_rendered)
     return text, 0, cut
 

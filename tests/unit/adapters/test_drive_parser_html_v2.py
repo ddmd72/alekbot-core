@@ -8,7 +8,7 @@ import re
 import pytest
 
 from src.adapters.drive_parser.html_text import (
-    HTML_TAG_SHARE_MIN, SCRIPT_RENDERED_TEXT_SHARE, html_page_text, tag_share,
+    HTML_TAG_SHARE_MIN, SCRIPT_RENDERED_TEXT_MAX, html_page_text, tag_share, text_is_html,
 )
 from src.adapters.drive_parser.readers import read_content
 from src.domain.drive_extraction import ExtractionStatus
@@ -35,6 +35,9 @@ _NEWSLETTER = """<!DOCTYPE html>
   <div id="content">
     <h1>Ferry timetable changes</h1>
     <p>From the first of May the morning ferry leaves at 07:40 instead of 07:15.</p>
+    <p>The evening ferry keeps its timetable, and the night boat runs on Fridays and Saturdays only. Tickets bought
+      before May stay valid on every crossing until the end of June; season passes are renewed at the harbour office,
+      which now opens at eight in the morning on weekdays and at ten on Saturdays.</p>
     <p>Contents: <a href="#market">Market hall</a></p>
     <h2 id="market">The new market hall</h2>
     <p>The market hall opens on Saturday. <a href="https://www.example.org/market/opening?utm=1">Read the
@@ -88,8 +91,8 @@ def _read(path, kind):
 # Tag share and thresholds
 # =============================================================================
 
-def test_thresholds_are_the_rfc_values():
-    assert HTML_TAG_SHARE_MIN == 0.05 and SCRIPT_RENDERED_TEXT_SHARE == 0.01
+def test_thresholds_are_the_review_values():
+    assert HTML_TAG_SHARE_MIN == 0.30 and SCRIPT_RENDERED_TEXT_MAX == 500
 
 
 def test_tag_share_of_plain_markdown_is_zero():
@@ -104,8 +107,8 @@ def test_script_and_style_bodies_count_as_markup():
 
 
 def test_tag_share_of_a_page_is_high_and_bounded():
-    share = tag_share(_NEWSLETTER)
-    assert 0.3 < share <= 1.0
+    share = tag_share(_NEWSLETTER)                            # tag names only since review M1; the doctype decides
+    assert 0.0 < share <= 1.0 and text_is_html(_NEWSLETTER)
     assert tag_share("") == 0.0
 
 
@@ -151,7 +154,7 @@ def test_newsletter_menu_header_footer_and_aside_are_dropped(tmp_path):
 def test_in_page_links_are_dropped(tmp_path):
     text = _read(_write(tmp_path, "issue.html", _NEWSLETTER), "html").text
     assert "Skip to content" not in text and "Back to top" not in text
-    assert "Contents: Market hall" not in text and "(#" not in text
+    assert "Contents: Market hall" in text and "(#" not in text       # in a sentence the text stays (review m5)
 
 
 def test_external_links_keep_their_text_and_domain_relative_links_their_text(tmp_path):
@@ -166,10 +169,11 @@ def test_images_become_their_alt_text(tmp_path):
     assert "Market hall facade" in text and "data:image" not in text and "![" not in text
 
 
-def test_main_is_kept_without_its_navigation(tmp_path):
+def test_main_is_kept_with_its_own_navigation(tmp_path):
     text = _read(_write(tmp_path, "soup.html", _page_with_main()), "html").text
     assert "Simmer the lentils for 25 minutes." in text and "Chef tip: add cumin." in text
-    for gone in ("Site header words", "Top nav words", "Breadcrumb words", "Footer words"):
+    assert "Breadcrumb words" in text                         # §25.3 keeps <main> whole (review M3)
+    for gone in ("Site header words", "Top nav words", "Footer words"):
         assert gone not in text
 
 
@@ -205,7 +209,7 @@ def test_og_values_equal_to_title_or_description_are_not_repeated():
     page = ("<html><head><title>Same</title><meta name='description' content='Desc'>"
             "<meta property='og:title' content='Same'><meta property='og:description' content='Desc'>"
             "</head><body><p>" + "Body text. " * 20 + "</p></body></html>")
-    text, flagged = html_page_text(page, len(page.encode()))
+    text, flagged = html_page_text(page)
     assert text.splitlines()[:2] == ["Title: Same", "Description: Desc"]
     assert "og:" not in text and flagged is False
 
@@ -234,7 +238,7 @@ def test_a_script_only_markdown_file_is_flagged_too(tmp_path):
 
 def test_a_language_alone_is_not_text():
     page = "<html lang='uk'><body><div id='root'></div></body></html>"
-    assert html_page_text(page, len(page.encode())) == ("", True)
+    assert html_page_text(page) == ("", False)              # no <script>: not script-rendered (review M2)
 
 
 def test_a_script_only_page_without_metadata_is_no_text(tmp_path):
@@ -249,7 +253,7 @@ def test_an_ordinary_page_is_not_flagged(tmp_path):
 def test_the_share_is_measured_on_the_body_text_not_the_metadata_lines():
     page = ("<html><head><title>" + "T" * 400 + "</title><script>" + "x" * 29_000 + "</script></head>"
             "<body><p>Hi</p></body></html>")
-    text, flagged = html_page_text(page, len(page.encode()))
+    text, flagged = html_page_text(page)
     assert flagged is True and text.endswith("Hi")
 
 
