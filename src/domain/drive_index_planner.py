@@ -267,7 +267,11 @@ def _build(change: DriveChange, cls: Classification, existing: Optional[DriveInd
         if not (existing is not None and repository_root(existing) and _repository(change, cls)):
             base = replace(base, lead_text="", readme_pending=False, readme_item_id=None, readme_version="")
     if admission(cls.kind) is not Admission.TRIAGE:
+        # a photograph's verdict and caption live together: one dropped without the other would keep the verdict
+        # and lose the caption for good, so an image that comes back to triage is triaged again (§24.5, T-m3)
         base = replace(base, caption="")
+        if base.triage_verdict is TriageVerdict.PHOTO:
+            base = replace(base, triage_verdict=None, triage_version=0, triaged_content_version="")
     if cls.state is not RecordState.PENDING:
         # no content work is left: its quiet period, deferral and started attempt end with it
         base = replace(base, dirty_since=None, defer_until=None, defer_priority=None, attempt_started_at=None)
