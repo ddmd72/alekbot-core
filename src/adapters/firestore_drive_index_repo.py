@@ -711,7 +711,8 @@ def _store_errors(method: Callable[..., Any]) -> Callable[..., Any]:
         except _MISSING_INDEX as exc:
             logger.error(f"[DriveIndex] index store {method.__name__} failed, an index is missing or building: "
                          f"{type(exc).__name__}: {exc}")
-            raise DriveIndexStoreUnavailable(f"{method.__name__}: {type(exc).__name__}") from exc
+            # the provider's message names the index to create (the smoke check and the deploy step print it)
+            raise DriveIndexStoreUnavailable(f"{method.__name__}: {type(exc).__name__}: {exc}") from exc
     return run
 
 
