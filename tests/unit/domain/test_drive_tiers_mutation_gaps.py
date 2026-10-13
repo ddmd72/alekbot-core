@@ -136,15 +136,19 @@ def _spread_file(n: int):
     return file, cs, {cid: text}
 
 
+def test_the_subset_search_cap_is_ten_optional_words():
+    assert _SUBSET_SEARCH_MAX == 10
+
+
 def test_up_to_the_cap_the_best_subset_of_words_is_put_in_the_chunk():
-    file, cs, texts = _spread_file(_SUBSET_SEARCH_MAX)
+    file, cs, texts = _spread_file(10)
     match = classify(file, cs, allowances(cs, {c.word: 1 for c in cs}, 100), texts, {})
     assert match.chunk is not None
-    assert sum(1 for cv in match.covers if cv.where == WHERE_CHUNK) == _SUBSET_SEARCH_MAX - 1
+    assert sum(1 for cv in match.covers if cv.where == WHERE_CHUNK) == 9
 
 
 def test_past_the_cap_only_all_or_none_is_tried():
-    file, cs, texts = _spread_file(_SUBSET_SEARCH_MAX + 1)
+    file, cs, texts = _spread_file(11)
     match = classify(file, cs, allowances(cs, {c.word: 1 for c in cs}, 100), texts, {})
     assert match.chunk is None and match.tier is MatchTier.LABELLED
 
@@ -164,6 +168,6 @@ def test_a_flat_pool_uses_the_minimum_spread():
 
 
 def test_the_pool_keeps_the_best_files_ties_by_item_id():
-    sims = {f"f{i:03d}": 0.5 for i in range(MEANING_POOL + 1)}
+    sims = {f"f{i:03d}": 0.5 for i in reversed(range(MEANING_POOL + 1))}   # inserted last id first
     z = source_scores(sims)
     assert len(z) == MEANING_POOL and f"f{MEANING_POOL:03d}" not in z and "f000" in z

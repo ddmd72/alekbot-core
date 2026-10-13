@@ -56,9 +56,10 @@ def test_a_negative_balance_and_an_overspent_month_clamp_at_zero():
     assert ep.available_usd(ctx(initial_balance_usd=2.0, month_usd={"profile": 999.0}), "profile") == 2.0
 
 
-@pytest.mark.parametrize("next_index,generation,chunks", [(2, 1, 2), (4, 1, 1), (0, 9, 2), (5, 1, 1)])
-def test_the_passage_estimate_is_the_next_calls_chunks(next_index, generation, chunks):
-    rec = doc(passages_next_index=next_index, passages_generation=generation)
+@pytest.mark.parametrize("next_index,generation,chunks,total", [(2, 1, 2, 5), (4, 1, 1, 5), (0, 9, 2, 5),
+                                                                (5, 1, 1, 5), (3, 9, 1, 1)])
+def test_the_passage_estimate_is_the_next_calls_chunks(next_index, generation, chunks, total):
+    rec = doc(passages_next_index=next_index, passages_generation=generation, chunk_count=total)
     assert ep.passages_estimate(rec) == pytest.approx(PASSAGE_CHUNK_USD_ESTIMATE * chunks)
 
 
@@ -220,3 +221,14 @@ def test_recovery_forgets_the_streak():
                                           ([0, 0], [1, 1], 0.0), ([1, 0], [0, 0], 0.0), ([1, 1], [1, 0], 0.7071068)])
 def test_similarity(a, b, expected):
     assert ep.similarity(a, b) == pytest.approx(expected)
+
+
+def test_with_a_closed_build_a_class_has_exactly_its_cap_and_an_unknown_class_nothing():
+    closed = ctx(initial_balance_usd=0.0, initial_open=False)
+    assert ep.available_usd(closed, "profile") == pytest.approx(USD_CAPS["profile"])
+    assert ep.available_usd(closed, "nope") == 0.0
+
+
+def test_a_ready_profile_with_a_leftover_hold_key_is_not_settled():
+    rec = doc()
+    assert not ep.profile_settled(replace(rec, profile_hold_version=ep.profile_hold_key(rec)), ctx())

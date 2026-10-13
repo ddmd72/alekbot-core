@@ -121,3 +121,9 @@ def test_one_whole_key_passes_the_floor_and_counts_every_shared_key():
     assert name_match_v2(["w:rome"], ["w:rome"]) == 1
     assert name_match_v2(["w:rome", "t:rom"], ["w:rome", "t:rom", "t:xyz"]) == 2
     assert name_match_v2(["w:rome"], ["w:paris"]) is None
+
+
+@pytest.mark.parametrize("query,words", [("15.03.2024март", ["15.03.2024", "март"]),
+                                         ("March 2024abc", ["march 2024", "abc"])])
+def test_a_word_right_after_a_number_is_not_consumed_by_it(query, words):
+    assert [c.word for c in query_concepts(query).concepts] == words
