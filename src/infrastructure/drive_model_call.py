@@ -23,16 +23,25 @@ Two outcomes, decided by what the failure says about the input:
   own — a 5xx, a timeout, an unexpected error: a reader outage that called the model for a file is charged to that
   file's `model_outages`, which fails it at MAX_ATTEMPTS. A 429, an account-level 4xx, a network failure or an open
   breaker never charges a file.
+
+Search v2 (§25.4.4, §25.4.6): the profiler, passages and triage v2 runners report every outcome as a
+`ModelReplyStatus` (`reply_status`), never as an exception. A refusal raised by the FALLBACK
+(`LLMFallbackClientError`) is a charged outage, retried on the primary after the backoff, never a refusal of the input;
+output still invalid after the parse retry is `DriveOutputInvalid` (charged, no backoff). `ledger_spend` splits an
+execution's cost into the model that served, the whole cost and the fallback's share in dollars.
 """
 from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from typing import Optional
 
+from ..domain.billing import TokenLedger
+from ..domain.drive_enrichment_calls import ModelReplyStatus
 from ..domain.drive_extraction import DriveModelUnavailable
 from ..domain.exceptions import (
-    BothProvidersUnavailableError, LLMAccountError, LLMClientError, LLMError, LLMServerError, LLMTimeoutError,
-    LLMUnavailableError, TranscriptLockedError,
+    BothProvidersUnavailableError, LLMAccountError, LLMClientError, LLMError, LLMFallbackClientError, LLMServerError,
+    LLMTimeoutError, LLMUnavailableError, TranscriptLockedError,
 )
 from ..ports.prompt_builder_port import PromptBuilderPort
 from ..utils.logger import logger
@@ -66,6 +75,11 @@ class DriveInputRefused(DriveModelCallFailed):
     DriveModelCallFailed (an adapter bug is not the file's)."""
 
 
+class DriveOutputInvalid(DriveModelCallFailed):
+    """The answer stayed unusable after the parse retry (and any correction turn): charged, no backoff (§25.4.6,
+    `invalid`). The v1 reader and triage raise the plain DriveModelCallFailed for the same case."""
+
+
 class DriveModelTimedOut(DriveModelUnavailable):
     """The call ran past its timeout. An outage, except that the reader first halves a multi-page window once — ten
     dense pages may simply take longer than the timeout — and a half that times out again fails the file (§24.3,
@@ -81,6 +95,12 @@ def classify_model_error(exc: BaseException, agent_type: str) -> Exception:
         # Credit balance or billing: its 400 is not a refusal of this input (§24.14) — an outage for everyone.
         logger.error(f"[{agent_type}] provider rejected the account (http={exc.http_status}): {str(exc)[:300]}")
         return DriveModelUnavailable(f"{type(exc).__name__}: {str(exc)[:200]}", charges_file=False)
+    if isinstance(exc, LLMFallbackClientError):
+        # The fallback refused what the primary could not serve: not the primary's verdict on this input — a charged
+        # attempt, retried on the primary after the backoff (§25.4.4 N7, §25.4.6).
+        logger.warning(f"[{agent_type}] fallback {exc.provider_name or '?'} refused the input "
+                       f"(http={exc.http_status}): {str(exc)[:300]}")
+        return DriveModelUnavailable(f"fallback refused (http={exc.http_status})", charges_file=True)
     if isinstance(exc, LLMClientError) and exc.http_status == 413:
         logger.warning(f"[{agent_type}] provider refused the input as too large (http=413): {str(exc)[:300]}")
         return DriveInputTooLarge("refused (http=413)")
@@ -119,12 +139,55 @@ class CallCounter:
     calls: int = 0
 
 
-def with_usage(exc: Exception, counter: CallCounter, cost: float) -> Exception:
+def with_usage(exc: Exception, counter: CallCounter, cost: float, *, fallback_cost: float = 0.0,
+               model: str = "") -> Exception:
     """`exc` (DriveModelCallFailed or DriveModelUnavailable) with the calls made and their cost from the ledger, so
-    the runner counts what a failed read or batch spent."""
+    the runner counts what a failed read or batch spent; Search v2 agents add the fallback's share and the model that
+    served (`model_fallback_cost`, `model_name`)."""
     setattr(exc, "model_calls", counter.calls)
     setattr(exc, "model_cost", cost)
+    setattr(exc, "model_fallback_cost", fallback_cost)
+    setattr(exc, "model_name", model)
     return exc
+
+
+def reply_status(exc: BaseException) -> ModelReplyStatus:
+    """The §25.4.6 outcome of a Search v2 agent failure (after `classify_model_error` and `with_usage`):
+    - a refusal of the input by the primary (HTTP 400/413/422, a safety stop): `refused`;
+    - output still invalid after the parse retry, or another per-input failure (a refusal raised before any HTTP
+      exchange): `invalid` — charged, no backoff;
+    - an outage that may be this input's (a 5xx, a timeout, an unexpected error, the fallback's refusal) after a call
+      was made: `failed` — charged, and a backoff for the agent type;
+    - every other outage (429, network, breaker, account 4xx, missing key or prompt, nothing sent): `unavailable`."""
+    if isinstance(exc, (DriveInputRefused, DriveInputTooLarge)):
+        return ModelReplyStatus.REFUSED
+    if isinstance(exc, DriveModelCallFailed):
+        return ModelReplyStatus.INVALID
+    if isinstance(exc, DriveModelUnavailable):
+        return (ModelReplyStatus.FAILED if exc.charges_file and getattr(exc, "model_calls", 0) > 0
+                else ModelReplyStatus.UNAVAILABLE)
+    return ModelReplyStatus.FAILED if getattr(exc, "model_calls", 0) > 0 else ModelReplyStatus.UNAVAILABLE
+
+
+@dataclass(frozen=True)
+class ModelSpend:
+    """One execution's cost: the model that served (the primary when it answered any call, else the fallback), the
+    whole cost and the fallback's share, in USD as the ledger prices each model (§25.4.4, §25.4.5)."""
+    model: str
+    usd: float
+    fallback_usd: float
+
+
+def ledger_spend(ledger: TokenLedger, *, primary_model: str, fallback_model: Optional[str]) -> ModelSpend:
+    fallback_usd = 0.0
+    primary_served = False
+    for model, leg in ledger.by_model.items():
+        if fallback_model and model == fallback_model:
+            fallback_usd += leg.cost(model)
+        elif leg.total_tokens:
+            primary_served = True
+    served = primary_model if primary_served or not fallback_usd else (fallback_model or primary_model)
+    return ModelSpend(model=served, usd=ledger.cost(), fallback_usd=round(fallback_usd, 6))
 
 
 def _timed_out(exc: BaseException) -> bool:

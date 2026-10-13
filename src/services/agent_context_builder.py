@@ -214,6 +214,23 @@ class AgentProviderStrategy:
             "fallback": "gemini",
             "fallback_tier": PerformanceTier.BALANCED,
         },
+        # Search v2 enrichment (USER_DRIVE_INDEXING_RFC §25.4.4): the profiler (one profile per text file) and the
+        # passage hints (doc2query) resolve like the reader without vision — OpenAI gpt-6-luna at ECO by default, the
+        # Claude switch, Gemini Flash (BALANCED) as the fallback only.
+        "drive_profiler": {
+            "default_provider": "openai",
+            "allowed_providers": ["claude", "openai"],   # gemini is the fallback only, never a primary
+            "required_capabilities": [],
+            "fallback": "gemini",
+            "fallback_tier": PerformanceTier.BALANCED,
+        },
+        "drive_passages": {
+            "default_provider": "openai",
+            "allowed_providers": ["claude", "openai"],   # gemini is the fallback only, never a primary
+            "required_capabilities": [],
+            "fallback": "gemini",
+            "fallback_tier": PerformanceTier.BALANCED,
+        },
         # Image generation: text-LLM axis (prompt-crafting call) — see
         # resolve_image_generation_context() below for the image-rendering axis,
         # which uses the SAME resolved provider name against a separate registry.
