@@ -29,7 +29,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 from ..domain import drive_index_policy as policy
-from ..domain.drive_card import card_eligible, card_hash, card_text, repository_root
+from ..domain.drive_card import card_eligible, card_hash, card_text, repository_root, structurally_card_eligible
 from ..domain.drive_chunker import chunk_text
 from ..domain.drive_content_terms import content_terms
 from ..domain.drive_extraction import (
@@ -188,6 +188,15 @@ class _Budget:
 
     def maintenance_allowed(self) -> bool:
         return self.maintenance_s < MAINTENANCE_SHARE * TICK_START_BUDGET.total_seconds()
+
+
+@dataclass
+class _CardSlots:
+    """Card headroom during one pass of a due class (§5.4; R3 F1-2), decided before a record's content or triage
+    work. `carded` is read once per pass; `admitted` counts the cardless records this pass let through, whose cards
+    come at the end of the pass."""
+    carded: Optional[int] = None
+    admitted: int = 0
 
 
 @dataclass
@@ -663,12 +672,14 @@ class DriveIndexingService:
     async def _work_class(self, user_id: str, state: DriveSyncState, recs: List[DriveIndexRecord], now: datetime,
                           budget: _Budget, summary: Dict[str, int], models: _Models, more_beyond: bool) -> bool:
         """Content and triage come before the card of the same record, so a read file is carded once, with its
-        lead text, brief or caption (§8.5); a card whose content cannot start now is embedded at once."""
+        lead text, brief or caption (§8.5); a card whose content cannot start now is embedded at once. Card headroom
+        is decided before both: a record the cap would refuse a card is capped instead of read (§5.4; R3 F1-2)."""
         ctx = self._ctx(user_id, state, now)
         cards: List[DriveIndexRecord] = []
         images: List[DriveIndexRecord] = []
         progressed = False
         page_ids = {r.item_id for r in recs}
+        slots = _CardSlots()
         for stale in recs:
             # An earlier step of this batch may have changed or removed it: always work the stored version.
             rec_or_none = (await self._repo.get_records(user_id, [stale.item_id])).get(stale.item_id)
@@ -692,6 +703,12 @@ class DriveIndexingService:
                 progressed |= await self._readme_step(user_id, rec, ctx, budget, summary)
             elif rec.has_card and not card_eligible(rec):
                 await self._commit(user_id, [without_card(rec, now)], set())
+                progressed = True
+            elif ((content_now or (triage_due(rec, now) and quiet_over(rec, now)))
+                  and not await self._card_slot(user_id, rec, slots)):
+                # no card headroom for it: its reading would never be found, so it waits for a release (R3 F1-2)
+                await self._commit(user_id, [capped(rec, now)], set(), before={rec.item_id: rec})
+                summary["capped"] = summary.get("capped", 0) + 1
                 progressed = True
             elif content_now and await self._index_step(user_id, rec, ctx, budget, summary, models):
                 progressed = True
@@ -886,10 +903,11 @@ class DriveIndexingService:
             if not rec.has_card and carded >= MAX_CARD_RECORDS_PER_USER:
                 victim = await self._repo.lowest_ranked_carded(user_id)
                 if victim is not None and victim.card_rank > rec.card_rank:
-                    await self._commit(user_id, [capped(victim, now)], set())
+                    # the evicted record's chunks go with its card (drops_readable, R3 F1-2)
+                    await self._commit(user_id, [capped(victim, now)], set(), before={victim.item_id: victim})
                     evicted += 1
                 else:
-                    await self._commit(user_id, [capped(rec, now)], set())
+                    await self._commit(user_id, [capped(rec, now)], set(), before={rec.item_id: rec})
                     continue
             elif not rec.has_card:
                 carded += 1
@@ -944,6 +962,20 @@ class DriveIndexingService:
             logger.warning(f"[DriveIndex] card embedding failed for {user_id[:8]}: "
                            f"{type(systemic).__name__}: {systemic}; {len(vectors)} cards kept, ending the tick")
             raise systemic
+
+    async def _card_slot(self, user_id: str, rec: DriveIndexRecord, slots: _CardSlots) -> bool:
+        """Whether `rec` will hold a card once its content or triage is done (§5.4): it has one, there is headroom
+        (counting the cardless records this pass already let through), or it outranks the lowest-ranked carded record,
+        which _embed_cards then evicts. Decided before any model or embedding work (R3 F1-2)."""
+        if rec.has_card or not structurally_card_eligible(rec):
+            return True
+        if slots.carded is None:
+            slots.carded = await self._repo.count_carded(user_id)
+        if slots.carded + slots.admitted < MAX_CARD_RECORDS_PER_USER:
+            slots.admitted += 1
+            return True
+        victim = await self._repo.lowest_ranked_carded(user_id)
+        return victim is not None and victim.card_rank > rec.card_rank
 
     async def _release_card_cap(self, user_id: str, now: datetime, summary: Dict[str, int]) -> None:
         """Headroom releases capped records best rank first (§5.4: a document before a non-document)."""

@@ -519,8 +519,9 @@ def _held(rec: DriveIndexRecord, now: Optional[datetime]) -> bool:
 def content_due(rec: DriveIndexRecord, now: Optional[datetime] = None) -> bool:
     """An index run is due (§8.1): pending, its content admitted (a content kind, or an image with a valid `text`
     verdict), and not yet indexed at this content version under the current extraction rules. A crashed or
-    retried run is still due; an indexed record is not. With `now`: and not deferred past `now`."""
-    if rec.state is not RecordState.PENDING or _indexed_now(rec) or _held(rec, now):
+    retried run is still due; an indexed record is not. With `now`: and not deferred past `now`. A card-capped record
+    holds its content work until released: search never shows content without a card (§5.4; R3 F1-2)."""
+    if rec.state is not RecordState.PENDING or rec.card_capped or _indexed_now(rec) or _held(rec, now):
         return False
     adm = admission(rec.kind)
     return adm is Admission.CONTENT or (adm is Admission.TRIAGE
@@ -529,8 +530,8 @@ def content_due(rec: DriveIndexRecord, now: Optional[datetime] = None) -> bool:
 
 def triage_due(rec: DriveIndexRecord, now: Optional[datetime] = None) -> bool:
     """An image waits for a verdict at the current TRIAGE_VERSION on its content version (§24.5). With `now`: and
-    not deferred past `now`."""
-    return (rec.state is RecordState.PENDING and admission(rec.kind) is Admission.TRIAGE
+    not deferred past `now`. A card-capped image is not triaged until released (§5.4; R3 F1-2)."""
+    return (rec.state is RecordState.PENDING and not rec.card_capped and admission(rec.kind) is Admission.TRIAGE
             and valid_verdict(rec, rec.content_version) is None and not _held(rec, now))
 
 
@@ -618,16 +619,20 @@ def without_card(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
 
 
 def capped(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
-    """No card headroom for this record (§5.4): the card is dropped and withheld; scope, state and reason stay what
-    the structure says, so a capped repository stays opaque. A deleting record is left alone."""
+    """No card headroom for this record (§5.4): the card is dropped and withheld; scope and reason stay what the
+    structure says, so a capped repository stays opaque. A deleting record is left alone. Content without a card is
+    never shown, so the readable generation goes too (the caller collects it, drops_readable) and stops counting
+    toward the chunk cap; an indexed record is pending again, its content and triage held until released (R3 F1-2)."""
     if rec.state is RecordState.DELETING:
         return rec
-    return schedule(replace(rec, card_capped=True, card_refused=False, card_hash=None, has_card=False), now,
+    state = RecordState.PENDING if rec.state is RecordState.INDEXED else rec.state
+    return schedule(replace(rec, card_capped=True, card_refused=False, card_hash=None, has_card=False, state=state,
+                            indexed_generation=None, chunk_space="", chunk_reembed_pending=False), now,
                     first_seen=False)
 
 
 def released(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
-    """Card headroom came back (§5.4): the cap is lifted and the card is due."""
+    """Card headroom came back (§5.4): the cap is lifted, and the content or triage it held is due before the card."""
     return schedule(replace(rec, card_capped=False), now, first_seen=True)
 
 
