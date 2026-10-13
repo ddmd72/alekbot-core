@@ -1,0 +1,194 @@
+[
+ {
+  "id": "v2-incident-rome",
+  "set": "positive",
+  "category": "find",
+  "lang": "en",
+  "text": "Find everything I have about Rome.",
+  "expect": "none",
+  "incident": true,
+  "answer_must_include": [
+   [
+    "booking",
+    "бронь",
+    "hotel",
+    "отел"
+   ],
+   [
+    "photo",
+    "фото",
+    "picture",
+    "IMG_51"
+   ]
+  ],
+  "note": "Search v2 incident shape (§25.7): 12 Rome photos, a Russian hotel booking, an English note, the Spanish plan; a book mentions Rome once. Right answer: the photos and the booking named, at most 2 searches, 2 opens, 1 listing."
+ },
+ {
+  "id": "v2-incident-rome-ru",
+  "set": "positive",
+  "category": "find",
+  "lang": "ru",
+  "text": "Найди всё, что у меня есть про Рим.",
+  "expect": "none",
+  "incident": true,
+  "answer_must_include": [
+   [
+    "бронь",
+    "booking",
+    "отел",
+    "hotel"
+   ],
+   [
+    "фото",
+    "photo",
+    "снимк",
+    "IMG_51"
+   ]
+  ]
+ },
+ {
+  "id": "v2-time-span-receipts",
+  "set": "positive",
+  "category": "find",
+  "lang": "en",
+  "text": "Find my receipts from February to May 2026.",
+  "expect": "date_filter",
+  "time_span": true,
+  "answer_must_include": [
+   [
+    "supermercado",
+    "Ticket",
+    "hardware",
+    "HW-55812",
+    "Аптека",
+    "аптек"
+   ]
+  ],
+  "note": "The span goes to drive_date_from/drive_date_to (D25), not into the words."
+ },
+ {
+  "id": "v2-time-span-photos-ru",
+  "set": "positive",
+  "category": "find",
+  "lang": "ru",
+  "text": "Покажи фото из Барселоны за 2024 год.",
+  "expect": "date_filter",
+  "time_span": true,
+  "answer_must_include": [
+   [
+    "IMG_710",
+    "Barcelona",
+    "Барселон"
+   ]
+  ]
+ },
+ {
+  "id": "v2-d29-vaccination",
+  "set": "positive",
+  "category": "find",
+  "lang": "en",
+  "text": "Do I have my dog's vaccination certificate somewhere in my files?",
+  "expect": "none",
+  "d29": true,
+  "answer_must_include": [
+   [
+    "no ",
+    "not ",
+    "couldn't",
+    "could not",
+    "нет"
+   ]
+  ],
+  "note": "No file holds 'vaccination' (D29 line): an honest not-found; at most one more search."
+ },
+ {
+  "id": "v2-d29-mortgage-ru",
+  "set": "positive",
+  "category": "find",
+  "lang": "ru",
+  "text": "Найди выписку по ипотеке.",
+  "expect": "none",
+  "d29": true,
+  "answer_must_include": [
+   [
+    "не нашл",
+    "нет",
+    "не найден",
+    "no "
+   ]
+  ]
+ },
+ {
+  "id": "v2-cholesterol-ru",
+  "set": "positive",
+  "category": "content",
+  "lang": "ru",
+  "text": "Какой у меня был холестерин в последнем анализе?",
+  "expect": "none",
+  "answer_must_include": [
+   [
+    "212"
+   ]
+  ],
+  "note": "Spanish lab report, Russian question: Labelled tier, then open the file."
+ },
+ {
+  "id": "v2-receipts-all",
+  "set": "positive",
+  "category": "find",
+  "lang": "en",
+  "text": "Show me all my receipts.",
+  "expect": "none",
+  "answer_must_include": [
+   [
+    "supermercado",
+    "Ticket"
+   ],
+   [
+    "hardware",
+    "HW-55812"
+   ]
+  ]
+ },
+ {
+  "id": "v2-what-expires",
+  "set": "positive",
+  "category": "find",
+  "lang": "en",
+  "text": "Which of my documents expire soon?",
+  "expect": "none",
+  "answer_must_include": [
+   [
+    "motor",
+    "insurance",
+    "MP-2026"
+   ],
+   [
+    "lavadora",
+    "washing",
+    "warranty",
+    "garant"
+   ]
+  ]
+ },
+ {
+  "id": "v2-car-docs-es",
+  "set": "positive",
+  "category": "find",
+  "lang": "es",
+  "text": "¿Qué documentos del coche tengo?",
+  "expect": "none",
+  "answer_must_include": [
+   [
+    "ITV",
+    "inspecc"
+   ],
+   [
+    "motor",
+    "seguro",
+    "insurance",
+    "MP-2026"
+   ]
+  ]
+ }
+]
