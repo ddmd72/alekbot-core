@@ -28,7 +28,14 @@ meantime is answered normally, not queued behind the first. When the run finishe
 posts `[late answer]` plus a permalink to the main feed itself — the run that did the
 work writes its own result, because only it knows what was actually said in chat while
 it was away (no separate "result turn" that could race the original, per RFC §4's
-rejection of the revision-3 fork design). Persistence (registry record, heartbeat,
+rejection of the revision-3 fork design). On Slack the late answer is posted, never
+posted-then-edited: the permalink in its header is unfurled by Slack's own asynchronous
+write, and a `chat.update` landing in that window returned ok and was then overwritten,
+leaving the header alone in the feed (4 of 27 late answers in one DM, fixed 2026-10-13).
+The header is posted alone, before the answer: Slack attaches the unfurl preview to the
+message that carries the link, and inside the first chunk it sat between the first and
+second chunk of a long answer (owner request, 2026-10-13).
+Persistence (registry record, heartbeat,
 cancel, chat-since lookup) is `LongTurnService` over a new `LongTurnRegistry` port,
 backed by `FirestoreLongTurnRegistry` (`{prefix}long_turns`, TTL on `expires_at`).
 Telegram updates move off the inline webhook into a `/worker` Cloud Task
