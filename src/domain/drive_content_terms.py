@@ -1,11 +1,12 @@
 """
 Content exact-token stream keys (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §24.6). Pure; one normaliser for indexing
-and for the query, so `1 250,00 €` in a scan and `1250.00` in a question meet. A change bumps EXTRACTION_VERSION.
+and for the query, so `1 250,00 €` in a scan and `1250.00` in a question meet. A change bumps EXTRACTION_VERSION (Search v2: KEYS_VERSION, §25.4.8).
 
 Public interface:
     content_terms(text) -> Tuple[str, ...]   sorted, unique, at most CONTENT_TERMS_PER_CHUNK
     query_terms(query) -> Tuple[str, ...]    the query's maximal forms, most specific first
     clip_query(query, max_chars) -> str      at most max_chars of the query, never ending inside a token
+    term_spans(text) / query_term_spans(query)   the same, with each span's position and category (Search v2 keyer)
 
 Terms (the index side keeps every form; the query only the maximal form of each span, review D-M1 — and the integer of
 an amount with zero cents, the same value, arbiter R2 S-m2):
@@ -42,23 +43,26 @@ _DIGITS = re.compile(r"\d+")
 _GROUP = r"[A-Za-z]{0,2}\d[0-9A-Za-z]{0,3}(?![0-9A-Za-z])"
 _GROUPS = re.compile(rf"(?<![\w.,/+-])\+?{_GROUP}(?:[{_SPACE}]{_GROUP})+(?![\w]|[.,/-]\w)")
 
-# Month names and their case forms (final review F5-5), matched case-insensitively; each maps to its month number.
+# Month names and their case forms (final review F5-5; locatives "в марте", "у березні": Search v2 P1 review m2), matched case-insensitively; each maps to its month number.
 _MONTH_FORMS: Dict[int, Tuple[str, ...]] = {
-    1: ("january", "jan", "enero", "janvier", "січня", "січень", "января", "январь", "янв"),
+    1: ("january", "jan", "enero", "janvier", "січня", "січень", "января", "январь", "янв", "январе", "січні"),
     2: ("february", "feb", "febrero", "février", "fevrier", "févr", "fevr", "лютого", "лютий", "февраля", "февраль",
-        "фев"),
-    3: ("march", "mar", "marzo", "mars", "березня", "березень", "марта", "март"),
-    4: ("april", "apr", "abril", "avril", "квітня", "квітень", "апреля", "апрель", "апр"),
-    5: ("may", "mayo", "mai", "травня", "травень", "мая", "май"),
-    6: ("june", "jun", "junio", "juin", "червня", "червень", "июня", "июнь"),
-    7: ("july", "jul", "julio", "juillet", "липня", "липень", "июля", "июль"),
-    8: ("august", "aug", "agosto", "août", "aout", "серпня", "серпень", "августа", "август", "авг"),
+        "фев", "феврале", "лютому"),
+    3: ("march", "mar", "marzo", "mars", "березня", "березень", "марта", "март", "марте", "березні"),
+    4: ("april", "apr", "abril", "avril", "квітня", "квітень", "апреля", "апрель", "апр", "апреле", "квітні"),
+    5: ("may", "mayo", "mai", "травня", "травень", "мая", "май", "мае", "травні"),
+    6: ("june", "jun", "junio", "juin", "червня", "червень", "июня", "июнь", "июне", "червні"),
+    7: ("july", "jul", "julio", "juillet", "липня", "липень", "июля", "июль", "июле", "липні"),
+    8: ("august", "aug", "agosto", "août", "aout", "серпня", "серпень", "августа", "август", "авг", "августе",
+        "серпні"),
     9: ("september", "sep", "sept", "septiembre", "setiembre", "septembre", "вересня", "вересень", "сентября",
-        "сентябрь", "сен", "сент"),
-    10: ("october", "oct", "octubre", "octobre", "жовтня", "жовтень", "октября", "октябрь", "окт"),
-    11: ("november", "nov", "noviembre", "novembre", "листопада", "листопад", "ноября", "ноябрь", "ноя"),
+        "сентябрь", "сен", "сент", "сентябре", "вересні"),
+    10: ("october", "oct", "octubre", "octobre", "жовтня", "жовтень", "октября", "октябрь", "окт", "октябре",
+        "жовтні"),
+    11: ("november", "nov", "noviembre", "novembre", "листопада", "листопад", "ноября", "ноябрь", "ноя", "ноябре",
+        "листопаді"),
     12: ("december", "dec", "diciembre", "décembre", "decembre", "déc", "грудня", "грудень", "декабря", "декабрь",
-         "дек"),
+        "дек", "декабре", "грудні"),
 }
 _MONTH_OF: Dict[str, int] = {form: month for month, forms in _MONTH_FORMS.items() for form in forms}
 _MONTH = "(" + "|".join(re.escape(f) for f in sorted(_MONTH_OF, key=lambda f: (-len(f), f))) + r")\.?(?![\w])"
@@ -153,53 +157,73 @@ def _id_spans(text: str) -> Iterable[Tuple[int, int, str, List[str]]]:
             yield m.start(), m.end(), maximal, fragments
 
 
+TermSpan = Tuple[int, int, Tuple[str, ...], str]   # (start, end, forms, category: date | amount | group | id)
+
+
+def term_spans(text: str) -> Tuple[TermSpan, ...]:
+    """The index side with positions (Search v2 keyer, §25.2.4): every span with every form, maximal and fragment,
+    in text order. Spans may overlap; `content_terms` is the union of their forms (before its cap)."""
+    spans: List[TermSpan] = []
+    spans.extend((s, e, forms, "date") for s, e, forms in _date_spans(text))
+    spans.extend((s, e, forms, "amount") for s, e, forms in _amount_spans(text))
+    spans.extend((s, e, forms, "group") for s, e, forms in _group_spans(text))
+    for start, end, maximal, fragments in _id_spans(text):
+        forms = ((maximal,) if maximal else ()) + tuple(fragments)
+        if forms:
+            spans.append((start, end, forms, "id"))
+    return tuple(sorted(spans, key=lambda span: (span[0], span[1])))
+
+
 def _terms(text: str) -> Set[str]:
     """The index side: every form of every span, maximal and fragment."""
-    terms: Set[str] = set()
-    for _, _, forms in (*_date_spans(text), *_amount_spans(text), *_group_spans(text)):
-        terms.update(forms)
-    for _, _, maximal, fragments in _id_spans(text):
-        if maximal:
-            terms.add(maximal)
-        terms.update(fragments)
-    return terms
+    return {form for span in term_spans(text) for form in span[2]}
 
 
-def _maximal(text: str) -> Set[str]:
-    """The query side: each span's maximal form only, the first kind that claims a stretch of text winning — dates,
-    then amounts, then digit groups, then ids. A part of a span (a date's year, an amount's integer part, a run inside
-    an id) is a fragment: as a query it would match documents that share only that part — except a whole amount's
-    integer, which is the same value."""
+def query_term_spans(query: str) -> Tuple[TermSpan, ...]:
+    """The query side with positions: each claimed stretch with its maximal forms (possibly none: an id too short for
+    a form still claims its stretch), the first kind that claims a stretch of text winning — dates, then amounts,
+    then digit groups, then ids. A part of a span (a date's year, an amount's integer part, a run inside an id) is a
+    fragment: as a query it would match documents that share only that part — except a whole amount's integer,
+    which is the same value. In text order."""
     # The claimed stretches never overlap, so sorted by start they are sorted by end too: the only one that can
     # overlap [start, end) is the last one starting before `end` (bisect, not a scan of every claim: arbiter R2 S-m1).
     starts: List[int] = []
     ends: List[int] = []
-    terms: Set[str] = set()
+    claimed: List[TermSpan] = []
 
-    def claim(start: int, end: int, forms: Iterable[str]) -> None:
+    def claim(start: int, end: int, forms: Iterable[str], category: str) -> None:
         i = bisect_left(starts, end)
         if i > 0 and ends[i - 1] > start:
             return
         starts.insert(i, start)
         ends.insert(i, end)
-        terms.update(f for f in forms if f)
+        claimed.insert(i, (start, end, tuple(f for f in forms if f), category))
 
-    for start, end, forms in _date_spans(text):
-        claim(start, end, forms)
-    for start, end, forms in _amount_spans(text):
+    for start, end, forms in _date_spans(query):
+        claim(start, end, forms, "date")
+    for start, end, forms in _amount_spans(query):
         # zero cents are the integer's value: "1,250.00" also queries "1250" (arbiter R2 S-m2), the integer part
         # the index side stores for the same text; any other cents are another value and query their form only
-        claim(start, end, forms if forms[0].endswith(".00") else forms[:1])
-    for start, end, forms in _group_spans(text):
-        claim(start, end, forms)
-    for start, end, maximal, _ in _id_spans(text):
-        claim(start, end, (maximal,))
-    return terms
+        claim(start, end, forms if forms[0].endswith(".00") else forms[:1], "amount")
+    for start, end, forms in _group_spans(query):
+        claim(start, end, forms, "group")
+    for start, end, maximal, _ in _id_spans(query):
+        claim(start, end, (maximal,), "id")
+    return tuple(claimed)
+
+
+def _maximal(text: str) -> Set[str]:
+    """The query side: each claimed span's maximal forms (`query_term_spans`)."""
+    return {form for span in query_term_spans(text) for form in span[2]}
 
 
 def content_terms(text: str) -> Tuple[str, ...]:
     """A chunk's terms. Bounded: past the cap, the longest (most specific) terms are kept."""
-    terms = _terms(text)
+    return capped_terms(_terms(text))
+
+
+def capped_terms(terms: Set[str]) -> Tuple[str, ...]:
+    """`content_terms`' cap over a term set already extracted (`term_spans`): the longest terms kept."""
     if len(terms) > CONTENT_TERMS_PER_CHUNK:
         terms = set(sorted(terms, key=lambda t: (-len(t), t))[:CONTENT_TERMS_PER_CHUNK])
     return tuple(sorted(terms))
