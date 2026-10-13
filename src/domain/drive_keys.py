@@ -18,7 +18,7 @@ Public interface:
     match_spans(text, keys) -> ((start, end), ...)    where any of a concept's word keys occurs in `text`
     name_keys_v2(name), query_name_keys_v2(query)     name keys v2 (NAME_KEYS_V2) and the name stream's query keys
     index_tables_digest(), golden_digest()     version pins: the tables, and the rules' output on a fixed fixture
-    FUNCTION_WORDS, GENERIC_WORDS, NAME_KEYS_V2
+    FUNCTION_WORDS, GENERIC_WORDS, TIME_WORDS, NAME_KEYS_V2
 
 Families (§25.2.4, review M8): native-script forms and stored spellings are `w:` (chunks, names) and `e:` (records):
 exact. A transliteration crosses scripts and spellings through ONE skeleton per word on the index — `x:` in chunks and
@@ -54,7 +54,7 @@ from .drive_match import FAMILY_SOURCE_CLASS, Concept, KeyFamily, QueryConcepts,
 from .drive_name_keys import _strip_accents, _trigrams
 
 __all__ = [
-    "FUNCTION_WORDS", "GENERIC_WORDS", "NAME_KEYS_V2", "about_keys_capped", "about_keys_of", "about_sources",
+    "FUNCTION_WORDS", "GENERIC_WORDS", "NAME_KEYS_V2", "TIME_WORDS", "about_keys_capped", "about_keys_of", "about_sources",
     "all_forms", "family_keys", "fetch_batches", "golden_digest", "index_tables_digest", "match_spans",
     "name_keys_v2", "phrase_keys", "query_concepts", "query_name_keys_v2", "source_class_of_about_key",
     "source_class_of_name_key", "source_class_of_word_key", "token_forms", "token_spans", "word_form_keys",
@@ -91,7 +91,23 @@ cómo cual cuál quien quién mi mis tu tus su sus me te se lo le les es son est
 ese esa eso
 le les une des du au aux à dans sur pour par avec et ou mais qui quoi où quand comment mon ma mes ton ta tes sa ses
 je il elle nous vous ils elles ce cet cette ces est sont ne pas
+этом этой этих этим этими этому цього цієї цих цим цими цьому цій
 """.split()) - {"son"}   # "son" (fr possessive) is an English noun; "como" (es) is left out: Lake Como (review m4)
+# Time expressions (en/es/uk/ru, with their case forms; P6 review M2): a time span belongs in the date fields (D25),
+# and left in the words it must not become a concept that D29 blocks ("в этом году" -> "No file holds 'году'").
+# Removed like generic words and named in the result's ignored list.
+TIME_WORDS: FrozenSet[str] = frozenset("""
+year years yearly month months week weeks day days today yesterday tomorrow tonight last next past recent recently
+ago since current
+год году года годы годов лет годах месяц месяца месяце месяцы месяцев неделя недели неделе неделю недель день дня
+дней сегодня вчера завтра недавно прошлый прошлом прошлого прошлой прошлую прошлые прошлых последний последняя
+последнее последние последних последней последнюю текущий текущем текущего этот эту
+рік року роки років році місяць місяця місяці місяців місяці тиждень тижня тижні тижнів день дня днів сьогодні
+вчора завтра нещодавно минулий минулого минулому минулої минулі минулих останній останнього останні останніх
+останньої поточний поточного цей цю
+año años mes meses semana semanas día días hoy ayer mañana pasado pasada pasados pasadas último última últimos
+últimas próximo próxima reciente recientes recientemente actual
+""".split())
 GENERIC_WORDS: FrozenSet[str] = frozenset("""
 all everything anything something every file files document documents doc docs stuff thing things info information
 find search show look give get need want please regarding concerning
@@ -390,7 +406,9 @@ def _is_function(token: str) -> bool:
 
 
 def _is_removable(token: str) -> bool:
-    return _is_function(token) or token in GENERIC_WORDS or _strip_accents(token) in GENERIC_WORDS
+    plain = _strip_accents(token)
+    return (_is_function(token) or token in GENERIC_WORDS or plain in GENERIC_WORDS or token in TIME_WORDS
+            or plain in TIME_WORDS)
 
 
 def _overlaps(a: Span, b: Span) -> bool:

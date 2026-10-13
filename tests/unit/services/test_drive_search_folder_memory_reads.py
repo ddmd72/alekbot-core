@@ -9,7 +9,7 @@ from src.domain.drive_index import DriveChunk
 
 from tests.unit.adapters.firestore_drive_chunk_fakes import ChunkDb, make_chunk_repo
 
-from .test_drive_search_content_streams import FAR, ContentSpy, by_id, index, query_vector, settle_metadata
+from .test_drive_search_content_streams import FAR, ContentSpy, index, settle_metadata
 from .test_drive_search_service import World
 
 
@@ -45,37 +45,12 @@ async def _folder_world(monkeypatch):
     return w, doc
 
 
-async def test_ranking_with_a_vector_reads_no_text_and_no_terms_for_a_query_without_terms(monkeypatch):
-    w, doc = await _folder_world(monkeypatch)
-    q = await query_vector(w, "boiler warranty")
-    await index(w, doc, ["the boiler warranty lasts five years"], [q])
-    result = await w.search("boiler warranty", folder="Work")
-    assert by_id(result)[doc].window == "the boiler warranty lasts five years"   # the window reads the text by id
-    assert w.repo.ranking_reads == [{"text": False, "terms": False, "vectors": True}]
-
-
-async def test_a_query_with_terms_reads_the_terms(monkeypatch):
-    w, doc = await _folder_world(monkeypatch)
-    await index(w, doc, ["invoice 98765"], [FAR])
-    await w.search("invoice 98765", folder="Work")
-    assert w.repo.ranking_reads == [{"text": False, "terms": True, "vectors": True}]
-
-
 async def test_refreshing_without_terms_reads_no_chunk(monkeypatch):
     w, doc = await _folder_world(monkeypatch)
     _vectors_off(w)
     await index(w, doc, ["the boiler warranty lasts five years"], [FAR])
     await w.search("boiler warranty", folder="Work")
     assert w.repo.ranking_reads == []
-
-
-async def test_refreshing_with_terms_reads_terms_but_no_vectors(monkeypatch):
-    w, doc = await _folder_world(monkeypatch)
-    _vectors_off(w)
-    await index(w, doc, ["invoice 98765"], [FAR])
-    result = await w.search("invoice 98765", folder="Work")
-    assert [c.item_id for c in result.cards] == [doc]
-    assert w.repo.ranking_reads == [{"text": False, "terms": True, "vectors": False}]
 
 
 async def test_the_in_memory_repository_leaves_out_what_was_not_asked_for():

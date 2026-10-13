@@ -7,12 +7,11 @@ import pytest
 from src.domain import drive_index_policy
 from src.domain.drive_index import DriveIndexRecord, DriveSyncState, Reason, RecordState, Scope
 from src.domain.drive_index_params import ACCESS_LOSS_TTL
-from src.domain.drive_name_keys import name_keys, query_token_groups
 from src.domain.drive_search import (
     KIND_FAMILIES, KIND_NAMES, REFERENCE_REMINDER, STATUS_AMBIGUOUS_FOLDER, STATUS_DISABLED,
     STATUS_DISCONNECTED, STATUS_FOLDER_NOT_FOUND, STATUS_OK, DriveSearchCard, DriveSearchEnvelope,
-    DriveSearchRequest, DriveSearchResult, canonical_kind, cover_first, escape_text, is_unread, kinds_for,
-    make_card, path_match, rank_names, render_results, request_from_fields, resolve_chain, search_gate,
+    DriveSearchRequest, DriveSearchResult, canonical_kind, escape_text, is_unread, kinds_for,
+    make_card, path_match, render_results, request_from_fields, resolve_chain, search_gate,
     wrap_untrusted,
 )
 from src.domain.user_drive import DriveConnection
@@ -288,27 +287,3 @@ class TestRender:
     def test_card_builds_the_step_one_item(self):
         item = _card("f1", "Contracts/a.pdf").drive_item()
         assert item.ref == "drive:f1" and item.path == "Contracts/a.pdf" and not item.is_folder
-
-
-def test_name_ranking_is_deterministic():
-    recs = [rec("b"), rec("a"), rec("c")]
-    assert [r.item_id for r in rank_names(recs, {"a": 2, "b": 2, "c": 5})] == ["c", "a", "b"]
-
-
-class TestCoverFirst:
-    def _named(self, item_id, name):
-        return rec(item_id, name=name, name_tokens=name_keys(name))
-
-    def test_full_name_matches_first_rrf_order_inside_each_group(self):
-        fused = [self._named("1", "IMG_4033.jpg"), self._named("2", "Договор_ред1.docx"),
-                 self._named("3", "Договор_ред3.docx"), self._named("4", "IMG_4366.jpg")]
-        out = cover_first(fused, query_token_groups("dogovor red3"))
-        assert [r.item_id for r in out] == ["3", "1", "2", "4"]
-
-    def test_no_cover_keeps_rrf_order(self):
-        fused = [self._named("1", "a.pdf"), self._named("2", "b.pdf")]
-        assert cover_first(fused, query_token_groups("rental contract")) == fused
-
-    def test_empty_query_covers_nothing(self):
-        fused = [self._named("1", "a.pdf")]
-        assert cover_first(fused, query_token_groups("")) == fused

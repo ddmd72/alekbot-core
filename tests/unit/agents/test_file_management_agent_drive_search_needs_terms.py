@@ -64,8 +64,12 @@ def test_the_query_field_description_says_it_is_required_and_what_goes_in_it():
     text = FILE_MANAGEMENT.context_schemas[Intent.SEARCH_FILES_IN_DRIVE]["drive_query"]
     assert "REQUIRED unless the request is filter-only" in text
     assert "`query` field is not read" in text
-    assert "place or subject" in text and "no type words" in text.lower()
-    assert "Dates written inside the document go in drive_query" in text   # review E-M3: the one date distinction
+    # Search v2 (D25, §25.13.6): document types are allowed, a file format goes in drive_kind and a time span in
+    # the date fields (v1's "no type words" and "dates written inside go in drive_query" are reversed by D25)
+    assert "a place, a person, a topic, a document type or purpose" in text
+    assert "A file format goes in drive_kind" in text
+    assert "goes in drive_date_from / drive_date_to, not in the words" in text
+    assert "no type words" not in text.lower() and "Dates written inside the document go in drive_query" not in text
     intent = FILE_MANAGEMENT.capability_descriptions[Intent.SEARCH_FILES_IN_DRIVE]
     assert "drive_query is required unless" in intent
 

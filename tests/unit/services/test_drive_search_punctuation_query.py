@@ -14,7 +14,7 @@ def test_a_query_without_name_keys_is_filter_only(query):
 
 
 def test_a_query_with_name_keys_is_not():
-    assert not DriveSearchRequest(query="a", kind="pdf").filter_only
+    assert not DriveSearchRequest(query="ИП", kind="pdf").filter_only   # §25.5.1: a 2-letter word is a concept
     assert not DriveSearchRequest(query="2026").filter_only
 
 
