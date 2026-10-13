@@ -34,7 +34,8 @@ from .drive_card import taken_at
 from .drive_index import DriveIndexRecord, DriveSyncState, Reason, RecordState, Scope, TriageVerdict
 from .drive_index_params import ACCESS_LOSS_TTL, WRAPPER_TAG_GAP_MAX
 from .drive_index_policy import Admission, admission, kind_of
-from .drive_name_keys import covers_query, query_name_keys
+from .drive_keys import query_concepts
+from .drive_name_keys import covers_query
 from .drive_tier_result import TieredResult
 from .user_drive import DriveConnection, DriveItem, make_drive_ref
 
@@ -136,8 +137,8 @@ REFERENCE_REMINDER_ATTACHED = (
 
 @dataclass(frozen=True)
 class DriveSearchRequest:
-    """§10.1 input. A query with no name words (empty, or punctuation only) is a filter-only request: no kNN,
-    newest first."""
+    """§10.1 input. A query with no concept (empty, punctuation, or only function and generic words such as "all my
+    documents", Search v2 §25.5.1) is a filter-only request: no kNN, newest first."""
     query: str = ""
     folder: Optional[str] = None
     kind: Optional[str] = None
@@ -146,7 +147,7 @@ class DriveSearchRequest:
 
     @property
     def filter_only(self) -> bool:
-        return not query_name_keys(self.query)
+        return not query_concepts(self.query).concepts
 
 
 @dataclass(frozen=True)

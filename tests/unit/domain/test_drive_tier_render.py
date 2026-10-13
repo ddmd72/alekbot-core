@@ -187,3 +187,11 @@ def test_date_without_a_source_and_file_date():
     r = example()
     c = replace(r.cards[0], date_source=DATE_FILE)
     assert "date: 2026-05-12 (file date)" in render_results(replace(r, cards=(c,) + r.cards[1:]))
+
+
+def test_one_file_is_singular():
+    tiered = TieredResult(concepts=("vaccination", "dog"), absent=("vaccination",), without=1)
+    assert render_results(replace(example(), cards=(), tiered=tiered)).endswith(
+        'Without "vaccination": 1 file matches the other words.')
+    tiered = TieredResult(concepts=("barcelona", "trip"), conjunction=(("barcelona", 1), ("trip", 2)))
+    assert '"barcelona" (1 file), "trip" (2 files)' in render_results(replace(example(), cards=(), tiered=tiered))
