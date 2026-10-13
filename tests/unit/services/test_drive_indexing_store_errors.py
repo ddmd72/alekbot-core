@@ -67,16 +67,16 @@ async def test_an_unexpected_re_embed_error_is_the_files_not_the_ticks(monkeypat
     parses = len(w.parser.requests)
     _switch_space(w, "new-space/768")
     await w.tick()
-    real = svc_mod._terms_of
+    real = svc_mod._keys_of   # Search v2: a chunk's word keys (§25.2.2) replaced its v1 content terms
     calls = {"n": 0}
 
     def broken(texts):
         calls["n"] += 1
         if calls["n"] == 1:
-            raise RuntimeError("terms blew up")
+            raise RuntimeError("keys blew up")
         return real(texts)
 
-    monkeypatch.setattr(svc_mod, "_terms_of", broken)
+    monkeypatch.setattr(svc_mod, "_keys_of", broken)
     result = await w.tick()
     assert result.status == "done"
     await w.settle()

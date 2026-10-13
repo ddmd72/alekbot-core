@@ -58,9 +58,11 @@ class TestVersions:
         assert all(isinstance(v, int) and v >= 1 for v in SEARCH_V2_VERSIONS.values())
         assert MIGRATION_GATE_KEY == "keys"
 
-    def test_v2_keys_are_not_current_yet(self):
-        """Adding them to CURRENT_VERSIONS would start the v1 upgrade pass: P5 does it behind the migration gate."""
-        assert not set(SEARCH_V2_VERSIONS) & set(CURRENT_VERSIONS)
+    def test_v2_keys_are_current_behind_the_gate(self):
+        """P5 added them to CURRENT_VERSIONS behind the migration gate (§25.8 as amended by D30): the gate key is one
+        of them, so a v1-built state (which lacks it) is told apart from a v2 onboarding (which stamps all of them)."""
+        assert {k: CURRENT_VERSIONS[k] for k in SEARCH_V2_VERSIONS} == dict(SEARCH_V2_VERSIONS)
+        assert MIGRATION_GATE_KEY in CURRENT_VERSIONS
 
 
 class TestLabels:

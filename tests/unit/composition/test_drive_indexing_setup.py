@@ -72,7 +72,9 @@ def test_place_lookup_uses_the_bundled_table(monkeypatch):
     rows = [PlaceRow(41.9028, 12.4964, "Rome", "Roma", "IT")]
     monkeypatch.setattr(setup, "load_place_rows", lambda: rows)
     place_of = setup.build_place_lookup()
-    assert place_of(41.90, 12.50) == "Rome (Roma), IT"
+    # geo table v2 (§25.4.3): the display name and its `place_forms`, written together with the geo stamp
+    found = place_of(41.90, 12.50)
+    assert found.name == "Rome (Roma), IT" and {"Rome", "Roma"} <= set(found.forms)
     assert place_of(0.0, 0.0) is None
 
 

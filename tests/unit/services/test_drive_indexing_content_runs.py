@@ -6,10 +6,10 @@ import pytest
 
 from src.domain import drive_index as di
 from src.domain.drive_card import card_text
-from src.domain.drive_content_terms import content_terms
+from src.domain.drive_keys import word_keys_capped
 from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus
 from src.domain.drive_index import Priority, Reason, RecordState
-from src.domain.drive_index_params import CARD_LEAD_CHARS, MAX_ATTEMPTS, MAX_DOWNLOAD_BYTES, RETRY_CAP
+from src.domain.drive_index_params import MAX_ATTEMPTS, MAX_DOWNLOAD_BYTES, RETRY_CAP
 from src.domain.drive_index_planner import backoff
 from src.domain.user_drive import DriveAccessDenied
 from src.services import drive_indexing_service as svc_mod
@@ -31,13 +31,15 @@ async def test_first_seen_document_is_indexed_and_carded_once(w):
     rec = w.rec(doc)
     assert (rec.state, rec.reason, rec.indexed_generation, rec.indexed_version) == (RecordState.INDEXED, None, 1, "c1")
     assert rec.chunk_count == len(w.readable(doc)) > 1 and rec.extracted_by == "parser@1"
-    assert rec.lead_text and rec.lead_text in card_text(rec) and len(rec.lead_text) <= CARD_LEAD_CHARS
+    # v2 (§25.2.7): no lead text in the card (the profile carries the content there, §25.4); chunks carry word keys
+    assert rec.lead_text == "" and (rec.keys_version, rec.keys_pending) == (di.KEYS_VERSION, False)
     assert w.generations(doc) == [1]
     for chunk in w.readable(doc):
-        assert chunk.kind == "pdf" and chunk.content_terms == content_terms(chunk.text)
-    assert any("inv20240012" in c.content_terms for c in w.readable(doc))
+        assert chunk.kind == "pdf" and chunk.word_keys == word_keys_capped(chunk.text)[0]
+        assert chunk.keys_version == di.KEYS_VERSION
+    assert any("n:inv20240012" in c.word_keys for c in w.readable(doc))
     card_calls = [t for t in w.emb.calls if t.startswith("lease.pdf | ")]
-    assert card_calls == [card_text(rec)]   # the card waited for the content: one embedding, with the lead text
+    assert card_calls == [card_text(rec)]   # the card waited for the content: one embedding
     (request,) = w.parser.requests
     assert (request.kind, request.name, request.user_id, request.account_id) == ("pdf", "lease.pdf", "u", "a")
     assert request.path.endswith(".pdf") and request.max_model_pages == 0

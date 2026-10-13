@@ -1,17 +1,20 @@
 """The reader in the tick (USER_DRIVE_INDEXING_RFC §9 router, §24.3, §24.5, §24.7, §24.8, §24.9): routing, model
-outages that never end the tick, monthly page budgets across a month boundary, images read from renditions."""
+outages that never end the tick, budgets across a month boundary, images read from renditions. Search v2 (§25.4.5):
+the page budget is the reader's dollars (the open initial build, then the month's cap) at the per-page estimate."""
 from datetime import datetime, timezone
 
 import pytest
 
 from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus
 from src.domain.drive_index import DocumentBrief, Priority, Reason, RecordState, TriageVerdict
+from src.domain.drive_enrichment import UsageClass
 from src.domain.drive_index_params import (
-    MODEL_BACKOFF_BASE_S, MODEL_EXTRACT_PAGES_PER_MONTH, READER_RENDITION_SIZE,
+    INITIAL_BUILD_USD, MODEL_BACKOFF_BASE_S, READER_PAGE_USD_ESTIMATE, READER_RENDITION_SIZE, READER_USD_PER_MONTH,
 )
 from src.domain.drive_index_run import READER_IMAGE_MAX_BYTES
 
 from .drive_content_world import JPEG, PNG, ContentWorld, admitted, prose  # noqa: F401  (fixture)
+from .drive_usage_helpers import affordable, close_initial_build, month_calls, month_usd, spend
 
 pytestmark = pytest.mark.usefixtures("admitted")
 
@@ -38,9 +41,11 @@ async def test_a_scan_goes_to_the_reader(w):
     assert (rec.state, rec.extracted_by, rec.brief, rec.effective_date) == \
         (RecordState.INDEXED, "reader@1", brief, brief.doc_date)
     (request,) = w.reader.requests
-    assert (request.kind, request.max_model_pages, request.account_id) == ("pdf", MODEL_EXTRACT_PAGES_PER_MONTH, "a")
-    state = await w.repo.get_sync_state("u")
-    assert (state.usage_month, state.model_pages_used) == ("2026-10", 3)
+    every_page = affordable(INITIAL_BUILD_USD + READER_USD_PER_MONTH, READER_PAGE_USD_ESTIMATE)
+    assert (request.kind, request.max_model_pages, request.account_id) == ("pdf", every_page, "a")
+    # the dollars the reader spent, priced by the runner, are in the month's document and the initial build paid them
+    assert await month_usd(w.repo, UsageClass.READER, "2026-10") == pytest.approx(0.002)
+    assert (await w.repo.get_initial_build("u")).spent_usd == pytest.approx(0.002)
     assert w.summary_total("model_pages") == 3 and w.summary_total("model_calls") == 1
     assert sum(r.model_cost for r in w.results) == pytest.approx(0.002)
 
@@ -123,11 +128,10 @@ async def test_an_outage_skips_image_reads_without_a_call(w):
 
 async def test_spent_pages_wait_for_the_next_month(w):
     w.parser.outcomes["scan.pdf"] = SCAN
-    w.reader.outcomes["scan.pdf"] = read()
+    w.reader.outcomes["scan.pdf"] = read(model_cost=0.0018)
     await w.settle()   # a sync state exists
-    state = await w.repo.get_sync_state("u")
-    await w.repo.save_sync_state(state.__class__(**{**state.__dict__, "usage_month": "2026-10",
-                                                    "model_pages_used": MODEL_EXTRACT_PAGES_PER_MONTH}))
+    await close_initial_build(w.repo, w.clock.now)
+    await spend(w.repo, UsageClass.READER, READER_USD_PER_MONTH, w.clock.now)   # the month's reader dollars are spent
     doc = w.add_doc("scan.pdf", "")
     await w.settle()
     rec = w.rec(doc)
@@ -136,8 +140,9 @@ async def test_spent_pages_wait_for_the_next_month(w):
     assert w.reader.requests == [] and len(w.parser.requests) == 1
     w.clock.now = november
     await w.settle()
-    state = await w.repo.get_sync_state("u")
-    assert w.rec(doc).state is RecordState.INDEXED and (state.usage_month, state.model_pages_used) == ("2026-11", 3)
+    assert w.rec(doc).state is RecordState.INDEXED
+    assert await month_usd(w.repo, UsageClass.READER, "2026-11") == pytest.approx(0.0018)   # counted in November
+    assert await month_calls(w.repo, "2026-11") == 1
 
 
 async def test_the_reader_reports_a_spent_budget(w):
@@ -154,9 +159,8 @@ async def test_pages_left_reach_the_reader(w):
     w.parser.outcomes["scan.pdf"] = SCAN
     w.reader.outcomes["scan.pdf"] = read(pages=2)
     await w.settle()
-    state = await w.repo.get_sync_state("u")
-    await w.repo.save_sync_state(state.__class__(**{**state.__dict__, "usage_month": "2026-10",
-                                                    "model_pages_used": MODEL_EXTRACT_PAGES_PER_MONTH - 7}))
+    await close_initial_build(w.repo, w.clock.now)
+    await spend(w.repo, UsageClass.READER, READER_USD_PER_MONTH - 7 * READER_PAGE_USD_ESTIMATE, w.clock.now)
     w.add_doc("scan.pdf", "")
     await w.settle()
     assert w.reader.requests[0].max_model_pages == 7
