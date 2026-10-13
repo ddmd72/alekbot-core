@@ -18,6 +18,7 @@ Public interface:
     escape_text(text) -> str;  wrap_untrusted(text, *, nonce, ref, path) -> str
     render_results(result) -> str
     make_card(rec, path, summary, nonce) / rank_names(recs, scores) / cover_first(fused, groups)
+    date_source(rec) -> DATE_TAKEN | DATE_WRITTEN | DATE_FILE | None      (the card's date label, F5-3)
 """
 from __future__ import annotations
 
@@ -28,6 +29,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timezone
 from typing import Callable, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Tuple
 
+from .drive_card import taken_at
 from .drive_index import DriveIndexRecord, DriveSyncState, Reason, RecordState, Scope, TriageVerdict
 from .drive_index_params import ACCESS_LOSS_TTL, WRAPPER_TAG_GAP_MAX
 from .drive_index_policy import Admission, admission, kind_of
@@ -43,6 +45,11 @@ STATUS_FOLDER_NOT_FOUND = "folder_not_found"
 MATCHED_CARD = "card"              # found by its card: the card kNN or the name stream
 MATCHED_CONTENT = "content"        # found by its chunks: the chunk kNN or the exact-term stream (§24.6)
 MATCHED_BOTH = "card+content"
+
+# Where a card's date comes from (§3.1, D13), shown beside it so a file date is never cited as the document's own
+DATE_TAKEN = "taken"
+DATE_WRITTEN = "written in the document"
+DATE_FILE = "file date"
 
 UNREAD_COUNTER = "unread"   # DriveSyncState.counters key the tick fills from is_unread (Slice 2)
 
@@ -160,6 +167,7 @@ class DriveSearchCard:
     content_hash: Optional[str] = None
     nonce: str = ""
     window: str = ""                     # content hits: the best chunk and its neighbours (§10.2), untrusted text
+    date_source: Optional[str] = None    # DATE_TAKEN | DATE_WRITTEN | DATE_FILE; None without a date
     window_shortened: bool = False       # the window budget trimmed the best chunk (not: left a neighbour out)
 
     def drive_item(self) -> DriveItem:
@@ -418,13 +426,26 @@ def is_unread(rec: DriveIndexRecord, admitted: Optional[FrozenSet[str]] = None,
     return rec.state is RecordState.METADATA_ONLY and rec.reason in _UNREAD_REASONS
 
 
+def date_source(rec: DriveIndexRecord) -> Optional[str]:
+    """Where the record's effective date comes from (§3.1, D13): the document's own date while its brief holds it,
+    a photo's taken date, else the file's date. Compared with the stored date, so a stale brief is never cited."""
+    when = rec.effective_date
+    if when is None:
+        return None
+    if rec.brief is not None and rec.brief.doc_date is not None and rec.brief.doc_date == when:
+        return DATE_WRITTEN
+    if taken_at(rec.facets) == when:
+        return DATE_TAKEN
+    return DATE_FILE
+
+
 def make_card(rec: DriveIndexRecord, path: str, summary: str, nonce: str) -> DriveSearchCard:
     return DriveSearchCard(
         ref=make_drive_ref(rec.item_id), item_id=rec.item_id, name=rec.name, path=path, kind=rec.kind,
         is_folder=rec.is_folder, summary=summary, size_bytes=rec.size_bytes, modified_at=rec.modified_at,
         effective_date=rec.effective_date, web_url=rec.web_url, state=rec.state.value,
         reason=rec.reason.value if rec.reason else None, stale=rec.stale, truncated=rec.truncated,
-        content_hash=rec.content_hash, nonce=nonce,
+        content_hash=rec.content_hash, nonce=nonce, date_source=date_source(rec),
     )
 
 
@@ -462,7 +483,9 @@ def _day(value: Optional[datetime]) -> str:
 
 
 def _card_body(card: DriveSearchCard) -> str:
-    lines = [card.summary, f"path: {card.path or '/'}", f"date: {_day(card.effective_date)}"]
+    dated = f"{_day(card.effective_date)} ({card.date_source})" if card.effective_date and card.date_source \
+        else _day(card.effective_date)
+    lines = [card.summary, f"path: {card.path or '/'}", f"date: {dated}"]
     lines.append(f"index: {card.state}" + (f" ({card.reason})" if card.reason else ""))
     if card.stale:
         lines.append("stale: the file changed after it was indexed")
