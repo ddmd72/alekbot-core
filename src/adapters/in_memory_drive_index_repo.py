@@ -8,12 +8,14 @@ from __future__ import annotations
 import asyncio
 import math
 from dataclasses import replace
-from datetime import datetime
+from datetime import date, datetime
 from typing import AbstractSet, Dict, List, Mapping, Optional, Sequence, Tuple
 
+from ..domain.drive_enrichment import DriveHintDoc, InitialBuild, ModelUsageMonth
+from ..domain.drive_index_lean import ChunkId, DriveChunkLean, DriveHintLean, DriveRecordLean
 from ..domain.drive_index import DriveChunk, DriveIndexRecord, DriveSyncState, LeaseLost, Reason, RecordState
 from ..domain.drive_search import is_not_read_yet, is_unread
-from ..ports.drive_index_repository import DriveIndexRepository
+from ..ports.drive_index_repository import SEARCH_V2_PENDING, DriveIndexRepository
 
 
 def _cosine_distance(a: Sequence[float], b: Sequence[float]) -> float:
@@ -271,7 +273,8 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
                                       vectors: bool = True) -> List[Tuple[DriveChunk, List[float]]]:
         rows = [self.chunks[(user_id, item_id, generation, i)] for i in sorted(set(indexes))
                 if (user_id, item_id, generation, i) in self.chunks]
-        return [(replace(c, text=c.text if text else "", content_terms=c.content_terms if terms else ()),
+        return [(replace(c, text=c.text if text else "", content_terms=c.content_terms if terms else (),
+                         word_keys=c.word_keys if terms else ()),
                  list(v) if vectors else []) for c, v in rows]
 
     async def readable_chunk_total(self, user_id: str) -> int:
@@ -287,3 +290,82 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
         for key in keys:
             del self.chunks[key]
         return len(keys)
+
+    # -- Search v2 (§25.13.1): implemented by P2 -----------------------------------------------------------------
+
+    async def find_by_about_keys(self, user_id: str, keys: Sequence[str], limit: int, *, kind: Optional[str] = None,
+                                 date_from: Optional[datetime] = None, date_to: Optional[datetime] = None,
+                                 after: Optional[str] = None) -> List[DriveRecordLean]:
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def find_expiring(self, user_id: str, keys: Sequence[str], after_date: date,
+                            limit: int) -> List[DriveRecordLean]:
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def find_chunks_by_word_keys(self, user_id: str, keys: Sequence[str], limit: int,
+                                       after_item_id: Optional[str] = None) -> List[DriveChunkLean]:
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def get_chunk_keys(self, user_id: str, ids: Sequence[ChunkId]) -> Dict[ChunkId, Tuple[str, ...]]:
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def find_hints_by_keys(self, user_id: str, keys: Sequence[str], limit: int,
+                                 after_item_id: Optional[str] = None) -> List[DriveHintLean]:
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def get_hint_keys(self, user_id: str, ids: Sequence[ChunkId]) -> Dict[ChunkId, Tuple[str, ...]]:
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def find_nearest_hints(self, user_id: str, vector: Sequence[float], limit: int,
+                                 kind: Optional[str] = None) -> List[Tuple[DriveHintLean, float]]:
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def get_hints(self, user_id: str, item_id: str, generation: int) -> List[DriveHintDoc]:
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def get_hints_with_vectors(self, user_id: str, item_id: str,
+                                     generation: int) -> List[Tuple[DriveHintDoc, List[float]]]:
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def write_hints(self, docs: Sequence[DriveHintDoc], vectors: Sequence[Sequence[float]]) -> None:
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def delete_hints_except(self, user_id: str, item_id: str, keep_generation: Optional[int]) -> int:
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def delete_user_hints(self, user_id: str, limit: int) -> int:
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def hints_page(self, user_id: str, after: Optional[ChunkId], limit: int) -> List[DriveHintLean]:
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def enrich_queue(self, user_id: str, limit: int) -> List[DriveIndexRecord]:
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def enrich_wakeups(self, user_id: str, now: datetime, limit: int) -> List[DriveIndexRecord]:
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def count_by_job_state(self, user_id: str, kinds: AbstractSet[str]) -> Dict[str, Dict[str, int]]:
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def keys_pending_page(self, user_id: str, after: Optional[str], limit: int) -> List[DriveIndexRecord]:
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def get_records_lean(self, user_id: str, item_ids: Sequence[str]) -> Dict[str, DriveRecordLean]:
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def get_model_usage(self, user_id: str, month: str) -> ModelUsageMonth:
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def add_model_usage(self, user_id: str, month: str, day: str, cls: str, usd: float, fallback_usd: float,
+                              calls: int) -> None:
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def get_initial_build(self, user_id: str) -> InitialBuild:
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def spend_initial_build(self, user_id: str, usd: float, now: datetime) -> Tuple[InitialBuild, float]:
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def close_initial_build(self, user_id: str, now: datetime) -> None:
+        raise NotImplementedError(SEARCH_V2_PENDING)

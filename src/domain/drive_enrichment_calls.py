@@ -1,10 +1,14 @@
 """
 Drive enrichment calls — the requests and replies of Search v2's model ports
-(docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §25.4.1-§25.4.4, frozen in §25.13.1). Pure data.
+(docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §25.4.1-§25.4.4, §25.4.6, frozen in §25.13.1). Pure data.
 
 `DocumentProfilerPort.profile(ProfileRequest) -> ProfileReply`, `PassageHintPort.hints(HintRequest) -> HintReply`, and
-the triage v2 reply `TriageReply` (the `ImageTriagePort` itself is unchanged until P3). Replies carry the model that
-served and the cost, already billed, so the tick can count them per `UsageClass` (§25.4.5).
+the triage v2 reply `TriageReply` (the `ImageTriagePort` switches to it in P3). All three report every outcome as a
+`ModelReplyStatus`, never as an exception, and carry the model that served and the cost already billed, with the
+fallback's share in dollars, so the tick counts them per `UsageClass` and for the daily fallback alert (§25.4.5).
+
+Several public classes in one module, by decision: the frozen core groups the port messages in one file, as
+`drive_extraction` does (CLAUDE.md's one-class rule is waived here on purpose).
 
 Public interface:
     ModelReplyStatus
@@ -14,7 +18,7 @@ Public interface:
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from enum import Enum
 from typing import Mapping, Optional, Sequence, Tuple
@@ -24,12 +28,24 @@ from .drive_index import TriageVerdict
 
 
 class ModelReplyStatus(str, Enum):
-    """How one enrichment call ended (§25.13.1, §25.4.6)."""
+    """How one enrichment call (or one chunk / image of it) ended, mapped to §25.4.6's effects:
+
+    | status           | §25.4.6 outcome                                                    | charged | backoff |
+    | ok               | answered                                                           | —       | no      |
+    | refused          | a refusal (400, 413, 422) by the primary                           | no      | no      |
+    | failed           | a 5xx, a timeout or an unexpected error after any failover; a      | yes     | yes     |
+    |                  | refusal by the fallback (LLMFallbackClientError)                   |         |         |
+    | invalid          | invalid output after the parse retry                               | yes     | no      |
+    | stopped_at_cap   | still stopped at the output cap after halving                      | yes     | no      |
+    | unavailable      | provider unavailable (429, network, breaker, account 4xx, missing  | no      | yes     |
+    |                  | key or prompt, both providers down): an outage of this agent type  |         |         |
+    """
     OK = "ok"
-    REFUSED = "refused"                 # 400 / 413 / 422 by the primary
-    FAILED = "failed"                   # charged: a 5xx, a timeout, an unexpected error, invalid output after a retry
-    STOPPED_AT_CAP = "stopped_at_cap"   # still stopped at the output cap after halving
-    UNAVAILABLE = "unavailable"         # an uncharged outage of this agent type
+    REFUSED = "refused"
+    FAILED = "failed"
+    INVALID = "invalid"
+    STOPPED_AT_CAP = "stopped_at_cap"
+    UNAVAILABLE = "unavailable"
 
 
 @dataclass(frozen=True)
@@ -66,12 +82,13 @@ class ProfileRequest:
 
 @dataclass(frozen=True)
 class ProfileReply:
-    """`profile` is set only with status `ok`; it is the model's output before `drive_profile.verify` (§25.4.1)."""
+    """`profile` is set only with status `ok`; it is the model's output before `drive_profile.verify` (§25.4.1).
+    `usd` is the whole cost, `fallback_usd` the part the fallback served."""
     status: ModelReplyStatus
     profile: Optional[DriveProfile]
     model: str
     usd: float
-    fallback_used: bool
+    fallback_usd: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -88,12 +105,19 @@ class HintRequest:
 
 @dataclass(frozen=True)
 class HintReply:
-    """Items per chunk index, before `drive_hints.ground` (§25.4.2)."""
+    """One passage call, after the runner's halving (§25.4.4). `outcome_by_index` has an entry for every chunk the
+    calls settled: `ok`, `refused` (no hints, counted, never holds the file), `stopped_at_cap` (no hints, counted),
+    `invalid` or `failed`. `items_by_index` holds the ungrounded items of the `ok` chunks only, and they are kept
+    whatever `status` says. A chunk with no outcome was not attempted (an outage cut the batch) and is retried.
+    `status` is the batch's deciding effect: `ok` when every chunk has an outcome and none is charged, else the one
+    that decides the attempt and the backoff (`unavailable` before `failed` before `invalid` / `stopped_at_cap`);
+    `refused` chunks alone leave it `ok`."""
     status: ModelReplyStatus
     items_by_index: Mapping[int, Sequence[HintItem]]
     model: str
     usd: float
-    fallback_used: bool
+    fallback_usd: float = 0.0
+    outcome_by_index: Mapping[int, ModelReplyStatus] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -106,10 +130,15 @@ class TriageResultV2:
 
 @dataclass(frozen=True)
 class TriageReply:
-    """The triage v2 reply (§25.13.1): one result per image answered, and what the batch cost (the v1
-    `TriageBatchOutcome` plus the served model and whether the fallback served)."""
+    """The triage v2 reply (§25.13.1): one result per image answered. `capped_item_ids` were still stopped at the cap
+    alone and `refused_item_ids` refused alone: they get no description (counted), never a photo result without one.
+    An image in none of the three was not settled and is retried. `status` follows `HintReply.status`. An outage is a
+    status here, not `DriveModelUnavailable`: one error contract for the three model ports."""
+    status: ModelReplyStatus
     results: Tuple[TriageResultV2, ...]
     model: str
     usd: float
-    fallback_used: bool
+    fallback_usd: float = 0.0
     model_calls: int = 0         # a refused or capped batch is split and asked again (§25.4.4)
+    capped_item_ids: Tuple[str, ...] = ()
+    refused_item_ids: Tuple[str, ...] = ()

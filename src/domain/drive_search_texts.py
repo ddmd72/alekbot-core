@@ -7,6 +7,12 @@ Defined by the frozen core and not wired yet: P6 renders with them (`render_resu
 of" line stay in `drive_search` unchanged. Templates use `str.format` fields; a word is passed already quoted where
 the template does not quote it.
 
+What is frozen (review MINOR 12, stated in §25.13.6): the strings of §25.13.6's example, its D29, footer and migration
+lines, the manifest field texts and the protocol tiers line. The other coverage parts (not read yet, could not be
+read, building, re-keying, a full page, keys cut, concepts cut, no doc2query), the other match sources (photo location,
+topic, life area, validity, photo description, entity, value, date, kind), the card's `index:` line, the intent's
+capability description and plural forms ("1 file", "1 text file is") are P6's, inside these templates' style.
+
 Public interface:
     render: SEARCHED_LINE, SEARCHED_IGNORED, SEARCHED_COMMON, COVERAGE_COMPLETE, COVERAGE_INCOMPLETE,
             COVERAGE_NOT_DESCRIBED, COVERAGE_NOT_DESCRIBABLE, the tier headings, SHOWING, SHOWING_AT_LEAST,
@@ -85,8 +91,10 @@ DRIVE_DATE_FROM_DESCRIPTION = (
     "written in the document when the index found one, otherwise the file's date. Use it for a time span the user "
     "gives."
 )
-DRIVE_DATE_TO_DESCRIPTION = (                                                  # §25.13.6 gives none: v1's, unchanged
-    "search_files_in_drive: optional latest date, YYYY-MM-DD, inclusive (the whole day counts)"
+DRIVE_DATE_TO_DESCRIPTION = (                                    # §25.5.7's date wording, added to §25.13.6
+    "search_files_in_drive: optional latest date, YYYY-MM-DD, inclusive (the whole day counts): a photo's taken date, "
+    "otherwise the date written in the document when the index found one, otherwise the file's date. Use it for a "
+    "time span the user gives."
 )
 
 # -- Smart protocol, `drive_specialist` block (§25.5.7) ------------------------------------------------------------
