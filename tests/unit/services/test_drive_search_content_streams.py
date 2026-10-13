@@ -106,7 +106,10 @@ async def test_a_weakly_named_scan_is_found_by_its_content_with_a_window(monkeyp
     assert hit.window == "1. Parties. 7.2 Either party may terminate on 30 days notice. 8. Law."
     assert w.repo.window_calls == [(scan, 1, (0, 1, 2))]   # the stream's chunk had no text: read by id
     assert result.envelope.content_search
-    assert "matching passage:\n1. Parties. 7.2 Either party" in render_results(result)
+    # the query has no exact terms, so only the chunk kNN found it: its nearest passage, not a matching one (F5-8)
+    assert w.repo.term_calls == [] and not hit.passage_exact
+    text = render_results(result)
+    assert "nearest passage:\n1. Parties. 7.2 Either party" in text and "matching passage" not in text
 
 
 async def test_content_streams_do_not_run_while_nothing_is_admitted(monkeypatch):
@@ -328,5 +331,8 @@ async def test_eight_content_hits_of_three_full_chunks_fit_the_window_budget(mon
     assert sum(len(t) for t in windows) <= WINDOW_CHARS_TOTAL
     assert all(c.window_shortened for c in result.cards)
     assert all(c.window.startswith(f"d{docs.index(c.item_id)}-c1") for c in result.cards)   # the best chunk
-    assert "matching passage (shortened):" in render_results(result)
+    # "warranty terms" has no exact terms: every window is the chunk kNN's nearest passage (F5-8)
+    assert w.repo.term_calls == [] and not any(c.passage_exact for c in result.cards)
+    text = render_results(result)
+    assert "nearest passage (shortened):" in text and "matching passage" not in text
     assert f"window_chars={sum(len(t) for t in windows)}" in log.info.call_args[0][0]

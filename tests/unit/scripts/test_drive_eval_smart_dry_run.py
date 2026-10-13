@@ -1,6 +1,7 @@
 """G3 harness logic, offline (USER_DRIVE_INDEXING_RFC §17.8, §24.11, D11): drive reads run for real against the
 fixture index through a real FileManagementAgent; other read-only delegations go to Smart's own engine; writes are
-answered without running; the metric is the search-initiated rate, barred on positives, reported on negatives."""
+answered without running; the metric is the search-initiated rate, barred from below on positives and from above on
+negatives (final review F5-6)."""
 import json
 from pathlib import Path
 
@@ -135,17 +136,22 @@ def test_rates_per_set_and_category():
     assert table["negative:web"]["rate"] == 0.5 and table["positive:ocr"]["rate"] == 0.0
 
 
-def test_the_bar_is_the_positive_rate_and_negatives_are_reported():
+def test_the_positives_are_barred_from_below_and_the_negatives_from_above():
     table = score(_rows())
     bars = make_g3_bars(table, "g", "gpt-6-luna", 3, "now")
     assert bars["positive_rate"] == 0.5 and bars["negative_rate_reported"] == 0.5
+    # final review F5-6: the negatives are barred too, by the rate's Wilson upper bound
+    assert bars["negative_rate_reported"] < bars["negative_bar"] <= 1.0
     # review E minor: the bar is the rate's Wilson lower bound, and judge runs at the recorded --repeats
     assert 0.0 <= bars["positive_bar"] < bars["positive_rate"]
     assert judge(table, bars, "g", "gpt-6-luna", repeats=3) == "pass"
     worse = score([{**r, "searched": False} for r in _rows()])
     assert judge(worse, bars, "g", "gpt-6-luna", repeats=3) == "regression"
+    # searching the drive for chit-chat, web or memory questions is the regression on the negatives (F5-6)
     noisier_negatives = score([{**r, "searched": True} if r["set"] == "negative" else r for r in _rows()])
-    assert judge(noisier_negatives, bars, "g", "gpt-6-luna", repeats=3) == "pass"
+    assert judge(noisier_negatives, bars, "g", "gpt-6-luna", repeats=3) == "regression"
+    quieter_negatives = score([{**r, "searched": False} if r["set"] == "negative" else r for r in _rows()])
+    assert judge(quieter_negatives, bars, "g", "gpt-6-luna", repeats=3) == "pass"
 
 
 def test_bars_from_another_gold_or_model_give_no_verdict():

@@ -18,7 +18,8 @@ def test_sums_open_the_file_then_compute_from_the_opened_text():
 
 def test_the_dates_line_is_the_retry_rule_only():
     block = _block()
-    assert 'dates: "If a date filter finds nothing, search again without it before saying not found."' in block
+    # final review F5-4: the retry fires when a date-filtered search does not show the file, not only on zero results
+    assert 'dates: "If a date-filtered search does not show the file asked for, search again without the filter."' in block
     for subtlety in ("the model read", "document's own date", "file's date", "drive_date_from"):
         assert subtlety not in block, subtlety
 
