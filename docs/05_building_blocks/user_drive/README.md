@@ -77,6 +77,16 @@ Smart → delegate_to_specialist(search_files_in_drive) → FileManagementAgent
   → DriveSearchService → FirestoreDriveIndexRepository (card kNN, name keys, chunk kNN, content terms, filters)
 ```
 
+**Why a polling tick and not Graph push notifications.** A Graph change notification says only that something in
+the drive changed, not what. The tick would still read the delta feed, so push would replace only what triggers the
+tick. Microsoft also advises a periodic sync to recover missed notifications, so the poll would stay anyway, at a
+lower rate. Push adds three things: a public webhook with a validation handshake on the main service (the indexer's
+ingress is internal), subscription renewal, and an unverified question, whether a subscription is allowed under
+`Files.ReadWrite.AppFolder` alone. For content it gains almost nothing: an edit waits out the 10-minute quiet period
+(§4, steps 1–3) either way. The bot's own changes already arrive at once through the nudge. An idle tick takes a few
+seconds (live: 2–5 s per user), billed per request. Push stays an extension: one more trigger that enqueues the same
+`drive_sync` (RFC §14).
+
 Deploy units, queue, scheduler job and the two-pass first deploy: [docs/07_deployment/README.md](../../07_deployment/README.md)
 → Drive Indexer Service and [SCHEDULERS.md](../../07_deployment/SCHEDULERS.md).
 

@@ -2,7 +2,8 @@
 
 **Date:** 2026-10-13 (premise and hardening revised after the final security review, R3 F3-1)
 **Status:** Accepted, with an owner-accepted residual risk and a named trigger (User Drive Step 2, Slice 2+4;
-adversarial review A, final review 3)
+adversarial review A, final review 3). Residual risk accepted by the owner on 2026-10-13 for the current whitelist;
+revisit before the whitelist admits anyone beyond the people the owner vouches for (see Trigger).
 **Context:** [USER_DRIVE_INDEXING_RFC.md](../../10_rfcs/USER_DRIVE_INDEXING_RFC.md) §9, §16 (Phase 0), §24.3,
 §24.14; `src/adapters/subprocess_content_extractor.py`, `src/adapters/drive_parser/child.py`,
 `src/adapters/drive_parser/readers.py`, `src/utils/document_hardening.py`, `Dockerfile`, `indexer_main.py`.

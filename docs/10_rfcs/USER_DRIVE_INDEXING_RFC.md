@@ -1137,7 +1137,7 @@ substitutions (deploy-substitution trap).
 | Reuse of extraction for duplicate files | Copy chunks between records with the same `content_hash` instead of re-extracting | `content_hash` |
 | Near-duplicate / version clustering (ред1..3) | Grouping step after RRF; today a protocol line only (§10.4) | names, `effective_date` |
 | Code, logs, archive tables of contents | Policy change (opaque root → walkable, new admitted kinds) + `policy_version` bump; a new epoch picks up subtrees that were never stored | `reason`, `kind`, opaque root records |
-| Push instead of polling (Graph webhooks) | Another trigger enqueuing the same `drive_sync` | — |
+| Push instead of polling (Graph webhooks) | Another trigger enqueuing the same `drive_sync`; the poll stays as the missed-notification sync at a lower rate. Deferred: a notification carries no change list (the delta read stays), it needs a public webhook, renewal and an App-Folder-scope check, and the content quiet period erases most of the latency gain (building block README §2) | — |
 | Recency preference | Re-rank after RRF | `modified_at` |
 | Range read of long files | `open_file_from_drive` option served from stored chunks; past the indexed span it downloads | chunks, offsets |
 | Second document source | Same card contract; new source adapter | — |
