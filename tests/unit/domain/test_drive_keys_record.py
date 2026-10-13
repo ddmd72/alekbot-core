@@ -175,11 +175,16 @@ def test_walk_through_pro_barselonu_record_side():
     concept = query_concepts("про Барселону").concepts[0]
     photo = RecordKeyInputs(kind="image", triage_verdict=TriageVerdict.PHOTO,
                             place_forms=("Barcelona", "Барселона", "Spain", "Испания"))
-    hits = {k for k in set(concept.about_keys) & set(about_keys_of(photo)) if k.startswith("e:")}
+    all_hits = set(concept.about_keys) & set(about_keys_of(photo))
+    hits = {k for k in all_hits if k.startswith("e:")}
     assert {"e:барселона", "e:барселон"} & hits
     sources = about_sources(photo)
-    assert {s.field for k in hits for s in sources[k]} == {AboutField.PLACE}
+    # Every hit, native or skeleton, comes from the place (test reviewer: the field check covers all hits again).
+    assert {s.field for k in all_hits for s in sources[k]} == {AboutField.PLACE}
     assert all(s.source_class is SourceClass.VERIFIED_RECORD for k in hits for s in sources[k])
+    skeletons = all_hits - hits                                      # review M8: a skeleton hit is a translation
+    assert all(k.startswith("ex:") for k in skeletons)
+    assert all(s.source_class is SourceClass.TRANSLATION for k in skeletons for s in sources[k])
 
     doc = RecordKeyInputs(kind="pdf", profile=_profile(entities=(
         ProfileEntity("Barcelona", "place", "Барселона", ("Барселона",)),)))

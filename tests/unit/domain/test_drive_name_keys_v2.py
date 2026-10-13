@@ -1,6 +1,7 @@
-"""Name keys v2 (USER_DRIVE_INDEXING_RFC §25.2.4 "Name keys", NAME_KEYS_VERSION 2): the v1 keys (whole tokens,
-variants, trigrams) stay, and gain the `w:` forms of every token and the `n:`/`y:` forms of digit tokens, so a
-concept's keys meet a name the way they meet a passage. v1 `name_keys` is unchanged while the v1 search calls it."""
+"""Name keys v2 (USER_DRIVE_INDEXING_RFC §25.2.4 "Name keys", NAME_KEYS_VERSION 2): the native `w:` forms of every
+token, one `x:` skeleton per word (v1's transliterated `w:` variants are dropped, P1 review B2/M8), the `n:`/`y:` forms
+of digit tokens and number terms, and trigrams, so a concept's keys meet a name the way they meet a passage. v1
+`name_keys` is unchanged while the v1 search calls it."""
 import pytest
 
 from src.domain.drive_keys import NAME_KEYS_V2, name_keys_v2, query_concepts, token_forms, token_spans
@@ -8,15 +9,31 @@ from src.domain.drive_name_keys import name_keys
 
 
 @pytest.mark.parametrize("name", ["Барселоне 2023.jpg", "Receipts March.pdf", "IMG_2210.jpg", "Київ — план v2.docx",
-                                  "Crème brûlée.md"])
+                                  "Crème brûlée.md", "myFileName Нью-Йорк сім'я.txt", ""])
 def test_v2_keys_every_token_but_no_transliterated_spelling(name):
     """v2 replaces v1's transliterated `w:` variants by one `x:` skeleton per word (review B2/M8): a name matched
-    only through another script is a translation, not exact. Every token keeps its form (a) or its number term."""
+    only through another script is a translation, not exact. Kept, per §25.2.4 "Name keys": every native `w:` form
+    of every token (with case parts and compounds), the `x:` skeleton of each word, and the trigrams of each token;
+    the `w:` keys are exactly the native forms (test reviewer: restores the full-set check the v1-subset test made)."""
+    from src.domain.drive_key_forms import scan, skeleton_key
+    from src.domain.drive_name_keys import _strip_accents, _trigrams
     keys = set(name_keys_v2(name))
     for token, _, _ in token_spans(name):
         forms = token_forms(token)
         assert (f"w:{forms[0]}" in keys) if forms else (f"n:{token}" in keys or len(token) < 2), token
-    assert any(k.startswith("x:") for k in keys)
+    native, skeletons, grams = set(), set(), set()
+    for token in scan(name):
+        for word in (token.text, *token.parts, token.compound):
+            if word:
+                native.update(token_forms(word))
+        for word in (token.text, token.compound):
+            sk = skeleton_key(word) if word else None
+            if sk:
+                skeletons.add(sk)
+        grams.update(_trigrams(_strip_accents(token.text)))
+    assert {k[2:] for k in keys if k.startswith("w:")} == native
+    assert {"x:" + sk for sk in skeletons} <= keys and {"t:" + g for g in grams} <= keys
+    assert bool(skeletons) == bool(name)
 
 
 def test_v2_has_no_cross_script_spelling_under_w():
