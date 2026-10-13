@@ -15,6 +15,7 @@ Public interface:
     normalize_path(path) -> str;  path_match(candidate, wanted) -> Optional[str]
     cosine_distance(a, b) -> float
     is_unread(rec, admitted=None, triaged=None) -> bool;  content_admitted() -> bool
+    is_not_read_yet(rec, admitted=None, triaged=None) -> bool   (waiting, not unreadable: F5-2)
     escape_text(text) -> str;  wrap_untrusted(text, *, nonce, ref, path) -> str
     render_results(result) -> str
     make_card(rec, path, summary, nonce) / rank_names(recs, scores) / cover_first(fused, groups)
@@ -51,7 +52,9 @@ DATE_TAKEN = "taken"
 DATE_WRITTEN = "written in the document"
 DATE_FILE = "file date"
 
-UNREAD_COUNTER = "unread"   # DriveSyncState.counters key the tick fills from is_unread (Slice 2)
+UNREAD_COUNTER = "unread"   # DriveSyncState.counters key: documents not searchable, both kinds below (Slice 2)
+NOT_READ_YET_COUNTER = "not_read_yet"   # of them, those still waiting to be read (is_not_read_yet, F5-2); the rest
+                                        # could not be read
 
 # A chain longer than this is a cycle or corrupt data: the record is hidden, never looped on.
 MAX_CHAIN_DEPTH = 64
@@ -188,7 +191,10 @@ class DriveSearchEnvelope:
     refreshing: bool = False             # cards are in another embedding space: names and filters only (§12.3)
     reconnect_needed: bool = False
     index_as_of: Optional[datetime] = None
-    unread: int = 0
+    unread: int = 0                      # documents that could not be read (the terminal demotes)
+    not_read_yet: int = 0                # documents still waiting to be read: queued, held, scheduled (F5-2)
+    reading: bool = False                # the index's applied policy is not POLICY_VERSION: the upgrade pass is
+                                         # still re-planning records, documents are still being read (F4-1)
     index_full: bool = False
 
 
@@ -442,6 +448,14 @@ def date_source(rec: DriveIndexRecord) -> Optional[str]:
     return DATE_FILE
 
 
+def is_not_read_yet(rec: DriveIndexRecord, admitted: Optional[FrozenSet[str]] = None,
+                    triaged: Optional[FrozenSet[str]] = None) -> bool:
+    """An unread document that is only waiting (final review F5-2): `pending` with no readable generation — queued,
+    held for next month, scheduled by an upgrade pass. Never one held by the card cap (`card_capped`, whatever its
+    state): the "index is full" line covers it. The other unread documents could not be read."""
+    return (rec.state is RecordState.PENDING and not rec.card_capped and is_unread(rec, admitted, triaged))
+
+
 def make_card(rec: DriveIndexRecord, path: str, summary: str, nonce: str) -> DriveSearchCard:
     return DriveSearchCard(
         ref=make_drive_ref(rec.item_id), item_id=rec.item_id, name=rec.name, path=path, kind=rec.kind,
@@ -543,6 +557,11 @@ def _envelope_lines(result: DriveSearchResult) -> List[str]:
     if not env.content_search:
         lines.append("Only file and folder names and metadata (type, dates, photo details, place) were "
                      "searched, not what the files contain.")
+    if env.reading:
+        waiting = f"{env.not_read_yet} are" if env.not_read_yet else "some are"
+        lines.append(f"Documents are still being read: {waiting} not read yet, so their content was not searched.")
+    elif env.not_read_yet:
+        lines.append(f"{env.not_read_yet} documents are not read yet, so their content was not searched.")
     if env.unread:
         lines.append(f"{env.unread} documents could not be read, so their content was not searched.")
     if env.index_full:

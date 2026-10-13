@@ -123,11 +123,13 @@ class DriveIndexRepository(ABC):
 
     @abstractmethod
     async def count_unread(self, user_id: str, kinds: AbstractSet[str],
-                           triaged: AbstractSet[str] = frozenset()) -> int:
+                           triaged: AbstractSet[str] = frozenset(), *, pending: Optional[bool] = None) -> int:
         """Documents of a kind in `kinds`, and images of a kind in `triaged` whose `triage_verdict` is `text`, whose
         content is not searchable (§10.2 `unread`, drive_search.is_unread): not folders, and `pending` without an
         `indexed_generation`, or `failed`, or `metadata_only` for too_large, no_text, machine_text or user_chunk_cap
-        (count aggregation queries). A kind in both lists counts as a document."""
+        (count aggregation queries). A kind in both lists counts as a document. `pending=True` counts only the
+        documents not read yet (drive_search.is_not_read_yet: pending, not `card_capped`), `pending=False` only those
+        that could not be read (the other classes); None counts every class (final review F5-2)."""
 
     @abstractmethod
     async def count_by_state(self, user_id: str) -> Dict[str, int]:

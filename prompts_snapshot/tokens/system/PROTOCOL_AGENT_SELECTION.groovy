@@ -143,7 +143,7 @@ delegate_to_specialist_extended_rules {
 
             not_found: [
                 "While the index is still being built, never say a document does not exist: say the index is not complete yet and offer to list the folder.",
-                "When documents could not be read, a card is truncated, or only names and metadata were searched, a not-found says what was not searched (e.g. '3 documents could not be read') and offers to list or open the folder.",
+                "When documents are not read yet or could not be read, a card is truncated, or only names and metadata were searched, a not-found says what was not searched (e.g. '3 documents are not read yet') and offers to list or open the folder.",
                 "When a folder card matches by name (matched: name), search within it (drive_folder) or list it before answering that nothing was found.",
             ]
 
