@@ -5,15 +5,15 @@ A full term page is an id-ordered slice, so a term spread over many files ranks 
 from the fusion, the window anchoring, the trimming and the widening. But a term concentrated in one file (an IBAN
 repeated in 120 chunks of one contract) fills the page too, and that page is the file the user asked for: it still
 fuses and anchors. A term is non-selective only when its full first page spans more than
-TERM_NONSELECTIVE_FILES distinct files; the folder in-memory path applies the same rule."""
-from unittest.mock import MagicMock
+TERM_NONSELECTIVE_FILES distinct files; the folder in-memory path applies the same rule.
+
+Search v2 (§25.9) retired the rule in the search: its service tests were replaced by commonness by files in
+test_drive_search_v2_ported.py. The domain-rule tests below stay until `drive_content_search` is removed."""
 
 from src.domain.drive_content_search import selective_term_hits
 from src.domain.drive_index import DriveChunk
-from src.domain.drive_index_params import CONTENT_TERM_FETCH, FETCH_MAX, TERM_NONSELECTIVE_FILES
-from src.services import drive_search_service as search_mod
+from src.domain.drive_index_params import CONTENT_TERM_FETCH, TERM_NONSELECTIVE_FILES
 
-from .test_drive_search_content_streams import FAR, by_id, index, query_vector, settle_metadata, world
 
 # A synthetic IBAN-shaped string (no real account), assembled so no source line holds it whole.
 IBAN = " ".join(("ZZ07", "0000", "1111", "2222", "3333", "44"))
@@ -54,79 +54,7 @@ def test_a_page_that_is_not_full_is_selective_however_many_files():
 
 # --- the user-wide streams -------------------------------------------------------------------------------------
 
-async def test_an_iban_in_120_chunks_of_one_contract_is_found_and_anchors_its_window(monkeypatch):
-    w = world()
-    contract = w.drive.add("contract.pdf")
-    others = [w.drive.add(f"note-{i}.pdf") for i in range(3)]
-    await settle_metadata(w, monkeypatch)
-    _vectors_off(w)
-    lines = [f"clause {i} pay to account {IBAN} monthly" for i in range(_CHUNKS)]
-    await index(w, contract, lines, [FAR] * len(lines))
-    for doc in others:
-        await index(w, doc, ["minutes of the meeting"], [FAR])
-    log = MagicMock()
-    monkeypatch.setattr(search_mod, "logger", log)
-    result = await w.search(IBAN)
-    assert [c.item_id for c in result.cards] == [contract]
-    assert "clause 0 pay to account" in by_id(result)[contract].window   # the term chunk anchors
-    assert "term_kept=1" in log.info.call_args[0][0]
-
-
-async def test_a_concentrated_term_anchors_over_the_nearest_chunk(monkeypatch):
-    w = world()
-    statement = w.drive.add("statement.pdf")
-    await settle_metadata(w, monkeypatch)
-    q = await query_vector(w, "overdraft fee")
-    lines = [f"line {i} account {IBAN} transfer" for i in range(_CHUNKS)]
-    await index(w, statement, lines + ["overdraft fee charged this month"], [FAR] * len(lines) + [q])
-    result = await w.search(f"overdraft fee {IBAN}")
-    assert "line 0 account" in by_id(result)[statement].window
-
-
-async def test_a_year_on_30_files_is_dropped(monkeypatch):
-    w = world()
-    decoys = [w.drive.add(f"a-report-{i:02d}.pdf") for i in range(30)]   # their ids sort before the target's
-    target = w.drive.add("z-contract.pdf")
-    await settle_metadata(w, monkeypatch)
-    _vectors_off(w)
-    for doc in decoys:                          # 30 files x 4 chunks: the first page of "2024" is full
-        await index(w, doc, [f"annual report 2024 part {p}" for p in range(4)], [FAR] * 4)
-    await index(w, target, ["contract 98765 signed in 2024"], [FAR])
-    log = MagicMock()
-    monkeypatch.setattr(search_mod, "logger", log)
-    result = await w.search("2024 98765")
-    assert [c.item_id for c in result.cards] == [target]
-    assert "term_kept=1" in log.info.call_args[0][0]
-    assert ("2024", FETCH_MAX) not in [(t, limit) for t, limit, _ in w.repo.term_calls]   # not widened
-
 
 # --- the folder in-memory path ---------------------------------------------------------------------------------
 
-async def test_folder_in_memory_an_iban_in_one_contract_is_found_and_anchors(monkeypatch):
-    w = world()
-    work = w.drive.add("Work", folder=True)
-    contract = w.drive.add("contract.pdf", parent=work)
-    others = [w.drive.add(f"note-{i}.pdf", parent=work) for i in range(3)]
-    await settle_metadata(w, monkeypatch)
-    _vectors_off(w)
-    lines = [f"clause {i} pay to account {IBAN} monthly" for i in range(_CHUNKS)]
-    await index(w, contract, lines, [FAR] * len(lines))
-    for doc in others:
-        await index(w, doc, ["minutes of the meeting"], [FAR])
-    result = await w.search(IBAN, folder="Work")
-    assert [c.item_id for c in result.cards] == [contract]
-    assert "clause 0 pay to account" in by_id(result)[contract].window
 
-
-async def test_folder_in_memory_a_year_on_30_files_is_dropped(monkeypatch):
-    w = world()
-    work = w.drive.add("Work", folder=True)
-    decoys = [w.drive.add(f"a-report-{i:02d}.pdf", parent=work) for i in range(30)]
-    target = w.drive.add("z-contract.pdf", parent=work)
-    await settle_metadata(w, monkeypatch)
-    _vectors_off(w)
-    for doc in decoys:
-        await index(w, doc, [f"annual report 2024 part {p}" for p in range(4)], [FAR] * 4)
-    await index(w, target, ["contract 98765 signed in 2024"], [FAR])
-    result = await w.search("2024 98765", folder="Work")
-    assert [c.item_id for c in result.cards] == [target]
