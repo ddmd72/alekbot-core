@@ -160,7 +160,7 @@ class DriveSearchCard:
     content_hash: Optional[str] = None
     nonce: str = ""
     window: str = ""                     # content hits: the best chunk and its neighbours (§10.2), untrusted text
-    window_shortened: bool = False       # the window budget trimmed the best chunk or left a neighbour out
+    window_shortened: bool = False       # the window budget trimmed the best chunk (not: left a neighbour out)
 
     def drive_item(self) -> DriveItem:
         """The Step 1 item, built only now that a path is derived (§3.1)."""
