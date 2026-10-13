@@ -19,6 +19,7 @@ from ..domain.drive_index_params import CONCEPT_KEYS_MAX
 from ..domain.drive_search import is_not_read_yet, is_unread
 from ..domain.drive_usage import added_usage, closed_initial, new_initial_build, spent_initial
 from ..ports.drive_index_repository import DriveIndexRepository
+from ..utils.logger import logger
 
 
 def _cosine_distance(a: Sequence[float], b: Sequence[float]) -> float:
@@ -301,15 +302,15 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
 
     # -- Search v2 (§25.13.1) ---------------------------------------------------------------------------------------
 
-    def _about_hits(self, user_id: str, keys: Sequence[str]) -> List[DriveIndexRecord]:
-        wanted = set(_query_keys(keys))
+    def _about_hits(self, user_id: str, keys: Sequence[str], method: str) -> List[DriveIndexRecord]:
+        wanted = set(_query_keys(keys, method))
         return [r for r in self._user(user_id) if wanted & set(r.about_keys)] if wanted else []
 
     async def find_by_about_keys(self, user_id: str, keys: Sequence[str], limit: int, *, kind: Optional[str] = None,
                                  date_from: Optional[datetime] = None, date_to: Optional[datetime] = None,
                                  after: Optional[str] = None) -> List[DriveRecordLean]:
         dated = date_from is not None or date_to is not None
-        hits = [r for r in self._about_hits(user_id, keys)
+        hits = [r for r in self._about_hits(user_id, keys, "find_by_about_keys")
                 if (kind is None or r.kind == kind)
                 and (not dated or (r.effective_date is not None
                                    and (date_from is None or r.effective_date >= date_from)
@@ -325,13 +326,13 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
     async def find_expiring(self, user_id: str, keys: Sequence[str], after_date: date,
                             limit: int) -> List[DriveRecordLean]:
         start = _day_start(after_date)
-        hits = [r for r in self._about_hits(user_id, keys) if r.valid_until is not None and r.valid_until >= start]
+        hits = [r for r in self._about_hits(user_id, keys, "find_expiring") if r.valid_until is not None and r.valid_until >= start]
         hits.sort(key=lambda r: (r.valid_until, r.item_id))
         return [lean_of(r) for r in hits[:limit]]
 
     async def find_chunks_by_word_keys(self, user_id: str, keys: Sequence[str], limit: int,
                                        after_item_id: Optional[str] = None) -> List[DriveChunkLean]:
-        wanted = set(_query_keys(keys))
+        wanted = set(_query_keys(keys, "find_chunks_by_word_keys"))
         hits = [c for c, _ in self._user_chunks(user_id) if wanted & set(c.word_keys)
                 and (after_item_id is None or c.item_id > after_item_id)]
         return [DriveChunkLean(c.user_id, c.item_id, c.generation, c.index, c.kind) for c in hits[:limit]]
@@ -345,7 +346,7 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
 
     async def find_hints_by_keys(self, user_id: str, keys: Sequence[str], limit: int,
                                  after_item_id: Optional[str] = None) -> List[DriveHintLean]:
-        wanted = set(_query_keys(keys))
+        wanted = set(_query_keys(keys, "find_hints_by_keys"))
         hits = [h for h, _ in self._user_hints(user_id) if wanted & set(h.hint_keys)
                 and (after_item_id is None or h.item_id > after_item_id)]
         return [_hint_lean(h) for h in hits[:limit]]
@@ -442,10 +443,14 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
             self.initial[user_id] = closed_initial(self.initial.get(user_id) or new_initial_build(), now)
 
 
-def _query_keys(keys: Sequence[str]) -> List[str]:
-    """The distinct keys one array-contains-any query takes, in order, cut at CONCEPT_KEYS_MAX (as the Firestore
-    adapter does: Firestore's limit)."""
-    return list(dict.fromkeys(keys))[:CONCEPT_KEYS_MAX]
+def _query_keys(keys: Sequence[str], method: str) -> List[str]:
+    """The distinct keys of one query, in order; more than CONCEPT_KEYS_MAX is refused and logged, as the Firestore
+    adapter does (Firestore's limit; never a silent cut)."""
+    wanted = list(dict.fromkeys(keys))
+    if len(wanted) > CONCEPT_KEYS_MAX:
+        logger.error(f"[DriveIndex] {method} refused: {len(wanted)} distinct keys, at most {CONCEPT_KEYS_MAX}")
+        raise ValueError(f"{method}: {len(wanted)} distinct keys, at most {CONCEPT_KEYS_MAX}")
+    return wanted
 
 
 def _day_start(day: date) -> datetime:

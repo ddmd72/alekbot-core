@@ -326,10 +326,15 @@ def initial_from_doc(data: Mapping[str, Any]) -> InitialBuild:
                         closed_at=_dt(data.get("closed_at")))
 
 
-def _query_keys(keys: Sequence[str]) -> List[str]:
-    """The distinct keys one `array_contains_any` takes, in order, cut at CONCEPT_KEYS_MAX: Firestore's limit of 30
-    values (and 30 disjunctions) per query. The caller sends at most that many (§25.5.1)."""
-    return list(dict.fromkeys(keys))[:CONCEPT_KEYS_MAX]
+def _query_keys(keys: Sequence[str], method: str) -> List[str]:
+    """The distinct keys of one `array_contains_any`, in order. More than CONCEPT_KEYS_MAX (Firestore's limit of 30
+    values and 30 disjunctions per query) is refused, logged, never cut: a cut key is a file lost without a trace.
+    The caller splits its lists (§25.5.1)."""
+    wanted = list(dict.fromkeys(keys))
+    if len(wanted) > CONCEPT_KEYS_MAX:
+        logger.error(f"[DriveIndex] {method} refused: {len(wanted)} distinct keys, at most {CONCEPT_KEYS_MAX}")
+        raise ValueError(f"{method}: {len(wanted)} distinct keys, at most {CONCEPT_KEYS_MAX}")
+    return wanted
 
 
 def _chunks(items: Sequence[Any], size: int = RECORD_WRITE_BATCH) -> List[Sequence[Any]]:
@@ -405,6 +410,10 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
         self._chunks_name = env_config.drive_index_chunks_collection   # resolved per call, like a reference
         self._hints_name = env_config.drive_index_hints_collection     # (Search v2, §25.2.2)
         self._usage_name = env_config.drive_model_usage_collection     # (Search v2, §25.4.5)
+        # Serialises this process's initial-build spends (review m1): enrichment spends concurrently on one document,
+        # and a transaction that loses its retries is an Aborted after the money was spent. The transaction stays for
+        # other processes (the indexer runs max-instances 1, concurrency 1).
+        self._initial_lock = asyncio.Lock()
         logger.info(f"📂 DriveIndex repo initialized (records={env_config.drive_index_records_collection}, "
                     f"chunks={self._chunks_name}, hints={self._hints_name}, usage={self._usage_name}, "
                     f"state={env_config.drive_sync_state_collection})")
@@ -868,7 +877,9 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
         query = (self._user_chunks(user_id).order_by("item_id").order_by("generation").order_by("index"))
         if after is not None:
             query = query.start_after({"item_id": after[0], "generation": after[1], "index": after[2]})
-        return [chunk_from_doc(snap.to_dict()) for snap in await query.select(list(CHUNK_FIELDS)).limit(limit).get()]
+        # ids only (review m3): the sweep needs (item_id, generation, index), and a v2 chunk carries up to 900 keys
+        snaps = await query.select(list(CHUNK_LEAN_FIELDS)).limit(limit).get()
+        return [chunk_from_doc(snap.to_dict()) for snap in snaps]
 
     async def delete_user_chunks(self, user_id: str, limit: int) -> int:
         snaps = await self._user_chunks(user_id).select([FieldPath.document_id()]).limit(limit).get()
@@ -905,7 +916,7 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
         smoke script runs it with the most disjunctions one query may carry. One `array_contains_any` of at most
         CONCEPT_KEYS_MAX keys and one `kind ==` (a family is post-filtered by the caller, §25.5.5), so a query never
         passes Firestore's 30 disjunctions."""
-        wanted = _query_keys(keys)
+        wanted = _query_keys(keys, "find_by_about_keys")
         if not wanted:
             return None
         query = self._user_query(user_id)
@@ -938,7 +949,7 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
 
     async def find_expiring(self, user_id: str, keys: Sequence[str], after_date: date,
                             limit: int) -> List[DriveRecordLean]:
-        wanted = _query_keys(keys)
+        wanted = _query_keys(keys, "find_expiring")
         if not wanted:
             return []
         start = datetime(after_date.year, after_date.month, after_date.day, tzinfo=timezone.utc)
@@ -1001,7 +1012,7 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
 
     def word_keys_query(self, user_id: str, keys: Sequence[str]) -> Any:
         """`find_chunks_by_word_keys`' query before its cursor and limit, None without keys (smoke script)."""
-        wanted = _query_keys(keys)
+        wanted = _query_keys(keys, "find_chunks_by_word_keys")
         if not wanted:
             return None
         return (self._user_chunks(user_id).where(filter=FieldFilter("word_keys", "array_contains_any", wanted))
@@ -1048,7 +1059,7 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
     def hint_keys_query(self, user_id: str, keys: Sequence[str]) -> Any:
         """`find_hints_by_keys`' query before its cursor and limit, None without keys (smoke script). Kind is never
         in it: the caller post-filters (§25.5.5, no `kind + hint_keys` composite)."""
-        wanted = _query_keys(keys)
+        wanted = _query_keys(keys, "find_hints_by_keys")
         if not wanted:
             return None
         return (self._user_hints(user_id).where(filter=FieldFilter("hint_keys", "array_contains_any", wanted))
@@ -1169,7 +1180,8 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
                 transaction.set(ref, initial_to_doc(user_id, after))
             return after, covered
 
-        return await _spend(self._db.transaction())
+        async with self._initial_lock:
+            return await _spend(self._db.transaction())
 
     async def close_initial_build(self, user_id: str, now: datetime) -> None:
         ref = self._usage_col.document(initial_doc_id(user_id))
@@ -1182,7 +1194,8 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
             if after != before:
                 transaction.set(ref, initial_to_doc(user_id, after))
 
-        await _close(self._db.transaction())
+        async with self._initial_lock:
+            await _close(self._db.transaction())
 
 
 # Transient on Firestore's side: the same call may succeed later, so it is never one file's failure (§8.2).
