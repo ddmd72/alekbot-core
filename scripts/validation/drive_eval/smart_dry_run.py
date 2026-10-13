@@ -15,7 +15,10 @@ Metrics:
 - the date-expectation rate: every case says where its date belongs (`expect`): `date_in_query` (a date written inside
   the document: Smart searched with a non-empty drive_query and set no date filter on any search), `date_filter` (the
   user limits when the file is dated: some search set drive_date_from or drive_date_to), `none` (no search set a date
-  filter). It is read from the fields of Smart's actual search calls, over every case, and barred.
+  filter). It is read from the fields of Smart's actual search calls. The bar is the rate over the date cases only
+  (`date_in_query` and `date_filter` together, scope `dated`): pooled over every case, the `none` cases — most of the
+  gold, the negatives meeting it by not searching — hid a full regression of the date cases (arbiter R2 S-m3). The
+  pooled rate (`expect`) is reported, not barred; bars recorded before the date bar give no verdict.
 One LLM sample per case is noisy (decisions/directive_applicability_gate.md § Variance), so a bar is the Wilson lower
 confidence bound (z = 1.96, the 95% two-sided interval's lower end) of the rate recorded over `--repeats` runs, and a
 run is judged only against bars recorded with the same `--repeats`.
@@ -61,6 +64,7 @@ NEGATIVE_CATEGORIES = frozenset({"chit_chat", "memory", "web", "general"})
 LANGS = frozenset({"en", "ru", "uk", "es", "fr"})
 MIN_PER_SET = 10
 EXPECTATIONS = ("date_in_query", "date_filter", "none")
+DATED_EXPECTATIONS = ("date_in_query", "date_filter")   # the cases the date bar is over (arbiter R2 S-m3)
 WILSON_Z = 1.96   # the 95% two-sided Wilson interval; its lower end is the bar
 _DATE_FILTERS = ("drive_date_from", "drive_date_to")
 DRIVE_READ_INTENTS: FrozenSet[str] = frozenset({
@@ -216,13 +220,17 @@ def expectation_met(expect: str, calls: Sequence[Mapping[str, Any]]) -> bool:
 
 def score(rows: Sequence[Mapping[str, Any]]) -> Dict[str, Dict[str, float]]:
     """{scope: {runs, searched, rate}} for each set and each `set:category`; for rows scored on their date
-    expectation, also `expect` and `expect:<expectation>` (there `searched` counts the expectation hits)."""
+    expectation, also `expect` and `expect:<expectation>`, and `dated` over the date cases only (there `searched`
+    counts the expectation hits)."""
     groups: Dict[str, List[bool]] = {}
     for row in rows:
         for scope in (row["set"], f"{row['set']}:{row['category']}"):
             groups.setdefault(scope, []).append(bool(row["searched"]))
         if "expect_hit" in row:
-            for scope in ("expect", f"expect:{row['expect']}"):
+            scopes = ["expect", f"expect:{row['expect']}"]
+            if row["expect"] in DATED_EXPECTATIONS:
+                scopes.append("dated")
+            for scope in scopes:
                 groups.setdefault(scope, []).append(bool(row["expect_hit"]))
     return {scope: {"runs": len(v), "searched": sum(v), "rate": sum(v) / len(v)} for scope, v in sorted(groups.items())}
 
@@ -248,6 +256,9 @@ def make_g3_bars(table: Mapping[str, Mapping[str, float]], gold_sha256: str, mod
             "wilson_z": WILSON_Z,
             "positive_rate": table.get("positive", {}).get("rate", 0.0),
             "positive_bar": _bound(table, "positive"),
+            "date_rate": table.get("dated", {}).get("rate", 0.0),
+            "date_bar": _bound(table, "dated"),
+            # pooled over every case, `none` included: reported, not judged (arbiter R2 S-m3)
             "expect_rate": table.get("expect", {}).get("rate", 0.0),
             "expect_bar": _bound(table, "expect"),
             "negative_rate_reported": table.get("negative", {}).get("rate", 0.0)}
@@ -262,12 +273,14 @@ def judge(table: Mapping[str, Mapping[str, float]], bars: Mapping[str, Any], gol
         raise G3Error(f"the bars were recorded with Smart on {bars.get('smart_model')}, this run is on {model}")
     if bars.get("repeats") != repeats:
         raise G3Error(f"the bars were recorded with --repeats {bars.get('repeats')}, this run has {repeats}")
-    for key in ("positive_bar", "expect_bar"):
-        if key not in bars:
-            raise G3Error(f"the bars have no {key} (recorded before the lower-bound bars) — run with --record")
+    if "positive_bar" not in bars:
+        raise G3Error("the bars have no positive_bar (recorded before the lower-bound bars) — run with --record")
+    if "date_bar" not in bars:
+        raise G3Error("the bars have no date_bar (recorded before the date-case bar, which replaced the date rate "
+                      "pooled over every case) — run with --record")
     positive = table.get("positive", {}).get("rate", 0.0)
-    expect = table.get("expect", {}).get("rate", 0.0)
-    below = positive < float(bars["positive_bar"]) - _EPS or expect < float(bars["expect_bar"]) - _EPS
+    dated = table.get("dated", {}).get("rate", 0.0)
+    below = positive < float(bars["positive_bar"]) - _EPS or dated < float(bars["date_bar"]) - _EPS
     return "regression" if below else "pass"
 
 

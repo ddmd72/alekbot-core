@@ -624,6 +624,20 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
                  .order_by("item_id").order_by("generation").order_by("index").limit(limit))
         return [chunk_from_doc(snap.to_dict()) for snap in await query.select(list(STREAM_FIELDS)).get()]
 
+    async def find_next_file_with_term(self, user_id: str, term: str, after_item_id: str,
+                                       kind: Optional[str] = None) -> Optional[DriveChunk]:
+        """The term page's query with a cursor on item_id alone: a cursor shorter than the ordering positions past
+        every document sharing its prefix, so past all of the item's chunks (arbiter R2 S-M1). Same composite index
+        as `find_chunks_by_term`."""
+        query = self._user_chunks(user_id)
+        if kind is not None:
+            query = query.where(filter=FieldFilter("kind", "==", kind))
+        query = (query.where(filter=FieldFilter("content_terms", "array_contains", term))
+                 .order_by("item_id").order_by("generation").order_by("index")
+                 .start_after({"item_id": after_item_id}).limit(1))
+        snaps = await query.select(list(STREAM_FIELDS)).get()
+        return chunk_from_doc(snaps[0].to_dict()) if snaps else None
+
     async def _get_chunk_docs(self, user_id: str, item_id: str, generation: int, indexes: Sequence[int],
                               field_paths: List[str]) -> List[Mapping[str, Any]]:
         wanted = sorted(set(indexes))

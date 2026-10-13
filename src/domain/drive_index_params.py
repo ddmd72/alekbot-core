@@ -60,6 +60,8 @@ CHUNK_FETCH = 300
 FOLDER_INMEM_CHUNKS = 2_000
 WINDOW_CHARS_TOTAL = 12_000                 # all content windows of one result set (≈ 3-4k tokens): best chunks
                                             # first, neighbours in rank order while it lasts (§10.2)
+QUERY_TERM_CHARS = 1000                     # the search extracts query terms from at most this many characters of
+                                            # drive_query, cut at a word boundary (no length cap upstream; arbiter R2 S-m1)
 CONTENT_TERM_QUERIES = 8                    # one array-contains query per query term, at most this many
 CONTENT_TERM_FETCH = 100
 TERM_NONSELECTIVE_FILES = 8                 # a query term whose FULL first term page spans more distinct files than
