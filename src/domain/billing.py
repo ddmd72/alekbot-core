@@ -203,7 +203,8 @@ _PRICING_PER_MILLION_TOKENS: Dict[str, Dict[str, float]] = {
     "claude-opus-5-5":                   {"input": 4.00,  "output": 20.00, "cache_read": 0.05, "cache_write": 1.25},
     # --- OpenAI GPT-5.6 family (Luna/Terra/Sol, GA 2026-07-09) — active tier defaults ---
     # cache_write 1.25: GPT-5.6 bills cache writes at 1.25x uncached input (new vs 5.4/5.5 = free).
-    # NOTE: only charged if usage surfaces cache-write tokens — verify extraction (RFC §3.4).
+    # The written tokens are a subset of OpenAI's input_tokens; OpenAIAdapter carves them out of
+    # prompt_tokens so the legs stay disjoint (decisions/billing_cache_write_and_voice_seconds.md).
     # PRICE CUT 2026-07-30, read off the provider pricing page (developers.openai.com/api/docs/pricing):
     #   luna  $1.00/$6.00  → $0.20/$1.20 (-80%)
     #   terra $2.50/$15.00 → $2.00/$12.00 (-20%)
@@ -445,6 +446,15 @@ def calculate_realtime_cost(model: str, usage: Dict[str, int]) -> float:
     total = sum(usage.get(leg, 0) * rate_per_million / 1_000_000 for leg, rate_per_million in (token_rates or {}).items())
     total += sum(usage.get(leg, 0) * rate_per_second for leg, rate_per_second in second_rates.items())
     return round(total, 6)
+
+
+def realtime_token_count(usage: Dict[str, float]) -> int:
+    """The token legs of a flattened realtime usage, for the account's token counter.
+
+    Per-second legs (xAI's ``billable_audio_seconds``) are a duration, not tokens:
+    they are priced by ``calculate_realtime_cost`` and kept out of this count.
+    """
+    return int(sum(value for leg, value in usage.items() if leg.endswith("_tokens")))
 
 
 @dataclass
