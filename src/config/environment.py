@@ -363,6 +363,22 @@ class EnvironmentConfig:
         return f"{self.firestore_collection_prefix}drive_index_chunks"
 
     @property
+    def drive_index_hints_collection(self) -> str:
+        """
+        User-drive passage-hint documents, one per chunk with hints (USER_DRIVE_INDEXING_RFC §25.2.2).
+        Dev: development_drive_index_hints
+        """
+        return f"{self.firestore_collection_prefix}drive_index_hints"
+
+    @property
+    def drive_model_usage_collection(self) -> str:
+        """
+        User-drive model usage per month and the initial-build allowance; a purge keeps them
+        (USER_DRIVE_INDEXING_RFC §25.4.5). Dev: development_drive_model_usage
+        """
+        return f"{self.firestore_collection_prefix}drive_model_usage"
+
+    @property
     def drive_sync_state_collection(self) -> str:
         """
         User-drive sync state, one per user (USER_DRIVE_INDEXING_RFC §3.5).

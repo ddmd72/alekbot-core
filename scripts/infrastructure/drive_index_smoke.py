@@ -1,5 +1,6 @@
 """
-Read-only smoke run of FirestoreDriveIndexRepository against live Firestore (USER_DRIVE_INDEXING_RFC §12.5).
+Read-only smoke run of FirestoreDriveIndexRepository against live Firestore (USER_DRIVE_INDEXING_RFC §12.5; Search v2
+reads §25.2.5, run before the v2 deploy as §25.8 rollout step 3 says).
 
 Runs every read query of the repository once for one user id, so a missing or still-building index fails here with
 Firestore's FAILED_PRECONDITION (and its index link) instead of on the first tick. Writes nothing. Empty results are
@@ -16,13 +17,15 @@ import os
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Awaitable, Callable, List, Tuple
+from typing import Awaitable, Callable, List, Sequence, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.adapters.firestore_drive_index_repo import FirestoreDriveIndexRepository  # noqa: E402
 from src.domain.drive_index import Priority  # noqa: E402
+from src.domain.drive_index_params import CONCEPT_KEYS_MAX  # noqa: E402
 from src.domain.drive_index_policy import SLICE2_CONTENT_KINDS, SLICE2_TRIAGED_KINDS  # noqa: E402
+from src.domain.drive_search import KIND_FAMILIES  # noqa: E402
 
 _VECTOR = [1.0] + [0.0] * 767   # any non-zero 768-dim vector
 
@@ -69,7 +72,58 @@ def checks(repo: FirestoreDriveIndexRepository, user_id: str) -> List[Tuple[str,
         ("chunks_page", lambda: repo.chunks_page(user_id, ("smoke-item", 1, 0), 5)),
         ("get_chunks", lambda: repo.get_chunks(user_id, "smoke-item", 1, [0, 1])),
         ("get_chunks_with_vectors", lambda: repo.get_chunks_with_vectors(user_id, "smoke-item", 1, [0, 1])),
+        *v2_checks(repo, user_id, now),
     ]
+
+
+def v2_checks(repo: FirestoreDriveIndexRepository, user_id: str,
+              now: datetime) -> List[Tuple[str, Callable[[], Awaitable[object]]]]:
+    """The Search v2 reads (§25.2.5). The about stream runs once with the most disjunctions a query may carry
+    (CONCEPT_KEYS_MAX keys and a single kind); a cursor read of a record that does not exist sends no query, so the
+    about cursor is not run (its query is the same as the first page's). A kind family runs its kNN one member kind
+    at a time, as the search does (§25.5.5): one check over the largest family. The per-state counts run one by one,
+    so a missing index is named per query."""
+    keys = [f"w:smoke{i}" for i in range(CONCEPT_KEYS_MAX)]
+    members = sorted(max(KIND_FAMILIES.values(), key=len))
+    ids = [("smoke-item", 1, 0), ("smoke-item", 1, 1)]
+    return [
+        ("find_by_about_keys", lambda: repo.find_by_about_keys(user_id, ["e:smoke"], 5)),
+        ("find_by_about_keys[kind]", lambda: repo.find_by_about_keys(user_id, ["e:smoke"], 5, kind="pdf")),
+        ("find_by_about_keys[dates]",
+         lambda: repo.find_by_about_keys(user_id, ["e:smoke"], 5, date_from=now - timedelta(days=7), date_to=now)),
+        ("find_by_about_keys[30 keys+kind]", lambda: repo.find_by_about_keys(user_id, keys, 5, kind="pdf")),
+        ("find_expiring", lambda: repo.find_expiring(user_id, ["lv:smoke"], now.date(), 5)),
+        ("find_chunks_by_word_keys", lambda: repo.find_chunks_by_word_keys(user_id, keys, 5)),
+        ("find_chunks_by_word_keys[cursor]",
+         lambda: repo.find_chunks_by_word_keys(user_id, ["w:smoke"], 5, after_item_id="smoke-item")),
+        ("get_chunk_keys", lambda: repo.get_chunk_keys(user_id, ids)),
+        ("find_hints_by_keys", lambda: repo.find_hints_by_keys(user_id, keys, 5)),
+        ("find_hints_by_keys[cursor]",
+         lambda: repo.find_hints_by_keys(user_id, ["w:smoke"], 5, after_item_id="smoke-item")),
+        ("get_hint_keys", lambda: repo.get_hint_keys(user_id, ids)),
+        ("find_nearest_hints", lambda: repo.find_nearest_hints(user_id, _VECTOR, 5)),
+        ("find_nearest_hints[kind]", lambda: repo.find_nearest_hints(user_id, _VECTOR, 5, kind="pdf")),
+        (f"family kNN[{','.join(members)}]", lambda: _family_knn(repo, user_id, members)),
+        ("get_hints", lambda: repo.get_hints(user_id, "smoke-item", 1)),
+        ("get_hints_with_vectors", lambda: repo.get_hints_with_vectors(user_id, "smoke-item", 1)),
+        ("hints_page", lambda: repo.hints_page(user_id, ("smoke-item", 1, 0), 5)),
+        ("enrich_queue", lambda: repo.enrich_queue(user_id, 5)),
+        ("enrich_wakeups", lambda: repo.enrich_wakeups(user_id, now, 5)),
+        *[(f"count_by_job_state[{job}={state}, batch {n // 12}]", (lambda q=q: q.count(alias="n").get()))
+          for n, (job, state, q) in enumerate(repo.job_state_count_queries(user_id, SLICE2_CONTENT_KINDS))],
+        ("keys_pending_page", lambda: repo.keys_pending_page(user_id, "a", 5)),
+        ("get_records_lean", lambda: repo.get_records_lean(user_id, ["smoke-item"])),
+        ("get_model_usage", lambda: repo.get_model_usage(user_id, now.strftime("%Y-%m"))),
+        ("get_initial_build", lambda: repo.get_initial_build(user_id)),
+    ]
+
+
+async def _family_knn(repo: FirestoreDriveIndexRepository, user_id: str, kinds: Sequence[str]) -> None:
+    """A family's kNN as the search runs it: card, chunk and hint kNN once per member kind (RFC Δ37, §25.5.2)."""
+    for kind in kinds:
+        await repo.find_nearest_cards(user_id, _VECTOR, 5, kind=kind)
+        await repo.find_nearest_chunks(user_id, _VECTOR, 5, kind=kind)
+        await repo.find_nearest_hints(user_id, _VECTOR, 5, kind=kind)
 
 
 async def run_smoke(repo: FirestoreDriveIndexRepository, user_id: str) -> List[Tuple[str, str]]:

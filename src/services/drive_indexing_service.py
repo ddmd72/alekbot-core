@@ -583,7 +583,7 @@ class DriveIndexingService:
         _fence()
         await self._recheck_gate(user_id)
         for item_id in sorted(collects or ()):
-            await self._repo.delete_chunks_except(user_id, item_id, None)
+            await self._collect(user_id, item_id, None)
         for start in range(0, len(writes), RECORD_WRITE_BATCH):
             await self._repo.upsert_records(writes[start:start + RECORD_WRITE_BATCH], card_vectors)
         if deletes:
@@ -614,8 +614,9 @@ class DriveIndexingService:
         while budget.cascade_ops > 0 and budget.time_left():
             stale = await self._repo.records_seen_before(user_id, state.epoch, min(budget.cascade_ops, RECORD_WRITE_BATCH))
             if not stale:
-                if not await self._sweep_chunks(user_id, budget, summary):
-                    return state   # the chunk backstop starts again next tick
+                if not (await self._sweep_hints(user_id, budget, summary)
+                        and await self._sweep_chunks(user_id, budget, summary)):
+                    return state   # the hint and chunk backstops start again next tick
                 logger.info(f"[DriveIndex] epoch {state.epoch} swept for {user_id[:8]}")
                 return replace(state, epoch_phase=EpochPhase.IDLE, initial_enumeration_done=True)
             writes: Dict[str, DriveIndexRecord] = {}
@@ -631,6 +632,34 @@ class DriveIndexingService:
             budget.cascade_ops -= len(stale)
             summary["swept"] = summary.get("swept", 0) + len(stale)
         return state
+
+    async def _sweep_hints(self, user_id: str, budget: _Budget, summary: Dict[str, int]) -> bool:
+        """The hint documents' backstop (§25.2.2), run before the chunks': hint documents whose record is missing or
+        whose generation is not the record's `indexed_generation` — found here even when their chunks are already
+        gone. Same pass rules as `_sweep_chunks`."""
+        after: Optional[Tuple[str, int, int]] = None
+        while budget.time_left():
+            page = await self._repo.hints_page(user_id, after, RECORD_WRITE_BATCH)
+            if not page:
+                return True
+            recs = await self._repo.get_records(user_id, sorted({h.item_id for h in page}))
+            debris = sorted({h.item_id for h in page
+                             if h.item_id not in recs or h.generation != recs[h.item_id].indexed_generation})
+            for item_id in debris:
+                _fence()
+                keep = recs[item_id].indexed_generation if item_id in recs else None
+                deleted = await self._repo.delete_hints_except(user_id, item_id, keep)
+                summary["swept_hints"] = summary.get("swept_hints", 0) + deleted
+            if len(page) < RECORD_WRITE_BATCH:
+                return True
+            after = (page[-1].item_id, page[-1].generation, page[-1].index)
+        return False
+
+    async def _collect(self, user_id: str, item_id: str, keep_generation: Optional[int]) -> None:
+        """Every generation of the item but `keep_generation` (None: all) goes: its hint documents first, then its
+        chunks (§7.4, §25.2.2), so no hint document outlives the chunks it was written for."""
+        await self._repo.delete_hints_except(user_id, item_id, keep_generation)
+        await self._repo.delete_chunks_except(user_id, item_id, keep_generation)
 
     async def _sweep_chunks(self, user_id: str, budget: _Budget, summary: Dict[str, int]) -> bool:
         """The backstop for every crash window (§7.5): chunks whose record is missing or whose generation is not the
@@ -648,6 +677,9 @@ class DriveIndexingService:
             for item_id in debris:
                 _fence()
                 keep = recs[item_id].indexed_generation if item_id in recs else None
+                hints = await self._repo.delete_hints_except(user_id, item_id, keep)   # hints first (§25.2.2)
+                if hints:
+                    summary["swept_hints"] = summary.get("swept_hints", 0) + hints
                 deleted = await self._repo.delete_chunks_except(user_id, item_id, keep)
                 summary["swept_chunks"] = summary.get("swept_chunks", 0) + deleted
             if len(page) < RECORD_WRITE_BATCH:
@@ -1323,8 +1355,7 @@ class DriveIndexingService:
             logger.info(f"[DriveIndex] item {run.item_id} of {user_id[:8]} changed during its run; result dropped")
             mark.committed = True   # the record is newer than the run: nothing may write the run back over it
             _fence()
-            await self._repo.delete_chunks_except(user_id, run.item_id,
-                                                  fresh.indexed_generation if fresh is not None else None)
+            await self._collect(user_id, run.item_id, fresh.indexed_generation if fresh is not None else None)
             summary["dropped"] = summary.get("dropped", 0) + 1
             if fresh is not None and fresh.attempt_started_at == run.attempt_started_at:
                 await self._commit(user_id, [replace(fresh, attempt_started_at=None)], set())
@@ -1446,8 +1477,7 @@ class DriveIndexingService:
             logger.info(f"[DriveIndex] item {rec.item_id} of {user_id[:8]} changed while re-embedding; dropped")
             mark.committed = True   # the record is newer than the re-embed: nothing may write over it
             _fence()
-            await self._repo.delete_chunks_except(user_id, rec.item_id,
-                                                  fresh.indexed_generation if fresh is not None else None)
+            await self._collect(user_id, rec.item_id, fresh.indexed_generation if fresh is not None else None)
             return
         done = chunks_reembedded(fresh, generation, self._space, now)
         if not (content_due(done) or triage_due(done)):   # waiting content keeps its own class and time (§7.8)
@@ -1455,7 +1485,7 @@ class DriveIndexingService:
         await self._commit(user_id, [done], set())
         mark.committed = True
         _fence()
-        await self._repo.delete_chunks_except(user_id, rec.item_id, generation)
+        await self._collect(user_id, rec.item_id, generation)
         summary["reembedded"] = summary.get("reembedded", 0) + 1
 
     async def _reread(self, user_id: str, rec: DriveIndexRecord, ctx: PlanContext) -> None:
@@ -1484,7 +1514,7 @@ class DriveIndexingService:
         if mark is not None:
             mark.committed = True
         _fence()
-        await self._repo.delete_chunks_except(user_id, final.item_id, final.indexed_generation)
+        await self._collect(user_id, final.item_id, final.indexed_generation)
         key = _outcome_key(before, final)
         summary[key] = summary.get(key, 0) + 1
         logger.info(_run_line(user_id, key, final, outcome))
@@ -1757,7 +1787,11 @@ class DriveIndexingService:
         budget = _Budget(started=self._monotonic(), monotonic=self._monotonic)
         while budget.time_left():
             _fence()
-            chunks = await self._repo.delete_user_chunks(user_id, RECORD_WRITE_BATCH)   # chunks first (§7.6)
+            hints = await self._repo.delete_user_hints(user_id, RECORD_WRITE_BATCH)   # hints first (§25.2.2)
+            if hints:
+                summary["purged_hints"] = summary.get("purged_hints", 0) + hints
+                continue
+            chunks = await self._repo.delete_user_chunks(user_id, RECORD_WRITE_BATCH)   # then chunks (§7.6)
             if chunks:
                 summary["purged_chunks"] = summary.get("purged_chunks", 0) + chunks
                 continue

@@ -484,6 +484,21 @@ After the next deploy from this branch, resume it:
 `gcloud scheduler jobs resume alek-bot-dev-start-drive-sync --location=us-central1`. A deploy does not resume a
 paused job.
 
+**Search v2 storage** (RFC §25.2.5, §25.4.5, §25.8 rollout step 3), before the v2 deploy:
+1. `make deploy-indexes` creates the new record, chunk and hint composites and the single-field exemptions
+   (`about_keys`, `profile`, the photo fields, `word_keys`, `hint_keys`, `items`, `hint_vector`, …);
+   `PROJECT_ID=<PROJECT_ID> scripts/infrastructure/create_drive_vector_indexes.sh` adds the two `hint_vector` indexes on
+   `development_drive_index_hints`. Wait until every index is `READY`.
+2. Turn on the TTL of the monthly usage documents (the `{user}:initial` document has no `expires_at` and never expires):
+   ```bash
+   gcloud firestore fields ttls update expires_at --collection-group=development_drive_model_usage \
+     --enable-ttl --database=us-production --project=<PROJECT_ID>
+   ```
+3. `venv/bin/python scripts/infrastructure/drive_index_smoke.py <DEV_USER_ID>` runs every v2 read once (the widest
+   about query and a kind family's kNN included).
+
+The two `content_terms` chunk composites stay until the owner accepts v2 (§25.8 step 7).
+
 ## Cost Optimization
 
 | Strategy             | Cost/Month | Pros        | Cons                      |

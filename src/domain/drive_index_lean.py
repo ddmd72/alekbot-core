@@ -9,14 +9,16 @@ rule is waived here on purpose).
 Public interface:
     ChunkId                     (item_id, generation, index) — one chunk or hint document of a user
     DriveRecordLean, DriveChunkLean, DriveHintLean
+    RECORD_LEAN_FIELDS          the record fields a lean read projects (both adapters; added by P2)
+    lean_of(record) -> DriveRecordLean
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from datetime import datetime
 from typing import Optional, Tuple
 
-from .drive_index import RecordState, Scope
+from .drive_index import DriveIndexRecord, RecordState, Scope
 
 ChunkId = Tuple[str, int, int]
 
@@ -60,3 +62,14 @@ class DriveHintLean:
     index: int
     kind: str
     hint_keys: Tuple[str, ...]
+
+
+# P2 (§25.13.3): the record fields a lean stream read projects — exactly the DriveRecordLean fields, all of them stored
+# record fields under the same names.
+RECORD_LEAN_FIELDS: Tuple[str, ...] = tuple(f.name for f in fields(DriveRecordLean))
+
+
+def lean_of(record: DriveIndexRecord) -> DriveRecordLean:
+    """The lean projection of a whole record (the in-memory adapter, and a Firestore record read with only
+    RECORD_LEAN_FIELDS, whose other fields take their defaults)."""
+    return DriveRecordLean(**{name: getattr(record, name) for name in RECORD_LEAN_FIELDS})
