@@ -367,34 +367,68 @@ URL silently disables indexing in the live environment, with no alert.
 
 ### Slice 2+4 — content, scans and images (owner steps)
 
-USER_DRIVE_INDEXING_RFC §24 adds model calls and chunk storage to the indexer. Before the deploy that ships it:
+USER_DRIVE_INDEXING_RFC §24 adds model calls and chunk storage to the indexer. The steps run **in this order**; each
+says why it cannot move later. Background for every step: the building block
+[`docs/05_building_blocks/user_drive/README.md`](../05_building_blocks/user_drive/README.md) §7.2.
 
-1. **Spikes, recorded in the RFC (§18).** S1 (child-process limits hold on the indexer for the Phase 0 bomb set; peak
-   RSS with a 45 MB download; cold start) before the parser ships; S0g (Graph custom renditions `c{w}x{h}` for App
+1. **Spikes, recorded in the RFC (§18).** S1 before the parser ships: run `scripts/infrastructure/drive_extract_s1.py`
+   as a one-off Cloud Run Job from the indexer's image (gen2, the indexer's memory), so `DRIVE_PARSER_USER` is set and
+   the child runs as the `driveparser` user, as deployed. It measures the Phase 0 bomb set under the child limits,
+   the peak RSS with a 45 MB download, cold start, and for the long PDFs a **reader-shaped run**: the parent holds
+   `MODEL_IN_FLIGHT` windows' bytes, base64 and request bodies while the child cuts the next window (simulated, no API
+   call), so the cgroup peak includes the parent's side of a read. S0g (Graph custom renditions `c{w}x{h}` for App
    Folder items, legible receipt text, HEIC) before the reader reads images; S3 (`find_nearest` cost and latency at
    10k and 50k chunks under a `user_id` filter) before the slice ships.
-2. **Model keys on the indexer.** The reader and triage agents call Claude (default) or OpenAI, so the indexer mounts
+2. **The first image build.** The Dockerfile now creates the system user `driveparser`, sets
+   `DRIVE_PARSER_USER=driveparser`, and fails the build on any world-writable file under `/app` (`node_modules`
+   aside) or in site-packages. Neither step was built locally: the first `make deploy` (or a plain `docker build`)
+   must show `useradd` succeeding in the base image and the check passing. The image is shared, so a failure here
+   blocks the main service's build too. On the indexer, a missing parser user fails the start
+   (`parser user 'driveparser' does not exist in this container`, ERROR) rather than parsing unsandboxed; its start
+   log names the user: `[DriveExtract] parser children run as driveparser (uid …, gid …)`.
+3. **Model keys on the indexer.** The reader and triage agents call Claude (default) or OpenAI, so the indexer mounts
    `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` from Secret Manager (`--set-secrets` in `cloudbuild-dev.yaml`, the same
    secret names the main service mounts). They are never Cloud Build substitutions. The runtime service account
    already reads them for the main service; check it once with
    `gcloud secrets get-iam-policy ANTHROPIC_API_KEY --project=<PROJECT_ID>`.
-3. **Prompts.** The `drive_reader` and `drive_triage` tokens, blueprints and profiles are uploaded by the owner
-   (`docs/how_to/NEW_AGENT_PLAYBOOK.md`; never from an agent session). Without them every model call fails as a model
-   outage (logged ERROR): parsed documents are still indexed, scans and images wait.
-4. **Smart's drive guidance.** The `drive_specialist` block of `PROTOCOL_AGENT_SELECTION`
+4. **The drive prompts, uploaded by the owner** (`docs/how_to/NEW_AGENT_PLAYBOOK.md`; never from an agent session).
+   Twelve files in `firestore_utils/uploads/` (gitignored; the copies are in the main checkout):
+   `COGNITIVE_PROCESS_DRIVE_READER.groovy` / `.json`, `COGNITIVE_PROCESS_DRIVE_TRIAGE.groovy` / `.json`,
+   `OUTPUT_FORMAT_DRIVE_READER.groovy` / `.json`, `OUTPUT_FORMAT_DRIVE_TRIAGE.groovy` / `.json` (the tokens),
+   `drive_reader.json`, `drive_triage.json` (the blueprints) and `drive_reader_agent_v1.json`,
+   `drive_triage_agent_v1.json` (the profiles). Without them every model call fails as a model outage (logged ERROR,
+   never charged to a file): parsed documents are still indexed, scans and images wait.
+5. **Indexes, then wait for `READY`.** The chunk collection `development_drive_index_chunks` needs three composites
+   (the term stream with and without `kind`, generation collection), the single-field exemptions for `text` and
+   `vector`, and two vector indexes on `vector` under `user_id` and `user_id + kind`; the records collection gains ten
+   composites (eight for the `unread` / `not_read_yet` counts, four of them with `triage_verdict` and two with
+   `card_capped`; one for the readable-chunk total; one for chunk-cap release). Composites and exemptions:
+   `make deploy-indexes PROJECT_ID=<PROJECT_ID>`; vectors:
+   `PROJECT_ID=<PROJECT_ID> scripts/infrastructure/create_drive_vector_indexes.sh`. **Wait until every one is
+   `READY`** (the `gcloud firestore indexes composite list … | grep -v READY` check above), then run the smoke check,
+   which also runs the chunk queries and names any missing index. Why it must be first: a query whose composite is
+   missing or still building fails with `FailedPrecondition`, which the indexer treats as a store outage
+   (`[DriveIndex] index store … failed, an index is missing or building`, ERROR, with the provider's message naming
+   the index). The tick ends there and counts nothing against any file, so nothing is lost — but no file's content
+   is indexed until the indexes are `READY`.
+6. **Smart's drive guidance, before the deploy.** The `drive_specialist` block of `PROTOCOL_AGENT_SELECTION`
    (`prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy`): back up the prompt layer
    (`firestore_utils/backup_prompt_layer.py` into `scripts/memory/`), check the mirror for drift
-   (`python firestore_utils/snapshot_pull.py --check`), dry-run the upload, then `--apply` (owner only;
-   [prompts_snapshot/README.md](../../prompts_snapshot/README.md)).
-5. **Indexes.** The chunk collection `development_drive_index_chunks` needs its composite indexes, and the records
-   collection the `unread` counts' composites (three of them carry `triage_verdict`, for images triaged as text)
-   (`make deploy-indexes PROJECT_ID=<PROJECT_ID>`) and its vector indexes on the chunk vector under `user_id` and
-   `user_id + kind` (`PROJECT_ID=<PROJECT_ID> scripts/infrastructure/create_drive_vector_indexes.sh`). Wait for
-   `READY`, then run the smoke check, which now also runs the chunk queries.
-6. **Cost.** A page read by the model costs about $0.0006 on Haiku 5.5 or GPT-6 Luna; the monthly budget bounds a user
-   at about $3 (§24.9). The calls are billed to the user's account and appear in `billing_daily_summary`; the tick
-   summary line carries `model_pages`, `model_calls`, `triage_images` and `model_cost`.
-7. **Live check, with the drive queue paused** (§22 step 2, §24.12). The main service's fan-out enqueues a tick for
+   (`python firestore_utils/snapshot_pull.py --check`), dry-run the upload, then
+   `python firestore_utils/snapshot_upload.py --apply prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy`
+   (owner only, interactive; [prompts_snapshot/README.md](../../prompts_snapshot/README.md)). Upload it **before**
+   deploying: the new `render_results` no longer carries the guidance the token now holds, and the prompt assembly
+   caches a template for 24 h per instance, so the new revision's fresh instances must find the new token. (The old
+   revision with the new token only repeats guidance it already rendered: harmless for the minutes in between.)
+7. **Deploy.** `make deploy` (the Indexer URL steps above apply as usual). The upgrade pass then re-plans the Slice 1
+   records in class 3; while it has not reached them all, search says "Documents are still being read".
+8. **Check the reader's resolved provider before the live model check.** The drive agents take the user's
+   `agent_providers["drive_reader"]` / `["drive_triage"]`, then the user's global `provider_preference` (when it is
+   `claude` or `openai`), then the default Claude. A user whose global preference is OpenAI reads with GPT without
+   naming the drive agents. Read the owner's `UserBotConfig` (Cabinet, or the user document) and run the live model
+   check on the provider that will actually read, or on both:
+   `venv/bin/python -m scripts.validation.drive_model_check read <folder> --providers claude,openai`.
+9. **Live check, with the drive queue paused** (§22 step 2, §24.12). The main service's fan-out enqueues a tick for
    every user with a sync state, the check's synthetic user included, so a live tick would race the check. Pause the
    queue, run the check, resume it:
    `gcloud tasks queues pause drive-sync-dev --location=us-central1 --project=<PROJECT_ID>`, then
@@ -402,6 +436,24 @@ USER_DRIVE_INDEXING_RFC §24 adds model calls and chunk storage to the indexer. 
    zz-synthetic-<yyyymmdd> --query …`, then `gcloud tasks queues resume drive-sync-dev --location=us-central1
    --project=<PROJECT_ID>`. The script refuses to start unless the queue reads PAUSED, never pauses or resumes it
    itself, and prints the resume command when it ends. Ticks queued meanwhile run after the resume.
+
+**Cost.** A page read by the model costs about $0.0006 on Haiku 5.5 or GPT-6 Luna; the monthly page budget bounds
+**the reader** at about $3 per user. That is not the whole bill: triage is bounded by 20 000 images per user per month
+(its price is measured by the live model check), embeddings have no monthly cap (bounded by 25 000 cards and 50 000
+chunks per user, and not billed to the user), and Firestore grows with the chunk count. Every path and its bound:
+the building block's §4.13 and RFC §24.9. Model calls are billed to the user's account and appear in
+`billing_daily_summary`; the tick summary line carries `model_pages`, `model_calls`, `triage_images` and
+`model_cost`.
+
+**Rollback: there is none to the Slice 1 revision.** Redeploying it over Slice 2+4 data fails: its `Reason` has no
+`photograph`, so a tick that reads such a record crashes, and it never deletes chunk documents. The levers are
+forward changes, each a code change plus a deploy:
+- stop all content work and collect every chunk: empty `ADMITTED_KINDS` and `TRIAGED_KINDS` in
+  `src/domain/drive_index_policy.py` and bump `POLICY_VERSION`; the upgrade pass re-classifies every record as
+  `kind_not_admitted` and collects the readable chunks;
+- stop model spend only: remove `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` from the indexer's secrets; every model call
+  is then a model outage (never charged to a file), and parsing, cards and search go on;
+- one user: turn their indexing off in the Cabinet; the purge removes chunks, records and sync state.
 
 **Rebuild one user's index.** `venv/bin/python scripts/infrastructure/drive_index_rebuild.py --user <USER_ID>` is a
 dry run; add `--apply` to mark the sync state `purging` under the user's lease (refused while a tick runs: retry in a
@@ -412,7 +464,10 @@ few minutes). The next tick purges the index and re-onboards from epoch 1 (USER_
 does not show it: `make fetch-logs-indexer K=300` writes `alek_debug_indexer.log` (`make logs-indexer` prints
 instead). A throttled tick logs a WARNING and a failed one an ERROR instead of that line; a purge logs
 `index purged`. An item whose observation fails inside a page is skipped with one ERROR line. That is expected
-behaviour (§8.2), not an incident, unless the same item repeats on every tick.
+behaviour (§8.2), not an incident, unless the same item repeats on every tick. From Slice 2+4 each index run also logs one INFO
+`[DriveIndex] run user=… item=<id> outcome=… state=… reason=… extractor=… attempts=… pages=<sent>/<total> refused=…
+truncated=…` line, and the reader one `[DriveReader] user=… item=<id> …` line per file; "why was file X not indexed"
+is answered from the record and these lines (building block §7.1).
 
 **Until the branch is merged**, a `make deploy` from another branch removes `start_drive_sync` from the main service
 while the scheduler job keeps firing. Pause the job first:
