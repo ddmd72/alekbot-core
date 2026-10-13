@@ -24,6 +24,7 @@ Public interface:
     can_start_file(elapsed_s, *, routed) -> bool
     with_card(rec, card_hash, embedding_space, now) / without_card(rec, now) / capped(rec, now) / released(rec, now)
     card_refused(rec, now) -> DriveIndexRecord
+    drops_readable(before, after) -> bool                                                    (§7.4)
     with_retry(rec, now) -> DriveIndexRecord
     access_action(enabled, state, connection, now) -> AccessAction
     is_stale(state, oldest_edit_due_at, now) -> bool
@@ -398,13 +399,19 @@ def plan_observation(change: DriveChange, existing: Optional[DriveIndexRecord], 
     return _collecting(_plan(change, existing, parent, probe, ctx, previous_parent, observed, nudged), existing)
 
 
+def drops_readable(before: Optional[DriveIndexRecord], after: DriveIndexRecord) -> bool:
+    """The write of `after` over `before` leaves the record with no readable generation where it had one: the
+    writer collects that generation's chunks (§3.4, §7.4; R3 F2-2). Every commit path decides it here; a run that
+    commits another generation collects the rest itself (`delete_chunks_except`)."""
+    return before is not None and before.indexed_generation is not None and after.indexed_generation is None
+
+
 def _collecting(plan: ObservationPlan, existing: Optional[DriveIndexRecord]) -> ObservationPlan:
     if existing is None:
         return plan
     deleted = plan.delete_item_id == existing.item_id and (existing.indexed_generation is not None
                                                            or existing.index_generation > 0)
-    dropped = (plan.upsert is not None and existing.indexed_generation is not None
-               and plan.upsert.indexed_generation is None)
+    dropped = plan.upsert is not None and drops_readable(existing, plan.upsert)
     return replace(plan, collect_chunks=existing.item_id) if deleted or dropped else plan
 
 
