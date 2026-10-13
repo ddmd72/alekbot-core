@@ -10,6 +10,8 @@ Public interface:
     pool_nearest(hits, records) -> List[ContentHit]        chunk kNN pooled per record, nearest first
     selective_term_hits(term_hits, limit, max_files) -> Dict[str, Sequence[DriveChunk]]   terms that select:
                                                            page not full, or full from few distinct files
+    term_file_probes(chunks, limit, max_files) -> int     files to look for past a full page from few files
+    term_selective(chunks, limit, files_past_page, max_files) -> bool   the user-wide stream's selectivity
     pool_terms(term_hits, records, terms) -> List[ContentHit]   exact-term hits pooled per record, most terms first
     window_indexes(index) -> Tuple[int, ...]               the window around a hit: index ± 1
     window_text(chunks) -> str                             the window's chunks joined without their overlap
@@ -70,6 +72,27 @@ def selective_term_hits(term_hits: Mapping[str, Sequence[DriveChunk]], limit: in
     in every chunk of one contract) is the files the user asked for, and still selects."""
     return {term: chunks for term, chunks in term_hits.items()
             if len(chunks) < limit or len({c.item_id for c in chunks}) <= max_files}
+
+
+def term_file_probes(chunks: Sequence[DriveChunk], limit: int, max_files: int = TERM_NONSELECTIVE_FILES) -> int:
+    """How many more files to look for past a term's first page before its selectivity is known (arbiter R2 S-M1):
+    the page is ordered by item_id, so a full page from at most `max_files` files may be a few long files that sort
+    first while the term sits in many more. 0 when the page decides (not full: complete; or over `max_files` files
+    already); else the files that would make one too many. Never more than `max_files`: a page holds a file."""
+    files = len({c.item_id for c in chunks})
+    if len(chunks) < limit or files > max_files:
+        return 0
+    return max_files + 1 - files
+
+
+def term_selective(chunks: Sequence[DriveChunk], limit: int, files_past_page: int,
+                   max_files: int = TERM_NONSELECTIVE_FILES) -> bool:
+    """The user-wide term stream's selectivity (§24.6, arbiter R1-2 + R2 S-M1): a page that was not full is complete
+    and selects; a full one selects while the files on it plus the files found past it (`term_file_probes`) are at
+    most `max_files`."""
+    if len(chunks) < limit:
+        return True
+    return len({c.item_id for c in chunks}) + files_past_page <= max_files
 
 
 def pool_terms(term_hits: Mapping[str, Sequence[DriveChunk]], records: Mapping[str, DriveIndexRecord],

@@ -5,8 +5,10 @@ and for the query, so `1 250,00 €` in a scan and `1250.00` in a question meet.
 Public interface:
     content_terms(text) -> Tuple[str, ...]   sorted, unique, at most CONTENT_TERMS_PER_CHUNK
     query_terms(query) -> Tuple[str, ...]    the query's maximal forms, most specific first
+    clip_query(query, max_chars) -> str      at most max_chars of the query, never ending inside a token
 
-Terms (the index side keeps every form; the query only the maximal form of each span, review D-M1):
+Terms (the index side keeps every form; the query only the maximal form of each span, review D-M1 — and the integer of
+an amount with zero cents, the same value, arbiter R2 S-m2):
     amounts   "1 250,00" "1.250,00" "1,250.00" "1250.5"  -> "1250.00" / "1250.50"; index also the integer part "1250"
     dates     "15.03.2024" "03/15/2024" "2024-03-15"     -> "2024-03-15" (both readings when day and month are <= 12)
     ids       "INV-2024/0012"                             -> "inv20240012"; index also "20240012", "2024", "0012"
@@ -16,6 +18,7 @@ A token holding `.` or `,` never yields its digits joined, on either side: "1250
 from __future__ import annotations
 
 import re
+from bisect import bisect_left
 from datetime import date
 from typing import Iterable, List, Set, Tuple
 
@@ -127,20 +130,28 @@ def _terms(text: str) -> Set[str]:
 def _maximal(text: str) -> Set[str]:
     """The query side: each span's maximal form only, the first kind that claims a stretch of text winning — dates,
     then amounts, then digit groups, then ids. A part of a span (a date's year, an amount's integer part, a run inside
-    an id) is a fragment: as a query it would match documents that share only that part."""
-    taken: List[Tuple[int, int]] = []
+    an id) is a fragment: as a query it would match documents that share only that part — except a whole amount's
+    integer, which is the same value."""
+    # The claimed stretches never overlap, so sorted by start they are sorted by end too: the only one that can
+    # overlap [start, end) is the last one starting before `end` (bisect, not a scan of every claim: arbiter R2 S-m1).
+    starts: List[int] = []
+    ends: List[int] = []
     terms: Set[str] = set()
 
     def claim(start: int, end: int, forms: Iterable[str]) -> None:
-        if any(start < e and s < end for s, e in taken):
+        i = bisect_left(starts, end)
+        if i > 0 and ends[i - 1] > start:
             return
-        taken.append((start, end))
+        starts.insert(i, start)
+        ends.insert(i, end)
         terms.update(f for f in forms if f)
 
     for start, end, forms in _date_spans(text):
         claim(start, end, forms)
     for start, end, forms in _amount_spans(text):
-        claim(start, end, forms[:1])
+        # zero cents are the integer's value: "1,250.00" also queries "1250" (arbiter R2 S-m2), the integer part
+        # the index side stores for the same text; any other cents are another value and query their form only
+        claim(start, end, forms if forms[0].endswith(".00") else forms[:1])
     for start, end, forms in _group_spans(text):
         claim(start, end, forms)
     for start, end, maximal, _ in _id_spans(text):
@@ -160,3 +171,15 @@ def query_terms(query: str) -> Tuple[str, ...]:
     """The query's maximal forms, most specific (longest) first; the search queries at most CONTENT_TERM_QUERIES of
     them. Each is also a form `content_terms` stores for the same text."""
     return tuple(sorted(_maximal(query), key=lambda t: (-len(t), t)))
+
+
+def clip_query(query: str, max_chars: int) -> str:
+    """At most `max_chars` characters of `query` for `query_terms` (arbiter R2 S-m1), cut at the last whitespace so no
+    token is cut in half (a halved id would query a fragment). One token longer than the cap keeps its prefix."""
+    if len(query) <= max_chars:
+        return query
+    head = query[:max_chars]
+    if query[max_chars].isspace():
+        return head.rstrip()
+    cut = max(head.rfind(ch) for ch in (" ", "\t", "\n", *_SPACE))
+    return head[:cut].rstrip() if cut > 0 else head

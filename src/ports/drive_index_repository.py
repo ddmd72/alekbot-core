@@ -184,6 +184,15 @@ class DriveIndexRepository(ABC):
         `get_chunks`."""
 
     @abstractmethod
+    async def find_next_file_with_term(self, user_id: str, term: str, after_item_id: str,
+                                       kind: Optional[str] = None) -> Optional[DriveChunk]:
+        """The first chunk, in (item_id, generation, index) order, whose `content_terms` contain `term` and whose
+        item_id sorts after `after_item_id` — past EVERY chunk of that item, so each call names a file not seen
+        before; None when no later file holds the term. One array-contains query with a cursor on item_id, limit 1.
+        Not fenced; `text` and `content_terms` may be empty. Counts the files a term spans past a full term page
+        (§24.6 selectivity, arbiter R2 S-M1)."""
+
+    @abstractmethod
     async def get_chunks(self, user_id: str, item_id: str, generation: int,
                          indexes: Sequence[int]) -> List[DriveChunk]:
         """The chunks among `indexes` of one generation that exist, by index (a hit's neighbour window, §10.2)."""

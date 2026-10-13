@@ -27,13 +27,14 @@ from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Optional, Seq
 from ..domain.drive_card import card_text
 from ..domain.drive_content_search import (
     ContentHit, WindowRequest, budget_windows, matched_label, pool_nearest, pool_terms, selective_term_hits,
-    window_indexes,
+    term_file_probes, term_selective, window_indexes,
 )
-from ..domain.drive_content_terms import query_terms
+from ..domain.drive_content_terms import clip_query, query_terms
 from ..domain.drive_index import DriveChunk, DriveIndexRecord, DriveSyncState, EpochPhase, Priority, RecordState, Scope
 from ..domain.drive_index_params import (
     CARD_FETCH, CHUNK_FETCH, CONTENT_TERM_FETCH, CONTENT_TERM_QUERIES, FETCH_MAX, FOLDER_INMEM_CARDS,
-    FOLDER_INMEM_CHUNKS, K, MAX_CARD_RECORDS_PER_USER, NAME_FETCH, NAME_KEY_QUERIES, RRF_K, WINDOW_CHARS_TOTAL,
+    FOLDER_INMEM_CHUNKS, K, MAX_CARD_RECORDS_PER_USER, NAME_FETCH, NAME_KEY_QUERIES, QUERY_TERM_CHARS, RRF_K,
+    WINDOW_CHARS_TOTAL,
 )
 from ..domain.drive_index_planner import usage_now
 from ..domain.drive_indexing_status import DriveIndexingStatus
@@ -88,6 +89,7 @@ class _Stats:
     chunk: int = 0                   # chunk kNN hits, before the fence
     chunk_kept: int = 0              # records after the fence and pooling
     term_queries: int = 0
+    term_probes: int = 0             # files looked for past a full term page from few files (arbiter R2 S-M1)
     term: int = 0                    # exact-term chunk hits, before the fence
     term_kept: int = 0
     windows: int = 0
@@ -230,7 +232,7 @@ class DriveSearchService:
             f"[DriveSearch] user={user_id[:8]} status={result.status} mode={stats.mode} scope={stats.scope} "
             f"content={stats.content} card={stats.card} name={stats.name} name_queries={stats.name_queries} "
             f"name_kept={stats.name_kept} chunk={stats.chunk} chunk_kept={stats.chunk_kept} "
-            f"term_queries={stats.term_queries} term={stats.term} term_kept={stats.term_kept} "
+            f"term_queries={stats.term_queries} term_probes={stats.term_probes} term={stats.term} term_kept={stats.term_kept} "
             f"visible={stats.visible} filtered={stats.filtered} fused={stats.fused} covered={stats.covered} "
             f"widened={stats.widened} collapsed={stats.collapsed} returned={stats.returned} windows={stats.windows} "
             f"window_chars={stats.window_chars} "
@@ -450,23 +452,31 @@ class DriveSearchService:
 
     @staticmethod
     def _terms(query: str) -> Tuple[str, ...]:
-        """The query's exact terms (amounts, dates, ids), most specific first, at most CONTENT_TERM_QUERIES (§24.6)."""
-        return query_terms(query)[:CONTENT_TERM_QUERIES]
+        """The query's exact terms (amounts, dates, ids), most specific first, at most CONTENT_TERM_QUERIES (§24.6),
+        taken from at most QUERY_TERM_CHARS of the query (arbiter R2 S-m1)."""
+        return query_terms(clip_query(query, QUERY_TERM_CHARS))[:CONTENT_TERM_QUERIES]
 
     async def _term_hits(self, user_id: str, terms: Sequence[str], limit: int, kind: Optional[str],
                          pages: _TermPages, stats: _Stats) -> None:
         """The exact-term stream (§24.6): one array-contains query per term, in parallel, never one
-        array-contains-any (it returns the first matches by id, so a common term would hide a rare one). Each term
-        is read once, at the first page size: a page that was not full is complete, and a full one leaves the term
-        out when it spans many files (selective_term_hits, review D-M2, arbiter R1-2) and is never read again; the
-        widening reads again only a selective term whose page was full."""
+        array-contains-any (it returns the first matches by id, so a common term would hide a rare one). Selectivity
+        is decided once, on a term's first read (term_selective, review D-M2, arbiter R1-2): a page that was not full
+        is complete; a full one is id-ordered, so when it spans few files the files past it are probed first
+        (arbiter R2 S-M1) — a non-selective term is never read again; the widening reads again only a selective term
+        whose page was full."""
         due = [t for t in terms if t not in pages.pages or t in pages.full]
         if not due:
             return
+        first = {t for t in due if t not in pages.pages}
         found = await asyncio.gather(*(self._repo.find_chunks_by_term(user_id, t, limit, kind) for t in due))
         stats.term_queries += len(due)
-        for term, chunks in zip(due, found):
-            if term not in pages.pages and term not in selective_term_hits({term: chunks}, limit):
+        read = dict(zip(due, found))
+        probing = [t for t in due if t in first and term_file_probes(read[t], limit)]
+        past = dict(zip(probing, await asyncio.gather(*(
+            self._files_past_page(user_id, t, read[t], term_file_probes(read[t], limit), kind, stats)
+            for t in probing))))
+        for term, chunks in read.items():
+            if term in first and not term_selective(chunks, limit, past.get(term, 0)):
                 pages.non_selective.add(term)
             pages.pages[term] = list(chunks)
             if term not in pages.non_selective and len(chunks) >= limit:
@@ -474,6 +484,21 @@ class DriveSearchService:
             else:
                 pages.full.discard(term)
         stats.term = sum(len(c) for c in pages.pages.values())
+
+    async def _files_past_page(self, user_id: str, term: str, page: Sequence[DriveChunk], wanted: int,
+                               kind: Optional[str], stats: _Stats) -> int:
+        """The files holding `term` past its first page, counted up to `wanted` (arbiter R2 S-M1): each probe starts
+        past the last file seen, so it names a new file or finds the term exhausted."""
+        after = max(c.item_id for c in page)
+        seen = 0
+        while seen < wanted:
+            nxt = await self._repo.find_next_file_with_term(user_id, term, after, kind)
+            stats.term_probes += 1
+            if nxt is None:
+                break
+            seen += 1
+            after = nxt.item_id
+        return seen
 
     async def _pool_content(self, user_id: str, chunk_hits: Sequence[Tuple[DriveChunk, float]],
                             term_pages: _TermPages, terms: Sequence[str], chunk_full: bool,
