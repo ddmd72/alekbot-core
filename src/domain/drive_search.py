@@ -520,6 +520,8 @@ def _render_card(card: DriveSearchCard, show_matched: bool = False) -> str:
 
 
 _BUILDING_LINE = "The index is still being built: some files and folders may not be in it yet."
+# Off and disconnected hold for the whole conversation: a repeated search only returns this again (F5-7).
+_NOT_AGAIN = "Do not search the drive again in this conversation."
 
 
 def _envelope_lines(result: DriveSearchResult) -> List[str]:
@@ -571,15 +573,15 @@ def render_results(result: DriveSearchResult) -> str:
     file before quoting, never say "does not exist" while building, name what was not searched) is in Smart's
     protocol token (§10.4, §24.10)."""
     if result.status == STATUS_DISABLED:
-        return ("Drive search is off: the user has not turned on drive indexing in the Cabinet. To find a "
-                "file now, browse folders with list_files_in_drive.")
+        return ("Drive search is off for this user: they have not turned on drive indexing in the Cabinet. "
+                f"{_NOT_AGAIN} To find a file now, browse folders with list_files_in_drive.")
     if result.status == STATUS_DISCONNECTED and result.other_drive:
-        return ("Drive search is unavailable for now: a different drive is connected than the one that was "
-                "indexed. The old index is being removed and the connected drive will be indexed from the start; "
-                "until then, browse it with list_files_in_drive.")
+        return ("Drive search is off for this user for now: a different drive is connected than the one that was "
+                "indexed. The old index is being removed and the connected drive will be indexed from the start. "
+                f"{_NOT_AGAIN} Browse it with list_files_in_drive.")
     if result.status == STATUS_DISCONNECTED:
-        return ("Drive search is unavailable: the user's drive is not connected. Ask them to connect it in the "
-                "Cabinet.")
+        return ("Drive search is off for this user: their drive is not connected. Ask them to connect it in the "
+                f"Cabinet. {_NOT_AGAIN}")
     wanted = _escape(result.request.folder or "")
     # A folder missing while the index is still being built may just not be indexed yet.
     building = [_BUILDING_LINE] if result.envelope.building else []
