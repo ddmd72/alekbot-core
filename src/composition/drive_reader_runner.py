@@ -25,7 +25,7 @@ out again is a model outage. A window the provider refuses as too large (HTTP 41
 single page still too large fails the file. At
 `file_budget_s` the windows done so far are kept and the rest cancelled (`truncated`). An image (the provider's
 rendition) is one call. Outcomes: text; no_text (the reader found none); error (the provider refused an input, its
-output stayed invalid, or the budget ran out before any window finished — never `timeout`, which means a parser
+output stayed invalid, or the budget cut a window while no window found text — never `timeout`, which means a parser
 bomb); the parser's own status when it cannot count or cut the PDF (encrypted, timeout, memory, ...); budget_exhausted (no pages left this month); unsupported / too_large (an image the
 providers do not take).
 """
@@ -227,7 +227,7 @@ class DriveReaderRunner(ContentExtractorPort):
         return self._outcome(
             text, run.windows[0].brief, pages_total=pages_total, pages_sent=run.total("pages_sent"),
             truncated=pages_total > covered or bool(cut) or any(w.truncated for w in run.windows),
-            calls=run.total("calls"), cost=run.total("cost"), timed_out=not finished,
+            calls=run.total("calls"), cost=run.total("cost"), timed_out=bool(cut) and not text,
             detail=f"windows={len(run.windows)} halves={run.total('halves')} cut={cut}")
 
     async def _window(self, agent: DriveDocumentReaderAgent, request: ExtractionRequest, index: int,
@@ -317,8 +317,9 @@ class DriveReaderRunner(ContentExtractorPort):
                                      pages_sent=pages_sent, truncated=truncated,
                                      extracted_by=f"{READER}@{READER_VERSION}", detail=detail, model_calls=calls,
                                      model_cost=cost)
-        # Nothing read because the budget cut every window is not "the file has no text" (deterministic, §24.8),
-        # nor a parser bomb (`timeout`): a per-file transient, retried with backoff (§8.2).
+        # No text while the budget cut any window is not "the file has no text" (deterministic, §24.8) — the cut
+        # windows were never read (R2 P-m4) — nor a parser bomb (`timeout`): a per-file transient, retried with
+        # backoff (§8.2).
         return ExtractionOutcome(status=S.ERROR if timed_out else S.NO_TEXT, pages_total=pages_total,
                                  pages_sent=pages_sent, truncated=truncated, detail=detail, model_calls=calls,
                                  model_cost=cost)
