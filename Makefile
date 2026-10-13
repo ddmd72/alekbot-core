@@ -175,7 +175,7 @@ install: ## Install dependencies
 
 install-dev: install ## Install dependencies + test/lint tools
 	@echo "📦 Installing dev tools..."
-	$(PYTHON) -m pip install pytest pytest-asyncio pytest-mock ruff
+	$(PYTHON) -m pip install pytest pytest-asyncio pytest-mock pytest-xdist ruff
 
 clean: ## Clean up temporary files and caches
 	@echo "🧹 Cleaning up temporary files..."
@@ -194,17 +194,29 @@ auth: ## Authenticate with Google Cloud
 # TESTING & QUALITY
 # ============================================================================
 
+# The unit suite runs in parallel via pytest-xdist: `auto` = one worker per CPU, which adapts to
+# the laptop, the CI runner and a cloud session alike; cap it with `make check PYTEST_WORKERS=6`.
+# The flag lives here, not in pytest.ini addopts, so a targeted `pytest path::test` stays a single
+# fast process. Integration/e2e stay serial — they touch live services.
+# Without xdist installed the suite falls back to a serial run, with a warning.
+PYTEST_WORKERS ?= auto
+PYTEST_XDIST = $(shell $(PYTHON) -c "import xdist" 2>/dev/null && echo yes)
+PYTEST_UNIT_FLAGS = $(if $(PYTEST_XDIST),-n $(PYTEST_WORKERS) -q,-v)
+XDIST_WARNING = $(if $(PYTEST_XDIST),,echo "⚠️  pytest-xdist not installed — running serially (pip install -r requirements.txt)")
+
 test: ## Run all tests
 	@echo "🧪 Running all tests..."
 	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/ -v --asyncio-mode=auto
 
 test-unit: ## Run unit tests
 	@echo "🧪 Running unit tests..."
-	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/unit/ -v --asyncio-mode=auto
+	@$(XDIST_WARNING)
+	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/unit/ $(PYTEST_UNIT_FLAGS) --asyncio-mode=auto
 
 test-coverage: ## Unit tests + global + per-file coverage gate (RFC § 8.4)
 	@echo "🧪 Running unit tests with coverage..."
-	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/unit/ \
+	@$(XDIST_WARNING)
+	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/unit/ $(PYTEST_UNIT_FLAGS) \
 	    --asyncio-mode=auto \
 	    --cov=src \
 	    --cov-report=term-missing:skip-covered \

@@ -73,6 +73,8 @@ truststore==0.10.4
 pytest
 pytest-asyncio
 pytest-mock
+# Parallel unit suite (make test-unit / make check: -n auto); pinned so CI matches local
+pytest-xdist==3.8.0
 
 # Linting — pinned so CI matches local; bumps are deliberate (new rules can break the gate)
 ruff==0.15.15
