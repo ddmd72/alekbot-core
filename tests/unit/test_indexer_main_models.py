@@ -1,5 +1,6 @@
 """indexer_main wiring of the content side (USER_DRIVE_INDEXING_RFC §24.2): the parser and the reader runner under the
-EXTRACTOR_CHAINS ids, the triage runner, both model providers from their own env keys, the optional billing alert.
+EXTRACTOR_CHAINS ids, the triage runner, the three model providers (Claude, OpenAI, and Gemini for the fallback) from
+their own env keys, the optional billing alert.
 Google clients are replaced, so nothing leaves the process."""
 from unittest.mock import MagicMock
 
@@ -46,7 +47,7 @@ def test_extractors_and_triage_reach_the_tick(wired):
     assert isinstance(triage, DriveTriageRunner)
     assert reader._user_repo is wired["users"]
     registry = reader._context_builder.registry
-    assert set(registry.list_available()) == {"claude", "openai"}
+    assert set(registry.list_available()) == {"claude", "openai", "gemini"}
 
 
 def test_billing_alert_is_optional(wired, monkeypatch):
@@ -57,7 +58,7 @@ def test_billing_alert_is_optional(wired, monkeypatch):
     assert wired["extractors"][READER]._quota_service.alert_sink is not None
 
 
-def test_without_the_openai_key_only_claude_is_registered(wired, monkeypatch):
+def test_without_the_openai_key_openai_is_not_registered(wired, monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY")
     indexer_main.build_app()
-    assert set(wired["extractors"][READER]._context_builder.registry.list_available()) == {"claude"}
+    assert set(wired["extractors"][READER]._context_builder.registry.list_available()) == {"claude", "gemini"}

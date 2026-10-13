@@ -17,7 +17,8 @@ def test_build_real_content_wires_the_parser_as_the_readers_splitter(monkeypatch
 
     container = SimpleNamespace(context_builder=object(), assembly_service=object())
     monkeypatch.setenv("DRIVE_EVAL_PROVIDER", "")
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "offline")
+    monkeypatch.setenv("OPENAI_API_KEY", "offline")   # the default provider's key (OpenAI, §24.2 D7 rev 3.17)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.setattr(firestore_mod, "AsyncClient", lambda **kwargs: object())
     monkeypatch.setattr(settings_mod, "load_settings",
                         lambda: {"ENVIRONMENT_CONFIG": SimpleNamespace(account_collection_name="accounts")})

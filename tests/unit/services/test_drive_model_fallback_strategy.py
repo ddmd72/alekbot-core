@@ -62,9 +62,9 @@ def test_no_gemini_key_means_no_fallback_and_the_primary_still_builds(monkeypatc
 def test_strategy_entry(agent_type):
     strategy = AgentProviderStrategy.get_strategy(agent_type)
     assert strategy["default_provider"] == "openai"
-    assert strategy["fallback"] == "gemini" and strategy["fallback"] in strategy["allowed_providers"]
+    assert strategy["fallback"] == "gemini" and strategy["fallback"] not in strategy["allowed_providers"]
     assert strategy["fallback_tier"] is PerformanceTier.BALANCED
-    assert {"claude", "openai"} <= set(strategy["allowed_providers"])
+    assert strategy["allowed_providers"] == ["claude", "openai"]   # Gemini is the fallback only, never a primary
 
 
 def test_fallback_tier_is_the_primary_tier_when_the_strategy_names_none(monkeypatch):

@@ -57,8 +57,8 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     (`claude-haiku-5-5`), and so does the user's global `provider_preference` when the agent has no override.
     **Fallback: Gemini Flash** (`gemini-3.8-flash`) — `STRATEGIES` in `agent_context_builder.py` sets `fallback:
     "gemini"` with `fallback_tier: BALANCED`, the only entries with that key: without it the fallback would resolve at
-    ECO, which on Gemini is flash-lite (D7 rev 3.17). `gemini` is therefore also in `allowed_providers`, so a global
-    `provider_preference: "gemini"` would make flash-lite the primary. A 4xx on the primary is not failed over; a 4xx
+    ECO, which on Gemini is flash-lite (D7 rev 3.17). Gemini is the fallback only: it is not in `allowed_providers`,
+    so no setting makes flash-lite the primary. A 4xx on the primary is not failed over; a 4xx
     from Gemini on a failover call is sorted like the primary's own (`decisions/drive_model_outage_defers_model_work.md`).
     Thinking `low` unless the user's `agent_thinking` says otherwise; `allow_provider_storage=False` (OpenAI
     `store=false` only — not a zero-retention guarantee; Claude and Gemini have no such flag). Limits in `agent_config.py`

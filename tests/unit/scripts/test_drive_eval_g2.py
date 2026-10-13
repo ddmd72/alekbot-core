@@ -175,7 +175,8 @@ def test_the_cli_gives_no_verdict_without_the_content_ports(tmp_path, monkeypatc
     assert "ANTHROPIC_API_KEY" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("provider, key", [("", "ANTHROPIC_API_KEY"), ("openai", "OPENAI_API_KEY")])
+@pytest.mark.parametrize("provider, key", [("", "OPENAI_API_KEY"), ("claude", "ANTHROPIC_API_KEY"),
+                                           ("openai", "OPENAI_API_KEY")])
 def test_content_wiring_names_the_missing_key(monkeypatch, provider, key):
     from scripts.validation.drive_eval import content_wiring
     monkeypatch.setenv("DRIVE_EVAL_PROVIDER", provider)
