@@ -244,10 +244,28 @@ def _read_pdf(path: str, kind: str) -> _Read:
         if is_memory_failure(exc):
             raise
         pages_total = 0
-    from pdfminer.high_level import extract_text
+    text, truncated = _pdfminer_text(path)
+    return text, pages_total, truncated
 
-    with open(path, "rb") as fh:
-        return str(extract_text(fh) or ""), pages_total, False
+
+def _pdfminer_text(path: str) -> Tuple[str, bool]:
+    """pdfminer's extract_text, page by page: layout stops once MAX_TEXT_CHARS characters are out (R2 P-m6), so a
+    thousand dense pages never all go through layout for text the cap drops. `truncated` when a page was left."""
+    from pdfminer.converter import TextConverter
+    from pdfminer.layout import LAParams
+    from pdfminer.pdfinterp import PDFPageInterpreter, PDFResourceManager
+    from pdfminer.pdfpage import PDFPage
+
+    with open(path, "rb") as fh, io.StringIO() as output:
+        manager = PDFResourceManager(caching=True)
+        device = TextConverter(manager, output, codec="utf-8", laparams=LAParams())
+        interpreter = PDFPageInterpreter(manager, device)
+        pages = PDFPage.get_pages(fh, caching=True)
+        for page in pages:
+            interpreter.process_page(page)
+            if output.tell() >= MAX_TEXT_CHARS:      # StringIO's position: the characters written so far
+                return output.getvalue(), next(pages, None) is not None
+        return output.getvalue(), False
 
 
 def _page_count(reader: Any) -> int:
