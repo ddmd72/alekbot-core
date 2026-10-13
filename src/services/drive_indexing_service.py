@@ -51,7 +51,7 @@ from ..domain.drive_index_planner import (
     AccessAction, ObservationPlan, PlaceOf, PlanContext, access_action, attempt_crashed, can_start_file, capped,
     card_refused, change_from_record, chunks_reembedded, content_due, content_retry, deferred, demoted,
     extractor_stale, generation_started, indexed, model_available, model_outage, model_recovered, needs_probe,
-    next_month_start,
+    next_month_start, quiet_over,
     parent_scope, plan_observation, readme_read, reembed_in_space, reextraction_due, released, schedule,
     stale_versions, triage_due, triaged, usage_now, with_card, with_retry, with_usage, without_card,
 )
@@ -667,6 +667,8 @@ class DriveIndexingService:
                 progressed = True
                 continue
             rec = rec_or_none
+            # its content may start now: due for other work (a card, a re-embed), it still keeps its quiet period
+            content_now = content_due(rec, now) and quiet_over(rec, now)
             if rec.state is RecordState.DELETING:
                 progressed |= await self._cascade_step(user_id, rec, now, budget, summary, page_ids)
             elif rec.probe_pending:
@@ -682,16 +684,16 @@ class DriveIndexingService:
             elif rec.has_card and not card_eligible(rec):
                 await self._commit(user_id, [without_card(rec, now)], set())
                 progressed = True
-            elif content_due(rec, now) and await self._index_step(user_id, rec, ctx, budget, summary, models):
+            elif content_now and await self._index_step(user_id, rec, ctx, budget, summary, models):
                 progressed = True
-            elif (rec.chunk_reembed_pending and rec.indexed_generation is not None and not content_due(rec, now)
-                  and rec.state is RecordState.INDEXED):
+            elif rec.chunk_reembed_pending and rec.indexed_generation is not None and not content_now:
+                # any content state: a failed or a waiting record serves its readable generation too (§3.4, §7.4)
                 progressed |= await self._reembed_step(user_id, rec, ctx, budget, summary)
-            elif triage_due(rec, now):
+            elif triage_due(rec, now) and quiet_over(rec, now):
                 images.append(rec)
             elif card_eligible(rec) and rec.card_hash != card_hash(rec):
                 cards.append(rec)
-            elif not content_due(rec, now):
+            elif not content_now:
                 await self._commit(user_id, [schedule(rec, now, first_seen=False)], set())
                 progressed = True
         if images:
@@ -1318,8 +1320,10 @@ class DriveIndexingService:
             await self._repo.delete_chunks_except(user_id, rec.item_id,
                                                   fresh.indexed_generation if fresh is not None else None)
             return True
-        await self._commit(user_id, [_maintenance_kept(chunks_reembedded(fresh, generation, self._space, now),
-                                                       rec.priority)], set())
+        done = chunks_reembedded(fresh, generation, self._space, now)
+        if not (content_due(done) or triage_due(done)):   # waiting content keeps its own class and time (§7.8)
+            done = _maintenance_kept(done, rec.priority)
+        await self._commit(user_id, [done], set())
         _fence()
         await self._repo.delete_chunks_except(user_id, rec.item_id, generation)
         summary["reembedded"] = summary.get("reembedded", 0) + 1
@@ -1562,6 +1566,10 @@ class DriveIndexingService:
             self._fold(_as_maintenance(plan_observation(change_from_record(rec), current, parent, None, ctx, parent,
                                                         observed=False)),
                        {}, writes, deletes, collects)
+            if rec.item_id not in writes and rec.item_id not in deletes and current != rec:
+                # nothing observable moved and the record is already scheduled (a quiet period, a deferral): the
+                # planner keeps it as it is, so the re-embed or re-read this pass decided is written here (§12.3)
+                writes[rec.item_id] = _maintenance(schedule(current, now, first_seen=False))
             if rec.item_id not in deletes and self._stale(writes.get(rec.item_id, rec)):
                 found = True
         await self._commit(user_id, list(writes.values()), deletes, collects=collects)
