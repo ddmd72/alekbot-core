@@ -13,7 +13,9 @@ from src.domain.drive_index_params import NAME_MIN_TRIGRAMS, STALE_ALERT_AFTER
 from src.domain.drive_index_planner import (
     PlanContext, is_stale, needs_probe, plan_observation, stale_versions,
 )
-from src.domain.drive_name_keys import name_keys, name_match, query_name_keys
+from src.domain.drive_keys import name_keys_v2, name_match_v2, query_concepts
+from src.domain.drive_tier_pool import concept_trigrams
+from src.domain.drive_tiers import name_query_keys
 
 NOW = datetime(2026, 10, 12, 12, tzinfo=timezone.utc)
 ROOT = "root"
@@ -125,13 +127,14 @@ class TestNameMatchFloor:
         """nk_floor_le — §10.1: NAME_MIN_TRIGRAMS shared trigrams, and no whole token, is a match."""
         grams = ("t:abc", "t:bcd", "t:cde")
         assert len(grams) == NAME_MIN_TRIGRAMS
-        assert name_match(grams + ("w:abcde",), grams + ("w:xyz",)) == NAME_MIN_TRIGRAMS
-        assert name_match(grams[:2] + ("w:abcde",), grams[:2] + ("w:xyz",)) is None
+        assert name_match_v2(grams + ("w:abcde",), grams + ("w:xyz",)) == NAME_MIN_TRIGRAMS
+        assert name_match_v2(grams[:2] + ("w:abcde",), grams[:2] + ("w:xyz",)) is None
 
     def test_a_typo_matches_through_the_transliteration_trigrams(self):
-        """nk_translit_grams_off: contarto/contrato share 2 Latin and 2 Cyrillic trigrams; only together they pass."""
-        record = name_keys("contrato.docx")
-        query = query_name_keys("contarto")
+        """nk_translit_grams_off, on name keys v2 (the v1 keys are retired): contarto/contrato share the Latin
+        trigrams con and ont and the skeleton's kon; only together they pass the floor."""
+        record = name_keys_v2("contrato.docx")
+        query = [k for c in query_concepts("contarto").concepts for k in (*name_query_keys(c), *concept_trigrams(c))]
         shared = set(record) & set(query)
-        assert not any(k.startswith("w:") for k in shared)
-        assert name_match(record, query) == 4
+        assert shared == {"t:con", "t:ont", "t:kon"}
+        assert name_match_v2(record, query) == 3

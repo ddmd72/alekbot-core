@@ -14,7 +14,7 @@ from src.domain.drive_index import (
     Scope, TriageVerdict,
 )
 from src.domain.drive_index_planner import content_due, triage_due
-from src.domain.drive_name_keys import name_keys
+from src.domain.drive_keys import name_keys_v2
 
 from .drive_content_world import ContentWorld, prose
 from .drive_index_fakes import ROOT, T0
@@ -34,7 +34,7 @@ def slice1_record(change, kind, cclass, rank, *, folder=False):
         reason=Reason.FOLDER if folder else Reason.KIND_NOT_ADMITTED, content_version=change.content_version,
         modified_at=change.modified_at, fs_modified_at=change.fs_modified_at, effective_date=change.fs_modified_at,
         policy_version=1, card_version=1, embedding_space=SPACE, card_hash="slice1-hash", has_card=True,
-        card_rank=rank, name_tokens=name_keys(change.name), name_keys_version=1, seen_epoch=1)
+        card_rank=rank, name_tokens=name_keys_v2(change.name), name_keys_version=1, seen_epoch=1)
 
 
 @pytest.fixture

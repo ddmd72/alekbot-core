@@ -69,6 +69,7 @@ class TestStatus:
                          "last_success_at": NOW.isoformat(), "last_error": "throttled",
                          "index_as_of": NOW.isoformat(), "index_full": False, "building": True,
                          "available": False, "access_lost_at": None, "index_kept": True,
+                         "awaiting_rebuild": False,     # XC-8: a v1 index waiting for its v2 rebuild
                          # review rv_sv2_p5 MINOR 3 (spec change, §25.4.5): dollars per class against the month's
                          # cap and the initial build replace the retired §24.7 page and image counters
                          "readable_chunks": 17, "model_usd_month": {"reader": 0.5, "triage": 0.25},

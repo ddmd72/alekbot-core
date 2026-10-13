@@ -65,7 +65,8 @@ def full_record() -> DriveIndexRecord:
         passages_defer_until=T + timedelta(hours=5), passages_parked_month="2026-08", passages_hold="failed",
         passages_hold_version="1:4", passages_attempts=3, passages_generation=4, passages_next_index=2,
         passages_done_at=T - timedelta(hours=6), passages_version=1, enrich_ready=True, enrich_wake_at=T + timedelta(hours=7),
-        effective_day="2026-10-09", keys_pending=True, keys_version=1, keys_capped=True,
+        effective_day="2026-10-09", describe_gap="held",   # XC-3: a non-default derived gap
+        keys_pending=True, keys_version=1, keys_capped=True,
         about_keys=("e:rome", "y:2026"), place_forms=("Rome", "Roma"), photo_description="a fountain in a square",
         photo_objects=(PhotoObject("fountain", ("fuente", "фонтан")),), photo_scene="city square",
         visible_text="TREVI", readme_excerpt="# Project", readme_excerpt_version="c7",

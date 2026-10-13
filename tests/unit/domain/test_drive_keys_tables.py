@@ -8,9 +8,12 @@ from src.domain.drive_keys import NAME_KEYS_V2, golden_digest, index_tables_dige
 TABLES = {
     (1, 2): "c54ed0c7d2c1c0a8601c71047dac8663c88bb301f55798373feb7ae7f836d3f4",
     (2, 2): "35c2d15703fcf1875fbf7f065fe9a735cd3d2696484d90a9bad048835a8e1140",
+    # KEYS_VERSION 3 (xc F1 `ef:`, F3 `xl:`/`exl:`, D31 fixed label names, numbers/interrogatives)
+    (3, 2): "f41fa1f4bb1f15a4138ccb08c2e5d405a6ea705e7e50a42f12574ebe0d28ab3a",
 }
 GOLDEN = {
     (2, 2): "eaddca63bfa2498893cb5644b06e065234c73eab151ec80eace891e3a04a0af5",
+    (3, 2): "7c3482296ff0118b7e3e67b5a22e33c6dca74636f2bdd7af68caf2d1484e5341",   # KEYS_VERSION 3, as above
 }
 
 

@@ -99,8 +99,15 @@ def test_entities_single_token_full_form_set_and_phrases_per_script():
         ProfileEntity("Barcelona", "place", "Barcelona", ("Барселона",)),
     )))
     keys = set(about_keys_of(rec))
-    assert {"e:le_havr", "e:нью_йорк", "e:barcelona", "e:барселона", "e:барселон"} <= keys
-    assert {"ex:le_havr", "ex:barselon", "e:ньюйорк"} <= keys        # one skeleton per spelling; the compound joined
+    # xc F1: "Барселона" is a form the file does not print (`found` empty), so it is the index's own `ef:`, not `e:`
+    assert {"e:le_havr", "e:нью_йорк", "e:barcelona", "ef:барселона", "ef:барселон"} <= keys
+    assert not {"e:барселона", "e:барселон"} & keys
+    # xc F3: the Latin entities' skeletons are `exl:`, the Cyrillic form's is `ex:`; the compound joined
+    assert {"exl:le_havr", "exl:barselon", "ex:barselon", "e:ньюйорк"} <= keys
+    # a spelling the verifier found in the text stays exact
+    found = set(about_keys_of(RecordKeyInputs(kind="pdf", profile=_profile(entities=(
+        ProfileEntity("Barcelona", "place", "Barcelona", ("Барселона",), ("Барселона",)),)))))
+    assert {"e:барселона", "e:барселон"} <= found and not {"ef:барселона", "ef:барселон"} & found
     assert _covers("Le Havre", rec) and _covers("Нью-Йорке", rec) and _covers("Барселоне", rec)
 
 
@@ -183,14 +190,17 @@ def test_walk_through_pro_barselonu_record_side():
     assert {s.field for k in all_hits for s in sources[k]} == {AboutField.PLACE}
     assert all(s.source_class is SourceClass.VERIFIED_RECORD for k in hits for s in sources[k])
     skeletons = all_hits - hits                                      # review M8: a skeleton hit is a translation
-    assert all(k.startswith("ex:") for k in skeletons)
+    assert skeletons and all(k.startswith(("ex:", "exl:")) for k in skeletons)       # xc F3: Latin side is `exl:`
     assert all(s.source_class is SourceClass.TRANSLATION for k in skeletons for s in sources[k])
 
     doc = RecordKeyInputs(kind="pdf", profile=_profile(entities=(
         ProfileEntity("Barcelona", "place", "Барселона", ("Барселона",)),)))
     hits = set(concept.about_keys) & set(about_keys_of(doc))
-    assert hits and {s.field for k in hits for s in about_sources(doc)[k]} == {AboutField.ENTITY}
     assert "e:барселон" in hits                                       # the printed form: exact
+    doc_sources = about_sources(doc)
+    assert {s.field for k in hits if k.startswith("e:") for s in doc_sources[k]} == {AboutField.ENTITY}
+    # xc F1: the unprinted name "Barcelona" adds only its skeletons, as the index's own entity form
+    assert {s.field for k in hits for s in doc_sources[k]} == {AboutField.ENTITY, AboutField.ENTITY_FORM}
 
     assert set(concept.word_keys) & set(word_keys("Неделя в Барселоне, жара."))           # mentioned in
     assert set(concept.hint_keys) & set(word_form_keys("Барселона"))                      # by translation

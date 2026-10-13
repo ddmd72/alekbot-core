@@ -1,13 +1,15 @@
 """DriveSearchService, Search v2 — the review fixes of rv_sv2_p6 (USER_DRIVE_INDEXING_RFC §25.5, D29, D30): a full
 page never yields a flat negative in scope (M1), validity queries filter the expiry date and time words are not
 concepts (M2), no migration mode (M3), the name stream fetches per word (M4), and the minors."""
+from dataclasses import replace
 from datetime import datetime, timezone
 
+from src.domain.drive_enrich_plan import COVERAGE_COUNTERS, GAP_WAITING, describe_gap
 from src.domain.drive_enrichment import DriveProfile
 from src.domain.drive_index import RecordState, Scope, DriveIndexRecord
 from src.domain.drive_keys import name_keys_v2, query_concepts
-from src.domain.drive_name_keys import name_keys
 from src.domain.drive_search import DriveSearchRequest, render_results, require_search_terms
+from src.domain.drive_search_texts import REBUILDING_LINE
 from src.services import drive_search_service as search_mod
 
 from .drive_search_v2_fixture import V2World, card, tier_of
@@ -70,20 +72,28 @@ def test_m2_the_date_fields_say_they_bound_the_expiry_date_for_what_expires():
         assert "For what expires, it bounds the expiry date." in text
 
 
+# the v1 `name_keys("Rome tickets.pdf")` (the function is retired, xc m4), literally
+V1_ROME_TICKETS = (
+    't:cke', 't:ets', 't:ick', 't:ket', 't:ome', 't:pdf', 't:rom', 't:tic', 't:икк', 't:кец', 't:кке', 't:оме', 't:пдф',
+    't:ром', 't:тик', 'w:pdf', 'w:rome', 'w:tickets', 'w:пдф', 'w:роме', 'w:тиккец')
+
+
 # -- M3 --------------------------------------------------------------------------------------------------------------
 
 async def test_m3_a_state_not_rebuilt_reads_no_v1_record_and_says_it_is_being_rebuilt():
     w = V2World(migrated=False)
     v1 = DriveIndexRecord(user_id="u", item_id="V1", parent_id="root", name="Rome tickets.pdf", kind="pdf",
                           scope=Scope.NORMAL, state=RecordState.INDEXED, has_card=True,
-                          name_tokens=name_keys("Rome tickets.pdf"))
+                          name_tokens=V1_ROME_TICKETS)   # a v1 record's name keys
     w.repo.records[("u", "V1")] = v1
-    v2 = w.file("rome tickets v2.pdf")
+    w.file("rome tickets v2.pdf")
     result = await w.search("rome tickets")
-    assert [c.item_id for c in result.cards if c.tier != "related"] == [v2]
-    assert "V1" not in [c.item_id for c in result.cards]
+    # XC-1 (supersedes the §25.8 "searches the v2 records written so far"): a state not rebuilt runs no stream, so no
+    # record is returned and no word is stated absent
+    assert result.cards == ()
     text = render_results(result)
-    assert "the index is being rebuilt" in text and "migrated" not in text
+    assert REBUILDING_LINE in text and "migrated" not in text
+    assert "No file holds" not in text and "No searched file holds" not in text
 
 
 # -- M4 --------------------------------------------------------------------------------------------------------------
@@ -152,7 +162,12 @@ def test_m7_minor_a_number_is_never_missable_as_common():
 
 async def test_m9_minor_a_sheet_waiting_for_its_profile_is_not_counted_as_without_passages():
     w = V2World()
-    w.file("budget.xlsx", kind="xlsx", profile_state="ready")
+    item = w.file("budget.xlsx", kind="xlsx", profile_state="ready")
+    # XC-3/XC-9: the tick derives the gap and stores its count in the state; search reads only that counter
+    w.set(item, describe_gap=describe_gap(w.repo.records[("u", item)]))
+    assert w.repo.records[("u", item)].describe_gap == GAP_WAITING
+    state = w.repo.states["u"]
+    w.repo.states["u"] = replace(state, counters={**state.counters, COVERAGE_COUNTERS[GAP_WAITING]: 1})
     text = render_results(await w.search("zebra"))
     assert "no passage keywords" not in text and "1 text file is not described yet" in text
 

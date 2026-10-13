@@ -18,7 +18,7 @@ def test_a_digit_or_year_key_alone_is_a_whole_token_match():
 
 
 def test_a_skeleton_alone_is_a_whole_token_match():
-    assert name_match_v2(name_keys_v2("Barselona.txt"), ["x:barselon"]) == 1
+    assert name_match_v2(name_keys_v2("Barselona.txt"), ["xl:barselon"]) == 1      # xc F3: a Latin name's skeleton is `xl:`
 
 
 def test_trigrams_alone_still_need_the_floor():
