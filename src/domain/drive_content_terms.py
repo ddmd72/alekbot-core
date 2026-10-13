@@ -230,8 +230,8 @@ def capped_terms(terms: Set[str]) -> Tuple[str, ...]:
 
 
 def query_terms(query: str) -> Tuple[str, ...]:
-    """The query's maximal forms, most specific (longest) first; the search queries at most CONTENT_TERM_QUERIES of
-    them. Each is also a form `content_terms` stores for the same text."""
+    """The query's maximal forms, most specific (longest) first. Each is also a form `content_terms` stores for the
+    same text."""
     return tuple(sorted(_maximal(query), key=lambda t: (-len(t), t)))
 
 
