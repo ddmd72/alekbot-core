@@ -796,8 +796,11 @@ class OpenAIAdapter(LLMPort):
                 ))
 
         # Usage metadata
-        # OpenAI: input_tokens INCLUDES cached_tokens (it's the total).
-        # Subtract cached so prompt_tokens = uncached only (matches billing formula).
+        # OpenAI: input_tokens is the total and INCLUDES both cached_tokens and
+        # cache_write_tokens (live probe 2026-10-13: input 7017 = 3 + 7014 written).
+        # Subtract both so the three legs never overlap, as Anthropic reports them:
+        # calculate_cost bills prompt at 1x, reads and writes at their own multipliers.
+        # Subtracting only `cached` billed every written token at 1x + 1.25x.
         usage_metadata = None
         if response.usage:
             cached = 0
@@ -810,8 +813,16 @@ class OpenAIAdapter(LLMPort):
                 # on older pins it still arrives because InputTokensDetails allows extra fields.
                 cache_write = getattr(itd, "cache_write_tokens", 0) or 0
             total_input = getattr(response.usage, "input_tokens", 0) or 0
+            if cached + cache_write > total_input:
+                # Never seen in production (30 days, 2026-10-13), but a third-party usage
+                # object in decisions/openai_cache_write_tokens_location.md has it. Reads and
+                # writes then overlap and calculate_cost over-bills the overlap; say so.
+                logger.warning(
+                    "⚠️ [OpenAIAdapter] cache legs overlap: input=%s cached=%s cache_write=%s — cost over-reported",
+                    total_input, cached, cache_write,
+                )
             usage_metadata = UsageMetadata(
-                prompt_tokens=total_input - cached,
+                prompt_tokens=max(total_input - cached - cache_write, 0),
                 completion_tokens=getattr(response.usage, "output_tokens", 0) or 0,
                 total_tokens=total_input + (getattr(response.usage, "output_tokens", 0) or 0),
                 cache_read_tokens=cached,

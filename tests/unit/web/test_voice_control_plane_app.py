@@ -409,3 +409,23 @@ async def test_no_alert_when_the_summary_pipeline_succeeds(app_and_deps):
 
     assert response.status_code == 200
     alert_sink.post.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_submit_transcript_xai_usage_records_tokens_without_seconds_and_prices_seconds(app_and_deps):
+    app, _es, quota_service, *_ = app_and_deps
+
+    client = app.test_client()
+    payload = {
+        "call_id": "c1", "user_id": "u1", "account_id": "a1", "transcript_text": "hi", "turns": [],
+        "usage_by_model": {"grok-voice-think-fast-2.0": {
+            "audio_input_tokens": 300, "audio_output_tokens": 400,
+            "text_input_tokens": 20, "text_output_tokens": 30, "billable_audio_seconds": 240,
+        }},
+    }
+    response = await client.post("/voice/submit-transcript", json=payload, headers={"Authorization": "Bearer x"})
+
+    assert response.status_code == 200
+    account_id, model, tokens, cost = quota_service.record_usage.await_args.args
+    assert (account_id, model, tokens) == ("a1", "grok-voice-think-fast-2.0", 750)
+    assert cost > 0  # priced by the seconds leg, not by the token count
