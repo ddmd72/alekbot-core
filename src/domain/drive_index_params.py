@@ -89,3 +89,59 @@ MODEL_BACKOFF_CAP_S = 3600
 MODEL_REREAD_COOLDOWN = timedelta(hours=24)  # a file the reader read is not read by it again sooner: the edits made
                                             # meanwhile wait, the newest version is read once it ends (final review
                                             # F1-3: a scan saved every few minutes was re-read, and re-billed, hourly)
+
+# -- Search v2 (§25.12; defined by the frozen core, read from P1-P7 on) --------------------------------------------
+# Two names clash with a v1 value still in use: the v2 value carries a _V2 suffix until its part replaces the v1 one
+# (TRIAGE_BATCH: P3 triage v2; WINDOW_CHARS_TOTAL: P6 render). Retired v1 names (§25.12) stay until their readers go.
+PROFILE_MIN_CHARS = 200                     # under it a note gets a template profile and no chunk/hint score (§25.3)
+PROFILE_REFRESH_COOLDOWN = timedelta(hours=24)
+PASSAGE_REFRESH_COOLDOWN = timedelta(hours=24)
+PASSAGE_CHUNKS_PER_CALL = 2
+PASSAGE_MAX_CHUNKS_PER_FILE = 100           # ≈ 240 000 chars of a file get passage hints (D17 acknowledgement)
+PASSAGE_REUSE_SHARE = 0.8                   # share of a new chunk's paragraphs from one old chunk to reuse its hints
+PASSAGE_MIN_SIMILARITY = 0.5                # calibrated (§25.7)
+TRIAGE_BATCH_V2 = 8                         # replaces TRIAGE_BATCH (§25.4.3)
+PROFILER_OUTPUT_TOKENS = 4_096              # output caps: schema worst case + reasoning allowance (§25.4.4)
+PASSAGES_OUTPUT_TOKENS = 4_096              # for PASSAGE_CHUNKS_PER_CALL chunks
+TRIAGE_OUTPUT_TOKENS = 8_192                # for TRIAGE_BATCH_V2 photos
+READER_USD_PER_MONTH = 4.0                  # per user per calendar month, at the model that ran (§25.4.5)
+TRIAGE_USD_PER_MONTH = 3.0
+PROFILE_USD_PER_MONTH = 4.0
+PASSAGE_USD_PER_MONTH = 20.0
+INITIAL_BUILD_USD = 40.0                    # once per user (D27; owner minimum $20)
+FALLBACK_ALERT_SHARE = 0.5                  # of a user's model cost in a day
+ENRICH_SHARE = 0.40                         # at least this share of the tick start budget goes to enrichment
+ENRICH_IN_FLIGHT = 3                        # files enriched at once
+PASSAGE_IN_FLIGHT = 2                       # passage calls per file at once, all under MODEL_IN_FLIGHT
+ENRICH_FILE_BUDGET_S = 300                  # hard wait_for around one file's enrichment (§25.4.5)
+WORD_KEYS_PER_CHUNK = 900                   # key caps (§25.2.6)
+HINT_KEYS_PER_CHUNK = 60
+ABOUT_KEYS_PER_RECORD = 600
+WRITE_BATCH_BYTES = 6_000_000               # write batches by bytes too, besides RECORD_WRITE_BATCH (Firestore 10 MiB)
+README_SCAN_CHILDREN = 1_000                # children a collapsed folder's README step lists at most (§25.3)
+MAX_CONCEPTS = 8                            # query concepts (§25.5.1)
+CONCEPT_KEYS_MAX = 30                       # keys per emitted list (Firestore array-contains-any)
+ABOUT_FETCH = 500                           # candidate streams (§25.5.2)
+WORD_FETCH = 300
+HINT_FETCH = 300
+WORD_FILES_MAX = 60
+MEANING_POOL = 50                           # meaning score (§25.5.3)
+MEANING_POOL_MIN = 12
+MIN_SPREAD = 0.01
+Z_RELATED = 2.5                             # then per drive-size band, calibrated (§25.7)
+DRIVE_SIZE_BANDS = (200, 2_000, 10_000)     # carded files: under 200, 200-2 000, 2 000-10 000, over 10 000
+RELATED_MAX = 3
+RELATED_SMALL = 2                           # every source abstained on a drive under DRIVE_SIZE_BANDS[0] files
+COMMON_SHARE = 0.3                          # measured on negatives before it is fixed (§25.7)
+PROXIMITY_CHARS = 400                       # minimum window of chunk-covered concepts
+ABOUT_SHOWN = 10                            # shown per tier (§25.5.6)
+MENTIONED_SHOWN = 6
+TRANSLATED_SHOWN = 6
+LABELLED_SHOWN = 8
+CARD_RENDER_MAX = 700
+RESULT_CHARS_MAX = 16_000
+WINDOW_PAD = 300
+WINDOW_MAX = 900
+WINDOW_CHARS_TOTAL_V2 = 5_000               # replaces WINDOW_CHARS_TOTAL (§25.5.6)
+GROUP_LINES = 6
+GROUP_READ_MAX = 1_000
