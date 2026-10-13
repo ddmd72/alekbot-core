@@ -28,7 +28,8 @@ name; a key value only when one of its number terms (`drive_content_terms`, the 
 or its `printed` occurs verbatim, and its `canonical` becomes that normaliser form (the `v:` key the query meets); a
 date only when its ISO form is among the text's number terms. Labels outside `drive_labels` become `other` (dates,
 entity types, the document type), `other_id` (value labels) or are dropped (life domains). Descriptive fields and the
-word lists are not verifiable: automatic. Matching is NFC + casefold + whitespace collapse, on word boundaries.
+word lists are not verifiable: automatic (an entry joined with commas is split into its words). Matching is NFC +
+casefold + whitespace collapse, on word boundaries.
 """
 from __future__ import annotations
 
@@ -311,13 +312,13 @@ def verify(profile: DriveProfile, chunks: Sequence[_HasText], name: str, *,
         key_values=tuple(values)[:PROFILE_KEY_VALUES_MAX],
         topics=_words(profile.topics, PROFILE_TOPICS_MAX),
         topics_native=_words(profile.topics_native, PROFILE_TOPICS_MAX),
-        topic_words=_words(profile.topic_words, PROFILE_WORD_LIST_MAX),
-        label_words=_words(profile.label_words, PROFILE_WORD_LIST_MAX),
-        domain_words=_words(profile.domain_words, PROFILE_WORD_LIST_MAX),
+        topic_words=_words(_split(profile.topic_words), PROFILE_WORD_LIST_MAX),
+        label_words=_words(_split(profile.label_words), PROFILE_WORD_LIST_MAX),
+        domain_words=_words(_split(profile.domain_words), PROFILE_WORD_LIST_MAX),
         validity_words=(),
     )
     if _validity_date(verified) is not None:
-        verified = replace(verified, validity_words=_words(profile.validity_words, PROFILE_WORD_LIST_MAX))
+        verified = replace(verified, validity_words=_words(_split(profile.validity_words), PROFILE_WORD_LIST_MAX))
     return verified, VerifyDrops(entities=dropped_entities, values=dropped_values, dates=dropped_dates,
                                  labels=labels)
 
@@ -468,6 +469,12 @@ def _validity_date(profile: DriveProfile) -> Optional[date]:
 
 def _unique(items: Iterable[str]) -> Tuple[str, ...]:
     return tuple(dict.fromkeys(i for i in items if i))
+
+
+def _split(items: Sequence[str]) -> List[str]:
+    """Word-list entries, one word or phrase each: an entry the model joined with commas or semicolons is split (seen
+    live: 'electricity, electric, luz' as one entry)."""
+    return [part for item in items for part in re.split(r"[,;]", item)]
 
 
 def _words(items: Sequence[str], cap: int) -> Tuple[str, ...]:

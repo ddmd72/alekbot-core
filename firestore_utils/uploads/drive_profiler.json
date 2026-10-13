@@ -1,0 +1,14 @@
+{
+  "agent_id": "drive_profiler",
+  "blueprint_id": "drive_profiler_agent_v1",
+  "tokens": {
+    "COGNITIVE_PROCESS_DRIVE_PROFILER": {
+      "order": 10,
+      "non_overridable": true
+    },
+    "OUTPUT_FORMAT_DRIVE_PROFILER": {
+      "order": 10,
+      "non_overridable": true
+    }
+  }
+}

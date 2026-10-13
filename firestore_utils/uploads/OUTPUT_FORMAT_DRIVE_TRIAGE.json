@@ -1,0 +1,14 @@
+{
+  "token_id": "OUTPUT_FORMAT_DRIVE_TRIAGE",
+  "category": "output_format",
+  "class": "output_format",
+  "content": "format: \"One JSON object and nothing else: no markdown fences, no text before or after it.\"\n\nshape: '{\"images\": [{\"index\": integer, \"verdict\": \"text\" | \"photo\", \"description\": string, \"objects\": [{\"name\": string, \"forms\": [string]}], \"scene\": string, \"visible_text\": string}]}'\n\nfields: [\n    \"images: one entry per image you were given.\",\n    \"index: the image's number as given in its label.\",\n    \"verdict: text or photo.\",\n    \"description: for photo, one or two English sentences; for text, an empty string.\",\n    \"objects: for photo, up to eight, each with an English name and up to six forms; for text, an empty list.\",\n    \"scene: for photo, up to six English words; for text, an empty string.\",\n    \"visible_text: for photo, the legible words as written, else an empty string; for text, an empty string.\",\n]\n",
+  "metadata": {
+    "description": "DriveImageTriageAgent v2 — output_format section (mirrors _RESPONSE_SCHEMA)",
+    "override_by": [
+      "SYSTEM",
+      "AGENT"
+    ],
+    "source": "v2 draft 2026-10-13: Search v2 (USER_DRIVE_INDEXING_RFC §25.4), not uploaded"
+  }
+}

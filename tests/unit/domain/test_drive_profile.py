@@ -283,6 +283,13 @@ class TestVerify:
         assert len(p.entities) == PROFILE_ENTITIES_MAX and len(p.entities[0].forms) == 8
         assert len(p.topic_words) == PROFILE_WORD_LIST_MAX and p.label_words == ("a", "b")
 
+    def test_a_comma_joined_word_list_entry_becomes_one_entry_per_word(self):
+        """Seen live (gpt-6-luna, 2026-10-13): 'electricity, electric, luz' as one entry of topic_words."""
+        p, _ = self._verify(_profile(topic_words=("electricity, electric; luz", "electric"),
+                                     label_words=("invoice,invoices",)))
+        assert p.topic_words == ("electricity", "electric", "luz") and p.label_words == ("invoice", "invoices")
+        assert p.topics == ()
+
     def test_dropping_everything_is_not_a_failure(self):
         p, drops = self._verify(_profile(entities=(ProfileEntity("Oslo", "place", "Oslo"),),
                                          key_values=(KeyValue("price", "7", "7"),)))
