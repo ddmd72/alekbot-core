@@ -1,10 +1,11 @@
 # RFC: User Drive Step 2 — Indexing and Search
 
-**Status:** Draft, revision 3.20 (2026-10-13) — **Slice 1 live** (PR #58, deployed and accepted 2026-10-12); where
+**Status:** Draft, revision 3.21 (2026-10-14) — **Slice 1 live** (PR #58, deployed and accepted 2026-10-12); where
 the build differs from this text, §23 says how and why. **Slices 2 and 4 are one slice** (D6), designed in §24 and
 built (not live until its deploy); §24 overrides the text above where they disagree and was brought in line with the
 code in rev 3.15 and again, after the final cross-cutting review, in rev 3.16; rev 3.17 records the owner's model
-switch after the live check. **Search v2** (owner decisions D14–D28, D29 by the arbiter) is designed in §25, not built;
+switch after the live check. **Search v2** (owner decisions D14–D28 and D30, D29 and D31 by the arbiter) is designed
+in §25 and **implemented on branch `asm/drive-search-v2`, not deployed** (results on the synthetic fixture: §25.7.1);
 §25 overrides §5.5, §8.5, §10, §14, §15 and §24 where they disagree. Slice 3 not built. Phase 0 hardening merged (PR #57, §16).
 **Builds on:** [USER_DRIVE_RFC.md](USER_DRIVE_RFC.md) (Step 1, live: CRUD over the user's OneDrive App Folder).
 Replaces that RFC's §5 "Step 2" placeholder.
@@ -120,6 +121,10 @@ To Do mirror (`TaskSearchIndex`), `src/domain/rrf.py`, `TaskQueue.enqueue_worker
   allowance for drive-wide common words; per-job enrichment states settled per version key; hint reuse inside the
   content run; the initial build in its own document; rollback deleting hint documents first; bars per case family; a
   recorded enrichment snapshot; frozen interfaces and a decomposition appendix (§25.13).
+- Rev 3.21 (2026-10-14): Search v2 implemented on `asm/drive-search-v2` (Part 0, P1–P7, the cross-cutting review's
+  fixes, D30, D31; `make check` green), not deployed. §25.7.1 records the real-vector eval on the synthetic fixture and
+  the arbiter's decision to keep `Z_RELATED` 2.5 until it is calibrated on the owner's drive after the rebuild;
+  §25.12's `WORD_KEYS_PER_CHUNK` corrected to the built 1 500 (§25.2.6 already said so).
 
 **Owner decisions (2026-10-11)**
 - The App Folder is meant to become a real document store. It is empty only because the feature is being built.
@@ -2119,7 +2124,7 @@ Values in `src/domain/drive_index_params.py` unless named otherwise.
 
 ---
 
-## 25. Search v2 (rev 3.20, designed 2026-10-13, not built)
+## 25. Search v2 (rev 3.20 design, 2026-10-13; implemented on `asm/drive-search-v2`, not deployed, rev 3.21)
 
 Owner decisions D14–D28, and D29 by the arbiter under the owner's delegation (§21). Built on branch
 `asm/drive-search-v2`, created from tag `drive-search-v1` (the Slice 2+4 tip after the GPT-6 Luna switch). There is
@@ -2982,6 +2987,51 @@ recorded only if they meet these numbers):
   `initial_build_usd`, `verify_dropped_*`, `hints_dropped_*` and similarity deciles, `hints_reused`, job states,
   `keys_capped`, `stopped_at_cap`; rebuild progress as described / text records.
 
+#### 25.7.1 Results (2026-10-14, synthetic fixture)
+`search_v2_eval --embeddings gemini` at the branch tip (`fdea786f`), with real `gemini-embedding-2/768` vectors over the
+synthetic, PII-free fixture (`tree.json` + `tree_v2.json`: about 1 450 indexed items, 2 521 carded records, so the
+drive-size band is 200–2 000) and the recorded enrichment (`enrichment.json`); no parameter was changed for the run.
+Two runs gave identical numbers. v1 is `baseline_v1.json`, the tag's run on the same fixture.
+
+| Family | v2 cases passed | v2 files found | Bar | v1 cases passed |
+|---|---|---|---|---|
+| Exact | 23 / 23 | 39 / 39 | 0.95 | 13 / 23 |
+| Semantic and cross-language | 11 / 12 | 14 / 16 | 0.85 | 1 / 12 |
+| Class | 7 / 7 | 18 / 18 | 0.85 | 1 / 7 |
+| Incident-shaped | 2 / 2 | 27 / 27 | 1.0 | 0 / 2 |
+| Misspellings | 4 / 4 | — | 1.0 | 1 / 4 |
+| Negatives | 12 / 13 | — | 0.9 | 0 / 13 |
+
+| Metric | v2 | Bar | v1 |
+|---|---|---|---|
+| Junk in the exact tiers, per case | 0.087 | ≤ 0.3 | 6.91 |
+| Junk in By translation / Labelled, per positive case | 0.636 | ≤ 0.5 | — |
+| Related lines per negative | 2.92 | ≤ 1.0 | — |
+| The book distractor in an exact tier | 0 cases | 0 | 3 cases |
+| Characters per result, median / max | 2 131 / 8 864 | ≤ 3 000 / ≤ 16 000 | 7 606 / 15 106 |
+| v1 G1/G2 cases passing under v2 | 81 / 87 | every v1-passing case | — |
+
+**Verdict: bars missed.** Every family's pass bar is met. Missed:
+- **Related lines per negative, 2.92 against ≤ 1.0.** The tier filled its cap of 3 on 12 of 13 negatives (2 on the
+  last). The relative floor is too low for real vectors: on this fixture a floor of about 5.25 reaches ≤ 1.0 related
+  line per negative; on a 200-file synthetic corpus (`scale_calibrate.py` with real vectors) about 4.0, where
+  near-miss recall falls to 0.10. Neither corpus can set the floor: the fixture's three cases that live only on the
+  Related tier cannot be told apart per floor without another full embedding run, and the synthetic corpus's
+  near-miss recall is bounded by its template texts (0.37 even at a floor of 0.5).
+- **Automatic-tier junk, 0.64 against ≤ 0.5 per positive case** (a reported bar).
+- **Three v1-passing G1/G2 cases lost:** one "latest version" case (`family-latest-dogovor`) and two content cases
+  (`g2-amount-deposit-porto`, `g2-clause-nda-term`) whose expected substring is not in the shown card
+  (`substring_not_in_card`; so are two cases v1 missed too, `g2-date-written-out` and `g2-ocr-bank`).
+- One semantic case (`sem-flat-repair`) and one negative (`neg-pool-booking`) fail.
+
+**Arbiter's decision (under the owner's delegation, 2026-10-14).** `Z_RELATED` stays **2.5** for every band. The
+Related tier is capped at 3 lines, labelled "by meaning only, unverified", never counted and never a match, so a
+generous floor costs Smart at most three labelled guesses; raising it on synthetic evidence would trade away the
+near-misses the tier exists for, with no measurement of that cost. The floor (per band), `COMMON_SHARE` and
+`PASSAGE_MIN_SIMILARITY` are calibrated on the owner's real drive after its v2 rebuild (rollout step 9, the live
+check), with the procedure above (related lines per negative ≤ 1.0, near-miss recall ≥ 0.7). The other misses are
+recorded for the same check.
+
 ### 25.8 Rollout, rebuild and rollback (runbooks)
 **The gate.** A sync state whose `applied_versions` lacks the key `keys` is **awaiting migration**: v2 does no tick
 work for it at all (no observation, no content run, no upgrade pass, no enrichment) and the fan-out raises an ops
@@ -3127,7 +3177,7 @@ common-word allowance (F-D); time spans to the date fields (F-E); verified and a
 | `INITIAL_BUILD_USD` | $40 (owner minimum $20, D27) | sizing §25.4.5 |
 | `FALLBACK_ALERT_SHARE` | 0.5 a day | |
 | `ENRICH_SHARE` / `ENRICH_IN_FLIGHT` / `PASSAGE_IN_FLIGHT` / `ENRICH_FILE_BUDGET` | 40 % / 3 / 2 / 300 s | §25.4.5 |
-| `WORD_KEYS_PER_CHUNK` / `HINT_KEYS_PER_CHUNK` / `ABOUT_KEYS_PER_RECORD` | 900 / 60 / 600 | §25.2.6 |
+| `WORD_KEYS_PER_CHUNK` / `HINT_KEYS_PER_CHUNK` / `ABOUT_KEYS_PER_RECORD` | 1 500 / 60 / 600 | §25.2.6 |
 | `WRITE_BATCH_BYTES` | 6 MB | |
 | `README_SCAN_CHILDREN` | 1 000 | |
 | `MAX_CONCEPTS` | 8 | |
