@@ -49,7 +49,7 @@ from ..domain.drive_index_params import (
 )
 from ..domain.drive_index_planner import (
     AccessAction, ObservationPlan, PlaceOf, PlanContext, access_action, attempt_crashed, can_start_file, capped,
-    card_refused, change_from_record, chunks_reembedded, content_due, content_retry, deferred, demoted,
+    card_refused, change_from_record, chunks_reembedded, chunks_refused, content_due, content_retry, deferred, demoted,
     drops_readable, extractor_stale, generation_started, indexed, model_available, model_outage, model_recovered, needs_probe,
     next_month_start, quiet_over,
     parent_scope, plan_observation, readme_read, reembed_in_space, reextraction_due, released, schedule,
@@ -1284,8 +1284,9 @@ class DriveIndexingService:
         the same fence as an index run (§7.4). Any content state: a failed record's previous generation and a waiting
         record's current one are served too (§3.4), and their content state, attempts and deferral are left as they
         are (T-M1). Errors are classified like an index run's (§8.2): a systemic one ends the tick with the re-embed
-        still due; chunks that cannot be read back as stored, a per-file embedding failure or any other error send the
-        file to a full index run, which counts it."""
+        still due; a chunk this space refuses (HTTP 400) is terminal for the space (chunks_refused, R3 F2-3); chunks that
+        cannot be read back as stored, an embedding timeout or any other error send the file to a full index run,
+        which counts it."""
         if not budget.file_allowed(routed=False):
             return False
         readable = rec.indexed_generation
@@ -1337,9 +1338,18 @@ class DriveIndexingService:
         except LLMClientError as exc:
             if exc.http_status != 400:
                 raise   # systemic (§8.2)
-            logger.warning(f"[DriveIndex] a chunk of item {rec.item_id} for {user_id[:8]} was refused: {exc}")
-            await self._reread(user_id, rec, ctx)
+            # a definite refusal by this space's model: terminal here, never re-read (a reader call would buy the
+            # same refusal); the old-space chunks go, so the space change completes (R3 F2-3)
+            logger.warning(f"[DriveIndex] a chunk of item {rec.item_id} for {user_id[:8]} was refused in "
+                           f"{self._space}: {exc}; no chunks in this space")
+            fresh = (await self._repo.get_records(user_id, [rec.item_id])).get(rec.item_id)
             mark.committed = True
+            if (fresh is None or fresh.content_version != rec.content_version or fresh.indexed_generation != readable
+                    or fresh.index_generation != generation):
+                return   # the record moved on: its own work decides (the sweep removes any debris, §7.5)
+            done = _maintenance_kept(chunks_refused(fresh, self._space, now), rec.priority)
+            await self._commit(user_id, [done], set(), before={fresh.item_id: fresh})
+            summary["reembed_refused"] = summary.get("reembed_refused", 0) + 1
             return
         summary["embed_ms"] = summary.get("embed_ms", 0) + int((self._monotonic() - started) * 1000)
         terms = await asyncio.to_thread(_terms_of, [c.text for c in stored])
