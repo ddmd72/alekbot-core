@@ -110,10 +110,12 @@ def concept_weight(df: int, carded: int) -> float:
 
 def allowances(concepts: Sequence[Concept], df: Mapping[str, int], carded: int) -> Allowance:
     """The query's allowances from each concept's user-wide document frequency. A common word is missable only when
-    some concept is not common (a lone common word is still the subject)."""
+    some concept is not common (a lone common word is still the subject); a number is never common."""
     words = [c.word for c in concepts]
     absent = tuple(w for w in words if df.get(w, 0) == 0)
-    common = frozenset(w for w in words if df.get(w, 0) > COMMON_SHARE * max(carded, 1))
+    # a number (an amount, an id, a year) is precise: never missable as common (P6 review m7)
+    common = frozenset(c.word for c in concepts
+                       if not c.is_number and df.get(c.word, 0) > COMMON_SHARE * max(carded, 1))
     if not set(words) - common:
         common = frozenset()
     low: Optional[str] = None

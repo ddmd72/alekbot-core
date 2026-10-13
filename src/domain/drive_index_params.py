@@ -34,7 +34,6 @@ LEASE_MARGIN = timedelta(minutes=1)         # lease_until = start + TICK_DEADLIN
 NUDGE_RETRY_DELAY_S = 60                    # a live lease ends within TICK_DEADLINE: at most ~31 retries
 PLACE_MAX_DISTANCE_KM = 50.0                # RFC Δ7
 PLACE_PREFER_RADIUS_KM = 15.0               # a heavier place within it may name a photo (RFC Δ39)
-RRF_K = 60
 SYSTEMIC_BACKOFF_BASE_S = 60                # continuation delay after a systemic error, doubled per failure
 SYSTEMIC_BACKOFF_CAP_S = 1800               # = 3 x TICK_INTERVAL
 RECORD_WRITE_BATCH = 400
@@ -66,12 +65,6 @@ WINDOW_CHARS_TOTAL = 12_000                 # all content windows of one result 
 QUERY_TERM_CHARS = 1000                     # the search extracts query terms from at most this many characters of
                                             # drive_query, cut at a word boundary (no length cap upstream; arbiter R2 S-m1)
 CONTENT_TERM_QUERIES = 8                    # one array-contains query per query term, at most this many
-CONTENT_TERM_FETCH = 100
-TERM_NONSELECTIVE_FILES = 8                 # a query term whose FULL first term page spans more distinct files than
-                                            # this is non-selective: the page is an id-ordered slice of many files,
-                                            # so it is dropped from fusion, anchoring, trimming and widening. A full
-                                            # page from few files (an IBAN in every chunk of one contract) still
-                                            # selects (§24.6, arbiter R1-2)
 MODEL_EXTRACT_DENSITY = 200                 # chars per page below which a PDF is routed to the reader (§9)
 MODEL_EXTRACT_GARBAGE = 0.05                # share of unreadable characters above which it is routed
 MODEL_EXTRACT_MAX_PAGES = 200

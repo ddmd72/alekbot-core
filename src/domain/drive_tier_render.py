@@ -2,7 +2,7 @@
 Drive tier render — the text Smart reads for a Search v2 query (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §25.5.6,
 verbatim contract §25.13.6). Pure; `drive_search.render_results` calls it for every query result that carries tiers.
 
-Layout: the reference reminder, the envelope lines, the searched line (or the migration line), the coverage line, the
+Layout: the reference reminder, the envelope lines, the searched line, the coverage line, the
 tiers in order (About, Mentioned in, By translation, Labelled, Related), and the footers. A tier shows at most its
 shown count of cards; the rest are "showing n of N" and up to GROUP_LINES group lines (top folder × kind × months) in
 one wrapper. Past RESULT_CHARS_MAX the lowest tiers' shown cards are cut first, and the result says so.
@@ -23,7 +23,7 @@ from .drive_search import (
 from .drive_search_texts import (
     ABOUT_HEADING, ABSENT_IN_SCOPE_LINE, ABSENT_LINE, CONJUNCTION_TERM, COVERAGE_COMPLETE, COVERAGE_INCOMPLETE,
     COVERAGE_NOT_DESCRIBABLE, COVERAGE_NOT_DESCRIBED, DATE_LINE, FOOTER_EXACT, FOOTER_NO_CONJUNCTION, GROUP_LINE,
-    KEYS_CUT, LABELLED_HEADING, MATCHED_LINE, MENTIONED_HEADING, MIGRATION_LINE, PASSAGE_LINE, RELATED_HEADING,
+    KEYS_CUT, LABELLED_HEADING, MATCHED_LINE, MENTIONED_HEADING, PASSAGE_LINE, RELATED_HEADING,
     RELATED_SMALL_NOTE, SEARCHED_COMMON, SEARCHED_IGNORED, SEARCHED_LINE, SHOWING, SHOWING_AT_LEAST, SIMILAR_NAME,
     TRANSLATED_HEADING, WITHOUT_AT_LEAST_LINE, WITHOUT_LINE,
 )
@@ -36,7 +36,7 @@ _HEADINGS = {MatchTier.MENTIONED: MENTIONED_HEADING, MatchTier.TRANSLATED: TRANS
 _GROUP_WORD = {MatchTier.ABOUT: "matching", MatchTier.MENTIONED: "mentioning", MatchTier.TRANSLATED: "translated",
                MatchTier.LABELLED: "labelled"}
 _RELATED_CARD_CHARS = 300
-_CUT_LINE = "Shortened to fit: fewer files are shown in the lowest tiers; their counts and folders are above."
+_CUT_LINE = "Shortened to fit: fewer files are shown as cards; their counts and folders are above."
 _EXPIRED_LINE = "{count} more {files} with these words already expired."
 _NOTHING = "No matching files or folders."
 _ELLIPSIS = "…"
@@ -85,8 +85,6 @@ def _envelope_lines(result: DriveSearchResult) -> List[str]:
 
 
 def _searched_line(tiered: TieredResult) -> str:
-    if tiered.migration:
-        return MIGRATION_LINE
     line = SEARCHED_LINE.format(concepts=_quoted(tiered.concepts))
     ignored = list(tiered.ignored) + [w for w in tiered.coverage.cut if w not in tiered.ignored]
     if ignored:
@@ -99,6 +97,8 @@ def _searched_line(tiered: TieredResult) -> str:
 def coverage_parts(cov: CoverageFacts, *, passages_tiers_empty: bool) -> List[str]:
     """The named parts of the coverage line (§25.5.6), in a fixed order."""
     parts: List[str] = []
+    if cov.rebuilding:
+        parts.append("the index is being rebuilt for a new search format, so files not rebuilt yet are not searched")
     if cov.building:
         parts.append("the index is still being built, so some files may not be in it yet")
     if cov.names_only:
@@ -122,6 +122,8 @@ def coverage_parts(cov: CoverageFacts, *, passages_tiers_empty: bool) -> List[st
         parts.append(f"{_plural(cov.unread, 'document', 'documents')} could not be read")
     if cov.full_page:
         parts.append("a candidate page was full, so more files may match")
+    if cov.unchecked:
+        parts.append(f"words held by many files could not be checked in the whole scope: {_quoted(cov.unchecked)}")
     if cov.keys_cut:
         parts.append(f"{_plural(cov.keys_cut, 'shown file', 'shown files')} had words cut by a key cap")
     if cov.cut:
@@ -192,8 +194,9 @@ def group_lines(members: Sequence[GroupMember], tier: MatchTier) -> Tuple[str, .
     for (folder, kind), months in ordered[:GROUP_LINES]:
         dated = sorted(m for m in months if m)
         dates = "undated" if not dated else dated[0] if dated[0] == dated[-1] else f"{dated[0]}–{dated[-1]}"
-        lines.append(GROUP_LINE.format(folder=folder, count=len(months), tier=_GROUP_WORD[tier],
-                                       kinds=_kind_label(kind), dates=dates))
+        template = GROUP_LINE.replace(" files (", " file (") if len(months) == 1 else GROUP_LINE   # P6's plural
+        lines.append(template.format(folder=folder, count=len(months), tier=_GROUP_WORD[tier],
+                                     kinds=_kind_label(kind), dates=dates))
     return tuple(lines)
 
 
@@ -213,8 +216,6 @@ def _heading(tier: MatchTier, tiered: TieredResult, block: TierBlock, shown: int
 
 def _footers(tiered: TieredResult, any_shown: bool, exact_shown: bool) -> List[str]:
     lines: List[str] = []
-    if tiered.migration:
-        return lines
     if tiered.absent or tiered.absent_in_scope:
         lines += [ABSENT_LINE.format(word=w) for w in tiered.absent]
         lines += [ABSENT_IN_SCOPE_LINE.format(word=w) for w in tiered.absent_in_scope]
@@ -261,7 +262,8 @@ def _render(result: DriveSearchResult, tiered: TieredResult, shown: Dict[MatchTi
     exact_shown = bool(tiered.block(MatchTier.ABOUT) or tiered.block(MatchTier.MENTIONED))
     footers = _footers(tiered, any_shown, exact_shown)
     out.extend(footers)
-    if not any_shown and not footers and not any(b.total for b in tiered.blocks):
+    if (not any_shown and not footers and not any(b.total for b in tiered.blocks)
+            and not tiered.coverage.unchecked):
         out.append(_NOTHING)
     return "\n".join(out)
 

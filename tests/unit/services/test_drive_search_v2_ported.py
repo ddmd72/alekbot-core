@@ -134,8 +134,6 @@ async def test_a_kind_filter_prefilters_the_card_knn_and_keeps_only_that_kind():
     assert w.repo.card_calls == [(CARD_FETCH, "xlsx")]
 
 
-@pytest.mark.xfail(strict=True, reason="review rv_sv2_p6 M1: the name stream has no kind prefilter and the scope "
-                                       "line claims absence from a truncated page")
 async def test_kind_filter_finds_a_name_match_past_a_full_user_wide_page(monkeypatch):
     """The other half of TestFilters.test_kind_prefilter_reaches_both_streams: a filtered search sees its file even
     when the unfiltered name page is full of other kinds, and never says no file in scope holds the word."""
@@ -198,7 +196,6 @@ async def test_reads_through_full_about_pages_are_bounded(monkeypatch):
 
 # -- from test_drive_search_capped_filters.py -----------------------------------------------------------------------
 
-@pytest.mark.xfail(strict=True, reason="review rv_sv2_p6 M1: absence in scope is claimed from a truncated page")
 async def test_date_filter_over_full_pages_never_claims_absence(monkeypatch):
     """Ports test_date_filter_over_full_pages_with_no_survivor_hedges: when the user-wide page was full and the date
     filter left nothing of it, the answer hedges — never a flat negative."""

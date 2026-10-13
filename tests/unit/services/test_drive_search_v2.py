@@ -3,10 +3,10 @@ enrichment fixture, strict AND with the D29 count line, the coverage and migrati
 scope and the log line."""
 import pytest
 
-from src.domain.drive_enrichment import DriveProfile, JobState, PhotoObject, ProfileEntity
+from src.domain.drive_enrichment import DriveProfile, JobState, ProfileEntity
 from src.domain.drive_index_params import ABOUT_SHOWN, CONCEPT_KEYS_MAX, RELATED_MAX
 from src.domain.drive_search import render_results
-from src.domain.drive_search_texts import FOOTER_EXACT, MIGRATION_LINE
+from src.domain.drive_search_texts import FOOTER_EXACT
 
 from .drive_search_v2_fixture import V2World, card, tier_of, vec
 
@@ -166,18 +166,6 @@ class TestCoverage:
         text = render_results(await w.search("zebra"))
         assert ("Coverage: incomplete — 1 text file is not described yet; 1 text file could not be described."
                 in text)
-
-
-class TestMigrationGuard:
-    async def test_a_state_not_rebuilt_searches_names_meaning_and_filters_only(self):
-        w = V2World(migrated=False)
-        named = w.file("Rome tickets.pdf")
-        content = w.file("note.md", kind="markdown", chunks=["Rome tickets in this note."])
-        result = await w.search("rome tickets")
-        assert tier_of(result, named) == "about" and tier_of(result, content) != "mentioned"
-        text = render_results(result)
-        assert MIGRATION_LINE in text and "Searched names" not in text
-        assert w.repo.key_lists == []   # no about, word or hint stream ran
 
 
 class TestFilters:

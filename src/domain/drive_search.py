@@ -18,7 +18,7 @@ Public interface:
     is_not_read_yet(rec, admitted=None, triaged=None) -> bool   (waiting, not unreadable: F5-2)
     escape_text(text) -> str;  wrap_untrusted(text, *, nonce, ref, path) -> str
     render_results(result) -> str
-    make_card(rec, path, summary, nonce) / rank_names(recs, scores) / cover_first(fused, groups)
+    make_card(rec, path, summary, nonce)
     date_source(rec) -> DATE_TAKEN | DATE_WRITTEN | DATE_FILE | None      (the card's date label, F5-3)
 """
 from __future__ import annotations
@@ -34,8 +34,7 @@ from .drive_card import taken_at
 from .drive_index import DriveIndexRecord, DriveSyncState, Reason, RecordState, Scope, TriageVerdict
 from .drive_index_params import ACCESS_LOSS_TTL, WRAPPER_TAG_GAP_MAX
 from .drive_index_policy import Admission, admission, kind_of
-from .drive_keys import query_concepts
-from .drive_name_keys import covers_query
+from .drive_keys import GENERIC_WORDS, query_concepts
 from .drive_tier_result import TieredResult
 from .user_drive import DriveConnection, DriveItem, make_drive_ref
 
@@ -45,9 +44,6 @@ STATUS_DISCONNECTED = "disconnected"
 STATUS_AMBIGUOUS_FOLDER = "ambiguous_folder"
 STATUS_FOLDER_NOT_FOUND = "folder_not_found"
 
-MATCHED_CARD = "card"              # found by its card: the card kNN or the name stream
-MATCHED_CONTENT = "content"        # found by its chunks: the chunk kNN or the exact-term stream (§24.6)
-MATCHED_BOTH = "card+content"
 
 # Where a card's date comes from (§3.1, D13), shown beside it so a file date is never cited as the document's own
 DATE_TAKEN = "taken"
@@ -149,6 +145,12 @@ class DriveSearchRequest:
     def filter_only(self) -> bool:
         return not query_concepts(self.query).concepts
 
+    @property
+    def name_words(self) -> bool:
+        """No concept, but generic words were given ("todo", "files"): without filters they are searched as name
+        words by the name stream alone (P6 review m6); with filters the request is a filter-only listing."""
+        return any(w in GENERIC_WORDS for w in query_concepts(self.query).ignored)
+
 
 @dataclass(frozen=True)
 class DriveSearchCard:
@@ -168,16 +170,10 @@ class DriveSearchCard:
     reason: Optional[str] = None
     stale: bool = False
     truncated: bool = False
-    matched: str = MATCHED_CARD
-    name_matched: bool = False           # the name stream found it (its name holds the query's words), F5-8
     also_at: Tuple[str, ...] = ()
     content_hash: Optional[str] = None
     nonce: str = ""
-    window: str = ""                     # content hits: the best chunk and its neighbours (§10.2), untrusted text
     date_source: Optional[str] = None    # DATE_TAKEN | DATE_WRITTEN | DATE_FILE; None without a date
-    passage_exact: bool = True           # the window's anchor holds a query term (exact-term stream); False: the
-                                         # chunk kNN's nearest passage only (F5-8)
-    window_shortened: bool = False       # the window budget trimmed the best chunk (not: left a neighbour out)
     # Search v2 (§25.5.6): the tier the card is shown in (a MatchTier value; "" for a filter-only listing), how it
     # matched (rendered sources, §25.13.6), the passage cut around the matched words or evidence, the query words it
     # may miss ('"photo" (common)'), and whether a key cap cut its keys
@@ -222,8 +218,6 @@ class DriveSearchResult:
     folder_lookup_truncated: bool = False  # folder_not_found, but a lookup page was full: "could not resolve"
     folder_not_indexed: bool = False     # the scope folder hides its contents (repository, generated, dense)
     other_drive: bool = False            # disconnected because a different drive is connected now
-    capped: bool = False                 # filters dropped candidates from a full (capped) stream page
-    candidates: int = 0                  # how many visible candidates the filters were applied to
     tiered: Optional[TieredResult] = None   # Search v2: a query result's tiers, coverage and footers (§25.5.6)
 
 
@@ -333,7 +327,7 @@ NOTHING_TO_SEARCH = (
 def require_search_terms(request: DriveSearchRequest) -> None:
     """Refuse a request with no name words and no filter (§10.1): it would only list the newest files, which
     reads as an answer to whatever the user asked."""
-    if not request.filter_only:
+    if not request.filter_only or request.name_words:
         return
     if request.folder or request.kind or request.date_from or request.date_to:
         return
@@ -512,22 +506,10 @@ def _day(value: Optional[datetime]) -> str:
     return value.date().isoformat() if value else "unknown"
 
 
-def _matched_line(card: DriveSearchCard) -> str:
-    """What found the card (§10.2, F5-8): its name words, its card by meaning, its content."""
-    sides: List[str] = []
-    if card.matched in (MATCHED_CARD, MATCHED_BOTH):
-        sides.append("name" if card.name_matched else "similar name or details")
-    if card.matched in (MATCHED_CONTENT, MATCHED_BOTH):
-        sides.append("content")
-    return "matched: " + " and ".join(sides)
-
-
-def _card_body(card: DriveSearchCard, show_matched: bool = False) -> str:
+def _card_body(card: DriveSearchCard) -> str:
     dated = f"{_day(card.effective_date)} ({card.date_source})" if card.effective_date and card.date_source \
         else _day(card.effective_date)
     lines = [card.summary, f"path: {card.path or '/'}", f"date: {dated}"]
-    if show_matched:
-        lines.append(_matched_line(card))
     lines.append(f"index: {card.state}" + (f" ({card.reason})" if card.reason else ""))
     if card.stale:
         lines.append("stale: the file changed after it was indexed")
@@ -535,15 +517,11 @@ def _card_body(card: DriveSearchCard, show_matched: bool = False) -> str:
         lines.append("truncated: only the beginning of the file was indexed")
     if card.also_at:
         lines.append("identical copies also at: " + "; ".join(card.also_at))
-    if card.window:
-        label = "matching passage" if card.passage_exact else "nearest passage"
-        lines.append(f"{label} (shortened):" if card.window_shortened else f"{label}:")
-        lines.append(card.window)
     return "\n".join(lines)
 
 
-def _render_card(card: DriveSearchCard, show_matched: bool = False) -> str:
-    return wrap_untrusted(_card_body(card, show_matched), nonce=card.nonce, ref=card.ref, path=card.path)
+def _render_card(card: DriveSearchCard) -> str:
+    return wrap_untrusted(_card_body(card), nonce=card.nonce, ref=card.ref, path=card.path)
 
 
 _BUILDING_LINE = "The index is still being built: some files and folders may not be in it yet."
@@ -583,14 +561,6 @@ def _envelope_lines(result: DriveSearchResult) -> List[str]:
         lines.append("The drive connection expired: these results come from the stored index. Ask the user "
                      "to reconnect the drive in the Cabinet.")
     return lines
-
-
-def _streams(env: DriveSearchEnvelope) -> str:
-    """The streams whose pages the filters saw (the `capped` hedge, §10.2, §24.6). No vector stream runs while
-    refreshing (§12.3)."""
-    if env.content_search:
-        return "name and exact-term" if env.refreshing else "name, meaning and content"
-    return "name" if env.refreshing else "name and meaning"
 
 
 def _scope_line(result: DriveSearchResult) -> Optional[str]:
@@ -660,28 +630,8 @@ def render_results(result: DriveSearchResult) -> str:
         else:
             total = f"at least {result.matched_total}" if result.matched_at_least else str(result.matched_total)
             out.append(f"{total} files and folders match the filters; showing the newest {shown}.")
-    if result.capped:
-        streams = _streams(result.envelope)
-        out.append(f"The filters were applied to the best {result.candidates} {streams} matches only, not to "
-                   f"every file, so more files may match.")
-        if not result.cards:
-            out.append("None of them passed the filters; that does not mean no file does. Search again with "
-                       "drive_query empty to apply the filters to every file, or add a folder or more name words.")
-            return "\n".join(out)
     if not result.cards:
         out.append("No matching files or folders.")
         return "\n".join(out)
-    # a filter-only listing matched no words: nothing found it but the filters
-    out.extend(_render_card(c, show_matched=not request.filter_only) for c in result.cards)
+    out.extend(_render_card(c) for c in result.cards)
     return "\n".join(out)
-
-
-def rank_names(recs: Sequence[DriveIndexRecord], scores: Mapping[str, int]) -> List[DriveIndexRecord]:
-    """The name stream's order: more shared keys first, item_id breaks ties (deterministic)."""
-    return sorted((r for r in recs if r.item_id in scores), key=lambda r: (-scores[r.item_id], r.item_id))
-
-
-def cover_first(fused: Sequence[DriveIndexRecord], groups: Sequence[FrozenSet[str]]) -> List[DriveIndexRecord]:
-    """The step after RRF (RFC Δ17, the §14 seam): records whose name covers every query token rank first,
-    RRF order kept inside each group. A query no name covers keeps plain RRF order."""
-    return sorted(fused, key=lambda r: 0 if covers_query(r.name_tokens, groups) else 1)

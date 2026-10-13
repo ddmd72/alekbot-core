@@ -68,6 +68,8 @@ FOOTER_EXACT = "No other file is about or mentions all of these words."
 FOOTER_NO_CONJUNCTION = "No file matches all of: {terms}."                    # terms: CONJUNCTION_TERM joined by ", "
 CONJUNCTION_TERM = '"{word}" ({count} files)'
 
+# Superseded by D30 (P6 review M3): v2 has no migration mode and never renders this line; a state not rebuilt under v2
+# is "being rebuilt" (a coverage part). Kept only because the frozen core pins it; drop it with that pin.
 MIGRATION_LINE = ("The index is being migrated to a new search format: only names, meaning and filters were "
                   "searched.")
 
@@ -89,12 +91,12 @@ DRIVE_KIND_DESCRIPTION = (
 DRIVE_DATE_FROM_DESCRIPTION = (
     "search_files_in_drive: optional earliest date, YYYY-MM-DD, inclusive: a photo's taken date, otherwise the date "
     "written in the document when the index found one, otherwise the file's date. Use it for a time span the user "
-    "gives."
+    "gives. For what expires, it bounds the expiry date."
 )
 DRIVE_DATE_TO_DESCRIPTION = (                                    # §25.5.7's date wording, added to §25.13.6
     "search_files_in_drive: optional latest date, YYYY-MM-DD, inclusive (the whole day counts): a photo's taken date, "
     "otherwise the date written in the document when the index found one, otherwise the file's date. Use it for a "
-    "time span the user gives."
+    "time span the user gives. For what expires, it bounds the expiry date."
 )
 
 # -- Smart protocol, `drive_specialist` block (§25.5.7) ------------------------------------------------------------
