@@ -541,9 +541,9 @@ only inside the untrusted wrapper.
 **Search v2 (D13 extended, RFC §25.4.1).** Once a file has a profile, the profile supersedes the brief in the card,
 and its verified issue date (`dates[issued]`, kept only when its ISO form is among the text's number terms) becomes
 `effective_date` for **every** profiled document, parsed ones included (`effective_from` in `drive_enrich_plan.py`):
-the profile's issue date, else the brief's date, else the taken / file date. *Known defect (reported, not fixed
-here):* the card's date label (`date_source` in `drive_search.py`) still recognises only the brief's date, so a
-parsed document dated by its profile is labelled `file date` instead of `written in the document`.
+the profile's issue date, else the brief's date, else the taken / file date. The card's date label (`date_source` in
+`drive_search.py`) cites `written in the document` while the stored date equals the profile's issue date or the
+brief's date, so a stale one is never cited.
 
 ### Step 7 — text gate, chunks, terms, embeddings
 
@@ -1384,7 +1384,7 @@ Which date a filter uses (`effective_date`, `_effective` in `drive_index_planner
 
 | File | Date used | Label on the card |
 |---|---|---|
-| Any profiled document (parsed or read by the model) | the verified issue date of its profile (Search v2) | `written in the document` intended; currently `file date` for a parsed one (known defect, §4 step 6) |
+| Any profiled document (parsed or read by the model) | the verified issue date of its profile (Search v2) | `written in the document` |
 | Scan, screenshot or hard PDF read by the model, before its profile | the date printed in it (the brief's `doc_date`) | `written in the document` |
 | Any other file | the file date | `file date` |
 | Photo | the taken date (`photo.takenDateTime`), else the file date | `taken` |
