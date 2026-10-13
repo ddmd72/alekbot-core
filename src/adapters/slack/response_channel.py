@@ -655,18 +655,24 @@ class SlackResponseChannel(ResponseChannel):
         `link` is the origin's permalink when the caller already fetched it; only when it
         is None is it looked up here.
 
-        Every chunk is a fresh top-level post (owner decision: never a thread), and nothing
+        Every post is a fresh top-level message (owner decision: never a thread), and nothing
         is posted-then-edited. The header carries the origin permalink, which Slack unfurls
         with its own asynchronous write to the message; a chat.update landing in that
         window returns ok and is then overwritten by the unfurl, leaving the header alone
         in the feed (4 of 27 late-answer posts in one DM, 2026-10-07..13). A message that is
         never edited cannot lose an edit.
+
+        The header is its own first post, so the origin's unfurl preview sits above the
+        answer; inside the first chunk it landed between the first and second chunk.
         """
         if link is None:
             link = await self.message_link(origin_message_id)
         header = f"{prefix} <{link}|↩>" if link else prefix
-        for chunk in self._resolve_and_split(f"{header}\n\n{text}", link_list):
-            await self.send_message(chunk)  # no thread_id → top-level, stays in main feed
+        await self.send_message(header)  # no thread_id → top-level, stays in main feed
+        if not text.strip():
+            return  # a rich-content-only answer: the caller delivers the content next
+        for chunk in self._resolve_and_split(text, link_list):
+            await self.send_message(chunk)
 
     async def on_long_turn(self) -> None:
         """Fire the long-turn hook (once) — e.g. release a held thread lock."""

@@ -26,13 +26,14 @@ async def test_message_link_survives_api_error():
 async def test_late_answer_goes_to_main_feed_with_prefix_and_link():
     ch, client = _channel()
     await ch.send_late_answer("the answer", "[late answer]", "100.1")
-    # Single chunk: one top-level post carrying header + body, never edited afterwards.
-    client.chat_postMessage.assert_awaited_once()
-    first = client.chat_postMessage.call_args.kwargs
-    assert first.get("thread_ts") is None
+    # Short answer: two top-level posts — the header with the link first, then the body —
+    # never edited afterwards.
+    assert client.chat_postMessage.await_count == 2
+    header, body = (c.kwargs for c in client.chat_postMessage.call_args_list)
+    assert header.get("thread_ts") is None and body.get("thread_ts") is None
     client.chat_update.assert_not_awaited()
-    posted_text = first["text"]
-    assert posted_text.startswith("[late answer]") and "https://s/p1" in posted_text and "the answer" in posted_text
+    assert header["text"].startswith("[late answer]") and "https://s/p1" in header["text"]
+    assert "the answer" in body["text"]
 
 
 async def test_late_answer_without_link_still_delivered():
@@ -56,7 +57,7 @@ async def test_late_answer_overflow_stays_in_main_feed_not_threaded():
     await ch.send_late_answer(long_answer, "[late answer]", "100.1")
 
     # Every chat_postMessage call (header chunk + overflow chunks) must carry no thread_ts.
-    assert client.chat_postMessage.await_count >= 2  # really overflowed
+    assert client.chat_postMessage.await_count >= 3  # the header, then a body that really overflowed
     for call in client.chat_postMessage.call_args_list:
         assert call.kwargs.get("thread_ts") is None
 
@@ -99,8 +100,8 @@ async def test_late_answer_with_a_given_link_does_not_refetch_the_permalink():
     await ch.send_late_answer("the answer", "[late answer]", "100.1", link="https://s/given")
     client.chat_getPermalink.assert_not_awaited()
     client.chat_update.assert_not_awaited()
-    posted_text = client.chat_postMessage.call_args.kwargs["text"]
-    assert "https://s/given" in posted_text and "the answer" in posted_text
+    header, body = (c.kwargs["text"] for c in client.chat_postMessage.call_args_list)
+    assert "https://s/given" in header and "the answer" in body
 
 
 async def test_late_answer_without_a_given_link_still_fetches_it():
