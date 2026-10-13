@@ -296,6 +296,9 @@ class DriveSyncState:
     target_space: str = ""                    # the space the running upgrade pass moves cards to
     upgrade_cursor: Optional[str] = None
     upgrade_found_stale: bool = False
+    # "YYYY-MM" (R3 F1-5): mid-pass, a record held for next month's budget was seen this month; after a pass that
+    # found nothing else stale, the month the pass is parked for — no new pass before it turns or the target changes
+    upgrade_parked_month: str = ""
     observed_as_of: Optional[datetime] = None
     access_lost_at: Optional[datetime] = None
     last_success_at: Optional[datetime] = None

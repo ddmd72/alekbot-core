@@ -29,6 +29,7 @@ Public interface:
     access_action(enabled, state, connection, now) -> AccessAction
     is_stale(state, oldest_edit_due_at, now) -> bool
     stale_versions(rec, *, embedding_space=None) -> bool
+    month_parked(rec, now, *, embedding_space) -> bool                                       (§12.3, §24.7)
     reembed_in_space(rec, embedding_space) -> DriveIndexRecord
     chunks_reembedded(rec, generation, embedding_space, now) -> DriveIndexRecord           (§12.3)
     chunks_refused(rec, embedding_space, now) -> DriveIndexRecord                            (§8.2, §12.3)
@@ -650,6 +651,23 @@ def with_retry(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
 def stale_versions(rec: DriveIndexRecord, *, embedding_space: Optional[str] = None) -> bool:
     """Decided, keyed or carded under an older constant (§12.3); with `embedding_space`, a card embedded in another
     space is stale too."""
+    if _structure_stale(rec, embedding_space):
+        return True
+    if rec.extraction_version > 0 and rec.extraction_version != EXTRACTION_VERSION:       # content read before
+        return True
+    return rec.triage_verdict is not None and rec.triage_version != TRIAGE_VERSION
+
+
+def month_parked(rec: DriveIndexRecord, now: datetime, *, embedding_space: str) -> bool:
+    """Its content or triage work waits for next month's budget (§24.7) and it is stale only for what that held work
+    applies (the extraction rules, its extractor link, the triage version): an upgrade pass leaves it parked, like a
+    record under an unresolved parent, until the month turns (R3 F1-5). Anything else stale is planned as usual."""
+    return (rec.defer_until is not None and rec.defer_until >= next_month_start(now)
+            and not _structure_stale(rec, embedding_space))
+
+
+def _structure_stale(rec: DriveIndexRecord, embedding_space: Optional[str]) -> bool:
+    """The versions an upgrade re-plan applies at once: policy, name keys, card, embedding space, geo table."""
     if rec.policy_version != POLICY_VERSION or rec.name_keys_version != NAME_KEYS_VERSION:
         return True
     if embedding_space is not None and rec.has_card and rec.embedding_space != embedding_space:
@@ -659,10 +677,6 @@ def stale_versions(rec: DriveIndexRecord, *, embedding_space: Optional[str] = No
     if embedding_space is not None and rec.chunks_refused_space and rec.chunks_refused_space != embedding_space:
         return True   # refused by another space's model: this one gives it a fresh try (R3 F2-3)
     if (rec.has_card or rec.card_hash is not None) and rec.card_version != CARD_VERSION:   # carded, or refused
-        return True
-    if rec.extraction_version > 0 and rec.extraction_version != EXTRACTION_VERSION:       # content read before
-        return True
-    if rec.triage_verdict is not None and rec.triage_version != TRIAGE_VERSION:
         return True
     return photo_location(rec.facets) is not None and rec.geo_table_version != GEO_TABLE_VERSION
 

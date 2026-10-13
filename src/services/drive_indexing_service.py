@@ -50,8 +50,8 @@ from ..domain.drive_index_params import (
 from ..domain.drive_index_planner import (
     AccessAction, ObservationPlan, PlaceOf, PlanContext, access_action, attempt_crashed, can_start_file, capped,
     card_refused, change_from_record, chunks_reembedded, chunks_refused, content_due, content_retry, deferred, demoted,
-    drops_readable, extractor_stale, generation_started, indexed, model_available, model_outage, model_recovered, needs_probe,
-    next_month_start, quiet_over,
+    drops_readable, extractor_stale, generation_started, indexed, model_available, model_outage, model_recovered,
+    month_key, month_parked, needs_probe, next_month_start, quiet_over,
     parent_scope, plan_observation, readme_read, reembed_in_space, reextraction_due, released, schedule,
     stale_versions, triage_due, triaged, usage_now, with_card, with_retry, with_usage, without_card,
 )
@@ -1609,9 +1609,12 @@ class DriveIndexingService:
         one pass: the work a pass schedules runs in the due loop of a later tick, so the next pass waits.
 
         A pass that left stale records (scheduled, backing off, or parked) is not repeated until due work has run
-        or the target versions change: a record stuck in backoff must not cost a full read of the index per tick."""
+        or the target versions change: a record stuck in backoff must not cost a full read of the index per tick. A
+        pass that left only records held for next month's budget is parked until the month turns (R3 F1-5)."""
         target = self._target_versions()
-        if _upgrade_waiting(state) and dict(state.target_versions) == target and state.target_space == self._space:
+        parked = state.upgrade_cursor is None and state.upgrade_parked_month == month_key(now)
+        if ((_upgrade_waiting(state) or parked) and dict(state.target_versions) == target
+                and state.target_space == self._space):
             return state
         while self._upgrade_due(state) and budget.time_left() and budget.maintenance_allowed():
             started = self._monotonic()
@@ -1625,19 +1628,25 @@ class DriveIndexingService:
                             summary: Dict[str, int]) -> DriveSyncState:
         if dict(state.target_versions) != target or state.target_space != self._space:
             state = replace(state, target_versions=target, target_space=self._space, upgrade_cursor=None,
-                            upgrade_found_stale=False)
+                            upgrade_found_stale=False, upgrade_parked_month="")
         ctx = self._ctx(user_id, state, now)
         page = await self._repo.records_page(user_id, state.upgrade_cursor, _DUE_PAGE)
         writes: Dict[str, DriveIndexRecord] = {}
         deletes: Set[str] = set()
         collects: Set[str] = set()
         found = state.upgrade_found_stale   # a stale record this pass left stale (its work is due, or blocked)
+        # a record held for next month seen earlier in this pass (a new pass starts with none)
+        held = state.upgrade_cursor is not None and state.upgrade_parked_month == month_key(now)
         for rec in page:
             if rec.state is RecordState.DELETING or not self._stale(rec):
                 continue
             if rec.state is RecordState.UNRESOLVED and rec.due_at is None:
                 # parked under an unresolved parent, whose rescope re-plans it under the current versions; scheduling
                 # it only re-parks it, and it holds no card, so it does not keep the versions from applying
+                continue
+            if month_parked(rec, now, embedding_space=self._space):
+                # its re-read is already scheduled for the month's turn: no parent read, no re-plan (R3 F1-5)
+                held = True
                 continue
             parent = await self._parent_of(user_id, rec, ctx)
             current = reembed_in_space(rec, self._space)
@@ -1654,13 +1663,18 @@ class DriveIndexingService:
                 found = True
         await self._commit(user_id, list(writes.values()), deletes, collects=collects)
         summary["upgraded"] = summary.get("upgraded", 0) + len(writes)
+        month = month_key(now) if held else ""
         if len(page) == _DUE_PAGE:
-            return replace(state, upgrade_cursor=page[-1].item_id, upgrade_found_stale=found)
+            return replace(state, upgrade_cursor=page[-1].item_id, upgrade_found_stale=found,
+                           upgrade_parked_month=month)
         if found:   # scheduling is not completion: the next pass verifies once due work has run
-            return replace(state, upgrade_cursor=None, upgrade_found_stale=True)
+            return replace(state, upgrade_cursor=None, upgrade_found_stale=True, upgrade_parked_month="")
+        if held:    # only month-held records are left: the next pass runs when the month turns (R3 F1-5)
+            logger.info(f"[DriveIndex] upgrade pass for {user_id[:8]} parked until the month turns")
+            return replace(state, upgrade_cursor=None, upgrade_found_stale=False, upgrade_parked_month=month)
         logger.info(f"[DriveIndex] versions {target} in {self._space} applied for {user_id[:8]}")
         return replace(state, applied_versions=target, applied_space=self._space, upgrade_cursor=None,
-                       upgrade_found_stale=False)
+                       upgrade_found_stale=False, upgrade_parked_month="")
 
     # ------------------------------------------------------------------------------------------
     # Purge, continuation, helpers
