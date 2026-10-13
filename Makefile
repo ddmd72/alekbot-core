@@ -71,6 +71,12 @@ _VOICE_RELAY_URL = $(patsubst https://%,wss://%,$(VOICE_RELAY_URL_DEV))
 # without the real .env, a key lost in an edit).
 _INDEXER_URL = $(INDEXER_URL_DEV)
 
+# The indexer's upgrade-pass emergency switch (USER_DRIVE_INDEXING_RFC §25.8): DRIVE_UPGRADE_PASS_DEV=off in .env
+# keeps it off across deploys (the indexer step's --set-env-vars replaces every variable, so a switch set with
+# `gcloud run services update` alone would turn back on at the next deploy). Default on. A deploy-only key, never
+# the local DRIVE_UPGRADE_PASS (CLAUDE.md, "Deploy-substitution trap").
+_DRIVE_UPGRADE_PASS = $(or $(DRIVE_UPGRADE_PASS_DEV),on)
+
 # Default entry count for log reads
 K ?= 300
 
@@ -263,7 +269,7 @@ deploy: ## Build + deploy to Cloud Run (the single live environment)
 		exit 1; fi
 	@echo "🚀 Build + deploy to Cloud Run ($(SERVICE_NAME))..."
 	gcloud builds submit --config=cloudbuild-dev.yaml \
-		--substitutions=_SERVICE_URL=$(SERVICE_URL_DEV),_OAUTH_REDIRECT_URI=$(SERVICE_URL_DEV)/auth/callback,_VOICE_RELAY_URL=$(_VOICE_RELAY_URL),_INDEXER_URL=$(_INDEXER_URL) .
+		--substitutions=_SERVICE_URL=$(SERVICE_URL_DEV),_OAUTH_REDIRECT_URI=$(SERVICE_URL_DEV)/auth/callback,_VOICE_RELAY_URL=$(_VOICE_RELAY_URL),_INDEXER_URL=$(_INDEXER_URL),_DRIVE_UPGRADE_PASS=$(_DRIVE_UPGRADE_PASS) .
 	@echo "✅ Deployment complete!"
 
 deploy-indexes: ## Deploy Firestore indexes from config/firestore.indexes.json

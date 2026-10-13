@@ -141,7 +141,8 @@ def _joined(parts: List[str]) -> str:
 
 def card_text(rec: DriveIndexRecord) -> str:
     """§25.2.7 (CARD_VERSION 3), each segment only when present:
-    - profiled file: `name | kind | doc_type | what_it_is | title | entities | topics | topics_native | facets`;
+    - profiled file: `name | kind | doc_type | what_it_is | title | entities (as printed) | topics | topics_native |
+      facets`;
     - text file without a profile: `name | kind | brief | facets`;
     - machine text: `name | kind | machine-generated text | lead text`;
     - photograph: `name | image | description | scene | objects | visible text | facets`;
@@ -161,8 +162,10 @@ def card_text(rec: DriveIndexRecord) -> str:
                         ", ".join(o.name for o in rec.photo_objects if o.name), rec.visible_text, *_key_facets(rec)])
     p = rec.profile
     if p is not None:
+        # an entity as the file prints it, never only the profiler's spelling of it (xc F1)
         return _joined([rec.name, kind, p.doc_type, p.what_it_is, p.title,
-                        ", ".join(e.name for e in p.entities if e.name), ", ".join(p.topics),
+                        ", ".join(e.printed or e.name for e in p.entities if e.printed or e.name),
+                        ", ".join(p.topics),
                         ", ".join(p.topics_native), *_key_facets(rec)])
     return _joined([rec.name, kind, *_brief_segments(rec.brief), *_key_facets(rec)])
 

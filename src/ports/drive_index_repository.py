@@ -225,7 +225,8 @@ class DriveIndexRepository(ABC):
 
     @abstractmethod
     async def delete_user_chunks(self, user_id: str, limit: int) -> int:
-        """Delete up to `limit` of the user's chunks; returns how many were deleted (purge)."""
+        """Delete up to `limit` of the user's chunks; returns how many were deleted (purge: after the user's hint
+        documents, before the records and the sync state, §25.2.2)."""
 
 
     # -- Search v2 (§25.13.1) -----------------------------------------------------------------------------------
@@ -323,6 +324,11 @@ class DriveIndexRepository(ABC):
     @abstractmethod
     async def enrich_wakeups(self, user_id: str, now: datetime, limit: int) -> List[DriveIndexRecord]:
         """Records with `enrich_wake_at <= now`, earliest first (§25.4.5)."""
+
+    @abstractmethod
+    async def count_describe_gaps(self, user_id: str) -> Dict[str, int]:
+        """Records per non-empty derived `describe_gap` ("waiting", "held", "no_passages"): the coverage line's
+        enrichment counts, stored by the tick (§25.5.6, XC-3, XC-9). A value with no record is left out."""
 
     @abstractmethod
     async def count_by_job_state(self, user_id: str, kinds: AbstractSet[str]) -> Dict[str, Dict[str, int]]:

@@ -17,9 +17,12 @@ Public interface:
     render: SEARCHED_LINE, SEARCHED_IGNORED, SEARCHED_COMMON, COVERAGE_COMPLETE, COVERAGE_INCOMPLETE,
             COVERAGE_NOT_DESCRIBED, COVERAGE_NOT_DESCRIBABLE, the tier headings, SHOWING, SHOWING_AT_LEAST,
             the card lines, GROUP_LINE, RELATED_SMALL_NOTE
-    D29:    ABSENT_LINE, ABSENT_IN_SCOPE_LINE, WITHOUT_LINE, WITHOUT_AT_LEAST_LINE
-    footers: FOOTER_EXACT, FOOTER_NO_CONJUNCTION, CONJUNCTION_TERM
-    MIGRATION_LINE
+    D29:    ABSENT_LINE, ABSENT_IN_SCOPE_LINE, WITHOUT_LINE, WITHOUT_AT_LEAST_LINE; with incomplete coverage
+            SEARCHED_ABSENT_LINE, SEARCHED_ABSENT_IN_SCOPE_LINE (xc F4)
+    footers: FOOTER_EXACT, FOOTER_NO_CONJUNCTION, CONJUNCTION_TERM; FOOTER_EXACT_SEARCHED,
+             FOOTER_NO_CONJUNCTION_SEARCHED (xc F4)
+    card:   VALID_UNTIL_LINE, DATE_EXPIRES (xc F5)
+    MIGRATION_LINE (superseded), REBUILDING_LINE (D30, xc XC-1)
     manifest: DRIVE_QUERY_DESCRIPTION, DRIVE_KIND_DESCRIPTION, DRIVE_DATE_FROM_DESCRIPTION, DRIVE_DATE_TO_DESCRIPTION
     PROTOCOL_TIERS_LINE
 """
@@ -53,6 +56,8 @@ NOT_MATCHED_COMMON = "not matched (common)"
 KEYS_CUT = "keys cut"
 SIMILAR_NAME = "similar name"
 DATE_LINE = "date: {iso} ({source})"                                           # source: drive_search.DATE_*
+DATE_EXPIRES = "expires"                     # the date line's source when the match came through validity words (F5)
+VALID_UNTIL_LINE = "valid until: {iso}"      # every card of a file with a validity or due date (xc F5)
 PASSAGE_LINE = "passage: … {text} …"
 GROUP_LINE = "{folder}: {count} more {tier} files ({kinds}, {dates})"
 RELATED_SMALL_NOTE = "closest by meaning; the drive is too small to tell related from unrelated"
@@ -62,14 +67,25 @@ ABSENT_LINE = 'No file holds "{word}".'
 ABSENT_IN_SCOPE_LINE = 'No file in this scope holds "{word}".'               # the word exists outside the filter/folder
 WITHOUT_LINE = 'Without "{word}": {count} files match the other words.'
 WITHOUT_AT_LEAST_LINE = 'Without "{word}": at least {count} files match the other words.'
+# The same statements when the coverage line names a part the search could not see (xc F4): an absence is stated only
+# over what was searched (§25.5.4 "only when the scope was read")
+SEARCHED_ABSENT_LINE = 'No searched file holds "{word}".'
+SEARCHED_ABSENT_IN_SCOPE_LINE = 'No searched file in this scope holds "{word}".'
 
 # -- footers -------------------------------------------------------------------------------------------------------
 FOOTER_EXACT = "No other file is about or mentions all of these words."
 FOOTER_NO_CONJUNCTION = "No file matches all of: {terms}."                    # terms: CONJUNCTION_TERM joined by ", "
 CONJUNCTION_TERM = '"{word}" ({count} files)'
+FOOTER_EXACT_SEARCHED = "No other searched file is about or mentions all of these words."      # coverage incomplete
+FOOTER_NO_CONJUNCTION_SEARCHED = "No searched file matches all of: {terms}."                   # coverage incomplete
+
+# A sync state not rebuilt under v2 (D30, xc XC-1): no stream runs, nothing is stated absent
+REBUILDING_LINE = ("The index is being rebuilt for a new search format, so nothing could be searched yet: this "
+                   "result says nothing about what the drive holds. Browse folders with list_files_in_drive, or "
+                   "search again later.")
 
 # Superseded by D30 (P6 review M3): v2 has no migration mode and never renders this line; a state not rebuilt under v2
-# is "being rebuilt" (a coverage part). Kept only because the frozen core pins it; drop it with that pin.
+# is not searched and answers REBUILDING_LINE (XC-1). Kept only because the frozen core pins it; drop it with that pin.
 MIGRATION_LINE = ("The index is being migrated to a new search format: only names, meaning and filters were "
                   "searched.")
 

@@ -281,8 +281,12 @@ def verify(profile: DriveProfile, chunks: Sequence[_HasText], name: str, *,
         etype = entity.type if entity.type in ENTITY_TYPES else "other"
         labels += etype != entity.type
         forms = _unique(f.strip() for f in entity.forms)[:ENTITY_FORMS_MAX]
-        entities.append(ProfileEntity(name=entity.name.strip() or entity.printed.strip(), type=etype,
-                                      printed=entity.printed.strip(), forms=forms))
+        name = entity.name.strip() or entity.printed.strip()
+        # which of the model's own spellings the file (or its name) prints: only those are exact keys (xc F1)
+        found = tuple(s for s in _unique((name, *forms))
+                      if s != entity.printed.strip() and (_occurs(s, haystack) or _occurs(s, name_norm)))
+        entities.append(ProfileEntity(name=name, type=etype, printed=entity.printed.strip(), forms=forms,
+                                      found=found))
 
     values: List[KeyValue] = []
     dropped_values = 0

@@ -26,7 +26,8 @@ from .drive_match import SourceClass
 
 class AboutField(str, Enum):
     """The record field an about key came from (§25.5.6: "place "Rome" (named in the file)", "type label ...")."""
-    ENTITY = "entity"                     # profile entity; `detail` is its type (place, person, ...)
+    ENTITY = "entity"                     # a spelling the file prints of a profile entity; `detail` is its type
+    ENTITY_FORM = "entity_form"           # a spelling the profiler wrote that the file does not print (`ef:`, xc F1)
     PLACE = "place"                       # the photo location's `place_forms`
     VALUE = "value"                       # verified key value; `detail` is its label
     DATE = "date"                         # verified date; `detail` is its label
@@ -44,13 +45,14 @@ class AboutField(str, Enum):
 
 @dataclass(frozen=True)
 class AboutSource:
-    """One source of one about key: the field, a detail (entity type, value or date label, photo field), the printed
-    form the key was made from, and the source class it proves (§25.5.4; None for `l:` keys, which no query
-    produces)."""
+    """One source of one about key: the field, a detail (entity type, value or date label, photo field), the spelling
+    the key was made from, the source class it proves (§25.5.4; None for `l:` keys, which no query produces), and,
+    for an entity spelling the file does not print, what the file prints instead (`in_file`, xc F1)."""
     field: AboutField
     detail: str
     printed: str
     source_class: Optional[SourceClass]
+    in_file: str = ""
 
 
 class KeyedRecord(Protocol):

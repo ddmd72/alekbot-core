@@ -1567,6 +1567,7 @@
           "drive.index_unread": "Not read yet",
           "drive.index_deleting": "Being removed",
           "drive.index_building": "Indexing in progress…",
+          "drive.index_awaiting_rebuild": "Waiting to be rebuilt for the new search: until then search finds nothing in the drive.",
           "drive.index_full": "Index full: some files are not searchable",
           "drive.index_last_sync": "Last sync",
           "drive.index_never": "not yet",
@@ -1675,6 +1676,7 @@
           "drive.index_unread": "Ще не прочитано",
           "drive.index_deleting": "Видаляються",
           "drive.index_building": "Триває індексація…",
+          "drive.index_awaiting_rebuild": "Очікує перебудови для нового пошуку: доти пошук нічого не знаходить на диску.",
           "drive.index_full": "Індекс заповнений: частина файлів недоступна для пошуку",
           "drive.index_last_sync": "Остання синхронізація",
           "drive.index_never": "ще не було",
@@ -1783,6 +1785,7 @@
           "drive.index_unread": "Pas encore lus",
           "drive.index_deleting": "Suppression en cours",
           "drive.index_building": "Indexation en cours…",
+          "drive.index_awaiting_rebuild": "En attente de reconstruction pour la nouvelle recherche : d’ici là, la recherche ne trouve rien dans le drive.",
           "drive.index_full": "Index plein : certains fichiers ne sont pas consultables",
           "drive.index_last_sync": "Dernière synchronisation",
           "drive.index_never": "pas encore",
@@ -1891,6 +1894,7 @@
           "drive.index_unread": "Aún sin leer",
           "drive.index_deleting": "Eliminándose",
           "drive.index_building": "Indexación en curso…",
+          "drive.index_awaiting_rebuild": "Pendiente de reconstrucción para la nueva búsqueda: hasta entonces la búsqueda no encuentra nada en el disco.",
           "drive.index_full": "Índice lleno: algunos archivos no se pueden buscar",
           "drive.index_last_sync": "Última sincronización",
           "drive.index_never": "todavía no",
@@ -3170,7 +3174,8 @@
             : null;
           details = `
             <div style="font-size:13px; color:var(--text-muted); margin-top:10px; line-height:1.6;">
-              ${ix.building ? `<div>${t("drive.index_building")}</div>` : ""}
+              ${ix.awaiting_rebuild ? `<div>${t("drive.index_awaiting_rebuild")}</div>`
+                : ix.building ? `<div>${t("drive.index_building")}</div>` : ""}
               <div>${counts.join(" \u00b7 ")}</div>
               ${usage ? `<div>${usage}</div>` : ""}
               <div>${t("drive.index_last_sync")}: ${last}</div>

@@ -185,7 +185,8 @@ def _profile(value: Any) -> Optional[DriveProfile]:
         dates=tuple(ProfileDate(label=d.get("label", ""), iso=date.fromisoformat(d["iso"]))
                     for d in value.get("dates") or ()),
         entities=tuple(ProfileEntity(name=e.get("name", ""), type=e.get("type", ""), printed=e.get("printed", ""),
-                                     forms=_strs(e.get("forms"))) for e in value.get("entities") or ()),
+                                     forms=_strs(e.get("forms")), found=_strs(e.get("found")))
+                       for e in value.get("entities") or ()),
         key_values=tuple(KeyValue(label=k.get("label", ""), printed=k.get("printed", ""),
                                   canonical=k.get("canonical", "")) for k in value.get("key_values") or ()),
         topics=_strs(value.get("topics")), topics_native=_strs(value.get("topics_native")),
@@ -987,6 +988,20 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
                              .where(filter=FieldFilter("kind", "in", list(part))))
                     queries.append((job.value, state.value, query))
         return queries
+
+    DESCRIBE_GAPS = ("waiting", "held", "no_passages")   # drive_enrich_plan.GAP_* (the derived `describe_gap`)
+
+    def describe_gap_count_queries(self, user_id: str) -> List[Tuple[str, Any]]:
+        """(gap, query) for `count_describe_gaps`: equality filters only (user_id, describe_gap), served by the
+        single-field indexes. Not a port method: the smoke script runs them."""
+        return [(gap, self._user_query(user_id).where(filter=FieldFilter("describe_gap", "==", gap)))
+                for gap in self.DESCRIBE_GAPS]
+
+    async def count_describe_gaps(self, user_id: str) -> Dict[str, int]:
+        """Three count aggregations a tick, never a scan; a gap with no record is left out."""
+        queries = self.describe_gap_count_queries(user_id)
+        totals = await asyncio.gather(*(self._count(q) for _, q in queries))
+        return {gap: n for (gap, _), n in zip(queries, totals) if n}
 
     async def count_by_job_state(self, user_id: str, kinds: AbstractSet[str]) -> Dict[str, Dict[str, int]]:
         """Count aggregations, never a scan; a state with no record is left out (as in `count_by_state`)."""

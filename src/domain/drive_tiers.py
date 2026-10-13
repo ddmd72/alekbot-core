@@ -110,7 +110,8 @@ def concept_weight(df: int, carded: int) -> float:
 
 def allowances(concepts: Sequence[Concept], df: Mapping[str, int], carded: int) -> Allowance:
     """The query's allowances from each concept's user-wide document frequency. A common word is missable only when
-    some concept is not common (a lone common word is still the subject); a number is never common."""
+    some concept is not common (a lone common word is still the subject); a number is never common, and never the
+    low-weight word."""
     words = [c.word for c in concepts]
     absent = tuple(w for w in words if df.get(w, 0) == 0)
     # a number (an amount, an id, a year) is precise: never missable as common (P6 review m7)
@@ -119,7 +120,10 @@ def allowances(concepts: Sequence[Concept], df: Mapping[str, int], carded: int) 
     if not set(words) - common:
         common = frozenset()
     low: Optional[str] = None
-    present = [(df[w], i, w) for i, w in enumerate(words) if df.get(w, 0) > 0]
+    # a number (an amount, an id, a year) is never the word a file may miss either: "electricity bill 2024" must not
+    # return a 2026 bill (P7 eval; the m7 ruling) — the lowest-weight WORD is
+    present = [(df[c.word], i, c.word) for i, c in enumerate(concepts)
+               if not c.is_number and df.get(c.word, 0) > 0]
     if len(words) >= 3 and present:
         low = max(present)[2]   # the lowest weight is the highest df; ties: the later word
     return Allowance(absent=absent, common=common, low_weight=low)

@@ -88,6 +88,7 @@ class _WindowRun:
     truncated: bool = False
     calls: int = 0
     cost: float = 0.0
+    fallback_cost: float = 0.0   # of `cost`, what the fallback served (the fallback alert, XC-5)
     pages_sent: int = 0
     halves: int = 0
     refused: int = 0             # single pages the provider refused, skipped (R3-P1)
@@ -179,9 +180,11 @@ class DriveReaderRunner(ContentExtractorPort):
                                      account_id=request.account_id)
         except DriveModelCallFailed as exc:
             return ExtractionOutcome(status=_failed_status(exc), pages_total=1, model_calls=exc.model_calls,
-                                     model_cost=exc.model_cost, detail=str(exc))
+                                     model_cost=exc.model_cost,
+                                     model_fallback_cost=getattr(exc, "model_fallback_cost", 0.0), detail=str(exc))
         return self._outcome(reply.text, reply.brief, pages_total=1, pages_sent=1, truncated=reply.output_limited,
-                             calls=reply.calls, cost=reply.cost, timed_out=False, detail="image")
+                             calls=reply.calls, cost=reply.cost, fallback_cost=reply.fallback_cost, timed_out=False,
+                             detail="image")
 
     # -- pdf ----------------------------------------------------------------------------------------------------
 
@@ -216,6 +219,7 @@ class DriveReaderRunner(ContentExtractorPort):
             # what the windows answered before the outage is spent and billed: the tick counts it (§24.7, §24.9)
             raise DriveModelUnavailable(str(unavailable), pages_sent=run.total("pages_sent"),
                                         model_calls=run.total("calls"), model_cost=run.total("cost"),
+                                        model_fallback_cost=run.total("fallback_cost"),
                                         charges_file=unavailable.charges_file) from unavailable
         if failures:
             first = failures[0]
@@ -228,7 +232,8 @@ class DriveReaderRunner(ContentExtractorPort):
                 logger.error(f"[DriveReader] window failed unexpectedly: {type(first).__name__}: {first}",
                              exc_info=first)
             return ExtractionOutcome(status=status, pages_total=pages_total, pages_sent=run.total("pages_sent"),
-                                     model_calls=run.total("calls"), model_cost=run.total("cost"), detail=detail)
+                                     model_calls=run.total("calls"), model_cost=run.total("cost"),
+                                     model_fallback_cost=run.total("fallback_cost"), detail=detail)
         finished = [w for w in run.windows if w.finished]
         cut = len(run.windows) - len(finished)
         if cut:
@@ -242,11 +247,13 @@ class DriveReaderRunner(ContentExtractorPort):
             status = S.TOO_LARGE if run.total("refused_too_large") else S.UNSUPPORTED
             return ExtractionOutcome(status=status, pages_total=pages_total, pages_sent=run.total("pages_sent"),
                                      model_calls=run.total("calls"), model_cost=run.total("cost"),
+                                     model_fallback_cost=run.total("fallback_cost"),
                                      pages_refused=refused, detail=f"every page refused ({refused})")
         return self._outcome(
             text, run.windows[0].brief, pages_total=pages_total, pages_sent=run.total("pages_sent"),
             truncated=pages_total > covered or bool(cut) or any(w.truncated for w in run.windows),
-            calls=run.total("calls"), cost=run.total("cost"), timed_out=bool(cut) and not text, pages_refused=refused,
+            calls=run.total("calls"), cost=run.total("cost"), fallback_cost=run.total("fallback_cost"),
+            timed_out=bool(cut) and not text, pages_refused=refused,
             detail=f"windows={len(run.windows)} halves={run.total('halves')} cut={cut} refused={refused}")
 
     async def _window(self, agent: DriveDocumentReaderAgent, request: ExtractionRequest, index: int,
@@ -335,26 +342,29 @@ class DriveReaderRunner(ContentExtractorPort):
         except (DriveModelCallFailed, DriveModelUnavailable) as exc:
             win.calls += exc.model_calls
             win.cost += exc.model_cost
+            win.fallback_cost += getattr(exc, "model_fallback_cost", 0.0)
             raise
         win.calls += reply.calls
         win.cost += reply.cost
+        win.fallback_cost += reply.fallback_cost
         win.pages_sent += pages
         return reply
 
     @staticmethod
     def _outcome(text: str, brief: Optional[DocumentBrief], *, pages_total: int, pages_sent: int, truncated: bool,
-                 calls: int, cost: float, timed_out: bool, detail: str, pages_refused: int = 0) -> ExtractionOutcome:
+                 calls: int, cost: float, timed_out: bool, detail: str, pages_refused: int = 0,
+                 fallback_cost: float = 0.0) -> ExtractionOutcome:
         if text.strip():
             return ExtractionOutcome(status=S.TEXT, text=text, brief=brief, pages_total=pages_total,
                                      pages_sent=pages_sent, truncated=truncated,
                                      extracted_by=f"{READER}@{READER_VERSION}", detail=detail, model_calls=calls,
-                                     model_cost=cost, pages_refused=pages_refused)
+                                     model_cost=cost, model_fallback_cost=fallback_cost, pages_refused=pages_refused)
         # No text while the budget cut any window is not "the file has no text" (deterministic, §24.8) — the cut
         # windows were never read (R2 P-m4) — nor a parser bomb (`timeout`): a per-file transient, retried with
         # backoff (§8.2).
         return ExtractionOutcome(status=S.ERROR if timed_out else S.NO_TEXT, pages_total=pages_total,
                                  pages_sent=pages_sent, truncated=truncated, detail=detail, model_calls=calls,
-                                 model_cost=cost, pages_refused=pages_refused)
+                                 model_cost=cost, model_fallback_cost=fallback_cost, pages_refused=pages_refused)
 
 
 def _failed_status(exc: DriveModelCallFailed) -> ExtractionStatus:

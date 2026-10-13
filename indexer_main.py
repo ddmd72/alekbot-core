@@ -29,7 +29,8 @@ Environment variables (set at deploy time in cloudbuild-dev.yaml):
   ANTHROPIC_API_KEY             Secret: the drive reader and triage agents for a user whose configuration picks Claude.
   OPENAI_API_KEY                Secret: the same agents on OpenAI (the default, §24.2).
   BILLING_SLACK_WEBHOOK_URL     Secret, optional: the advisory daily budget alert of the quota service.
-  DRIVE_UPGRADE_PASS            Optional emergency switch (§25.8): "off" stops every version upgrade pass.
+  DRIVE_UPGRADE_PASS            Optional emergency switch (§25.8): "off" stops every version upgrade pass. Deployed
+                                from DRIVE_UPGRADE_PASS_DEV in .env (Makefile), so it survives a deploy (XC-7).
   MICROSOFT_TODO_CLIENT_ID      Secret: the drive app registration (token refresh).
   MICROSOFT_TODO_CLIENT_SECRET  Secret: same.
   SERVICE_ACCOUNT_EMAIL         Secret: the /worker OIDC gate and the OIDC identity of the tasks this

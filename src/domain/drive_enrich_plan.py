@@ -13,6 +13,8 @@ Public interface:
     template_reason(rec) -> Optional[TemplateReason];  chunks_to_hint(rec) -> int
     input_fingerprint_of(rec, chunks) -> Optional[str]  `profile_input_fingerprint` from stored text
     profile_plan(rec, ctx) / passages_plan(rec, ctx) / keys_planned(rec, now) / derived(rec) / planned(rec, ctx)
+    described(rec) / describe_gap(rec) -> str;  NO_PASSAGE_KINDS, COVERAGE_COUNTERS   the coverage line's counts
+                                                         (§25.5.6, XC-3, XC-9)
     profile_settled(rec) / passages_settled(rec) / keys_settled(rec)     the upgrade pass's per-key criteria
     profiled(rec, profile, *, source, fingerprint, now) / reverified(rec, profile, now)
     profile_charged(rec, status, now) / profile_unusable(rec) / passages_unusable(rec)
@@ -70,6 +72,12 @@ _SINCE = ":since"            # the backoff map's streak start, beside the agent'
 
 _R, _C, _D, _P, _H, _N = (JobState.READY.value, JobState.CURRENT.value, JobState.DEFERRED.value,
                           JobState.PARKED.value, JobState.HELD.value, JobState.NONE.value)
+# Text kinds with a profile but no doc2query by policy (§25.3): books, sheets and data files
+NO_PASSAGE_KINDS = frozenset({"epub", "xlsx", "xls", "ods", "csv", "json"})
+GAP_WAITING, GAP_HELD, GAP_NO_PASSAGES = "waiting", "held", "no_passages"
+# The sync-state counters the tick stores them under; search reads them (XC-9: no count query per search)
+COVERAGE_COUNTERS: Mapping[str, str] = {GAP_WAITING: "coverage_waiting", GAP_HELD: "coverage_held",
+                                        GAP_NO_PASSAGES: "coverage_no_passages"}
 
 
 # -- budget -------------------------------------------------------------------------------------------------------
@@ -180,9 +188,11 @@ def profile_hold_key(rec: DriveIndexRecord) -> str:
 
 
 def _profile_cleared(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
+    """The profile and its job's fields cleared; the refresh cooldown (`profile_defer_until`) is kept, so a file
+    whose readable text drops and comes back is not profiled again within it (XC-6)."""
     had_profile = rec.profile is not None
     out = replace(rec, profile=None, valid_until=None, profile_source=None, profile_fingerprint=None,
-                  profile_version=0, profiled_content_version="", profile_state=_N, profile_defer_until=None,
+                  profile_version=0, profiled_content_version="", profile_state=_N,
                   profile_parked_month="", profile_hold=None, profile_hold_version="", profile_attempts=0,
                   profile_input_fingerprint=None if not rec.is_folder else rec.profile_input_fingerprint)
     if had_profile:
@@ -227,7 +237,9 @@ def profile_plan(rec: DriveIndexRecord, ctx: EnrichContext) -> DriveIndexRecord:
 def profiled(rec: DriveIndexRecord, profile: DriveProfile, *, source: ProfileSource, fingerprint: Optional[str],
              now: datetime) -> DriveIndexRecord:
     """A profile written (verified, or a template): its version, fingerprint and content version, `valid_until`
-    (00:00 UTC of the printed date) and the effective date; a model profile starts the refresh cooldown (§25.4.7)."""
+    (00:00 UTC of the printed date) and the effective date; a model profile starts the refresh cooldown (§25.4.7), a
+    template keeps the last model profile's (a note whose edits cross PROFILE_MIN_CHARS back and forth is profiled at
+    most once per cooldown, XC-6)."""
     valid = valid_until_of(profile)
     model = source is ProfileSource.MODEL
     # the input it was made from IS the current input (the derive step's fingerprint, §25.2.1): both are written
@@ -235,7 +247,7 @@ def profiled(rec: DriveIndexRecord, profile: DriveProfile, *, source: ProfileSou
                   profile_input_fingerprint=fingerprint if fingerprint is not None else rec.profile_input_fingerprint,
                   profile_version=PROFILE_VERSION, profiled_content_version=rec.content_version,
                   valid_until=_utc(valid) if valid is not None else None,
-                  profile_defer_until=now + PROFILE_REFRESH_COOLDOWN if model else None,
+                  profile_defer_until=now + PROFILE_REFRESH_COOLDOWN if model else rec.profile_defer_until,
                   profile_hold=None, profile_hold_version="", profile_attempts=0, profile_parked_month="")
     return replace(out, effective_date=effective_from(out, profile, now=now) or rec.effective_date)
 
@@ -282,9 +294,10 @@ def passages_hold_key(rec: DriveIndexRecord) -> str:
 
 
 def _passages_cleared(rec: DriveIndexRecord) -> DriveIndexRecord:
+    """The passage job's fields cleared, but when it last finished and under which version are kept: the refresh
+    cooldown runs from there, so a generation that drops and comes back is not hinted again within it (XC-6)."""
     return replace(rec, passages_state=_N, passages_defer_until=None, passages_parked_month="", passages_hold=None,
-                   passages_hold_version="", passages_attempts=0, passages_generation=None, passages_next_index=0,
-                   passages_done_at=None, passages_version=0)
+                   passages_hold_version="", passages_attempts=0, passages_generation=None, passages_next_index=0)
 
 
 def _passages_done(rec: DriveIndexRecord) -> bool:
@@ -297,7 +310,8 @@ def passages_plan(rec: DriveIndexRecord, ctx: EnrichContext) -> DriveIndexRecord
     if (not policy.doc2query or rec.indexed_generation is None or chunks_to_hint(rec) == 0
             or rec.state is RecordState.DELETING):
         empty = (rec.passages_state == _N and rec.passages_generation is None and not rec.passages_attempts
-                 and rec.passages_hold is None and rec.passages_done_at is None and rec.passages_version == 0)
+                 and rec.passages_hold is None and rec.passages_next_index == 0 and rec.passages_defer_until is None
+                 and not rec.passages_parked_month and not rec.passages_hold_version)
         return rec if empty else _passages_cleared(rec)
     if _passages_done(rec):
         return replace(rec, passages_state=_C, passages_parked_month="", passages_defer_until=None)
@@ -376,8 +390,32 @@ def _next_month(now: datetime) -> datetime:
     return datetime(year, month, 1, tzinfo=timezone.utc)
 
 
+def described(rec: DriveIndexRecord) -> bool:
+    """The file has a description search can use (XC-3): a profile, and — when the policy gives it passage hints —
+    a passage run that finished at least once (on any generation)."""
+    return rec.profile is not None and (rec.passages_state == _N or rec.passages_done_at is not None)
+
+
+def describe_gap(rec: DriveIndexRecord) -> str:
+    """What the coverage line counts the file as (§25.5.6): a text file with no description yet whose job waits
+    (`waiting`: ready, deferred, parked) or is held (`held`), or a profiled book, sheet or data file (`no_passages`).
+    A file that is already described is not "not described" while its re-description waits (XC-3). Never a folder."""
+    if rec.is_folder:
+        return ""
+    jobs = (rec.profile_state, rec.passages_state)
+    if not described(rec):
+        if any(j in (_R, _D, _P) for j in jobs):
+            return GAP_WAITING
+        if _H in jobs:
+            return GAP_HELD
+    if rec.kind in NO_PASSAGE_KINDS and rec.profile_state == _C:
+        return GAP_NO_PASSAGES
+    return ""
+
+
 def derived(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
-    """`enrich_ready`, `enrich_wake_at` (a deferred job's time; a parked job's month turn) and `effective_day`."""
+    """`enrich_ready`, `enrich_wake_at` (a deferred job's time; a parked job's month turn), `effective_day` and
+    `describe_gap`."""
     # a deferral for a due content run has no wake time of its own (its commit re-plans): a past cooldown end is none
     wakes = [at for state, at in ((rec.profile_state, rec.profile_defer_until),
                                   (rec.passages_state, rec.passages_defer_until))
@@ -386,7 +424,7 @@ def derived(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
         wakes.append(_next_month(now))
     day = rec.effective_date.astimezone(timezone.utc).date().isoformat() if rec.effective_date is not None else ""
     return replace(rec, enrich_ready=_R in (rec.profile_state, rec.passages_state),
-                   enrich_wake_at=min(wakes) if wakes else None, effective_day=day)
+                   enrich_wake_at=min(wakes) if wakes else None, effective_day=day, describe_gap=describe_gap(rec))
 
 
 def planned(rec: DriveIndexRecord, ctx: EnrichContext) -> DriveIndexRecord:

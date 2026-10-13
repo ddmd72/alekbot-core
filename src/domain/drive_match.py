@@ -24,12 +24,16 @@ from typing import Mapping, Tuple
 class KeyFamily(str, Enum):
     """Every key is a short string with one of these prefixes (§25.2.4)."""
     WORD = "w:"            # the native forms of a token (chunks, names): exact
-    TRANSLIT = "x:"        # one transliteration skeleton per word (chunks, names): a translation (review M8)
+    TRANSLIT = "x:"        # the skeleton of a Cyrillic word (chunks, names): a translation (review M8)
+    TRANSLIT_LATIN = "xl:"  # the skeleton of a Latin word (chunks, names): a translation; a Latin query word never
+                            # reads it, so two Latin words never meet through a skeleton's stem (xc F3: Mario/Maria)
     NUMBER = "n:"          # number terms (the content-terms normaliser)
     MONTH = "m:"           # m:YYYY-MM
     YEAR = "y:"            # y:YYYY
-    ENTITY = "e:"          # entity phrases (profile entities) and the photo place's forms: verified
-    ENTITY_TRANSLIT = "ex:"  # the skeleton of an `e:` phrase: a translation, never exact (review M8)
+    ENTITY = "e:"          # entity spellings the file prints (verified) and the photo place's forms: exact
+    ENTITY_FORM = "ef:"    # an entity spelling the profiler wrote that the file does not print: a translation (F1)
+    ENTITY_TRANSLIT = "ex:"  # the skeleton of an entity phrase of Cyrillic words: a translation (review M8)
+    ENTITY_TRANSLIT_LATIN = "exl:"  # ... of Latin words: a Latin query word never reads it (xc F3)
     PHOTO_ENTITY = "pe:"   # photo object names, keyed like `e:` phrases: automatic (review M3, RFC §25.2.4)
     VALUE = "v:"           # a verified key value's canonical form; a verified date's ISO form
     KIND = "k:"            # the kind words (drive_labels.KIND_WORDS)
@@ -45,8 +49,9 @@ class KeyFamily(str, Enum):
 class SourceClass(str, Enum):
     """The class of key that covers a concept in a file; a file's tier is set by the weakest class it needs (§25.5.4).
     Verified record: name keys (`w:`, `n:`, `y:`), `e:`, `v:`, `y:`, `m:`, `k:`. Passage words: `word_keys` `w:`,
-    `n:`, `m:`. Translation: `hint_keys`, and every transliteration skeleton (`x:` in chunks and names, `ex:` in
-    records: a match across scripts is never exact, review M8). Automatic record: `lw:`, `tw:`, `dw:`, `lv:`, `pw:`,
+    `n:`, `m:`. Translation: `hint_keys`, every transliteration skeleton (`x:`/`xl:` in chunks and names, `ex:`/`exl:`
+    in records: a match across scripts is never exact, review M8), and an entity spelling the file does not print
+    (`ef:`, xc F1). Automatic record: `lw:`, `tw:`, `dw:`, `lv:`, `pw:`,
     `pe:`, `pn:`. An about key's class follows from its prefix alone, so
     tiers are decided on lean records."""
     VERIFIED_RECORD = "verified_record"
@@ -64,6 +69,7 @@ FAMILY_SOURCE_CLASS: Mapping[KeyFamily, SourceClass] = {
     KeyFamily.DOMAIN_WORD: SourceClass.AUTOMATIC_RECORD, KeyFamily.VALIDITY_WORD: SourceClass.AUTOMATIC_RECORD,
     KeyFamily.PHOTO_WORD: SourceClass.AUTOMATIC_RECORD, KeyFamily.PHOTO_ENTITY: SourceClass.AUTOMATIC_RECORD,
     KeyFamily.PHOTO_NUMBER: SourceClass.AUTOMATIC_RECORD, KeyFamily.ENTITY_TRANSLIT: SourceClass.TRANSLATION,
+    KeyFamily.ENTITY_TRANSLIT_LATIN: SourceClass.TRANSLATION, KeyFamily.ENTITY_FORM: SourceClass.TRANSLATION,
 }
 
 
