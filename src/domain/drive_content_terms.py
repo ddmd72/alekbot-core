@@ -7,7 +7,8 @@ Public interface:
     query_terms(query) -> Tuple[str, ...]    the query's maximal forms, most specific first
     clip_query(query, max_chars) -> str      at most max_chars of the query, never ending inside a token
 
-Terms (the index side keeps every form; the query only the maximal form of each span, review D-M1):
+Terms (the index side keeps every form; the query only the maximal form of each span, review D-M1 — and the integer of
+an amount with zero cents, the same value, arbiter R2 S-m2):
     amounts   "1 250,00" "1.250,00" "1,250.00" "1250.5"  -> "1250.00" / "1250.50"; index also the integer part "1250"
     dates     "15.03.2024" "03/15/2024" "2024-03-15"     -> "2024-03-15" (both readings when day and month are <= 12)
     ids       "INV-2024/0012"                             -> "inv20240012"; index also "20240012", "2024", "0012"
@@ -129,7 +130,8 @@ def _terms(text: str) -> Set[str]:
 def _maximal(text: str) -> Set[str]:
     """The query side: each span's maximal form only, the first kind that claims a stretch of text winning — dates,
     then amounts, then digit groups, then ids. A part of a span (a date's year, an amount's integer part, a run inside
-    an id) is a fragment: as a query it would match documents that share only that part."""
+    an id) is a fragment: as a query it would match documents that share only that part — except a whole amount's
+    integer, which is the same value."""
     # The claimed stretches never overlap, so sorted by start they are sorted by end too: the only one that can
     # overlap [start, end) is the last one starting before `end` (bisect, not a scan of every claim: arbiter R2 S-m1).
     starts: List[int] = []
@@ -147,7 +149,9 @@ def _maximal(text: str) -> Set[str]:
     for start, end, forms in _date_spans(text):
         claim(start, end, forms)
     for start, end, forms in _amount_spans(text):
-        claim(start, end, forms[:1])
+        # zero cents are the integer's value: "1,250.00" also queries "1250" (arbiter R2 S-m2), the integer part
+        # the index side stores for the same text; any other cents are another value and query their form only
+        claim(start, end, forms if forms[0].endswith(".00") else forms[:1])
     for start, end, forms in _group_spans(text):
         claim(start, end, forms)
     for start, end, maximal, _ in _id_spans(text):
