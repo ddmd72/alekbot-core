@@ -564,8 +564,8 @@ delete/replace post a localised `notify_raw` receipt, or a "did not complete" no
 survive turns via `history_context["drive_context"]` (full_text only, never consolidated). Provider search does not
 work inside the App Folder (spike A6), so finding files goes through our own index (below). The `Trivial_Exclusions`
 line that keeps file operations out of memory was applied to the live `CONSOLIDATION_TAXONOMY` on 2026-10-10 (dry
-run: leaks 3/3 → 1/3; RFC §4.12). Step 2 Slices 1 and 2+4 (metadata, content, scans and images) are built; one
-extraction path (Slice 3), long audio/video transcripts and full editing are not.
+run: leaks 3/3 → 1/3; RFC §4.12). Step 2 Slice 1 (metadata) is live; Slice 2+4 (content, scans and images) is built,
+not live until its deploy; one extraction path (Slice 3), long audio/video transcripts and full editing are not.
 
 **User Drive indexing** (`docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md`: Slice 1 finds a file by metadata, its deltas
 from the RFC text are §23, cited in code as `RFC Δn`; Slice 2+4 answers from content, designed in §24;
@@ -590,18 +590,21 @@ pass of the two-pass first deploy, `docs/07_deployment/README.md`). The main ser
 retried only if no send was attempted) and nudges after each Step 1 mutation. Cards are `name | kind | key facets`
 (photo date, camera, offline `place_name`), plus the brief or caption below; OS/lock artefacts get no card;
 dot-folders, `.git`/`pyvenv.cfg` folders, `node_modules`/`__pycache__`/`site-packages` and dense trees collapse to one
-card. **Content (Slice 2+4, §24):** the §5.1 document kinds are read on the indexer through `ContentExtractorPort`:
-the child-process parser first (`SubprocessContentExtractor`, rlimits); PDFs go on to the document reader agent
-(`drive_reader`) when the parser finds no text, low density or garbage text, or fails (other kinds stay with the
-parser's outcome). The reader returns verbatim text and a brief whose `doc_date` becomes `effective_date` (D13;
+card. **Content (Slice 2+4, §24; built, not live until deploy):** the §5.1 document kinds are read on the indexer
+through `ContentExtractorPort`: the child-process parser first (`SubprocessContentExtractor`, rlimits — resource
+isolation, not code-execution containment); PDFs go on to the document reader agent (`drive_reader`, 10-page windows
+cut on demand) when the parser finds no text, low density or garbage text, or fails (never after a parser
+timeout/memory kill; other kinds stay with the parser's outcome). The reader returns verbatim text and a brief whose `doc_date` becomes `effective_date` (D13;
 parsed documents keep the file date). Every image is triaged in thumbnail
 batches (`drive_triage`): text goes to the reader, a photograph gets a caption. Both agents run on Claude Haiku 5.5 or
 GPT by `agent_providers` (D7), billed to the user, within monthly page and image budgets on the sync state; a model
-outage defers only model work (`model_backoff_until`). Audio and video stay metadata-only. Text is chunked into
-`{prefix}drive_index_chunks` (generation-fenced, `content_terms` for amounts, ids and dates). `search_files_in_drive`
+outage defers only model work (`model_backoff_until`); a refused single page is skipped (`truncated`), and only a refusal of every page or of an image is terminal. Audio and video
+stay metadata-only. Text passes a machine-text gate (repetition AND low variety, so statements pass), then is chunked
+into `{prefix}drive_index_chunks` (generation-fenced, `content_terms` for amounts, ids, dates and digit groups). `search_files_in_drive`
 (SYNC) → `DriveSearchService`: card kNN, a per-key name stream (accent, Ukrainian and Russian transliteration
-variants), chunk kNN (one window per file, `index ± 1`) and the content exact-token stream, fused with RRF, full-name
-cover first; reads only `drive_query` (content questions put the phrase, number or amount there; no words and no
+variants), chunk kNN (one window per file, `index ± 1`, all windows within 12 000 chars) and the content exact-token
+stream (maximal query forms; a term held by > 8 files is dropped <!-- r2: S-M1 -->), fused with RRF, full-name cover
+first; reads only `drive_query` (content questions put the phrase, number or amount there; no words and no
 filter → refused); a capped filter set hedges, never "no match"; results in a nonce-tagged `<drive_document>` wrapper
 (only tag look-alikes neutralised) with a coverage envelope. Smart's standing guidance (search when the answer may be
 in a document, freshness, honest not-found, totals, document vs memory, versions) is the `drive_specialist` block of

@@ -13,7 +13,10 @@ photograph with a caption. Both are agents built per call with the user's own co
 extractors, and run only on the indexer service; their runners implement `ContentExtractorPort` and
 `ImageTriagePort`, so the tick sees ports only. The provider is configuration: both default to Claude at ECO
 (`claude-haiku-5-5`), and a user's `agent_providers` can switch either to OpenAI (`gpt-6-luna`). The pick is checked
-live on the owner's real files before deploy. Calls are billed to the user's account.
+live on the owner's real files before deploy (`scripts/validation/drive_model_check.py`). There is no fallback
+provider: a second model's transcription was never checked, so an outage defers model work instead
+([decision](drive_model_outage_defers_model_work.md)). Calls are billed to the user's account, run with provider-side
+storage off, and are not copied into BigQuery or Logfire.
 
 **Rejected alternatives:**
 - *Gemini, as §9 once said:* the claim had no basis, and its adapter takes no inline file bytes.
