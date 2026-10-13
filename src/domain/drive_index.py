@@ -257,6 +257,8 @@ class DriveIndexRecord:
     brief: Optional[DocumentBrief] = None     # model-read documents only (§24.4)
     model_outages: int = 0                    # reader outages charged to this content version (F1-1): at MAX_ATTEMPTS
                                               # the file fails; a content outcome or a new version starts it again
+    model_read_at: Optional[datetime] = None  # the reader last settled this file's content (F1-3): not again before
+                                              # MODEL_REREAD_COOLDOWN after it
     # image triage (§5.3, §24.5); a verdict holds for the content version it was taken on
     triage_verdict: Optional[TriageVerdict] = None
     triage_version: int = 0

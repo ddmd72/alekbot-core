@@ -6,6 +6,7 @@ Public interface:
     RunStep, outcome_step(status) -> Tuple[RunStep, Optional[Reason]]
     gate_exempt(kind) -> bool                     tables skip the text-quality gate (§8.3)
     routed(kind) -> bool                          the kind may reach the reader (§24.3 deadline rule)
+    reread_cooldown_until(rec) -> Optional[datetime]  the reader's next read of an edit of a file it read (F1-3)
     camera_prior(facets) -> bool                  the triage hint (§5.3)
     original_fallback(rec) -> bool               the reader may get the original image (§24.5, S0g)
     image_mime(head) -> str                       a provider rendition is JPEG or PNG (S0f)
@@ -30,7 +31,7 @@ from .drive_extraction import READER, ExtractionOutcome, ExtractionStatus, Triag
 from .drive_image_mime import MAX_VISION_IMAGE_BYTES
 from .drive_index import DriveChange, DriveIndexRecord, Priority, Reason, RecordState, TriageVerdict
 from .drive_index_params import (
-    MAX_ATTEMPTS, MAX_CHUNKS_PER_USER, MODEL_EXTRACT_MAX_PAGES, MODEL_EXTRACT_PAGES_PER_MONTH,
+    MAX_ATTEMPTS, MAX_CHUNKS_PER_USER, MODEL_EXTRACT_MAX_PAGES, MODEL_EXTRACT_PAGES_PER_MONTH, MODEL_REREAD_COOLDOWN,
 )
 from .drive_index_planner import content_retry, schedule, triaged
 from .drive_index_policy import is_readme_name
@@ -72,6 +73,15 @@ def outcome_step(status: ExtractionStatus) -> Tuple[RunStep, Optional[Reason]]:
 def gate_exempt(kind: str) -> bool:
     """Tables are row-capped and treated as tables, never as machine text (§5.5 class 3, §8.3)."""
     return kind in _TABLE_KINDS
+
+
+def reread_cooldown_until(rec: DriveIndexRecord) -> Optional[datetime]:
+    """When the reader may read an edit of this file (final review F1-3): MODEL_REREAD_COOLDOWN after it last settled
+    the file's content. None — no wait — for a file the reader never read, and for work that is not an edit (first
+    sight, a nudge, an upgrade or a release is not dirty, §7.3): a new reader version still re-reads at once."""
+    if rec.model_read_at is None or rec.dirty_since is None:
+        return None
+    return rec.model_read_at + MODEL_REREAD_COOLDOWN
 
 
 def routed(kind: str) -> bool:
