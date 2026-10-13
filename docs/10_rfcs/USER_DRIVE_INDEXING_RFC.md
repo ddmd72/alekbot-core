@@ -1474,7 +1474,7 @@ this section wins; the text above was corrected where it was plainly false. Slic
   order. A window answered at the output limit, or whose call timed out, is split in half (cut from the source) and
   retried once; a half or a single page still at the limit adds no text and sets `truncated`, and one that times out
   again is a model outage. A window the provider refuses as too large (HTTP 413) is halved down to one page; a single
-  page still too large fails the file (`error`). An outage carries what the file spent before it (pages answered,
+  page still too large fails the file as `too_large` (terminal: a retry would bill the windows already read again). An outage carries what the file spent before it (pages answered,
   calls, cost), and the tick counts that before it records the outage. When the file's model time
   reaches `MODEL_FILE_BUDGET`, the windows done so far are indexed and the record is `truncated` — no file restarts
   forever. Pages past `MODEL_EXTRACT_MAX_PAGES` are not sent (`truncated`).
@@ -1535,7 +1535,7 @@ this section wins; the text above was corrected where it was plainly false. Slic
 | Outcome | Effect |
 |---|---|
 | Provider unavailable (429, 5xx, timeout, network), or a missing prompt | **Model outage, not a systemic error**: `model_backoff_until` on the sync state (the §7.7 backoff), records that need the model stay `pending` and are skipped until then; parser work, cards and cascades go on. |
-| The provider refuses one window or image (HTTP 400) | Per-file transient (§8.2); at `MAX_ATTEMPTS` → `failed / extract_error`. |
+| The provider refuses one window or image (HTTP 400/422) | Terminal: `unsupported` → `metadata_only / kind_not_admitted`; a single page or image still refused as too large (HTTP 413) → `too_large`. The same bytes get the same refusal, and a retry would bill every window read before it again (round-2 review P-m5). A refusal raised before any HTTP exchange stays a per-file transient. |
 | Output that is not valid JSON after the parse retry | Per-file transient. |
 | The reader finds no text | `metadata_only / no_text` (deterministic). |
 | Monthly budget spent | `budget_exhausted`: `pending`, class 3, due at the month boundary. |
