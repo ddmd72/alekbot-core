@@ -384,10 +384,12 @@ class TestParameters:
     def test_byte_batches_fit_a_firestore_request(self):
         assert P.WRITE_BATCH_BYTES < 10 * 1024 * 1024
 
-    def test_v1_values_still_in_use_are_unchanged(self):
-        """The two clashing names keep their v1 values until their part replaces them: P3 replaced TRIAGE_BATCH with
-        the v2 value (§25.4.3, §25.12: 8 photos per enriched call); WINDOW_CHARS_TOTAL waits for P6."""
-        assert (P.TRIAGE_BATCH, P.TRIAGE_BATCH_V2, P.WINDOW_CHARS_TOTAL) == (8, 8, 12_000)
+    def test_the_clashing_v1_values_are_replaced(self):
+        """The two names that clashed with v1: P3 replaced TRIAGE_BATCH with the v2 value (§25.4.3, §25.12: 8 photos
+        per enriched call); P6 replaced the v1 12 000-char window budget with WINDOW_CHARS_TOTAL_V2 (§25.5.6), and the
+        v1 constant is removed (reviewer, 2026-10-13: the cleanup spec change)."""
+        assert (P.TRIAGE_BATCH, P.TRIAGE_BATCH_V2, P.WINDOW_CHARS_TOTAL_V2) == (8, 8, 5_000)
+        assert not hasattr(P, "WINDOW_CHARS_TOTAL")
 
 
 class TestTexts:

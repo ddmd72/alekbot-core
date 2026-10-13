@@ -120,6 +120,12 @@ def _brief_segments(brief: Optional[DocumentBrief]) -> List[str]:
     return out
 
 
+def repository_root(rec: DriveIndexRecord) -> bool:
+    """A folder made opaque by a marker child (`.git`, `pyvenv.cfg`): its card reads `repository` (§5.2, RFC Δ33)."""
+    return (rec.is_folder and rec.scope is Scope.OPAQUE_ROOT and rec.reason is Reason.OPAQUE_ROOT
+            and not is_generated_dir(rec.name))
+
+
 def collapsed_folder(rec: DriveIndexRecord) -> bool:
     """A folder kept as one record (any opaque_root reason: repository, generated, hidden, dense): it gets a profile
     from its README (§25.3)."""
