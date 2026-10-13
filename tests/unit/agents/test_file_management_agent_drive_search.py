@@ -90,7 +90,7 @@ class TestSearch:
 
     async def test_disabled_answers_without_history(self, conversion, search):
         search.search.return_value = DriveSearchResult(status=STATUS_DISABLED)
-        resp = await _agent(conversion, search).execute(_msg(Intent.SEARCH_FILES_IN_DRIVE, drive_query="x"))
+        resp = await _agent(conversion, search).execute(_msg(Intent.SEARCH_FILES_IN_DRIVE, drive_query="lease"))
         assert resp.status == AgentStatus.SUCCESS and "turned on" in resp.result and resp.history_context is None
 
     async def test_bad_date_is_refused_before_searching(self, conversion, search):
@@ -105,7 +105,7 @@ class TestSearch:
 
     async def test_unexpected_error_is_named_not_leaked(self, conversion, search):
         search.search.side_effect = RuntimeError("index exploded with secrets")
-        resp = await _agent(conversion, search).execute(_msg(Intent.SEARCH_FILES_IN_DRIVE, drive_query="x"))
+        resp = await _agent(conversion, search).execute(_msg(Intent.SEARCH_FILES_IN_DRIVE, drive_query="lease"))
         assert resp.status == AgentStatus.FAILED and resp.error == "Drive operation failed: RuntimeError."
 
 

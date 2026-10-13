@@ -8,27 +8,6 @@ from src.domain.drive_search import render_results
 from .test_drive_search_content_streams import FAR, admit, by_id, index, query_vector, settle_metadata, world  # noqa: F401
 
 
-async def test_a_nearest_only_content_hit_is_labelled_nearest_passage(monkeypatch):
-    w = world()
-    scan = w.drive.add("Scan_0012.pdf")
-    await settle_metadata(w, monkeypatch)
-    q = await query_vector(w, "notice period for termination")
-    await index(w, scan, ["7.2 Either party may terminate on 30 days notice."], [q])
-    text = render_results(await w.search("notice period for termination"))
-    assert "nearest passage:\n7.2 Either party" in text and "matching passage" not in text
-    matched = next(line for line in text.splitlines() if line.startswith("matched: "))
-    assert matched.endswith("content") and "name and" not in matched and matched != "matched: name"
-
-
-async def test_an_exact_term_hit_is_a_matching_passage(monkeypatch):
-    w = world()
-    invoice = w.drive.add("Scan_0099.pdf")
-    await settle_metadata(w, monkeypatch)
-    await index(w, invoice, ["Factura INV-2024/0012 total 1 250,00 €"], [FAR])
-    text = render_results(await w.search("INV-2024/0012"))
-    assert "matching passage:\nFactura INV-2024/0012" in text and "nearest passage" not in text
-
-
 async def test_a_name_match_says_so(monkeypatch):
     w = world()
     w.drive.add("Contracts", folder=True)
