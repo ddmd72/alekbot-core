@@ -64,8 +64,10 @@ initial value (RFC §24.13), not a measured one.
 - A query made only of common terms falls back to the chunk kNN, card and name streams for ranking; the answer is no
   worse than a search without the term stream.
 - Probes add at most a few single-document reads to a search with a concentrated term; none to the common case.
-- The query side sends only maximal forms (an ISO date, a canonical amount, a joined id), never a fragment like a
-  year, so the most common non-selective terms never become queries in the first place (review D-M1).
+- The query side sends only maximal forms (an ISO date, a canonical amount, a joined id), never a fragment like the
+  year of a date, so the most common non-selective terms never become queries in the first place (review D-M1). A
+  number the user types alone ("2024", or the year of "March 2026") is its own maximal form and is queried; this rule
+  is what keeps it from flooding the results.
 
 ## Trigger to revisit
 

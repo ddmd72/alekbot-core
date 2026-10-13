@@ -10,18 +10,23 @@ deltas and §24 the Slice 2+4 design.
 |---|---|
 | What is in the index, what a record or a card holds, why a folder is one card | §3 |
 | Why a file was or was not read; what happens to it from the moment it lands on the drive | §4 (walk-through, steps 1–9) |
+| When a new file (a scan, a PDF) becomes searchable; why an edited file still shows its old text | §4.15 (timelines) |
 | Why a scan, a screenshot or a PDF went to the model, and what the model returns | §4 steps 4–6 |
-| Why a photo has no caption, or an image was or was not read | §4 step 5 |
+| What image triage decides and where its verdict and caption go; why a photo has no caption | §4 step 5 (images), §4.15 |
 | What a record's `state` / `reason` means, which outcomes retry and which are final | §4.10 (outcome table) |
+| What happens when Claude or OpenAI is down (an hour, a day); which failures are charged to a file | §4.10 (outage paragraphs) |
 | Why a file is waiting: quiet period, monthly budget, model outage, re-read cooldown, card cap, tick budget | §4 steps 1–3, §4.11 |
-| A new parser, reader, prompt rule or embedding model: what gets redone, and what it costs | §4.12 (upgrade pass) |
+| A very large file (hundreds of pages, tens of MiB): what is read, what is not, how it is marked | §4.11 (large files) |
+| A new parser, reader, prompt rule or embedding model: what gets redone, and what it costs; how to switch the embedding model | §4.12 (upgrade pass) |
 | What indexing costs: every spending path and what bounds it | §4.13 |
-| Is the parser a security boundary; what a hostile document can and cannot make the bot do | §4.14 |
+| Is the parser a security boundary; what a hostile document can and cannot make the bot do; the remaining risk | §4.14 |
+| Where the reader and triage prompts live; how to switch the reader or triage to GPT (or back) | §4.16 |
 | How the tick schedules its work, leases, errors and continuations | §5 |
-| How a search ranks; why a passage is shown or shortened; why a number did or did not match | §6, §6.1 |
-| What Smart reads and how it is told to use it; dates in queries vs date filters | §6.2 |
+| How a search ranks; why a passage is shown or shortened; why a number or a date did or did not match; why a common number ("2024") does not flood results | §6, §6.1; the normaliser in §4 step 7 |
+| What Smart reads and how it is told to use it; dates in queries vs date filters; which date a filter uses for a scan, a DOCX, a photo | §6.2 |
 | How quality is measured (G1, G2, OCR, G3), the live checks, logs, indexes | §7 |
 | Why a given file was not indexed: which record fields and log lines answer it | §7.1 |
+| Smart said "N documents could not be read": what counts, and how to find which and why | §7.1 (could not be read) |
 | Deploy order, owner steps, and why there is no rollback to Slice 1 | §7.2 |
 | Where a piece of code lives | §8 |
 
@@ -319,7 +324,7 @@ image `(reader)`, every other admitted kind `(parser)`.
   (`AgentContextBuilder`, D7) and bills every call to the user's account. The provider is resolved in this order:
   the user's `agent_providers["drive_reader"]` (or `drive_triage`), then the user's global `provider_preference`
   when it names `claude` or `openai`, then the default `claude`. So a user whose global preference is OpenAI gets GPT
-  here too.
+  here too. Where the prompts live and how to switch the provider: §4.16.
   - An image is one call on the rendition.
   - A PDF's pages are counted by the sandboxed child, then read in windows of `MODEL_PAGES_PER_CALL` (10) pages, at
     most `MODEL_IN_FLIGHT` (4) at a time, each window cut by the child only when its turn comes (lazy windows: at most
@@ -443,7 +448,7 @@ Back in the same `_work_class` pass, the record's card is due because its text c
 | fetch / triage | download or thumbnail failed; no rendition yet | `pending` → `failed / download_error` (a missing rendition ends as a photograph without caption) | yes, 3 |
 | embeddings | per-file 180 s passed | `pending` → `failed / embed_timeout` | yes, 3 |
 | reader / triage | month's pages or images spent (`budget_exhausted`, or the hold before the call) | `pending`, class 3, due at the UTC month start | waits |
-| reader / triage | **model outage, not charged**: 429, network, open breaker, account-level 4xx (key, permission, model id, quota), missing prompt, a provider with no key; any triage outage | `pending`, due at `model_backoff_until` (60 s doubling to 1 h); attempts untouched | waits |
+| reader / triage | **model outage, not charged**: 429, network, open breaker, an account-level 4xx other than 400/413/422 (401 key, 403 permission, 404 model id), missing prompt, a provider with no key; any triage outage | `pending`, due at `model_backoff_until` (60 s doubling to 1 h); attempts untouched | waits |
 | reader | **model outage charged to the file**: a 5xx, a timeout of a single-page window or an image, an unexpected error — when the reader made a call for this file | `model_outages + 1`, `pending` in class 3 behind other due work, due at `model_backoff_until`; the `MAX_ATTEMPTS`-th → `failed / extract_error` under the reader's link | yes, 3 |
 | run | **systemic**: drive disconnected or throttled, a rejected refresh, an embedding error other than a chunk's 400, a transient Firestore error or a missing / building composite index (`DriveIndexStoreUnavailable`), a content port not wired | the run is abandoned (attempt not counted, content due again); the tick ends with its §5 backoff | the tick |
 
@@ -456,6 +461,27 @@ Treated as a plain outage, such a file came back after every backoff, re-read (a
 failing one, and drained the month's pages month after month. Charging it to the file bounds it at `MAX_ATTEMPTS`
 reads; a rate limit or an account error is everyone's, so it is never charged. A real provider outage that hits the
 same file three times with a 5xx can fail it until the file is edited or the reader's version changes (RFC §24.14).
+
+**Claude or OpenAI down for an hour, or a day.** There is no fallback provider (D7): the model work waits, nothing
+else does. Parsed documents, cards, embeddings, renames, moves and deletions go on; search keeps working and says
+"N documents are not read yet" for the scans and images waiting. The backoff doubles from 60 s to 1 h, so a day-long
+outage costs about one probe call an hour per user, and the first model call that succeeds ends it.
+- A **429, a network failure, an open breaker, a 401/403/404, a missing prompt or a missing key** is never charged
+  to a file: everything resumes by itself when the provider is back, with nothing lost.
+- A **5xx (including 503) or a single-page timeout** is charged to the file being read. Each backoff probe reads one
+  file, and a charged file waits behind other due work, so over a day each scan in the queue can collect three
+  charges and end `failed / extract_error` (reader link). Such a file stays failed until it is edited, the reader's
+  version is bumped (re-reads every reader-decided file, §4.12) or the user's index is rebuilt (§7) — there is no
+  per-file retry command. Its name card stays searchable.
+- Triage outages are never charged: images simply wait.
+- **Anthropic's "credit balance too low" is an HTTP 400**, and every 400 is read as a refusal of the input, not as an
+  outage (`classify_model_error`): while the account has no credit, a PDF's pages are refused one by one and the file
+  is demoted `unsupported` (`metadata_only / kind_not_admitted`), an image too, and a triage batch is halved down to
+  photographs without a caption. These are final until the content or the reader / triage version changes (RFC
+  §24.14).
+
+No alert of its own: the outage shows as ERROR / WARNING lines (`[drive_reader]`, `[drive_triage]`) and as the
+`deferred` count in the tick line (§7).
 
 ### 4.11 Budgets and bounds
 
@@ -478,6 +504,20 @@ Monthly counters are on the sync state, keyed by UTC month (`usage_now`, `with_u
 error paths included, carries them, and the tick also writes them after each reader file and each triage batch
 (`_persist_usage`, a fenced write), so a tick the instance kills or whose lease is lost still counts what it sent.
 Usage spent before an outage is counted without ending it: the backoff keeps doubling.
+
+**Large files: what is read and how it is marked.** Take a 600-page PDF.
+- Over 45 MiB (likely for a 600-page scan): `metadata_only / too_large` from the size in the listing, never
+  downloaded; its name card is searchable, it counts as "could not be read" (§7.1).
+- With a good text layer: the parser reads every page until `MAX_TEXT_CHARS` (2 M characters); the chunker keeps the
+  first `MAX_CHUNKS_PER_FILE` (400) chunks of about 2 400 characters each, so roughly the first 860 000 characters
+  (a few hundred pages) are searchable and the rest is not. The router judges density as an average over all
+  pages, so a mostly-text PDF with some scanned pages stays with the parser and its scanned pages are not read.
+- A scan (no or thin text layer): the reader gets the first `MODEL_EXTRACT_MAX_PAGES` (200) pages, 10 per call,
+  4 calls at a time, within 600 s; pages 201–600 are never sent. It needs 200 of the month's 5 000 pages free before
+  it starts; otherwise it waits whole for the next month (it is never cut to what is left).
+- Either cut sets `truncated` on the record and the run line shows `pages=<sent>/<total>` (e.g. `200/600`); Smart
+  sees `truncated: only the beginning of the file was indexed` on the card, and its guidance names a truncated card
+  when it reports a not-found (§6.2). A refused page skipped (§4 step 5) also sets `truncated`.
 
 ### 4.12 Upgrades: what a version change redoes
 
@@ -502,6 +542,17 @@ within the maintenance share, and re-plans each stale record (`stale_versions`, 
   collected, `chunks_refused_space` names the space, an indexed record becomes `failed / extract_error`, and the
   file is not read again (a reader call would buy the same refusal) — so the space change completes and
   `applied_space` advances. A later space change gives it a fresh read.
+
+  **Switching the embedding model** is a code change in `GeminiEmbeddingAdapter`
+  (`src/adapters/gemini_embedding_adapter.py`): its model, output dimension or task prefixes make `EMBEDDING_SPACE`
+  (`<model>/<dim>`), and any change of them must change that string — that is what starts the pass above. Know before
+  you do it: the same adapter embeds memory facts and emails, whose vectors this pass does not touch; a new
+  **dimension** also needs new vector indexes, because every `vectorConfig` in `config/firestore.indexes.json` and
+  `scripts/infrastructure/create_drive_vector_indexes.sh` is 768 — create them and wait for `READY` before the deploy.
+  Meanwhile, per user until that user's pass completes, search says `refreshing` and runs on names, filters and exact
+  terms only (card and chunk kNN are skipped, §6); the re-embed runs in class 3 inside the 30 % maintenance share, so
+  a large index takes several ticks. Cost: Gemini embeddings only — no download, no parser, no reader call, not
+  billed to the user, bounded by the 25 000 cards and 50 000 chunks per user (§4.13).
 - A pass that leaves stale records (backing off, held) does not repeat until due work has run; `applied_versions` and
   `applied_space` are written only after a clean pass.
 - A record whose model work is held for next month's budget, and which is stale only for what that held work
@@ -560,6 +611,83 @@ calls (§7). The reader and triage agents have no tools, so a hostile document c
 A parser failure reaches the logs and the outcome as a type, a code position and a hash (`failure_label`), and a
 failed child's stderr as its length and a hash, never their text: a parser's message or traceback can quote the
 document. The per-run line (§7.1) carries ids, never the file name or its text.
+
+**What is left (prompt injection).** Smart still holds tools — memory, web fetch, drive mutations, documents — and
+the only thing between a hostile document and them is the wrapper, the `untrusted` line in Smart's token and the G3
+bar (zero such calls on the injected case). That is a model instruction checked by an eval, not an enforced guard:
+a strong enough injection can still sway Smart. A document can also steer what its own brief, caption and lead text
+say (a false amount, a misleading description), so it can mislead an answer about itself or rank itself into a
+search; it cannot reach another file's record. A `drive:` file passed to DocPlanner, PdfGenerator or
+HtmlPageGenerator reaches them without the wrapper until Slice 3
+([decision](../../04_solution_strategy/decisions/drive_prefetch_wrapper_slice3.md)).
+
+### 4.15 Timelines: a new file, an edited file, a photo
+
+**A new scanned PDF.** 1. *Seen:* saved by the bot (`save_file_to_drive`), it is a nudge and a tick is enqueued at
+once (behind any tick already running: the queue runs one at a time); uploaded any other way, it arrives in the delta
+feed at the next fan-out tick, every 10 minutes (minutes 3, 13, …). 2. *Classified* `pending`, content due in class 2;
+first sight has no quiet period. 3. In the same tick, after the delta round completes: card headroom, then the run
+budget (50 runs, 8-minute start budget, the worst case must fit the 30-minute deadline). 4. Download (≤ 45 MiB) →
+sniff → the parser finds no text or under 200 characters a page → the model hold (the month's pages, the outage
+backoff, the re-read cooldown, chunk headroom) → the reader transcribes it in 10-page windows and returns the brief →
+text gate → chunks → embeddings → commit → the card (name, kind, brief, lead text). 5. **Smart can find its text from the moment that run commits** —
+typically a few minutes after it was seen. Until then search reports `building` and "N documents are not read yet".
+If the content cannot be read now (month spent, outage, no time left in this tick), its name card is embedded without
+waiting for it, so the file is findable by name, kind and date while its content waits.
+
+**An edited file still shows its old content.** In order, any of:
+- the edit has not been seen yet: an edit outside the bot reaches the index at the next 10-minute fan-out tick; until
+  then nothing marks the result old except the envelope line "The index reflects the drive as of …";
+- it is in its **quiet period**: an edit is read only after the file has been untouched for 10 minutes, or 60 minutes
+  after the first unread edit at most (Word for the web saves every 1–3 minutes while someone types). Edits by the
+  bot itself (a nudge) skip it;
+- the file was read by the **model** (a scan, a screenshot, a hard PDF): it is re-read at most once per 24 h after
+  `model_read_at` (`MODEL_REREAD_COOLDOWN`); the edits made meanwhile are read once, at their newest version;
+- the run is waiting for the month's pages or a model outage (§4.10), or failed (`failed` keeps the old generation).
+
+Meanwhile the old generation keeps serving and each result carries `stale: the file changed after it was indexed`;
+Smart's guidance opens a stale or recently edited file before quoting it (§6.2).
+
+**A photo with no caption.** A caption exists only for an image triage judged a photograph. None, because:
+- it is not triaged yet: triage is due at first sight (class 2) after the image's quiet period, and the photos
+  already on the drive when Slice 2+4 was deployed are triaged by the upgrade pass in class 3, a share of each tick,
+  so a large library gets captions over many ticks; the month's 20 000 images may be spent (it waits for the next
+  month); a model outage defers the batch; a card-capped image is not triaged;
+- triage judged it **text** (a receipt, a screenshot): it is read by the reader and gets a brief, not a caption;
+- triage settled it as a photograph **without** a caption: the provider refused it (400/413/422, also an Anthropic
+  credit-balance 400, §4.10), the model left it unanswered after its correction turn, its thumbnail is over the
+  3.75 MiB vision cap or not a JPEG/PNG/WebP/GIF, the provider had no thumbnail after `MAX_ATTEMPTS`, or the model
+  returned an empty caption. These stand until the image changes or `TRIAGE_VERSION` is bumped;
+- it is never read: inside an opaque folder (a repository, generated files, a dense tree) it has no record at all;
+  a dot-name or secret-shaped name keeps a name card but is never triaged (§3).
+
+The record's `triage_verdict` and `caption` say which (§7.1).
+
+### 4.16 The model agents: prompts and provider
+
+**Prompts.** The reader and triage prompts live in Firestore (the prompt layer: tokens, blueprints, profiles), the
+single source of truth, assembled by `build_drive_prompt` with no biography, directives or user overrides. Twelve
+files: tokens `COGNITIVE_PROCESS_DRIVE_READER`, `COGNITIVE_PROCESS_DRIVE_TRIAGE`, `OUTPUT_FORMAT_DRIVE_READER`,
+`OUTPUT_FORMAT_DRIVE_TRIAGE` (each `.groovy` + `.json`), blueprints `drive_reader.json`, `drive_triage.json`,
+profiles `drive_reader_agent_v1.json`, `drive_triage_agent_v1.json`. Their upload copies are in
+`firestore_utils/uploads/` of the main checkout (gitignored); once uploaded, `firestore_utils/snapshot_pull.py`
+mirrors them into `prompts_snapshot/` (tokens, blueprints, profiles), which is where to read or diff them. The owner
+uploads them (`docs/how_to/NEW_AGENT_PLAYBOOK.md`); a missing or incomplete prompt is a model outage (ERROR, never
+charged to a file), and it is evicted from the prompt cache, so an upload takes effect on the next call. A prompt
+change does not re-read anything already read: bump the reader's or triage's version for that (§4.12).
+
+**Provider.** The default is Claude Haiku 5.5 (ECO) for both agents. Per user, in order: the user document's
+`config.agent_providers["drive_reader"]` / `["drive_triage"]` (`claude` or `openai`), then the user's global
+`config.provider_preference` when it is `claude` or `openai`, then Claude (`AgentContextBuilder.resolve_provider_name`).
+To read with GPT (`gpt-6-luna`), set `config.agent_providers` to `{"drive_reader": "openai"}` (add `"drive_triage":
+"openai"` for triage too) on the user's document in `{prefix}domain_users_v2`; there is no Cabinet control for it. The
+indexer reads the user document for every file and batch, so it applies from the next read, with no deploy, as long
+as the indexer has `OPENAI_API_KEY` (a provider without a key is a model outage). It does **not** re-read files
+already read: `extracted_by` is `reader@1` whichever provider read it. To have them read again by the new provider,
+bump `READER_VERSION` in `src/composition/drive_reader_runner.py` (a deploy; re-reads and re-bills every
+reader-decided file of every user, §4.12). Before switching for real, compare the two on real files with
+`scripts/validation/drive_model_check.py read <folder> --providers claude,openai`, and re-record the eval bars with
+`DRIVE_EVAL_PROVIDER=openai` (the bars pin the reader's provider, §7).
 
 ---
 
@@ -668,12 +796,20 @@ The content streams run while the policy admits any content (`content_admitted`)
 - **Chunk kNN** (`find_nearest_chunks`, `CHUNK_FETCH` = 300, one per member kind): nearest chunks, fenced against the
   records read now (`chunk_readable`) and max-pooled to one hit per record, its nearest chunk (`pool_nearest`).
 - **Content exact-term stream.** `query_terms` takes the **maximal form** of each number-like span of `drive_query`
-  — an ISO date, a canonical amount, a joined id, a joined digit group — never a fragment (a year, an amount's integer
-  part, a run inside an id), because a fragment matches documents that share only that part. A whole amount with
+  — an ISO date, a canonical amount, a joined id, a joined digit group — never a fragment (the year inside a date, an
+  amount's integer part, a run inside an id), because a fragment matches documents that share only that part. A
+  number standing alone is its own maximal form: "2024", or the year of "March 2026" (a month and year give no date
+  term), is queried as `2024` / `2026` and left to the selectivity rule below. A numeric date whose day and month
+  are both ≤ 12 queries both readings (`01.03.2026` → `2026-03-01` and `2026-01-03`), as the index stores both. Only
+  number-like spans are terms: words ("invoice", "electricity") never reach this stream; they are matched by meaning
+  (card and chunk kNN) and by the name stream. A whole amount with
   `.00` cents also queries its integer form, so "1,250.00" finds a document that says "1250". Terms are read from at
   most `QUERY_TERM_CHARS` (1 000) characters of the query, cut at a word boundary, at most `CONTENT_TERM_QUERIES` (8)
   of them, longest first. Each runs as its own `array-contains` query (`CONTENT_TERM_FETCH` = 100, ordered by item id), never one `array-contains-any`, which would let a common term
-  hide a rare one.
+  hide a rare one. How the document side is normalised (amounts, numeric and written-out dates in five languages,
+  ids, digit groups): §4 step 7. Worked examples: a query "1 250,00" sends `1250.00` and `1250`; a document saying
+  "1250 EUR" holds the term `1250`, so it matches. "1 березня 2026" in the query and "01.03.2026" in the document both
+  become `2026-03-01`, and so do "1 de marzo de 2026", "1er mars 2026" or "March 1, 2026".
 - **Selectivity** (`selective_term_hits` / `term_selective`, `src/domain/drive_content_search.py`;
   [decision](../../04_solution_strategy/decisions/drive_term_selectivity_distinct_files.md)). A page that was not full
   is complete and selects. A full page is an id-ordered slice: the term is **non-selective** when it spans more than
@@ -681,7 +817,9 @@ The content streams run while the policy admits any content (`content_admitted`)
   file per probe (`find_next_file_with_term`), until a ninth file is seen or the term runs out; only then is it
   selective (at most 8 single-document probes per term). A non-selective term takes no part in fusion, anchoring,
   window trimming or the widening. A term concentrated in few files — an IBAN in every chunk of one contract — still selects. The folder
-  in-memory path has every chunk, so its page is complete.
+  in-memory path has every chunk, so its page is complete. This is why a common number such as `2024` does not flood
+  the results: held by more than 8 files, it is dropped from ranking and the rest of the query (other terms, chunk
+  and card kNN, names) decides; and a search never returns more than `K` = 8 results anyway.
 - **Pooling** (`pool_terms`): records sharing more query terms first, then the more specific term, then item id; the
   anchor is the record's chunk holding the most terms.
 - **Visibility.** A content hit counts only for a record that is carded and visible (§17.1 d): nothing inside an
@@ -715,10 +853,10 @@ The content streams run while the policy admits any content (`content_admitted`)
   reconnect;
 - one nonce-tagged `<drive_document>` wrapper per card holding the card text, `path`, `date: <day> (<source>)` —
   the source being `taken` (a photo), `written in the document` (a reader-read document whose brief gave the date) or
-  `file date`, so a file date is never cited as the document's own — then, unless the request was filter-only,
-  `matched: name | similar name or details | content` (two joined by "and"), `index: <state> (<reason>)`, `stale`,
-  `truncated`, `identical copies also at`, and for a content hit `matching passage:` or `nearest passage:` (each
-  `(shortened)` when its best chunk was trimmed) with the window;
+  `file date`, so a file date is never cited as the document's own — then `matched: name | similar name or details
+  | content` (two joined by "and"; left out on a filter-only listing), and always `index: <state> (<reason>)`, then
+  when they apply `stale`, `truncated`, `identical copies also at`, and for a content hit `matching passage:` or
+  `nearest passage:` (each `(shortened)` when its best chunk was trimmed) with the window;
 - when drive search is off, or the drive is disconnected or a different one is connected, one line saying so for
   this user, "Do not search the drive again in this conversation", and where to browse instead. The rule rides on
   the tool result, so no per-user prompt gating is needed.
@@ -747,6 +885,19 @@ file asked for, search again without the filter." The filter matches `effective_
 reader-read document's own date, otherwise the file date — but the model is told only the one distinction; the
 card's date label says which it is per result
 ([decision](../../04_solution_strategy/decisions/drive_document_date_effective_date.md)).
+
+Which date a filter uses (`effective_date`, `_effective` in `drive_index_planner.py`; bounds are UTC days):
+
+| File | Date used | Label on the card |
+|---|---|---|
+| Scan, screenshot or hard PDF read by the model | the date printed in it (the brief's `doc_date`); if the reader found none, a photo-taken date if the image has one, else the file date | `written in the document` (or `taken` / `file date`) |
+| DOCX, a text-layer PDF, XLSX and every other parsed file | the file date — never a date written inside it (parsed files get no brief, D10) | `file date` |
+| Photo | the taken date (`photo.takenDateTime`), else the file date | `taken` |
+
+The **file date** is the file-system modified time the drive reports (`fileSystemInfo.lastModifiedDateTime`, usually
+when the file was last saved on the device it came from), else the drive's own modified time. So "bills dated
+March" finds a March scan uploaded in April, but not a March DOCX last saved in April; a date written inside a
+parsed document is still found through `drive_query` and the exact-term stream (§6.1).
 
 ---
 
@@ -864,28 +1015,54 @@ Then the indexer's logs (`make fetch-logs-indexer K=…`, grep the item id):
 Images are triaged before any of this: `[DriveTriage]` lines are per batch, with no item ids; the record's
 `triage_verdict` and `caption` say what triage decided.
 
+**"N documents could not be read."** The number is drive-wide for the user, not about the search's own results: the
+sync-state counters, refreshed by every tick that completes (§6.1). It counts documents of a content kind, and images
+triaged as `text`, in one of these states:
+- `failed` (any reason: `extract_error`, `extract_timeout`, `extract_memory`, `download_error`, `embed_timeout`);
+- `metadata_only` with reason `too_large`, `no_text`, `machine_text` or `user_chunk_cap`.
+
+It does **not** count a password-protected file (`encrypted`), a file the parser or provider cannot handle
+(`unsupported`, stored as `kind_not_admitted`), photographs, or kinds that are never read (code, archives, audio,
+video, `doc`, …); Smart is not told about those. "N documents are not read yet" is the other counter: `pending` with
+no readable generation, not card-capped — they will be read.
+
+To find which: there is no listing script. In the Firestore console, filter `{prefix}drive_index_records` on
+`user_id == <user id>` and `state == failed`, then on `state == metadata_only` with each of the four reasons above
+(the counter's own queries add `kind in [content kinds]`, and for images `triage_verdict == text`;
+`FirestoreDriveIndexRepository.unread_count_queries`). Each record has its `name`, `state`, `reason`, `attempts`,
+`model_outages` and `pages_total`; then the item id in the logs, as above. From chat, any search result shows the
+same per file on its `index: <state> (<reason>)` line, so a filter-only search ("list my PDFs") shows which of them
+failed and why.
+
 ### 7.2 Deploy order, owner steps, rollback
 
-Full commands: [docs/07_deployment/README.md](../../07_deployment/README.md) → Slice 2+4. In order: spikes (S1 with
-its reader-shaped run and the `driveparser` user, S0g, S3); the first image build, which must create the
-`driveparser` user and pass the world-writable check; the model keys on the indexer; the 12 drive prompt files
-uploaded by the owner; the Firestore indexes created and **`READY`** before the indexer runs the new code — a
-missing or building composite is now a store outage (`FailedPrecondition` → `DriveIndexStoreUnavailable`, ERROR, the
-tick ends, nothing is counted against any file), so nothing is lost, but no file's content is indexed until they
-are;
-Smart's `PROTOCOL_AGENT_SELECTION` uploaded **before** the deploy (the prompt assembly caches a template for 24 h
-per instance, and `render_results` no longer carries the guidance the token now holds); the deploy; a check of the
-reader's resolved provider for the owner (`agent_providers`, then the global `provider_preference`, §4 step 5)
-before the live model check; then the live check with the drive queue paused.
+Full commands: [docs/07_deployment/README.md](../../07_deployment/README.md) → Slice 2+4. In order:
+1. the first image build of this branch, which must create the `driveparser` user and pass the world-writable
+   check — built and pushed, not deployed, because S1 runs from it (`make deploy` builds and deploys in one go);
+2. the spikes: S1 from that image (with its reader-shaped run, as the `driveparser` user), S0g, S3;
+3. the model keys on the indexer (already in `cloudbuild-dev.yaml`; a one-time IAM check);
+4. the 12 drive prompt files uploaded by the owner (§4.16);
+5. the Firestore indexes created and **`READY`** before the indexer runs the new code — a missing or building
+   composite is a store outage (`FailedPrecondition` → `DriveIndexStoreUnavailable`, ERROR, the tick ends, nothing is
+   counted against any file), so nothing is lost, but no file's content is indexed until they are;
+6. the reader's resolved provider for the owner checked (`agent_providers`, then the global `provider_preference`,
+   §4.16), then the **live model check** and the **live check** (drive queue paused) — both before the deploy (RFC
+   §22 step 2): they run locally against the providers and live Firestore and need the prompts and the indexes, not
+   the new revision;
+7. Smart's `PROTOCOL_AGENT_SELECTION` uploaded **before** the deploy (the prompt assembly caches a template for 24 h
+   per instance, and `render_results` no longer carries the guidance the token now holds);
+8. the deploy.
 
 **There is no rollback to the Slice 1 revision.** It cannot read a record whose reason is `photograph` (its enum has
 no such value) and it never purges chunks, so redeploying it would crash ticks and leave chunk documents behind.
-The levers are forward ones, each a code change plus a deploy:
+The levers are forward ones; the first two are a code change plus a deploy, the last two are not:
 - **stop all content work and collect the chunks:** empty `ADMITTED_KINDS` and `TRIAGED_KINDS` in
-  `drive_index_policy.py` and bump `POLICY_VERSION`; the upgrade pass re-classifies every record as
-  `kind_not_admitted`, and every write that drops a readable generation collects its chunks;
-- **stop model spend only:** unset `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` on the indexer: every model call is then a
-  model outage (not charged to any file), parsing and cards go on;
+  `drive_index_policy.py` and bump `POLICY_VERSION` (in `src/domain/drive_index.py`); the upgrade pass re-classifies
+  every record as `kind_not_admitted`, and every write that drops a readable generation collects its chunks;
+- **stop model spend only:** remove `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` from the indexer's `--set-secrets` in
+  `cloudbuild-dev.yaml`: every model call is then a model outage (not charged to any file), parsing and cards go on,
+  scans and images wait as "not read yet";
+- **switch the reader's provider** (a field on the user document): §4.16;
 - **one user:** turn indexing off for them (the purge removes chunks, records and sync state).
 
 ---

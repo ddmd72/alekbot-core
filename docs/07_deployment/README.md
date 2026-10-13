@@ -371,21 +371,23 @@ USER_DRIVE_INDEXING_RFC §24 adds model calls and chunk storage to the indexer. 
 says why it cannot move later. Background for every step: the building block
 [`docs/05_building_blocks/user_drive/README.md`](../05_building_blocks/user_drive/README.md) §7.2.
 
-1. **Spikes, recorded in the RFC (§18).** S1 before the parser ships: run `scripts/infrastructure/drive_extract_s1.py`
-   as a one-off Cloud Run Job from the indexer's image (gen2, the indexer's memory), so `DRIVE_PARSER_USER` is set and
+1. **The first image build.** The Dockerfile now creates the system user `driveparser`, sets
+   `DRIVE_PARSER_USER=driveparser`, and fails the build on any world-writable file under `/app` (`node_modules`
+   aside) or in site-packages. Neither step was built locally. Build this branch's image and push it **without
+   deploying** (`make deploy` builds and deploys in one Cloud Build, and the parser must not ship before S1; there is
+   no image-only make target): the build must show `useradd` succeeding in the base image and the check passing, and
+   step 2's S1 runs from that image. The image is shared, so a failure here
+   blocks the main service's build too. On the indexer, a missing parser user fails the start
+   (`parser user 'driveparser' does not exist in this container`, ERROR) rather than parsing unsandboxed; its start
+   log names the user: `[DriveExtract] parser children run as driveparser (uid …, gid …)`.
+2. **Spikes, recorded in the RFC (§18).** S1 before the parser ships: run `scripts/infrastructure/drive_extract_s1.py`
+   as a one-off Cloud Run Job from step 1's image (gen2, the indexer's memory), so `DRIVE_PARSER_USER` is set and
    the child runs as the `driveparser` user, as deployed. It measures the Phase 0 bomb set under the child limits,
    the peak RSS with a 45 MB download, cold start, and for the long PDFs a **reader-shaped run**: the parent holds
    `MODEL_IN_FLIGHT` windows' bytes, base64 and request bodies while the child cuts the next window (simulated, no API
    call), so the cgroup peak includes the parent's side of a read. S0g (Graph custom renditions `c{w}x{h}` for App
    Folder items, legible receipt text, HEIC) before the reader reads images; S3 (`find_nearest` cost and latency at
    10k and 50k chunks under a `user_id` filter) before the slice ships.
-2. **The first image build.** The Dockerfile now creates the system user `driveparser`, sets
-   `DRIVE_PARSER_USER=driveparser`, and fails the build on any world-writable file under `/app` (`node_modules`
-   aside) or in site-packages. Neither step was built locally: the first `make deploy` (or a plain `docker build`)
-   must show `useradd` succeeding in the base image and the check passing. The image is shared, so a failure here
-   blocks the main service's build too. On the indexer, a missing parser user fails the start
-   (`parser user 'driveparser' does not exist in this container`, ERROR) rather than parsing unsandboxed; its start
-   log names the user: `[DriveExtract] parser children run as driveparser (uid …, gid …)`.
 3. **Model keys on the indexer.** The reader and triage agents call Claude (default) or OpenAI, so the indexer mounts
    `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` from Secret Manager (`--set-secrets` in `cloudbuild-dev.yaml`, the same
    secret names the main service mounts). They are never Cloud Build substitutions. The runtime service account
@@ -411,7 +413,24 @@ says why it cannot move later. Background for every step: the building block
    (`[DriveIndex] index store … failed, an index is missing or building`, ERROR, with the provider's message naming
    the index). The tick ends there and counts nothing against any file, so nothing is lost — but no file's content
    is indexed until the indexes are `READY`.
-6. **Smart's drive guidance, before the deploy.** The `drive_specialist` block of `PROTOCOL_AGENT_SELECTION`
+6. **Check the reader's resolved provider, then the live model check — before the deploy.** The drive agents take the user's
+   `agent_providers["drive_reader"]` / `["drive_triage"]`, then the user's global `provider_preference` (when it is
+   `claude` or `openai`), then the default Claude. A user whose global preference is OpenAI reads with GPT without
+   naming the drive agents. Read the owner's `config` on the user document (`development_domain_users_v2`; the
+   Cabinet does not show these fields) and run the live model check on the provider that will actually read, or on
+   both: `venv/bin/python -m scripts.validation.drive_model_check read <folder> --providers claude,openai`. It runs
+   locally with the uploaded prompts (step 4) and settles the model pick, the 180 s window timeout and the thumbnail
+   size before they ship. Switching the provider later: building block §4.16.
+7. **Live check, with the drive queue paused — before the deploy** (§22 step 2, §24.12). It runs the real tick,
+   parser, reader and triage locally against live Firestore, so it needs steps 4 and 5, not the new revision. The main service's fan-out enqueues a tick for
+   every user with a sync state, the check's synthetic user included, so a live tick would race the check. Pause the
+   queue, run the check, resume it:
+   `gcloud tasks queues pause drive-sync-dev --location=us-central1 --project=<PROJECT_ID>`, then
+   `venv/bin/python -m scripts.validation.drive_eval.live_check --folder scripts/memory/drive_live --user
+   zz-synthetic-<yyyymmdd> --query …`, then `gcloud tasks queues resume drive-sync-dev --location=us-central1
+   --project=<PROJECT_ID>`. The script refuses to start unless the queue reads PAUSED, never pauses or resumes it
+   itself, and prints the resume command when it ends. Ticks queued meanwhile run after the resume.
+8. **Smart's drive guidance, before the deploy.** The `drive_specialist` block of `PROTOCOL_AGENT_SELECTION`
    (`prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy`): back up the prompt layer
    (`firestore_utils/backup_prompt_layer.py` into `scripts/memory/`), check the mirror for drift
    (`python firestore_utils/snapshot_pull.py --check`), dry-run the upload, then
@@ -420,22 +439,8 @@ says why it cannot move later. Background for every step: the building block
    deploying: the new `render_results` no longer carries the guidance the token now holds, and the prompt assembly
    caches a template for 24 h per instance, so the new revision's fresh instances must find the new token. (The old
    revision with the new token only repeats guidance it already rendered: harmless for the minutes in between.)
-7. **Deploy.** `make deploy` (the Indexer URL steps above apply as usual). The upgrade pass then re-plans the Slice 1
+9. **Deploy.** `make deploy` (the Indexer URL steps above apply as usual). The upgrade pass then re-plans the Slice 1
    records in class 3; while it has not reached them all, search says "Documents are still being read".
-8. **Check the reader's resolved provider before the live model check.** The drive agents take the user's
-   `agent_providers["drive_reader"]` / `["drive_triage"]`, then the user's global `provider_preference` (when it is
-   `claude` or `openai`), then the default Claude. A user whose global preference is OpenAI reads with GPT without
-   naming the drive agents. Read the owner's `UserBotConfig` (Cabinet, or the user document) and run the live model
-   check on the provider that will actually read, or on both:
-   `venv/bin/python -m scripts.validation.drive_model_check read <folder> --providers claude,openai`.
-9. **Live check, with the drive queue paused** (§22 step 2, §24.12). The main service's fan-out enqueues a tick for
-   every user with a sync state, the check's synthetic user included, so a live tick would race the check. Pause the
-   queue, run the check, resume it:
-   `gcloud tasks queues pause drive-sync-dev --location=us-central1 --project=<PROJECT_ID>`, then
-   `venv/bin/python -m scripts.validation.drive_eval.live_check --folder scripts/memory/drive_live --user
-   zz-synthetic-<yyyymmdd> --query …`, then `gcloud tasks queues resume drive-sync-dev --location=us-central1
-   --project=<PROJECT_ID>`. The script refuses to start unless the queue reads PAUSED, never pauses or resumes it
-   itself, and prints the resume command when it ends. Ticks queued meanwhile run after the resume.
 
 **Cost.** A page read by the model costs about $0.0006 on Haiku 5.5 or GPT-6 Luna; the monthly page budget bounds
 **the reader** at about $3 per user. That is not the whole bill: triage is bounded by 20 000 images per user per month
@@ -449,7 +454,7 @@ the building block's §4.13 and RFC §24.9. Model calls are billed to the user's
 `photograph`, so a tick that reads such a record crashes, and it never deletes chunk documents. The levers are
 forward changes, each a code change plus a deploy:
 - stop all content work and collect every chunk: empty `ADMITTED_KINDS` and `TRIAGED_KINDS` in
-  `src/domain/drive_index_policy.py` and bump `POLICY_VERSION`; the upgrade pass re-classifies every record as
+  `src/domain/drive_index_policy.py` and bump `POLICY_VERSION` (in `src/domain/drive_index.py`); the upgrade pass re-classifies every record as
   `kind_not_admitted` and collects the readable chunks;
 - stop model spend only: remove `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` from the indexer's secrets; every model call
   is then a model outage (never charged to a file), and parsing, cards and search go on;

@@ -1697,8 +1697,10 @@ this section wins; the text above was corrected where it was plainly false. Slic
   never yields its digits joined (`1250.00` is not `125000`). A normaliser change bumps `EXTRACTION_VERSION`.
 - **Query side: maximal forms only** (review D-M1). `query_terms` takes each number-like span's maximal form — the ISO
   date, the canonical amount, the joined digit group, the joined id, the first kind claiming a stretch of text winning
-  in that order — never a fragment (a year, an amount's integer part, a run inside an id), because a fragment as a
-  query matches documents that share only that part. An amount whose cents are `.00` also queries its integer form, so
+  in that order — never a fragment (the year of a date, an amount's integer part, a run inside an id), because a
+  fragment as a query matches documents that share only that part. A number standing alone ("2024", the year of
+  "March 2026") is its own maximal form and is queried, left to the selectivity rule below; an ambiguous numeric
+  date queries both readings, as the index holds both. An amount whose cents are `.00` also queries its integer form, so
   `1,250.00` finds a document that says `1250`. The terms come from at most `QUERY_TERM_CHARS` of
   the query, cut at a word boundary, and a span's overlap with the stretches already claimed is found by bisection,
   not by a scan of every claim; at most
@@ -1904,6 +1906,13 @@ Values in `src/domain/drive_index_params.py` unless named otherwise.
   chunker and the text gate, so a terms-only change re-reads every file, scans included, and re-bills their reader
   pages. Deriving the terms again from the stored chunk text is a §14 follow-up. Slice 2+4 has no live chunks before
   its first deploy, so the bumps to 3 cost nothing there.
+- **Anthropic's exhausted credit reads as a refusal of the input.** Anthropic answers "credit balance too low" with
+  HTTP 400, and `classify_model_error` reads every 400 as the provider refusing this input (`DriveInputRefused`), not
+  as an account-level outage. While the account has no credit, each PDF the reader tries is halved down to single
+  pages, every page is refused and the file is demoted `unsupported`; an image is demoted the same way; a triage batch
+  is halved down to photographs without a caption. All are final until the content, the reader version or
+  `TRIAGE_VERSION` changes. *Trigger:* any credit lapse on the Anthropic account; the fix is to classify that 400 by
+  its message as an outage.
 - **A real provider outage can fail a file.** A 5xx is charged to the file the reader was reading (some files always
   get one, §24.8), so a provider outage long enough to hit the same file three times fails it (`failed /
   extract_error`) until the file is edited or the reader's version changes. A 429, an account-level error or a
