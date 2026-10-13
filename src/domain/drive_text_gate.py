@@ -2,7 +2,7 @@
 Text-quality gate (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §8.1 step 6, §5.5 class 3). Pure and deterministic.
 
 Public interface:
-    GateMetrics(lines, residue_lines, repetition, near_empty, variety)
+    GateMetrics(lines, residue_lines, repetition, near_empty, variety, plain_lines, plain_repetition)
     measure(text) -> GateMetrics
     is_machine_text(text) -> bool
 
@@ -16,7 +16,9 @@ near-empty), and token variety over a fixed-size sample.
 
 Machine text is repetition AND low variety together, or a text of near-empty lines. Repetition alone is what a bank
 statement, an invoice or a payroll has too: their lines repeat a template, but merchants, items and accounts keep the
-token variety up. Meeting transcripts, chat exports and dated journals keep prose after their timestamps and pass.
+token variety up. A short text has too few tokens for variety to be judged; there repetition is taken over the long
+residue lines that carry no amount or date (the plain lines) and is judged alone. A ledger's template lines carry
+amounts and drop out, a log line stripped of its timestamp carries none and stays. Meeting transcripts, chat exports and dated journals keep prose after their timestamps and pass.
 Markdown table rows are not measured: tables are exempt (§8.3). Too little residue is never judged.
 
 Linear in the text: lines are split once, tokens are whitespace-split and folded one by one, and the patterns (the
@@ -40,6 +42,7 @@ VARIETY_SAMPLE = 2_000        # tokens sampled for variety, spread over the samp
 VARIETY_MIN_TOKENS = 400      # fewer tokens: variety is not judged
 MIN_VARIETY = 0.04            # distinct / total tokens in the sample (tokens with digits folded): dumps measure
                               # <= 0.015, a 1500-line statement over 200 Zipf merchants >= 0.10, prose ~0.3+
+VARIETY_NOT_JUDGED = 1.0      # the variety reported when the sample holds fewer than VARIETY_MIN_TOKENS tokens
 
 _TIME = r"\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d{1,6})?(?:\s?[AaPp][Mm])?"
 _DATE = (r"(?:\d{4}[-./]\d{1,2}[-./]\d{1,2}|\d{1,2}[-./]\d{1,2}[-./]\d{2,4}"
@@ -73,6 +76,8 @@ class GateMetrics:
     repetition: float
     near_empty: float
     variety: float            # 1.0 when not judged (too few tokens)
+    plain_lines: int = 0      # long residue lines in the sample with no amount or date
+    plain_repetition: float = 0.0   # share of plain lines that repeat an earlier one (tokens with digits folded)
 
 
 def _residue(line: str) -> str:
@@ -119,6 +124,10 @@ def _spread(items: List[str], limit: int) -> List[str]:
     return [items[int(i * step)] for i in range(limit)]
 
 
+def _repetition(lines: List[str]) -> float:
+    return (len(lines) - len(set(lines))) / len(lines) if lines else 0.0
+
+
 def measure(text: str) -> GateMetrics:
     measured = 0
     residue: List[str] = []
@@ -131,12 +140,15 @@ def measure(text: str) -> GateMetrics:
         if rest and not _ONLY_NUMBER.fullmatch(rest):
             residue.append(rest)
     if not residue:
-        return GateMetrics(measured, 0, 0.0, 0.0, 1.0)
+        return GateMetrics(measured, 0, 0.0, 0.0, VARIETY_NOT_JUDGED)
     sample = _spread(residue, SAMPLE_LINES)
     split = [r.split() for r in sample]
     folded = [[_fold(t) for t in tokens] for tokens in split]
     long_lines = [" ".join(f) for f, r in zip(folded, sample) if len(r) >= REPEAT_MIN_CHARS]
-    repetition = (len(long_lines) - len(set(long_lines))) / len(long_lines) if long_lines else 0.0
+    repetition = _repetition(long_lines)
+    plain = [" ".join(f) for f, r, tokens in zip(folded, sample, split)
+             if len(r) >= REPEAT_MIN_CHARS and not _ledger(r, tokens)]
+    plain_repetition = _repetition(plain)
     near_empty = sum(1 for r, tokens in zip(sample, split) if _near_empty(r, tokens)) / len(sample)
     total = sum(len(f) for f in folded)
     every = max(1, total // VARIETY_SAMPLE)   # every n-th line: the token sample spans the text, not its head
@@ -146,12 +158,18 @@ def measure(text: str) -> GateMetrics:
         if len(tokens) >= VARIETY_SAMPLE:
             break
     tokens = tokens[:VARIETY_SAMPLE]
-    variety = len(set(tokens)) / len(tokens) if len(tokens) >= VARIETY_MIN_TOKENS else 1.0
-    return GateMetrics(measured, len(residue), repetition, near_empty, variety)
+    variety = len(set(tokens)) / len(tokens) if len(tokens) >= VARIETY_MIN_TOKENS else VARIETY_NOT_JUDGED
+    return GateMetrics(measured, len(residue), repetition, near_empty, variety, len(plain), plain_repetition)
 
 
 def is_machine_text(text: str) -> bool:
     m = measure(text)
     if m.residue_lines < MIN_RESIDUE_LINES:
         return False
-    return (m.repetition > MAX_REPETITION and m.variety < MIN_VARIETY) or m.near_empty > MAX_NEAR_EMPTY
+    if m.near_empty > MAX_NEAR_EMPTY:
+        return True
+    if m.repetition > MAX_REPETITION and m.variety < MIN_VARIETY:
+        return True
+    # Too few tokens for variety (a log under ~70 lines): the plain lines' repetition is judged alone.
+    return (m.variety == VARIETY_NOT_JUDGED and m.plain_lines >= MIN_RESIDUE_LINES
+            and m.plain_repetition > MAX_REPETITION)
