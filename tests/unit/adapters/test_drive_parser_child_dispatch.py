@@ -1,5 +1,6 @@
-"""The drive parser's child dispatching to the readers (USER_DRIVE_INDEXING_RFC §9, §24.3): `extract` and
-`split_pdf` end to end through a real child process, the result in a file, nothing on stdout."""
+"""The drive parser's child dispatching to the readers (USER_DRIVE_INDEXING_RFC §9, §24.3): `extract` and the lazy
+page-window ops `pdf_page_count` / `cut_pdf_window` end to end through a real child process, the result in a file,
+nothing on stdout."""
 import json
 import subprocess
 import sys
@@ -44,9 +45,12 @@ def test_split_op_end_to_end(tmp_path):
     source = make_pdf(tmp_path / "s.pdf", ["a", "b", "c"])
     windows = tmp_path / "w"
     windows.mkdir()
-    proc = _run(_request(tmp_path, op="split_pdf", path=str(source), pages_per_window=2, max_pages=10,
-                         out_dir=str(windows)))
+    proc = _run(_request(tmp_path, op="pdf_page_count", path=str(source)))
     assert proc.returncode == 0, proc.stderr
-    result = json.loads((tmp_path / "result.json").read_text())
-    assert result["status"] == "text" and result["pages_total"] == 3 and result["truncated"] is False
-    assert [Path(p).name for p in result["paths"]] == ["window-0000.pdf", "window-0001.pdf"]
+    assert json.loads((tmp_path / "result.json").read_text()) == {"status": "text", "pages_total": 3}
+    for first, name, pages in ((0, "window-0000.pdf", 2), (2, "window-0001.pdf", 1)):
+        proc = _run(_request(tmp_path, op="cut_pdf_window", path=str(source), first_page=first, page_count=2,
+                             out_path=str(windows / name)))
+        assert proc.returncode == 0, proc.stderr
+        assert json.loads((tmp_path / "result.json").read_text()) == {"status": "text", "pages": pages}
+    assert sorted(p.name for p in windows.iterdir()) == ["window-0000.pdf", "window-0001.pdf"]

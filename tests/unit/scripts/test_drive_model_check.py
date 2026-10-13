@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 
 from scripts.validation import drive_model_check as check
-from src.domain.drive_extraction import PdfSplit
 from src.services.provider_registry import ProviderRegistry
 from tests.unit.agents.drive_model_fakes import RoutedLLM, reply
 
@@ -32,10 +31,11 @@ def _uploads(tmp_path: Path) -> Path:
 
 
 class _Splitter:
-    async def split_pdf(self, path, pages_per_window, max_pages, out_dir):
-        out = Path(out_dir) / "part-1.pdf"
-        out.write_bytes(b"%PDF window")
-        return PdfSplit(paths=(str(out),), pages_total=3)
+    async def pdf_page_count(self, path):
+        return 3
+
+    async def cut_pdf_window(self, path, first_page, page_count, out_path):
+        Path(out_path).write_bytes(b"%PDF window")
 
 
 def _registry(handler):

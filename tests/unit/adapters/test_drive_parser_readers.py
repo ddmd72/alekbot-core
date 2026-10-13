@@ -7,7 +7,7 @@ import pytest
 
 from src.adapters.drive_parser import readers
 from src.adapters.drive_parser.readers import (
-    MARKITDOWN_CONVERTERS, decode_text, markdown_table, read_content, split_pdf_windows, subtitle_cues,
+    MARKITDOWN_CONVERTERS, cut_pdf_window, decode_text, markdown_table, pdf_page_count, read_content, subtitle_cues,
 )
 from src.domain.drive_extraction import ExtractionStatus, PdfSplitFailed
 from src.domain.drive_index_policy import SLICE2_CONTENT_KINDS
@@ -538,13 +538,27 @@ def test_docx_that_is_not_a_zip_is_unsupported(tmp_path):
 # Deterministic failures are terminal (`unsupported`, §8.2), never retried as `error`
 # =============================================================================
 
+def _markitdown_at_least(version):
+    from importlib.metadata import version as installed
+
+    return tuple(int(p) for p in installed("markitdown").split(".")[:3]) >= version
+
+
 def test_html_nested_past_the_parsers_recursion_is_unsupported(tmp_path):
+    """Hostile nesting never becomes a retried `error`. markitdown 0.1.8 (the requirements.txt pin, review A
+    "M pins") catches the RecursionError itself and falls back to plain-text extraction, so the text is read; an
+    older markitdown raises and the reader maps it to a terminal `unsupported` (§8.2). The mapping of a
+    RecursionError raised by any reader stays pinned by test_deterministic_failures_of_any_reader_are_unsupported."""
     path = tmp_path / "nested.html"
     path.write_text("<html><body>" + "<div>" * 5000 + "deep" + "</div>" * 5000 + "</body></html>",
                     encoding="utf-8")
     outcome = _read(path, "html")
-    assert outcome.status is ExtractionStatus.UNSUPPORTED
-    assert "RecursionError" in outcome.detail
+    if _markitdown_at_least((0, 1, 8)):
+        assert outcome.status is ExtractionStatus.TEXT
+        assert outcome.text == "deep"
+    else:
+        assert outcome.status is ExtractionStatus.UNSUPPORTED
+        assert "RecursionError" in outcome.detail
 
 
 @pytest.mark.parametrize("failure", [RecursionError("deep"), readers._WrongContainer("ole")])
@@ -576,9 +590,11 @@ def test_split_hitting_recursion_is_unsupported(tmp_path, monkeypatch):
         raise RecursionError("page tree loop")
 
     monkeypatch.setattr(pypdf, "PdfReader", deep)
-    with pytest.raises(PdfSplitFailed) as failed:
-        split_pdf_windows(str(tmp_path / "x.pdf"), 10, 10, str(tmp_path))
-    assert failed.value.status is ExtractionStatus.UNSUPPORTED
+    for call in (lambda: pdf_page_count(str(tmp_path / "x.pdf")),
+                 lambda: cut_pdf_window(str(tmp_path / "x.pdf"), 0, 10, str(tmp_path / "w.pdf"))):
+        with pytest.raises(PdfSplitFailed) as failed:
+            call()
+        assert failed.value.status is ExtractionStatus.UNSUPPORTED
 
 
 @pytest.mark.parametrize("failure", [
@@ -608,7 +624,9 @@ def test_an_ordinary_import_error_is_an_error_outcome(tmp_path, monkeypatch):
 
 
 # =============================================================================
-# split_pdf_windows (§24.3)
+# pdf_page_count + cut_pdf_window: lazy page windows, one cut per call (§24.3, review A "M split"). The month and
+# MODEL_EXTRACT_MAX_PAGES caps (formerly split_pdf_windows' max_pages/truncated) live in DriveReaderRunner and are
+# pinned in tests/unit/composition/test_drive_reader_runner*.py.
 # =============================================================================
 
 def _page_texts(path):
@@ -621,44 +639,47 @@ def test_split_cuts_windows_in_page_order(tmp_path):
     source = make_pdf(tmp_path / "s.pdf", [f"page {i}" for i in range(1, 26)])
     out = tmp_path / "w"
     out.mkdir()
-    split = split_pdf_windows(str(source), 10, 200, str(out))
-    assert split.pages_total == 25 and split.truncated is False
-    assert [p.rsplit("/", 1)[1] for p in split.paths] == ["window-0000.pdf", "window-0001.pdf", "window-0002.pdf"]
-    assert _page_texts(split.paths[0]) == [f"page {i}" for i in range(1, 11)]
-    assert _page_texts(split.paths[2]) == [f"page {i}" for i in range(21, 26)]
-
-
-def test_split_stops_at_max_pages_and_marks_truncated(tmp_path):
-    source = make_pdf(tmp_path / "s.pdf", [f"page {i}" for i in range(1, 26)])
-    split = split_pdf_windows(str(source), 10, 12, str(tmp_path))
-    assert split.truncated is True and split.pages_total == 25
-    assert [len(_page_texts(p)) for p in split.paths] == [10, 2]
+    assert pdf_page_count(str(source)) == 25
+    written = [cut_pdf_window(str(source), first, 10, str(out / f"window-{n:04d}.pdf"))
+               for n, first in enumerate(range(0, 25, 10))]
+    assert written == [10, 10, 5]
+    assert sorted(p.name for p in out.iterdir()) == ["window-0000.pdf", "window-0001.pdf", "window-0002.pdf"]
+    assert _page_texts(out / "window-0000.pdf") == [f"page {i}" for i in range(1, 11)]
+    assert _page_texts(out / "window-0002.pdf") == [f"page {i}" for i in range(21, 26)]
 
 
 def test_split_of_an_owner_password_pdf_works(tmp_path):
     source = encrypt_pdf(make_pdf(tmp_path / "s.pdf", ["a", "b"]), tmp_path / "r.pdf", user_password="")
-    split = split_pdf_windows(str(source), 1, 10, str(tmp_path))
-    assert len(split.paths) == 2
+    assert pdf_page_count(str(source)) == 2
+    assert [cut_pdf_window(str(source), first, 1, str(tmp_path / f"w{first}.pdf")) for first in (0, 1)] == [1, 1]
+    assert _page_texts(tmp_path / "w1.pdf") == ["b"]
 
 
 def test_split_of_a_user_password_pdf_is_encrypted(tmp_path):
     source = encrypt_pdf(make_pdf(tmp_path / "s.pdf", ["a"]), tmp_path / "l.pdf", user_password="pw")
-    with pytest.raises(PdfSplitFailed) as failed:
-        split_pdf_windows(str(source), 10, 10, str(tmp_path))
-    assert failed.value.status is ExtractionStatus.ENCRYPTED
+    for call in (lambda: pdf_page_count(str(source)),
+                 lambda: cut_pdf_window(str(source), 0, 10, str(tmp_path / "w.pdf"))):
+        with pytest.raises(PdfSplitFailed) as failed:
+            call()
+        assert failed.value.status is ExtractionStatus.ENCRYPTED
 
 
 def test_split_of_garbage_is_an_error(tmp_path):
     source = tmp_path / "g.pdf"
     source.write_bytes(b"garbage")
-    with pytest.raises(PdfSplitFailed) as failed:
-        split_pdf_windows(str(source), 10, 10, str(tmp_path))
-    assert failed.value.status is ExtractionStatus.ERROR
+    for call in (lambda: pdf_page_count(str(source)),
+                 lambda: cut_pdf_window(str(source), 0, 10, str(tmp_path / "w.pdf"))):
+        with pytest.raises(PdfSplitFailed) as failed:
+            call()
+        assert failed.value.status is ExtractionStatus.ERROR
 
 
 def test_split_needs_a_positive_window(tmp_path):
-    with pytest.raises(ValueError):
-        split_pdf_windows(str(tmp_path / "x.pdf"), 0, 10, str(tmp_path))
+    source = make_pdf(tmp_path / "s.pdf", ["a", "b"])
+    with pytest.raises(PdfSplitFailed) as failed:
+        cut_pdf_window(str(source), 0, 0, str(tmp_path / "w.pdf"))
+    assert failed.value.status is ExtractionStatus.ERROR
+    assert not (tmp_path / "w.pdf").exists()
 
 
 @pytest.mark.parametrize("text,encoding", [

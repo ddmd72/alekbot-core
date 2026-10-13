@@ -139,17 +139,21 @@ def test_the_bar_is_the_positive_rate_and_negatives_are_reported():
     table = score(_rows())
     bars = make_g3_bars(table, "g", "gpt-6-luna", 3, "now")
     assert bars["positive_rate"] == 0.5 and bars["negative_rate_reported"] == 0.5
-    assert judge(table, bars, "g", "gpt-6-luna") == "pass"
+    # review E minor: the bar is the rate's Wilson lower bound, and judge runs at the recorded --repeats
+    assert 0.0 <= bars["positive_bar"] < bars["positive_rate"]
+    assert judge(table, bars, "g", "gpt-6-luna", repeats=3) == "pass"
     worse = score([{**r, "searched": False} for r in _rows()])
-    assert judge(worse, bars, "g", "gpt-6-luna") == "regression"
+    assert judge(worse, bars, "g", "gpt-6-luna", repeats=3) == "regression"
     noisier_negatives = score([{**r, "searched": True} if r["set"] == "negative" else r for r in _rows()])
-    assert judge(noisier_negatives, bars, "g", "gpt-6-luna") == "pass"
+    assert judge(noisier_negatives, bars, "g", "gpt-6-luna", repeats=3) == "pass"
 
 
 def test_bars_from_another_gold_or_model_give_no_verdict():
     table = score(_rows())
     bars = make_g3_bars(table, "g", "gpt-6-luna", 3, "now")
     with pytest.raises(G3Error, match="gold_g3.json changed"):
-        judge(table, bars, "h", "gpt-6-luna")
+        judge(table, bars, "h", "gpt-6-luna", repeats=3)
     with pytest.raises(G3Error, match="recorded with Smart on gpt-6-luna"):
-        judge(table, bars, "g", "claude-sonnet-5-5")
+        judge(table, bars, "g", "claude-sonnet-5-5", repeats=3)
+    with pytest.raises(G3Error, match="recorded with --repeats 3"):   # review E minor: equal repeats
+        judge(table, bars, "g", "gpt-6-luna", repeats=1)
