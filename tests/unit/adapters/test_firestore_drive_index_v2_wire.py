@@ -116,10 +116,17 @@ class TestLeanProjections:
 
 class TestDisjunctions:
     async def test_one_key_list_of_at_most_thirty_and_kind_by_equality(self, repo, db):
-        keys = [f"e:k{i}" for i in range(40)] + ["e:k0"]
+        """Thirty distinct keys (a duplicate dropped) go out as one list, in order; more is refused before any query
+        (review M1, arbiter: never a silent cut)."""
+        for method in ("find_by_about_keys", "find_chunks_by_word_keys", "find_hints_by_keys"):
+            with pytest.raises(ValueError, match="30"):
+                await getattr(repo, method)("u", [f"e:k{i}" for i in range(40)], 5)
+        assert all(not col.executed for col in db.cols.values())   # refused before any query
+        keys = [f"e:k{i}" for i in range(30)] + ["e:k0"]
         await repo.find_by_about_keys("u", keys, 5, kind="pdf")
         await repo.find_chunks_by_word_keys("u", keys, 5)
         await repo.find_hints_by_keys("u", keys, 5)
+        assert db.cols[RECS].executed and db.cols[CHUNKS].executed and db.cols[HINTS].executed
         for ops in db.cols[RECS].executed + db.cols[CHUNKS].executed + db.cols[HINTS].executed:
             lists = [op for op in ops if op[0] == "where" and op[2] in ("array_contains_any", "in")]
             assert len(lists) == 1 and lists[0][3] == [f"e:k{i}" for i in range(30)]

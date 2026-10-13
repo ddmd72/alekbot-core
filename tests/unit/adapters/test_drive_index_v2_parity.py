@@ -129,9 +129,16 @@ class TestFindByAboutKeys:
         got = await seeded.both("find_by_about_keys", "u", ["e:rome"], 10, date_from=D)
         assert [r.item_id for r in got] == ["b", "a"]
 
-    async def test_the_keys_are_cut_at_thirty(self, seeded):
-        keys = [f"w:filler{i}" for i in range(30)] + ["e:rome"]
-        assert await seeded.both("find_by_about_keys", "u", keys, 10) == []
+    async def test_thirty_keys_are_read_and_a_thirty_first_is_refused(self, seeded):
+        """Review M1 (arbiter): a list over 30 distinct keys is a ValueError on both adapters, never a silent cut; the
+        30th key still counts."""
+        expected = await seeded.both("find_by_about_keys", "u", ["e:rome"], 10)
+        assert expected
+        thirty = [f"w:filler{i}" for i in range(29)] + ["e:rome"]
+        assert await seeded.both("find_by_about_keys", "u", thirty, 10) == expected
+        for repo in (seeded.mem, seeded.fs):
+            with pytest.raises(ValueError, match="30"):
+                await repo.find_by_about_keys("u", [f"w:filler{i}" for i in range(30)] + ["e:rome"], 10)
 
     async def test_no_keys_no_records(self, seeded):
         assert await seeded.both("find_by_about_keys", "u", [], 10) == []
@@ -190,9 +197,16 @@ class TestWordKeys:
         got = await seeded.both("get_chunk_keys", "u", [("b", 1, 1), ("a", 1, 3), ("a", 9, 9), ("z", 1, 0)])
         assert got == {("b", 1, 1): ("w:rome", "w:ticket"), ("a", 1, 3): ("w:rome",)}
 
-    async def test_the_keys_are_cut_at_thirty(self, seeded):
-        keys = [f"w:filler{i}" for i in range(30)] + ["w:rome"]
-        assert await seeded.both("find_chunks_by_word_keys", "u", keys, 10) == []
+    async def test_thirty_keys_are_read_and_a_thirty_first_is_refused(self, seeded):
+        """Review M1 (arbiter): a list over 30 distinct keys is a ValueError on both adapters, never a silent cut; the
+        30th key still counts."""
+        expected = await seeded.both("find_chunks_by_word_keys", "u", ["w:rome"], 10)
+        assert expected
+        thirty = [f"w:filler{i}" for i in range(29)] + ["w:rome"]
+        assert await seeded.both("find_chunks_by_word_keys", "u", thirty, 10) == expected
+        for repo in (seeded.mem, seeded.fs):
+            with pytest.raises(ValueError, match="30"):
+                await repo.find_chunks_by_word_keys("u", [f"w:filler{i}" for i in range(30)] + ["w:rome"], 10)
 
 
 class TestHints:
