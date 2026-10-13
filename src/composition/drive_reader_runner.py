@@ -21,11 +21,12 @@ MODEL_IN_FLIGHT at a time and join in page order. Each window is cut by the pars
 memory and removed before the call, so at most MODEL_IN_FLIGHT window files exist on disk (a window can carry an image
 every page shares). A window answered at the output limit, or whose call timed out, is cut in half from the source
 and read once more; a half or a single page still at the limit adds no text and sets `truncated`, and one that times
-out again is a model outage. A window the provider refuses as too large (HTTP 413) is halved down to one page; a
-single page still too large is `too_large`. At `file_budget_s` the windows done so far are kept and the rest
-cancelled (`truncated`). An image (the provider's rendition) is one call. Outcomes: text; no_text (the reader found
-none); too_large / unsupported (the provider refused an input, terminal — 413 on a single page or an image, 400/422 on
-any window or image, R2 P-m5 — or an image the providers do not take); error (output stayed invalid, a refusal
+out again is a model outage. A window the provider refuses (HTTP 413, 400 or 422) is halved down to one page; a single
+page still refused is skipped and the rest of the file is read (`truncated`, `pages_refused`, R3-P1). At
+`file_budget_s` the windows done so far are kept and the rest cancelled (`truncated`). An image (the provider's
+rendition) is one call. Outcomes: text; no_text (the reader found none); too_large / unsupported (terminal, never
+retried: every page of the PDF refused, or the image refused — too_large when a refusal was 413; or an image the
+providers do not take); error (output stayed invalid, a refusal
 raised before any HTTP exchange, or the budget cut a window while no window found text — never `timeout`, which
 means a parser bomb); the parser's own status when it cannot count or cut the PDF (encrypted, timeout, memory, ...);
 budget_exhausted (no pages left this month).
@@ -88,6 +89,8 @@ class _WindowRun:
     cost: float = 0.0
     pages_sent: int = 0
     halves: int = 0
+    refused: int = 0             # single pages the provider refused, skipped (R3-P1)
+    refused_too_large: int = 0   # of them, refused as too large (413)
 
 
 @dataclass
@@ -131,7 +134,8 @@ class DriveReaderRunner(ContentExtractorPort):
             outcome = await self._read_pdf(agent, request)
         logger.info(f"[DriveReader] user={request.user_id[:8]} kind={request.kind} status={outcome.status.value} "
                     f"pages={outcome.pages_sent}/{outcome.pages_total} calls={outcome.model_calls} "
-                    f"cost=${outcome.model_cost:.4f} truncated={outcome.truncated} {outcome.detail}")
+                    f"cost=${outcome.model_cost:.4f} truncated={outcome.truncated} refused={outcome.pages_refused} "
+                    f"{outcome.detail}")
         return outcome
 
     # -- agent --------------------------------------------------------------------------------------------------
@@ -229,11 +233,19 @@ class DriveReaderRunner(ContentExtractorPort):
             logger.warning(f"[DriveReader] file budget {self._file_budget_s:.0f} s reached: {cut} of "
                            f"{len(run.windows)} windows not read")
         text = "\n\n".join(w.text for w in finished if w.text)
+        refused = run.total("refused")
+        if refused and refused >= covered:
+            # every page sent was refused even alone: the same bytes get the same answer, so the file is terminal
+            # (R3-P1) — too_large when any page was refused as too large, else unsupported
+            status = S.TOO_LARGE if run.total("refused_too_large") else S.UNSUPPORTED
+            return ExtractionOutcome(status=status, pages_total=pages_total, pages_sent=run.total("pages_sent"),
+                                     model_calls=run.total("calls"), model_cost=run.total("cost"),
+                                     pages_refused=refused, detail=f"every page refused ({refused})")
         return self._outcome(
             text, run.windows[0].brief, pages_total=pages_total, pages_sent=run.total("pages_sent"),
             truncated=pages_total > covered or bool(cut) or any(w.truncated for w in run.windows),
-            calls=run.total("calls"), cost=run.total("cost"), timed_out=bool(cut) and not text,
-            detail=f"windows={len(run.windows)} halves={run.total('halves')} cut={cut}")
+            calls=run.total("calls"), cost=run.total("cost"), timed_out=bool(cut) and not text, pages_refused=refused,
+            detail=f"windows={len(run.windows)} halves={run.total('halves')} cut={cut} refused={refused}")
 
     async def _window(self, agent: DriveDocumentReaderAgent, request: ExtractionRequest, index: int,
                       win: _WindowRun, semaphore: asyncio.Semaphore, work: str) -> None:
@@ -248,14 +260,19 @@ class DriveReaderRunner(ContentExtractorPort):
         """The text of pages [first_page, first_page + pages), in page order (§24.3):
         - output limit, or a timeout: halved once (`may_halve`); a half or a single page still at the limit adds no
           text and sets `truncated`; a half or a single page that times out again is a model outage;
-        - HTTP 413: halved, down to one page; a single page still too large fails the file (`too_large`).
+        - HTTP 413, 400 or 422: halved, down to one page; a single page still refused is skipped (`truncated`, counted
+          in `refused`), and the rest of the file is read (R3-P1).
         `brief`: this piece starts the document, so it asks for the brief (the first piece that answers sets it)."""
         try:
             reply = await self._call(agent, request, work, index, win, first_page, pages, first=brief)
-        except DriveInputTooLarge:
+        except (DriveInputTooLarge, DriveInputRefused) as exc:
             if pages <= 1:
-                raise
-            logger.warning(f"[DriveReader] window {index + 1} pages {first_page + 1}+{pages} too large (413); halved")
+                logger.warning(f"[DriveReader] window {index + 1} page {first_page + 1} refused ({exc}); skipped")
+                win.refused += 1
+                win.refused_too_large += isinstance(exc, DriveInputTooLarge)
+                win.truncated = True
+                return []
+            logger.warning(f"[DriveReader] window {index + 1} pages {first_page + 1}+{pages} refused ({exc}); halved")
             return await self._halves(agent, request, work, index, win, first_page, pages, brief=brief,
                                       may_halve=may_halve)
         except DriveModelTimedOut:
@@ -282,8 +299,9 @@ class DriveReaderRunner(ContentExtractorPort):
         win.halves += 2
         texts = await self._piece(agent, request, work, index, win, first_page, left, brief=brief,
                                   may_halve=may_halve)
-        texts += await self._piece(agent, request, work, index, win, first_page + left, pages - left, brief=False,
-                                   may_halve=may_halve)
+        # the right half asks for the brief when the left one did and got none (a skipped page, the output limit)
+        texts += await self._piece(agent, request, work, index, win, first_page + left, pages - left,
+                                   brief=brief and win.brief is None, may_halve=may_halve)
         return texts
 
     async def _cut(self, request: ExtractionRequest, work: str, first_page: int, pages: int) -> bytes:
@@ -316,18 +334,18 @@ class DriveReaderRunner(ContentExtractorPort):
 
     @staticmethod
     def _outcome(text: str, brief: Optional[DocumentBrief], *, pages_total: int, pages_sent: int, truncated: bool,
-                 calls: int, cost: float, timed_out: bool, detail: str) -> ExtractionOutcome:
+                 calls: int, cost: float, timed_out: bool, detail: str, pages_refused: int = 0) -> ExtractionOutcome:
         if text.strip():
             return ExtractionOutcome(status=S.TEXT, text=text, brief=brief, pages_total=pages_total,
                                      pages_sent=pages_sent, truncated=truncated,
                                      extracted_by=f"{READER}@{READER_VERSION}", detail=detail, model_calls=calls,
-                                     model_cost=cost)
+                                     model_cost=cost, pages_refused=pages_refused)
         # No text while the budget cut any window is not "the file has no text" (deterministic, §24.8) — the cut
         # windows were never read (R2 P-m4) — nor a parser bomb (`timeout`): a per-file transient, retried with
         # backoff (§8.2).
         return ExtractionOutcome(status=S.ERROR if timed_out else S.NO_TEXT, pages_total=pages_total,
                                  pages_sent=pages_sent, truncated=truncated, detail=detail, model_calls=calls,
-                                 model_cost=cost)
+                                 model_cost=cost, pages_refused=pages_refused)
 
 
 def _failed_status(exc: DriveModelCallFailed) -> ExtractionStatus:
