@@ -166,8 +166,8 @@ Full per-agent detail (mechanics, intents, tiers, gotchas) lives in
 | Alek gateway | zero-LLM | `ask_alek` (SYNC), `tell_alek` (ASYNC errand) — internal | Lelik's route to Router → Smart; question: links copy to chat; errand: full outcome to chat |
 | WebSearchLight | ECO (Gemini flash-lite) | `search_web_light` (internal, Lelik only) | one grounded lookup, ~2 s, spoken answer |
 | lelik_summarizer | ECO | none (not manifest-registered) | end-of-call transcript → plain-text summary; run by `CompanionExtractorRunner`, same slot `tutor_extractor` fills |
-| DriveDocumentReader | ECO (Claude Haiku 5.5, or GPT by `agent_providers`) | none (indexer only) | PDF window or image → verbatim text + brief; `ContentExtractorPort` via `DriveReaderRunner` |
-| DriveImageTriage | ECO (same switch) | none (indexer only) | thumbnail batch → text or photo + caption; `ImageTriagePort` via `DriveTriageRunner` |
+| DriveDocumentReader | ECO (OpenAI `gpt-6-luna`, or Claude by `agent_providers`; fallback Gemini `gemini-3.8-flash`) | none (indexer only) | PDF window or image → verbatim text + brief; `ContentExtractorPort` via `DriveReaderRunner` |
+| DriveImageTriage | ECO (same switch and fallback) | none (indexer only) | 800 px thumbnail batch → text or photo + caption; `ImageTriagePort` via `DriveTriageRunner` |
 
 **Long-running turns** — one absolute 25-min clock per chat turn (`domain/turn_clock.py`,
 `TurnClock` in a `ContextVar`; `use_turn_clock=True` only on Smart's top-level engine). At 90 s
@@ -606,10 +606,12 @@ PDFs go on to the document reader agent (`drive_reader`, 10-page windows
 cut on demand) when the parser finds no text, low density or garbage text, or fails (never after a parser
 timeout/memory kill; other kinds stay with the parser's outcome). The reader returns verbatim text and a brief whose `doc_date` becomes `effective_date` (D13;
 parsed documents keep the file date). Every image is triaged in thumbnail
-batches (`drive_triage`): text goes to the reader, a photograph gets a caption. Both agents run on Claude Haiku 5.5 or
-GPT by `agent_providers`, then the global `provider_preference` (D7), billed to the user, within monthly page and
+batches (`drive_triage`, 800 px): text goes to the reader, a photograph gets a caption. Both agents run on GPT-6 Luna
+by default (owner's live check 2026-10-13: Haiku 5.5 shifted a batch's captions), Claude by `agent_providers`, then
+the global `provider_preference` (D7 rev 3.17), and fail over to Gemini Flash (`gemini-3.8-flash`, via the strategy's
+`fallback_tier`), billed to the user at the model that ran, within monthly page and
 image budgets on the sync state (the ≈ $3/user/month figure is reader pages only; embeddings have no monthly cap, only
-the 25 000-card / 50 000-chunk size caps); a model outage defers only model work (`model_backoff_until`), except a
+the 25 000-card / 50 000-chunk size caps); a model outage (both providers down) defers only model work (`model_backoff_until`), except a
 reader 5xx/timeout/unexpected error, which is charged to the file (`model_outages`, `failed` at 3); an edited
 reader-read file is re-read at most once per 24 h; card headroom is decided before any content work; a refused
 single page is skipped (`truncated`), and only a refusal of every page or of an image is terminal. Audio and video
