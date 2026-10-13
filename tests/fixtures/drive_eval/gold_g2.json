@@ -23,6 +23,7 @@
   {"id": "g2-html-library", "case": "fact", "query": "reading room closing time", "lang": "en", "goal": "G2", "filters": {}, "expected_paths": ["Inbox/weekly_digest_2026-10-06.html"], "expected_substring": "20:00"},
   {"id": "g2-ocr-schet-faktura", "case": "amount", "query": "счёт-фактура 1847 итого к оплате", "lang": "ru", "goal": "G2", "filters": {}, "expected_paths": ["Finance/Счёт-фактура №1847.pdf"], "expected_substring": "18 460,00", "ocr": true},
   {"id": "g2-ocr-electricity", "case": "amount", "query": "скільки до сплати за електроенергію", "lang": "uk", "goal": "G2", "filters": {}, "expected_paths": ["Scans/Scan_0012.pdf"], "expected_substring": "1 205,28", "ocr": true},
+  {"id": "g2-date-written-out", "case": "date", "query": "03.06.2024", "lang": "en", "goal": "G2", "filters": {}, "expected_paths": ["Inbox/Super important agreement.pdf"], "expected_substring": "3 June 2024"},
   {"id": "g2-ocr-electricity-date", "case": "date", "query": "рахунок від 15.03.2026", "lang": "uk", "goal": "G2", "filters": {}, "expected_paths": ["Scans/Scan_0012.pdf"], "expected_substring": "15.03.2026", "ocr": true},
   {"id": "g2-ocr-hardware", "case": "amount", "query": "total de la ferretería por el taladro", "lang": "es", "goal": "G2", "filters": {}, "expected_paths": ["Scans/Scan_0013.pdf"], "expected_substring": "82,40", "ocr": true},
   {"id": "g2-ocr-cafe", "case": "amount", "query": "итого по чеку кафе Ласточка", "lang": "ru", "goal": "G2", "filters": {}, "expected_paths": ["Scans/IMG_4912.jpg"], "expected_substring": "1 030,00", "ocr": true},
