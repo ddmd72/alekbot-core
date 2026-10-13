@@ -55,7 +55,7 @@ from src.adapters.firestore_user_repo import FirestoreUserRepository
 from src.adapters.gemini_embedding_adapter import GeminiEmbeddingAdapter
 from src.adapters.microsoft import OneDriveAdapter
 from src.adapters.slack.webhook_adapter import SlackWebhookAdapter
-from src.adapters.subprocess_content_extractor import SubprocessContentExtractor
+from src.adapters.subprocess_content_extractor import PARSER_USER_ENV, SubprocessContentExtractor
 from src.composition.drive_indexing_setup import (
     build_drive_index_repository, build_drive_task_queue, build_place_lookup,
 )
@@ -97,7 +97,8 @@ def build_app() -> Quart:
     assembly_service, _ = build_prompt_assembly_service(db, env_config)
     billing_webhook = (os.environ.get("BILLING_SLACK_WEBHOOK_URL") or "").strip()
     extractors, triage = build_drive_model_extractors(
-        parser=SubprocessContentExtractor(),
+        # the image's unprivileged user (Dockerfile); a named user missing from the container fails the start (R3 F3-1)
+        parser=SubprocessContentExtractor(sandbox_user=os.environ.get(PARSER_USER_ENV)),
         users=users,
         account_repo=account_repo,
         assembly_service=assembly_service,

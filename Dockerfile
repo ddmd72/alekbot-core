@@ -31,6 +31,21 @@ RUN cd docx_generator && npm install --omit=dev
 COPY pdf_generator/package.json pdf_generator/
 RUN cd pdf_generator && npm install --omit=dev
 
+# The drive indexer's parser child runs as this unprivileged user (R3 F3-1, USER_DRIVE_INDEXING_RFC §9): another
+# uid cannot read the indexer's /proc/<pid>/environ (its API keys) or rewrite the app source it loads. Only the
+# indexer reads DRIVE_PARSER_USER (indexer_main.py); a named user missing from the image fails its start. No USER
+# directive: the services stay root, which switching the child to this user needs.
+ENV DRIVE_PARSER_USER=driveparser
+RUN useradd --system --user-group --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin driveparser
+
 COPY . .
+
+# Nothing the indexer loads may be writable by the parser user: fail the build on a world-writable file or directory
+# under /app (node_modules aside: never loaded by the indexer) or in site-packages.
+RUN if find /app /usr/local/lib/python3.11/site-packages -path '*/node_modules' -prune -o \
+        -perm -o+w ! -type l -print | grep -q .; then \
+      echo "world-writable files under /app or site-packages: the drive parser user could rewrite them" >&2; \
+      exit 1; \
+    fi
 
 CMD ["python", "main.py"]
