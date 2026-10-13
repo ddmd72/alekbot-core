@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import AbstractSet, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from ..domain.drive_index import DriveChunk, DriveIndexRecord, DriveSyncState, LeaseLost, Reason, RecordState
-from ..domain.drive_search import is_unread
+from ..domain.drive_search import is_not_read_yet, is_unread
 from ..ports.drive_index_repository import DriveIndexRepository
 
 
@@ -176,9 +176,14 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
         return refused[:limit]
 
     async def count_unread(self, user_id: str, kinds: AbstractSet[str],
-                           triaged: AbstractSet[str] = frozenset()) -> int:
-        admitted = frozenset(kinds)
-        return sum(1 for r in self._user(user_id) if is_unread(r, admitted, frozenset(triaged)))
+                           triaged: AbstractSet[str] = frozenset(), *, pending: Optional[bool] = None) -> int:
+        admitted, images = frozenset(kinds), frozenset(triaged)
+        if pending:
+            return sum(1 for r in self._user(user_id) if is_not_read_yet(r, admitted, images))
+        if pending is False:
+            return sum(1 for r in self._user(user_id)
+                       if is_unread(r, admitted, images) and r.state is not RecordState.PENDING)
+        return sum(1 for r in self._user(user_id) if is_unread(r, admitted, images))
 
     async def count_by_state(self, user_id: str) -> Dict[str, int]:
         counts: Dict[str, int] = {}

@@ -30,7 +30,9 @@ from ..domain.drive_content_search import (
     term_file_probes, term_selective, window_indexes,
 )
 from ..domain.drive_content_terms import clip_query, query_terms
-from ..domain.drive_index import DriveChunk, DriveIndexRecord, DriveSyncState, EpochPhase, Priority, RecordState, Scope
+from ..domain.drive_index import (
+    POLICY_VERSION, DriveChunk, DriveIndexRecord, DriveSyncState, EpochPhase, Priority, RecordState, Scope,
+)
 from ..domain.drive_index_params import (
     CARD_FETCH, CHUNK_FETCH, CONTENT_TERM_FETCH, CONTENT_TERM_QUERIES, FETCH_MAX, FOLDER_INMEM_CARDS,
     FOLDER_INMEM_CHUNKS, K, MAX_CARD_RECORDS_PER_USER, NAME_FETCH, NAME_KEY_QUERIES, QUERY_TERM_CHARS, RRF_K,
@@ -40,7 +42,7 @@ from ..domain.drive_index_planner import usage_now
 from ..domain.drive_indexing_status import DriveIndexingStatus
 from ..domain.drive_name_keys import covers_query, name_match, query_name_keys, query_token_groups
 from ..domain.drive_search import (
-    MAX_CHAIN_DEPTH, STATUS_AMBIGUOUS_FOLDER, STATUS_FOLDER_NOT_FOUND, STATUS_OK, UNREAD_COUNTER,
+    MAX_CHAIN_DEPTH, NOT_READ_YET_COUNTER, STATUS_AMBIGUOUS_FOLDER, STATUS_FOLDER_NOT_FOUND, STATUS_OK, UNREAD_COUNTER,
     DriveSearchCard, DriveSearchEnvelope, DriveSearchRequest, DriveSearchResult, content_admitted, cosine_distance,
     cover_first, hides_descendants, in_date_range, kinds_for, make_card, normalize_path, path_match, rank_names,
     record_visible, resolve_chain, search_gate,
@@ -787,10 +789,14 @@ class DriveSearchService:
 
     async def _envelope(self, user_id: str, state: DriveSyncState, reconnect_needed: bool,
                         use_cards: bool) -> DriveSearchEnvelope:
+        unread = int(state.counters.get(UNREAD_COUNTER, 0))
+        waiting = int(state.counters.get(NOT_READ_YET_COUNTER, 0))
         return DriveSearchEnvelope(
             building=await self._building(user_id, state), reconnect_needed=reconnect_needed,
             refreshing=not use_cards, content_search=content_admitted(),
-            index_as_of=state.observed_as_of, unread=int(state.counters.get(UNREAD_COUNTER, 0)),
+            index_as_of=state.observed_as_of, unread=max(0, unread - waiting), not_read_yet=waiting,
+            # the flip's upgrade pass re-plans records it has not reached yet: reading whatever the counters say (F4-1)
+            reading=int(state.applied_versions.get("policy", POLICY_VERSION)) != POLICY_VERSION,
             index_full=int(state.counters.get("carded", 0)) >= MAX_CARD_RECORDS_PER_USER,
         )
 
