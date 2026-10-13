@@ -16,6 +16,12 @@ _EXPECTED = {
     "get_chunks_with_vectors",   # folder-scoped chunk ranking in memory (§10.1 Folder; arbiter-accepted delta)
     "readable_chunk_total", "chunks_page", "delete_user_chunks",
     "chunk_capped", "count_unread",   # chunk-cap release (§5.4) and `unread` (§10.2): CORE-DELTA 2, arbiter-accepted
+    # Search v2 (§25.13.1): abstract from Part 0, stubbed in both adapters until P2
+    "find_by_about_keys", "find_expiring", "find_chunks_by_word_keys", "get_chunk_keys", "find_hints_by_keys",
+    "get_hint_keys", "find_nearest_hints", "get_hints", "get_hints_with_vectors", "write_hints",
+    "delete_hints_except", "delete_user_hints", "hints_page", "enrich_queue", "enrich_wakeups", "count_by_job_state",
+    "keys_pending_page", "get_records_lean", "get_model_usage", "add_model_usage", "get_initial_build",
+    "spend_initial_build", "close_initial_build",
 }
 
 
