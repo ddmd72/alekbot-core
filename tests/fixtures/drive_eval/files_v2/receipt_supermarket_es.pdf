@@ -1,0 +1,42 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>
+endobj
+4 0 obj
+<< /Length 442 >>
+stream
+BT /F1 11 Tf 15 TL 56 790 Td
+(SUPERMERCADO EJEMPLO S.A.) Tj
+T* (Ticket de compra n.º 4471-0214) Tj
+T* (14/02/2026  18:32   Caja 3) Tj
+T* (Leche entera 1 L        2 x 0,99     1,98) Tj
+T* (Pan integral                         2,40) Tj
+T* (Manzanas 1 kg                        2,15) Tj
+T* (TOTAL                                6,53 EUR) Tj
+T* (Pagado con tarjeta  **** 0000) Tj
+T* (Gracias por su compra. Conserve el ticket para cambios.) Tj
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000241 00000 n 
+0000000734 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+831
+%%EOF

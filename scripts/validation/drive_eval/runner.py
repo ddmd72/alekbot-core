@@ -30,9 +30,11 @@ from src.domain.drive_search import DriveSearchRequest, request_from_fields, req
 from src.domain.user import UserBotConfig, UserProfile
 from src.domain.user_drive import parse_drive_ref
 from src.ports.content_extractor_port import ContentExtractorPort
+from src.ports.document_profiler_port import DocumentProfilerPort
 from src.ports.drive_index_repository import DriveIndexRepository
 from src.ports.embedding_service import EmbeddingService
 from src.ports.image_triage_port import ImageTriagePort
+from src.ports.passage_hint_port import PassageHintPort
 from src.services.drive_indexing_service import DriveIndexingService
 from src.services.drive_search_service import DriveSearchService
 
@@ -191,17 +193,24 @@ async def index_fixture(drive: FixtureDrive, repo: DriveIndexRepository, embeddi
                         monotonic: Callable[[], float] = time.monotonic,
                         extractors: Optional[Mapping[str, ContentExtractorPort]] = None,
                         triage: Optional[ImageTriagePort] = None,
-                        user_id: str = EVAL_USER, users: Optional[Any] = None) -> IndexOutcome:
+                        user_id: str = EVAL_USER, users: Optional[Any] = None,
+                        profiler: Optional[DocumentProfilerPort] = None,
+                        passages: Optional[PassageHintPort] = None) -> IndexOutcome:
     """Tick until no continuation is pending and no record waits for a later attempt, as the drive queue and the
     10-minute fan-out would (a waiting record moves the clock to its due_at). `extractors` and `triage` are the content
     ports the indexer service is built with (parser and reader, §24.2); the CLI passes the real ones. `user_id` and
-    `users` let the live check index under its synthetic user."""
+    `users` let the live check index under its synthetic user. `profiler` and `passages` are Search v2's enrichment
+    ports (§25.4; the v2 eval passes the snapshot's replays)."""
     queue = _RecordingQueue()
     content: Dict[str, Any] = {}
     if extractors is not None:
         content["extractors"] = extractors
     if triage is not None:
         content["triage"] = triage
+    if profiler is not None:
+        content["profiler"] = profiler
+    if passages is not None:
+        content["passages"] = passages
     service = DriveIndexingService(drive, repo, embeddings, queue, users or _EnabledUsers(),
                                    place_of, embedding_space, clock=clock, monotonic=monotonic, **content)
     statuses: Counter[str] = Counter()

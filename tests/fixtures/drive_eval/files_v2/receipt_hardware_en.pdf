@@ -1,0 +1,41 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>
+endobj
+4 0 obj
+<< /Length 383 >>
+stream
+BT /F1 11 Tf 15 TL 56 790 Td
+(EXAMPLE HARDWARE CO.) Tj
+T* (Sales receipt #HW-55812) Tj
+T* (2026-05-03  11:05) Tj
+T* (Paint roller                        7.90) Tj
+T* (Wall filler 500 g                   5.40) Tj
+T* (Masking tape x3                     6.00) Tj
+T* (Total paid                         19.30 EUR) Tj
+T* (Card payment. Keep this receipt for returns within 30 days.) Tj
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000241 00000 n 
+0000000675 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+772
+%%EOF
