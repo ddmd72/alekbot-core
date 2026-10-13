@@ -131,6 +131,9 @@ class TestThrottledTicks:
             async def count_by_state(self, user_id):
                 return {"carded": 1}
 
+            async def oldest_due_at(self, user_id, priority):
+                return None
+
         class _Scripted:
             def __init__(self, drive, repo, embeddings, queue, *args, **kwargs):
                 self.repo, self.queue, self.calls = repo, queue, 0
