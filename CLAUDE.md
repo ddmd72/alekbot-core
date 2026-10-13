@@ -591,15 +591,21 @@ retried only if no send was attempted) and nudges after each Step 1 mutation. Ca
 (photo date, camera, offline `place_name`), plus the brief or caption below; OS/lock artefacts get no card;
 dot-folders, `.git`/`pyvenv.cfg` folders, `node_modules`/`__pycache__`/`site-packages` and dense trees collapse to one
 card. **Content (Slice 2+4, §24; built, not live until deploy):** the §5.1 document kinds are read on the indexer
-through `ContentExtractorPort`: the child-process parser first (`SubprocessContentExtractor`, rlimits — resource
-isolation, not code-execution containment); PDFs go on to the document reader agent (`drive_reader`, 10-page windows
+through `ContentExtractorPort`: the child-process parser first (`SubprocessContentExtractor`, rlimits, run as the
+image's unprivileged `driveparser` user — it cannot read the indexer's keys or rewrite its code, but can still reach
+the metadata server and the network: owner-accepted residual, `decisions/drive_parser_sandbox_resource_isolation.md`);
+PDFs go on to the document reader agent (`drive_reader`, 10-page windows
 cut on demand) when the parser finds no text, low density or garbage text, or fails (never after a parser
 timeout/memory kill; other kinds stay with the parser's outcome). The reader returns verbatim text and a brief whose `doc_date` becomes `effective_date` (D13;
 parsed documents keep the file date). Every image is triaged in thumbnail
 batches (`drive_triage`): text goes to the reader, a photograph gets a caption. Both agents run on Claude Haiku 5.5 or
-GPT by `agent_providers` (D7), billed to the user, within monthly page and image budgets on the sync state; a model
-outage defers only model work (`model_backoff_until`); a refused single page is skipped (`truncated`), and only a refusal of every page or of an image is terminal. Audio and video
-stay metadata-only. Text passes a machine-text gate (repetition AND low variety, so statements pass), then is chunked
+GPT by `agent_providers`, then the global `provider_preference` (D7), billed to the user, within monthly page and
+image budgets on the sync state (the ≈ $3/user/month figure is reader pages only; embeddings have no monthly cap, only
+the 25 000-card / 50 000-chunk size caps); a model outage defers only model work (`model_backoff_until`), except a
+reader 5xx/timeout/unexpected error, which is charged to the file (`model_outages`, `failed` at 3); an edited
+reader-read file is re-read at most once per 24 h; card headroom is decided before any content work; a refused
+single page is skipped (`truncated`), and only a refusal of every page or of an image is terminal. Audio and video
+stay metadata-only. No rollback to the Slice 1 revision (forward levers: `docs/07_deployment/README.md`). Text passes a machine-text gate (repetition AND low variety, so statements pass), then is chunked
 into `{prefix}drive_index_chunks` (generation-fenced, `content_terms` for amounts, ids, dates and digit groups). `search_files_in_drive`
 (SYNC) → `DriveSearchService`: card kNN, a per-key name stream (accent, Ukrainian and Russian transliteration
 variants), chunk kNN (one window per file, `index ± 1`, all windows within 12 000 chars) and the content exact-token
