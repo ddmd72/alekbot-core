@@ -80,7 +80,9 @@ MODEL_PAGES_PER_CALL = 10                   # far below the 100k-token price ste
 MODEL_IN_FLIGHT = 4
 TRIAGE_BATCH = 16
 TRIAGE_IMAGES_PER_MONTH = 20_000
-TRIAGE_THUMBNAIL_SIZE = "medium"            # Graph 176 px; "large" (800 px) is the live-check alternative
+TRIAGE_THUMBNAIL_SIZE = "large"             # Graph 800 px, chosen after the live check (2026-10-13): captions more
+                                            # precise than at 176 px ("medium"). TRIAGE_VERSION is not bumped: images
+                                            # already triaged keep their verdict until the owner rebuilds the index
 READER_RENDITION_SIZE = "c2048x2048"        # Graph custom size for the reader's image input (S0g)
 MODEL_BACKOFF_BASE_S = 60                   # model outage backoff, doubled per consecutive outage (§24.8)
 MODEL_BACKOFF_CAP_S = 3600
