@@ -60,11 +60,8 @@ MAX_SHEET_ROWS = 5_000
 CARD_LEAD_CHARS = 2_000
 CHUNK_FETCH = 300
 FOLDER_INMEM_CHUNKS = 2_000
-WINDOW_CHARS_TOTAL = 12_000                 # all content windows of one result set (≈ 3-4k tokens): best chunks
-                                            # first, neighbours in rank order while it lasts (§10.2)
 QUERY_TERM_CHARS = 1000                     # the search extracts query terms from at most this many characters of
                                             # drive_query, cut at a word boundary (no length cap upstream; arbiter R2 S-m1)
-CONTENT_TERM_QUERIES = 8                    # one array-contains query per query term, at most this many
 MODEL_EXTRACT_DENSITY = 200                 # chars per page below which a PDF is routed to the reader (§9)
 MODEL_EXTRACT_GARBAGE = 0.05                # share of unreadable characters above which it is routed
 MODEL_EXTRACT_MAX_PAGES = 200
@@ -83,8 +80,7 @@ MODEL_REREAD_COOLDOWN = timedelta(hours=24)  # a file the reader read is not rea
 
 # -- Search v2 (§25.12; defined by the frozen core, read from P1-P7 on) --------------------------------------------
 # Two names clash with a v1 value still in use: the v2 value carries a _V2 suffix until its part replaces the v1 one
-# (WINDOW_CHARS_TOTAL: P6 render; TRIAGE_BATCH was replaced by P3). Retired v1 names (§25.12) stay until their readers
-# go.
+# (TRIAGE_BATCH was replaced by P3). Retired v1 names (§25.12) stay until their readers go.
 PROFILE_MIN_CHARS = 200                     # under it a note gets a template profile and no chunk/hint score (§25.3)
 PROFILE_REFRESH_COOLDOWN = timedelta(hours=24)
 PASSAGE_REFRESH_COOLDOWN = timedelta(hours=24)
@@ -134,7 +130,7 @@ CARD_RENDER_MAX = 700
 RESULT_CHARS_MAX = 16_000
 WINDOW_PAD = 300
 WINDOW_MAX = 900
-WINDOW_CHARS_TOTAL_V2 = 5_000               # replaces WINDOW_CHARS_TOTAL (§25.5.6)
+WINDOW_CHARS_TOTAL_V2 = 5_000               # the v1 12 000 is gone (§25.5.6)
 GROUP_LINES = 6
 GROUP_READ_MAX = 1_000
 # model output caps the schemas, verification, grounding and the keyer share (§25.2.6, §25.4.1-§25.4.3; review M6)
