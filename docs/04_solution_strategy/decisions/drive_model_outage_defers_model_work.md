@@ -7,6 +7,15 @@
 `src/infrastructure/drive_model_call.py`, `model_outage` / `model_available` in `src/domain/drive_index_planner.py`,
 `_Models` in `src/services/drive_indexing_service.py`.
 
+**Fallback first (amended 2026-10-13, RFC D7 rev 3.17).** Both agents now fail over to Gemini Flash
+(`gemini-3.8-flash`): a 429, 5xx, timeout, network failure or open breaker on the primary is re-served there by
+`BaseAgent._call_llm`, and the call succeeds. Everything below applies when the fallback fails too (or there is
+none: no `GEMINI_API_KEY`, a Gemini primary, an open Gemini breaker): `_call_llm` raises
+`BothProvidersUnavailableError`, and `classify_model_error` reads its **primary** cause, so a primary 5xx followed
+by a Gemini failure is still charged to the file and a primary 429 still is not. An account-level 4xx on the primary
+(`LLMAccountError`, a key, a permission, a model id) is not a failover trigger: it is not re-served and stays an
+uncharged outage, as before.
+
 **Decision:** When the reader or the triage model cannot be used now — 429, 5xx, a timeout of a call that cannot be
 halved, a network error, an open breaker, an account-level 4xx (key, permission, model id), a provider with no key on
 the indexer, a missing or incomplete prompt in Firestore, or anything unexpected — the agent raises
@@ -62,7 +71,10 @@ beyond the error-log policy. A real provider outage of 5xx responses long enough
 fails that file until it is edited or the reader's version changes (RFC §24.14). Anthropic's "credit balance too
 low", an HTTP 400, was once read as a refusal of the input and demoted every file and image tried during a credit
 lapse; it is now an uncharged outage (status alone cannot tell it apart, so the adapter classifies it by the error
-body, RFC §24.14). A Gemini or Grok billing error is not recognised that way — the drive's model agents use neither.
+body, RFC §24.14). A Gemini billing error is not recognised that way, and since rev 3.17 Gemini serves the
+fallback: a 4xx the fallback raises is not wrapped by `_call_llm` and is sorted as if the primary had raised it —
+a Gemini 400 on a failover call is a refusal of that input (a page skipped, an image `unsupported`), not an outage.
+Wire tests pin what the adapter sends so that a systematic Gemini 400 does not arise (RFC §24.14).
 
-**Trigger to revisit:** a provider whose outages are per model rather than per account, or a second model provider
-used as a live fallback.
+**Trigger to revisit:** a provider whose outages are per model rather than per account; a Gemini 4xx observed on a
+failover call (then wrap the fallback's non-failover errors for the drive agents as an outage).

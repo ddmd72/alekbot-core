@@ -1,9 +1,10 @@
 # RFC: User Drive Step 2 — Indexing and Search
 
-**Status:** Draft, revision 3.16 (2026-10-13) — **Slice 1 live** (PR #58, deployed and accepted 2026-10-12); where
+**Status:** Draft, revision 3.17 (2026-10-13) — **Slice 1 live** (PR #58, deployed and accepted 2026-10-12); where
 the build differs from this text, §23 says how and why. **Slices 2 and 4 are one slice** (D6), designed in §24 and
 built (not live until its deploy); §24 overrides the text above where they disagree and was brought in line with the
-code in rev 3.15 and again, after the final cross-cutting review, in rev 3.16. Slice 3 not built. Phase 0 hardening merged (PR #57, §16).
+code in rev 3.15 and again, after the final cross-cutting review, in rev 3.16; rev 3.17 records the owner's model
+switch after the live check. Slice 3 not built. Phase 0 hardening merged (PR #57, §16).
 **Builds on:** [USER_DRIVE_RFC.md](USER_DRIVE_RFC.md) (Step 1, live: CRUD over the user's OneDrive App Folder).
 Replaces that RFC's §5 "Step 2" placeholder.
 **Precedents reused:** email index ([GMAIL_EMAIL_INDEXING_RFC.md](GMAIL_EMAIL_INDEXING_RFC.md), `IndexedEmail`),
@@ -88,6 +89,12 @@ To Do mirror (`TaskSearchIndex`), `src/domain/rrf.py`, `TaskQueue.enqueue_worker
   when the matching chunk was trimmed, `matched` and `nearest passage` shown, the card's date labelled by source,
   written-out dates as exact terms (`EXTRACTION_VERSION` 3), the off result says not to search again, G3 bars the
   negatives with hard checks.
+- Rev 3.17 (2026-10-13): owner decisions after the live model check on the owner's photos (D7 amended). Both agents
+  default to OpenAI GPT-6 Luna (ECO): Claude Haiku 5.5 shifted the captions of a 16-image triage batch by one image
+  in 1 call of 5, Luna in none of 8, at a third of the cost. Triage sends the 800 px thumbnail (`large`), more
+  precise than 176 px; `TRIAGE_VERSION` is not bumped (the owner rebuilds deliberately). Both agents fail over to
+  Gemini Flash (`gemini-3.8-flash`, resolved at BALANCED through the strategy's new `fallback_tier`), which needed
+  inline file bytes in the Gemini adapter; an outage is now both providers failing (§24.2, §24.8, §24.9, §24.14).
 
 **Owner decisions (2026-10-11)**
 - The App Folder is meant to become a real document store. It is empty only because the feature is being built.
@@ -1406,7 +1413,11 @@ reports are in `scripts/memory/onedrive_s0_*.json`, which is gitignored because 
   Building the parser path alone would mean reshaping it when the model path arrives.
 - **D7 Extractor model: Claude Haiku 5.5 or a GPT model, no spike.** The provider is a configuration switch, and the
   final pick is checked live on the owner's real files before deploy (§24.3). §9's "Gemini, decided" had no basis and
-  is withdrawn.
+  is withdrawn. **Amended 2026-10-13 (rev 3.17), after the live check on the owner's photos:** the default is GPT-6
+  Luna for both agents (Haiku 5.5 shifted a triage batch's captions by one image in 1 call of 5; Luna in none of 8,
+  at a third of the cost), and "no fallback" is replaced by a **Gemini Flash fallback** (`gemini-3.8-flash`) for both:
+  a primary outage re-serves the call there instead of deferring all model work. Gemini as the *fallback* is a
+  different claim from §9's withdrawn "Gemini as the extractor": it serves only when the checked primary cannot.
 - **D8 The extractor call also returns a brief**, in structured fields next to the verbatim text: the document type,
   one line on what it is, the document's own date, the parties and the amount when present. The brief goes into the
   card, so a scan with a neutral name is found by subject and Smart can describe it without opening it. The verbatim
@@ -1434,7 +1445,7 @@ verified core, then reviewed adversarially before any code lands on a feature br
 1. Spikes before code that depends on them: S1 (child-process limits on the indexer), S0g (Graph renditions for model
    input, §24.5); S3 (`find_nearest` cost on chunks) before the slice ships.
 2. Live checks before deploy, with the owner: the model choice (Haiku 5.5 or a GPT model) and the thumbnail size
-   (176 or 800 px) on the owner's real files; the real repository under a `zz-synthetic-…` user, then purged.
+   (176 or 800 px) on the owner's real files — done 2026-10-13: GPT-6 Luna, 800 px, Gemini Flash fallback (D7); the real repository under a `zz-synthetic-…` user, then purged.
 3. Owner-run steps: the agents' prompts (tokens, blueprints, profiles) and the Smart protocol token (`--apply` is
    human-only), each backed up first.
 4. Deferred by decision, each with its trigger: `docs/04_solution_strategy/decisions/drive_*.md`.
@@ -1499,7 +1510,7 @@ of the decision. Code and tests cite these rows as `RFC Δn`.
 
 ---
 
-## 24. Slice 2+4 design (rev 3.16)
+## 24. Slice 2+4 design (rev 3.17)
 
 One slice (D6): content extraction with the parser first and the model second, chunks, the content streams, image
 triage with captions, the brief, the protocol lines, the full eval. Where this section and the text above disagree,
@@ -1537,17 +1548,26 @@ this section wins; the text above was corrected where it was plainly false. Slic
   inside its billing scope. The reader's runner (`DriveReaderRunner`) implements `ContentExtractorPort`; the triage
   runner (`DriveTriageRunner`) implements `ImageTriagePort`. The indexing service sees only ports.
   `src/composition/drive_model_setup.py` builds both for `indexer_main.py` (and the eval) on one context builder.
-- **Provider is configuration (D7).** `STRATEGIES` entries for both types allow `claude` and `openai`, default
-  `claude`, no fallback; `_DEFAULT_AGENT_TIERS` sets both to ECO (Claude ECO = `claude-haiku-5-5`, OpenAI ECO =
-  `gpt-6-luna`). A user's `agent_providers` switches one or both. The indexer builds a `ProviderRegistry` with the
-  Claude and OpenAI adapters, each only when its key is set (their API keys are indexer secrets, never Cloud Build
-  substitutions); a user whose configuration names a provider without a key gets a model outage. The provider is
+- **Provider is configuration (D7, rev 3.17).** `STRATEGIES` entries for both types allow `claude`, `openai` and
+  `gemini`, default `openai`, fallback `gemini` at `fallback_tier: BALANCED`; `_DEFAULT_AGENT_TIERS` sets both to ECO
+  (OpenAI ECO = `gpt-6-luna`, Claude ECO = `claude-haiku-5-5`). A user's `agent_providers` switches one or both. The
+  indexer builds a `ProviderRegistry` with the Claude, OpenAI and Gemini adapters, each only when its key is set
+  (their API keys are indexer secrets, never Cloud Build substitutions; `GEMINI_API_KEY` is already there for
+  embeddings); a user whose configuration names a primary without a key gets a model outage. The provider is
   resolved like any agent's (`AgentContextBuilder.resolve_provider_name`): the user's `agent_providers[agent type]`,
-  then the user's global `provider_preference` when it is `claude` or `openai`, then the default — so a user whose
-  global preference is OpenAI reads with GPT without naming the drive agents. Gemini is not offered: its adapter
-  takes no inline file bytes. Calls run with `allow_provider_storage=False`: OpenAI receives `store=false`, so the
+  then the user's global `provider_preference` when it is an allowed provider, then the default. `gemini` is allowed
+  because it is the fallback; as a primary it resolves at ECO to `gemini-3.5-flash-lite`, never checked on these
+  inputs, so a global `provider_preference: "gemini"` would move the drive agents there (no user has one today).
+  **Fallback:** `BaseAgent._call_llm` re-serves a call that fails with a failover trigger (429, 5xx, timeout,
+  network, open breaker) on Gemini; `fallback_tier` makes `AgentContextBuilder._build` resolve that model at
+  BALANCED (`gemini-3.8-flash`, Gemini Flash, the owner's pick) instead of the agents' ECO (`gemini-3.5-flash-lite`);
+  a strategy without `fallback_tier` resolves its fallback at the primary's tier as before. The Gemini adapter sends
+  inline base64 file parts as `inline_data` bytes (it dropped them before, logging "Unsupported file_data format")
+  and the agents' schemas as `response_json_schema` (Gemini's JSON Schema subset takes `required`, `enum` and
+  nullable type arrays); Gemini caps an inline request at 20 MB. The failover is per call and `extracted_by` does not
+  record the model that read. Calls run with `allow_provider_storage=False`: OpenAI receives `store=false`, so the
   Responses API keeps no copy for retrieval or the dashboard. It is not a zero-retention guarantee — each provider's
-  own retention and abuse-monitoring policies still apply — and the Claude adapter has no such flag. Per-call limits (`DRIVE_READER` / `DRIVE_TRIAGE` in `agent_config.py`):
+  own retention and abuse-monitoring policies still apply — and the Claude and Gemini adapters have no such flag. Per-call limits (`DRIVE_READER` / `DRIVE_TRIAGE` in `agent_config.py`):
   reader 180 s and 16 000 output tokens, triage 120 s and 4 096, one parse retry, thinking `low` (a user's
   `agent_thinking` wins).
 - **OpenAI file input is fixed in this slice** (adapter wire tests, `docs/how_to/ADAPTER_WIRE_TESTING.md`): a PDF goes
@@ -1657,8 +1677,9 @@ this section wins; the text above was corrected where it was plainly false. Slic
   on first sight, class 3 after an upgrade). The tick gathers due images `TRIAGE_BATCH` per call; a partial last batch
   waits for the next page of the same class only while the pass progresses anyway, so N images cost ⌈N /
   `TRIAGE_BATCH`⌉ calls. Thumbnails come from `UserDrivePort.get_thumbnail(user_id, item_id, size) -> bytes | None`
-  (Graph, served as JPEG or PNG, S0f), at `TRIAGE_THUMBNAIL_SIZE` (`medium`, 176 px; `large`, 800 px, is the live
-  check's alternative). Each thumbnail goes with an opaque index and the camera prior (§5.3) as text.
+  (Graph, served as JPEG or PNG, S0f), at `TRIAGE_THUMBNAIL_SIZE` (`large`, 800 px, since rev 3.17: in the live
+  check its captions were more precise than at `medium`, 176 px; already-triaged images keep their verdict, since
+  `TRIAGE_VERSION` was not bumped). Each thumbnail goes with an opaque index and the camera prior (§5.3) as text.
 - Verdict `text` → the record's content is due for the reader, in the class the triage had. Verdict `photo` →
   `metadata_only / photograph` (new reason) with its caption. **No thumbnail** may be one the provider has not made yet:
   it is retried with backoff, and only at `MAX_ATTEMPTS` is it `metadata_only / photograph` without a caption. A batch
@@ -1751,6 +1772,13 @@ this section wins; the text above was corrected where it was plainly false. Slic
   `EMBED_FILE_BUDGET`; per tick `TICK_FILE_BUDGET` runs within the start budget and the deadline rule of §24.3.
 
 ### 24.8 Model failures
+**Fallback first (rev 3.17).** A failover trigger on the primary (429, 5xx, timeout, network, open breaker) is
+re-served on the Gemini Flash fallback by `BaseAgent._call_llm`; only when that fails too (or there is no fallback:
+no `GEMINI_API_KEY`, a Gemini primary, an open Gemini breaker) does the call raise `BothProvidersUnavailableError`,
+which the table below reads by the **primary's** cause — so what is charged to a file is unchanged. A 4xx on the
+primary (an account error, a key, a permission, a model id) is not failed over. A 4xx the fallback raises is not
+wrapped and is sorted as if the primary had raised it (§24.14).
+
 `src/infrastructure/drive_model_call.py` sorts every failed call by what it says about the input:
 
 | Outcome | Effect |
@@ -1770,7 +1798,9 @@ this section wins; the text above was corrected where it was plainly false. Slic
   from the user record on the indexer; the task payload stays `{user_id}`, Δ4); failed calls and parse retries are
   counted from the agent's ledger too.
 - Prices (checked at the provider 2026-10-13): Claude Haiku 5.5 $0.10 / $0.50 per million input / output tokens for
-  prompts up to 100k tokens, five times that above; GPT-6 Luna $0.10 / $0.50. A page costs about $0.0006, so the
+  prompts up to 100k tokens, five times that above; GPT-6 Luna $0.10 / $0.50. The fallback, Gemini 3.8 Flash, is
+  $1.50 / $7.50 in `billing.py` (promotional until 2026-12-31), 15× the primary's token price; a failover call is priced
+  at the model that ran (`TokenLedger.by_model`). A page costs about $0.0006, so the
   default page budget bounds **the reader's pages** at about $3 per user a month. That figure is the reader only.
   Every spending path and its bound:
   - **Reader:** `MODEL_EXTRACT_PAGES_PER_MONTH` (5 000 pages per user), `MODEL_EXTRACT_MAX_PAGES` per file; an edit
@@ -1912,8 +1942,15 @@ Values in `src/domain/drive_index_params.py` unless named otherwise.
   triage batches down to photographs without a caption, for good. The Claude adapter now recognises it by the error
   body's message (and `billing_error` by type), the OpenAI adapter a billing or quota `code` on a 4xx other than 429,
   as `LLMAccountError`; `classify_model_error` makes that an uncharged outage (§24.8): model work waits, files stay
-  `pending`. An exhausted OpenAI quota is a 429 and was already an outage. Not covered: Gemini and Grok billing
-  errors, which the drive's model agents do not use.
+  `pending`. An exhausted OpenAI quota is a 429 and was already an outage. Not covered: Gemini billing errors (the
+  Gemini adapter has no `LLMAccountError` recognition) and Grok's, which the drive's agents do not use.
+- **A 4xx from the Gemini fallback is read like the primary's own (rev 3.17).** `_call_llm` wraps only failover
+  triggers from the fallback; a Gemini 400/422 on a failover call is a refusal of that input (a page skipped, an
+  image `unsupported`), a 413 too large, and a Gemini billing 4xx is not recognised as an account error (above). So
+  a systematic Gemini 400 during a primary outage would demote what it touched. What keeps it from being
+  systematic is pinned by wire tests: inline file bytes and each agent's schema as `response_json_schema`
+  (`tests/unit/adapters/test_gemini_adapter_inline_bytes_wire.py`). No live Gemini call on the drive inputs has been
+  made; the live model check runs each provider alone.
 - **A real provider outage can fail a file.** A 5xx is charged to the file the reader was reading (some files always
   get one, §24.8), so a provider outage long enough to hit the same file three times fails it (`failed /
   extract_error`) until the file is edited or the reader's version changes. A 429, an account-level error or a

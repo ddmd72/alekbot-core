@@ -52,11 +52,16 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   `_parse_response()` (see inline comment).
 - DriveDocumentReader (`drive_reader`) and DriveImageTriage (`drive_triage`) — the drive index's two model calls
   (USER_DRIVE_INDEXING_RFC §24.2–§24.5, building block `docs/05_building_blocks/user_drive/README.md` §4).
-  - **Tier / provider:** both ECO, default Claude (`claude-haiku-5-5`); a user's `agent_providers` switches either to
-    OpenAI (`gpt-6-luna`), and so does the user's global `provider_preference` when the agent has no override;
-    no fallback provider (`STRATEGIES` in `agent_context_builder.py`, D7). Thinking `low` unless
-    the user's `agent_thinking` says otherwise; `allow_provider_storage=False` (OpenAI `store=false` only — not a
-    zero-retention guarantee; Claude has no such flag). Limits in `agent_config.py`
+  - **Tier / provider:** both ECO, default OpenAI (`gpt-6-luna`) since the owner's live check 2026-10-13 (Claude
+    Haiku 5.5 shifted a triage batch's captions by one image); a user's `agent_providers` switches either to Claude
+    (`claude-haiku-5-5`), and so does the user's global `provider_preference` when the agent has no override.
+    **Fallback: Gemini Flash** (`gemini-3.8-flash`) — `STRATEGIES` in `agent_context_builder.py` sets `fallback:
+    "gemini"` with `fallback_tier: BALANCED`, the only entries with that key: without it the fallback would resolve at
+    ECO, which on Gemini is flash-lite (D7 rev 3.17). `gemini` is therefore also in `allowed_providers`, so a global
+    `provider_preference: "gemini"` would make flash-lite the primary. A 4xx on the primary is not failed over; a 4xx
+    from Gemini on a failover call is sorted like the primary's own (`decisions/drive_model_outage_defers_model_work.md`).
+    Thinking `low` unless the user's `agent_thinking` says otherwise; `allow_provider_storage=False` (OpenAI
+    `store=false` only — not a zero-retention guarantee; Claude and Gemini have no such flag). Limits in `agent_config.py`
     (`DRIVE_READER`: 180 s, 16 000 tokens; `DRIVE_TRIAGE`: 120 s, 4 096 tokens; one parse retry).
   - **Where they run:** on the indexer service only (`indexer_main.py` → `composition/drive_model_setup.py`), never on
     the main service. No manifest descriptor (`can_handle` false), no tools, no history, no biography, no user prompt
@@ -67,9 +72,10 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     sandboxed parser) or one image rendition and returns verbatim text, plus on the first window a brief (`doc_type`,
     one-line `description`, `doc_date` → `effective_date` per D13, `parties`, `amount`) in structured output
     (`OUTPUT_FORMAT_DRIVE_READER`); a reply stopped at the output limit is reported, never parsed. Triage takes up to
-    `TRIAGE_BATCH` (16) thumbnails under opaque indexes with the camera prior as text and returns per image `text` or
+    `TRIAGE_BATCH` (16) 800 px thumbnails under opaque indexes with the camera prior as text and returns per image `text` or
     `photo` + a caption of at most ten words (`OUTPUT_FORMAT_DRIVE_TRIAGE`; missing indexes get one correction turn).
-  - **Failures** (`infrastructure/drive_model_call.py`): a 429/5xx/timeout/account error or a missing prompt raises
+  - **Failures** (`infrastructure/drive_model_call.py`): when the Gemini fallback fails too (or a non-failover error
+    hits), a 429/5xx/timeout/account error or a missing prompt raises
     `DriveModelUnavailable` (model work waits, nothing else does,
     `decisions/drive_model_outage_defers_model_work.md`), carrying what was spent before it and `charges_file`: a
     5xx, a timeout or an unexpected error may be the file's own, so a reader outage after a call for that file is

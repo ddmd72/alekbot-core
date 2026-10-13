@@ -457,7 +457,10 @@ forward changes, each a code change plus a deploy:
   `src/domain/drive_index_policy.py` and bump `POLICY_VERSION` (in `src/domain/drive_index.py`); the upgrade pass re-classifies every record as
   `kind_not_admitted` and collects the readable chunks;
 - stop model spend only: remove `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` from the indexer's secrets; every model call
-  is then a model outage (never charged to a file), and parsing, cards and search go on;
+  is then a model outage (never charged to a file), and parsing, cards and search go on. The Gemini Flash fallback
+  does not take over: a primary without a key fails the context build before any failover (`GEMINI_API_KEY` stays,
+  embeddings need it); to turn the fallback off, set `"fallback": None` in the two drive entries of
+  `AgentProviderStrategy.STRATEGIES`;
 - one user: turn their indexing off in the Cabinet; the purge removes chunks, records and sync state.
 
 **Rebuild one user's index.** `venv/bin/python scripts/infrastructure/drive_index_rebuild.py --user <USER_ID>` is a
