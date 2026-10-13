@@ -120,9 +120,10 @@ def cut_pdf_window(path: str, first_page: int, page_count: int, out_path: str) -
         if first_page < 0 or page_count < 1 or first_page >= total:
             raise PdfSplitFailed(ExtractionStatus.ERROR, f"pages {first_page}+{page_count} outside 0..{total}")
         last = min(first_page + page_count, total)
+        pages = reader.flattened_pages or []           # the walked tree: `reader.pages[i]` answers from /Count too
         writer = PdfWriter()
         for index in range(first_page, last):
-            writer.add_page(reader.pages[index])
+            writer.add_page(pages[index])
         with open(out_path, "wb") as fh:
             writer.write(fh)
         return last - first_page
