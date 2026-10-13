@@ -32,8 +32,8 @@ def _exempt(collection):
 def _required(ops):
     """Equality / array filters (any order) first, then the range field, then the orderings or the vector field.
     None for equality-only queries without ordering (single-field indexes serve them)."""
-    prefix = {(op[1], "CONTAINS" if op[2] == "array_contains" else "EQ")
-              for op in ops if op[0] == "where" and op[2] in ("==", "array_contains")}
+    prefix = {(op[1], "CONTAINS" if op[2].startswith("array_contains") else "EQ")
+              for op in ops if op[0] == "where" and op[2] in ("==", "array_contains", "array_contains_any")}
     ranged = [(op[1], "ASCENDING") for op in ops if op[0] == "where" and op[2] in (">", ">=", "<", "<=")]
     nearest = [op[1] for op in ops if op[0] == "find_nearest"]
     tail = ([(nearest[0]["vector_field"], "VECTOR")] if nearest
@@ -81,37 +81,52 @@ async def test_the_readable_sum_has_its_records_index(db, mock_env_config):
 
 
 def test_chunk_indexes_are_declared_for_the_live_collection_only():
-    assert len(_declared("development_drive_index_chunks")) == 5   # 3 composites + 2 vector entries
+    # 4 composites (+ Search v2's word_keys stream, §25.2.5) + 2 vector entries
+    assert len(_declared("development_drive_index_chunks")) == 6
     assert _declared("drive_index_chunks") == []
 
 
 def test_text_and_vector_are_exempt_from_single_field_indexes_on_the_live_collection_only():
-    assert _exempt("development_drive_index_chunks") == {"text", "vector"}
+    assert _exempt("development_drive_index_chunks") == {"text", "vector", "word_keys"}   # word_keys: §25.2.5
     assert not any("fields" not in idx and not idx["collectionGroup"].startswith("development_") for idx in _raw())
 
 
 async def test_no_chunk_query_relies_on_an_exempt_field(db, mock_env_config):
-    """Equality-only reads are served by single-field indexes, and composites never list an exempt field: an
-    exemption must not take away an index a query uses (the vector field is served by its vector index)."""
+    """An exemption must not take away an index a query uses. It removes only the automatic single-field indexes
+    (Firestore: "A field exempted from automatic indexing can still be indexed as part of a manual index"), so a query
+    that reads no composite never touches an exempt field, and a query on an exempt field is served by a declared
+    composite that lists it. The only exempt field in a composite is Search v2's `word_keys`, as CONTAINS (§25.2.5);
+    the vector field is served by its vector index."""
     repo = make_chunk_repo(db, mock_env_config)
     await repo.delete_chunks_except("u", "a", 1)
     await repo.delete_user_chunks("u", 5)
     await repo.find_chunks_by_term("u", "1250", 5)
     await repo.chunks_page("u", ("a", 1, 0), 5)
-    used = {op[1] for ops in executed(db, CHUNKS) for op in ops if op[0] in ("where", "order_by")}
+    await repo.find_chunks_by_word_keys("u", ["w:a"], 5)
+    await repo.find_chunks_by_word_keys("u", ["w:a"], 5, after_item_id="a")
     exempt = _exempt("development_drive_index_chunks")
-    assert used and not used & exempt
-    assert not any(path in exempt for idx in _declared("development_drive_index_chunks") for path, mode in idx
-                   if mode != "VECTOR")
+    declared = _declared("development_drive_index_chunks")
+    queries = executed(db, CHUNKS)
+    used = {op[1] for ops in queries for op in ops if op[0] in ("where", "order_by")}
+    assert used & exempt == {"word_keys"}
+    for ops in queries:
+        fields = {op[1] for op in ops if op[0] in ("where", "order_by")}
+        if _required(ops) is None:
+            assert not fields & exempt, ops
+        elif fields & exempt:
+            assert any(_covered(_required(ops), i) and (fields & exempt) <= {p for p, _ in i} for i in declared), ops
+    assert {(path, mode) for idx in declared for path, mode in idx
+            if path in exempt and mode != "VECTOR"} == {("word_keys", "CONTAINS")}
 
 
 def test_deploy_creates_the_chunk_composites_and_the_exemptions():
     chunk = [c for c in _deploy_commands() if "--collection-group=development_drive_index_chunks" in c]
     composites = [c for c in chunk if c[3] == "composite"]
     exemptions = [c for c in chunk if c[3] == "fields"]
-    assert len(composites) == 3
+    assert len(composites) == 4   # + Search v2's word_keys stream (§25.2.5)
     assert sum("--field-config=field-path=content_terms,array-config=contains" in c for c in composites) == 2
-    assert sorted(c[5] for c in exemptions) == ["text", "vector"]
+    assert sum("--field-config=field-path=word_keys,array-config=contains" in c for c in composites) == 1
+    assert sorted(c[5] for c in exemptions) == ["text", "vector", "word_keys"]
     assert all("--disable-indexes" in c for c in exemptions)
     records = [c for c in _deploy_commands() if "--collection-group=development_drive_index_records" in c]
     assert sum("--field-config=field-path=chunk_count,order=ascending" in c for c in records) == 1
