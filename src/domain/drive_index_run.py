@@ -154,10 +154,11 @@ def readme_choice(children: Sequence[DriveChange]) -> Optional[DriveChange]:
 
 
 def reader_pages(kind: str, parsed: Optional[ExtractionOutcome]) -> int:
-    """Pages the reader needs from this month's budget for the file (§24.7), known before it is called: an image is
-    one page; a PDF is the page count the parser's outcome carries, at most MODEL_EXTRACT_MAX_PAGES, and that maximum
+    """Pages the reader needs from the dollars left for the file (§24.7, §25.4.5), known before it is called: an image
+    is one page; a PDF is the page count the parser's outcome carries, at most MODEL_EXTRACT_MAX_PAGES, and that maximum
     when the parser could not count. A file waits for the next month rather than being cut by what is left of this
-    one; only a file that needs more than the whole monthly budget is cut to it."""
+    one; only a file that needs more than the whole monthly reader cap pays (MODEL_EXTRACT_PAGES_PER_MONTH, derived
+    from READER_USD_PER_MONTH) is cut to it, so no file waits for a month that could never pay for it."""
     if kind != "pdf":
         return 1
     pages = parsed.pages_total if parsed is not None and parsed.pages_total > 0 else MODEL_EXTRACT_MAX_PAGES

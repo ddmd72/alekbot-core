@@ -40,7 +40,7 @@ from .drive_content_terms import (
 from .drive_enrichment import DriveProfile, KeyValue, PhotoObject, ProfileEntity
 from .drive_index import TriageVerdict
 from .drive_index_params import (
-    ABOUT_KEYS_PER_RECORD, CONCEPT_KEYS_MAX, ENTITY_FORMS_MAX, MAX_CONCEPTS, NAME_QUERY_KEYS_MAX,
+    ABOUT_KEYS_PER_RECORD, CONCEPT_KEYS_MAX, ENTITY_FORMS_MAX, MAX_CONCEPTS, NAME_MIN_TRIGRAMS, NAME_QUERY_KEYS_MAX,
     PHOTO_OBJECT_FORMS_MAX, PHOTO_OBJECTS_MAX, PHRASE_RUN_MAX, PROFILE_DATES_MAX, PROFILE_ENTITIES_MAX,
     PROFILE_KEY_VALUES_MAX, PROFILE_WORD_LIST_MAX, QUERY_TERM_CHARS, WORD_KEYS_PER_CHUNK,
 )
@@ -56,7 +56,7 @@ from .drive_name_keys import _strip_accents, _trigrams
 __all__ = [
     "FUNCTION_WORDS", "GENERIC_WORDS", "NAME_KEYS_V2", "TIME_WORDS", "about_keys_capped", "about_keys_of", "about_sources",
     "all_forms", "family_keys", "fetch_batches", "golden_digest", "index_tables_digest", "match_spans",
-    "name_keys_v2", "phrase_keys", "query_concepts", "query_name_keys_v2", "source_class_of_about_key",
+    "name_keys_v2", "name_match_v2", "phrase_keys", "query_concepts", "query_name_keys_v2", "source_class_of_about_key",
     "source_class_of_name_key", "source_class_of_word_key", "token_forms", "token_spans", "word_form_keys",
     "word_keys", "word_keys_capped",
 ]
@@ -556,6 +556,18 @@ def query_name_keys_v2(query: str) -> Tuple[str, ...]:
     whole = [k for c in q.concepts for k in c.word_keys]
     grams = ["t:" + g for c in q.concepts if not c.is_number for g in _trigrams(_strip_accents(c.word))]
     return tuple(dict.fromkeys(whole + grams))[:NAME_QUERY_KEYS_MAX]
+
+
+def name_match_v2(record_keys: Sequence[str], query_keys: Sequence[str]) -> Optional[int]:
+    """Shared name keys v2, or None below the floor (§10.1, §25.2.4): one whole key — `w:`, `x:`, `n:` or `y:`, the
+    forms the index writes for a word, its skeleton or its digits — or NAME_MIN_TRIGRAMS trigrams (`t:`), which never
+    cover on their own. The v1 `drive_name_keys.name_match` counted only `w:` as whole: on v2 keys a number or a
+    skeleton matched alone fell under the floor (review rv_sv2_p5 M2)."""
+    shared = set(record_keys) & set(query_keys)
+    grams = sum(1 for k in shared if k.startswith("t:"))
+    if grams == len(shared) and grams < NAME_MIN_TRIGRAMS:
+        return None
+    return len(shared)
 
 
 # -- the version pins -----------------------------------------------------------------------------------------------

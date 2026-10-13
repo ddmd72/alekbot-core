@@ -1,12 +1,13 @@
 """
 DriveIndexingStatus — what the Cabinet shows about a user's drive index (USER_DRIVE_INDEXING_RFC §6):
-counters, freshness, the error category, and from Slice 2+4 the readable chunks and this month's model usage against
-its budgets (§24.7). Built by DriveSearchService.indexing_status, so the Cabinet and search derive `building` and
-`index_full` one way. Pure value object.
+counters, freshness, the error category, the readable chunks (Slice 2+4), and Search v2's model dollars: this month's
+per class against its cap, and the initial build's progress (§25.4.5; the §24.7 page and image counters are retired).
+Built by DriveSearchService.indexing_status, so the Cabinet and search derive `building` and `index_full` one way.
+Pure value object.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Mapping, Optional
 
@@ -25,8 +26,11 @@ class DriveIndexingStatus:
     access_lost_at: Optional[datetime] = None
     purging: bool = False
     readable_chunks: int = 0                  # chunks of the generations search may return (§3.3, §7.4)
-    model_pages_month: int = 0                # pages sent to the reader this calendar month (§24.7)
-    triage_images_month: int = 0              # images sent to triage this calendar month (§24.7)
+    usd_month: Mapping[str, float] = field(default_factory=dict)   # UsageClass value -> dollars this month (§25.4.5)
+    usd_caps: Mapping[str, float] = field(default_factory=dict)    # UsageClass value -> the month's cap
+    initial_build_spent_usd: float = 0.0      # the initial build (D27): spent of its allowance, open or closed
+    initial_build_allowance_usd: float = 0.0
+    initial_build_closed: bool = False
 
     def index_kept(self, now: datetime) -> bool:
         """A stored index exists and is inside the access-loss grace period (§7.7): the only time the Cabinet

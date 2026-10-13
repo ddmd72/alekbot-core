@@ -2337,7 +2337,8 @@ The class follows from the prefix and the field (`drive_match.FAMILY_SOURCE_CLAS
 - **Records:** `user_id + about_keys (CONTAINS) + effective_date DESC + item_id DESC`; `user_id + kind + about_keys
   (CONTAINS) + effective_date DESC + item_id DESC` (single-kind filters only, §25.5.5; `item_id DESC` is the tie-break
   the item-id cursor needs); `user_id + about_keys (CONTAINS) + valid_until ASC + item_id`;
-  `user_id + enrich_ready + effective_day DESC + parent_id + item_id` (the enrichment queue);
+  `user_id + enrich_ready + effective_day DESC + parent_id + item_id` (the enrichment queue), and the same with
+  `profile_state` and with `passages_state` in place of `enrich_ready` (one agent type's own queue, §25.4.6);
   `user_id + enrich_wake_at + item_id` (wake-ups); `user_id + profile_state + kind` and `user_id + passages_state +
   kind` (counts, `kind in` batches of 30); `user_id + keys_pending + item_id`; the card vector, name-token and
   filter-only composites stay.
@@ -2490,7 +2491,9 @@ re-extracts every parser-decided record (all parser kinds); in the migration it 
 **Three jobs, three states.**
 - **Keys** — deterministic, never budgeted, parked or held: `keys_pending` is set by the planner when `keys_version` is
   not `KEYS_VERSION` (any record, whatever its enrichment states), and the work runs in the content loop's class 3,
-  like `chunk_reembed_pending` (§25.4.8).
+  like `chunk_reembed_pending` (§25.4.8). It is due **now** even on a record scheduled later (next month's reader
+  budget, a quiet period, a backoff): those waits live in `defer_until` and the quiet period, which the content work
+  still honours; the upgrade pass re-plans a month-held record whose keys are stale (P5 review MINOR 9).
 - **Profile** and **passages** — each with its own state (`current`, `ready`, `deferred`, `parked`, `held`, `none`),
   decided by the pure `profile_plan(rec, ctx)` and `passages_plan(rec, ctx)`, where `ctx: EnrichContext` (§25.13.2)
   carries `now`, the month's usage per class, the caps and the initial-build balance; it reaches the planner through
@@ -2501,25 +2504,40 @@ re-extracts every parser-decided record (all parser kinds); in the migration it 
 | `none` | `PROFILE_POLICY` gives the kind no profile (no doc2query), or the record has no readable generation and no `readme_excerpt` |
 | `held` | `profile_hold` is set **and** `profile_hold_version` equals `"<PROFILE_VERSION>:<profile_input_fingerprint>"` (passages: `passages_hold_version` = `"<PASSAGES_VERSION>:<indexed_generation>"`) |
 | `parked` | the month's cap for the class and the initial-build balance are spent, recorded under the current version (`profile_parked_month` = the month) |
-| `deferred` | the cooldown (`PROFILE_REFRESH_COOLDOWN` / `PASSAGE_REFRESH_COOLDOWN`) not over: `*_defer_until`. An agent-type model backoff is **not** a job state: the job stays `ready` and the backoff (`model_backoff_by_agent`) gates the enrichment queue read (§25.4.6; Part 0 review MINOR 2) |
+| `deferred` | the cooldown (`PROFILE_REFRESH_COOLDOWN` / `PASSAGE_REFRESH_COOLDOWN`) not over: `*_defer_until`; or the record's content run is due (an edit, a re-extraction): its readable text is about to be replaced, so no call is made on it and no cooldown starts from it, and the content run's commit re-plans the job (no wake time of its own; P5 review MINOR 1). An agent-type model backoff is **not** a job state: the job stays `ready` and the backoff (`model_backoff_by_agent`) gates the enrichment queue read (§25.4.6; Part 0 review MINOR 2) |
 | `ready` | work is due: no profile, `profile_fingerprint`/`profile_version` differ from the current input fingerprint and version, a new content version; passages: `passages_version` or generation differs, or `passages_next_index` < the chunks to hint |
 | `current` | nothing to do |
 
 A hold or park recorded under an older version or fingerprint is not a match, so a bump makes the job `ready`. The
-derived `enrich_ready` (any job `ready`) and `enrich_wake_at` (the earliest `deferred` time) feed the queue.
+derived `enrich_ready` (any job `ready`) and `enrich_wake_at` (the earliest `deferred` time still ahead) feed the
+queue. **No ready job without progress** (P5 review M4): a run that can write nothing for a ready job holds it
+`failed` for the current version and fingerprint (profile: no stored text for a short note's template, no profiler
+input) or generation (passages: no stored chunk at all); a missing chunk is skipped and counted
+(`passage_missing_chunks`), and a passage wave shrinks to the batches the dollars left pay for. As a backstop, a file
+whose run left its record unchanged is not waited for again in that tick (`enrich_idle`): the tick chain never
+continues at zero delay for it, and the next fan-out tries it again.
 
 **The queue and the order inside a tick.** `enrich_queue` reads `enrich_ready`, `effective_day` newest first, then
 `parent_id`, then `item_id` (so a rebuild describes recent files first and a folder's same-day files together);
-`enrich_wakeups` reads `enrich_wake_at <= now` and re-plans; when the month turns, `parked` jobs are re-planned. §7.1
-step 2 becomes: content classes 0–2 with at most `1 − ENRICH_SHARE` of the start budget; enrichment with at least
-`ENRICH_SHARE` (40 %); classes 3–4 (keys work included) with `MAINTENANCE_SHARE` of what is left; then the upgrade pass.
-Enrichment runs up to `ENRICH_IN_FLIGHT` (3) files at once, each with up to `PASSAGE_IN_FLIGHT` (2) passage calls, all
-under `MODEL_IN_FLIGHT`. A first-seen file whose profile is `ready` when its content commits is profiled in the same
-run, charged to the enrichment share, so its card is embedded once.
+`enrich_wakeups` reads `enrich_wake_at <= now` and re-plans; when the month turns, `parked` jobs are re-planned. When a
+full queue page holds no job an available agent can do (one agent type backed off, its records first), each available
+agent type's own queue is read (`enrich_queue(…, job=)`: `profile_state` or `passages_state` = `ready`, same order), so
+one agent's backoff never hides the other's work (P5 review MINOR 6). §7.1 step 2 becomes: content classes 0–2 start
+within at most `1 − ENRICH_SHARE` of the start budget; enrichment gets a **start window** of at least `ENRICH_SHARE`
+(40 %); classes 3–4 (keys work included) with `MAINTENANCE_SHARE` of what is left; then the upgrade pass. The shares
+bound when work **starts**, not how long it runs (P5 review MINOR 8): a routed file started late in the content window
+may run past it (its worst case is in the §7.1 deadline sum), and enrichment then starts nothing that tick; the fence
+holds (content worst case ≈ 1 500 s, enrichment started before 480 s ends before ≈ 780 s, the deadline is 1 800 s).
+Bounding run time would mean refusing routed files outright. Enrichment runs up to `ENRICH_IN_FLIGHT` (3) files at
+once, each with up to `PASSAGE_IN_FLIGHT` (2) passage calls, all under `MODEL_IN_FLIGHT`; a file's fatal error (the
+lease, the gate, a systemic store or embedding error) cancels its siblings at once. A first-seen file whose profile is
+`ready` when its content commits is **profiled** in the same run (the profile and its card re-embed only; P5 review
+M3), charged to the enrichment share, so its card is embedded once; its passages go through the enrichment phase.
 
 **Per-file time.** `ENRICH_FILE_BUDGET` (300 s) is a hard `asyncio.wait_for` around one file's profile call, passage
 batches, hint embeddings and card re-embed; it joins the §7.1 deadline sum. Passage progress is saved per batch
-(hint documents, `passages_next_index`), so a cut file resumes.
+(hint documents, `passages_next_index`), so a cut file resumes. A spend write is shielded from the cut: a paid reply
+is always recorded, whole (P5 review MINOR 5).
 
 **The upgrade pass is settled per version key.** `CURRENT_VERSIONS` gains `keys`, `profile`, `passages` (§25.4.8). A
 pass marks `profile` applied only when every record's profile job is `current` or `none`, or `held`/`parked` **for the
@@ -2533,14 +2551,22 @@ page and image monthly caps and the sync-state counters are retired; page and im
 estimates (a file starts only if its expected cost at the primary's price fits). Usage is kept in documents a purge
 does not delete:
 - `{prefix}drive_model_usage/{user_id}:{YYYY-MM}`: `reader_usd`, `triage_usd`, `profile_usd`, `passage_usd`,
-  `fallback_usd`, `calls`, and `daily: {YYYY-MM-DD: {total_usd, fallback_usd}}`; TTL 400 days;
+  `fallback_usd`, `calls`, and `daily: {YYYY-MM-DD: {total_usd, fallback_usd}}`; and per class `<cls>_initial_usd`,
+  the share of `<cls>_usd` the initial build paid (written only when there is one). A month's cap counts only
+  `<cls>_usd − <cls>_initial_usd`: the build is spent first, so its dollars never exhaust the caps (P5 review M1); the
+  Cabinet and the fallback alert read the totals. TTL 400 days;
 - `{prefix}drive_model_usage/{user_id}:initial`: `allowance_usd`, `spent_usd`, `opened_at`, `closed_at`; no TTL.
 
 **The initial build (D27).** Spent first, before the monthly caps, on every model class of the first full description
 of the drive (onboarding, the v2 rebuild). It **closes** when spent, or when the first onboarding has completed
 (`initial_enumeration_done`) and no record has a profile or passages job `ready` or `parked`; once closed it never
 reopens (a purge, a rebuild or a toggle does not renew it; only an owner script, `drive_initial_build_reset.py`,
-does). Sizing at the caps: 25 000 profiles × $0.0008 ≈ $20, 50 000 passage chunks × $0.0004 ≈ $20, enriched triage of
+does).
+
+*Note on the close (P5 review MINOR 7):* the built rule also requires the index to have **settled** (no due work and
+nothing to enrich). Right after the first enumeration no file has been read, so no record has a job at all and D27's
+test alone would close the build before any content it is meant to describe was read. With steady churn the build may
+stay open until it is spent, which is bounded by its allowance. Sizing at the caps: 25 000 profiles × $0.0008 ≈ $20, 50 000 passage chunks × $0.0004 ≈ $20, enriched triage of
 20 000 images ≥ $2.5, the reader's re-read of scans ≈ $0.0006 a page: about **$43**. $20 (the owner's minimum) covers
 about 6 500 typical text files (a profile and five passage chunks ≈ $0.003 each). `INITIAL_BUILD_USD` = **$40**.
 
@@ -2548,7 +2574,10 @@ about 6 500 typical text files (a profile and five passage chunks ≈ $0.003 eac
 (the `daily` map), the fan-out posts once that day to `AlertSinkPort`.
 
 **The Cabinet** shows dollars per class this month and the initial build's progress (spent / allowance, open or
-closed) instead of pages and images.
+closed) instead of pages and images (`model_usd_month`, `model_usd_caps`, `initial_build` in `/api/drive/status`). The
+reader's page clamp is derived from dollars: `MODEL_EXTRACT_PAGES_PER_MONTH` = the pages `READER_USD_PER_MONTH` pays
+at `READER_PAGE_USD_ESTIMATE`; only a file over it is cut to it, so no file waits for a month that could never pay for
+it (P5 review MINOR 4).
 
 #### 25.4.6 Failures and charges
 One backoff **per agent type**: a new sync-state map `model_backoff_by_agent` (agent type → until); the v1 field
@@ -2738,8 +2767,11 @@ passage words, translation, automatic record. A file's tier is decided by the we
    A native-script match and a stored spelling (an entity's or place's own form, `e:`) stay exact.
 4. **Labelled** (automatic): at least one concept is covered only by automatic-record keys (`lw:`, `tw:`, `dw:`, `lv:`,
    `pw:`, `pe:`), the others by any class.
-5. **Related by meaning only:** `meaning ≥ Z_RELATED`; or a name over the `name_match` floor that does not cover the
-   query ("similar name"). At most 3 lines.
+5. **Related by meaning only:** `meaning ≥ Z_RELATED`; or a name over the `name_match_v2` floor that does not cover
+   the query ("similar name"). At most 3 lines. The floor counts the keys name keys v2 write for a whole token — `w:`,
+   `x:`, `n:`, `y:` — as whole, and needs `NAME_MIN_TRIGRAMS` trigrams otherwise; the folder in-memory ranking tests
+   names with the same function, so a number or a skeleton alone matches there too (P5 review M2: v1's `name_match`
+   counted only `w:`).
 Each file is shown once, in its best tier. One test per combination of classes is required.
 
 **Strict AND (D28) with two allowances.** A concept's weight is `log(1 + N / df)` (`N` the carded files).
@@ -2931,7 +2963,10 @@ users are not caught. `DRIVE_UPGRADE_PASS` (`os.getenv`, default on) stops every
    ≈ 6–15 text files per tick, ≈ 40–100 an hour with ticks chained, so ≈ 1 000–2 400 a day: a few hundred text files in
    hours, a cap-sized drive in two to four weeks (measured in the scale test). Search is empty while the purge runs
    and fills as onboarding proceeds (`building`); scans are re-read once. A stalled rebuild alerts: the fan-out also
-   fires when a user's described count has not grown for 24 h while jobs are `ready` and budget is left.
+   fires when a user's enrichment has not moved for 24 h while jobs are `ready` and budget is left
+   (`described_grew_at`: refreshed when the described count grows, when a run changes a record, or when no job is
+   ready; P5 review MINOR 2: a quiet day before one new file, passage-only progress, or a delete plus an add is no
+   stall). A v1 index's tick logs WARNING once per instance until the ops alert, INFO afterwards (MINOR 10).
 6. The owner's live check.
 7. After acceptance, drop the two `content_terms` composites.
 
@@ -3081,13 +3116,15 @@ write_hints(docs: Sequence[DriveHintDoc], vectors: Sequence[Sequence[float]]) ->
 delete_hints_except(user_id, item_id: str, keep_generation: Optional[int]) -> int
 delete_user_hints(user_id, limit: int) -> int
 hints_page(user_id, after: Optional[ChunkId], limit: int) -> List[DriveHintLean]
-enrich_queue(user_id, limit: int) -> List[DriveIndexRecord]                     # enrich_ready, effective_day DESC
+enrich_queue(user_id, limit: int, job: Optional[str] = None) -> List[DriveIndexRecord]
+                                         # enrich_ready (or <job>_state = ready), effective_day DESC (P5 review MINOR 6)
 enrich_wakeups(user_id, now: datetime, limit: int) -> List[DriveIndexRecord]
 count_by_job_state(user_id, kinds: AbstractSet[str]) -> Dict[str, Dict[str, int]]   # job -> state -> count
 keys_pending_page(user_id, after: Optional[str], limit: int) -> List[DriveIndexRecord]
 get_records_lean(user_id, item_ids: Sequence[str]) -> Dict[str, DriveRecordLean]
 get_model_usage(user_id, month: str) -> ModelUsageMonth
-add_model_usage(user_id, month: str, day: str, cls: str, usd: float, fallback_usd: float, calls: int) -> None
+add_model_usage(user_id, month: str, day: str, cls: str, usd: float, fallback_usd: float, calls: int,
+                covered_usd: float = 0.0) -> None    # covered_usd: the initial build's share (P5 review M1)
 get_initial_build(user_id) -> InitialBuild
 spend_initial_build(user_id, usd: float, now: datetime) -> Tuple[InitialBuild, float]   # (after, usd covered)
 close_initial_build(user_id, now: datetime) -> None
@@ -3128,7 +3165,8 @@ DriveHintDoc(user_id, item_id, generation: int, index: int, kind: str, chunk_tex
 EnrichContext(now: datetime, month_usd: Mapping[str, float], caps_usd: Mapping[str, float],
               initial_balance_usd: float, initial_open: bool)
 ModelUsageMonth(reader_usd, triage_usd, profile_usd, passage_usd, fallback_usd: float, calls: int,
-                daily: Mapping[str, Tuple[float, float]])
+                daily: Mapping[str, Tuple[float, float]], reader_initial_usd, triage_initial_usd,
+                profile_initial_usd, passage_initial_usd: float)   # cap_usd(cls): what the month's cap paid
 InitialBuild(allowance_usd: float, spent_usd: float, opened_at: Optional[datetime], closed_at: Optional[datetime])
 DriveRecordLean(item_id, parent_id, name, kind, effective_date, about_keys, name_tokens, state, scope, has_card,
                 indexed_generation, content_hash, valid_until)

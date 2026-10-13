@@ -10,7 +10,7 @@ Public interface:
     MODEL_USAGE_TTL, INITIAL_DOC_SUFFIX
     usage_doc_id(user_id, month) / initial_doc_id(user_id)
     usage_expires_at(month) -> datetime          the TTL timestamp of a month's document
-    added_usage(usage, day, cls, usd, fallback_usd, calls) -> ModelUsageMonth
+    added_usage(usage, day, cls, usd, fallback_usd, calls, covered_usd=0) -> ModelUsageMonth
     new_initial_build() -> InitialBuild          an unopened build with INITIAL_BUILD_USD
     spent_initial(build, usd, now) -> (InitialBuild, float)   the build after a spend and the dollars it covered
     closed_initial(build, now) -> InitialBuild
@@ -44,15 +44,18 @@ def usage_expires_at(month: str) -> datetime:
 
 
 def added_usage(usage: ModelUsageMonth, day: str, cls: str, usd: float, fallback_usd: float,
-                calls: int) -> ModelUsageMonth:
+                calls: int, covered_usd: float = 0.0) -> ModelUsageMonth:
     """`usd` added to the class's dollars and to the day's total, `fallback_usd` to the month's and the day's fallback
-    share, `calls` to the calls. `cls` must be a UsageClass value (ValueError otherwise)."""
+    share, `calls` to the calls, `covered_usd` (the part of `usd` the initial build paid, D27) to the class's
+    `<cls>_initial_usd`, which the month's cap does not count. `cls` must be a UsageClass value (ValueError
+    otherwise)."""
     name = f"{UsageClass(cls).value}_usd"
+    initial = f"{UsageClass(cls).value}_initial_usd"
     daily: Dict[str, Tuple[float, float]] = dict(usage.daily)
     total, fallback = daily.get(day, (0.0, 0.0))
     daily[day] = (total + usd, fallback + fallback_usd)
-    return replace(usage, **{name: getattr(usage, name) + usd}, fallback_usd=usage.fallback_usd + fallback_usd,
-                   calls=usage.calls + calls, daily=daily)
+    return replace(usage, **{name: getattr(usage, name) + usd, initial: getattr(usage, initial) + covered_usd},
+                   fallback_usd=usage.fallback_usd + fallback_usd, calls=usage.calls + calls, daily=daily)
 
 
 def new_initial_build() -> InitialBuild:

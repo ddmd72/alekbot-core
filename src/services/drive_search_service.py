@@ -32,7 +32,7 @@ from datetime import date, datetime, timezone
 from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Set, Tuple, Union
 
 from ..domain.drive_card import card_text
-from ..domain.drive_enrichment import EnrichJob, HintItem, JobState
+from ..domain.drive_enrichment import USD_CAPS, EnrichJob, HintItem, JobState, UsageClass
 from ..domain.drive_index import (
     KEYS_VERSION, MIGRATION_GATE_KEY, POLICY_VERSION, DriveIndexRecord, DriveSyncState, EpochPhase, Priority,
     RecordState, Scope,
@@ -44,11 +44,10 @@ from ..domain.drive_index_params import (
     NAME_KEY_QUERIES, PASSAGE_MAX_CHUNKS_PER_FILE, PROFILE_MIN_CHARS, RELATED_MAX, RELATED_SMALL, TRANSLATED_SHOWN, WINDOW_CHARS_TOTAL_V2,
     WINDOW_MAX, WORD_FETCH, WORD_FILES_MAX,
 )
-from ..domain.drive_index_planner import usage_now
+from ..domain.drive_index_planner import month_key
 from ..domain.drive_indexing_status import DriveIndexingStatus
-from ..domain.drive_keys import fetch_batches, query_concepts, query_name_keys_v2
+from ..domain.drive_keys import fetch_batches, name_match_v2, query_concepts, query_name_keys_v2
 from ..domain.drive_match import Concept, KeyFamily, MatchTier, QueryConcepts
-from ..domain.drive_name_keys import name_match
 from ..domain.drive_search import (
     MAX_CHAIN_DEPTH, NOT_READ_YET_COUNTER, STATUS_AMBIGUOUS_FOLDER, STATUS_FOLDER_NOT_FOUND, STATUS_OK, UNREAD_COUNTER,
     DriveSearchCard, DriveSearchEnvelope, DriveSearchRequest, DriveSearchResult, content_admitted, cosine_distance,
@@ -678,7 +677,7 @@ class DriveSearchService:
         for rec in subtree:
             pool.add(rec)
         name_keys = [k for c in concepts for k in (*name_query_keys(c), *concept_trigrams(c))]
-        named = [r for r in subtree if name_match(r.name_tokens, name_keys) is not None]
+        named = [r for r in subtree if name_match_v2(r.name_tokens, name_keys) is not None]
         self._add_names(named, concepts, pool, stats)
         if with_content:
             for rec in subtree:
@@ -945,13 +944,13 @@ class DriveSearchService:
     def _related(self, qkeys: Sequence[str], pool: _Pool, scope: _Scope, meaning: Mapping[str, float],
                  kinds: FrozenSet[str], carded: int, tiered: Mapping[MatchTier, List[str]],
                  matched: Set[str]) -> Tuple[List[Tuple[str, bool]], bool]:
-        """Related by meaning only (§25.5.3): similar names first (over the name_match floor, not covering the
+        """Related by meaning only (§25.5.3): similar names first (over the name_match_v2 floor, not covering the
         query), then files whose meaning clears the band's floor; at most RELATED_MAX, never a file of another tier.
         When every source abstained on a drive under the first band and nothing else matched, the best RELATED_SMALL
         by similarity (never under a kind filter; beside matches it would only be filler)."""
         taken = set(matched) | {i for items in tiered.values() for i in items}
-        names = sorted(((name_match(r.name_tokens, qkeys) or 0, i) for i, r in pool.names.items()
-                        if i in scope.passing and i not in taken and name_match(r.name_tokens, qkeys) is not None),
+        names = sorted(((name_match_v2(r.name_tokens, qkeys) or 0, i) for i, r in pool.names.items()
+                        if i in scope.passing and i not in taken and name_match_v2(r.name_tokens, qkeys) is not None),
                        key=lambda p: (-p[0], p[1]))
         out: List[Tuple[str, bool]] = [(i, True) for _, i in names[:RELATED_MAX]]
         floor = related_floor(size_band(carded))
@@ -1297,7 +1296,9 @@ class DriveSearchService:
         enabled = bool(profile is not None and profile.config.drive_indexing_enabled)
         if state is None:
             return DriveIndexingStatus(enabled=enabled, counters={}, building=enabled)
-        pages, images = usage_now(state, self._clock())   # a new month reads as zero before the tick resets it
+        now = self._clock()
+        usage, build = await asyncio.gather(self._repo.get_model_usage(user_id, month_key(now)),
+                                            self._repo.get_initial_build(user_id))
         return DriveIndexingStatus(
             enabled=enabled, counters=dict(state.counters), last_success_at=state.last_success_at,
             last_error=state.last_error.value if state.last_error else None, index_as_of=state.observed_as_of,
@@ -1305,5 +1306,7 @@ class DriveSearchService:
             building=enabled and (state.purging or not state.root_item_id or await self._building(user_id, state)),
             access_lost_at=state.access_lost_at, purging=state.purging,
             readable_chunks=await self._repo.readable_chunk_total(user_id),
-            model_pages_month=pages, triage_images_month=images,
+            usd_month={c.value: float(getattr(usage, f"{c.value}_usd")) for c in UsageClass}, usd_caps=dict(USD_CAPS),
+            initial_build_spent_usd=build.spent_usd, initial_build_allowance_usd=build.allowance_usd,
+            initial_build_closed=build.closed_at is not None,
         )

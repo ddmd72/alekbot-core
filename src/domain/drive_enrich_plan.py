@@ -15,7 +15,7 @@ Public interface:
     profile_plan(rec, ctx) / passages_plan(rec, ctx) / keys_planned(rec, now) / derived(rec) / planned(rec, ctx)
     profile_settled(rec) / passages_settled(rec) / keys_settled(rec)     the upgrade pass's per-key criteria
     profiled(rec, profile, *, source, fingerprint, now) / reverified(rec, profile, now)
-    profile_charged(rec, status, now)
+    profile_charged(rec, status, now) / profile_unusable(rec) / passages_unusable(rec)
     passages_started(rec) / passages_advanced(rec, next_index, *, finished, now) / passages_charged(rec)
     agent_available(backoffs, agent, now) / agent_outage(backoffs, agent, now) / agent_recovered(backoffs, agent)
     similarity(a, b) -> float                            cosine similarity (grounding rule 4)
@@ -25,7 +25,10 @@ The state table (§25.4.5), per job, first match wins:
               README excerpt). The job's fields are cleared (§25.4.9: a write that drops the readable generation).
     current   nothing is due.
     held      a hold recorded for the current version and fingerprint (passages: generation).
-    deferred  the refresh cooldown is not over (`*_defer_until`). A model backoff is not a state (§25.4.6).
+    deferred  the refresh cooldown is not over (`*_defer_until`), or the record's content run is due (an edit, a
+              re-extraction): its readable text is about to be replaced, so no call is made on it and no cooldown
+              starts from it; the content run's commit re-plans the job (review rv_sv2_p5 MINOR 1). A model backoff
+              is not a state (§25.4.6).
     parked    one call no longer fits the open initial build plus the month's rest of the class cap (§25.4.5:
               "a file starts only if its expected cost at the primary's price fits"); wakes when the month turns.
     ready     work is due.
@@ -49,6 +52,7 @@ from .drive_index import (
     KEYS_VERSION, PASSAGES_VERSION, PROFILE_VERSION, DriveChange, DriveChunk, DriveIndexRecord, Priority, Reason,
     RecordState, Scope,
 )
+from .drive_index_planner import content_due
 from .drive_index_params import (
     INITIAL_BUILD_USD, MAX_ATTEMPTS, MODEL_BACKOFF_BASE_S, MODEL_BACKOFF_CAP_S, PASSAGE_CHUNK_USD_ESTIMATE,
     PASSAGE_CHUNKS_PER_CALL, PASSAGE_MAX_CHUNKS_PER_FILE, PASSAGE_REFRESH_COOLDOWN, PROFILE_REFRESH_COOLDOWN,
@@ -71,8 +75,10 @@ _R, _C, _D, _P, _H, _N = (JobState.READY.value, JobState.CURRENT.value, JobState
 # -- budget -------------------------------------------------------------------------------------------------------
 
 def enrich_context(now: datetime, usage: ModelUsageMonth, build: InitialBuild) -> EnrichContext:
-    """What the plans decide with this tick: the month's dollars per class, the caps and the initial build."""
-    month = {c.value: float(getattr(usage, f"{c.value}_usd")) for c in UsageClass}
+    """What the plans decide with this tick: the month's dollars per class against its cap — the dollars the initial
+    build paid left out, since the build is spent first, before the caps (§25.4.5, D27; review rv_sv2_p5 M1) — the
+    caps and the initial build."""
+    month = {c.value: usage.cap_usd(c.value) for c in UsageClass}
     return EnrichContext(now=now, month_usd=month, caps_usd=dict(USD_CAPS),
                          initial_balance_usd=max(0.0, build.allowance_usd - build.spent_usd),
                          initial_open=build.closed_at is None)
@@ -208,6 +214,8 @@ def profile_plan(rec: DriveIndexRecord, ctx: EnrichContext) -> DriveIndexRecord:
     key = profile_hold_key(rec)
     if rec.profile_hold is not None and rec.profile_hold_version == key:
         return replace(rec, profile_state=_H)
+    if content_due(rec):
+        return replace(rec, profile_state=_D)   # the text is about to change: profiled after its content run
     bump = rec.profile is not None and rec.profile_version != PROFILE_VERSION
     if (not template and not bump and rec.profile_defer_until is not None and ctx.now < rec.profile_defer_until):
         return replace(rec, profile_state=_D)
@@ -260,6 +268,13 @@ def profile_charged(rec: DriveIndexRecord, status: ModelReplyStatus, now: dateti
     return rec
 
 
+def profile_unusable(rec: DriveIndexRecord) -> DriveIndexRecord:
+    """A ready profile job the stored text cannot serve (no text for a short note's template, no profiler input): held
+    `failed` for the current version and fingerprint, so a run that can write nothing never leaves it `ready` (review
+    rv_sv2_p5 M4). A new text — a new fingerprint — or a version bump makes it ready again."""
+    return replace(rec, profile_hold=HoldReason.FAILED.value, profile_hold_version=profile_hold_key(rec))
+
+
 # -- passages_plan -------------------------------------------------------------------------------------------------
 
 def passages_hold_key(rec: DriveIndexRecord) -> str:
@@ -289,6 +304,8 @@ def passages_plan(rec: DriveIndexRecord, ctx: EnrichContext) -> DriveIndexRecord
     key = passages_hold_key(rec)
     if rec.passages_hold is not None and rec.passages_hold_version == key:
         return replace(rec, passages_state=_H)
+    if content_due(rec):
+        return replace(rec, passages_state=_D, passages_defer_until=None)   # hinted after its content run
     if (rec.passages_version == PASSAGES_VERSION and rec.passages_done_at is not None
             and ctx.now < rec.passages_done_at + PASSAGE_REFRESH_COOLDOWN):
         return replace(rec, passages_state=_D, passages_defer_until=rec.passages_done_at + PASSAGE_REFRESH_COOLDOWN)
@@ -323,6 +340,12 @@ def passages_charged(rec: DriveIndexRecord) -> DriveIndexRecord:
     return replace(rec, passages_attempts=attempts)
 
 
+def passages_unusable(rec: DriveIndexRecord) -> DriveIndexRecord:
+    """A ready passage job whose readable generation has no stored chunk to send: held `failed` for this generation
+    (review rv_sv2_p5 M4); a new generation makes it ready again."""
+    return replace(rec, passages_hold=HoldReason.FAILED.value, passages_hold_version=passages_hold_key(rec))
+
+
 # -- keys, derived, the whole plan ---------------------------------------------------------------------------------
 
 def keys_planned(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
@@ -334,8 +357,12 @@ def keys_planned(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
             return replace(rec, keys_pending=False, keys_version=KEYS_VERSION)
         return rec
     pending = rec.keys_version != KEYS_VERSION
-    if pending and rec.due_at is None:
-        return replace(rec, keys_pending=True, due_at=now, priority=int(Priority.MAINTENANCE))
+    if pending and (rec.due_at is None or rec.due_at > now):
+        # due now even when the record waits for something else (next month's reader budget, a quiet period, a
+        # backoff): those waits live in `defer_until` and the quiet period, which the content work still honours, so
+        # a keys bump never waits a month behind them (review rv_sv2_p5 MINOR 9)
+        cls = min(rec.priority, int(Priority.MAINTENANCE)) if rec.priority is not None else int(Priority.MAINTENANCE)
+        return replace(rec, keys_pending=True, due_at=now, priority=cls)
     return replace(rec, keys_pending=pending) if pending != rec.keys_pending else rec
 
 
@@ -351,8 +378,10 @@ def _next_month(now: datetime) -> datetime:
 
 def derived(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
     """`enrich_ready`, `enrich_wake_at` (a deferred job's time; a parked job's month turn) and `effective_day`."""
+    # a deferral for a due content run has no wake time of its own (its commit re-plans): a past cooldown end is none
     wakes = [at for state, at in ((rec.profile_state, rec.profile_defer_until),
-                                  (rec.passages_state, rec.passages_defer_until)) if state == _D and at is not None]
+                                  (rec.passages_state, rec.passages_defer_until))
+             if state == _D and at is not None and at > now]
     if _P in (rec.profile_state, rec.passages_state):
         wakes.append(_next_month(now))
     day = rec.effective_date.astimezone(timezone.utc).date().isoformat() if rec.effective_date is not None else ""

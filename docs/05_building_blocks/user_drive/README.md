@@ -521,8 +521,8 @@ No alert of its own: the outage shows as ERROR / WARNING lines (`[drive_reader]`
 | Runs per tick (`TICK_FILE_BUDGET`) | 50 | the rest wait for the next tick |
 | Start budget / tick deadline | 8 min / 30 min | no run starts whose worst case would pass the deadline |
 | Per file: download, parser, model, embeddings | 120 s, 120 s, 600 s, 180 s | `too_large`/retry; `timeout` kill; `truncated`; `embed_timeout` |
-| Reader pages per user per month | 5 000 | a file waits until a month has the pages it needs; never cut to what is left |
-| Triage images per user per month | 20 000 | the rest wait in class 3 for the next month |
+| Reader dollars per user per month (Search v2, RFC §25.4.5) | $4 (`READER_USD_PER_MONTH`; ≈ 6 666 pages at $0.0006, `MODEL_EXTRACT_PAGES_PER_MONTH` is derived from it) | a file waits until the dollars left (the open initial build, then the month's cap) pay for its pages; never cut to what is left; only a file over a whole month's cap is cut to it |
+| Triage dollars per user per month | $3 (`TRIAGE_USD_PER_MONTH`) | the rest wait in class 3 for the next month |
 | Pages read per file | 200 | `truncated` |
 | Concurrent model calls | 4 per file (files go to the reader one at a time) | — |
 | Re-read of an edited, reader-read file (`MODEL_REREAD_COOLDOWN`) | 24 h after `model_read_at` | the edit waits; the newest version is read once |
@@ -544,8 +544,8 @@ Usage spent before an outage is counted without ending it: the backoff keeps dou
   (a few hundred pages) are searchable and the rest is not. The router judges density as an average over all
   pages, so a mostly-text PDF with some scanned pages stays with the parser and its scanned pages are not read.
 - A scan (no or thin text layer): the reader gets the first `MODEL_EXTRACT_MAX_PAGES` (200) pages, 10 per call,
-  4 calls at a time, within 600 s; pages 201–600 are never sent. It needs 200 of the month's 5 000 pages free before
-  it starts; otherwise it waits whole for the next month (it is never cut to what is left).
+  4 calls at a time, within 600 s; pages 201–600 are never sent. It needs the dollars for its 200 pages (≈ $0.12) left
+  before it starts; otherwise it waits whole for the next month (it is never cut to what is left).
 - Either cut sets `truncated` on the record and the run line shows `pages=<sent>/<total>` (e.g. `200/600`); Smart
   sees `truncated: only the beginning of the file was indexed` on the card, and its guidance names a truncated card
   when it reports a not-found (§6.2). A refused page skipped (§4 step 5) also sets `truncated`.
@@ -599,8 +599,8 @@ The "about $3 a user a month" figure is the reader's pages only. Each path, what
 
 | Path | Price basis | Bound |
 |---|---|---|
-| **Reader** (scans, screenshots, images with text, PDFs the parser cannot read) | GPT-6 Luna by default (or Haiku 5.5), $0.10 / $0.50 per million input / output tokens; a page ≈ $0.0006. A failover call runs on Gemini Flash (`gemini-3.8-flash`, $1.50 / $7.50, promotional until 2026-12-31 — 15× the primary's token price), priced per model that ran | `MODEL_EXTRACT_PAGES_PER_MONTH` 5 000 pages per user (≈ $3), 200 pages per file; an edit re-reads at most once per 24 h (`MODEL_REREAD_COOLDOWN`); a file whose reads keep failing as an outage at most `MAX_ATTEMPTS` times; a refused page or image is never retried |
-| **Triage** (every image, 16 thumbnails of 800 px per call) | the same models and fallback; an 800 px thumbnail costs more input tokens than the 176 px one did; not priced per image yet — the live model check's triage leg prints the real cost | `TRIAGE_IMAGES_PER_MONTH` 20 000 images per user (≈ 1 250 calls); a failing batch costs its call and parse retry, a refused one halves only down to the refused image |
+| **Reader** (scans, screenshots, images with text, PDFs the parser cannot read) | GPT-6 Luna by default (or Haiku 5.5), $0.10 / $0.50 per million input / output tokens; a page ≈ $0.0006. A failover call runs on Gemini Flash (`gemini-3.8-flash`, $1.50 / $7.50, promotional until 2026-12-31 — 15× the primary's token price), priced per model that ran | `READER_USD_PER_MONTH` $4 per user (Search v2; ≈ 6 666 pages, `MODEL_EXTRACT_PAGES_PER_MONTH` derived from it), after the one-time initial build (D27), 200 pages per file; an edit re-reads at most once per 24 h (`MODEL_REREAD_COOLDOWN`); a file whose reads keep failing as an outage at most `MAX_ATTEMPTS` times; a refused page or image is never retried |
+| **Triage** (every image, 16 thumbnails of 800 px per call) | the same models and fallback; an 800 px thumbnail costs more input tokens than the 176 px one did; not priced per image yet — the live model check's triage leg prints the real cost | `TRIAGE_USD_PER_MONTH` $3 per user (Search v2, after the initial build; the 20 000-image cap is retired); a failing batch costs its call and parse retry, a refused one halves only down to the refused image |
 | **Embeddings** (card and chunk vectors, `gemini-embedding-2`) | not priced in `billing.py` and not billed to the user; Google's charge is not in the daily summary | **no monthly cap.** Bounded by size: 25 000 cards and 50 000 readable chunks per user, 400 chunks per file; a card is re-embedded only when its text changes; an edit embeds only its changed chunks (vectors reused by text hash); a space change re-embeds stored text without reading the file again |
 | **Firestore** (records, chunks, kNN, term and count queries) | reads and writes at Firestore prices; a kNN reads 1 per 100 index entries scanned under the user filter | linear in the user's chunks, so bounded by the chunk cap; spike S3 measures it before the slice ships |
 | **Indexer CPU** | Cloud Run, scale to zero, one instance | `TICK_FILE_BUDGET` 50 runs per tick, a 30-minute tick deadline |
@@ -682,7 +682,7 @@ Smart's guidance opens a stale or recently edited file before quoting it (§6.2)
 **A photo with no caption.** A caption exists only for an image triage judged a photograph. None, because:
 - it is not triaged yet: triage is due at first sight (class 2) after the image's quiet period, and the photos
   already on the drive when Slice 2+4 was deployed are triaged by the upgrade pass in class 3, a share of each tick,
-  so a large library gets captions over many ticks; the month's 20 000 images may be spent (it waits for the next
+  so a large library gets captions over many ticks; the month's triage dollars may be spent (it waits for the next
   month); a model outage defers the batch; a card-capped image is not triaged;
 - triage judged it **text** (a receipt, a screenshot): it is read by the reader and gets a brief, not a caption;
 - triage settled it as a photograph **without** a caption: the provider refused it (400/413/422; an Anthropic
@@ -974,7 +974,8 @@ parsed document is still found through `drive_query` and the exact-term stream (
   block out, so Connect, Disconnect and Reconnect always show. The block carries `available` (a drive queue is
   wired; the switch is hidden when false unless search is on), `access_lost_at` and `index_kept` (the "kept about 30
   days" hint shows only while an index is kept), and the card lists every non-zero counter (RFC Δ44). From Slice 2+4
-  it also returns `readable_chunks` and this month's `model_pages_month` / `triage_images_month` with their limits;
+  it also returns `readable_chunks`; from Search v2 (RFC §25.4.5) `model_usd_month` (this month's dollars per class),
+  `model_usd_caps` and `initial_build` (spent, allowance, closed), which replaced the retired page and image counters;
   the disclosure names the model providers (Anthropic or OpenAI) that read scans, images and hard PDFs, and Google
   (Gemini) for embeddings.
 - **Cost.** §4.13: the reader's pages are about $3 a user a month at most; triage, embeddings and Firestore are
