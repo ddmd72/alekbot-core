@@ -13,6 +13,7 @@ Public interface:
     change_from_record(rec) -> DriveChange
     schedule(rec, now, *, first_seen) -> DriveIndexRecord
     content_due(rec, now=None) -> bool / triage_due(rec, now=None) -> bool
+    quiet_over(rec, now) -> bool                                                            (§7.3)
     valid_verdict(rec, content_version) -> Optional[TriageVerdict]
     generation_started(rec, now) / indexed(rec, *, outcome, generation, chunk_count, now)
     deferred(rec, until, now, *, maintenance=False) / next_month_start(now) -> datetime
@@ -266,7 +267,11 @@ def _build(change: DriveChange, cls: Classification, existing: Optional[DriveInd
         if not (existing is not None and repository_root(existing) and _repository(change, cls)):
             base = replace(base, lead_text="", readme_pending=False, readme_item_id=None, readme_version="")
     if admission(cls.kind) is not Admission.TRIAGE:
+        # a photograph's verdict and caption live together: one dropped without the other would keep the verdict
+        # and lose the caption for good, so an image that comes back to triage is triaged again (§24.5, T-m3)
         base = replace(base, caption="")
+        if base.triage_verdict is TriageVerdict.PHOTO:
+            base = replace(base, triage_verdict=None, triage_version=0, triaged_content_version="")
     if cls.state is not RecordState.PENDING:
         # no content work is left: its quiet period, deferral and started attempt end with it
         base = replace(base, dirty_since=None, defer_until=None, defer_priority=None, attempt_started_at=None)
@@ -501,6 +506,13 @@ def triage_due(rec: DriveIndexRecord, now: Optional[datetime] = None) -> bool:
     not deferred past `now`."""
     return (rec.state is RecordState.PENDING and admission(rec.kind) is Admission.TRIAGE
             and valid_verdict(rec, rec.content_version) is None and not _held(rec, now))
+
+
+def quiet_over(rec: DriveIndexRecord, now: datetime) -> bool:
+    """§7.3: the record's content or triage work may start at `now` — it is not dirty, or its quiet period (QUIET
+    untouched, at most MAX_DEFER dirty) has ended. A record due for other work (a card, a re-embed) is not thereby due
+    for its content."""
+    return _content_due_at(rec, now) <= now
 
 
 def _content_due_at(rec: DriveIndexRecord, now: datetime) -> datetime:
