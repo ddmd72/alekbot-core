@@ -29,7 +29,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 from ..domain import drive_index_policy as policy
-from ..domain.drive_card import card_eligible, card_hash, card_text, repository_root
+from ..domain.drive_card import card_eligible, card_hash, card_text, repository_root, structurally_card_eligible
 from ..domain.drive_chunker import chunk_text
 from ..domain.drive_content_terms import content_terms
 from ..domain.drive_extraction import (
@@ -49,9 +49,9 @@ from ..domain.drive_index_params import (
 )
 from ..domain.drive_index_planner import (
     AccessAction, ObservationPlan, PlaceOf, PlanContext, access_action, attempt_crashed, can_start_file, capped,
-    card_refused, change_from_record, chunks_reembedded, content_due, content_retry, deferred, demoted,
-    extractor_stale, generation_started, indexed, model_available, model_outage, model_recovered, needs_probe,
-    next_month_start, quiet_over,
+    card_refused, change_from_record, chunks_reembedded, chunks_refused, content_due, content_retry, deferred, demoted,
+    drops_readable, extractor_stale, generation_started, indexed, model_available, model_outage, model_recovered,
+    month_key, month_parked, needs_probe, next_month_start, quiet_over,
     parent_scope, plan_observation, readme_read, reembed_in_space, reextraction_due, released, schedule,
     stale_versions, triage_due, triaged, usage_now, with_card, with_retry, with_usage, without_card,
 )
@@ -188,6 +188,15 @@ class _Budget:
 
     def maintenance_allowed(self) -> bool:
         return self.maintenance_s < MAINTENANCE_SHARE * TICK_START_BUDGET.total_seconds()
+
+
+@dataclass
+class _CardSlots:
+    """Card headroom during one pass of a due class (§5.4; R3 F1-2), decided before a record's content or triage
+    work. `carded` is read once per pass; `admitted` counts the cardless records this pass let through, whose cards
+    come at the end of the pass."""
+    carded: Optional[int] = None
+    admitted: int = 0
 
 
 @dataclass
@@ -549,8 +558,14 @@ class DriveIndexingService:
 
     async def _commit(self, user_id: str, writes: List[DriveIndexRecord], deletes: Set[str],
                       card_vectors: Optional[Dict[str, List[float]]] = None, *,
-                      collects: Optional[Set[str]] = None) -> None:
-        """`collects`: items whose chunks (every generation) go before the records are written (§3.4, §7.6)."""
+                      collects: Optional[Set[str]] = None,
+                      before: Optional[Mapping[str, DriveIndexRecord]] = None) -> None:
+        """`collects`: items whose chunks (every generation) go before the records are written (§3.4, §7.6).
+        `before`: the records the writes were derived from; a write that drops its readable generation collects it
+        (drops_readable, R3 F2-2), so a caller holding the record never has to remember to."""
+        if before:
+            dropped = {w.item_id for w in writes if drops_readable(before.get(w.item_id), w)}
+            collects = (collects or set()) | dropped if dropped else collects
         if not writes and not deletes and not collects:
             return
         _fence()
@@ -657,12 +672,14 @@ class DriveIndexingService:
     async def _work_class(self, user_id: str, state: DriveSyncState, recs: List[DriveIndexRecord], now: datetime,
                           budget: _Budget, summary: Dict[str, int], models: _Models, more_beyond: bool) -> bool:
         """Content and triage come before the card of the same record, so a read file is carded once, with its
-        lead text, brief or caption (§8.5); a card whose content cannot start now is embedded at once."""
+        lead text, brief or caption (§8.5); a card whose content cannot start now is embedded at once. Card headroom
+        is decided before both: a record the cap would refuse a card is capped instead of read (§5.4; R3 F1-2)."""
         ctx = self._ctx(user_id, state, now)
         cards: List[DriveIndexRecord] = []
         images: List[DriveIndexRecord] = []
         progressed = False
         page_ids = {r.item_id for r in recs}
+        slots = _CardSlots()
         for stale in recs:
             # An earlier step of this batch may have changed or removed it: always work the stored version.
             rec_or_none = (await self._repo.get_records(user_id, [stale.item_id])).get(stale.item_id)
@@ -686,6 +703,12 @@ class DriveIndexingService:
                 progressed |= await self._readme_step(user_id, rec, ctx, budget, summary)
             elif rec.has_card and not card_eligible(rec):
                 await self._commit(user_id, [without_card(rec, now)], set())
+                progressed = True
+            elif ((content_now or (triage_due(rec, now) and quiet_over(rec, now)))
+                  and not await self._card_slot(user_id, rec, slots)):
+                # no card headroom for it: its reading would never be found, so it waits for a release (R3 F1-2)
+                await self._commit(user_id, [capped(rec, now)], set(), before={rec.item_id: rec})
+                summary["capped"] = summary.get("capped", 0) + 1
                 progressed = True
             elif content_now and await self._index_step(user_id, rec, ctx, budget, summary, models):
                 progressed = True
@@ -880,10 +903,11 @@ class DriveIndexingService:
             if not rec.has_card and carded >= MAX_CARD_RECORDS_PER_USER:
                 victim = await self._repo.lowest_ranked_carded(user_id)
                 if victim is not None and victim.card_rank > rec.card_rank:
-                    await self._commit(user_id, [capped(victim, now)], set())
+                    # the evicted record's chunks go with its card (drops_readable, R3 F1-2)
+                    await self._commit(user_id, [capped(victim, now)], set(), before={victim.item_id: victim})
                     evicted += 1
                 else:
-                    await self._commit(user_id, [capped(rec, now)], set())
+                    await self._commit(user_id, [capped(rec, now)], set(), before={rec.item_id: rec})
                     continue
             elif not rec.has_card:
                 carded += 1
@@ -938,6 +962,20 @@ class DriveIndexingService:
             logger.warning(f"[DriveIndex] card embedding failed for {user_id[:8]}: "
                            f"{type(systemic).__name__}: {systemic}; {len(vectors)} cards kept, ending the tick")
             raise systemic
+
+    async def _card_slot(self, user_id: str, rec: DriveIndexRecord, slots: _CardSlots) -> bool:
+        """Whether `rec` will hold a card once its content or triage is done (§5.4): it has one, there is headroom
+        (counting the cardless records this pass already let through), or it outranks the lowest-ranked carded record,
+        which _embed_cards then evicts. Decided before any model or embedding work (R3 F1-2)."""
+        if rec.has_card or not structurally_card_eligible(rec):
+            return True
+        if slots.carded is None:
+            slots.carded = await self._repo.count_carded(user_id)
+        if slots.carded + slots.admitted < MAX_CARD_RECORDS_PER_USER:
+            slots.admitted += 1
+            return True
+        victim = await self._repo.lowest_ranked_carded(user_id)
+        return victim is not None and victim.card_rank > rec.card_rank
 
     async def _release_card_cap(self, user_id: str, now: datetime, summary: Dict[str, int]) -> None:
         """Headroom releases capped records best rank first (§5.4: a document before a non-document)."""
@@ -1278,8 +1316,9 @@ class DriveIndexingService:
         the same fence as an index run (§7.4). Any content state: a failed record's previous generation and a waiting
         record's current one are served too (§3.4), and their content state, attempts and deferral are left as they
         are (T-M1). Errors are classified like an index run's (§8.2): a systemic one ends the tick with the re-embed
-        still due; chunks that cannot be read back as stored, a per-file embedding failure or any other error send the
-        file to a full index run, which counts it."""
+        still due; a chunk this space refuses (HTTP 400) is terminal for the space (chunks_refused, R3 F2-3); chunks that
+        cannot be read back as stored, an embedding timeout or any other error send the file to a full index run,
+        which counts it."""
         if not budget.file_allowed(routed=False):
             return False
         readable = rec.indexed_generation
@@ -1331,9 +1370,18 @@ class DriveIndexingService:
         except LLMClientError as exc:
             if exc.http_status != 400:
                 raise   # systemic (§8.2)
-            logger.warning(f"[DriveIndex] a chunk of item {rec.item_id} for {user_id[:8]} was refused: {exc}")
-            await self._reread(user_id, rec, ctx)
+            # a definite refusal by this space's model: terminal here, never re-read (a reader call would buy the
+            # same refusal); the old-space chunks go, so the space change completes (R3 F2-3)
+            logger.warning(f"[DriveIndex] a chunk of item {rec.item_id} for {user_id[:8]} was refused in "
+                           f"{self._space}: {exc}; no chunks in this space")
+            fresh = (await self._repo.get_records(user_id, [rec.item_id])).get(rec.item_id)
             mark.committed = True
+            if (fresh is None or fresh.content_version != rec.content_version or fresh.indexed_generation != readable
+                    or fresh.index_generation != generation):
+                return   # the record moved on: its own work decides (the sweep removes any debris, §7.5)
+            done = _maintenance_kept(chunks_refused(fresh, self._space, now), rec.priority)
+            await self._commit(user_id, [done], set(), before={fresh.item_id: fresh})
+            summary["reembed_refused"] = summary.get("reembed_refused", 0) + 1
             return
         summary["embed_ms"] = summary.get("embed_ms", 0) + int((self._monotonic() - started) * 1000)
         terms = await asyncio.to_thread(_terms_of, [c.text for c in stored])
@@ -1468,7 +1516,7 @@ class DriveIndexingService:
             except (DriveNotConnectedError, DriveThrottled) as exc:
                 logger.warning(f"[DriveIndex] thumbnail of item {rec.item_id} hit a systemic error for "
                                f"{user_id[:8]}: {type(exc).__name__}")
-                await self._commit(user_id, writes, set())   # the verdicts already taken stay
+                await self._commit(user_id, writes, set(), before={r.item_id: r for r in batch})   # verdicts stay
                 raise
             except _PER_ITEM_ERRORS as exc:
                 logger.warning(f"[DriveIndex] thumbnail of item {rec.item_id} failed for {user_id[:8]}: "
@@ -1503,7 +1551,7 @@ class DriveIndexingService:
                     result = by_id.get(item_id)
                     writes.append(_verdict(rec, result, now) if result is not None
                                   else content_retry(rec, Reason.EXTRACT_ERROR, now))
-        await self._commit(user_id, writes, set())
+        await self._commit(user_id, writes, set(), before={r.item_id: r for r in batch})
         summary["triaged"] = summary.get("triaged", 0) + sum(1 for w in writes if w.triage_verdict is not None)
         for rec in gone:
             await self._item_gone(user_id, rec, rec.priority, ctx, budget, summary)
@@ -1561,9 +1609,12 @@ class DriveIndexingService:
         one pass: the work a pass schedules runs in the due loop of a later tick, so the next pass waits.
 
         A pass that left stale records (scheduled, backing off, or parked) is not repeated until due work has run
-        or the target versions change: a record stuck in backoff must not cost a full read of the index per tick."""
+        or the target versions change: a record stuck in backoff must not cost a full read of the index per tick. A
+        pass that left only records held for next month's budget is parked until the month turns (R3 F1-5)."""
         target = self._target_versions()
-        if _upgrade_waiting(state) and dict(state.target_versions) == target and state.target_space == self._space:
+        parked = state.upgrade_cursor is None and state.upgrade_parked_month == month_key(now)
+        if ((_upgrade_waiting(state) or parked) and dict(state.target_versions) == target
+                and state.target_space == self._space):
             return state
         while self._upgrade_due(state) and budget.time_left() and budget.maintenance_allowed():
             started = self._monotonic()
@@ -1577,19 +1628,25 @@ class DriveIndexingService:
                             summary: Dict[str, int]) -> DriveSyncState:
         if dict(state.target_versions) != target or state.target_space != self._space:
             state = replace(state, target_versions=target, target_space=self._space, upgrade_cursor=None,
-                            upgrade_found_stale=False)
+                            upgrade_found_stale=False, upgrade_parked_month="")
         ctx = self._ctx(user_id, state, now)
         page = await self._repo.records_page(user_id, state.upgrade_cursor, _DUE_PAGE)
         writes: Dict[str, DriveIndexRecord] = {}
         deletes: Set[str] = set()
         collects: Set[str] = set()
         found = state.upgrade_found_stale   # a stale record this pass left stale (its work is due, or blocked)
+        # a record held for next month seen earlier in this pass (a new pass starts with none)
+        held = state.upgrade_cursor is not None and state.upgrade_parked_month == month_key(now)
         for rec in page:
             if rec.state is RecordState.DELETING or not self._stale(rec):
                 continue
             if rec.state is RecordState.UNRESOLVED and rec.due_at is None:
                 # parked under an unresolved parent, whose rescope re-plans it under the current versions; scheduling
                 # it only re-parks it, and it holds no card, so it does not keep the versions from applying
+                continue
+            if month_parked(rec, now, embedding_space=self._space):
+                # its re-read is already scheduled for the month's turn: no parent read, no re-plan (R3 F1-5)
+                held = True
                 continue
             parent = await self._parent_of(user_id, rec, ctx)
             current = reembed_in_space(rec, self._space)
@@ -1606,13 +1663,18 @@ class DriveIndexingService:
                 found = True
         await self._commit(user_id, list(writes.values()), deletes, collects=collects)
         summary["upgraded"] = summary.get("upgraded", 0) + len(writes)
+        month = month_key(now) if held else ""
         if len(page) == _DUE_PAGE:
-            return replace(state, upgrade_cursor=page[-1].item_id, upgrade_found_stale=found)
+            return replace(state, upgrade_cursor=page[-1].item_id, upgrade_found_stale=found,
+                           upgrade_parked_month=month)
         if found:   # scheduling is not completion: the next pass verifies once due work has run
-            return replace(state, upgrade_cursor=None, upgrade_found_stale=True)
+            return replace(state, upgrade_cursor=None, upgrade_found_stale=True, upgrade_parked_month="")
+        if held:    # only month-held records are left: the next pass runs when the month turns (R3 F1-5)
+            logger.info(f"[DriveIndex] upgrade pass for {user_id[:8]} parked until the month turns")
+            return replace(state, upgrade_cursor=None, upgrade_found_stale=False, upgrade_parked_month=month)
         logger.info(f"[DriveIndex] versions {target} in {self._space} applied for {user_id[:8]}")
         return replace(state, applied_versions=target, applied_space=self._space, upgrade_cursor=None,
-                       upgrade_found_stale=False)
+                       upgrade_found_stale=False, upgrade_parked_month="")
 
     # ------------------------------------------------------------------------------------------
     # Purge, continuation, helpers
