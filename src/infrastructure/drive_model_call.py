@@ -6,14 +6,18 @@ overrides; a prompt missing a section is an outage, never a fallback prompt).
 Two outcomes, decided by what the failure says about the input:
 - DriveModelCallFailed: this one input cannot be read now — the provider refused it (HTTP 400/413/422, a safety
   refusal, a file part the adapter could not build) or the output stayed invalid after the parse retry. The runner
-  turns it into an `error` outcome (a per-file transient), except its two terminal cases (R2 P-m5): the same bytes
-  get the same answer, so a retry would only bill the file's windows again —
-  DriveInputTooLarge (413) first halves a multi-page PDF window, down to one page; a single page or an image still
-  refused is `too_large`; DriveInputRefused (400/422) is `unsupported`.
+  turns it into an `error` outcome (a per-file transient), except its two refusal cases, DriveInputTooLarge (413)
+  and DriveInputRefused (400/422), where the same bytes get the same answer (R2 P-m5, R3-P1):
+  - a PDF window is halved, down to one page; a single page still refused is skipped and the rest of the file is
+    read; a file whose every page was refused is `too_large` (a 413 among them) or `unsupported`;
+  - an image still refused is terminal: `too_large` (413) or `unsupported` (400/422);
+  - triage halves a refused batch down to the refused image, a photograph without a caption; any other failed
+    triage call is not halved (R3 F1-6).
 - DriveModelUnavailable (domain): the model cannot be used now for anyone — 429, 5xx, timeout, network, an open
   breaker, an account-level 4xx (key, permission, model id), a missing prompt, or anything unexpected. The tick
   defers model work for the user and keeps parsing (§24.8), so a bug never burns a file's attempts. Its
-  DriveModelTimedOut case first halves a multi-page PDF window once.
+  DriveModelTimedOut case first halves a multi-page PDF window once; a half that times out again is a per-file
+  failure (`error`), not an outage (T-M2b).
 """
 from __future__ import annotations
 
@@ -45,12 +49,15 @@ class DriveModelCallFailed(Exception):
 
 class DriveInputTooLarge(DriveModelCallFailed):
     """HTTP 413: the request was too large for the provider. The reader halves a multi-page window, down to one page;
-    a single page still too large fails the file (§24.3)."""
+    a single page still too large is skipped and the rest of the file is read (R3-P1); an image still too large is
+    `too_large`; triage halves the batch down to the image (§24.3, §24.5)."""
 
 
 class DriveInputRefused(DriveModelCallFailed):
-    """HTTP 400/422: the provider refused this input outright. Terminal for the file (`unsupported`, R2 P-m5); a
-    refusal raised before any HTTP exchange stays a plain DriveModelCallFailed (an adapter bug is not the file's)."""
+    """HTTP 400/422: the provider refused this input outright; the same bytes get the same answer (R2 P-m5). A PDF
+    window is halved and a single page still refused is skipped (R3-P1); an image is terminal (`unsupported`);
+    triage halves the batch down to the image. A refusal raised before any HTTP exchange stays a plain
+    DriveModelCallFailed (an adapter bug is not the file's)."""
 
 
 class DriveModelTimedOut(DriveModelUnavailable):
