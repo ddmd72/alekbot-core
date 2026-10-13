@@ -1,0 +1,33 @@
+{
+  "source": "GeoNames (https://www.geonames.org), CC BY 4.0",
+  "base_url": "https://download.geonames.org/export/dump/",
+  "inputs": {
+    "alternateNamesV2.zip": {
+      "sha256": "3c4e5e5e317aefc84b7b639be2db63dab940de72192789c84ee9b796ba82c1f4",
+      "bytes": 204831254,
+      "last_modified": "Tue, 13 Oct 2026 02:02:37 GMT"
+    },
+    "cities5000.zip": {
+      "sha256": "a8ea0640263209c573536d15cb28cb666ee0f292f4f4f6da669e007fd021b49f",
+      "bytes": 5712327,
+      "last_modified": "Tue, 13 Oct 2026 01:57:19 GMT"
+    },
+    "countryInfo.txt": {
+      "sha256": "c5997ea659df5bcf42509eb937064d172b2a998bb873608603e8421d714a9974",
+      "bytes": 31680,
+      "last_modified": "Tue, 13 Oct 2026 02:02:56 GMT"
+    }
+  },
+  "languages": [
+    "en",
+    "es",
+    "fr",
+    "uk",
+    "ru"
+  ],
+  "per_language_max": 3,
+  "large_population": 100000,
+  "large_max_km": 50.0,
+  "places": 64505,
+  "countries": 252
+}

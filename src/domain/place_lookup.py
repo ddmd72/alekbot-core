@@ -7,6 +7,11 @@ nearest place's. Then the heaviest such place wins: a photo in a Porto parish is
 one in Trastevere "Rome" although the Vatican City row is nearer; Monaco is never "Nice", Kehl never "Strasbourg",
 Brazzaville never "Kinshasa". Candidates come from a 1-degree grid: the three latitude rows around the point, and as many longitude
 cells as PLACE_MAX_DISTANCE_KM spans at that latitude.
+
+Geo table v2 (§25.4.3, GEO_TABLE_VERSION 2) gives each row its alternate names in en, es, fr, uk and ru, its country's
+names in those languages, and the nearest place of PLACE_LARGE_POPULATION people or more within PLACE_MAX_DISTANCE_KM
+(chosen when the table is built). `place()` returns them with the display name as the photo's `place_forms`: the
+spellings its keys are made from, on the index side only (no query-side table, OQ-V3).
 """
 from __future__ import annotations
 
@@ -24,6 +29,8 @@ PLACE_PREFER_WEIGHT_FACTOR = 3.0
 # and only where the nearest place's own footprint does not hold the photo (an enclave like the Vatican), never
 # over a separate border town or city (Kehl, Monaco, Brazzaville).
 PLACE_FOOTPRINT_K = 0.0015
+# Geo table v2 (§25.4.3): a place this populous near a smaller one joins the smaller one's place forms.
+PLACE_LARGE_POPULATION = 100_000
 
 
 @dataclass(frozen=True)
@@ -34,6 +41,40 @@ class PlaceRow:
     name_local: str
     country: str
     weight: int = 0   # population, tripled for capitals and regional seats
+    # Geo table v2 (empty on a v1 row): the place's names in en, es, fr, uk, ru beyond name_en/name_local; its
+    # country's names (one tuple shared by every row of the country); the nearest place of PLACE_LARGE_POPULATION
+    # people or more within PLACE_MAX_DISTANCE_KM, None when the place is that large itself or none is near.
+    alt_names: Tuple[str, ...] = ()
+    country_names: Tuple[str, ...] = ()
+    large: Optional["PlaceRow"] = None
+
+
+@dataclass(frozen=True)
+class Place:
+    """What a photo's coordinates resolve to: the display name (`place_name`) and its spellings (`place_forms`)."""
+    name: str
+    forms: Tuple[str, ...]
+
+
+def place_forms(row: PlaceRow) -> Tuple[str, ...]:
+    """The row's spellings in a fixed order — its own names, its country's, the nearest large place's — each once
+    (case-insensitive; the first spelling is kept)."""
+    names: List[str] = [row.name_en, row.name_local, *row.alt_names, row.country, *row.country_names]
+    if row.large is not None:
+        names += [row.large.name_en, row.large.name_local, *row.large.alt_names]
+    seen = set()
+    forms: List[str] = []
+    for name in names:
+        key = name.strip().casefold()
+        if key and key not in seen:
+            seen.add(key)
+            forms.append(name.strip())
+    return tuple(forms)
+
+
+def distance_km(a_lat: float, a_lon: float, b_lat: float, b_lon: float) -> float:
+    """Great-circle distance (haversine); the build script picks a row's large place with it."""
+    return _km(a_lat, a_lon, b_lat, b_lon)
 
 
 def _km(a_lat: float, a_lon: float, b_lat: float, b_lon: float) -> float:
@@ -66,10 +107,12 @@ class PlaceIndex:
     def lookup(self, lat: float, lon: float) -> Optional[str]:
         """The place name a photo taken here gets, e.g. "Rome (Roma), Italy"; None when no place is near."""
         row = self.resolve(lat, lon)
-        if row is None:
-            return None
-        local = f" ({row.name_local})" if row.name_local and row.name_local != row.name_en else ""
-        return f"{row.name_en}{local}, {row.country}"
+        return None if row is None else _display(row)
+
+    def place(self, lat: float, lon: float) -> Optional[Place]:
+        """The display name and the place forms of the place a photo taken here gets (§25.4.3); None as lookup()."""
+        row = self.resolve(lat, lon)
+        return None if row is None else Place(name=_display(row), forms=place_forms(row))
 
     def resolve(self, lat: float, lon: float) -> Optional[PlaceRow]:
         """The place row behind lookup()."""
@@ -108,3 +151,8 @@ class PlaceIndex:
         if not heavier:
             return nearest
         return max(heavier, key=lambda c: (c[1].weight, -c[0]))[1]
+
+
+def _display(row: PlaceRow) -> str:
+    local = f" ({row.name_local})" if row.name_local and row.name_local != row.name_en else ""
+    return f"{row.name_en}{local}, {row.country}"
