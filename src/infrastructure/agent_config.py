@@ -318,7 +318,8 @@ class VoiceSummarizerAgentConfig:
 @dataclass
 class DriveReaderAgentConfig:
     # One window of MODEL_PAGES_PER_CALL pages: ≈ 60 s a round (§24.13). A call past this halves a multi-page window
-    # once; a half or a single page past it is a model outage (§24.3). Calibrate with the live model check's timing
+    # once; a half past it again fails the file (`error`, a counted per-file retry, T-M2b); a single-page window
+    # past it, never halved, is a model outage (§24.3). Calibrate with the live model check's timing
     # summary (scripts/validation/drive_model_check.py: slowest call, output tokens/s).
     call_timeout_s: int = 180
     # ≈ 8k output tokens for ten dense pages, plus low-effort thinking, which counts toward the cap on Claude.
