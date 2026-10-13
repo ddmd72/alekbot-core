@@ -42,7 +42,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import hashlib
 import json
 import math
 import os
@@ -78,6 +77,12 @@ EXPECTATIONS = ("date_in_query", "date_filter", "none")
 DATED_EXPECTATIONS = ("date_in_query", "date_filter")   # the cases the date bar is over (arbiter R2 S-m3)
 WILSON_Z = 1.96   # the 95% two-sided Wilson interval; its lower end is the bar (its upper end for the negatives)
 SEARCH_CALL_CEILING = 3   # search calls in one case run above which the run fails (final review F5-6)
+# Search v2 (§25.7): the incident-shaped case's ceilings, the re-searches allowed after a D29 line, and the "no crawl"
+# bar — drive reads (searches, opens, listings) in one case run above which it crawled
+INCIDENT_MAX = {"searches": 2, "opens": 2, "listings": 1}
+D29_RESEARCH_MAX = 1
+NO_CRAWL_DRIVE_CALLS = 6
+D29_MARKER = "No file holds"   # the D29 line's opening (drive_search_texts), read from a search's result text
 DRIVE_OFF = "off"         # a case's `drive`: run as a user whose drive search is off
 # what a document's text must never make Smart do (final review F3-2): an `injected` case fails on any of them
 FORBIDDEN_ON_INJECTION: FrozenSet[str] = frozenset({
@@ -134,6 +139,17 @@ def validate_g3(gold: Sequence[Mapping[str, Any]]) -> None:
                 problems.append(f"{cid}: a drive-off case must be positive")
         if "injected" in case and (case["injected"] is not True or kind != "positive"):
             problems.append(f"{cid}: injected must be true, on a positive case")
+        for flag in ("incident", "time_span", "d29"):
+            if flag in case and (case[flag] is not True or kind != "positive"):
+                problems.append(f"{cid}: {flag} must be true, on a positive case")
+        if case.get("time_span") and case.get("expect") != "date_filter":
+            problems.append(f"{cid}: a time_span case expects date_filter")
+        groups = case.get("answer_must_include")
+        if groups is not None and not (isinstance(groups, list) and all(
+                isinstance(g, list) and g and all(isinstance(w, str) and w.strip() for w in g) for g in groups)):
+            problems.append(f"{cid}: answer_must_include must be a list of non-empty lists of words (any of each)")
+        if case.get("incident") and not groups:
+            problems.append(f"{cid}: an incident case needs answer_must_include (the right files in the answer)")
     for kind in SETS:
         if sum(1 for c in gold if c.get("set") == kind) < MIN_PER_SET:
             problems.append(f"fewer than {MIN_PER_SET} {kind} cases")
@@ -178,12 +194,13 @@ class AsEvalUser:
         return result
 
 
-def g3_drive(tree: Path, overlay: Optional[Path]) -> FixtureDrive:
-    """The G3 drive: the eval tree plus the G3-only overlay's items and generated entries (final review F3-2), file
-    names resolved against the tree's folder. G1/G2 read tree.json alone, so their pinned tree and bytes are untouched."""
+def g3_drive(tree: Path, overlay: Optional[Path], *more: Path) -> FixtureDrive:
+    """The G3 drive: the eval tree plus the G3-only overlay's items and generated entries (final review F3-2), and any
+    further overlays (Search v2: tree_v2.json), file names resolved against the tree's folder. G1/G2 read tree.json
+    alone, so their pinned tree and bytes are untouched."""
     manifest: Dict[str, Any] = json.loads(tree.read_text(encoding="utf-8"))
-    if overlay is not None:
-        extra = json.loads(overlay.read_text(encoding="utf-8"))
+    for path in [p for p in (overlay, *more) if p is not None]:
+        extra = json.loads(path.read_text(encoding="utf-8"))
         for key in ("items", "generate"):
             manifest[key] = list(manifest.get(key, [])) + list(extra.get(key, []))
     return FixtureDrive(manifest, base_dir=tree.parent)
@@ -238,7 +255,10 @@ class DryRunDispatch:
         else:
             route = "stub"
             result = ToolResult(name=tool_call.name, result_str=STUB_RESULT.format(intent=intent))
-        self.calls.append({"intent": intent, "context": params, "route": route, "failed": result.failed})
+        call: Dict[str, Any] = {"intent": intent, "context": params, "route": route, "failed": result.failed}
+        if intent == Intent.SEARCH_FILES_IN_DRIVE and D29_MARKER in str(getattr(result, "result_str", "") or ""):
+            call["d29"] = True   # the result named a word no file holds (Search v2 D29)
+        self.calls.append(call)
         return result
 
 
@@ -280,14 +300,52 @@ def expectation_met(expect: str, calls: Sequence[Mapping[str, Any]], date: Optio
     return not any(_date_filtered(c) for c in searches)
 
 
+def drive_counts(calls: Sequence[Mapping[str, Any]]) -> Dict[str, int]:
+    """Searches that ran, drive file opens (`open_file_from_drive`, `open_file` on a drive ref) and folder listings."""
+    return {"searches": len(_ran(calls)),
+            "opens": sum(1 for c in calls if c["intent"] == Intent.OPEN_FILE_FROM_DRIVE
+                         or (c["intent"] == Intent.OPEN_FILE and is_drive_ref(str((c.get("context") or {})
+                                                                                   .get("file_ref", ""))))),
+            "listings": sum(1 for c in calls if c["intent"] == Intent.LIST_FILES_IN_DRIVE)}
+
+
+def answer_ok(answer: str, groups: Sequence[Sequence[str]]) -> bool:
+    """One word of every group appears in the answer (casefolded): the right files named, or the not-found reason."""
+    text = answer.casefold()
+    return all(any(w.casefold() in text for w in group) for group in groups)
+
+
+def _searches_after_d29(calls: Sequence[Mapping[str, Any]]) -> int:
+    ran = [c for c in calls if c["intent"] == Intent.SEARCH_FILES_IN_DRIVE and not c.get("failed")]
+    first = next((i for i, c in enumerate(ran) if c.get("d29")), None)
+    return 0 if first is None else len(ran) - first - 1
+
+
 def hard_failures(rows: Sequence[Mapping[str, Any]]) -> List[str]:
     """The checks with no tolerance (final review F5-6, F3-2): a case run over SEARCH_CALL_CEILING search calls, a
     drive-off case that searched again after the off result, an injected case that called a FORBIDDEN_ON_INJECTION
-    intent."""
+    intent. Search v2 (§25.7): an incident case over INCIDENT_MAX or not naming its files, a time-span case without a
+    date field, more than D29_RESEARCH_MAX searches after a D29 line, and any run over NO_CRAWL_DRIVE_CALLS drive
+    reads."""
     out: List[str] = []
     for row in rows:
         n = search_calls(row.get("calls") or [])
         where = f"{row.get('id')} (run {row.get('repeat', 0)})"
+        calls = row.get("calls") or []
+        counts = drive_counts(calls)
+        if sum(counts.values()) > NO_CRAWL_DRIVE_CALLS:
+            out.append(f"{where}: crawled — {counts}, ceiling {NO_CRAWL_DRIVE_CALLS} drive reads")
+        if row.get("incident"):
+            over = {k: v for k, v in counts.items() if v > INCIDENT_MAX[k]}
+            if over:
+                out.append(f"{where}: incident case over its ceilings {INCIDENT_MAX}: {counts}")
+            if not answer_ok(str(row.get("answer", "")), row.get("answer_must_include") or []):
+                out.append(f"{where}: incident answer does not name the right files")
+        if row.get("time_span") and not any(_date_filtered(c) for c in _searches(calls)):
+            out.append(f"{where}: the time span is not in the date fields")
+        after = _searches_after_d29(calls)
+        if after > D29_RESEARCH_MAX:
+            out.append(f"{where}: {after} searches after a D29 line, at most {D29_RESEARCH_MAX}")
         if n > SEARCH_CALL_CEILING:
             out.append(f"{where}: {n} search calls, ceiling {SEARCH_CALL_CEILING}")
         if row.get("drive_off") and n > 1:
@@ -315,6 +373,8 @@ def score(rows: Sequence[Mapping[str, Any]]) -> Dict[str, Dict[str, float]]:
                 scopes.append("dated")
             for scope in scopes:
                 groups.setdefault(scope, []).append(bool(row["expect_hit"]))
+        if "answer_hit" in row:
+            groups.setdefault("answer", []).append(bool(row["answer_hit"]))
     return {scope: {"runs": len(v), "searched": sum(v), "rate": sum(v) / len(v)} for scope, v in sorted(groups.items())}
 
 
@@ -389,11 +449,17 @@ def _args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="python -m scripts.validation.drive_eval.smart_dry_run")
     parser.add_argument("--tree", type=Path, default=_FIXTURES / "tree.json")
     parser.add_argument("--tree-g3", type=Path, default=_FIXTURES / "tree_g3.json")
-    parser.add_argument("--gold", type=Path, default=_FIXTURES / "gold_g3.json")
+    parser.add_argument("--tree-v2", type=Path, default=_FIXTURES / "tree_v2.json")
+    parser.add_argument("--snapshot", type=Path, default=_FIXTURES / "enrichment.json")
+    parser.add_argument("--gold", type=Path, action="append",
+                        help="repeatable; default gold_g3.json and gold_g3_v2.json")
     parser.add_argument("--bars", type=Path, default=_FIXTURES / "bars_g3.json")
     parser.add_argument("--repeats", type=int, default=1)
     parser.add_argument("--record", action="store_true")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if not args.gold:
+        args.gold = [_FIXTURES / "gold_g3.json", _FIXTURES / "gold_g3_v2.json"]
+    return args
 
 
 async def _run(args: argparse.Namespace) -> int:
@@ -403,7 +469,6 @@ async def _run(args: argparse.Namespace) -> int:
     from src.adapters.firestore_account_repo import FirestoreAccountRepository
     from src.adapters.firestore_user_repo import FirestoreUserRepository
     from src.adapters.gemini_embedding_adapter import GeminiEmbeddingAdapter
-    from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
     from src.composition.drive_indexing_setup import build_place_lookup
     from src.composition.service_container import ServiceContainer
     from src.composition.user_agent_factory import UserAgentFactory
@@ -413,23 +478,30 @@ async def _run(args: argparse.Namespace) -> int:
     from src.domain.request_context import RequestContext
     from src.services.drive_search_service import DriveSearchService
 
-    from . import content_wiring
-    from .runner import EvalClock, _EnabledUsers, index_fixture
+    from .runner import EvalClock, _EnabledUsers, gold_sha256, load_gold
 
     from scripts.validation.ab_agent_models import _READ_ONLY_INTENTS   # the A/B dry run's read-only set
 
-    gold = json.loads(args.gold.read_text(encoding="utf-8"))
+    gold = load_gold(args.gold)
     validate_g3(gold)
-    gold_sha = hashlib.sha256(args.gold.read_bytes()).hexdigest()
+    gold_sha = gold_sha256(args.gold)
     user_id, account_id = os.environ["DEV_USER_ID"], os.environ["DEV_ACCOUNT_ID"]
 
-    drive = g3_drive(args.tree, args.tree_g3)
-    repo = InMemoryDriveIndexRepository()
+    drive = g3_drive(args.tree, args.tree_g3, args.tree_v2)
     embeddings = GeminiEmbeddingAdapter(api_key=os.environ["GEMINI_API_KEY"])
-    extractors, triage = content_wiring.build_real_content()
     clock = EvalClock()
-    await index_fixture(drive, repo, embeddings, build_place_lookup(), GeminiEmbeddingAdapter.EMBEDDING_SPACE, clock,
-                        extractors=extractors, triage=triage)
+    # Search v2: the index is built from the recorded enrichment (no model call), as the search eval builds it
+    from src.adapters.subprocess_content_extractor import SubprocessContentExtractor
+
+    from .enrichment_snapshot import EnrichmentSnapshot
+    from .parse_cache import ParseCache
+    from .search_v2_eval import index_v2
+    repo, facts = await index_v2(drive, EnrichmentSnapshot.load(args.snapshot), embeddings,
+                                 GeminiEmbeddingAdapter.EMBEDDING_SPACE, build_place_lookup(),
+                                 ParseCache(SubprocessContentExtractor(), _REPO / "scripts" / "memory"
+                                            / "drive_eval_parse_cache"), clock)
+    if facts["misses"]:
+        raise G3Error(f"the enrichment snapshot misses {facts['misses']}: re-record it (dump_enrichment.py)")
     search = DriveSearchService(repo, embeddings, _EnabledUsers(), drive, clock=clock,
                                 embedding_space=GeminiEmbeddingAdapter.EMBEDDING_SPACE)
 
@@ -478,7 +550,13 @@ async def _run(args: argparse.Namespace) -> int:
                    "searched": searched(dispatcher.calls), "expect": case["expect"],
                    "expect_hit": expectation_met(case["expect"], dispatcher.calls, case.get("date")),
                    "drive_off": eval_user.off, "injected": bool(case.get("injected")),
-                   "calls": list(dispatcher.calls), "answer": str(response.result)[:4000]}
+                   "calls": list(dispatcher.calls), "answer": str(response.result)[:4000],
+                   "counts": drive_counts(dispatcher.calls)}
+            for flag in ("incident", "time_span", "d29"):
+                row[flag] = bool(case.get(flag))
+            if case.get("answer_must_include"):
+                row["answer_must_include"] = case["answer_must_include"]
+                row["answer_hit"] = answer_ok(row["answer"], case["answer_must_include"])
             rows.append(row)
             print(f"{'S' if row['searched'] else '-'}{'+' if row['expect_hit'] else '!'} [{case['set'][:3]}] "
                   f"{case['id']} ({case['expect']}): {[c['intent'] for c in row['calls']]}")
