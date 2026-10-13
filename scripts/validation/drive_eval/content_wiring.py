@@ -1,11 +1,12 @@
 """
 The eval's real content ports (USER_DRIVE_INDEXING_RFC §24.2, §24.11): the child-process parser, the document reader
 and the image triage, built as the indexer service builds them — on the indexer's context builder
-(`build_drive_context_builder`: Claude and OpenAI only, a process-local breaker, none of the main service's alerting,
-prompt caching or prompt-content store) — minus billing (no quota service: the eval user is not an account). The
-prompts come from Firestore, so a run needs GCP credentials and the owner-uploaded drive_reader / drive_triage
-prompts; the model keys come from .env. The reader runs on the eval user's default provider (Claude ECO, §24.2), or
-on `DRIVE_EVAL_PROVIDER=openai` for the other leg of the model check; `reader_provider()` names it for the bars.
+(`build_drive_context_builder`: a process-local breaker, none of the main service's alerting, prompt caching or
+prompt-content store) — minus billing (no quota service: the eval user is not an account) and minus the Gemini
+fallback (no GEMINI_API_KEY passed: a failover would mix a second model into bars stamped with one reader provider).
+The prompts come from Firestore, so a run needs GCP credentials and the owner-uploaded drive_reader / drive_triage
+prompts; the model keys come from .env. The reader runs on the eval user's default provider (OpenAI ECO, §24.2), or
+on `DRIVE_EVAL_PROVIDER=claude` for the other leg of the model check; `reader_provider()` names it for the bars.
 """
 from __future__ import annotations
 
@@ -47,7 +48,7 @@ def build_real_content() -> Tuple[Dict[str, ContentExtractorPort], ImageTriagePo
     """{PARSER, READER} and the triage port. Raises ContentSetupError instead of falling back: bars recorded without
     the reader would be meaningless."""
     provider = (os.getenv("DRIVE_EVAL_PROVIDER") or "").strip()
-    needed = {"": "ANTHROPIC_API_KEY", "claude": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY"}.get(provider)
+    needed = {"claude": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY"}.get(provider or reader_provider())
     if needed is None:
         raise ContentSetupError(f"DRIVE_EVAL_PROVIDER must be claude or openai, not {provider!r}")
     if not os.getenv(needed):

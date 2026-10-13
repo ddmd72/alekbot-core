@@ -190,14 +190,19 @@ class AgentProviderStrategy:
         # The provider is a configuration switch between the two that take inline file bytes (Gemini's adapter
         # does not); the pick is checked live on the owner's files. No fallback: a second model's transcription
         # was never checked, and an outage defers model work instead (§24.8).
+        # The reader defaults to OpenAI (gpt-6-luna at ECO) with triage: one provider for both drive model calls,
+        # the one the live check (2026-10-13) found exact.
         "drive_reader": {
-            "default_provider": "claude",
+            "default_provider": "openai",
             "allowed_providers": ["claude", "openai"],
             "required_capabilities": ["vision"],
             "fallback": None,
         },
+        # Triage defaults to OpenAI (gpt-6-luna at ECO): in the live check (2026-10-13) Claude Haiku 5.5 shifted the
+        # captions of a 16-image batch by one image in 1 call of 5 (11 captions on the wrong files); Luna shifted
+        # none in 8, at a third of the cost.
         "drive_triage": {
-            "default_provider": "claude",
+            "default_provider": "openai",
             "allowed_providers": ["claude", "openai"],
             "required_capabilities": ["vision"],
             "fallback": None,
