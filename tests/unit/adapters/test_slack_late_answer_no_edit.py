@@ -44,9 +44,9 @@ async def test_late_answer_body_survives_the_permalink_unfurl():
         "📂 Знайшов *два фото* у `Index test/Photos/`.", "[відкладена відповідь]", "1001.1")
 
     shown = slack.shown()
-    assert len(shown) == 1
+    assert len(shown) == 2  # the header, then the body — both posted, neither edited
     assert shown[0].startswith("[відкладена відповідь] <https://ws.slack.com/archives/D1/p1001|↩>")
-    assert "Знайшов *два фото*" in shown[0]
+    assert "Знайшов *два фото*" in shown[1]
 
 
 async def test_long_late_answer_is_shown_whole_in_the_main_feed():
@@ -56,7 +56,7 @@ async def test_long_late_answer_is_shown_whole_in_the_main_feed():
 
     await ch.send_late_answer("\n\n".join(paragraphs), "[late answer]", "1001.1")
 
-    assert len(slack.feed) > 1  # really overflowed past SLACK_CHUNK_SIZE
+    assert len(slack.feed) > 2  # the header, then a body that really overflowed past SLACK_CHUNK_SIZE
     assert all(len(t) <= SLACK_CHUNK_SIZE for t in slack.shown())
     assert all(m["thread_ts"] is None for m in slack.feed.values())
     shown = "\n".join(slack.shown())

@@ -32,6 +32,9 @@ rejection of the revision-3 fork design). On Slack the late answer is posted, ne
 posted-then-edited: the permalink in its header is unfurled by Slack's own asynchronous
 write, and a `chat.update` landing in that window returned ok and was then overwritten,
 leaving the header alone in the feed (4 of 27 late answers in one DM, fixed 2026-10-13).
+The header is posted alone, before the answer: Slack attaches the unfurl preview to the
+message that carries the link, and inside the first chunk it sat between the first and
+second chunk of a long answer (owner request, 2026-10-13).
 Persistence (registry record, heartbeat,
 cancel, chat-since lookup) is `LongTurnService` over a new `LongTurnRegistry` port,
 backed by `FirestoreLongTurnRegistry` (`{prefix}long_turns`, TTL on `expires_at`).
