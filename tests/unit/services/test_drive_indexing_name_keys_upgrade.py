@@ -13,7 +13,7 @@ async def test_a_keyer_bump_re_keys_every_record_without_re_embedding(monkeypatc
     await w.settle()
     target = {**CURRENT_VERSIONS, "name_keys": CURRENT_VERSIONS["name_keys"] + 1}
     monkeypatch.setattr(planner, "NAME_KEYS_VERSION", target["name_keys"])
-    monkeypatch.setattr(planner, "name_keys", lambda name: (f"v2:{name}",))
+    monkeypatch.setattr(planner, "name_keys_v2", lambda name: (f"v2:{name}",))   # the planner's keyer (§25.2.4)
     monkeypatch.setattr(svc_mod, "CURRENT_VERSIONS", target)
     w.emb.calls.clear()
     await w.settle()

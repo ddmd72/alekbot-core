@@ -31,14 +31,17 @@ async def _counters(w: ContentWorld):
 
 
 async def test_a_reextraction_reuses_every_vector_and_recomputes_every_chunks_terms(monkeypatch):
+    """Search v2 (§25.2.2): a chunk's terms are its `word_keys`, computed by `word_keys_capped` (the v1 `content_terms`
+    are retired); the property is unchanged: new keying rules reach every chunk of a re-extraction."""
     w = ContentWorld()
     doc = w.add_doc("terms.md", prose(300))
     await w.settle()
     before = w.rec(doc)
     texts = [c.text for c in w.readable(doc)]
-    assert len(texts) > 4 and all(MARK not in c.content_terms for c in w.readable(doc))
-    real_terms = svc_mod.content_terms
-    monkeypatch.setattr(svc_mod, "content_terms", lambda text: (*real_terms(text), MARK))   # the new rules
+    assert len(texts) > 4 and all(MARK not in c.word_keys for c in w.readable(doc))
+    real_keys = svc_mod.word_keys_capped
+    monkeypatch.setattr(svc_mod, "word_keys_capped",
+                        lambda text: ((*real_keys(text)[0], MARK), False))   # the new rules
     w.parser._version = 2                                     # the extractor changed: its files are read again (§9)
     _switch_space(w, "test-space/8", w.emb)
     parses, embedded = len(w.parser.requests), len(w.emb.calls)
@@ -48,7 +51,7 @@ async def test_a_reextraction_reuses_every_vector_and_recomputes_every_chunks_te
     assert after.state is RecordState.INDEXED and after.indexed_generation != before.indexed_generation
     assert [c.text for c in w.readable(doc)] == texts
     assert not set(texts) & set(w.emb.calls[embedded:])        # no unchanged chunk embedded again
-    assert all(MARK in c.content_terms for c in w.readable(doc))
+    assert all(MARK in c.word_keys for c in w.readable(doc))
     assert w.generations(doc) == [after.indexed_generation]    # the old generation is collected
 
 

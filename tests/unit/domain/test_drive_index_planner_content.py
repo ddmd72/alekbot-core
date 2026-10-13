@@ -7,6 +7,7 @@ import pytest
 
 from src.domain import drive_index_policy as policy
 from src.domain.drive_card import card_hash
+from src.domain.drive_enrichment import DriveProfile, PhotoDescription
 from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus, TriageResult
 from src.domain.drive_index import (
     EXTRACTION_VERSION, TRIAGE_VERSION, DocumentBrief, DriveChange, DriveIndexRecord, DriveSyncState, EpochPhase,
@@ -332,14 +333,21 @@ class TestRuns:
         assert (rec.indexed_generation, rec.indexed_version, rec.extraction_version) == (1, "c1", EXTRACTION_VERSION)
         assert (rec.extracted_by, rec.text_chars, rec.pages_total, rec.chunk_count, rec.truncated) == \
             ("parser@1", len(body), 3, 7, True)
-        assert rec.lead_text == "x" * CARD_LEAD_CHARS
+        assert rec.lead_text == ""   # v2 (§25.2.7): no lead text but for machine text; the profile carries the card
         assert (rec.attempts, rec.attempt_started_at, rec.dirty_since) == (0, None, None)
-        assert (rec.due_at, rec.priority) == (NOW, Priority.FIRST_SEEN)   # the card gained lead text
+        assert (rec.due_at, rec.priority) == (NOW, Priority.FIRST_SEEN)   # never carded: its first card is due
         assert not content_due(rec)
 
     def test_a_carded_record_refreshes_its_card_in_class_0(self):
-        rec = indexed(generation_started(stored(ch()), NOW), outcome=text(), generation=1, chunk_count=1, now=NOW)
+        # v2: the read text no longer reaches the card by itself (no lead text); a brief does, so the card changes
+        brief = DocumentBrief(doc_type="invoice")
+        rec = indexed(generation_started(stored(ch()), NOW), outcome=text(brief=brief), generation=1, chunk_count=1,
+                      now=NOW)
         assert (rec.due_at, rec.priority) == (NOW, Priority.EDIT)
+
+    def test_a_carded_record_whose_card_is_unchanged_is_not_rescheduled(self):
+        rec = indexed(generation_started(stored(ch()), NOW), outcome=text(), generation=1, chunk_count=1, now=NOW)
+        assert (rec.due_at, rec.priority) == (None, None)
 
     def test_indexed_brief_sets_the_effective_date(self):
         brief = DocumentBrief(doc_type="invoice", doc_date=datetime(2024, 3, 15, tzinfo=timezone.utc))
@@ -405,12 +413,13 @@ class TestRuns:
 @pytest.mark.usefixtures("admitted")
 class TestTriaged:
     def test_photo(self):
-        rec = triaged(stored(image()), TriageResult("img", TriageVerdict.PHOTO, "a cathedral at night"), NOW)
-        assert (rec.state, rec.reason, rec.caption) == (RecordState.METADATA_ONLY, Reason.PHOTOGRAPH,
-                                                        "a cathedral at night")
+        rec = triaged(stored(image()), TriageResult("img", TriageVerdict.PHOTO), NOW,
+                      photo=PhotoDescription(description="a cathedral at night", scene="old town"))
+        assert (rec.state, rec.reason, rec.photo_description, rec.photo_scene) == (
+            RecordState.METADATA_ONLY, Reason.PHOTOGRAPH, "a cathedral at night", "old town")
         assert (rec.triage_verdict, rec.triage_version, rec.triaged_content_version) == \
             (TriageVerdict.PHOTO, TRIAGE_VERSION, "c1")
-        assert rec.due_at == NOW   # the caption changed the card
+        assert rec.due_at == NOW   # the description changed the card
 
     def test_photo_drops_what_a_reading_left(self):
         read = triaged(stored(image()), TriageResult("img", TriageVerdict.TEXT), NOW)
@@ -441,21 +450,26 @@ class TestTriaged:
         with pytest.raises(ValueError):
             triaged(observe(image()), TriageResult("other", TriageVerdict.PHOTO), NOW)
 
-    def test_a_photo_keeps_its_verdict_and_caption_on_rename(self):
-        photo = carded(triaged(stored(image()), TriageResult("img", TriageVerdict.PHOTO, "a beach"), NOW))
+    def test_a_photo_keeps_its_verdict_and_description_on_rename(self):
+        photo = carded(triaged(stored(image()), TriageResult("img", TriageVerdict.PHOTO), NOW,
+                               photo=PhotoDescription(description="a beach")))
         rec = observe(replace(image(), name="beach.jpg"), photo)
-        assert (rec.reason, rec.caption) == (Reason.PHOTOGRAPH, "a beach") and not triage_due(rec)
+        assert (rec.reason, rec.photo_description) == (Reason.PHOTOGRAPH, "a beach") and not triage_due(rec)
 
     def test_new_content_needs_a_new_verdict(self):
         photo = carded(triaged(stored(image()), TriageResult("img", TriageVerdict.PHOTO, "a beach"), NOW))
         rec = observe(image(cv="c2", modified=NOW), photo)
         assert rec.state is RecordState.PENDING and triage_due(rec)
 
-    def test_rollback_of_triage_drops_the_caption(self, monkeypatch):
-        photo = carded(triaged(stored(image()), TriageResult("img", TriageVerdict.PHOTO, "a beach"), NOW))
+    def test_rollback_of_triage_drops_the_description(self, monkeypatch):
+        # v2 (§25.4.9): the kind leaving triage clears the photo fields (the v1 caption's successor)
+        photo = carded(triaged(stored(image()), TriageResult("img", TriageVerdict.PHOTO), NOW,
+                               photo=PhotoDescription(description="a beach", scene="coast", visible_text="BAR")))
+        assert photo.photo_description == "a beach"
         monkeypatch.setattr(policy, "TRIAGED_KINDS", frozenset())
         rec = observe(image(), photo)
-        assert (rec.reason, rec.caption) == (Reason.KIND_NOT_ADMITTED, "")
+        assert (rec.reason, rec.photo_description, rec.photo_scene, rec.visible_text) == (
+            Reason.KIND_NOT_ADMITTED, "", "", "")
 
 
 @pytest.mark.usefixtures("admitted")
@@ -474,8 +488,10 @@ class TestObservationKeepsContent:
         assert hidden.effective_date == FS
 
     def test_a_content_change_keeps_the_old_chunks_readable(self):
-        rec = observe(ch(cv="c2", modified=NOW), indexed_rec())
-        assert rec.indexed_generation == 1 and rec.stale and rec.lead_text
+        # v2 (§25.4.9): what the content gave the card (the profile, no longer lead text) is kept until the new read
+        profile = DriveProfile(title="Lease", what_it_is="A flat lease", language="en", doc_type="contract")
+        rec = observe(ch(cv="c2", modified=NOW), replace(indexed_rec(), profile=profile))
+        assert rec.indexed_generation == 1 and rec.stale and rec.profile == profile
 
 
 # -- versions (§12.3) ----------------------------------------------------------------------------------------
