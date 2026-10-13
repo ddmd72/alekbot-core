@@ -120,6 +120,7 @@ HINT_VECTOR = "hint_vector"
 HINT_DISTANCE = "hint_distance"
 USAGE_EXPIRES_AT = "expires_at"                     # the TTL field of a month's usage document (§25.4.5)
 USAGE_USD_FIELDS: Tuple[str, ...] = tuple(f"{c.value}_usd" for c in UsageClass)
+USAGE_INITIAL_FIELDS: Tuple[str, ...] = tuple(f"{c.value}_initial_usd" for c in UsageClass)
 STATE_FIELDS: Tuple[str, ...] = tuple(name for name in _DOC_FIELDS if name not in _LEASE)   # save_sync_state's
 
 
@@ -311,7 +312,7 @@ def usage_from_doc(data: Mapping[str, Any]) -> ModelUsageMonth:
     """A month's usage document; a class or a day never written reads as zero."""
     daily = {str(day): (float((v or {}).get("total_usd", 0.0)), float((v or {}).get("fallback_usd", 0.0)))
              for day, v in (data.get("daily") or {}).items()}
-    return ModelUsageMonth(**{name: float(data.get(name, 0.0)) for name in USAGE_USD_FIELDS},
+    return ModelUsageMonth(**{name: float(data.get(name, 0.0)) for name in (*USAGE_USD_FIELDS, *USAGE_INITIAL_FIELDS)},
                            fallback_usd=float(data.get("fallback_usd", 0.0)), calls=int(data.get("calls", 0)),
                            daily=daily)
 
@@ -961,8 +962,10 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
                  .order_by("valid_until").order_by("item_id").limit(limit))
         return await self._read_lean(query)
 
-    async def enrich_queue(self, user_id: str, limit: int) -> List[DriveIndexRecord]:
-        query = (self._user_query(user_id).where(filter=FieldFilter("enrich_ready", "==", True))
+    async def enrich_queue(self, user_id: str, limit: int, job: Optional[str] = None) -> List[DriveIndexRecord]:
+        queued = (FieldFilter("enrich_ready", "==", True) if job is None
+                  else FieldFilter(f"{EnrichJob(job).value}_state", "==", JobState.READY.value))
+        query = (self._user_query(user_id).where(filter=queued)
                  .order_by("effective_day", direction=firestore.Query.DESCENDING)
                  .order_by("parent_id").order_by("item_id").limit(limit))
         return await self._read(query)
@@ -1155,16 +1158,19 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
         return usage_from_doc(snap.to_dict()) if snap.exists else ModelUsageMonth()
 
     async def add_model_usage(self, user_id: str, month: str, day: str, cls: str, usd: float, fallback_usd: float,
-                              calls: int) -> None:
-        """One merge write with server-side increments: concurrent adds never lose one (no transaction)."""
+                              calls: int, covered_usd: float = 0.0) -> None:
+        """One merge write with server-side increments: concurrent adds never lose one (no transaction). The initial
+        build's share is written only when there is one."""
         name = f"{UsageClass(cls).value}_usd"   # ValueError for an unknown class, before any write
-        data = {
+        data: Dict[str, Any] = {
             "user_id": user_id, "month": month, USAGE_EXPIRES_AT: usage_expires_at(month),
             name: firestore.Increment(float(usd)), "fallback_usd": firestore.Increment(float(fallback_usd)),
             "calls": firestore.Increment(int(calls)),
             "daily": {day: {"total_usd": firestore.Increment(float(usd)),
                             "fallback_usd": firestore.Increment(float(fallback_usd))}},
         }
+        if covered_usd > 0:
+            data[f"{UsageClass(cls).value}_initial_usd"] = firestore.Increment(float(covered_usd))
         await self._usage_col.document(usage_doc_id(user_id, month)).set(data, merge=True)
 
     async def get_initial_build(self, user_id: str) -> InitialBuild:

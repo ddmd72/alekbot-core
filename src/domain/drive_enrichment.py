@@ -182,7 +182,9 @@ class EnrichContext:
 @dataclass(frozen=True)
 class ModelUsageMonth:
     """`{prefix}drive_model_usage/{user_id}:{YYYY-MM}` (§25.4.5), priced at the model that ran. `daily` maps
-    `YYYY-MM-DD` to `(total_usd, fallback_usd)` (the fallback alert)."""
+    `YYYY-MM-DD` to `(total_usd, fallback_usd)` (the fallback alert). `<cls>_usd` is every dollar the class spent this
+    month (the Cabinet, the alerts); `<cls>_initial_usd` the share of it the initial build paid (D27), which the
+    month's cap never counts: the build is spent first, before the caps (review rv_sv2_p5 M1)."""
     reader_usd: float = 0.0
     triage_usd: float = 0.0
     profile_usd: float = 0.0
@@ -190,6 +192,15 @@ class ModelUsageMonth:
     fallback_usd: float = 0.0
     calls: int = 0
     daily: Mapping[str, Tuple[float, float]] = field(default_factory=dict)
+    reader_initial_usd: float = 0.0
+    triage_initial_usd: float = 0.0
+    profile_initial_usd: float = 0.0
+    passage_initial_usd: float = 0.0
+
+    def cap_usd(self, cls: str) -> float:
+        """What the month's cap of `cls` has paid: the class's dollars less the initial build's share."""
+        name = UsageClass(cls).value
+        return max(0.0, float(getattr(self, f"{name}_usd")) - float(getattr(self, f"{name}_initial_usd")))
 
 
 @dataclass(frozen=True)

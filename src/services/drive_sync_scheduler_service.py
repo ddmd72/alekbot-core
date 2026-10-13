@@ -12,8 +12,10 @@ whose ticks never land is alerted too (§12.1). The tick onboards from it as fro
 
 Search v2 (§25.4.5, §25.8 as amended by D30) adds three ops alerts to the checks, each posted once through its own flag:
 an index built by v1 that awaits the owner's from-scratch rebuild (its ticks do no work); the fallback model serving
-more than FALLBACK_ALERT_SHARE of a user's model dollars in a day (once that day); a rebuild whose described count has
-not grown for DESCRIBED_STALL_AFTER while jobs are ready and budget is left (once, cleared when it grows again).
+more than FALLBACK_ALERT_SHARE of a user's model dollars in a day (once that day); enrichment that has not moved for
+DESCRIBED_STALL_AFTER while jobs are ready and budget is left (once, cleared when it moves again). "Moved" is
+`described_grew_at`, which the tick refreshes on any enrichment progress or when no job is ready (review rv_sv2_p5
+MINOR 2), so a quiet day followed by one new file is not a stall.
 
 Two passes: every user's tick is enqueued first, then the checks run. A notice goes through the
 formatter agent (up to its 120 s SLA), so running checks first would let one slow notice delay every
@@ -185,8 +187,9 @@ class DriveSyncSchedulerService:
         return posted
 
     async def _stall(self, user_id: str, state: DriveSyncState, now: datetime) -> int:
-        """§25.8: the described count has not grown for DESCRIBED_STALL_AFTER while profile or passage jobs are ready
-        and the initial build or a month's cap has dollars left."""
+        """§25.8: enrichment has not moved (`described_grew_at`: the described count grew, a run changed a record, or
+        nothing was ready) for DESCRIBED_STALL_AFTER while profile or passage jobs are ready and the initial build or a
+        month's cap has dollars left."""
         stalled = state.described_grew_at is not None and now - state.described_grew_at > DESCRIBED_STALL_AFTER
         if not stalled:
             if state.stall_alerted:

@@ -382,7 +382,8 @@ class DriveSyncState:
     # Search v2 (§25.4.6): one model backoff per agent type (agent type -> until); `model_backoff_until` keeps its v1
     # meaning for the reader and triage
     model_backoff_by_agent: Mapping[str, datetime] = field(default_factory=dict)
-    # P5 (§25.8, D30): rebuild progress the tick keeps — profiles `current` (described) and when that count last grew —
+    # P5 (§25.8, D30): rebuild progress the tick keeps — profiles `current` (described), and `described_grew_at`: when
+    # enrichment last moved (that count grew, a run changed a record) or had no ready job (review rv_sv2_p5 MINOR 2) —
     # and the fan-out's once-only alert flags (written only by update_sync_flags, like stale_alerted)
     described_count: int = 0
     described_grew_at: Optional[datetime] = None

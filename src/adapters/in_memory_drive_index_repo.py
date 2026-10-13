@@ -395,8 +395,12 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
         rows = [h for h, _ in self._user_hints(user_id)]
         return [_hint_lean(h) for h in rows if after is None or (h.item_id, h.generation, h.index) > after][:limit]
 
-    async def enrich_queue(self, user_id: str, limit: int) -> List[DriveIndexRecord]:
-        ready = sorted((r for r in self._user(user_id) if r.enrich_ready), key=lambda r: (r.parent_id, r.item_id))
+    async def enrich_queue(self, user_id: str, limit: int, job: Optional[str] = None) -> List[DriveIndexRecord]:
+        field = None if job is None else f"{EnrichJob(job).value}_state"   # ValueError for an unknown job
+
+        def queued(r: DriveIndexRecord) -> bool:
+            return r.enrich_ready if field is None else getattr(r, field) == JobState.READY.value
+        ready = sorted((r for r in self._user(user_id) if queued(r)), key=lambda r: (r.parent_id, r.item_id))
         ready.sort(key=lambda r: r.effective_day, reverse=True)   # stable: (parent_id, item_id) within a day
         return ready[:limit]
 
@@ -427,10 +431,10 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
         return self.usage.get((user_id, month), ModelUsageMonth())
 
     async def add_model_usage(self, user_id: str, month: str, day: str, cls: str, usd: float, fallback_usd: float,
-                              calls: int) -> None:
+                              calls: int, covered_usd: float = 0.0) -> None:
         async with self._lock:
             current = self.usage.get((user_id, month), ModelUsageMonth())
-            self.usage[(user_id, month)] = added_usage(current, day, cls, usd, fallback_usd, calls)
+            self.usage[(user_id, month)] = added_usage(current, day, cls, usd, fallback_usd, calls, covered_usd)
 
     async def get_initial_build(self, user_id: str) -> InitialBuild:
         return self.initial.get(user_id) or new_initial_build()

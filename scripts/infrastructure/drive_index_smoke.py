@@ -110,6 +110,8 @@ def v2_checks(repo: FirestoreDriveIndexRepository, user_id: str,
         ("get_hints_with_vectors", lambda: repo.get_hints_with_vectors(user_id, "smoke-item", 1)),
         ("hints_page", lambda: repo.hints_page(user_id, ("smoke-item", 1, 0), 5)),
         ("enrich_queue", lambda: repo.enrich_queue(user_id, 5)),
+        ("enrich_queue[profile]", lambda: repo.enrich_queue(user_id, 5, job="profile")),
+        ("enrich_queue[passages]", lambda: repo.enrich_queue(user_id, 5, job="passages")),
         ("enrich_wakeups", lambda: repo.enrich_wakeups(user_id, now, 5)),
         *[(f"count_by_job_state[{job}={state}, batch {n // per_batch}]", (lambda q=q: q.count(alias="n").get()))
           for n, (job, state, q) in enumerate(repo.job_state_count_queries(user_id, SLICE2_CONTENT_KINDS))],

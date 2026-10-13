@@ -315,8 +315,10 @@ class DriveIndexRepository(ABC):
         sweep, §25.2.2)."""
 
     @abstractmethod
-    async def enrich_queue(self, user_id: str, limit: int) -> List[DriveIndexRecord]:
-        """Records with `enrich_ready`, ordered by (effective_day DESC, parent_id, item_id) (§25.4.5)."""
+    async def enrich_queue(self, user_id: str, limit: int, job: Optional[str] = None) -> List[DriveIndexRecord]:
+        """Records with `enrich_ready`, ordered by (effective_day DESC, parent_id, item_id) (§25.4.5). With `job` (an
+        EnrichJob value): only the records whose job of that name is `ready`, in the same order (one agent type's own
+        queue while the other's is backed off)."""
 
     @abstractmethod
     async def enrich_wakeups(self, user_id: str, now: datetime, limit: int) -> List[DriveIndexRecord]:
@@ -341,9 +343,10 @@ class DriveIndexRepository(ABC):
 
     @abstractmethod
     async def add_model_usage(self, user_id: str, month: str, day: str, cls: str, usd: float, fallback_usd: float,
-                              calls: int) -> None:
+                              calls: int, covered_usd: float = 0.0) -> None:
         """Atomically add `usd` to the month's `<cls>_usd` (`cls` a UsageClass value), `fallback_usd` and `calls`
-        to theirs, and (usd, fallback_usd) to `daily[day]` ("YYYY-MM-DD"). Not idempotent: a call that fails after
+        to theirs, `covered_usd` (the share of `usd` the initial build paid) to `<cls>_initial_usd`, and
+        (usd, fallback_usd) to `daily[day]` ("YYYY-MM-DD"). Not idempotent: a call that fails after
         its write committed (an ambiguous timeout, DriveIndexStoreUnavailable) may have added, so a caller must not
         retry it blindly; a retry over-counts (the safe direction: a cap closes early)."""
 

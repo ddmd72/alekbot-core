@@ -851,6 +851,28 @@
     "queryScope": "COLLECTION",
     "fields": [
       { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "profile_state", "order": "ASCENDING" },
+      { "fieldPath": "effective_day", "order": "DESCENDING" },
+      { "fieldPath": "parent_id", "order": "ASCENDING" },
+      { "fieldPath": "item_id", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_index_records",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "passages_state", "order": "ASCENDING" },
+      { "fieldPath": "effective_day", "order": "DESCENDING" },
+      { "fieldPath": "parent_id", "order": "ASCENDING" },
+      { "fieldPath": "item_id", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_index_records",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
       { "fieldPath": "enrich_wake_at", "order": "ASCENDING" },
       { "fieldPath": "item_id", "order": "ASCENDING" }
     ]

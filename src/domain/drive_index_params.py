@@ -68,11 +68,9 @@ CONTENT_TERM_QUERIES = 8                    # one array-contains query per query
 MODEL_EXTRACT_DENSITY = 200                 # chars per page below which a PDF is routed to the reader (§9)
 MODEL_EXTRACT_GARBAGE = 0.05                # share of unreadable characters above which it is routed
 MODEL_EXTRACT_MAX_PAGES = 200
-MODEL_EXTRACT_PAGES_PER_MONTH = 5_000       # ≈ $3 per user per month on Haiku 5.5 (§24.9)
 MODEL_PAGES_PER_CALL = 10                   # far below the 100k-token price step (§24.3)
 MODEL_IN_FLIGHT = 4
 TRIAGE_BATCH = 8                            # Search v2 (§25.4.3): enriched triage, 8 photos per call (was 16)
-TRIAGE_IMAGES_PER_MONTH = 20_000
 TRIAGE_THUMBNAIL_SIZE = "large"             # Graph 800 px, chosen after the live check (2026-10-13): captions more
                                             # precise than at 176 px ("medium"). TRIAGE_VERSION is not bumped: images
                                             # already triaged keep their verdict until the owner rebuilds the index
@@ -174,6 +172,10 @@ PROFILE_USD_ESTIMATE = 0.0008               # one profile call
 PASSAGE_CHUNK_USD_ESTIMATE = 0.0004         # one chunk's passage hints
 READER_PAGE_USD_ESTIMATE = 0.0006           # one page the reader reads (§24.9)
 TRIAGE_IMAGE_USD_ESTIMATE = 0.0003          # one enriched-triage image (§24.9 + §25.6's +$0.000125)
+# The pages a whole month's reader cap pays at the per-page estimate (§25.4.5; review rv_sv2_p5 MINOR 4): a file that
+# needs more is cut to it rather than waiting for a month that could never pay for it, and the reader is never asked
+# for more in one file. Derived from the dollar cap: the §24.7 page cap (5 000) and image cap are retired.
+MODEL_EXTRACT_PAGES_PER_MONTH = int(READER_USD_PER_MONTH / READER_PAGE_USD_ESTIMATE + 1e-9)
 ENRICH_QUEUE_PAGE = 30                      # enrichment queue records read at once (§25.4.5)
 ENRICH_WAKEUPS_PAGE = 100                   # deferred or parked jobs re-planned per tick
 DESCRIBED_STALL_AFTER = timedelta(hours=24) # a rebuild whose described count does not grow this long alerts (§25.8)
