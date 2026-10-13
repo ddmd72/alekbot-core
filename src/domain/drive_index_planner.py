@@ -155,7 +155,11 @@ def classify(change: DriveChange, pscope: Optional[Scope], probe: Optional[Folde
         return Classification(True, scope, state, reason, kind, cclass, **kw)
 
     if pscope is None or pscope is Scope.UNRESOLVED:
-        return c(Scope.UNRESOLVED, RecordState.UNRESOLVED, None)
+        # a scope hold (R3 F2-1): a file keeps the content outcome that stands, its reason in `reason` (None for
+        # indexed) and its content fields as they are, so the outcome stands again once the parent resolves
+        held = (previous.reason if previous is not None and not change.is_folder
+                and _outcome_stands(previous, change.content_version) else None)
+        return c(Scope.UNRESOLVED, RecordState.UNRESOLVED, held)
     if pscope in (Scope.OPAQUE_ROOT, Scope.INSIDE_OPAQUE):
         if change.is_folder:
             return c(Scope.INSIDE_OPAQUE, RecordState.METADATA_ONLY, Reason.FOLDER)
@@ -195,7 +199,7 @@ def classify(change: DriveChange, pscope: Optional[Scope], probe: Optional[Folde
     else:
         return c(Scope.NORMAL, RecordState.METADATA_ONLY, Reason.KIND_NOT_ADMITTED)
     if previous is not None and _outcome_stands(previous, change.content_version):
-        return c(Scope.NORMAL, previous.state, previous.reason, content_kept=True)
+        return c(Scope.NORMAL, _outcome_state(previous), previous.reason, content_kept=True)
     return c(Scope.NORMAL, RecordState.PENDING, None)
 
 
@@ -213,15 +217,29 @@ def _indexed_now(rec: DriveIndexRecord) -> bool:
             and rec.extraction_version == EXTRACTION_VERSION)
 
 
+def _outcome_state(rec: DriveIndexRecord) -> RecordState:
+    """The content state a record holds. An unresolved file is a scope hold (R3 F2-1): its `reason` keeps the outcome
+    it had — a per-file failure, a content demotion, or None with its readable generation (indexed)."""
+    if rec.state is not RecordState.UNRESOLVED:
+        return rec.state
+    if rec.reason in _FAILED_REASONS:
+        return RecordState.FAILED
+    if rec.reason in _CONTENT_REASONS:
+        return RecordState.METADATA_ONLY
+    return RecordState.INDEXED if _indexed_now(rec) else RecordState.PENDING
+
+
 def _outcome_stands(previous: DriveIndexRecord, content_version: str) -> bool:
     """A content outcome (indexed, failed, or a content demotion) decided at this content version under the
-    current extraction rules (§3.4, §8.2): kept, so a rename or a policy re-plan never re-reads the file."""
+    current extraction rules (§3.4, §8.2): kept, so a rename, a policy re-plan or a spell under an unresolved parent
+    never re-reads the file."""
     if previous.content_version != content_version or previous.extraction_version != EXTRACTION_VERSION:
         return False
-    if previous.state is RecordState.INDEXED:
+    state = _outcome_state(previous)
+    if state is RecordState.INDEXED:
         return _indexed_now(previous)
-    return previous.state is RecordState.FAILED or (previous.state is RecordState.METADATA_ONLY
-                                                    and previous.reason in _CONTENT_REASONS)
+    return state is RecordState.FAILED or (state is RecordState.METADATA_ONLY
+                                           and previous.reason in _CONTENT_REASONS)
 
 
 def change_from_record(rec: DriveIndexRecord) -> DriveChange:
