@@ -252,6 +252,8 @@ class DriveIndexRecord:
     chunk_count: int = 0
     chunk_space: str = ""                     # the embedding space the readable generation's chunks are in (§12.3)
     chunk_reembed_pending: bool = False       # those chunks are in another space: their stored text is embedded again
+    chunks_refused_space: str = ""            # the space that refused this content's chunks (HTTP 400): terminal there,
+                                              # no re-read; another space gives it a fresh try (R3 F2-3)
     truncated: bool = False
     lead_text: str = ""                       # first CARD_LEAD_CHARS of the extracted text, for the card (§8.5)
     brief: Optional[DocumentBrief] = None     # model-read documents only (§24.4)

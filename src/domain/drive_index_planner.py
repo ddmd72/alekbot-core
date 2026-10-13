@@ -31,6 +31,7 @@ Public interface:
     stale_versions(rec, *, embedding_space=None) -> bool
     reembed_in_space(rec, embedding_space) -> DriveIndexRecord
     chunks_reembedded(rec, generation, embedding_space, now) -> DriveIndexRecord           (§12.3)
+    chunks_refused(rec, embedding_space, now) -> DriveIndexRecord                            (§8.2, §12.3)
     extractor_stale(rec, versions) -> bool / reextraction_due(rec) -> DriveIndexRecord      (§9, §12.3)
     readme_read(rec, item_id, version, lead_text, now) -> DriveIndexRecord                  (§5.2)
 """
@@ -650,6 +651,8 @@ def stale_versions(rec: DriveIndexRecord, *, embedding_space: Optional[str] = No
         return True
     if embedding_space is not None and rec.indexed_generation is not None and rec.chunk_space != embedding_space:
         return True   # readable chunks embedded in another space
+    if embedding_space is not None and rec.chunks_refused_space and rec.chunks_refused_space != embedding_space:
+        return True   # refused by another space's model: this one gives it a fresh try (R3 F2-3)
     if (rec.has_card or rec.card_hash is not None) and rec.card_version != CARD_VERSION:   # carded, or refused
         return True
     if rec.extraction_version > 0 and rec.extraction_version != EXTRACTION_VERSION:       # content read before
@@ -691,6 +694,9 @@ def reembed_in_space(rec: DriveIndexRecord, embedding_space: str) -> DriveIndexR
         rec = replace(rec, card_hash=None)
     if rec.indexed_generation is not None and rec.chunk_space != embedding_space:
         rec = replace(rec, chunk_reembed_pending=True)
+    if rec.chunks_refused_space and rec.chunks_refused_space != embedding_space:
+        # the refusal held for another space's model: the file is read again for this one (R3 F2-3)
+        rec = replace(reextraction_due(rec), chunks_refused_space="")
     return rec
 
 
@@ -699,6 +705,19 @@ def chunks_reembedded(rec: DriveIndexRecord, generation: int, embedding_space: s
     """The re-embedded generation becomes readable in `embedding_space`; the caller collects every other one."""
     return schedule(replace(rec, indexed_generation=generation, chunk_space=embedding_space,
                             chunk_reembed_pending=False), now, first_seen=not rec.has_card)
+
+
+def chunks_refused(rec: DriveIndexRecord, embedding_space: str, now: datetime) -> DriveIndexRecord:
+    """The embedding model of `embedding_space` refused a chunk of the readable generation (a definite HTTP 400):
+    terminal for that space, like a refused card text (§8.2; R3 F2-3). The generation goes (the caller collects every
+    generation's chunks) and is not re-read: an indexed record becomes `failed` (the outcome a run's refused chunk
+    reaches), a waiting or failed one keeps its content state. Its card stays; another space gives it a fresh try."""
+    state, reason = rec.state, rec.reason
+    if state is RecordState.INDEXED:
+        state, reason = RecordState.FAILED, Reason.EXTRACT_ERROR
+    return schedule(replace(rec, state=state, reason=reason, indexed_generation=None, chunk_space="",
+                            chunk_reembed_pending=False, chunks_refused_space=embedding_space), now,
+                    first_seen=not rec.has_card)
 
 
 def access_action(enabled: bool, state: Optional[DriveSyncState], connection: DriveConnection,
@@ -741,7 +760,8 @@ def is_stale(state: DriveSyncState, oldest_edit_due_at: Optional[datetime], now:
 def generation_started(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
     """Step 2 of §8.1, persisted before the first chunk write: a new generation, so a retry never reuses a crashed
     run's. The content is due again when the run would count as crashed (attempt_crashed), in the retry class."""
-    return _defer(replace(rec, index_generation=rec.index_generation + 1, attempt_started_at=now),
+    return _defer(replace(rec, index_generation=rec.index_generation + 1, attempt_started_at=now,
+                          chunks_refused_space=""),
                   now + timedelta(seconds=TICK_DEADLINE_S), int(Priority.RETRY), now)
 
 
