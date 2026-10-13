@@ -240,13 +240,14 @@ async def test_every_version_bump_completes_and_applies(monkeypatch, constant, m
     w = World()
     for i in range(4):
         w.drive.add(f"IMG_{i}.jpg", facets={"location": {"latitude": 41.9, "longitude": 12.5}})
-    await w.settle()
+    await w.settle_due()   # images without a rendition reach their verdict only after retries (review B minor)
+    assert all(r.due_at is None for r in w.repo.records.values())
     bumped = CURRENT_VERSIONS[constant] + 1
     for module, attr in module_attrs:
         monkeypatch.setattr(module, attr, bumped)
     target = {**CURRENT_VERSIONS, constant: bumped}
     monkeypatch.setattr(svc_mod, "CURRENT_VERSIONS", target)
-    await w.settle(max_ticks=60)
+    await w.settle_due(max_ticks=60)
     state = await w.repo.get_sync_state("u")
     assert dict(state.applied_versions) == {**target, **EXTRACTOR_VERSIONS}
     assert not planner.stale_versions(next(iter(w.repo.records.values())))

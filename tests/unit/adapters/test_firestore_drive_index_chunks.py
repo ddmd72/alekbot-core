@@ -46,8 +46,10 @@ class TestCodec:
         assert chunk_from_doc({**doc, CHUNK_VECTOR: Vector([1.0]), CHUNK_DISTANCE: 0.1}) == c
 
     def test_a_projected_stream_row_reads_with_empty_text(self):
+        # review D-M3: a stream row projects neither `text` nor `content_terms`; both read back empty
         doc = {k: v for k, v in chunk_to_doc(chunk(terms=("1250",))).items() if k in STREAM_FIELDS}
-        assert chunk_from_doc(doc) == DriveChunk("u", "a", 1, 0, "", 0, 10, "pdf", ("1250",))
+        assert "text" not in doc and "content_terms" not in doc
+        assert chunk_from_doc(doc) == DriveChunk("u", "a", 1, 0, "", 0, 10, "pdf", ())
 
     def test_missing_terms_read_as_empty(self):
         doc = {k: v for k, v in chunk_to_doc(chunk()).items() if k != "content_terms"}

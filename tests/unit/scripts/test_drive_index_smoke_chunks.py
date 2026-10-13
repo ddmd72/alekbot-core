@@ -54,4 +54,7 @@ async def test_the_chunk_cap_and_every_unread_count_run_once(smoke, mock_env_con
     assert sum(1 for ops in records if ("where", "reason", "==", "user_chunk_cap") in ops
                and any(op[0] == "order_by" for op in ops)) == 1
     unread = [ops for ops in records if any(op[:3] == ("where", "kind", "in") for op in ops)]
-    assert len(unread) == 6 and all(ops[-1][0] == "count" for ops in unread)
+    # 6 classes over the content kinds + the same 6 over the images triaged as text (review D-M4)
+    assert len(unread) == 12 and all(ops[-1][0] == "count" for ops in unread)
+    documents = [ops for ops in unread if ("where", "triage_verdict", "==", "text") not in ops]
+    assert len(documents) == 6

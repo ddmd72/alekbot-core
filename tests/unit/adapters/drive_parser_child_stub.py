@@ -1,6 +1,6 @@
 """A misbehaving drive extraction child for the sandbox tests: `python -m tests.unit.adapters.drive_parser_child_stub`.
-It goes through the real `serve` (limits, result file, MemoryError exit), and the request's `kind` (for a split, the
-file name) picks what it does. Never imported by production code."""
+It goes through the real `serve` (limits, result file, MemoryError exit), and the request's `kind` (for a page-window
+op, the file name) picks what it does. Never imported by production code."""
 import json
 import os
 import signal
@@ -12,7 +12,7 @@ from src.adapters.drive_parser.child import serve
 
 def _handle(request):
     path = request.get("path", "")
-    kind = request.get("kind") or os.path.basename(path)      # split requests carry no kind
+    kind = request.get("kind") or os.path.basename(path)      # page-window requests carry no kind
     if kind == "sleep":
         with open(path + ".pid", "w") as fh:
             fh.write(str(os.getpid()))
@@ -54,8 +54,6 @@ def _handle(request):
         with open(path, "a") as fh:
             fh.write(f"end {time.monotonic()}\n")
         return {"status": "text", "text": "ok", "pages_total": 0, "truncated": False}
-    if kind == "escape":
-        return {"status": "text", "paths": ["/etc/hosts"], "pages_total": 1, "truncated": False}
     if kind == "split_encrypted":
         return {"status": "encrypted", "detail": "user password"}
     return {"status": "error", "detail": f"stub has no behaviour {kind!r}"}

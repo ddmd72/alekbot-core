@@ -1,5 +1,6 @@
 """DriveReaderRunner (USER_DRIVE_INDEXING_RFC §24.2, §24.3, §24.8, §24.9): per-file agent built from the user's
-configuration and billed to the account; PDF page windows from the sandboxed splitter, capped by the month and by
+configuration and billed to the account; PDF page windows counted and cut lazily by the sandboxed parser (review A
+"M split"), capped by the month and by
 MODEL_EXTRACT_MAX_PAGES, run at most MODEL_IN_FLIGHT at a time and joined in page order; the output-limit split; the
 file budget; the outcome classes. The real agent runs over a content-routed fake LLM."""
 import asyncio
@@ -13,7 +14,7 @@ import pytest
 
 from src.composition.drive_reader_runner import READER_VERSION, DriveReaderRunner
 from src.domain.drive_extraction import (
-    READER, DriveModelUnavailable, ExtractionRequest, ExtractionStatus, PdfSplit,
+    READER, DriveModelUnavailable, ExtractionRequest, ExtractionStatus,
 )
 from src.domain.drive_index_params import MODEL_EXTRACT_MAX_PAGES, MODEL_IN_FLIGHT, MODEL_PAGES_PER_CALL
 from src.domain.exceptions import LLMClientError, LLMRateLimitError
@@ -28,28 +29,41 @@ BRIEF = {"doc_type": "contract", "description": "Lease", "doc_date": "2026-01-31
 
 
 class FakeSplitter:
-    """Writes one temp PDF per window into out_dir, content `<source>|w<n>`; records every call."""
+    """The parser's lazy page-window ops (§24.3). `pdf_page_count` answers `pages_total` (or raises `error`); every
+    `cut_pdf_window` writes `<source>|w<n>#<pages>` to the caller's path, where `n` is the window of
+    MODEL_PAGES_PER_CALL pages the cut starts in; a later cut inside that window is a half, `|w<n>|w1` (it starts
+    the window) or `|w<n>|w2`. Records every count and cut."""
 
     def __init__(self, pages_total: int, truncated: bool = False, error: Exception = None) -> None:
         self.pages_total = pages_total
-        self.truncated = truncated
         self.error = error
-        self.calls: List[Tuple[str, int, int]] = []
+        self.counts: List[str] = []
+        self.cuts: List[Tuple[int, int]] = []
+        self._windows_cut: set = set()
 
-    async def split_pdf(self, path, pages_per_window, max_pages, out_dir):
-        self.calls.append((path, pages_per_window, max_pages))
+    @property
+    def calls(self) -> List[object]:
+        """Every parser op, counts and cuts."""
+        return [*self.counts, *self.cuts]
+
+    async def pdf_page_count(self, path):
+        self.counts.append(path)
         if self.error is not None:
             raise self.error
+        return self.pages_total
+
+    async def cut_pdf_window(self, path, first_page, page_count, out_path):
+        self.cuts.append((first_page, page_count))
         source = Path(path).read_bytes().decode()
-        total = self.pages_total if source == "SOURCE" else int(source.split("#")[1])
-        covered = min(total, max_pages)
-        paths = []
-        for n, start in enumerate(range(0, covered, pages_per_window), start=1):
-            pages = min(pages_per_window, covered - start)
-            out = os.path.join(out_dir, f"part-{n}.pdf")
-            Path(out).write_bytes(f"{source.split('#')[0]}|w{n}#{pages}".encode())
-            paths.append(out)
-        return PdfSplit(paths=tuple(paths), pages_total=total, truncated=self.truncated or covered < total)
+        window = first_page // MODEL_PAGES_PER_CALL + 1
+        key = f"{source}|w{window}"
+        if first_page % MODEL_PAGES_PER_CALL:
+            key += "|w2"
+        elif window in self._windows_cut:
+            key += "|w1"
+        self._windows_cut.add(window)
+        pages = min(first_page + page_count, self.pages_total) - first_page
+        Path(out_path).write_bytes(f"{key}#{pages}".encode())
 
 
 def _key(request) -> str:
@@ -111,7 +125,7 @@ class TestWindows:
         out = await runner.extract(_request(tmp_path))
         assert out.status is S.TEXT
         assert out.text == "text of SOURCE|w1\n\ntext of SOURCE|w2\n\ntext of SOURCE|w3"
-        assert splitter.calls[0][1:] == (MODEL_PAGES_PER_CALL, MODEL_EXTRACT_MAX_PAGES)
+        assert sorted(splitter.cuts) == [(0, MODEL_PAGES_PER_CALL), (10, MODEL_PAGES_PER_CALL), (20, 5)]
         assert (out.pages_total, out.pages_sent, out.model_calls, out.truncated) == (25, 25, 3, False)
         assert out.brief.doc_type == "contract" and out.extracted_by == "reader@1"
         assert out.model_cost == pytest.approx(3 * (1000 * 0.10e-6 + 200 * 0.50e-6))
@@ -128,7 +142,7 @@ class TestWindows:
         splitter = FakeSplitter(25)
         runner, _, _ = _runner(_text, splitter=splitter)
         out = await runner.extract(_request(tmp_path, pages=12))
-        assert splitter.calls[0][2] == 12
+        assert sorted(splitter.cuts) == [(0, 10), (10, 2)]
         assert (out.pages_sent, out.model_calls, out.truncated) == (12, 2, True)
 
     async def test_at_most_model_in_flight_calls_at_once(self, tmp_path):
@@ -165,7 +179,7 @@ class TestOutputLimit:
         splitter = FakeSplitter(25)
         runner, _, _ = _runner(handler, splitter=splitter)
         out = await runner.extract(_request(tmp_path))
-        assert splitter.calls[1][1:] == (5, 10)
+        assert (10, 5) in splitter.cuts and (15, 5) in splitter.cuts and len(splitter.cuts) == 5
         assert out.text == ("text of SOURCE|w1\n\ntext of SOURCE|w2|w1\n\ntext of SOURCE|w2|w2\n\n"
                             "text of SOURCE|w3")
         assert (out.model_calls, out.pages_sent, out.truncated) == (5, 35, False)
@@ -209,7 +223,7 @@ class TestOutputLimit:
         splitter = FakeSplitter(11)
         runner, _, _ = _runner(handler, splitter=splitter)
         out = await runner.extract(_request(tmp_path))
-        assert len(splitter.calls) == 1 and out.truncated is True and out.text == "text of SOURCE|w1"
+        assert sorted(splitter.cuts) == [(0, 10), (10, 1)] and out.truncated is True and out.text == "text of SOURCE|w1"
 
 
 class TestFileBudget:

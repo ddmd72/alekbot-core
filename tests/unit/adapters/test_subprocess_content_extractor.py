@@ -16,6 +16,7 @@ from src.ports.content_extractor_port import ContentExtractorPort
 from tests.unit.adapters.drive_extraction_fixtures import encrypt_pdf, make_docx, make_member_bomb, make_pdf
 
 STUB = "tests.unit.adapters.drive_parser_child_stub"
+CUT_STUB = "tests.unit.adapters.drive_parser_cut_stub"
 
 
 def _request(path, kind):
@@ -103,16 +104,21 @@ async def test_real_child_splits_a_pdf(tmp_path):
     source = make_pdf(tmp_path / "s.pdf", [f"page {i}" for i in range(1, 8)])
     out = tmp_path / "windows"
     out.mkdir()
-    split = await SubprocessContentExtractor().split_pdf(str(source), 3, 5, str(out))
-    assert split.pages_total == 7 and split.truncated is True
-    assert [os.path.basename(p) for p in split.paths] == ["window-0000.pdf", "window-0001.pdf"]
-    assert all(os.path.isfile(p) for p in split.paths)
+    extractor = SubprocessContentExtractor()
+    assert await extractor.pdf_page_count(str(source)) == 7
+    for first, name in ((0, "window-0000.pdf"), (3, "window-0001.pdf")):
+        await extractor.cut_pdf_window(str(source), first, 3, str(out / name))
+    assert sorted(os.listdir(out)) == ["window-0000.pdf", "window-0001.pdf"]
+    assert all(os.path.isfile(out / name) for name in os.listdir(out))
 
 
 async def test_real_child_split_of_an_encrypted_pdf_raises_encrypted(tmp_path):
     locked = encrypt_pdf(make_pdf(tmp_path / "s.pdf", ["a"]), tmp_path / "l.pdf", user_password="pw")
     with pytest.raises(PdfSplitFailed) as failed:
-        await SubprocessContentExtractor().split_pdf(str(locked), 10, 10, str(tmp_path))
+        await SubprocessContentExtractor().pdf_page_count(str(locked))
+    assert failed.value.status is ExtractionStatus.ENCRYPTED
+    with pytest.raises(PdfSplitFailed) as failed:
+        await SubprocessContentExtractor().cut_pdf_window(str(locked), 0, 10, str(tmp_path / "w.pdf"))
     assert failed.value.status is ExtractionStatus.ENCRYPTED
 
 
@@ -249,22 +255,30 @@ async def test_cancelled_extraction_kills_the_child(tmp_path):
 
 
 # =============================================================================
-# split_pdf failures
+# page-window op failures (pdf_page_count / cut_pdf_window, §24.3)
 # =============================================================================
 
 async def test_split_result_naming_files_outside_its_directory_is_refused(tmp_path):
+    # the lazy cut names no paths; a child that answers with a window linked to a file outside it is refused
+    out = tmp_path / "w.pdf"
+    stub = SubprocessContentExtractor(child_module=CUT_STUB, temp_root=str(_workroot(tmp_path)))
     with pytest.raises(PdfSplitFailed) as failed:
-        await _stub(tmp_path).split_pdf(str(_file(tmp_path, "escape")), 10, 10, str(tmp_path))
+        await stub.cut_pdf_window(str(_file(tmp_path, "symlink_window")), 0, 10, str(out))
     assert failed.value.status is ExtractionStatus.ERROR
+    assert not os.path.lexists(out)
 
 
 async def test_split_status_from_the_child_is_raised(tmp_path):
+    source = str(_file(tmp_path, "split_encrypted"))
     with pytest.raises(PdfSplitFailed) as failed:
-        await _stub(tmp_path).split_pdf(str(_file(tmp_path, "split_encrypted")), 10, 10, str(tmp_path))
+        await _stub(tmp_path).pdf_page_count(source)
+    assert failed.value.status is ExtractionStatus.ENCRYPTED
+    with pytest.raises(PdfSplitFailed) as failed:
+        await _stub(tmp_path).cut_pdf_window(source, 0, 10, str(tmp_path / "w.pdf"))
     assert failed.value.status is ExtractionStatus.ENCRYPTED
 
 
 async def test_split_killed_by_the_wall_clock_is_timeout(tmp_path):
     with pytest.raises(PdfSplitFailed) as failed:
-        await _stub(tmp_path, wall_timeout_s=1.5).split_pdf(str(_file(tmp_path, "sleep")), 10, 10, str(tmp_path))
+        await _stub(tmp_path, wall_timeout_s=1.5).pdf_page_count(str(_file(tmp_path, "sleep")))
     assert failed.value.status is ExtractionStatus.TIMEOUT

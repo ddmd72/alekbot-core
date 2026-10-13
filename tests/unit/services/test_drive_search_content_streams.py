@@ -210,7 +210,8 @@ async def test_an_invoice_number_and_an_amount_written_differently_are_found(mon
                 [FAR, FAR, FAR])
     await index(w, decoy, ["Holidays 2024"], [FAR])
     by_number = await w.search("invoice inv 2024-0012")
-    assert [c.item_id for c in by_number.cards][:2] == [invoice, decoy]
+    # review D-M1: the query holds only the maximal form of the number; its year fragment no longer finds the decoy
+    assert [c.item_id for c in by_number.cards] == [invoice] and decoy not in by_id(by_number)
     hit = by_id(by_number)[invoice]
     assert hit.matched == MATCHED_CONTENT and "INV-2024/0012" in hit.window
     assert w.repo.chunk_limits == []   # refreshing: the vector streams are off, the term stream still runs
@@ -303,7 +304,8 @@ async def test_the_summary_line_counts_the_content_streams(monkeypatch):
     monkeypatch.setattr(search_mod, "logger", log)
     await w.search("INV-2024/0012")
     line = log.info.call_args[0][0]
-    for part in ("content=wide", "chunk=2", "chunk_kept=1", "term_queries=4", "term_kept=1", "windows=1"):
+    # review D-M1: "INV-2024/0012" is one maximal query term (its fragments are index-side only)
+    for part in ("content=wide", "chunk=2", "chunk_kept=1", "term_queries=1", "term_kept=1", "windows=1"):
         assert part in line, (part, line)
 
 

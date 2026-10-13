@@ -7,7 +7,7 @@ import pytest
 from src.domain.drive_card import card_text
 from src.domain.drive_extraction import TriageBatchOutcome
 from src.domain.drive_index import Priority, Reason, RecordState, TriageVerdict
-from src.domain.drive_index_params import QUIET, TRIAGE_BATCH, TRIAGE_IMAGES_PER_MONTH, TRIAGE_THUMBNAIL_SIZE
+from src.domain.drive_index_params import MAX_ATTEMPTS, QUIET, RETRY_CAP, TRIAGE_BATCH, TRIAGE_IMAGES_PER_MONTH, TRIAGE_THUMBNAIL_SIZE
 from src.domain.user_drive import DriveAccessDenied
 
 from .drive_content_world import ContentWorld, admitted, prose  # noqa: F401  (fixture)
@@ -65,11 +65,18 @@ async def test_a_text_verdict_sends_the_image_to_the_reader(w):
 
 
 async def test_no_thumbnail_is_a_photograph_without_a_caption(w):
+    # review B minor: a missing rendition may not be made yet, so it is retried with backoff and becomes a
+    # photograph without a caption only at MAX_ATTEMPTS
     img = w.add_image("odd.jpg", thumbnail=None)
+    for attempt in range(1, MAX_ATTEMPTS):
+        await w.settle()
+        assert (w.rec(img).state, w.rec(img).attempts, w.rec(img).triage_verdict) == (RecordState.PENDING, attempt, None)
+        w.clock.advance(int(RETRY_CAP.total_seconds()))
     await w.settle()
     rec = w.rec(img)
     assert (rec.reason, rec.caption, rec.triage_verdict) == (Reason.PHOTOGRAPH, "", TriageVerdict.PHOTO)
-    assert w.triage.calls == []
+    assert rec.state is RecordState.METADATA_ONLY and rec.due_at is None
+    assert w.triage.calls == [] and [i for i, _ in w.drive.thumbnail_calls] == [img] * MAX_ATTEMPTS
 
 
 async def test_a_thumbnail_error_backs_off_then_fails(w):

@@ -53,10 +53,12 @@ _LINES = {
     "building: never say it does not exist": "never say a document does not exist",
     "unread / truncated / names only: say what was not searched": "says what was not searched",
     "folder card: search or list within it": "When a folder card matches",
-    "sums and totals: open or compute": "use the compute intent",
+    "sums and totals: open, then compute (review E-M2)": "open the file, then compute from the opened text",
     "document authority vs memory": "does not override memory about the user's current situation",
     "version families: never pick silently": "never pick silently",
-    "D13: date filters on parsed documents use the file date": "they match the file's date",
+    # review E-M3: which date goes where is one distinction in the manifest; the token keeps only the retry rule
+    "dates: a date filter that finds nothing is retried without it": "search again without it before saying not found",
+    "shortened passage: open before quoting (review E minor)": "If a passage is marked shortened, open the file",
 }
 
 

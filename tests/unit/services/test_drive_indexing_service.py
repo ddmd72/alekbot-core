@@ -7,7 +7,7 @@ import pytest
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.domain.drive_extraction import PARSER, READER
 from src.domain.drive_index import CURRENT_VERSIONS, POLICY_VERSION, EpochPhase, ErrorCategory, Nudge, Reason, Scope
-from src.domain.drive_index_params import ACCESS_LOSS_TTL, TICK_START_BUDGET
+from src.domain.drive_index_params import ACCESS_LOSS_TTL, MAX_ATTEMPTS, TICK_START_BUDGET
 from src.domain.user_drive import DriveConnection, DriveReauthRequired, DriveThrottled
 from src.services import drive_indexing_service as svc_mod
 from src.services.drive_indexing_service import DriveIndexingService
@@ -48,6 +48,19 @@ class World:
                 return result
             self.clock.advance(max(1, max(t["delay"] for t in continued)))
         raise AssertionError("did not settle")
+
+    async def settle_due(self, max_ticks=200, max_rounds=MAX_ATTEMPTS):
+        """`settle`, then as the scheduler's fan-out would: let time run until every record is due again (an image
+        without a rendition is retried with backoff, review B minor) and settle once more, until nothing is due.
+        `max_rounds` bounds it: a retried item must converge within MAX_ATTEMPTS attempts (§8.2, §24.5)."""
+        result = await self.settle(max_ticks)
+        for _ in range(max_rounds):
+            due = [r.due_at for (user, _), r in self.repo.records.items() if user == "u" and r.due_at is not None]
+            if not due:
+                return result
+            self.clock.advance(max(1.0, (max(due) - self.clock.now).total_seconds()))
+            result = await self.settle(max_ticks)
+        return result
 
     def rec(self, item_id):
         return self.repo.records.get(("u", item_id))

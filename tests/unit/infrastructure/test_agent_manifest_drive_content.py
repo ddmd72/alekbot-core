@@ -21,13 +21,17 @@ def test_content_words_go_into_drive_query():
     assert "what to find inside the documents" in text
     for example in ("'notice period'", "'INV-2024-417'", "'1 250,00'"):
         assert example in text, example
-    assert "a date the user quotes from inside a document may stay" in text
+    # review E-M3 / E-Δ2: one date distinction instead of "a date the user quotes ... may stay"
+    assert ("Dates written inside the document go in drive_query; use the date filters only when the user limits "
+            "when the file is dated.") in text
 
 
 def test_the_date_filter_says_which_date_it_matches():
     text = _SCHEMA["drive_date_from"]
-    assert "when a photo was taken" in text and "the document's own date for scans" in text
-    assert "otherwise when the file was last changed" in text
+    # review E-M3: no per-kind date subtlety (scans' own date) in model-facing text; the filter says photos go by
+    # when they were taken and everything else by when the file is dated
+    assert "The date is when a photo was taken, otherwise when the file is dated." in text
+    assert "own date" not in text and "scans" not in text
 
 
 def test_capabilities_say_the_drive_answers_from_content():
