@@ -1165,6 +1165,13 @@ class DriveIndexingService:
                 held = self._model_hold(run, now, models, cls=cls, pages=pages)
                 if held is not None:
                     return None, held
+                # The store before the model (final review F4-2): a store that cannot count the user's chunks ends
+                # the tick before anything is billed, and a user with no chunk headroom costs no reader call. The
+                # real count is checked again on the text (_read_text); one chunk is the least a read can add.
+                if chunk_cap_refuses(await self._repo.readable_chunk_total(user_id), run, 1):
+                    logger.info(f"[DriveIndex] item {run.item_id} of {user_id[:8]} refused by the chunk cap before "
+                                f"the reader")
+                    return None, demoted(run, Reason.USER_CHUNK_CAP, now, chunk_count=1)
                 max_pages = models.pages_left(now)
             extractor = self._extractor(extractor_id)
             request = ExtractionRequest(path=path, name=run.name, kind=kind, mime_type=run.mime_type,
