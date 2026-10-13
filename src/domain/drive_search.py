@@ -35,6 +35,7 @@ from .drive_index import DriveIndexRecord, DriveSyncState, Reason, RecordState, 
 from .drive_index_params import ACCESS_LOSS_TTL, WRAPPER_TAG_GAP_MAX
 from .drive_index_policy import Admission, admission, kind_of
 from .drive_keys import name_word_concepts, query_concepts
+from .drive_profile import issued_of
 from .drive_search_texts import REBUILDING_LINE, VALID_UNTIL_LINE
 from .drive_tier_result import TieredResult
 from .user_drive import DriveConnection, DriveItem, make_drive_ref
@@ -448,11 +449,15 @@ def is_unread(rec: DriveIndexRecord, admitted: Optional[FrozenSet[str]] = None,
 
 
 def date_source(rec: DriveIndexRecord) -> Optional[str]:
-    """Where the record's effective date comes from (§3.1, D13): the document's own date while its brief holds it,
-    a photo's taken date, else the file's date. Compared with the stored date, so a stale brief is never cited."""
+    """Where the record's effective date comes from (§3.1, D13 extended by §25.4.1): the document's own date while
+    its profile's verified `issued` date or its brief holds it, a photo's taken date, else the file's date. Compared
+    with the stored date, so a stale profile or brief is never cited."""
     when = rec.effective_date
     if when is None:
         return None
+    issued = issued_of(rec.profile) if rec.profile is not None else None
+    if issued is not None and (when.year, when.month, when.day) == (issued.year, issued.month, issued.day):
+        return DATE_WRITTEN
     if rec.brief is not None and rec.brief.doc_date is not None and rec.brief.doc_date == when:
         return DATE_WRITTEN
     if taken_at(rec.facets) == when:
