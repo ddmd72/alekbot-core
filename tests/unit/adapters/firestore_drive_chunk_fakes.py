@@ -1,5 +1,6 @@
 """The recording Firestore client of firestore_drive_fakes, extended for the chunk collection (USER_DRIVE_INDEXING_RFC
-§3.3, §24.6): queries also take `start_after` and `sum`, and the records collection answers `sum` too."""
+§3.3, §24.6): queries also take `start_after` and `sum`, and the records collection answers `sum` too. Search v2's
+hint and usage collections (§25.2.2, §25.4.5) exist as well, so a repository read of them is recorded, not a KeyError."""
 from types import SimpleNamespace
 
 from src.adapters.firestore_drive_index_repo import FirestoreDriveIndexRepository, chunk_to_doc
@@ -8,6 +9,8 @@ from src.domain.drive_index import DriveChunk
 from tests.unit.adapters.firestore_drive_fakes import RECS, STATES, Collection, Db, Query, snap
 
 CHUNKS = "test_drive_index_chunks"
+HINTS = "test_drive_index_hints"
+USAGE = "test_drive_model_usage"
 
 
 class ChunkQuery(Query):
@@ -37,13 +40,16 @@ class ChunkCollection(Collection):
 class ChunkDb(Db):
     def __init__(self):
         super().__init__()
-        self.cols = {RECS: ChunkCollection(RECS), STATES: Collection(STATES), CHUNKS: ChunkCollection(CHUNKS)}
+        self.cols = {RECS: ChunkCollection(RECS), STATES: Collection(STATES), CHUNKS: ChunkCollection(CHUNKS),
+                     HINTS: ChunkCollection(HINTS), USAGE: Collection(USAGE)}
 
 
 def make_chunk_repo(db, env_config):
     env_config.drive_index_records_collection = RECS
     env_config.drive_sync_state_collection = STATES
     env_config.drive_index_chunks_collection = CHUNKS
+    env_config.drive_index_hints_collection = HINTS
+    env_config.drive_model_usage_collection = USAGE
     return FirestoreDriveIndexRepository(db, env_config)
 
 

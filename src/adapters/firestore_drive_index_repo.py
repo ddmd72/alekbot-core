@@ -7,6 +7,14 @@ Collections (env-prefixed through EnvironmentConfig):
     {prefix}drive_index_chunks    doc id chunk_key(user_id, item_id, generation, index); every DriveChunk field
                                   under its own name, plus `vector` (Vector, 768) (§3.3, §24.6)
     {prefix}drive_sync_state      doc id user_id; every DriveSyncState field under its own name
+    {prefix}drive_index_hints     doc id chunk_key(...) of the chunk; every DriveHintDoc field (items as maps), plus
+                                  `hint_vector` (Vector, 768) (Search v2, §25.2.2)
+    {prefix}drive_model_usage     `{user_id}:{YYYY-MM}` (per-class dollars, fallback, calls, daily map, `expires_at` for
+                                  the TTL) and `{user_id}:initial` (the initial build); no purge deletes them (§25.4.5)
+
+Search v2 (§25.13.1): stream reads project the lean fields only (RECORD_LEAN_FIELDS, CHUNK_LEAN_FIELDS,
+HINT_LEAN_FIELDS); a key list is cut at 30 values and a kind is one `==` (a family is the caller's post-filter); every
+document write goes in batches of at most RECORD_WRITE_BATCH documents and WRITE_BATCH_BYTES estimated bytes.
 
 Reference semantics: InMemoryDriveIndexRepository. The deliberate differences are Firestore's own:
     - `due_records` reads one query per priority class (0..4) and stops when the page is full, so every query
@@ -65,15 +73,23 @@ from google.cloud.firestore_v1.vector import Vector
 
 from ..config.environment import EnvironmentConfig
 from ..domain.drive_enrichment import (
-    DriveHintDoc, DriveProfile, InitialBuild, KeyValue, ModelUsageMonth, PhotoObject, ProfileDate, ProfileEntity,
+    DriveHintDoc, DriveProfile, EnrichJob, HintItem, InitialBuild, JobState, KeyValue, ModelUsageMonth, PhotoObject,
+    ProfileDate, ProfileEntity, UsageClass,
 )
 from ..domain.drive_index import (
     ContentClass, DocumentBrief, DriveChunk, DriveIndexRecord, DriveIndexStoreUnavailable, DriveSyncState, EpochPhase,
     ErrorCategory, LeaseLost, Priority, Reason, RecordState, Scope, TriageVerdict, record_key,
 )
-from ..domain.drive_index_lean import ChunkId, DriveChunkLean, DriveHintLean, DriveRecordLean
-from ..domain.drive_index_params import NAME_QUERY_KEYS_MAX, RECORD_WRITE_BATCH
-from ..ports.drive_index_repository import SEARCH_V2_PENDING, DriveIndexRepository
+from ..domain.drive_index_lean import (
+    RECORD_LEAN_FIELDS, ChunkId, DriveChunkLean, DriveHintLean, DriveRecordLean, lean_of,
+)
+from ..domain.drive_index_params import (
+    CONCEPT_KEYS_MAX, NAME_QUERY_KEYS_MAX, RECORD_WRITE_BATCH, WRITE_BATCH_BYTES,
+)
+from ..domain.drive_usage import (
+    closed_initial, initial_doc_id, new_initial_build, spent_initial, usage_doc_id, usage_expires_at,
+)
+from ..ports.drive_index_repository import DriveIndexRepository
 from ..utils.logger import logger
 
 CARD_VECTOR = "card_vector"
@@ -96,6 +112,14 @@ CHUNK_KEY_FIELDS: Tuple[str, ...] = ("word_keys", "keys_version")
 STREAM_FIELDS: Tuple[str, ...] = tuple(name for name in CHUNK_FIELDS
                                        if name not in ("text", "content_terms") + CHUNK_KEY_FIELDS)
 _DOC_FIELDS: Tuple[str, ...] = tuple(f.name for f in fields(DriveSyncState) if f.name not in _FLAGS)
+# Search v2 lean projections (§25.13.3): streams read no text, no keys, no vector, no hint items
+CHUNK_LEAN_FIELDS: Tuple[str, ...] = tuple(f.name for f in fields(DriveChunkLean))
+HINT_FIELDS: Tuple[str, ...] = tuple(f.name for f in fields(DriveHintDoc))
+HINT_LEAN_FIELDS: Tuple[str, ...] = tuple(f.name for f in fields(DriveHintLean))
+HINT_VECTOR = "hint_vector"
+HINT_DISTANCE = "hint_distance"
+USAGE_EXPIRES_AT = "expires_at"                     # the TTL field of a month's usage document (§25.4.5)
+USAGE_USD_FIELDS: Tuple[str, ...] = tuple(f"{c.value}_usd" for c in UsageClass)
 STATE_FIELDS: Tuple[str, ...] = tuple(name for name in _DOC_FIELDS if name not in _LEASE)   # save_sync_state's
 
 
@@ -246,8 +270,121 @@ def chunk_from_doc(data: Mapping[str, Any]) -> DriveChunk:
                       word_keys=tuple(data.get("word_keys") or ()), keys_version=int(data.get("keys_version", 0)))
 
 
+def chunk_lean_from_doc(data: Mapping[str, Any]) -> DriveChunkLean:
+    return DriveChunkLean(user_id=data["user_id"], item_id=data["item_id"], generation=int(data["generation"]),
+                          index=int(data["index"]), kind=data.get("kind", ""))
+
+
+def lean_record_from_doc(data: Mapping[str, Any]) -> DriveRecordLean:
+    """A record read with RECORD_LEAN_FIELDS (or whole): the same readers as `record_from_doc` (the projection has no
+    `user_id`; the lean record has none either)."""
+    return lean_of(record_from_doc({"user_id": "", **data}))
+
+
+def hint_to_doc(doc: DriveHintDoc) -> Dict[str, Any]:
+    """Every hint-document field under its own name (`items` as maps); the vector is not part of the document."""
+    return {name: _plain(getattr(doc, name)) for name in HINT_FIELDS}
+
+
+def _hint_items(value: Any) -> Tuple[HintItem, ...]:
+    return tuple(HintItem(text=v.get("text", ""), type=v.get("type", ""), evidence=v.get("evidence", ""),
+                          evidence_start=int(v.get("evidence_start", -1)), evidence_end=int(v.get("evidence_end", -1)))
+                 for v in (value or ()))
+
+
+def hint_from_doc(data: Mapping[str, Any]) -> DriveHintDoc:
+    """Vector, distance and extra fields are ignored."""
+    return DriveHintDoc(user_id=data["user_id"], item_id=data["item_id"], generation=int(data["generation"]),
+                        index=int(data["index"]), kind=data.get("kind", ""),
+                        chunk_text_hash=data.get("chunk_text_hash", ""), items=_hint_items(data.get("items")),
+                        hint_keys=_strs(data.get("hint_keys")), passages_version=int(data.get("passages_version", 0)))
+
+
+def hint_lean_from_doc(data: Mapping[str, Any]) -> DriveHintLean:
+    return DriveHintLean(user_id=data["user_id"], item_id=data["item_id"], generation=int(data["generation"]),
+                         index=int(data["index"]), kind=data.get("kind", ""), hint_keys=_strs(data.get("hint_keys")))
+
+
+def usage_from_doc(data: Mapping[str, Any]) -> ModelUsageMonth:
+    """A month's usage document; a class or a day never written reads as zero."""
+    daily = {str(day): (float((v or {}).get("total_usd", 0.0)), float((v or {}).get("fallback_usd", 0.0)))
+             for day, v in (data.get("daily") or {}).items()}
+    return ModelUsageMonth(**{name: float(data.get(name, 0.0)) for name in USAGE_USD_FIELDS},
+                           fallback_usd=float(data.get("fallback_usd", 0.0)), calls=int(data.get("calls", 0)),
+                           daily=daily)
+
+
+def initial_to_doc(user_id: str, build: InitialBuild) -> Dict[str, Any]:
+    return {"user_id": user_id, "allowance_usd": build.allowance_usd, "spent_usd": build.spent_usd,
+            "opened_at": build.opened_at, "closed_at": build.closed_at}
+
+
+def initial_from_doc(data: Mapping[str, Any]) -> InitialBuild:
+    allowance = data.get("allowance_usd")
+    return InitialBuild(allowance_usd=new_initial_build().allowance_usd if allowance is None else float(allowance),
+                        spent_usd=float(data.get("spent_usd", 0.0)), opened_at=_dt(data.get("opened_at")),
+                        closed_at=_dt(data.get("closed_at")))
+
+
+def _query_keys(keys: Sequence[str], method: str) -> List[str]:
+    """The distinct keys of one `array_contains_any`, in order. More than CONCEPT_KEYS_MAX (Firestore's limit of 30
+    values and 30 disjunctions per query) is refused, logged, never cut: a cut key is a file lost without a trace.
+    The caller splits its lists (§25.5.1)."""
+    wanted = list(dict.fromkeys(keys))
+    if len(wanted) > CONCEPT_KEYS_MAX:
+        logger.error(f"[DriveIndex] {method} refused: {len(wanted)} distinct keys, at most {CONCEPT_KEYS_MAX}")
+        raise ValueError(f"{method}: {len(wanted)} distinct keys, at most {CONCEPT_KEYS_MAX}")
+    return wanted
+
+
 def _chunks(items: Sequence[Any], size: int = RECORD_WRITE_BATCH) -> List[Sequence[Any]]:
     return [items[i:i + size] for i in range(0, len(items), size)]
+
+
+# -- write batches by bytes (§25.2.6) ---------------------------------------------------------------------------------
+
+_DOC_OVERHEAD_BYTES = 1_024     # the document name, write metadata and the merge mask, generously
+
+
+def stored_bytes(value: Any) -> int:
+    """An upper estimate of a value's size in the write request: protobuf bytes, each value wrapped in its `Value`
+    message and each array element or map entry in its own (a string its UTF-8 bytes + 6, a number 12, a timestamp 16,
+    a vector element 12). Nothing else counts the bytes of a write, so the estimate leans high
+    (tests/unit/adapters/test_firestore_drive_index_v2_wire.py checks it against the SDK's own encoding)."""
+    if value is None or isinstance(value, bool):
+        return 4
+    if isinstance(value, (int, float)):
+        return 12
+    if isinstance(value, datetime):
+        return 16
+    if isinstance(value, str):
+        return len(value.encode("utf-8")) + 6
+    if isinstance(value, Vector):
+        return 12 * len(value) + 32
+    if isinstance(value, Mapping):
+        return sum(len(str(k).encode("utf-8")) + 6 + stored_bytes(v) for k, v in value.items()) + 6
+    if isinstance(value, (list, tuple)):
+        return sum(stored_bytes(v) for v in value) + 6
+    return 64   # a sentinel such as DELETE_FIELD, or a transform
+
+
+def byte_batches(writes: Sequence[Any], size_of: Callable[[Any], int]) -> List[List[Any]]:
+    """Consecutive batches of at most RECORD_WRITE_BATCH writes and WRITE_BATCH_BYTES estimated bytes (Firestore
+    refuses a request over 10 MiB; a v2 chunk is about 25-35 KB, so 400 of them would pass it). A single write over
+    the byte budget goes alone."""
+    batches: List[List[Any]] = []
+    current: List[Any] = []
+    used = 0
+    for write in writes:
+        size = size_of(write) + _DOC_OVERHEAD_BYTES
+        if current and (len(current) >= RECORD_WRITE_BATCH or used + size > WRITE_BATCH_BYTES):
+            batches.append(current)
+            current, used = [], 0
+        current.append(write)
+        used += size
+    if current:
+        batches.append(current)
+    return batches
 
 
 async def _fence(ref: Any, transaction: Any, owner: Optional[str], user_id: str, *,
@@ -271,8 +408,15 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
         self._records = db_client.collection(env_config.drive_index_records_collection)
         self._states = db_client.collection(env_config.drive_sync_state_collection)
         self._chunks_name = env_config.drive_index_chunks_collection   # resolved per call, like a reference
+        self._hints_name = env_config.drive_index_hints_collection     # (Search v2, §25.2.2)
+        self._usage_name = env_config.drive_model_usage_collection     # (Search v2, §25.4.5)
+        # Serialises this process's initial-build spends (review m1): enrichment spends concurrently on one document,
+        # and a transaction that loses its retries is an Aborted after the money was spent. The transaction stays for
+        # other processes (the indexer runs max-instances 1, concurrency 1).
+        self._initial_lock = asyncio.Lock()
         logger.info(f"📂 DriveIndex repo initialized (records={env_config.drive_index_records_collection}, "
-                    f"chunks={self._chunks_name}, state={env_config.drive_sync_state_collection})")
+                    f"chunks={self._chunks_name}, hints={self._hints_name}, usage={self._usage_name}, "
+                    f"state={env_config.drive_sync_state_collection})")
 
     # -- sync state --------------------------------------------------------------------------
 
@@ -386,18 +530,17 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
         if stuck:   # due_records queries per priority class: such a record would never be worked again
             logger.error(f"[DriveIndex] refused write: due without a priority: {stuck[:5]}")
             raise ValueError(f"records due without a priority: {stuck[:5]}")
-        for chunk in _chunks(records):
-            batch = self._db.batch()
-            for rec in chunk:
-                data = record_to_doc(rec)
-                if card_vectors and rec.item_id in card_vectors:
-                    data[CARD_VECTOR] = Vector([float(x) for x in card_vectors[rec.item_id]])
-                    data[HAS_CARD_VECTOR] = True
-                elif not rec.has_card:
-                    data[CARD_VECTOR] = firestore.DELETE_FIELD
-                    data[HAS_CARD_VECTOR] = False
-                batch.set(self._ref(rec.user_id, rec.item_id), data, merge=list(data))
-            await batch.commit()
+        writes = []
+        for rec in records:
+            data = record_to_doc(rec)
+            if card_vectors and rec.item_id in card_vectors:
+                data[CARD_VECTOR] = Vector([float(x) for x in card_vectors[rec.item_id]])
+                data[HAS_CARD_VECTOR] = True
+            elif not rec.has_card:
+                data[CARD_VECTOR] = firestore.DELETE_FIELD
+                data[HAS_CARD_VECTOR] = False
+            writes.append((self._ref(rec.user_id, rec.item_id), data))
+        await self._set_in_batches(writes, merge=True)   # by bytes too: a v2 record carries a profile and keys
 
     async def delete_records(self, user_id: str, item_ids: Sequence[str]) -> None:
         for chunk in _chunks(list(dict.fromkeys(item_ids))):
@@ -632,14 +775,12 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
         if len(chunks) != len(vectors):
             logger.error(f"[DriveIndex] refused chunk write: {len(chunks)} chunks but {len(vectors)} vectors")
             raise ValueError(f"{len(chunks)} chunks but {len(vectors)} vectors")
-        pairs = list(zip(chunks, vectors))
-        for part in _chunks(pairs):
-            batch = self._db.batch()
-            for chunk, vector in part:
-                data = chunk_to_doc(chunk)
-                data[CHUNK_VECTOR] = Vector([float(x) for x in vector])
-                batch.set(self._chunk_ref(chunk.user_id, chunk.item_id, chunk.generation, chunk.index), data)
-            await batch.commit()
+        writes = []
+        for chunk, vector in zip(chunks, vectors):
+            data = chunk_to_doc(chunk)
+            data[CHUNK_VECTOR] = Vector([float(x) for x in vector])
+            writes.append((self._chunk_ref(chunk.user_id, chunk.item_id, chunk.generation, chunk.index), data))
+        await self._set_in_batches(writes)   # by bytes too: a v2 chunk carries up to 900 keys (§25.2.6)
 
     async def delete_chunks_except(self, user_id: str, item_id: str, keep_generation: Optional[int]) -> int:
         """Equality filters only (single-field indexes); the generation is compared here. An item holds at most a
@@ -736,12 +877,26 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
         query = (self._user_chunks(user_id).order_by("item_id").order_by("generation").order_by("index"))
         if after is not None:
             query = query.start_after({"item_id": after[0], "generation": after[1], "index": after[2]})
-        return [chunk_from_doc(snap.to_dict()) for snap in await query.select(list(CHUNK_FIELDS)).limit(limit).get()]
+        # ids only (review m3): the sweep needs (item_id, generation, index), and a v2 chunk carries up to 900 keys
+        snaps = await query.select(list(CHUNK_LEAN_FIELDS)).limit(limit).get()
+        return [chunk_from_doc(snap.to_dict()) for snap in snaps]
 
     async def delete_user_chunks(self, user_id: str, limit: int) -> int:
         snaps = await self._user_chunks(user_id).select([FieldPath.document_id()]).limit(limit).get()
         await self._delete_refs([snap.reference for snap in snaps])
         return len(snaps)
+
+    async def _set_in_batches(self, writes: Sequence[Tuple[Any, Dict[str, Any]]], *,
+                              merge: bool = False) -> None:
+        """(reference, data) pairs as whole-document sets (or merges of the listed fields), in byte-sized batches."""
+        for part in byte_batches(writes, lambda w: stored_bytes(w[1])):
+            batch = self._db.batch()
+            for ref, data in part:
+                if merge:
+                    batch.set(ref, data, merge=list(data))
+                else:
+                    batch.set(ref, data)
+            await batch.commit()
 
     async def _delete_refs(self, refs: Sequence[Any]) -> None:
         for part in _chunks(refs):
@@ -750,84 +905,297 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
                 batch.delete(ref)
             await batch.commit()
 
-    # -- Search v2 (§25.13.1): implemented by P2 -----------------------------------------------------------------
+    # -- Search v2: record streams and enrichment reads (§25.13.1) ---------------------------------------------------
+
+    async def _read_lean(self, query: Any) -> List[DriveRecordLean]:
+        return [lean_record_from_doc(snap.to_dict()) for snap in await query.select(list(RECORD_LEAN_FIELDS)).get()]
+
+    def about_query(self, user_id: str, keys: Sequence[str], *, kind: Optional[str] = None,
+                    date_from: Optional[datetime] = None, date_to: Optional[datetime] = None) -> Any:
+        """The query of `find_by_about_keys` before its cursor and limit, None without keys. Not a port method: the
+        smoke script runs it with the most disjunctions one query may carry. One `array_contains_any` of at most
+        CONCEPT_KEYS_MAX keys and one `kind ==` (a family is post-filtered by the caller, §25.5.5), so a query never
+        passes Firestore's 30 disjunctions."""
+        wanted = _query_keys(keys, "find_by_about_keys")
+        if not wanted:
+            return None
+        query = self._user_query(user_id)
+        if kind is not None:
+            query = query.where(filter=FieldFilter("kind", "==", kind))
+        query = query.where(filter=FieldFilter("about_keys", "array_contains_any", wanted))
+        if date_from is not None:
+            query = query.where(filter=FieldFilter("effective_date", ">=", date_from))
+        if date_to is not None:
+            query = query.where(filter=FieldFilter("effective_date", "<=", date_to))   # a range excludes nulls
+        return (query.order_by("effective_date", direction=firestore.Query.DESCENDING)
+                .order_by("item_id", direction=firestore.Query.DESCENDING))
 
     async def find_by_about_keys(self, user_id: str, keys: Sequence[str], limit: int, *, kind: Optional[str] = None,
                                  date_from: Optional[datetime] = None, date_to: Optional[datetime] = None,
                                  after: Optional[str] = None) -> List[DriveRecordLean]:
-        raise NotImplementedError(SEARCH_V2_PENDING)
+        """Without a date filter the ordering alone keeps the undated records, last: every record stores
+        `effective_date` (null included) and Firestore orders null below every timestamp. The cursor is the stored
+        (effective_date, item_id) of the record `after`, read by id first."""
+        query = self.about_query(user_id, keys, kind=kind, date_from=date_from, date_to=date_to)
+        if query is None:
+            return []
+        if after is not None:
+            snap = await self._ref(user_id, after).get(field_paths=["effective_date", "item_id"])
+            if not snap.exists:
+                return []   # the cursor record is gone: the paging ends (port)
+            data = snap.to_dict() or {}
+            query = query.start_after({"effective_date": data.get("effective_date"), "item_id": after})
+        return await self._read_lean(query.limit(limit))
 
     async def find_expiring(self, user_id: str, keys: Sequence[str], after_date: date,
                             limit: int) -> List[DriveRecordLean]:
-        raise NotImplementedError(SEARCH_V2_PENDING)
+        wanted = _query_keys(keys, "find_expiring")
+        if not wanted:
+            return []
+        start = datetime(after_date.year, after_date.month, after_date.day, tzinfo=timezone.utc)
+        query = (self._user_query(user_id).where(filter=FieldFilter("about_keys", "array_contains_any", wanted))
+                 .where(filter=FieldFilter("valid_until", ">=", start))
+                 .order_by("valid_until").order_by("item_id").limit(limit))
+        return await self._read_lean(query)
+
+    async def enrich_queue(self, user_id: str, limit: int) -> List[DriveIndexRecord]:
+        query = (self._user_query(user_id).where(filter=FieldFilter("enrich_ready", "==", True))
+                 .order_by("effective_day", direction=firestore.Query.DESCENDING)
+                 .order_by("parent_id").order_by("item_id").limit(limit))
+        return await self._read(query)
+
+    async def enrich_wakeups(self, user_id: str, now: datetime, limit: int) -> List[DriveIndexRecord]:
+        query = (self._user_query(user_id).where(filter=FieldFilter("enrich_wake_at", "<=", now))
+                 .order_by("enrich_wake_at").order_by("item_id").limit(limit))
+        return await self._read(query)
+
+    def job_state_count_queries(self, user_id: str, kinds: AbstractSet[str]) -> List[Tuple[str, str, Any]]:
+        """(job, state, query) for `count_by_job_state`: one count per job, state and batch of at most IN_VALUES_MAX
+        kinds (`kind in [...]`, the only disjunction in the query). Not a port method: the smoke script runs them."""
+        queries = []
+        for part in _chunks(sorted(set(kinds)), IN_VALUES_MAX):
+            for job in EnrichJob:
+                for state in JobState:
+                    query = (self._user_query(user_id)
+                             .where(filter=FieldFilter(f"{job.value}_state", "==", state.value))
+                             .where(filter=FieldFilter("kind", "in", list(part))))
+                    queries.append((job.value, state.value, query))
+        return queries
+
+    async def count_by_job_state(self, user_id: str, kinds: AbstractSet[str]) -> Dict[str, Dict[str, int]]:
+        """Count aggregations, never a scan; a state with no record is left out (as in `count_by_state`)."""
+        queries = self.job_state_count_queries(user_id, kinds)
+        totals = await asyncio.gather(*(self._count(q) for _, _, q in queries))
+        counts: Dict[str, Dict[str, int]] = {job.value: {} for job in EnrichJob}
+        for (job, state, _), n in zip(queries, totals):
+            if n:
+                counts[job][state] = counts[job].get(state, 0) + n
+        return counts
+
+    async def keys_pending_page(self, user_id: str, after: Optional[str], limit: int) -> List[DriveIndexRecord]:
+        query = self._user_query(user_id).where(filter=FieldFilter("keys_pending", "==", True))
+        if after is not None:
+            query = query.where(filter=FieldFilter("item_id", ">", after))
+        return await self._read(query.order_by("item_id").limit(limit))
+
+    async def get_records_lean(self, user_id: str, item_ids: Sequence[str]) -> Dict[str, DriveRecordLean]:
+        found: Dict[str, DriveRecordLean] = {}
+        for part in _chunks(list(dict.fromkeys(item_ids))):
+            refs = [self._ref(user_id, i) for i in part]
+            async for snap in self._db.get_all(refs, field_paths=list(RECORD_LEAN_FIELDS)):
+                if snap.exists:
+                    lean = lean_record_from_doc(snap.to_dict())
+                    found[lean.item_id] = lean
+        return found
+
+    # -- Search v2: chunk keys (§25.2.2) ---------------------------------------------------------------------------
+
+    def word_keys_query(self, user_id: str, keys: Sequence[str]) -> Any:
+        """`find_chunks_by_word_keys`' query before its cursor and limit, None without keys (smoke script)."""
+        wanted = _query_keys(keys, "find_chunks_by_word_keys")
+        if not wanted:
+            return None
+        return (self._user_chunks(user_id).where(filter=FieldFilter("word_keys", "array_contains_any", wanted))
+                .order_by("item_id").order_by("generation").order_by("index"))
 
     async def find_chunks_by_word_keys(self, user_id: str, keys: Sequence[str], limit: int,
                                        after_item_id: Optional[str] = None) -> List[DriveChunkLean]:
-        raise NotImplementedError(SEARCH_V2_PENDING)
+        """A cursor on item_id alone positions past every chunk of that item (as `find_next_file_with_term`)."""
+        query = self.word_keys_query(user_id, keys)
+        if query is None:
+            return []
+        if after_item_id is not None:
+            query = query.start_after({"item_id": after_item_id})
+        snaps = await query.select(list(CHUNK_LEAN_FIELDS)).limit(limit).get()
+        return [chunk_lean_from_doc(snap.to_dict()) for snap in snaps]
+
+    async def _keys_by_id(self, refs_of: Callable[[ChunkId], Any], ids: Sequence[ChunkId],
+                          field: str) -> Dict[ChunkId, Tuple[str, ...]]:
+        found: Dict[ChunkId, Tuple[str, ...]] = {}
+        wanted = list(dict.fromkeys(ids))
+        for part in _chunks(wanted):
+            async for snap in self._db.get_all([refs_of(i) for i in part],
+                                               field_paths=["item_id", "generation", "index", field]):
+                data = snap.to_dict() if snap.exists else None
+                if data:
+                    found[(data["item_id"], int(data["generation"]), int(data["index"]))] = _strs(data.get(field))
+        return found
 
     async def get_chunk_keys(self, user_id: str, ids: Sequence[ChunkId]) -> Dict[ChunkId, Tuple[str, ...]]:
-        raise NotImplementedError(SEARCH_V2_PENDING)
+        return await self._keys_by_id(lambda i: self._chunk_ref(user_id, *i), ids, "word_keys")
+
+    # -- Search v2: hint documents (§25.2.2) -------------------------------------------------------------------------
+
+    @property
+    def _hint_col(self) -> Any:
+        return self._db.collection(self._hints_name)
+
+    def _hint_ref(self, user_id: str, item_id: str, generation: int, index: int) -> Any:
+        return self._hint_col.document(chunk_key(user_id, item_id, generation, index))
+
+    def _user_hints(self, user_id: str) -> Any:
+        return self._hint_col.where(filter=FieldFilter("user_id", "==", user_id))
+
+    def hint_keys_query(self, user_id: str, keys: Sequence[str]) -> Any:
+        """`find_hints_by_keys`' query before its cursor and limit, None without keys (smoke script). Kind is never
+        in it: the caller post-filters (§25.5.5, no `kind + hint_keys` composite)."""
+        wanted = _query_keys(keys, "find_hints_by_keys")
+        if not wanted:
+            return None
+        return (self._user_hints(user_id).where(filter=FieldFilter("hint_keys", "array_contains_any", wanted))
+                .order_by("item_id").order_by("generation").order_by("index"))
 
     async def find_hints_by_keys(self, user_id: str, keys: Sequence[str], limit: int,
                                  after_item_id: Optional[str] = None) -> List[DriveHintLean]:
-        raise NotImplementedError(SEARCH_V2_PENDING)
+        query = self.hint_keys_query(user_id, keys)
+        if query is None:
+            return []
+        if after_item_id is not None:
+            query = query.start_after({"item_id": after_item_id})
+        snaps = await query.select(list(HINT_LEAN_FIELDS)).limit(limit).get()
+        return [hint_lean_from_doc(snap.to_dict()) for snap in snaps]
 
     async def get_hint_keys(self, user_id: str, ids: Sequence[ChunkId]) -> Dict[ChunkId, Tuple[str, ...]]:
-        raise NotImplementedError(SEARCH_V2_PENDING)
+        return await self._keys_by_id(lambda i: self._hint_ref(user_id, *i), ids, "hint_keys")
 
     async def find_nearest_hints(self, user_id: str, vector: Sequence[float], limit: int,
                                  kind: Optional[str] = None) -> List[Tuple[DriveHintLean, float]]:
-        raise NotImplementedError(SEARCH_V2_PENDING)
+        query = self._user_hints(user_id)
+        if kind is not None:
+            query = query.where(filter=FieldFilter("kind", "==", kind))
+        # as find_nearest_cards: under a projection the distance comes back only when its name is selected too
+        nearest = query.select([*HINT_LEAN_FIELDS, HINT_DISTANCE]).find_nearest(
+            vector_field=HINT_VECTOR, query_vector=Vector([float(x) for x in vector]), limit=limit,
+            distance_measure=DistanceMeasure.COSINE, distance_result_field=HINT_DISTANCE)
+        hits: List[Tuple[DriveHintLean, float]] = []
+        for snap in await nearest.get():
+            data = snap.to_dict()
+            hits.append((hint_lean_from_doc(data), float(data[HINT_DISTANCE])))
+        return hits
+
+    def _generation_hints(self, user_id: str, item_id: str, generation: int) -> Any:
+        return (self._user_hints(user_id).where(filter=FieldFilter("item_id", "==", item_id))
+                .where(filter=FieldFilter("generation", "==", generation)).order_by("index"))
 
     async def get_hints(self, user_id: str, item_id: str, generation: int) -> List[DriveHintDoc]:
-        raise NotImplementedError(SEARCH_V2_PENDING)
+        snaps = await self._generation_hints(user_id, item_id, generation).select(list(HINT_FIELDS)).get()
+        return [hint_from_doc(snap.to_dict()) for snap in snaps]
 
     async def get_hints_with_vectors(self, user_id: str, item_id: str,
                                      generation: int) -> List[Tuple[DriveHintDoc, List[float]]]:
-        raise NotImplementedError(SEARCH_V2_PENDING)
+        query = self._generation_hints(user_id, item_id, generation).select([*HINT_FIELDS, HINT_VECTOR])
+        rows: List[Tuple[DriveHintDoc, List[float]]] = []
+        for snap in await query.get():
+            data = snap.to_dict()
+            rows.append((hint_from_doc(data), [float(x) for x in data.get(HINT_VECTOR) or ()]))
+        return rows
 
     async def write_hints(self, docs: Sequence[DriveHintDoc], vectors: Sequence[Sequence[float]]) -> None:
-        raise NotImplementedError(SEARCH_V2_PENDING)
+        if len(docs) != len(vectors):
+            logger.error(f"[DriveIndex] refused hint write: {len(docs)} documents but {len(vectors)} vectors")
+            raise ValueError(f"{len(docs)} hint documents but {len(vectors)} vectors")
+        writes = []
+        for doc, vector in zip(docs, vectors):
+            data = hint_to_doc(doc)
+            data[HINT_VECTOR] = Vector([float(x) for x in vector])
+            writes.append((self._hint_ref(doc.user_id, doc.item_id, doc.generation, doc.index), data))
+        await self._set_in_batches(writes)
 
     async def delete_hints_except(self, user_id: str, item_id: str, keep_generation: Optional[int]) -> int:
-        raise NotImplementedError(SEARCH_V2_PENDING)
+        """Equality filters only, the generation compared here (as `delete_chunks_except`)."""
+        query = self._user_hints(user_id).where(filter=FieldFilter("item_id", "==", item_id)).select(["generation"])
+        doomed = [snap.reference for snap in await query.get()
+                  if (snap.to_dict() or {}).get("generation") != keep_generation]
+        await self._delete_refs(doomed)
+        return len(doomed)
 
     async def delete_user_hints(self, user_id: str, limit: int) -> int:
-        raise NotImplementedError(SEARCH_V2_PENDING)
+        snaps = await self._user_hints(user_id).select([FieldPath.document_id()]).limit(limit).get()
+        await self._delete_refs([snap.reference for snap in snaps])
+        return len(snaps)
 
     async def hints_page(self, user_id: str, after: Optional[ChunkId], limit: int) -> List[DriveHintLean]:
-        raise NotImplementedError(SEARCH_V2_PENDING)
+        query = self._user_hints(user_id).order_by("item_id").order_by("generation").order_by("index")
+        if after is not None:
+            query = query.start_after({"item_id": after[0], "generation": after[1], "index": after[2]})
+        snaps = await query.select(list(HINT_LEAN_FIELDS)).limit(limit).get()
+        return [hint_lean_from_doc(snap.to_dict()) for snap in snaps]
 
-    async def enrich_queue(self, user_id: str, limit: int) -> List[DriveIndexRecord]:
-        raise NotImplementedError(SEARCH_V2_PENDING)
+    # -- Search v2: model usage and the initial build (§25.4.5, D27) ----------------------------------------------------
 
-    async def enrich_wakeups(self, user_id: str, now: datetime, limit: int) -> List[DriveIndexRecord]:
-        raise NotImplementedError(SEARCH_V2_PENDING)
-
-    async def count_by_job_state(self, user_id: str, kinds: AbstractSet[str]) -> Dict[str, Dict[str, int]]:
-        raise NotImplementedError(SEARCH_V2_PENDING)
-
-    async def keys_pending_page(self, user_id: str, after: Optional[str], limit: int) -> List[DriveIndexRecord]:
-        raise NotImplementedError(SEARCH_V2_PENDING)
-
-    async def get_records_lean(self, user_id: str, item_ids: Sequence[str]) -> Dict[str, DriveRecordLean]:
-        raise NotImplementedError(SEARCH_V2_PENDING)
+    @property
+    def _usage_col(self) -> Any:
+        return self._db.collection(self._usage_name)
 
     async def get_model_usage(self, user_id: str, month: str) -> ModelUsageMonth:
-        raise NotImplementedError(SEARCH_V2_PENDING)
+        snap = await self._usage_col.document(usage_doc_id(user_id, month)).get()
+        return usage_from_doc(snap.to_dict()) if snap.exists else ModelUsageMonth()
 
     async def add_model_usage(self, user_id: str, month: str, day: str, cls: str, usd: float, fallback_usd: float,
                               calls: int) -> None:
-        raise NotImplementedError(SEARCH_V2_PENDING)
+        """One merge write with server-side increments: concurrent adds never lose one (no transaction)."""
+        name = f"{UsageClass(cls).value}_usd"   # ValueError for an unknown class, before any write
+        data = {
+            "user_id": user_id, "month": month, USAGE_EXPIRES_AT: usage_expires_at(month),
+            name: firestore.Increment(float(usd)), "fallback_usd": firestore.Increment(float(fallback_usd)),
+            "calls": firestore.Increment(int(calls)),
+            "daily": {day: {"total_usd": firestore.Increment(float(usd)),
+                            "fallback_usd": firestore.Increment(float(fallback_usd))}},
+        }
+        await self._usage_col.document(usage_doc_id(user_id, month)).set(data, merge=True)
 
     async def get_initial_build(self, user_id: str) -> InitialBuild:
-        raise NotImplementedError(SEARCH_V2_PENDING)
+        snap = await self._usage_col.document(initial_doc_id(user_id)).get()
+        return initial_from_doc(snap.to_dict()) if snap.exists else new_initial_build()
 
     async def spend_initial_build(self, user_id: str, usd: float, now: datetime) -> Tuple[InitialBuild, float]:
-        raise NotImplementedError(SEARCH_V2_PENDING)
+        ref = self._usage_col.document(initial_doc_id(user_id))
+
+        @firestore.async_transactional
+        async def _spend(transaction: Any) -> Tuple[InitialBuild, float]:
+            snap = await ref.get(transaction=transaction)
+            before = initial_from_doc(snap.to_dict()) if snap.exists else new_initial_build()
+            after, covered = spent_initial(before, usd, now)
+            if after != before:
+                transaction.set(ref, initial_to_doc(user_id, after))
+            return after, covered
+
+        async with self._initial_lock:
+            return await _spend(self._db.transaction())
 
     async def close_initial_build(self, user_id: str, now: datetime) -> None:
-        raise NotImplementedError(SEARCH_V2_PENDING)
+        ref = self._usage_col.document(initial_doc_id(user_id))
+
+        @firestore.async_transactional
+        async def _close(transaction: Any) -> None:
+            snap = await ref.get(transaction=transaction)
+            before = initial_from_doc(snap.to_dict()) if snap.exists else new_initial_build()
+            after = closed_initial(before, now)
+            if after != before:
+                transaction.set(ref, initial_to_doc(user_id, after))
+
+        async with self._initial_lock:
+            await _close(self._db.transaction())
 
 
 # Transient on Firestore's side: the same call may succeed later, so it is never one file's failure (§8.2).

@@ -1,21 +1,25 @@
 """
 InMemoryDriveIndexRepository — DriveIndexRepository in process memory. The second implementation of
 the port: the eval (scripts/validation/drive_eval) and service tests run the real tick on it. kNN is
-brute-force cosine; ordering and lease semantics match the Firestore adapter.
+brute-force cosine; ordering and lease semantics match the Firestore adapter (Search v2's are pinned by
+tests/unit/adapters/test_drive_index_v2_parity.py against it).
 """
 from __future__ import annotations
 
 import asyncio
 import math
 from dataclasses import replace
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import AbstractSet, Dict, List, Mapping, Optional, Sequence, Tuple
 
-from ..domain.drive_enrichment import DriveHintDoc, InitialBuild, ModelUsageMonth
-from ..domain.drive_index_lean import ChunkId, DriveChunkLean, DriveHintLean, DriveRecordLean
+from ..domain.drive_enrichment import DriveHintDoc, EnrichJob, InitialBuild, JobState, ModelUsageMonth
 from ..domain.drive_index import DriveChunk, DriveIndexRecord, DriveSyncState, LeaseLost, Reason, RecordState
+from ..domain.drive_index_lean import ChunkId, DriveChunkLean, DriveHintLean, DriveRecordLean, lean_of
+from ..domain.drive_index_params import CONCEPT_KEYS_MAX
 from ..domain.drive_search import is_not_read_yet, is_unread
-from ..ports.drive_index_repository import SEARCH_V2_PENDING, DriveIndexRepository
+from ..domain.drive_usage import added_usage, closed_initial, new_initial_build, spent_initial
+from ..ports.drive_index_repository import DriveIndexRepository
+from ..utils.logger import logger
 
 
 def _cosine_distance(a: Sequence[float], b: Sequence[float]) -> float:
@@ -39,6 +43,11 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
         self.states: Dict[str, DriveSyncState] = {}
         # (user_id, item_id, generation, index) -> (chunk, vector)
         self.chunks: Dict[Tuple[str, str, int, int], Tuple[DriveChunk, List[float]]] = {}
+        # Search v2 (§25.2.2, §25.4.5): hint documents by (user_id, item_id, generation, index); usage documents by
+        # (user_id, "YYYY-MM") and the initial build by user, which a purge keeps (no delete method touches them)
+        self.hints: Dict[Tuple[str, str, int, int], Tuple[DriveHintDoc, List[float]]] = {}
+        self.usage: Dict[Tuple[str, str], ModelUsageMonth] = {}
+        self.initial: Dict[str, InitialBuild] = {}
         self._lock = asyncio.Lock()
 
     # -- sync state --------------------------------------------------------------------------
@@ -291,81 +300,172 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
             del self.chunks[key]
         return len(keys)
 
-    # -- Search v2 (§25.13.1): implemented by P2 -----------------------------------------------------------------
+    # -- Search v2 (§25.13.1) ---------------------------------------------------------------------------------------
+
+    def _about_hits(self, user_id: str, keys: Sequence[str], method: str) -> List[DriveIndexRecord]:
+        wanted = set(_query_keys(keys, method))
+        return [r for r in self._user(user_id) if wanted & set(r.about_keys)] if wanted else []
 
     async def find_by_about_keys(self, user_id: str, keys: Sequence[str], limit: int, *, kind: Optional[str] = None,
                                  date_from: Optional[datetime] = None, date_to: Optional[datetime] = None,
                                  after: Optional[str] = None) -> List[DriveRecordLean]:
-        raise NotImplementedError(SEARCH_V2_PENDING)
+        dated = date_from is not None or date_to is not None
+        hits = [r for r in self._about_hits(user_id, keys, "find_by_about_keys")
+                if (kind is None or r.kind == kind)
+                and (not dated or (r.effective_date is not None
+                                   and (date_from is None or r.effective_date >= date_from)
+                                   and (date_to is None or r.effective_date <= date_to)))]
+        hits.sort(key=_newest_first, reverse=True)
+        if after is not None:
+            cursor = self.records.get((user_id, after))
+            if cursor is None:
+                return []   # the cursor record is gone: the paging ends (port)
+            hits = [r for r in hits if _newest_first(r) < _newest_first(cursor)]
+        return [lean_of(r) for r in hits[:limit]]
 
     async def find_expiring(self, user_id: str, keys: Sequence[str], after_date: date,
                             limit: int) -> List[DriveRecordLean]:
-        raise NotImplementedError(SEARCH_V2_PENDING)
+        start = _day_start(after_date)
+        hits = [r for r in self._about_hits(user_id, keys, "find_expiring") if r.valid_until is not None and r.valid_until >= start]
+        hits.sort(key=lambda r: (r.valid_until, r.item_id))
+        return [lean_of(r) for r in hits[:limit]]
 
     async def find_chunks_by_word_keys(self, user_id: str, keys: Sequence[str], limit: int,
                                        after_item_id: Optional[str] = None) -> List[DriveChunkLean]:
-        raise NotImplementedError(SEARCH_V2_PENDING)
+        wanted = set(_query_keys(keys, "find_chunks_by_word_keys"))
+        hits = [c for c, _ in self._user_chunks(user_id) if wanted & set(c.word_keys)
+                and (after_item_id is None or c.item_id > after_item_id)]
+        return [DriveChunkLean(c.user_id, c.item_id, c.generation, c.index, c.kind) for c in hits[:limit]]
 
     async def get_chunk_keys(self, user_id: str, ids: Sequence[ChunkId]) -> Dict[ChunkId, Tuple[str, ...]]:
-        raise NotImplementedError(SEARCH_V2_PENDING)
+        return {i: self.chunks[(user_id, *i)][0].word_keys for i in ids if (user_id, *i) in self.chunks}
+
+    def _user_hints(self, user_id: str, kind: Optional[str] = None) -> List[Tuple[DriveHintDoc, List[float]]]:
+        rows = [row for k, row in sorted(self.hints.items()) if k[0] == user_id]
+        return [(h, v) for h, v in rows if kind is None or h.kind == kind]
 
     async def find_hints_by_keys(self, user_id: str, keys: Sequence[str], limit: int,
                                  after_item_id: Optional[str] = None) -> List[DriveHintLean]:
-        raise NotImplementedError(SEARCH_V2_PENDING)
+        wanted = set(_query_keys(keys, "find_hints_by_keys"))
+        hits = [h for h, _ in self._user_hints(user_id) if wanted & set(h.hint_keys)
+                and (after_item_id is None or h.item_id > after_item_id)]
+        return [_hint_lean(h) for h in hits[:limit]]
 
     async def get_hint_keys(self, user_id: str, ids: Sequence[ChunkId]) -> Dict[ChunkId, Tuple[str, ...]]:
-        raise NotImplementedError(SEARCH_V2_PENDING)
+        return {i: self.hints[(user_id, *i)][0].hint_keys for i in ids if (user_id, *i) in self.hints}
 
     async def find_nearest_hints(self, user_id: str, vector: Sequence[float], limit: int,
                                  kind: Optional[str] = None) -> List[Tuple[DriveHintLean, float]]:
-        raise NotImplementedError(SEARCH_V2_PENDING)
+        scored = [(h, _cosine_distance(vector, v)) for h, v in self._user_hints(user_id, kind)]
+        scored.sort(key=lambda pair: pair[1])   # stable: equal distances keep the key order
+        return [(_hint_lean(h), d) for h, d in scored[:limit]]
 
     async def get_hints(self, user_id: str, item_id: str, generation: int) -> List[DriveHintDoc]:
-        raise NotImplementedError(SEARCH_V2_PENDING)
+        return [h for h, _ in await self.get_hints_with_vectors(user_id, item_id, generation)]
 
     async def get_hints_with_vectors(self, user_id: str, item_id: str,
                                      generation: int) -> List[Tuple[DriveHintDoc, List[float]]]:
-        raise NotImplementedError(SEARCH_V2_PENDING)
+        return [(h, list(v)) for k, (h, v) in sorted(self.hints.items())
+                if k[:3] == (user_id, item_id, generation)]
 
     async def write_hints(self, docs: Sequence[DriveHintDoc], vectors: Sequence[Sequence[float]]) -> None:
-        raise NotImplementedError(SEARCH_V2_PENDING)
+        if len(docs) != len(vectors):
+            raise ValueError(f"{len(docs)} hint documents but {len(vectors)} vectors")
+        for doc, vector in zip(docs, vectors):
+            self.hints[(doc.user_id, doc.item_id, doc.generation, doc.index)] = (doc, list(vector))
 
     async def delete_hints_except(self, user_id: str, item_id: str, keep_generation: Optional[int]) -> int:
-        raise NotImplementedError(SEARCH_V2_PENDING)
+        doomed = [k for k in self.hints if k[0] == user_id and k[1] == item_id and k[2] != keep_generation]
+        for key in doomed:
+            del self.hints[key]
+        return len(doomed)
 
     async def delete_user_hints(self, user_id: str, limit: int) -> int:
-        raise NotImplementedError(SEARCH_V2_PENDING)
+        keys = sorted(k for k in self.hints if k[0] == user_id)[:limit]
+        for key in keys:
+            del self.hints[key]
+        return len(keys)
 
     async def hints_page(self, user_id: str, after: Optional[ChunkId], limit: int) -> List[DriveHintLean]:
-        raise NotImplementedError(SEARCH_V2_PENDING)
+        rows = [h for h, _ in self._user_hints(user_id)]
+        return [_hint_lean(h) for h in rows if after is None or (h.item_id, h.generation, h.index) > after][:limit]
 
     async def enrich_queue(self, user_id: str, limit: int) -> List[DriveIndexRecord]:
-        raise NotImplementedError(SEARCH_V2_PENDING)
+        ready = sorted((r for r in self._user(user_id) if r.enrich_ready), key=lambda r: (r.parent_id, r.item_id))
+        ready.sort(key=lambda r: r.effective_day, reverse=True)   # stable: (parent_id, item_id) within a day
+        return ready[:limit]
 
     async def enrich_wakeups(self, user_id: str, now: datetime, limit: int) -> List[DriveIndexRecord]:
-        raise NotImplementedError(SEARCH_V2_PENDING)
+        due = [r for r in self._user(user_id) if r.enrich_wake_at is not None and r.enrich_wake_at <= now]
+        return sorted(due, key=lambda r: (r.enrich_wake_at, r.item_id))[:limit]
 
     async def count_by_job_state(self, user_id: str, kinds: AbstractSet[str]) -> Dict[str, Dict[str, int]]:
-        raise NotImplementedError(SEARCH_V2_PENDING)
+        states = {s.value for s in JobState}
+        counts: Dict[str, Dict[str, int]] = {job.value: {} for job in EnrichJob}
+        for rec in self._user(user_id):
+            if rec.kind not in kinds:
+                continue
+            for job, state in ((EnrichJob.PROFILE.value, rec.profile_state),
+                               (EnrichJob.PASSAGES.value, rec.passages_state)):
+                if state in states:
+                    counts[job][state] = counts[job].get(state, 0) + 1
+        return counts
 
     async def keys_pending_page(self, user_id: str, after: Optional[str], limit: int) -> List[DriveIndexRecord]:
-        raise NotImplementedError(SEARCH_V2_PENDING)
+        recs = sorted((r for r in self._user(user_id) if r.keys_pending), key=lambda r: r.item_id)
+        return [r for r in recs if after is None or r.item_id > after][:limit]
 
     async def get_records_lean(self, user_id: str, item_ids: Sequence[str]) -> Dict[str, DriveRecordLean]:
-        raise NotImplementedError(SEARCH_V2_PENDING)
+        return {i: lean_of(self.records[(user_id, i)]) for i in item_ids if (user_id, i) in self.records}
 
     async def get_model_usage(self, user_id: str, month: str) -> ModelUsageMonth:
-        raise NotImplementedError(SEARCH_V2_PENDING)
+        return self.usage.get((user_id, month), ModelUsageMonth())
 
     async def add_model_usage(self, user_id: str, month: str, day: str, cls: str, usd: float, fallback_usd: float,
                               calls: int) -> None:
-        raise NotImplementedError(SEARCH_V2_PENDING)
+        async with self._lock:
+            current = self.usage.get((user_id, month), ModelUsageMonth())
+            self.usage[(user_id, month)] = added_usage(current, day, cls, usd, fallback_usd, calls)
 
     async def get_initial_build(self, user_id: str) -> InitialBuild:
-        raise NotImplementedError(SEARCH_V2_PENDING)
+        return self.initial.get(user_id) or new_initial_build()
 
     async def spend_initial_build(self, user_id: str, usd: float, now: datetime) -> Tuple[InitialBuild, float]:
-        raise NotImplementedError(SEARCH_V2_PENDING)
+        async with self._lock:
+            before = self.initial.get(user_id) or new_initial_build()
+            after, covered = spent_initial(before, usd, now)
+            if after != before:
+                self.initial[user_id] = after
+            return after, covered
 
     async def close_initial_build(self, user_id: str, now: datetime) -> None:
-        raise NotImplementedError(SEARCH_V2_PENDING)
+        async with self._lock:
+            self.initial[user_id] = closed_initial(self.initial.get(user_id) or new_initial_build(), now)
+
+
+def _query_keys(keys: Sequence[str], method: str) -> List[str]:
+    """The distinct keys of one query, in order; more than CONCEPT_KEYS_MAX is refused and logged, as the Firestore
+    adapter does (Firestore's limit; never a silent cut)."""
+    wanted = list(dict.fromkeys(keys))
+    if len(wanted) > CONCEPT_KEYS_MAX:
+        logger.error(f"[DriveIndex] {method} refused: {len(wanted)} distinct keys, at most {CONCEPT_KEYS_MAX}")
+        raise ValueError(f"{method}: {len(wanted)} distinct keys, at most {CONCEPT_KEYS_MAX}")
+    return wanted
+
+
+def _day_start(day: date) -> datetime:
+    return datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
+
+
+def _newest_first(rec: DriveIndexRecord) -> Tuple[bool, datetime, str]:
+    """Sorted with reverse=True: dated records newest first, then the undated, item_id descending within a date
+    (Firestore orders null below every timestamp)."""
+    dated = rec.effective_date is not None
+    return dated, rec.effective_date if dated else _NO_DATE, rec.item_id
+
+
+_NO_DATE = datetime.min.replace(tzinfo=timezone.utc)
+
+
+def _hint_lean(doc: DriveHintDoc) -> DriveHintLean:
+    return DriveHintLean(doc.user_id, doc.item_id, doc.generation, doc.index, doc.kind, doc.hint_keys)

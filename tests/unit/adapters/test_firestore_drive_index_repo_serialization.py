@@ -68,7 +68,8 @@ def full_record() -> DriveIndexRecord:
         effective_day="2026-10-09", keys_pending=True, keys_version=1, keys_capped=True,
         about_keys=("e:rome", "y:2026"), place_forms=("Rome", "Roma"), photo_description="a fountain in a square",
         photo_objects=(PhotoObject("fountain", ("fuente", "фонтан")),), photo_scene="city square",
-        visible_text="TREVI", readme_excerpt="# Project", readme_excerpt_version="c7")
+        visible_text="TREVI", readme_excerpt="# Project", readme_excerpt_version="c7",
+        script_rendered=True)
 
 
 def full_state() -> DriveSyncState:
