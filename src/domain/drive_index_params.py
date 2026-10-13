@@ -38,6 +38,9 @@ RRF_K = 60
 SYSTEMIC_BACKOFF_BASE_S = 60                # continuation delay after a systemic error, doubled per failure
 SYSTEMIC_BACKOFF_CAP_S = 1800               # = 3 x TICK_INTERVAL
 RECORD_WRITE_BATCH = 400
+WRAPPER_TAG_GAP_MAX = 16                    # spaces / invisible characters a wrapper-tag look-alike may hold
+                                            # between its parts: bounded so the escape stays linear on hostile
+                                            # whitespace (final review F3-3); the per-result nonce is the defence
 
 # -- content (Slice 2+4, §15, §24.13) ------------------------------------------------------------------------------
 QUIET = timedelta(minutes=10)               # S0b: Word for the web saves every 1.2-3.3 min while typing (§7.3)
