@@ -167,7 +167,8 @@ class WindowRequest:
 @dataclass(frozen=True)
 class Window:
     text: str
-    shortened: bool = False                   # the best chunk was trimmed, or a neighbour left out for the budget
+    shortened: bool = False                   # the best chunk itself was trimmed (a dropped neighbour is not: the
+                                              # matching passage is whole, final review F5-1)
 
 
 def _focus_end(text: str, terms: Sequence[str]) -> Optional[int]:
@@ -217,7 +218,8 @@ def budget_windows(requests: Sequence[WindowRequest], terms: Sequence[str], tota
     trimmed around its query term only when the best chunks alone would not fit, and then only down to the share
     the shorter ones leave (`_fair_share`); then neighbours are
     added in rank order, each whole, until one does not fit — after that no lower hit gets one, so a better hit
-    never has less context than a worse one. A hit whose best chunk is gone (collected meanwhile) gets no window."""
+    never has less context than a worse one. A hit whose best chunk is gone (collected meanwhile) gets no window.
+    `shortened` means the best chunk was trimmed; a neighbour left out does not count (final review F5-1)."""
     anchors: Dict[int, DriveChunk] = {}
     for i, request in enumerate(requests):
         anchor = next((c for c in request.chunks if c.index == request.anchor_index and c.text), None)
@@ -228,7 +230,6 @@ def budget_windows(requests: Sequence[WindowRequest], terms: Sequence[str], tota
     trimmed = {i for i, a in anchors.items() if best[i] != a.text}
     remaining = total - sum(len(t) for t in best.values())
     included: Dict[int, List[DriveChunk]] = {i: [a] for i, a in anchors.items()}
-    left_out: Set[int] = set()
     stopped = False
     for i in sorted(anchors):
         if i in trimmed:
@@ -240,7 +241,6 @@ def budget_windows(requests: Sequence[WindowRequest], terms: Sequence[str], tota
             cost = len(window_text(included[i] + [neighbour])) - len(window_text(included[i]))
             if stopped or cost > remaining:
                 stopped = True
-                left_out.add(i)
                 continue
             included[i].append(neighbour)
             remaining -= cost
@@ -251,7 +251,7 @@ def budget_windows(requests: Sequence[WindowRequest], terms: Sequence[str], tota
         elif i in trimmed:
             windows.append(Window(best[i], shortened=True))
         else:
-            windows.append(Window(window_text(included[i]), shortened=i in left_out))
+            windows.append(Window(window_text(included[i])))
     return windows
 
 

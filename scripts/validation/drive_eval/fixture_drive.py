@@ -48,6 +48,7 @@ _RAW_FACETS = ("photo", "location", "image", "video", "audio", "remoteItem", "pa
 TEMPLATES: Mapping[str, str] = {
     "vault_note": fixture_texts.VAULT_NOTE_TEMPLATE,
     "invoice_2024": fixture_texts.INVOICE_2024_TEMPLATE,
+    "g3_injected_note": fixture_texts.G3_INJECTED_NOTE_TEMPLATE,   # tree_g3.json only (final review F3-2)
 }
 
 

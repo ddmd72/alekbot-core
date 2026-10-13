@@ -668,6 +668,17 @@
     "fields": [
       { "fieldPath": "user_id", "order": "ASCENDING" },
       { "fieldPath": "state", "order": "ASCENDING" },
+      { "fieldPath": "indexed_generation", "order": "ASCENDING" },
+      { "fieldPath": "card_capped", "order": "ASCENDING" },
+      { "fieldPath": "kind", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_index_records",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "state", "order": "ASCENDING" },
       { "fieldPath": "reason", "order": "ASCENDING" },
       { "fieldPath": "kind", "order": "ASCENDING" }
     ]
@@ -689,6 +700,18 @@
       { "fieldPath": "user_id", "order": "ASCENDING" },
       { "fieldPath": "state", "order": "ASCENDING" },
       { "fieldPath": "indexed_generation", "order": "ASCENDING" },
+      { "fieldPath": "triage_verdict", "order": "ASCENDING" },
+      { "fieldPath": "kind", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_index_records",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "state", "order": "ASCENDING" },
+      { "fieldPath": "indexed_generation", "order": "ASCENDING" },
+      { "fieldPath": "card_capped", "order": "ASCENDING" },
       { "fieldPath": "triage_verdict", "order": "ASCENDING" },
       { "fieldPath": "kind", "order": "ASCENDING" }
     ]

@@ -11,6 +11,9 @@ Terms (the index side keeps every form; the query only the maximal form of each 
 an amount with zero cents, the same value, arbiter R2 S-m2):
     amounts   "1 250,00" "1.250,00" "1,250.00" "1250.5"  -> "1250.00" / "1250.50"; index also the integer part "1250"
     dates     "15.03.2024" "03/15/2024" "2024-03-15"     -> "2024-03-15" (both readings when day and month are <= 12)
+              "15 March 2024" "March 15, 2024" "15 березня 2024" "15 марта 2024" "15 de marzo de 2024" "15 mars 2024"
+                                                          -> "2024-03-15" (a day, a month name in en/es/fr/uk/ru with its
+                                                          case forms, a year; a month and year alone give no date term)
     ids       "INV-2024/0012"                             -> "inv20240012"; index also "20240012", "2024", "0012"
     groups    "XX00 1234 5678 …" "+34 600 000 000"        -> "xx0012345678…", "34600000000" (_GROUP_MIN_DIGITS on)
 A token holding `.` or `,` never yields its digits joined, on either side: "1250.00" is not "125000".
@@ -20,7 +23,7 @@ from __future__ import annotations
 import re
 from bisect import bisect_left
 from datetime import date
-from typing import Iterable, List, Set, Tuple
+from typing import Dict, Iterable, List, Set, Tuple
 
 CONTENT_TERMS_PER_CHUNK = 256
 _MIN_DIGITS = 3
@@ -38,6 +41,33 @@ _DIGITS = re.compile(r"\d+")
 # longer token, and never ending where a decimal part or an id separator follows (that is an amount or an id).
 _GROUP = r"[A-Za-z]{0,2}\d[0-9A-Za-z]{0,3}(?![0-9A-Za-z])"
 _GROUPS = re.compile(rf"(?<![\w.,/+-])\+?{_GROUP}(?:[{_SPACE}]{_GROUP})+(?![\w]|[.,/-]\w)")
+
+# Month names and their case forms (final review F5-5), matched case-insensitively; each maps to its month number.
+_MONTH_FORMS: Dict[int, Tuple[str, ...]] = {
+    1: ("january", "jan", "enero", "janvier", "січня", "січень", "января", "январь", "янв"),
+    2: ("february", "feb", "febrero", "février", "fevrier", "févr", "fevr", "лютого", "лютий", "февраля", "февраль",
+        "фев"),
+    3: ("march", "mar", "marzo", "mars", "березня", "березень", "марта", "март"),
+    4: ("april", "apr", "abril", "avril", "квітня", "квітень", "апреля", "апрель", "апр"),
+    5: ("may", "mayo", "mai", "травня", "травень", "мая", "май"),
+    6: ("june", "jun", "junio", "juin", "червня", "червень", "июня", "июнь"),
+    7: ("july", "jul", "julio", "juillet", "липня", "липень", "июля", "июль"),
+    8: ("august", "aug", "agosto", "août", "aout", "серпня", "серпень", "августа", "август", "авг"),
+    9: ("september", "sep", "sept", "septiembre", "setiembre", "septembre", "вересня", "вересень", "сентября",
+        "сентябрь", "сен", "сент"),
+    10: ("october", "oct", "octubre", "octobre", "жовтня", "жовтень", "октября", "октябрь", "окт"),
+    11: ("november", "nov", "noviembre", "novembre", "листопада", "листопад", "ноября", "ноябрь", "ноя"),
+    12: ("december", "dec", "diciembre", "décembre", "decembre", "déc", "грудня", "грудень", "декабря", "декабрь",
+         "дек"),
+}
+_MONTH_OF: Dict[str, int] = {form: month for month, forms in _MONTH_FORMS.items() for form in forms}
+_MONTH = "(" + "|".join(re.escape(f) for f in sorted(_MONTH_OF, key=lambda f: (-len(f), f))) + r")\.?(?![\w])"
+_ORDINAL = r"(?:st|nd|rd|th|er|e)?"
+# "1 March 2026", "1st of March 2026", "1 de marzo de 2026", "1er mars 2026", "1 березня 2026 року"
+_DAY_MONTH_YEAR = re.compile(rf"(?<![\w.,/-])(\d{{1,2}}){_ORDINAL}\s+(?:(?:de|of)\s+)?{_MONTH},?\s+(?:(?:de|del)\s+)?"
+                             rf"(\d{{4}})(?!\d)", re.IGNORECASE)
+# "March 1, 2026", "Mar 1st 2026"
+_MONTH_DAY_YEAR = re.compile(rf"(?<![\w]){_MONTH}\s+(\d{{1,2}}){_ORDINAL},?\s+(\d{{4}})(?!\d)", re.IGNORECASE)
 
 Span = Tuple[int, int, Tuple[str, ...]]   # (start, end, the span's forms)
 
@@ -75,6 +105,14 @@ def _date_spans(text: str) -> Iterable[Span]:
         readings = tuple(sorted(iso for iso in {_iso(y, b, a), _iso(y, a, b)} if iso))   # day- and month-first
         if readings:
             yield m.start(), m.end(), readings
+    for m in _DAY_MONTH_YEAR.finditer(text):
+        iso = _iso(int(m.group(3)), _MONTH_OF[m.group(2).casefold()], int(m.group(1)))
+        if iso:
+            yield m.start(), m.end(), (iso,)
+    for m in _MONTH_DAY_YEAR.finditer(text):
+        iso = _iso(int(m.group(3)), _MONTH_OF[m.group(1).casefold()], int(m.group(2)))
+        if iso:
+            yield m.start(), m.end(), (iso,)
 
 
 def _amount_spans(text: str) -> Iterable[Span]:
