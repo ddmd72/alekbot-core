@@ -162,8 +162,9 @@ class TestEnums:
                                                    "automatic_record"]
 
     def test_key_families(self):
-        assert [f.value for f in KeyFamily] == ["w:", "x:", "n:", "m:", "y:", "e:", "ex:", "pe:", "v:", "k:", "lw:",
-                                                "tw:", "dw:", "lv:", "pw:", "pn:", "l:"]
+        # xc F1 adds `ef:` (an unprinted entity spelling), xc F3 adds `xl:`/`exl:` (Latin skeletons)
+        assert [f.value for f in KeyFamily] == ["w:", "x:", "xl:", "n:", "m:", "y:", "e:", "ef:", "ex:", "exl:", "pe:",
+                                                "v:", "k:", "lw:", "tw:", "dw:", "lv:", "pw:", "pn:", "l:"]
 
     def test_family_source_classes(self):
         """A key's class follows from its prefix alone: photo objects are `pe:` and photo numbers `pn:`, automatic
@@ -171,14 +172,17 @@ class TestEnums:
         verified = {KeyFamily.ENTITY, KeyFamily.VALUE, KeyFamily.YEAR, KeyFamily.MONTH, KeyFamily.KIND}
         automatic = {KeyFamily.LABEL_WORD, KeyFamily.TOPIC_WORD, KeyFamily.DOMAIN_WORD, KeyFamily.VALIDITY_WORD,
                      KeyFamily.PHOTO_WORD, KeyFamily.PHOTO_ENTITY, KeyFamily.PHOTO_NUMBER}
-        translation = {KeyFamily.ENTITY_TRANSLIT}
+        # xc F3: Latin skeletons `exl:` too; xc F1: an unprinted entity spelling `ef:` is index-made, never exact
+        translation = {KeyFamily.ENTITY_TRANSLIT, KeyFamily.ENTITY_TRANSLIT_LATIN, KeyFamily.ENTITY_FORM}
         assert {f for f, c in FAMILY_SOURCE_CLASS.items() if c is SourceClass.VERIFIED_RECORD} == verified
         assert {f for f, c in FAMILY_SOURCE_CLASS.items() if c is SourceClass.AUTOMATIC_RECORD} == automatic
         assert {f for f, c in FAMILY_SOURCE_CLASS.items() if c is SourceClass.TRANSLATION} == translation
         assert not {f for f, c in FAMILY_SOURCE_CLASS.items() if c is SourceClass.PASSAGE_WORDS}
         # `x:` lives in chunks and names only (never an about key); `w:`/`n:` are not record families; `l:` is never
         # queried.
-        assert set(FAMILY_SOURCE_CLASS) == set(KeyFamily) - {KeyFamily.WORD, KeyFamily.TRANSLIT, KeyFamily.NUMBER,
+        # (`xl:` is the Latin twin of `x:`, chunks and names only: xc F3)
+        assert set(FAMILY_SOURCE_CLASS) == set(KeyFamily) - {KeyFamily.WORD, KeyFamily.TRANSLIT,
+                                                             KeyFamily.TRANSLIT_LATIN, KeyFamily.NUMBER,
                                                              KeyFamily.LABEL}
 
     def test_skeletons_are_translations_wherever_they_live(self):
@@ -211,7 +215,7 @@ class TestTypes:
                         "key_values", "topics", "topics_native", "topic_words", "label_words", "domain_words",
                         "validity_words"]),
         (ProfileDate, ["label", "iso"]),
-        (ProfileEntity, ["name", "type", "printed", "forms"]),
+        (ProfileEntity, ["name", "type", "printed", "forms", "found"]),   # xc F1: printed spellings tracked
         (KeyValue, ["label", "printed", "canonical"]),
         (PhotoDescription, ["description", "objects", "scene", "visible_text"]),
         (PhotoObject, ["name", "forms"]),

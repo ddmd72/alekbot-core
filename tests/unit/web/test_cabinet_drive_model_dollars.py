@@ -55,8 +55,10 @@ async def test_the_status_reads_the_usage_document_and_the_initial_build():
     await w.repo.add_model_usage("u", month_key(now), now.date().isoformat(), "triage", 0.75, 0.0, 3,
                                  covered_usd=0.75)
     await w.repo.spend_initial_build("u", 0.75, now)
+    # XC-4: 0.5 more that no initial build covered; the card's "x / cap" is what the cap paid, not the total
+    await w.repo.add_model_usage("u", month_key(now), now.date().isoformat(), "triage", 0.5, 0.0, 1, covered_usd=0.0)
     status = await w.search_svc.indexing_status("u")
-    assert status.usd_month == {"reader": 0.0, "triage": 0.75, "profile": 0.0, "passage": 0.0}
+    assert status.usd_month == {"reader": 0.0, "triage": 0.5, "profile": 0.0, "passage": 0.0}
     assert status.usd_caps == dict(USD_CAPS)
     assert (status.initial_build_spent_usd, status.initial_build_allowance_usd, status.initial_build_closed) == (
         0.75, INITIAL_BUILD_USD, False)

@@ -148,7 +148,7 @@ def test_word_keys_are_capped_keeping_the_earliest_text():
 
 def test_word_keys_hold_only_word_number_and_month_families():
     keys = word_keys("Invoice INV-7 of 15 March 2024, total 1 250,00; paid in April 2024.")
-    assert {k.split(":", 1)[0] for k in keys} == {"w", "x", "n", "m"}
+    assert {k.split(":", 1)[0] for k in keys} == {"w", "xl", "n", "m"}   # xc F3: a Latin text's skeletons are `xl:`
     assert {"m:2024-03", "m:2024-04", "n:2024-03-15", "n:1250.00", "n:1250"} <= set(keys)
 
 

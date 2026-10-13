@@ -97,7 +97,8 @@ EXPECTED = "\n".join([
     '<drive_document nonce="nF600000" ref="drive:F6" path="Photos/IMG_2210.jpg">',
     "IMG_2210.jpg | image | a square with a fountain at night | 2026-05-11",
     '</drive_document nonce="nF600000">',
-    "No other file is about or mentions all of these words.",
+    # xc F4: the coverage line is incomplete, so the exhaustive footer speaks of searched files only (RFC §25.13.6)
+    "No other searched file is about or mentions all of these words.",
 ])
 
 

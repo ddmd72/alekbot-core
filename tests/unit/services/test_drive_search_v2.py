@@ -1,8 +1,12 @@
 """DriveSearchService, Search v2 (USER_DRIVE_INDEXING_RFC §25.5): the §25.5.1 walk-throughs end to end over a synthetic
 enrichment fixture, strict AND with the D29 count line, the coverage and migration lines, filters, fencing, folder
 scope and the log line."""
+from dataclasses import replace
+from datetime import datetime, timezone
+
 import pytest
 
+from src.domain.drive_enrich_plan import COVERAGE_COUNTERS, GAP_HELD, GAP_WAITING, derived
 from src.domain.drive_enrichment import DriveProfile, JobState, ProfileEntity
 from src.domain.drive_index_params import ABOUT_SHOWN, CONCEPT_KEYS_MAX, RELATED_MAX
 from src.domain.drive_search import render_results
@@ -163,6 +167,15 @@ class TestCoverage:
         w.file("c.jpg", kind="image", taken="2025-01-01")
         folder = w.folder("Repo")
         w.set(folder, profile_state=JobState.READY.value)
+        # XC-3/XC-9: the planner derives `describe_gap` per record, the tick counts it (`count_describe_gaps`) into the
+        # state's coverage counters, and search reads only those
+        for (user, item), rec in list(w.repo.records.items()):
+            w.repo.records[(user, item)] = derived(rec, datetime(2026, 10, 20, tzinfo=timezone.utc))
+        gaps = await w.repo.count_describe_gaps("u")
+        assert gaps == {GAP_WAITING: 1, GAP_HELD: 1}                # not the folder, not the photo
+        state = w.repo.states["u"]
+        w.repo.states["u"] = replace(state, counters={
+            **state.counters, **{COVERAGE_COUNTERS[g]: n for g, n in gaps.items()}})
         text = render_results(await w.search("zebra"))
         assert ("Coverage: incomplete — 1 text file is not described yet; 1 text file could not be described."
                 in text)

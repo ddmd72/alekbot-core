@@ -241,7 +241,8 @@ class TestPassagesPlan:
         rec = ep.passages_plan(replace(done, indexed_generation=None), ctx())
         assert rec.passages_state == JobState.NONE.value
         assert (rec.passages_generation, rec.passages_next_index, rec.passages_done_at, rec.passages_version) == (
-            None, 0, None, 0)
+            None, 0, NOW, ep.PASSAGES_VERSION)
+        # XC-6: when it finished and under which version are kept, so the refresh cooldown survives the clear
 
 
 # -- keys, derived fields, the whole plan --------------------------------------------------------------------------

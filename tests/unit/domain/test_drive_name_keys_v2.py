@@ -1,11 +1,12 @@
 """Name keys v2 (USER_DRIVE_INDEXING_RFC §25.2.4 "Name keys", NAME_KEYS_VERSION 2): the native `w:` forms of every
 token, one `x:` skeleton per word (v1's transliterated `w:` variants are dropped, P1 review B2/M8), the `n:`/`y:` forms
 of digit tokens and number terms, and trigrams, so a concept's keys meet a name the way they meet a passage. v1
-`name_keys` is unchanged while the v1 search calls it."""
+v1 `name_keys` is retired (no caller in src/)."""
+import re
+
 import pytest
 
 from src.domain.drive_keys import NAME_KEYS_V2, name_keys_v2, query_concepts, token_forms, token_spans
-from src.domain.drive_name_keys import name_keys
 
 
 @pytest.mark.parametrize("name", ["Барселоне 2023.jpg", "Receipts March.pdf", "IMG_2210.jpg", "Київ — план v2.docx",
@@ -28,16 +29,15 @@ def test_v2_keys_every_token_but_no_transliterated_spelling(name):
                 native.update(token_forms(word))
         for word in (token.text, token.compound):
             sk = skeleton_key(word) if word else None
-            if sk:
-                skeletons.add(sk)
+            if sk:    # xc F3: a skeleton is keyed under the script of its word, `x:` Cyrillic and `xl:` Latin
+                skeletons.add(("x:" if re.search("[\u0400-\u04ff]", word) else "xl:") + sk)
         grams.update(_trigrams(_strip_accents(token.text)))
     assert {k[2:] for k in keys if k.startswith("w:")} == native
-    assert {"x:" + sk for sk in skeletons} <= keys and {"t:" + g for g in grams} <= keys
+    assert skeletons <= keys and {"t:" + g for g in grams} <= keys
     assert bool(skeletons) == bool(name)
 
 
 def test_v2_has_no_cross_script_spelling_under_w():
-    assert {"w:kyiv", "w:kiyiv"} <= set(name_keys("Київ.docx"))
     assert not {"w:kyiv", "w:kiyiv"} & set(name_keys_v2("Київ.docx"))
     assert "w:barselone" not in name_keys_v2("Барселоне.jpg")
 

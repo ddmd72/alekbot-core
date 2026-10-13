@@ -170,7 +170,8 @@ def test_latin_spelling_meets_cyrillic_text_only_through_a_skeleton():
 
 
 def test_cyrillic_query_meets_latin_text_only_through_a_skeleton():
-    assert _meets("Барселону", "A week in Barcelona.") == {"x:barselon"}
+    # xc F3: the text is Latin, so its skeleton is `xl:`, which a Cyrillic query word reads
+    assert _meets("Барселону", "A week in Barcelona.") == {"xl:barselon"}
 
 
 def test_digits_split_from_letters():
@@ -189,9 +190,11 @@ def test_a_short_number_is_a_word_form_and_a_long_one_a_number_term():
 def test_tokens_split_like_name_keys_except_case_and_apostrophe():
     """Separators and digit boundaries as `drive_name_keys`; a case boundary no longer splits (M1) and a Ukrainian
     apostrophe stays inside the word (M4); ё folds to е (m7)."""
-    from src.domain.drive_name_keys import _tokens
-    for text in ("Нью-Йорк", "IMG_2210.jpg", "Crème brûlée 2024", "Київ — «Львів»", "Peter's house"):
-        assert [t for t, _, _ in token_spans(text)] == _tokens(text), text
+    # (the v1 `_tokens` is gone, xc m4: its outputs on these texts are the literals)
+    for text, tokens in (("Нью-Йорк", ["нью", "йорк"]), ("IMG_2210.jpg", ["img", "2210", "jpg"]),
+                         ("Crème brûlée 2024", ["crème", "brûlée", "2024"]), ("Київ — «Львів»", ["київ", "львів"]),
+                         ("Peter's house", ["peter", "s", "house"])):
+        assert [t for t, _, _ in token_spans(text)] == tokens, text
     assert [t for t, _, _ in token_spans("myFileName v2")] == ["myfilename", "v", "2"]
     assert [t for t, _, _ in token_spans("Пётр сім'я")] == ["петр", "сімʼя"]
     assert [t for t, _, _ in token_spans("Пётр's ʼдім")] == ["петр", "s", "дім"]   # a Latin ' still separates

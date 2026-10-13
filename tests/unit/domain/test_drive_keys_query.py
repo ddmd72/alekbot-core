@@ -105,8 +105,10 @@ def test_every_list_is_unique_and_fetched_in_batches_of_at_most_thirty():
 def test_lists_hold_only_their_streams_families():
     for c in query_concepts("Barcelona trip").concepts:
         assert all(k[:2] in ("w:", "x:") for k in c.word_keys) and all(k.startswith("w:") for k in c.hint_keys)
-        assert all(k.split(":", 1)[0] + ":" in ("e:", "ex:", "k:", "lw:", "tw:", "dw:", "lv:", "pw:", "pe:", "v:")
-                   for k in c.about_keys)
+        # xc F1 adds `ef:`; xc F3: a Latin query word never reads `xl:`/`exl:` skeletons (so none appear here)
+        assert all(k.split(":", 1)[0] + ":" in ("e:", "ef:", "ex:", "k:", "lw:", "tw:", "dw:", "lv:", "pw:", "pe:",
+                                                "v:") for k in c.about_keys)
+        assert not any(k.startswith(("xl:", "exl:")) for k in (*c.word_keys, *c.about_keys, *c.hint_keys))
 
 
 def test_barcelona_trip_walk_through():
