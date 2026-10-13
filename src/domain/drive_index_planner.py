@@ -24,12 +24,15 @@ Public interface:
     can_start_file(elapsed_s, *, routed) -> bool
     with_card(rec, card_hash, embedding_space, now) / without_card(rec, now) / capped(rec, now) / released(rec, now)
     card_refused(rec, now) -> DriveIndexRecord
+    drops_readable(before, after) -> bool                                                    (§7.4)
     with_retry(rec, now) -> DriveIndexRecord
     access_action(enabled, state, connection, now) -> AccessAction
     is_stale(state, oldest_edit_due_at, now) -> bool
     stale_versions(rec, *, embedding_space=None) -> bool
+    month_parked(rec, now, *, embedding_space) -> bool                                       (§12.3, §24.7)
     reembed_in_space(rec, embedding_space) -> DriveIndexRecord
     chunks_reembedded(rec, generation, embedding_space, now) -> DriveIndexRecord           (§12.3)
+    chunks_refused(rec, embedding_space, now) -> DriveIndexRecord                            (§8.2, §12.3)
     extractor_stale(rec, versions) -> bool / reextraction_due(rec) -> DriveIndexRecord      (§9, §12.3)
     readme_read(rec, item_id, version, lead_text, now) -> DriveIndexRecord                  (§5.2)
 """
@@ -155,7 +158,11 @@ def classify(change: DriveChange, pscope: Optional[Scope], probe: Optional[Folde
         return Classification(True, scope, state, reason, kind, cclass, **kw)
 
     if pscope is None or pscope is Scope.UNRESOLVED:
-        return c(Scope.UNRESOLVED, RecordState.UNRESOLVED, None)
+        # a scope hold (R3 F2-1): a file keeps the content outcome that stands, its reason in `reason` (None for
+        # indexed) and its content fields as they are, so the outcome stands again once the parent resolves
+        held = (previous.reason if previous is not None and not change.is_folder
+                and _outcome_stands(previous, change.content_version) else None)
+        return c(Scope.UNRESOLVED, RecordState.UNRESOLVED, held)
     if pscope in (Scope.OPAQUE_ROOT, Scope.INSIDE_OPAQUE):
         if change.is_folder:
             return c(Scope.INSIDE_OPAQUE, RecordState.METADATA_ONLY, Reason.FOLDER)
@@ -195,7 +202,7 @@ def classify(change: DriveChange, pscope: Optional[Scope], probe: Optional[Folde
     else:
         return c(Scope.NORMAL, RecordState.METADATA_ONLY, Reason.KIND_NOT_ADMITTED)
     if previous is not None and _outcome_stands(previous, change.content_version):
-        return c(Scope.NORMAL, previous.state, previous.reason, content_kept=True)
+        return c(Scope.NORMAL, _outcome_state(previous), previous.reason, content_kept=True)
     return c(Scope.NORMAL, RecordState.PENDING, None)
 
 
@@ -213,15 +220,29 @@ def _indexed_now(rec: DriveIndexRecord) -> bool:
             and rec.extraction_version == EXTRACTION_VERSION)
 
 
+def _outcome_state(rec: DriveIndexRecord) -> RecordState:
+    """The content state a record holds. An unresolved file is a scope hold (R3 F2-1): its `reason` keeps the outcome
+    it had — a per-file failure, a content demotion, or None with its readable generation (indexed)."""
+    if rec.state is not RecordState.UNRESOLVED:
+        return rec.state
+    if rec.reason in _FAILED_REASONS:
+        return RecordState.FAILED
+    if rec.reason in _CONTENT_REASONS:
+        return RecordState.METADATA_ONLY
+    return RecordState.INDEXED if _indexed_now(rec) else RecordState.PENDING
+
+
 def _outcome_stands(previous: DriveIndexRecord, content_version: str) -> bool:
     """A content outcome (indexed, failed, or a content demotion) decided at this content version under the
-    current extraction rules (§3.4, §8.2): kept, so a rename or a policy re-plan never re-reads the file."""
+    current extraction rules (§3.4, §8.2): kept, so a rename, a policy re-plan or a spell under an unresolved parent
+    never re-reads the file."""
     if previous.content_version != content_version or previous.extraction_version != EXTRACTION_VERSION:
         return False
-    if previous.state is RecordState.INDEXED:
+    state = _outcome_state(previous)
+    if state is RecordState.INDEXED:
         return _indexed_now(previous)
-    return previous.state is RecordState.FAILED or (previous.state is RecordState.METADATA_ONLY
-                                                    and previous.reason in _CONTENT_REASONS)
+    return state is RecordState.FAILED or (state is RecordState.METADATA_ONLY
+                                           and previous.reason in _CONTENT_REASONS)
 
 
 def change_from_record(rec: DriveIndexRecord) -> DriveChange:
@@ -380,13 +401,19 @@ def plan_observation(change: DriveChange, existing: Optional[DriveIndexRecord], 
     return _collecting(_plan(change, existing, parent, probe, ctx, previous_parent, observed, nudged), existing)
 
 
+def drops_readable(before: Optional[DriveIndexRecord], after: DriveIndexRecord) -> bool:
+    """The write of `after` over `before` leaves the record with no readable generation where it had one: the
+    writer collects that generation's chunks (§3.4, §7.4; R3 F2-2). Every commit path decides it here; a run that
+    commits another generation collects the rest itself (`delete_chunks_except`)."""
+    return before is not None and before.indexed_generation is not None and after.indexed_generation is None
+
+
 def _collecting(plan: ObservationPlan, existing: Optional[DriveIndexRecord]) -> ObservationPlan:
     if existing is None:
         return plan
     deleted = plan.delete_item_id == existing.item_id and (existing.indexed_generation is not None
                                                            or existing.index_generation > 0)
-    dropped = (plan.upsert is not None and existing.indexed_generation is not None
-               and plan.upsert.indexed_generation is None)
+    dropped = plan.upsert is not None and drops_readable(existing, plan.upsert)
     return replace(plan, collect_chunks=existing.item_id) if deleted or dropped else plan
 
 
@@ -493,8 +520,9 @@ def _held(rec: DriveIndexRecord, now: Optional[datetime]) -> bool:
 def content_due(rec: DriveIndexRecord, now: Optional[datetime] = None) -> bool:
     """An index run is due (§8.1): pending, its content admitted (a content kind, or an image with a valid `text`
     verdict), and not yet indexed at this content version under the current extraction rules. A crashed or
-    retried run is still due; an indexed record is not. With `now`: and not deferred past `now`."""
-    if rec.state is not RecordState.PENDING or _indexed_now(rec) or _held(rec, now):
+    retried run is still due; an indexed record is not. With `now`: and not deferred past `now`. A card-capped record
+    holds its content work until released: search never shows content without a card (§5.4; R3 F1-2)."""
+    if rec.state is not RecordState.PENDING or rec.card_capped or _indexed_now(rec) or _held(rec, now):
         return False
     adm = admission(rec.kind)
     return adm is Admission.CONTENT or (adm is Admission.TRIAGE
@@ -503,8 +531,8 @@ def content_due(rec: DriveIndexRecord, now: Optional[datetime] = None) -> bool:
 
 def triage_due(rec: DriveIndexRecord, now: Optional[datetime] = None) -> bool:
     """An image waits for a verdict at the current TRIAGE_VERSION on its content version (§24.5). With `now`: and
-    not deferred past `now`."""
-    return (rec.state is RecordState.PENDING and admission(rec.kind) is Admission.TRIAGE
+    not deferred past `now`. A card-capped image is not triaged until released (§5.4; R3 F1-2)."""
+    return (rec.state is RecordState.PENDING and not rec.card_capped and admission(rec.kind) is Admission.TRIAGE
             and valid_verdict(rec, rec.content_version) is None and not _held(rec, now))
 
 
@@ -592,16 +620,20 @@ def without_card(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
 
 
 def capped(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
-    """No card headroom for this record (§5.4): the card is dropped and withheld; scope, state and reason stay what
-    the structure says, so a capped repository stays opaque. A deleting record is left alone."""
+    """No card headroom for this record (§5.4): the card is dropped and withheld; scope and reason stay what the
+    structure says, so a capped repository stays opaque. A deleting record is left alone. Content without a card is
+    never shown, so the readable generation goes too (the caller collects it, drops_readable) and stops counting
+    toward the chunk cap; an indexed record is pending again, its content and triage held until released (R3 F1-2)."""
     if rec.state is RecordState.DELETING:
         return rec
-    return schedule(replace(rec, card_capped=True, card_refused=False, card_hash=None, has_card=False), now,
+    state = RecordState.PENDING if rec.state is RecordState.INDEXED else rec.state
+    return schedule(replace(rec, card_capped=True, card_refused=False, card_hash=None, has_card=False, state=state,
+                            indexed_generation=None, chunk_space="", chunk_reembed_pending=False), now,
                     first_seen=False)
 
 
 def released(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
-    """Card headroom came back (§5.4): the cap is lifted and the card is due."""
+    """Card headroom came back (§5.4): the cap is lifted, and the content or triage it held is due before the card."""
     return schedule(replace(rec, card_capped=False), now, first_seen=True)
 
 
@@ -619,17 +651,32 @@ def with_retry(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
 def stale_versions(rec: DriveIndexRecord, *, embedding_space: Optional[str] = None) -> bool:
     """Decided, keyed or carded under an older constant (§12.3); with `embedding_space`, a card embedded in another
     space is stale too."""
+    if _structure_stale(rec, embedding_space):
+        return True
+    if rec.extraction_version > 0 and rec.extraction_version != EXTRACTION_VERSION:       # content read before
+        return True
+    return rec.triage_verdict is not None and rec.triage_version != TRIAGE_VERSION
+
+
+def month_parked(rec: DriveIndexRecord, now: datetime, *, embedding_space: str) -> bool:
+    """Its content or triage work waits for next month's budget (§24.7) and it is stale only for what that held work
+    applies (the extraction rules, its extractor link, the triage version): an upgrade pass leaves it parked, like a
+    record under an unresolved parent, until the month turns (R3 F1-5). Anything else stale is planned as usual."""
+    return (rec.defer_until is not None and rec.defer_until >= next_month_start(now)
+            and not _structure_stale(rec, embedding_space))
+
+
+def _structure_stale(rec: DriveIndexRecord, embedding_space: Optional[str]) -> bool:
+    """The versions an upgrade re-plan applies at once: policy, name keys, card, embedding space, geo table."""
     if rec.policy_version != POLICY_VERSION or rec.name_keys_version != NAME_KEYS_VERSION:
         return True
     if embedding_space is not None and rec.has_card and rec.embedding_space != embedding_space:
         return True
     if embedding_space is not None and rec.indexed_generation is not None and rec.chunk_space != embedding_space:
         return True   # readable chunks embedded in another space
+    if embedding_space is not None and rec.chunks_refused_space and rec.chunks_refused_space != embedding_space:
+        return True   # refused by another space's model: this one gives it a fresh try (R3 F2-3)
     if (rec.has_card or rec.card_hash is not None) and rec.card_version != CARD_VERSION:   # carded, or refused
-        return True
-    if rec.extraction_version > 0 and rec.extraction_version != EXTRACTION_VERSION:       # content read before
-        return True
-    if rec.triage_verdict is not None and rec.triage_version != TRIAGE_VERSION:
         return True
     return photo_location(rec.facets) is not None and rec.geo_table_version != GEO_TABLE_VERSION
 
@@ -666,6 +713,9 @@ def reembed_in_space(rec: DriveIndexRecord, embedding_space: str) -> DriveIndexR
         rec = replace(rec, card_hash=None)
     if rec.indexed_generation is not None and rec.chunk_space != embedding_space:
         rec = replace(rec, chunk_reembed_pending=True)
+    if rec.chunks_refused_space and rec.chunks_refused_space != embedding_space:
+        # the refusal held for another space's model: the file is read again for this one (R3 F2-3)
+        rec = replace(reextraction_due(rec), chunks_refused_space="")
     return rec
 
 
@@ -674,6 +724,19 @@ def chunks_reembedded(rec: DriveIndexRecord, generation: int, embedding_space: s
     """The re-embedded generation becomes readable in `embedding_space`; the caller collects every other one."""
     return schedule(replace(rec, indexed_generation=generation, chunk_space=embedding_space,
                             chunk_reembed_pending=False), now, first_seen=not rec.has_card)
+
+
+def chunks_refused(rec: DriveIndexRecord, embedding_space: str, now: datetime) -> DriveIndexRecord:
+    """The embedding model of `embedding_space` refused a chunk of the readable generation (a definite HTTP 400):
+    terminal for that space, like a refused card text (§8.2; R3 F2-3). The generation goes (the caller collects every
+    generation's chunks) and is not re-read: an indexed record becomes `failed` (the outcome a run's refused chunk
+    reaches), a waiting or failed one keeps its content state. Its card stays; another space gives it a fresh try."""
+    state, reason = rec.state, rec.reason
+    if state is RecordState.INDEXED:
+        state, reason = RecordState.FAILED, Reason.EXTRACT_ERROR
+    return schedule(replace(rec, state=state, reason=reason, indexed_generation=None, chunk_space="",
+                            chunk_reembed_pending=False, chunks_refused_space=embedding_space), now,
+                    first_seen=not rec.has_card)
 
 
 def access_action(enabled: bool, state: Optional[DriveSyncState], connection: DriveConnection,
@@ -716,7 +779,8 @@ def is_stale(state: DriveSyncState, oldest_edit_due_at: Optional[datetime], now:
 def generation_started(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
     """Step 2 of §8.1, persisted before the first chunk write: a new generation, so a retry never reuses a crashed
     run's. The content is due again when the run would count as crashed (attempt_crashed), in the retry class."""
-    return _defer(replace(rec, index_generation=rec.index_generation + 1, attempt_started_at=now),
+    return _defer(replace(rec, index_generation=rec.index_generation + 1, attempt_started_at=now,
+                          chunks_refused_space=""),
                   now + timedelta(seconds=TICK_DEADLINE_S), int(Priority.RETRY), now)
 
 

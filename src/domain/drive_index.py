@@ -252,6 +252,8 @@ class DriveIndexRecord:
     chunk_count: int = 0
     chunk_space: str = ""                     # the embedding space the readable generation's chunks are in (§12.3)
     chunk_reembed_pending: bool = False       # those chunks are in another space: their stored text is embedded again
+    chunks_refused_space: str = ""            # the space that refused this content's chunks (HTTP 400): terminal there,
+                                              # no re-read; another space gives it a fresh try (R3 F2-3)
     truncated: bool = False
     lead_text: str = ""                       # first CARD_LEAD_CHARS of the extracted text, for the card (§8.5)
     brief: Optional[DocumentBrief] = None     # model-read documents only (§24.4)
@@ -294,6 +296,9 @@ class DriveSyncState:
     target_space: str = ""                    # the space the running upgrade pass moves cards to
     upgrade_cursor: Optional[str] = None
     upgrade_found_stale: bool = False
+    # "YYYY-MM" (R3 F1-5): mid-pass, a record held for next month's budget was seen this month; after a pass that
+    # found nothing else stale, the month the pass is parked for — no new pass before it turns or the target changes
+    upgrade_parked_month: str = ""
     observed_as_of: Optional[datetime] = None
     access_lost_at: Optional[datetime] = None
     last_success_at: Optional[datetime] = None
