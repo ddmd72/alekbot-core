@@ -6,6 +6,7 @@ import random
 import pytest
 
 from src.domain.drive_index_params import WORD_KEYS_PER_CHUNK
+from src.domain.drive_key_forms import SHORT_FUNCTION_WORDS
 from src.domain.drive_keys import (
     FUNCTION_WORDS, GENERIC_WORDS, match_spans, phrase_keys, query_concepts, token_spans, word_keys,
     word_keys_capped,
@@ -27,15 +28,54 @@ def _sentence(rng: random.Random, n: int) -> str:
     return " ".join(rng.choice(VOCABULARY) for _ in range(n))
 
 
-@pytest.mark.parametrize("seed", range(40))
+ADVERSARIAL = (
+    "iPhone PayPal McDonalds OneDrive YouTube WiFi Wi-Fi e-mail E-Mail ИП ЖК ТВ CV TV EU HR X5 A4 ред3 "
+    "комп'ютер комп’ютера сім'я сімʼї п'ять м'ясо ёлка елка счёт счет Пётр Петр за́мок квар­тира "
+    "Нью-Йорк Нью-Йорке Санкт-Петербурге Kyiv Києві Kharkiv Харкові Lviv Львові São Zürich Œuvre straße"
+).split()
+
+
+def _recase(rng: random.Random, word: str) -> str:
+    """The same word as a user might type it: lower, upper, capitalised, or as written."""
+    return rng.choice([word, word.lower(), word.upper(), word[:1].upper() + word[1:].lower()])
+
+
+def _removable(word: str) -> bool:
+    return all(t in FUNCTION_WORDS or t in GENERIC_WORDS or len(t) == 1 or t in SHORT_FUNCTION_WORDS
+               for t, _, _ in token_spans(word))
+
+
+@pytest.mark.parametrize("seed", range(60))
 def test_every_word_of_a_text_is_found_by_its_own_query(seed):
+    """Index and query parity on adversarial input: per-occurrence casing, camelCase brands, apostrophes, hyphen
+    compounds, 2-letter acronyms, ё/е, stress marks and soft hyphens (review M9). A query that yields no concept
+    fails unless every token is a function or generic word."""
     rng = random.Random(seed)
-    text = _sentence(rng, 25) + ", " + rng.choice(NUMBERS) + "; " + _sentence(rng, 10) + "."
+    pool = VOCABULARY + ADVERSARIAL
+    words = [_recase(rng, rng.choice(pool)) for _ in range(30)]
+    text = " ".join(words[:20]) + ", " + rng.choice(NUMBERS) + "; " + " ".join(words[20:]) + "."
     keys = set(word_keys(text))
-    for token, start, end in token_spans(text):
-        q = query_concepts(text[start:end])
+    for word in words:
+        q = query_concepts(_recase(rng, word))
+        assert q.concepts or _removable(word), word
         for concept in q.concepts:
-            assert set(concept.word_keys) & keys, (text[start:end], concept)
+            assert set(concept.word_keys) & keys, (word, concept.word)
+
+
+@pytest.mark.parametrize("seed", range(10))
+def test_parity_holds_on_a_text_past_the_cap_for_its_kept_keys(seed):
+    """A text over the cap: the keys kept are the earliest text's, and every word of that early text is found."""
+    rng = random.Random(500 + seed)
+    def suffix(i: int) -> str:
+        return chr(97 + i % 26) + chr(97 + i // 26 % 26) + chr(97 + i // 676)
+
+    words = [rng.choice(VOCABULARY) + suffix(i) if i % 3 else rng.choice(VOCABULARY) for i in range(1600)]
+    text = " ".join(words)
+    keys, capped = word_keys_capped(text)
+    assert capped
+    for word in words[:50]:
+        for concept in query_concepts(word).concepts:
+            assert set(concept.word_keys) & set(keys), word
 
 
 @pytest.mark.parametrize("number", NUMBERS)
@@ -52,7 +92,7 @@ def test_a_named_thing_is_found_by_a_query_typing_it(seed):
     name = " ".join(rng.choice(words) for _ in range(rng.randint(1, 3)))
     stored = set(phrase_keys(name))
     q = query_concepts(name)
-    assert q.concepts
+    assert q.concepts, name
     for concept in q.concepts:
         assert set(concept.about_keys) & stored, (name, concept.word)
 
@@ -98,17 +138,17 @@ def test_match_spans_handles_decomposed_text():
 # -- the chunk key cap ----------------------------------------------------------------------------------------------
 
 def test_word_keys_are_capped_keeping_the_earliest_text():
-    words = [f"w{chr(97 + i)}{chr(97 + j)}{chr(97 + k)}" for i in range(10) for j in range(10) for k in range(10)]
+    words = [f"w{chr(97 + i)}{chr(97 + j)}{chr(97 + k)}" for i in range(26) for j in range(26) for k in range(4)]
     text = " ".join(words)
     keys, capped = word_keys_capped(text)
     assert capped and len(keys) == WORD_KEYS_PER_CHUNK and word_keys(text) == keys
-    assert "w:waaa" in keys and "w:wjjj" not in keys
+    assert "w:waaa" in keys and "w:wzzd" not in keys
     assert not word_keys_capped("a short text")[1]
 
 
 def test_word_keys_hold_only_word_number_and_month_families():
     keys = word_keys("Invoice INV-7 of 15 March 2024, total 1 250,00; paid in April 2024.")
-    assert {k.split(":", 1)[0] for k in keys} == {"w", "n", "m"}
+    assert {k.split(":", 1)[0] for k in keys} == {"w", "x", "n", "m"}
     assert {"m:2024-03", "m:2024-04", "n:2024-03-15", "n:1250.00", "n:1250"} <= set(keys)
 
 

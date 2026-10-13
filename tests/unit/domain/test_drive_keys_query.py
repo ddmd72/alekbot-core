@@ -89,18 +89,24 @@ def test_numbers_are_kept_before_words_under_the_cap():
     assert _words(q)[0] == "12345" and "india" in q.cut and "hotel" in q.cut
 
 
-def test_every_emitted_list_is_at_most_thirty_keys():
+def test_every_list_is_unique_and_fetched_in_batches_of_at_most_thirty():
+    """Review B1: the lists are uncut (coverage); the fetch cuts them into batches of at most 30."""
+    from src.domain.drive_keys import fetch_batches
     q = query_concepts("медицинские записи по холестерину у доктора Иванова в Киеве")
+    assert any(len(c.about_keys) > CONCEPT_KEYS_MAX for c in q.concepts)
     for c in q.concepts:
         for keys in (c.about_keys, c.word_keys, c.hint_keys):
-            assert len(keys) <= CONCEPT_KEYS_MAX and len(set(keys)) == len(keys)
+            assert len(set(keys)) == len(keys)
+            batches = fetch_batches(keys)
+            assert all(len(b) <= CONCEPT_KEYS_MAX for b in batches)
+            assert [k for b in batches for k in b] == list(keys)
 
 
 def test_lists_hold_only_their_streams_families():
     for c in query_concepts("Barcelona trip").concepts:
-        assert all(k.startswith("w:") for k in c.word_keys + c.hint_keys)
-        assert all(k.split(":", 1)[0] + ":" in ("e:", "k:", "lw:", "tw:", "dw:", "lv:", "pw:",
-                                                                 "po:") for k in c.about_keys)
+        assert all(k[:2] in ("w:", "x:") for k in c.word_keys) and all(k.startswith("w:") for k in c.hint_keys)
+        assert all(k.split(":", 1)[0] + ":" in ("e:", "ex:", "k:", "lw:", "tw:", "dw:", "lv:", "pw:", "pe:", "v:")
+                   for k in c.about_keys)
 
 
 def test_barcelona_trip_walk_through():
@@ -108,7 +114,7 @@ def test_barcelona_trip_walk_through():
     assert _words(q) == ["barcelona", "trip"] and q.ignored == ()
     barcelona, trip = q.concepts
     assert "e:barcelona_trip" in barcelona.about_keys and "e:barcelona_trip" in trip.about_keys
-    assert "w:барселона" in barcelona.word_keys                   # the c rule: c before e
+    assert "x:barselon" in barcelona.word_keys and "ex:barselon" in barcelona.about_keys   # the c rule
     assert {"k:trip", "lw:trip", "tw:trip"} <= set(trip.about_keys)
 
 
@@ -129,10 +135,11 @@ def test_a_repeated_word_is_one_concept():
     assert _words(query_concepts("rome Rome ROME")) == ["rome"]
 
 
-def test_a_short_word_without_forms_is_ignored_not_a_blocking_concept():
-    q = query_concepts("BMW X5")
-    assert _words(q) == ["bmw", "5"] and q.ignored == ("x",)
-    assert query_concepts("BMW X5").concepts[1].word_keys == ("w:5",)
+def test_a_one_letter_word_is_ignored_and_a_two_letter_one_is_a_concept():
+    """Review M2 reversed P1's first deviation: a 2-letter word is a concept with its exact form; 1 letter is not."""
+    q = query_concepts("BMW X5 x")
+    assert [c.word for c in q.concepts] == ["bmw", "x5"] and q.ignored == ("x",)
+    assert q.concepts[1].word_keys == ("w:x5",)
 
 
 def test_the_query_is_clipped_at_a_word_boundary():
@@ -152,7 +159,7 @@ def test_walk_through_pro_barselonu_concepts():
     q = query_concepts("про Барселону")
     assert _words(q) == ["барселону"] and q.ignored == ("про",)
     c = q.concepts[0]
-    assert {"w:барселону", "w:барселон", "w:barselonu"} <= set(c.word_keys)
+    assert {"w:барселону", "w:барселон", "x:barselon"} <= set(c.word_keys)
     assert {"e:барселону", "e:барселон"} <= set(c.about_keys)
 
 

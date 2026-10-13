@@ -42,33 +42,38 @@ VALUE_LABELS: Tuple[str, ...] = (
 #   - `mhtml` is a web page (the `html` row); kinds with no row (subtitles, json, code, log, data_dump, database,
 #     disk_image, executable, iwork, other) get no `k:` words;
 #   - French words are those of the table (several coincide with en/es); more is a later KEYS_VERSION bump;
-#   - photo words go to images whose verdict is `photo` only (§25.2.4's reading; owner to confirm).
+#   - photo words go to images whose verdict is `photo` only (§25.2.4's reading; owner to confirm);
+#   - P1 review (KEYS_VERSION 2): image and photo rows gain the usual ru/uk/es/fr words (M7); the audio row says
+#     "аудиозапись"/"аудіозапис" instead of "запись"/"запис", which covered every "записи" (m3); French added.
 KIND_WORDS: Mapping[str, Tuple[str, ...]] = {
-    "image": ("image", "picture", "imagen"),
+    "image": ("image", "picture", "imagen", "изображение", "зображення", "картинка", "illustration"),
     "pdf": ("pdf",),
     "docx": ("document", "documento", "документ"),
     "doc": ("document", "documento", "документ"),
     "odt": ("document", "documento", "документ"),
     "rtf": ("document", "documento", "документ"),
-    "xlsx": ("spreadsheet", "table", "hoja de cálculo", "таблица", "таблиця"),
-    "xls": ("spreadsheet", "table", "hoja de cálculo", "таблица", "таблиця"),
-    "ods": ("spreadsheet", "table", "hoja de cálculo", "таблица", "таблиця"),
-    "csv": ("spreadsheet", "table", "hoja de cálculo", "таблица", "таблиця"),
-    "pptx": ("presentation", "slides", "presentación", "презентация", "презентація"),
-    "ppt": ("presentation", "slides", "presentación", "презентация", "презентація"),
-    "odp": ("presentation", "slides", "presentación", "презентация", "презентація"),
-    "markdown": ("note", "text", "nota", "заметка", "нотатка"),
-    "text": ("note", "text", "nota", "заметка", "нотатка"),
-    "html": ("web page", "página web", "веб-страница", "веб-сторінка"),
-    "mhtml": ("web page", "página web", "веб-страница", "веб-сторінка"),
-    "eml": ("email", "mail", "correo", "письмо", "лист"),
-    "msg": ("email", "mail", "correo", "письмо", "лист"),
-    "epub": ("book", "e-book", "libro", "книга"),
-    "video": ("video", "vídeo", "видео", "відео"),
-    "audio": ("audio", "recording", "grabación", "запись", "запис"),
+    "xlsx": ("spreadsheet", "table", "hoja de cálculo", "tableur", "таблица", "таблиця"),
+    "xls": ("spreadsheet", "table", "hoja de cálculo", "tableur", "таблица", "таблиця"),
+    "ods": ("spreadsheet", "table", "hoja de cálculo", "tableur", "таблица", "таблиця"),
+    "csv": ("spreadsheet", "table", "hoja de cálculo", "tableur", "таблица", "таблиця"),
+    "pptx": ("presentation", "slides", "presentación", "présentation", "презентация", "презентація"),
+    "ppt": ("presentation", "slides", "presentación", "présentation", "презентация", "презентація"),
+    "odp": ("presentation", "slides", "presentación", "présentation", "презентация", "презентація"),
+    "markdown": ("note", "text", "nota", "texte", "заметка", "нотатка"),
+    "text": ("note", "text", "nota", "texte", "заметка", "нотатка"),
+    "html": ("web page", "página web", "page web", "веб-страница", "веб-сторінка"),
+    "mhtml": ("web page", "página web", "page web", "веб-страница", "веб-сторінка"),
+    "eml": ("email", "mail", "correo", "courriel", "письмо", "лист"),
+    "msg": ("email", "mail", "correo", "courriel", "письмо", "лист"),
+    "epub": ("book", "e-book", "libro", "livre", "книга"),
+    "video": ("video", "vídeo", "vidéo", "видео", "відео"),
+    "audio": ("audio", "recording", "grabación", "enregistrement", "аудио", "аудіо", "аудиозапись", "аудіозапис"),
     "archive": ("archive", "zip", "archivo", "архив", "архів"),
-    "folder": ("folder", "carpeta", "папка"),
+    "folder": ("folder", "carpeta", "dossier", "папка"),
 }
 
 # Added to an image's `k:` words only when its triage verdict is `photo` (§25.2.4, §25.13.5).
-PHOTO_KIND_WORDS: Tuple[str, ...] = ("photo", "foto", "фото", "світлина")
+PHOTO_KIND_WORDS: Tuple[str, ...] = (
+    "photo", "foto", "фото", "світлина", "photograph", "photographie", "fotografía", "fotografia", "фотография",
+    "фотографія", "снимок", "знімок", "фотка",
+)

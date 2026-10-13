@@ -2201,71 +2201,128 @@ where they labelled 38 synthetic documents correctly in both runs:
   customer_number, reference, tax_id, phone, amount_total, amount_due, price, other_id`.
 - Not in the set (unstable or ambiguous in the study): free tags, `personal_record`, `issuer` (an issuer is an entity).
 
-#### 25.2.4 Keys: one normaliser with form sets (`src/domain/drive_keys.py`, pure)
+#### 25.2.4 Keys: one normaliser with form sets (`src/domain/drive_keys.py`, `drive_key_forms.py`, pure)
 Every key is a short string with a family prefix. Index and query call the same functions. A table of word groups
-(§25.13.4) is pinned as unit tests of index/query parity, and a test hashes the form tables and fails unless
-`KEYS_VERSION` (and `NAME_KEYS_VERSION`, when the forms change) is bumped with them.
+(§25.13.4) is pinned as unit tests of index/query parity. Two digests are pinned per (`KEYS_VERSION`,
+`NAME_KEYS_VERSION`): a hash of the form tables, and a hash of the keyer's output on a fixed multilingual fixture, so a
+change to a rule's code fails the pin too. Either fails unless the versions are bumped with it.
 
-**Tokens.** Split as `drive_name_keys` splits (NFC, casefold, Unicode punctuation and separators, case and digit
-boundaries; a hyphen separates). Each token gets a **set of forms**, each kept only at 3 letters or more; the index
-stores the whole set and a query ORs it, so any shared form matches.
-- **Cyrillic forms:** (a) the token; (b) the token with the longest ending of `ами ями ого его ому ему ой ей ий ый ым им
-  ых их ая яя ое ее ую юю ою ею ові еві ом ем ах ях ам ям ов ев ы и а я у ю е є і ї о` stripped; (c) the token without
-  a final `й` or `ь`; (d) a fleeting-vowel form (`-ок`, `-ек`, `-ец`, `-ень` lose their `о`/`е`: "квиток" → "квитк");
-  (e) on stems of 4 letters or more, the Ukrainian last-syllable alternation (`і` → `о`, `е`; `ї` → `є`: "Київ" →
-  "києв", "Харків" → "харков"). **No truncation.**
+**Tokens** (P1 review, `KEYS_VERSION` 2). The tokeniser:
+- splits on Unicode punctuation, symbols, separators and controls, and on letter/digit boundaries; "ред3" → "ред", "3";
+- does **not** split on case: "iPhone", "PayPal", "McDonalds" are one token each (casefolded). The index also stores
+  the case parts' forms ("phone" finds "iPhone"); a query word is never stood for by a part;
+- applies NFC and casefold; in Cyrillic it drops stress marks and folds `ё` to `е`;
+- keeps a Ukrainian apostrophe between two Cyrillic letters inside the word, as one code point (U+02BC), in any of its
+  spellings (`'` `’` `ʼ` `` ` `` `´` `ʹ` `ʻ` `ʽ` `‘`). A Latin apostrophe still separates ("O'Brien");
+- deletes a soft hyphen (U+00AD) and joins a line-break hyphenation ("квар-\nтира");
+- treats a hyphen compound ("Wi-Fi", "e-mail", "Нью-Йорк") and a short letter-digit run of at most 6 characters ("X5",
+  "A4") as one query word. The index stores the joined form beside the parts.
+
+Each token gets a **set of native forms**, each of 3 letters or more; the index stores the set and a query ORs it.
+- **Cyrillic forms:**
+  - (a) the token;
+  - (b) the token less its **longest and its second-longest** listed ending, each leaving 3 letters or more. The
+    endings are `ами ями ого его ому ему ой ей ий ый ым им ых их ая яя ое ее ую юю ою ею ые ие ыми ими ові еві ої ій
+    ім іх іми ів ом ем ах ях ам ям ов ев ы и а я у ю е є і ї о`; the second strip keeps здание/здания and
+    медицинские/медицинская linked;
+  - (c) the token without a final `й` or `ь`;
+  - (d) a fleeting-vowel form: `-ок`, `-ек`, `-ец`, `-ень` lose their `о`/`е` ("квиток" → "квитк");
+  - (e) on stems of 4 letters or more, the Ukrainian last-syllable alternation, `і` → `о`, `е` and `ї` → `є` ("Київ"
+    → "києв", "Харків" → "харков"), with (b) of each.
+
+  A word with an apostrophe also gets its forms without it, except a stem ending at the apostrophe: "сімʼ" links
+  сім'я and сім'ї, and "сім" stays another word. **No truncation.**
 - **Latin forms:** (a) the token, accents stripped (`_LATIN_FOLDS` too); (b) its singular: `-sses` → `-ss`, `-ies` →
   `-i`, `-es` dropped after `x`, `z`, `ch`, `sh`, else a final `-s` unless the token ends in `-ss`, `-us` or `-is`; then,
   on 4 letters or more, a final `-e` dropped and a final `-y` turned into `-i`. "house"/"houses" → `hous`;
   "lease"/"leases" → `leas`; "movie"/"movies" → `movi`; "policy"/"policies" → `polici`; "receipt"/"receipts" →
   `receipt`; "Paris" and "analysis" stay. Residual: "taxis", "menus" are kept by the `-is`/`-us` exception.
-- **Transliterations** of forms (a) and (b) only: Russian-style and Ukrainian national for Cyrillic, Latin-to-Cyrillic
-  for Latin (with `c` before `e`, `i`, `y` → `с`, general Latin orthography, not a place rule); each transliteration
-  then gets its target script's forms (a)–(b).
-- **Digits:** a digit token below the number-term minimum (fewer than 3 digits, "ред3" → "ред", "3") is the word form
-  `w:3` on both sides; longer numbers are number terms.
+- **Two-letter words** ("ИП", "ЖК", "TV", "CV", "X5") are keyed by their exact form (a) only: no stripping, no skeleton.
+  The explicit 1–2-letter function words per language (`SHORT_FUNCTION_WORDS`: "на", "по", "in", "de", "et", …) are
+  never keyed. A 1-letter word is never keyed.
+- **Digits:** a digit token below the number-term minimum (fewer than 3 digits) is the word form `w:3` on both sides;
+  longer numbers are number terms.
+- **Transliteration (review B2, M6, M8).** The index stores **one skeleton per word**, not transliterated spellings.
+  The skeleton is the word's Cyrillic stem, form (b); a Latin word is first spelled in Cyrillic Russian-style, with `c`
+  before `e`, `i`, `y` → `с`. That stem is written in a sound-class Latin alphabet (г/ґ/х → h; е/є/э/ё → e; и/і/ї/й/ы →
+  i; ю → u; я → a; ь, ъ and the apostrophe dropped; doubled letters collapsed), so Russian and Ukrainian spellings and
+  both schemes meet. The query generates every variant:
+  - for a Cyrillic word, the skeletons of its forms, of their stems, and of the nominative a Ukrainian locative stem
+    comes from ("києв" → "київ");
+  - for a Latin word, its Cyrillic spellings by the Russian-style table and by the Ukrainian national scheme in reverse
+    ("kyiv" → "киів", "kharkiv" → "харків"), and those spellings' forms (a)–(e) and stems.
+
+  "Kyiv" reaches "у Києві", "Kharkiv" reaches "в Харкові", "Барселону" reaches "Barcelona". "Lviv" does not reach
+  "Львові" (the soft sign); accepted. A match through a skeleton crosses scripts or spellings: it is a translation,
+  never exact (§25.5.4).
 - **Measured** (review round 2, on a targeted list of 27 inflection groups — surnames, `-ей` names, nouns ending in a
   listed ending, soft sign, fleeting vowels, Ukrainian locatives — and a 1 216-word Russian/Ukrainian corpus): the
   rev 3.19 rule (one ending, then 5 letters) keyed 12 of 27 groups together and linked 177 pairs of different words
   ("барсетка" with "Барселона", a given name with a city name); the form set keys 26 of 27 (the last fixed by the
-  extended endings) and links 47 pairs, most of them true inflections.
+  extended endings) and links 47 pairs, most of them true inflections. P1 review, on a synthetic table of 172 words
+  with their inflections (551 forms):
+  - native forms link 664 of 702 same-word pairs (95 %), and 16 different-word pairs share a native form, all of
+    them translations (договор/договір, hotels/hoteles);
+  - skeletons link 7 more same-word pairs, and 47 different-word pairs only by skeleton (translation tier): all are
+    translations (Киев/Київ, Одесса/Одеса, Barcelona/Барселона, bank/банк) except one pair, an English common noun and a Russian given name;
+  - a ru/uk contract or UI chunk of 2 400 characters holds 650–715 keys.
 
 **Families**
-- `w:` **words** — the forms of a token.
+- `w:` **words** — the native forms of a token (chunks, names): exact.
+- `x:` **skeletons** — one per word (chunks, names): a translation (§25.5.4).
 - `n:` **number terms** — today's normaliser (`drive_content_terms`: amounts, numeric and written-out dates in five
   languages, ids, digit groups): index-side forms per chunk (the 256-term cap applies per chunk), maximal forms on the
   query side. Its rules now belong to `KEYS_VERSION` (§25.4.8).
-- `m:` **months** — `m:YYYY-MM` for every date term and every month-year span ("March 2023", "березень 2023") in a
-  chunk's text, and for every verified date and `effective_date` on a record. A month query emits only `m:`.
+- `m:` **months** — `m:YYYY-MM` for every date term and every month-year span ("March 2023", "березень 2023", "в марте
+  2023", "у березні 2023") in a chunk's text, and for every verified date and `effective_date` on a record. A month
+  query emits only `m:`.
 - `y:` **years** — `y:YYYY` of every verified date and of `effective_date` (records); a 4-digit number from 1900 to
   2099 in a query also emits `y:`.
 - `e:` **entity phrases** — a named thing's spelling (an entity's `printed`, `name` and `forms`; the photo place's
-  `place_forms`): a single-token name gets its full form set; a multi-token phrase joins each token's form (b) with
-  `_` (articles kept: phrases are built before function words are dropped), one key per script variant: "Le Havre" →
-  `e:le_havr`; "Нью-Йорке" → `e:нью_йорк`.
+  `place_forms`):
+  - a single-token name gets its native form set;
+  - a multi-token phrase joins each token's form (b) with `_`, articles kept: "Le Havre" → `e:le_havr`,
+    "Нью-Йорке" → `e:нью_йорк`. A hyphen compound also gets its joined form ("Нью-Йорк" → `e:ньюйорк`);
+  - a person or place of several words also keys its last word alone (the surname: "Сергей Иванов" is about
+    "Иванову").
+- `ex:` **entity skeletons** — the same phrases built from each token's skeleton: a translation.
 - `pe:` **photo-object phrases** — a photo object's `name` and `forms`, built exactly as `e:` phrases; the query emits
   `pe:` beside `e:`. A family of its own so a key's source class follows from its prefix and tiers are decided on lean
   records (Part 0 review M3).
-- `v:` **values** — a verified key value's canonical form; a verified date's ISO form.
-- `k:` **kind** — the forms of the record's kind names in en, es, fr, uk and ru (the table in §25.13.5; "photo" words
-  for images whose triage verdict is `photo`), written by the keyer at index time; a fixed table of format names, on
-  the index side only.
-- `lw:` **label words**, `tw:` **topic words**, `dw:` **life-area words**, `lv:` **validity words** — the forms of the
-  profile's `label_words`, `topic_words`, `domain_words`, and of `validity_words` (written only when `valid_until` is
-  set); `pw:` **photo words** — the forms of the photo description, scene, objects and `visible_text` (with `n:` of
-  `visible_text`). All automatic.
+- `v:` **values** — a verified key value in the form the query produces (P1 review M3). From both `canonical` and
+  `printed`, it is each maximal number-term form ("INV-2024/0012" → `v:inv20240012`, "1.250,00" → `v:1250.00`), or, for
+  a value with no number term, its casefolded letters and digits ("XKJQPL" → `v:xkjqpl`; a word concept emits `v:` of
+  its letters and digits). A verified date gives its ISO form.
+- `k:` **kind** — the native forms of the record's kind names in en, es, fr, uk and ru (the table in §25.13.5; "photo"
+  words for images whose triage verdict is `photo`), written by the keyer at index time; a fixed table of format
+  names, on the index side only.
+- `lw:` **label words**, `tw:` **topic words**, `dw:` **life-area words**, `lv:` **validity words** — the native forms of
+  the profile's `label_words`, `topic_words`, `domain_words`, and of `validity_words` (written only when `valid_until`
+  is set); `pw:` **photo words** — the native forms of the photo description, scene, objects and `visible_text`;
+  `pn:` **photo numbers** — the number terms of `visible_text`. All automatic.
 - `l:` **labels** — `l:type:<doc_type>`, `l:domain:<domain>`, `l:valid`: stored for grouping and display; no query
   produces them.
-- **Name keys** (`name_tokens`, the name stream) gain the `w:` forms and the `n:`/`y:` forms of digit tokens
-  (`NAME_KEYS_VERSION` 2); trigrams and the existing variants stay; trigrams never count as coverage.
+- **Name keys** (`name_tokens`, the name stream; `NAME_KEYS_VERSION` 2):
+  - kept: the native `w:` forms (with case parts and compounds); the `x:` skeleton of each word; the `n:`/`y:` forms of
+    digit tokens and of the name's number terms, with and without its extension; the trigrams (`t:`) of each token
+    and skeleton;
+  - dropped: v1's transliterated `w:` variants.
 
-**Where keys live.** `word_keys` (chunk) = `w:`, `n:`, `m:` of its text. `about_keys` (record) = `e:`, `v:`, `y:`, `m:`,
-`k:`, `lw:`, `tw:`, `dw:`, `lv:`, `pw:`, `pe:`, `l:`. `hint_keys` (hint document) = `w:` of grounded keywords. Which source
-gave an about key is recomputed at render time (`about_sources(rec)`, using `place_forms`); it is not stored.
+  Trigrams never count as coverage.
 
-**Source classes** (they decide the tier, §25.5.4): **verified record** — name keys, `e:` (entities, place), `v:`,
-`y:`, `m:`, `k:`; **passage words** — `word_keys`; **translation** — `hint_keys`; **automatic record** — `lw:`, `tw:`,
-`dw:`, `lv:`, `pw:`, `pe:` (`drive_match.FAMILY_SOURCE_CLASS`).
+**Where keys live.** `word_keys` (chunk) = `w:`, `x:`, `n:`, `m:` of its text. `about_keys` (record) = `e:`, `ex:`, `v:`,
+`y:`, `m:`, `k:`, `lw:`, `tw:`, `dw:`, `lv:`, `pw:`, `pe:`, `pn:`, `l:`. `hint_keys` (hint document) = `w:` of grounded
+keywords. Which source gave an about key is recomputed at render time (`about_sources(rec)`, using `place_forms`); it is
+not stored.
+
+**Source classes** (they decide the tier, §25.5.4):
+- **verified record** — name keys `w:`, `n:`, `y:`, and the record's `e:`, `v:`, `y:`, `m:`, `k:`;
+- **passage words** — `word_keys` `w:`, `n:`, `m:`;
+- **translation** — `hint_keys`, and every skeleton: `x:` in chunks and names, `ex:` in records;
+- **automatic record** — `lw:`, `tw:`, `dw:`, `lv:`, `pw:`, `pe:`, `pn:`.
+
+The class follows from the prefix and the field (`drive_match.FAMILY_SOURCE_CLASS`,
+`drive_keys.source_class_of_*_key`).
 
 #### 25.2.5 Firestore indexes (`config/firestore.indexes.json`, `development_` collections)
 - **Records:** `user_id + about_keys (CONTAINS) + effective_date DESC`; `user_id + kind + about_keys (CONTAINS) +
@@ -2284,7 +2341,8 @@ gave an about key is recomputed at render time (`about_sources(rec)`, using `pla
 - A missing or building index is `FailedPrecondition`, a store outage (§12.5): every index is `READY` before deploy.
 
 #### 25.2.6 Sizes
-- Caps: `WORD_KEYS_PER_CHUNK` 900 (the form set roughly doubles the 350–470 keys measured), `HINT_KEYS_PER_CHUNK` 60,
+- Caps: `WORD_KEYS_PER_CHUNK` 1 500 (P1 review B2: native forms plus one skeleton per word put a 2 400-char ru/uk
+  contract or UI chunk at 650–715 keys, and es/fr/en at 450–520; the cap only guards dense synthetic text), `HINT_KEYS_PER_CHUNK` 60,
   `ABOUT_KEYS_PER_RECORD` 600, entities 12 × 8 forms, key values 12, dates 5, topics 8 + 8, each word list ≤ 24 words.
   Over a cap the keyer keeps the earliest text's or entries' keys, counts `keys_capped`, and the card says "keys cut".
 - **Write batches by bytes:** at most `WRITE_BATCH_BYTES` (6 MB) and `RECORD_WRITE_BATCH` documents per batch
@@ -2552,30 +2610,44 @@ pass the coverage line says the index is being re-keyed (§25.5.6). Profiles tou
 duplicate collapse, the nonce wrapper and the refusal of an empty request.
 
 #### 25.5.1 Query normalisation (`drive_keys.query_concepts(drive_query) -> QueryConcepts`)
-1. Clip to `QUERY_TERM_CHARS` (1 000) at a word boundary; tokenise as §25.2.4.
-2. **Phrase runs first:** every contiguous run of 1–3 tokens of the original sequence, function words included, gives
-   `e:` keys.
-3. **Number concepts:** maximal forms (`n:`, `v:`); a 1900–2099 number also `y:`; a month name with a year is one month
-   concept emitting only `m:YYYY-MM`.
-4. **Generic search words are removed:** function words (en, ru, uk, es, fr) and `drive_keys.GENERIC_WORDS` ("documents",
-   "files", "all", "everything", "всё", "все", "усі", "файли", "документы", "todo", "todos", …). Time-span words are
-   not handled here: the manifest sends a time span to the date fields (D25 wording, §25.5.7).
-5. **Word concepts:** every remaining token. **Emitted keys per concept, in this order, cut at 30** (Firestore's
-   `array-contains-any` limit): the `w:` forms of the token as written (a)–(e); the `e:` keys of the runs it belongs to;
-   the `w:` forms of its transliterations; the same forms under the record families that a word can meet (`k:`, `lw:`,
-   `tw:`, `dw:`, `lv:`, `pw:`) — sent as separate key lists per stream (about keys get `e:`, `k:` and the automatic
-   families; word keys get `w:`; hint keys get `w:`), so no list passes 30.
+1. Clip to `QUERY_TERM_CHARS` (1 000) at a word boundary; tokenise as §25.2.4. A hyphen compound ("Wi-Fi") and a short
+   letter-digit run ("X5") are one word; a short run whose parts all have keys ("ред3") is its parts.
+2. **Phrase runs first:** every contiguous run of 2–3 tokens of the original sequence, function words included (a run
+   ending in a function word excepted), gives `e:`, `ex:`, `k:` and `pe:` phrase keys to the words it holds.
+3. **Number concepts:** maximal forms (`n:`, `v:`, `pn:`); a 1900–2099 number also `y:`; a month name (any case form,
+   locatives included) with a year is one month concept emitting only `m:YYYY-MM`. A letter-digit id of at most 5
+   characters ("ред3") is not a number concept.
+4. **Generic search words are removed:**
+   - function words (en, ru, uk, es, fr), with an explicit list for 1–2-letter ones;
+   - `drive_keys.GENERIC_WORDS`: "documents", "files", "all", "everything", "всё", "все", "усі", "файли", "документы",
+     "todo", "todos", ….
+
+   A place-like word is not on either list ("como"), and neither is "list". A 1-letter word is ignored; a 2-letter
+   one is a concept (§25.2.4). Time-span words are not handled here: the manifest sends a time span to the date
+   fields (D25 wording, §25.5.7).
+5. **Word concepts:** every remaining word. **Emitted keys per concept, uncut** (P1 review B1: coverage is tested on
+   the whole list, so a word's coverage never depends on its neighbours):
+   - word keys: `w:` native forms and `x:` skeletons;
+   - hint keys: `w:` native forms;
+   - about keys: `e:` forms and runs, `ex:` skeletons and runs, `k:` forms and runs, `lw:`, `tw:`, `dw:`, `lv:`, `pw:`
+     forms, `pe:` forms and runs, and `v:` of the word's letters and digits.
+
+   The fetch splits each list in order into lists of at most 30 (Firestore's `array-contains-any` limit,
+   `drive_keys.fetch_batches`): about 2–3 queries per concept, word and hint 1.
 6. At most `MAX_CONCEPTS` (8): numbers first, then words in query order. Every removed or cut word is named in the
    result's searched line.
 
 The delegate's `query` sentence is not read (D19).
 
 **Walk-throughs** (synthetic):
-- **"про Барселону"** → "про" is a function word (after the runs). *барселону*: forms `барселону`, `барселон`, transliteration
-  `barselonu`. A photo with `place_forms` "Barcelona, Барселона, …, Spain, Испания" holds `e:барселона`,
-  `e:барселон` → covers → **About** ("place (photo location)"). A document whose entity has the form "Барселона" →
-  About ("named in the file"). A note saying "в Барселоне" → `w:барселон` → **Mentioned in**. A Latin passage naming
-  the city once, with a grounded keyword "Барселона" → **By translation**.
+- **"про Барселону"** → "про" is a function word (after the runs). *барселону*: forms `барселону`, `барселон`, skeleton
+  `barselon`.
+  - A photo with `place_forms` "Barcelona, Барселона, …, Spain, Испания" holds `e:барселона`, `e:барселон` → covers →
+    **About** ("place (photo location)").
+  - A document whose entity has the form "Барселона" → About ("named in the file").
+  - A note saying "в Барселоне" → `w:барселон` → **Mentioned in**.
+  - A Latin passage naming the city ("Barcelona") → `x:barselon` → **By translation**, as is a passage with a grounded
+    keyword "Барселона".
 - **"медицинские записи по холестерину"** over a Spanish lab report ("colesterol"). Concepts *медицинские*, *записи*,
   *холестерину* ("по" removed). The profile wrote `topic_words` ("cholesterol", "colesterol", "холестерин", …) and
   `label_words` for `medical_record` ("medical record", "historia clínica", "медична картка", "медицинская запись",
@@ -2584,7 +2656,7 @@ The delegate's `query` sentence is not read (D19).
   "холестерин" adds **By translation** with the evidence window. If no file anywhere holds *записи* (`df = 0`), the
   exact and automatic tiers are empty and the result says: "No file holds 'записи'. Without 'записи': 3 files match the
   other words." (D29), and Smart may search again with the subject alone.
-- **"Paris 2023"** → *paris* and *2023* (`n:2023`, `v:2023`, `y:2023`): a photo in Paris taken in 2023 holds
+- **"Paris 2023"** → *paris* and *2023* (`n:2023`, `v:2023`, `y:2023`, `pn:2023`): a photo in Paris taken in 2023 holds
   `e:paris` and `y:2023` → About. "Париж 2023" meets the alternate name "Париж" in `place_forms`.
 - **"all my receipts"** → "all", "my" removed; *receipts* (`receipts`, `receipt`): a profiled receipt's `lw:receipt` →
   **Labelled**; a file named "Receipt …" → About ("name"); a note saying "receipt" → Mentioned in; "квитанции" meets
@@ -2631,8 +2703,15 @@ passage words, translation, automatic record. A file's tier is decided by the we
    by the chunk; with two or more chunk-covered concepts, a **minimum window** of the chunk text of at most
    `PROXIMITY_CHARS` (400) holds one occurrence of each (`match_spans` from the same tokeniser); record-covered concepts
    are exempt from the window.
-3. **By translation** (automatic): as Mentioned in, but at least one concept is covered only by the same chunk's hint
-   document's `hint_keys`. Shown with the window around that keyword's stored evidence span.
+3. **By translation** (automatic): as Mentioned in or About, but at least one concept is covered only by a translation
+   key:
+   - the same chunk's hint document's `hint_keys`, shown with the window around that keyword's stored evidence span;
+   - or a **skeleton** (P1 review M8): `x:` in the chunk's `word_keys` or in the name keys, `ex:` in the record's
+     `about_keys`.
+
+   A skeleton match crosses scripts or spellings ("Barcelona" in a Russian note, "hotel" against "хотел"). It is never
+   exact: it is shown with the window around the matched word, labelled "by spelling in another script (automatic)".
+   A native-script match and a stored spelling (an entity's or place's own form, `e:`) stay exact.
 4. **Labelled** (automatic): at least one concept is covered only by automatic-record keys (`lw:`, `tw:`, `dw:`, `lv:`,
    `pw:`, `pe:`), the others by any class.
 5. **Related by meaning only:** `meaning ≥ Z_RELATED`; or a name over the `name_match` floor that does not cover the
@@ -3045,19 +3124,44 @@ Cyrillic: Барселона/Барселону/Барселоне/Барсел�
 cache/caches; movie/movies; policy/policies; box/boxes; receipt/receipts; invoice/invoices; Paris; analysis. Digits:
 "ред3" → `w:ред`, `w:3`. Negative pins (must not share a form): барсетка/Барселона; Валентина/Валенсия.
 
+P1 review (`KEYS_VERSION` 2) adds:
+- **Adjectives (exact):** новые/новая; нової/нова; медичної/медична; медицинские/медицинская; здание/здания;
+  красными/красная; синіми/синій.
+- **Casing (exact):** iphone/iPhone; paypal/PayPal; mcdonalds/McDonalds.
+- **Apostrophe (exact):** компютер/комп'ютера in five apostrophe spellings; сім'я/сім'ї.
+- **Compounds and artefacts (exact):** email/e-mail; Wi-Fi/WiFi; квартира/"квар-\ntира"/"квар\u00adтира";
+  замок/за́мок; ёлка/елка.
+- **Two-letter words (exact):** ИП, ЖК, TV, CV, X5.
+- **Across scripts (translation only):** Kyiv/Києві; Kharkiv/Харкові; Барселону/Barcelona.
+- **Translation only, never exact:** hotel/хотел; cost/кости; net/нет; list/лист; data/дата.
+- **Negative pins:** сім'я/сім; iphone/phone (as a query); ип/ипотека; квиток/квитанция.
+- **Known stemming links, pinned so a widening shows:** почта/почти; банка/банк.
+
 #### 25.13.5 The `k:` table
-image → image, picture, photo (verdict `photo`), foto, фото, світлина, imagen, image; pdf → pdf; docx/doc/odt/rtf →
-document, documento, документ; xlsx/xls/ods/csv → spreadsheet, table, hoja de cálculo, таблица, таблиця; pptx/ppt/odp →
-presentation, slides, presentación, презентация, презентація; markdown/text → note, text, nota, заметка, нотатка;
-html → web page, página web, веб-страница, веб-сторінка; eml/msg → email, mail, correo, письмо, лист; epub → book,
-e-book, libro, книга; video → video, vídeo, видео, відео; audio → audio, recording, grabación, запись, запис; archive
-→ archive, zip, archivo, архив, архів; folder → folder, carpeta, папка. All passed through §25.2.4's forms.
+- image → image, picture, imagen, изображение, зображення, картинка, illustration;
+- photo words (verdict `photo` only) → photo, foto, фото, світлина, photograph, photographie, fotografía, fotografia,
+  фотография, фотографія, снимок, знімок, фотка;
+- pdf → pdf;
+- docx/doc/odt/rtf → document, documento, документ;
+- xlsx/xls/ods/csv → spreadsheet, table, hoja de cálculo, tableur, таблица, таблиця;
+- pptx/ppt/odp → presentation, slides, presentación, présentation, презентация, презентація;
+- markdown/text → note, text, nota, texte, заметка, нотатка;
+- html/mhtml → web page, página web, page web, веб-страница, веб-сторінка;
+- eml/msg → email, mail, correo, courriel, письмо, лист;
+- epub → book, e-book, libro, livre, книга;
+- video → video, vídeo, vidéo, видео, відео;
+- audio → audio, recording, grabación, enregistrement, аудио, аудіо, аудиозапись, аудіозапис. "запись"/"запис" left,
+  since their stem covered every "записи" (P1 review m3);
+- archive → archive, zip, archivo, архив, архів;
+- folder → folder, carpeta, dossier, папка.
+
+All passed through §25.2.4's native forms.
 
 Decisions (Part 0 review MINOR 11): a multi-word entry is one phrase key (tokens' form (b) joined with `_`, as `e:`),
-never per-token keys; the query emits `k:` for its 1–3 token runs. `mhtml` takes the `html` row; the kinds without a
+never per-token keys; the query emits `k:` for its 2–3 token runs. `mhtml` takes the `html` row; the kinds without a
 row (subtitles, json, code, log, data_dump, database, disk_image, executable, iwork, other) get no `k:` words. The
-French words are those of the table; more is a later `KEYS_VERSION` bump. The photo words (photo, foto, фото,
-світлина) go only to images whose verdict is `photo` (§25.2.4's reading; owner to confirm).
+document words are generic search words in a query (§25.5.1), so their `k:` keys serve only the index. The photo words
+go only to images whose verdict is `photo` (§25.2.4's reading; owner to confirm).
 
 #### 25.13.6 Verbatim texts (render, manifest, protocol)
 A complete synthetic result:
