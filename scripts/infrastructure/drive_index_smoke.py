@@ -22,6 +22,7 @@ from typing import Awaitable, Callable, List, Sequence, Tuple
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.adapters.firestore_drive_index_repo import FirestoreDriveIndexRepository  # noqa: E402
+from src.domain.drive_enrichment import EnrichJob, JobState  # noqa: E402
 from src.domain.drive_index import Priority  # noqa: E402
 from src.domain.drive_index_params import CONCEPT_KEYS_MAX  # noqa: E402
 from src.domain.drive_index_policy import SLICE2_CONTENT_KINDS, SLICE2_TRIAGED_KINDS  # noqa: E402
@@ -86,6 +87,7 @@ def v2_checks(repo: FirestoreDriveIndexRepository, user_id: str,
     keys = [f"w:smoke{i}" for i in range(CONCEPT_KEYS_MAX)]
     members = sorted(max(KIND_FAMILIES.values(), key=len))
     ids = [("smoke-item", 1, 0), ("smoke-item", 1, 1)]
+    per_batch = len(EnrichJob) * len(JobState)   # count queries per kind batch (job_state_count_queries)
     return [
         ("find_by_about_keys", lambda: repo.find_by_about_keys(user_id, ["e:smoke"], 5)),
         ("find_by_about_keys[kind]", lambda: repo.find_by_about_keys(user_id, ["e:smoke"], 5, kind="pdf")),
@@ -109,7 +111,7 @@ def v2_checks(repo: FirestoreDriveIndexRepository, user_id: str,
         ("hints_page", lambda: repo.hints_page(user_id, ("smoke-item", 1, 0), 5)),
         ("enrich_queue", lambda: repo.enrich_queue(user_id, 5)),
         ("enrich_wakeups", lambda: repo.enrich_wakeups(user_id, now, 5)),
-        *[(f"count_by_job_state[{job}={state}, batch {n // 12}]", (lambda q=q: q.count(alias="n").get()))
+        *[(f"count_by_job_state[{job}={state}, batch {n // per_batch}]", (lambda q=q: q.count(alias="n").get()))
           for n, (job, state, q) in enumerate(repo.job_state_count_queries(user_id, SLICE2_CONTENT_KINDS))],
         ("keys_pending_page", lambda: repo.keys_pending_page(user_id, "a", 5)),
         ("get_records_lean", lambda: repo.get_records_lean(user_id, ["smoke-item"])),

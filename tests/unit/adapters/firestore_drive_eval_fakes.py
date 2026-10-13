@@ -18,6 +18,7 @@ from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 from unittest.mock import patch
 
+from google.api_core.exceptions import InvalidArgument
 from google.cloud import firestore
 from google.cloud.firestore_v1.transforms import Increment
 from google.cloud.firestore_v1.types import StructuredQuery
@@ -32,6 +33,26 @@ HINTS = "eval_drive_index_hints"
 USAGE = "eval_drive_model_usage"
 
 _MISSING = object()
+_DISJUNCTIONS_MAX = 30          # Firestore: values per `in` / `array_contains_any`, and the disjunction product
+_ARRAY_OPS = ("array_contains", "array_contains_any")
+
+
+def _check_shape(ops: List[tuple]) -> None:
+    """Refuse what Firestore refuses with INVALID_ARGUMENT: a value list over 30, two array filters in one query, a
+    disjunction product (`in` x `array_contains_any`) over 30, and a kNN whose pre-filter is not equality only."""
+    wheres = [op for op in ops if op[0] == "where"]
+    product = 1
+    for _, field, op, value in wheres:
+        if op in ("in", "array_contains_any"):
+            if len(value) > _DISJUNCTIONS_MAX:
+                raise InvalidArgument(f"'{op}' on {field} takes at most {_DISJUNCTIONS_MAX} values, got {len(value)}")
+            product *= len(value)
+    if product > _DISJUNCTIONS_MAX:
+        raise InvalidArgument(f"the query has {product} disjunctions, more than {_DISJUNCTIONS_MAX}")
+    if sum(op in _ARRAY_OPS for _, _, op, _ in wheres) > 1:
+        raise InvalidArgument("at most one array-contains or array-contains-any filter per query")
+    if any(o[0] == "find_nearest" for o in ops) and any(op not in ("==", "IS_NULL") for _, _, op, _ in wheres):
+        raise InvalidArgument("a vector query's pre-filters must be equality filters")
 
 
 def _rank(value: Any) -> int:
@@ -212,6 +233,7 @@ class EvalQuery:
 
     async def get(self) -> List[Any]:
         self.col.executed.append(self.ops)
+        _check_shape(self.ops)
         if self.col.fail is not None:
             raise self.col.fail
         return self.col.evaluate(self.ops)
