@@ -255,6 +255,8 @@ class DriveIndexRecord:
     truncated: bool = False
     lead_text: str = ""                       # first CARD_LEAD_CHARS of the extracted text, for the card (§8.5)
     brief: Optional[DocumentBrief] = None     # model-read documents only (§24.4)
+    model_outages: int = 0                    # reader outages charged to this content version (F1-1): at MAX_ATTEMPTS
+                                              # the file fails; a content outcome or a new version starts it again
     # image triage (§5.3, §24.5); a verdict holds for the content version it was taken on
     triage_verdict: Optional[TriageVerdict] = None
     triage_version: int = 0

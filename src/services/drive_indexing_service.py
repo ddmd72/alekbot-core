@@ -51,7 +51,7 @@ from ..domain.drive_index_planner import (
     AccessAction, ObservationPlan, PlaceOf, PlanContext, access_action, attempt_crashed, can_start_file, capped,
     card_refused, change_from_record, chunks_reembedded, content_due, content_retry, deferred, demoted,
     extractor_stale, generation_started, indexed, model_available, model_outage, model_recovered, needs_probe,
-    next_month_start, quiet_over,
+    next_month_start, outage_charged, quiet_over,
     parent_scope, plan_observation, readme_read, reembed_in_space, reextraction_due, released, schedule,
     stale_versions, triage_due, triaged, usage_now, with_card, with_retry, with_usage, without_card,
 )
@@ -1189,6 +1189,13 @@ class DriveIndexingService:
                               outage=True)
                 models.outage(now)   # after the usage, which leaves the backoff to this outage (C-M1, T-M2)
                 await self._persist_usage(models)
+                if exc.model_calls > 0:
+                    # the reader called the model for this file and it failed as an outage: charged to the file,
+                    # which waits behind other due work and fails at MAX_ATTEMPTS (F1-1)
+                    charged = outage_charged(run, _backoff_until(models), now, f"{extractor_id}@{extractor.version}")
+                    logger.warning(f"[DriveIndex] outage charged to item {run.item_id} of {user_id[:8]} "
+                                   f"({charged.model_outages or MAX_ATTEMPTS}/{MAX_ATTEMPTS})")
+                    return None, charged
                 return None, deferred(_cleared(run), _backoff_until(models), now, priority=cls)
             except Exception as exc:   # the port reports per-file failures as outcomes; anything else is this file's
                 logger.error(f"[DriveIndex] {extractor_id} failed on item {run.item_id} of {user_id[:8]}: {exc}",
