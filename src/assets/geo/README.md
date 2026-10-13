@@ -115,6 +115,11 @@ k, at factor 3 (self-name 40 435, 62.7%, and centre crossed 0 for every k):
 | 0.006 | 48 | none (the Vatican's own footprint now holds St. Peter's) |
 | 0.01 | 70 | none |
 
+**Re-measured on geo table v2** (2026-10-13 snapshot, 64 505 places): the same picture. At factor 3 and k = 0.0015
+self-name is 40 437 (62.7%), centre crossed 0, off-centre crossed 4 (the same four below), and all 17 expected cases
+pass; the factor and k rows move by at most a few places and miss the same cases as the v1 tables above. The
+constants stand.
+
 Factor 3 is the largest that keeps Brooklyn → New York (New York weighs 3.2 times Brooklyn). k must
 reach Trastevere (3.4 km from the Rome row: k ≥ 0.0013); 0.0015 is the smallest measured value that
 passes every case, and border crossings grow with k from there. A rebuilt table can move these
