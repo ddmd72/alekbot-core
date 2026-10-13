@@ -50,6 +50,12 @@ def _forms(word: str) -> set:
     return set(all_forms(token))
 
 
+def _meets(query: str, text: str) -> set:
+    """The keys a query word shares with a text (any family): native or skeleton."""
+    (concept,) = query_concepts(query).concepts
+    return set(concept.word_keys) & set(word_keys(text))
+
+
 def _pairs(group):
     return [(a, b) for a in group for b in group if a != b]
 
@@ -77,12 +83,12 @@ def test_a_negative_pin_does_not_meet_from_query_to_index(a, b):
     assert not set(concept.word_keys) & set(word_keys(f"Текст про {b}."))
 
 
-def test_nyu_york_meets_its_locative_as_a_phrase_and_per_token():
-    concepts = query_concepts("Нью-Йорк").concepts
-    assert [c.word for c in concepts] == ["нью", "йорк"]
-    keys = set(word_keys("Мы были в Нью-Йорке"))
-    assert all(set(c.word_keys) & keys for c in concepts)
-    assert all("e:нью_йорк" in c.about_keys for c in concepts)
+def test_nyu_york_is_one_compound_word_meeting_its_locative():
+    """A hyphen compound is one query word (review m5); its parts' phrase is among its record keys."""
+    (concept,) = query_concepts("Нью-Йорк").concepts
+    assert concept.word == "ньюйорк"
+    assert set(concept.word_keys) & set(word_keys("Мы были в Нью-Йорке"))
+    assert "e:нью_йорк" in concept.about_keys
 
 
 @pytest.mark.parametrize("word,expected", [
@@ -138,37 +144,33 @@ def test_the_alternation_needs_a_stem_of_four_letters():
     assert token_forms("кіт") == ("кіт",)
 
 
-def test_transliterations_of_cyrillic_forms_a_and_b():
-    forms = all_forms("барселону")
-    assert {"barselonu", "barselon"} <= set(forms)
-    own = token_forms("барселону")
-    assert forms[:len(own)] == own                      # own forms first, then the transliterations
-
-
-def test_ukrainian_national_transliteration_is_among_the_forms():
-    assert "kyiv" in all_forms("київ")
-    assert "kharkiv" in all_forms("харків")
+def test_the_index_stores_no_transliterated_spelling():
+    """Review B2: native forms plus one skeleton per word; the variants are generated on the query side."""
+    assert all_forms("барселону") == token_forms("барселону")
+    keys = word_keys("Барселону")
+    assert [k for k in keys if k.startswith("x:")] == ["x:barselon"]
+    assert not any(k.startswith("w:") and k[2:].isascii() for k in keys)
 
 
 @pytest.mark.parametrize("latin,cyrillic", [
     ("barcelona", "барселона"),        # c before e -> с
     ("valencia", "валенсиа"),          # c before i -> с
-    ("cycle", "сыкл"),                 # c before y -> с; the second c before l -> к
+    ("cycle", "сыкле"),                # c before y -> с; the second c before l -> к
     ("costa", "коста"),                # c elsewhere -> к
     ("chekhov", "чехов"),              # ch is still ч
 ])
 def test_latin_to_cyrillic_applies_the_c_rule(latin, cyrillic):
-    assert cyrillic in all_forms(latin)
+    from src.domain.drive_key_forms import lat_to_cyr_ru
+    assert lat_to_cyr_ru(latin) == cyrillic
 
 
-def test_latin_spelling_meets_cyrillic_text_through_the_c_rule():
-    (concept,) = query_concepts("Barcelona").concepts
-    assert set(concept.word_keys) & set(word_keys("Были в Барселоне в мае."))
+def test_latin_spelling_meets_cyrillic_text_only_through_a_skeleton():
+    """Across scripts the match is a skeleton (`x:`), never a native form: a translation, not exact (M8)."""
+    assert _meets("Barcelona", "Были в Барселоне в мае.") == {"x:barselon"}
 
 
-def test_cyrillic_query_meets_latin_text_through_the_index_transliteration():
-    (concept,) = query_concepts("Барселону").concepts
-    assert set(concept.word_keys) & set(word_keys("A week in Barcelona."))
+def test_cyrillic_query_meets_latin_text_only_through_a_skeleton():
+    assert _meets("Барселону", "A week in Barcelona.") == {"x:barselon"}
 
 
 def test_digits_split_from_letters():
@@ -184,10 +186,14 @@ def test_a_short_number_is_a_word_form_and_a_long_one_a_number_term():
     assert "w:7" in keys and "n:12345" in keys and "w:12345" not in keys
 
 
-def test_tokens_split_like_name_keys():
+def test_tokens_split_like_name_keys_except_case_and_apostrophe():
+    """Separators and digit boundaries as `drive_name_keys`; a case boundary no longer splits (M1) and a Ukrainian
+    apostrophe stays inside the word (M4); ё folds to е (m7)."""
     from src.domain.drive_name_keys import _tokens
-    for text in ("Нью-Йорк", "IMG_2210.jpg", "Crème brûlée 2024", "myFileName v2", "Київ — «Львів»", "Пётр's ʼдім"):
+    for text in ("Нью-Йорк", "IMG_2210.jpg", "Crème brûlée 2024", "Київ — «Львів»", "Peter's house"):
         assert [t for t, _, _ in token_spans(text)] == _tokens(text), text
+    assert [t for t, _, _ in token_spans("myFileName v2")] == ["myfilename", "v", "2"]
+    assert [t for t, _, _ in token_spans("Пётр сім'я")] == ["петр", "сімʼя"]
 
 
 def test_token_spans_point_into_the_original_text():

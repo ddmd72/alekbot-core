@@ -3,14 +3,26 @@ variants, trigrams) stay, and gain the `w:` forms of every token and the `n:`/`y
 concept's keys meet a name the way they meet a passage. v1 `name_keys` is unchanged while the v1 search calls it."""
 import pytest
 
-from src.domain.drive_keys import NAME_KEYS_V2, name_keys_v2, query_concepts
+from src.domain.drive_keys import NAME_KEYS_V2, name_keys_v2, query_concepts, token_forms, token_spans
 from src.domain.drive_name_keys import name_keys
 
 
 @pytest.mark.parametrize("name", ["Барселоне 2023.jpg", "Receipts March.pdf", "IMG_2210.jpg", "Київ — план v2.docx",
-                                  "Crème brûlée.md", ""])
-def test_v2_keeps_every_v1_key(name):
-    assert set(name_keys(name)) <= set(name_keys_v2(name))
+                                  "Crème brûlée.md"])
+def test_v2_keys_every_token_but_no_transliterated_spelling(name):
+    """v2 replaces v1's transliterated `w:` variants by one `x:` skeleton per word (review B2/M8): a name matched
+    only through another script is a translation, not exact. Every token keeps its form (a) or its number term."""
+    keys = set(name_keys_v2(name))
+    for token, _, _ in token_spans(name):
+        forms = token_forms(token)
+        assert (f"w:{forms[0]}" in keys) if forms else (f"n:{token}" in keys or len(token) < 2), token
+    assert any(k.startswith("x:") for k in keys)
+
+
+def test_v2_has_no_cross_script_spelling_under_w():
+    assert {"w:kyiv", "w:kiyiv"} <= set(name_keys("Київ.docx"))
+    assert not {"w:kyiv", "w:kiyiv"} & set(name_keys_v2("Київ.docx"))
+    assert "w:barselone" not in name_keys_v2("Барселоне.jpg")
 
 
 def test_v2_is_sorted_and_unique():
@@ -20,7 +32,7 @@ def test_v2_is_sorted_and_unique():
 
 def test_v2_adds_word_forms():
     keys = set(name_keys_v2("Барселоне 2023.jpg"))
-    assert {"w:барселон", "w:barselon"} <= keys
+    assert {"w:барселон", "x:barselon"} <= keys
 
 
 def test_v2_adds_number_and_year_forms_of_digit_tokens():

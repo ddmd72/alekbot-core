@@ -23,11 +23,13 @@ from typing import Mapping, Tuple
 
 class KeyFamily(str, Enum):
     """Every key is a short string with one of these prefixes (§25.2.4)."""
-    WORD = "w:"            # the forms of a token
+    WORD = "w:"            # the native forms of a token (chunks, names): exact
+    TRANSLIT = "x:"        # one transliteration skeleton per word (chunks, names): a translation (review M8)
     NUMBER = "n:"          # number terms (the content-terms normaliser)
     MONTH = "m:"           # m:YYYY-MM
     YEAR = "y:"            # y:YYYY
     ENTITY = "e:"          # entity phrases (profile entities) and the photo place's forms: verified
+    ENTITY_TRANSLIT = "ex:"  # the skeleton of an `e:` phrase: a translation, never exact (review M8)
     PHOTO_ENTITY = "pe:"   # photo object names, keyed like `e:` phrases: automatic (review M3, RFC §25.2.4)
     VALUE = "v:"           # a verified key value's canonical form; a verified date's ISO form
     KIND = "k:"            # the kind words (drive_labels.KIND_WORDS)
@@ -36,13 +38,16 @@ class KeyFamily(str, Enum):
     DOMAIN_WORD = "dw:"    # profile domain_words
     VALIDITY_WORD = "lv:"  # profile validity_words, only when valid_until is set
     PHOTO_WORD = "pw:"     # photo description, scene, objects and visible text
+    PHOTO_NUMBER = "pn:"   # number terms of a photo's visible text: automatic (P1 review, M3 of Part 0)
     LABEL = "l:"           # l:type:<doc_type>, l:domain:<domain>, l:valid — stored for grouping, never queried
 
 
 class SourceClass(str, Enum):
     """The class of key that covers a concept in a file; a file's tier is set by the weakest class it needs (§25.5.4).
-    Verified record: name keys, `e:`, `v:`, `y:`, `m:`, `k:`. Passage words: `word_keys`. Translation: `hint_keys`.
-    Automatic record: `lw:`, `tw:`, `dw:`, `lv:`, `pw:`, `pe:`. An about key's class follows from its prefix alone, so
+    Verified record: name keys (`w:`, `n:`, `y:`), `e:`, `v:`, `y:`, `m:`, `k:`. Passage words: `word_keys` `w:`,
+    `n:`, `m:`. Translation: `hint_keys`, and every transliteration skeleton (`x:` in chunks and names, `ex:` in
+    records: a match across scripts is never exact, review M8). Automatic record: `lw:`, `tw:`, `dw:`, `lv:`, `pw:`,
+    `pe:`, `pn:`. An about key's class follows from its prefix alone, so
     tiers are decided on lean records."""
     VERIFIED_RECORD = "verified_record"
     PASSAGE_WORDS = "passage_words"
@@ -58,6 +63,7 @@ FAMILY_SOURCE_CLASS: Mapping[KeyFamily, SourceClass] = {
     KeyFamily.LABEL_WORD: SourceClass.AUTOMATIC_RECORD, KeyFamily.TOPIC_WORD: SourceClass.AUTOMATIC_RECORD,
     KeyFamily.DOMAIN_WORD: SourceClass.AUTOMATIC_RECORD, KeyFamily.VALIDITY_WORD: SourceClass.AUTOMATIC_RECORD,
     KeyFamily.PHOTO_WORD: SourceClass.AUTOMATIC_RECORD, KeyFamily.PHOTO_ENTITY: SourceClass.AUTOMATIC_RECORD,
+    KeyFamily.PHOTO_NUMBER: SourceClass.AUTOMATIC_RECORD, KeyFamily.ENTITY_TRANSLIT: SourceClass.TRANSLATION,
 }
 
 
@@ -73,8 +79,10 @@ class MatchTier(str, Enum):
 @dataclass(frozen=True)
 class Concept:
     """One query concept and the keys it emits per stream (§25.5.1 step 5): `about_keys` for the record stream (`e:`,
-    `pe:`, `k:` and the automatic families, plus number and date families for a number), `word_keys` for chunk
-    `word_keys`, `hint_keys` for hint documents. Each list holds at most `CONCEPT_KEYS_MAX` keys."""
+    `ex:`, `pe:`, `k:`, `v:` and the automatic families, plus number and date families for a number), `word_keys` for
+    chunk `word_keys` (`w:`, `x:`, or `n:`/`m:`), `hint_keys` for hint documents. The lists are UNCUT: coverage is
+    tested on the whole list, and the fetch splits each into lists of at most `CONCEPT_KEYS_MAX`
+    (`drive_keys.fetch_batches`), so a word's coverage never depends on its neighbours (P1 review B1)."""
     word: str
     about_keys: Tuple[str, ...]
     word_keys: Tuple[str, ...]

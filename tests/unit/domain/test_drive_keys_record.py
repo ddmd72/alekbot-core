@@ -99,8 +99,8 @@ def test_entities_single_token_full_form_set_and_phrases_per_script():
         ProfileEntity("Barcelona", "place", "Barcelona", ("Барселона",)),
     )))
     keys = set(about_keys_of(rec))
-    assert {"e:le_havr", "e:нью_йорк", "e:barcelona", "e:барселона", "e:барселон", "e:barselona"} <= keys
-    assert {"e:ле_хавр", "e:nyu_york"} <= keys                        # one key per script variant
+    assert {"e:le_havr", "e:нью_йорк", "e:barcelona", "e:барселона", "e:барселон"} <= keys
+    assert {"ex:le_havr", "ex:barselon", "e:ньюйорк"} <= keys        # one skeleton per spelling; the compound joined
     assert _covers("Le Havre", rec) and _covers("Нью-Йорке", rec) and _covers("Барселоне", rec)
 
 
@@ -128,8 +128,8 @@ def test_photo_objects_and_visible_text_numbers_have_their_own_automatic_prefixe
                           photo_objects=(PhotoObject("Sagrada Familia", ("Саграда Фамилия",)),),
                           visible_text="Gate 12345")
     keys = set(about_keys_of(rec))
-    assert {"po:sagrada_familia", "po:саград_фамили"} <= keys
-    assert not any(k.startswith("e:") for k in keys)
+    assert {"pe:sagrada_familia", "pe:саград_фамили"} <= keys
+    assert not any(k.startswith(("e:", "ex:")) for k in keys)
     assert "pn:12345" in keys and "pw:gate" in keys and not any(k.startswith("n:") for k in keys)
     assert _covers("Sagrada Familia", rec) and _covers("12345", rec)
 
@@ -139,8 +139,8 @@ def test_photo_objects_and_visible_text_numbers_have_their_own_automatic_prefixe
     ("m:", SourceClass.VERIFIED_RECORD), ("k:", SourceClass.VERIFIED_RECORD),
     ("lw:", SourceClass.AUTOMATIC_RECORD), ("tw:", SourceClass.AUTOMATIC_RECORD),
     ("dw:", SourceClass.AUTOMATIC_RECORD), ("lv:", SourceClass.AUTOMATIC_RECORD),
-    ("pw:", SourceClass.AUTOMATIC_RECORD), ("po:", SourceClass.AUTOMATIC_RECORD),
-    ("pn:", SourceClass.AUTOMATIC_RECORD),
+    ("pw:", SourceClass.AUTOMATIC_RECORD), ("pe:", SourceClass.AUTOMATIC_RECORD),
+    ("pn:", SourceClass.AUTOMATIC_RECORD), ("ex:", SourceClass.TRANSLATION),
 ])
 def test_every_queried_about_prefix_has_one_source_class(prefix, cls):
     assert source_class_of_about_key(prefix + "x") is cls
@@ -175,7 +175,7 @@ def test_walk_through_pro_barselonu_record_side():
     concept = query_concepts("про Барселону").concepts[0]
     photo = RecordKeyInputs(kind="image", triage_verdict=TriageVerdict.PHOTO,
                             place_forms=("Barcelona", "Барселона", "Spain", "Испания"))
-    hits = set(concept.about_keys) & set(about_keys_of(photo))
+    hits = {k for k in set(concept.about_keys) & set(about_keys_of(photo)) if k.startswith("e:")}
     assert {"e:барселона", "e:барселон"} & hits
     sources = about_sources(photo)
     assert {s.field for k in hits for s in sources[k]} == {AboutField.PLACE}
@@ -185,6 +185,7 @@ def test_walk_through_pro_barselonu_record_side():
         ProfileEntity("Barcelona", "place", "Барселона", ("Барселона",)),)))
     hits = set(concept.about_keys) & set(about_keys_of(doc))
     assert hits and {s.field for k in hits for s in about_sources(doc)[k]} == {AboutField.ENTITY}
+    assert "e:барселон" in hits                                       # the printed form: exact
 
     assert set(concept.word_keys) & set(word_keys("Неделя в Барселоне, жара."))           # mentioned in
     assert set(concept.hint_keys) & set(word_form_keys("Барселона"))                      # by translation

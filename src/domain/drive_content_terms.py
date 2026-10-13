@@ -43,23 +43,26 @@ _DIGITS = re.compile(r"\d+")
 _GROUP = r"[A-Za-z]{0,2}\d[0-9A-Za-z]{0,3}(?![0-9A-Za-z])"
 _GROUPS = re.compile(rf"(?<![\w.,/+-])\+?{_GROUP}(?:[{_SPACE}]{_GROUP})+(?![\w]|[.,/-]\w)")
 
-# Month names and their case forms (final review F5-5), matched case-insensitively; each maps to its month number.
+# Month names and their case forms (final review F5-5; locatives "в марте", "у березні": Search v2 P1 review m2), matched case-insensitively; each maps to its month number.
 _MONTH_FORMS: Dict[int, Tuple[str, ...]] = {
-    1: ("january", "jan", "enero", "janvier", "січня", "січень", "января", "январь", "янв"),
+    1: ("january", "jan", "enero", "janvier", "січня", "січень", "января", "январь", "янв", "январе", "січні"),
     2: ("february", "feb", "febrero", "février", "fevrier", "févr", "fevr", "лютого", "лютий", "февраля", "февраль",
-        "фев"),
-    3: ("march", "mar", "marzo", "mars", "березня", "березень", "марта", "март"),
-    4: ("april", "apr", "abril", "avril", "квітня", "квітень", "апреля", "апрель", "апр"),
-    5: ("may", "mayo", "mai", "травня", "травень", "мая", "май"),
-    6: ("june", "jun", "junio", "juin", "червня", "червень", "июня", "июнь"),
-    7: ("july", "jul", "julio", "juillet", "липня", "липень", "июля", "июль"),
-    8: ("august", "aug", "agosto", "août", "aout", "серпня", "серпень", "августа", "август", "авг"),
+        "фев", "феврале", "лютому"),
+    3: ("march", "mar", "marzo", "mars", "березня", "березень", "марта", "март", "марте", "березні"),
+    4: ("april", "apr", "abril", "avril", "квітня", "квітень", "апреля", "апрель", "апр", "апреле", "квітні"),
+    5: ("may", "mayo", "mai", "травня", "травень", "мая", "май", "мае", "травні"),
+    6: ("june", "jun", "junio", "juin", "червня", "червень", "июня", "июнь", "июне", "червні"),
+    7: ("july", "jul", "julio", "juillet", "липня", "липень", "июля", "июль", "июле", "липні"),
+    8: ("august", "aug", "agosto", "août", "aout", "серпня", "серпень", "августа", "август", "авг", "августе",
+        "серпні"),
     9: ("september", "sep", "sept", "septiembre", "setiembre", "septembre", "вересня", "вересень", "сентября",
-        "сентябрь", "сен", "сент"),
-    10: ("october", "oct", "octubre", "octobre", "жовтня", "жовтень", "октября", "октябрь", "окт"),
-    11: ("november", "nov", "noviembre", "novembre", "листопада", "листопад", "ноября", "ноябрь", "ноя"),
+        "сентябрь", "сен", "сент", "сентябре", "вересні"),
+    10: ("october", "oct", "octubre", "octobre", "жовтня", "жовтень", "октября", "октябрь", "окт", "октябре",
+        "жовтні"),
+    11: ("november", "nov", "noviembre", "novembre", "листопада", "листопад", "ноября", "ноябрь", "ноя", "ноябре",
+        "листопаді"),
     12: ("december", "dec", "diciembre", "décembre", "decembre", "déc", "грудня", "грудень", "декабря", "декабрь",
-         "дек"),
+        "дек", "декабре", "грудні"),
 }
 _MONTH_OF: Dict[str, int] = {form: month for month, forms in _MONTH_FORMS.items() for form in forms}
 _MONTH = "(" + "|".join(re.escape(f) for f in sorted(_MONTH_OF, key=lambda f: (-len(f), f))) + r")\.?(?![\w])"
@@ -216,7 +219,11 @@ def _maximal(text: str) -> Set[str]:
 
 def content_terms(text: str) -> Tuple[str, ...]:
     """A chunk's terms. Bounded: past the cap, the longest (most specific) terms are kept."""
-    terms = _terms(text)
+    return capped_terms(_terms(text))
+
+
+def capped_terms(terms: Set[str]) -> Tuple[str, ...]:
+    """`content_terms`' cap over a term set already extracted (`term_spans`): the longest terms kept."""
     if len(terms) > CONTENT_TERMS_PER_CHUNK:
         terms = set(sorted(terms, key=lambda t: (-len(t), t))[:CONTENT_TERMS_PER_CHUNK])
     return tuple(sorted(terms))
