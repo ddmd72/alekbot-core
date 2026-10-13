@@ -1,7 +1,7 @@
 """FirestoreDriveIndexRepository serialization (USER_DRIVE_INDEXING_RFC §3.2, §3.5) and the write encoding,
 proven on the real google-cloud-firestore client offline: the batch is built by the SDK and captured at commit."""
 from dataclasses import fields
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -16,6 +16,7 @@ from src.adapters.firestore_drive_index_repo import (
     RECORD_FIELDS, STATE_FIELDS, FirestoreDriveIndexRepository, record_from_doc, record_to_doc, state_from_doc,
     state_to_doc,
 )
+from src.domain.drive_enrichment import DriveProfile, KeyValue, PhotoObject, ProfileDate, ProfileEntity
 from src.domain.drive_index import (
     ContentClass, DocumentBrief, DriveIndexRecord, DriveSyncState, EpochPhase, ErrorCategory, Reason, RecordState,
     Scope, TriageVerdict,
@@ -48,7 +49,26 @@ def full_record() -> DriveIndexRecord:
         triage_verdict=TriageVerdict.PHOTO, triage_version=1, triaged_content_version="c1",
         caption="a beach at sunset", defer_until=T + timedelta(hours=2), defer_priority=3, seen_epoch=7,
         readme_pending=True, readme_item_id="RM1", readme_version="c7", chunks_refused_space="new-space/3072",
-        model_outages=2, model_read_at=T - timedelta(hours=3))
+        model_outages=2, model_read_at=T - timedelta(hours=3),
+        # Search v2 (§25.2.1): every field, the nested profile with every one of its own fields set
+        profile=DriveProfile(
+            title="Boarding pass Barcelona–Rome", what_it_is="An airline boarding pass", language="es",
+            doc_type="ticket", life_domains=("travel",), dates=(ProfileDate("valid_until", date(2026, 5, 12)),),
+            entities=(ProfileEntity("Roma", "place", "ROMA FCO", ("rome", "рим")),),
+            key_values=(KeyValue("reference", "AB 12-34", "ab1234"),), topics=("flight",), topics_native=("vuelo",),
+            topic_words=("flight", "flights"), label_words=("ticket",), domain_words=("travel",),
+            validity_words=("valid",)),
+        valid_until=datetime(2026, 5, 12, tzinfo=timezone.utc), profile_source="model",
+        profile_input_fingerprint="pif", profile_fingerprint="pf", profile_version=2, profiled_content_version="c1",
+        profile_state="current", profile_defer_until=T + timedelta(hours=4), profile_parked_month="2026-09",
+        profile_hold="refused", profile_hold_version="1:pif", profile_attempts=1, passages_state="deferred",
+        passages_defer_until=T + timedelta(hours=5), passages_parked_month="2026-08", passages_hold="failed",
+        passages_hold_version="1:4", passages_attempts=3, passages_generation=4, passages_next_index=2,
+        passages_done_at=T - timedelta(hours=6), enrich_ready=True, enrich_wake_at=T + timedelta(hours=7),
+        effective_day="2026-10-09", keys_pending=True, keys_version=1, keys_capped=True,
+        about_keys=("e:rome", "y:2026"), place_forms=("Rome", "Roma"), photo_description="a fountain in a square",
+        photo_objects=(PhotoObject("fountain", ("fuente", "фонтан")),), photo_scene="city square",
+        visible_text="TREVI", readme_excerpt="# Project", readme_excerpt_version="c7")
 
 
 def full_state() -> DriveSyncState:
@@ -61,7 +81,8 @@ def full_state() -> DriveSyncState:
         observed_as_of=T, access_lost_at=T, last_success_at=T, last_error=ErrorCategory.THROTTLED,
         stale_alerted=True, reconnect_notified=True, systemic_failures=2, counters={"indexed": 3},
         model_backoff_until=T + timedelta(minutes=10), model_failures=3, usage_month="2026-10", model_pages_used=40,
-        triage_images_used=12, upgrade_parked_month="2026-10")
+        triage_images_used=12, upgrade_parked_month="2026-10",
+        model_backoff_by_agent={"drive_reader": T + timedelta(minutes=20), "drive_profiler": T + timedelta(minutes=5)})
 
 
 def stored(value):
