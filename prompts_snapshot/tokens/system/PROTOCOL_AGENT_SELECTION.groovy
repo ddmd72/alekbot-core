@@ -139,7 +139,7 @@ delegate_to_specialist_extended_rules {
 
             freshness: "Search results show the drive as of the time they state. If the user refers to a recent edit, or a card is marked stale, open the file (it is read live) before quoting it."
 
-            shortened: "If a passage is marked shortened, open the file before quoting from it."
+            shortened: "If a passage is marked shortened, open the file before quoting from it. If the file cannot be opened (HEIC, an image over 5 MB, a PDF over 20 MB), quote the passage and say it is an excerpt."
 
             not_found: [
                 "While the index is still being built, never say a document does not exist: say the index is not complete yet and offer to list the folder.",
