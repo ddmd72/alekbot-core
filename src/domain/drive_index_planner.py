@@ -499,10 +499,14 @@ def _kind_changed(rec: DriveIndexRecord, existing: Optional[DriveIndexRecord]) -
 def _quiet_period(rec: DriveIndexRecord, existing: Optional[DriveIndexRecord], now: datetime,
                   nudged: bool) -> DriveIndexRecord:
     """§7.3: a content change on a stored record waiting for content marks it dirty (once) and restarts its
-    per-file attempts (§8.2); a nudge is the bot's own atomic write, so it is never in a quiet period."""
+    per-file attempts (§8.2); a nudge is the bot's own atomic write, so it is never in a quiet period. A file held
+    under an unresolved parent (R3 F2-1) that changes meanwhile restarts them too, so a new version never inherits
+    the old one's attempts or charged reader outages (F1-1) when the parent resolves."""
+    new_version = existing is not None and existing.content_version != rec.content_version
+    if rec.state is RecordState.UNRESOLVED and not rec.is_folder and new_version:
+        return replace(rec, attempts=0, defer_until=None, defer_priority=None, model_outages=0)
     if rec.state is not RecordState.PENDING:
         return rec
-    new_version = existing is not None and existing.content_version != rec.content_version
     if new_version:
         # a new edit restarts the work: its attempts and any deferral of the old version end
         rec = replace(rec, attempts=0, defer_until=None, defer_priority=None, model_outages=0)
