@@ -57,6 +57,7 @@ per `G1`, `G2` and `ocr`.
 web and general questions). The metrics are how often Smart calls `search_files_in_drive`, and how often its search
 calls put the date where the case's `expect` says (`date_in_query`: a date written inside the document stays in
 `drive_query` and no date filter is set; `date_filter`: the user limits when the file is dated; `none`: no date
-filter). `bars_g3.json` holds the positive and expectation rates and their Wilson lower bounds (z = 1.96), which are
-the bars; the negative rate is reported. A run is judged only against bars recorded with the same `--repeats`. A
+filter). `bars_g3.json` holds the positive rate and the date-case rate (`date_in_query` and `date_filter` together)
+with their Wilson lower bounds (z = 1.96), which are the bars; the negative rate and the expectation rate pooled over
+every case are reported. Bars recorded before the date-case bar give no verdict. A run is judged only against bars recorded with the same `--repeats`. A
 `note` says what a right answer looks like for the owner's review.
