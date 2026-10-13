@@ -68,7 +68,8 @@ KIND_NAMES: FrozenSet[str] = frozenset({
 # Words a user means as several kinds (RFC Δ20). "all my spreadsheets" is the RFC's own example (§10.1).
 KIND_FAMILIES: Mapping[str, FrozenSet[str]] = {
     "spreadsheet": frozenset({"xlsx", "xls", "ods", "csv"}),
-    "document": frozenset({"docx", "doc", "odt", "rtf", "pdf"}),
+    # §25.5.5 (D23): Markdown and text are documents; HTML, mail and e-books are not (OQ-V8)
+    "document": frozenset({"docx", "doc", "odt", "rtf", "pdf", "markdown", "text"}),
     "word": frozenset({"docx", "doc"}),
     "presentation": frozenset({"pptx", "ppt", "odp"}),
     "photo": frozenset({"image"}),
