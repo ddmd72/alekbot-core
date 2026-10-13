@@ -64,7 +64,7 @@ from ..domain.drive_index_run import (
     gate_exempt, image_mime, no_rendition, original_fallback, outcome_step, reader_pages, readme_choice, releasable,
     reread_cooldown_until, routed,
 )
-from ..domain.drive_search import UNREAD_COUNTER
+from ..domain.drive_search import NOT_READ_YET_COUNTER, UNREAD_COUNTER
 from ..domain.drive_sniff import SNIFF_HEAD_BYTES, sniff_kind
 from ..domain.drive_task_keys import DRIVE_SYNC_TASK, continuation_key, nudge_key, tick_payload
 from ..domain.drive_text_gate import is_machine_text
@@ -355,6 +355,8 @@ class DriveIndexingService:
             more = await self._has_more(user_id, state, now, upgrade_wrote=summary.get("upgraded", 0) > 0)
             if more:
                 cont.request()
+                # unread is what search tells Smart: refreshed every tick, not only once the index settles (F4-1)
+                state = replace(state, counters=await self._unread_counters(user_id, state.counters))
             else:
                 state = replace(state, counters=await self._counters(user_id))   # settled: refresh
             progressed = any(v for k, v in summary.items() if k != "pages")
@@ -406,11 +408,19 @@ class DriveIndexingService:
         """Records per state and carded (§3.5), readable chunks and `unread` (§10.2, §12.1). A zero content counter
         is left out: the Cabinet lists only non-zero counters and every reader defaults to 0."""
         counters = dict(await self._repo.count_by_state(user_id))
-        content = {"chunks": await self._repo.readable_chunk_total(user_id),
-                   UNREAD_COUNTER: await self._repo.count_unread(user_id, policy.ADMITTED_KINDS,
-                                                                   policy.TRIAGED_KINDS)}
+        content = {"chunks": await self._repo.readable_chunk_total(user_id)}
         counters.update({k: v for k, v in content.items() if v})
-        return counters
+        return await self._unread_counters(user_id, counters)
+
+    async def _unread_counters(self, user_id: str, counters: Mapping[str, int]) -> Dict[str, int]:
+        """`counters` with `unread` and `not_read_yet` counted now (§10.2, final review F5-2): the documents still
+        waiting and those that could not be read, two count passes; a zero is left out."""
+        waiting, unreadable = await asyncio.gather(
+            self._repo.count_unread(user_id, policy.ADMITTED_KINDS, policy.TRIAGED_KINDS, pending=True),
+            self._repo.count_unread(user_id, policy.ADMITTED_KINDS, policy.TRIAGED_KINDS, pending=False))
+        out = {k: v for k, v in counters.items() if k not in (UNREAD_COUNTER, NOT_READ_YET_COUNTER)}
+        out.update({k: v for k, v in ((UNREAD_COUNTER, waiting + unreadable), (NOT_READ_YET_COUNTER, waiting)) if v})
+        return out
 
     # ------------------------------------------------------------------------------------------
     # Observe

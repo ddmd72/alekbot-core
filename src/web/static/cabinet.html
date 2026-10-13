@@ -3125,7 +3125,8 @@
           const known = Object.keys(DRIVE_COUNTER_LABELS);
           const keys = known.concat(Object.keys(c).filter((k) => !known.includes(k)));
           for (const key of keys) {
-            if (key === "carded" || !num(c[key])) continue;
+            // not_read_yet is the waiting part of `unread`, for search's envelope (F5-2): not a counter of its own
+            if (key === "carded" || key === "not_read_yet" || !num(c[key])) continue;
             counts.push(`${DRIVE_COUNTER_LABELS[key] ? t(DRIVE_COUNTER_LABELS[key]) : escapeHtml(key)}: ${num(c[key])}`);
           }
           const last = ix.last_success_at

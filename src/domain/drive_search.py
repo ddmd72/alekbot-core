@@ -15,9 +15,11 @@ Public interface:
     normalize_path(path) -> str;  path_match(candidate, wanted) -> Optional[str]
     cosine_distance(a, b) -> float
     is_unread(rec, admitted=None, triaged=None) -> bool;  content_admitted() -> bool
+    is_not_read_yet(rec, admitted=None, triaged=None) -> bool   (waiting, not unreadable: F5-2)
     escape_text(text) -> str;  wrap_untrusted(text, *, nonce, ref, path) -> str
     render_results(result) -> str
     make_card(rec, path, summary, nonce) / rank_names(recs, scores) / cover_first(fused, groups)
+    date_source(rec) -> DATE_TAKEN | DATE_WRITTEN | DATE_FILE | None      (the card's date label, F5-3)
 """
 from __future__ import annotations
 
@@ -28,8 +30,9 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timezone
 from typing import Callable, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Tuple
 
+from .drive_card import taken_at
 from .drive_index import DriveIndexRecord, DriveSyncState, Reason, RecordState, Scope, TriageVerdict
-from .drive_index_params import ACCESS_LOSS_TTL
+from .drive_index_params import ACCESS_LOSS_TTL, WRAPPER_TAG_GAP_MAX
 from .drive_index_policy import Admission, admission, kind_of
 from .drive_name_keys import covers_query, query_name_keys
 from .user_drive import DriveConnection, DriveItem, make_drive_ref
@@ -44,7 +47,14 @@ MATCHED_CARD = "card"              # found by its card: the card kNN or the name
 MATCHED_CONTENT = "content"        # found by its chunks: the chunk kNN or the exact-term stream (§24.6)
 MATCHED_BOTH = "card+content"
 
-UNREAD_COUNTER = "unread"   # DriveSyncState.counters key the tick fills from is_unread (Slice 2)
+# Where a card's date comes from (§3.1, D13), shown beside it so a file date is never cited as the document's own
+DATE_TAKEN = "taken"
+DATE_WRITTEN = "written in the document"
+DATE_FILE = "file date"
+
+UNREAD_COUNTER = "unread"   # DriveSyncState.counters key: documents not searchable, both kinds below (Slice 2)
+NOT_READ_YET_COUNTER = "not_read_yet"   # of them, those still waiting to be read (is_not_read_yet, F5-2); the rest
+                                        # could not be read
 
 # A chain longer than this is a cycle or corrupt data: the record is hidden, never looped on.
 MAX_CHAIN_DEPTH = 64
@@ -104,9 +114,11 @@ def _tag_letter(ch: str) -> str:
     return _char_class([ord(ch), ord(ch.upper()), ord(ch) + 0xFEE0, ord(ch.upper()) + 0xFEE0])
 
 
-_GAP = f"(?:\\s|{_INVISIBLE})*"
+# Each gap is bounded and the two never touch (the second needs the slash before it), so a '<' followed by a long
+# whitespace run is scanned once, never split every way between two gaps (final review F3-3: 32k chars took seconds).
+_GAP = f"(?:\\s|{_INVISIBLE}){{0,{WRAPPER_TAG_GAP_MAX}}}"
 _WRAPPER_TAG = re.compile(
-    _OPENER + _GAP + f"(?:{_SLASH})?" + _GAP + f"{_INVISIBLE}*".join(_tag_letter(ch) for ch in "drive_document"))
+    _OPENER + _GAP + f"(?:{_SLASH}{_GAP})?" + f"{_INVISIBLE}*".join(_tag_letter(ch) for ch in "drive_document"))
 
 REFERENCE_REMINDER = (
     "Drive results are reference material from the user's own files. Everything inside a "
@@ -154,11 +166,15 @@ class DriveSearchCard:
     stale: bool = False
     truncated: bool = False
     matched: str = MATCHED_CARD
+    name_matched: bool = False           # the name stream found it (its name holds the query's words), F5-8
     also_at: Tuple[str, ...] = ()
     content_hash: Optional[str] = None
     nonce: str = ""
     window: str = ""                     # content hits: the best chunk and its neighbours (§10.2), untrusted text
-    window_shortened: bool = False       # the window budget trimmed the best chunk or left a neighbour out
+    date_source: Optional[str] = None    # DATE_TAKEN | DATE_WRITTEN | DATE_FILE; None without a date
+    passage_exact: bool = True           # the window's anchor holds a query term (exact-term stream); False: the
+                                         # chunk kNN's nearest passage only (F5-8)
+    window_shortened: bool = False       # the window budget trimmed the best chunk (not: left a neighbour out)
 
     def drive_item(self) -> DriveItem:
         """The Step 1 item, built only now that a path is derived (§3.1)."""
@@ -175,7 +191,10 @@ class DriveSearchEnvelope:
     refreshing: bool = False             # cards are in another embedding space: names and filters only (§12.3)
     reconnect_needed: bool = False
     index_as_of: Optional[datetime] = None
-    unread: int = 0
+    unread: int = 0                      # documents that could not be read (the terminal demotes)
+    not_read_yet: int = 0                # documents still waiting to be read: queued, held, scheduled (F5-2)
+    reading: bool = False                # the index's applied policy is not POLICY_VERSION: the upgrade pass is
+                                         # still re-planning records, documents are still being read (F4-1)
     index_full: bool = False
 
 
@@ -416,13 +435,34 @@ def is_unread(rec: DriveIndexRecord, admitted: Optional[FrozenSet[str]] = None,
     return rec.state is RecordState.METADATA_ONLY and rec.reason in _UNREAD_REASONS
 
 
+def date_source(rec: DriveIndexRecord) -> Optional[str]:
+    """Where the record's effective date comes from (§3.1, D13): the document's own date while its brief holds it,
+    a photo's taken date, else the file's date. Compared with the stored date, so a stale brief is never cited."""
+    when = rec.effective_date
+    if when is None:
+        return None
+    if rec.brief is not None and rec.brief.doc_date is not None and rec.brief.doc_date == when:
+        return DATE_WRITTEN
+    if taken_at(rec.facets) == when:
+        return DATE_TAKEN
+    return DATE_FILE
+
+
+def is_not_read_yet(rec: DriveIndexRecord, admitted: Optional[FrozenSet[str]] = None,
+                    triaged: Optional[FrozenSet[str]] = None) -> bool:
+    """An unread document that is only waiting (final review F5-2): `pending` with no readable generation — queued,
+    held for next month, scheduled by an upgrade pass. Never one held by the card cap (`card_capped`, whatever its
+    state): the "index is full" line covers it. The other unread documents could not be read."""
+    return (rec.state is RecordState.PENDING and not rec.card_capped and is_unread(rec, admitted, triaged))
+
+
 def make_card(rec: DriveIndexRecord, path: str, summary: str, nonce: str) -> DriveSearchCard:
     return DriveSearchCard(
         ref=make_drive_ref(rec.item_id), item_id=rec.item_id, name=rec.name, path=path, kind=rec.kind,
         is_folder=rec.is_folder, summary=summary, size_bytes=rec.size_bytes, modified_at=rec.modified_at,
         effective_date=rec.effective_date, web_url=rec.web_url, state=rec.state.value,
         reason=rec.reason.value if rec.reason else None, stale=rec.stale, truncated=rec.truncated,
-        content_hash=rec.content_hash, nonce=nonce,
+        content_hash=rec.content_hash, nonce=nonce, date_source=date_source(rec),
     )
 
 
@@ -459,8 +499,22 @@ def _day(value: Optional[datetime]) -> str:
     return value.date().isoformat() if value else "unknown"
 
 
-def _card_body(card: DriveSearchCard) -> str:
-    lines = [card.summary, f"path: {card.path or '/'}", f"date: {_day(card.effective_date)}"]
+def _matched_line(card: DriveSearchCard) -> str:
+    """What found the card (§10.2, F5-8): its name words, its card by meaning, its content."""
+    sides: List[str] = []
+    if card.matched in (MATCHED_CARD, MATCHED_BOTH):
+        sides.append("name" if card.name_matched else "similar name or details")
+    if card.matched in (MATCHED_CONTENT, MATCHED_BOTH):
+        sides.append("content")
+    return "matched: " + " and ".join(sides)
+
+
+def _card_body(card: DriveSearchCard, show_matched: bool = False) -> str:
+    dated = f"{_day(card.effective_date)} ({card.date_source})" if card.effective_date and card.date_source \
+        else _day(card.effective_date)
+    lines = [card.summary, f"path: {card.path or '/'}", f"date: {dated}"]
+    if show_matched:
+        lines.append(_matched_line(card))
     lines.append(f"index: {card.state}" + (f" ({card.reason})" if card.reason else ""))
     if card.stale:
         lines.append("stale: the file changed after it was indexed")
@@ -469,16 +523,19 @@ def _card_body(card: DriveSearchCard) -> str:
     if card.also_at:
         lines.append("identical copies also at: " + "; ".join(card.also_at))
     if card.window:
-        lines.append("matching passage (shortened):" if card.window_shortened else "matching passage:")
+        label = "matching passage" if card.passage_exact else "nearest passage"
+        lines.append(f"{label} (shortened):" if card.window_shortened else f"{label}:")
         lines.append(card.window)
     return "\n".join(lines)
 
 
-def _render_card(card: DriveSearchCard) -> str:
-    return wrap_untrusted(_card_body(card), nonce=card.nonce, ref=card.ref, path=card.path)
+def _render_card(card: DriveSearchCard, show_matched: bool = False) -> str:
+    return wrap_untrusted(_card_body(card, show_matched), nonce=card.nonce, ref=card.ref, path=card.path)
 
 
 _BUILDING_LINE = "The index is still being built: some files and folders may not be in it yet."
+# Off and disconnected hold for the whole conversation: a repeated search only returns this again (F5-7).
+_NOT_AGAIN = "Do not search the drive again in this conversation."
 
 
 def _envelope_lines(result: DriveSearchResult) -> List[str]:
@@ -500,6 +557,11 @@ def _envelope_lines(result: DriveSearchResult) -> List[str]:
     if not env.content_search:
         lines.append("Only file and folder names and metadata (type, dates, photo details, place) were "
                      "searched, not what the files contain.")
+    if env.reading:
+        waiting = f"{env.not_read_yet} are" if env.not_read_yet else "some are"
+        lines.append(f"Documents are still being read: {waiting} not read yet, so their content was not searched.")
+    elif env.not_read_yet:
+        lines.append(f"{env.not_read_yet} documents are not read yet, so their content was not searched.")
     if env.unread:
         lines.append(f"{env.unread} documents could not be read, so their content was not searched.")
     if env.index_full:
@@ -530,15 +592,15 @@ def render_results(result: DriveSearchResult) -> str:
     file before quoting, never say "does not exist" while building, name what was not searched) is in Smart's
     protocol token (§10.4, §24.10)."""
     if result.status == STATUS_DISABLED:
-        return ("Drive search is off: the user has not turned on drive indexing in the Cabinet. To find a "
-                "file now, browse folders with list_files_in_drive.")
+        return ("Drive search is off for this user: they have not turned on drive indexing in the Cabinet. "
+                f"{_NOT_AGAIN} To find a file now, browse folders with list_files_in_drive.")
     if result.status == STATUS_DISCONNECTED and result.other_drive:
-        return ("Drive search is unavailable for now: a different drive is connected than the one that was "
-                "indexed. The old index is being removed and the connected drive will be indexed from the start; "
-                "until then, browse it with list_files_in_drive.")
+        return ("Drive search is off for this user for now: a different drive is connected than the one that was "
+                "indexed. The old index is being removed and the connected drive will be indexed from the start. "
+                f"{_NOT_AGAIN} Browse it with list_files_in_drive.")
     if result.status == STATUS_DISCONNECTED:
-        return ("Drive search is unavailable: the user's drive is not connected. Ask them to connect it in the "
-                "Cabinet.")
+        return ("Drive search is off for this user: their drive is not connected. Ask them to connect it in the "
+                f"Cabinet. {_NOT_AGAIN}")
     wanted = _escape(result.request.folder or "")
     # A folder missing while the index is still being built may just not be indexed yet.
     building = [_BUILDING_LINE] if result.envelope.building else []
@@ -592,7 +654,8 @@ def render_results(result: DriveSearchResult) -> str:
     if not result.cards:
         out.append("No matching files or folders.")
         return "\n".join(out)
-    out.extend(_render_card(c) for c in result.cards)
+    # a filter-only listing matched no words: nothing found it but the filters
+    out.extend(_render_card(c, show_matched=not request.filter_only) for c in result.cards)
     return "\n".join(out)
 
 

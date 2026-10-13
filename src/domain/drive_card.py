@@ -42,6 +42,11 @@ def photo_location(facets: Mapping[str, Any]) -> Optional[Tuple[float, float]]:
     return None
 
 
+def taken_at(facets: Mapping[str, Any]) -> Optional[datetime]:
+    """A photo's taken date, from its `photo` facet."""
+    return _parse_dt((facets.get("photo") or {}).get("takenDateTime"))
+
+
 def effective_date(change: DriveChange, fallback: datetime) -> datetime:
     """The date a user means (§3.1): taken, else filesystem-modified, else server time."""
     taken = _parse_dt((change.facets.get("photo") or {}).get("takenDateTime"))
