@@ -47,7 +47,8 @@ class DriveInputTooLarge(DriveModelCallFailed):
 
 class DriveModelTimedOut(DriveModelUnavailable):
     """The call ran past its timeout. An outage, except that the reader first halves a multi-page window once — ten
-    dense pages may simply take longer than the timeout (§24.3, §24.8)."""
+    dense pages may simply take longer than the timeout — and a half that times out again fails the file (§24.3,
+    §24.8)."""
 
 
 def classify_model_error(exc: BaseException, agent_type: str) -> Exception:

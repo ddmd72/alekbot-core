@@ -20,8 +20,8 @@ month's remaining pages and MODEL_EXTRACT_MAX_PAGES; the indexer process never p
 MODEL_IN_FLIGHT at a time and join in page order. Each window is cut by the parser only when its turn comes, read into
 memory and removed before the call, so at most MODEL_IN_FLIGHT window files exist on disk (a window can carry an image
 every page shares). A window answered at the output limit, or whose call timed out, is cut in half from the source
-and read once more; a half or a single page still at the limit adds no text and sets `truncated`, and one that times
-out again is a model outage. A window the provider refuses as too large (HTTP 413) is halved down to one page; a
+and read once more; a half or a single page still at the limit adds no text and sets `truncated`, and a half that
+times out again fails the file (`error`); a single-page window that times out is a model outage. A window the provider refuses as too large (HTTP 413) is halved down to one page; a
 single page still too large fails the file. At
 `file_budget_s` the windows done so far are kept and the rest cancelled (`truncated`). An image (the provider's
 rendition) is one call. Outcomes: text; no_text (the reader found none); error (the provider refused an input, its
@@ -242,7 +242,8 @@ class DriveReaderRunner(ContentExtractorPort):
                      win: _WindowRun, first_page: int, pages: int, *, brief: bool, may_halve: bool) -> List[str]:
         """The text of pages [first_page, first_page + pages), in page order (§24.3):
         - output limit, or a timeout: halved once (`may_halve`); a half or a single page still at the limit adds no
-          text and sets `truncated`; a half or a single page that times out again is a model outage;
+          text and sets `truncated`; a half that times out again fails the file (`error`, a counted per-file retry);
+          a single-page window that times out, never halved, is a model outage;
         - HTTP 413: halved, down to one page; a single page still too large fails the file (`error`).
         `brief`: this piece starts the document, so it asks for the brief (the first piece that answers sets it)."""
         try:
@@ -253,8 +254,14 @@ class DriveReaderRunner(ContentExtractorPort):
             logger.warning(f"[DriveReader] window {index + 1} pages {first_page + 1}+{pages} too large (413); halved")
             return await self._halves(agent, request, work, index, win, first_page, pages, brief=brief,
                                       may_halve=may_halve)
-        except DriveModelTimedOut:
-            if pages <= 1 or not may_halve:
+        except DriveModelTimedOut as exc:
+            if not may_halve:
+                # already halved: the model answers, these pages are too dense for it — a per-file failure, counted
+                # and capped by MAX_ATTEMPTS, never an outage that re-reads the finished windows (§8.2, T-M2)
+                logger.warning(f"[DriveReader] window {index + 1} pages {first_page + 1}+{pages} timed out again "
+                               f"after halving; the file fails")
+                raise DriveModelCallFailed(f"pages {first_page + 1}+{pages} timed out after halving") from exc
+            if pages <= 1:
                 raise
             logger.warning(f"[DriveReader] window {index + 1} pages {first_page + 1}+{pages} timed out; halved")
             return await self._halves(agent, request, work, index, win, first_page, pages, brief=brief,

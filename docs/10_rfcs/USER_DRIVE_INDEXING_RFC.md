@@ -1472,8 +1472,9 @@ this section wins; the text above was corrected where it was plainly false. Slic
   and removed before the call), so at most `MODEL_IN_FLIGHT` windows exist on disk even when every page shares one
   large image; the windows run with at most `MODEL_IN_FLIGHT` concurrent calls and their texts are joined in page
   order. A window answered at the output limit, or whose call timed out, is split in half (cut from the source) and
-  retried once; a half or a single page still at the limit adds no text and sets `truncated`, and one that times out
-  again is a model outage. A window the provider refuses as too large (HTTP 413) is halved down to one page; a single
+  retried once; a half or a single page still at the limit adds no text and sets `truncated`, and a half that times
+  out again fails the file (`error`, a counted per-file retry — the model answered, these pages are too dense for
+  it); a single-page window that times out is a model outage. A window the provider refuses as too large (HTTP 413) is halved down to one page; a single
   page still too large fails the file (`error`). An outage carries what the file spent before it (pages answered,
   calls, cost), and the tick counts that before it records the outage. When the file's model time
   reaches `MODEL_FILE_BUDGET`, the windows done so far are indexed and the record is `truncated` — no file restarts
