@@ -59,9 +59,13 @@ make fetch-logs [K=300] # Pull last K logs to alek_debug.log (grep locally — s
 Lint + format via `ruff` (`make lint` / `make format`, config in `ruff.toml`). `make check` runs
 `ruff check src/` and `mypy --strict` on `src/domain` + `src/ports` (`mypy.ini`; adapters stay
 informational, `mypy-adapters.ini`, see `decisions/mypy_scoped_rollout.md`) before the unit suite, and CI (`.github/workflows/ci.yml`) runs `make check` on
-every push/PR (posting ✅/❌ to Slack). The full unit/architecture suite is green and runs ~1:14
-single-process — **safe to run in full** (any historical "don't run the full suite" warning was a
-since-fixed chunker infinite loop, not a standing hazard). Lint scope is `src/` only (default high-signal ruleset: pyflakes + pycodestyle
+every push/PR (posting ✅/❌ to Slack). The full unit/architecture suite (~11 300 tests) is green
+and **safe to run in full** (any historical "don't run the full suite" warning was a since-fixed
+chunker infinite loop, not a standing hazard). `make test-unit` / `make check` run it in parallel
+via pytest-xdist (`-n auto`; cap with `PYTEST_WORKERS=6`): ~1:34 on a 12-core Mac vs ~5:00
+single-process. The `-n` flag lives in the Makefile, not `pytest.ini`, so a targeted
+`pytest path::test` stays one process; integration/e2e targets stay serial. A test that fails only
+under xdist is order-dependent — a real test bug, fixed under the reviewer rule, not re-serialised. Lint scope is `src/` only (default high-signal ruleset: pyflakes + pycodestyle
 errors). `ruff format` exists as a dev convenience but is not enforced in CI — the codebase is not
 mass-reformatted.
 

@@ -214,8 +214,8 @@ class SlackResponseChannel(ResponseChannel):
     def _resolve_and_split(self, text: str, link_list: Optional[list]) -> List[str]:
         """Resolve [N] link anchors, then split into SLACK_CHUNK_SIZE-bounded chunks.
 
-        Shared by send_chunked_message (threaded overflow) and the main-feed overflow
-        path used by send_late_answer, so link resolution behaves identically either way.
+        Shared by send_chunked_message (threaded overflow) and send_late_answer (main
+        feed), so link resolution behaves identically either way.
         """
         text = self._resolve_links_slack(text, link_list)
         return self._split_into_chunks(text, SLACK_CHUNK_SIZE)
@@ -243,23 +243,6 @@ class SlackResponseChannel(ResponseChannel):
         thread_ts = thread_id if thread_id else message_id
         for chunk in chunks:
             await self.send_message(chunk, thread_ts)
-
-    async def _send_flat_chunks(self, text: str, message_id: str, link_list: Optional[list] = None) -> None:
-        """Deliver text as top-level messages only — no thread, ever.
-
-        First chunk replaces message_id (the already-posted header); overflow chunks are
-        posted as new top-level messages (no thread_ts), same shape as send_flat_response.
-        Used by send_late_answer: the owner decision is the late answer stays in the main
-        feed, so overflow must NOT fall back to send_chunked_message's thread_ts=message_id
-        threading.
-        """
-        chunks = self._resolve_and_split(text, link_list)
-        if not chunks:
-            return
-
-        await self.update_message(message_id, chunks[0])
-        for chunk in chunks[1:]:
-            await self.send_message(chunk)  # no thread_id → top-level, stays in main feed
 
     async def send_long_text(
         self, text: str, link_list: Optional[list] = None, thread_id: Optional[str] = None
@@ -671,14 +654,25 @@ class SlackResponseChannel(ResponseChannel):
 
         `link` is the origin's permalink when the caller already fetched it; only when it
         is None is it looked up here.
+
+        Every post is a fresh top-level message (owner decision: never a thread), and nothing
+        is posted-then-edited. The header carries the origin permalink, which Slack unfurls
+        with its own asynchronous write to the message; a chat.update landing in that
+        window returns ok and is then overwritten by the unfurl, leaving the header alone
+        in the feed (4 of 27 late-answer posts in one DM, 2026-10-07..13). A message that is
+        never edited cannot lose an edit.
+
+        The header is its own first post, so the origin's unfurl preview sits above the
+        answer; inside the first chunk it landed between the first and second chunk.
         """
         if link is None:
             link = await self.message_link(origin_message_id)
         header = f"{prefix} <{link}|↩>" if link else prefix
-        posted = await self.client.chat_postMessage(channel=self.channel_id, text=header)
-        await self._send_flat_chunks(
-            f"{header}\n\n{text}", posted["ts"], link_list=link_list,
-        )
+        await self.send_message(header)  # no thread_id → top-level, stays in main feed
+        if not text.strip():
+            return  # a rich-content-only answer: the caller delivers the content next
+        for chunk in self._resolve_and_split(text, link_list):
+            await self.send_message(chunk)
 
     async def on_long_turn(self) -> None:
         """Fire the long-turn hook (once) — e.g. release a held thread lock."""
