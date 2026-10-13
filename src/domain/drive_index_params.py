@@ -1,6 +1,6 @@
 """
-Drive indexing parameters (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §15). Initial values; S1, S3 and the
-eval may revise them. Slice 1 subset — content parameters arrive with Slice 2.
+Drive indexing parameters (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §15, §24.13). Initial values; S1, S3 and the
+eval may revise them. Slice 1 parameters first, then the content parameters of Slice 2+4.
 """
 from datetime import timedelta
 

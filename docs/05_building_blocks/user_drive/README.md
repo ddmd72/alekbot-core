@@ -212,15 +212,17 @@ A file arrives in a delta page (or, for the bot's own write, in a nudge read wit
 
 A new content version of an indexed file makes it `pending`; its old generation keeps serving, marked `stale` in
 results, until the new one commits (§7.4 fence). A kind change (`.jpg` renamed to `.pdf`) is another extractor chain:
-attempts, backoff and deferrals restart (`_kind_changed`). A photograph's caption lives with its `photo` verdict: a
-rename away and back keeps both <!-- r2: T-m3 -->.
+attempts, backoff and deferrals restart (`_kind_changed`). A photograph's caption lives with its `photo` verdict:
+when the record's kind leaves triage (a rename away from an image) both are cleared together, and renamed back the
+image is triaged again (one more triage call), so a verdict never stands without its caption.
 
 ### Step 2 — when it runs (quiet period, classes)
 
 `schedule` / `_content_due_at`: an edit of a pending record sets `dirty_since`; its content waits until the file has
 been untouched for `QUIET` (10 min) or dirty for `MAX_DEFER` (60 min) — Word for the web saves every 1–3 minutes while
 someone types (spike S0b). First sight, an upgrade, a release and a nudge (the bot's own atomic write) are due at once.
-A record due for other work (a card, a re-embed) still keeps its content's quiet period (`quiet_over`) <!-- r2: T-M1 -->.
+A record due for other work (a card, a re-embed) still keeps the quiet period of its content and of its image
+triage (`quiet_over`).
 
 The due loop (`_due_loop` → `_work_class`) works records in class order: 0 edits, 1 cascades, 2 first-seen,
 3 maintenance (upgrades, releases, month-held work), 4 retries. Within a record, content and triage run before its
@@ -261,13 +263,13 @@ image `(reader)`, every other admitted kind `(parser)`.
   process per file (`src/adapters/drive_parser/child.py`) with `RLIMIT_AS` 1 GiB, `RLIMIT_CPU` 90 s, `RLIMIT_FSIZE`
   64 MiB, no core dumps, a 120 s wall-clock kill of its process group, an allowlisted environment and a private temp
   directory; one child at a time. Readers (`src/adapters/drive_parser/readers.py`): pdfminer.six for PDF text, laid
-  out page by page and stopped once `MAX_TEXT_CHARS` is reached <!-- r2: P-m6 --> (pypdf for the page count and
-  encryption);
-  markitdown's allowlisted converters for DOCX, PPTX, EPUB, MSG and HTML; openpyxl (XLSX, at most 1 025 columns) and
-  xlrd (XLS) as Markdown tables of at most 5 000 rows per sheet, `truncated` when a cell past the column bound holds a
-  value <!-- r2: P-m3 -->; charset detection for text kinds; cue text for VTT/SRT; `striprtf`; the stdlib `email`
-  parser; ODF `content.xml` through `defusedxml`. A password-protected file is `encrypted`. Text is capped at
-  `MAX_TEXT_CHARS` (2 M). The parser libraries are pinned in `requirements.txt`: a changed output for the same file
+  out page by page and stopped once `MAX_TEXT_CHARS` is reached (`truncated` when a page was left; pypdf for the
+  page count, walked from the page tree, and encryption);
+  markitdown's allowlisted converters for DOCX, PPTX, EPUB, MSG and HTML; openpyxl (XLSX) and xlrd (XLS) as Markdown
+  tables of at most 1 024 columns and 5 000 rows per sheet, `truncated` when a value lies past either bound (for
+  XLSX, a cell holding only a style, or the sheet's declared dimension, does not count); charset detection for text
+  kinds; cue text for VTT/SRT; `striprtf`; the stdlib `email` parser; ODF `content.xml` through `defusedxml`. A
+  password-protected file is `encrypted`. Text is capped at `MAX_TEXT_CHARS` (2 M). The parser libraries are pinned in `requirements.txt`: a changed output for the same file
   is a `SubprocessContentExtractor.VERSION` bump. This is resource isolation, not code-execution containment
   ([decision](../../04_solution_strategy/decisions/drive_parser_sandbox_resource_isolation.md)).
 - **Router** (`model_route`): a PDF goes on to the reader when the parser found no text, fewer than
@@ -283,20 +285,20 @@ image `(reader)`, every other admitted kind `(parser)`.
   - An image is one call on the rendition.
   - A PDF's pages are counted by the sandboxed child, then read in windows of `MODEL_PAGES_PER_CALL` (10) pages, at
     most `MODEL_IN_FLIGHT` (4) at a time, each window cut by the child only when its turn comes (lazy windows: at most
-    four window files on disk, cut from the walked page tree, never from `/Count` <!-- r2: P-M1 -->), joined in page
-    order.
+    four window files on disk, cut from the walked page tree, never from `/Count`), joined in page order.
   - A window answered at the output limit is halved once (cut from the source); a half or a single page still at
     the limit adds no text and sets `truncated`.
   - A window whose call times out (180 s) is halved once; a half that times out again fails the file (`error`, a
-    counted per-file retry); a single-page window that times out is a model outage <!-- r2: T-M2b -->.
+    counted per-file retry); a single-page window, never halved, that times out is a model outage.
   - HTTP 413, 400 or 422 halves a window down to one page; a single page still refused is skipped, the rest of the
-    file is read and indexed `truncated`, with `pages_refused` on the outcome and in the log line <!-- r2: R3-P1 -->.
+    file is read and indexed `truncated`, with `pages_refused` on the outcome and in the `[DriveReader]` log line.
     Only a PDF whose every page was refused, or a refused image, is terminal: `too_large` when a refusal was 413,
     else `unsupported` — both demote, because the same bytes always get the same answer and a retry would only bill
-    the read windows again <!-- r2: P-m5 -->. Output that stays invalid after the parse retry is `error`.
-  - At `MODEL_FILE_BUDGET_S` (600 s) the windows done are kept and the rest cancelled (`truncated`); a file whose
-    every window was cut by the budget and that found no text is `error` (retried), never `no_text`
-    <!-- r2: P-m4 -->. Pages past 200 are not sent (`truncated`).
+    the read windows again. An image timeout is a model outage. Output that stays invalid after the parse retry, or a
+    refusal raised before any HTTP exchange, is `error`.
+  - At `MODEL_FILE_BUDGET_S` (600 s) the windows done are kept and the rest cancelled (`truncated`); a file the
+    budget cut (any window) while no finished window found text is `error` (retried), never `no_text` — the cut
+    windows were never read. Pages past 200 are not sent (`truncated`).
   - An outage in any window raises `DriveModelUnavailable` carrying the pages, calls and cost spent before it.
 - **Outcome** (`outcome_step` in `src/domain/drive_index_run.py`): `text` goes on; `no_text`, `unsupported`,
   `too_large`, `encrypted` demote; `timeout`, `memory`, `error` retry; `budget_exhausted` waits for next month. See
@@ -309,7 +311,9 @@ image `(reader)`, every other admitted kind `(parser)`.
 for the next page of the same class only when the pass is progressing anyway, so N photos cost ⌈N/16⌉ calls. Each
 image's `medium` (176 px) thumbnail goes with an opaque index and the camera prior as text (`photo.takenDateTime` or
 `cameraMake` present: a hint, never a verdict). `DriveTriageRunner` returns one result per image: `photo` + a caption
-of at most ten words, or `text`. A batch the provider refuses (400) is halved until the refused image is alone; that
+of at most ten words, or `text`. A batch that fails as a batch (a provider refusal — 400, 413 or 422 —, an answer
+stopped at the output limit or by safety, or no usable answer after the correction turn) is halved until the failing
+image is alone; that
 image, an image left unanswered after one correction turn, and a thumbnail over the vision cap are photographs
 without a caption. Verdicts (`triaged`): `photo` → `metadata_only / photograph` with the caption, carded; `text` →
 content due for the reader (steps 3–8), in the class the triage had. No thumbnail yet is retried with backoff
@@ -371,20 +375,20 @@ Back in the same `_work_class` pass, the record's card is due because its text c
 |---|---|---|---|
 | any run | text, chunks committed | `indexed` | — |
 | parser / reader | `no_text` (reader found none, PDF with no pages, no chunk) | `metadata_only / no_text` | no, until the content or the extractor changes |
-| parser / reader | `unsupported` (no reader for the kind, a deterministic parser failure, a provider 400/422 refusal of an image or of every page <!-- r2: P-m5, R3-P1 -->) | `metadata_only / kind_not_admitted` | no |
-| fetch / parser / reader | `too_large` (download cap, ZIP container bomb, 413 on an image or among refusals of every page <!-- r2: P-m5, R3-P1 -->) | `metadata_only / too_large` | no |
+| parser / reader | `unsupported` (no reader for the kind, a deterministic parser failure, a provider 400/422 refusal of an image, or of every page of a PDF with no 413 among them) | `metadata_only / kind_not_admitted` | no |
+| fetch / parser / reader | `too_large` (download cap, ZIP container bomb, 413 on an image, or every page of a PDF refused with a 413 among them) | `metadata_only / too_large` | no |
 | parser | `encrypted` (user password) | `metadata_only / encrypted` | no |
 | sniff | bytes show a kind the policy does not admit | `metadata_only / kind_not_admitted` | no |
 | text gate | machine text | `metadata_only / machine_text` | no |
 | chunk cap | over `MAX_CHUNKS_PER_USER` | `metadata_only / user_chunk_cap` | released when headroom holds it |
 | triage | photograph | `metadata_only / photograph` (+ caption) | no |
 | parser | `timeout`, `memory` (a bomb) | `pending`, backoff 10 min, 20 min, then `failed / extract_timeout` or `extract_memory` | yes, `MAX_ATTEMPTS` 3 |
-| parser / reader / run | `error` (parser error, invalid model output, a half that timed out again <!-- r2: T-M2b -->, a budget that cut every window), crashed run, chunk refused (400) | `pending` → `failed / extract_error` | yes, 3 |
+| parser / reader / run | `error` (parser error, invalid model output, a half that timed out again, a refusal raised before any HTTP exchange, a budget cut with no text found), crashed run, chunk refused (400) | `pending` → `failed / extract_error` | yes, 3 |
 | fetch / triage | download or thumbnail failed; no rendition yet | `pending` → `failed / download_error` (a missing rendition ends as a photograph without caption) | yes, 3 |
 | embeddings | per-file 180 s passed | `pending` → `failed / embed_timeout` | yes, 3 |
 | reader / triage | month's pages or images spent (`budget_exhausted`, or the hold before the call) | `pending`, class 3, due at the UTC month start | waits |
-| reader / triage | **model outage**: 429, 5xx, timeout of an unhalved single page, network, open breaker, account-level 4xx, missing prompt, anything unexpected | `pending`, due at `model_backoff_until` (60 s doubling to 1 h); attempts untouched | waits |
-| run | **systemic**: drive disconnected or throttled, a rejected refresh, an embedding error other than a chunk's 400, transient Firestore errors <!-- r2: T-m4 -->, a content port not wired | the run is abandoned (attempt not counted, content due again); the tick ends with its §5 backoff | the tick |
+| reader / triage | **model outage**: 429, 5xx, timeout of a single-page window or an image, network, open breaker, account-level 4xx, missing prompt, anything unexpected | `pending`, due at `model_backoff_until` (60 s doubling to 1 h); attempts untouched | waits |
+| run | **systemic**: drive disconnected or throttled, a rejected refresh, an embedding error other than a chunk's 400, a transient Firestore error (`DriveIndexStoreUnavailable`), a content port not wired | the run is abandoned (attempt not counted, content due again); the tick ends with its §5 backoff | the tick |
 
 A `failed` record keeps its previous readable generation (served as stale). Retry backoff is `5 min · 2^attempts`,
 capped at 6 h. A new content version restarts attempts and deferrals. `failed` and content demotions stand until the
@@ -406,7 +410,7 @@ content version or the deciding extractor changes.
 
 Monthly counters are on the sync state, keyed by UTC month (`usage_now`, `with_usage`); every save of the tick,
 error paths included, carries them. Usage spent before an outage is counted without ending it: the backoff keeps
-doubling <!-- r2: T-M2a -->. A tick that ends `lease_lost` cannot save its usage (RFC §24.14 known limit).
+doubling. A tick that ends `lease_lost` cannot save its usage (RFC §24.14 known limit).
 
 ### 4.12 Upgrades: what a version change redoes
 
@@ -423,7 +427,7 @@ within the maintenance share, and re-plans each stale record (`stale_versions`, 
   `refreshing`), and readable chunks are re-embedded from their stored text into a new generation with no download and
   no extraction (`_reembed_step`, under the same fence). This applies to any record with readable chunks in the old
   space, whatever its content state (an indexed, failed or still-waiting record), without touching its attempts,
-  deferral or quiet period <!-- r2: T-M1 -->. Chunks that cannot be read back as stored send the file to a full run.
+  deferral or quiet period. Chunks that cannot be read back as stored send the file to a full run.
 - A pass that leaves stale records (backing off, held) does not repeat until due work has run; `applied_versions` and
   `applied_space` are written only after a clean pass.
 
@@ -521,7 +525,7 @@ to find inside the documents (a phrase, a number, an amount, a date as written i
   one runs the user-wide streams under a folder post-filter.
 - Duplicates (same `quickXorHash` and size, files with content only) collapse into one card with `also_at` paths.
 - One `[DriveSearch]` line per search, with the counts after each stage (`card`, `name`, `chunk`, `chunk_kept`,
-  `term_queries`, `term_probes` <!-- r2: S-M1 -->, `term`, `term_kept`, `fused`, `covered`, `widened`, `windows`,
+  `term_queries`, `term_probes`, `term`, `term_kept`, `fused`, `covered`, `widened`, `windows`,
   `window_chars`, …) and `ms=`.
 
 The drive is not part of `SearchEnrichmentService`:
@@ -536,18 +540,17 @@ The content streams run while the policy admits any content (`content_admitted`)
 - **Content exact-term stream.** `query_terms` takes the **maximal form** of each number-like span of `drive_query`
   — an ISO date, a canonical amount, a joined id, a joined digit group — never a fragment (a year, an amount's integer
   part, a run inside an id), because a fragment matches documents that share only that part. A whole amount with
-  `.00` cents also queries its integer form, so "1,250.00" finds a document that says "1250" <!-- r2: S-m2 -->. Terms
-  are read from at most `QUERY_TERM_CHARS` (1 000) characters of the query, cut at a word boundary
-  <!-- r2: S-m1 -->, at most `CONTENT_TERM_QUERIES` (8) of them, longest first. Each runs as its own `array-contains`
-  query (`CONTENT_TERM_FETCH` = 100, ordered by item id), never one `array-contains-any`, which would let a common term
+  `.00` cents also queries its integer form, so "1,250.00" finds a document that says "1250". Terms are read from at
+  most `QUERY_TERM_CHARS` (1 000) characters of the query, cut at a word boundary, at most `CONTENT_TERM_QUERIES` (8)
+  of them, longest first. Each runs as its own `array-contains` query (`CONTENT_TERM_FETCH` = 100, ordered by item id), never one `array-contains-any`, which would let a common term
   hide a rare one.
 - **Selectivity** (`selective_term_hits` / `term_selective`, `src/domain/drive_content_search.py`;
   [decision](../../04_solution_strategy/decisions/drive_term_selectivity_distinct_files.md)). A page that was not full
   is complete and selects. A full page is an id-ordered slice: the term is **non-selective** when it spans more than
   `TERM_NONSELECTIVE_FILES` (8) distinct files. A full page from 8 files or fewer is probed past its last file, one new
   file per probe (`find_next_file_with_term`), until a ninth file is seen or the term runs out; only then is it
-  selective <!-- r2: S-M1 -->. A non-selective term takes no part in fusion, anchoring, window trimming or the
-  widening. A term concentrated in few files — an IBAN in every chunk of one contract — still selects. The folder
+  selective (at most 8 single-document probes per term). A non-selective term takes no part in fusion, anchoring,
+  window trimming or the widening. A term concentrated in few files — an IBAN in every chunk of one contract — still selects. The folder
   in-memory path has every chunk, so its page is complete.
 - **Pooling** (`pool_terms`): records sharing more query terms first, then the more specific term, then item id; the
   anchor is the record's chunk holding the most terms.
@@ -598,8 +601,8 @@ document's own date, otherwise the file date — but the model is told only the 
   line per tick that completes, with counts such as `observed`, `pages`, `skipped`, `cards`, `swept`, `deleted`,
   `rescoped`, `upgraded`, `released`; from Slice 2+4 `indexed`, `demoted`, `failed`, `retried`, `deferred`, `chunks`,
   `embed_ms`, `dropped`, `gone`, `reembedded`, `released_chunks`, `swept_chunks`, `triaged`, `triage_calls`,
-  `triage_images`, `model_calls`, `model_pages`. `[DriveReader]` logs one line per read file (status, pages, calls,
-  cost, windows, halves); `[DriveExtract]` the parser's failures; `[drive_reader]` / `[drive_triage]` each failed
+  `triage_images`, `model_calls`, `model_pages`. `[DriveReader]` logs one line per read file (status, pages sent / total,
+  calls, cost, `truncated`, `refused`, and for a PDF its windows, halves and budget-cut windows); `[DriveExtract]` the parser's failures; `[drive_reader]` / `[drive_triage]` each failed
   model call and how it was classified. A throttled or failed tick logs its own WARNING or ERROR line instead, a tick
   that lost its lease an INFO line, and a purge logs `index purged`. An idle tick still observes a few items, since
   the root and re-emitted unchanged items arrive in every delta round (S0a), but it adds no `cards`. The indexer has
@@ -640,8 +643,9 @@ document's own date, otherwise the file date — but the model is told only the 
   `gold_g3.json` with the drive reads answered from the fixture index. It measures the search-initiated rate (barred
   on positives, reported on negatives: chit-chat, memory, web, general) and the date-expectation rate (did Smart put a
   document's date in `drive_query` and a "dated" limit in the filters), barred over the date cases only
-  (`date_in_query`, `date_filter`) <!-- r2: S-m3 -->. A bar is the Wilson lower bound (z = 1.96) of the recorded
-  rate, judged only against bars recorded with the same `--repeats` (`bars_g3.json`).
+  (`date_in_query`, `date_filter`); the rate pooled over every case is reported, not barred. A bar is the Wilson
+  lower bound (z = 1.96) of the recorded rate, judged only against bars recorded with the same `--repeats`
+  (`bars_g3.json`); bars without a `date_bar` (recorded before it) are refused — re-record with `--record`.
 - **Live model check** (before deploy; owner-run, paid). `venv/bin/python -m scripts.validation.drive_model_check
   read <folder> [--providers claude,openai]` runs the production reader on real files side by side per provider and
   times every call against the 180 s per-window timeout; `triage <renditions dir> [--sizes medium,large]` answers the

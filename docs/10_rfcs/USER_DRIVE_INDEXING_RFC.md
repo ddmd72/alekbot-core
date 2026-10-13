@@ -1435,7 +1435,7 @@ this section wins; the text above was corrected where it was plainly false. Slic
 - §7.3 quiet period, §8.1 index run, §8.2 content outcome classes, §8.3 tables, §8.4 chunker, §7.4 fence, §5.4 chunk
   cap and release, §5.2 the repository root's `README` lead text (read by the parser only), §12.1 the counters this
   slice adds (all listed as not built in Δ12). A record due for other work (a card, a re-embed) still keeps its
-  content's quiet period. <!-- r2: T-M1 -->
+  content's quiet period, and an image its triage's (`quiet_over`).
 - §9 `ContentExtractorPort`, the child-process parser adapter, the router (§24.3) and the reader agent (§24.2).
 - §5.3 triage with captions (§24.4), §10.1 step 3 chunk stream plus the content exact-token stream (§24.6), §10.2
   windows and `matched`, §10.4 protocol lines in Smart's token (D11), the G2/G3/OCR eval (§24.11).
@@ -1494,21 +1494,22 @@ this section wins; the text above was corrected where it was plainly false. Slic
   the next tick.
 - **Parser adapter** `SubprocessContentExtractor`: one child Python process per file (`python -B -E -s -m
   src.adapters.drive_parser.child`), one at a time, with `RLIMIT_AS`, `RLIMIT_CPU`, `RLIMIT_FSIZE`, `RLIMIT_CORE` 0
-  applied before any parser loads, a wall-clock kill of its process group, an allowlisted environment and a private
-  temp directory; the result is a JSON file, never stdout. Inside it: pdfminer.six for PDF text, laid out page by page
-  and stopped at `MAX_TEXT_CHARS` <!-- r2: P-m6 -->; pypdf for the page count (walked from the page tree, never from
-  `/Count`), encryption and page windows; markitdown 0.1.8's allowlisted converters (Phase 0) for DOCX, PPTX, EPUB,
-  MSG and HTML; openpyxl for XLSX (at most 1 025 columns, rendered per sheet, stopping at `MAX_TEXT_CHARS`;
-  `truncated` when a cell past the column bound holds a value <!-- r2: P-m3 -->) and xlrd for XLS, both as Markdown
-  tables capped at `MAX_SHEET_ROWS`; charset detection for text kinds (`charset-normalizer`, BOM first, a legacy
-  code-page tie-break for uk/ru/en/es/fr); `striprtf` for RTF; the stdlib `email` parser for EML; ODF `content.xml`
-  read with `defusedxml`; VTT/SRT reduced to cue text. Password-protected PDF, Office, EPUB and ODF files are
-  `encrypted`; a ZIP container over the Phase 0 limits is `too_large`. Every library on this path is pinned in
-  `requirements.txt`; a changed output for the same file is a `SubprocessContentExtractor.VERSION` bump. The memory,
-  CPU and wall limits (1 GiB, 90 s, 120 s) are placeholders until spike S1.
+  applied before any parser loads, a wall-clock kill of its process group, an allowlisted environment and a private temp
+  directory; the result is a JSON file, never stdout. Inside it: pdfminer.six for PDF text, laid out page by page and
+  stopped at `MAX_TEXT_CHARS` (`truncated` when a page was left); pypdf for the page count (walked from the page tree,
+  never from `/Count`), encryption and page windows; markitdown 0.1.8's allowlisted converters (Phase 0) for DOCX, PPTX,
+  EPUB, MSG and HTML; openpyxl for XLSX (rendered per sheet, stopping at `MAX_TEXT_CHARS`; a cell holding only a style,
+  or the declared dimension, never marks it `truncated`) and xlrd for XLS, both as Markdown tables of at most 1 024
+  columns and `MAX_SHEET_ROWS` rows, `truncated` when a value lies past either bound; charset detection for text kinds
+  (`charset-normalizer`, BOM first, a legacy code-page tie-break for uk/ru/en/es/fr); `striprtf` for RTF; the stdlib
+  `email` parser for EML; ODF `content.xml` read with `defusedxml`; VTT/SRT reduced to cue text. Password-protected PDF,
+  Office, EPUB and ODF files are `encrypted`; a ZIP container over the Phase 0 limits is `too_large`. Every library on
+  this path is pinned in `requirements.txt`; a changed output for the same file is a
+  `SubprocessContentExtractor.VERSION` bump. The memory, CPU and wall limits (1 GiB, 90 s, 120 s) are placeholders until
+  spike S1.
 - **Page windows.** One call cannot transcribe 200 pages, and a Haiku 5.5 prompt above 100k tokens costs five times
   as much on input and output. The child process counts a routed PDF's pages, then cuts one window of
-  `MODEL_PAGES_PER_CALL` pages at a time, on demand, from the walked page tree <!-- r2: P-M1 --> (a temp PDF the
+  `MODEL_PAGES_PER_CALL` pages at a time, on demand, from the walked page tree, never from `/Count` (a temp PDF the
   indexer process never parses, read into memory and removed before the call), so at most `MODEL_IN_FLIGHT` windows
   exist on disk even when every page shares one large image; the windows run with at most `MODEL_IN_FLIGHT`
   concurrent calls and their texts are joined in page order. The parser's own status (`encrypted`, `timeout`,
@@ -1517,19 +1518,19 @@ this section wins; the text above was corrected where it was plainly false. Slic
   - a window answered at the output limit is split in half (cut from the source) and read once more; a half or a
     single page still at the limit adds no text and sets `truncated`;
   - a window whose call timed out is halved once; a half that times out again fails the file (`error`, a counted
-    per-file retry — the model answers, these pages are too dense for it); a single-page window that times out is a
-    model outage <!-- r2: T-M2b -->;
+    per-file retry — the model answers, these pages are too dense for it); a single-page window, never halved, that
+    times out is a model outage;
   - a window the provider refuses (HTTP 413, 400 or 422) is halved down to one page; a single page still refused is
     skipped, the rest of the file is read and indexed, and the outcome is `truncated` with the refused pages counted
-    (`pages_refused`, also in the log line) <!-- r2: R3-P1 -->. Only a file whose every page was refused is terminal:
+    (`pages_refused`, also in the log line). Only a file whose every page was refused is terminal:
     `too_large` when any page was refused as too large (413), else `unsupported`. Both demote: the same bytes get the
-    same answer, and a retry would only bill the windows already read again <!-- r2: P-m5 -->. Output that stays
+    same answer, and a retry would only bill the windows already read again. Output that stays
     invalid after the parse retry, or a refusal raised before any HTTP exchange, is `error`.
 - **File budget.** When the file's model time reaches `MODEL_FILE_BUDGET`, the windows done so far are indexed and the
-  record is `truncated` — no file restarts forever. A file whose windows were all cut by the budget with no text read
-  is `error` (retried), never `no_text` <!-- r2: P-m4 -->. Pages past `MODEL_EXTRACT_MAX_PAGES` are not sent
-  (`truncated`). An outage in any window cancels the file and carries what it spent before it (pages answered, calls,
-  cost); the tick counts that before it records the outage.
+  record is `truncated` — no file restarts forever. A file the budget cut (any window) while no finished window found
+  text is `error` (retried), never `no_text`: the cut windows were never read. Pages past `MODEL_EXTRACT_MAX_PAGES` are
+  not sent (`truncated`). An outage in any window cancels the file and carries what it spent before it (pages answered,
+  calls, cost); the tick counts that before it records the outage.
 - **Tick deadline (§7.1):** a file that may be routed starts only if
   `elapsed + DOWNLOAD_TIMEOUT + EXTRACT_WALL_TIMEOUT + MODEL_FILE_BUDGET + EMBED_FILE_BUDGET + margin < TICK_DEADLINE`;
   a test asserts it for the configured constants.
@@ -1542,7 +1543,8 @@ this section wins; the text above was corrected where it was plainly false. Slic
   keeps the verbatim field verbatim; the brief fields are the only place for interpretation. Stored on the record as
   `brief` (a `DocumentBrief`).
 - **Caption** (triage, photographs only): at most ten words, in English, stored as `caption`. It lives with the `photo`
-  verdict: a rename away and back keeps both. <!-- r2: T-m3 -->
+  verdict: when the record's kind leaves triage (a rename away from an image) both are cleared together, and renamed
+  back the image is triaged again (one more triage call), so a verdict never stands without its caption.
 - **Card text** (`card_text`, `CARD_VERSION` 2): `name | kind | brief | caption | key facets | lead text`, each content
   segment only when present, the brief as `doc_type | description | doc_date | parties: … | amount`. The lead text is
   the first `CARD_LEAD_CHARS` of every indexed document's text, parsed or read (a `machine_text` demotion keeps it
@@ -1560,17 +1562,18 @@ this section wins; the text above was corrected where it was plainly false. Slic
   (Graph, served as JPEG or PNG, S0f), at `TRIAGE_THUMBNAIL_SIZE` (`medium`, 176 px; `large`, 800 px, is the live
   check's alternative). Each thumbnail goes with an opaque index and the camera prior (§5.3) as text.
 - Verdict `text` → the record's content is due for the reader, in the class the triage had. Verdict `photo` →
-  `metadata_only / photograph` (new reason) with its caption. **No thumbnail** may be one the provider has not made
-  yet: it is retried with backoff, and only at `MAX_ATTEMPTS` is it `metadata_only / photograph` without a caption.
-  A batch the provider refuses (400) is halved until the refused image is alone; that image, one left unanswered after
-  the agent's one correction turn, and a thumbnail over the vision cap are photographs without a caption
-  (deterministic). The verdict, `triage_version`, `triaged_content_version` and the caption are stored.
+  `metadata_only / photograph` (new reason) with its caption. **No thumbnail** may be one the provider has not made yet:
+  it is retried with backoff, and only at `MAX_ATTEMPTS` is it `metadata_only / photograph` without a caption. A batch
+  that fails as a batch (a provider refusal — 400, 413 or 422 —, an answer stopped at the output limit or by safety, or
+  no usable answer after the correction turn) is halved until the failing image is alone; that image, one left
+  unanswered after the agent's one correction turn, and a thumbnail over the vision cap are photographs without a
+  caption (deterministic). The verdict, `triage_version`, `triaged_content_version` and the caption are stored.
 - The reader gets an information-bearing image as the provider's `READER_RENDITION_SIZE` rendition
   (`c2048x2048`, JPEG; HEIC is never decoded by us). **Spike S0g** confirms custom rendition sizes under
   `Files.ReadWrite.AppFolder` and that receipt text stays legible. With no rendition, the original is sent only when it
   is JPEG/PNG/WebP/GIF within the vision cap (3.75 MiB raw: 5 MiB once base64-encoded, Anthropic's per-image limit; to
   be confirmed in the live model check); other formats are `metadata_only / no_text`. A 413 on an image is
-  `too_large`, a 400/422 `unsupported`. <!-- r2: P-m5 -->
+  `too_large`, a 400/422 `unsupported` (both terminal); a timeout on an image is a model outage.
 - Done-when of §16 Slice 4 holds: 100 holiday photos cost ⌈100 / `TRIAGE_BATCH`⌉ triage calls and no reader call.
 
 ### 24.6 Chunks and the content streams
@@ -1591,19 +1594,20 @@ this section wins; the text above was corrected where it was plainly false. Slic
   date, the canonical amount, the joined digit group, the joined id, the first kind claiming a stretch of text winning
   in that order — never a fragment (a year, an amount's integer part, a run inside an id), because a fragment as a
   query matches documents that share only that part. An amount whose cents are `.00` also queries its integer form, so
-  `1,250.00` finds a document that says `1250` <!-- r2: S-m2 -->. The terms come from at most `QUERY_TERM_CHARS` of
-  the query, cut at a word boundary, and the span claiming is linear <!-- r2: S-m1 -->; at most
+  `1,250.00` finds a document that says `1250`. The terms come from at most `QUERY_TERM_CHARS` of
+  the query, cut at a word boundary, and a span's overlap with the stretches already claimed is found by bisection,
+  not by a scan of every claim; at most
   `CONTENT_TERM_QUERIES` terms, longest first, each matched by its own `array-contains` query ordered by item id (not
   one `array-contains-any`, which returns the first 100 by id and lets a common term hide a rare one).
-- **Selectivity by distinct files** (review D-M2, arbiter R1-2 and R2 S-M1). A term page that was not full is
-  complete and selects. A full page is an id-ordered slice of the term's chunks: the term is **non-selective** when
-  the page spans more than `TERM_NONSELECTIVE_FILES` distinct files. A full page from at most that many files is
-  probed past its last file, one new file per probe (`find_next_file_with_term`: the same query with a cursor on
-  `item_id`, limit 1), until one file too many is seen or the term runs out; only then is it selective
-  <!-- r2: S-M1 -->. A non-selective term takes no part in the fusion, in anchoring a window, in trimming a window
-  around a term, or in the widening (it is never read again). A full page concentrated in few files — an IBAN in every
-  chunk of one contract — still selects. The folder in-memory path reads every chunk of the subtree, so its pages are
-  complete and need no probe.
+- **Selectivity by distinct files** (review D-M2, arbiter R1-2 and R2 S-M1). A term page that was not full is complete
+  and selects. A full page is an id-ordered slice of the term's chunks: the term is **non-selective** when the page
+  spans more than `TERM_NONSELECTIVE_FILES` distinct files. A full page from at most that many files is probed past its
+  last file, one new file per probe (`find_next_file_with_term`: the same query with a cursor on `item_id`, limit 1),
+  until one file too many is seen or the term runs out; only then is it selective (at most `TERM_NONSELECTIVE_FILES`
+  probes per term, counted as `term_probes` on the `[DriveSearch]` line). A non-selective term takes no part in the
+  fusion, in anchoring a window, in trimming a window around a term, or in the widening (it is never read again). A full
+  page concentrated in few files — an IBAN in every chunk of one contract — still selects. The folder in-memory path
+  reads every chunk of the subtree, so its pages are complete and need no probe.
 - **Pooling and fusion.** Term hits are fenced and pooled per record: more shared query terms first, then the more
   specific term, then item id; the anchor is the record's chunk holding the most terms. The card, name, chunk and term
   streams are fused by RRF. A content hit counts only for a carded, visible record (§17.1 d).
@@ -1632,10 +1636,10 @@ this section wins; the text above was corrected where it was plainly false. Slic
 
 | Outcome | Effect |
 |---|---|
-| Provider unavailable: 429, 5xx, a timeout of a call that cannot be halved, network, an open breaker, an account-level 4xx (key, permission, model id), a provider without a key, a missing prompt, anything unexpected | **Model outage, not a systemic error** (`DriveModelUnavailable`): `model_backoff_until` on the sync state (`MODEL_BACKOFF_BASE_S` doubling to `MODEL_BACKOFF_CAP_S`), records that need the model stay `pending` and are skipped until then, attempts untouched; parser work, cards and cascades go on. What the file or batch spent before the outage is counted against the month and the summary without ending the outage: the backoff keeps doubling. <!-- r2: T-M2a --> Successful model work ends it. |
-| The provider refuses a window or a single page of a PDF (413, 400 or 422) | The window is halved down to one page (§24.3); a single page still refused is skipped and the file is indexed `truncated`, `pages_refused` counted. <!-- r2: R3-P1 --> |
-| The provider refuses every page of a PDF, or an image: `too_large` when a refusal was 413, else `unsupported` | Deterministic: `metadata_only`, no retry, no re-bill. <!-- r2: P-m5 --> In triage, the refused image is a photograph without a caption. |
-| A window halved after a timeout times out again | Per-file transient (`error`, §8.2); at `MAX_ATTEMPTS` → `failed / extract_error`. <!-- r2: T-M2b --> |
+| Provider unavailable: 429, 5xx, a timeout of a call that cannot be halved, network, an open breaker, an account-level 4xx (key, permission, model id), a provider without a key, a missing prompt, anything unexpected | **Model outage, not a systemic error** (`DriveModelUnavailable`): `model_backoff_until` on the sync state (`MODEL_BACKOFF_BASE_S` doubling to `MODEL_BACKOFF_CAP_S`), records that need the model stay `pending` and are skipped until then, attempts untouched; parser work, cards and cascades go on. What the file or batch spent before the outage is counted against the month and the summary without ending the outage: the backoff keeps doubling. Successful model work ends it. |
+| The provider refuses a window or a single page of a PDF (413, 400 or 422) | The window is halved down to one page (§24.3); a single page still refused is skipped and the file is indexed `truncated`, `pages_refused` counted. |
+| The provider refuses every page of a PDF, or an image: `too_large` when a refusal was 413, else `unsupported` | Deterministic: `metadata_only`, no retry, no re-bill. In triage, the refused image is a photograph without a caption. |
+| A window halved after a timeout times out again | Per-file transient (`error`, §8.2); at `MAX_ATTEMPTS` → `failed / extract_error`. |
 | Output that is not valid JSON after the parse retry, a refusal before any HTTP exchange | Per-file transient. |
 | The reader finds no text | `metadata_only / no_text` (deterministic). |
 | Monthly budget spent | `budget_exhausted` / the pre-call hold: `pending`, class 3, due at the month boundary. |
@@ -1678,7 +1682,8 @@ this section wins; the text above was corrected where it was plainly false. Slic
   fixture index; positives and a negative set; the search-initiated rate is recorded. Each case also says where its
   date belongs (`expect`: `date_in_query`, `date_filter` or `none`), scored from the fields of Smart's search calls as
   its own rate, barred over the date cases (`date_in_query`, `date_filter`) only, with synthetic date cases added so
-  the bar has enough of them <!-- r2: S-m3 -->. The bars are the Wilson lower bounds (z = 1.96) of the recorded rates,
+  the bar has enough of them; the rate pooled over every case is reported, not barred, and bars recorded without a
+  `date_bar` are refused (re-record). The bars are the Wilson lower bounds (z = 1.96) of the recorded rates,
   judged only at equal repeats.
 
 ### 24.12 Acceptance
@@ -1717,7 +1722,7 @@ Values in `src/domain/drive_index_params.py` unless named otherwise.
 | `CHUNK_FETCH` / `FOLDER_INMEM_CHUNKS` | 300 / 2 000 | Chunk kNN page; folder chunks ranked in memory |
 | `CONTENT_TERM_QUERIES` / `CONTENT_TERM_FETCH` | 8 / 100 | Term queries per search; term page size |
 | `TERM_NONSELECTIVE_FILES` | 8 | Distinct files a full term page may span and still select |
-| `QUERY_TERM_CHARS` | 1 000 | Query characters terms are read from <!-- r2: S-m1 --> |
+| `QUERY_TERM_CHARS` | 1 000 | Query characters terms are read from, cut at a word boundary |
 | `WINDOW_CHARS_TOTAL` | 12 000 | All windows of one result set (≈ 3–4k tokens) |
 
 ### 24.14 Known limits

@@ -603,8 +603,8 @@ stay metadata-only. Text passes a machine-text gate (repetition AND low variety,
 into `{prefix}drive_index_chunks` (generation-fenced, `content_terms` for amounts, ids, dates and digit groups). `search_files_in_drive`
 (SYNC) → `DriveSearchService`: card kNN, a per-key name stream (accent, Ukrainian and Russian transliteration
 variants), chunk kNN (one window per file, `index ± 1`, all windows within 12 000 chars) and the content exact-token
-stream (maximal query forms; a term held by > 8 files is dropped <!-- r2: S-M1 -->), fused with RRF, full-name cover
-first; reads only `drive_query` (content questions put the phrase, number or amount there; no words and no
+stream (maximal query forms; a term held by > 8 files is dropped, a full term page from few files is probed past
+it first), fused with RRF, full-name cover first; reads only `drive_query` (content questions put the phrase, number or amount there; no words and no
 filter → refused); a capped filter set hedges, never "no match"; results in a nonce-tagged `<drive_document>` wrapper
 (only tag look-alikes neutralised) with a coverage envelope. Smart's standing guidance (search when the answer may be
 in a document, freshness, honest not-found, totals, document vs memory, versions) is the `drive_specialist` block of

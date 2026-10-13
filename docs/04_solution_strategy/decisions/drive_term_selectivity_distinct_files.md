@@ -25,9 +25,8 @@ So the search must decide, per term, whether its page is a ranking signal or noi
 1. **A page that was not full is complete**: every chunk holding the term is on it. The term selects.
 2. **A full page is judged by the number of distinct files on it**, not by its chunk count. A term is
    **non-selective** when its full first page spans more than `TERM_NONSELECTIVE_FILES` (8) distinct files.
-3. **A full page from 8 files or fewer is probed past its last file** before it is trusted
-   <!-- r2: S-M1 -->. The page is id-ordered, so a few long files that sort first can fill it while the term sits in
-   many more files after them. The service asks for the next file holding the term past the last item id seen
+3. **A full page from 8 files or fewer is probed past its last file** before it is trusted. The page is
+   id-ordered, so a few long files that sort first can fill it while the term sits in many more files after them. The service asks for the next file holding the term past the last item id seen
    (`find_next_file_with_term`: the same query with a cursor on `item_id`, limit 1), one new file per probe, until a
    ninth file is seen (non-selective) or the term runs out (selective). At most 8 probes per term, each one
    single-document read.
