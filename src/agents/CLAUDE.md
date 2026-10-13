@@ -50,21 +50,30 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
 - EmailClassification — shared ServiceContainer singleton, called by EmailIndexingService (not agents);
   tool-calling triage, extracts fact sentences. OUTPUT_FORMAT exception: markdown-block extraction in
   `_parse_response()` (see inline comment).
-- DriveDocumentReader (`drive_reader`, ECO: Claude Haiku 5.5 by default, GPT by `agent_providers`; USER_DRIVE_INDEXING_RFC
-  §24.2–§24.4) and DriveImageTriage (`drive_triage`, ECO, same switch; §24.5) — the drive index's two model calls, on
-  the indexer service only. No manifest descriptor (`can_handle` false), no tools, no history, no biography: like
-  `EmailClassificationAgent` they are not routed to, and like the companion extractors they are built per call with
-  the user's own configuration by a runner in `composition/` (`DriveReaderRunner` implements `ContentExtractorPort`,
-  `DriveTriageRunner` implements `ImageTriagePort`; services/ cannot import agents/). The reader takes one PDF window
-  (`MODEL_PAGES_PER_CALL` pages) or one image rendition and returns verbatim text, plus on the first window a brief
-  (`doc_type`, one-line `description`, `doc_date` → `effective_date` per D13, `parties`, `amount`) in structured output
-  (`OUTPUT_FORMAT_DRIVE_READER`). Triage takes up to `TRIAGE_BATCH` thumbnails with the camera prior as text and
-  returns per image `text` or `photo` + a caption of at most ten words. A 429/5xx/timeout or a missing prompt raises
-  `DriveModelUnavailable` (model work waits, nothing else does, `decisions/drive_model_outage_defers_model_work.md`),
-  carrying what was spent before it; the runner first halves a PDF window that timed out (once) or got HTTP 413
-  (down to one page), and the parser cuts each window on demand;
-  calls are billed to the user's account through the runner's quota service. Prompts are owner-uploaded Firestore
-  tokens; no fallback prompt.
+- DriveDocumentReader (`drive_reader`) and DriveImageTriage (`drive_triage`) — the drive index's two model calls
+  (USER_DRIVE_INDEXING_RFC §24.2–§24.5, building block `docs/05_building_blocks/user_drive/README.md` §4).
+  - **Tier / provider:** both ECO, default Claude (`claude-haiku-5-5`); a user's `agent_providers` switches either to
+    OpenAI (`gpt-6-luna`); no fallback provider (`STRATEGIES` in `agent_context_builder.py`, D7). Thinking `low` unless
+    the user's `agent_thinking` says otherwise; `allow_provider_storage=False`. Limits in `agent_config.py`
+    (`DRIVE_READER`: 180 s, 16 000 tokens; `DRIVE_TRIAGE`: 120 s, 4 096 tokens; one parse retry).
+  - **Where they run:** on the indexer service only (`indexer_main.py` → `composition/drive_model_setup.py`), never on
+    the main service. No manifest descriptor (`can_handle` false), no tools, no history, no biography, no user prompt
+    overrides: like `EmailClassificationAgent` they are not routed to, and like the companion extractors they are
+    built per call with the user's own configuration by a runner in `composition/` (`DriveReaderRunner` implements
+    `ContentExtractorPort`, `DriveTriageRunner` implements `ImageTriagePort`; services/ cannot import agents/).
+  - **What they return:** the reader takes one PDF window (`MODEL_PAGES_PER_CALL` = 10 pages, cut on demand by the
+    sandboxed parser) or one image rendition and returns verbatim text, plus on the first window a brief (`doc_type`,
+    one-line `description`, `doc_date` → `effective_date` per D13, `parties`, `amount`) in structured output
+    (`OUTPUT_FORMAT_DRIVE_READER`); a reply stopped at the output limit is reported, never parsed. Triage takes up to
+    `TRIAGE_BATCH` (16) thumbnails under opaque indexes with the camera prior as text and returns per image `text` or
+    `photo` + a caption of at most ten words (`OUTPUT_FORMAT_DRIVE_TRIAGE`; missing indexes get one correction turn).
+  - **Failures** (`infrastructure/drive_model_call.py`): a 429/5xx/timeout/account error or a missing prompt raises
+    `DriveModelUnavailable` (model work waits, nothing else does,
+    `decisions/drive_model_outage_defers_model_work.md`), carrying what was spent before it. The reader runner halves
+    a window at the output limit or a timeout once (a half that times out again fails the file <!-- r2: T-M2b -->) and
+    a 413 down to one page; a provider refusal of one input is terminal (`too_large` / `unsupported`)
+    <!-- r2: P-m5 -->. Calls are billed to the user's account through the runner's quota service. Prompts are
+    owner-uploaded Firestore tokens; no fallback prompt.
 - DocPlanner (ASYNC, PERFORMANCE, intent `create_document`) — LLM → JSON layout spec →
   fire-and-forget delegate to DocGenerator → DeliveryItem("file_upload").
 - DocGenerator (internal, BALANCED, intent `generate_docx_code`) — LLM writes Node.js script →
