@@ -15,7 +15,7 @@ from .drive_enrichment import DriveProfile, PhotoObject
 
 POLICY_VERSION = 2                            # 2: the Slice 2+4 kinds admitted (§24.1)
 CARD_VERSION = 2                              # 2: brief, caption and lead text in the card (§24.4)
-GEO_TABLE_VERSION = 1
+GEO_TABLE_VERSION = 2                         # 2: alternate names, country names, large place (§25.4.3)
 NAME_KEYS_VERSION = 1                         # the name-stream keyer (drive_name_keys); a change re-keys (§12.3)
 EXTRACTION_VERSION = 3                        # chunker, text gate, content_terms normaliser (§12.3, §24.6); 2: maximal query forms (D-M1); 3: written-out dates (F5-5)
 TRIAGE_VERSION = 1                            # image triage prompt and verdict rules (§5.3, §24.5)
