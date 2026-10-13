@@ -29,11 +29,14 @@ class TestQueryEmitsOnlyMaximalForms:
     def test_an_iso_date_is_not_also_its_joined_digits(self):
         assert query_terms("2024-03-15") == ("2024-03-15",)
 
-    def test_a_decimal_amount_is_its_canonical_form_only(self):
-        assert query_terms("invoice for 1250.00") == ("1250.00",)
+    def test_a_decimal_amount_is_its_canonical_form_plus_a_zero_cents_integer(self):
+        # zero cents also query the integer, the same value (R2 S-m2); any other cents stay the canonical form only
+        assert query_terms("invoice for 1250.00") == ("1250.00", "1250")
+        assert query_terms("invoice for 1250.50") == ("1250.50",)
 
-    def test_a_grouped_amount_is_its_canonical_form_only(self):
-        assert query_terms("1 250,00 €") == ("1250.00",)
+    def test_a_grouped_amount_is_its_canonical_form_plus_a_zero_cents_integer(self):
+        assert query_terms("1 250,00 €") == ("1250.00", "1250")
+        assert query_terms("1 250,50 €") == ("1250.50",)
 
     def test_a_plain_number_is_itself(self):
         assert query_terms("1250 euro") == ("1250",)

@@ -86,10 +86,14 @@ def test_wilson_lower_bound(hits, runs, expected):
     assert math.isclose(wilson_lower_bound(hits, runs), expected, abs_tol=1e-4)
 
 
-def _table(pos_hits, pos_runs, exp_hits, exp_runs):
-    return {"positive": {"runs": pos_runs, "searched": pos_hits, "rate": pos_hits / pos_runs},
-            "negative": {"runs": 10, "searched": 1, "rate": 0.1},
-            "expect": {"runs": exp_runs, "searched": exp_hits, "rate": exp_hits / exp_runs}}
+def _table(pos_hits, pos_runs, exp_hits, exp_runs, dated=None):
+    """`dated`: (hits, runs) over the date cases only, the scope the date bar is over (R2 S-m3); `expect` is pooled."""
+    table = {"positive": {"runs": pos_runs, "searched": pos_hits, "rate": pos_hits / pos_runs},
+             "negative": {"runs": 10, "searched": 1, "rate": 0.1},
+             "expect": {"runs": exp_runs, "searched": exp_hits, "rate": exp_hits / exp_runs}}
+    if dated is not None:
+        table["dated"] = {"runs": dated[1], "searched": dated[0], "rate": dated[0] / dated[1]}
+    return table
 
 
 def test_the_bars_are_lower_confidence_bounds_of_the_recorded_rates():
@@ -100,10 +104,11 @@ def test_the_bars_are_lower_confidence_bounds_of_the_recorded_rates():
 
 
 def test_a_run_below_the_recorded_rate_but_within_the_bound_passes():
-    bars = make_g3_bars(_table(10, 10, 5, 10), "g", "m", 3, "now")
-    assert judge(_table(8, 10, 3, 10), bars, "g", "m", repeats=3) == "pass"
-    assert judge(_table(7, 10, 5, 10), bars, "g", "m", repeats=3) == "regression"
-    assert judge(_table(10, 10, 2, 10), bars, "g", "m", repeats=3) == "regression"
+    # the date bar is over the date cases (R2 S-m3): the pooled `expect` rate is held perfect and decides nothing
+    bars = make_g3_bars(_table(10, 10, 10, 10, dated=(5, 10)), "g", "m", 3, "now")
+    assert judge(_table(8, 10, 10, 10, dated=(3, 10)), bars, "g", "m", repeats=3) == "pass"
+    assert judge(_table(7, 10, 10, 10, dated=(5, 10)), bars, "g", "m", repeats=3) == "regression"
+    assert judge(_table(10, 10, 10, 10, dated=(2, 10)), bars, "g", "m", repeats=3) == "regression"
 
 
 def test_bars_from_another_number_of_repeats_give_no_verdict():

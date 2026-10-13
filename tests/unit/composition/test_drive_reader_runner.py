@@ -248,10 +248,12 @@ class TestFileBudget:
 
 
 class TestFailures:
-    async def test_a_refused_window_fails_the_file_and_cancels_the_rest(self, tmp_path):
+    async def test_a_window_that_fails_the_file_cancels_the_rest(self, tmp_path):
+        # A provider refusal (HTTP 400) no longer fails the file — its pages are halved and skipped (R3-P1,
+        # test_drive_reader_runner_refused_pages_skipped.py); a refusal raised before any HTTP exchange still does.
         async def handler(request):
             if _key(request) == "SOURCE|w1":
-                return LLMClientError("bad page", http_status=400)
+                return LLMClientError("part not built", http_status=None)
             await asyncio.sleep(5)
             return _text(request)
 
@@ -304,9 +306,11 @@ class TestImage:
         out = await runner.extract(_request(tmp_path, kind="image", data=b"\x00\x00\x00\x18ftypheic", mime="image/heic"))
         assert out.status is S.UNSUPPORTED and llm.requests == []
 
-    async def test_refused_image_is_an_error(self, tmp_path):
+    async def test_refused_image_is_unsupported(self, tmp_path):
+        # the same bytes get the same refusal: terminal, never a retried `error` (R2 P-m5; unchanged by R3-P1)
         runner, _, _ = _runner(lambda r: LLMClientError("no", http_status=400))
-        assert (await runner.extract(_request(tmp_path, kind="image", data=JPEG))).status is S.ERROR
+        out = await runner.extract(_request(tmp_path, kind="image", data=JPEG))
+        assert out.status is S.UNSUPPORTED and out.pages_total == 1 and out.model_calls >= 1
 
 
 class TestAgentWiring:

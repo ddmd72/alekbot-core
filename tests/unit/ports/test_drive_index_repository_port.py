@@ -12,6 +12,7 @@ _EXPECTED = {
     "filter_records", "card_vectors", "has_record_in",
     # chunks (Slice 2, §24.6): records and chunks stay in one repository
     "write_chunks", "delete_chunks_except", "find_nearest_chunks", "find_chunks_by_term", "get_chunks",
+    "find_next_file_with_term",   # term selectivity probed past a full term page (§24.6, arbiter R2 S-M1)
     "get_chunks_with_vectors",   # folder-scoped chunk ranking in memory (§10.1 Folder; arbiter-accepted delta)
     "readable_chunk_total", "chunks_page", "delete_user_chunks",
     "chunk_capped", "count_unread",   # chunk-cap release (§5.4) and `unread` (§10.2): CORE-DELTA 2, arbiter-accepted

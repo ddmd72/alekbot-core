@@ -1,6 +1,7 @@
 """XLSX truncation is honest past the column read bound (arbiter R1-3; USER_DRIVE_INDEXING_RFC §5.1, §8.3; review A
 "M xlsx"). Rows are read at most 1025 columns wide so a far-right cell cannot pad every row to 16384 values, but a
-value or a declared dimension past column 1025 is content the index does not hold: the outcome says `truncated`."""
+value past column 1025 is content the index does not hold: the outcome says `truncated`. A declared dimension past it
+is not (R2 P-m3: the sheet's own cells decide, a dimension alone can be bogus)."""
 import re
 import zipfile
 
@@ -58,13 +59,13 @@ def test_one_value_past_the_bound_on_a_single_row_marks_truncated(tmp_path):
     assert outcome.truncated is True
 
 
-def test_a_declared_dimension_past_the_bound_marks_truncated(tmp_path):
+def test_a_declared_dimension_past_the_bound_alone_is_not_truncation(tmp_path):
     plain = _book(tmp_path / "p.xlsx", [(1, 1, "Item"), (1, 2, "Cost"), (2, 1, "Rent"), (2, 2, 1200)])
     declared = _declare(plain, "A1:BZZ2", tmp_path / "declared.xlsx")
     outcome = read_content(str(declared), "xlsx")
     assert outcome.status is ExtractionStatus.TEXT
     assert "| Rent | 1200 |" in outcome.text
-    assert outcome.truncated is True
+    assert outcome.truncated is False       # every value was read; only a value past the bound truncates (R2 P-m3)
 
 
 def test_a_last_value_inside_the_column_cap_is_not_truncated(tmp_path):
