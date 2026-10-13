@@ -325,6 +325,8 @@ class DriveIndexRecord:
     visible_text: str = ""
     readme_excerpt: str = ""                  # a collapsed folder's README profile input (§25.3)
     readme_excerpt_version: str = ""          # the README content version it came from
+    script_rendered: bool = False             # parser@2 flagged the page script-rendered (§25.3): a template profile;
+                                              # copied from ExtractionOutcome.script_rendered by P5
 
     @property
     def stale(self) -> bool:
