@@ -111,7 +111,8 @@ class TriageResult:
 
 @dataclass(frozen=True)
 class TriageBatchOutcome:
-    """One triage call's answer: one result per image given, and what the model work cost (tick summary, §24.9)."""
+    """One triage call's answer: one result per image answered (an image whose call failed has none, for the
+    caller's per-file retry), and what the model work cost (tick summary, §24.9)."""
     results: Tuple[TriageResult, ...]
     model_calls: int = 0         # triage calls made for this batch (a refused batch is split, §24.5)
     model_cost: float = 0.0      # their cost in USD, already billed to the account
