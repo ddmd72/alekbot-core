@@ -4,7 +4,10 @@ runtime? Every input goes through SubprocessContentExtractor with the given limi
 process, and the spike prints one JSON line per file and a summary: outcome, wall time, the child's peak RSS, the
 host process's peak RSS and the container cgroup's memory peak before and after the run (cgroup v2 `memory.peak`,
 v1 `memory.max_usage_in_bytes`). Only the cgroup sees what RSS misses: Cloud Run's disk is memory, so the PDF windows
-a split writes count against the instance. It also probes whether the kernel enforces RLIMIT_AS at all (Cloud Run gen2 must) and,
+a split writes count against the instance. The long PDFs also get a reader-shaped run (R3 F4-8): the measuring
+process holds MODEL_IN_FLIGHT windows' bytes, their base64 and a request body each — what the reader's in-flight
+model calls hold, simulated locally with no API call — while the sandboxed child cuts the next window, so the host's
+peak and the cgroup's peak include the parent's side of a read, not only the child's. It also probes whether the kernel enforces RLIMIT_AS at all (Cloud Run gen2 must) and,
 where it does, the smallest address space the parser stack starts in (the floor the limit must clear).
 
 Run it where the indexer runs: a one-off Cloud Run Job from the indexer's image, gen2, the indexer's memory and CPU
@@ -24,11 +27,14 @@ indexer's memory.
 Usage:
     python scripts/infrastructure/drive_extract_s1.py --generate /tmp/s1 [--inputs DIR] [--memory-mib 1024]
         [--cpu-s 90] [--wall-s 120] [--file-mib 64] [--scale 1.0]
-    python scripts/infrastructure/drive_extract_s1.py --one FILE --kind KIND [limits]     (one measured run)
+    python scripts/infrastructure/drive_extract_s1.py --one FILE --kind KIND [--split [--reader]] [limits]
+        (one measured run)
 Exit code: 0 (a spike reports, it does not judge).
 """
 import argparse
 import asyncio
+import base64
+import collections
 import json
 import os
 import resource
@@ -171,14 +177,18 @@ def rlimit_probe(limit_mib: int = 256) -> Dict[str, Any]:
 
 
 async def _measure_one(path: str, kind: str, args: argparse.Namespace) -> Dict[str, Any]:
-    from src.adapters.subprocess_content_extractor import SubprocessContentExtractor
+    from src.adapters.subprocess_content_extractor import PARSER_USER_ENV, SubprocessContentExtractor
     from src.domain.drive_extraction import ExtractionRequest, PdfSplitFailed
 
+    # as the indexer runs it: the image's unprivileged parser user when the image names one (R3 F3-1)
     extractor = SubprocessContentExtractor(memory_limit_bytes=args.memory_mib * _MIB, cpu_limit_s=args.cpu_s,
-                                           wall_timeout_s=args.wall_s, file_limit_bytes=args.file_mib * _MIB)
+                                           wall_timeout_s=args.wall_s, file_limit_bytes=args.file_mib * _MIB,
+                                           sandbox_user=os.environ.get(PARSER_USER_ENV))
     started = time.monotonic()
     row: Dict[str, Any] = {"file": os.path.basename(path), "kind": kind, "bytes": os.path.getsize(path)}
-    if args.split:
+    if args.split and getattr(args, "reader", False):
+        row.update(await _reader_shaped(extractor, path))
+    elif args.split:
         with tempfile.TemporaryDirectory() as out_dir:
             try:   # as the reader does: the page count, then one window at a time, removed once cut
                 pages_total = await extractor.pdf_page_count(path)
@@ -200,6 +210,48 @@ async def _measure_one(path: str, kind: str, args: argparse.Namespace) -> Dict[s
     row["child_peak_mib"] = _peak_mib(resource.RUSAGE_CHILDREN)
     row["host_peak_mib"] = _peak_mib(resource.RUSAGE_SELF)
     return row
+
+
+def reader_payload(window: bytes) -> Dict[str, Any]:
+    """What one in-flight reader call holds in the parent: the window's bytes, their base64 (the MessagePart) and the
+    serialized request body the SDK sends. Simulated: nothing is sent."""
+    encoded = base64.b64encode(window).decode("ascii")
+    body = json.dumps({"input": [{"file_data": {"base64": encoded, "mime_type": "application/pdf"}}]})
+    return {"data": window, "base64": encoded, "body": body}
+
+
+def held_bytes(payload: Dict[str, Any]) -> int:
+    return len(payload["data"]) + len(payload["base64"]) + len(payload["body"])
+
+
+async def _reader_shaped(extractor: Any, path: str) -> Dict[str, Any]:
+    """The reader's memory shape (§24.3): windows of MODEL_PAGES_PER_CALL pages, each cut by the child while up to
+    MODEL_IN_FLIGHT earlier windows' payloads are still held, as their model calls would be."""
+    from src.domain.drive_extraction import PdfSplitFailed
+    from src.domain.drive_index_params import MODEL_EXTRACT_MAX_PAGES, MODEL_IN_FLIGHT, MODEL_PAGES_PER_CALL
+
+    in_flight: "collections.deque[Dict[str, Any]]" = collections.deque()
+    held_during_cut: List[int] = []
+    held_peak = 0
+    with tempfile.TemporaryDirectory() as out_dir:
+        try:
+            pages_total = await extractor.pdf_page_count(path)
+            for first_page in range(0, min(pages_total, MODEL_EXTRACT_MAX_PAGES), MODEL_PAGES_PER_CALL):
+                window = os.path.join(out_dir, "window.pdf")
+                held_during_cut.append(len(in_flight))
+                await extractor.cut_pdf_window(path, first_page, MODEL_PAGES_PER_CALL, window)
+                with open(window, "rb") as fh:
+                    data = fh.read()
+                os.remove(window)
+                if len(in_flight) == MODEL_IN_FLIGHT:   # the oldest call answered: its slot takes the new window
+                    in_flight.popleft()
+                in_flight.append(reader_payload(data))
+                held_peak = max(held_peak, sum(held_bytes(p) for p in in_flight))
+        except PdfSplitFailed as exc:
+            return {"status": exc.status.value, "detail": exc.detail}
+    return {"status": "reader", "windows": len(held_during_cut), "pages_total": pages_total,
+            "truncated": pages_total > MODEL_EXTRACT_MAX_PAGES, "in_flight": MODEL_IN_FLIGHT,
+            "held_during_cut": held_during_cut, "held_peak_mib": round(held_peak / _MIB, 3)}
 
 
 def _peak_mib(who: int) -> float:
@@ -227,7 +279,8 @@ def _run_measured(path: Path, kind: str, args: argparse.Namespace, *, split: boo
     it: a rise is this run's (the peak never falls, so an unchanged value means the run stayed below it)."""
     command = [sys.executable, str(Path(__file__).resolve()), "--one", str(path), "--kind", kind,
                "--memory-mib", str(args.memory_mib), "--cpu-s", str(args.cpu_s), "--wall-s", str(args.wall_s),
-               "--file-mib", str(args.file_mib)] + (["--split"] if split else [])
+               "--file-mib", str(args.file_mib)] + (["--split"] if split else []) + \
+        (["--reader"] if split and getattr(args, "reader", False) else [])
     before = cgroup_memory_peak_bytes()
     proc = subprocess.run(command, capture_output=True, text=True, timeout=args.wall_s + 120)
     after = cgroup_memory_peak_bytes()
@@ -249,6 +302,9 @@ def run(paths: List[Path], args: argparse.Namespace) -> List[Dict[str, Any]]:
         print(json.dumps(rows[-1], ensure_ascii=False), flush=True)
         if kind == "pdf" and path.name.startswith(("pages_", "shared_image_")):
             rows.append(_run_measured(path, kind, args, split=True))
+            print(json.dumps(rows[-1], ensure_ascii=False), flush=True)
+            reader = argparse.Namespace(**{**vars(args), "reader": True})   # the parent's side too (R3 F4-8)
+            rows.append(_run_measured(path, kind, reader, split=True))
             print(json.dumps(rows[-1], ensure_ascii=False), flush=True)
     return rows
 
@@ -298,6 +354,7 @@ def _parse(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--one", help=argparse.SUPPRESS)
     parser.add_argument("--kind", help=argparse.SUPPRESS)
     parser.add_argument("--split", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--reader", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--memory-mib", type=int, default=1024)
     parser.add_argument("--cpu-s", type=int, default=90)
     parser.add_argument("--wall-s", type=float, default=120)
