@@ -41,14 +41,14 @@ from ..domain.drive_index_lean import ChunkId
 from ..domain.drive_index_params import (
     ABOUT_FETCH, ABOUT_SHOWN, CARD_FETCH, CHUNK_FETCH, FETCH_MAX, FOLDER_INMEM_CARDS, FOLDER_INMEM_CHUNKS,
     GROUP_READ_MAX, HINT_FETCH, K, LABELLED_SHOWN, MAX_CARD_RECORDS_PER_USER, MENTIONED_SHOWN, NAME_FETCH,
-    NAME_KEY_QUERIES, PROFILE_MIN_CHARS, RELATED_MAX, RELATED_SMALL, TRANSLATED_SHOWN, WINDOW_CHARS_TOTAL_V2,
+    NAME_KEY_QUERIES, PASSAGE_MAX_CHUNKS_PER_FILE, PROFILE_MIN_CHARS, RELATED_MAX, RELATED_SMALL, TRANSLATED_SHOWN, WINDOW_CHARS_TOTAL_V2,
     WINDOW_MAX, WORD_FETCH, WORD_FILES_MAX,
 )
 from ..domain.drive_index_planner import usage_now
 from ..domain.drive_indexing_status import DriveIndexingStatus
 from ..domain.drive_keys import fetch_batches, query_concepts, query_name_keys_v2
-from ..domain.drive_match import Concept, KeyFamily, MatchTier, SourceClass
-from ..domain.drive_name_keys import covers_query, name_match, query_name_keys, query_token_groups
+from ..domain.drive_match import Concept, KeyFamily, MatchTier, QueryConcepts
+from ..domain.drive_name_keys import name_match
 from ..domain.drive_search import (
     MAX_CHAIN_DEPTH, NOT_READ_YET_COUNTER, STATUS_AMBIGUOUS_FOLDER, STATUS_FOLDER_NOT_FOUND, STATUS_OK, UNREAD_COUNTER,
     DriveSearchCard, DriveSearchEnvelope, DriveSearchRequest, DriveSearchResult, content_admitted, cosine_distance,
@@ -56,10 +56,12 @@ from ..domain.drive_search import (
     KIND_NAMES, render_results, resolve_chain, search_gate,
 )
 from ..domain.drive_tier_explain import explain, not_matched, passage_window
-from ..domain.drive_tier_pool import ConceptHits, candidate_ids, document_frequency, tier_order_key
+from ..domain.drive_tier_pool import (
+    ConceptHits, candidate_ids, concept_trigrams, document_frequency, name_word_concepts, tier_order_key,
+)
 from ..domain.drive_tier_result import CoverageFacts, GroupMember, TierBlock, TieredResult
 from ..domain.drive_tiers import (
-    WHERE_HINT, WHERE_NAME, Allowance, Cover, FileKeys, FileMatch, allowances, chunks_needing_text, classify,
+    WHERE_HINT, Allowance, FileKeys, FileMatch, allowances, chunks_needing_text, classify,
     meaning_scores, name_query_keys, related_floor, size_band, source_scores,
 )
 from ..domain.user_drive import parse_drive_ref
@@ -76,7 +78,8 @@ _EPOCH = datetime.min.replace(tzinfo=timezone.utc)
 _SHOWN: Mapping[MatchTier, int] = {MatchTier.ABOUT: ABOUT_SHOWN, MatchTier.MENTIONED: MENTIONED_SHOWN,
                                    MatchTier.TRANSLATED: TRANSLATED_SHOWN, MatchTier.LABELLED: LABELLED_SHOWN}
 _TIERS: Tuple[MatchTier, ...] = (MatchTier.ABOUT, MatchTier.MENTIONED, MatchTier.TRANSLATED, MatchTier.LABELLED)
-_PASSAGE_TIERS = frozenset({MatchTier.MENTIONED, MatchTier.TRANSLATED})
+# Cards that show a passage when the match came from a chunk or a grounded keyword (P6 review m3: Labelled too)
+_PASSAGE_TIERS = frozenset({MatchTier.MENTIONED, MatchTier.TRANSLATED, MatchTier.LABELLED})
 # Text kinds whose enrichment jobs the coverage line counts (§25.5.6): never folders, photos (their jobs are `none`),
 # audio, video or other kinds that hold no text.
 _NO_TEXT_KINDS = frozenset({"folder", "audio", "video", "archive", "code", "log", "data_dump", "database",
@@ -92,6 +95,10 @@ Rec = Any   # a DriveIndexRecord or a DriveRecordLean: both carry the fields vis
 
 def _not_indexed(folder_name: str) -> DriveSearchResult:
     return DriveSearchResult(status=STATUS_OK, folder_path=folder_name, folder_not_indexed=True)
+
+
+def _filters(request: DriveSearchRequest) -> bool:
+    return bool(request.folder or request.kind or request.date_from or request.date_to)
 
 
 def _utcnow() -> datetime:
@@ -122,7 +129,6 @@ class _Stats:
     mode: str = "query"
     scope: str = "all"
     content: str = "off"             # off | wide (user-wide streams) | memory (a folder's chunks in memory)
-    migration: bool = False
     concepts: int = 0
     ignored: int = 0
     common: int = 0
@@ -171,11 +177,34 @@ class _Pool:
     texts: Dict[ChunkId, str] = field(default_factory=dict)
     items: Dict[ChunkId, Tuple[HintItem, ...]] = field(default_factory=dict)
     items_read: Set[Tuple[str, int]] = field(default_factory=set)
+    stale_keys: bool = False        # the state is not rebuilt under v2: records of another keyer are never read (D30)
 
-    def add(self, rec: Rec) -> None:
+    def add(self, rec: Rec) -> bool:
+        """Keep a record; False (dropped) for a whole record keyed by another keyer while the index is rebuilt."""
         if isinstance(rec, DriveIndexRecord):
+            if self.stale_keys and rec.keys_version != KEYS_VERSION:
+                return False
             self.fulls[rec.item_id] = rec
+            self.leans[rec.item_id] = rec
+            return True
         self.leans.setdefault(rec.item_id, rec)
+        return True
+
+
+@dataclass(frozen=True)
+class _PostFilters:
+    """What the wide streams cannot read in one composite: a single kind (the about and name streams re-read it), a
+    kind family, a date range (the about stream re-reads it) and a folder (never re-read)."""
+    single_kind: Optional[str]
+    family: bool
+    dates: bool
+    folder: bool
+
+
+@dataclass(frozen=True)
+class _ValidUntil:
+    """A record dated by its expiry date for the date filter (a query for what expires)."""
+    effective_date: Optional[datetime]
 
 
 @dataclass
@@ -266,7 +295,7 @@ class DriveSearchService:
         tiers = " ".join(f"{t.value}={stats.tiers.get(t.value, 0)}" for t in _TIERS)
         logger.info(
             f"[DriveSearch] user={user_id[:8]} status={result.status} mode={stats.mode} scope={stats.scope} "
-            f"content={stats.content} migration={stats.migration} concepts={stats.concepts} "
+            f"content={stats.content} concepts={stats.concepts} "
             f"ignored={stats.ignored} common={stats.common} absent={stats.absent} {tiers} related={stats.related} "
             f"card={stats.card} chunk={stats.chunk} hint={stats.hint} name={stats.name} "
             f"name_queries={stats.name_queries} about_queries={stats.about_queries} "
@@ -298,7 +327,8 @@ class DriveSearchService:
         if result.tiered is not None:
             coverage = replace(result.tiered.coverage, building=envelope.building, reading=envelope.reading,
                                refreshing=envelope.refreshing, not_read_yet=envelope.not_read_yet,
-                               unread=envelope.unread, names_only=not envelope.content_search)
+                               unread=envelope.unread,
+                               names_only=result.tiered.coverage.names_only or not envelope.content_search)
             stats.coverage = "complete" if coverage == CoverageFacts() else "incomplete"
             result = replace(result, tiered=replace(result.tiered, coverage=coverage))
         return result
@@ -325,6 +355,9 @@ class DriveSearchService:
                 subtree = walked
             else:
                 stats.scope = "folder-wide"
+        if request.filter_only and request.name_words and not _filters(request):
+            return await self._query(user_id, request, state, kinds, folder, subtree, ancestry, use_cards, stats,
+                                     names_only=True)
         if request.filter_only:
             if subtree is not None:
                 return await self._filter_in_memory(request, kinds, folder, subtree, ancestry, stats)
@@ -337,53 +370,61 @@ class DriveSearchService:
 
     async def _query(self, user_id: str, request: DriveSearchRequest, state: DriveSyncState, kinds: FrozenSet[str],
                      folder: Optional[_Folder], subtree: Optional[List[DriveIndexRecord]], ancestry: _Ancestry,
-                     use_cards: bool, stats: _Stats) -> DriveSearchResult:
-        q = query_concepts(request.query)
+                     use_cards: bool, stats: _Stats, names_only: bool = False) -> DriveSearchResult:
+        """One query (§25.5). `names_only`: the request held only generic words ("todo", "files"), searched as name
+        words by the name stream alone (P6 review m6), never by content and never with a D29 line."""
+        if names_only:
+            q = QueryConcepts(name_word_concepts(request.query), (), ())
+        else:
+            q = query_concepts(request.query)
         concepts = list(q.concepts)
-        migration = MIGRATION_GATE_KEY not in state.applied_versions   # D30: a state not rebuilt under v2
-        stats.migration, stats.concepts, stats.ignored = migration, len(concepts), len(q.ignored)
-        with_content = content_admitted() and not migration
-        stats.content = "off" if not with_content else "wide"
+        # D30: a state not rebuilt under v2 has no migration mode — v1 records are never read; the v2 records written
+        # so far are searched and the coverage line says the index is being rebuilt (P6 review M3)
+        rebuilding = MIGRATION_GATE_KEY not in state.applied_versions
+        stats.concepts, stats.ignored = len(concepts), len(q.ignored)
+        with_content = content_admitted() and not names_only
         members: List[Optional[str]] = list(sorted(kinds)) or [None]   # a family: one kNN per member kind
-        pool = _Pool(hits=[ConceptHits() for _ in concepts])
-        # the migration guard reads v1 name keys the way v1 did; a rebuilt index has name keys v2
-        name_keys = query_name_keys(request.query) if migration else query_name_keys_v2(request.query)
+        pool = _Pool(hits=[ConceptHits() for _ in concepts], stale_keys=rebuilding)
+        post = _PostFilters(single_kind=members[0] if len(members) == 1 else None, family=len(members) > 1,
+                            dates=request.date_from is not None or request.date_to is not None,
+                            folder=folder is not None and subtree is None)
         if subtree is not None:
             carded = sum(1 for r in subtree if r.has_card) or 1
-            await self._memory_pool(user_id, request.query, name_keys, concepts, subtree, pool, ancestry,
-                                    with_content, use_cards, members, stats)
+            await self._memory_pool(user_id, request.query, concepts, subtree, pool, ancestry, with_content,
+                                    use_cards, members, stats)
         else:
             carded = max(int(state.counters.get("carded", 0)), 1)
-            await self._wide_pool(user_id, request, name_keys, concepts, members, pool, with_content, use_cards,
-                                  stats)
+            await self._wide_pool(user_id, request, concepts, members, post, pool, with_content, use_cards, stats)
         await self._records(user_id, pool)
         self._fence(pool)
-        scope = await self._scope(pool, request, kinds, folder, ancestry)
+        validity = self._validity_keys(concepts, pool)
+        scope = await self._scope(pool, request, kinds, folder, ancestry, validity)
         stats.band = size_band(carded)
 
         df, full = document_frequency(pool.hits)
         in_scope = [h.files() & scope.passing for h in pool.hits]
-        if migration:
+        unchecked = [c.word for c, h, s in zip(concepts, pool.hits, in_scope)
+                     if not s and h.unchecked and scope.filtered]
+        if names_only:
             absent: List[str] = []
             absent_in_scope: List[str] = []
         else:
             absent = [c.word for c, n in zip(concepts, df) if n == 0 and subtree is None]
+            # a scope's absence is stated only when it was read, never from a truncated page (P6 review M1)
             absent_in_scope = [c.word for c, n, s in zip(concepts, df, in_scope)
-                               if c.word not in absent and not s and (scope.filtered or subtree is not None)]
+                               if c.word not in absent and c.word not in unchecked and not s
+                               and (scope.filtered or subtree is not None)]
         blocked = set(absent) | set(absent_in_scope)
         stats.absent = len(blocked)
         others = [c for c in concepts if c.word not in blocked]
         df_of = {c.word: n for c, n in zip(concepts, df)}
-        allowance = Allowance() if migration else allowances(others, df_of, carded)
+        allowance = allowances(others, df_of, carded)
         stats.common = len(allowance.common)
         tested = [i for i, c in enumerate(concepts) if c.word not in blocked]
-        if migration:
-            matches = self._name_matches(request.query, concepts, pool, scope)
-        else:
-            matches = await self._matches(user_id, pool, [concepts[i] for i in tested],
-                                          [pool.hits[i] for i in tested], [in_scope[i] for i in tested],
-                                          [df[i] for i in tested], allowance, stats)
-        page_full = any(full[i] for i in tested) or pool.name_full
+        matches = await self._matches(user_id, pool, [concepts[i] for i in tested], [pool.hits[i] for i in tested],
+                                      [in_scope[i] for i in tested], [df[i] for i in tested],
+                                      [full[i] for i in tested], allowance, stats)
+        page_full = any(full[i] for i in tested)
         without: Optional[int] = None
         if blocked:
             without = len(matches) if others else None
@@ -391,7 +432,10 @@ class DriveSearchService:
 
         meaning = self._meaning(pool, scope, stats)
         today = self._clock().date()
-        tiered_ids, blocks, expired = self._tiers(matches, pool, scope, meaning, page_full, today)
+        tiered_ids, blocks, expired = self._tiers(matches, pool, scope, meaning, page_full, today,
+                                                  count_expired=request.date_from is None)
+        name_keys = tuple(dict.fromkeys(k for c in concepts for k in (*sorted(name_query_keys(c)),
+                                                                         *concept_trigrams(c))))
         related, related_small = self._related(name_keys, pool, scope, meaning, kinds, carded, tiered_ids,
                                                set(matches))
         shown_ids = [i for tier in _TIERS for i in tiered_ids.get(tier, [])[:_SHOWN[tier]]]
@@ -403,17 +447,22 @@ class DriveSearchService:
         stats.related = len(related)
 
         conjunction: Tuple[Tuple[str, int], ...] = ()
-        if not migration and not blocked and not matches and len(concepts) >= 2:
+        if not names_only and not blocked and not unchecked and not matches and len(concepts) >= 2:
             conjunction = tuple((c.word, len(s)) for c, s in zip(concepts, in_scope))
         keys_v = state.applied_versions.get(MIGRATION_GATE_KEY)
         not_described, not_describable, no_passages = await self._job_counts(user_id)
+        long_docs = sum(1 for i, r in pool.fulls.items()
+                        if i in scope.passing and r.chunk_count > PASSAGE_MAX_CHUNKS_PER_FILE)
         coverage = CoverageFacts(
-            rekeying=keys_v is not None and int(keys_v) != KEYS_VERSION, full_page=page_full,
+            rebuilding=rebuilding, rekeying=keys_v is not None and int(keys_v) != KEYS_VERSION, full_page=page_full,
             keys_cut=sum(1 for c in built if c.keys_cut), cut=q.cut, not_described=not_described,
-            not_describable=not_describable, no_passages=no_passages)
+            not_describable=not_describable, no_passages=no_passages + long_docs, unchecked=tuple(unchecked),
+            names_only=names_only)
+        position = request.query.casefold()
+        ordered = sorted(concepts, key=lambda c: (position.find(c.word) % (len(position) + 1), concepts.index(c)))
         tiered = TieredResult(
-            concepts=tuple(c.word for c in concepts), ignored=q.ignored,
-            common=tuple(c.word for c in concepts if c.word in allowance.common), migration=migration,
+            concepts=tuple(c.word for c in ordered), ignored=q.ignored,
+            common=tuple(c.word for c in concepts if c.word in allowance.common),
             coverage=coverage, blocks=tuple(blocks[t] for t in _TIERS if t in blocks),
             related_small=related_small, absent=tuple(absent), absent_in_scope=tuple(absent_in_scope),
             without=without, without_at_least=bool(blocked) and page_full, conjunction=conjunction,
@@ -423,31 +472,35 @@ class DriveSearchService:
 
     # -- streams --------------------------------------------------------------------------------
 
-    async def _wide_pool(self, user_id: str, request: DriveSearchRequest, name_keys: Sequence[str],
-                         concepts: Sequence[Concept], members: Sequence[Optional[str]], pool: _Pool,
-                         with_content: bool, use_cards: bool, stats: _Stats) -> None:
-        """The user-wide streams (§25.5.2), all in parallel: about, word and hint pages per concept, the name stream,
-        and the kNN pages. Kind, date and folder filters are post-filters (the about stream also reads its filtered
-        composite past a full page), so `df` is user-wide."""
-        single_kind = members[0] if len(members) == 1 else None
-        about = [self._about_hits(user_id, c, request, single_kind, stats) for c in concepts] if with_content else []
+    async def _wide_pool(self, user_id: str, request: DriveSearchRequest, concepts: Sequence[Concept],
+                         members: Sequence[Optional[str]], post: _PostFilters, pool: _Pool, with_content: bool,
+                         use_cards: bool, stats: _Stats) -> None:
+        """The user-wide streams (§25.5.2), all in parallel: about, word and hint pages per concept, the name stream
+        per concept, and the kNN pages. Kind, date and folder filters are post-filters, so `df` is user-wide; past a
+        full page the about stream reads its filtered composite and the name stream its kind prefilter (P6 review
+        M1). A concept with a full page no scoped read covered is `unchecked`: the scope's absence is never claimed
+        from it."""
+        about = [self._about_hits(user_id, c, request, post.single_kind, stats) for c in concepts] \
+            if with_content else []
         words = [self._word_hits(user_id, c, stats) for c in concepts] if with_content else []
         hints = [self._hint_hits(user_id, c, stats) for c in concepts] if with_content else []
         results = await asyncio.gather(
             asyncio.gather(*about), asyncio.gather(*words), asyncio.gather(*hints),
-            self._name_candidates(user_id, name_keys, NAME_FETCH, None, stats),
+            self._name_hits(user_id, concepts, post.single_kind, stats),
             self._knn(user_id, request.query, members, use_cards, content_admitted(), pool, stats))
-        about_pages, word_pages, hint_pages, (named, name_full), _ = results
+        about_pages, word_pages, hint_pages, (named, name_pages), _ = results
         stats.content = "wide" if with_content else "off"
-        for i, (recs, full) in enumerate(about_pages):
+        for i, (recs, full, scoped) in enumerate(about_pages):
             for rec in recs:
-                pool.add(rec)
-                pool.hits[i].about.add(rec.item_id)
+                if pool.add(rec):
+                    pool.hits[i].about.add(rec.item_id)
             pool.hits[i].full |= full
+            pool.hits[i].unchecked |= full and not (scoped and not post.family and not post.folder)
         for i, (chunks, full) in enumerate(word_pages):
             for cid in chunks:
                 pool.hits[i].words.setdefault(cid[0], set()).add(cid)
             pool.hits[i].full |= full
+            pool.hits[i].unchecked |= full
         for i, (docs, full) in enumerate(hint_pages):
             for doc in docs:
                 cid = (doc.item_id, doc.generation, doc.index)
@@ -455,14 +508,62 @@ class DriveSearchService:
                 pool.hint_checked.add(cid)
                 pool.hits[i].hints.setdefault(doc.item_id, set()).add(cid)
             pool.hits[i].full |= full
-        self._add_names(named, name_full, concepts, pool, stats)
+            pool.hits[i].unchecked |= full
+        self._add_names(named, concepts, pool, stats)
+        for i, (full, scoped) in enumerate(name_pages):
+            pool.hits[i].full |= full
+            pool.hits[i].unchecked |= full and not (scoped and not post.dates and not post.family and not post.folder)
 
-    def _add_names(self, named: Sequence[DriveIndexRecord], name_full: bool, concepts: Sequence[Concept],
-                   pool: _Pool, stats: _Stats) -> None:
+    async def _name_hits(self, user_id: str, concepts: Sequence[Concept], single_kind: Optional[str],
+                         stats: _Stats) -> Tuple[List[DriveIndexRecord], List[Tuple[bool, bool]]]:
+        """The name stream on name keys v2 (§25.5.2, RFC Δ17), per concept (P6 review M4): each concept's whole keys
+        in fetches of at most 30 (`fetch_batches`), so a word's hits never depend on the other words; past a full
+        page under a single kind, the kind-prefiltered page too. Then single-trigram queries (native and skeleton
+        trigrams, round-robin over the words, at most NAME_KEY_QUERIES): they find similar names, never cover.
+        Returns (records, per concept (a page was full, a full page was re-read under the kind and was not full))."""
+
+        async def concept_pages(concept: Concept) -> Tuple[List[DriveIndexRecord], bool, bool]:
+            whole = [*(k for k in concept.word_keys), *sorted(name_query_keys(concept) - set(concept.word_keys))]
+            out: List[DriveIndexRecord] = []
+            full = False
+            scoped = True
+            for keys in fetch_batches(whole):
+                page = await self._repo.find_by_name_keys(user_id, keys, NAME_FETCH, None)
+                stats.name_queries += 1
+                out.extend(page)
+                if len(page) >= NAME_FETCH:
+                    full = True
+                    if single_kind is None:
+                        scoped = False
+                        continue
+                    narrow = await self._repo.find_by_name_keys(user_id, keys, NAME_FETCH, single_kind)
+                    stats.name_queries += 1
+                    out.extend(narrow)
+                    scoped = scoped and len(narrow) < NAME_FETCH
+            return out, full, scoped
+
+        grams: List[str] = []
+        lists = [list(concept_trigrams(c)) for c in concepts if not c.is_number]
+        for i in range(max((len(g) for g in lists), default=0)):
+            for gram_list in lists:
+                if i < len(gram_list) and gram_list[i] not in grams and len(grams) < NAME_KEY_QUERIES:
+                    grams.append(gram_list[i])
+        pages, gram_pages = await asyncio.gather(
+            asyncio.gather(*(concept_pages(c) for c in concepts)),
+            asyncio.gather(*(self._repo.find_by_name_keys(user_id, [g], NAME_FETCH, None) for g in grams)))
+        stats.name_queries += len(grams)
+        merged: Dict[str, DriveIndexRecord] = {}
+        for recs in [p[0] for p in pages] + list(gram_pages):
+            for rec in recs:
+                merged.setdefault(rec.item_id, rec)
+        return list(merged.values()), [(full, scoped) for _, full, scoped in pages]
+
+    def _add_names(self, named: Sequence[DriveIndexRecord], concepts: Sequence[Concept], pool: _Pool,
+                   stats: _Stats) -> None:
         stats.name = len(named)
-        pool.name_full = name_full
         for rec in named:
-            pool.add(rec)
+            if not pool.add(rec):
+                continue
             pool.names[rec.item_id] = rec
             tokens = set(rec.name_tokens)
             for i, concept in enumerate(concepts):
@@ -470,14 +571,16 @@ class DriveSearchService:
                     pool.hits[i].names.add(rec.item_id)
 
     async def _about_hits(self, user_id: str, concept: Concept, request: DriveSearchRequest,
-                          single_kind: Optional[str], stats: _Stats) -> Tuple[List[Rec], bool]:
+                          single_kind: Optional[str], stats: _Stats) -> Tuple[List[Rec], bool, bool]:
         """One concept's about pages (§25.5.2), one per key batch of at most 30: newest first, ABOUT_FETCH a page,
         read on through the cursor up to GROUP_READ_MAX when full. Past a full page under a single-kind or date
         filter, the filtered composite is read too, so a filtered search still sees its files. A concept covered by
-        validity words also reads the soonest-expiring records (`find_expiring`, §25.5.4)."""
+        validity words also reads the soonest-expiring records (`find_expiring`, §25.5.4) from `drive_date_from`
+        (else today): for what expires the dates bound the expiry date (P6 review M2). Returns (records, a page was
+        full, every full page was re-read in scope and the re-read was not full)."""
         filtered = single_kind is not None or request.date_from is not None or request.date_to is not None
 
-        async def batch(keys: Tuple[str, ...]) -> Tuple[List[Rec], bool]:
+        async def batch(keys: Tuple[str, ...]) -> Tuple[List[Rec], bool, bool]:
             out: List[Rec] = []
             after: Optional[str] = None
             while True:
@@ -485,27 +588,29 @@ class DriveSearchService:
                 stats.about_queries += 1
                 out.extend(page)
                 if len(page) < ABOUT_FETCH:
-                    return out, False
+                    return out, False, True
                 if len(out) >= GROUP_READ_MAX:
                     break
                 after = page[-1].item_id
-            if filtered:
-                out.extend(await self._repo.find_by_about_keys(
-                    user_id, keys, ABOUT_FETCH, kind=single_kind, date_from=request.date_from,
-                    date_to=request.date_to))
-                stats.about_queries += 1
-            return out, True
+            if not filtered:
+                return out, True, False
+            narrow = await self._repo.find_by_about_keys(
+                user_id, keys, ABOUT_FETCH, kind=single_kind, date_from=request.date_from, date_to=request.date_to)
+            stats.about_queries += 1
+            return out + narrow, True, len(narrow) < ABOUT_FETCH
 
         pages = await asyncio.gather(*(batch(b) for b in fetch_batches(concept.about_keys)))
-        recs = [r for page, _ in pages for r in page]
-        full = any(f for _, f in pages)
+        recs = [r for page, _, _ in pages for r in page]
+        full = any(f for _, f, _ in pages)
+        scoped = all(s for _, _, s in pages)
         validity = [k for k in concept.about_keys if k.startswith(_VALIDITY)]
         if validity and any(set(r.about_keys) & set(validity) for r in recs):
-            expiring = await asyncio.gather(*(self._repo.find_expiring(user_id, b, self._clock().date(), ABOUT_FETCH)
+            start = request.date_from.date() if request.date_from is not None else self._clock().date()
+            expiring = await asyncio.gather(*(self._repo.find_expiring(user_id, b, start, ABOUT_FETCH)
                                               for b in fetch_batches(validity)))
             stats.about_queries += len(expiring)
             recs += [r for page in expiring for r in page]
-        return recs, full
+        return recs, full, scoped
 
     async def _word_hits(self, user_id: str, concept: Concept, stats: _Stats) -> Tuple[List[ChunkId], bool]:
         """One concept's word pages (§25.5.2): WORD_FETCH chunks ordered by item, continued past the last item while
@@ -564,7 +669,7 @@ class DriveSearchService:
             pool.hint_knn += [((h.item_id, h.generation, h.index), d) for h, d in page]
         stats.card, stats.chunk, stats.hint = len(pool.card_knn), len(pool.chunk_knn), len(pool.hint_knn)
 
-    async def _memory_pool(self, user_id: str, query: str, name_keys: Sequence[str], concepts: Sequence[Concept],
+    async def _memory_pool(self, user_id: str, query: str, concepts: Sequence[Concept],
                            subtree: Sequence[DriveIndexRecord], pool: _Pool, ancestry: _Ancestry, with_content: bool,
                            use_cards: bool, members: Sequence[Optional[str]], stats: _Stats) -> None:
         """A folder whose subtree fits FOLDER_INMEM_CARDS (§25.5.5): its records' about and name keys in memory, and
@@ -572,8 +677,9 @@ class DriveSearchService:
         word, hint and kNN streams run under the folder post-filter."""
         for rec in subtree:
             pool.add(rec)
+        name_keys = [k for c in concepts for k in (*name_query_keys(c), *concept_trigrams(c))]
         named = [r for r in subtree if name_match(r.name_tokens, name_keys) is not None]
-        self._add_names(named, False, concepts, pool, stats)
+        self._add_names(named, concepts, pool, stats)
         if with_content:
             for rec in subtree:
                 held = set(rec.about_keys)
@@ -651,24 +757,6 @@ class DriveSearchService:
         pool.hint_knn = [((h.item_id, h.generation, h.index), d) for page in hints for h, d in page]
         stats.chunk, stats.hint = len(pool.chunk_knn), len(pool.hint_knn)
 
-    async def _name_candidates(self, user_id: str, keys: Sequence[str], limit: int, kind: Optional[str],
-                               stats: _Stats) -> Tuple[List[DriveIndexRecord], bool]:
-        """The name stream's pool (§10.1 step 3a, RFC Δ17): one query per whole-token key and one per
-        trigram key, each in query order and at most NAME_KEY_QUERIES of each kind, plus one any-key query
-        for the remaining keys (at most NAME_QUERY_KEYS_MAX), all in parallel. A record sharing a query key
-        held by at most `limit` records is always in the pool. Returns (records, any page full)."""
-        whole = [k for k in keys if not k.startswith("t:")][:NAME_KEY_QUERIES]
-        grams = [k for k in keys if k.startswith("t:")][:NAME_KEY_QUERIES]
-        rest = [k for k in keys if k not in whole and k not in grams]
-        batches = [[k] for k in whole + grams] + ([rest] if rest else [])
-        pages = await asyncio.gather(*(self._repo.find_by_name_keys(user_id, b, limit, kind) for b in batches))
-        stats.name_queries += len(batches)
-        merged: Dict[str, DriveIndexRecord] = {}
-        for page in pages:
-            for rec in page:
-                merged.setdefault(rec.item_id, rec)
-        return list(merged.values()), any(len(page) >= limit for page in pages)
-
     # -- records, fence, visibility -------------------------------------------------------------
 
     async def _records(self, user_id: str, pool: _Pool) -> None:
@@ -682,8 +770,7 @@ class DriveSearchService:
         wanted = sorted({i for i in item_ids if i not in pool.fulls})
         if wanted:
             for rec in (await self._repo.get_records(user_id, wanted)).values():
-                pool.fulls[rec.item_id] = rec
-                pool.leans[rec.item_id] = rec
+                pool.add(rec)
 
     def _fence(self, pool: _Pool) -> None:
         """§7.4 on every stream's chunks and hint documents: only the readable generation counts."""
@@ -698,9 +785,17 @@ class DriveSearchService:
         pool.chunk_knn = [(cid, d) for cid, d in pool.chunk_knn if _fenced(pool.leans.get(cid[0]), cid[1])]
         pool.hint_knn = [(cid, d) for cid, d in pool.hint_knn if _fenced(pool.leans.get(cid[0]), cid[1])]
 
+    @staticmethod
+    def _validity_keys(concepts: Sequence[Concept], pool: _Pool) -> FrozenSet[str]:
+        """The validity keys (`lv:`) of the concepts some about hit holds them for: a query for what expires."""
+        held = {k for i in set().union(*(h.about for h in pool.hits)) if i in pool.leans
+                for k in pool.leans[i].about_keys if k.startswith(_VALIDITY)} if pool.hits else set()
+        return frozenset(k for c in concepts for k in c.about_keys if k in held)
+
     async def _scope(self, pool: _Pool, request: DriveSearchRequest, kinds: FrozenSet[str],
-                     folder: Optional[_Folder], ancestry: _Ancestry) -> _Scope:
-        """Read-time visibility (§5.2, §17.1 d) of every record named, then the kind, date and folder filters."""
+                     folder: Optional[_Folder], ancestry: _Ancestry, validity: FrozenSet[str]) -> _Scope:
+        """Read-time visibility (§5.2, §17.1 d) of every record named, then the kind, date and folder filters. A
+        record holding a validity key of the query is dated by its `valid_until` (P6 review M2)."""
         scope = _Scope(filtered=bool(kinds or request.date_from or request.date_to or folder))
         await ancestry.load(pool.leans.values())
         for item, rec in pool.leans.items():
@@ -711,7 +806,8 @@ class DriveSearchService:
             scope.paths[item] = path
             if kinds and rec.kind not in kinds:
                 continue
-            if not in_date_range(rec, request):
+            dated = (_ValidUntil(rec.valid_until) if validity and set(rec.about_keys) & validity else rec)
+            if not in_date_range(dated, request):
                 continue
             if folder is not None and folder.record.item_id not in ancestors:
                 continue
@@ -720,24 +816,15 @@ class DriveSearchService:
 
     # -- coverage and tiers ---------------------------------------------------------------------
 
-    @staticmethod
-    def _name_matches(query: str, concepts: Sequence[Concept], pool: _Pool, scope: _Scope) -> Dict[str, FileMatch]:
-        """The migration guard (D30): an index not rebuilt under v2 holds v1 name keys only, so a file is About when its
-        name covers every query token the v1 way (RFC Δ17's cover); meaning and similar names fill Related."""
-        groups = query_token_groups(query)
-        covers = tuple(Cover(c.word, SourceClass.VERIFIED_RECORD, WHERE_NAME, ()) for c in concepts)
-        return {item: FileMatch(item, MatchTier.ABOUT, covers) for item, rec in pool.names.items()
-                if item in scope.passing and covers_query(rec.name_tokens, groups)}
-
     async def _matches(self, user_id: str, pool: _Pool, concepts: Sequence[Concept], hits: Sequence[ConceptHits],
-                       in_scope: Sequence[Set[str]], df: Sequence[int], allowance: Allowance,
+                       in_scope: Sequence[Set[str]], df: Sequence[int], full: Sequence[bool], allowance: Allowance,
                        stats: _Stats) -> Dict[str, FileMatch]:
         """Test each candidate's coverage (§25.5.2, §25.5.4): its about and name keys and the keys of the chunks and
         hint documents the streams named for it, read by id; chunk texts and hint items only where two or more words
         are covered in one chunk (the minimum window)."""
         if not concepts:
             return {}
-        candidates = sorted(candidate_ids(concepts, in_scope, df, allowance))
+        candidates = sorted(candidate_ids(concepts, in_scope, df, allowance, full))
         stats.candidates_tested += len(candidates)
         chunk_ids = {item: set().union(*(h.words.get(item, set()) | h.hints.get(item, set()) for h in hits))
                      for item in candidates}
@@ -821,7 +908,8 @@ class DriveSearchService:
                               no_chunk_score=excluded)
 
     def _tiers(self, matches: Mapping[str, FileMatch], pool: _Pool, scope: _Scope, meaning: Mapping[str, float],
-               page_full: bool, today: date) -> Tuple[Dict[MatchTier, List[str]], Dict[MatchTier, TierBlock], int]:
+               page_full: bool, today: date, *, count_expired: bool = True
+               ) -> Tuple[Dict[MatchTier, List[str]], Dict[MatchTier, TierBlock], int]:
         """Each match in its tier, ordered (validity matches soonest first, expired ones counted, §25.5.4), with its
         totals; the members past the shown count become group members."""
         by_tier: Dict[MatchTier, List[str]] = {}
@@ -831,7 +919,7 @@ class DriveSearchService:
         for item, match in matches.items():
             rec = pool.leans[item]
             if any(c.keys and all(k.startswith(_VALIDITY) for k in c.keys) for c in match.covers):
-                if rec.valid_until is not None and rec.valid_until < start:
+                if count_expired and rec.valid_until is not None and rec.valid_until < start:
                     expired += 1
                     continue
                 if rec.valid_until is not None:
@@ -952,7 +1040,7 @@ class DriveSearchService:
         jobs = (EnrichJob.PROFILE.value, EnrichJob.PASSAGES.value)
         profiled = no_passage.get(EnrichJob.PROFILE.value, {})
         return (max(total(j, _NOT_DESCRIBED_STATES) for j in jobs), max(total(j, (JobState.HELD.value,)) for j in jobs),
-                sum(n for s, n in profiled.items() if s != JobState.NONE.value))
+                profiled.get(JobState.CURRENT.value, 0))
 
     # ------------------------------------------------------------------------------------------
     # Filter-only listings (§10.1, unchanged)
@@ -1073,9 +1161,11 @@ class DriveSearchService:
         page_full = not descent_complete
         guessed = False   # one suffix match from a full name page: another may sit past it (§10.1)
         if not matches:
-            keys = [k for k in query_name_keys(segments[-1]) if k.startswith("w:")]
-            named, page_full_by_name = (await self._name_candidates(user_id, keys, NAME_FETCH, "folder", _Stats())
-                                        if keys else ([], False))
+            # name keys v2 without trigrams: words, skeletons and digits ("2026" is n:/y:, P6 review m1)
+            keys = [k for k in query_name_keys_v2(segments[-1]) if not k.startswith("t:")]
+            pages = [await self._repo.find_by_name_keys(user_id, b, NAME_FETCH, "folder") for b in fetch_batches(keys)]
+            named = list({r.item_id: r for page in pages for r in page}.values())
+            page_full_by_name = any(len(page) >= NAME_FETCH for page in pages)
             page_full = page_full or page_full_by_name
             candidates = await self._as_folders([r for r in named if r.is_folder], ancestry)
             exact = [f for f in candidates if path_match(f.path, wanted) == "exact"]

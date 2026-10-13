@@ -2633,9 +2633,15 @@ duplicate collapse, the nonce wrapper and the refusal of an empty request.
    - `drive_keys.GENERIC_WORDS`: "documents", "files", "all", "everything", "всё", "все", "усі", "файли", "документы",
      "todo", "todos", ….
 
+   - `drive_keys.TIME_WORDS` (P6 review M2): time-expression words in en, es, uk and ru with their case forms ("this
+     year", "в этом году", "цього року", "este año", "last year", "за последний месяц" …; the demonstratives "этом",
+     "цього" … are function words). The manifest sends a time span to the date fields (D25 wording, §25.5.7); a span
+     left in the words is removed, named in the ignored list, and never becomes a concept that D29 would block.
+
    A place-like word is not on either list ("como"), and neither is "list". A 1-letter word is ignored; a 2-letter
-   one is a concept (§25.2.4). Time-span words are not handled here: the manifest sends a time span to the date
-   fields (D25 wording, §25.5.7).
+   one is a concept (§25.2.4). A query left with no concept is a filter-only request; when it held generic words and
+   no filter is set ("todo", "files"), those words are searched as name words by the name stream alone, never by
+   content and never with a D29 line (P6 review m6).
 5. **Word concepts:** every remaining word. **Emitted keys per concept, uncut** (P1 review B1: coverage is tested on
    the whole list, so a word's coverage never depends on its neighbours):
    - word keys: `w:` native forms and `x:` skeletons;
@@ -2664,7 +2670,8 @@ The delegate's `query` sentence is not read (D19).
   `label_words` for `medical_record` ("medical record", "historia clínica", "медична картка", "медицинская запись",
   "медицинские записи", …): `tw:холестерин` covers *холестерину* (form (b) of both is `холестерин`); `lw:` covers
   *медицинские* and *записи* → **Labelled** ("topic", "type label"). A passage with a grounded keyword
-  "холестерин" adds **By translation** with the evidence window. If no file anywhere holds *записи* (`df = 0`), the
+  "холестерин" covers *холестерину* more strongly (translation); the file stays **Labelled** (its weakest needed
+  class) and its card shows the passage keyword with the evidence window (P6 review m3). If no file anywhere holds *записи* (`df = 0`), the
   exact and automatic tiers are empty and the result says: "No file holds 'записи'. Without 'записи': 3 files match the
   other words." (D29), and Smart may search again with the subject alone.
 - **"Paris 2023"** → *paris* and *2023* (`n:2023`, `v:2023`, `y:2023`, `pn:2023`): a photo in Paris taken in 2023 holds
@@ -2678,15 +2685,20 @@ The delegate's `query` sentence is not read (D19).
 #### 25.5.2 Candidate sources (in parallel; Firestore only; lean projections)
 - **About stream:** one `find_by_about_keys` per concept (`ABOUT_FETCH` 500, newest first; a date filter in the query;
   a single-kind filter by the kind composite; a family post-filtered, §25.5.5).
-- **Name stream:** unchanged (§10.1 step 3a, RFC Δ17), on the new name keys.
+- **Name stream:** on name keys v2, **per concept** (P6 review M4): each concept's whole keys (`w:`, `x:`, `n:`, `y:`)
+  in fetches of at most 30 (`fetch_batches`), so a word's hits never depend on the other words; past a full page
+  under a single kind, the kind-prefiltered page too (P6 review M1). Then single-trigram queries (the word's native
+  and skeleton trigrams, round-robin over the words, at most `NAME_KEY_QUERIES`): they find similar names, never
+  cover.
 - **Word stream:** per concept, `find_chunks_by_word_keys` (`WORD_FETCH` 300 chunks, ordered by item), grouped by file;
   a full page with fewer than `WORD_FILES_MAX` (60) files continues after its last item until 60 files or exhaustion.
 - **Hint stream:** per concept, `find_hints_by_keys` over hint documents (`HINT_FETCH` 300), grouped by file.
 - **Document frequency** (`df`, per concept): the number of distinct files in the union of its about, word and hint
   hits and its whole-token name-key hits (trigrams never count), **user-wide** (before kind, date and folder
   filters), with a `lower_bound` flag when any of those pages was full; capped at the largest page.
-- **Candidates:** the files of the smallest page of the rarest concept; with three or more concepts, the union of the
-  two rarest concepts' smallest pages (so a file that may miss the rarest is still tested); plus every name-stream hit.
+- **Candidates:** the in-scope hits of the rarest **required** concept (neither common nor the low-weight one: every
+  match covers it), all its streams' hits including its whole-token name hits; when its page was full, the next
+  required concept's in-scope hits join (P6 review m2; the built form of this line, equivalent on complete pages).
   Each candidate's coverage is tested on its `about_keys`, name keys and the `word_keys` of its matching chunks (read by
   id, `get_chunk_keys`) and its hint documents' `hint_keys`.
 - **Meaning:** one query embedding; card kNN (`CARD_FETCH` 50), chunk kNN (`CHUNK_FETCH` 300), hint kNN (`HINT_FETCH`
@@ -2733,17 +2745,24 @@ Each file is shown once, in its best tier. One test per combination of classes i
 - **Absent (`df = 0` user-wide)** — never dropped, never forgiven: every tier but Related is empty. The result names it,
   "No file holds '<word>'", and (D29) adds one count line, no cards: "Without '<word>': N files match the other words"
   (N from the same streams; "at least N" when a page was full). Under a filter or folder the wording is "no file in
-  this scope holds" when the word exists outside it.
+  this scope holds" when the word exists outside it — **only when the scope was read**: a concept whose page was full
+  and no scoped read covered it (a folder, a kind family, a date range on the name, word or hint streams) is never
+  stated absent; the coverage line names it ("could not be checked in the whole scope", P6 review M1).
 - **Low weight** — with three or more concepts, a file may miss the single lowest-weight concept with `df > 0`.
 - **Common** — a concept held by more than `COMMON_SHARE` (30 %) of the carded files may also be missed (any number of
   concepts), and is named in the searched line ("ignored as common: <word>") and on the card ("not matched (common)").
   Absent and rare subject words still block, so honest negatives keep their strict-AND behaviour; the share is
-  measured on the negative set before it is fixed (§25.7).
+  measured on the negative set before it is fixed (§25.7). A number (an amount, an id, a year) is never common (P6
+  review m7).
 - Within a concept keys are OR; across concepts AND. Keys never filter.
 
 **Validity words.** A concept covered by `lv:` keys runs its about query on the `valid_until` composite from today
 (`find_expiring`, soonest first; expired files counted on one line). No query-time mapping: the trigger is which key
-family matched.
+family matched. **For such a query the date fields bound the expiry date** (P6 review M2): a record holding a
+validity key of the query is dated by its `valid_until`, `find_expiring` reads from `drive_date_from`, and with
+`drive_date_from` set nothing is counted as expired (the span is the user's). "что истекает в этом году" works both
+ways: the span in the date fields, or left in the words (removed as time words, named in the ignored list). The
+manifest's date texts say so in one clause (§25.13.6).
 
 **Labels never become a filter on their own** (the round-2 study: mapping a specific request to its broad label turned
 honest negatives into junk). No judge; a judge stays D22's trigger.
@@ -2766,7 +2785,8 @@ coverage line, the tiers in order (About, Mentioned in, By translation, Labelled
   cursor up to `GROUP_READ_MAX` 1 000) and up to `GROUP_LINES` (6) group lines per tier (top folder × kind × date
   range) in one wrapper.
 - **Cards:** at most `CARD_RENDER_MAX` (700) characters of card text; About and Labelled cards carry the match source
-  and printed form; Mentioned and By-translation cards carry a passage cut `WINDOW_PAD` (300) characters around the
+  and printed form; Mentioned, By-translation and Labelled cards whose match came from a chunk or a grounded keyword
+  (P6 review m3) carry a passage cut `WINDOW_PAD` (300) characters around the
   matched words or the evidence span, ≤ `WINDOW_MAX` (900) per file, all passages sharing `WINDOW_CHARS_TOTAL` (5 000).
 - **Ceiling:** 10 × (700 + 150) + 6 × (700 + 150) + 6 × (700 + 150) + 8 × (700 + 150) + 5 000 (passages) + 3 × 300 +
   4 × 6 × 120 (groups) + 1 500 (header lines) ≈ 38 000 characters in the worst case; the median target stays
@@ -2776,7 +2796,8 @@ coverage line, the tiers in order (About, Mentioned in, By translation, Labelled
   "could not be described"); text files without doc2query by policy, **only when a Mentioned/By-translation tier is
   empty** (EPUB, sheets, JSON, chunks past 100); documents not read yet or that could not be read (`not_read_yet`,
   `unread`); `building`, `reading`, `refreshing`; a keys pass in progress; a full page; keys cut on a shown file;
-  concepts cut past `MAX_CONCEPTS`. **Never** folders, photos, audio, video or other kinds that hold no text: they are
+  concepts cut past `MAX_CONCEPTS`; the index being rebuilt (a state not rebuilt under v2, §25.8); words whose full
+  page no scoped read covered. **Never** folders, photos, audio, video or other kinds that hold no text: they are
   not "not described". Counts come from `count_by_job_state` (refreshed by every tick that completes).
 - **Footers:** after non-empty exact tiers, "No other file is about or mentions all of these words."; when no file
   holds all concepts but each exists, "No file matches all of: <w1> (n1 files), <w2> (n2 files)."; when a concept is
@@ -2890,8 +2911,10 @@ recorded only if they meet these numbers):
 
 ### 25.8 Rollout, rebuild and rollback (runbooks)
 **The gate.** A sync state whose `applied_versions` lacks the key `keys` is **awaiting migration**: v2 runs no upgrade
-pass and no enrichment for it; search answers from what v1 stored and the coverage line says the index is being
-migrated; new or edited files are indexed under v2 rules. A fresh v2 onboarding stamps every key (as today), so new
+pass and no enrichment for it; new or edited files are indexed under v2 rules. Search has **no migration mode** (D30,
+P6 review M3): it never reads a record keyed by another keyer (`keys_version` not `KEYS_VERSION`), searches the v2
+records written so far, and the coverage line says "the index is being rebuilt for a new search format, so files not
+rebuilt yet are not searched". A fresh v2 onboarding stamps every key (as today), so new
 users are not caught. `DRIVE_UPGRADE_PASS` (`os.getenv`, default on) stops every upgrade pass in an emergency.
 
 **Rollout**
@@ -3211,7 +3234,8 @@ No other file is about or mentions all of these words.
 ```
 A blocked concept: `No file holds "vaccination". Without "vaccination": 3 files match the other words.` An empty
 conjunction: `No file matches all of: "barcelona" (41 files), "trip" (2 files).` Migration: `The index is being
-migrated to a new search format: only names, meaning and filters were searched.`
+migrated to a new search format: only names, meaning and filters were searched.` (superseded by D30: never rendered;
+a state not rebuilt under v2 shows the coverage part "the index is being rebuilt", §25.8).
 
 Manifest (D25), `drive_query`: "search_files_in_drive: REQUIRED unless the request is filter-only; the `query` field is
 not read for search. The subject in the user's words (any language): the words of a file or folder name, a place,
@@ -3220,9 +3244,10 @@ inside (a phrase, a number, an amount, an id). For 'everything about X' put X. A
 ('photos', 'PDF', 'spreadsheet'); a time span ('last year', '2023–2024') goes in drive_date_from / drive_date_to, not
 in the words. Leave EMPTY only for filter-only requests." `drive_date_from`: "search_files_in_drive: optional earliest
 date, YYYY-MM-DD, inclusive: a photo's taken date, otherwise the date written in the document when the index found one,
-otherwise the file's date. Use it for a time span the user gives." `drive_date_to`: "search_files_in_drive: optional
-latest date, YYYY-MM-DD, inclusive (the whole day counts): a photo's taken date, otherwise the date written in the
-document when the index found one, otherwise the file's date. Use it for a time span the user gives." `drive_kind`:
+otherwise the file's date. Use it for a time span the user gives. For what expires, it bounds the expiry
+date." `drive_date_to`: "search_files_in_drive: optional latest date, YYYY-MM-DD, inclusive (the whole day counts): a
+photo's taken date, otherwise the date written in the document when the index found one, otherwise the file's date. Use
+it for a time span the user gives. For what expires, it bounds the expiry date." `drive_kind`:
 the v1 text with "document (docx, doc, odt, rtf, pdf, markdown, text)".
 
 Only these strings are frozen (`drive_search_texts`): the example's lines, the D29, footer and migration lines, the

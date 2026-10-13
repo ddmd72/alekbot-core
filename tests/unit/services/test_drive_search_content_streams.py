@@ -8,7 +8,7 @@ import pytest
 from src.domain import drive_index_policy as policy
 from src.domain.drive_content_terms import content_terms
 from src.domain.drive_index import DriveChunk, RecordState
-from src.domain.drive_search import MATCHED_CONTENT, render_results
+from src.domain.drive_search import render_results
 
 from .test_drive_search_service import SpyRepo, World
 
@@ -99,7 +99,7 @@ async def test_content_streams_do_not_run_while_nothing_is_admitted(monkeypatch)
     monkeypatch.setattr(policy, "TRIAGED_KINDS", frozenset())   # since the flip images are triaged (§24.1)
     result = await w.search("INV-2024/0012")
     assert w.repo.chunk_limits == [] and w.repo.term_calls == [] and w.repo.window_calls == []
-    assert not result.envelope.content_search and all(c.window == "" for c in result.cards)
+    assert not result.envelope.content_search and all(c.passage == "" for c in result.cards)
 
 
 # --- the read fence (§7.4, §17.4) ----------------------------------------------------------------------------
@@ -117,7 +117,7 @@ async def test_a_demoted_or_deleting_record_shows_no_content(monkeypatch):
     result = await w.search("secret clause")
     text = render_results(result)
     assert "DEMOTED TEXT" not in text and "DELETING TEXT" not in text
-    assert all(c.matched != MATCHED_CONTENT for c in result.cards)
+    assert all(c.passage == "" for c in result.cards)   # v2 field (P6 review m12): no content shown
 
 
 # --- pooling before RRF (§17.6) and the starving document ----------------------------------------------------

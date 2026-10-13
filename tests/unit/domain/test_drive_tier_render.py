@@ -9,7 +9,6 @@ from src.domain.drive_search import (
     DATE_FILE, DATE_TAKEN, DATE_WRITTEN, REFERENCE_REMINDER, STATUS_OK, DriveSearchCard, DriveSearchEnvelope,
     DriveSearchRequest, DriveSearchResult, render_results,
 )
-from src.domain.drive_search_texts import FOOTER_EXACT, MIGRATION_LINE
 from src.domain.drive_tier_render import group_lines
 from src.domain.drive_tier_result import CoverageFacts, GroupMember, TierBlock, TieredResult
 
@@ -124,12 +123,6 @@ def test_empty_conjunction_footer():
     tiered = TieredResult(concepts=("barcelona", "trip"), conjunction=(("barcelona", 41), ("trip", 2)))
     assert render_results(replace(example(), cards=(), tiered=tiered)).endswith(
         'No file matches all of: "barcelona" (41 files), "trip" (2 files).')
-
-
-def test_migration_line_replaces_the_searched_line_and_drops_the_exact_footer():
-    r = example()
-    text = render_results(replace(r, tiered=replace(r.tiered, migration=True)))
-    assert MIGRATION_LINE in text and "Searched names" not in text and FOOTER_EXACT not in text
 
 
 def test_coverage_complete_and_never_says_final():

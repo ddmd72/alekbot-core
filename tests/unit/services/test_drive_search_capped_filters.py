@@ -58,7 +58,7 @@ async def test_no_hedge_when_the_pages_were_not_full():
     await w.settle()
     result = await w.search("invoice", **MARCH)
     text = render_results(result)
-    assert result.cards == () and not result.capped
+    assert result.cards == ()   # v1's `capped` field is gone (P6 review m12); the text below is the hedge
     assert "No matching files or folders." in text and "more files may match" not in text
 
 

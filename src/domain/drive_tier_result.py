@@ -56,7 +56,10 @@ class CoverageFacts:
     full_page: bool = False         # a candidate page was full: more files may match
     keys_cut: int = 0               # shown files whose keys a cap cut
     cut: Tuple[str, ...] = ()       # words past MAX_CONCEPTS
-    names_only: bool = False        # the policy admits no content: only names and metadata were searched
+    names_only: bool = False        # only names and metadata were searched (no content admitted, or only generic
+                                    # words given)
+    rebuilding: bool = False        # the state is not rebuilt under v2 (D30): files not rebuilt are not searched
+    unchecked: Tuple[str, ...] = () # words whose full page under a filter no scoped read covered (P6 review M1)
 
 
 @dataclass(frozen=True)
@@ -68,7 +71,6 @@ class TieredResult:
     concepts: Tuple[str, ...]
     ignored: Tuple[str, ...] = ()
     common: Tuple[str, ...] = ()
-    migration: bool = False
     coverage: CoverageFacts = CoverageFacts()
     blocks: Tuple[TierBlock, ...] = ()
     related_small: bool = False
