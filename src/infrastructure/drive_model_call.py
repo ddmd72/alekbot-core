@@ -22,7 +22,8 @@ from dataclasses import dataclass
 
 from ..domain.drive_extraction import DriveModelUnavailable
 from ..domain.exceptions import (
-    BothProvidersUnavailableError, LLMClientError, LLMError, LLMTimeoutError, TranscriptLockedError,
+    BothProvidersUnavailableError, LLMClientError, LLMError, LLMServerError, LLMTimeoutError, LLMUnavailableError,
+    TranscriptLockedError,
 )
 from ..ports.prompt_builder_port import PromptBuilderPort
 from ..utils.logger import logger
@@ -69,7 +70,7 @@ def classify_model_error(exc: BaseException, agent_type: str) -> Exception:
         return DriveInputTooLarge("refused (http=413)")
     if _timed_out(exc):
         logger.warning(f"[{agent_type}] model call timed out ({type(exc).__name__}): {str(exc)[:300]}")
-        return DriveModelTimedOut(f"{type(exc).__name__}: {str(exc)[:200]}")
+        return DriveModelTimedOut(f"{type(exc).__name__}: {str(exc)[:200]}", charges_file=True)
     if isinstance(exc, LLMClientError) and exc.http_status in _REFUSED_STATUSES:
         logger.warning(f"[{agent_type}] provider refused the input (http={exc.http_status}): {str(exc)[:300]}")
         return DriveInputRefused(f"refused (http={exc.http_status})")
@@ -83,7 +84,17 @@ def classify_model_error(exc: BaseException, agent_type: str) -> Exception:
         logger.warning(f"[{agent_type}] model unavailable ({type(exc).__name__}): {str(exc)[:300]}")
     else:
         logger.error(f"[{agent_type}] unexpected failure ({type(exc).__name__}): {exc}", exc_info=exc)
-    return DriveModelUnavailable(f"{type(exc).__name__}: {str(exc)[:200]}")
+    return DriveModelUnavailable(f"{type(exc).__name__}: {str(exc)[:200]}", charges_file=_charges_file(exc))
+
+
+def _charges_file(exc: BaseException) -> bool:
+    """Whether an outage may be the file's (final review F1-1, arbiter R3-x2-a): a provider 5xx, a timeout or an
+    unexpected (non-LLM) error. A rate limit, an account-level 4xx, a network failure or an open breaker is the
+    model's for everyone and never charges a file."""
+    cause = _cause(exc)
+    if isinstance(cause, (LLMServerError, LLMUnavailableError, LLMTimeoutError, asyncio.TimeoutError)):
+        return True
+    return not isinstance(cause, LLMError)
 
 
 @dataclass
@@ -103,11 +114,17 @@ def with_usage(exc: Exception, counter: CallCounter, cost: float) -> Exception:
 def _timed_out(exc: BaseException) -> bool:
     """A timeout, also when the agent's provider strategy reports it wrapped (no fallback configured: the primary's
     timeout arrives as BothProvidersUnavailableError, or TranscriptLockedError mid-transcript)."""
+    return isinstance(_cause(exc), (LLMTimeoutError, asyncio.TimeoutError))
+
+
+def _cause(exc: BaseException) -> BaseException:
+    """The provider's own error under the provider strategy's wrappers (BothProvidersUnavailableError's primary cause,
+    TranscriptLockedError's cause)."""
     if isinstance(exc, BothProvidersUnavailableError):
-        exc = exc.primary_cause
-    elif isinstance(exc, TranscriptLockedError):
-        exc = exc.cause
-    return isinstance(exc, (LLMTimeoutError, asyncio.TimeoutError))
+        return exc.primary_cause
+    if isinstance(exc, TranscriptLockedError):
+        return exc.cause
+    return exc
 
 
 async def build_drive_prompt(prompt_builder: PromptBuilderPort, agent_type: str) -> str:
