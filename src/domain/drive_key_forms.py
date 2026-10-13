@@ -99,8 +99,8 @@ _CYR_LETTER = re.compile("[а-яёіїєґА-ЯЁІЇЄҐ]")
 
 @lru_cache(maxsize=1)
 def _word_run() -> re.Pattern[str]:
-    """A run of word characters: letters and digits (not `_`, not the apostrophe look-alikes `drive_name_keys`
-    treats as separators), combining marks, and the soft hyphen (dropped later). Everything else separates: Unicode
+    """A run of word characters: letters and digits (not `_`, not the apostrophe look-alikes of
+    `drive_name_keys._QUOTE_LIKE`), combining marks, and the soft hyphen (dropped later). Everything else separates: Unicode
     punctuation, symbols, separators and controls."""
     marks = "".join(re.escape(chr(c)) for c in range(0x300, 0x10000) if unicodedata.category(chr(c))[0] == "M")
     quotes = "".join(re.escape(q) for q in sorted(_QUOTE_LIKE))
@@ -144,7 +144,7 @@ def _normalise(raw: str) -> str:
 
 
 def scan(text: str) -> Tuple[Token, ...]:
-    """Tokens split as `drive_name_keys` splits on separators and digit boundaries; a case boundary does not split
+    """Tokens split on separators (Unicode punctuation, symbols) and digit boundaries; a case boundary does not split
     (the whole word is the token, its parts are `parts`); a Ukrainian apostrophe stays in the word as `APOSTROPHE`."""
     tokens: List[Token] = []
     for raw, idx in _runs(text):
