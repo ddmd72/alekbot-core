@@ -481,19 +481,22 @@ def _common_drive(w, parent=None):
     kw = {"parent": parent} if parent else {}
     for i in range(30):
         w.file(f"report-{i}.pdf", chunks=[f"annual figures for 2024, part {i}"], **kw)
-    return w.file("boiler.pdf", chunks=["boiler service in 2024, invoice attached"], **kw)
+    return w.file("boiler.pdf", chunks=["boiler service in 2024, invoice and figures attached"], **kw)
 
 
 async def test_a_word_on_more_than_common_share_of_the_files_is_ignored_as_common_and_named():
     """Replaces test_a_year_on_many_documents_does_not_rank_them, test_a_year_on_30_files_is_dropped and the probe
     file's tests (term selectivity is gone, §25.9): a word held by more than COMMON_SHARE of the carded files may be
-    missed and is named; the rarer word still decides (strict AND)."""
+    missed and is named; the rarer word still decides (strict AND). A number is never common (P6 review m7, arbiter
+    ruling: "receipts 2024" must not lose its year), so on the same drive "2024" is required, never ignored."""
     w = world()
     target = _common_drive(w)
-    result = await w.search("boiler 2024")
+    result = await w.search("boiler figures")
     assert tiers(result) == [target]
     assert tier_of(result, target) == "mentioned"
-    assert '; ignored as common: "2024".' in render_results(result)
+    assert '; ignored as common: "figures".' in render_results(result)
+    year = await w.search("boiler 2024")
+    assert tiers(year) == [target] and "ignored as common" not in render_results(year)
     alone = await w.search("2024 lighthouse")
     assert tiers(alone) == [] and 'No file holds "lighthouse".' in render_results(alone)
 

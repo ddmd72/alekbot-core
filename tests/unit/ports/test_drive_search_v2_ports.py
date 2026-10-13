@@ -64,13 +64,16 @@ _V2_METHODS = {
     "delete_hints_except": (["user_id", "item_id", "keep_generation"], {}),
     "delete_user_hints": (["user_id", "limit"], {}),
     "hints_page": (["user_id", "after", "limit"], {}),
-    "enrich_queue": (["user_id", "limit"], {}),
+    # P5 review MINOR 6: one agent type's own queue while the other is backed off (`job`).
+    "enrich_queue": (["user_id", "limit", "job"], {"job": None}),
     "enrich_wakeups": (["user_id", "now", "limit"], {}),
     "count_by_job_state": (["user_id", "kinds"], {}),
     "keys_pending_page": (["user_id", "after", "limit"], {}),
     "get_records_lean": (["user_id", "item_ids"], {}),
     "get_model_usage": (["user_id", "month"], {}),
-    "add_model_usage": (["user_id", "month", "day", "cls", "usd", "fallback_usd", "calls"], {}),
+    # P5 review M1: the initial build's covered share is recorded apart from the month's cap counter.
+    "add_model_usage": (["user_id", "month", "day", "cls", "usd", "fallback_usd", "calls", "covered_usd"],
+                        {"covered_usd": 0.0}),
     "get_initial_build": (["user_id"], {}),
     "spend_initial_build": (["user_id", "usd", "now"], {}),
     "close_initial_build": (["user_id", "now"], {}),
@@ -116,7 +119,9 @@ _PARAM_TYPES = {   # parameter types the parts rely on (review MINOR 15)
     "hints_page": {"after": typing.Optional[ChunkId]},
     "enrich_wakeups": {"now": datetime},
     "count_by_job_state": {"kinds": typing.AbstractSet[str]},
-    "add_model_usage": {"month": str, "day": str, "cls": str, "usd": float, "fallback_usd": float, "calls": int},
+    "enrich_queue": {"job": typing.Optional[str]},
+    "add_model_usage": {"month": str, "day": str, "cls": str, "usd": float, "fallback_usd": float, "calls": int,
+                        "covered_usd": float},
     "spend_initial_build": {"usd": float, "now": datetime},
 }
 

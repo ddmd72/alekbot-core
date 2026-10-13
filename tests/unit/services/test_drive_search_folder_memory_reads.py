@@ -50,7 +50,10 @@ async def test_refreshing_without_terms_reads_no_chunk(monkeypatch):
     _vectors_off(w)
     await index(w, doc, ["the boiler warranty lasts five years"], [FAR])
     await w.search("boiler warranty", folder="Work")
-    assert w.repo.ranking_reads == []
+    # §25.5.2 (spec change): every v2 word is a concept tested on the chunks' word keys, so a word query always has
+    # terms; while refreshing the ranking still reads neither chunk text nor vectors, only the keys (finding the file
+    # on real word keys: test_drive_search_v2_ported.test_folder_ranking_while_refreshing_reads_word_keys_but_no_vectors)
+    assert w.repo.ranking_reads == [{"text": False, "terms": True, "vectors": False}]
 
 
 async def test_the_in_memory_repository_leaves_out_what_was_not_asked_for():

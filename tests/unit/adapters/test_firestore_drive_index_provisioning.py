@@ -77,8 +77,9 @@ def test_indexes_are_declared_for_the_live_collection_only():
     # 21 composites (incl. the readable-chunk sum's, §24.6; chunk_capped's and count_unread's three, §5.4, §10.2;
     # count_unread's three for images triaged as text, review D-M4; the not-read-yet count's two, documents and text
     # images, final review F5-2) + 8 Search v2 composites (§25.2.5: about, about by kind, expiring, enrichment queue,
-    # wake-ups, profile and passages state counts, keys pending) + 2 vector entries
-    assert len(_declared_indexes()) == 31
+    # wake-ups, profile and passages state counts, keys pending) + 2 per-job enrichment queues (P5 review MINOR 6)
+    # + 2 vector entries
+    assert len(_declared_indexes()) == 33
     assert _declared_indexes("drive_index_records") == []   # RFC Δ22: the unprefixed collections were deleted
 
 
@@ -115,9 +116,9 @@ def test_deploy_creates_the_drive_composites_and_leaves_the_vectors_to_their_scr
                                                   for c in records if c not in drive)
     declared = [i for i in _declared_indexes() if not any(mode == "VECTOR" for _, mode in i)]
     # +1 readable_chunk_total's sum, +1 chunk_capped, +3 count_unread, +3 count_unread over text images (review D-M4),
-    # +2 the not-read-yet count over documents and text images (F5-2), +8 Search v2 (§25.2.5); the 2 vector entries:
-    # create_drive_vector_indexes.sh
-    assert len(drive) == len(declared) == 29
+    # +2 the not-read-yet count over documents and text images (F5-2), +8 Search v2 (§25.2.5), +2 per-job enrichment
+    # queues (P5 review MINOR 6); the 2 vector entries: create_drive_vector_indexes.sh
+    assert len(drive) == len(declared) == 31
     not_read_yet = [c for c in drive if "--field-config=field-path=card_capped,order=ascending" in c
                     and "--field-config=field-path=indexed_generation,order=ascending" in c]
     assert len(not_read_yet) == 2

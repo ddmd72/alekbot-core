@@ -14,11 +14,12 @@ from tests.unit.adapters.firestore_drive_fakes import RECS, STATES
 
 _SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "infrastructure" / "drive_index_smoke.py"
 # Search v2's checks (§25.2.5, pinned on the evaluating client in test_drive_index_smoke_v2.py) add to the records: 4
-# about pages, expiring, the enrichment queue and wake-ups, keys pending, the per-job-state counts (2 jobs x 6 states
+# about pages, expiring, the enrichment queue (whole, then per job: profile and passages, P5 review MINOR 6) and
+# wake-ups, keys pending, the per-job-state counts (2 jobs x 6 states
 # per 30 kinds) and the largest kind family's card kNN, one per member kind; to the chunks: 2 word-key pages and the
 # family's chunk kNN.
 _FAMILY = len(max(KIND_FAMILIES.values(), key=len))
-_V2_RECORD_QUERIES = 4 + 1 + 1 + 1 + 1 + 12 * ((len(SLICE2_CONTENT_KINDS) + 29) // 30) + _FAMILY
+_V2_RECORD_QUERIES = 4 + 1 + 1 + 2 + 1 + 1 + 12 * ((len(SLICE2_CONTENT_KINDS) + 29) // 30) + _FAMILY
 _V2_CHUNK_QUERIES = 2 + _FAMILY
 
 

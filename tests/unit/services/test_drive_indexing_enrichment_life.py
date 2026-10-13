@@ -56,6 +56,7 @@ async def test_a_files_life():
     assert not rec.enrich_ready and rec.enrich_wake_at is None
     calls_before = len(w.passages.requests)
     old_gen = rec.indexed_generation
+    ticks_before = len(w.results)
 
     # -- an edit in the middle: the profile input is unchanged, so no re-profile; hints reused --------------------
     w.drive.edit(doc, paragraphs(30, changed=range(13, 18)).encode(), modified_at=w.clock.now)
@@ -65,8 +66,8 @@ async def test_a_files_life():
     assert rec.indexed_generation != old_gen and w.hint_generations(doc) == [rec.indexed_generation]
     assert len(w.profiler.requests) == 1                               # the skip rule (§25.4.7)
     assert rec.profile_state == JobState.CURRENT.value and rec.profiled_content_version == rec.content_version
-    reused = w.results[-1].summary.get("hints_reused", 0) + sum(r.summary.get("hints_reused", 0)
-                                                                 for r in w.results)
+    # the edit's ticks only, each counted once (P5 review MINOR 11: the last tick was counted twice)
+    reused = sum(r.summary.get("hints_reused", 0) for r in w.results[ticks_before:])
     assert reused >= rec.chunk_count - 2
     assert len(w.passages.requests) == calls_before                    # the changed chunk waits for the cooldown
     assert rec.passages_state == JobState.DEFERRED.value
