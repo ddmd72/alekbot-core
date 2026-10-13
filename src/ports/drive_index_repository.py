@@ -43,8 +43,11 @@ class DriveIndexRepository(ABC):
 
     @abstractmethod
     async def update_sync_flags(self, user_id: str, *, stale_alerted: Optional[bool] = None,
-                                reconnect_notified: Optional[bool] = None) -> None:
-        """Field-level update of the fan-out's flags; a missing state is left missing."""
+                                reconnect_notified: Optional[bool] = None, migration_alerted: Optional[bool] = None,
+                                stall_alerted: Optional[bool] = None,
+                                fallback_alerted_day: Optional[str] = None) -> None:
+        """Field-level update of the fan-out's flags (the v1 two and Search v2's three alert flags, §25.8); a missing
+        state is left missing. `save_sync_state` never writes them."""
 
     @abstractmethod
     async def delete_sync_state(self, user_id: str, owner: Optional[str] = None) -> None:

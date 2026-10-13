@@ -7,8 +7,8 @@ Firestore prompt builder, the quota service that bills each call to the user's a
 and the triage, and Search v2's profiler and passage hints (§25.4.4), all over one context builder (one breaker per
 provider), one prompt builder and one quota service (`build_drive_models`). The extractor registry is
 `{PARSER: parser, READER: reader runner}` (EXTRACTOR_CHAINS ids); the reader cuts PDFs with the same sandboxed
-parser. `build_drive_model_extractors` keeps the v1 shape (extractors, triage) until the indexer wires the enrichment
-runners (P5).
+parser. `indexer_main.py` wires all four into DriveIndexingService (Search v2 P5); `build_drive_model_extractors`
+keeps the v1 shape (extractors, triage) for the callers that need only those.
 
 Deliberately absent: prompt caching (the prompts are below the providers' minimum cacheable size), the alerting
 proxy (a scan the provider refuses is a per-file outcome, not a Slack alert), the prompt-content store (verbatim

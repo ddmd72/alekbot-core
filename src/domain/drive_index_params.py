@@ -175,3 +175,12 @@ PHRASE_RUN_MAX = 3                          # query phrase runs of 1-3 tokens gi
 PROFILER_TIMEOUT_S = 60                     # model call timeouts (§25.4.4)
 PASSAGES_TIMEOUT_S = 60
 TRIAGE_TIMEOUT_S = 120
+# P5 (indexer integration): per-unit cost estimates at the primary's price (§25.4.5 "a file starts only if its
+# expected cost fits", §25.6's cost table; the page and image counts of §24.7 are estimates now, not caps)
+PROFILE_USD_ESTIMATE = 0.0008               # one profile call
+PASSAGE_CHUNK_USD_ESTIMATE = 0.0004         # one chunk's passage hints
+READER_PAGE_USD_ESTIMATE = 0.0006           # one page the reader reads (§24.9)
+TRIAGE_IMAGE_USD_ESTIMATE = 0.0003          # one enriched-triage image (§24.9 + §25.6's +$0.000125)
+ENRICH_QUEUE_PAGE = 30                      # enrichment queue records read at once (§25.4.5)
+ENRICH_WAKEUPS_PAGE = 100                   # deferred or parked jobs re-planned per tick
+DESCRIBED_STALL_AFTER = timedelta(hours=24) # a rebuild whose described count does not grow this long alerts (§25.8)

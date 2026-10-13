@@ -10,6 +10,11 @@ It writes the two fan-out flags, through `update_sync_flags`, and a minimal sync
 user with a working grant who has none (`create_sync_state_if_absent`): its `created_at` is the staleness baseline, so a user
 whose ticks never land is alerted too (§12.1). The tick onboards from it as from no state at all.
 
+Search v2 (§25.4.5, §25.8 as amended by D30) adds three ops alerts to the checks, each posted once through its own flag:
+an index built by v1 that awaits the owner's from-scratch rebuild (its ticks do no work); the fallback model serving
+more than FALLBACK_ALERT_SHARE of a user's model dollars in a day (once that day); a rebuild whose described count has
+not grown for DESCRIBED_STALL_AFTER while jobs are ready and budget is left (once, cleared when it grows again).
+
 Two passes: every user's tick is enqueued first, then the checks run. A notice goes through the
 formatter agent (up to its 120 s SLA), so running checks first would let one slow notice delay every
 later user's tick past the scheduler's attempt deadline.
@@ -24,9 +29,12 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
-from ..domain.drive_index import DriveSyncState
-from ..domain.drive_index_params import TICK_DEADLINE_S
-from ..domain.drive_index_planner import is_stale
+from ..domain import drive_enrich_plan as enrich
+from ..domain.drive_enrichment import EnrichJob, JobState, UsageClass
+from ..domain.drive_index import MIGRATION_GATE_KEY, DriveSyncState
+from ..domain.drive_index_params import DESCRIBED_STALL_AFTER, FALLBACK_ALERT_SHARE, TICK_DEADLINE_S
+from ..domain.drive_index_planner import is_stale, month_key
+from ..domain.drive_profile import PROFILE_POLICY
 from ..domain.drive_task_keys import DRIVE_SYNC_TASK, tick_key, tick_payload
 from ..domain.notification_kind import NotificationKind
 from ..domain.user_drive import DriveConnection
@@ -92,6 +100,7 @@ class DriveSyncSchedulerService:
                 connection = await self._drive.connection(user_id)
                 summary["notices"] += await self._reconnect_notice(user_id, profile, state, connection)
                 summary["alerts"] += await self._staleness(user_id, state, now)
+                summary["alerts"] += await self._search_v2_alerts(user_id, state, now)
             except Exception as exc:   # a check never costs anyone their tick: all are enqueued already
                 summary["errors"] += 1
                 logger.error(f"[DriveSync] checks failed for {user_id[:8]}: {exc}", exc_info=True)
@@ -146,6 +155,61 @@ class DriveSyncSchedulerService:
             await self._repo.update_sync_flags(user_id, stale_alerted=False)
             logger.info(f"[DriveSync] drive index fresh again for {user_id[:8]}")
         return 0
+
+    async def _search_v2_alerts(self, user_id: str, state: DriveSyncState, now: datetime) -> int:
+        """The three Search v2 ops alerts (module docstring); each flag is written only after its post."""
+        if self._alert_sink is None:
+            return 0
+        posted = 0
+        if state.applied_versions and MIGRATION_GATE_KEY not in state.applied_versions and not state.purging:
+            if not state.migration_alerted:
+                await self._alert_sink.post(
+                    f"⚠️ Drive index of user {user_id[:8]} was built by Search v1 and awaits its v2 rebuild (D30): its "
+                    f"ticks do no work until `drive_index_rebuild.py --user … --apply`")
+                await self._repo.update_sync_flags(user_id, migration_alerted=True)
+                logger.warning(f"[DriveSync] index of {user_id[:8]} awaits its v2 rebuild; alerted")
+                posted += 1
+            return posted   # a v1 index has no v2 usage or rebuild to watch
+        day = now.astimezone(timezone.utc).date().isoformat()
+        if state.fallback_alerted_day != day:
+            usage = await self._repo.get_model_usage(user_id, month_key(now))
+            total, fallback = usage.daily.get(day, (0.0, 0.0))
+            if total > 0 and fallback > FALLBACK_ALERT_SHARE * total:
+                await self._alert_sink.post(
+                    f"⚠️ Drive models for user {user_id[:8]}: the fallback served ${fallback:.4f} of ${total:.4f} "
+                    f"today (over {FALLBACK_ALERT_SHARE:.0%}); the primary provider may be failing")
+                await self._repo.update_sync_flags(user_id, fallback_alerted_day=day)
+                logger.warning(f"[DriveSync] drive model fallback share high for {user_id[:8]}; alerted")
+                posted += 1
+        posted += await self._stall(user_id, state, now)
+        return posted
+
+    async def _stall(self, user_id: str, state: DriveSyncState, now: datetime) -> int:
+        """§25.8: the described count has not grown for DESCRIBED_STALL_AFTER while profile or passage jobs are ready
+        and the initial build or a month's cap has dollars left."""
+        stalled = state.described_grew_at is not None and now - state.described_grew_at > DESCRIBED_STALL_AFTER
+        if not stalled:
+            if state.stall_alerted:
+                await self._repo.update_sync_flags(user_id, stall_alerted=False)
+            return 0
+        if state.stall_alerted or self._alert_sink is None:
+            return 0
+        counts = await self._repo.count_by_job_state(user_id, frozenset(PROFILE_POLICY) | {"image"})
+        ready = sum(counts.get(job.value, {}).get(JobState.READY.value, 0) for job in EnrichJob)
+        if not ready:
+            return 0
+        ctx = enrich.enrich_context(now, await self._repo.get_model_usage(user_id, month_key(now)),
+                                    await self._repo.get_initial_build(user_id))
+        if not any(enrich.available_usd(ctx, cls) > 0 for cls in (UsageClass.PROFILE.value,
+                                                                   UsageClass.PASSAGE.value)):
+            return 0
+        await self._alert_sink.post(
+            f"⚠️ Drive index rebuild stalled for user {user_id[:8]}: {state.described_count} files described, none "
+            f"more since {state.described_grew_at.isoformat() if state.described_grew_at else 'never'}, with "
+            f"{ready} jobs ready and budget left")
+        await self._repo.update_sync_flags(user_id, stall_alerted=True)
+        logger.warning(f"[DriveSync] drive index rebuild stalled for {user_id[:8]}; alerted")
+        return 1
 
     async def _reconnect_notice(self, user_id: str, profile: Any, state: DriveSyncState,
                                 connection: DriveConnection) -> int:

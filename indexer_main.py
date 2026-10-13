@@ -10,7 +10,8 @@ the Gemini embedding adapter, the place table, a task queue bound to the drive q
 service's own `/worker` (continuations and nudge re-queues come back here), and the content side of
 Slice 2+4 (§24.2): the child-process parser, the document reader and image triage agents over Claude
 and OpenAI, the Firestore prompt builder and the quota service that bills their calls to the user's
-account (`src/composition/drive_model_setup.py`). No `ServiceContainer`: it would build every agent,
+account (`src/composition/drive_model_setup.py`), and Search v2's profiler and passage-hint runners
+(§25.4.4) on the same wiring. No `ServiceContainer`: it would build every agent,
 LLM adapter and chat surface for a process that uses none of them. No `load_settings()`: it would
 chase every key this service does not have into Secret Manager on each cold start.
 
@@ -28,6 +29,7 @@ Environment variables (set at deploy time in cloudbuild-dev.yaml):
   ANTHROPIC_API_KEY             Secret: the drive reader and triage agents for a user whose configuration picks Claude.
   OPENAI_API_KEY                Secret: the same agents on OpenAI (the default, §24.2).
   BILLING_SLACK_WEBHOOK_URL     Secret, optional: the advisory daily budget alert of the quota service.
+  DRIVE_UPGRADE_PASS            Optional emergency switch (§25.8): "off" stops every version upgrade pass.
   MICROSOFT_TODO_CLIENT_ID      Secret: the drive app registration (token refresh).
   MICROSOFT_TODO_CLIENT_SECRET  Secret: same.
   SERVICE_ACCOUNT_EMAIL         Secret: the /worker OIDC gate and the OIDC identity of the tasks this
@@ -59,7 +61,7 @@ from src.adapters.subprocess_content_extractor import PARSER_USER_ENV, Subproces
 from src.composition.drive_indexing_setup import (
     build_drive_index_repository, build_drive_task_queue, build_place_lookup,
 )
-from src.composition.drive_model_setup import build_drive_model_extractors
+from src.composition.drive_model_setup import build_drive_models
 from src.composition.prompt_assembly_setup import build_prompt_assembly_service
 from src.config.environment import EnvironmentConfig
 from src.services.drive_indexing_service import DriveIndexingService
@@ -96,7 +98,7 @@ def build_app() -> Quart:
     # The reader and triage prompts live in Firestore (§24.2); a failure here fails the start, never a fallback prompt.
     assembly_service, _ = build_prompt_assembly_service(db, env_config)
     billing_webhook = (os.environ.get("BILLING_SLACK_WEBHOOK_URL") or "").strip()
-    extractors, triage = build_drive_model_extractors(
+    models = build_drive_models(
         # the image's unprivileged user (Dockerfile); a named user missing from the container fails the start (R3 F3-1)
         parser=SubprocessContentExtractor(sandbox_user=os.environ.get(PARSER_USER_ENV)),
         users=users,
@@ -117,13 +119,23 @@ def build_app() -> Quart:
         users=users,
         place_of=build_place_lookup(),
         embedding_space=GeminiEmbeddingAdapter.EMBEDDING_SPACE,
-        extractors=extractors,
-        triage=triage,
+        extractors=models.extractors,
+        triage=models.triage,
+        # Search v2 (§25.4.4): the profiler and the passage-hint runners, over the same context builder, prompt
+        # builder and quota service as the reader and triage
+        profiler=models.profiler,
+        passages=models.passages,
+        upgrade_pass=upgrade_pass_enabled(os.environ.get("DRIVE_UPGRADE_PASS")),
     )
 
     app.register_blueprint(create_indexer_worker_blueprint(indexing, gate))
     logger.info(f"[Indexer] ready (OIDC gate {'on' if sa_email else 'off'})")
     return app
+
+
+def upgrade_pass_enabled(value: Any) -> bool:
+    """DRIVE_UPGRADE_PASS (§25.8): an optional emergency switch, on unless set to 0/off/false/no."""
+    return (str(value or "on")).strip().lower() not in ("0", "off", "false", "no")
 
 
 async def serve_until_shutdown(app: Any, config: Any, shutdown: asyncio.Event, *,
