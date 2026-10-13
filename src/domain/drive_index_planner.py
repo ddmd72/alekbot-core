@@ -13,6 +13,7 @@ Public interface:
     change_from_record(rec) -> DriveChange
     schedule(rec, now, *, first_seen) -> DriveIndexRecord
     content_due(rec, now=None) -> bool / triage_due(rec, now=None) -> bool
+    quiet_over(rec, now) -> bool                                                            (§7.3)
     valid_verdict(rec, content_version) -> Optional[TriageVerdict]
     generation_started(rec, now) / indexed(rec, *, outcome, generation, chunk_count, now)
     deferred(rec, until, now, *, maintenance=False) / next_month_start(now) -> datetime
@@ -501,6 +502,13 @@ def triage_due(rec: DriveIndexRecord, now: Optional[datetime] = None) -> bool:
     not deferred past `now`."""
     return (rec.state is RecordState.PENDING and admission(rec.kind) is Admission.TRIAGE
             and valid_verdict(rec, rec.content_version) is None and not _held(rec, now))
+
+
+def quiet_over(rec: DriveIndexRecord, now: datetime) -> bool:
+    """§7.3: the record's content or triage work may start at `now` — it is not dirty, or its quiet period (QUIET
+    untouched, at most MAX_DEFER dirty) has ended. A record due for other work (a card, a re-embed) is not thereby due
+    for its content."""
+    return _content_due_at(rec, now) <= now
 
 
 def _content_due_at(rec: DriveIndexRecord, now: datetime) -> datetime:
