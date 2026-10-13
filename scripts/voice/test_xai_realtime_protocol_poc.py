@@ -10,7 +10,7 @@ written. macOS only: test speech is synthesized with `say` + `afconvert` so serv
 speech to detect.
 
 Usage: python scripts/voice/test_xai_realtime_protocol_poc.py [case ...]
-Cases: config, autoreply, bargein, idle_cancel, pcm24, latency (default: all).
+Cases: config, autoreply, bargein, idle_cancel, pcm24, latency, usage (default: all).
 """
 import asyncio
 import base64
@@ -296,8 +296,27 @@ async def case_latency(key: str) -> dict:
     return out
 
 
+async def case_usage(key: str) -> dict:
+    """Is response.done usage per response or a running session total? Three short replies in one
+    session, with 5 s of streamed silence before each, so both output audio and session time grow.
+    Summing a running total across response.done events multiplies the billed seconds."""
+    probe = await _open("usage", key, _session(effort="none"))
+    out = []
+    for i in range(3):
+        await probe.stream(_silence(5.0, "ulaw"), "ulaw")
+        await probe.send({"type": "conversation.item.create", "item": {
+            "type": "message", "role": "user",
+            "content": [{"type": "input_text", "text": f"Say one short sentence about the number {i + 1}."}]}})
+        await probe.send({"type": "response.create"})
+        done = await probe.recv_until(lambda e: e.get("type") in ("response.done", "error"), 40)
+        out.append({"t": round(probe.now(), 1), "usage": done and done.get("usage")})
+    await probe.ws.close()
+    return {"response_done_usage": out}
+
+
 CASES = {"config": case_config, "autoreply": case_autoreply, "bargein": case_bargein,
-         "idle_cancel": case_idle_cancel, "vad_timing": case_vad_timing, "pcm24": case_pcm24, "latency": case_latency}
+         "idle_cancel": case_idle_cancel, "vad_timing": case_vad_timing, "pcm24": case_pcm24, "latency": case_latency,
+         "usage": case_usage}
 
 
 async def main() -> None:

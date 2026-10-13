@@ -44,6 +44,10 @@ def _flatten_usage(usage: dict) -> Dict[str, float]:
     xAI bills per minute of audio and reports the billable part itself
     (`billable_audio_seconds`); that and text input are the priced legs
     (domain.billing). Token legs ride along for observability only.
+
+    The token legs are per response, but `billable_audio_seconds` is the session's
+    running total (live probe 2026-10-13: 7 → 14 → 23 s over three replies). This
+    function passes it through raw; the adapter turns it into a per-response delta.
     """
     input_details = usage.get("input_token_details") or {}
     output_details = usage.get("output_token_details") or {}
@@ -72,6 +76,9 @@ class XaiRealtimeAdapter(RealtimeSessionPort):
         self._connect = ws_connect
         self._audio_format = audio_format
         self._ws: Optional[ClientConnection] = None
+        # Highest running total of billable_audio_seconds seen this session. One adapter
+        # per call (relay_main), so this is the call's billed time so far.
+        self._billed_audio_seconds: float = 0
 
     @property
     def _socket(self) -> ClientConnection:
@@ -129,6 +136,13 @@ class XaiRealtimeAdapter(RealtimeSessionPort):
         if event_type == "response.done":
             # Usage sits at the event's top level on xAI, not under `response`.
             usage = _flatten_usage(event.get("usage") or {})
+            # VoiceCallBuffer sums every response_done; summing xAI's running total
+            # billed a 4-minute call as 31 minutes. Hand it the increment instead.
+            running_total = usage["billable_audio_seconds"]
+            usage["billable_audio_seconds"] = max(running_total - self._billed_audio_seconds, 0)
+            self._billed_audio_seconds = max(self._billed_audio_seconds, running_total)
+            logger.info(f"xAI realtime usage: running billable_audio_seconds={running_total} "
+                        f"delta={usage['billable_audio_seconds']}")
             return RealtimeSessionEvent(type="response_done", payload={"usage": usage, "model": self._model})
         if event_type == "conversation.item.input_audio_transcription.completed":
             return RealtimeSessionEvent(type="user_transcript", payload={"text": event.get("transcript", "")})

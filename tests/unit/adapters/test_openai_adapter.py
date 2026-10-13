@@ -1016,7 +1016,7 @@ async def test_usage_metadata_extracts_cache_write_tokens():
     ))
 
     # Verify cache tokens are extracted into UsageMetadata
-    assert result.usage_metadata.prompt_tokens == 900  # 1000 - 100 cached
+    assert result.usage_metadata.prompt_tokens == 750  # 1000 - 100 cached - 150 written (both inside input_tokens)
     assert result.usage_metadata.completion_tokens == 500
     assert result.usage_metadata.cache_read_tokens == 100
     assert result.usage_metadata.cache_creation_tokens == 150
@@ -1253,3 +1253,74 @@ async def test_finish_reason_mapped_from_response_status(status, reason, expecte
     )
 
     assert response.finish_reason == (FinishReason(expected) if expected else None)
+
+
+@pytest.mark.asyncio
+async def test_usage_metadata_cache_write_is_carved_out_of_prompt_tokens():
+    """OpenAI's cache_write_tokens is a SUBSET of input_tokens (live probe 2026-10-13, gpt-6-luna:
+    input_tokens=7017, cache_write_tokens=7014, cached_tokens=0). The legs handed to billing must
+    not overlap, or calculate_cost bills the written tokens at 1x + 1.25x input."""
+    from src.domain.billing import calculate_cost
+
+    adapter = OpenAIAdapter(api_key="test-key")
+
+    usage = MagicMock()
+    usage.input_tokens = 7017
+    usage.output_tokens = 5
+    usage.input_tokens_details = MagicMock(cached_tokens=0, cache_write_tokens=7014)
+    usage.output_tokens_details = MagicMock()
+
+    response = _make_response(text="OK", usage=usage)
+
+    async def mock_create(**kwargs):
+        return response
+
+    adapter.client.responses.create = mock_create
+
+    result = await adapter.generate_content(request=LLMRequest(
+        model_name="gpt-6-astra",
+        messages=[Message(role="user", parts=[MessagePart(text="test")])],
+    ))
+
+    meta = result.usage_metadata
+    assert meta.prompt_tokens == 3  # neither read from nor written to the cache
+    assert meta.cache_creation_tokens == 7014
+    assert meta.cache_read_tokens == 0
+    assert meta.prompt_tokens + meta.cache_read_tokens + meta.cache_creation_tokens == usage.input_tokens
+    assert meta.total_tokens == 7022
+    # astra input $10/M: 3 at 1x + 7014 at 1.25x, plus 5 output at $50/M
+    assert calculate_cost("gpt-6-astra", meta.prompt_tokens, meta.completion_tokens,
+                          meta.cache_read_tokens, meta.cache_creation_tokens) == round(
+        (3 * 10 + 7014 * 10 * 1.25 + 5 * 50) / 1_000_000, 6)
+
+
+@pytest.mark.asyncio
+async def test_usage_metadata_warns_when_cache_read_and_write_overlap(caplog):
+    """cached + cache_write > input_tokens has never been seen in production, but a third-party
+    usage object shows it (decisions/openai_cache_write_tokens_location.md). The legs then overlap
+    and cost is over-reported; the clamp must not hide that silently."""
+    import logging
+
+    adapter = OpenAIAdapter(api_key="test-key")
+
+    usage = MagicMock()
+    usage.input_tokens = 4583
+    usage.output_tokens = 10
+    usage.input_tokens_details = MagicMock(cached_tokens=3945, cache_write_tokens=4580)
+    usage.output_tokens_details = MagicMock()
+
+    response = _make_response(text="OK", usage=usage)
+
+    async def mock_create(**kwargs):
+        return response
+
+    adapter.client.responses.create = mock_create
+
+    with caplog.at_level(logging.WARNING):
+        result = await adapter.generate_content(request=LLMRequest(
+            model_name="gpt-6-luna",
+            messages=[Message(role="user", parts=[MessagePart(text="test")])],
+        ))
+
+    assert result.usage_metadata.prompt_tokens == 0
+    assert any("cache legs overlap" in r.getMessage() for r in caplog.records)
