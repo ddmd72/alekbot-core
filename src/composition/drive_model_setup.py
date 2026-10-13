@@ -1,8 +1,8 @@
 """
 The drive indexer's model wiring (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §24.2, §24.9; D7, D12).
 
-Builds, for `indexer_main.py` only: a ProviderRegistry with the two providers that take inline file bytes (Claude,
-OpenAI; Gemini's adapter does not, §24.2), an AgentContextBuilder over it with a process-local breaker, the
+Builds, for `indexer_main.py` only: a ProviderRegistry with Claude and OpenAI (the primaries a user's configuration may
+pick) and Gemini (the drive agents' fallback, D7 rev 3.17), an AgentContextBuilder over it with a process-local breaker, the
 Firestore prompt builder, the quota service that bills each call to the user's account, and the two runners. The
 extractor registry is `{PARSER: parser, READER: reader runner}` (EXTRACTOR_CHAINS ids); the reader cuts PDFs with
 the same sandboxed parser.
@@ -10,7 +10,8 @@ the same sandboxed parser.
 Deliberately absent: prompt caching (the prompts are below the providers' minimum cacheable size), the alerting
 proxy (a scan the provider refuses is a per-file outcome, not a Slack alert), the prompt-content store (verbatim
 scans stay out of BigQuery, §24.2), and Logfire. A provider without a key is not registered: a user whose
-configuration names it gets a model outage (logged ERROR), parsing goes on.
+configuration names it gets a model outage (logged ERROR), parsing goes on; without GEMINI_API_KEY the agents run with
+no fallback (a primary outage defers model work, §24.8).
 """
 from __future__ import annotations
 
@@ -18,6 +19,7 @@ from typing import Any, Dict, Mapping, Optional, Tuple
 
 from ..adapters.claude_adapter import ClaudeAdapter
 from ..adapters.firestore_quota_service import FirestoreQuotaService
+from ..adapters.gemini_adapter import GeminiAdapter
 from ..adapters.in_memory_provider_resilience import InMemoryProviderResilience
 from ..adapters.openai_adapter import OpenAIAdapter
 from ..domain.drive_extraction import PARSER, READER
@@ -46,15 +48,21 @@ class _DrivePromptBuilder(PromptBuilder):
 
 
 def build_drive_model_registry(keys: Mapping[str, Optional[str]]) -> ProviderRegistry:
-    """Claude and OpenAI, each only when its key is set. Keys are stripped: a secret stored with a trailing
-    newline becomes an illegal header that looks like a network error."""
+    """Claude, OpenAI and Gemini, each only when its key is set. Gemini serves only the drive agents' fallback (Gemini
+    Flash, `fallback_tier` in their strategy). Keys are stripped: a secret stored with a trailing newline becomes an
+    illegal header that looks like a network error."""
     registry: ProviderRegistry = ProviderRegistry()
     anthropic_key = (keys.get("ANTHROPIC_API_KEY") or "").strip()
     openai_key = (keys.get("OPENAI_API_KEY") or "").strip()
+    gemini_key = (keys.get("GEMINI_API_KEY") or "").strip()
     if anthropic_key:
         registry.register("claude", ClaudeAdapter(api_key=anthropic_key))
     if openai_key:
         registry.register("openai", OpenAIAdapter(api_key=openai_key))
+    if gemini_key:
+        registry.register("gemini", GeminiAdapter(api_key=gemini_key))
+    if not gemini_key:
+        logger.warning("[Indexer] GEMINI_API_KEY not set: the drive models run without their Gemini fallback")
     missing = [name for name, key in (("ANTHROPIC_API_KEY", anthropic_key), ("OPENAI_API_KEY", openai_key))
                if not key]
     if missing:

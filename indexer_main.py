@@ -24,9 +24,9 @@ Environment variables (set at deploy time in cloudbuild-dev.yaml):
   APP_ENV                       "development" -> `development_` collections, queue `drive-sync-dev`.
   DRIVE_INDEXER_URL             This service's own URL: the drive queue's target. Empty on the first
                                 pass of the two-pass first deploy: the service starts, /worker answers 503.
-  GEMINI_API_KEY                Secret: card and chunk embeddings.
-  ANTHROPIC_API_KEY             Secret: the drive reader and triage agents on Claude (the default, §24.2).
-  OPENAI_API_KEY                Secret: the same agents for a user whose configuration picks OpenAI.
+  GEMINI_API_KEY                Secret: card and chunk embeddings, and the drive agents' Gemini Flash fallback.
+  ANTHROPIC_API_KEY             Secret: the drive reader and triage agents for a user whose configuration picks Claude.
+  OPENAI_API_KEY                Secret: the same agents on OpenAI (the default, §24.2).
   BILLING_SLACK_WEBHOOK_URL     Secret, optional: the advisory daily budget alert of the quota service.
   MICROSOFT_TODO_CLIENT_ID      Secret: the drive app registration (token refresh).
   MICROSOFT_TODO_CLIENT_SECRET  Secret: same.
@@ -102,7 +102,7 @@ def build_app() -> Quart:
         users=users,
         account_repo=account_repo,
         assembly_service=assembly_service,
-        keys={key: os.environ.get(key) for key in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY")},
+        keys={key: os.environ.get(key) for key in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY")},
         alert_sink=SlackWebhookAdapter(billing_webhook) if billing_webhook else None,
     )
     indexing = DriveIndexingService(
