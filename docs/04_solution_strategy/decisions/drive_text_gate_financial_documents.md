@@ -69,4 +69,5 @@ reads `metadata_only (machine_text)`, and the search envelope counts it among th
 
 A statement, invoice set or ledger is demoted `machine_text` in the live check or in a user's index (raise the bar's
 evidence: lower `MIN_VARIETY` further or weight lines with amounts), or a log passes and floods results (the reverse).
-A change to the gate bumps `EXTRACTION_VERSION`, so the upgrade pass re-reads every file the old rule decided.
+A change to the gate bumps `EXTRACTION_VERSION`, so the upgrade pass re-reads every file the old rule decided —
+the model-routed ones included, whose reader pages are billed again (RFC §24.14).
