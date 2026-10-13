@@ -386,16 +386,17 @@ class TestScale:
         assert names(await camera_roll.search(query))[0] == "IMG_4912.jpg"
 
     async def test_one_query_per_whole_token_key_plus_one_for_the_rest(self, camera_roll):
+        # Name keys v2 (§25.2.4, P6 review M4; spec change): one fetch per concept with its own forms, then one per
+        # trigram of a word concept (a number has none). A common word ("img", on all 1 200 photos) never shares a
+        # capped page with a rare number, so nothing is left for a remainder call (RFC Δ17).
         w = camera_roll
         before = len(w.repo.name_keys)
-        await w.search("IMG_4912")
-        batches = w.repo.name_keys[before:]
-        whole = [b for b in batches if len(b) == 1 and b[0].startswith("w:")]
-        assert ("w:4912",) in whole and ("w:img",) in whole
-        # Every whole-token and trigram key of this short query has its own call (RFC Δ17): no
-        # common key shares a capped page with a rare one, so nothing is left for a remainder call.
-        assert sorted(batches) == sorted([("w:img",), ("w:4912",), ("w:имг",),
-                                          ("t:img",), ("t:491",), ("t:912",), ("t:имг",)])
+        await w.search("IMG_4912")   # one id-like token: one number concept
+        assert w.repo.name_keys[before:] == [("n:img4912",)]
+        before = len(w.repo.name_keys)
+        await w.search("IMG 4912")
+        assert sorted(w.repo.name_keys[before:]) == sorted([("n:4912",), ("w:img", "x:imh"), ("t:img",), ("t:imh",)])
+        assert names(await w.search("IMG 4912"))[0] == "IMG_4912.jpg"
 
     @pytest.mark.parametrize("query", ["ред3", "Договор ред3", "dogovor red3"])
     async def test_version_suffix_ranks_the_named_version_first(self, camera_roll, query):

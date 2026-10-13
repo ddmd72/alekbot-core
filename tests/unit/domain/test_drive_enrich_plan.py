@@ -254,9 +254,13 @@ class TestPlanned:
         assert not bare.keys_pending and bare.keys_version == KEYS_VERSION
 
     def test_pending_keys_keep_an_earlier_schedule(self):
-        due = NOW + timedelta(hours=1)
-        rec = ep.planned(doc(keys_version=0, due_at=due, priority=int(Priority.RETRY)), ctx())
-        assert rec.keys_pending and (rec.due_at, rec.priority) == (due, int(Priority.RETRY))
+        # review rv_sv2_p5 MINOR 9 (spec change): keys work is due now even behind a later wait (a retry backoff stays
+        # in `defer_until`, which content work honours); an already-due schedule and a more urgent class are kept.
+        earlier = NOW - timedelta(hours=1)
+        kept = ep.planned(doc(keys_version=0, due_at=earlier, priority=int(Priority.EDIT)), ctx())
+        assert kept.keys_pending and (kept.due_at, kept.priority) == (earlier, int(Priority.EDIT))
+        later = ep.planned(doc(keys_version=0, due_at=NOW + timedelta(hours=1), priority=int(Priority.RETRY)), ctx())
+        assert later.keys_pending and (later.due_at, later.priority) == (NOW, int(Priority.MAINTENANCE))
 
     def test_derived_queue_fields(self):
         rec = ep.planned(doc(), ctx())

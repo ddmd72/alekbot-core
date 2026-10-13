@@ -7,6 +7,7 @@ kind, so the kind filter itself never drops a card candidate."""
 from datetime import datetime, timezone
 
 from src.domain.drive_search import render_results
+from src.domain.drive_search_texts import ABSENT_IN_SCOPE_LINE, COVERAGE_COMPLETE
 from src.services import drive_search_service as search_mod
 
 from .test_drive_search_service import SpyRepo, World
@@ -59,6 +60,8 @@ async def test_no_hedge_when_the_pages_were_not_full():
     result = await w.search("invoice", **MARCH)
     text = render_results(result)
     assert result.cards == ()   # v1's `capped` field is gone (P6 review m12); the text below is the hedge
-    assert "No matching files or folders." in text and "more files may match" not in text
+    # §25.13.6 / D29 wording (spec change): complete pages give a flat in-scope negative and no hedge
+    assert COVERAGE_COMPLETE in text and ABSENT_IN_SCOPE_LINE.format(word="invoice") in text
+    assert "more files may match" not in text
 
 
