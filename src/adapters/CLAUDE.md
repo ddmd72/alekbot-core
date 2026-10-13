@@ -48,6 +48,11 @@ mocks cannot detect translation regressions) + contract validators in
     `stop_reason:"refusal"` and an empty or partial body. `_raise_on_refusal` turns it into
     `LLMClientError` (content-policy class: no failover, Slack-alerted) on both the plain and the
     grounded path; the DR runner raises instead of returning a "partial report".
+  - **Account-level 4xx** — "credit balance too low" is HTTP 400 `invalid_request_error`, same as a
+    content refusal; `_is_account_error` reads the error body's message (and `billing_error` by type)
+    and raises `LLMAccountError` (an `LLMClientError`: no failover, alerted) on both paths. The drive
+    indexer reads it as an outage, not a refusal of the file. OpenAI: a billing/quota `code` on a
+    non-429 4xx (`_ACCOUNT_ERROR_CODES`).
   - `_NO_XHIGH_MODELS` — the 4.6 generation's effort scale stops at `high`; `xhigh` is clamped.
   New tokenizer (~30% more tokens) — keep `max_tokens` headroom.
   Decisions: `decisions/claude_sonnet_5_adoption.md`, `decisions/model_refresh_2026_10.md`.

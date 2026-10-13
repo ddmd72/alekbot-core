@@ -1755,9 +1755,9 @@ this section wins; the text above was corrected where it was plainly false. Slic
 
 | Outcome | Effect |
 |---|---|
-| Provider unavailable: 429, 5xx, a timeout of a call that cannot be halved, network, an open breaker, an account-level 4xx (key, permission, model id), a provider without a key, a missing prompt, anything unexpected | **Model outage, not a systemic error** (`DriveModelUnavailable`): `model_backoff_until` on the sync state (`MODEL_BACKOFF_BASE_S` doubling to `MODEL_BACKOFF_CAP_S`), records that need the model stay `pending` and are skipped until then, attempts untouched; parser work, cards and cascades go on. What the file or batch spent before the outage is counted against the month and the summary without ending the outage: the backoff keeps doubling. Successful model work ends it. |
+| Provider unavailable: 429, 5xx, a timeout of a call that cannot be halved, network, an open breaker, an account-level 4xx (key, permission, model id; credit balance or billing — `LLMAccountError`, recognised by the adapter from the provider's error body, since Anthropic sends an exhausted credit as a 400), a provider without a key, a missing prompt, anything unexpected | **Model outage, not a systemic error** (`DriveModelUnavailable`): `model_backoff_until` on the sync state (`MODEL_BACKOFF_BASE_S` doubling to `MODEL_BACKOFF_CAP_S`), records that need the model stay `pending` and are skipped until then, attempts untouched; parser work, cards and cascades go on. What the file or batch spent before the outage is counted against the month and the summary without ending the outage: the backoff keeps doubling. Successful model work ends it. |
 | …of these, a reader outage that may be the file's own (`charges_file`: a 5xx, a timeout, an unexpected error), when the reader made a call for this file | **Charged to the file** (`outage_charged`): `model_outages + 1`, the file waits for the backoff in class 3, behind other due work; the `MAX_ATTEMPTS`-th charged outage is a counted failure, `failed / extract_error` under the reader's link (a new reader version or a new content version gets a fresh try). Some files always get a 5xx or a single-page timeout; uncharged, they re-read and re-billed their windows after every backoff, month after month. A 429, an account-level error, a network failure, an open breaker, and every triage outage never charge. |
-| The provider refuses a window or a single page of a PDF (413, 400 or 422) | The window is halved down to one page (§24.3); a single page still refused is skipped and the file is indexed `truncated`, `pages_refused` counted. |
+| The provider refuses a window or a single page of a PDF (413, 400 or 422; an account-level 400 is the outage above, not a refusal) | The window is halved down to one page (§24.3); a single page still refused is skipped and the file is indexed `truncated`, `pages_refused` counted. |
 | The provider refuses every page of a PDF, or an image: `too_large` when a refusal was 413, else `unsupported` | Deterministic: `metadata_only`, no retry, no re-bill. In triage, a refused batch is halved down to the refused image, a photograph without a caption. |
 | A triage call fails otherwise (invalid output after the parse retry, an answer stopped, a refusal before any HTTP exchange) | Not halved: its images get no result, each a per-file transient (§8.2). |
 | A window halved after a timeout times out again | Per-file transient (`error`, §8.2); at `MAX_ATTEMPTS` → `failed / extract_error`. |
@@ -1906,13 +1906,14 @@ Values in `src/domain/drive_index_params.py` unless named otherwise.
   chunker and the text gate, so a terms-only change re-reads every file, scans included, and re-bills their reader
   pages. Deriving the terms again from the stored chunk text is a §14 follow-up. Slice 2+4 has no live chunks before
   its first deploy, so the bumps to 3 cost nothing there.
-- **Anthropic's exhausted credit reads as a refusal of the input.** Anthropic answers "credit balance too low" with
-  HTTP 400, and `classify_model_error` reads every 400 as the provider refusing this input (`DriveInputRefused`), not
-  as an account-level outage. While the account has no credit, each PDF the reader tries is halved down to single
-  pages, every page is refused and the file is demoted `unsupported`; an image is demoted the same way; a triage batch
-  is halved down to photographs without a caption. All are final until the content, the reader version or
-  `TRIAGE_VERSION` changes. *Trigger:* any credit lapse on the Anthropic account; the fix is to classify that 400 by
-  its message as an outage.
+- **Handled, no longer a limit: Anthropic's exhausted credit is an outage, not a refusal of the input.** Anthropic
+  answers "credit balance too low" with HTTP 400 `invalid_request_error`, the status and type of a request refused for
+  its content. Read as a refusal, a credit lapse demoted every PDF and image tried during it `unsupported` and halved
+  triage batches down to photographs without a caption, for good. The Claude adapter now recognises it by the error
+  body's message (and `billing_error` by type), the OpenAI adapter a billing or quota `code` on a 4xx other than 429,
+  as `LLMAccountError`; `classify_model_error` makes that an uncharged outage (§24.8): model work waits, files stay
+  `pending`. An exhausted OpenAI quota is a 429 and was already an outage. Not covered: Gemini and Grok billing
+  errors, which the drive's model agents do not use.
 - **A real provider outage can fail a file.** A 5xx is charged to the file the reader was reading (some files always
   get one, §24.8), so a provider outage long enough to hit the same file three times fails it (`failed /
   extract_error`) until the file is edited or the reader's version changes. A 429, an account-level error or a
