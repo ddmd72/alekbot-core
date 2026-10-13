@@ -1,8 +1,9 @@
 # RFC: User Drive Step 2 — Indexing and Search
 
-**Status:** Draft, revision 3.14 (2026-10-13) — **Slice 1 live** (PR #58, deployed and accepted 2026-10-12); where
-the build differs from this text, §23 says how and why. **Slices 2 and 4 are one slice** (D6), designed in §24, which
-overrides the text above where they disagree. Slice 3 not built. Phase 0 hardening merged (PR #57, §16).
+**Status:** Draft, revision 3.15 (2026-10-13) — **Slice 1 live** (PR #58, deployed and accepted 2026-10-12); where
+the build differs from this text, §23 says how and why. **Slices 2 and 4 are one slice** (D6), designed in §24 and
+built (not live until its deploy); §24 overrides the text above where they disagree and was brought in line with the
+code in rev 3.15. Slice 3 not built. Phase 0 hardening merged (PR #57, §16).
 **Builds on:** [USER_DRIVE_RFC.md](USER_DRIVE_RFC.md) (Step 1, live: CRUD over the user's OneDrive App Folder).
 Replaces that RFC's §5 "Step 2" placeholder.
 **Precedents reused:** email index ([GMAIL_EMAIL_INDEXING_RFC.md](GMAIL_EMAIL_INDEXING_RFC.md), `IndexedEmail`),
@@ -65,6 +66,13 @@ To Do mirror (`TaskSearchIndex`), `src/domain/rrf.py`, `TaskQueue.enqueue_worker
   withdrawn), it returns a structured brief next to the verbatim text, image triage also captions photographs (moved
   in from §14), the document's own date becomes `effective_date`, both model calls are agents on the indexer, the
   drive intents stay as they are.
+- Rev 3.15 (2026-10-13): §24 matched to the built slice after its adversarial reviews: lazy page windows and the
+  halving rules (a half that times out again fails the file; a refused single page is skipped, and only a refusal
+  of every page or of an image is terminal), maximal query terms,
+  digit groups and the `.00` integer form, term selectivity by distinct files with a probe past the page, the window
+  budget, partial usage before an outage that does not end it, re-embedding readable chunks in any content state, a
+  missing thumbnail retried before it reads as a photograph, the parameters as built, and the known limits (sandbox
+  isolation, `LeaseLost` usage, text-gate calibration).
 
 **Owner decisions (2026-10-11)**
 - The App Folder is meant to become a real document store. It is empty only because the feature is being built.
@@ -1408,7 +1416,7 @@ of the decision. Code and tests cite these rows as `RFC Δn`.
 
 ---
 
-## 24. Slice 2+4 design (rev 3.14)
+## 24. Slice 2+4 design (rev 3.15)
 
 One slice (D6): content extraction with the parser first and the model second, chunks, the content streams, image
 triage with captions, the brief, the protocol lines, the full eval. Where this section and the text above disagree,
@@ -1417,13 +1425,17 @@ this section wins; the text above was corrected where it was plainly false. Slic
 2026-10-13): they stay metadata-only, and their seam is the §14 row.
 
 ### 24.1 What the slice builds, by RFC section
-- §5.1 admission (`POLICY_VERSION` 2): the document kinds with a named extractor each; every image enters triage.
-  New constants `EXTRACTION_VERSION`, `TRIAGE_VERSION` (both 1) join `CURRENT_VERSIONS`; `CARD_VERSION` 2 (brief,
-  caption, lead text). The upgrade pass (§12.3) makes the Slice 1 records due in class 3 — the extension path exercised
-  on real data, bounded by `MAINTENANCE_SHARE`.
+- §5.1 admission (`POLICY_VERSION` 2): the document kinds with a named extractor each (PDF, DOCX, PPTX, XLSX/XLS,
+  ODT/ODS/ODP, EPUB, HTML, Markdown, text, CSV, JSON, RTF, MSG, EML, VTT/SRT); every image enters triage. New
+  constants `EXTRACTION_VERSION` (2 since the maximal query forms of §24.6) and `TRIAGE_VERSION` (1) join
+  `CURRENT_VERSIONS`; `CARD_VERSION` 2 (brief, caption, lead text). Each wired extractor's version joins the target
+  map as `extractor:<id>`, so a new parser or reader re-reads only what it decided (`extracted_by`, §12.3). The
+  upgrade pass (§12.3) makes the Slice 1 records due in class 3 — the extension path exercised on real data, bounded
+  by `MAINTENANCE_SHARE`.
 - §7.3 quiet period, §8.1 index run, §8.2 content outcome classes, §8.3 tables, §8.4 chunker, §7.4 fence, §5.4 chunk
-  cap and release, §5.2 the repository root's `README` lead text, §12.1 the counters this slice adds (all listed as not
-  built in Δ12).
+  cap and release, §5.2 the repository root's `README` lead text (read by the parser only), §12.1 the counters this
+  slice adds (all listed as not built in Δ12). A record due for other work (a card, a re-embed) still keeps its
+  content's quiet period. <!-- r2: T-M1 -->
 - §9 `ContentExtractorPort`, the child-process parser adapter, the router (§24.3) and the reader agent (§24.2).
 - §5.3 triage with captions (§24.4), §10.1 step 3 chunk stream plus the content exact-token stream (§24.6), §10.2
   windows and `matched`, §10.4 protocol lines in Smart's token (D11), the G2/G3/OCR eval (§24.11).
@@ -1431,126 +1443,212 @@ this section wins; the text above was corrected where it was plainly false. Slic
 ### 24.2 Two agents on the indexer (D12)
 - **`DriveDocumentReaderAgent`** (agent type `drive_reader`): a PDF window or an image in, verbatim text plus — for the
   first window only — the brief (§24.4) out, as structured output with an `OUTPUT_FORMAT_DRIVE_READER` token. No
-  tools, no conversation history, no biographical context. **`DriveImageTriageAgent`** (agent type `drive_triage`):
-  a batch of thumbnails in, one verdict and, for photographs, one caption per thumbnail out.
+  tools, no conversation history, no biographical context, no user prompt overrides. **`DriveImageTriageAgent`**
+  (agent type `drive_triage`): a batch of thumbnails in, one verdict and, for photographs, one caption per thumbnail
+  out (`OUTPUT_FORMAT_DRIVE_TRIAGE`).
 - Both are non-delegation agents (no manifest descriptor, `can_handle` false), like `EmailClassificationAgent`, but
   built **per call with the user's own configuration**, like `CompanionExtractorRunner`
   (`src/composition/companion_extractor_runner.py`): composition holds a runner per agent type that reads the user's
   `UserBotConfig`, builds the execution context through `AgentContextBuilder`, sets the quota service and runs the agent
-  inside its billing scope. The reader's runner implements `ContentExtractorPort`; the triage runner implements a new
-  `ImageTriagePort`. The indexing service sees only ports.
+  inside its billing scope. The reader's runner (`DriveReaderRunner`) implements `ContentExtractorPort`; the triage
+  runner (`DriveTriageRunner`) implements `ImageTriagePort`. The indexing service sees only ports.
+  `src/composition/drive_model_setup.py` builds both for `indexer_main.py` (and the eval) on one context builder.
 - **Provider is configuration (D7).** `STRATEGIES` entries for both types allow `claude` and `openai`, default
-  `claude`; `_DEFAULT_AGENT_TIERS` sets both to ECO (Claude ECO = `claude-haiku-5-5`, OpenAI ECO = `gpt-6-luna`). A
-  user's `agent_providers` switches one or both. The indexer builds a `ProviderRegistry` with the Claude and OpenAI
-  adapters (their API keys become indexer secrets, never Cloud Build substitutions). Gemini is not offered: its adapter
-  takes no inline file bytes.
+  `claude`, no fallback; `_DEFAULT_AGENT_TIERS` sets both to ECO (Claude ECO = `claude-haiku-5-5`, OpenAI ECO =
+  `gpt-6-luna`). A user's `agent_providers` switches one or both. The indexer builds a `ProviderRegistry` with the
+  Claude and OpenAI adapters, each only when its key is set (their API keys are indexer secrets, never Cloud Build
+  substitutions); a user whose configuration names a provider without a key gets a model outage. Gemini is not
+  offered: its adapter takes no inline file bytes. Calls run with `allow_provider_storage=False` (OpenAI `store`
+  off): the content is the user's files. Per-call limits (`DRIVE_READER` / `DRIVE_TRIAGE` in `agent_config.py`):
+  reader 180 s and 16 000 output tokens, triage 120 s and 4 096, one parse retry, thinking `low` (a user's
+  `agent_thinking` wins).
 - **OpenAI file input is fixed in this slice** (adapter wire tests, `docs/how_to/ADAPTER_WIRE_TESTING.md`): a PDF goes
   as an inline `input_file` with a file name instead of a Files API upload that is never deleted, and a part that
-  cannot be built raises instead of being dropped silently.
+  cannot be built raises instead of being dropped silently. The Claude adapter sends no PDF citations when a response
+  schema is set.
 - **Prompts live in Firestore** (tokens, blueprints, profiles per `docs/how_to/NEW_AGENT_PLAYBOOK.md`), uploaded by the
-  owner. A missing prompt fails the call (no fallback prompt) and is handled as a model outage (§24.8), logged ERROR.
+  owner and assembled by `build_drive_prompt` (no biography, no directives, no user overrides). A missing prompt, or an
+  assembly without its `cognitive_process` and `output_format` sections, fails the call (no fallback prompt), is
+  evicted from the prompt cache and is handled as a model outage (§24.8), logged ERROR.
 - **Telemetry:** the indexer has no Logfire and no `prompt_content` capture; verbatim scans are not copied into
-  BigQuery. The tick summary line carries the model counters and cost (§24.9).
+  BigQuery. The tick summary line carries the model counters and cost (§24.9); `[DriveReader]` logs one line per
+  file read.
 
 ### 24.3 Extraction: the port, the router, page windows
-- `ContentExtractorPort.extract(request) -> ExtractionOutcome`. The request carries the temp file path, kind, mime
-  type, limits and the caller (`user_id`, `account_id` — the parser ignores them; the reader bills and configures by
-  them). The outcome: `text`, `no_text`, `unsupported`, `too_large`, `encrypted`, `timeout`, `memory`, `error`,
-  `model_unavailable`, `budget_exhausted`, with `pages_total`, `pages_sent`, `truncated` and the brief when present.
+- `ContentExtractorPort.extract(request) -> ExtractionOutcome`. The request carries the temp file path, name, sniffed
+  kind, mime type, the caller (`user_id`, `account_id` — the parser ignores them; the reader bills and configures by
+  them) and `max_model_pages`, the pages the reader may still send this month. The outcome status is one of `text`,
+  `no_text`, `unsupported`, `too_large`, `encrypted`, `timeout`, `memory`, `error`, `budget_exhausted`, with `text`,
+  `pages_total`, `pages_sent`, `truncated`, the brief when present, `extracted_by` (`id@version`), `model_calls` and
+  `model_cost`. A model outage is not a status: the reader raises `DriveModelUnavailable` (§24.8), carrying what the
+  file spent before it. `extract()` never raises otherwise.
 - `EXTRACTOR_CHAINS` (pure domain table, §9): PDF `[parser, reader]`; image `[reader]` (after a `text` triage
-  verdict); every other admitted kind `[parser]`. The router calls the next link only on the four signals of §9
-  (no text, low density, garbage text, parser error or unsupported). `extracted_by` records the link that produced the
-  text.
-- **Parser adapter** `SubprocessContentExtractor`: one child Python process per file with `RLIMIT_AS`, `RLIMIT_CPU`
-  and a wall-clock kill (values from S1). Inside it: markitdown with the Phase 0 allowlist; charset detection for
-  text kinds (`charset-normalizer`, BOM first); `striprtf` for RTF; the stdlib `email` parser for EML; ODF
-  `content.xml` read with `defusedxml`; VTT/SRT normalised to cue text; page count and page windows for PDFs (`pypdf`).
-  New direct dependencies: `pypdf`, `striprtf`, `defusedxml`, `charset-normalizer`.
+  verdict); every other admitted kind `[parser]`. The router (`model_route`) calls the next link only on the §9
+  signals: no text, low density (fewer than `MODEL_EXTRACT_DENSITY` characters per page), garbage text (more than
+  `MODEL_EXTRACT_GARBAGE` of the visible characters in `(cid:N)` runs, replacement characters, or UTF-8 read as
+  Latin-1 or CP1251), or a parser `error` / `unsupported`. A parser `timeout` or `memory` kill is a bomb and is never
+  routed; `encrypted` is deterministic and never routed. `extracted_by` records the link that decided.
+- **Sniffing before the chain.** The kind the chain runs on is the one the downloaded head shows (`sniff_kind`, magic
+  bytes over the name); a sniffed kind the policy does not admit is `metadata_only / kind_not_admitted`. A file whose
+  bytes show a kind that may reach the reader, when this tick has no time left for the reader's worst case, waits for
+  the next tick.
+- **Parser adapter** `SubprocessContentExtractor`: one child Python process per file (`python -B -E -s -m
+  src.adapters.drive_parser.child`), one at a time, with `RLIMIT_AS`, `RLIMIT_CPU`, `RLIMIT_FSIZE`, `RLIMIT_CORE` 0
+  applied before any parser loads, a wall-clock kill of its process group, an allowlisted environment and a private
+  temp directory; the result is a JSON file, never stdout. Inside it: pdfminer.six for PDF text, laid out page by page
+  and stopped at `MAX_TEXT_CHARS` <!-- r2: P-m6 -->; pypdf for the page count (walked from the page tree, never from
+  `/Count`), encryption and page windows; markitdown 0.1.8's allowlisted converters (Phase 0) for DOCX, PPTX, EPUB,
+  MSG and HTML; openpyxl for XLSX (at most 1 025 columns, rendered per sheet, stopping at `MAX_TEXT_CHARS`;
+  `truncated` when a cell past the column bound holds a value <!-- r2: P-m3 -->) and xlrd for XLS, both as Markdown
+  tables capped at `MAX_SHEET_ROWS`; charset detection for text kinds (`charset-normalizer`, BOM first, a legacy
+  code-page tie-break for uk/ru/en/es/fr); `striprtf` for RTF; the stdlib `email` parser for EML; ODF `content.xml`
+  read with `defusedxml`; VTT/SRT reduced to cue text. Password-protected PDF, Office, EPUB and ODF files are
+  `encrypted`; a ZIP container over the Phase 0 limits is `too_large`. Every library on this path is pinned in
+  `requirements.txt`; a changed output for the same file is a `SubprocessContentExtractor.VERSION` bump. The memory,
+  CPU and wall limits (1 GiB, 90 s, 120 s) are placeholders until spike S1.
 - **Page windows.** One call cannot transcribe 200 pages, and a Haiku 5.5 prompt above 100k tokens costs five times
   as much on input and output. The child process counts a routed PDF's pages, then cuts one window of
-  `MODEL_PAGES_PER_CALL` pages at a time, on demand (a temp PDF the indexer process never parses, read into memory
-  and removed before the call), so at most `MODEL_IN_FLIGHT` windows exist on disk even when every page shares one
-  large image; the windows run with at most `MODEL_IN_FLIGHT` concurrent calls and their texts are joined in page
-  order. A window answered at the output limit, or whose call timed out, is split in half (cut from the source) and
-  retried once; a half or a single page still at the limit adds no text and sets `truncated`, and a half that times
-  out again fails the file (`error`, a counted per-file retry — the model answered, these pages are too dense for
-  it); a single-page window that times out is a model outage. A window the provider refuses (HTTP 413, 400 or 422) is
-  halved down to one page; a single page still refused is skipped, the rest of the file is read and indexed, and the
-  outcome is `truncated` with the refused pages counted (`pages_refused`, also in the log line). Only a file whose
-  every page was refused is terminal: `too_large` when any page was refused as too large (413), else `unsupported`
-  (R3-P1). An outage carries what the file spent before it (pages answered,
-  calls, cost), and the tick counts that before it records the outage. When the file's model time
-  reaches `MODEL_FILE_BUDGET`, the windows done so far are indexed and the record is `truncated` — no file restarts
-  forever. Pages past `MODEL_EXTRACT_MAX_PAGES` are not sent (`truncated`).
+  `MODEL_PAGES_PER_CALL` pages at a time, on demand, from the walked page tree <!-- r2: P-M1 --> (a temp PDF the
+  indexer process never parses, read into memory and removed before the call), so at most `MODEL_IN_FLIGHT` windows
+  exist on disk even when every page shares one large image; the windows run with at most `MODEL_IN_FLIGHT`
+  concurrent calls and their texts are joined in page order. The parser's own status (`encrypted`, `timeout`,
+  `memory`, …) when it cannot count or cut the PDF is the file's outcome.
+- **Halving rules** (`DriveReaderRunner._piece`):
+  - a window answered at the output limit is split in half (cut from the source) and read once more; a half or a
+    single page still at the limit adds no text and sets `truncated`;
+  - a window whose call timed out is halved once; a half that times out again fails the file (`error`, a counted
+    per-file retry — the model answers, these pages are too dense for it); a single-page window that times out is a
+    model outage <!-- r2: T-M2b -->;
+  - a window the provider refuses (HTTP 413, 400 or 422) is halved down to one page; a single page still refused is
+    skipped, the rest of the file is read and indexed, and the outcome is `truncated` with the refused pages counted
+    (`pages_refused`, also in the log line) <!-- r2: R3-P1 -->. Only a file whose every page was refused is terminal:
+    `too_large` when any page was refused as too large (413), else `unsupported`. Both demote: the same bytes get the
+    same answer, and a retry would only bill the windows already read again <!-- r2: P-m5 -->. Output that stays
+    invalid after the parse retry, or a refusal raised before any HTTP exchange, is `error`.
+- **File budget.** When the file's model time reaches `MODEL_FILE_BUDGET`, the windows done so far are indexed and the
+  record is `truncated` — no file restarts forever. A file whose windows were all cut by the budget with no text read
+  is `error` (retried), never `no_text` <!-- r2: P-m4 -->. Pages past `MODEL_EXTRACT_MAX_PAGES` are not sent
+  (`truncated`). An outage in any window cancels the file and carries what it spent before it (pages answered, calls,
+  cost); the tick counts that before it records the outage.
 - **Tick deadline (§7.1):** a file that may be routed starts only if
   `elapsed + DOWNLOAD_TIMEOUT + EXTRACT_WALL_TIMEOUT + MODEL_FILE_BUDGET + EMBED_FILE_BUDGET + margin < TICK_DEADLINE`;
   a test asserts it for the configured constants.
 
 ### 24.4 The brief and the caption (D8, D9, D13)
 - **Brief** (reader, first window): `doc_type` (a short English label: invoice, receipt, contract, statement, letter,
-  ticket, certificate, form, other), `description` (one line in the document's language), `doc_date` (ISO date or
-  null), `parties` (at most 5 names), `amount` (value + currency, or null). The prompt keeps the verbatim field
-  verbatim; the brief fields are the only place for interpretation. Stored on the record (`brief_*` fields).
-- **Caption** (triage, photographs only): at most ten words, in English, stored as `caption`.
-- **Card text** (`card_text`, `CARD_VERSION` 2): a model-read document is
-  `name | kind | doc_type | description | doc_date | parties | amount` plus the lead text; a photograph
-  `name | image | caption | key facets`. Brief and caption are model output from untrusted content: they reach Smart
-  only inside the nonce-tagged wrapper, like names and chunks.
-- **`effective_date`** = the brief's `doc_date` when present, else the §3.1 order (D13). The model is not told which
-  kind matches which date: the guidance is one distinction (§24.10).
+  ticket, certificate, form, other; anything else reads as `other`), `description` (one line in the document's
+  language, at most 300 characters), `doc_date` (ISO date or null; anything else is dropped, never fails the
+  transcription), `parties` (at most 5 names), `amount` (value + currency as one display string, or empty). The prompt
+  keeps the verbatim field verbatim; the brief fields are the only place for interpretation. Stored on the record as
+  `brief` (a `DocumentBrief`).
+- **Caption** (triage, photographs only): at most ten words, in English, stored as `caption`. It lives with the `photo`
+  verdict: a rename away and back keeps both. <!-- r2: T-m3 -->
+- **Card text** (`card_text`, `CARD_VERSION` 2): `name | kind | brief | caption | key facets | lead text`, each content
+  segment only when present, the brief as `doc_type | description | doc_date | parties: … | amount`. The lead text is
+  the first `CARD_LEAD_CHARS` of every indexed document's text, parsed or read (a `machine_text` demotion keeps it
+  too); a photograph's card is `name | image | caption | key facets`. Brief, caption and lead text are model output or
+  file text from untrusted content: they reach Smart only inside the nonce-tagged wrapper, like names and chunks.
+- **`effective_date`** = the brief's `doc_date` when present, else the §3.1 order (D13). Only the reader writes a
+  brief, so parsed documents keep the file date. The model is not told which kind matches which date: the guidance is
+  one distinction (§24.10).
 
 ### 24.5 Image triage and image reading
-- Every image record without a verdict at the current `TRIAGE_VERSION` is triage-due (class 2 on first sight,
-  class 3 after an upgrade). The tick gathers up to `TRIAGE_BATCH` due images per call. Thumbnails come from a new
-  `UserDrivePort.get_thumbnail(user_id, item_id, size) -> bytes | None` (Graph, served as JPEG or PNG, S0f); the size
-  (176 or 800 px) is a live check on the owner's photos. Each thumbnail goes with an opaque index and the camera prior
-  (§5.3) as text.
-- Verdict `text` → the record becomes `pending` for the reader. Verdict `photo` → `metadata_only / photograph` (new
-  reason) with its caption. No thumbnail → `metadata_only / photograph` without a caption (deterministic, no retry).
-  The verdict, `triage_version` and the caption are stored.
-- The reader gets an information-bearing image as the provider's large rendition (Graph custom size, JPEG; HEIC is
-  never decoded by us). **Spike S0g** confirms custom rendition sizes under `Files.ReadWrite.AppFolder` and picks the
-  size that keeps receipt text legible; if it fails, the original is sent for JPEG/PNG/WebP/GIF within the vision
-  cap (3.75 MiB raw: 5 MiB once base64-encoded, Anthropic's per-image limit; to be confirmed in the live model check),
-  and other formats stay `metadata_only / no_text`.
+- Every image record without a verdict at the current `TRIAGE_VERSION` on its content version is triage-due (class 2
+  on first sight, class 3 after an upgrade). The tick gathers due images `TRIAGE_BATCH` per call; a partial last batch
+  waits for the next page of the same class only while the pass progresses anyway, so N images cost ⌈N /
+  `TRIAGE_BATCH`⌉ calls. Thumbnails come from `UserDrivePort.get_thumbnail(user_id, item_id, size) -> bytes | None`
+  (Graph, served as JPEG or PNG, S0f), at `TRIAGE_THUMBNAIL_SIZE` (`medium`, 176 px; `large`, 800 px, is the live
+  check's alternative). Each thumbnail goes with an opaque index and the camera prior (§5.3) as text.
+- Verdict `text` → the record's content is due for the reader, in the class the triage had. Verdict `photo` →
+  `metadata_only / photograph` (new reason) with its caption. **No thumbnail** may be one the provider has not made
+  yet: it is retried with backoff, and only at `MAX_ATTEMPTS` is it `metadata_only / photograph` without a caption.
+  A batch the provider refuses (400) is halved until the refused image is alone; that image, one left unanswered after
+  the agent's one correction turn, and a thumbnail over the vision cap are photographs without a caption
+  (deterministic). The verdict, `triage_version`, `triaged_content_version` and the caption are stored.
+- The reader gets an information-bearing image as the provider's `READER_RENDITION_SIZE` rendition
+  (`c2048x2048`, JPEG; HEIC is never decoded by us). **Spike S0g** confirms custom rendition sizes under
+  `Files.ReadWrite.AppFolder` and that receipt text stays legible. With no rendition, the original is sent only when it
+  is JPEG/PNG/WebP/GIF within the vision cap (3.75 MiB raw: 5 MiB once base64-encoded, Anthropic's per-image limit; to
+  be confirmed in the live model check); other formats are `metadata_only / no_text`. A 413 on an image is
+  `too_large`, a 400/422 `unsupported`. <!-- r2: P-m5 -->
 - Done-when of §16 Slice 4 holds: 100 holiday photos cost ⌈100 / `TRIAGE_BATCH`⌉ triage calls and no reader call.
 
 ### 24.6 Chunks and the content streams
 - Collection `{prefix}drive_index_chunks`, doc id `{user_id}:{item_id}:{generation}:{index}`, fields of §3.3 plus
-  `content_terms`. Vector indexes under `user_id` and `user_id + kind`; composites for the term stream and for
-  generation collection. The repository port gains the chunk methods; records and chunks stay in one repository.
-- **Chunk stream** (§10.1 step 3): kNN, fence, max-pool per record, window `index ± 1`.
-- **Content exact-token stream** (decided in rev 3.8): `content_terms` per chunk from one pure normaliser shared by
-  indexing and the query — amounts in one canonical form whatever the separators, digit runs of three or more and
-  alphanumeric ids with their separators stripped, numeric dates in ISO form (both readings when day and month are
-  ambiguous). The query's terms are matched one `array-contains` query per term (not one `array-contains-any`, which
-  returns the first 100 by id), pooled per record, fused by RRF with the card, name and chunk streams. A normaliser
-  change bumps `EXTRACTION_VERSION`.
+  `content_terms`. Vector indexes under `user_id` and `user_id + kind`; composites for the term stream (with and
+  without `kind`) and for generation collection; single-field exemptions for `text` and `vector`. Stream reads project
+  away `text` and `content_terms` (they may come back empty); windows read chunks by id. The repository port gains the
+  chunk methods; records and chunks stay in one repository.
+- **Chunk stream** (§10.1 step 3): kNN (`CHUNK_FETCH`), fence, max-pool per record before fusion, window
+  `index ± 1`. Off while the index's vectors are in another embedding space (`refreshing`), like the card stream.
+- **Content terms** (`drive_content_terms.py`, decided in rev 3.8): one pure normaliser shared by indexing and the
+  query. Index side, every form, at most 256 per chunk: amounts in one canonical form whatever the separators
+  (`1 250,00`, `1.250,00`, `1,250.00` → `1250.00`) plus their integer part; numeric dates in ISO form (both readings
+  when day and month are ambiguous); alphanumeric ids with their separators stripped plus their digit runs of three
+  or more; whitespace-separated digit groups of 9+ digits joined (IBANs, phone numbers). A token holding `.` or `,`
+  never yields its digits joined (`1250.00` is not `125000`). A normaliser change bumps `EXTRACTION_VERSION`.
+- **Query side: maximal forms only** (review D-M1). `query_terms` takes each number-like span's maximal form — the ISO
+  date, the canonical amount, the joined digit group, the joined id, the first kind claiming a stretch of text winning
+  in that order — never a fragment (a year, an amount's integer part, a run inside an id), because a fragment as a
+  query matches documents that share only that part. An amount whose cents are `.00` also queries its integer form, so
+  `1,250.00` finds a document that says `1250` <!-- r2: S-m2 -->. The terms come from at most `QUERY_TERM_CHARS` of
+  the query, cut at a word boundary, and the span claiming is linear <!-- r2: S-m1 -->; at most
+  `CONTENT_TERM_QUERIES` terms, longest first, each matched by its own `array-contains` query ordered by item id (not
+  one `array-contains-any`, which returns the first 100 by id and lets a common term hide a rare one).
+- **Selectivity by distinct files** (review D-M2, arbiter R1-2 and R2 S-M1). A term page that was not full is
+  complete and selects. A full page is an id-ordered slice of the term's chunks: the term is **non-selective** when
+  the page spans more than `TERM_NONSELECTIVE_FILES` distinct files. A full page from at most that many files is
+  probed past its last file, one new file per probe (`find_next_file_with_term`: the same query with a cursor on
+  `item_id`, limit 1), until one file too many is seen or the term runs out; only then is it selective
+  <!-- r2: S-M1 -->. A non-selective term takes no part in the fusion, in anchoring a window, in trimming a window
+  around a term, or in the widening (it is never read again). A full page concentrated in few files — an IBAN in every
+  chunk of one contract — still selects. The folder in-memory path reads every chunk of the subtree, so its pages are
+  complete and need no probe.
+- **Pooling and fusion.** Term hits are fenced and pooled per record: more shared query terms first, then the more
+  specific term, then item id; the anchor is the record's chunk holding the most terms. The card, name, chunk and term
+  streams are fused by RRF. A content hit counts only for a carded, visible record (§17.1 d).
+- **Windows** (§10.2). The anchor (a term anchor wins over a kNN anchor) and its neighbours are read by id from stored
+  text. All windows of one result set share `WINDOW_CHARS_TOTAL`: each hit keeps its best chunk — trimmed around its
+  query term only when the best chunks alone exceed the budget, and then only down to the share the shorter ones leave
+  — and neighbours are added in rank order, each whole, until one does not fit; after that no lower hit gets one.
+  A trimmed or cut window is marked `shortened`, and Smart opens the file before quoting from it.
 - Envelope `content_search = true`; `unread` filled by the tick; the `capped` hedge names all streams.
 
 ### 24.7 Budgets and bounds (layer 0, §5.5)
 - `MODEL_EXTRACT_PAGES_PER_MONTH` per user (pages sent to the reader) and `TRIAGE_IMAGES_PER_MONTH` per user (images
-  sent to triage); over either, the work waits as `pending` in class 3 until the next month. Both are counters on
-  `DriveSyncState` keyed by month, shown in the Cabinet card and the tick summary.
-- `MODEL_IN_FLIGHT` bounds concurrent model calls per tick, separately from `EMBED_IN_FLIGHT` (D7): the model quota is
-  not the Gemini embedding quota.
+  sent to triage). Before the reader is called, the file must fit what is left of the month: an image needs one page,
+  a PDF its page count capped at `MODEL_EXTRACT_MAX_PAGES` (that cap when the parser could not count). A file that does
+  not fit waits as `pending` in class 3 until the next month (UTC); it is never cut to what is left of this one, and
+  only a file needing more than the whole monthly budget would be cut to it (review B-M4). Images over the month's
+  triage budget wait the same way. Both are counters on `DriveSyncState` keyed by month, carried by every save of the
+  tick (error paths included), shown in the Cabinet card and the tick summary.
+- `MODEL_IN_FLIGHT` bounds concurrent model calls per file, and the tick hands files to the reader one at a time;
+  separate from `EMBED_IN_FLIGHT` (D7): the model quota is not the Gemini embedding quota.
+- Per-file time: download `DOWNLOAD_TIMEOUT`, parser `EXTRACT_WALL_TIMEOUT`, model `MODEL_FILE_BUDGET`, embeddings
+  `EMBED_FILE_BUDGET`; per tick `TICK_FILE_BUDGET` runs within the start budget and the deadline rule of §24.3.
 
 ### 24.8 Model failures
+`src/infrastructure/drive_model_call.py` sorts every failed call by what it says about the input:
+
 | Outcome | Effect |
 |---|---|
-| Provider unavailable (429, 5xx, timeout, network), or a missing prompt | **Model outage, not a systemic error**: `model_backoff_until` on the sync state (the §7.7 backoff), records that need the model stay `pending` and are skipped until then; parser work, cards and cascades go on. |
-| The provider refuses a window, page or image (HTTP 413, 400 or 422) | A window is halved down to one page (§24.3); a single page still refused is skipped and the file is indexed `truncated`, `pages_refused` counted. Terminal, never retried: every page of the PDF refused, or the image refused — `too_large` when a refusal was 413, else `unsupported` → `metadata_only / kind_not_admitted`. The same bytes get the same refusal, and a retry would bill every window read before it again (P-m5, R3-P1). A refusal raised before any HTTP exchange stays a per-file transient. |
-| Output that is not valid JSON after the parse retry | Per-file transient. |
+| Provider unavailable: 429, 5xx, a timeout of a call that cannot be halved, network, an open breaker, an account-level 4xx (key, permission, model id), a provider without a key, a missing prompt, anything unexpected | **Model outage, not a systemic error** (`DriveModelUnavailable`): `model_backoff_until` on the sync state (`MODEL_BACKOFF_BASE_S` doubling to `MODEL_BACKOFF_CAP_S`), records that need the model stay `pending` and are skipped until then, attempts untouched; parser work, cards and cascades go on. What the file or batch spent before the outage is counted against the month and the summary without ending the outage: the backoff keeps doubling. <!-- r2: T-M2a --> Successful model work ends it. |
+| The provider refuses a window or a single page of a PDF (413, 400 or 422) | The window is halved down to one page (§24.3); a single page still refused is skipped and the file is indexed `truncated`, `pages_refused` counted. <!-- r2: R3-P1 --> |
+| The provider refuses every page of a PDF, or an image: `too_large` when a refusal was 413, else `unsupported` | Deterministic: `metadata_only`, no retry, no re-bill. <!-- r2: P-m5 --> In triage, the refused image is a photograph without a caption. |
+| A window halved after a timeout times out again | Per-file transient (`error`, §8.2); at `MAX_ATTEMPTS` → `failed / extract_error`. <!-- r2: T-M2b --> |
+| Output that is not valid JSON after the parse retry, a refusal before any HTTP exchange | Per-file transient. |
 | The reader finds no text | `metadata_only / no_text` (deterministic). |
-| Monthly budget spent | `budget_exhausted`: `pending`, class 3, due at the month boundary. |
+| Monthly budget spent | `budget_exhausted` / the pre-call hold: `pending`, class 3, due at the month boundary. |
 
 ### 24.9 Cost and billing
 - Every reader and triage call is billed to the user's account through the agents' billing scope (`account_id` read
-  from the user record on the indexer; the task payload stays `{user_id}`, Δ4).
+  from the user record on the indexer; the task payload stays `{user_id}`, Δ4); failed calls and parse retries are
+  counted from the agent's ledger too.
 - Prices (checked at the provider 2026-10-13): Claude Haiku 5.5 $0.10 / $0.50 per million input / output tokens for
   prompts up to 100k tokens, five times that above; GPT-6 Luna $0.10 / $0.50. A page costs about $0.0006, so the
   default page budget bounds a user at about $3 a month. The tick summary adds `indexed`, `failed`, `demoted`,
-  `chunks`, embedding time, `model_pages`, `model_calls`, `triage_images` and `model_cost`.
+  `retried`, `deferred`, `chunks`, `embed_ms`, `model_pages`, `model_calls`, `triage_calls`, `triage_images` and
+  `model_cost`.
 
 ### 24.10 Agent surface (D11)
 - The intents stay as they are. `search_files_in_drive`'s description and `drive_query` field description say that
@@ -1558,40 +1656,69 @@ this section wins; the text above was corrected where it was plainly false. Slic
 - Dates are one distinction, the same sentence in the `drive_query` and `drive_date_from` descriptions: dates written
   inside the document go in `drive_query`; the date filters only when the user limits when the file is dated. The
   token keeps only the retry rule (a date filter that finds nothing is retried without it before "not found").
-- The §10.4 protocol lines go into Smart's protocol token (backed up first; `--apply` is run by the owner).
-  `render_results` keeps the per-result facts and drops the standing guidance that moves to the token.
+- The §10.4 protocol lines go into Smart's protocol token (`drive_specialist` in `PROTOCOL_AGENT_SELECTION`, backed up
+  first; `--apply` is run by the owner): search when the answer may be in a document, freshness, open a shortened
+  passage before quoting, honest not-found, open the file for sums (a window is not a table), document vs memory,
+  versions. `render_results` keeps the per-result facts and drops the standing guidance that moves to the token, so
+  the render change and the token upload ship together.
 - `capabilities.py` says the drive answers from content.
 
 ### 24.11 Eval and tests
-- §17 in full, plus: the router's four signals; page windows (join order, output-limit split, file budget,
-  truncation); triage batching, verdict mapping and the photo invariant; model outage keeping parser work going;
-  budgets across a month boundary; `effective_date` from the brief; the OpenAI adapter's file input (wire tests).
+- §17 in full, plus: the router's signals; page windows (join order, output-limit split, timeout and 413/400/422 halving, refused pages skipped,
+  file budget, truncation); triage batching, verdict mapping and the photo invariant; model outage keeping parser work
+  going; budgets across a month boundary; `effective_date` from the brief; term selectivity; the window budget; the
+  OpenAI adapter's file input (wire tests). `tests/integration/test_drive_g2_end_to_end.py` runs every text-layer G2
+  case through the real parser with scripted models.
 - The eval fixture folder gains file bytes: documents generated by a committed script (DOCX, PDF with and without a
   text layer, broken-font Cyrillic PDF, XLSX, CSV, RTF, EML, ODT, VTT) and rendered scans and screenshots (UA, RU, ES,
   EN), PII-free. `gold_g2.json` adds `expected_substring` cases (clauses, amounts, invoice numbers, table-heavy and
   two-column PDFs); OCR-labelled G1/G2 cases lose their expected-miss label. Bars are recorded with the real reader and
-  real embeddings; unit tests use fakes.
+  real embeddings and pin the reader's provider; unit tests use fakes.
 - G3: a Smart dry run (the `ab_agent_models.py` scaffolding) in which the drive read intents run for real against the
   fixture index; positives and a negative set; the search-initiated rate is recorded. Each case also says where its
   date belongs (`expect`: `date_in_query`, `date_filter` or `none`), scored from the fields of Smart's search calls as
-  its own rate. The bars are the Wilson lower bounds (z = 1.96) of the recorded rates, judged only at equal repeats.
+  its own rate, barred over the date cases (`date_in_query`, `date_filter`) only, with synthetic date cases added so
+  the bar has enough of them <!-- r2: S-m3 -->. The bars are the Wilson lower bounds (z = 1.96) of the recorded rates,
+  judged only at equal repeats.
 
 ### 24.12 Acceptance
 §17 and §24.11 green; the eval meets its recorded bars (G1, G2, OCR-labelled, G3 positives; the G3 negative rate
 reported); the §16 Slice 4 photo invariant; the Office Online edit-then-ask scenario answers from the edit or states
-the index time; live checks with the owner on real files: the model pick (Haiku 5.5 or GPT), the thumbnail size, a
-scan, a broken-font Cyrillic PDF, a screenshot and a photo folder, each found by subject and answered from content.
+the index time; live checks with the owner on real files (`scripts/validation/drive_model_check.py`, then
+`drive_eval.live_check` with the drive queue paused): the model pick (Haiku 5.5 or GPT) and the per-window timeout,
+the thumbnail size, a scan, a broken-font Cyrillic PDF, a screenshot and a photo folder, each found by subject and
+answered from content.
 
 ### 24.13 Parameters (initial)
+Values in `src/domain/drive_index_params.py` unless named otherwise.
+
 | Name | Initial | Basis |
 |---|---|---|
+| `QUIET` / `MAX_DEFER` | 10 min / 60 min | S0b: Word for the web saves every 1.2–3.3 min while typing |
+| `DOWNLOAD_TIMEOUT_S` / `EXTRACT_WALL_TIMEOUT_S` / `EMBED_FILE_BUDGET_S` | 120 / 120 / 180 s | §7.1 deadline sum; S1 may revise the parser's |
+| `MODEL_FILE_BUDGET_S` | 600 s | Fits the §7.1 deadline sum with the other per-file budgets |
+| `TICK_FILE_BUDGET` | 50 | Index runs per tick |
+| `MAX_DOWNLOAD_BYTES` / `MAX_SHEET_DOWNLOAD_BYTES` | 45 MiB / 10 MiB | Step 1 cap; sheets amplify most (Phase 0) |
+| `MAX_TEXT_CHARS` / `MAX_SHEET_ROWS` | 2 000 000 / 5 000 | Text and table bounds |
+| `CHUNK_CHARS` / `CHUNK_OVERLAP` / `MAX_CHUNKS_PER_FILE` / `MAX_CHUNKS_PER_USER` | 2 400 / 240 / 400 / 50 000 | §8.4, §5.4 |
+| `CARD_LEAD_CHARS` | 2 000 | Lead text in the card |
+| `MODEL_EXTRACT_DENSITY` / `MODEL_EXTRACT_GARBAGE` | 200 chars per page / 0.05 | §9 router |
+| `MODEL_EXTRACT_MAX_PAGES` | 200 | Pages read per file |
 | `MODEL_PAGES_PER_CALL` | 10 | ≈ 15–40k prompt tokens on Claude, far below the 100k price step; ≈ 8k output tokens |
 | `MODEL_IN_FLIGHT` | 4 | A 200-page PDF in ≈ 5 rounds of ≈ 60 s |
-| `MODEL_FILE_BUDGET` | 600 s | Fits the §7.1 deadline sum with the other per-file budgets |
 | `MODEL_EXTRACT_PAGES_PER_MONTH` | 5 000 | ≈ $3 per user per month |
 | `TRIAGE_IMAGES_PER_MONTH` | 20 000 | ≈ 1 250 triage calls |
 | `TRIAGE_BATCH` | 16 | §15 |
-| Thumbnail size / reader rendition | 176 or 800 px / S0g | Live check / spike |
+| `TRIAGE_THUMBNAIL_SIZE` / `READER_RENDITION_SIZE` | `medium` (176 px) / `c2048x2048` | Live check / spike S0g |
+| `MODEL_BACKOFF_BASE_S` / `MODEL_BACKOFF_CAP_S` | 60 s / 3 600 s | §7.7 doubling backoff |
+| Reader / triage call timeout and output cap (`agent_config.py`) | 180 s, 16 000 tokens / 120 s, 4 096 tokens | Calibrated by the live model check |
+| Vision cap (`MAX_VISION_IMAGE_BYTES`, `drive_image_mime.py`) | 3.75 MiB raw | 5 MiB base64, Anthropic's per-image limit |
+| Parser `RLIMIT_AS` / `RLIMIT_CPU` / `RLIMIT_FSIZE` (`subprocess_content_extractor.py`) | 1 GiB / 90 s / 64 MiB | Placeholders until S1 |
+| `CHUNK_FETCH` / `FOLDER_INMEM_CHUNKS` | 300 / 2 000 | Chunk kNN page; folder chunks ranked in memory |
+| `CONTENT_TERM_QUERIES` / `CONTENT_TERM_FETCH` | 8 / 100 | Term queries per search; term page size |
+| `TERM_NONSELECTIVE_FILES` | 8 | Distinct files a full term page may span and still select |
+| `QUERY_TERM_CHARS` | 1 000 | Query characters terms are read from <!-- r2: S-m1 --> |
+| `WINDOW_CHARS_TOTAL` | 12 000 | All windows of one result set (≈ 3–4k tokens) |
 
 ### 24.14 Known limits
 - **The parser sandbox is resource isolation, not code-execution containment.** The child process bounds memory, CPU,
@@ -1601,7 +1728,12 @@ scan, a broken-font Cyrillic PDF, a screenshot and a photo folder, each found by
   files. *Trigger to revisit:* a code-execution CVE in a parser the child loads (markitdown and its converters,
   pdfminer/pdfplumber, openpyxl, python-pptx, mammoth, lxml), or indexing files of untrusted users (multi-tenant
   growth); the answer then is a separate parser service with its own identity (§9's "separate service" adapter).
+  Decision: `decisions/drive_parser_sandbox_resource_isolation.md`.
 - **A tick that ends with `LeaseLost` loses its model usage.** The month's page and image counters live on the sync
   state, and a tick without its lease cannot write it, so the model calls of that one tick are not counted against
   the monthly budgets (they are still billed to the account per call). Bounded to one tick's work
   (`MODEL_IN_FLIGHT` windows and the triage batches of one tick); the next tick counts from the last saved state.
+- **The text gate's variety bar is calibrated on synthetic text.** `MIN_VARIETY` 0.04 separates the measured dumps
+  (≤ 0.015) from a 1 500-line statement over 200 merchants (≥ 0.10); a real statement with far fewer merchants may
+  still read as machine text. *Trigger:* a statement or ledger demoted `machine_text` in the live check. Decision:
+  `decisions/drive_text_gate_financial_documents.md`.
