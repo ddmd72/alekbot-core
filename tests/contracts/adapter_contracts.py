@@ -719,3 +719,49 @@ PDF_FILE_INPUT_IS_INLINE = ContractRule(
         ),
     },
 )
+
+
+# ---- Drive agents' Gemini fallback (USER_DRIVE_INDEXING_RFC §24.2 D7 rev 3.17) -------------------------------------
+
+def _gemini_inline_parts(kw: dict) -> list:
+    """Every part of the converted contents that carries inline bytes."""
+    return [part for content in kw.get("contents") or [] for part in getattr(content, "parts", None) or []
+            if getattr(part, "inline_data", None) is not None]
+
+
+INLINE_FILE_BYTES_ARE_SENT = ContractRule(
+    name="INLINE_FILE_BYTES_ARE_SENT",
+    description=(
+        "A file part given as inline base64 (`file_data={'base64', 'mime_type'}` — the drive reader's PDF window or "
+        "image, the triage's thumbnails) reaches the provider as the file's bytes, never dropped and never uploaded "
+        "to a store. Gemini: one `inline_data` part per file, the decoded bytes and the mime type, and no Files API "
+        "upload. Input: the captured generate_content kwargs plus `expected` — a list of (bytes, mime_type) in order."
+    ),
+    validators={
+        "gemini": lambda kw: (
+            _eq([(p.inline_data.data, p.inline_data.mime_type) for p in _gemini_inline_parts(kw)],
+                kw["expected"], "Gemini: inline file parts differ from the files given"),
+            _true(all(getattr(p, "file_data", None) is None for p in _gemini_inline_parts(kw)),
+                  "Gemini: an inline file part also carries a file_data upload reference"),
+        ),
+    },
+)
+
+DICT_SCHEMA_IS_SENT_AS_JSON_SCHEMA = ContractRule(
+    name="DICT_SCHEMA_IS_SENT_AS_JSON_SCHEMA",
+    description=(
+        "A dict `response_schema` with `response_mime_type='application/json'` (the drive agents' structured output) "
+        "is enforced natively. Gemini: `config.response_json_schema` carries the schema (lowercase types; nullable "
+        "as a type array, which Gemini's JSON Schema subset accepts), `config.response_schema` stays None, and "
+        "`config.response_mime_type` is application/json. Input: the captured generate_content kwargs plus "
+        "`expected_schema`."
+    ),
+    validators={
+        "gemini": lambda kw: (
+            _eq(kw["config"].response_json_schema, kw["expected_schema"],
+                "Gemini: response_json_schema differs from the agent's schema"),
+            _true(kw["config"].response_schema is None, "Gemini: a dict schema went to response_schema"),
+            _eq(kw["config"].response_mime_type, "application/json", "Gemini: JSON mime type missing"),
+        ),
+    },
+)
