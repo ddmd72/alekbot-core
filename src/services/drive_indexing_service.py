@@ -1030,7 +1030,7 @@ class DriveIndexingService:
             try:
                 outcome = await extractor.extract(ExtractionRequest(
                     path=path, name=readme.name, kind=sniffed, mime_type=readme.mime_type, user_id=user_id,
-                    account_id=self._account_ids.get(user_id, "")))
+                    account_id=self._account_ids.get(user_id, ""), item_id=readme.item_id))
             except Exception as exc:   # the parser reports failures as outcomes; anything else is this file's
                 logger.error(f"[DriveIndex] README parse failed for {user_id[:8]}: {exc}", exc_info=True)
                 return None
@@ -1109,7 +1109,7 @@ class DriveIndexingService:
         if final is None and outcome is not None and kind is not None:
             final = await self._read_text(user_id, run, outcome, kind, now, summary, mark)
         if final is not None:
-            await self._end_run(user_id, run, final, cls, summary, mark)
+            await self._end_run(user_id, run, final, cls, summary, mark, outcome=outcome)
 
     async def _fetch(self, user_id: str, run: DriveIndexRecord, path: str,
                      now: datetime) -> Tuple[Optional[str], Optional[DriveIndexRecord]]:
@@ -1151,7 +1151,8 @@ class DriveIndexingService:
                        cls: Optional[int]) -> Tuple[Optional[ExtractionOutcome], Optional[DriveIndexRecord]]:
         """§9 / §24.3 router: the kind's chain, the next link only on the parser-failed signals. The reader runs
         only while the model is available and the month has the pages the file needs left (§24.7, §24.8); a
-        deferral keeps `cls`, the class the run started from."""
+        deferral keeps `cls`, the class the run started from. Returns the last link's outcome (for the run's log
+        line, F4-6) and, when that outcome is not text to index, the record to write instead."""
         outcome: Optional[ExtractionOutcome] = None
         for position, extractor_id in enumerate(chain_for(kind)):
             if position > 0:
@@ -1176,7 +1177,7 @@ class DriveIndexingService:
             extractor = self._extractor(extractor_id)
             request = ExtractionRequest(path=path, name=run.name, kind=kind, mime_type=run.mime_type,
                                         user_id=user_id, account_id=self._account_ids.get(user_id, ""),
-                                        max_model_pages=max_pages)
+                                        max_model_pages=max_pages, item_id=run.item_id)
             try:
                 outcome = await extractor.extract(request)
                 if not outcome.extracted_by:   # the link that decided, whatever the outcome (§9 upgrade compares it)
@@ -1198,14 +1199,14 @@ class DriveIndexingService:
             raise _NotWired(f"no extractor chain for kind {kind}")
         step, reason = outcome_step(outcome.status)
         if step is RunStep.WAIT_MONTH:
-            return None, deferred(_cleared(run), next_month_start(now), now, maintenance=True)
+            return outcome, deferred(_cleared(run), next_month_start(now), now, maintenance=True)
         if step is RunStep.DEMOTE and reason is not None:
-            return None, demoted(run, reason, now, outcome=outcome)
+            return outcome, demoted(run, reason, now, outcome=outcome)
         if step is RunStep.RETRY and reason is not None:
             retry = content_retry(run, reason, now)
             if retry.state is RecordState.FAILED:   # failed under this link: a new version of it gets a fresh try
                 retry = replace(retry, extracted_by=outcome.extracted_by)
-            return None, retry
+            return outcome, retry
         return outcome, None
 
     async def _read_text(self, user_id: str, run: DriveIndexRecord, outcome: ExtractionOutcome, kind: str,
@@ -1383,9 +1384,11 @@ class DriveIndexingService:
         await self._commit(user_id, list(writes.values()), deletes, collects=collects)
 
     async def _end_run(self, user_id: str, before: DriveIndexRecord, final: DriveIndexRecord, cls: Optional[int],
-                       summary: Dict[str, int], mark: Optional[_RunMark] = None) -> None:
+                       summary: Dict[str, int], mark: Optional[_RunMark] = None, *,
+                       outcome: Optional[ExtractionOutcome] = None) -> None:
         """The run's one record write, then its debris: every generation but the readable one goes (§7.4), a crashed
-        run's partial chunks included. Terminal outcomes of maintenance work keep class 3 for the card (§7.8)."""
+        run's partial chunks included. Terminal outcomes of maintenance work keep class 3 for the card (§7.8). One INFO
+        line names the outcome (F4-6); `outcome` is what the last extractor link reported, when one ran."""
         if final.state is not RecordState.PENDING:
             final = _maintenance_kept(final, cls)
         await self._commit(user_id, [final], set())
@@ -1395,6 +1398,7 @@ class DriveIndexingService:
         await self._repo.delete_chunks_except(user_id, final.item_id, final.indexed_generation)
         key = _outcome_key(before, final)
         summary[key] = summary.get(key, 0) + 1
+        logger.info(_run_line(user_id, key, final, outcome))
 
     async def _abandon_run(self, user_id: str, run: DriveIndexRecord, cls: Optional[int], now: datetime) -> None:
         """A systemic error ends the tick mid-run (§8.2): the attempt is cleared with `attempts` untouched and the
@@ -1803,6 +1807,20 @@ def _outcome_key(before: DriveIndexRecord, final: DriveIndexRecord) -> str:
     if final.state is RecordState.METADATA_ONLY:
         return "demoted"
     return "retried" if final.attempts > before.attempts else "deferred"
+
+
+def _run_line(user_id: str, key: str, final: DriveIndexRecord, outcome: Optional[ExtractionOutcome]) -> str:
+    """One index run's outcome for on-call (final review F4-6): ids, state, reason, the deciding link and the pages
+    — never document text or the file name."""
+    reason = final.reason.value if final.reason is not None else "-"
+    extractor = (outcome.extracted_by if outcome is not None and outcome.extracted_by else final.extracted_by) or "-"
+    total = outcome.pages_total if outcome is not None else final.pages_total
+    sent = outcome.pages_sent if outcome is not None else 0
+    refused = outcome.pages_refused if outcome is not None else 0
+    truncated = final.truncated or (outcome is not None and outcome.truncated)
+    return (f"[DriveIndex] run user={user_id[:8]} item={final.item_id} outcome={key} state={final.state.value} "
+            f"reason={reason} extractor={extractor} attempts={final.attempts} pages={sent}/{total} "
+            f"refused={refused} truncated={truncated}")
 
 
 def _terms_of(texts: Sequence[str]) -> List[Tuple[str, ...]]:

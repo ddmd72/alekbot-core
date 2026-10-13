@@ -51,6 +51,7 @@ class ExtractionRequest:
     user_id: str
     account_id: str
     max_model_pages: int = 0     # pages the reader may still send this month (§24.7); 0: the reader is not called
+    item_id: str = ""            # the drive item, for the extractors' log lines only (final review F4-6)
 
 
 @dataclass(frozen=True)
