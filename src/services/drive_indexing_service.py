@@ -197,6 +197,7 @@ class _Models:
     state: DriveSyncState
     calls: int = 0
     cost: float = 0.0
+    saved: Optional[_Saved] = None   # the tick's last written sync state, which a usage write extends (F1-4)
 
     def available(self, now: datetime) -> bool:
         return model_available(self.state, now)
@@ -334,7 +335,7 @@ class DriveIndexingService:
         self._gate_checked[user_id] = budget.started   # the gate just read the flag
         state = replace(state, continuation_enqueued_at=None)
         saved = _Saved(state)
-        models = _Models(state)
+        models = _Models(state, saved=saved)
         try:
             if nudge is not None:
                 await self._observe_nudge(user_id, state, nudge, now, budget, summary)
@@ -1187,6 +1188,7 @@ class DriveIndexingService:
                 _count_reader(models, summary, now, calls=exc.model_calls, cost=exc.model_cost, pages=exc.pages_sent,
                               outage=True)
                 models.outage(now)   # after the usage, which leaves the backoff to this outage (C-M1, T-M2)
+                await self._persist_usage(models)
                 return None, deferred(_cleared(run), _backoff_until(models), now, priority=cls)
             except Exception as exc:   # the port reports per-file failures as outcomes; anything else is this file's
                 logger.error(f"[DriveIndex] {extractor_id} failed on item {run.item_id} of {user_id[:8]}: {exc}",
@@ -1195,6 +1197,7 @@ class DriveIndexingService:
             if extractor_id == READER:
                 _count_reader(models, summary, now, calls=outcome.model_calls, cost=outcome.model_cost,
                               pages=outcome.pages_sent)
+                await self._persist_usage(models)
         if outcome is None:   # an empty chain: no kind is admitted without an extractor (§5.1)
             raise _NotWired(f"no extractor chain for kind {kind}")
         step, reason = outcome_step(outcome.status)
@@ -1412,6 +1415,17 @@ class DriveIndexingService:
             logger.warning(f"[DriveIndex] could not clear the run of item {run.item_id} for {user_id[:8]}: {exc}; "
                            f"it counts as a crashed attempt")
 
+    async def _persist_usage(self, models: _Models) -> None:
+        """The month's usage (and the model's outage state) written as soon as it is spent: after each reader file and
+        each triage batch (final review F1-4), so a tick the instance kills, or whose lease is lost, still counts the
+        pages and images it sent. One fenced write over the tick's last saved state; it raises LeaseLost once the lease
+        is gone, like every other write of the tick."""
+        if models.saved is None:
+            return
+        state = models.onto(models.saved.state)
+        await self._save_state(state)
+        models.saved.state = state
+
     def _model_hold(self, rec: DriveIndexRecord, now: datetime, models: _Models, *, cls: Optional[int] = None,
                     pages: int = 1) -> Optional[DriveIndexRecord]:
         """Model work waits, still pending, while the model is out (§24.8) or until a month has the `pages` the file
@@ -1460,6 +1474,7 @@ class DriveIndexingService:
                 summary["deferred"] = summary.get("deferred", 0) + len(batch)
                 continue
             await self._triage_batch(user_id, port, batch, ctx, budget, summary, models)
+            await self._persist_usage(models)
         return True
 
     async def _triage_batch(self, user_id: str, port: ImageTriagePort, batch: List[DriveIndexRecord],
