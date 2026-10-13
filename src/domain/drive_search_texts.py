@@ -1,0 +1,101 @@
+"""
+Drive search texts — the verbatim strings of Search v2's result, agent manifest and Smart protocol
+(docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §25.5.6, §25.5.7, frozen in §25.13.6). Pure constants.
+
+Defined by the frozen core and not wired yet: P6 renders with them (`render_results`), puts the manifest texts into
+`agent_manifest` and the tiers line into the protocol token. `REFERENCE_REMINDER` and the "index reflects the drive as
+of" line stay in `drive_search` unchanged. Templates use `str.format` fields; a word is passed already quoted where
+the template does not quote it.
+
+Public interface:
+    render: SEARCHED_LINE, SEARCHED_IGNORED, SEARCHED_COMMON, COVERAGE_COMPLETE, COVERAGE_INCOMPLETE,
+            COVERAGE_NOT_DESCRIBED, COVERAGE_NOT_DESCRIBABLE, the tier headings, SHOWING, SHOWING_AT_LEAST,
+            the card lines, GROUP_LINE, RELATED_SMALL_NOTE
+    D29:    ABSENT_LINE, ABSENT_IN_SCOPE_LINE, WITHOUT_LINE, WITHOUT_AT_LEAST_LINE
+    footers: FOOTER_EXACT, FOOTER_NO_CONJUNCTION, CONJUNCTION_TERM
+    MIGRATION_LINE
+    manifest: DRIVE_QUERY_DESCRIPTION, DRIVE_KIND_DESCRIPTION, DRIVE_DATE_FROM_DESCRIPTION, DRIVE_DATE_TO_DESCRIPTION
+    PROTOCOL_TIERS_LINE
+"""
+
+# -- render (§25.13.6) ---------------------------------------------------------------------------------------------
+SEARCHED_LINE = ("Searched names (several spellings and word forms), file descriptions, document text and passage "
+                 "keywords for: {concepts}")                                  # then the optional parts, then "."
+SEARCHED_IGNORED = "; ignored: {words}"
+SEARCHED_COMMON = "; ignored as common: {words}"                              # §25.5.4
+
+COVERAGE_COMPLETE = "Coverage: complete."
+COVERAGE_INCOMPLETE = "Coverage: incomplete — {parts}."                       # parts joined by "; "
+COVERAGE_NOT_DESCRIBED = "not described yet"                                  # ready, deferred, parked
+COVERAGE_NOT_DESCRIBABLE = "could not be described"                           # held
+
+ABOUT_HEADING = 'About "{query}" ({count}):'
+MENTIONED_HEADING = "Mentioned in ({count}):"
+TRANSLATED_HEADING = "By translation (automatic) ({count}):"
+LABELLED_HEADING = "Labelled (automatic) ({count}):"
+RELATED_HEADING = "Related by meaning only, unverified ({count}):"
+SHOWING = "showing {shown} of {total}"                                         # replaces {count} past the shown cap
+SHOWING_AT_LEAST = "showing {shown} of at least {total}"                      # a page was full
+
+MATCHED_LINE = "matched: {sources}"                                            # sources joined by "; "
+MATCH_NAME = 'name "{word}"'
+MATCH_PLACE_IN_FILE = 'place "{word}" (named in the file)'
+MATCH_WORDS_IN_PASSAGE = "words {words} in one passage"
+MATCH_PASSAGE_KEYWORD = 'passage keyword "{word}", from "{evidence}"'
+MATCH_TYPE_LABEL = 'type label "{word}" (automatic)'
+NOT_MATCHED_COMMON = "not matched (common)"
+KEYS_CUT = "keys cut"
+SIMILAR_NAME = "similar name"
+DATE_LINE = "date: {iso} ({source})"                                           # source: drive_search.DATE_*
+PASSAGE_LINE = "passage: … {text} …"
+GROUP_LINE = "{folder}: {count} more {tier} files ({kinds}, {dates})"
+RELATED_SMALL_NOTE = "closest by meaning; the drive is too small to tell related from unrelated"
+
+# -- D29: an absent concept ----------------------------------------------------------------------------------------
+ABSENT_LINE = 'No file holds "{word}".'
+ABSENT_IN_SCOPE_LINE = 'No file in this scope holds "{word}".'               # the word exists outside the filter/folder
+WITHOUT_LINE = 'Without "{word}": {count} files match the other words.'
+WITHOUT_AT_LEAST_LINE = 'Without "{word}": at least {count} files match the other words.'
+
+# -- footers -------------------------------------------------------------------------------------------------------
+FOOTER_EXACT = "No other file is about or mentions all of these words."
+FOOTER_NO_CONJUNCTION = "No file matches all of: {terms}."                    # terms: CONJUNCTION_TERM joined by ", "
+CONJUNCTION_TERM = '"{word}" ({count} files)'
+
+MIGRATION_LINE = ("The index is being migrated to a new search format: only names, meaning and filters were "
+                  "searched.")
+
+# -- agent manifest (D25, §25.5.7) ---------------------------------------------------------------------------------
+DRIVE_QUERY_DESCRIPTION = (
+    "search_files_in_drive: REQUIRED unless the request is filter-only; the `query` field is not read for search. "
+    "The subject in the user's words (any language): the words of a file or folder name, a place, a person, a topic, "
+    "a document type or purpose ('tickets', 'receipts', 'contracts', 'what expires'), or what to find inside (a "
+    "phrase, a number, an amount, an id). For 'everything about X' put X. A file format goes in drive_kind ('photos', "
+    "'PDF', 'spreadsheet'); a time span ('last year', '2023–2024') goes in drive_date_from / drive_date_to, not in "
+    "the words. Leave EMPTY only for filter-only requests."
+)
+DRIVE_KIND_DESCRIPTION = (
+    "search_files_in_drive: optional file type. A family covers every format of its kind: "
+    "spreadsheet (xlsx, xls, ods, csv), document (docx, doc, odt, rtf, pdf, markdown, text), word (docx, doc), "
+    "presentation (pptx, ppt, odp), photo (any image). Or one kind: pdf, docx, xlsx, markdown, text, csv, image, video, "
+    "audio, archive, code, folder, or a file extension such as 'jpg'. Other words are refused"
+)
+DRIVE_DATE_FROM_DESCRIPTION = (
+    "search_files_in_drive: optional earliest date, YYYY-MM-DD, inclusive: a photo's taken date, otherwise the date "
+    "written in the document when the index found one, otherwise the file's date. Use it for a time span the user "
+    "gives."
+)
+DRIVE_DATE_TO_DESCRIPTION = (                                                  # §25.13.6 gives none: v1's, unchanged
+    "search_files_in_drive: optional latest date, YYYY-MM-DD, inclusive (the whole day counts)"
+)
+
+# -- Smart protocol, `drive_specialist` block (§25.5.7) ------------------------------------------------------------
+PROTOCOL_TIERS_LINE = (
+    "Drive results say how each file matched. 'About' and 'mentioned in' are exact: the file's own name, details, "
+    "place or text holds the words, in their spellings and word forms. 'By translation' and 'labelled' are the "
+    "index's automatic words — passage keywords with their source quote, type, topic and life-area words — and may "
+    "be wrong or incomplete. 'Related by meaning only' lines are guesses. Other spellings and word forms were "
+    "searched; other languages only where the index wrote them, so a search in another language can still find "
+    "more. The coverage line says what the search could not see. When a word is held by no file, the result counts "
+    "the files that match the other words, so you can tell whether the word was phrasing or the subject."
+)

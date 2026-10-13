@@ -21,6 +21,16 @@ CURRENT_VERSIONS: Mapping[str, int] = {"policy": POLICY_VERSION, "card": CARD_VE
                                        "geo_table": GEO_TABLE_VERSION, "name_keys": NAME_KEYS_VERSION,
                                        "extraction": EXTRACTION_VERSION, "triage": TRIAGE_VERSION}
 
+# Search v2 (§25.4.8, frozen in §25.13.2). Defined, NOT yet in CURRENT_VERSIONS: adding them would start an upgrade
+# pass over v1 records. P5 adds them behind the migration gate (§25.8: a state whose applied_versions lacks
+# MIGRATION_GATE_KEY is awaiting migration and runs no upgrade pass).
+KEYS_VERSION = 1                              # drive_keys and the drive_content_terms normaliser: re-keys from stored text
+PROFILE_VERSION = 1                           # profiler prompt, schema, input rules, verification
+PASSAGES_VERSION = 1                          # doc2query prompt and grounding
+SEARCH_V2_VERSIONS: Mapping[str, int] = {"keys": KEYS_VERSION, "profile": PROFILE_VERSION,
+                                         "passages": PASSAGES_VERSION}
+MIGRATION_GATE_KEY = "keys"
+
 
 class Scope(str, Enum):
     NORMAL = "normal"
@@ -187,6 +197,10 @@ class DriveChunk:
     char_end: int
     kind: str
     content_terms: Tuple[str, ...] = ()
+    # Search v2 (§25.2.2): the chunk's `w:`, `n:`, `m:` keys (at most WORD_KEYS_PER_CHUNK) and the KEYS_VERSION they
+    # were made under. Written by P5; until then empty / 0.
+    word_keys: Tuple[str, ...] = ()
+    keys_version: int = 0
 
 
 @dataclass(frozen=True)

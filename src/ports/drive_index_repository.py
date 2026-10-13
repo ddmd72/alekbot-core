@@ -16,10 +16,14 @@ missing state counts as one with none). Anything else raises `drive_index.LeaseL
 outlived its lease cannot purge or overwrite the state of the tick that took over.
 """
 from abc import ABC, abstractmethod
-from datetime import datetime
+from datetime import date, datetime
 from typing import AbstractSet, Dict, List, Mapping, Optional, Sequence, Tuple
 
+from src.domain.drive_enrichment import DriveHintDoc, InitialBuild, ModelUsageMonth
 from src.domain.drive_index import DriveChunk, DriveIndexRecord, DriveSyncState, RecordState
+from src.domain.drive_index_lean import ChunkId, DriveChunkLean, DriveHintLean, DriveRecordLean
+
+SEARCH_V2_PENDING = "Search v2 P2"
 
 
 class DriveIndexRepository(ABC):
@@ -220,3 +224,105 @@ class DriveIndexRepository(ABC):
     @abstractmethod
     async def delete_user_chunks(self, user_id: str, limit: int) -> int:
         """Delete up to `limit` of the user's chunks; returns how many were deleted (purge)."""
+
+    # -- Search v2 (§25.13.1) -----------------------------------------------------------------------------------
+    # Frozen signatures, implemented by P2 in the Firestore and in-memory adapters (with parity tests on order,
+    # limits and cursors). Until then each raises NotImplementedError; nothing calls them. Not abstract, so both
+    # adapters stay untouched until P2 (precedent: PromptContentStore.flush, UserRepository.add_platform_id).
+
+    async def find_by_about_keys(self, user_id: str, keys: Sequence[str], limit: int, *, kind: Optional[str] = None,
+                                 date_from: Optional[datetime] = None, date_to: Optional[datetime] = None,
+                                 after: Optional[str] = None) -> List[DriveRecordLean]:
+        """Records whose `about_keys` contain any of `keys` (at most 30), newest `effective_date` first; a single
+        `kind` through its composite, a date range in the query; the cursor `after` is an item id (§25.5.2)."""
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def find_expiring(self, user_id: str, keys: Sequence[str], after_date: date,
+                            limit: int) -> List[DriveRecordLean]:
+        """Records whose `about_keys` contain any of `keys`, with `valid_until` from `after_date`, soonest first
+        (§25.5.4 validity words)."""
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def find_chunks_by_word_keys(self, user_id: str, keys: Sequence[str], limit: int,
+                                       after_item_id: Optional[str] = None) -> List[DriveChunkLean]:
+        """Chunks whose `word_keys` contain any of `keys`, ordered by (item_id, generation, index), after the item
+        `after_item_id`. Not fenced (§25.5.2)."""
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def get_chunk_keys(self, user_id: str, ids: Sequence[ChunkId]) -> Dict[ChunkId, Tuple[str, ...]]:
+        """The `word_keys` of the chunks among `ids` that exist, read by id (candidate coverage, §25.5.2)."""
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def find_hints_by_keys(self, user_id: str, keys: Sequence[str], limit: int) -> List[DriveHintLean]:
+        """Hint documents whose `hint_keys` contain any of `keys`. Not fenced (§25.5.2)."""
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def find_nearest_hints(self, user_id: str, vector: Sequence[float], limit: int,
+                                 kind: Optional[str] = None) -> List[Tuple[DriveHintLean, float]]:
+        """Hint kNN under the user (+ kind) pre-filter; (hint, cosine distance), nearest first. Not fenced."""
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def get_hints(self, user_id: str, item_id: str, generation: int) -> List[DriveHintDoc]:
+        """Every hint document of one generation of an item, by index (windows, hint reuse)."""
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def write_hints(self, docs: Sequence[DriveHintDoc], vectors: Sequence[Sequence[float]]) -> None:
+        """Write hint documents with their `hint_vector` (`vectors[i]` belongs to `docs[i]`), in byte-sized batches
+        (§25.2.6). A document with the same key is replaced."""
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def delete_hints_except(self, user_id: str, item_id: str, keep_generation: Optional[int]) -> int:
+        """Delete the item's hint documents of every generation but `keep_generation` (None: all of them); returns
+        how many were deleted. Runs before `delete_chunks_except` (§25.2.2)."""
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def delete_user_hints(self, user_id: str, limit: int) -> int:
+        """Delete up to `limit` of the user's hint documents; returns how many (purge, first; rollback)."""
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def hints_page(self, user_id: str, after: Optional[Tuple[str, int, int]],
+                         limit: int) -> List[DriveHintLean]:
+        """The user's hint documents ordered by (item_id, generation, index), after the key `after` (the sweep)."""
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def enrich_queue(self, user_id: str, limit: int) -> List[DriveIndexRecord]:
+        """Records with `enrich_ready`, `effective_day` newest first, then `parent_id`, then `item_id` (§25.4.5)."""
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def enrich_wakeups(self, user_id: str, now: datetime, limit: int) -> List[DriveIndexRecord]:
+        """Records with `enrich_wake_at <= now` (§25.4.5)."""
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def count_by_job_state(self, user_id: str, kinds: AbstractSet[str]) -> Dict[str, Dict[str, int]]:
+        """Records of a kind in `kinds` counted per job and state: job ("profile", "passages") -> state -> count
+        (the coverage line, §25.5.6)."""
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def keys_pending_page(self, user_id: str, after: Optional[str], limit: int) -> List[DriveIndexRecord]:
+        """Records with `keys_pending`, ordered by item_id, after the item `after` (§25.4.5)."""
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def get_records_lean(self, user_id: str, item_ids: Sequence[str]) -> Dict[str, DriveRecordLean]:
+        """The lean projections of the records that exist among `item_ids`, keyed by item id (§25.13.3)."""
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def get_model_usage(self, user_id: str, month: str) -> ModelUsageMonth:
+        """The user's usage document for `month` ("YYYY-MM"); zeros when none is stored (§25.4.5)."""
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def add_model_usage(self, user_id: str, month: str, day: str, cls: str, usd: float, fallback_usd: float,
+                              calls: int) -> None:
+        """Add to the month's `<cls>_usd`, `fallback_usd`, `calls` and the day's totals (atomic increments)."""
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def get_initial_build(self, user_id: str) -> InitialBuild:
+        """The user's initial-build document; a new one with the allowance when none is stored (D27)."""
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def spend_initial_build(self, user_id: str, usd: float, now: datetime) -> InitialBuild:
+        """Add `usd` to `spent_usd` (opening it at `now` if new) and return the result (D27)."""
+        raise NotImplementedError(SEARCH_V2_PENDING)
+
+    async def close_initial_build(self, user_id: str, now: datetime) -> None:
+        """Close the initial build at `now`; once closed it never reopens (D27)."""
+        raise NotImplementedError(SEARCH_V2_PENDING)
