@@ -14,7 +14,9 @@ Two outcomes, decided by what the failure says about the input:
   - triage halves a refused batch down to the refused image, a photograph without a caption; any other failed
     triage call is not halved (R3 F1-6).
 - DriveModelUnavailable (domain): the model cannot be used now for anyone — 429, 5xx, timeout, network, an open
-  breaker, an account-level 4xx (key, permission, model id), a missing prompt, or anything unexpected. The tick
+  breaker, an account-level 4xx (key, permission, model id; and LLMAccountError — credit balance, billing — which
+  the adapter recognises by the provider's error body, since Anthropic sends it as a 400, §24.14), a missing
+  prompt, or anything unexpected. The tick
   defers model work for the user and keeps parsing (§24.8), and never counts it in a file's `attempts`. Its
   DriveModelTimedOut case first halves a multi-page PDF window once; a half that times out again is a per-file
   failure (`error`), not an outage (T-M2b). `charges_file` (F1-1) marks the outages that may still be the file's
@@ -29,8 +31,8 @@ from dataclasses import dataclass
 
 from ..domain.drive_extraction import DriveModelUnavailable
 from ..domain.exceptions import (
-    BothProvidersUnavailableError, LLMClientError, LLMError, LLMServerError, LLMTimeoutError, LLMUnavailableError,
-    TranscriptLockedError,
+    BothProvidersUnavailableError, LLMAccountError, LLMClientError, LLMError, LLMServerError, LLMTimeoutError,
+    LLMUnavailableError, TranscriptLockedError,
 )
 from ..ports.prompt_builder_port import PromptBuilderPort
 from ..utils.logger import logger
@@ -75,6 +77,10 @@ def classify_model_error(exc: BaseException, agent_type: str) -> Exception:
     DriveInputTooLarge / DriveModelTimedOut cases). Logs it."""
     if isinstance(exc, (DriveModelCallFailed, DriveModelUnavailable)):
         return exc
+    if isinstance(exc, LLMAccountError):
+        # Credit balance or billing: its 400 is not a refusal of this input (§24.14) — an outage for everyone.
+        logger.error(f"[{agent_type}] provider rejected the account (http={exc.http_status}): {str(exc)[:300]}")
+        return DriveModelUnavailable(f"{type(exc).__name__}: {str(exc)[:200]}", charges_file=False)
     if isinstance(exc, LLMClientError) and exc.http_status == 413:
         logger.warning(f"[{agent_type}] provider refused the input as too large (http=413): {str(exc)[:300]}")
         return DriveInputTooLarge("refused (http=413)")

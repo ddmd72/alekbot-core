@@ -52,6 +52,7 @@ from ..ports.llm_port import (
 from ..domain.llm import FinishReason, USER_TURN_SYSTEM_ANCHOR, build_persona_anchor
 from ..domain.user import PerformanceTier
 from ..domain.exceptions import (
+    LLMAccountError,
     LLMClientError,
     LLMNetworkError,
     LLMRateLimitError,
@@ -60,6 +61,12 @@ from ..domain.exceptions import (
     LLMUnavailableError,
 )
 from ..utils.logger import logger
+
+
+# Error codes OpenAI puts on an account-level failure (the error body's `code`, lifted onto the SDK exception).
+# An exhausted quota normally arrives as HTTP 429 and stays LLMRateLimitError; on any other 4xx these are
+# LLMAccountError — about the account, not the request.
+_ACCOUNT_ERROR_CODES = frozenset({"insufficient_quota", "billing_hard_limit_reached", "billing_not_active"})
 
 
 def _default_filename(mime: str) -> str:
@@ -401,9 +408,12 @@ class OpenAIAdapter(LLMPort):
                 raise LLMUnavailableError(str(e), http_status=503) from e
             if isinstance(status, int) and 500 <= status < 600:
                 raise LLMServerError(str(e), http_status=status) from e
-            # 4xx (non-429, e.g. 400 / insufficient_quota) → deterministic client error.
-            # Not a failover trigger; surfaces immediately + alerts.
+            # 4xx (non-429) → deterministic client error. Not a failover trigger;
+            # surfaces immediately + alerts. An account-level code (billing limit,
+            # quota) is LLMAccountError: not about the request (drive indexer: an outage).
             if isinstance(status, int) and 400 <= status < 500:
+                if getattr(e, "code", None) in _ACCOUNT_ERROR_CODES:
+                    raise LLMAccountError(str(e), http_status=status) from e
                 raise LLMClientError(str(e), http_status=status) from e
             logger.error(
                 "❌ [OpenAIAdapter] API error: model=%s status=%s error=%s",

@@ -466,7 +466,8 @@ same file three times with a 5xx can fail it until the file is edited or the rea
 else does. Parsed documents, cards, embeddings, renames, moves and deletions go on; search keeps working and says
 "N documents are not read yet" for the scans and images waiting. The backoff doubles from 60 s to 1 h, so a day-long
 outage costs about one probe call an hour per user, and the first model call that succeeds ends it.
-- A **429, a network failure, an open breaker, a 401/403/404, a missing prompt or a missing key** is never charged
+- A **429, a network failure, an open breaker, a 401/403/404, an account-level 400 (credit balance, billing), a
+  missing prompt or a missing key** is never charged
   to a file: everything resumes by itself when the provider is back, with nothing lost.
 - A **5xx (including 503) or a single-page timeout** is charged to the file being read. Each backoff probe reads one
   file, and a charged file waits behind other due work, so over a day each scan in the queue can collect three
@@ -474,11 +475,10 @@ outage costs about one probe call an hour per user, and the first model call tha
   version is bumped (re-reads every reader-decided file, §4.12) or the user's index is rebuilt (§7) — there is no
   per-file retry command. Its name card stays searchable.
 - Triage outages are never charged: images simply wait.
-- **Anthropic's "credit balance too low" is an HTTP 400**, and every 400 is read as a refusal of the input, not as an
-  outage (`classify_model_error`): while the account has no credit, a PDF's pages are refused one by one and the file
-  is demoted `unsupported` (`metadata_only / kind_not_admitted`), an image too, and a triage batch is halved down to
-  photographs without a caption. These are final until the content or the reader / triage version changes (RFC
-  §24.14).
+- **Anthropic's "credit balance too low" is an HTTP 400, and it is an outage, not a refusal of the input.** The
+  adapter tells it from a content refusal by the error message and raises `LLMAccountError` (OpenAI: a billing or
+  quota `code`); `classify_model_error` makes it an uncharged outage, so during a credit lapse files and images stay
+  `pending` and triage batches wait, instead of being demoted `unsupported` page by page (RFC §24.14).
 
 No alert of its own: the outage shows as ERROR / WARNING lines (`[drive_reader]`, `[drive_triage]`) and as the
 `deferred` count in the tick line (§7).
@@ -654,8 +654,8 @@ Smart's guidance opens a stale or recently edited file before quoting it (§6.2)
   so a large library gets captions over many ticks; the month's 20 000 images may be spent (it waits for the next
   month); a model outage defers the batch; a card-capped image is not triaged;
 - triage judged it **text** (a receipt, a screenshot): it is read by the reader and gets a brief, not a caption;
-- triage settled it as a photograph **without** a caption: the provider refused it (400/413/422, also an Anthropic
-  credit-balance 400, §4.10), the model left it unanswered after its correction turn, its thumbnail is over the
+- triage settled it as a photograph **without** a caption: the provider refused it (400/413/422; an Anthropic
+  credit-balance 400 is an outage instead, §4.10), the model left it unanswered after its correction turn, its thumbnail is over the
   3.75 MiB vision cap or not a JPEG/PNG/WebP/GIF, the provider had no thumbnail after `MAX_ATTEMPTS`, or the model
   returned an empty caption. These stand until the image changes or `TRIAGE_VERSION` is bumped;
 - it is never read: inside an opaque folder (a repository, generated files, a dense tree) it has no record at all;

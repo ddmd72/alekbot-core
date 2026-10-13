@@ -24,7 +24,8 @@ backoff keeps doubling. Only model work that goes through resets it.
 a 5xx, an unexpected adapter error or a single-page timeout from the provider. Treated as a plain outage, such a
 file came back after every backoff, re-read (and re-billed) the windows before the failing one, and drained the
 month's pages month after month. So `DriveModelUnavailable` carries `charges_file`: true for a 5xx, a timeout or an
-unexpected error; false for a 429, an account-level 4xx, a network failure or an open breaker, which are the model's
+unexpected error; false for a 429, an account-level 4xx (including a credit-balance or billing 400, below), a network failure or an
+open breaker, which are the model's
 for everyone. When the reader made a call for the file and the outage may be its own, the tick charges it
 (`outage_charged`): `model_outages + 1`, the file waits for the backoff in class 3, behind other due work, and the
 `MAX_ATTEMPTS`-th charged outage is a counted failure, `failed / extract_error` under the reader's link. A new
@@ -32,7 +33,8 @@ content version, a content outcome, or a new reader version starts it again. Tri
 
 Not outages, because they are about the input, not the model:
 - a provider refusal (413, 400 or 422) of a PDF window halves it down to one page, and a single page still refused
-  is skipped: the rest of the file is indexed `truncated`, `pages_refused` counted;
+  is skipped (an account-level 400 — Anthropic's "credit balance too low", a billing error — is not a refusal: the
+  adapter recognises it by the provider's error body as `LLMAccountError`, and it is an uncharged outage): the rest of the file is indexed `truncated`, `pages_refused` counted;
 - a refusal of every page of a PDF, or of an image, is terminal: `too_large` when a refusal was 413, else
   `unsupported` (both `metadata_only`, no retry, no re-bill); in triage the refused image is a photograph without a
   caption;
@@ -58,8 +60,9 @@ Not outages, because they are about the input, not the model:
 **Residual risk:** a prompt deleted by mistake keeps model work waiting with ERROR lines but no alert of its own
 beyond the error-log policy. A real provider outage of 5xx responses long enough to hit the same file three times
 fails that file until it is edited or the reader's version changes (RFC §24.14). Anthropic's "credit balance too
-low" is an HTTP 400, which the classification reads as a refusal of the input, not an outage: a credit lapse demotes
-the files and images tried during it as `unsupported` / photographs without a caption (RFC §24.14).
+low", an HTTP 400, was once read as a refusal of the input and demoted every file and image tried during a credit
+lapse; it is now an uncharged outage (status alone cannot tell it apart, so the adapter classifies it by the error
+body, RFC §24.14). A Gemini or Grok billing error is not recognised that way — the drive's model agents use neither.
 
 **Trigger to revisit:** a provider whose outages are per model rather than per account, or a second model provider
 used as a live fallback.
