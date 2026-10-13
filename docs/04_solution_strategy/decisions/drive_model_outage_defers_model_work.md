@@ -57,7 +57,9 @@ Not outages, because they are about the input, not the model:
 
 **Residual risk:** a prompt deleted by mistake keeps model work waiting with ERROR lines but no alert of its own
 beyond the error-log policy. A real provider outage of 5xx responses long enough to hit the same file three times
-fails that file until it is edited or the reader's version changes (RFC §24.14).
+fails that file until it is edited or the reader's version changes (RFC §24.14). Anthropic's "credit balance too
+low" is an HTTP 400, which the classification reads as a refusal of the input, not an outage: a credit lapse demotes
+the files and images tried during it as `unsupported` / photographs without a caption (RFC §24.14).
 
 **Trigger to revisit:** a provider whose outages are per model rather than per account, or a second model provider
 used as a live fallback.
