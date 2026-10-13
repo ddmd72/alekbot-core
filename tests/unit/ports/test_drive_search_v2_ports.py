@@ -1,6 +1,6 @@
 """Search v2 port surface (USER_DRIVE_INDEXING_RFC §25.13.1): the two model ports and the repository additions.
 Names, async-ness, parameters and their types are pinned: the plan parts are written against them. The repository
-additions are abstract; both adapters stub them with NotImplementedError until P2 implements them."""
+additions are abstract; both adapters implement them since P2."""
 import inspect
 import typing
 from datetime import date, datetime, timezone
@@ -14,8 +14,9 @@ from src.domain.drive_enrichment import DriveHintDoc, InitialBuild, ModelUsageMo
 from src.domain.drive_enrichment_calls import HintReply, HintRequest, ProfileReply, ProfileRequest
 from src.domain.drive_index import DriveIndexRecord
 from src.domain.drive_index_lean import ChunkId, DriveChunkLean, DriveHintLean, DriveRecordLean
+from src.domain.drive_index_params import INITIAL_BUILD_USD
 from src.ports.document_profiler_port import DocumentProfilerPort
-from src.ports.drive_index_repository import SEARCH_V2_PENDING, DriveIndexRepository
+from src.ports.drive_index_repository import DriveIndexRepository
 from src.ports.image_triage_port import ImageTriagePort
 from src.ports.passage_hint_port import PassageHintPort
 
@@ -139,10 +140,15 @@ class TestRepositoryV2Methods:
         """An adapter that forgets one cannot be instantiated (review MINOR 13)."""
         assert set(_V2_METHODS) <= set(DriveIndexRepository.__abstractmethods__)
 
-    async def test_both_adapters_stub_them_until_p2(self, mock_env_config):
-        """Scaffold: P2 replaces the stubs (listed in §25.13.8)."""
-        for repo in (InMemoryDriveIndexRepository(), FirestoreDriveIndexRepository(MagicMock(), mock_env_config)):
-            with pytest.raises(NotImplementedError, match=SEARCH_V2_PENDING):
-                await repo.find_by_about_keys("u", ["e:rome"], 10)
-            with pytest.raises(NotImplementedError, match=SEARCH_V2_PENDING):
-                await repo.get_initial_build("u")
+    async def test_both_adapters_implement_them_since_p2(self, mock_env_config):
+        """The Part 0 scaffold flipped by P2 (§25.13.8): each adapter defines every v2 method itself, none of them a
+        stub, and the in-memory one answers an empty index."""
+        for cls in (InMemoryDriveIndexRepository, FirestoreDriveIndexRepository):
+            for name in _V2_METHODS:
+                assert name in vars(cls), (cls.__name__, name)
+                source = inspect.getsource(inspect.unwrap(vars(cls)[name]))
+                assert "NotImplementedError" not in source and "SEARCH_V2_PENDING" not in source, (cls.__name__, name)
+        FirestoreDriveIndexRepository(MagicMock(), mock_env_config)   # constructible: no abstract method left
+        repo = InMemoryDriveIndexRepository()
+        assert await repo.find_by_about_keys("u", ["e:rome"], 10) == []
+        assert await repo.get_initial_build("u") == InitialBuild(allowance_usd=INITIAL_BUILD_USD)
