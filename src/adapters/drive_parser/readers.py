@@ -383,7 +383,7 @@ def _watch_far_cells(sheet: Any, bound: int) -> List[bool]:
     """A flag set once any row of `sheet` holds a cell past column `bound`. iter_rows(max_col=bound) drops those
     cells without a trace, so the sheet's row builder is wrapped: it receives every parsed cell of a row (already in
     memory; nothing is padded) before cutting it to `bound`. openpyxl's `_get_row` is private, so openpyxl is pinned
-    (requirements.txt) and tests/unit/adapters/test_drive_parser_xlsx_wide_truncation.py fails if the hook stops
+    (requirements.txt) and tests/unit/adapters/test_drive_parser_xlsx_far_cell_hook.py fails if the hook stops
     seeing cells."""
     seen = [False]
     build_row = sheet._get_row
