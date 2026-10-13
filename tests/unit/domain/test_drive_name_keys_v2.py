@@ -1,0 +1,48 @@
+"""Name keys v2 (USER_DRIVE_INDEXING_RFC §25.2.4 "Name keys", NAME_KEYS_VERSION 2): the v1 keys (whole tokens,
+variants, trigrams) stay, and gain the `w:` forms of every token and the `n:`/`y:` forms of digit tokens, so a
+concept's keys meet a name the way they meet a passage. v1 `name_keys` is unchanged while the v1 search calls it."""
+import pytest
+
+from src.domain.drive_keys import NAME_KEYS_V2, name_keys_v2, query_concepts
+from src.domain.drive_name_keys import name_keys
+
+
+@pytest.mark.parametrize("name", ["Барселоне 2023.jpg", "Receipts March.pdf", "IMG_2210.jpg", "Київ — план v2.docx",
+                                  "Crème brûlée.md", ""])
+def test_v2_keeps_every_v1_key(name):
+    assert set(name_keys(name)) <= set(name_keys_v2(name))
+
+
+def test_v2_is_sorted_and_unique():
+    keys = name_keys_v2("Receipts receipts 2023.pdf")
+    assert list(keys) == sorted(set(keys))
+
+
+def test_v2_adds_word_forms():
+    keys = set(name_keys_v2("Барселоне 2023.jpg"))
+    assert {"w:барселон", "w:barselon"} <= keys
+
+
+def test_v2_adds_number_and_year_forms_of_digit_tokens():
+    keys = set(name_keys_v2("Trip 2023 v2 IMG_2210.jpg"))
+    assert {"n:2023", "y:2023", "w:2", "n:2210", "n:img2210"} <= keys
+    assert "y:2210" not in keys
+
+
+@pytest.mark.parametrize("name,query", [
+    ("Receipt 2023-05.pdf", "receipts"),
+    ("Барселона.jpg", "Барселоне"),
+    ("Barcelona trip.docx", "Барселона"),
+    ("Policies.pdf", "policy"),
+    ("Trip 2023.md", "2023"),
+    ("IMG_2210.jpg", "IMG_2210"),
+    ("IMG_2210.jpg", "2210"),
+])
+def test_a_concept_meets_a_v2_name(name, query):
+    keys = set(name_keys_v2(name))
+    for c in query_concepts(query).concepts:
+        assert (set(c.word_keys) | set(c.about_keys)) & keys, (name, query, c)
+
+
+def test_the_target_version_is_two():
+    assert NAME_KEYS_V2 == 2
