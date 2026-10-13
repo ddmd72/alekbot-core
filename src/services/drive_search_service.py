@@ -29,11 +29,12 @@ from ..domain.drive_content_search import (
     ContentHit, WindowRequest, budget_windows, matched_label, pool_nearest, pool_terms, selective_term_hits,
     term_file_probes, term_selective, window_indexes,
 )
-from ..domain.drive_content_terms import query_terms
+from ..domain.drive_content_terms import clip_query, query_terms
 from ..domain.drive_index import DriveChunk, DriveIndexRecord, DriveSyncState, EpochPhase, Priority, RecordState, Scope
 from ..domain.drive_index_params import (
     CARD_FETCH, CHUNK_FETCH, CONTENT_TERM_FETCH, CONTENT_TERM_QUERIES, FETCH_MAX, FOLDER_INMEM_CARDS,
-    FOLDER_INMEM_CHUNKS, K, MAX_CARD_RECORDS_PER_USER, NAME_FETCH, NAME_KEY_QUERIES, RRF_K, WINDOW_CHARS_TOTAL,
+    FOLDER_INMEM_CHUNKS, K, MAX_CARD_RECORDS_PER_USER, NAME_FETCH, NAME_KEY_QUERIES, QUERY_TERM_CHARS, RRF_K,
+    WINDOW_CHARS_TOTAL,
 )
 from ..domain.drive_index_planner import usage_now
 from ..domain.drive_indexing_status import DriveIndexingStatus
@@ -451,8 +452,9 @@ class DriveSearchService:
 
     @staticmethod
     def _terms(query: str) -> Tuple[str, ...]:
-        """The query's exact terms (amounts, dates, ids), most specific first, at most CONTENT_TERM_QUERIES (§24.6)."""
-        return query_terms(query)[:CONTENT_TERM_QUERIES]
+        """The query's exact terms (amounts, dates, ids), most specific first, at most CONTENT_TERM_QUERIES (§24.6),
+        taken from at most QUERY_TERM_CHARS of the query (arbiter R2 S-m1)."""
+        return query_terms(clip_query(query, QUERY_TERM_CHARS))[:CONTENT_TERM_QUERIES]
 
     async def _term_hits(self, user_id: str, terms: Sequence[str], limit: int, kind: Optional[str],
                          pages: _TermPages, stats: _Stats) -> None:
