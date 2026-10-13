@@ -14,27 +14,29 @@ from typing import Any, Mapping, Optional, Tuple
 from .drive_enrichment import DriveProfile, PhotoObject
 
 POLICY_VERSION = 2                            # 2: the Slice 2+4 kinds admitted (§24.1)
-CARD_VERSION = 2                              # 2: brief, caption and lead text in the card (§24.4)
+CARD_VERSION = 3                              # 2: brief, caption and lead text in the card (§24.4); 3: profile and
+                                              # photo fields, no lead text but for machine text (§25.2.7)
 # 2: alternate names, country names, large place (§25.4.3). Bumped before P5 by D30 (no v1 migration: the rollout
 # rebuilds from scratch). P5 MUST write `place_forms` (PlaceIndex.place) together with this stamp: `_place` keeps a
 # stored place while the stamp matches, so a record stamped 2 without forms would never get them.
 GEO_TABLE_VERSION = 2
-NAME_KEYS_VERSION = 1                         # the name-stream keyer (drive_name_keys); a change re-keys (§12.3)
+NAME_KEYS_VERSION = 2                         # the name-stream keyer; 2: drive_keys.name_keys_v2 (§25.2.4)
 EXTRACTION_VERSION = 3                        # chunker, text gate, content_terms normaliser (§12.3, §24.6); 2: maximal query forms (D-M1); 3: written-out dates (F5-5)
-TRIAGE_VERSION = 1                            # image triage prompt and verdict rules (§5.3, §24.5)
-CURRENT_VERSIONS: Mapping[str, int] = {"policy": POLICY_VERSION, "card": CARD_VERSION,
-                                       "geo_table": GEO_TABLE_VERSION, "name_keys": NAME_KEYS_VERSION,
-                                       "extraction": EXTRACTION_VERSION, "triage": TRIAGE_VERSION}
+TRIAGE_VERSION = 2                            # image triage prompt and verdict rules (§5.3, §24.5); 2: enriched (§25.4.3)
 
-# Search v2 (§25.4.8, frozen in §25.13.2). Defined, NOT yet in CURRENT_VERSIONS: adding them would start an upgrade
-# pass over v1 records. P5 adds them behind the migration gate (§25.8: a state whose applied_versions lacks
-# MIGRATION_GATE_KEY is awaiting migration and runs no upgrade pass).
+# Search v2 (§25.4.8, frozen in §25.13.2). In CURRENT_VERSIONS since P5, behind the migration gate (§25.8 as amended
+# by D30): a sync state whose applied_versions lacks MIGRATION_GATE_KEY was built by v1 and is never upgraded — it runs
+# no tick work until the owner's from-scratch rebuild, whose onboarding stamps every key.
 KEYS_VERSION = 2                              # drive_keys and the drive_content_terms normaliser: re-keys from stored text
 PROFILE_VERSION = 1                           # profiler prompt, schema, input rules, verification
 PASSAGES_VERSION = 1                          # doc2query prompt and grounding
 SEARCH_V2_VERSIONS: Mapping[str, int] = {"keys": KEYS_VERSION, "profile": PROFILE_VERSION,
                                          "passages": PASSAGES_VERSION}
 MIGRATION_GATE_KEY = "keys"
+CURRENT_VERSIONS: Mapping[str, int] = {"policy": POLICY_VERSION, "card": CARD_VERSION,
+                                       "geo_table": GEO_TABLE_VERSION, "name_keys": NAME_KEYS_VERSION,
+                                       "extraction": EXTRACTION_VERSION, "triage": TRIAGE_VERSION,
+                                       **SEARCH_V2_VERSIONS}
 
 
 class Scope(str, Enum):
@@ -314,7 +316,8 @@ class DriveIndexRecord:
     passages_generation: Optional[int] = None
     passages_next_index: int = 0
     passages_done_at: Optional[datetime] = None
-    enrich_ready: bool = False                # derived by the planner: any job `ready`
+    passages_version: int = 0                 # P5 addition: the PASSAGES_VERSION the generation's hints were made under
+    enrich_ready: bool = False               # derived by the planner: any job `ready`
     enrich_wake_at: Optional[datetime] = None # derived: the earliest `*_defer_until` of a `deferred` job
     effective_day: str = ""                   # derived: effective_date as "YYYY-MM-DD" (the queue's order)
     keys_pending: bool = False
@@ -379,6 +382,13 @@ class DriveSyncState:
     # Search v2 (§25.4.6): one model backoff per agent type (agent type -> until); `model_backoff_until` keeps its v1
     # meaning for the reader and triage
     model_backoff_by_agent: Mapping[str, datetime] = field(default_factory=dict)
+    # P5 (§25.8, D30): rebuild progress the tick keeps — profiles `current` (described) and when that count last grew —
+    # and the fan-out's once-only alert flags (written only by update_sync_flags, like stale_alerted)
+    described_count: int = 0
+    described_grew_at: Optional[datetime] = None
+    migration_alerted: bool = False           # awaiting the from-scratch rebuild: alerted once
+    stall_alerted: bool = False               # the rebuild stalled for DESCRIBED_STALL_AFTER: alerted once
+    fallback_alerted_day: str = ""            # "YYYY-MM-DD" the fallback alert was posted for
 
     def cards_in_space(self, embedding_space: str) -> bool:
         """The card stream answers queries embedded in `embedding_space`: no card is left in another space."""

@@ -9,12 +9,26 @@ so a crash between writes repeats the step instead of skipping work.
 
 Public interface:
     DriveIndexingService(drive, repo, embeddings, queue, users, place_of, embedding_space, *, extractors=None,
-                         triage=None, clock, monotonic)
+                         triage=None, profiler=None, passages=None, upgrade_pass=True, clock, monotonic)
     await tick(user_id, nudge=None) -> TickResult
 
 `extractors` maps `drive_extraction.PARSER` / `READER` to their ContentExtractorPort and `triage` is the
 ImageTriagePort (§24.2). Both may be left out where nothing is admitted; a record whose content or triage is due
-without them ends the tick as an internal error (loud, retried with backoff, never a demotion).
+without them ends the tick as an internal error (loud, retried with backoff, never a demotion). `profiler` and
+`passages` are Search v2's DocumentProfilerPort and PassageHintPort (§25.4.4): without both the enrichment phase does
+not run (the jobs wait, planned as usual).
+
+Search v2 (§25.4, P5):
+- the migration gate (§25.8 as amended by D30): a sync state whose `applied_versions` lacks the `keys` key was built
+  by v1 and is never upgraded: its tick does no work until the owner's from-scratch rebuild (a purge, then an
+  onboarding that stamps every version). The fan-out raises one ops alert for it;
+- every record write runs `drive_enrich_plan.planned` (`_commit`): the profile and passage jobs, the keys work,
+  `about_keys` and the queue fields;
+- the tick's order: content classes 0-2 within `1 - ENRICH_SHARE` of the start budget; enrichment (the queue, newest
+  first, ENRICH_IN_FLIGHT files at once, model calls under MODEL_IN_FLIGHT, each file inside ENRICH_FILE_BUDGET_S);
+  classes 3-4 (keys work included) within the maintenance share of what is left; then the upgrade pass;
+- model dollars per class are written to the usage documents a purge keeps, the initial build first (§25.4.5); the
+  reader's pages and triage's images are cost estimates against them, no longer monthly counters.
 """
 from __future__ import annotations
 
@@ -29,26 +43,36 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
+from ..domain import drive_enrich_plan as enrich
 from ..domain import drive_index_policy as policy
-from ..domain.drive_card import card_eligible, card_hash, card_text, repository_root, structurally_card_eligible
+from ..domain.drive_card import card_eligible, card_hash, card_text, collapsed_folder, structurally_card_eligible
 from ..domain.drive_chunker import chunk_text
-from ..domain.drive_content_terms import content_terms
-from ..domain.drive_enrichment_calls import ModelReplyStatus, TriageResultV2
+from ..domain.drive_enrich_plan import PASSAGES_AGENT, PROFILER_AGENT
+from ..domain.drive_enrichment import (
+    DriveHintDoc, EnrichContext, EnrichJob, HintItem, InitialBuild, JobState, ModelUsageMonth, ProfileSource,
+    UsageClass,
+)
+from ..domain.drive_enrichment_calls import (
+    HintReply, HintRequest, ModelReplyStatus, ProfileLabels, ProfileRequest, TriageResultV2,
+)
+from ..domain.drive_hints import chunk_text_hash, drop_if_far, ground, old_chunk, reuse_source
 from ..domain.drive_extraction import (
     PARSER, READER, DriveModelUnavailable, ExtractionOutcome, ExtractionRequest, ExtractionStatus, TriageImage,
     TriageResult, chain_for, model_route,
 )
 from ..domain.drive_index import (
-    CURRENT_VERSIONS, DriveChange, DriveChanges, DriveChunk, DriveIndexRecord, DriveIndexStoreUnavailable,
-    DriveSyncState, EpochPhase, ErrorCategory, FolderProbe, LeaseLost, Nudge, Priority, Reason, RecordState, Scope,
-    TriageVerdict,
+    CURRENT_VERSIONS, KEYS_VERSION, MIGRATION_GATE_KEY, PASSAGES_VERSION, DriveChange, DriveChanges, DriveChunk,
+    DriveIndexRecord, DriveIndexStoreUnavailable, DriveSyncState, EpochPhase, ErrorCategory, FolderProbe, LeaseLost,
+    Nudge, Priority, Reason, RecordState, Scope, TriageVerdict,
 )
 from ..domain.drive_index_params import (
-    CASCADE_OPS_PER_TICK, EMBED_FILE_BUDGET_S, EMBED_IN_FLIGHT, ITEM_CALLS_PER_TICK, LEASE_MARGIN, MAINTENANCE_SHARE,
-    MAX_ATTEMPTS, MAX_CARD_RECORDS_PER_USER, MAX_CHUNKS_PER_USER, MODEL_EXTRACT_PAGES_PER_MONTH,
-    NUDGE_RETRY_DELAY_S, PROBE_CHILDREN, READER_RENDITION_SIZE, RECORD_WRITE_BATCH, RELIST_PAGE, RETRY_CAP,
-    SYSTEMIC_BACKOFF_BASE_S, SYSTEMIC_BACKOFF_CAP_S, TICK_DEADLINE_S, TICK_FILE_BUDGET, TICK_START_BUDGET,
-    TRIAGE_BATCH, TRIAGE_IMAGES_PER_MONTH, TRIAGE_THUMBNAIL_SIZE,
+    CASCADE_OPS_PER_TICK, EMBED_FILE_BUDGET_S, EMBED_IN_FLIGHT, ENRICH_FILE_BUDGET_S, ENRICH_IN_FLIGHT,
+    ENRICH_QUEUE_PAGE, ENRICH_SHARE, ENRICH_WAKEUPS_PAGE, FILE_START_MARGIN_S, ITEM_CALLS_PER_TICK, LEASE_MARGIN,
+    MAINTENANCE_SHARE, MAX_ATTEMPTS, MAX_CARD_RECORDS_PER_USER, MAX_CHUNKS_PER_USER, MODEL_IN_FLIGHT,
+    NUDGE_RETRY_DELAY_S, PASSAGE_CHUNK_USD_ESTIMATE, PASSAGE_CHUNKS_PER_CALL, PASSAGE_IN_FLIGHT, PROBE_CHILDREN,
+    README_CHILD_NAMES, README_SCAN_CHILDREN, READER_PAGE_USD_ESTIMATE, READER_RENDITION_SIZE, RECORD_WRITE_BATCH,
+    RELIST_PAGE, RETRY_CAP, SYSTEMIC_BACKOFF_BASE_S, SYSTEMIC_BACKOFF_CAP_S, TICK_DEADLINE_S, TICK_FILE_BUDGET,
+    TICK_START_BUDGET, TRIAGE_BATCH, TRIAGE_IMAGE_USD_ESTIMATE, TRIAGE_THUMBNAIL_SIZE,
 )
 from ..domain.drive_index_planner import (
     AccessAction, ObservationPlan, PlaceOf, PlanContext, access_action, attempt_crashed, can_start_file, capped,
@@ -56,7 +80,12 @@ from ..domain.drive_index_planner import (
     drops_readable, extractor_stale, generation_started, indexed, model_available, model_outage, model_recovered,
     month_key, month_parked, needs_probe, next_month_start, outage_charged, quiet_over,
     parent_scope, plan_observation, readme_read, reembed_in_space, reextraction_due, released, schedule,
-    stale_versions, triage_due, triaged, usage_now, with_card, with_retry, with_usage, without_card,
+    stale_versions, triage_due, triaged, with_card, with_retry, without_card,
+)
+from ..domain.drive_keys import word_form_keys, word_keys_capped
+from ..domain.drive_profile import (
+    PROFILE_POLICY, ProfileOutput, TemplateReason, input_fingerprint, profile_input, record_policy, stored_text,
+    template_profile, verify,
 )
 from ..domain.drive_index_policy import (
     Admission, admission, is_marker_child, kind_of, probe_from_children, size_cap,
@@ -70,15 +99,18 @@ from ..domain.drive_search import NOT_READ_YET_COUNTER, UNREAD_COUNTER
 from ..domain.drive_sniff import SNIFF_HEAD_BYTES, sniff_kind
 from ..domain.drive_task_keys import DRIVE_SYNC_TASK, continuation_key, nudge_key, tick_payload
 from ..domain.drive_text_gate import is_machine_text
+from ..domain.drive_usage import added_usage
 from ..domain.exceptions import LLMClientError, LLMError, LLMRateLimitError, LLMUnavailableError
 from ..domain.user_drive import (
     DriveAccessDenied, DriveFileTooLarge, DriveItemNotFoundError, DriveNotConnectedError, DriveReauthRequired,
     DriveResyncRequired, DriveThrottled,
 )
 from ..ports.content_extractor_port import ContentExtractorPort
+from ..ports.document_profiler_port import DocumentProfilerPort
 from ..ports.drive_index_repository import DriveIndexRepository
 from ..ports.embedding_service import EmbeddingService
 from ..ports.image_triage_port import ImageTriagePort
+from ..ports.passage_hint_port import PassageHintPort
 from ..ports.task_queue import TaskQueue
 from ..ports.user_drive_port import UserDrivePort
 from ..ports.user_repository import UserRepository
@@ -90,12 +122,15 @@ _DUE_PAGE = 100
 _PER_ITEM_ERRORS = (DriveAccessDenied, DriveItemNotFoundError, asyncio.TimeoutError, ValueError, OSError)
 _STEP_ASIDE = timedelta(seconds=1)   # a deleting folder waiting for its children comes back after them
 _GATE_RECHECK_S = 5.0   # the opt-out flag is re-read before a write batch at most this often
+# The kinds a profile or passage job can exist for (§25.3): the job counts read only these (`kind in` batches)
+_ENRICH_KINDS = frozenset(PROFILE_POLICY) | {"image"}
+_READY = JobState.READY.value
 
 
 @dataclass
 class TickResult:
     status: str                               # disabled | busy | purging | purged | access_lost | done | throttled |
-                                              # error | lease_lost
+                                              # error | lease_lost | awaiting_migration (D30)
     summary: Dict[str, int] = field(default_factory=dict)
     model_cost: float = 0.0                   # USD of the reader and triage calls of this tick, as the runners priced
                                               # them (§24.9)
@@ -174,9 +209,28 @@ class _Budget:
     cascade_ops: int = field(default_factory=lambda: CASCADE_OPS_PER_TICK)
     maintenance_s: float = 0.0
     files: int = field(default_factory=lambda: TICK_FILE_BUDGET)
+    enrich_s: float = 0.0          # time spent on enrichment this tick (§25.4.5), the inline first-seen profiles too
+    enriched: Set[str] = field(default_factory=set)   # files enriched this tick: never twice in one tick
+
+    def elapsed(self) -> float:
+        return self.monotonic() - self.started
 
     def time_left(self) -> bool:
-        return self.monotonic() - self.started < TICK_START_BUDGET.total_seconds()
+        return self.elapsed() < TICK_START_BUDGET.total_seconds()
+
+    def content_allowed(self) -> bool:
+        """Content classes 0-2 use at most `1 - ENRICH_SHARE` of the start budget, enrichment time not counted
+        (§25.4.5): enrichment keeps at least its share."""
+        elapsed = self.elapsed()
+        total = TICK_START_BUDGET.total_seconds()
+        return elapsed < total and elapsed - self.enrich_s < (1 - ENRICH_SHARE) * total
+
+    def enrichment_allowed(self, stop_at: float) -> bool:
+        """A file's enrichment starts before `stop_at` (the phase's share) and only if its whole ENRICH_FILE_BUDGET_S
+        still ends before the tick deadline (§25.4.5: it joins the §7.1 deadline sum)."""
+        elapsed = self.elapsed()
+        return (elapsed < stop_at and self.time_left()
+                and elapsed + ENRICH_FILE_BUDGET_S + FILE_START_MARGIN_S < TICK_DEADLINE_S)
 
     def file_allowed(self, *, routed: bool) -> bool:
         """An index run starts only within the file budget and the start budget, and only if its worst case still
@@ -204,56 +258,91 @@ class _CardSlots:
 
 @dataclass
 class _Models:
-    """Model availability and monthly usage during one tick (§24.7, §24.8). Every sync-state save of the tick, the
-    error paths included, carries them, so pages already sent are counted even when the tick ends on an error."""
+    """Model availability during one tick (§24.8, §25.4.6): the reader's and triage's shared backoff (the v1 fields)
+    and Search v2's backoff per agent type. Every sync-state save of the tick, the error paths included, carries them.
+    The dollars spent are the usage documents' (`_Spend`)."""
     state: DriveSyncState
     calls: int = 0
     cost: float = 0.0
-    saved: Optional[_Saved] = None   # the tick's last written sync state, which a usage write extends (F1-4)
+    saved: Optional[_Saved] = None   # the tick's last written sync state, which a backoff write extends (F1-4)
 
     def available(self, now: datetime) -> bool:
         return model_available(self.state, now)
 
-    def pages_left(self, now: datetime) -> int:
-        return max(0, MODEL_EXTRACT_PAGES_PER_MONTH - usage_now(self.state, now)[0])
-
-    def images_left(self, now: datetime) -> int:
-        return max(0, TRIAGE_IMAGES_PER_MONTH - usage_now(self.state, now)[1])
-
     def outage(self, now: datetime) -> None:
         self.state = model_outage(self.state, now)
 
-    def used(self, now: datetime, *, calls: int, cost: float, pages: int = 0, images: int = 0,
-             recovered: bool = True) -> None:
+    def used(self, now: datetime, *, calls: int, cost: float, recovered: bool = True) -> None:
         """Model work spent: count it as the runner reports it. `recovered`: it went through, so an outage is over;
         the part spent before an outage ends nothing, and the outage's backoff keeps doubling (§24.8)."""
-        state = with_usage(self.state, now, pages=pages, images=images)
-        self.state = model_recovered(state) if recovered else state
+        if recovered:
+            self.state = model_recovered(self.state)
         self.calls += calls
         self.cost += cost
+
+    def agent_available(self, agent: str, now: datetime) -> bool:
+        return enrich.agent_available(self.state.model_backoff_by_agent, agent, now)
+
+    def agent_outage(self, agent: str, now: datetime) -> None:
+        self.state = replace(self.state, model_backoff_by_agent=enrich.agent_outage(
+            self.state.model_backoff_by_agent, agent, now))
+
+    def agent_recovered(self, agent: str) -> bool:
+        """True when a backoff was lifted (the state needs a write)."""
+        before = dict(self.state.model_backoff_by_agent)
+        after = enrich.agent_recovered(before, agent)
+        if after == before:
+            return False
+        self.state = replace(self.state, model_backoff_by_agent=after)
+        return True
 
     def onto(self, state: DriveSyncState) -> DriveSyncState:
         m = self.state
         return replace(state, model_backoff_until=m.model_backoff_until, model_failures=m.model_failures,
-                       usage_month=m.usage_month, model_pages_used=m.model_pages_used,
-                       triage_images_used=m.triage_images_used)
+                       model_backoff_by_agent=dict(m.model_backoff_by_agent))
+
+
+@dataclass
+class _Spend:
+    """The user's model dollars during one tick (§25.4.5): the month's usage document and the initial build, read when
+    the tick starts and kept current by every spend, so the plans and the budget checks see what was spent. `usd` is
+    this tick's spending per class, plus "fallback" and "initial_build" (the tick line)."""
+    now: datetime
+    usage: ModelUsageMonth
+    build: InitialBuild
+    usd: Dict[str, float] = field(default_factory=dict)
+
+    def ctx(self) -> EnrichContext:
+        return enrich.enrich_context(self.now, self.usage, self.build)
+
+    def available(self, cls: str) -> float:
+        return enrich.available_usd(self.ctx(), cls)
+
+
+# Per tick, like the lease: the spend every plan and budget check of the tick reads.
+_TICK_SPEND: ContextVar[Optional[_Spend]] = ContextVar("drive_tick_spend", default=None)
 
 
 def _count_reader(models: _Models, summary: Dict[str, int], now: datetime, *, calls: int, cost: float,
                   pages: int, outage: bool = False) -> None:
-    """What the reader spent on one file — all of it, or the part before an `outage` (§24.7, §24.9). The part before
-    an outage never ends it: the doubling backoff the outage then extends stands."""
-    models.used(now, calls=calls, cost=cost, pages=pages, recovered=not outage)
+    """What the reader spent on one file — all of it, or the part before an `outage` (§24.9). The part before an
+    outage never ends it: the doubling backoff the outage then extends stands. Its dollars go to `_spend_usd`."""
+    models.used(now, calls=calls, cost=cost, recovered=not outage)
     summary["model_calls"] = summary.get("model_calls", 0) + calls
     summary["model_pages"] = summary.get("model_pages", 0) + pages
 
 
 def _count_triage(models: _Models, summary: Dict[str, int], now: datetime, *, calls: int, cost: float,
                   images: int, outage: bool = False) -> None:
-    """What triage spent on one batch — all of it, or the part before an `outage`, which never ends it (§24.7-§24.9)."""
-    models.used(now, calls=calls, cost=cost, images=images, recovered=not outage)
+    """What triage spent on one batch — all of it, or the part before an `outage`, which never ends it (§24.8, §24.9)."""
+    models.used(now, calls=calls, cost=cost, recovered=not outage)
     summary["triage_calls"] = summary.get("triage_calls", 0) + calls
     summary["triage_images"] = summary.get("triage_images", 0) + images
+
+
+def _inc(summary: Dict[str, int], key: str, by: int = 1) -> None:
+    if by:
+        summary[key] = summary.get(key, 0) + by
 
 
 def _utcnow() -> datetime:
@@ -273,6 +362,8 @@ class DriveIndexingService:
                  queue: TaskQueue, users: UserRepository, place_of: PlaceOf, embedding_space: str, *,
                  extractors: Optional[Mapping[str, ContentExtractorPort]] = None,
                  triage: Optional[ImageTriagePort] = None,
+                 profiler: Optional[DocumentProfilerPort] = None,
+                 passages: Optional[PassageHintPort] = None, upgrade_pass: bool = True,
                  clock: Callable[[], datetime] = _utcnow, monotonic: Callable[[], float] = time.monotonic) -> None:
         self._drive = drive
         self._repo = repo
@@ -285,6 +376,9 @@ class DriveIndexingService:
         # each wired link's version: a new one re-extracts what that link decided (§9, §12.3)
         self._extractor_versions: Dict[str, int] = {k: e.version for k, e in self._extractors.items()}
         self._triage = triage
+        self._profiler = profiler
+        self._passages = passages
+        self._upgrade_pass = upgrade_pass   # False: the §25.8 emergency switch stops every upgrade pass
         self._clock = clock
         self._monotonic = monotonic
         self._gate_checked: Dict[str, float] = {}
@@ -327,6 +421,11 @@ class DriveIndexingService:
                     await self._save_state(replace(state, access_lost_at=now))
                     logger.warning(f"[DriveIndex] access lost for {user_id[:8]}; grace period started")
                 return TickResult("access_lost")
+            if MIGRATION_GATE_KEY not in state.applied_versions:
+                # D30: built by v1, never upgraded. No tick work until the owner's rebuild purges it; the fan-out
+                # alerts once. A purge (above) and a fresh onboarding (stamped just above) are never caught here.
+                logger.warning(f"[DriveIndex] index of {user_id[:8]} awaits its v2 rebuild (D30); no tick work")
+                return TickResult("awaiting_migration")
             if action is AccessAction.RESUME_AFTER_REGAIN:
                 state = replace(state, access_lost_at=None)
                 logger.info(f"[DriveIndex] access regained for {user_id[:8]}; continuing from the cursor")
@@ -348,25 +447,44 @@ class DriveIndexingService:
         state = replace(state, continuation_enqueued_at=None)
         saved = _Saved(state)
         models = _Models(state, saved=saved)
+        spend = _Spend(now, await self._repo.get_model_usage(user_id, month_key(now)),
+                       await self._repo.get_initial_build(user_id))
+        spend_token = _TICK_SPEND.set(spend)
+        try:
+            return await self._run_spending(user_id, state, nudge, now, enabled, budget, summary, cont, saved,
+                                            models, spend)
+        finally:
+            _TICK_SPEND.reset(spend_token)
+
+    async def _run_spending(self, user_id: str, state: DriveSyncState, nudge: Optional[Nudge], now: datetime,
+                            enabled: bool, budget: _Budget, summary: Dict[str, int], cont: _Continuation,
+                            saved: _Saved, models: _Models, spend: _Spend) -> TickResult:
         try:
             if nudge is not None:
                 await self._observe_nudge(user_id, state, nudge, now, budget, summary)
             state = await self._observe(user_id, state, now, budget, summary, saved)
             if state.round_complete:
                 state = await self._work_off(user_id, state, now, budget, summary, models)
-            more = await self._has_more(user_id, state, now, upgrade_wrote=summary.get("upgraded", 0) > 0)
+            more = await self._has_more(user_id, state, now, upgrade_wrote=summary.get("upgraded", 0) > 0,
+                                        models=models)
+            job_counts: Dict[str, int] = {}
+            if state.round_complete and self._enrich_wired():
+                state, job_counts = await self._rebuild_progress(user_id, state, now, spend, settled=not more)
             if more:
                 cont.request()
                 # unread is what search tells Smart: refreshed every tick, not only once the index settles (F4-1)
                 state = replace(state, counters=await self._unread_counters(user_id, state.counters))
             else:
                 state = replace(state, counters=await self._counters(user_id))   # settled: refresh
+            if job_counts:
+                state = replace(state, counters={**{k: v for k, v in state.counters.items()
+                                                    if not k.startswith(("profile_", "passages_"))}, **job_counts})
             progressed = any(v for k, v in summary.items() if k != "pages")
             state = replace(models.onto(state), continuation_enqueued_at=now if more else None, last_error=None,
                             systemic_failures=0,
                             last_success_at=now if (progressed or not more) else state.last_success_at)
             await self._save_state(state)
-            self._log(user_id, "continued" if more else "done", summary, budget, models)
+            self._log(user_id, "continued" if more else "done", summary, budget, models, spend)
             return TickResult("done", summary, models.cost)
         except LeaseLost:
             raise   # nothing more may be written, not even the error
@@ -586,6 +704,8 @@ class DriveIndexingService:
         await self._recheck_gate(user_id)
         for item_id in sorted(collects or ()):
             await self._collect(user_id, item_id, None)
+        ctx = self._enrich_ctx()
+        writes = [enrich.planned(w, ctx) for w in writes]   # every write's plan, keys and queue fields (§25.4.9)
         for start in range(0, len(writes), RECORD_WRITE_BATCH):
             await self._repo.upsert_records(writes[start:start + RECORD_WRITE_BATCH], card_vectors)
         if deletes:
@@ -597,6 +717,9 @@ class DriveIndexingService:
 
     async def _work_off(self, user_id: str, state: DriveSyncState, now: datetime, budget: _Budget,
                         summary: Dict[str, int], models: _Models) -> DriveSyncState:
+        """§7.1 step 2 as Search v2 orders it (§25.4.5): content classes 0-2 within their share, then enrichment with at
+        least ENRICH_SHARE, then classes 3-4 (keys work included) within the maintenance share of what is left, then
+        the upgrade pass and the cap releases."""
         if state.epoch_phase is EpochPhase.SWEEPING:
             state = await self._sweep(user_id, state, now, budget, summary)
         stopped_class, worked = await self._due_loop(user_id, state, now, budget, summary, models)
@@ -695,14 +818,31 @@ class DriveIndexingService:
         any record was worked.
 
         A class that runs out of its budget stops the loop: lower classes wait for the next tick. That is
-        what keeps a repository's files from being carded while its rescope is unfinished (RFC Δ15)."""
+        what keeps a repository's files from being carded while its rescope is unfinished (RFC Δ15). Search v2's
+        order (§25.4.5): content classes 0-2 stop at their share of the start budget (checked once work was done, so
+        every tick progresses); the enrichment phase runs once, after them — before classes 3-4, or when the content
+        share or the due work ends; classes 3-4 then have the maintenance share."""
         worked = False
+        enriched = False
+
+        async def enrich_once() -> None:
+            nonlocal worked, enriched
+            if not enriched:
+                enriched = True
+                worked |= await self._enrich_phase(user_id, now, budget, summary, models)
+
         while budget.time_left():
             batch = await self._repo.due_records(user_id, now, _DUE_PAGE)
             if not batch:
+                await enrich_once()
                 return None, worked
             cls = batch[0].priority if batch[0].priority is not None else int(Priority.RETRY)
             same = [r for r in batch if r.priority == cls]
+            if cls <= Priority.FIRST_SEEN and worked and not budget.content_allowed():
+                await enrich_once()
+                return cls, worked   # the content share is spent: the rest waits for the next tick
+            if cls >= Priority.MAINTENANCE:
+                await enrich_once()
             if cls >= Priority.MAINTENANCE and not budget.maintenance_allowed():
                 return cls, worked
             started = self._monotonic()
@@ -712,7 +852,10 @@ class DriveIndexingService:
             if cls >= Priority.MAINTENANCE:
                 budget.maintenance_s += self._monotonic() - started
             if not progressed:
+                if cls <= Priority.FIRST_SEEN:
+                    await enrich_once()
                 return cls, worked
+        await enrich_once()
         return int(Priority.RETRY), worked
 
     async def _work_class(self, user_id: str, state: DriveSyncState, recs: List[DriveIndexRecord], now: datetime,
@@ -726,6 +869,8 @@ class DriveIndexingService:
         progressed = False
         page_ids = {r.item_id for r in recs}
         slots = _CardSlots()
+        content_class = (recs[0].priority if recs and recs[0].priority is not None else 0) <= Priority.FIRST_SEEN
+        runs = 0
         for stale in recs:
             # An earlier step of this batch may have changed or removed it: always work the stored version.
             rec_or_none = (await self._repo.get_records(user_id, [stale.item_id])).get(stale.item_id)
@@ -735,6 +880,8 @@ class DriveIndexingService:
             rec = rec_or_none
             # its content may start now: due for other work (a card, a re-embed), it still keeps its quiet period
             content_now = content_due(rec, now) and quiet_over(rec, now)
+            if content_now and content_class and runs and not budget.content_allowed():
+                break   # the content classes' share is spent (§25.4.5): the rest waits for the next tick
             if rec.state is RecordState.DELETING:
                 progressed |= await self._cascade_step(user_id, rec, now, budget, summary, page_ids)
             elif rec.probe_pending:
@@ -758,9 +905,14 @@ class DriveIndexingService:
                 progressed = True
             elif content_now and await self._index_step(user_id, rec, ctx, budget, summary, models):
                 progressed = True
+                runs += 1
+                if rec.priority == int(Priority.FIRST_SEEN):
+                    await self._enrich_inline(user_id, rec.item_id, now, budget, summary, models)
             elif rec.chunk_reembed_pending and rec.indexed_generation is not None and not content_now:
                 # any content state: a failed or a waiting record serves its readable generation too (§3.4, §7.4)
                 progressed |= await self._reembed_step(user_id, rec, ctx, budget, summary)
+            elif rec.keys_pending and rec.indexed_generation is not None and not content_now:
+                progressed |= await self._keys_step(user_id, rec, ctx, budget, summary)
             elif triage_due(rec, now) and quiet_over(rec, now):
                 images.append(rec)
             elif card_eligible(rec) and rec.card_hash != card_hash(rec):
@@ -1035,40 +1187,55 @@ class DriveIndexingService:
         await self._commit(user_id, [_maintenance(released(rec, now)) for rec in capped_recs], set())
         summary["released"] = summary.get("released", 0) + len(capped_recs)
 
-    # -- the repository root's README (§5.2) -----------------------------------------------------
+    # -- a collapsed folder's README (§5.2, §25.3) -----------------------------------------------
 
     async def _readme_step(self, user_id: str, rec: DriveIndexRecord, ctx: PlanContext, budget: _Budget,
                            summary: Dict[str, int]) -> bool:
-        """One listing of the repository root (an item call) finds its README; the parser reads it (never the
-        reader) and its first CARD_LEAD_CHARS become the root's lead text. A transient failure backs off; after
-        MAX_ATTEMPTS the root keeps what it had."""
+        """Every collapsed folder (any opaque_root reason) finds its README by listing its children page by page
+        (RELIST_PAGE per item call) until `readme_choice` finds one or README_SCAN_CHILDREN were listed; the parser
+        reads it (never the reader); its head and tail and the first README_CHILD_NAMES child names become the
+        folder's `readme_excerpt`, the profile's input. A transient failure backs off; after MAX_ATTEMPTS the folder
+        keeps what it had. The scan starts only when the tick has the item calls it needs (at most
+        ITEM_CALLS_PER_TICK) and is not resumed across ticks: one the budget still cuts decides on what it listed (a
+        README further on is found when the child count next moves)."""
         now = ctx.now
-        if not repository_root(rec):
+        if not collapsed_folder(rec):
             await self._commit(user_id, [readme_read(rec, None, "", "", now)], set())
             return True
-        if not budget.item_call_allowed():
+        pages = max(1, -(-min(max(rec.child_count, 1), README_SCAN_CHILDREN) // RELIST_PAGE))
+        if budget.item_calls < min(pages, ITEM_CALLS_PER_TICK) or not budget.item_call_allowed():
             return False
-        budget.item_calls -= 1
-        try:
-            page = await self._drive.list_children_changes(user_id, rec.item_id, limit=RELIST_PAGE)
-        except DriveItemNotFoundError:
-            logger.info(f"[DriveIndex] repository {rec.item_id} of {user_id[:8]} is gone; its tombstone follows")
-            await self._commit(user_id, [readme_read(rec, None, "", "", now)], set())
-            return True
-        except (DriveNotConnectedError, DriveThrottled) as exc:
-            logger.warning(f"[DriveIndex] README listing hit a systemic error for {user_id[:8]}: {type(exc).__name__}")
-            raise
-        except _PER_ITEM_ERRORS as exc:
-            logger.warning(f"[DriveIndex] README listing failed for {user_id[:8]}: {exc}")
-            await self._commit(user_id, [self._readme_retry(rec, now)], set())
-            return True
-        readme = readme_choice(page.changes)
+        names: List[str] = []
+        seen: List[DriveChange] = []
+        cursor: Optional[str] = None
+        readme: Optional[DriveChange] = None
+        while True:
+            if not budget.item_call_allowed():
+                break   # cut: decided on what was listed
+            budget.item_calls -= 1
+            try:
+                page = await self._drive.list_children_changes(user_id, rec.item_id, limit=RELIST_PAGE, cursor=cursor)
+            except DriveItemNotFoundError:
+                logger.info(f"[DriveIndex] folder {rec.item_id} of {user_id[:8]} is gone; its tombstone follows")
+                await self._commit(user_id, [readme_read(rec, None, "", "", now)], set())
+                return True
+            except (DriveNotConnectedError, DriveThrottled) as exc:
+                logger.warning(f"[DriveIndex] README listing hit a systemic error for {user_id[:8]}: "
+                               f"{type(exc).__name__}")
+                raise
+            except _PER_ITEM_ERRORS as exc:
+                logger.warning(f"[DriveIndex] README listing failed for {user_id[:8]}: {exc}")
+                await self._commit(user_id, [self._readme_retry(rec, now)], set())
+                return True
+            seen.extend(page.changes)
+            names.extend(c.name for c in page.changes if not c.deleted and c.name)
+            readme = readme_choice(seen)
+            cursor = page.next_cursor
+            if readme is not None or cursor is None or len(seen) >= README_SCAN_CHILDREN:
+                break
+        child_names = tuple(names[:README_CHILD_NAMES])
         if readme is None:
             await self._commit(user_id, [readme_read(rec, None, "", "", now)], set())
-            return True
-        if readme.item_id == rec.readme_item_id and readme.content_version == rec.readme_version:
-            await self._commit(user_id, [readme_read(rec, readme.item_id, readme.content_version, rec.lead_text,
-                                                     now)], set())
             return True
         kind = kind_of(readme.name, readme.mime_type, False)
         if admission(kind) is not Admission.CONTENT or readme.size_bytes > README_MAX_BYTES:
@@ -1081,14 +1248,15 @@ class DriveIndexingService:
         if text is None:
             await self._commit(user_id, [self._readme_retry(rec, now)], set())
             return True
-        await self._commit(user_id, [readme_read(rec, readme.item_id, readme.content_version, text, now)], set())
+        await self._commit(user_id, [readme_read(rec, readme.item_id, readme.content_version, text, now,
+                                                 child_names=child_names)], set())
         summary["readmes"] = summary.get("readmes", 0) + 1
         return True
 
     @staticmethod
     def _readme_retry(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
         if rec.attempts + 1 >= MAX_ATTEMPTS:
-            return readme_read(rec, rec.readme_item_id, rec.readme_version, rec.lead_text, now)   # keeps what it had
+            return readme_read(rec, rec.readme_item_id, rec.readme_version, None, now)   # keeps what it had
         return with_retry(rec, now)
 
     async def _read_readme(self, user_id: str, readme: DriveChange, kind: str) -> Optional[str]:
@@ -1260,7 +1428,7 @@ class DriveIndexingService:
                     logger.info(f"[DriveIndex] item {run.item_id} of {user_id[:8]} refused by the chunk cap before "
                                 f"the reader")
                     return None, demoted(run, Reason.USER_CHUNK_CAP, now, chunk_count=1)
-                max_pages = models.pages_left(now)
+                max_pages = self._affordable(UsageClass.READER.value, READER_PAGE_USD_ESTIMATE)
             extractor = self._extractor(extractor_id)
             request = ExtractionRequest(path=path, name=run.name, kind=kind, mime_type=run.mime_type,
                                         user_id=user_id, account_id=self._account_ids.get(user_id, ""),
@@ -1273,6 +1441,7 @@ class DriveIndexingService:
                 logger.warning(f"[DriveIndex] reader unavailable for {user_id[:8]}: {exc}; model work deferred")
                 _count_reader(models, summary, now, calls=exc.model_calls, cost=exc.model_cost, pages=exc.pages_sent,
                               outage=True)
+                await self._spend_usd(user_id, UsageClass.READER.value, exc.model_cost, 0.0, exc.model_calls)
                 models.outage(now)   # after the usage, which leaves the backoff to this outage (C-M1, T-M2)
                 await self._persist_usage(models)
                 if exc.model_calls > 0 and exc.charges_file:
@@ -1291,6 +1460,7 @@ class DriveIndexingService:
             if extractor_id == READER:
                 _count_reader(models, summary, now, calls=outcome.model_calls, cost=outcome.model_cost,
                               pages=outcome.pages_sent)
+                await self._spend_usd(user_id, UsageClass.READER.value, outcome.model_cost, 0.0, outcome.model_calls)
                 await self._persist_usage(models)
         if outcome is None:   # an empty chain: no kind is admitted without an extractor (§5.1)
             raise _NotWired(f"no extractor chain for kind {kind}")
@@ -1342,10 +1512,11 @@ class DriveIndexingService:
         if len(keys) > len(missing):
             summary["vectors_reused"] = summary.get("vectors_reused", 0) + sum(1 for k in keys if k in reused)
         generation = run.index_generation
-        terms = await asyncio.to_thread(_terms_of, [c.text for c in chunked.chunks])
+        keyed = await asyncio.to_thread(_keys_of, [c.text for c in chunked.chunks])
         chunks = [DriveChunk(user_id=user_id, item_id=run.item_id, generation=generation, index=i, text=c.text,
-                             char_start=c.char_start, char_end=c.char_end, kind=run.kind, content_terms=t)
-                  for i, (c, t) in enumerate(zip(chunked.chunks, terms))]
+                             char_start=c.char_start, char_end=c.char_end, kind=run.kind, word_keys=k,
+                             keys_version=KEYS_VERSION)
+                  for i, (c, (k, _)) in enumerate(zip(chunked.chunks, keyed))]
         _fence()
         await self._recheck_gate(user_id)
         for start in range(0, len(chunks), RECORD_WRITE_BATCH):
@@ -1363,8 +1534,74 @@ class DriveIndexingService:
                 await self._commit(user_id, [replace(fresh, attempt_started_at=None)], set())
             return None
         summary["chunks"] = summary.get("chunks", 0) + len(chunks)
-        return indexed(fresh, outcome=replace(outcome, truncated=outcome.truncated or chunked.truncated),
-                       generation=generation, chunk_count=len(chunks), now=now, chunk_space=self._space)
+        keys_cut = any(cut for _, cut in keyed)
+        _inc(summary, "keys_capped", int(keys_cut))
+        done = indexed(fresh, outcome=replace(outcome, truncated=outcome.truncated or chunked.truncated),
+                       generation=generation, chunk_count=len(chunks), now=now, chunk_space=self._space,
+                       keys_capped=keys_cut)
+        return await self._v2_content(user_id, fresh, done, chunks, now, summary)
+
+    async def _v2_content(self, user_id: str, before: DriveIndexRecord, done: DriveIndexRecord,
+                          chunks: List[DriveChunk], now: datetime, summary: Dict[str, int]) -> DriveIndexRecord:
+        """Search v2's part of an index run, between the fence re-read and the commit (§25.4.7): the profiler input's
+        fingerprint from the new text, the stored profile re-verified against it at once (before any model call), a
+        short note's template, and the passage hints reused into the new generation."""
+        fingerprint = enrich.input_fingerprint_of(done, chunks)
+        done = replace(done, profile_input_fingerprint=fingerprint)
+        if done.profile is not None and done.profile_source == ProfileSource.MODEL.value:
+            policy_ = record_policy(done, text_chars=done.text_chars, script_rendered=done.script_rendered)
+            verified, drops = await asyncio.to_thread(verify, done.profile, chunks, done.name,
+                                                      key_values=policy_.output is ProfileOutput.FULL)
+            done = enrich.reverified(done, verified, now)
+            _inc(summary, "reverified")
+        if enrich.template_reason(done) is TemplateReason.SHORT:
+            text = stored_text(chunks)
+            done = enrich.profiled(done, template_profile(TemplateReason.SHORT, done.kind, text),
+                                   source=ProfileSource.TEMPLATE, fingerprint=fingerprint, now=now)
+        return await self._reuse_hints(user_id, before, done, chunks, summary)
+
+    async def _reuse_hints(self, user_id: str, before: DriveIndexRecord, done: DriveIndexRecord,
+                           chunks: List[DriveChunk], summary: Dict[str, int]) -> DriveIndexRecord:
+        """§25.4.7 (N4): a new chunk takes an old chunk's hint items when its text hash matches, or when at least
+        PASSAGE_REUSE_SHARE of its paragraphs came from that one old chunk; the items are grounded again against the
+        new text and written as hint documents of the NEW generation (fenced: invisible until it commits) with the old
+        hint vector. Chunks left without hints wait for passage enrichment (the plan's cooldown)."""
+        old_gen, new_gen = before.indexed_generation, done.indexed_generation
+        if (old_gen is None or new_gen is None or old_gen == new_gen or before.chunk_space != self._space
+                or enrich.chunks_to_hint(done) == 0):
+            return done
+        old_hints = {h.index: (h, v) for h, v in await self._repo.get_hints_with_vectors(user_id, done.item_id, old_gen)
+                     if h.passages_version == PASSAGES_VERSION}
+        if not old_hints:
+            return done
+        olds = [old_chunk(c.index, c.text)
+                for c in await self._repo.get_chunks(user_id, done.item_id, old_gen, sorted(old_hints))]
+        to_hint = enrich.chunks_to_hint(done)
+        docs: List[DriveHintDoc] = []
+        vectors: List[List[float]] = []
+        for chunk in chunks[:to_hint]:
+            source = reuse_source(chunk.text, olds)
+            if source is None or source not in old_hints:
+                continue
+            hint, vector = old_hints[source]
+            grounded = ground(chunk.text, hint.items, chunk_word_keys=chunk.word_keys, keyword_keys=word_form_keys)
+            if not grounded.items:
+                continue
+            docs.append(DriveHintDoc(user_id=user_id, item_id=done.item_id, generation=new_gen, index=chunk.index,
+                                     kind=done.kind, chunk_text_hash=chunk_text_hash(chunk.text),
+                                     items=grounded.items, hint_keys=grounded.hint_keys,
+                                     passages_version=PASSAGES_VERSION))
+            vectors.append(list(vector))
+        if not docs:
+            return done
+        _fence()
+        await self._recheck_gate(user_id)
+        await self._repo.write_hints(docs, vectors)
+        _inc(summary, "hints_reused", len(docs))
+        reused = {d.index for d in docs}
+        complete = all(i in reused for i in range(to_hint))
+        return replace(done, passages_generation=new_gen, passages_version=PASSAGES_VERSION,
+                       passages_next_index=to_hint if complete else 0, passages_attempts=0)
 
     async def _reusable_vectors(self, user_id: str, run: DriveIndexRecord) -> Dict[str, List[float]]:
         """The readable generation's vectors by chunk-text hash, when it is in this tick's embedding space (final
@@ -1466,13 +1703,29 @@ class DriveIndexingService:
             summary["reembed_refused"] = summary.get("reembed_refused", 0) + 1
             return
         summary["embed_ms"] = summary.get("embed_ms", 0) + int((self._monotonic() - started) * 1000)
-        terms = await asyncio.to_thread(_terms_of, [c.text for c in stored])
-        chunks = [replace(c, generation=generation, content_terms=t) for c, t in zip(stored, terms)]
+        keyed = await asyncio.to_thread(_keys_of, [c.text for c in stored])
+        chunks = [replace(c, generation=generation, content_terms=(), word_keys=k, keys_version=KEYS_VERSION)
+                  for c, (k, _) in zip(stored, keyed)]
+        # its hint documents move with it, their vectors embedded in this space too (§25.2.2: fenced like chunks)
+        hints = await self._repo.get_hints(user_id, rec.item_id, readable)
+        hint_vectors: List[List[float]] = []
+        if hints:
+            try:
+                hint_vectors = await asyncio.wait_for(self._embed_texts([_hint_text(h.items) for h in hints]),
+                                                      timeout=EMBED_FILE_BUDGET_S)
+            except LLMClientError as exc:
+                if exc.http_status != 400:
+                    raise   # systemic (§8.2)
+                logger.warning(f"[DriveIndex] hint text of item {rec.item_id} for {user_id[:8]} refused in "
+                               f"{self._space}: {exc}; its passage hints are written again")
+                hints = []
         _fence()
         await self._recheck_gate(user_id)
         for start in range(0, len(chunks), RECORD_WRITE_BATCH):
             await self._repo.write_chunks(chunks[start:start + RECORD_WRITE_BATCH],
                                           vectors[start:start + RECORD_WRITE_BATCH])
+        if hints:
+            await self._repo.write_hints([replace(h, generation=generation) for h in hints], hint_vectors)
         fresh = (await self._repo.get_records(user_id, [rec.item_id])).get(rec.item_id)
         if (fresh is None or fresh.content_version != rec.content_version or fresh.indexed_generation != readable
                 or fresh.index_generation != generation):
@@ -1482,6 +1735,11 @@ class DriveIndexingService:
             await self._collect(user_id, rec.item_id, fresh.indexed_generation if fresh is not None else None)
             return
         done = chunks_reembedded(fresh, generation, self._space, now)
+        done = replace(done, keys_version=KEYS_VERSION, keys_pending=False,
+                       keys_capped=any(cut for _, cut in keyed),
+                       passages_generation=(generation if fresh.passages_generation == readable and hints
+                                            else None if fresh.passages_generation == readable
+                                            else fresh.passages_generation))
         if not (content_due(done) or triage_due(done)):   # waiting content keeps its own class and time (§7.8)
             done = _maintenance_kept(done, rec.priority)
         await self._commit(user_id, [done], set())
@@ -1528,7 +1786,7 @@ class DriveIndexingService:
                                           first_seen=not run.has_card), cls)
         try:
             _fence()
-            await self._repo.upsert_records([back])
+            await self._repo.upsert_records([enrich.planned(back, self._enrich_ctx())])
         except Exception as exc:
             logger.warning(f"[DriveIndex] could not clear the run of item {run.item_id} for {user_id[:8]}: {exc}; "
                            f"it counts as a crashed attempt")
@@ -1546,8 +1804,9 @@ class DriveIndexingService:
 
     def _model_hold(self, rec: DriveIndexRecord, now: datetime, models: _Models, *, cls: Optional[int] = None,
                     pages: int = 1) -> Optional[DriveIndexRecord]:
-        """Model work waits, still pending, while the model is out (§24.8) or until a month has the `pages` the file
-        needs (reader_pages): it is never cut to what is left of this month (§24.7). A file the reader settled less
+        """Model work waits, still pending, while the model is out (§24.8) or until the dollars left for the reader
+        (the initial build, then the month's cap, §25.4.5) pay for the `pages` the file needs at the per-page estimate
+        (reader_pages): it is never cut to what is left of this month (§24.7). A file the reader settled less
         than MODEL_REREAD_COOLDOWN ago waits for it to end, in its class: the edits made meanwhile are read once, at
         their newest version (final review F1-3)."""
         cooled = reread_cooldown_until(rec)
@@ -1555,7 +1814,8 @@ class DriveIndexingService:
             return deferred(_cleared(rec), cooled, now, priority=cls)
         if not models.available(now):
             return deferred(_cleared(rec), _backoff_until(models), now, priority=cls)
-        if models.pages_left(now) < pages:
+        if self._affordable(UsageClass.READER.value, READER_PAGE_USD_ESTIMATE) < pages:
+            # the reader's dollars this month and the initial build cannot pay for the pages it needs (§25.4.5)
             return deferred(_cleared(rec), next_month_start(now), now, maintenance=True)
         return None
 
@@ -1577,7 +1837,7 @@ class DriveIndexingService:
             await self._commit(user_id, [deferred(r, _backoff_until(models), now) for r in recs], set())
             summary["deferred"] = summary.get("deferred", 0) + len(recs)
             return True
-        left = models.images_left(now)
+        left = self._affordable(UsageClass.TRIAGE.value, TRIAGE_IMAGE_USD_ESTIMATE)
         over = [deferred(r, next_month_start(now), now, maintenance=True) for r in recs[left:]]
         if over:
             await self._commit(user_id, over, set())
@@ -1638,23 +1898,25 @@ class DriveIndexingService:
                 logger.error(f"[DriveIndex] triage failed for {user_id[:8]}: {exc}", exc_info=True)
                 writes.extend(content_retry(r, Reason.EXTRACT_ERROR, now) for r in waiting.values())
             else:
-                # Triage v2 reply (§25.13.1), read with v1's effects until P5 writes the photo fields and the
-                # per-agent backoff: a verdict is stored (the description standing in for the caption), a refused
-                # image is a photograph without a caption, a capped image is a per-file retry (a text scan must
-                # not become a permanent photograph), an outage defers what it left unsettled. Differences from v1,
-                # all §25.13.1's: an image left unanswered after the correction turn is a per-file retry (v1: a
-                # photograph without a caption); in an outage the images answered before it keep their verdicts
-                # (v1 deferred the whole batch).
+                # Triage v2 (§25.4.3, §25.13.1): a verdict is stored with the photo fields, a refused image is a
+                # photograph without a description, a capped image is a per-file retry (a text scan must not become a
+                # permanent photograph), an outage defers what it left unsettled; an image left unanswered after the
+                # correction turn is a per-file retry; in an outage the images answered before it keep their verdicts.
+                # The dollars go to the triage class (the fallback's share for the daily alert).
                 outage = reply.status in (ModelReplyStatus.UNAVAILABLE, ModelReplyStatus.FAILED)
                 _count_triage(models, summary, now, calls=reply.model_calls, cost=reply.usd,
                               images=len(reply.results) if outage else len(images), outage=outage)
+                await self._spend_usd(user_id, UsageClass.TRIAGE.value, reply.usd, reply.fallback_usd,
+                                      reply.model_calls)
                 if outage:
                     logger.warning(f"[DriveIndex] triage unavailable for {user_id[:8]} ({reply.status.value}); "
                                    f"model work deferred")
                     models.outage(now)   # after the usage, which leaves the backoff to this outage (C-M1, T-M2)
-                by_id = {r.item_id: _v1_triage_result(r) for r in reply.results}
+                by_id: Dict[str, TriageResultV2] = {r.item_id: r for r in reply.results}
                 for item_id in reply.refused_item_ids:
-                    by_id.setdefault(item_id, TriageResult(item_id=item_id, verdict=TriageVerdict.PHOTO))
+                    by_id.setdefault(item_id, TriageResultV2(item_id=item_id, verdict=TriageVerdict.PHOTO))
+                _inc(summary, "triage_capped", len(reply.capped_item_ids))
+                _inc(summary, "triage_refused", len(reply.refused_item_ids))
                 for item_id, rec in waiting.items():
                     result = by_id.get(item_id)
                     if result is not None:
@@ -1714,6 +1976,476 @@ class DriveIndexingService:
             await self._commit(user_id, [chunk_released(rec, now) for rec in fits], set())
             summary["released_chunks"] = summary.get("released_chunks", 0) + len(fits)
 
+    # -- Search v2: model dollars (§25.4.5) -----------------------------------------------------
+
+    def _enrich_ctx(self) -> EnrichContext:
+        spend = _TICK_SPEND.get()
+        return spend.ctx() if spend is not None else enrich.default_context(self._clock())
+
+    def _affordable(self, cls: str, unit_usd: float) -> int:
+        """Units (pages, images) the dollars left for `cls` pay for at the per-unit estimate: the open initial build,
+        then the month's rest of the class cap (§25.4.5). Outside a tick: no limit."""
+        spend = _TICK_SPEND.get()
+        if spend is None:
+            return 1 << 30
+        return int(spend.available(cls) / unit_usd + 1e-9)
+
+    async def _spend_usd(self, user_id: str, cls: str, usd: float, fallback_usd: float, calls: int) -> None:
+        """Dollars a model call cost, priced by the runner at the model that ran (failover included): the initial
+        build covers what it can first (D27), and the month's document keeps every dollar per class, the fallback's
+        share and the day's totals (the fallback alert). Never retried, never fenced: the call was made (§25.13.1)."""
+        if usd <= 0 and calls <= 0:
+            return
+        spend = _TICK_SPEND.get()
+        now = spend.now if spend is not None else self._clock()
+        covered = 0.0
+        if usd > 0 and (spend is None or spend.build.closed_at is None):
+            build, covered = await self._repo.spend_initial_build(user_id, usd, now)
+            if spend is not None:
+                spend.build = build
+        day = now.astimezone(timezone.utc).date().isoformat()
+        await self._repo.add_model_usage(user_id, month_key(now), day, cls, max(usd, 0.0), max(fallback_usd, 0.0),
+                                         max(calls, 0))
+        if spend is not None:
+            spend.usage = added_usage(spend.usage, day, cls, max(usd, 0.0), max(fallback_usd, 0.0), max(calls, 0))
+            for key, value in ((cls, usd), ("fallback", fallback_usd), ("initial_build", covered)):
+                if value > 0:
+                    spend.usd[key] = spend.usd.get(key, 0.0) + value
+
+    # -- Search v2: enrichment (§25.4.1-§25.4.7) ------------------------------------------------
+
+    def _enrich_wired(self) -> bool:
+        return self._profiler is not None and self._passages is not None
+
+    @staticmethod
+    def _jobs_now(rec: DriveIndexRecord, models: _Models, now: datetime) -> Tuple[bool, bool]:
+        """The record's ready jobs whose agent type is not backed off (§25.4.6: a backoff gates the queue read, it
+        is not a job state). A template profile calls no model."""
+        profile = rec.profile_state == _READY and (enrich.template_reason(rec) is not None
+                                                   or models.agent_available(PROFILER_AGENT, now))
+        passages = rec.passages_state == _READY and models.agent_available(PASSAGES_AGENT, now)
+        return profile, passages
+
+    async def _enrichment_waiting(self, user_id: str, now: datetime, models: _Models) -> bool:
+        """The tick continues while the queue holds a record with a job an available agent can do now, or a deferred
+        or parked job is due to wake."""
+        if not self._enrich_wired():
+            return False
+        if await self._repo.enrich_wakeups(user_id, now, 1):
+            return True
+        page = await self._repo.enrich_queue(user_id, ENRICH_QUEUE_PAGE)
+        return any(any(self._jobs_now(r, models, now)) for r in page)
+
+    async def _enrich_phase(self, user_id: str, now: datetime, budget: _Budget, summary: Dict[str, int],
+                            models: _Models) -> bool:
+        """The enrichment share of the tick (§25.4.5): wake-ups re-planned, then the queue (newest first), up to
+        ENRICH_IN_FLIGHT files at once, all model calls under MODEL_IN_FLIGHT. It gets at least ENRICH_SHARE of the
+        start budget, or `1 - MAINTENANCE_SHARE` of what the content classes left, whichever is more. Returns whether
+        any record was enriched or re-planned."""
+        if not self._enrich_wired():
+            return False
+        started = self._monotonic()
+        total = TICK_START_BUDGET.total_seconds()
+        at = budget.elapsed()
+        stop_at = min(total, at + max(ENRICH_SHARE * total - budget.enrich_s, (1 - MAINTENANCE_SHARE) * (total - at)))
+        worked = False
+        try:
+            woken = await self._repo.enrich_wakeups(user_id, now, ENRICH_WAKEUPS_PAGE)
+            if woken:
+                await self._commit(user_id, woken, set())   # re-planned: a cooldown or a month turn ended
+                _inc(summary, "enrich_woken", len(woken))
+                worked = True
+            processed = budget.enriched
+            model_slots = asyncio.Semaphore(MODEL_IN_FLIGHT)
+            while budget.enrichment_allowed(stop_at):
+                page = await self._repo.enrich_queue(user_id, ENRICH_QUEUE_PAGE)
+                todo = [r for r in page if r.item_id not in processed and any(self._jobs_now(r, models, now))]
+                if not todo:
+                    break
+                files = asyncio.Semaphore(ENRICH_IN_FLIGHT)
+
+                async def one(rec: DriveIndexRecord) -> bool:
+                    async with files:
+                        if not budget.enrichment_allowed(stop_at):
+                            return False
+                        processed.add(rec.item_id)
+                        await self._enrich_file(user_id, rec.item_id, now, summary, models, model_slots)
+                        return True
+
+                outcomes = await asyncio.gather(*(one(r) for r in todo), return_exceptions=True)
+                errors = [o for o in outcomes if isinstance(o, BaseException)]
+                if errors:
+                    raise next((e for e in errors if isinstance(e, (LeaseLost, _OptedOut))), errors[0])
+                if not any(o is True for o in outcomes):
+                    break
+                worked = True
+        finally:
+            budget.enrich_s += self._monotonic() - started
+        return worked
+
+    async def _enrich_inline(self, user_id: str, item_id: str, now: datetime, budget: _Budget,
+                             summary: Dict[str, int], models: _Models) -> None:
+        """A first-seen file whose profile is ready when its content commits is profiled in the same run, charged to
+        the enrichment share, so its card is embedded once (§25.4.5)."""
+        if not self._enrich_wired():
+            return
+        rec = (await self._repo.get_records(user_id, [item_id])).get(item_id)
+        if rec is None or rec.profile_state != _READY or not self._jobs_now(rec, models, now)[0]:
+            return
+        if not budget.enrichment_allowed(TICK_START_BUDGET.total_seconds()):
+            return
+        budget.enriched.add(item_id)
+        started = self._monotonic()
+        try:
+            await self._enrich_file(user_id, item_id, now, summary, models, asyncio.Semaphore(MODEL_IN_FLIGHT))
+        finally:
+            budget.enrich_s += self._monotonic() - started
+
+    async def _enrich_file(self, user_id: str, item_id: str, now: datetime, summary: Dict[str, int],
+                           models: _Models, slots: asyncio.Semaphore) -> None:
+        """One file's enrichment inside ENRICH_FILE_BUDGET_S (a hard wait_for, §25.4.5): its profile, its passage
+        batches with their hint embeddings, and its card. Progress is saved per batch, so a cut file resumes. A
+        model outcome is never a content failure (§25.4.6); a systemic error (the store, the embeddings, the lease)
+        ends the tick."""
+        try:
+            await asyncio.wait_for(self._enrich_run(user_id, item_id, now, summary, models, slots),
+                                   timeout=ENRICH_FILE_BUDGET_S)
+        except asyncio.TimeoutError:
+            logger.warning(f"[DriveIndex] enrichment of item {item_id} for {user_id[:8]} passed "
+                           f"{ENRICH_FILE_BUDGET_S}s; it resumes from its saved progress")
+            _inc(summary, "enrich_timeouts")
+        except (LeaseLost, _OptedOut):
+            raise
+        except _RUN_SYSTEMIC as exc:
+            logger.warning(f"[DriveIndex] enrichment of item {item_id} for {user_id[:8]} ended by "
+                           f"{type(exc).__name__}: {exc}")
+            raise
+        except Exception as exc:   # one file never stalls the queue; it is ready again next tick
+            logger.error(f"[DriveIndex] enrichment of item {item_id} for {user_id[:8]} failed: "
+                         f"{type(exc).__name__}: {exc}", exc_info=True)
+            _inc(summary, "enrich_errors")
+
+    async def _enrich_run(self, user_id: str, item_id: str, now: datetime, summary: Dict[str, int],
+                          models: _Models, slots: asyncio.Semaphore) -> None:
+        rec = (await self._repo.get_records(user_id, [item_id])).get(item_id)
+        if rec is None or not rec.enrich_ready:
+            return
+        do_profile, do_passages = self._jobs_now(rec, models, now)
+        if not (do_profile or do_passages):
+            return
+        chunks: List[DriveChunk] = []
+        vectors: Dict[int, List[float]] = {}
+        if rec.indexed_generation is not None and rec.chunk_count > 0:
+            rows = await self._repo.get_chunks_with_vectors(user_id, item_id, rec.indexed_generation,
+                                                            range(rec.chunk_count), vectors=do_passages)
+            chunks = sorted((c for c, _ in rows), key=lambda c: c.index)
+            vectors = {c.index: v for c, v in rows if v}
+        if do_profile:
+            after = await self._profile_job(user_id, rec, chunks, now, summary, models, slots)
+            if after is None:
+                return
+            if card_eligible(after) and after.card_hash != card_hash(after):
+                await self._embed_cards(user_id, [after], now, summary)   # its card carries the profile (§25.2.7)
+            rec = (await self._repo.get_records(user_id, [item_id])).get(item_id)
+            if rec is None:
+                return
+        if do_passages and rec.passages_state == _READY and chunks:
+            await self._passages_job(user_id, rec, chunks, vectors, now, summary, models, slots)
+
+    async def _commit_enriched(self, user_id: str, started: DriveIndexRecord,
+                               apply: Callable[[DriveIndexRecord], DriveIndexRecord]) -> Optional[DriveIndexRecord]:
+        """An enrichment result written onto the record as it is now (a rename meanwhile is kept), only while the text
+        it was made from is still the readable one (§7.4's fence for enrichment): same content version, readable
+        generation and README excerpt. Returns the planned record, or None when the result was dropped."""
+        fresh = (await self._repo.get_records(user_id, [started.item_id])).get(started.item_id)
+        if (fresh is None or fresh.indexed_generation != started.indexed_generation
+                or fresh.content_version != started.content_version
+                or fresh.readme_excerpt_version != started.readme_excerpt_version):
+            logger.info(f"[DriveIndex] item {started.item_id} of {user_id[:8]} changed during its enrichment; "
+                        f"result dropped")
+            return None
+        done = apply(fresh)
+        await self._commit(user_id, [done], set())
+        return enrich.planned(done, self._enrich_ctx())
+
+    async def _profile_job(self, user_id: str, rec: DriveIndexRecord, chunks: List[DriveChunk], now: datetime,
+                           summary: Dict[str, int], models: _Models,
+                           slots: asyncio.Semaphore) -> Optional[DriveIndexRecord]:
+        """One profile (§25.4.1): a short note's template from its stored text, or a profiler call over the policy's
+        input, verified against the whole stored text; the outcome per §25.4.6. The skip rule (§25.4.7) is the plan's:
+        the job is ready only when the input fingerprint or the version moved and the cooldown is over."""
+        reason = enrich.template_reason(rec)
+        if reason is TemplateReason.SHORT:
+            text = stored_text(chunks)
+            if not text.strip():
+                return rec
+            fingerprint = enrich.input_fingerprint_of(rec, chunks)
+            profile = template_profile(reason, rec.kind, text)
+            return await self._commit_enriched(user_id, rec, lambda f: enrich.profiled(
+                f, profile, source=ProfileSource.TEMPLATE, fingerprint=fingerprint, now=now))
+        inp = profile_input(rec, chunks, rec.kind)
+        if inp is None or self._profiler is None:
+            return rec
+        if enrich.available_usd(self._enrich_ctx(), UsageClass.PROFILE.value) < enrich.profile_estimate(rec):
+            return await self._commit_enriched(user_id, rec, lambda f: f)   # re-planned: parked
+        fingerprint = input_fingerprint(rec.kind, inp)
+        previous = None
+        if rec.profile is not None and rec.profile_source == ProfileSource.MODEL.value:
+            previous = ProfileLabels(doc_type=rec.profile.doc_type, life_domains=rec.profile.life_domains,
+                                     valid_until=rec.valid_until.date() if rec.valid_until is not None else None)
+        async with slots:
+            reply = await self._profiler.profile(ProfileRequest(
+                user_id=user_id, account_id=self._account_ids.get(user_id, ""), item_id=rec.item_id, kind=rec.kind,
+                name=rec.name, input=inp, previous=previous))
+        status = reply.status
+        await self._spend_usd(user_id, UsageClass.PROFILE.value, reply.usd, reply.fallback_usd,
+                              0 if status is ModelReplyStatus.UNAVAILABLE and not reply.usd else 1)
+        _inc(summary, f"profile_{status.value}")
+        if status is ModelReplyStatus.UNAVAILABLE:
+            # uncharged: the job stays ready behind this agent type's backoff; content work and keys go on
+            models.agent_outage(PROFILER_AGENT, now)
+            await self._persist_usage(models)
+            return rec
+        if status is ModelReplyStatus.OK and reply.profile is not None:
+            policy_ = record_policy(rec, text_chars=rec.text_chars, script_rendered=rec.script_rendered)
+            texts: Sequence[object] = chunks if chunks else [_Text(rec.readme_excerpt)]
+            verified, drops = verify(reply.profile, texts, rec.name,   # type: ignore[arg-type]
+                                     key_values=policy_.output is ProfileOutput.FULL)
+            for key, value in (("entities", drops.entities), ("values", drops.values), ("dates", drops.dates),
+                               ("labels", drops.labels)):
+                _inc(summary, f"verify_dropped_{key}", value)
+            _inc(summary, "profiles")
+            if models.agent_recovered(PROFILER_AGENT):
+                await self._persist_usage(models)
+            return await self._commit_enriched(user_id, rec, lambda f: enrich.profiled(
+                f, verified, source=ProfileSource.MODEL, fingerprint=fingerprint, now=now))
+        if status is ModelReplyStatus.FAILED:
+            models.agent_outage(PROFILER_AGENT, now)   # charged AND a backoff (§25.4.6); a fallback refusal too
+            await self._persist_usage(models)
+        if status is ModelReplyStatus.STOPPED_AT_CAP:
+            _inc(summary, "stopped_at_cap")
+        return await self._commit_enriched(user_id, rec, lambda f: enrich.profile_charged(f, status, now))
+
+    async def _passages_job(self, user_id: str, rec: DriveIndexRecord, chunks: List[DriveChunk],
+                            vectors: Mapping[int, List[float]], now: datetime, summary: Dict[str, int],
+                            models: _Models, slots: asyncio.Semaphore) -> Optional[DriveIndexRecord]:
+        """Passage hints for the chunks still without them (§25.4.2): PASSAGE_CHUNKS_PER_CALL chunks a call, up to
+        PASSAGE_IN_FLIGHT calls at once; each batch's grounded hint documents written (fenced) before the next, the
+        record re-read after each (a moved generation deletes this run's documents and stops it). Outcomes per
+        §25.4.6: a refused or still-capped chunk gets no hints and never holds the file; `invalid`/`failed` chunks
+        cost one attempt per run and stay due; `failed` and `unavailable` stop the run behind a backoff."""
+        if self._passages is None or rec.indexed_generation is None:
+            return rec
+        gen = rec.indexed_generation
+        started = enrich.passages_started(rec)
+        to_hint = enrich.chunks_to_hint(started)
+        have = {h.index for h in await self._repo.get_hints(user_id, rec.item_id, gen)
+                if h.passages_version == PASSAGES_VERSION}
+        by_index = {c.index: c for c in chunks}
+        settled: Set[int] = set(have)
+        pending = [i for i in range(started.passages_next_index, to_hint) if i not in have and i in by_index]
+        title, what = (rec.profile.title, rec.profile.what_it_is) if rec.profile is not None else ("", "")
+        batches = [pending[i:i + PASSAGE_CHUNKS_PER_CALL] for i in range(0, len(pending), PASSAGE_CHUNKS_PER_CALL)]
+        charged = halted = failed = answered = False
+        for at in range(0, len(batches), PASSAGE_IN_FLIGHT):
+            wave = batches[at:at + PASSAGE_IN_FLIGHT]
+            estimate = PASSAGE_CHUNK_USD_ESTIMATE * sum(len(b) for b in wave)
+            if enrich.available_usd(self._enrich_ctx(), UsageClass.PASSAGE.value) < estimate:
+                break   # the plan parks the rest
+            replies = await asyncio.gather(*(self._hint_call(user_id, rec, batch, by_index, title, what, slots)
+                                             for batch in wave))
+            docs: List[DriveHintDoc] = []
+            doc_vectors: List[List[float]] = []
+            for batch, reply in zip(wave, replies):
+                await self._spend_usd(user_id, UsageClass.PASSAGE.value, reply.usd, reply.fallback_usd,
+                                      0 if reply.status is ModelReplyStatus.UNAVAILABLE and not reply.usd else 1)
+                halted |= reply.status is ModelReplyStatus.UNAVAILABLE
+                failed |= reply.status is ModelReplyStatus.FAILED
+                for index in batch:
+                    outcome = reply.outcome_by_index.get(index)
+                    if outcome is None:
+                        continue   # not attempted: an outage cut the batch; retried
+                    _inc(summary, f"passage_{outcome.value}")
+                    if outcome in (ModelReplyStatus.REFUSED, ModelReplyStatus.STOPPED_AT_CAP):
+                        settled.add(index)
+                        if outcome is ModelReplyStatus.STOPPED_AT_CAP:
+                            _inc(summary, "stopped_at_cap")
+                        continue
+                    if outcome is not ModelReplyStatus.OK:
+                        charged = True
+                        continue
+                    answered = True
+                    settled.add(index)
+                    _inc(summary, "passage_chunks")
+                    made = await self._hint_doc(user_id, rec, gen, by_index[index],
+                                                reply.items_by_index.get(index, ()), vectors.get(index), summary)
+                    if made is not None:
+                        docs.append(made[0])
+                        doc_vectors.append(made[1])
+            if docs:
+                _fence()
+                await self._recheck_gate(user_id)
+                await self._repo.write_hints(docs, doc_vectors)
+            fresh = (await self._repo.get_records(user_id, [rec.item_id])).get(rec.item_id)
+            if fresh is None or fresh.indexed_generation != gen:
+                if docs:   # the generation moved meanwhile: this run's documents go (§25.2.2)
+                    _fence()
+                    await self._repo.delete_hints_except(user_id, rec.item_id,
+                                                         fresh.indexed_generation if fresh is not None else None)
+                return None
+            if halted or failed:
+                break
+            if at + PASSAGE_IN_FLIGHT < len(batches):   # progress saved per batch: a cut file resumes (§25.4.5)
+                done_to = _first_unsettled(started.passages_next_index, to_hint, settled)
+                if await self._commit_enriched(user_id, rec, _passage_progress(started, done_to, now)) is None:
+                    return None
+        next_index = _first_unsettled(started.passages_next_index, to_hint, settled)
+        if halted or failed:
+            models.agent_outage(PASSAGES_AGENT, now)
+            await self._persist_usage(models)
+        elif answered and models.agent_recovered(PASSAGES_AGENT):
+            await self._persist_usage(models)
+        return await self._commit_enriched(user_id, rec, _passage_progress(
+            started, next_index, now, finished=next_index >= to_hint, charged=charged))
+
+    async def _hint_call(self, user_id: str, rec: DriveIndexRecord, batch: Sequence[int],
+                         by_index: Mapping[int, DriveChunk], title: str, what: str,
+                         slots: asyncio.Semaphore) -> HintReply:
+        port = self._passages
+        if port is None:
+            raise _NotWired("passage hints are not wired into the indexing service")
+        async with slots:
+            return await port.hints(HintRequest(
+                user_id=user_id, account_id=self._account_ids.get(user_id, ""), item_id=rec.item_id,
+                chunks=[(i, by_index[i].text) for i in batch], title=title, what_it_is=what))
+
+    async def _hint_doc(self, user_id: str, rec: DriveIndexRecord, gen: int, chunk: DriveChunk,
+                        items: Sequence[HintItem], chunk_vector: Optional[List[float]],
+                        summary: Dict[str, int]) -> Optional[Tuple[DriveHintDoc, List[float]]]:
+        """Grounding (§25.4.2): rules 1-3 over the chunk, its hint vector embedded, rule 4 against the chunk's vector.
+        Drops are counted per rule; the hint-to-chunk similarity by deciles."""
+        word_keys = chunk.word_keys or word_keys_capped(chunk.text)[0]
+        grounded = ground(chunk.text, items, chunk_word_keys=word_keys, keyword_keys=word_form_keys)
+        for key in ("evidence", "numbers", "plain", "invalid"):
+            _inc(summary, f"hints_dropped_{key}", getattr(grounded.drops, key))
+        if not grounded.items:
+            return None
+        try:
+            vector = await self._embeddings.get_embedding(_hint_text(grounded.items), "RETRIEVAL_DOCUMENT")
+        except LLMClientError as exc:
+            if exc.http_status != 400:
+                raise   # systemic (§8.2)
+            logger.warning(f"[DriveIndex] hint text of item {rec.item_id} for {user_id[:8]} refused: {exc}")
+            _inc(summary, "hints_dropped_embed")
+            return None
+        if chunk_vector:
+            score = enrich.similarity(vector, chunk_vector)
+            _inc(summary, f"hint_sim_d{min(9, max(0, int(score * 10)))}")
+            grounded = drop_if_far(grounded, score)
+            _inc(summary, "hints_dropped_far", grounded.drops.far)
+            if not grounded.items:
+                return None
+        doc = DriveHintDoc(user_id=user_id, item_id=rec.item_id, generation=gen, index=chunk.index, kind=rec.kind,
+                           chunk_text_hash=chunk_text_hash(chunk.text), items=grounded.items,
+                           hint_keys=grounded.hint_keys, passages_version=PASSAGES_VERSION)
+        return doc, list(vector)
+
+    # -- Search v2: the keys pass (§25.4.8) ----------------------------------------------------
+
+    async def _keys_step(self, user_id: str, rec: DriveIndexRecord, ctx: PlanContext, budget: _Budget,
+                         summary: Dict[str, int]) -> bool:
+        """Keys made under another KEYS_VERSION: the readable generation is re-keyed from its stored text into a NEW
+        generation, the way `_reembed_run` re-embeds (no in-place writes): each chunk's text, offsets, kind, vector and
+        `user_id` with new `word_keys`, its hint documents with re-keyed `hint_keys`; committed under the §7.4 fence
+        (dropped if the content version or the generation moved), then the other generations' hints and chunks go. No
+        model call, never budgeted."""
+        if not budget.file_allowed(routed=False):
+            return False
+        readable = rec.indexed_generation
+        if readable is None:
+            return True
+        rows = sorted(await self._repo.get_chunks_with_vectors(user_id, rec.item_id, readable, range(rec.chunk_count),
+                                                               terms=False), key=lambda r: r[0].index)
+        if rec.chunk_count == 0 or [c.index for c, _ in rows] != list(range(rec.chunk_count)):
+            logger.warning(f"[DriveIndex] chunks of item {rec.item_id} for {user_id[:8]} cannot be re-keyed as "
+                           f"stored; the file is read again")
+            await self._reread(user_id, rec, ctx)
+            return True
+        budget.files -= 1
+        now = ctx.now
+        generation = rec.index_generation + 1
+        await self._commit(user_id, [replace(rec, index_generation=generation)], set())   # never reused (§8.1 step 2)
+        keyed = await asyncio.to_thread(_keys_of, [c.text for c, _ in rows])
+        chunks = [replace(c, generation=generation, content_terms=(), word_keys=k, keys_version=KEYS_VERSION)
+                  for (c, _), (k, _) in zip(rows, keyed)]
+        chunk_keys = {c.index: c for c in chunks}
+        hints: List[DriveHintDoc] = []
+        hint_vectors: List[List[float]] = []
+        for hint, vector in await self._repo.get_hints_with_vectors(user_id, rec.item_id, readable):
+            chunk = chunk_keys.get(hint.index)
+            if chunk is None:
+                continue
+            regrounded = ground(chunk.text, hint.items, chunk_word_keys=chunk.word_keys, keyword_keys=word_form_keys)
+            hints.append(replace(hint, generation=generation, hint_keys=regrounded.hint_keys))
+            hint_vectors.append(list(vector))
+        _fence()
+        await self._recheck_gate(user_id)
+        for start in range(0, len(chunks), RECORD_WRITE_BATCH):
+            await self._repo.write_chunks(chunks[start:start + RECORD_WRITE_BATCH],
+                                          [v for _, v in rows[start:start + RECORD_WRITE_BATCH]])
+        if hints:
+            await self._repo.write_hints(hints, hint_vectors)
+        fresh = (await self._repo.get_records(user_id, [rec.item_id])).get(rec.item_id)
+        if (fresh is None or fresh.content_version != rec.content_version or fresh.indexed_generation != readable
+                or fresh.index_generation != generation):
+            logger.info(f"[DriveIndex] item {rec.item_id} of {user_id[:8]} changed while re-keying; dropped")
+            _fence()
+            await self._collect(user_id, rec.item_id, fresh.indexed_generation if fresh is not None else None)
+            return True
+        cut = any(c for _, c in keyed)
+        done = replace(fresh, indexed_generation=generation, keys_version=KEYS_VERSION, keys_pending=False,
+                       keys_capped=cut,
+                       passages_generation=(generation if fresh.passages_generation == readable
+                                            else fresh.passages_generation))
+        done = schedule(done, now, first_seen=not done.has_card)
+        if not (content_due(done) or triage_due(done)):
+            done = _maintenance_kept(done, rec.priority)
+        await self._commit(user_id, [done], set())
+        _fence()
+        await self._collect(user_id, rec.item_id, generation)
+        _inc(summary, "rekeyed")
+        _inc(summary, "keys_capped", int(cut))
+        return True
+
+    # -- Search v2: rebuild progress and the initial build (§25.4.5, §25.8) ---------------------------------
+
+    async def _rebuild_progress(self, user_id: str, state: DriveSyncState, now: datetime, spend: _Spend, *,
+                                settled: bool) -> Tuple[DriveSyncState, Dict[str, int]]:
+        """The job states per job (the tick line and the Cabinet), the described count (profiles `current`) and when it
+        last grew (the fan-out's stalled-rebuild alert), and the initial build's end: it closes once the first
+        onboarding has completed and no record has a profile or passages job ready or parked (D27) — and the index has
+        settled (`settled`: no due work, nothing to enrich), so a build is not closed before the content it describes
+        was read."""
+        counts = await self._repo.count_by_job_state(user_id, _ENRICH_KINDS)
+        flat = {f"{job}_{st}": n for job, states in counts.items() for st, n in states.items() if n}
+        described = counts.get(EnrichJob.PROFILE.value, {}).get(JobState.CURRENT.value, 0)
+        text_records = sum(n for st, n in counts.get(EnrichJob.PROFILE.value, {}).items()
+                           if st != JobState.NONE.value)
+        grew = state.described_grew_at
+        if grew is None or described > state.described_count:
+            grew = now
+        if described != state.described_count:
+            logger.info(f"[DriveIndex] rebuild progress user={user_id[:8]} described={described}/{text_records}")
+        state = replace(state, described_count=described, described_grew_at=grew)
+        waiting = any(counts.get(job.value, {}).get(st, 0) for job in EnrichJob
+                      for st in (JobState.READY.value, JobState.PARKED.value))
+        if spend.build.closed_at is None and state.initial_enumeration_done and settled and not waiting:
+            await self._repo.close_initial_build(user_id, now)
+            spend.build = replace(spend.build, closed_at=now)
+            logger.info(f"[DriveIndex] initial build closed for {user_id[:8]} "
+                        f"(${spend.build.spent_usd:.2f} of ${spend.build.allowance_usd:.2f})")
+        return state, flat
+
     # -- version upgrades (§12.3) --------------------------------------------------------------
 
     async def _upgrade_step(self, user_id: str, state: DriveSyncState, now: datetime, budget: _Budget,
@@ -1724,6 +2456,8 @@ class DriveIndexingService:
         A pass that left stale records (scheduled, backing off, or parked) is not repeated until due work has run
         or the target versions change: a record stuck in backoff must not cost a full read of the index per tick. A
         pass that left only records held for next month's budget is parked until the month turns (R3 F1-5)."""
+        if not self._upgrade_pass:
+            return state   # the emergency switch (§25.8, DRIVE_UPGRADE_PASS): no upgrade pass at all
         target = self._target_versions()
         parked = state.upgrade_cursor is None and state.upgrade_parked_month == month_key(now)
         if ((_upgrade_waiting(state) or parked) and dict(state.target_versions) == target
@@ -1750,8 +2484,9 @@ class DriveIndexingService:
         found = state.upgrade_found_stale   # a stale record this pass left stale (its work is due, or blocked)
         # a record held for next month seen earlier in this pass (a new pass starts with none)
         held = state.upgrade_cursor is not None and state.upgrade_parked_month == month_key(now)
+        pending = self._pending_keys(state, target)
         for rec in page:
-            if rec.state is RecordState.DELETING or not self._stale(rec):
+            if rec.state is RecordState.DELETING or not self._stale(rec, pending):
                 continue
             if rec.state is RecordState.UNRESOLVED and rec.due_at is None:
                 # parked under an unresolved parent, whose rescope re-plans it under the current versions; scheduling
@@ -1772,7 +2507,10 @@ class DriveIndexingService:
                 # nothing observable moved and the record is already scheduled (a quiet period, a deferral): the
                 # planner keeps it as it is, so the re-embed or re-read this pass decided is written here (§12.3)
                 writes[rec.item_id] = _maintenance(schedule(current, now, first_seen=False))
-            if rec.item_id not in deletes and self._stale(writes.get(rec.item_id, rec)):
+            if rec.item_id not in writes and rec.item_id not in deletes and self._enrich_stale(rec, pending):
+                writes[rec.item_id] = rec   # re-planned by the commit: its job is ready, or its keys pending (§25.4.5)
+            if rec.item_id not in deletes and self._stale(enrich.planned(writes.get(rec.item_id, rec),
+                                                                         self._enrich_ctx()), pending):
                 found = True
         await self._commit(user_id, list(writes.values()), deletes, collects=collects)
         summary["upgraded"] = summary.get("upgraded", 0) + len(writes)
@@ -1822,8 +2560,10 @@ class DriveIndexingService:
         return TickResult("purging", summary)
 
     async def _has_more(self, user_id: str, state: DriveSyncState, now: datetime, *,
-                        upgrade_wrote: bool = False) -> bool:
+                        upgrade_wrote: bool = False, models: Optional[_Models] = None) -> bool:
         if not state.round_complete or state.epoch_phase is EpochPhase.SWEEPING:
+            return True
+        if models is not None and await self._enrichment_waiting(user_id, now, models):
             return True
         if self._upgrade_due(state) and (state.upgrade_cursor is not None or upgrade_wrote):
             # a pass is mid-way, or this tick's pass wrote (re-stamped or scheduled) and the verification pass
@@ -1845,9 +2585,22 @@ class DriveIndexingService:
         (`extractor:<id>`), so a new parser or reader starts an upgrade pass (§9, §12.3)."""
         return {**dict(CURRENT_VERSIONS), **{f"extractor:{k}": v for k, v in self._extractor_versions.items()}}
 
-    def _stale(self, rec: DriveIndexRecord) -> bool:
+    def _stale(self, rec: DriveIndexRecord, pending: Optional[Set[str]] = None) -> bool:
         return (stale_versions(rec, embedding_space=self._space)
-                or extractor_stale(rec, self._extractor_versions))
+                or extractor_stale(rec, self._extractor_versions)
+                or (pending is not None and self._enrich_stale(rec, pending)))
+
+    def _enrich_stale(self, rec: DriveIndexRecord, pending: Set[str]) -> bool:
+        """Settled per version key (§25.4.5): a pending `profile` or `passages` key waits for every record's job to be
+        current or none, or held/parked for the current version; a pending `keys` key for every record's keys."""
+        ctx = self._enrich_ctx()
+        return (("profile" in pending and not enrich.profile_settled(rec, ctx))
+                or ("passages" in pending and not enrich.passages_settled(rec, ctx))
+                or ("keys" in pending and not enrich.keys_settled(rec)))
+
+    @staticmethod
+    def _pending_keys(state: DriveSyncState, target: Mapping[str, int]) -> Set[str]:
+        return {key for key, version in target.items() if state.applied_versions.get(key) != version}
 
     async def _continue(self, user_id: str, tick_id: str, delay_seconds: int = 0) -> None:
         name = await self._queue.enqueue_worker_task(DRIVE_SYNC_TASK, tick_payload(user_id),
@@ -1893,10 +2646,18 @@ class DriveIndexingService:
         return bool(profile is not None and profile.config.drive_indexing_enabled)
 
     @staticmethod
-    def _log(user_id: str, end: str, summary: Dict[str, int], budget: _Budget, models: _Models) -> None:
+    def _log(user_id: str, end: str, summary: Dict[str, int], budget: _Budget, models: _Models,
+             spend: Optional[_Spend] = None) -> None:
+        """The tick line (§12.1, §25.7 telemetry): the summary counts, and the dollars per class spent this tick (the
+        fallback's share and what the initial build covered), the enrichment time and the rebuild progress."""
         elapsed = budget.monotonic() - budget.started
         cost = f" model_cost=${models.cost:.4f}" if models.calls or models.cost else ""
-        logger.info(f"[DriveIndex] tick user={user_id[:8]} end={end} {summary}{cost} duration={elapsed:.1f}s")
+        usd = ""
+        if spend is not None and spend.usd:
+            usd = " " + " ".join(f"{k}_usd=${v:.4f}" for k, v in sorted(spend.usd.items()) if v)
+        enriched = f" enrich_s={budget.enrich_s:.1f}" if budget.enrich_s else ""
+        logger.info(f"[DriveIndex] tick user={user_id[:8]} end={end} {summary}{cost}{usd}{enriched} "
+                    f"duration={elapsed:.1f}s")
 
 
 def _fence() -> None:
@@ -1948,16 +2709,11 @@ def _maintenance_kept(rec: DriveIndexRecord, cls: Optional[int]) -> DriveIndexRe
     return _maintenance(rec) if cls == int(Priority.MAINTENANCE) else rec
 
 
-def _v1_triage_result(result: TriageResultV2) -> TriageResult:
-    """A v2 triage result as the v1 verdict the planner stores until P5 writes the photo fields (§25.4.3): the
-    description stands in for the caption."""
-    return TriageResult(item_id=result.item_id, verdict=result.verdict,
-                        caption=result.photo.description if result.photo is not None else "")
-
-
-def _verdict(rec: DriveIndexRecord, result: TriageResult, now: datetime) -> DriveIndexRecord:
-    """A stored verdict (§24.5); an upgrade's image keeps class 3 for what follows (§7.8)."""
-    return _maintenance_kept(triaged(rec, result, now), rec.priority)
+def _verdict(rec: DriveIndexRecord, result: TriageResultV2, now: datetime) -> DriveIndexRecord:
+    """A stored verdict with its photo fields (§24.5, §25.4.3); an upgrade's image keeps class 3 for what follows
+    (§7.8)."""
+    verdict = TriageResult(item_id=result.item_id, verdict=result.verdict)
+    return _maintenance_kept(triaged(rec, verdict, now, photo=result.photo), rec.priority)
 
 
 def _cleared(rec: DriveIndexRecord) -> DriveIndexRecord:
@@ -2003,8 +2759,37 @@ def _text_key(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def _terms_of(texts: Sequence[str]) -> List[Tuple[str, ...]]:
-    return [content_terms(t) for t in texts]
+def _keys_of(texts: Sequence[str]) -> List[Tuple[Tuple[str, ...], bool]]:
+    """Each chunk's `word_keys` (§25.2.2) and whether the cap cut them; CPU work, run in a worker thread."""
+    return [word_keys_capped(t) for t in texts]
+
+
+def _first_unsettled(start: int, end: int, settled: Set[int]) -> int:
+    return next((i for i in range(start, end) if i not in settled), end)
+
+
+def _passage_progress(started: DriveIndexRecord, next_index: int, now: datetime, *, finished: bool = False,
+                      charged: bool = False) -> Callable[[DriveIndexRecord], DriveIndexRecord]:
+    """A passage run's progress written onto the record as it is now: the run's generation and version, the next chunk
+    to send, a finished run's time, and one charged attempt per run (§25.4.6)."""
+    def apply(fresh: DriveIndexRecord) -> DriveIndexRecord:
+        out = replace(fresh, passages_generation=started.passages_generation,
+                      passages_version=started.passages_version, passages_attempts=started.passages_attempts,
+                      passages_next_index=started.passages_next_index)
+        out = enrich.passages_advanced(out, next_index, finished=finished, now=now)
+        return enrich.passages_charged(out) if charged else out
+    return apply
+
+
+@dataclass(frozen=True)
+class _Text:
+    """A text verification reads (a folder's README excerpt stands in for chunks, §25.4.1)."""
+    text: str
+
+
+def _hint_text(items: Sequence[HintItem]) -> str:
+    """The text a hint document's `hint_vector` embeds: its kept items (§25.2.2)."""
+    return "\n".join(item.text for item in items)
 
 
 def _write_file(path: str, data: bytes) -> None:

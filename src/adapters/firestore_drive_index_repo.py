@@ -98,7 +98,7 @@ CARD_DISTANCE = "card_distance"
 CHUNK_VECTOR = "vector"
 CHUNK_DISTANCE = "chunk_distance"
 _TS_MIN = datetime(1, 1, 1, tzinfo=timezone.utc)   # Firestore's smallest timestamp: `>=` it excludes nulls
-_FLAGS = ("stale_alerted", "reconnect_notified")
+_FLAGS = ("stale_alerted", "reconnect_notified", "migration_alerted", "stall_alerted", "fallback_alerted_day")
 _LEASE = ("lease_owner", "lease_until")
 IN_VALUES_MAX = 30                                  # Firestore `in` limit (and the disjunction limit per query)
 # metadata_only reasons that leave an admitted document unread (drive_search.is_unread, §10.2)
@@ -226,6 +226,8 @@ _STATE_READERS: Dict[str, Callable[[Any], Any]] = {
     "stale_alerted": bool, "reconnect_notified": bool,
     "model_backoff_until": _dt, "model_failures": int, "model_pages_used": int, "triage_images_used": int,
     "model_backoff_by_agent": _dt_map,
+    "described_count": int, "described_grew_at": _dt,
+    "migration_alerted": bool, "stall_alerted": bool, "fallback_alerted_day": str,
 }
 
 
@@ -444,12 +446,13 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
         return True
 
     async def update_sync_flags(self, user_id: str, *, stale_alerted: Optional[bool] = None,
-                                reconnect_notified: Optional[bool] = None) -> None:
-        changes: Dict[str, bool] = {}
-        if stale_alerted is not None:
-            changes["stale_alerted"] = stale_alerted
-        if reconnect_notified is not None:
-            changes["reconnect_notified"] = reconnect_notified
+                                reconnect_notified: Optional[bool] = None, migration_alerted: Optional[bool] = None,
+                                stall_alerted: Optional[bool] = None,
+                                fallback_alerted_day: Optional[str] = None) -> None:
+        given = {"stale_alerted": stale_alerted, "reconnect_notified": reconnect_notified,
+                 "migration_alerted": migration_alerted, "stall_alerted": stall_alerted,
+                 "fallback_alerted_day": fallback_alerted_day}
+        changes: Dict[str, Any] = {name: value for name, value in given.items() if value is not None}
         if not changes:
             return
         try:

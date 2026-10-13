@@ -29,6 +29,10 @@ def _cosine_distance(a: Sequence[float], b: Sequence[float]) -> float:
     return 1.0 if na == 0 or nb == 0 else 1.0 - dot / (na * nb)
 
 
+# The fan-out's flags: only update_sync_flags writes them (the Firestore adapter's _FLAGS)
+_FLAG_FIELDS = ("stale_alerted", "reconnect_notified", "migration_alerted", "stall_alerted", "fallback_alerted_day")
+
+
 def _fence(current: Optional[DriveSyncState], owner: Optional[str], user_id: str) -> None:
     """The port's fence: the stored lease holder (None for a missing state) must be `owner`."""
     held = current.lease_owner if current is not None else None
@@ -60,10 +64,10 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
         async with self._lock:
             current = self.states.get(state.user_id)
             _fence(current, owner, state.user_id)
-            flags = (current.stale_alerted, current.reconnect_notified) if current else (False, False)
+            base = current or DriveSyncState(user_id=state.user_id)
+            flags = {name: getattr(base, name) for name in _FLAG_FIELDS}
             lease = (current.lease_owner, current.lease_until) if current else (None, None)
-            self.states[state.user_id] = replace(state, stale_alerted=flags[0], reconnect_notified=flags[1],
-                                                 lease_owner=lease[0], lease_until=lease[1])
+            self.states[state.user_id] = replace(state, **flags, lease_owner=lease[0], lease_until=lease[1])
 
     async def create_sync_state_if_absent(self, state: DriveSyncState) -> bool:
         async with self._lock:
@@ -73,15 +77,16 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
             return True
 
     async def update_sync_flags(self, user_id: str, *, stale_alerted: Optional[bool] = None,
-                                reconnect_notified: Optional[bool] = None) -> None:
+                                reconnect_notified: Optional[bool] = None, migration_alerted: Optional[bool] = None,
+                                stall_alerted: Optional[bool] = None,
+                                fallback_alerted_day: Optional[str] = None) -> None:
         current = self.states.get(user_id)
         if current is None:
             return
-        if stale_alerted is not None:
-            current = replace(current, stale_alerted=stale_alerted)
-        if reconnect_notified is not None:
-            current = replace(current, reconnect_notified=reconnect_notified)
-        self.states[user_id] = current
+        given = {"stale_alerted": stale_alerted, "reconnect_notified": reconnect_notified,
+                 "migration_alerted": migration_alerted, "stall_alerted": stall_alerted,
+                 "fallback_alerted_day": fallback_alerted_day}
+        self.states[user_id] = replace(current, **{k: v for k, v in given.items() if v is not None})
 
     async def delete_sync_state(self, user_id: str, owner: Optional[str] = None) -> None:
         async with self._lock:
