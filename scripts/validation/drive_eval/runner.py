@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Union
 
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
+from src.domain.drive_index import Priority
 from src.domain.drive_index_params import K
 from src.domain.drive_index_planner import PlaceOf
 from src.domain.drive_search import DriveSearchRequest, request_from_fields, require_search_terms
@@ -191,7 +192,8 @@ async def index_fixture(drive: FixtureDrive, repo: DriveIndexRepository, embeddi
                         extractors: Optional[Mapping[str, ContentExtractorPort]] = None,
                         triage: Optional[ImageTriagePort] = None,
                         user_id: str = EVAL_USER, users: Optional[Any] = None) -> IndexOutcome:
-    """Tick until no continuation is pending, as the drive queue would. `extractors` and `triage` are the content
+    """Tick until no continuation is pending and no record waits for a later attempt, as the drive queue and the
+    10-minute fan-out would (a waiting record moves the clock to its due_at). `extractors` and `triage` are the content
     ports the indexer service is built with (parser and reader, §24.2); the CLI passes the real ones. `user_id` and
     `users` let the live check index under its synthetic user."""
     queue = _RecordingQueue()
@@ -227,10 +229,21 @@ async def index_fixture(drive: FixtureDrive, repo: DriveIndexRepository, embeddi
         if state is None:
             raise EvalError(f"tick {tick} left no sync state (status {result.status})")
         if state.continuation_enqueued_at is None and state.round_complete:
-            records = await repo.count_by_state(user_id)
-            return IndexOutcome(repo, tick, dict(statuses), dict(summary), records)
+            due_at = await _earliest_due_at(repo, user_id)
+            if due_at is None:
+                records = await repo.count_by_state(user_id)
+                return IndexOutcome(repo, tick, dict(statuses), dict(summary), records)
+            # A record waits for a later attempt (a retry, an image with no rendition yet): production's fan-out
+            # re-ticks every 10 minutes, so the runner moves the clock to when the record is due and ticks again.
+            clock.advance(max(60.0, (due_at - clock.now).total_seconds()))
+            continue
         clock.advance(60)
     raise EvalError(f"the index did not settle in {max_ticks} ticks")
+
+
+async def _earliest_due_at(repo: DriveIndexRepository, user_id: str) -> Optional[datetime]:
+    dates = [d for d in [await repo.oldest_due_at(user_id, p) for p in Priority] if d is not None]
+    return min(dates, default=None)
 
 
 def request_for(case: Dict[str, Any]) -> DriveSearchRequest:
