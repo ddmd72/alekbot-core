@@ -37,8 +37,8 @@ The two search streams (`find_nearest_chunks`, `find_chunks_by_term`) leave out 
 a widened page is up to FETCH_MAX chunks, and windows are read by id with `get_chunks`.
 Chunk reads are never fenced: the search service compares each chunk's generation with its record (§7.4).
 Errors: Firestore's transient errors (DeadlineExceeded, ServiceUnavailable, InternalServerError, Aborted,
-ResourceExhausted) leave every public method as DriveIndexStoreUnavailable, which the tick treats as systemic (§8.2);
-any other error keeps its type.
+ResourceExhausted) and FailedPrecondition (a composite index missing or still building, logged ERROR) leave every
+public method as DriveIndexStoreUnavailable, which the tick treats as systemic (§8.2); any other error keeps its type.
 Datetimes come back as plain tz-aware UTC datetimes, never DatetimeWithNanoseconds (see
 firestore_oauth_credentials_adapter.py: `.replace()` on one breaks write-back).
 """
@@ -53,7 +53,8 @@ from enum import Enum
 from typing import AbstractSet, Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from google.api_core.exceptions import (
-    Aborted, AlreadyExists, DeadlineExceeded, InternalServerError, NotFound, ResourceExhausted, ServiceUnavailable,
+    Aborted, AlreadyExists, DeadlineExceeded, FailedPrecondition, InternalServerError, NotFound, ResourceExhausted,
+    ServiceUnavailable,
 )
 from google.cloud import firestore
 from google.cloud.firestore import FieldFilter
@@ -137,7 +138,7 @@ _RECORD_READERS: Dict[str, Callable[[Any], Any]] = {
     "state": RecordState,
     "reason": _optional(Reason),
     "modified_at": _dt, "fs_modified_at": _dt, "effective_date": _dt,
-    "dirty_since": _dt, "due_at": _dt, "attempt_started_at": _dt, "defer_until": _dt,
+    "dirty_since": _dt, "due_at": _dt, "attempt_started_at": _dt, "defer_until": _dt, "model_read_at": _dt,
     "name_tokens": lambda v: tuple(v or ()),
     "priority": _optional(int), "defer_priority": _optional(int),
     "brief": _brief,
@@ -694,6 +695,9 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
 
 # Transient on Firestore's side: the same call may succeed later, so it is never one file's failure (§8.2).
 _TRANSIENT = (DeadlineExceeded, ServiceUnavailable, InternalServerError, Aborted, ResourceExhausted)
+# A query whose composite index is missing or still building (final review F4-2): no file's fault, and it does not heal
+# by itself — logged as an error, and systemic for the tick like a transient error, so no file is counted for it.
+_MISSING_INDEX = (FailedPrecondition,)
 
 
 def _store_errors(method: Callable[..., Any]) -> Callable[..., Any]:
@@ -704,6 +708,11 @@ def _store_errors(method: Callable[..., Any]) -> Callable[..., Any]:
         except _TRANSIENT as exc:
             logger.warning(f"[DriveIndex] index store {method.__name__} failed: {type(exc).__name__}: {exc}")
             raise DriveIndexStoreUnavailable(f"{method.__name__}: {type(exc).__name__}") from exc
+        except _MISSING_INDEX as exc:
+            logger.error(f"[DriveIndex] index store {method.__name__} failed, an index is missing or building: "
+                         f"{type(exc).__name__}: {exc}")
+            # the provider's message names the index to create (the smoke check and the deploy step print it)
+            raise DriveIndexStoreUnavailable(f"{method.__name__}: {type(exc).__name__}: {exc}") from exc
     return run
 
 

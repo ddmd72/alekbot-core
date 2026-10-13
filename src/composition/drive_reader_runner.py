@@ -133,7 +133,7 @@ class DriveReaderRunner(ContentExtractorPort):
             outcome = await self._read_image(agent, request)
         else:
             outcome = await self._read_pdf(agent, request)
-        logger.info(f"[DriveReader] user={request.user_id[:8]} kind={request.kind} status={outcome.status.value} "
+        logger.info(f"[DriveReader] user={request.user_id[:8]} item={request.item_id} kind={request.kind} status={outcome.status.value} "
                     f"pages={outcome.pages_sent}/{outcome.pages_total} calls={outcome.model_calls} "
                     f"cost=${outcome.model_cost:.4f} truncated={outcome.truncated} refused={outcome.pages_refused} "
                     f"{outcome.detail}")
@@ -215,7 +215,8 @@ class DriveReaderRunner(ContentExtractorPort):
         if unavailable is not None:
             # what the windows answered before the outage is spent and billed: the tick counts it (§24.7, §24.9)
             raise DriveModelUnavailable(str(unavailable), pages_sent=run.total("pages_sent"),
-                                        model_calls=run.total("calls"), model_cost=run.total("cost")) from unavailable
+                                        model_calls=run.total("calls"), model_cost=run.total("cost"),
+                                        charges_file=unavailable.charges_file) from unavailable
         if failures:
             first = failures[0]
             status, detail = S.ERROR, str(first)

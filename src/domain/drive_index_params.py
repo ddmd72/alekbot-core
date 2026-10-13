@@ -81,3 +81,6 @@ TRIAGE_THUMBNAIL_SIZE = "medium"            # Graph 176 px; "large" (800 px) is 
 READER_RENDITION_SIZE = "c2048x2048"        # Graph custom size for the reader's image input (S0g)
 MODEL_BACKOFF_BASE_S = 60                   # model outage backoff, doubled per consecutive outage (§24.8)
 MODEL_BACKOFF_CAP_S = 3600
+MODEL_REREAD_COOLDOWN = timedelta(hours=24)  # a file the reader read is not read by it again sooner: the edits made
+                                            # meanwhile wait, the newest version is read once it ends (final review
+                                            # F1-3: a scan saved every few minutes was re-read, and re-billed, hourly)
