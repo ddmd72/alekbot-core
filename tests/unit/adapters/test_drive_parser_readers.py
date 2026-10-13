@@ -833,11 +833,13 @@ def test_pdf_text_comes_from_pdfminer_not_markitdowns_pdf_converter(tmp_path, mo
 
 
 def test_a_memory_failure_inside_pdfminer_is_not_swallowed(tmp_path, monkeypatch):
-    import pdfminer.high_level
+    # pdfminer is driven page by page (R2 P-m6): the failure is injected where it parses the page tree; a failure
+    # while a page is laid out is pinned in test_drive_parser_pdf_text_cap.py
+    from pdfminer.pdfpage import PDFPage
 
     def exhausted(*args, **kwargs):
         raise MemoryError("pdfminer")
 
-    monkeypatch.setattr(pdfminer.high_level, "extract_text", exhausted)
+    monkeypatch.setattr(PDFPage, "get_pages", exhausted)
     with pytest.raises(MemoryError):
         _read(make_pdf(tmp_path / "a.pdf", ["text"]), "pdf")

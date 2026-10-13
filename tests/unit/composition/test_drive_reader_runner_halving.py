@@ -1,7 +1,8 @@
 """DriveReaderRunner halving a window the provider could not take (USER_DRIVE_INDEXING_RFC §24.3, §24.8):
-- C-M2: a per-window timeout on a multi-page window halves it once, like the output limit; a single page, or a half
-  that times out again, stays a model outage;
-- C-M3: HTTP 413 halves the window, down to one page; a single page still too large fails the file (`error`)."""
+- C-M2: a per-window timeout on a multi-page window halves it once, like the output limit; a single-page window that
+  times out stays a model outage, a half that times out again fails the file (`error`, R2 T-M2b);
+- C-M3: HTTP 413 halves the window, down to one page; a single page still too large is skipped and the rest of the
+  file is read (`truncated`, `pages_refused`, R3-P1); an image refused as too large is `too_large` (R2 P-m5)."""
 import asyncio
 from types import SimpleNamespace
 from typing import List
@@ -101,10 +102,11 @@ async def test_a_timed_out_window_is_halved_and_read(tmp_path):
     assert out.pages_sent == 25
 
 
-async def test_a_half_that_times_out_again_is_an_outage(tmp_path):
+async def test_a_half_that_times_out_again_fails_the_file_not_an_outage(tmp_path):
+    # R2 T-M2b: the model answered the other windows, so it is up — the dense pages are this file's problem
     runner, _, _ = _runner(_answer({"11-20": LLMTimeoutError("t"), "16-20": LLMTimeoutError("t")}))
-    with pytest.raises(DriveModelUnavailable):
-        await runner.extract(_request(tmp_path))
+    out = await runner.extract(_request(tmp_path))
+    assert out.status is S.ERROR and "timed out after halving" in out.detail
 
 
 async def test_a_single_page_timeout_is_an_outage(tmp_path):
@@ -161,20 +163,25 @@ async def test_the_brief_comes_from_the_first_piece_that_answered(tmp_path):
     assert asked == {"1-10", "1-5"} and out.brief is not None and out.brief.doc_type == "invoice"
 
 
-async def test_a_single_page_still_too_large_fails_the_file(tmp_path):
+async def test_a_single_page_still_too_large_is_skipped_and_the_rest_is_read(tmp_path, caplog):
     big = LLMClientError("too large", http_status=413)
-    runner, _, _ = _runner(_answer({"21-25": big, "21-23": big, "21-22": big, "21-21": big}))
+    runner, _, cutter = _runner(_answer({"21-25": big, "21-23": big, "21-22": big, "21-21": big}))
     out = await runner.extract(_request(tmp_path))
-    assert out.status is S.ERROR and "413" in out.detail
+    assert out.status is S.TEXT and out.truncated is True and out.pages_refused == 1
+    assert out.text.split("\n\n") == ["text of 1-10", "text of 11-20", "text of 22-22", "text of 23-23",
+                                      "text of 24-25"]
+    assert (20, 1) in cutter.cuts and (21, 1) in cutter.cuts
+    assert any("page 21 refused" in r.getMessage() and "413" in r.getMessage() for r in caplog.records)
 
 
-async def test_a_too_large_image_is_a_per_file_error(tmp_path):
+async def test_a_too_large_image_is_too_large(tmp_path):
     runner, _, _ = _runner(lambda r: LLMClientError("too large", http_status=413))
     path = tmp_path / "img"
     path.write_bytes(b"\xff\xd8\xff\xe0" + b"j" * 20)
     request = ExtractionRequest(path=str(path), name="i.jpg", kind="image", mime_type="image/jpeg", user_id="u",
                                 account_id="a", max_model_pages=500)
-    assert (await runner.extract(request)).status is S.ERROR
+    out = await runner.extract(request)
+    assert out.status is S.TOO_LARGE and out.pages_total == 1   # terminal, never a retried `error` (R2 P-m5)
 
 
 async def test_413_then_output_limit_on_a_piece_still_halves_once(tmp_path):

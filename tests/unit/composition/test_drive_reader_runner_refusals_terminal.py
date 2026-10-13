@@ -1,9 +1,10 @@
-"""A provider refusal of the input is the file's terminal outcome, never a retried `error` (round-2 review P-m5;
-USER_DRIVE_INDEXING_RFC §24.3, §24.8). A single page still refused as too large (HTTP 413), or a window or image refused
-outright (HTTP 400/422), failed the file as `error`: retried up to MAX_ATTEMPTS, and every window read before the
-refusal was sent and billed again on each attempt. The same bytes get the same refusal, so the outcome demotes:
-`too_large` for 413, `unsupported` for 400/422. Output that stays invalid, a refusal raised before any HTTP exchange
-and a safety stop remain per-file transients."""
+"""A provider refusal of the input is never a retried `error` (round-2 review P-m5; USER_DRIVE_INDEXING_RFC §24.3,
+§24.8). As `error` it was retried up to MAX_ATTEMPTS, and every window read before the refusal was sent and billed
+again on each attempt. The same bytes get the same refusal, so: an image refused is terminal (`too_large` for 413,
+`unsupported` for 400/422); in a PDF a refused window is halved down to one page and a single page still refused is
+skipped, the rest of the file read (R3-P1, which superseded P-m5's "the PDF is terminal"; the every-page-refused
+terminal path is pinned in test_drive_reader_runner_refused_pages_skipped.py). Output that stays invalid, a refusal
+raised before any HTTP exchange and a safety stop remain per-file transients."""
 import asyncio
 
 import pytest
@@ -50,25 +51,33 @@ def test_both_terminal_statuses_demote_and_never_retry():
 
 # -- pdf windows ------------------------------------------------------------------------------------------------------
 
-async def test_a_single_page_still_too_large_is_too_large_and_keeps_what_was_spent(tmp_path):
+async def test_a_single_page_still_too_large_is_skipped_and_keeps_what_was_spent(tmp_path):
     big = LLMClientError("too large", http_status=413)
-    runner, _, _ = _runner(_answer({"21-25": big, "21-23": big, "21-22": big, "21-21": big}))
+    runner, llm, _ = _runner(_answer({"21-25": big, "21-23": big, "21-22": big, "21-21": big}))
     out = await runner.extract(_request(tmp_path))
-    assert out.status is S.TOO_LARGE and "413" in out.detail
-    assert out.pages_sent >= 20 and out.model_calls >= 2      # the windows read before the refusal are counted once
+    assert out.status is S.TEXT and out.truncated is True and out.pages_refused == 1
+    assert out.pages_sent == 24                               # every answered page counts against the month, once
+    # nine calls: 1-10, 11-20, the four refused (21-25, 21-23, 21-22, 21-21), 22-22, 23-23, 24-25 — refused ones too
+    assert out.model_calls == len(llm.requests) == 9
 
 
 @pytest.mark.parametrize("status", [400, 422])
-async def test_a_refused_window_is_unsupported_and_cancels_the_rest(tmp_path, status):
+async def test_a_wholly_refused_window_is_skipped_and_the_other_windows_complete(tmp_path, status, caplog):
+    # R3-P1: a refusal no longer cancels the file. Every piece of pages 1-10 is refused, down to each single page,
+    # while the other windows are still in flight; they complete and are indexed.
     async def handler(request):
-        if _key(request) == "1-10":
+        last = int(_key(request).split("-")[1])
+        if last <= 10:
             return LLMClientError("bad page", http_status=status)
-        await asyncio.sleep(5)
+        await asyncio.sleep(0.2)
         return reply({"text": f"text of {_key(request)}", "brief": None})
 
-    runner, _, _ = _runner(handler)
+    runner, llm, _ = _runner(handler)
     out = await asyncio.wait_for(runner.extract(_request(tmp_path)), timeout=2)
-    assert out.status is S.UNSUPPORTED and f"http={status}" in out.detail and out.model_calls >= 1
+    assert out.status is S.TEXT and out.truncated is True and out.pages_refused == 10
+    assert out.text == "text of 11-20\n\ntext of 21-25" and out.pages_sent == 15
+    assert out.model_calls == len(llm.requests) == 21      # 19 refused pieces of 1-10, then 11-20 and 21-25
+    assert any(f"http={status}" in r.getMessage() for r in caplog.records)
 
 
 async def test_a_window_whose_output_stays_invalid_is_still_a_retried_error(tmp_path):
