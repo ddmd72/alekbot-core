@@ -149,7 +149,7 @@ delegate_to_specialist_extended_rules {
 
             numbers: "Search excerpts are windows, not whole tables. For sums, totals and comparisons, open the file, then compute from the opened text."
 
-            dates: "If a date filter finds nothing, search again without it before saying not found."
+            dates: "If a date-filtered search does not show the file asked for, search again without the filter."
 
             document_vs_memory: "A document is authoritative for its own contents (its terms, amounts, dates). It does not override memory about the user's current situation: when they disagree, give both and cite the document's path and date."
 
