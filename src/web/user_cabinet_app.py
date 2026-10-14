@@ -1369,6 +1369,43 @@ def create_user_cabinet_blueprint(
         logger.info(f"🗂️ Drive indexing {'on' if enabled else 'off'} for user={g.user_id[:8]} (queued={queued})")
         return jsonify({"enabled": enabled, "queued": queued}), 200
 
+    @bp.route("/api/drive/deep-research-copy", methods=["GET"])
+    @auth_required
+    async def drive_deep_research_copy_get():
+        """Whether finished deep research reports are copied to the user's drive
+        (decisions/deep_research_drive_copy.md)."""
+        try:
+            user = await user_repo.get_user(g.user_id)
+            if not user:
+                return jsonify({"error": "User not found"}), 404
+            return jsonify({"enabled": user.config.drive_copy_deep_research}), 200
+        except Exception as exc:
+            logger.error(f"Error fetching deep research drive copy setting: {exc}", exc_info=True)
+            return jsonify({"error": "Internal server error"}), 500
+
+    @bp.route("/api/drive/deep-research-copy", methods=["PUT"])
+    @auth_required
+    async def drive_deep_research_copy_set():
+        """Turn the deep research drive copy on or off. Body: {"enabled": bool}.
+
+        The toggle is the user's explicit consent to the copy; it is read uncached at each delivery, so
+        it applies from the next report. Turning it off leaves copies already made on the drive."""
+        try:
+            body = await request.get_json(force=True) or {}
+            enabled = body.get("enabled")
+            if not isinstance(enabled, bool):
+                return jsonify({"error": "enabled (bool) required"}), 400
+            user = await user_repo.get_user(g.user_id)
+            if not user:
+                return jsonify({"error": "User not found"}), 404
+            user.config.drive_copy_deep_research = enabled
+            await user_repo.update_user(user)
+        except Exception as exc:
+            logger.error(f"Error updating deep research drive copy setting: {exc}", exc_info=True)
+            return jsonify({"error": "Internal server error"}), 500
+        logger.info(f"📁 Deep research drive copy {'on' if enabled else 'off'} for user={g.user_id[:8]}")
+        return jsonify({"enabled": enabled}), 200
+
     @bp.route("/api/drive/disconnect", methods=["DELETE"])
     @auth_required
     async def drive_disconnect():

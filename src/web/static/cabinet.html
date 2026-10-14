@@ -1579,6 +1579,12 @@
           "toast.drive_index_on": "Drive search on — indexing starts shortly",
           "toast.drive_index_off": "Drive search off — the index is being deleted",
           "toast.drive_index_failed": "Failed to change drive search",
+          "drive.dr_copy_title": "Copy deep research reports to my drive",
+          "drive.dr_copy_disclosure": "When on, every finished deep research report (the HTML page you receive in chat) is also saved to your drive, in the folder “Deep research”, named by date and title. The copies are ordinary files: they stay on the drive if you turn this off, and when drive search is on they are indexed like any other file. If the drive is not connected when a report is ready, it is not copied and the chat says so.",
+          "drive.index_disclosure_dr_copy": "This includes the deep research reports copied to your drive.",
+          "toast.drive_dr_copy_on": "Deep research reports will be copied to your drive",
+          "toast.drive_dr_copy_off": "Deep research reports will no longer be copied",
+          "toast.drive_dr_copy_failed": "Failed to change the deep research copy",
           "gmail.auto_index": "Daily auto-index",
           "gmail.daily_review": "Daily email review",
           "gmail.run_at": "Run at",
@@ -1688,6 +1694,12 @@
           "toast.drive_index_on": "Пошук на диску увімкнено — індексація скоро почнеться",
           "toast.drive_index_off": "Пошук на диску вимкнено — індекс видаляється",
           "toast.drive_index_failed": "Не вдалося змінити пошук на диску",
+          "drive.dr_copy_title": "Копіювати звіти глибоких досліджень на мій диск",
+          "drive.dr_copy_disclosure": "Коли увімкнено, кожен готовий звіт глибокого дослідження (HTML-сторінка, яку ти отримуєш у чаті) також зберігається на твоєму диску в папці «Глибокі дослідження» з датою й назвою в імені файлу. Копії — звичайні файли: вони лишаються на диску, якщо ти це вимкнеш, а коли пошук на диску увімкнено, індексуються як будь-який інший файл. Якщо диск не підключено, коли звіт готовий, його не буде скопійовано, і в чаті про це буде сказано.",
+          "drive.index_disclosure_dr_copy": "Це стосується й звітів глибоких досліджень, скопійованих на твій диск.",
+          "toast.drive_dr_copy_on": "Звіти глибоких досліджень копіюватимуться на твій диск",
+          "toast.drive_dr_copy_off": "Звіти глибоких досліджень більше не копіюватимуться",
+          "toast.drive_dr_copy_failed": "Не вдалося змінити копіювання глибоких досліджень",
           "gmail.auto_index": "Щоденна індексація",
           "gmail.daily_review": "Щоденний огляд пошти",
           "gmail.run_at": "Запускати о",
@@ -1797,6 +1809,12 @@
           "toast.drive_index_on": "Recherche dans le disque activée — l'indexation commence bientôt",
           "toast.drive_index_off": "Recherche dans le disque désactivée — l'index est en cours de suppression",
           "toast.drive_index_failed": "Impossible de modifier la recherche dans le disque",
+          "drive.dr_copy_title": "Copier les rapports de recherche approfondie sur mon disque",
+          "drive.dr_copy_disclosure": "Une fois activé, chaque rapport de recherche approfondie terminé (la page HTML que tu reçois dans le chat) est aussi enregistré sur ton disque, dans le dossier « Recherches approfondies », nommé par date et par titre. Les copies sont des fichiers ordinaires : elles restent sur le disque si tu désactives cette option et, quand la recherche dans le disque est activée, elles sont indexées comme n'importe quel autre fichier. Si le disque n'est pas connecté quand un rapport est prêt, il n'est pas copié et le chat le signale.",
+          "drive.index_disclosure_dr_copy": "Cela inclut les rapports de recherche approfondie copiés sur ton disque.",
+          "toast.drive_dr_copy_on": "Les rapports de recherche approfondie seront copiés sur ton disque",
+          "toast.drive_dr_copy_off": "Les rapports de recherche approfondie ne seront plus copiés",
+          "toast.drive_dr_copy_failed": "Impossible de modifier la copie des recherches approfondies",
           "gmail.auto_index": "Indexation quotidienne",
           "gmail.daily_review": "Revue quotidienne des emails",
           "gmail.run_at": "Lancer \u00e0",
@@ -1906,6 +1924,12 @@
           "toast.drive_index_on": "Búsqueda en el disco activada: la indexación empieza en breve",
           "toast.drive_index_off": "Búsqueda en el disco desactivada: el índice se está borrando",
           "toast.drive_index_failed": "No se pudo cambiar la búsqueda en el disco",
+          "drive.dr_copy_title": "Copiar los informes de investigación a fondo a mi disco",
+          "drive.dr_copy_disclosure": "Si está activado, cada informe de investigación a fondo terminado (la página HTML que recibes en el chat) también se guarda en tu disco, en la carpeta «Investigaciones», con la fecha y el título en el nombre. Las copias son archivos normales: se quedan en el disco si desactivas esta opción y, cuando la búsqueda en el disco está activada, se indexan como cualquier otro archivo. Si el disco no está conectado cuando un informe está listo, no se copia y el chat lo indica.",
+          "drive.index_disclosure_dr_copy": "Esto incluye los informes de investigación a fondo copiados a tu disco.",
+          "toast.drive_dr_copy_on": "Los informes de investigación a fondo se copiarán a tu disco",
+          "toast.drive_dr_copy_off": "Los informes de investigación a fondo ya no se copiarán",
+          "toast.drive_dr_copy_failed": "No se pudo cambiar la copia de las investigaciones a fondo",
           "gmail.auto_index": "Indexaci\u00f3n diaria",
           "gmail.daily_review": "Revisi\u00f3n diaria de correos",
           "gmail.run_at": "Ejecutar a las",
@@ -3060,8 +3084,26 @@
             credentials: "include",
           });
           if (!res.ok) throw new Error();
-          renderDriveStatus(await res.json());
+          const data = await res.json();
+          data.dr_copy = await loadDeepResearchCopy();
+          // The search disclosure mentions the copies while the copy is on (they are indexed like any file).
+          if (data.indexing) data.indexing.dr_copy = data.dr_copy === true;
+          renderDriveStatus(data);
         } catch {}
+      }
+
+      // "Copy deep research reports to my drive" (decisions/deep_research_drive_copy.md): true/false, or
+      // null when the setting could not be read (the switch is then not shown).
+      async function loadDeepResearchCopy() {
+        try {
+          const res = await fetch(`${API}/api/drive/deep-research-copy`, {
+            credentials: "include",
+          });
+          if (!res.ok) return null;
+          return !!(await res.json()).enabled;
+        } catch {
+          return null;
+        }
       }
 
       function renderDriveStatus(data) {
@@ -3087,6 +3129,10 @@
         const indexingHtml = data.indexing && (linked || data.indexing.enabled) && (data.indexing.available || data.indexing.enabled)
           ? renderDriveIndexing(data.indexing, linked)
           : "";
+        // The copy switch: offered while connected, and while on (so it can be turned off when disconnected).
+        const drCopyHtml = (data.dr_copy === true || (data.dr_copy === false && linked))
+          ? renderDeepResearchCopy(data.dr_copy)
+          : "";
         const actionButtons = !linked
           ? `<a href="/auth/connect-onedrive" class="btn btn-black">${t("platform.connect_drive")}</a>`
           : needsReconnect
@@ -3108,6 +3154,7 @@
 
             ${reconnectHtml}
             ${indexingHtml}
+            ${drCopyHtml}
 
             <div class="integration-actions">
               ${actionButtons}
@@ -3190,9 +3237,39 @@
               <input type="checkbox" id="drive-index-toggle" ${enabled ? "checked" : ""}
                 onchange="saveDriveIndexing(this)" style="width:18px;height:18px;cursor:pointer;">
             </div>
-            <p style="font-size:12px; color:var(--text-muted); margin:8px 0 0;">${t("drive.index_disclosure")}</p>
+            <p style="font-size:12px; color:var(--text-muted); margin:8px 0 0;">${t("drive.index_disclosure")}${ix.dr_copy ? " " + t("drive.index_disclosure_dr_copy") : ""}</p>
             ${details}
           </div>`;
+      }
+
+      function renderDeepResearchCopy(enabled) {
+        return `
+          <div style="margin-bottom:16px; padding:12px 16px; background:var(--bg-active); border-radius:12px;">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+              <label style="font-size:14px; font-weight:500; cursor:pointer;" for="drive-dr-copy-toggle">${t("drive.dr_copy_title")}</label>
+              <input type="checkbox" id="drive-dr-copy-toggle" ${enabled ? "checked" : ""}
+                onchange="saveDeepResearchCopy(this)" style="width:18px;height:18px;cursor:pointer;">
+            </div>
+            <p style="font-size:12px; color:var(--text-muted); margin:8px 0 0;">${t("drive.dr_copy_disclosure")}</p>
+          </div>`;
+      }
+
+      async function saveDeepResearchCopy(input) {
+        const enabled = input.checked;
+        try {
+          const res = await fetch(`${API}/api/drive/deep-research-copy`, {
+            method: "PUT",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ enabled }),
+          });
+          if (!res.ok) throw new Error();
+          showToast(t(enabled ? "toast.drive_dr_copy_on" : "toast.drive_dr_copy_off"), "success");
+          loadDriveStatus();
+        } catch {
+          input.checked = !enabled;
+          showToast(t("toast.drive_dr_copy_failed"), "error");
+        }
       }
 
       async function saveDriveIndexing(input) {

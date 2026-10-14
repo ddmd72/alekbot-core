@@ -65,6 +65,20 @@ The user's long-term file area: their OneDrive App Folder, behind the provider-n
 
 The drive is the source of truth; the index is a disposable mirror. Everything in it can be rebuilt from the drive.
 
+### 1.1 Deep research copies (opt-in)
+
+A Cabinet switch in the Drive card, "Copy deep research reports to my drive" (`UserBotConfig.drive_copy_deep_research`,
+`GET/PUT /api/drive/deep-research-copy`, off by default), is the user's consent to keep each finished deep research
+report on the drive ([decision](../../04_solution_strategy/decisions/deep_research_drive_copy.md)). One seam: every
+deep research path ends in `deliver_deep_research`, which marks the HtmlPageGenerator task's context with the question
+(`deep_research_report_query`); when `AgentWorkerHandler` has delivered that task's HTML link,
+`DeepResearchDriveCopyService` saves the same HTML through `UserDriveService.save` (never overwrites, same bytes →
+existing file) into a folder named in the UI language ("Deep research", "Глибокі дослідження", "Recherches
+approfondies", "Investigaciones") as `YYYY-MM-DD <title>.html` (the `<title>`, else the question shortened; drive-safe,
+≤ 200 UTF-8 bytes). One localized line follows the link: copied (with the path), not connected, or failed. No retry,
+no queue; the copy never fails the delivery. The copy is an ordinary file: with indexing on, it is indexed like any
+HTML, with no indexer change.
+
 ---
 
 ## 2. Architecture
@@ -1664,5 +1678,6 @@ The levers are forward ones; the first two are a code change plus a deploy, the 
 | Services | `src/services/drive_indexing_service.py`, `drive_search_service.py`, `drive_sync_scheduler_service.py`, `user_drive_service.py` |
 | Wiring, indexer routes | `src/composition/drive_indexing_setup.py`, `indexer_main.py`, `src/web/indexer_worker_app.py` |
 | Agent, manifest | `src/agents/file_management_agent.py`, `src/infrastructure/agent_manifest.py` |
+| Deep research copies (§1.1) | `src/domain/deep_research_drive_copy.py`, `src/services/deep_research_drive_copy_service.py`, `AgentWorkerHandler._copy_deep_research_report`, `deliver_deep_research` (the marker), `/api/drive/deep-research-copy` |
 | Eval and checks | `scripts/validation/drive_eval/` (`runner.py`, `smart_dry_run.py`, `live_check.py`, `make_fixtures.py`; Search v2: `search_v2_eval.py`, `v2_metrics.py`, `dump_enrichment.py`, `enrichment_*.py`, `v1_baseline.py`, `scale_calibrate.py`, `make_fixtures_v2.py`), `scripts/validation/drive_model_check.py`, `tests/fixtures/drive_eval/`, `tests/integration/test_drive_g2_end_to_end.py` |
 | Ops and spike scripts | `scripts/infrastructure/drive_index_rebuild.py` (`--all-users`, `--hints-only`), `drive_initial_build_reset.py`, `drive_index_smoke.py`, `create_drive_vector_indexes.sh`, `deploy_firestore_indexes.py`, `drive_extract_s1.py` (S1), `drive_chunk_knn_cost.py` (S3); `scripts/onedrive/probe_renditions.py` (S0g) |

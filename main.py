@@ -450,6 +450,15 @@ async def main():
         agent_worker_handler._doc_delivery_service = doc_delivery_service
         agent_worker_handler._link_service = file_link_service
         agent_worker_handler._short_link_service = short_link_service
+        # Opt-in copy of deep research reports to the user's drive (decisions/deep_research_drive_copy.md).
+        # Always wired: with no drive on this deployment, an opted-in user gets the "not connected" line.
+        from src.services.deep_research_drive_copy_service import DeepResearchDriveCopyService
+        agent_worker_handler._deep_research_drive_copy = DeepResearchDriveCopyService(
+            users=user_repo,
+            drive=container.user_drive_service,
+            localization=_localization,
+            language=_language_service,
+        )
         # Cloud Tasks is at-least-once: claims keyed by task name stop a redelivered task
         # from running twice. TTL 1800s = the longest dispatch_deadline Cloud Tasks allows,
         # so every attempt of a task is over before its claim expires.
