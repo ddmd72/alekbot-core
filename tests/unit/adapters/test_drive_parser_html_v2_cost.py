@@ -3,11 +3,12 @@ converted in place. v1 (markitdown's HtmlConverter on the whole page) and parser
 each in a fresh process, measuring CPU time and the resident memory the conversion adds over the imports; parser@2
 stays within v1 + 10 % on both and under the child's limits.
 
-CPU is compared as the minimum of several conversions per mode, never one sample: noise on a shared machine (other
-test workers, a busy sibling core) only adds time, so the minimum is the cost of the code (Python's `timeit` takes the
-minimum for the same reason). The children run in the order v1, v2, v2, v1, each converting the page `_CONVERSIONS`
-times, so a drift in the machine's load reaches both modes alike. Memory is compared per pair of children, as the
-first conversion of a fresh process measures it."""
+CPU is compared as the minimum of `_CONVERSIONS` conversions per mode, never one sample: noise only adds time, so the
+minimum is the cost of the code (Python's `timeit` takes the minimum for the same reason). The test is a
+`cpu_benchmark`: `make test-unit` runs it alone after the parallel suite, because a machine whose cores the suite
+saturates inflates CPU time unevenly and for longer than a child runs (on the CI runner the same conversion took
+0.72 s idle and up to 2.2 s under the parallel suite) — no number of samples taken there measures the code. Memory is
+measured on the first conversion of each fresh process (ru_maxrss is a high-water mark)."""
 import json
 import subprocess
 import sys
@@ -19,8 +20,7 @@ from src.adapters.subprocess_content_extractor import EXTRACT_CPU_LIMIT_S, EXTRA
 
 _ROOT = Path(__file__).resolve().parents[3]
 _PAGE_BYTES = 250_000
-_CONVERSIONS = 2                       # per child: the first measures the memory, every one the CPU
-_ORDER = ("v1", "v2", "v2", "v1")      # interleaved, so neither mode runs only while the machine is busier
+_CONVERSIONS = 3                       # per child: the first measures the memory, every one the CPU
 _MEASURE = r"""
 import gc, json, resource, sys, time
 mode, shape, size, conversions = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4])
@@ -61,15 +61,11 @@ def _measure(mode: str, shape: str) -> dict:
     return json.loads(proc.stdout.strip().splitlines()[-1])
 
 
+@pytest.mark.cpu_benchmark
 @pytest.mark.parametrize("shape", ["divs", "table"])
 def test_parser_v2_costs_no_more_than_v1(shape):
-    runs: dict = {"v1": [], "v2": []}
-    for mode in _ORDER:
-        runs[mode].append(_measure(mode, shape))
-    v1_cpu = min(cpu for run in runs["v1"] for cpu in run["cpu"])
-    v2_cpu = min(cpu for run in runs["v2"] for cpu in run["cpu"])
-    assert v2_cpu <= 1.10 * v1_cpu, (v1_cpu, v2_cpu, runs)
-    for v1, v2 in zip(runs["v1"], runs["v2"]):
-        assert v2["chars"] > 0
-        assert v2["added"] <= 1.10 * v1["added"] + 8 * 1024 * 1024, (v1, v2)   # RSS is page-granular: 8 MiB slack
-        assert max(v2["cpu"]) < EXTRACT_CPU_LIMIT_S and v2["peak"] < EXTRACT_MEMORY_LIMIT_BYTES
+    v1, v2 = _measure("v1", shape), _measure("v2", shape)
+    assert v2["chars"] > 0
+    assert min(v2["cpu"]) <= 1.10 * min(v1["cpu"]), (v1, v2)
+    assert v2["added"] <= 1.10 * v1["added"] + 8 * 1024 * 1024, (v1, v2)   # RSS is page-granular: 8 MiB slack
+    assert max(v2["cpu"]) < EXTRACT_CPU_LIMIT_S and v2["peak"] < EXTRACT_MEMORY_LIMIT_BYTES
