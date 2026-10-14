@@ -1415,10 +1415,20 @@ def create_user_cabinet_blueprint(
         try:
             await user_drive.disconnect(g.user_id)
             logger.info(f"🔌 Drive disconnected for user={g.user_id[:8]}")
-            return jsonify({"success": True}), 200
         except Exception as exc:
             logger.error(f"Error disconnecting drive: {exc}", exc_info=True)
             return jsonify({"error": "Internal server error"}), 500
+        # The deep research copy needs a drive: a disconnect turns it off, so the switch the Cabinet hides while
+        # no drive is linked is never left on (owner, 2026-10-14). Best effort: the disconnect already happened.
+        try:
+            user = await user_repo.get_user(g.user_id)
+            if user and user.config.drive_copy_deep_research:
+                user.config.drive_copy_deep_research = False
+                await user_repo.update_user(user)
+                logger.info(f"📁 Deep research drive copy turned off by the disconnect for user={g.user_id[:8]}")
+        except Exception as exc:
+            logger.error(f"Error turning the deep research drive copy off on disconnect: {exc}", exc_info=True)
+        return jsonify({"success": True}), 200
 
     # =========================================================================
     # Microsoft To Do task endpoints

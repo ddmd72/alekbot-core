@@ -3129,8 +3129,8 @@
         const indexingHtml = data.indexing && (linked || data.indexing.enabled) && (data.indexing.available || data.indexing.enabled)
           ? renderDriveIndexing(data.indexing, linked)
           : "";
-        // The copy switch: offered while connected, and while on (so it can be turned off when disconnected).
-        const drCopyHtml = (data.dr_copy === true || (data.dr_copy === false && linked))
+        // The copy switch: offered only while a drive is linked; disconnecting the drive turns it off server-side.
+        const drCopyHtml = linked && typeof data.dr_copy === "boolean"
           ? renderDeepResearchCopy(data.dr_copy)
           : "";
         const actionButtons = !linked

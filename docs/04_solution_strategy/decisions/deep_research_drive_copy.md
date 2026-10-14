@@ -14,7 +14,9 @@ Code: `src/domain/deep_research_drive_copy.py`, `src/services/deep_research_driv
 - **Scope: deep research reports only.** Morning issues, email reviews and other generated pages are not kept. The
   media bucket and its lifecycle are unchanged.
 - **Opt-in, per user.** A Cabinet switch in the Drive card, "Copy deep research reports to my drive", is the explicit
-  consent; **off by default**. It is read uncached at each delivery.
+  consent; **off by default**. It is read uncached at each delivery. The switch is shown only while a drive is
+  linked, and disconnecting the drive turns it off (best effort: a failed reset never fails the disconnect), so
+  reconnecting asks for consent again and a hidden switch is never left on.
 - **What is copied: one file, the HTML report** the user received (the same bytes stored under `docs/`), not the
   round markdown or `meta.json`.
 - **Where:** the user's drive App Folder, in a folder named in the user's UI language (`UIMessage.
