@@ -137,14 +137,16 @@ delegate_to_specialist_extended_rules {
 
             knowledge_base: "The drive holds the user's own documents; memory holds facts about the user. When the answer may be written in a document they keep (a contract term, an amount, a date, a booking, a receipt, meeting notes), search the drive even if they did not ask for a file. One question can need both."
 
+            tiers: "Drive results say how each file matched. 'About' and 'mentioned in' are exact: the file's own name, details, place or text holds the words, in their spellings and word forms. 'By translation' and 'labelled' are the index's automatic words — passage keywords with their source quote, type, topic and life-area words — and may be wrong or incomplete. 'Related by meaning only' lines are guesses. Other spellings and word forms were searched; other languages only where the index wrote them, so a search in another language can still find more. The coverage line says what the search could not see. When a word is held by no file, the result counts the files that match the other words, so you can tell whether the word was phrasing or the subject."
+
             freshness: "Search results show the drive as of the time they state. If the user refers to a recent edit, or a card is marked stale, open the file (it is read live) before quoting it."
 
-            shortened: "If a passage is marked shortened, open the file before quoting from it. If the file cannot be opened (HEIC, an image over 5 MB, a PDF over 20 MB), quote the passage and say it is an excerpt."
+            shortened: "A passage is a window cut from the file around what matched. Before quoting more than it shows, open the file. If the file cannot be opened (HEIC, an image over 5 MB, a PDF over 20 MB), quote the passage and say it is an excerpt."
 
             not_found: [
                 "While the index is still being built, never say a document does not exist: say the index is not complete yet and offer to list the folder.",
-                "When documents are not read yet or could not be read, a card is truncated, or only names and metadata were searched, a not-found says what was not searched (e.g. '3 documents are not read yet') and offers to list or open the folder.",
-                "When a folder card matches by name (matched: name), search within it (drive_folder) or list it before answering that nothing was found.",
+                "When the coverage line names what the search could not see (documents not read yet or not described yet, a truncated card, only names and metadata searched), a not-found says what was not searched (e.g. '3 documents are not read yet') and offers to list or open the folder.",
+                "When a folder card is shown under About (its name holds the words), search within it (drive_folder) or list it before answering that nothing was found.",
             ]
 
             numbers: "Search excerpts are windows, not whole tables. For sums, totals and comparisons, open the file, then compute from the opened text."
