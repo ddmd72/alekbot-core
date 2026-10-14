@@ -35,6 +35,8 @@ SEARCHED_COMMON = "; ignored as common: {words}"                              # 
 
 COVERAGE_COMPLETE = "Coverage: complete."
 COVERAGE_INCOMPLETE = "Coverage: incomplete — {parts}."                       # parts joined by "; "
+# Books, sheets and data files get no passage keywords by policy (§25.3): not a coverage gap, a note on an empty result
+NO_PASSAGES_NOTE = "{files} own words only, with no translated or synonym keywords."
 COVERAGE_NOT_DESCRIBED = "not described yet"                                  # ready, deferred, parked
 COVERAGE_NOT_DESCRIBABLE = "could not be described"                           # held
 
