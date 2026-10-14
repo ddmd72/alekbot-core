@@ -17,6 +17,7 @@ Deep research delivery:
 
 from __future__ import annotations
 
+import asyncio
 import base64
 from typing import TYPE_CHECKING, Dict, Any, Optional
 
@@ -33,6 +34,10 @@ from ..services.task_dispatch_service import TaskDispatchService
 from ..infrastructure.agent_coordinator import AgentCoordinator
 from ..infrastructure.agent_manifest import Intent
 from ..utils.logger import logger
+
+# The drive copy runs after the report's link was sent; a slow Graph sequence must not hold the delivery
+# task open (review 2026-10-14). On the timeout nothing more is posted.
+DEEP_RESEARCH_COPY_TIMEOUT_S = 60.0
 
 if TYPE_CHECKING:
     from ..ports.dedup_store import DedupStore
@@ -357,14 +362,19 @@ class AgentWorkerHandler:
             return
         user_id = context.get("user_id", "")
         try:
-            line = await self._deep_research_drive_copy.copy_report(
-                user_id, html, str(context.get(DEEP_RESEARCH_REPORT_CONTEXT_KEY) or ""))
+            line = await asyncio.wait_for(
+                self._deep_research_drive_copy.copy_report(
+                    user_id, html, str(context.get(DEEP_RESEARCH_REPORT_CONTEXT_KEY) or "")),
+                timeout=DEEP_RESEARCH_COPY_TIMEOUT_S)
             if line:
                 await self._notification.notify_raw(
                     user_id, context.get("account_id", ""), line,
                     channel_id_override=context.get("origin_channel_id"),
                     platform_override=context.get("origin_platform"),
                 )
+        except asyncio.TimeoutError:
+            logger.warning("[AgentWorkerHandler] Deep research drive copy timed out after %ss for user=%s",
+                           DEEP_RESEARCH_COPY_TIMEOUT_S, user_id[:8])
         except Exception as exc:
             logger.error(
                 "[AgentWorkerHandler] Deep research drive copy failed for user=%s: %s",
