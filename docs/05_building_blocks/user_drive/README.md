@@ -1090,8 +1090,11 @@ it.
 
 **Sub-folders (RFC Δ78).** A folder marked (through a file, a re-listing, a README listing or a probe) marks its stored
 sub-folders with it — they inherit its permissions — reading at most 400 stored records, no provider call; listing one
-by path then answers the access sentence. Each is re-read on its own schedule; a folder that can be opened again makes
-its marked sub-folders due within the hour.
+by path then answers the access sentence. Each is due for its own re-read within the hour (it was marked by inference,
+not by its own 404), so a sub-folder with its own grant for the app shows the access line for at most an hour; a folder
+that can be opened again makes its marked sub-folders due within the hour too. Limit: the 400-record budget counts the
+folder's files as well (no folder filter on the children read without a new index), so a folder with 400 or more
+direct files ahead of its sub-folders by item id may leave some sub-folders unmarked until their own 404.
 
 **The notice (Δ49, Δ53, Δ54).** Sent by the main service's 10-minute fan-out (`DriveSyncSchedulerService`), never by
 the indexer. Read only while the tick's `inaccessible_unnotified` counter is non-zero. A file is in it once a delta round

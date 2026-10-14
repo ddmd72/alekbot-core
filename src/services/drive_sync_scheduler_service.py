@@ -296,7 +296,9 @@ class DriveSyncSchedulerService:
         if self._notifier is None or self._localization is None:
             logger.warning(f"[DriveSync] files of {user_id[:8]} the bot cannot open; no notifier or localization")
             return 0
-        marked = await self._repo.inaccessible_records(user_id, INACCESSIBLE_SCAN_MAX)
+        # lean (ACCESS_MARK_FIELDS): the notice reads the name, the parent, the two inaccessible_* fields and what the
+        # path needs to see the record (scope, state); the ancestors are read in full (`_ancestors`)
+        marked = await self._repo.inaccessible_records(user_id, INACCESSIBLE_SCAN_MAX, lean=True)
         due = notice_batch(marked, state.observed_as_of, INACCESSIBLE_NOTICE_BATCH)
         if not due:
             return 0

@@ -111,10 +111,11 @@ UNREAD_REASONS: Tuple[Reason, ...] = (Reason.TOO_LARGE, Reason.NO_TEXT, Reason.M
 RECORD_FANOUT_FIELDS: Tuple[str, ...] = ("inaccessible_notified_since",)
 RECORD_FIELDS: Tuple[str, ...] = tuple(f.name for f in fields(DriveIndexRecord) if f.name not in RECORD_FANOUT_FIELDS)
 _ALL_RECORD_FIELDS: Tuple[str, ...] = RECORD_FIELDS + RECORD_FANOUT_FIELDS
-# What the tick reads of a marked record (§26.2, review of S1): its counters (drive_access.access_counts, which reads
-# drive_search.is_not_read_yet) and its parent map
+# What the tick and the fan-out read of a marked record (§26.2, reviews of S1): the tick's counters
+# (drive_access.access_counts, which reads drive_search.is_not_read_yet) and parent map; the fan-out's notice
+# (drive_access.notice_batch, and notice_paths, whose resolve_chain needs scope and state to see the record)
 ACCESS_MARK_FIELDS: Tuple[str, ...] = (
-    "user_id", "item_id", "parent_id", "name", "is_folder", "kind", "state", "reason", "indexed_generation",
+    "user_id", "item_id", "parent_id", "name", "is_folder", "kind", "scope", "state", "reason", "indexed_generation",
     "card_capped", "triage_verdict", "inaccessible_since", "inaccessible_notified_since")
 CHUNK_FIELDS: Tuple[str, ...] = tuple(f.name for f in fields(DriveChunk))
 # search streams (port): no text (windows read it by id) and no content_terms (up to 256 per chunk; the term stream

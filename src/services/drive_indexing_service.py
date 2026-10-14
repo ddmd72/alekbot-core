@@ -2159,7 +2159,10 @@ class DriveIndexingService:
 
     async def _subfolders(self, user_id: str, folder: DriveIndexRecord) -> List[DriveIndexRecord]:
         """The stored folders below `folder`, breadth first, reading at most SUBFOLDER_SCAN_MAX records (Firestore
-        reads only, no provider call)."""
+        reads only, no provider call). The budget counts every child read, files included: `children` has no folder
+        filter, and one would need a new composite index (user_id, parent_id, is_folder, item_id). A folder with more
+        direct files than the budget, in item-id order before its sub-folders, may leave sub-folders unmarked (RFC
+        Δ78): they are marked by their own 404 when they are next listed, or answer "No folder" on a path listing."""
         found: List[DriveIndexRecord] = []
         level, left = [folder.item_id], SUBFOLDER_SCAN_MAX
         while level and left > 0:
@@ -2181,9 +2184,10 @@ class DriveIndexingService:
 
     async def _mark_subfolders(self, user_id: str, folder: DriveIndexRecord, now: datetime) -> None:
         """A folder the bot cannot open marks its stored sub-folders as well (review of S1): they inherit its
-        permissions, and a sub-folder listed by path must answer the access sentence. Each is re-read by id on its own
-        schedule, so one that has its own permissions for the app heals at its first re-read."""
-        subs = [marked_inaccessible(r, now) for r in await self._subfolders(user_id, folder)
+        permissions, and a sub-folder listed by path must answer the access sentence. Marked by inference, not by its
+        own 404, each is due for its own re-read within INACCESSIBLE_RETRY_MIN (second review of S1), so one that has
+        its own permissions for the app shows the access line for at most an hour."""
+        subs = [access_observed(marked_inaccessible(r, now), now) for r in await self._subfolders(user_id, folder)
                 if not inaccessible(r)]
         if subs:
             await self._commit(user_id, subs, set())
