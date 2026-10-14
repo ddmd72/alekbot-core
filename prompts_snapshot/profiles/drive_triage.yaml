@@ -1,0 +1,11 @@
+agent_id: drive_triage
+blueprint_id: drive_triage_agent_v1
+source_file: firestore_utils/uploads/drive_triage.json
+tokens:
+  COGNITIVE_PROCESS_DRIVE_TRIAGE:
+    non_overridable: true
+    order: 10
+  OUTPUT_FORMAT_DRIVE_TRIAGE:
+    non_overridable: true
+    order: 10
+uploaded_by: local_script

@@ -1,0 +1,11 @@
+agent_id: drive_profiler
+blueprint_id: drive_profiler_agent_v1
+source_file: firestore_utils/uploads/drive_profiler.json
+tokens:
+  COGNITIVE_PROCESS_DRIVE_PROFILER:
+    non_overridable: true
+    order: 10
+  OUTPUT_FORMAT_DRIVE_PROFILER:
+    non_overridable: true
+    order: 10
+uploaded_by: local_script

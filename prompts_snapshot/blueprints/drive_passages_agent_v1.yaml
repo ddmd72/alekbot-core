@@ -1,0 +1,7 @@
+blueprint_id: drive_passages_agent_v1
+class_order:
+- cognitive_process
+- output_format
+outer_class: DrivePassageAgent extends Agent
+source_file: firestore_utils/uploads/drive_passages_agent_v1.json
+uploaded_by: local_script

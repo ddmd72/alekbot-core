@@ -1,0 +1,20 @@
+agent_id: lelik_bare
+blueprint_id: lelik_agent_v1
+source_file: firestore_utils/uploads/lelik_bare.json
+tokens:
+  ARCHETYPE_INTELLECTUAL_SNIPER:
+    order: 20
+  COGNITIVE_PROCESS_LELIK_BARE:
+    non_overridable: true
+    order: 10
+  HUMOR_PRESET_RANEVSKAYA:
+    order: 60
+  LANG_MIRROR:
+    non_overridable: false
+    order: 300
+  PROTOCOL_LELIK_DELEGATION_BARE:
+    non_overridable: true
+    order: 200
+  VIBE_BATTLE_WEARY:
+    order: 30
+uploaded_by: local_script

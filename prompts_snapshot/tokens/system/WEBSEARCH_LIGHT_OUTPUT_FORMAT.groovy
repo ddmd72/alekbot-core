@@ -2,14 +2,16 @@
 category: output_format
 class: output_format
 metadata:
-  description: WebSearchLightAgent v4 — output_format section
+  description: WebSearchLightAgent v5 (voice, VOICE_COMPANION_RFC §4.15.1) — output_format
+    section
   override_by:
   - SYSTEM
   - AGENT
-  source: split from COGNITIVE_PROCESS_WEBSEARCH_LIGHT v3
+  source: 'v5 2026-09-29: rewritten for Lelik''s spoken answers (was Slack mrkdwn
+    for QuickResponseAgent)'
 source_file: firestore_utils/uploads/WEBSEARCH_LIGHT_OUTPUT_FORMAT.json
 token_id: WEBSEARCH_LIGHT_OUTPUT_FORMAT
 uploaded_by: local_script
 ---
-language: "same as query"
-style: "Slack mrkdwn. No JSON, no code blocks."
+language: "same as the query"
+style: "One to three short sentences meant to be spoken aloud. Plain text only: no markdown, no bold, no emojis, no lists, no links. Round numbers the way a person would say them."
