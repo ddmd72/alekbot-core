@@ -19,7 +19,8 @@ Flow:
        - On deny: 302 to redirect_uri?error=access_denied&state=...
 """
 
-from urllib.parse import urlencode
+from html import escape
+from urllib.parse import quote, urlencode
 
 from quart import Blueprint, Response, abort, make_response, redirect, request
 
@@ -29,6 +30,17 @@ from ..services.mcp_authorization_service import (
 )
 from ..services.session_service import SessionService
 from ..utils.logger import logger
+
+# The page has no script and no external resource: only its own inline <style>. It must never be framed (the
+# Approve button), and its URL carries the consent request token, so it sends no referrer.
+_CONSENT_PAGE_HEADERS = {
+    "Content-Security-Policy": (
+        "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'"
+    ),
+    "X-Frame-Options": "DENY",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+}
 
 
 def build_mcp_consent_blueprint(
@@ -44,14 +56,12 @@ def build_mcp_consent_blueprint(
         """
         token = request.cookies.get("access_token")
         if not token:
-            next_url = request.url
-            return redirect(f"/auth/login?next={next_url}")
+            return redirect(f"/auth/login?next={quote(request.url, safe='')}")
         try:
             payload = session_service.verify_access_token(token)
         except Exception as e:  # noqa: BLE001
             logger.warning(f"MCP consent: invalid Cabinet token — {e}")
-            next_url = request.url
-            return redirect(f"/auth/login?next={next_url}")
+            return redirect(f"/auth/login?next={quote(request.url, safe='')}")
         return payload["sub"], payload["account_id"]
 
     def _render_consent_html(
@@ -61,10 +71,13 @@ def build_mcp_consent_blueprint(
         scopes: list[str],
         error: str | None = None,
     ) -> str:
-        scope_list = "".join(f"<li><code>{s}</code></li>" for s in scopes) or "<li>(none)</li>"
+        # Every value is text: the client name comes from anonymous registration (RFC 7591).
+        scope_list = "".join(f"<li><code>{escape(s)}</code></li>" for s in scopes) or "<li>(none)</li>"
         error_block = (
-            f'<div class="error">{error}</div>' if error else ""
+            f'<div class="error">{escape(error)}</div>' if error else ""
         )
+        client_name = escape(client_name)
+        req_jwt = escape(req_jwt, quote=True)
         return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -137,6 +150,7 @@ def build_mcp_consent_blueprint(
         resp = await make_response(html)
         resp.headers["Content-Type"] = "text/html; charset=utf-8"
         resp.headers["Cache-Control"] = "no-store"
+        resp.headers.update(_CONSENT_PAGE_HEADERS)
         return resp
 
     @bp.route("/mcp/consent", methods=["POST"])
