@@ -68,6 +68,27 @@ def _answer(failing):
     return handler
 
 
+def _answer_after(first, failing):
+    """`_answer`, except that a window in `failing` fails only once window `first` has answered and finished. The
+    windows run concurrently and an outage cancels the ones still in flight (§24.8), so which one answers first is
+    thread timing (each window's file is read through `asyncio.to_thread`); a test counting what `first` spent
+    before the outage must fix that order, not assume it."""
+    first_window: list = []
+    answered = asyncio.Event()
+
+    async def handler(request):
+        key = _key(request)
+        if key in failing:
+            await asyncio.wait_for(answered.wait(), timeout=5)
+            await asyncio.wait_for(asyncio.wait(first_window), timeout=5)   # its call counted, its pages sent
+            return failing[key]
+        if key == first:
+            first_window.append(asyncio.current_task())
+            answered.set()
+        return reply({"text": f"text of {key}", "brief": None})
+    return handler
+
+
 # =============================================================================
 # classification
 # =============================================================================
