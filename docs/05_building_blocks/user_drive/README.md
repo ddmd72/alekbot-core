@@ -5,6 +5,8 @@
 Find the kind of question, then read the section named. The code paths in each section are the ground truth; the
 RFC ([USER_DRIVE_INDEXING_RFC.md](../../10_rfcs/USER_DRIVE_INDEXING_RFC.md)) holds the reasoning, §23 the Slice 1
 deltas, §24 the Slice 2+4 design and §25 Search v2 (decisions D14–D31; results in §25.7.1).
+RFC §26 (card accuracy score, capture facet — scan, document photo, screenshot — and files the bot cannot open;
+decisions D33–D38) is **proposed, not built**: nothing below describes it yet.
 
 | Question | Read |
 |---|---|
@@ -48,14 +50,14 @@ The user's long-term file area: their OneDrive App Folder, behind the provider-n
 - **Step 2, Slice 1, live** ([USER_DRIVE_INDEXING_RFC.md](../../10_rfcs/USER_DRIVE_INDEXING_RFC.md)): an opt-in
   index that finds a file or folder by name (exact, partial, transliterated, misspelled), kind, date, folder, photo
   facets and place.
-- **Step 2, Slice 2+4, built, not live until its deploy** (RFC §24, one slice by owner decision D6): the index reads
+- **Step 2, Slice 2+4, live since 2026-10-14** (PR #60; RFC §24, one slice by owner decision D6): the index reads
   what the files say. Documents are parsed in a sandboxed child process; scans, screenshots, images with text and PDFs
   the parser cannot read go to a model (GPT-6 Luna by default, Claude Haiku 5.5 by a user's switch, Gemini Flash as
   the fallback); every image is triaged first, and photographs get a
   short caption (a richer description since Search v2). Smart answers a clause, an amount or a date from the documents and searches the drive on its own when
   the answer may be there. One extraction path for chat uploads and `open_file_from_drive` (Slice 3) and audio/video
   transcripts are not built ([decision](../../04_solution_strategy/decisions/drive_audio_video_deferred.md)).
-- **Search v2, built on branch `asm/drive-search-v2`, not deployed** (RFC §25, D14–D31): the index describes each
+- **Search v2, live since 2026-10-14** (PR #64; RFC §25, D14–D31): the index describes each
   file once at index time — a **profile** per text file (type, life areas, dates, names, values, topics, and the
   words a user may say for them in en/es/uk/ru), **passage hints** per chunk (keywords and questions with a quote from
   the passage, doc2query), and an **enriched triage** description per photograph — and the search makes no model
@@ -1087,8 +1089,7 @@ Lease, queue and service: [decisions/drive_indexer_lease_queue_service.md](../..
 
 ## 6. Search
 
-This section describes **Search v2** (RFC §25.5, built on `asm/drive-search-v2`, not deployed). `main` still
-searches with v1; what v1 did and why it went is §6.6.
+This section describes **Search v2** (RFC §25.5, live since 2026-10-14, PR #64). What v1 did and why it went is §6.6.
 
 `search_files_in_drive` (SYNC, FileManagement, zero-LLM; context fields `drive_query`, `drive_folder`, `drive_kind`,
 `drive_date_from`, `drive_date_to`) calls `DriveSearchService.search` (`src/services/drive_search_service.py`). Search
