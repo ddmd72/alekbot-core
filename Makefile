@@ -205,6 +205,9 @@ auth: ## Authenticate with Google Cloud
 # The flag lives here, not in pytest.ini addopts, so a targeted `pytest path::test` stays a single
 # fast process. Integration/e2e stay serial — they touch live services.
 # Without xdist installed the suite falls back to a serial run, with a warning.
+# Tests marked `cpu_benchmark` compare CPU time, which a busy machine inflates unevenly (measured on the
+# CI runner: the same conversion took 0.72 s idle and up to 2.2 s under the parallel suite). They run
+# after the parallel suite, alone in one process, as pytest-benchmark does under xdist.
 PYTEST_WORKERS ?= auto
 PYTEST_XDIST = $(shell $(PYTHON) -c "import xdist" 2>/dev/null && echo yes)
 PYTEST_UNIT_FLAGS = $(if $(PYTEST_XDIST),-n $(PYTEST_WORKERS) -q,-v)
@@ -217,13 +220,14 @@ test: ## Run all tests
 test-unit: ## Run unit tests
 	@echo "🧪 Running unit tests..."
 	@$(XDIST_WARNING)
-	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/unit/ $(PYTEST_UNIT_FLAGS) --asyncio-mode=auto
+	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/unit/ $(PYTEST_UNIT_FLAGS) --asyncio-mode=auto -m "not cpu_benchmark"
+	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/unit/ -q --asyncio-mode=auto -m cpu_benchmark
 
 test-coverage: ## Unit tests + global + per-file coverage gate (RFC § 8.4)
 	@echo "🧪 Running unit tests with coverage..."
 	@$(XDIST_WARNING)
 	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/unit/ $(PYTEST_UNIT_FLAGS) \
-	    --asyncio-mode=auto \
+	    --asyncio-mode=auto -m "not cpu_benchmark" \
 	    --cov=src \
 	    --cov-report=term-missing:skip-covered \
 	    --cov-report=json \
