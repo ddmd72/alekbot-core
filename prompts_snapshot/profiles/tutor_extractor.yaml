@@ -1,0 +1,11 @@
+agent_id: tutor_extractor
+blueprint_id: tutor_extractor_agent_v1
+source_file: firestore_utils/uploads/tutor_extractor.json
+tokens:
+  COGNITIVE_PROCESS_TUTOR_EXTRACTOR:
+    non_overridable: true
+    order: 10
+  OUTPUT_FORMAT_TUTOR_EXTRACTOR:
+    non_overridable: true
+    order: 20
+uploaded_by: local_script

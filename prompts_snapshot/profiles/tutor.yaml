@@ -1,0 +1,11 @@
+agent_id: tutor
+blueprint_id: tutor_agent_v1
+source_file: firestore_utils/uploads/tutor.json
+tokens:
+  COGNITIVE_PROCESS_TUTOR:
+    non_overridable: false
+    order: 10
+  OUTPUT_FORMAT_TUTOR:
+    non_overridable: true
+    order: 20
+uploaded_by: local_script

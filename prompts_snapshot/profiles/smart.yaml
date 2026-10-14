@@ -33,6 +33,15 @@ tokens:
   PROTOCOL_DEEP_RESEARCH_PREP:
     non_overridable: true
     order: '230'
+  PROTOCOL_LONG_TURNS:
+    non_overridable: true
+    order: 260
+  PROTOCOL_VIDEO_GEN_PREP:
+    non_overridable: true
+    order: 240
+  PROTOCOL_VOICE_PARTNER:
+    non_overridable: true
+    order: 250
   VIBE_BATTLE_WEARY:
     order: 30
   VOICE_APHORISTIC:

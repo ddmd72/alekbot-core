@@ -187,7 +187,8 @@ uploaded_by: local_script
                 "Ephemeral UI commands: 'Scroll up', 'Delete message', 'Edit that'",
                 "Questions without answers: 'What's my weight?' (only store answer if provided)",
                 "ASSISTANT recalls that user only confirms: RAG echo trap (no new info)",
-                "Temporary debugging state: 'Testing feature X' (unless ongoing project)"
+                "Temporary debugging state: 'Testing feature X' (unless ongoing project)",
+                "File operations: saving, opening, moving, renaming, deleting files or folders on the user's drive or in chat — the drive is the record of what exists and where"
             ]
 
             reasoning_test: "Would this fact be relevant in 30+ days?"

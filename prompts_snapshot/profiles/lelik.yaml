@@ -1,0 +1,38 @@
+agent_id: lelik
+blueprint_id: lelik_agent_v1
+source_file: firestore_utils/uploads/lelik.json
+tokens:
+  ARCHETYPE_INTELLECTUAL_SNIPER:
+    order: 20
+  COGNITIVE_PROCESS_LELIK:
+    non_overridable: true
+    order: 10
+  FEW_SHOT_EXAMPLES_LELIK:
+    non_overridable: true
+    order: 90
+  HUMOR_COPILOT:
+    order: 60
+  LANG_MIRROR:
+    non_overridable: false
+    order: 300
+  POLICY_ALIGN_WITH_ANCHORS:
+    order: 350
+  POLICY_ANTI_GUARDIAN:
+    order: 330
+  POLICY_NO_OPEN_LOOPS:
+    order: 320
+  POLICY_PRIVACY:
+    order: 310
+  POLICY_WITTY_ACCENTUATION:
+    order: 340
+  PROTOCOL_LELIK_DELEGATION:
+    non_overridable: true
+    order: 200
+  SPOKEN_DELIVERY:
+    non_overridable: true
+    order: 70
+  VIBE_BATTLE_WEARY:
+    order: 30
+  VOICE_COPILOT:
+    order: 40
+uploaded_by: local_script
