@@ -1,0 +1,17 @@
+agent_id: lelik_prose
+blueprint_id: lelik_agent_v1
+source_file: firestore_utils/uploads/lelik_prose.json
+tokens:
+  COGNITIVE_PROCESS_LELIK_BARE:
+    non_overridable: true
+    order: 10
+  LANG_MIRROR:
+    non_overridable: false
+    order: 300
+  PERSONA_LELIK_PROSE:
+    non_overridable: true
+    order: 20
+  PROTOCOL_LELIK_DELEGATION_BARE:
+    non_overridable: true
+    order: 200
+uploaded_by: local_script

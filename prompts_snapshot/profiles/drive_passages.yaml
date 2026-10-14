@@ -1,0 +1,11 @@
+agent_id: drive_passages
+blueprint_id: drive_passages_agent_v1
+source_file: firestore_utils/uploads/drive_passages.json
+tokens:
+  COGNITIVE_PROCESS_DRIVE_PASSAGES:
+    non_overridable: true
+    order: 10
+  OUTPUT_FORMAT_DRIVE_PASSAGES:
+    non_overridable: true
+    order: 10
+uploaded_by: local_script

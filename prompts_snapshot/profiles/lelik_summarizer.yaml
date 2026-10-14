@@ -1,0 +1,19 @@
+agent_id: lelik_summarizer
+blueprint_id: lelik_summarizer_agent_v1
+source_file: firestore_utils/uploads/lelik_summarizer.json
+tokens:
+  ARCHETYPE_INTELLECTUAL_SNIPER:
+    order: 20
+  COGNITIVE_PROCESS_LELIK_SUMMARIZER:
+    non_overridable: true
+    order: 10
+  HUMOR_PRESET_RANEVSKAYA:
+    order: 60
+  LANG_MIRROR:
+    non_overridable: false
+    order: 300
+  VIBE_BATTLE_WEARY:
+    order: 30
+  VOICE_APHORISTIC:
+    order: 40
+uploaded_by: local_script

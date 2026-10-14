@@ -1,0 +1,8 @@
+agent_id: video_generation
+blueprint_id: video_generation_agent_v1
+source_file: firestore_utils/uploads/video_generation.json
+tokens:
+  COGNITIVE_PROCESS_VIDEO_GEN:
+    non_overridable: true
+    order: 10
+uploaded_by: local_script
