@@ -1611,6 +1611,8 @@ identity-document scans (observations in §26.1, described generically). Designe
   each file in the same folder"); the paths are **always** in an attached file, whatever the count, so names never
   appear in chat text. The indexer only marks; the main service's 10-minute fan-out sends it. Access regained clears
   the state silently; an original that stays inaccessible after the user copied it is never announced again (§26.2).
+  *(Recorded as the owner said it. Δ75 (§26.10) overrides the fix's wording in every user-facing text: "copy each file
+  into a new folder you create inside the bot's folder"; the owner's own words were only "make a copy of them".)*
 - **D34 A capture facet: scan, document photo, screenshot, digital — deterministic and model.** Deterministic signals
   (no text layer and one full-page image at a scanner-like resolution and glass size → scan; EXIF camera Make/Model →
   camera photo; a text layer → digital) win where unambiguous; the model (the reader for PDF pages, triage for images)
@@ -3527,7 +3529,7 @@ words, so you can tell whether the word was phrasing or the subject."
 
 Owner decisions D33–D38 (§21), recorded after a live session on the owner's drive on 2026-10-14; the engineering
 decisions taken to carry them out are the deltas Δ47–Δ67 (§26.10), each stated with its reason. **Slice S1 (§26.2,
-files the bot cannot open) is built on `feat/drive-card-accuracy`, not deployed; its build deltas are Δ68–Δ74
+files the bot cannot open) is built on `feat/drive-card-accuracy`, not deployed; its build deltas are Δ68–Δ78
 (§26.10) and OQ-C1 is resolved (§26.11). The other slices are not built.** Where this section and §3.4, §7.6, §8.2,
 §10.2, §10.4, §24.4 or §25.2–§25.5 disagree, this section wins for what is built; for the rest the text above describes
 the code. Every example below is synthetic: the observations were
@@ -3625,8 +3627,8 @@ access*, not *deleted*; the record is removed only when delta reports the item `
   change alone re-emits an item in the App Folder's delta is not verified (OQ-C1).
 - **Search (D33).** The card keeps its tier; its `index:` line (`src/domain/drive_tier_render.py:154-155`) reads
   `index: the file exists, but the bot cannot open it (its sharing settings keep the bot out); to fix it, copy the
-  file into a new folder inside the bot's folder: the copy can be read.` A folder card gets the folder form ("…
-  cannot open this folder or its files …; copy the files into a new folder …"). The coverage line counts them on
+  file into a new folder you create inside the bot's folder: the copy can be read.` A folder card gets the folder form
+  ("… cannot open this folder or its files …; copy the files into a new folder you create …"; Δ75). The coverage line counts them on
   their own (Δ56: "N files cannot be opened by the bot"); today they would sit in `not_read_yet` for good
   (`drive_tier_render.py:120-121`).
 - **List and open (Δ55).** `list_files_in_drive` takes a `drive:` folder ref as well as a path (listed by id); the
@@ -3645,8 +3647,8 @@ access*, not *deleted*; the record is removed only when delta reports the item `
     query every 10 minutes.
   - *What.* All of a pass's files in one message (at most `INACCESSIBLE_NOTICE_BATCH`, the rest on the next pass).
     The message carries only the count and the fix — "N files in your drive folder cannot be opened by the bot
-    because of their sharing settings. To fix it, make a copy of each file in the same folder; the copies can be
-    read. The list is attached." — as a deterministic localized UI string (en, uk, fr, es; `src/locales/`), and the
+    because of their sharing settings. To fix it, copy each file into a new folder you create inside the bot's
+    folder; the copies can be read. The list is attached." (Δ75) — as a deterministic localized UI string (en, uk, fr, es; `src/locales/`), and the
     paths are **always** in an attached text file (`notify_file_bytes`, `user_notification_service.py:533-`),
     whatever the count, so no file or folder name appears in the chat text or reaches a formatter model (Δ53).
   - *Delivery bookkeeping, the Δ6 rule.* The list goes first; only when it was sent is the text posted. The records
@@ -3666,7 +3668,9 @@ access*, not *deleted*; the record is removed only when delta reports the item `
   retry clock and the observation flag, Δ68); the notice gated by a tick counter instead of two sync-state timestamps
   (Δ69); access regained clears the tick's fields only (Δ70); the coverage count from one read of the marked records,
   the count queries unchanged (Δ71); the parent's observation through a per-tick map (Δ72); card details (Δ73); the
-  upgrade pass and a marked record (Δ74). OQ-C1 resolved by a slow timed retry (§26.11). Code map: the building block
+  upgrade pass and a marked record (Δ74). OQ-C1 resolved by a slow timed retry (§26.11). After the S1 review: the
+  fix's wording (Δ75), the undeliverable notice's backoff (Δ76), file delivery by platform (Δ77), sub-folders marked with
+  their folder (Δ78), and mutations answering the access sentence (Δ55 as built). Code map: the building block
   (`docs/05_building_blocks/user_drive/README.md` §4.18).
 
 ### 26.3 Capture (D34)
@@ -3772,9 +3776,11 @@ detail reaches Smart: it opens the file when the answer depends on a value and t
     accuracy is 90% or more. Below that, open the file and check the value before answering.
   - For a scan or a photo of a document, the file's text is a reading of the image; when a value matters to the
     user, say where you read it.
-  - A result saying the bot cannot open the file: the file exists. Tell the user that a copy of it inside the bot's
-    folder can be read; do not try to open it.
+  - A result saying the bot cannot open the file: the file exists. Tell the user to copy each file into a new
+    folder they create inside the bot's folder (a copy in the same folder can stay closed); the copy can be read.
+    Do not try to open it.
   ```
+  (The last bullet is already in the skill since S1, in this wording since Δ75.)
   The 90 is a starting point to calibrate (D36); it lives only in the skill text.
 
 ### 26.5 Smaller fixes (engineering decisions)
@@ -3936,9 +3942,13 @@ records parse under the old code because §26 adds fields and no enum value (Δ4
 | Δ68 | Δ47: two record fields | Four: `inaccessible_since`, `inaccessible_notified_since`, and the retry bookkeeping `inaccessible_checked_at` (the last read that answered 404) and `inaccessible_reobserved` (the item or its parent was observed since). A marked record's re-read is due `INACCESSIBLE_RETRY_MIN` after `checked_at` once observed, else `INACCESSIBLE_RETRY_SLOW` after it, in class 3 | Δ51's cap and OQ-C1's slow retry need the time of the last read, which `inaccessible_since` cannot be (it must stay fixed for the notice); every field is a plain new field, so the rollback tag still parses every record |
 | Δ69 | The fan-out reads records after `DriveSyncState.inaccessible_marked_at` moves past `inaccessible_checked_at` | No new sync-state field: the tick counts `inaccessible_unnotified` (files whose `inaccessible_notified_since != inaccessible_since`) in `counters` every tick it counts the marked files; the fan-out reads the records only while that count is non-zero, and per record requires `observed_as_of > inaccessible_since` (Δ49) | The same "no query on a quiet drive" with one writer per field: a fan-out-written timestamp on the state would be a new flag class (a datetime) for the state codec; the count costs nothing extra (Δ71 reads the records anyway). After a notice the next pass may read once more before the next tick refreshes the count: bounded, nothing is sent twice |
 | Δ70 | "A readable answer clears both fields silently" | It clears the tick's fields (`inaccessible_since`, `checked_at`, `reobserved`); `inaccessible_notified_since` stays | Δ54: only the fan-out writes it. It is compared by equality with `inaccessible_since`, so a stale value is harmless: a new loss of access is a new `inaccessible_since`, one new notice |
-| Δ71 | Coverage counts "N files cannot be opened" (Δ56) | The tick reads the marked records (`inaccessible_records`, at most `INACCESSIBLE_SCAN_MAX` = 2 000, only while the last tick counted some or this one marked one), counts the files (`inaccessible`) and takes the ones `count_unread` counts as waiting out of `not_read_yet`; the count queries are unchanged | Adding `inaccessible_since == null` to the count queries would need a new composite index per unread class; one composite (`user_id + inaccessible_since`) serves the counts, the parent map and the notice |
+| Δ71 | Coverage counts "N files cannot be opened" (Δ56) | The tick reads the marked records lean (`inaccessible_records(…, lean=True)`: the fields its counters and parent map need; at most `INACCESSIBLE_SCAN_MAX` = 2 000) once per tick: at its start while the last tick counted a marked file, reused for the counters unless the tick changed a marking itself (then read again). A settled tick always counts (an empty read is one billed read), and so does a tick that marked, re-checked or regained an item, so a tick interrupted after a marking (its counters unsaved) cannot hide it from the notice for good. It counts the files (`inaccessible`) and takes the ones `count_unread` counts as waiting out of `not_read_yet`; the count queries are unchanged | Adding `inaccessible_since == null` to the count queries would need a new composite index per unread class; one composite (`user_id + inaccessible_since`) serves the counts, the parent map and the notice |
 | Δ72 | Δ51: an observation of the parent folder makes a marked record due | Through a per-tick map parent → marked records, read at the tick's start only while the last tick counted a marked file; a folder marked with no marked file inside is re-read by the timer only | No query per observed folder; a folder-only marking is rare (a re-listing or a README listing that met a 404) and the 7-day retry covers it |
 | Δ73 | The card's `index:` line; Δ52 "shown stale" | The access line replaces the `index:` line on tier cards, filter listings and Related cards; a kept readable generation is flagged `stale` with its own line ("the indexed text is from before the bot lost access to the file, and may be out of date"); a filter listing's envelope says "N files cannot be opened by the bot" | "The file changed after it was indexed" would be false for a file whose permissions changed; a Related card is opened as readily as any other |
+| Δ75 | D33's fix text: "make a copy of each file in the same folder" (notice); "copy … into a new folder inside the bot's folder" (search) | Every user-facing fix text says "copy each file into a new folder you create inside the bot's folder": the notice in en/uk/fr/es, the card lines (`ACCESS_LINE_FILE`, `ACCESS_LINE_FOLDER`), the list/open note, the `drive-search` skill (arbiter, 2026-10-14) | A copy takes its folder's permissions: in the same folder it stays closed when the whole folder lacks the app's entry (§26.1). The owner's own words were only "make a copy of them"; D33's quote in §21 stays as said |
+| Δ76 | A notice not sent is retried on the next pass | A notice whose list could not be sent (no channel, no file upload for the user's platform, a failed upload) is not read again until the next UTC day, unless the tick counts more files waiting to be told about; per process (a new instance tries once more, posting nothing that cannot arrive) | A user who cannot receive files would otherwise cost a read of the marked records every 10 minutes forever; no new sync-state flag |
+| Δ77 | `notify_file_bytes` used the one wired media port (Slack's) and posted a "📎" placeholder first | Media ports per platform (`register_platform_media`); a platform without one returns "not sent" before posting anything; the placeholder only for Slack (it turns a stored user id into the DM channel); Telegram's port uploads to the chat id as is. `main.py` registers Slack's and Telegram's | With only Slack's port, a Telegram default chat got a "📎" every pass, forever, and never the list |
+| Δ78 | Δ50: a folder is marked through its file, one level per marking | A folder marked (through a file, a re-listing, a README listing or a probe) marks its stored sub-folders with it (breadth first, Firestore reads only, at most `SUBFOLDER_SCAN_MAX` = 400 records read); a folder regained makes its marked sub-folders due for their own re-read (≤ 1 h). Files inside are still marked only by their own 404 | A sub-folder inherits its folder's permissions, and listing it by path must answer the access sentence, not "No folder"; each sub-folder is re-read by id on its own schedule, so one with its own grant for the app heals at its first re-read |
 | Δ74 | §12.3 upgrade pass | A marked record is stale only for what a re-plan applies without reading it (card version, name keys, embedding space, keys from stored text); its content versions wait for access, like a record under an unresolved parent, and never keep the versions from applying. Access regained re-reads an extractor-stale record | A content re-read is impossible while it 404s; counting it stale would keep every upgrade pass from applying for as long as the user leaves the file closed |
 
 ### 26.11 Open questions (each with a recommendation)
@@ -3962,6 +3972,7 @@ records parse under the old code because §26 adds fields and no enum value (Δ4
 | `INACCESSIBLE_RETRY_SLOW` | 7 days | OQ-C1 resolution (Δ68): one item call per closed item a week |
 | `INACCESSIBLE_NOTICE_BATCH` | 2 000 files | one text file per pass |
 | `INACCESSIBLE_SCAN_MAX` | 2 000 records | Δ71: the marked records one read returns (the tick's counts and map, the fan-out) |
+| `SUBFOLDER_SCAN_MAX` | 400 records | Δ78: stored records read to mark a closed folder's sub-folders with it |
 | `FULL_PAGE_COVER` | 0.95 of the page | §26.3 rule 2 |
 | `SCAN_DPI_MIN` / `SCAN_DPI_MAX` | 150 / 600 dpi | §26.1 item 2 (200 dpi observed) |
 | `SCAN_GLASS_MAX_MM` | 220 × 360 mm | A4, Letter and Legal glass |
