@@ -182,16 +182,21 @@ Here's the short version:
    `client_id` (uuid4) + `client_secret` (32-byte hex), calls our
    `register_client` (via the SDK shim) which persists it to Firestore. Our service
    validates the `redirect_uri` host against an allowlist (`claude.ai`, `claude.com`,
-   `localhost`, `127.0.0.1`).
+   `localhost`, `127.0.0.1`) and stores the client name normalized (`domain/mcp.py`
+   `normalize_client_name`: control characters become spaces, at most 100 characters) —
+   registration is anonymous, so the name is the registrant's choice.
 3. **Authorize:** browser GET to `/authorize` with PKCE challenge + resource indicator.
    SDK calls `provider.authorize(client, params)` which calls
    `service.build_consent_redirect(client, params)`. The service mints a short-lived
    **consent-state JWT** containing the full `AuthorizationParams`, and returns
    `https://host/mcp/consent?req=<jwt>`. The SDK 302-redirects the browser there.
 4. **Consent UI:** `/mcp/consent` (Quart blueprint) verifies the consent JWT. If the user
-   has no Cabinet JWT cookie, redirects to `/auth/login?next=<self>` → Firebase flow →
-   back here. Renders an HTML form with the client's `client_name` + requested scopes +
-   Approve/Deny buttons.
+   has no Cabinet JWT cookie, redirects to `/auth/login?next=<self, URL-encoded>` → Firebase
+   flow → back here. Renders an HTML form with the client's `client_name` + requested scopes +
+   Approve/Deny buttons. Every value is HTML-escaped, and the page is served with a
+   Content-Security-Policy that allows only its inline style (`default-src 'none'`,
+   `frame-ancestors 'none'`), `X-Frame-Options: DENY`, `nosniff` and `Referrer-Policy:
+   no-referrer` (its URL carries the consent token).
 5. **Approve:** POST to `/mcp/consent` with `action=approve`. The blueprint reads the
    Cabinet JWT cookie to get `user_id` + `account_id`, then calls
    `service.issue_auth_code_for_consent(consent_jwt, user_id, account_id)`. The service
