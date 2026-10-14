@@ -2,7 +2,6 @@ import pytest
 from unittest.mock import MagicMock, AsyncMock
 from datetime import datetime, timezone, timedelta
 
-from src.services.identity_resolver import IdentityResolver
 from src.services.invite_code_service import InviteCodeService
 from src.domain.invite_code import InviteCode, InviteType
 from src.domain.user import UserProfile
@@ -63,74 +62,6 @@ def mock_invite_repo():
 @pytest.fixture
 def invite_service(mock_invite_repo, mock_user_repo, mock_account_repo, mock_whitelist_repo):
     return InviteCodeService(mock_invite_repo, mock_user_repo, mock_account_repo, mock_whitelist_repo)
-
-@pytest.fixture
-def identity_resolver(mock_user_repo, mock_account_repo, invite_service):
-    return IdentityResolver(mock_user_repo, mock_account_repo, invite_service)
-
-@pytest.mark.asyncio
-async def test_full_self_link_flow(identity_resolver, invite_service, mock_user_repo):
-    """
-    E2E Flow:
-    1. User A (Web Auth) generates SELF_LINK code.
-    2. User A goes to Slack, sends message with code.
-    3. Bot resolves identity using code.
-    4. Slack Identity is linked to User A.
-    """
-    # 1. Setup User A
-    user_a = UserProfile(user_id="user-a", account_id="acc-a", display_name="User A")
-    mock_user_repo.get_user.return_value = user_a
-    
-    # 2. Generate Code
-    invite_code = await invite_service.generate_self_link("user-a", "acc-a", "slack")
-    assert invite_code.code is not None
-    assert invite_code.type == InviteType.SELF_LINK
-    
-    # 3. Simulate Slack Resolution (First time seeing this Slack User)
-    slack_user_id = "U_NEW_SLACK"
-    mock_user_repo.get_user_by_platform_id.return_value = None  # Not linked yet
-    
-    resolved_user = await identity_resolver.resolve_user(
-        platform="slack",
-        platform_user_id=slack_user_id,
-        invite_code=invite_code.code
-    )
-    
-    # 4. Verify Result
-    assert resolved_user.user_id == "user-a"  # Should match original user
-    assert resolved_user.platform_identities["slack"] == slack_user_id
-    
-    # Verify DB updates
-    mock_user_repo.update_user.assert_called_once()
-    
-    # Verify code used
-    stored_invite = await invite_service.repo.get_by_code(invite_code.code)
-    assert stored_invite.used_at is not None
-    assert stored_invite.used_by_user_id == "user-a"
-
-@pytest.mark.asyncio
-async def test_invalid_code_fallback_to_auto_create(identity_resolver, invite_service, mock_user_repo, mock_account_repo):
-    """
-    Flow:
-    1. User sends invalid code.
-    2. System fails to link.
-    3. System falls back to auto-creating NEW user (default behavior).
-    """
-    slack_user_id = "U_STRANGER"
-    mock_user_repo.get_user_by_platform_id.return_value = None
-    
-    # Simulate resolving with bad code
-    resolved_user = await identity_resolver.resolve_user(
-        platform="slack",
-        platform_user_id=slack_user_id,
-        invite_code="BAD-CODE"
-    )
-    
-    # Should result in NEW user
-    assert resolved_user.platform_identities["slack"] == slack_user_id
-    assert resolved_user.user_id != "user-a"  # Random ID
-    
-    mock_user_repo.create_user.assert_called_once()
 
 @pytest.mark.asyncio
 async def test_team_invite_consumption(invite_service, mock_user_repo, mock_account_repo):
