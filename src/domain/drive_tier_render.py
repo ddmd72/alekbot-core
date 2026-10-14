@@ -24,7 +24,7 @@ from .drive_search_texts import (
     ABOUT_HEADING, ABSENT_IN_SCOPE_LINE, ABSENT_LINE, CONJUNCTION_TERM, COVERAGE_COMPLETE, COVERAGE_INCOMPLETE,
     COVERAGE_NOT_DESCRIBABLE, COVERAGE_NOT_DESCRIBED, DATE_EXPIRES, DATE_LINE, FOOTER_EXACT, FOOTER_EXACT_SEARCHED,
     FOOTER_NO_CONJUNCTION, FOOTER_NO_CONJUNCTION_SEARCHED, GROUP_LINE, KEYS_CUT, LABELLED_HEADING, MATCHED_LINE,
-    MENTIONED_HEADING, PASSAGE_LINE, RELATED_HEADING, RELATED_SMALL_NOTE, SEARCHED_ABSENT_IN_SCOPE_LINE,
+    MENTIONED_HEADING, NO_PASSAGES_NOTE, PASSAGE_LINE, RELATED_HEADING, RELATED_SMALL_NOTE, SEARCHED_ABSENT_IN_SCOPE_LINE,
     SEARCHED_ABSENT_LINE, SEARCHED_COMMON, SEARCHED_IGNORED, SEARCHED_LINE, SHOWING, SHOWING_AT_LEAST, SIMILAR_NAME,
     TRANSLATED_HEADING, VALID_UNTIL_LINE, WITHOUT_AT_LEAST_LINE, WITHOUT_LINE,
 )
@@ -112,9 +112,9 @@ def coverage_parts(cov: CoverageFacts, *, passages_tiers_empty: bool) -> List[st
         parts.append(f"{_plural(cov.not_described, 'text file is', 'text files are')} {COVERAGE_NOT_DESCRIBED}")
     if cov.not_describable:
         parts.append(f"{_plural(cov.not_describable, 'text file', 'text files')} {COVERAGE_NOT_DESCRIBABLE}")
-    if cov.no_passages and passages_tiers_empty:
-        parts.append(f"{_plural(cov.no_passages, 'book, sheet or data file has', 'books, sheets and data files have')}"
-                     " no passage keywords")
+    # Files without passage keywords BY POLICY (books, sheets, data; §25.3) are not a gap: their own words were
+    # searched. They never make coverage incomplete — `_no_passages_note` names them only on an empty result (UAT
+    # 2026-10-14: counting them made every answer hedge).
     if cov.reading:
         parts.append("documents are still being read")
     if cov.not_read_yet:
@@ -136,6 +136,17 @@ def _coverage_line(tiered: TieredResult) -> str:
     empty = not tiered.block(MatchTier.MENTIONED) and not tiered.block(MatchTier.TRANSLATED)
     parts = coverage_parts(tiered.coverage, passages_tiers_empty=empty)
     return COVERAGE_INCOMPLETE.format(parts="; ".join(parts)) if parts else COVERAGE_COMPLETE
+
+
+def _no_passages_note(tiered: TieredResult) -> Optional[str]:
+    """A neutral note on books, sheets and data files (no passage keywords by policy), only when nothing exact or
+    automatic matched: there it tells a not-found that those files were not searched in translation."""
+    count = tiered.coverage.no_passages
+    if not count or any(tiered.block(t) for t in (MatchTier.ABOUT, MatchTier.MENTIONED, MatchTier.TRANSLATED,
+                                                   MatchTier.LABELLED)):
+        return None
+    return NO_PASSAGES_NOTE.format(files=_plural(count, "book, sheet or data file was searched by its",
+                                                 "books, sheets and data files were searched by their"))
 
 
 # -- cards and groups ------------------------------------------------------------------------------------------------
@@ -274,6 +285,9 @@ def _render(result: DriveSearchResult, tiered: TieredResult, shown: Dict[MatchTi
     exact_shown = bool(tiered.block(MatchTier.ABOUT) or tiered.block(MatchTier.MENTIONED))
     footers = _footers(tiered, any_shown, exact_shown, incomplete=coverage != COVERAGE_COMPLETE)
     out.extend(footers)
+    note = _no_passages_note(tiered)
+    if note:
+        out.append(note)
     if (not any_shown and not footers and not any(b.total for b in tiered.blocks)
             and not tiered.coverage.unchecked):
         out.append(_NOTHING)
