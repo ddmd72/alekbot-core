@@ -184,3 +184,4 @@ INACCESSIBLE_RETRY_SLOW = timedelta(days=7)      # OQ-C1 (§26.11): whether a pe
                                                  # re-read on a timer, one item call each
 INACCESSIBLE_NOTICE_BATCH = 2_000                # files in one notice; the rest on the next pass
 INACCESSIBLE_SCAN_MAX = 2_000                    # marked records one read returns (the tick's counters, the fan-out)
+SUBFOLDER_SCAN_MAX = 400                         # stored records read to mark a closed folder's sub-folders with it

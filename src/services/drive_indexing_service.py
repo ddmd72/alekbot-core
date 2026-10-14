@@ -78,7 +78,7 @@ from ..domain.drive_index import (
 )
 from ..domain.drive_index_params import (
     CASCADE_OPS_PER_TICK, EMBED_FILE_BUDGET_S, EMBED_IN_FLIGHT, ENRICH_FILE_BUDGET_S, ENRICH_IN_FLIGHT,
-    ENRICH_QUEUE_PAGE, ENRICH_SHARE, ENRICH_WAKEUPS_PAGE, FILE_START_MARGIN_S, INACCESSIBLE_SCAN_MAX,
+    ENRICH_QUEUE_PAGE, ENRICH_SHARE, ENRICH_WAKEUPS_PAGE, FILE_START_MARGIN_S, INACCESSIBLE_SCAN_MAX, SUBFOLDER_SCAN_MAX,
     ITEM_CALLS_PER_TICK, LEASE_MARGIN,
     MAINTENANCE_SHARE, MAX_ATTEMPTS, MAX_CARD_RECORDS_PER_USER, MAX_CHUNKS_PER_USER, MODEL_EXTRACT_PAGES_PER_MONTH,
     MODEL_IN_FLIGHT,
@@ -344,9 +344,19 @@ class _Spend:
 
 # Per tick, like the lease: the spend every plan and budget check of the tick reads.
 _TICK_SPEND: ContextVar[Optional[_Spend]] = ContextVar("drive_tick_spend", default=None)
-# Per tick (§26.2, Δ51): parent folder id -> the item ids of its marked records, read when the tick starts, so an
-# observation of the folder makes them due for a re-read. None when the last tick counted no marked file.
-_TICK_CLOSED: ContextVar[Optional[Dict[str, Tuple[str, ...]]]] = ContextVar("drive_tick_closed", default=None)
+@dataclass
+class _Marks:
+    """The marked records (§26.2) as the tick read them at its start, lean (Δ51, Δ71): parent folder id -> item ids, so
+    an observation of the folder makes them due for a re-read, and the same list for the counters at the end when the
+    tick changed no marking."""
+    records: List[DriveIndexRecord]
+    by_parent: Dict[str, Tuple[str, ...]]
+
+
+# Per tick: None when the last tick counted no marked file (nothing read at the start).
+_TICK_CLOSED: ContextVar[Optional[_Marks]] = ContextVar("drive_tick_closed", default=None)
+# What makes the tick read the marked records again for its counters: it changed a marking itself (review of S1)
+_MARK_CHANGES = ("inaccessible", "inaccessible_folders", "inaccessible_rechecked", "access_regained")
 
 
 def _count_reader(models: _Models, summary: Dict[str, int], now: datetime, *, calls: int, cost: float,
@@ -484,7 +494,7 @@ class DriveIndexingService:
         spend = _Spend(now, await self._repo.get_model_usage(user_id, month_key(now)),
                        await self._repo.get_initial_build(user_id))
         spend_token = _TICK_SPEND.set(spend)
-        closed_token = _TICK_CLOSED.set(await self._closed_children(user_id, state))
+        closed_token = _TICK_CLOSED.set(None)   # read inside the tick's error handling (_run_spending)
         try:
             return await self._run_spending(user_id, state, nudge, now, enabled, budget, summary, cont, saved,
                                             models, spend)
@@ -492,20 +502,45 @@ class DriveIndexingService:
             _TICK_CLOSED.reset(closed_token)
             _TICK_SPEND.reset(spend_token)
 
-    async def _closed_children(self, user_id: str, state: DriveSyncState) -> Optional[Dict[str, Tuple[str, ...]]]:
-        """Parent id -> marked record ids (§26.2, Δ51), read only while the last tick counted a marked file."""
+    async def _read_marks(self, user_id: str) -> List[DriveIndexRecord]:
+        """The marked records, lean (the fields the counters and the parent map read), at most INACCESSIBLE_SCAN_MAX."""
+        marked = await self._repo.inaccessible_records(user_id, INACCESSIBLE_SCAN_MAX, lean=True)
+        if len(marked) >= INACCESSIBLE_SCAN_MAX:
+            logger.warning(f"[DriveIndex] {user_id[:8]} has at least {INACCESSIBLE_SCAN_MAX} records the bot cannot "
+                           f"open; counted up to that")
+        return marked
+
+    async def _start_marks(self, user_id: str, state: DriveSyncState) -> Optional[_Marks]:
+        """Read at the tick's start only while the last tick counted a marked file (§26.2, Δ51)."""
         if not state.counters.get(INACCESSIBLE_COUNTER):
             return None
+        records = await self._read_marks(user_id)
         by_parent: Dict[str, List[str]] = {}
-        for rec in await self._repo.inaccessible_records(user_id, INACCESSIBLE_SCAN_MAX):
+        for rec in records:
             if rec.parent_id:
                 by_parent.setdefault(rec.parent_id, []).append(rec.item_id)
-        return {parent: tuple(kids) for parent, kids in by_parent.items()}
+        return _Marks(records, {parent: tuple(kids) for parent, kids in by_parent.items()})
+
+    async def _end_marks(self, user_id: str, state: DriveSyncState, summary: Mapping[str, int], *,
+                         settled: bool) -> Optional[List[DriveIndexRecord]]:
+        """The marked records the counters are made from (Δ56, Δ71), or None to leave them uncounted. A settled tick
+        always counts them, so a tick interrupted after a marking (its counters unsaved) cannot hide the marking from
+        the notice for good; otherwise only while the last tick counted some or this one changed a marking. The start's
+        read is reused when this tick changed none."""
+        changed = any(summary.get(key) for key in _MARK_CHANGES)
+        if not (settled or changed or state.counters.get(INACCESSIBLE_COUNTER)
+                or state.counters.get(INACCESSIBLE_UNNOTIFIED_COUNTER)):
+            return None
+        marks = _TICK_CLOSED.get()
+        if marks is not None and not changed:
+            return marks.records
+        return await self._read_marks(user_id)
 
     async def _run_spending(self, user_id: str, state: DriveSyncState, nudge: Optional[Nudge], now: datetime,
                             enabled: bool, budget: _Budget, summary: Dict[str, int], cont: _Continuation,
                             saved: _Saved, models: _Models, spend: _Spend) -> TickResult:
         try:
+            _TICK_CLOSED.set(await self._start_marks(user_id, state))
             if nudge is not None:
                 await self._observe_nudge(user_id, state, nudge, now, budget, summary)
             state = await self._observe(user_id, state, now, budget, summary, saved)
@@ -517,17 +552,14 @@ class DriveIndexingService:
             if state.round_complete and self._enrich_wired():
                 state, job_counts = await self._rebuild_progress(user_id, state, now, spend, settled=not more,
                                                                  progressed=budget.enrich_progressed)
-            # files the bot cannot open are counted while any may exist: the last tick counted some, or this one
-            # marked one (§26.2, Δ56)
-            scan = bool(state.counters.get(INACCESSIBLE_COUNTER) or state.counters.get(INACCESSIBLE_UNNOTIFIED_COUNTER)
-                        or summary.get("inaccessible") or summary.get("inaccessible_folders"))
+            # the files the bot cannot open (§26.2, Δ56): always on a settled tick, else while any may exist
+            marked = await self._end_marks(user_id, state, summary, settled=not more)
             if more:
                 cont.request()
                 # unread is what search tells Smart: refreshed every tick, not only once the index settles (F4-1)
-                state = replace(state, counters=await self._unread_counters(user_id, state.counters,
-                                                                            scan_access=scan))
+                state = replace(state, counters=await self._unread_counters(user_id, state.counters, marked=marked))
             else:
-                state = replace(state, counters=await self._counters(user_id, scan_access=scan))   # settled: refresh
+                state = replace(state, counters=await self._counters(user_id, marked=marked))   # settled: refresh
             if job_counts:
                 state = replace(state, counters={**{k: v for k, v in state.counters.items()
                                                     if not k.startswith(("profile_", "passages_", "coverage_"))},
@@ -577,30 +609,27 @@ class DriveIndexingService:
                                            systemic_failures=state.systemic_failures + 1))
             return TickResult("error", summary, models.cost)
 
-    async def _counters(self, user_id: str, *, scan_access: bool = False) -> Dict[str, int]:
+    async def _counters(self, user_id: str, *,
+                        marked: Optional[Sequence[DriveIndexRecord]] = None) -> Dict[str, int]:
         """Records per state and carded (§3.5), readable chunks and `unread` (§10.2, §12.1). A zero content counter
         is left out: the Cabinet lists only non-zero counters and every reader defaults to 0."""
         counters = dict(await self._repo.count_by_state(user_id))
         content = {"chunks": await self._repo.readable_chunk_total(user_id)}
         counters.update({k: v for k, v in content.items() if v})
-        return await self._unread_counters(user_id, counters, scan_access=scan_access)
+        return await self._unread_counters(user_id, counters, marked=marked)
 
     async def _unread_counters(self, user_id: str, counters: Mapping[str, int], *,
-                               scan_access: bool = False) -> Dict[str, int]:
+                               marked: Optional[Sequence[DriveIndexRecord]] = None) -> Dict[str, int]:
         """`counters` with `unread` and `not_read_yet` counted now (§10.2, final review F5-2): the documents still
-        waiting and those that could not be read, two count passes; a zero is left out. With `scan_access`, the files
-        the bot cannot open are read (at most INACCESSIBLE_SCAN_MAX) and counted on their own (`inaccessible`, and
+        waiting and those that could not be read, two count passes; a zero is left out. With `marked` (the marked
+        records, `_end_marks`), the files the bot cannot open are counted on their own (`inaccessible`, and
         `inaccessible_unnotified` for the fan-out's notice); they are taken out of `not_read_yet`, which they would
         otherwise stay in for good (§26.2, Δ56). The count queries are unchanged: no new composite index."""
         waiting, unreadable = await asyncio.gather(
             self._repo.count_unread(user_id, policy.ADMITTED_KINDS, policy.TRIAGED_KINDS, pending=True),
             self._repo.count_unread(user_id, policy.ADMITTED_KINDS, policy.TRIAGED_KINDS, pending=False))
         closed = access_counts(())
-        if scan_access:
-            marked = await self._repo.inaccessible_records(user_id, INACCESSIBLE_SCAN_MAX)
-            if len(marked) >= INACCESSIBLE_SCAN_MAX:
-                logger.warning(f"[DriveIndex] {user_id[:8]} has at least {INACCESSIBLE_SCAN_MAX} records the bot cannot "
-                               f"open; counted up to that")
+        if marked is not None:
             closed = access_counts(marked, frozenset(policy.ADMITTED_KINDS), frozenset(policy.TRIAGED_KINDS))
         waiting = max(0, waiting - closed.waiting)
         out = {k: v for k, v in counters.items()
@@ -721,10 +750,10 @@ class DriveIndexingService:
                                        writes: Dict[str, DriveIndexRecord], deletes: Set[str]) -> None:
         """An observed folder makes its marked children due for a re-read (§26.2, Δ51): a permission change on a folder
         may re-emit the folder alone. The children come from the tick's map (`_TICK_CLOSED`)."""
-        closed = _TICK_CLOSED.get()
-        if not closed:
+        marks = _TICK_CLOSED.get()
+        if marks is None or not marks.by_parent:
             return
-        kids = [k for c in changes if c.is_folder and not c.deleted for k in closed.get(c.item_id, ())
+        kids = [k for c in changes if c.is_folder and not c.deleted for k in marks.by_parent.get(c.item_id, ())
                 if k not in deletes]
         if not kids:
             return
@@ -1065,6 +1094,7 @@ class DriveIndexingService:
             # the bot cannot list it (§26.2): marked, and classified without a probe, as after MAX_ATTEMPTS (§8.2)
             logger.info(f"[DriveIndex] folder {rec.item_id} of {user_id[:8]} cannot be opened; marked")
             rec, probe = marked_inaccessible(rec, ctx.now), FolderProbe(marker_found=False, class_counts={}, sampled=0)
+            await self._mark_subfolders(user_id, rec, ctx.now)
         if probe is None and rec.attempts + 1 < MAX_ATTEMPTS:
             await self._commit(user_id, [with_retry(rec, ctx.now)], set())
             return True
@@ -1172,6 +1202,7 @@ class DriveIndexingService:
             logger.info(f"[DriveIndex] folder {folder.item_id} of {user_id[:8]} cannot be listed; marked")
             await self._commit(user_id, [marked_inaccessible(folder, ctx.now)], set())
             _inc(summary, "inaccessible_folders")
+            await self._mark_subfolders(user_id, folder, ctx.now)
             return True
         except _PER_ITEM_ERRORS as exc:
             if folder.attempts + 1 >= MAX_ATTEMPTS:
@@ -1329,6 +1360,7 @@ class DriveIndexingService:
                 logger.info(f"[DriveIndex] folder {rec.item_id} of {user_id[:8]} cannot be listed; marked")
                 await self._commit(user_id, [marked_inaccessible(rec, now)], set())
                 _inc(summary, "inaccessible_folders")
+                await self._mark_subfolders(user_id, rec, now)
                 return True
             except (DriveNotConnectedError, DriveThrottled) as exc:
                 logger.warning(f"[DriveIndex] README listing hit a systemic error for {user_id[:8]}: "
@@ -2116,6 +2148,7 @@ class DriveIndexingService:
         except DriveItemNotFoundError:
             await self._commit(user_id, [marked_inaccessible(parent, ctx.now)], set())
             _inc(summary, "inaccessible_folders")
+            await self._mark_subfolders(user_id, parent, ctx.now)
             logger.info(f"[DriveIndex] folder {parent.item_id} of {user_id[:8]} cannot be opened by the bot; marked")
         except (DriveNotConnectedError, DriveThrottled) as exc:
             logger.warning(f"[DriveIndex] parent check of item {rec.item_id} hit a systemic error for {user_id[:8]}: "
@@ -2123,6 +2156,39 @@ class DriveIndexingService:
             raise
         except _PER_ITEM_ERRORS as exc:   # the parent stays as it is; a later marking checks it again
             logger.warning(f"[DriveIndex] parent check of item {rec.item_id} failed for {user_id[:8]}: {exc}")
+
+    async def _subfolders(self, user_id: str, folder: DriveIndexRecord) -> List[DriveIndexRecord]:
+        """The stored folders below `folder`, breadth first, reading at most SUBFOLDER_SCAN_MAX records (Firestore
+        reads only, no provider call)."""
+        found: List[DriveIndexRecord] = []
+        level, left = [folder.item_id], SUBFOLDER_SCAN_MAX
+        while level and left > 0:
+            below: List[str] = []
+            for parent_id in level:
+                after: Optional[str] = None
+                while left > 0:
+                    want = min(left, RECORD_WRITE_BATCH)
+                    page = await self._repo.children(user_id, parent_id, after, want)
+                    left -= len(page)
+                    kids = [k for k in page if k.is_folder and k.state is not RecordState.DELETING]
+                    found.extend(kids)
+                    below.extend(k.item_id for k in kids)
+                    if len(page) < want:
+                        break
+                    after = page[-1].item_id
+            level = below
+        return found
+
+    async def _mark_subfolders(self, user_id: str, folder: DriveIndexRecord, now: datetime) -> None:
+        """A folder the bot cannot open marks its stored sub-folders as well (review of S1): they inherit its
+        permissions, and a sub-folder listed by path must answer the access sentence. Each is re-read by id on its own
+        schedule, so one that has its own permissions for the app heals at its first re-read."""
+        subs = [marked_inaccessible(r, now) for r in await self._subfolders(user_id, folder)
+                if not inaccessible(r)]
+        if subs:
+            await self._commit(user_id, subs, set())
+            logger.info(f"[DriveIndex] {len(subs)} sub-folders of folder {folder.item_id} of {user_id[:8]} marked "
+                        f"with it")
 
     async def _recheck_step(self, user_id: str, rec: DriveIndexRecord, ctx: PlanContext, budget: _Budget,
                             summary: Dict[str, int]) -> bool:
@@ -2153,6 +2219,11 @@ class DriveIndexingService:
             regained = reextraction_due(regained)   # an upgrade pass skipped it while it could not be read
         await self._commit(user_id, [regained], set())
         await self._apply(user_id, ctx, [change], budget, summary)
+        if regained.is_folder:   # its marked sub-folders are due for their own re-read (Δ51)
+            observed = [access_observed(r, ctx.now) for r in await self._subfolders(user_id, regained)
+                        if inaccessible(r) and not r.inaccessible_reobserved]
+            if observed:
+                await self._commit(user_id, observed, set())
         _inc(summary, "access_regained")
         logger.info(f"[DriveIndex] item {rec.item_id} of {user_id[:8]} can be opened again")
         return True

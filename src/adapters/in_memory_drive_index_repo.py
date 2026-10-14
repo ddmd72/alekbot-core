@@ -194,7 +194,7 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
         refused.sort(key=lambda r: (r.card_rank, -(r.modified_at.timestamp() if r.modified_at else 0.0), r.item_id))
         return refused[:limit]
 
-    async def inaccessible_records(self, user_id: str, limit: int) -> List[DriveIndexRecord]:
+    async def inaccessible_records(self, user_id: str, limit: int, *, lean: bool = False) -> List[DriveIndexRecord]:
         marked = [r for r in self._user(user_id) if r.inaccessible_since is not None]
         marked.sort(key=lambda r: (r.inaccessible_since, r.item_id))
         return marked[:limit]

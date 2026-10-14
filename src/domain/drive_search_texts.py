@@ -134,10 +134,10 @@ PROTOCOL_TIERS_LINE = (
 
 # -- files the bot cannot open (§26.2, D33) --------------------------------------------------------------------------
 ACCESS_LINE_FILE = ("index: the file exists, but the bot cannot open it (its sharing settings keep the bot out); to fix "
-                    "it, copy the file into a new folder inside the bot's folder: the copy can be read.")
+                    "it, copy the file into a new folder you create inside the bot's folder: the copy can be read.")
 ACCESS_LINE_FOLDER = ("index: the folder exists, but the bot cannot open this folder or its files (their sharing "
-                      "settings keep the bot out); to fix it, copy the files into a new folder inside the bot's "
-                      "folder: the copies can be read.")
+                      "settings keep the bot out); to fix it, copy the files into a new folder you create inside the "
+                      "bot's folder: the copies can be read.")
 # list and open answer from the index on a "not found" (Δ55): the same sentence, outside a card
 ACCESS_NOTE_FILE = "The" + ACCESS_LINE_FILE[len("index: the"):]
 ACCESS_NOTE_FOLDER = "The" + ACCESS_LINE_FOLDER[len("index: the"):]
