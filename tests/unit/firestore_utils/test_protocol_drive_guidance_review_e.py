@@ -7,7 +7,11 @@ from tests.unit.firestore_utils.test_protocol_drive_guidance import _drive_block
 
 
 def _block():
-    return _drive_block(ser.token_from_file(_text())["content"])
+    # the rules these tests pin now live in the drive-search system skill (owner decision 2026-10-14)
+    from pathlib import Path
+    from src.adapters.filesystem_skill_loader import load_system_skills
+    root = Path(__file__).resolve().parents[3]
+    return next(s for s in load_system_skills(root / "src" / "skills" / "smart") if s.name == "drive-search").body
 
 
 def test_sums_open_the_file_then_compute_from_the_opened_text():
@@ -19,7 +23,7 @@ def test_sums_open_the_file_then_compute_from_the_opened_text():
 def test_the_dates_line_is_the_retry_rule_only():
     block = _block()
     # final review F5-4: the retry fires when a date-filtered search does not show the file, not only on zero results
-    assert 'dates: "If a date-filtered search does not show the file asked for, search again without the filter."' in block
+    assert "If a date-filtered search does not show the file asked for, search again without the filter." in block
     for subtlety in ("the model read", "document's own date", "file's date", "drive_date_from"):
         assert subtlety not in block, subtlety
 
