@@ -26,4 +26,6 @@ def test_the_list_title_has_no_placeholder(mod):
 
 def test_the_english_notice_says_the_fix():
     text = en.UI_STRINGS[UIMessage.DRIVE_INACCESSIBLE_NOTICE.value]
-    assert "make a copy of each file in the same folder" in text and "sharing settings" in text
+    # Δ75: a copy in the same folder stays closed when the whole folder lacks the app's entry (§26.1)
+    assert "copy each file into a new folder you create inside the bot's folder" in text
+    assert "sharing settings" in text and "same folder" not in text
