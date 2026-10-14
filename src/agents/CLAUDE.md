@@ -227,7 +227,10 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   ACK (job_id); result delivered by adapter. **Default Claude** (`ClaudeDeepResearchRunnerAgent`,
   `NO_RETRY`) runs as a **Cloud Run Job** (`job_main.py`, task-timeout 18000s) via `JobRunnerPort`+
   `CloudRunJobsAdapter`; OpenAI backend = webhook. Gemini backend removed 2026-05-29. Two-pass critic via
-  `UserBotConfig.deep_research_second_pass`. Job logs: `make logs-job` / `make fetch-logs-job [K]` →
+  `UserBotConfig.deep_research_second_pass`. Every path ends in `deliver_deep_research` → HtmlPageGenerator
+  task; its context carries `deep_research_report_query`, and once that HTML is delivered `AgentWorkerHandler`
+  copies it to the user's drive when `UserBotConfig.drive_copy_deep_research` (Cabinet opt-in) is on, posting one
+  line after the link (`decisions/deep_research_drive_copy.md`). Job logs: `make logs-job` / `make fetch-logs-job [K]` →
   `alek_debug_job.log`; single run: `make logs-execution EXECUTION=<name>`.
 - MapsSearch (SYNC, BALANCED, OpenAI `gpt-6-luna` default (5.6-luna until 2026-10-03), intent `maps_query`, **`internal=True`**) — place
   search, routes, weather via Google Maps AI Grounding (MCP, `MapsToolsPort`). Not shown to LLMs;

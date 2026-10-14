@@ -132,4 +132,8 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.DRIVE_REPLACED.value: "✏️ Reemplazado: {path} ({before} → {after}; la versión anterior está en su historial de versiones)",
     UIMessage.DRIVE_DELETE_FAILED.value: "⚠️ La eliminación de {path} no se completó.",
     UIMessage.DRIVE_REPLACE_FAILED.value: "⚠️ El reemplazo de {path} no se completó.",
+    UIMessage.DEEP_RESEARCH_DRIVE_FOLDER.value: "Investigaciones",
+    UIMessage.DEEP_RESEARCH_DRIVE_COPIED.value: "📁 Copiado en tu disco: {path}",
+    UIMessage.DEEP_RESEARCH_DRIVE_NOT_CONNECTED.value: "No copiado en tu disco: el disco no está conectado.",
+    UIMessage.DEEP_RESEARCH_DRIVE_COPY_FAILED.value: "No copiado en tu disco: no se pudo guardar.",
 }
