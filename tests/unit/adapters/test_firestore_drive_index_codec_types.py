@@ -9,7 +9,9 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from google.api_core.datetime_helpers import DatetimeWithNanoseconds
 
-from src.adapters.firestore_drive_index_repo import record_from_doc, record_to_doc, state_from_doc, state_to_doc
+from src.adapters.firestore_drive_index_repo import (
+    RECORD_FANOUT_FIELDS, record_from_doc, record_to_doc, state_from_doc, state_to_doc,
+)
 from src.domain.drive_index import DocumentBrief, DriveIndexRecord, DriveSyncState
 
 T = datetime(2026, 10, 12, 9, 15, 30, 250000, tzinfo=timezone.utc)
@@ -63,7 +65,13 @@ def test_both_models_have_timestamp_fields():
 @pytest.mark.parametrize("name", _datetime_fields(DriveIndexRecord))
 def test_record_timestamp_reads_back_as_plain_utc_datetime(name):
     rec = DriveIndexRecord(user_id="u", item_id="i", **{name: T})
-    doc = _stored(record_to_doc(rec))
+    written = record_to_doc(rec)
+    if name in RECORD_FANOUT_FIELDS:
+        # the fan-out's own field (USER_DRIVE_INDEXING_RFC §26.2, Δ54): never part of the tick's record writes;
+        # set_inaccessible_notified writes the plain datetime with a field update, record_from_doc reads it
+        assert name not in written
+        written = {**written, name: T}
+    doc = _stored(written)
     assert type(doc[name]) is DatetimeWithNanoseconds   # the input really is Firestore-shaped
     back = getattr(record_from_doc(doc), name)
     _assert_plain_utc(back, name)

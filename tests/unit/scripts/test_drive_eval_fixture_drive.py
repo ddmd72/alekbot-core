@@ -59,8 +59,11 @@ async def test_generated_items_implicit_folders_and_s0e_facets():
 
 async def test_single_reads():
     drive = FixtureDrive(MANIFEST)
-    gone = await drive.get_change(USER, "fx-unknown")
-    assert gone.deleted
+    # the UserDrivePort contract of USER_DRIVE_INDEXING_RFC §26.2 (Δ48): "not found" by id raises, never a deletion
+    with pytest.raises(DriveItemNotFoundError):
+        await drive.get_change(USER, "fx-unknown")
+    known = await drive.get_change(USER, item_id_for("Dumps/site-mirror"))
+    assert known.item_id == item_id_for("Dumps/site-mirror") and known.is_folder and not known.deleted
     mirror = item_id_for("Dumps/site-mirror")
     first = await drive.list_children_changes(USER, mirror, limit=5)
     assert [k.name for k in first.changes] == [f"page-{n:03d}.bin" for n in range(5)] and first.next_cursor

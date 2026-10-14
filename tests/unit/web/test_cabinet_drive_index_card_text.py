@@ -6,7 +6,7 @@ import re
 import pytest
 
 from src.domain.drive_index import RecordState
-from src.domain.drive_search import UNREAD_COUNTER
+from src.domain.drive_search import INACCESSIBLE_COUNTER, INACCESSIBLE_UNNOTIFIED_COUNTER, UNREAD_COUNTER
 from tests.unit.web.test_cabinet_drive_index_strings import LANGS, _dicts
 
 NEW_KEYS = ("drive.reconnect_hint_neutral", "drive.index_indexed", "drive.index_metadata_only",
@@ -33,7 +33,9 @@ def test_new_translations_are_not_copies_of_english():
 def test_every_counter_the_index_writes_has_a_label_in_every_language():
     html, dicts = _dicts()
     labels = _counter_labels(html)
-    assert set(labels) == {s.value for s in RecordState} | {"carded", UNREAD_COUNTER}
+    # §26.2 (Δ56): the files the bot cannot open are a counter the user sees; `inaccessible_unnotified` is the notice's
+    # gate, never shown (below)
+    assert set(labels) == {s.value for s in RecordState} | {"carded", UNREAD_COUNTER, INACCESSIBLE_COUNTER}
     assert [(lang, k) for lang in LANGS for k in labels.values() if not dicts[lang].get(k)] == []
 
 
@@ -59,3 +61,14 @@ def test_the_kept_hint_shows_only_while_the_index_is_kept():
 def test_no_switch_is_offered_where_indexing_cannot_run():
     html, _ = _dicts()
     assert "(data.indexing.available || data.indexing.enabled)" in html
+
+
+def test_the_inaccessible_label_is_translated_and_the_notice_gate_is_never_shown():
+    """§26.2: the `inaccessible` counter reads in the user's language, not as a raw key or an English copy; the
+    fan-out's gate counter is skipped like `not_read_yet`."""
+    html, dicts = _dicts()
+    key = _counter_labels(html)[INACCESSIBLE_COUNTER]
+    for lang in ("uk", "fr", "es"):
+        assert dicts[lang][key] != dicts["en"][key], lang
+    render = re.search(r"function renderDriveIndexing\(ix, linked\) \{(.*?)\n      \}", html, re.S).group(1)
+    assert f'key === "{INACCESSIBLE_UNNOTIFIED_COUNTER}"' in render
