@@ -4,7 +4,7 @@ from dataclasses import replace
 from datetime import timedelta
 
 from src.domain import drive_index_planner as planner
-from src.domain.drive_index import DriveChange, DriveIndexRecord, Priority, RecordState, Scope
+from src.domain.drive_index import CURRENT_VERSIONS, POLICY_VERSION, DriveChange, DriveIndexRecord, Priority, RecordState, Scope
 from src.domain.drive_index_params import MAX_ATTEMPTS, RETRY_CAP
 from src.services import drive_indexing_service as svc_mod
 
@@ -115,8 +115,8 @@ class TestRelistingOnlyWalkableFolders:
         w.drive.add(".git", parent=repo, folder=True)
         await w.settle()
         assert w.rec(repo).scope is Scope.OPAQUE_ROOT
-        monkeypatch.setattr(planner, "POLICY_VERSION", 2)
-        monkeypatch.setattr(svc_mod, "CURRENT_VERSIONS", {"policy": 2, "card": 1, "geo_table": 1})
+        monkeypatch.setattr(planner, "POLICY_VERSION", POLICY_VERSION + 1)
+        monkeypatch.setattr(svc_mod, "CURRENT_VERSIONS", {**CURRENT_VERSIONS, "policy": POLICY_VERSION + 1})
         wasted = []
         real_list = w.drive.list_children_changes
 
@@ -128,7 +128,7 @@ class TestRelistingOnlyWalkableFolders:
         w.drive.list_children_changes = listing
         await w.settle(max_ticks=200)
         assert w.rec(repo).scope is Scope.OPAQUE_ROOT
-        assert wasted == []
+        assert wasted == ["myproject"]   # only the README lead-text read lists the root (§5.2, ΔB8); nothing below it
         assert not [r for r in w.repo.records.values() if r.reobserve_pending]
 
     async def test_reobserve_step_skips_an_opaque_folder_without_a_call(self):

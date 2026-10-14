@@ -6,8 +6,8 @@ import pytest
 
 from src.domain.drive_card import card_hash
 from src.domain.drive_index import (
-    ContentClass, DriveChange, DriveIndexRecord, DriveSyncState, EpochPhase, FolderProbe, Priority, Reason,
-    RecordState, Scope,
+    POLICY_VERSION, ContentClass, DriveChange, DriveIndexRecord, DriveSyncState, EpochPhase, FolderProbe, Priority,
+    Reason, RecordState, Scope,
 )
 from src.domain.drive_index_planner import (
     AccessAction, PlanContext, access_action, capped, change_from_record, classify, is_stale, needs_probe,
@@ -31,7 +31,7 @@ def ch(item_id, name, parent=ROOT, folder=False, **kw):
 def folder_rec(item_id, name, scope=Scope.NORMAL, reason=Reason.FOLDER, parent=ROOT, **kw):
     return DriveIndexRecord(user_id="u", item_id=item_id, name=name, parent_id=parent, is_folder=True,
                             kind="folder", content_class=ContentClass.FOLDER, scope=scope,
-                            state=RecordState.METADATA_ONLY, reason=reason, policy_version=1, **kw)
+                            state=RecordState.METADATA_ONLY, reason=reason, policy_version=POLICY_VERSION, **kw)
 
 
 def probe(other=0, docs=0, media=0, marker=False):
@@ -93,8 +93,8 @@ class TestClassify:
 
     def test_files(self):
         assert classify(ch("a", "id_rsa"), Scope.NORMAL, None, None).reason is Reason.SECRET_NAME
-        cls = classify(ch("a", "Договор.docx"), Scope.NORMAL, None, None)
-        assert (cls.state, cls.reason, cls.kind) == (RecordState.METADATA_ONLY, Reason.KIND_NOT_ADMITTED, "docx")
+        cls = classify(ch("a", "Договор.doc"), Scope.NORMAL, None, None)   # .doc: no extractor, not admitted
+        assert (cls.state, cls.reason, cls.kind) == (RecordState.METADATA_ONLY, Reason.KIND_NOT_ADMITTED, "doc")
 
     def test_root_is_an_implicit_normal_parent(self):
         assert parent_scope(ROOT, None, ROOT) is Scope.NORMAL
@@ -108,7 +108,7 @@ class TestObservation:
         assert observe(ch(ROOT, "Alek-bot", parent="x", folder=True)).upsert is None
 
     def test_first_sight_file_gets_first_seen_card_work(self):
-        plan = observe(ch("a", "Scan_0012.pdf", content_version="c1", modified_at=NOW))
+        plan = observe(ch("a", "Scan_0012.doc", content_version="c1", modified_at=NOW))   # not admitted
         rec = plan.upsert
         assert rec.state is RecordState.METADATA_ONLY and rec.reason is Reason.KIND_NOT_ADMITTED
         assert (rec.priority, rec.due_at) == (Priority.FIRST_SEEN, NOW)
@@ -232,7 +232,7 @@ class TestObservation:
 
 class TestScheduling:
     def test_no_work_clears_due(self):
-        rec = observe(ch("a", "x.pdf")).upsert
+        rec = observe(ch("a", "x.py")).upsert   # no content work for code
         done = with_card(rec, card_hash(rec), "space", NOW)
         assert done.due_at is None and done.priority is None and done.has_card
 
@@ -305,11 +305,11 @@ class TestStaleness:
 class TestReviewARegressions:
     def test_card_version_bump_reschedules_an_unchanged_record(self, monkeypatch):
         from src.domain import drive_card, drive_index_planner as planner
-        rec = observe(ch("a", "x.pdf")).upsert
+        rec = observe(ch("a", "x.py")).upsert   # a kind with no content work, so only the card can be due
         stored = with_card(rec, card_hash(rec), "space", NOW)
-        monkeypatch.setattr(drive_card, "CARD_VERSION", 2)
-        monkeypatch.setattr(planner, "CARD_VERSION", 2)
-        plan = observe(ch("a", "x.pdf"), stored)
+        monkeypatch.setattr(drive_card, "CARD_VERSION", drive_card.CARD_VERSION + 1)
+        monkeypatch.setattr(planner, "CARD_VERSION", planner.CARD_VERSION + 1)
+        plan = observe(ch("a", "x.py"), stored)
         assert plan.upsert is not None and plan.upsert.due_at == NOW
 
     def test_reobserve_is_class_two(self):

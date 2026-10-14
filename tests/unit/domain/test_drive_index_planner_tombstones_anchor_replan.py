@@ -3,7 +3,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 
 from src.domain.drive_index import (
-    ContentClass, DriveChange, DriveIndexRecord, EpochPhase, RecordState, Reason, Scope,
+    POLICY_VERSION, ContentClass, DriveChange, DriveIndexRecord, EpochPhase, RecordState, Reason, Scope,
 )
 from src.domain.drive_index_planner import PlanContext, change_from_record, needs_probe, plan_observation
 
@@ -19,7 +19,7 @@ def ctx(epoch=1, phase=EpochPhase.IDLE):
 def folder_rec(item_id, name, scope=Scope.NORMAL, reason=Reason.FOLDER, parent=ROOT, **kw):
     return DriveIndexRecord(user_id="u", item_id=item_id, name=name, parent_id=parent, is_folder=True,
                             kind="folder", content_class=ContentClass.FOLDER, scope=scope,
-                            state=RecordState.METADATA_ONLY, reason=reason, policy_version=1, **kw)
+                            state=RecordState.METADATA_ONLY, reason=reason, policy_version=POLICY_VERSION, **kw)
 
 
 class TestDyingRepositoryIsNotReopened:

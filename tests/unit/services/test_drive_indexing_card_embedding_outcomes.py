@@ -2,20 +2,22 @@
 becomes terminal, and a systemic failure mid-batch keeps the vectors already obtained."""
 from src.domain import drive_card
 from src.domain import drive_index_planner as planner
-from src.domain.drive_index import RecordState
+from src.domain.drive_index import CURRENT_VERSIONS, RecordState
 from src.domain.drive_index_params import MAX_ATTEMPTS, RETRY_CAP
 from src.domain.exceptions import LLMClientError, LLMServerError
 from src.services import drive_indexing_service as svc_mod
 
-from .test_drive_indexing_service import World
+from .test_drive_indexing_service import EXTRACTOR_VERSIONS, World
 
 
 def _bump_card_version(monkeypatch):
-    monkeypatch.setattr(drive_card, "CARD_VERSION", 2)
-    monkeypatch.setattr(planner, "CARD_VERSION", 2)
-    target = {"policy": 1, "card": 2, "geo_table": 1}
+    """CARD_VERSION + 1; returns the version map the service applies once the pass is clean (CORE-DELTA 5 keys)."""
+    bumped = drive_card.CARD_VERSION + 1
+    monkeypatch.setattr(drive_card, "CARD_VERSION", bumped)
+    monkeypatch.setattr(planner, "CARD_VERSION", bumped)
+    target = {**CURRENT_VERSIONS, "card": bumped}
     monkeypatch.setattr(svc_mod, "CURRENT_VERSIONS", target)
-    return target
+    return {**target, **EXTRACTOR_VERSIONS}
 
 
 def _refuse_cards_starting_with(w, prefix):
@@ -71,7 +73,7 @@ class TestRefusedCardBecomesTerminal:
         rec = w.rec(bad)
         assert rec.card_refused and rec.state is RecordState.METADATA_ONLY and not rec.has_card
         assert bad not in w.carded()
-        assert rec.card_version == 2 and not planner.stale_versions(rec) and rec.due_at is None
+        assert rec.card_version == drive_card.CARD_VERSION and not planner.stale_versions(rec) and rec.due_at is None
 
     async def test_a_backed_off_stale_record_costs_no_pass_per_quiet_tick(self, monkeypatch):
         """While the refused card waits for its retry, a quiet tick does not re-read the index in a new pass."""
@@ -128,9 +130,9 @@ class TestSystemicEmbeddingFailureKeepsTheBatch:
     async def test_one_poison_card_does_not_discard_the_other_vectors(self):
         """A 5xx is systemic (§8.2) and ends the tick, but the vectors the batch already holds are committed."""
         w = World(page_size=500)
-        for i in range(50):
-            w.drive.add(f"doc{i:02d}.pdf")
-        poison = w.drive.add("doc00 poison.pdf")
+        for i in range(50):   # .doc: no content run ahead of the cards (§7.1), so one batch holds all 51 cards
+            w.drive.add(f"doc{i:02d}.doc")
+        poison = w.drive.add("doc00 poison.doc")
         real = w.emb.get_embedding
 
         async def emb(text, task_type="RETRIEVAL_DOCUMENT"):

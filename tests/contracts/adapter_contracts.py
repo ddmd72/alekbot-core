@@ -658,3 +658,110 @@ NOTE_AFTER_TOOL_RESULT_SURVIVES_CONVERSION = ContractRule(
         ),
     },
 )
+
+
+# ---- Drive document reader (USER_DRIVE_INDEXING_RFC §24.2) -------------------------------------------------------
+
+def _claude_document_blocks(kw: dict) -> list:
+    """Every `document` block of the converted messages, including one nested in a tool_result."""
+    blocks = []
+    for msg in kw.get("messages") or []:
+        for block in msg.get("content") if isinstance(msg.get("content"), list) else []:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "document":
+                blocks.append(block)
+            if block.get("type") == "tool_result" and isinstance(block.get("content"), list):
+                blocks.extend(b for b in block["content"] if isinstance(b, dict) and b.get("type") == "document")
+    return blocks
+
+
+def _openai_input_files(kw: dict) -> list:
+    return [part for item in kw.get("input") or [] if isinstance(item.get("content"), list)
+            for part in item["content"] if isinstance(part, dict) and part.get("type") == "input_file"]
+
+
+STRUCTURED_OUTPUT_PDF_SENDS_NO_CITATIONS = ContractRule(
+    name="STRUCTURED_OUTPUT_PDF_SENDS_NO_CITATIONS",
+    description=(
+        "A PDF sent together with a response_schema: Anthropic rejects citations with output_config.format "
+        "(HTTP 400), so no document block may enable them when the request carries output_config.format. "
+        "Input: the captured messages.stream kwargs."
+    ),
+    validators={
+        "claude": lambda kw: (
+            _true("format" in (kw.get("output_config") or {}), "Claude: output_config.format missing"),
+            _true(_claude_document_blocks(kw), "Claude: no document block was sent"),
+            _true(all("citations" not in b for b in _claude_document_blocks(kw)),
+                  "Claude: a document block enables citations next to output_config.format"),
+        ),
+    },
+)
+
+PDF_FILE_INPUT_IS_INLINE = ContractRule(
+    name="PDF_FILE_INPUT_IS_INLINE",
+    description=(
+        "A PDF part goes inline with the request, never through a stored upload: OpenAI gets an input_file "
+        "with a filename and file_data as a base64 data URL (no file_id, no Files API object left behind); "
+        "Claude gets a document block with a base64 source. Input: the captured SDK call kwargs."
+    ),
+    validators={
+        "openai": lambda kw: (
+            _true(_openai_input_files(kw), "OpenAI: no input_file part was sent"),
+            _true(all(p.get("filename") and str(p.get("file_data", "")).startswith("data:application/pdf;base64,")
+                      and "file_id" not in p for p in _openai_input_files(kw)),
+                  "OpenAI: input_file must carry filename + a base64 data URL and no file_id"),
+        ),
+        "claude": lambda kw: _true(
+            _claude_document_blocks(kw) and all(b["source"]["type"] == "base64"
+                                                 for b in _claude_document_blocks(kw)),
+            "Claude: the PDF must be a document block with a base64 source",
+        ),
+    },
+)
+
+
+# ---- Drive agents' Gemini fallback (USER_DRIVE_INDEXING_RFC §24.2 D7 rev 3.17) -------------------------------------
+
+def _gemini_inline_parts(kw: dict) -> list:
+    """Every part of the converted contents that carries inline bytes."""
+    return [part for content in kw.get("contents") or [] for part in getattr(content, "parts", None) or []
+            if getattr(part, "inline_data", None) is not None]
+
+
+INLINE_FILE_BYTES_ARE_SENT = ContractRule(
+    name="INLINE_FILE_BYTES_ARE_SENT",
+    description=(
+        "A file part given as inline base64 (`file_data={'base64', 'mime_type'}` — the drive reader's PDF window or "
+        "image, the triage's thumbnails) reaches the provider as the file's bytes, never dropped and never uploaded "
+        "to a store. Gemini: one `inline_data` part per file, the decoded bytes and the mime type, and no Files API "
+        "upload. Input: the captured generate_content kwargs plus `expected` — a list of (bytes, mime_type) in order."
+    ),
+    validators={
+        "gemini": lambda kw: (
+            _eq([(p.inline_data.data, p.inline_data.mime_type) for p in _gemini_inline_parts(kw)],
+                kw["expected"], "Gemini: inline file parts differ from the files given"),
+            _true(all(getattr(p, "file_data", None) is None for p in _gemini_inline_parts(kw)),
+                  "Gemini: an inline file part also carries a file_data upload reference"),
+        ),
+    },
+)
+
+DICT_SCHEMA_IS_SENT_AS_JSON_SCHEMA = ContractRule(
+    name="DICT_SCHEMA_IS_SENT_AS_JSON_SCHEMA",
+    description=(
+        "A dict `response_schema` with `response_mime_type='application/json'` (the drive agents' structured output) "
+        "is enforced natively. Gemini: `config.response_json_schema` carries the schema (lowercase types; nullable "
+        "as a type array, which Gemini's JSON Schema subset accepts), `config.response_schema` stays None, and "
+        "`config.response_mime_type` is application/json. Input: the captured generate_content kwargs plus "
+        "`expected_schema`."
+    ),
+    validators={
+        "gemini": lambda kw: (
+            _eq(kw["config"].response_json_schema, kw["expected_schema"],
+                "Gemini: response_json_schema differs from the agent's schema"),
+            _true(kw["config"].response_schema is None, "Gemini: a dict schema went to response_schema"),
+            _eq(kw["config"].response_mime_type, "application/json", "Gemini: JSON mime type missing"),
+        ),
+    },
+)

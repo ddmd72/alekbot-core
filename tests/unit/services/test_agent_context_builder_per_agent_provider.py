@@ -451,7 +451,11 @@ def test_strategies_has_no_orphans():
     # - tutor_extractor: built on-demand by CompanionExtractorRunner (composition/), not
     #   UserAgentFactory — companion extraction batches are session-scoped and ephemeral, not a
     #   per-user eager instance.
-    _NON_FACTORY_STRATEGIES = {"email_classifier", "deep_research", "tutor_extractor"}
+    # - drive_reader / drive_triage: built per call by DriveReaderRunner / DriveTriageRunner
+    #   (composition/) for the drive indexer, not UserAgentFactory (USER_DRIVE_INDEXING_RFC §24.2).
+    _NON_FACTORY_STRATEGIES = {
+        "email_classifier", "deep_research", "tutor_extractor", "drive_reader", "drive_triage",
+    }
 
     all_strategies = set(AgentProviderStrategy.STRATEGIES.keys())
     factory_set = set(_FACTORY_AGENT_TYPES)

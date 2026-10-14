@@ -2,7 +2,7 @@ import pytest
 
 from src.domain.drive_index import ContentClass, DriveChange, Reason
 from src.domain.drive_index_policy import (
-    ADMITTED_KINDS, card_rank_of, content_class_of, density_still_valid, is_dense, is_dot_name,
+    ADMITTED_KINDS, SLICE2_CONTENT_KINDS, card_rank_of, content_class_of, density_still_valid, is_dense, is_dot_name,
     is_generated_dir, is_marker_child, item_rule, kind_of, probe_from_children,
 )
 
@@ -33,8 +33,8 @@ def test_folder_kind_and_classes():
                                       ContentClass.FOLDER)] == [0, 1, 2, 3]
 
 
-def test_slice1_admits_nothing():
-    assert ADMITTED_KINDS == frozenset()
+def test_the_flip_admits_the_slice2_content_kinds():   # §24.1 (was: Slice 1 admits nothing)
+    assert ADMITTED_KINDS == SLICE2_CONTENT_KINDS
 
 
 @pytest.mark.parametrize("name,facets,reason", [

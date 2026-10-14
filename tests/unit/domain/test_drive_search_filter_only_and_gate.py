@@ -42,14 +42,16 @@ class TestNoFiltersGiven:
         assert "at least 50 files and folders match the filters; showing the newest 1." in render_results(result)
 
 
-# --- While building, no "0 files match" next to "do not say a file does not exist" -------
+# --- While building, no "0 files match" next to "the index is still being built" ---------
 
 class TestBuildingFilterOnly:
     def test_building_filter_only_drops_the_zero_count_line(self):
         result = DriveSearchResult(status=STATUS_OK, envelope=DriveSearchEnvelope(building=True),
                                    request=DriveSearchRequest(kind="spreadsheet"), matched_total=0)
         text = render_results(result)
-        assert "do not say a file does not exist" in text
+        # The building fact stays; "do not say a file does not exist" is Smart's protocol token now (§24.10)
+        assert "The index is still being built: some files and folders may not be in it yet." in text
+        assert "do not say a file does not exist" not in text
         assert "0 files" not in text and "match the filters" not in text and "newest 0" not in text
 
     def test_building_all_empty_request_drops_the_zero_newest_line(self):

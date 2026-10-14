@@ -100,7 +100,7 @@ async def test_random_drive_converges_to_the_oracle(seed):
         if step == "tick":
             await w.tick()
             w.clock.advance(1)
-    await w.settle(max_ticks=200)
+    await w.settle_due(max_ticks=200)   # an image without a rendition converges after its retries (review B minor)
 
     expected = oracle(w.drive)
     stored = {i: r for (u, i), r in w.repo.records.items()}

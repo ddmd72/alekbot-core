@@ -627,6 +627,111 @@
     "queryScope": "COLLECTION",
     "fields": [
       { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "indexed_generation", "order": "ASCENDING" },
+      { "fieldPath": "chunk_count", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_index_records",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "state", "order": "ASCENDING" },
+      { "fieldPath": "reason", "order": "ASCENDING" },
+      { "fieldPath": "card_rank", "order": "ASCENDING" },
+      { "fieldPath": "modified_at", "order": "DESCENDING" },
+      { "fieldPath": "item_id", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_index_records",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "state", "order": "ASCENDING" },
+      { "fieldPath": "kind", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_index_records",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "state", "order": "ASCENDING" },
+      { "fieldPath": "indexed_generation", "order": "ASCENDING" },
+      { "fieldPath": "kind", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_index_records",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "state", "order": "ASCENDING" },
+      { "fieldPath": "indexed_generation", "order": "ASCENDING" },
+      { "fieldPath": "card_capped", "order": "ASCENDING" },
+      { "fieldPath": "kind", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_index_records",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "state", "order": "ASCENDING" },
+      { "fieldPath": "reason", "order": "ASCENDING" },
+      { "fieldPath": "kind", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_index_records",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "state", "order": "ASCENDING" },
+      { "fieldPath": "triage_verdict", "order": "ASCENDING" },
+      { "fieldPath": "kind", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_index_records",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "state", "order": "ASCENDING" },
+      { "fieldPath": "indexed_generation", "order": "ASCENDING" },
+      { "fieldPath": "triage_verdict", "order": "ASCENDING" },
+      { "fieldPath": "kind", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_index_records",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "state", "order": "ASCENDING" },
+      { "fieldPath": "indexed_generation", "order": "ASCENDING" },
+      { "fieldPath": "card_capped", "order": "ASCENDING" },
+      { "fieldPath": "triage_verdict", "order": "ASCENDING" },
+      { "fieldPath": "kind", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_index_records",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "state", "order": "ASCENDING" },
+      { "fieldPath": "reason", "order": "ASCENDING" },
+      { "fieldPath": "triage_verdict", "order": "ASCENDING" },
+      { "fieldPath": "kind", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_index_records",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
       { "fieldPath": "card_vector", "vectorConfig": { "dimension": 768, "flat": {} } }
     ]
   },
@@ -638,5 +743,65 @@
       { "fieldPath": "kind", "order": "ASCENDING" },
       { "fieldPath": "card_vector", "vectorConfig": { "dimension": 768, "flat": {} } }
     ]
+  },
+  {
+    "collectionGroup": "development_drive_index_chunks",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "content_terms", "arrayConfig": "CONTAINS" },
+      { "fieldPath": "item_id", "order": "ASCENDING" },
+      { "fieldPath": "generation", "order": "ASCENDING" },
+      { "fieldPath": "index", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_index_chunks",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "kind", "order": "ASCENDING" },
+      { "fieldPath": "content_terms", "arrayConfig": "CONTAINS" },
+      { "fieldPath": "item_id", "order": "ASCENDING" },
+      { "fieldPath": "generation", "order": "ASCENDING" },
+      { "fieldPath": "index", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_index_chunks",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "item_id", "order": "ASCENDING" },
+      { "fieldPath": "generation", "order": "ASCENDING" },
+      { "fieldPath": "index", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_index_chunks",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "vector", "vectorConfig": { "dimension": 768, "flat": {} } }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_index_chunks",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "kind", "order": "ASCENDING" },
+      { "fieldPath": "vector", "vectorConfig": { "dimension": 768, "flat": {} } }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_index_chunks",
+    "fieldPath": "text",
+    "indexes": []
+  },
+  {
+    "collectionGroup": "development_drive_index_chunks",
+    "fieldPath": "vector",
+    "indexes": []
   }
 ]
