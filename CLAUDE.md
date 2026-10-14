@@ -581,8 +581,8 @@ delete/replace post a localised `notify_raw` receipt, or a "did not complete" no
 survive turns via `history_context["drive_context"]` (full_text only, never consolidated). Provider search does not
 work inside the App Folder (spike A6), so finding files goes through our own index (below). The `Trivial_Exclusions`
 line that keeps file operations out of memory was applied to the live `CONSOLIDATION_TAXONOMY` on 2026-10-10 (dry
-run: leaks 3/3 → 1/3; RFC §4.12). Step 2 Slice 1 (metadata) is live; Slice 2+4 (content, scans and images) is built,
-not live until its deploy; one extraction path (Slice 3), long audio/video transcripts and full editing are not.
+run: leaks 3/3 → 1/3; RFC §4.12). Step 2 Slice 1 (metadata), Slice 2+4 (content, scans and images) and Search v2 are live (2026-10-14);
+§26 (card accuracy, capture, inaccessible files) is proposed; one extraction path (Slice 3), long audio/video transcripts and full editing are not.
 - **Deep research copies (opt-in, 2026-10-14).** The Cabinet switch "Copy deep research reports to my drive"
   (`UserBotConfig.drive_copy_deep_research`, default off, `/api/drive/deep-research-copy`) is the consent. Only deep
   research reports are kept (no morning issues or email reviews; the media bucket's TTL is unchanged). Every deep
@@ -614,7 +614,7 @@ pinned audience, gen2, 2 GiB, concurrency 1, max 1; logs `make fetch-logs-indexe
 service fans out `start_drive_sync` every 10 min (`DriveSyncSchedulerService`: minimal sync state for enabled users,
 staleness alert, one reconnect notice; v2 adds the awaiting-rebuild, stalled-rebuild and fallback-share alerts) and
 nudges after each Step 1 mutation. OS/lock artefacts get no card; dot-folders, `.git`/`pyvenv.cfg` folders,
-`node_modules`/`__pycache__`/`site-packages` and dense trees collapse to one card. **Content (Slice 2+4, §24; built, not live until its deploy):** the
+`node_modules`/`__pycache__`/`site-packages` and dense trees collapse to one card. **Content (Slice 2+4, §24; live since 2026-10-14, PR #60):** the
 §5.1 document kinds are parsed on the indexer by a child process (`SubprocessContentExtractor`, rlimits, run as the
 unprivileged `driveparser` user — it cannot read the indexer's keys or rewrite its code, but can reach the metadata
 server and the network: owner-accepted residual, `decisions/drive_parser_sandbox_resource_isolation.md`); PDFs the
@@ -626,7 +626,7 @@ model that ran; a model outage defers only model work, except a reader 5xx/timeo
 to the file (`failed` at 3); an edited reader-read file is re-read at most once per 24 h; card headroom is decided
 before any content work. Text passes a machine-text gate, is chunked (generation-fenced) and embedded. Audio and video
 stay metadata-only. No rollback to the Slice 1 revision.
-**Search v2 (built on `asm/drive-search-v2`, not deployed; `main` still searches with v1's RRF fusion):** intelligence at
+**Search v2 (live since 2026-10-14, PR #64):** intelligence at
 index time, zero-LLM search. The indexer describes each text file once (`drive_profiler`: type and life areas from
 fixed enums, dates, entities, values, topics, en/es/uk/ru word lists, verified against the text), writes passage hints
 per chunk (`drive_passages`: doc2query keywords and questions grounded by an evidence quote), and gives each photo an
