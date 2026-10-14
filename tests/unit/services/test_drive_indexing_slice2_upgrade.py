@@ -1,21 +1,27 @@
-"""The flip on a live Slice 1 index (USER_DRIVE_INDEXING_RFC §24.1, §12.3, §7.8): the upgrade pass makes every Slice 1
-record due in class 3, the work then runs, and the versions apply only when a pass finds nothing stale."""
+"""A version flip on a live index (USER_DRIVE_INDEXING_RFC §24.1, §12.3, §7.8): the upgrade pass makes every record
+built under older versions due in class 3, the work then runs, and the versions apply only when a pass finds nothing
+stale. Search v2 (D30): an index v1 built (no `keys` stamp) is never upgraded — that gate is
+test_drive_indexing_enrichment_tick.test_a_v1_index_does_no_tick_work_until_its_rebuild — so the live index here is a
+v2 one (its Search v2 keys stamped) whose policy, card, geo, name-key, extraction and triage versions predate a bump,
+which is the upgrade pass's remaining job (§25.8: v2 to v2.x)."""
 from dataclasses import replace
 from datetime import timedelta
 
 import pytest
 
 from src.domain.drive_index import (
-    CURRENT_VERSIONS, ContentClass, DriveIndexRecord, DriveSyncState, EpochPhase, Priority, Reason, RecordState,
+    CURRENT_VERSIONS, SEARCH_V2_VERSIONS, ContentClass, DriveIndexRecord, DriveSyncState, EpochPhase, Priority, Reason, RecordState,
     Scope, TriageVerdict,
 )
 from src.domain.drive_index_planner import content_due, triage_due
-from src.domain.drive_name_keys import name_keys
+from src.domain.drive_keys import name_keys_v2
 
 from .drive_content_world import ContentWorld, prose
 from .drive_index_fakes import ROOT, T0
 
 SLICE1_VERSIONS = {"policy": 1, "card": 1, "geo_table": 1, "name_keys": 1}
+# the state's stamps: the older versions above, with the Search v2 keys (the migration gate's among them) current
+APPLIED_VERSIONS = {**SLICE1_VERSIONS, **SEARCH_V2_VERSIONS}
 SPACE = "test-space/8"
 
 
@@ -28,7 +34,7 @@ def slice1_record(change, kind, cclass, rank, *, folder=False):
         reason=Reason.FOLDER if folder else Reason.KIND_NOT_ADMITTED, content_version=change.content_version,
         modified_at=change.modified_at, fs_modified_at=change.fs_modified_at, effective_date=change.fs_modified_at,
         policy_version=1, card_version=1, embedding_space=SPACE, card_hash="slice1-hash", has_card=True,
-        card_rank=rank, name_tokens=name_keys(change.name), name_keys_version=1, seen_epoch=1)
+        card_rank=rank, name_tokens=name_keys_v2(change.name), name_keys_version=1, seen_epoch=1)
 
 
 @pytest.fixture
@@ -56,13 +62,13 @@ async def w():
     world.repo.states["u"] = DriveSyncState(
         user_id="u", drive_id="d1", root_item_id=ROOT, cursor=f"delta:{len(world.drive.log)}", round_complete=True,
         epoch=1, epoch_phase=EpochPhase.IDLE, initial_enumeration_done=True, created_at=T0,
-        applied_versions=SLICE1_VERSIONS, applied_space=SPACE, observed_as_of=T0)
+        applied_versions=APPLIED_VERSIONS, applied_space=SPACE, observed_as_of=T0)
     world.clock.advance(timedelta(days=1).total_seconds())
     return world
 
 
 async def test_the_upgrade_pass_makes_slice1_records_due_in_class_3(w):
-    assert dict(CURRENT_VERSIONS) != SLICE1_VERSIONS   # the flip is in
+    assert dict(CURRENT_VERSIONS) != APPLIED_VERSIONS   # the flip is in
     await w.tick()
     for item in (w.folder, w.pdf, w.img, w.code):
         rec = w.rec(item)
@@ -85,11 +91,14 @@ async def test_the_scheduled_work_runs_and_the_versions_apply(w):
     assert state.applied_space == SPACE
 
 
-async def test_a_slice1_repository_gets_its_readme_lead_text(w):
+async def test_an_upgraded_repository_reads_its_readme_for_its_profile(w):
+    # v2 (§25.3, §25.2.7): the README becomes the folder's `readme_excerpt` and its profile job is ready (the
+    # profile, not lead text, then carries it into the card; that run is test_a_hidden_folder_is_profiled_from_its_readme)
     await w.settle()
     root = w.rec(w.repo_root)
     assert (root.scope, root.reason) == (Scope.OPAQUE_ROOT, Reason.OPAQUE_ROOT)
-    assert w.card_texts()[w.repo_root] == "alek-site | repository | Family recipes as a static site."
+    assert root.readme_excerpt.startswith("Family recipes as a static site.")
+    assert root.readme_excerpt_version and root.profile_state == "ready" and root.enrich_ready
 
 
 async def test_upgrade_work_keeps_class_3_after_its_run(w, monkeypatch):

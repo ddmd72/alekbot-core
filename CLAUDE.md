@@ -171,7 +171,9 @@ Full per-agent detail (mechanics, intents, tiers, gotchas) lives in
 | WebSearchLight | ECO (Gemini flash-lite) | `search_web_light` (internal, Lelik only) | one grounded lookup, ~2 s, spoken answer |
 | lelik_summarizer | ECO | none (not manifest-registered) | end-of-call transcript → plain-text summary; run by `CompanionExtractorRunner`, same slot `tutor_extractor` fills |
 | DriveDocumentReader | ECO (OpenAI `gpt-6-luna`, or Claude by `agent_providers`; fallback Gemini `gemini-3.8-flash`) | none (indexer only) | PDF window or image → verbatim text + brief; `ContentExtractorPort` via `DriveReaderRunner` |
-| DriveImageTriage | ECO (same switch and fallback) | none (indexer only) | 800 px thumbnail batch → text or photo + caption; `ImageTriagePort` via `DriveTriageRunner` |
+| DriveImageTriage | ECO (same switch and fallback) | none (indexer only) | 800 px thumbnail batch of 8 → text or photo + description, objects, scene, visible text (triage v2); `ImageTriagePort` via `DriveTriageRunner` |
+| DriveProfiler | ECO (same switch and fallback) | none (indexer only) | one text file's stored text → profile (type, life areas, dates, entities, values, topics, en/es/uk/ru word lists), verified against the text; `DocumentProfilerPort` via `DriveProfilerRunner` |
+| DrivePassages | ECO (same switch and fallback) | none (indexer only) | 2 chunks → keywords and questions with evidence quotes (doc2query), grounded in the chunk; `PassageHintPort` via `DrivePassageRunner` |
 
 **Long-running turns** — one absolute 25-min clock per chat turn (`domain/turn_clock.py`,
 `TurnClock` in a `ContextVar`; `use_turn_clock=True` only on Smart's top-level engine). At 90 s
@@ -580,60 +582,63 @@ run: leaks 3/3 → 1/3; RFC §4.12). Step 2 Slice 1 (metadata) is live; Slice 2+
 not live until its deploy; one extraction path (Slice 3), long audio/video transcripts and full editing are not.
 
 **User Drive indexing** (`docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md`: Slice 1 finds a file by metadata, its deltas
-from the RFC text are §23, cited in code as `RFC Δn`; Slice 2+4 answers from content, designed in §24;
-`docs/05_building_blocks/user_drive/README.md`) —
+from the RFC text are §23, cited in code as `RFC Δn`; Slice 2+4 answers from content, §24; **Search v2**, §25, D14–D31;
+`docs/05_building_blocks/user_drive/README.md`, the owner's map — keep it current) —
 **opt-in** (`UserBotConfig.drive_indexing_enabled`, Cabinet toggle, `PUT /api/drive/indexing`). A disposable mirror of
 the App Folder: `{prefix}drive_index_records` (one record per item, doc id `{user_id}:{item_id}`, 768-dim
 `card_vector`, **no stored path** — paths come from the `parent_id` chain at read time; `card_capped`/`card_refused`
-are flags beside the structural state) and `{prefix}drive_sync_state` (one per user: delta cursor bound to its drive,
-epoch, lease, `access_lost_at`, `purging`, `applied_space`). **Lease-fenced:** a tick writes nothing past
-`lease_until - LEASE_MARGIN`, and state save/delete are transactions by owner (`LeaseLost` = quiet stop). Pure domain
-decides everything (`drive_index_planner.py`, `drive_index_policy.py`, `drive_card.py`, `drive_name_keys.py`);
-`DriveIndexingService.tick`: gate → lease → observe (nudged items, then delta) → work off due records by class (edits,
-cascades, first-seen and re-listings, maintenance, retries) → upgrade pass → release, then continuation. Errors are
-classified by the call (RFC §8.2): item calls defer that item (a parent lookup never deletes on transient errors);
-the feed, token endpoint and embeddings are systemic (only an HTTP 400 card refusal backs one card off). **A third
-Cloud Run service:** the tick runs only on `alek-bot-indexer-dev` (`indexer_main.py`, `drive_sync`-only `/worker`,
-`--ingress=internal` + OIDC with a pinned audience, gen2, 2 GiB, concurrency 1, max 1; logs `make fetch-logs-indexer`,
-no Logfire), fed by queue `drive-sync-dev` (`max-concurrent-dispatches=1`). URL chain `INDEXER_URL_DEV` →
-`_INDEXER_URL` → `DRIVE_INDEXER_URL` (`os.getenv`); `make deploy` refuses it empty unless `DRIVE_FIRST_PASS=1` (first
-pass of the two-pass first deploy, `docs/07_deployment/README.md`). The main service fans out `start_drive_sync` every
-10 min (`DriveSyncSchedulerService`: minimal sync state for enabled users, staleness alert, one reconnect notice,
-retried only if no send was attempted) and nudges after each Step 1 mutation. Cards are `name | kind | key facets`
-(photo date, camera, offline `place_name`), plus the brief or caption below; OS/lock artefacts get no card;
-dot-folders, `.git`/`pyvenv.cfg` folders, `node_modules`/`__pycache__`/`site-packages` and dense trees collapse to one
-card. **Content (Slice 2+4, §24; built, not live until deploy):** the §5.1 document kinds are read on the indexer
-through `ContentExtractorPort`: the child-process parser first (`SubprocessContentExtractor`, rlimits, run as the
-image's unprivileged `driveparser` user — it cannot read the indexer's keys or rewrite its code, but can still reach
-the metadata server and the network: owner-accepted residual, `decisions/drive_parser_sandbox_resource_isolation.md`);
-PDFs go on to the document reader agent (`drive_reader`, 10-page windows
-cut on demand) when the parser finds no text, low density or garbage text, or fails (never after a parser
-timeout/memory kill; other kinds stay with the parser's outcome). The reader returns verbatim text and a brief whose `doc_date` becomes `effective_date` (D13;
-parsed documents keep the file date). Every image is triaged in thumbnail
-batches (`drive_triage`, 800 px): text goes to the reader, a photograph gets a caption. Both agents run on GPT-6 Luna
-by default (owner's live check 2026-10-13: Haiku 5.5 shifted a batch's captions), Claude by `agent_providers`, then
-the global `provider_preference` (D7 rev 3.17), and fail over to Gemini Flash (`gemini-3.8-flash`, via the strategy's
-`fallback_tier`), billed to the user at the model that ran, within monthly page and
-image budgets on the sync state (the ≈ $3/user/month figure is reader pages only; embeddings have no monthly cap, only
-the 25 000-card / 50 000-chunk size caps); a model outage (both providers down) defers only model work (`model_backoff_until`), except a
-reader 5xx/timeout/unexpected error, which is charged to the file (`model_outages`, `failed` at 3); an edited
-reader-read file is re-read at most once per 24 h; card headroom is decided before any content work; a refused
-single page is skipped (`truncated`), and only a refusal of every page or of an image is terminal. Audio and video
-stay metadata-only. No rollback to the Slice 1 revision (forward levers: `docs/07_deployment/README.md`). Text passes a machine-text gate (repetition AND low variety, so statements pass), then is chunked
-into `{prefix}drive_index_chunks` (generation-fenced, `content_terms` for amounts, ids, dates and digit groups). `search_files_in_drive`
-(SYNC) → `DriveSearchService`: card kNN, a per-key name stream (accent, Ukrainian and Russian transliteration
-variants), chunk kNN (one window per file, `index ± 1`, all windows within 12 000 chars) and the content exact-token
-stream (maximal query forms; a term held by > 8 files is dropped, a full term page from few files is probed past
-it first), fused with RRF, full-name cover first; reads only `drive_query` (content questions put the phrase, number or amount there; no words and no
-filter → refused); a capped filter set hedges, never "no match"; results in a nonce-tagged `<drive_document>` wrapper
-(only tag look-alikes neutralised) with a coverage envelope. Smart's standing guidance (search when the answer may be
-in a document, freshness, honest not-found, totals, document vs memory, versions) is the `drive_specialist` block of
-`PROTOCOL_AGENT_SELECTION`; the results carry per-result facts only. Not in `SearchEnrichmentService`. Opt-out purges
-at once; lost access keeps the index 30 days. Rebuild one user: `scripts/infrastructure/drive_index_rebuild.py`. Eval:
-`venv/bin/python -m scripts.validation.drive_eval` (G1 and G2 over a committed fixture with file bytes made by
-`make_fixtures.py`, real embeddings, parser, reader and triage on the indexer's model registry; bars in
-`tests/fixtures/drive_eval/bars.json` pin tree, gold, bytes and the reader's provider; `--record` only deliberately; any lost case fails); G3 (does Smart search the drive when it
-should): `python -m scripts.validation.drive_eval.smart_dry_run`, owner-run, bars in `bars_g3.json`. Decisions:
+are flags beside the structural state), `{prefix}drive_index_chunks`, `{prefix}drive_index_hints` (v2) and
+`{prefix}drive_sync_state` (one per user: delta cursor bound to its drive, epoch, lease, `access_lost_at`, `purging`,
+`applied_space`, `applied_versions`). **Lease-fenced:** a tick writes nothing past `lease_until - LEASE_MARGIN`, and
+state save/delete are transactions by owner (`LeaseLost` = quiet stop). Pure domain decides everything
+(`drive_index_planner.py`, `drive_index_policy.py`, `drive_card.py`, `drive_keys.py`, `drive_enrich_plan.py`,
+`drive_tiers.py`); `DriveIndexingService.tick`: gate → lease → observe (nudged items, then delta) → work off due records
+by class (edits, cascades, first-seen and re-listings, maintenance, retries) → upgrade pass → release, then
+continuation. Errors are classified by the call (RFC §8.2): item calls defer that item; the feed, token endpoint and
+embeddings are systemic (only an HTTP 400 card refusal backs one card off). **A third Cloud Run service:** the tick runs
+only on `alek-bot-indexer-dev` (`indexer_main.py`, `drive_sync`-only `/worker`, `--ingress=internal` + OIDC with a
+pinned audience, gen2, 2 GiB, concurrency 1, max 1; logs `make fetch-logs-indexer`, no Logfire), fed by queue
+`drive-sync-dev` (`max-concurrent-dispatches=1`). URL chain `INDEXER_URL_DEV` → `_INDEXER_URL` → `DRIVE_INDEXER_URL`
+(`os.getenv`); `make deploy` refuses it empty unless `DRIVE_FIRST_PASS=1` (`docs/07_deployment/README.md`). The main
+service fans out `start_drive_sync` every 10 min (`DriveSyncSchedulerService`: minimal sync state for enabled users,
+staleness alert, one reconnect notice; v2 adds the awaiting-rebuild, stalled-rebuild and fallback-share alerts) and
+nudges after each Step 1 mutation. OS/lock artefacts get no card; dot-folders, `.git`/`pyvenv.cfg` folders,
+`node_modules`/`__pycache__`/`site-packages` and dense trees collapse to one card. **Content (Slice 2+4, §24; built, not live until its deploy):** the
+§5.1 document kinds are parsed on the indexer by a child process (`SubprocessContentExtractor`, rlimits, run as the
+unprivileged `driveparser` user — it cannot read the indexer's keys or rewrite its code, but can reach the metadata
+server and the network: owner-accepted residual, `decisions/drive_parser_sandbox_resource_isolation.md`); PDFs the
+parser cannot read (no text, low density, garbage, failure — never after a timeout/memory kill) and images triaged as
+text go to the reader agent (`drive_reader`, 10-page windows); every image is triaged (`drive_triage`, 800 px
+thumbnails). Model agents run on GPT-6 Luna by default, Claude by `agent_providers`, then the global
+`provider_preference`, and fail over to Gemini Flash (`gemini-3.8-flash`, `fallback_tier`), billed to the user at the
+model that ran; a model outage defers only model work, except a reader 5xx/timeout/unexpected error, which is charged
+to the file (`failed` at 3); an edited reader-read file is re-read at most once per 24 h; card headroom is decided
+before any content work. Text passes a machine-text gate, is chunked (generation-fenced) and embedded. Audio and video
+stay metadata-only. No rollback to the Slice 1 revision.
+**Search v2 (built on `asm/drive-search-v2`, not deployed; `main` still searches with v1's RRF fusion):** intelligence at
+index time, zero-LLM search. The indexer describes each text file once (`drive_profiler`: type and life areas from
+fixed enums, dates, entities, values, topics, en/es/uk/ru word lists, verified against the text), writes passage hints
+per chunk (`drive_passages`: doc2query keywords and questions grounded by an evidence quote), and gives each photo an
+enriched description (triage v2, batches of 8) — in the tick's enrichment share (≥ 40 % of the start window), with
+per-job states, a newest-first queue and per-agent backoff. Budgets are dollars per class per month (reader $4, triage
+$3, profile $4, passages $20) in `{prefix}drive_model_usage` (kept by a purge) after a one-time $40 initial build.
+One normaliser (`drive_keys.py`) keys words as form sets (`w:`), one transliteration skeleton per word (`x:`/`xl:`,
+translation only), number terms (`n:`), entities (`e:` printed / `ef:` index spelling), D31 label names (`lw:`/`dw:`)
+and automatic words; a `KEYS_VERSION` bump re-keys from stored text. `search_files_in_drive` (SYNC) →
+`DriveSearchService`: per query word, about / name / word / hint key streams; strict AND (an absent word blocks, with
+the D29 "Without X: N files" line; one lowest-idf word and >30 % common words may be missed, numbers never); files in
+tiers About / Mentioned in (exact), By translation / Labelled (automatic), Related by meaning only (≤ 3, relative
+z-floor `Z_RELATED` 2.5, uncalibrated); a coverage line names what was not searched or described; results in a
+nonce-tagged `<drive_document>` wrapper; reads only `drive_query` (a time span goes in the date fields). A sync state
+built by v1 (no `keys` in `applied_versions`) is gated (D30): no tick work, search answers "being rebuilt"; the rollout
+rebuilds every user (`docs/07_deployment/README.md` § Search v2). Smart's drive guidance (incl. the `tiers` line and
+"find is answered from the results; open a file only for its contents") is the system skill `drive-search`
+(`src/skills/smart/drive-search/SKILL.md`, D32), loaded before the first drive search; the `drive_specialist` block of
+`PROTOCOL_AGENT_SELECTION` keeps only when to search the drive, the pointer and the untrusted-text line. Not in
+`SearchEnrichmentService`. Opt-out purges at once;
+lost access keeps the index 30 days. Rebuild one user: `scripts/infrastructure/drive_index_rebuild.py`. Evals:
+`python -m scripts.validation.drive_eval` (G1/G2, v1 bars), `… drive_eval.search_v2_eval` (v2 families, offline by
+default, `bars_v2.json`; results RFC §25.7.1), G3 `… drive_eval.smart_dry_run` (owner-run, `bars_g3.json`). Decisions:
 `decisions/drive_*.md`.
 
 **Per-channel sessions** — `session_id = f"{user_id}:{channel_id}"`, deterministic; each channel (Slack

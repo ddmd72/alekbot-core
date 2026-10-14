@@ -34,24 +34,30 @@ Public interface:
     chunks_reembedded(rec, generation, embedding_space, now) -> DriveIndexRecord           (§12.3)
     chunks_refused(rec, embedding_space, now) -> DriveIndexRecord                            (§8.2, §12.3)
     extractor_stale(rec, versions) -> bool / reextraction_due(rec) -> DriveIndexRecord      (§9, §12.3)
-    readme_read(rec, item_id, version, lead_text, now) -> DriveIndexRecord                  (§5.2)
+    readme_read(rec, item_id, version, text, now, child_names=()) -> DriveIndexRecord      (§5.2, §25.3)
+
+Search v2 (§25.4.9): the job plans, `about_keys` and the derived queue fields are NOT decided here but by
+`drive_enrich_plan.planned`, which the tick runs on every record write (`_commit`). The planner writes the facts they
+are planned from: `place_forms` with the geo v2 stamp, name keys v2, the profile's issue date first in the effective
+date, every collapsed folder's README excerpt, `script_rendered`, the keys stamp of an index run, the photo fields.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import Any, Callable, List, Mapping, Optional, Tuple
+from typing import Any, Callable, List, Mapping, Optional, Tuple, Union
 
 from .drive_card import (
-    card_eligible, card_hash, content_hash_of, effective_date, photo_location, repository_root,
+    card_eligible, card_hash, collapsed_folder, content_hash_of, effective_date, photo_location,
     structurally_card_eligible,
 )
+from .drive_enrichment import DriveProfile, PhotoDescription
 from .drive_extraction import ExtractionOutcome, TriageResult, chain_for
 from .drive_index import (
-    CARD_VERSION, EXTRACTION_VERSION, GEO_TABLE_VERSION, NAME_KEYS_VERSION, POLICY_VERSION, TRIAGE_VERSION,
-    ContentClass, DocumentBrief, DriveChange, DriveIndexRecord, DriveSyncState, EpochPhase, FolderProbe, Priority,
-    Reason, RecordState, Scope, TriageVerdict,
+    CARD_VERSION, EXTRACTION_VERSION, GEO_TABLE_VERSION, KEYS_VERSION, NAME_KEYS_VERSION, POLICY_VERSION,
+    TRIAGE_VERSION, ContentClass, DocumentBrief, DriveChange, DriveIndexRecord, DriveSyncState, EpochPhase, FolderProbe,
+    Priority, Reason, RecordState, Scope, TriageVerdict,
 )
 from .drive_index_params import (
     ACCESS_LOSS_TTL, CARD_LEAD_CHARS, DENSE_FOLDER_CHILDREN, DOWNLOAD_TIMEOUT_S, EMBED_FILE_BUDGET_S,
@@ -62,10 +68,14 @@ from .drive_index_policy import (
     Admission, admission, card_rank_of, content_class_of, density_still_valid, is_dense, is_dot_name,
     is_generated_dir, is_marker_child, is_readme_name, item_rule, kind_of, readme_readable, searchable, size_cap,
 )
-from .drive_name_keys import name_keys
+from .drive_keys import name_keys_v2
+from .drive_profile import issued_of, readme_excerpt
+from .place_lookup import Place
 from .user_drive import DriveConnection
 
-PlaceOf = Callable[[float, float], Optional[str]]
+# The place a photo's coordinates resolve to: PlaceIndex.place (its display name and `place_forms`, §25.4.3), or a
+# display name alone (its only form).
+PlaceOf = Callable[[float, float], Union[None, str, Place]]
 
 
 @dataclass(frozen=True)
@@ -253,14 +263,20 @@ def change_from_record(rec: DriveIndexRecord) -> DriveChange:
                        child_count=rec.child_count, facets=dict(rec.facets))
 
 
-def _place(change: DriveChange, existing: Optional[DriveIndexRecord], place_of: PlaceOf) -> Tuple[Optional[str], int]:
+def _place(change: DriveChange, existing: Optional[DriveIndexRecord],
+           place_of: PlaceOf) -> Tuple[Optional[str], Tuple[str, ...], int]:
+    """(place_name, place_forms, geo stamp): written together (§25.4.3), so a stamp never stands without its forms; a
+    stored place at this stamp and location is kept."""
     loc = photo_location(change.facets)
     if loc is None:
-        return None, 0
+        return None, (), 0
     if (existing is not None and existing.geo_table_version == GEO_TABLE_VERSION
             and photo_location(existing.facets) == loc):
-        return existing.place_name, GEO_TABLE_VERSION
-    return place_of(*loc), GEO_TABLE_VERSION
+        return existing.place_name, existing.place_forms, GEO_TABLE_VERSION
+    found = place_of(*loc)
+    if isinstance(found, Place):
+        return found.name, tuple(found.forms), GEO_TABLE_VERSION
+    return found, ((found,) if found else ()), GEO_TABLE_VERSION
 
 
 def _observable(rec: DriveIndexRecord) -> Tuple[Any, ...]:
@@ -269,28 +285,32 @@ def _observable(rec: DriveIndexRecord) -> Tuple[Any, ...]:
             rec.fs_modified_at, rec.effective_date, rec.place_name, rec.geo_table_version, rec.policy_version,
             rec.probe_pending, rec.rescope_pending, rec.reobserve_pending, rec.probed_child_count, rec.card_capped,
             rec.card_refused, rec.name_keys_version, rec.indexed_generation, rec.lead_text, rec.brief, rec.caption,
-            rec.dirty_since, rec.readme_pending, rec.readme_item_id, rec.readme_version, rec.chunk_reembed_pending)
+            rec.dirty_since, rec.readme_pending, rec.readme_item_id, rec.readme_version, rec.chunk_reembed_pending,
+            rec.place_forms, rec.readme_excerpt, rec.readme_excerpt_version, rec.photo_description,
+            rec.photo_objects, rec.photo_scene, rec.visible_text)
 
 
 def _build(change: DriveChange, cls: Classification, existing: Optional[DriveIndexRecord],
            ctx: PlanContext, observed: bool = True) -> DriveIndexRecord:
     base = existing or DriveIndexRecord(user_id=ctx.user_id, item_id=change.item_id)
-    place_name, geo_version = _place(change, existing, ctx.place_of)
+    place_name, place_forms, geo_version = _place(change, existing, ctx.place_of)
     carried = existing.probed_child_count if existing and not cls.probe_pending and not cls.density_reset else 0
     probed = cls.density_count or carried
     if cls.state is RecordState.METADATA_ONLY and not cls.content_kept:
         # entering metadata_only clears the readable generation (the service collects its chunks) and what the
-        # content gave the card (§3.4); a content demotion that stands keeps its own fields, and a repository root
-        # that stays one keeps its README's lead text (§5.2). Decided from metadata, it carries no extraction stamp:
+        # content gave the card (§3.4); a content demotion that stands keeps its own fields, and a collapsed folder
+        # that stays one keeps its README excerpt (§5.2, §25.3). Decided from metadata, it carries no extraction stamp:
         # nothing was read, so a later observation that admits the file again reads it (a rename away and back)
         base = replace(base, indexed_generation=None, brief=None, extraction_version=0, extracted_by=None,
                        chunk_space="", chunk_reembed_pending=False)
-        if not (existing is not None and repository_root(existing) and _repository(change, cls)):
-            base = replace(base, lead_text="", readme_pending=False, readme_item_id=None, readme_version="")
+        if not (existing is not None and collapsed_folder(existing) and _collapsed(change, cls)):
+            base = replace(base, lead_text="", readme_pending=False, readme_item_id=None, readme_version="",
+                           readme_excerpt="", readme_excerpt_version="")
     if admission(cls.kind) is not Admission.TRIAGE:
-        # a photograph's verdict and caption live together: one dropped without the other would keep the verdict
-        # and lose the caption for good, so an image that comes back to triage is triaged again (§24.5, T-m3)
-        base = replace(base, caption="")
+        # a photograph's verdict and its description live together: one dropped without the other would keep the
+        # verdict and lose the description for good, so an image that comes back to triage is triaged again (§24.5,
+        # T-m3); the kind leaving triage clears the photo fields (§25.4.9)
+        base = _without_photo(replace(base, caption=""))
         if base.triage_verdict is TriageVerdict.PHOTO:
             base = replace(base, triage_verdict=None, triage_version=0, triaged_content_version="")
     if cls.state is not RecordState.PENDING:
@@ -302,10 +322,11 @@ def _build(change: DriveChange, cls: Classification, existing: Optional[DriveInd
         child_count=change.child_count, facets=dict(change.facets), kind=cls.kind,
         content_class=cls.content_class, scope=cls.scope, state=cls.state, reason=cls.reason,
         content_version=change.content_version, modified_at=change.modified_at,
-        fs_modified_at=change.fs_modified_at, effective_date=_effective(change, base.brief, ctx.now),
-        place_name=place_name, geo_table_version=geo_version, policy_version=POLICY_VERSION,
+        fs_modified_at=change.fs_modified_at,
+        effective_date=_effective(change, base.brief, ctx.now, base.profile),
+        place_name=place_name, place_forms=place_forms, geo_table_version=geo_version, policy_version=POLICY_VERSION,
         card_rank=card_rank_of(cls.content_class),
-        name_tokens=name_keys(change.name) if searchable(cls.reason) else (), name_keys_version=NAME_KEYS_VERSION,
+        name_tokens=name_keys_v2(change.name) if searchable(cls.reason) else (), name_keys_version=NAME_KEYS_VERSION,
         content_hash=content_hash_of(change), probe_pending=cls.probe_pending, probed_child_count=probed,
         seen_epoch=_stamp(existing, ctx, observed),
     )
@@ -316,33 +337,42 @@ def _build(change: DriveChange, cls: Classification, existing: Optional[DriveInd
     return replace(rec, card_refused=_refusal_stands(existing, rec))
 
 
-def _repository(change: DriveChange, cls: Classification) -> bool:
-    return (change.is_folder and cls.scope is Scope.OPAQUE_ROOT and cls.reason is Reason.OPAQUE_ROOT
-            and not is_generated_dir(change.name))
+def _without_photo(rec: DriveIndexRecord) -> DriveIndexRecord:
+    """The photo fields cleared (§25.4.9: a text verdict, or the kind leaving triage)."""
+    return replace(rec, photo_description="", photo_objects=(), photo_scene="", visible_text="")
+
+
+def _collapsed(change: DriveChange, cls: Classification) -> bool:
+    return change.is_folder and cls.scope is Scope.OPAQUE_ROOT
 
 
 def _readme_due(existing: Optional[DriveIndexRecord], rec: DriveIndexRecord) -> bool:
-    """A repository root reads its README when it becomes one, when its child count moves (a README added, removed
-    or renamed) or under a new policy; only once text content is admitted (§5.2)."""
-    if not repository_root(rec) or not readme_readable():
+    """Every collapsed folder (any opaque_root reason, §25.3) reads its README when it becomes one, when its child
+    count moves (a README added, removed or renamed) or under a new policy; never on a PROFILE_VERSION bump, which
+    re-profiles from the stored excerpt; only once text content is admitted (§5.2)."""
+    if not collapsed_folder(rec) or not readme_readable():
         return False
-    return (existing is None or not repository_root(existing) or existing.child_count != rec.child_count
+    return (existing is None or not collapsed_folder(existing) or existing.child_count != rec.child_count
             or existing.policy_version != POLICY_VERSION)
 
 
 def _readme_touched(change: DriveChange, parent: Optional[DriveIndexRecord],
                     now: datetime) -> Tuple[DriveIndexRecord, ...]:
-    """A README directly inside a repository root changed: the root reads it again (§5.2). Its own record is never
-    kept (files inside an opaque root get none)."""
-    if (parent is None or change.is_folder or change.parent_id != parent.item_id or not repository_root(parent)
+    """A README directly inside a collapsed folder changed: the folder reads it again (§5.2, §25.3). Its own record is
+    never kept (files inside an opaque root get none)."""
+    if (parent is None or change.is_folder or change.parent_id != parent.item_id or not collapsed_folder(parent)
             or parent.readme_pending or not is_readme_name(change.name) or not readme_readable()
             or change.content_version == parent.readme_version):
         return ()
     return (schedule(replace(parent, readme_pending=True), now, first_seen=not parent.has_card),)
 
 
-def _effective(change: DriveChange, brief: Optional[DocumentBrief], now: datetime) -> datetime:
-    """The document's own date while a brief holds one (D13), else the §3.1 order."""
+def _effective(change: DriveChange, brief: Optional[DocumentBrief], now: datetime,
+               profile: Optional[DriveProfile] = None) -> datetime:
+    """The profile's verified issue date first (§25.4.1, D13 extended), else the brief's date (D13), else §3.1."""
+    issued = issued_of(profile) if profile is not None else None
+    if issued is not None:
+        return datetime(issued.year, issued.month, issued.day, tzinfo=timezone.utc)
     if brief is not None and brief.doc_date is not None:
         return brief.doc_date
     return effective_date(change, now)
@@ -367,7 +397,8 @@ def _reopened_marker_parent(parent: DriveIndexRecord, ctx: PlanContext) -> Drive
                   state=RecordState.UNRESOLVED if big else RecordState.METADATA_ONLY,
                   reason=None if big else Reason.FOLDER, probe_pending=big, probed_child_count=0,
                   rescope_pending=True, cascade_cursor=None, reobserve_pending=True, reobserve_cursor=None,
-                  attempts=0, lead_text="", readme_pending=False, readme_item_id=None, readme_version="")
+                  attempts=0, lead_text="", readme_pending=False, readme_item_id=None, readme_version="",
+                  readme_excerpt="", readme_excerpt_version="")
     return schedule(rec, ctx.now, first_seen=False)
 
 
@@ -584,6 +615,8 @@ def _works(rec: DriveIndexRecord, first_seen: bool, now: datetime) -> List[Tuple
         works.append((Priority.MAINTENANCE, now))  # an enrichment of the repository card (§5.2)
     if rec.chunk_reembed_pending and rec.indexed_generation is not None:
         works.append((Priority.MAINTENANCE, now))  # readable chunks in another embedding space (§12.3)
+    if rec.keys_pending and rec.indexed_generation is not None:
+        works.append((Priority.MAINTENANCE, now))  # keys under another KEYS_VERSION (§25.4.5, §25.4.8)
     if _card_due(rec):
         works.append((Priority.FIRST_SEEN if first_seen else Priority.EDIT, now))
     if content_due(rec) or triage_due(rec):
@@ -700,11 +733,19 @@ def reextraction_due(rec: DriveIndexRecord) -> DriveIndexRecord:
     return replace(rec, extraction_version=0)
 
 
-def readme_read(rec: DriveIndexRecord, item_id: Optional[str], version: str, lead_text: str,
-                now: datetime) -> DriveIndexRecord:
-    """The repository root's README was read, found absent or given up on (§5.2): its lead text is the card's."""
-    return schedule(replace(rec, readme_pending=False, readme_item_id=item_id, readme_version=version,
-                            lead_text=lead_text.strip()[:CARD_LEAD_CHARS], attempts=0), now,
+def readme_read(rec: DriveIndexRecord, item_id: Optional[str], version: str, text: Optional[str],
+                now: datetime, child_names: Tuple[str, ...] = ()) -> DriveIndexRecord:
+    """A collapsed folder's README was read, found absent or given up on (§5.2, §25.3): its head and tail and up to
+    README_CHILD_NAMES child names become `readme_excerpt` (the profile's input), with the README's content version.
+    `text` None keeps the stored excerpt (an unchanged README, or one given up on); "" clears it. No lead text: the
+    v2 card carries the folder's profile (§25.2.7)."""
+    if text is None:
+        excerpt, excerpt_version = rec.readme_excerpt, rec.readme_excerpt_version
+    else:
+        excerpt = readme_excerpt(text.strip(), child_names) if text.strip() else ""
+        excerpt_version = version if excerpt else ""
+    return schedule(replace(rec, readme_pending=False, readme_item_id=item_id, readme_version=version, lead_text="",
+                            readme_excerpt=excerpt, readme_excerpt_version=excerpt_version, attempts=0), now,
                     first_seen=not rec.has_card)
 
 
@@ -830,17 +871,26 @@ def _settled(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
 
 
 def indexed(rec: DriveIndexRecord, *, outcome: ExtractionOutcome, generation: int, chunk_count: int,
-            now: datetime, chunk_space: str = "") -> DriveIndexRecord:
+            now: datetime, chunk_space: str = "", keys_capped: bool = False,
+            profile_fingerprint: Optional[str] = None) -> DriveIndexRecord:
     """The fence's one record write (§7.4): `generation` becomes readable for this content version, its chunks
-    embedded in `chunk_space`. The caller then collects every other generation. `outcome.truncated` must include the
-    chunker's cut (§5.4). A brief's date becomes the effective date (D13)."""
+    embedded in `chunk_space` and keyed under KEYS_VERSION (`keys_capped`: a chunk's word keys were cut). The caller
+    then collects every other generation. `outcome.truncated` must include the chunker's cut (§5.4). The profile's
+    issue date, else the brief's, becomes the effective date (D13); `profile_fingerprint` is the profiler input's
+    fingerprint from the new text, `script_rendered` is parser@2's flag (§25.2.1). No lead text: v2 cards carry the
+    profile (§25.2.7). A new content version restarts the enrichment jobs' attempts (§25.4.9)."""
+    new_version = rec.indexed_version != rec.content_version
     done = replace(rec, state=RecordState.INDEXED, reason=None, indexed_generation=generation,
                    chunk_space=chunk_space, chunk_reembed_pending=False,
                    indexed_version=rec.content_version, extraction_version=EXTRACTION_VERSION,
                    extracted_by=outcome.extracted_by, text_chars=len(outcome.text), pages_total=outcome.pages_total,
-                   chunk_count=chunk_count, truncated=outcome.truncated,
-                   lead_text=outcome.text.strip()[:CARD_LEAD_CHARS], brief=outcome.brief,
-                   effective_date=_effective(change_from_record(rec), outcome.brief, rec.effective_date or now))
+                   chunk_count=chunk_count, truncated=outcome.truncated, lead_text="", brief=outcome.brief,
+                   script_rendered=outcome.script_rendered, keys_version=KEYS_VERSION, keys_pending=False,
+                   keys_capped=keys_capped, profile_input_fingerprint=profile_fingerprint,
+                   effective_date=_effective(change_from_record(rec), outcome.brief, rec.effective_date or now,
+                                             rec.profile))
+    if new_version:
+        done = replace(done, profile_attempts=0, passages_attempts=0)
     return _settled(done, now)
 
 
@@ -895,22 +945,28 @@ def outage_charged(rec: DriveIndexRecord, until: datetime, now: datetime, extrac
     return deferred(replace(rec, model_outages=outages, attempt_started_at=None), until, now, maintenance=True)
 
 
-def triaged(rec: DriveIndexRecord, result: TriageResult, now: datetime) -> DriveIndexRecord:
-    """Store a verdict for this content version (§24.5). A photograph is metadata_only with its caption; text makes
-    the content due for the reader, unless this version is already indexed. The reader's work keeps the class the
-    triage had: an edit stays class 0, anything else is class 2 (the tick moves upgrades to class 3)."""
+def triaged(rec: DriveIndexRecord, result: TriageResult, now: datetime,
+            photo: Optional[PhotoDescription] = None) -> DriveIndexRecord:
+    """Store a verdict for this content version (§24.5). A photograph is metadata_only with its description (§25.4.3:
+    `photo`, None for one the model refused or stopped on alone); text makes the content due for the reader, unless
+    this version is already indexed, and clears the photo fields. The reader's work keeps the class the triage had:
+    an edit stays class 0, anything else is class 2 (the tick moves upgrades to class 3)."""
     if result.item_id != rec.item_id:
         raise ValueError(f"verdict for {result.item_id} applied to {rec.item_id}")
     first_seen = rec.priority != int(Priority.EDIT)
     rec = replace(rec, triage_verdict=result.verdict, triage_version=TRIAGE_VERSION,
                   triaged_content_version=rec.content_version, attempts=0, defer_until=None, defer_priority=None)
     if result.verdict is TriageVerdict.PHOTO:
-        photo = replace(rec, state=RecordState.METADATA_ONLY, reason=Reason.PHOTOGRAPH, caption=result.caption,
-                        indexed_generation=None, chunk_space="", chunk_reembed_pending=False, lead_text="", brief=None, dirty_since=None,
-                        effective_date=_effective(change_from_record(rec), None, rec.effective_date or now))
-        return schedule(photo, now, first_seen=first_seen)
+        done = replace(rec, state=RecordState.METADATA_ONLY, reason=Reason.PHOTOGRAPH, caption="",
+                       indexed_generation=None, chunk_space="", chunk_reembed_pending=False, lead_text="", brief=None,
+                       dirty_since=None, effective_date=_effective(change_from_record(rec), None,
+                                                                   rec.effective_date or now))
+        done = _without_photo(done) if photo is None else replace(
+            done, photo_description=photo.description, photo_objects=tuple(photo.objects), photo_scene=photo.scene,
+            visible_text=photo.visible_text)
+        return schedule(done, now, first_seen=first_seen)
     state = RecordState.INDEXED if _indexed_now(rec) else RecordState.PENDING
-    return schedule(replace(rec, state=state, reason=None, caption=""), now, first_seen=first_seen)
+    return schedule(_without_photo(replace(rec, state=state, reason=None, caption="")), now, first_seen=first_seen)
 
 
 def can_start_file(elapsed_s: float, *, routed: bool) -> bool:

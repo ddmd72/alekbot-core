@@ -1,0 +1,8 @@
+{
+  "blueprint_id": "drive_profiler_agent_v1",
+  "outer_class": "DriveProfilerAgent extends Agent",
+  "class_order": [
+    "cognitive_process",
+    "output_format"
+  ]
+}

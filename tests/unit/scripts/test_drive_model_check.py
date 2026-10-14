@@ -76,15 +76,19 @@ async def test_triage_compares_sizes_per_provider(tmp_path):
 
     def handler(request):
         n = sum(1 for p in request.messages[0].parts if p.file_data)
-        return reply({"images": [{"index": i, "verdict": "photo", "caption": "a dog"} for i in range(1, n + 1)]})
+        return reply({"images": [{"index": i, "verdict": "photo", "description": "a dog",
+                                  "objects": [{"name": "dog", "forms": ["perro", "собака"]}], "scene": "park",
+                                  "visible_text": ""} for i in range(1, n + 1)]})
 
     out = await check.run(["triage", str(folder), "--providers", "claude"], registry=_registry(handler),
                           assembly=check.local_assembly_service(_uploads(tmp_path)), memory=tmp_path / "memory")
     data = json.loads((out / "triage" / "verdicts.json").read_text())
     assert set(data["totals"]) == {"claude/medium", "claude/large"}
     assert data["totals"]["claude/medium"]["images"] == 2 and data["totals"]["claude/medium"]["calls"] == 1
-    assert data["items"]["01"] == {"claude/medium": {"verdict": "photo", "caption": "a dog"},
-                                   "claude/large": {"verdict": "photo", "caption": "a dog"}}
+    # triage v2 (§25.4.3): each photograph's description, objects with their forms, scene and visible text
+    row = {"verdict": "photo", "description": "a dog", "scene": "park", "visible_text": "",
+           "objects": [{"name": "dog", "forms": ["perro", "собака"]}]}
+    assert data["items"]["01"] == {"claude/medium": row, "claude/large": row}
 
 
 def test_output_root_is_the_gitignored_memory_folder():

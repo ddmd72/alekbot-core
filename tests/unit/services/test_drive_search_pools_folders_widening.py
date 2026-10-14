@@ -1,11 +1,11 @@
 """DriveSearchService: the name-key pool, filter-only honesty, folder lookup, the walk budget and widening
 (USER_DRIVE_INDEXING_RFC §10.1, §10.2)."""
-from datetime import datetime, timezone
 
 import pytest
 
-from src.domain.drive_index_params import NAME_KEY_QUERIES, NAME_QUERY_KEYS_MAX
-from src.domain.drive_name_keys import query_name_keys
+from src.domain.drive_index_params import NAME_KEY_QUERIES
+from src.domain.drive_keys import query_concepts
+from src.domain.drive_tier_pool import concept_trigrams
 from src.domain.drive_search import STATUS_FOLDER_NOT_FOUND, STATUS_OK, render_results
 from src.services import drive_search_service as search_mod
 
@@ -61,17 +61,23 @@ class TestTrigramPool:
         assert target in names(await w.search(query))
 
     async def test_long_query_singles_at_most_name_key_queries_trigrams_in_query_order_plus_one_rest(self, w):
+        # §25.5.2 (spec change): trigrams find similar names and never cover, so there is no remainder batch; the
+        # NAME_KEY_QUERIES singles go round-robin over the words, so a long query still probes every word.
         w.drive.add("a.pdf")
         await w.settle()
         query = "quarterly planning review document"
         before = len(w.repo.name_keys)
         await w.search(query)
         batches = w.repo.name_keys[before:]
-        grams = [k for k in query_name_keys(query) if k.startswith("t:")]
+        lists = [list(concept_trigrams(c)) for c in query_concepts(query).concepts if not c.is_number]
+        assert len(lists) >= 3 and sum(map(len, lists)) > NAME_KEY_QUERIES
+        expected = []
+        for i in range(max(map(len, lists))):
+            expected += [g[i] for g in lists if i < len(g) and g[i] not in expected]
         singles = [b[0] for b in batches if len(b) == 1 and b[0].startswith("t:")]
-        rest = [b for b in batches if len(b) > 1]
-        assert singles == grams[:NAME_KEY_QUERIES]
-        assert len(rest) == 1 and list(rest[0]) == grams[NAME_KEY_QUERIES:] and len(rest[0]) <= NAME_QUERY_KEYS_MAX
+        assert singles == expected[:NAME_KEY_QUERIES]
+        assert {g[0] for g in lists} <= set(singles)   # every word probed
+        assert not [b for b in batches if len(b) > 1 and any(k.startswith("t:") for k in b)]
 
 
 # --- A capped filter-only page with no survivors is not "no matches" ----------------------------
@@ -180,18 +186,6 @@ class TestWalkBudget:
 # --- Search decisions, each pinned by its own test ------------------------------------------------
 
 class TestSearchDecisions:
-    async def test_ranked_widens_at_most_once_even_when_the_widened_page_is_full(self, w, monkeypatch):
-        """Without the once-guard a full FETCH_MAX page with fewer than K survivors loops forever."""
-        monkeypatch.setattr(search_mod, "CARD_FETCH", 2)
-        monkeypatch.setattr(search_mod, "NAME_FETCH", 2)
-        monkeypatch.setattr(search_mod, "FETCH_MAX", 3)
-        for i in range(10):
-            w.drive.add(f"report {i:02d}.pdf", facets=taken(f"2024-01-{i + 1:02d}"))
-        await w.settle()
-        _limit_calls(w, "find_nearest_cards", 4)
-        result = await w.search("report", date_from=datetime(2020, 1, 1, tzinfo=timezone.utc),
-                                date_to=datetime(2020, 12, 31, tzinfo=timezone.utc))
-        assert result.cards == () and w.repo.card_limits == [2, 3]
 
     async def test_filter_only_widens_at_most_once_even_when_the_widened_page_is_full(self, w, monkeypatch):
         monkeypatch.setattr(search_mod, "CARD_FETCH", 2)

@@ -3,17 +3,20 @@
 keeps it until its new run commits (§7.4): their chunks are re-embedded from the stored text like an indexed
 record's, with the content state, attempts and deferral untouched, so the space change completes and the quiet period
 and the month hold still stand."""
-from dataclasses import replace
 from datetime import datetime, timezone
 
 import pytest
 
 from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus
 from src.domain.drive_index import RecordState
-from src.domain.drive_index_params import MAX_ATTEMPTS, MODEL_EXTRACT_PAGES_PER_MONTH, QUIET, RETRY_CAP
+from src.domain.drive_enrichment import UsageClass
+from src.domain.drive_index_params import (
+    MAX_ATTEMPTS, QUIET, READER_PAGE_USD_ESTIMATE, READER_USD_PER_MONTH, RETRY_CAP,
+)
 from src.services import drive_indexing_service as svc_mod
 
 from .drive_content_world import ContentWorld, admitted, prose  # noqa: F401  (fixture)
+from .drive_usage_helpers import close_initial_build, spend
 
 pytestmark = pytest.mark.usefixtures("admitted")
 
@@ -79,9 +82,9 @@ async def test_a_month_held_record_re_embeds_and_stays_held():
     doc = w.add_doc("scan.pdf", "")
     await w.settle()
     texts = [c.text for c in w.readable(doc)]
-    state = await w.repo.get_sync_state("u")
-    await w.repo.save_sync_state(replace(state, usage_month="2026-10",
-                                         model_pages_used=MODEL_EXTRACT_PAGES_PER_MONTH - 5))
+    # Search v2 (§25.4.5): the initial build is over and the month's reader dollars pay 5 pages
+    await close_initial_build(w.repo, w.clock.now)
+    await spend(w.repo, UsageClass.READER, READER_USD_PER_MONTH - 5 * READER_PAGE_USD_ESTIMATE, w.clock.now)
     w.parser.outcomes["scan.pdf"] = _scan(12)
     w.drive.edit(doc, b"%PDF-1.7\n")
     w.clock.advance(QUIET.total_seconds() + 60)

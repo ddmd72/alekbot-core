@@ -30,4 +30,4 @@ def test_other_plurals_are_still_refused(raw):
 def test_the_kind_field_description_names_what_each_family_covers():
     from src.infrastructure.agent_manifest import FILE_MANAGEMENT, Intent
     text = FILE_MANAGEMENT.context_schemas[Intent.SEARCH_FILES_IN_DRIVE]["drive_kind"]
-    assert "document (docx, doc, odt, rtf, pdf)" in text and "word (docx, doc)" in text
+    assert "document (docx, doc, odt, rtf, pdf, markdown, text)" in text and "word (docx, doc)" in text   # D23

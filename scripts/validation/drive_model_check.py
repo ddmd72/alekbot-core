@@ -1,11 +1,15 @@
 """
-Live model check for the drive reader and triage (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §24.3, §24.5, §24.12; D7).
-OWNER-RUN: every call is paid (≈ $0.0006 a page). Runs the production runners locally, side by side per provider,
-on the owner's real files; nothing is billed to an account and nothing is written to Firestore.
+Live model check for the drive reader, triage and the Search v2 enrichment agents (docs/10_rfcs/
+USER_DRIVE_INDEXING_RFC.md §24.3, §24.5, §24.12, §25.4; D7). OWNER-RUN: every call is paid (≈ $0.0006 a page,
+≈ $0.0008 a profile, ≈ $0.0004 a passage chunk). Runs the production runners locally, side by side per provider, on
+the owner's real files (or synthetic ones); nothing is billed to an account and nothing is written to Firestore.
 
     venv/bin/python -m scripts.validation.drive_model_check read <folder> [--providers claude,openai]
     venv/bin/python -m scripts.validation.drive_model_check triage <renditions dir> [--providers claude,openai]
                                                            [--sizes medium,large]
+    venv/bin/python -m scripts.validation.drive_model_check profile <text folder> [--providers claude,openai]
+    venv/bin/python -m scripts.validation.drive_model_check passages <text folder> [--providers claude,openai]
+                                                           [--max-chunks 4]
 
 read    Every PDF and image directly in <folder> (files the owner copied out of the drive, or the c2048x2048
         renditions saved by scripts/onedrive/probe_renditions.py) through DriveReaderRunner. PDFs are cut by the
@@ -16,7 +20,14 @@ read    Every PDF and image directly in <folder> (files the owner copied out of 
         5 MiB base64, Anthropic's per-image limit as its errors state it), include a JPEG just under 3.75 MiB: its
         row must read `text`, not `error`.
 triage  The renditions saved by probe_renditions.py (`<n>_<size>.<ext>`), per size, in batches of TRIAGE_BATCH
-        through DriveTriageRunner: the 176 px vs 800 px question of §24.5 (800 px chosen 2026-10-13).
+        through DriveTriageRunner: the 176 px vs 800 px question of §24.5 (800 px chosen 2026-10-13); triage v2
+        records each photograph's description, objects, scene and visible text (§25.4.3).
+profile Every text file directly in <folder> (.txt, .md, .csv, .json, .html, .eml, .vtt, .srt) as the indexer stores
+        it: chunked by the chunker, the input cut by `drive_profile.profile_input`, profiled by DriveProfilerRunner,
+        verified by `drive_profile.verify` (§25.4.1). Per file: status, calls, seconds, cost, verification drops.
+passages The first --max-chunks chunks of every text file, PASSAGE_CHUNKS_PER_CALL per call through
+        DrivePassageRunner, then grounded by `drive_hints.ground` (rules 1-2; §25.4.2). Per file: chunk outcomes,
+        items kept and dropped per rule.
 
 Prompts come from firestore_utils/uploads (assembled offline by the real PromptAssemblyService, so a prompt can be
 tried before it is uploaded) or, with --prompts firestore, from the live prompt collections (read-only).
@@ -44,12 +55,18 @@ from dotenv import load_dotenv
 
 from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
 from src.composition.drive_model_setup import build_drive_model_registry
+from src.composition.drive_passage_runner import DrivePassageRunner
+from src.composition.drive_profiler_runner import DriveProfilerRunner
 from src.composition.drive_reader_runner import DriveReaderRunner, PdfSplitter
 from src.composition.drive_triage_runner import DriveTriageRunner
 from src.composition.prompt_assembly_setup import build_prompt_assembly_service
 from src.config.environment import EnvironmentConfig
+from src.domain import drive_hints, drive_profile
+from src.domain.drive_chunker import chunk_text
+from src.domain.drive_enrichment_calls import HintRequest, ProfileRequest
 from src.domain.drive_extraction import DriveModelUnavailable, ExtractionRequest, TriageImage
-from src.domain.drive_index_params import TRIAGE_BATCH
+from src.domain.drive_index import DriveChunk, DriveIndexRecord
+from src.domain.drive_index_params import PASSAGE_CHUNKS_PER_CALL, TRIAGE_BATCH
 from src.domain.llm import LLMResponse
 from src.domain.user import UserBotConfig
 from src.infrastructure.agent_config import DRIVE_READER
@@ -66,6 +83,9 @@ _KINDS = {".pdf": ("pdf", "application/pdf"), ".jpg": ("image", "image/jpeg"), "
           ".png": ("image", "image/png"), ".gif": ("image", "image/gif"), ".webp": ("image", "image/webp"),
           ".heic": ("image", "image/heic")}
 _RENDITION = re.compile(r"^(?P<item>.+)_(?P<size>[A-Za-z0-9]+)\.(?:jpg|jpeg|png)$")
+_TEXT_KINDS = {".txt": "text", ".md": "markdown", ".csv": "csv", ".json": "json", ".html": "html", ".htm": "html",
+               ".eml": "eml", ".vtt": "subtitles", ".srt": "subtitles"}
+_AGENTS = ("drive_reader", "drive_triage", "drive_profiler", "drive_passages")
 
 
 class CostMeter(QuotaService):
@@ -147,10 +167,10 @@ def _timed(registry: ProviderRegistry, provider: str) -> Tuple[ProviderRegistry,
 
 
 class _Users:
-    """One synthetic user whose configuration pins both drive agents to `provider`."""
+    """One synthetic user whose configuration pins every drive agent to `provider`."""
 
     def __init__(self, provider: str) -> None:
-        self.config = UserBotConfig(agent_providers={"drive_reader": provider, "drive_triage": provider})
+        self.config = UserBotConfig(agent_providers={agent: provider for agent in _AGENTS})
 
     async def get_user(self, user_id: str) -> Any:
         return SimpleNamespace(config=self.config)
@@ -266,25 +286,35 @@ async def check_triage(folder: Path, providers: Sequence[str], sizes: Sequence[s
             print(f"[triage] {provider}: no API key, skipped", flush=True)
             continue
         # Only the provider under test: the drive agents' Gemini fallback must not answer in its column.
-        alone = ProviderRegistry()
-        alone.register(provider, registry.get(provider))
+        alone, timer = _timed(registry, provider)
         for size, paths in groups.items():
+            timer.calls = []
             meter = CostMeter()
             runner = DriveTriageRunner(_context_builder(alone), _Users(provider), PromptBuilder(repo=None, assembly_service=assembly),
                                        quota_service=meter)
             images = [TriageImage(item_id=_RENDITION.match(p.name).group("item"),  # type: ignore[union-attr]
                                   thumbnail=p.read_bytes(), mime_type="", camera_prior=False) for p in paths]
             for start in range(0, len(images), TRIAGE_BATCH):
-                try:
-                    batch = await runner.triage("model-check", "model-check", images[start:start + TRIAGE_BATCH])
-                except DriveModelUnavailable as exc:
-                    print(f"[triage] {provider}/{size}: model unavailable: {exc}", flush=True)
+                batch = await runner.triage("model-check", "model-check", images[start:start + TRIAGE_BATCH])
+                if batch.status.value in ("unavailable", "failed"):
+                    print(f"[triage] {provider}/{size}: model {batch.status.value}", flush=True)
                     break
                 for r in batch.results:
-                    table.setdefault(r.item_id, {})[f"{provider}/{size}"] = {"verdict": r.verdict.value,
-                                                                            "caption": r.caption}
+                    row: Dict[str, Any] = {"verdict": r.verdict.value}
+                    if r.photo is not None:
+                        row.update(description=r.photo.description, scene=r.photo.scene,
+                                   visible_text=r.photo.visible_text,
+                                   objects=[{"name": o.name, "forms": list(o.forms)} for o in r.photo.objects])
+                    table.setdefault(r.item_id, {})[f"{provider}/{size}"] = row
+                labels = {**{i: "capped" for i in batch.capped_item_ids},
+                          **{i: "refused" for i in batch.refused_item_ids}}
+                answered = {r.item_id for r in batch.results}
+                for image in images[start:start + TRIAGE_BATCH]:
+                    if image.item_id not in answered:
+                        table.setdefault(image.item_id, {})[f"{provider}/{size}"] = {
+                            "verdict": labels.get(image.item_id, "unsettled"), "status": batch.status.value}
             totals[f"{provider}/{size}"] = {"images": len(images), "calls": meter.calls,
-                                            "cost": round(meter.cost, 6)}
+                                            "cost": round(meter.cost, 6), "timing": timing_summary(timer.calls)}
             print(f"[triage] {provider}/{size}: {len(images)} images, {meter.calls} calls, ${meter.cost:.4f}",
                   flush=True)
     target = out_dir / "triage"
@@ -294,13 +324,133 @@ async def check_triage(folder: Path, providers: Sequence[str], sizes: Sequence[s
     return {"totals": totals, "items": table}
 
 
+def text_files(folder: Path) -> List[Tuple[Path, str]]:
+    """Every text file directly in `folder` with its kind."""
+    return [(p, _TEXT_KINDS[p.suffix.lower()]) for p in sorted(folder.iterdir())
+            if p.is_file() and p.suffix.lower() in _TEXT_KINDS]
+
+
+def stored_chunks(item_id: str, kind: str, text: str) -> List[DriveChunk]:
+    """The chunks the indexer would store for `text`."""
+    return [DriveChunk(user_id="model-check", item_id=item_id, generation=1, index=i, text=c.text,
+                       char_start=c.char_start, char_end=c.char_end, kind=kind)
+            for i, c in enumerate(chunk_text(text).chunks)]
+
+
+async def check_profile(folder: Path, providers: Sequence[str], *, registry: ProviderRegistry, assembly: Any,
+                        out_dir: Path) -> Dict[str, Any]:
+    files = text_files(folder)
+    summary: Dict[str, Any] = {}
+    for provider in providers:
+        if provider not in registry.list_available():
+            print(f"[profile] {provider}: no API key, skipped", flush=True)
+            continue
+        meter = CostMeter()
+        timed, timer = _timed(registry, provider)
+        runner = DriveProfilerRunner(_context_builder(timed), _Users(provider),
+                                     PromptBuilder(repo=None, assembly_service=assembly), quota_service=meter)
+        target = out_dir / "profile" / provider
+        target.mkdir(parents=True, exist_ok=True)
+        rows: List[Dict[str, Any]] = []
+        all_calls: List[Dict[str, Any]] = []
+        for path, kind in files:
+            text = path.read_text(encoding="utf-8")
+            chunks = stored_chunks(path.stem, kind, text)
+            rec = DriveIndexRecord(user_id="model-check", item_id=path.stem, name=path.name, kind=kind)
+            inp = drive_profile.profile_input(rec, chunks, kind)
+            if inp is None:
+                rows.append({"file": path.name, "status": "no_model_input"})
+                continue
+            timer.calls = []
+            started = time.monotonic()
+            reply = await runner.profile(ProfileRequest(user_id="model-check", account_id="model-check",
+                                                        item_id=path.stem, kind=kind, name=path.name, input=inp))
+            seconds = round(time.monotonic() - started, 2)
+            all_calls.extend(timer.calls)
+            row: Dict[str, Any] = {"file": path.name, "status": reply.status.value, "model": reply.model,
+                                   "cost": round(reply.usd, 6), "seconds": seconds, "calls": timer.calls}
+            if reply.profile is not None:
+                verified, drops = drive_profile.verify(reply.profile, chunks, path.name)
+                row["drops"] = asdict(drops)
+                (target / f"{path.stem}.profile.json").write_text(json.dumps(
+                    {"model": asdict(reply.profile), "verified": asdict(verified)}, ensure_ascii=False, indent=1,
+                    default=str), encoding="utf-8")
+            rows.append(row)
+        timing = timing_summary(all_calls)
+        summary[provider] = {"files": rows, "calls": meter.calls, "cost": round(meter.cost, 6), "timing": timing}
+        print(f"[profile] {provider}: {len(files)} files, {meter.calls} calls, ${meter.cost:.4f}; median call "
+              f"{timing['median_seconds']} s, slowest {timing['max_seconds']} s", flush=True)
+    (out_dir / "profile").mkdir(parents=True, exist_ok=True)
+    (out_dir / "profile" / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=1),
+                                                      encoding="utf-8")
+    return summary
+
+
+async def check_passages(folder: Path, providers: Sequence[str], *, registry: ProviderRegistry, assembly: Any,
+                         out_dir: Path, max_chunks: int) -> Dict[str, Any]:
+    files = text_files(folder)
+    summary: Dict[str, Any] = {}
+    for provider in providers:
+        if provider not in registry.list_available():
+            print(f"[passages] {provider}: no API key, skipped", flush=True)
+            continue
+        meter = CostMeter()
+        timed, timer = _timed(registry, provider)
+        runner = DrivePassageRunner(_context_builder(timed), _Users(provider),
+                                    PromptBuilder(repo=None, assembly_service=assembly), quota_service=meter)
+        target = out_dir / "passages" / provider
+        target.mkdir(parents=True, exist_ok=True)
+        rows: List[Dict[str, Any]] = []
+        all_calls: List[Dict[str, Any]] = []
+        for path, kind in files:
+            chunks = stored_chunks(path.stem, kind, path.read_text(encoding="utf-8"))[:max_chunks]
+            by_index = {c.index: c.text for c in chunks}
+            timer.calls = []
+            started = time.monotonic()
+            outcomes: Dict[int, str] = {}
+            kept: Dict[int, List[Dict[str, Any]]] = {}
+            drops = {"evidence": 0, "numbers": 0, "invalid": 0}
+            items_in = 0
+            cost = 0.0
+            for start in range(0, len(chunks), PASSAGE_CHUNKS_PER_CALL):
+                batch = [(c.index, c.text) for c in chunks[start:start + PASSAGE_CHUNKS_PER_CALL]]
+                reply = await runner.hints(HintRequest(user_id="model-check", account_id="model-check",
+                                                       item_id=path.stem, chunks=batch, title=path.stem,
+                                                       what_it_is=""))
+                cost += reply.usd
+                outcomes.update({i: o.value for i, o in reply.outcome_by_index.items()})
+                for index, items in reply.items_by_index.items():
+                    items_in += len(items)
+                    grounded = drive_hints.ground(by_index[index], items)
+                    for rule in drops:
+                        drops[rule] += getattr(grounded.drops, rule)
+                    kept[index] = [asdict(i) for i in grounded.items]
+            seconds = round(time.monotonic() - started, 2)
+            all_calls.extend(timer.calls)
+            rows.append({"file": path.name, "chunks": len(chunks), "outcomes": outcomes, "items": items_in,
+                         "kept": sum(len(v) for v in kept.values()), "drops": drops, "cost": round(cost, 6),
+                         "seconds": seconds, "calls": timer.calls})
+            (target / f"{path.stem}.hints.json").write_text(json.dumps(kept, ensure_ascii=False, indent=1),
+                                                            encoding="utf-8")
+        timing = timing_summary(all_calls)
+        summary[provider] = {"files": rows, "calls": meter.calls, "cost": round(meter.cost, 6), "timing": timing}
+        print(f"[passages] {provider}: {sum(r['chunks'] for r in rows)} chunks, {meter.calls} calls, "
+              f"${meter.cost:.4f}; median call {timing['median_seconds']} s, slowest {timing['max_seconds']} s",
+              flush=True)
+    (out_dir / "passages").mkdir(parents=True, exist_ok=True)
+    (out_dir / "passages" / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=1),
+                                                       encoding="utf-8")
+    return summary
+
+
 def _args(argv: Optional[List[str]]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="python -m scripts.validation.drive_model_check")
-    parser.add_argument("mode", choices=["read", "triage"])
+    parser.add_argument("mode", choices=["read", "triage", "profile", "passages"])
     parser.add_argument("folder", type=Path)
     parser.add_argument("--providers", default="claude,openai")
     parser.add_argument("--sizes", default="medium,large")
     parser.add_argument("--prompts", choices=["local", "firestore"], default="local")
+    parser.add_argument("--max-chunks", type=int, default=4)
     return parser.parse_args(argv)
 
 
@@ -320,6 +470,11 @@ async def run(argv: Optional[List[str]] = None, *, keys: Optional[Mapping[str, O
             splitter = SubprocessContentExtractor()
         await check_read(args.folder, providers, registry=registry, assembly=assembly, splitter=splitter,
                          out_dir=out_dir)
+    elif args.mode == "profile":
+        await check_profile(args.folder, providers, registry=registry, assembly=assembly, out_dir=out_dir)
+    elif args.mode == "passages":
+        await check_passages(args.folder, providers, registry=registry, assembly=assembly, out_dir=out_dir,
+                             max_chunks=args.max_chunks)
     else:
         await check_triage(args.folder, providers, [s.strip() for s in args.sizes.split(",") if s.strip()],
                            registry=registry, assembly=assembly, out_dir=out_dir)

@@ -25,7 +25,7 @@ def repo(db, mock_env_config):
 def _declared_indexes(collection="development_drive_index_records"):
     raw = json.loads((_ROOT / "config" / "firestore.indexes.json").read_text())
     return [[(f["fieldPath"], f.get("order") or f.get("arrayConfig") or "VECTOR") for f in idx["fields"]]
-            for idx in raw if idx["collectionGroup"] == collection]
+            for idx in raw if idx["collectionGroup"] == collection and "fields" in idx]   # not the exemptions
 
 
 def _required_index(ops):
@@ -76,8 +76,10 @@ async def test_every_record_query_has_a_declared_index(repo, db):
 def test_indexes_are_declared_for_the_live_collection_only():
     # 21 composites (incl. the readable-chunk sum's, §24.6; chunk_capped's and count_unread's three, §5.4, §10.2;
     # count_unread's three for images triaged as text, review D-M4; the not-read-yet count's two, documents and text
-    # images, final review F5-2) + 2 vector entries
-    assert len(_declared_indexes()) == 23
+    # images, final review F5-2) + 8 Search v2 composites (§25.2.5: about, about by kind, expiring, enrichment queue,
+    # wake-ups, profile and passages state counts, keys pending) + 2 per-job enrichment queues (P5 review MINOR 6)
+    # + 2 vector entries
+    assert len(_declared_indexes()) == 33
     assert _declared_indexes("drive_index_records") == []   # RFC Δ22: the unprefixed collections were deleted
 
 
@@ -108,11 +110,15 @@ def _deploy_commands():
 
 
 def test_deploy_creates_the_drive_composites_and_leaves_the_vectors_to_their_script():
-    drive = [c for c in _deploy_commands() if "--collection-group=development_drive_index_records" in c]
+    records = [c for c in _deploy_commands() if "--collection-group=development_drive_index_records" in c]
+    drive = [c for c in records if c[3] == "composite"]   # the v2 single-field exemptions are `fields update` (§25.2.5)
+    assert len(records) == len(drive) + 8 and all(c[3] == "fields" and "--disable-indexes" in c
+                                                  for c in records if c not in drive)
     declared = [i for i in _declared_indexes() if not any(mode == "VECTOR" for _, mode in i)]
     # +1 readable_chunk_total's sum, +1 chunk_capped, +3 count_unread, +3 count_unread over text images (review D-M4),
-    # +2 the not-read-yet count over documents and text images (F5-2); the 2 vector entries: create_drive_vector_indexes.sh
-    assert len(drive) == len(declared) == 21
+    # +2 the not-read-yet count over documents and text images (F5-2), +8 Search v2 (§25.2.5), +2 per-job enrichment
+    # queues (P5 review MINOR 6); the 2 vector entries: create_drive_vector_indexes.sh
+    assert len(drive) == len(declared) == 31
     not_read_yet = [c for c in drive if "--field-config=field-path=card_capped,order=ascending" in c
                     and "--field-config=field-path=indexed_generation,order=ascending" in c]
     assert len(not_read_yet) == 2

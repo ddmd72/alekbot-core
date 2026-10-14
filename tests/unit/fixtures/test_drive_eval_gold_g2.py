@@ -17,7 +17,9 @@ from scripts.validation.drive_eval import fixture_texts as T
 from scripts.validation.drive_eval.fixture_drive import FixtureDrive
 from scripts.validation.drive_eval.metrics import expected_substrings, normalize_snippet
 from scripts.validation.drive_eval.runner import validate_gold
-from src.domain.drive_name_keys import name_keys, name_match, query_name_keys
+from src.domain.drive_keys import name_keys_v2, name_match_v2, name_word_concepts, query_concepts
+from src.domain.drive_tier_pool import concept_trigrams
+from src.domain.drive_tiers import name_query_keys
 
 _DIR = Path(__file__).resolve().parents[2] / "fixtures" / "drive_eval"
 
@@ -90,9 +92,17 @@ def test_g2_covers_what_the_rfc_names():
     assert all(c["goal"] == "G2" for c in g2) and len(g2) >= 25
 
 
+def _query_name_keys(query):
+    """The name keys the search queries with (v2: the v1 `query_name_keys` is retired, xc m3/m4)."""
+    concepts = query_concepts(query).concepts
+    if not concepts:           # xc F2: a query of ignored words only is searched by name, whole keys alone
+        return [k for c in name_word_concepts(query) for k in name_query_keys(c)]
+    return [k for c in concepts for k in (*name_query_keys(c), *concept_trigrams(c))]
+
+
 def test_ocr_g1_cases_find_by_subject_only():
     ocr = [c for c in _gold("gold_g1.json") if c.get("ocr")]
     assert len(ocr) >= 4
     for case in ocr:
         for path in case["expected_paths"]:
-            assert name_match(name_keys(path.rsplit("/", 1)[-1]), query_name_keys(case["query"])) is None, case["id"]
+            assert name_match_v2(name_keys_v2(path.rsplit("/", 1)[-1]), _query_name_keys(case["query"])) is None, case["id"]

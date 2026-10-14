@@ -69,7 +69,11 @@ class ExtractionOutcome:
     detail: str = ""             # for the log line only, never shown to the user
     model_calls: int = 0         # reader calls made for this file (tick summary, §24.9)
     model_cost: float = 0.0      # their cost in USD, already billed to the account (§24.9)
+    model_fallback_cost: float = 0.0   # of it, what the fallback served (the fallback alert, §25.4.5, XC-5)
     pages_refused: int = 0       # PDF pages the provider refused even alone (413/400/422), skipped (R3-P1)
+    # Parser@2 (§25.3): a `text` outcome of an HTML page whose text is under 1 % of its bytes. Its text is then
+    # mostly the page's metadata lines; the profile is a `template` (doc_type web_page) and it gets no doc2query.
+    script_rendered: bool = False
 
 
 class PdfSplitFailed(Exception):
@@ -95,13 +99,14 @@ class DriveModelUnavailable(Exception):
     permission, model id, quota), a network failure, an open breaker."""
 
     def __init__(self, message: str = "", *, pages_sent: int = 0, images_sent: int = 0, model_calls: int = 0,
-                 model_cost: float = 0.0, charges_file: bool = True) -> None:
+                 model_cost: float = 0.0, model_fallback_cost: float = 0.0, charges_file: bool = True) -> None:
         super().__init__(message)
         self.charges_file = charges_file
         self.pages_sent = pages_sent
         self.images_sent = images_sent
         self.model_calls = model_calls
         self.model_cost = model_cost
+        self.model_fallback_cost = model_fallback_cost   # the fallback's share of model_cost (XC-5)
 
 
 @dataclass(frozen=True)

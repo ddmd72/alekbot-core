@@ -4,7 +4,7 @@ DriveDocumentReaderAgent — reads one PDF window or one image for the drive ind
 
 Public interface:
     AGENT_TYPE = "drive_reader"
-    ReaderReply(text, brief, output_limited, cost, calls)
+    ReaderReply(text, brief, output_limited, cost, calls, fallback_cost)
     DriveDocumentReaderAgent(config, execution_context, prompt_builder, thinking=None)
         .read(data=, mime_type=, file_name=, first_window=, account_id=) -> ReaderReply
             raises DriveModelCallFailed (this input) or DriveModelUnavailable (the model, now), each carrying the
@@ -37,7 +37,7 @@ from ..ports.prompt_builder_port import PromptBuilderPort
 from ..utils.logger import logger
 from .base_agent import BaseAgent
 from ..infrastructure.drive_model_call import (
-    CallCounter, DriveModelCallFailed, build_drive_prompt, classify_model_error, with_usage,
+    CallCounter, DriveModelCallFailed, build_drive_prompt, classify_model_error, ledger_spend, with_usage,
 )
 
 AGENT_TYPE = "drive_reader"
@@ -97,6 +97,7 @@ class ReaderReply:
     output_limited: bool = False      # stopped at the output limit: the runner splits the window (§24.3)
     cost: float = 0.0                 # USD, already billed to the account
     calls: int = 1                    # LLM calls made, the parse retry included
+    fallback_cost: float = 0.0        # of `cost`, what the fallback served (the fallback alert, XC-5)
 
 
 class DriveDocumentReaderAgent(BaseAgent):
@@ -106,6 +107,7 @@ class DriveDocumentReaderAgent(BaseAgent):
         super().__init__(config)
         self._llm = execution_context.provider
         self._model_name = execution_context.model_name
+        self._fallback_model = execution_context.fallback_model_name
         self._prompt_builder = prompt_builder
         self._thinking = thinking or DRIVE_READER.thinking
         self._system: Optional[str] = None
@@ -129,13 +131,16 @@ class DriveDocumentReaderAgent(BaseAgent):
             try:
                 reply = await self._read(data, mime_type, file_name, first_window, counter)
             except Exception as exc:
-                mapped = with_usage(classify_model_error(exc, AGENT_TYPE), counter, ledger.cost())
+                spend = ledger_spend(ledger, primary_model=self._model_name, fallback_model=self._fallback_model)
+                mapped = with_usage(classify_model_error(exc, AGENT_TYPE), counter, spend.usd,
+                                    fallback_cost=spend.fallback_usd, model=spend.model)
                 if mapped is exc:
                     raise
                 raise mapped from exc
             finally:
                 await self._flush_billing()
-            return replace(reply, cost=ledger.cost(), calls=counter.calls)
+            spend = ledger_spend(ledger, primary_model=self._model_name, fallback_model=self._fallback_model)
+            return replace(reply, cost=spend.usd, fallback_cost=spend.fallback_usd, calls=counter.calls)
 
     # -- implementation -----------------------------------------------------------------------------------------
 

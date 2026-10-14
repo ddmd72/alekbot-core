@@ -16,10 +16,12 @@ missing state counts as one with none). Anything else raises `drive_index.LeaseL
 outlived its lease cannot purge or overwrite the state of the tick that took over.
 """
 from abc import ABC, abstractmethod
-from datetime import datetime
+from datetime import date, datetime
 from typing import AbstractSet, Dict, List, Mapping, Optional, Sequence, Tuple
 
+from src.domain.drive_enrichment import DriveHintDoc, InitialBuild, ModelUsageMonth
 from src.domain.drive_index import DriveChunk, DriveIndexRecord, DriveSyncState, RecordState
+from src.domain.drive_index_lean import ChunkId, DriveChunkLean, DriveHintLean, DriveRecordLean
 
 
 class DriveIndexRepository(ABC):
@@ -41,8 +43,11 @@ class DriveIndexRepository(ABC):
 
     @abstractmethod
     async def update_sync_flags(self, user_id: str, *, stale_alerted: Optional[bool] = None,
-                                reconnect_notified: Optional[bool] = None) -> None:
-        """Field-level update of the fan-out's flags; a missing state is left missing."""
+                                reconnect_notified: Optional[bool] = None, migration_alerted: Optional[bool] = None,
+                                stall_alerted: Optional[bool] = None,
+                                fallback_alerted_day: Optional[str] = None) -> None:
+        """Field-level update of the fan-out's flags (the v1 two and Search v2's three alert flags, §25.8); a missing
+        state is left missing. `save_sync_state` never writes them."""
 
     @abstractmethod
     async def delete_sync_state(self, user_id: str, owner: Optional[str] = None) -> None:
@@ -176,14 +181,14 @@ class DriveIndexRepository(ABC):
     async def find_nearest_chunks(self, user_id: str, vector: Sequence[float], limit: int,
                                   kind: Optional[str] = None) -> List[Tuple[DriveChunk, float]]:
         """Chunk kNN under the user (+ kind) pre-filter; (chunk, cosine distance), nearest first. Not fenced.
-        `text` and `content_terms` may be empty: windows are read with `get_chunks`."""
+        `text`, `content_terms`, `word_keys` and `keys_version` may be empty: windows are read with `get_chunks`."""
 
     @abstractmethod
     async def find_chunks_by_term(self, user_id: str, term: str, limit: int,
                                   kind: Optional[str] = None) -> List[DriveChunk]:
         """Chunks whose `content_terms` contain `term` (one array-contains query), ordered by
-        (item_id, generation, index). Not fenced. `text` and `content_terms` may be empty: windows are read with
-        `get_chunks`."""
+        (item_id, generation, index). Not fenced. `text`, `content_terms`, `word_keys` and `keys_version` may be
+        empty: windows are read with `get_chunks`."""
 
     @abstractmethod
     async def find_next_file_with_term(self, user_id: str, term: str, after_item_id: str,
@@ -204,8 +209,8 @@ class DriveIndexRepository(ABC):
                                       text: bool = True, terms: bool = True,
                                       vectors: bool = True) -> List[Tuple[DriveChunk, List[float]]]:
         """`get_chunks` with each chunk's vector, by index (folder-scoped chunk ranking in memory, §10.1). A field
-        not asked for is not read: `text` / `content_terms` come back empty, and the vector as [] (the ranking
-        reads only what it ranks with)."""
+        not asked for is not read: `text` / `content_terms` come back empty (`terms=False` leaves out the v2
+        `word_keys` too), and the vector as [] (the ranking reads only what it ranks with)."""
 
     @abstractmethod
     async def readable_chunk_total(self, user_id: str) -> int:
@@ -215,8 +220,154 @@ class DriveIndexRepository(ABC):
     async def chunks_page(self, user_id: str, after: Optional[Tuple[str, int, int]],
                           limit: int) -> List[DriveChunk]:
         """The user's chunks ordered by (item_id, generation, index), starting after the key `after` (the sweep's
-        chunk backstop, §7.5)."""
+        chunk backstop, §7.5). Ids only: `text`, `char_start`/`char_end`, `content_terms`, `word_keys` and
+        `keys_version` may come back empty (a v2 chunk carries up to 900 keys)."""
 
     @abstractmethod
     async def delete_user_chunks(self, user_id: str, limit: int) -> int:
-        """Delete up to `limit` of the user's chunks; returns how many were deleted (purge)."""
+        """Delete up to `limit` of the user's chunks; returns how many were deleted (purge: after the user's hint
+        documents, before the records and the sync state, §25.2.2)."""
+
+
+    # -- Search v2 (§25.13.1) -----------------------------------------------------------------------------------
+    # Frozen signatures, implemented by both adapters (parity tests on order, limits and cursors:
+    # tests/unit/adapters/test_drive_index_v2_parity.py). Conventions:
+    #   - a "lean" read projects only the DriveRecordLean / DriveChunkLean / DriveHintLean fields (§25.13.3);
+    #   - `valid_until` is stored as 00:00 UTC of the printed date; a `date` argument means 00:00 UTC of that date;
+    #   - an item-id cursor (`after`, `after_item_id`) starts strictly after that item; reads are never fenced;
+    #   - a key list takes at most CONCEPT_KEYS_MAX (30) distinct keys, Firestore's limit for one query; more is a
+    #     ValueError (logged), never a silent cut: the caller splits its lists (§25.5.1).
+
+    @abstractmethod
+    async def find_by_about_keys(self, user_id: str, keys: Sequence[str], limit: int, *, kind: Optional[str] = None,
+                                 date_from: Optional[datetime] = None, date_to: Optional[datetime] = None,
+                                 after: Optional[str] = None) -> List[DriveRecordLean]:
+        """Records whose `about_keys` contain any of `keys` (at most CONCEPT_KEYS_MAX distinct; more is a ValueError),
+        ordered by (effective_date DESC, item_id
+        DESC), records without an `effective_date` last; a single `kind` through its composite; `date_from` /
+        `date_to` inclusive on `effective_date` (a record without one is then excluded). `after` is the item id of
+        the previous page's last record: the page starts after that record's stored (effective_date, item_id); a
+        cursor record that no longer exists ends the paging (an empty page) (§25.5.2)."""
+
+    @abstractmethod
+    async def find_expiring(self, user_id: str, keys: Sequence[str], after_date: date,
+                            limit: int) -> List[DriveRecordLean]:
+        """Records whose `about_keys` contain any of `keys` (at most CONCEPT_KEYS_MAX distinct; more is a ValueError)
+        and whose `valid_until` >= 00:00 UTC of `after_date`,
+        ordered by (valid_until ASC, item_id ASC) (§25.5.4 validity words)."""
+
+    @abstractmethod
+    async def find_chunks_by_word_keys(self, user_id: str, keys: Sequence[str], limit: int,
+                                       after_item_id: Optional[str] = None) -> List[DriveChunkLean]:
+        """Chunks whose `word_keys` contain any of `keys` (at most CONCEPT_KEYS_MAX distinct; more is a ValueError),
+        ordered by (item_id, generation, index), starting past every
+        chunk of the item `after_item_id` (§25.5.2)."""
+
+    @abstractmethod
+    async def get_chunk_keys(self, user_id: str, ids: Sequence[ChunkId]) -> Dict[ChunkId, Tuple[str, ...]]:
+        """The `word_keys` of the chunks among `ids` that exist, read by id. A candidate's chunk ids come only from
+        the word pages that named it (§25.5.2); there is no per-item word-key read."""
+
+    @abstractmethod
+    async def find_hints_by_keys(self, user_id: str, keys: Sequence[str], limit: int,
+                                 after_item_id: Optional[str] = None) -> List[DriveHintLean]:
+        """Hint documents whose `hint_keys` contain any of `keys` (at most CONCEPT_KEYS_MAX distinct; more is a
+        ValueError), ordered by (item_id, generation, index), starting
+        past every hint document of the item `after_item_id` (§25.5.2, §25.5.6)."""
+
+    @abstractmethod
+    async def get_hint_keys(self, user_id: str, ids: Sequence[ChunkId]) -> Dict[ChunkId, Tuple[str, ...]]:
+        """The `hint_keys` of the hint documents among `ids` that exist, read by id (candidate coverage, without
+        their items)."""
+
+    @abstractmethod
+    async def find_nearest_hints(self, user_id: str, vector: Sequence[float], limit: int,
+                                 kind: Optional[str] = None) -> List[Tuple[DriveHintLean, float]]:
+        """Hint kNN under the user (+ kind) pre-filter; (hint, cosine distance), nearest first."""
+
+    @abstractmethod
+    async def get_hints(self, user_id: str, item_id: str, generation: int) -> List[DriveHintDoc]:
+        """Every hint document of one generation of an item, by index (windows, hint reuse)."""
+
+    @abstractmethod
+    async def get_hints_with_vectors(self, user_id: str, item_id: str,
+                                     generation: int) -> List[Tuple[DriveHintDoc, List[float]]]:
+        """`get_hints` with each document's `hint_vector`, by index: the keys pass and hint reuse copy a document into
+        a new generation without re-embedding it (§25.4.7, §25.4.8)."""
+
+    @abstractmethod
+    async def write_hints(self, docs: Sequence[DriveHintDoc], vectors: Sequence[Sequence[float]]) -> None:
+        """Write hint documents with their `hint_vector` (`vectors[i]` belongs to `docs[i]`; the lengths must match),
+        in batches of at most WRITE_BATCH_BYTES and RECORD_WRITE_BATCH documents (§25.2.6). A document with the same
+        key is replaced."""
+
+    @abstractmethod
+    async def delete_hints_except(self, user_id: str, item_id: str, keep_generation: Optional[int]) -> int:
+        """Delete the item's hint documents of every generation but `keep_generation` (None: all of them); returns
+        how many were deleted. Runs before `delete_chunks_except` (§25.2.2)."""
+
+    @abstractmethod
+    async def delete_user_hints(self, user_id: str, limit: int) -> int:
+        """Delete up to `limit` of the user's hint documents; returns how many (purge, first; rollback)."""
+
+    @abstractmethod
+    async def hints_page(self, user_id: str, after: Optional[ChunkId], limit: int) -> List[DriveHintLean]:
+        """The user's hint documents ordered by (item_id, generation, index), starting after the key `after` (the
+        sweep, §25.2.2)."""
+
+    @abstractmethod
+    async def enrich_queue(self, user_id: str, limit: int, job: Optional[str] = None) -> List[DriveIndexRecord]:
+        """Records with `enrich_ready`, ordered by (effective_day DESC, parent_id, item_id) (§25.4.5). With `job` (an
+        EnrichJob value): only the records whose job of that name is `ready`, in the same order (one agent type's own
+        queue while the other's is backed off)."""
+
+    @abstractmethod
+    async def enrich_wakeups(self, user_id: str, now: datetime, limit: int) -> List[DriveIndexRecord]:
+        """Records with `enrich_wake_at <= now`, earliest first (§25.4.5)."""
+
+    @abstractmethod
+    async def count_describe_gaps(self, user_id: str) -> Dict[str, int]:
+        """Records per non-empty derived `describe_gap` ("waiting", "held", "no_passages"): the coverage line's
+        enrichment counts, stored by the tick (§25.5.6, XC-3, XC-9). A value with no record is left out."""
+
+    @abstractmethod
+    async def count_by_job_state(self, user_id: str, kinds: AbstractSet[str]) -> Dict[str, Dict[str, int]]:
+        """Records of a kind in `kinds` counted per job and state: EnrichJob value -> JobState value -> count (the
+        coverage line, §25.5.6)."""
+
+    @abstractmethod
+    async def keys_pending_page(self, user_id: str, after: Optional[str], limit: int) -> List[DriveIndexRecord]:
+        """Records with `keys_pending`, ordered by item_id, starting after the item `after` (§25.4.5)."""
+
+    @abstractmethod
+    async def get_records_lean(self, user_id: str, item_ids: Sequence[str]) -> Dict[str, DriveRecordLean]:
+        """The lean projections of the records that exist among `item_ids`, keyed by item id (§25.13.3)."""
+
+    @abstractmethod
+    async def get_model_usage(self, user_id: str, month: str) -> ModelUsageMonth:
+        """The user's usage document for `month` ("YYYY-MM"); `ModelUsageMonth()` when none is stored (§25.4.5)."""
+
+    @abstractmethod
+    async def add_model_usage(self, user_id: str, month: str, day: str, cls: str, usd: float, fallback_usd: float,
+                              calls: int, covered_usd: float = 0.0) -> None:
+        """Atomically add `usd` to the month's `<cls>_usd` (`cls` a UsageClass value), `fallback_usd` and `calls`
+        to theirs, `covered_usd` (the share of `usd` the initial build paid) to `<cls>_initial_usd`, and
+        (usd, fallback_usd) to `daily[day]` ("YYYY-MM-DD"). Not idempotent: a call that fails after
+        its write committed (an ambiguous timeout, DriveIndexStoreUnavailable) may have added, so a caller must not
+        retry it blindly; a retry over-counts (the safe direction: a cap closes early)."""
+
+    @abstractmethod
+    async def get_initial_build(self, user_id: str) -> InitialBuild:
+        """The user's initial-build document; when none is stored, an unopened one with INITIAL_BUILD_USD as its
+        allowance (D27). Reading never writes."""
+
+    @abstractmethod
+    async def spend_initial_build(self, user_id: str, usd: float, now: datetime) -> Tuple[InitialBuild, float]:
+        """Transactional: cover as much of `usd` as the allowance has left, opening the build at `now` if new and
+        closing it at `now` when the allowance is spent; returns (the build after, the dollars covered). The rest of
+        `usd` belongs to the monthly class. A closed build covers 0 and writes nothing (D27). Not idempotent, like
+        `add_model_usage`: a caller must not retry it blindly after a store error."""
+
+    @abstractmethod
+    async def close_initial_build(self, user_id: str, now: datetime) -> None:
+        """Close the initial build at `now`; an already closed build keeps its `closed_at`. It never reopens (D27)."""

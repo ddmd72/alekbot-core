@@ -33,6 +33,13 @@ def _drive_block(body):
     raise AssertionError("drive_specialist block is not closed")
 
 
+def _skill_body():
+    # the drive rules now live in the drive-search system skill, not in the protocol token (owner decision 2026-10-14)
+    from pathlib import Path
+    from src.adapters.filesystem_skill_loader import load_system_skills
+    return next(s for s in load_system_skills(Path(_ROOT) / "src" / "skills" / "smart") if s.name == "drive-search").body
+
+
 def test_smarts_profile_assigns_this_token():
     with open(_PROFILE, encoding="utf-8") as fh:
         assert "PROTOCOL_AGENT_SELECTION:" in fh.read()
@@ -52,7 +59,9 @@ _LINES = {
     "index_as_of / stale: open before quoting": "open the file (it is read live) before quoting it",
     "building: never say it does not exist": "never say a document does not exist",
     "unread / truncated / names only: say what was not searched": "says what was not searched",
-    "folder card: search or list within it": "When a folder card matches",
+    # Search v2 P6 (RFC §25.5.6): the folder rule keys on the About tier, the shortened rule on a cut window; new tiers line
+    "folder card: search or list within it": "When a folder card is shown under About",
+    "tiers: how each file matched": "Drive results say how each file matched.",
     "sums and totals: open, then compute (review E-M2)": "open the file, then compute from the opened text",
     "document authority vs memory": "does not override memory about the user's current situation",
     "version families: never pick silently": "never pick silently",
@@ -60,13 +69,18 @@ _LINES = {
     # Final review F5-4: the retry fires when the file asked for is not shown, not only on zero results
     "dates: a date-filtered search that misses the file is retried without the filter":
         "If a date-filtered search does not show the file asked for, search again without the filter.",
-    "shortened passage: open before quoting (review E minor)": "If a passage is marked shortened, open the file",
+    "shortened passage: open before quoting (review E minor)": "Before quoting more than it shows, open the file.",
 }
 
 
 def test_every_protocol_line_is_said_once():
+    # only the search trigger stays in the protocol block; every other line is said once in the skill body
     block = _drive_block(ser.token_from_file(_text())["content"])
-    assert {line: block.count(phrase) for line, phrase in _LINES.items()} == {line: 1 for line in _LINES}
+    body = _skill_body()
+    trigger = "search when the answer may be in the user's documents"
+    assert block.count(_LINES[trigger]) == 1
+    rest = {line: phrase for line, phrase in _LINES.items() if line != trigger}
+    assert {line: body.count(phrase) for line, phrase in rest.items()} == {line: 1 for line in rest}
 
 
 def test_the_block_does_not_restate_the_tool_contract():

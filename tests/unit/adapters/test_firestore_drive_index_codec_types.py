@@ -1,6 +1,7 @@
 """FirestoreDriveIndexRepository codec: every timestamp Firestore hands back (DatetimeWithNanoseconds) is read as a
 plain tz-aware UTC `datetime`, including the one nested in a document brief (USER_DRIVE_INDEXING_RFC §3.2, §3.5,
 §24.4). Equality cannot prove this — DatetimeWithNanoseconds compares equal to datetime — so the type is asserted."""
+import collections.abc
 import typing
 from dataclasses import fields
 from datetime import datetime, timedelta, timezone
@@ -30,11 +31,21 @@ def _stored(value):
     return value
 
 
+def _is_map(hint) -> bool:
+    return typing.get_origin(hint) in (dict, collections.abc.Mapping)
+
+
 def _datetime_fields(cls) -> typing.List[str]:
     """Every field typed datetime / Optional[datetime], found by type so a new timestamp field is covered."""
     hints = typing.get_type_hints(cls)
     return [f.name for f in fields(cls)
-            if hints[f.name] is datetime or datetime in typing.get_args(hints[f.name])]
+            if hints[f.name] is datetime or (datetime in typing.get_args(hints[f.name]) and not _is_map(hints[f.name]))]
+
+
+def _datetime_map_fields(cls) -> typing.List[str]:
+    """Every field typed Mapping[str, datetime] (§25.4.6 `model_backoff_by_agent`), found by type likewise."""
+    hints = typing.get_type_hints(cls)
+    return [f.name for f in fields(cls) if _is_map(hints[f.name]) and typing.get_args(hints[f.name])[1:] == (datetime,)]
 
 
 def _assert_plain_utc(value, name):
@@ -45,6 +56,8 @@ def _assert_plain_utc(value, name):
 def test_both_models_have_timestamp_fields():
     assert "defer_until" in _datetime_fields(DriveIndexRecord)
     assert "model_backoff_until" in _datetime_fields(DriveSyncState)
+    assert _datetime_map_fields(DriveSyncState) == ["model_backoff_by_agent"]
+    assert not _datetime_map_fields(DriveIndexRecord)
 
 
 @pytest.mark.parametrize("name", _datetime_fields(DriveIndexRecord))
@@ -65,6 +78,20 @@ def test_state_timestamp_reads_back_as_plain_utc_datetime(name):
     back = getattr(state_from_doc("u", doc), name)
     _assert_plain_utc(back, name)
     assert back == T
+
+
+@pytest.mark.parametrize("name", _datetime_map_fields(DriveSyncState))
+def test_state_timestamp_map_reads_back_as_plain_utc_datetimes(name):
+    """A map of timestamps: every value Firestore hands back is read as a plain UTC datetime, keys kept."""
+    written = {"drive_reader": T, "drive_profiler": T + timedelta(minutes=5)}
+    state = DriveSyncState(user_id="u", **{name: written})
+    doc = _stored(state_to_doc(state))
+    assert {type(v) for v in doc[name].values()} == {DatetimeWithNanoseconds}
+    back = getattr(state_from_doc("u", doc), name)
+    assert set(back) == set(written)
+    for key, value in back.items():
+        _assert_plain_utc(value, f"{name}[{key}]")
+    assert dict(back) == written
 
 
 def test_brief_doc_date_reads_back_as_plain_utc_datetime():

@@ -1,17 +1,20 @@
-"""search_files_in_drive's date rule after review E-M3 (USER_DRIVE_INDEXING_RFC §24.10, D13): one distinction, the same
-sentence in drive_query and drive_date_from, with no per-kind subtlety (which date a scan's filter matches) in
-model-facing text; the Context template names what can be searched inside."""
+"""search_files_in_drive's date rule (USER_DRIVE_INDEXING_RFC §24.10, D13; Search v2 D25, §25.5.7, §25.13.6): a time
+span goes in the date fields, both date fields say the same thing about which date they match, with no per-kind
+subtlety (which date a scan's filter matches) in model-facing text; the Context template names what can be searched
+inside."""
 from src.infrastructure.agent_manifest import FILE_MANAGEMENT, Intent
 
-RULE = ("Dates written inside the document go in drive_query; use the date filters only when the user limits when "
-        "the file is dated.")
+RULE = ("a photo's taken date, otherwise the date written in the document when the index found one, otherwise the "
+        "file's date. Use it for a time span the user gives.")
 _SCHEMA = FILE_MANAGEMENT.context_schemas[Intent.SEARCH_FILES_IN_DRIVE]
 _DESCRIPTION = FILE_MANAGEMENT.capability_descriptions[Intent.SEARCH_FILES_IN_DRIVE]
 
 
 def test_the_rule_is_the_same_sentence_in_both_fields():
-    assert _SCHEMA["drive_query"].count(RULE) == 1
+    # D25: the span itself is sent from drive_query to the date fields, and both date fields name the same date
+    assert "goes in drive_date_from / drive_date_to, not in the words" in _SCHEMA["drive_query"]
     assert _SCHEMA["drive_date_from"].count(RULE) == 1
+    assert _SCHEMA["drive_date_to"].count(RULE) == 1
 
 
 def test_no_per_kind_date_subtlety_reaches_the_model():
@@ -22,9 +25,10 @@ def test_no_per_kind_date_subtlety_reaches_the_model():
 
 
 def test_the_date_filter_still_says_photos_go_by_when_they_were_taken():
-    assert "when a photo was taken" in _SCHEMA["drive_date_from"]
+    assert "a photo's taken date" in _SCHEMA["drive_date_from"]
 
 
 def test_the_context_template_names_what_to_find_inside():
     template = _DESCRIPTION[_DESCRIPTION.index("Context: "):]
-    assert '"drive_query": "<name words, a place or subject, or words, a number or an amount to find inside>"' in template
+    assert ('"drive_query": "<the subject, a document type or purpose, or words, a number or an amount to find '
+            'inside>"') in template

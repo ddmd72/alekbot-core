@@ -74,7 +74,8 @@ class SubprocessContentExtractor(ContentExtractorPort):
     """The `parser` link of every extractor chain; also counts a routed PDF's pages and cuts its page windows for
     the reader, one window per call (§24.3)."""
 
-    VERSION = 1
+    # 2: parser@2's HTML policy (§25.3, D23). A bump re-extracts every parser-decided record (§25.4.8).
+    VERSION = 2
 
     def __init__(self, *, memory_limit_bytes: int = EXTRACT_MEMORY_LIMIT_BYTES,
                  cpu_limit_s: int = EXTRACT_CPU_LIMIT_S, wall_timeout_s: float = EXTRACT_WALL_TIMEOUT_S,
@@ -252,8 +253,9 @@ class SubprocessContentExtractor(ContentExtractorPort):
             text = result.get("text", "")
             pages_total = result.get("pages_total", 0)
             truncated = result.get("truncated", False)
+            script_rendered = result.get("script_rendered", False)
             if (status not in _CHILD_STATUSES or not isinstance(text, str) or not isinstance(pages_total, int)
-                    or pages_total < 0 or not isinstance(truncated, bool)):
+                    or pages_total < 0 or not isinstance(truncated, bool) or not isinstance(script_rendered, bool)):
                 raise ValueError("bad field")
         except (KeyError, ValueError, TypeError):
             logger.warning("[DriveExtract] child result has an invalid shape")
@@ -262,9 +264,11 @@ class SubprocessContentExtractor(ContentExtractorPort):
             text, truncated = text[:MAX_TEXT_CHARS], True
         if status is ExtractionStatus.TEXT and not text.strip():
             status = ExtractionStatus.NO_TEXT
-        return ExtractionOutcome(status=status, text=text if status is ExtractionStatus.TEXT else "",
+        is_text = status is ExtractionStatus.TEXT
+        return ExtractionOutcome(status=status, text=text if is_text else "",
                                  pages_total=pages_total, truncated=truncated, extracted_by=self.stamp,
-                                 detail=str(result.get("detail", ""))[:300])
+                                 detail=str(result.get("detail", ""))[:300],
+                                 script_rendered=is_text and script_rendered)
 
     async def _pdf_op(self, payload: Mapping[str, Any]) -> Dict[str, Any]:
         """The child's result of a page-window op, or PdfSplitFailed with the outcome status."""

@@ -28,12 +28,13 @@ async def test_gate_chunker_and_terms_run_off_the_event_loop(w, monkeypatch):
             return fn(*args, **kwargs)
         return run
 
-    for name in ("is_machine_text", "chunk_text", "content_terms"):
+    # Search v2 (§25.2.2): a chunk's terms are its word keys (`word_keys_capped`), the v1 `content_terms` retired
+    for name in ("is_machine_text", "chunk_text", "word_keys_capped"):
         monkeypatch.setattr(svc_mod, name, watched(getattr(svc_mod, name)))
     doc = w.add_doc("notes.md", prose(80))
     await w.settle()
     assert w.rec(doc).state is RecordState.INDEXED
-    assert {name for name, _ in on_loop} == {"is_machine_text", "chunk_text", "content_terms"}
+    assert {name for name, _ in on_loop} == {"is_machine_text", "chunk_text", "word_keys_capped"}
     assert not any(main for _, main in on_loop)
 
 
@@ -50,21 +51,24 @@ def _read(pages):
                              pages_total=pages, pages_sent=pages, model_calls=1)
 
 
-async def _pages_used(w, used):
-    from dataclasses import replace
+async def _pages_left(w, left):
+    """Search v2 (§25.4.5): the initial build is over and the month's reader dollars pay `left` pages."""
+    from src.domain.drive_enrichment import UsageClass
+    from src.domain.drive_index_params import READER_PAGE_USD_ESTIMATE, READER_USD_PER_MONTH
+
+    from .drive_usage_helpers import close_initial_build, spend
     await w.settle()   # a sync state exists
-    state = await w.repo.get_sync_state("u")
-    await w.repo.save_sync_state(replace(state, usage_month="2026-10", model_pages_used=used))
+    await close_initial_build(w.repo, w.clock.now)
+    await spend(w.repo, UsageClass.READER, READER_USD_PER_MONTH - left * READER_PAGE_USD_ESTIMATE, w.clock.now)
 
 
 async def test_a_scan_needing_more_pages_than_are_left_waits_for_next_month(w):
     from datetime import datetime, timezone
 
     from src.domain.drive_index import Priority
-    from src.domain.drive_index_params import MODEL_EXTRACT_PAGES_PER_MONTH
     w.parser.outcomes["scan.pdf"] = _scan(12)
     w.reader.outcomes["scan.pdf"] = _read(12)
-    await _pages_used(w, MODEL_EXTRACT_PAGES_PER_MONTH - 5)
+    await _pages_left(w, 5)
     doc = w.add_doc("scan.pdf", "")
     await w.settle()
     rec = w.rec(doc)
@@ -77,10 +81,9 @@ async def test_a_scan_needing_more_pages_than_are_left_waits_for_next_month(w):
 
 
 async def test_a_scan_that_fits_in_the_pages_left_is_read_now(w):
-    from src.domain.drive_index_params import MODEL_EXTRACT_PAGES_PER_MONTH
     w.parser.outcomes["scan.pdf"] = _scan(5)
     w.reader.outcomes["scan.pdf"] = _read(5)
-    await _pages_used(w, MODEL_EXTRACT_PAGES_PER_MONTH - 5)
+    await _pages_left(w, 5)
     doc = w.add_doc("scan.pdf", "")
     await w.settle()
     assert w.rec(doc).state is RecordState.INDEXED and w.reader.requests[0].max_model_pages == 5

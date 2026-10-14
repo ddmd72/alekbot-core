@@ -64,8 +64,10 @@ def build_drive_task_queue(config: Mapping[str, Any], env_config: EnvironmentCon
 
 
 def build_place_lookup() -> PlaceOf:
-    """Offline place names from the bundled city table (§5.3, RFC Δ7); loaded once per process."""
-    return PlaceIndex(load_place_rows()).lookup
+    """Offline places from the bundled city table (§5.3, RFC Δ7; geo table v2, §25.4.3): the display name and its
+    `place_forms` (PlaceIndex.place), which the planner writes together with the geo v2 stamp. Loaded once per
+    process."""
+    return PlaceIndex(load_place_rows()).place
 
 
 def build_drive_sync_scheduler(*, repo: DriveIndexRepository, queue: TaskQueue, drive: UserDrivePort,

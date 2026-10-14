@@ -30,12 +30,12 @@ def _run(tmp_path, *answers):
     return proc, calls
 
 
-# Four indexes: two card vector indexes, then two chunk vector indexes (§24.6).
-@pytest.mark.parametrize("answers", [("ok",) * 4, ("exists",) * 4, ("exists", "ok", "exists", "ok")])
+# Six indexes: two card vector indexes, two chunk vector indexes (§24.6), then two hint vector indexes (§25.2.5).
+@pytest.mark.parametrize("answers", [("ok",) * 6, ("exists",) * 6, ("exists", "ok", "exists", "ok", "exists", "ok")])
 def test_created_or_already_existing_is_success(tmp_path, answers):
     proc, calls = _run(tmp_path, *answers)
     assert proc.returncode == 0, proc.stderr
-    assert len(calls) == 4
+    assert len(calls) == 6
 
 
 def test_any_other_failure_stops_with_a_non_zero_exit(tmp_path):

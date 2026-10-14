@@ -803,5 +803,214 @@
     "collectionGroup": "development_drive_index_chunks",
     "fieldPath": "vector",
     "indexes": []
+  },
+  {
+    "collectionGroup": "development_drive_index_records",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "about_keys", "arrayConfig": "CONTAINS" },
+      { "fieldPath": "effective_date", "order": "DESCENDING" },
+      { "fieldPath": "item_id", "order": "DESCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_index_records",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "kind", "order": "ASCENDING" },
+      { "fieldPath": "about_keys", "arrayConfig": "CONTAINS" },
+      { "fieldPath": "effective_date", "order": "DESCENDING" },
+      { "fieldPath": "item_id", "order": "DESCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_index_records",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "about_keys", "arrayConfig": "CONTAINS" },
+      { "fieldPath": "valid_until", "order": "ASCENDING" },
+      { "fieldPath": "item_id", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_index_records",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "enrich_ready", "order": "ASCENDING" },
+      { "fieldPath": "effective_day", "order": "DESCENDING" },
+      { "fieldPath": "parent_id", "order": "ASCENDING" },
+      { "fieldPath": "item_id", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_index_records",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "profile_state", "order": "ASCENDING" },
+      { "fieldPath": "effective_day", "order": "DESCENDING" },
+      { "fieldPath": "parent_id", "order": "ASCENDING" },
+      { "fieldPath": "item_id", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_index_records",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "passages_state", "order": "ASCENDING" },
+      { "fieldPath": "effective_day", "order": "DESCENDING" },
+      { "fieldPath": "parent_id", "order": "ASCENDING" },
+      { "fieldPath": "item_id", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_index_records",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "enrich_wake_at", "order": "ASCENDING" },
+      { "fieldPath": "item_id", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_index_records",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "profile_state", "order": "ASCENDING" },
+      { "fieldPath": "kind", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_index_records",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "passages_state", "order": "ASCENDING" },
+      { "fieldPath": "kind", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_index_records",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "keys_pending", "order": "ASCENDING" },
+      { "fieldPath": "item_id", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_index_chunks",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "word_keys", "arrayConfig": "CONTAINS" },
+      { "fieldPath": "item_id", "order": "ASCENDING" },
+      { "fieldPath": "generation", "order": "ASCENDING" },
+      { "fieldPath": "index", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_index_hints",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "hint_keys", "arrayConfig": "CONTAINS" },
+      { "fieldPath": "item_id", "order": "ASCENDING" },
+      { "fieldPath": "generation", "order": "ASCENDING" },
+      { "fieldPath": "index", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_index_hints",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "item_id", "order": "ASCENDING" },
+      { "fieldPath": "generation", "order": "ASCENDING" },
+      { "fieldPath": "index", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_index_hints",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "hint_vector", "vectorConfig": { "dimension": 768, "flat": {} } }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_index_hints",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "kind", "order": "ASCENDING" },
+      { "fieldPath": "hint_vector", "vectorConfig": { "dimension": 768, "flat": {} } }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_index_records",
+    "fieldPath": "about_keys",
+    "indexes": []
+  },
+  {
+    "collectionGroup": "development_drive_index_records",
+    "fieldPath": "profile",
+    "indexes": []
+  },
+  {
+    "collectionGroup": "development_drive_index_records",
+    "fieldPath": "readme_excerpt",
+    "indexes": []
+  },
+  {
+    "collectionGroup": "development_drive_index_records",
+    "fieldPath": "place_forms",
+    "indexes": []
+  },
+  {
+    "collectionGroup": "development_drive_index_records",
+    "fieldPath": "photo_description",
+    "indexes": []
+  },
+  {
+    "collectionGroup": "development_drive_index_records",
+    "fieldPath": "photo_objects",
+    "indexes": []
+  },
+  {
+    "collectionGroup": "development_drive_index_records",
+    "fieldPath": "photo_scene",
+    "indexes": []
+  },
+  {
+    "collectionGroup": "development_drive_index_records",
+    "fieldPath": "visible_text",
+    "indexes": []
+  },
+  {
+    "collectionGroup": "development_drive_index_chunks",
+    "fieldPath": "word_keys",
+    "indexes": []
+  },
+  {
+    "collectionGroup": "development_drive_index_hints",
+    "fieldPath": "hint_keys",
+    "indexes": []
+  },
+  {
+    "collectionGroup": "development_drive_index_hints",
+    "fieldPath": "items",
+    "indexes": []
+  },
+  {
+    "collectionGroup": "development_drive_index_hints",
+    "fieldPath": "hint_vector",
+    "indexes": []
   }
 ]

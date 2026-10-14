@@ -1543,7 +1543,7 @@
           "toast.todo_connected": "To Do connected",
           "toast.drive_connected": "Drive connected",
           "drive.index_title": "Search my drive",
-          "drive.index_disclosure": "When on, the bot copies the names and details of the files in its drive folder, the text it extracts from them, and search vectors into its database. Google (Gemini) turns the file names and the text into these search vectors. Excerpts reach the AI model when you ask about your files and stay in operational logs for up to 30 days; excerpts already shown in chat stay in the conversation. Scans, images and hard-to-read PDFs are read during indexing by an AI model provider (Anthropic or OpenAI); every picture is sent to it as a small preview, to tell photos from documents. Turning this off deletes the index. After a disconnect or an expired connection the index is kept for about 30 days in case the same drive comes back.",
+          "drive.index_disclosure": "When on, the bot copies the names and details of the files in its drive folder, the text it extracts from them, and search vectors into its database. Google (Gemini) turns the file names and the text into these search vectors. Excerpts reach the AI model when you ask about your files and stay in operational logs for up to 30 days; excerpts already shown in chat stay in the conversation. To describe your files for search, the beginning and end of every readable file, the text of your documents passage by passage, and a preview of every picture go to an AI model provider: OpenAI by default (asked not to store them, store=false; the provider may keep them for a limited time for abuse monitoring), Google Gemini when OpenAI is unavailable, or Anthropic if you chose Claude. Scans, images and hard-to-read PDFs are read in full by that provider during indexing; every picture is sent to it as a small preview, to tell photos from documents. Turning this off deletes the index. After a disconnect or an expired connection the index is kept for about 30 days in case the same drive comes back.",
           "drive.index_off_confirm": "Turn off drive search? The index will be deleted; your files stay on the drive.",
           "drive.needs_reconnect": "Reconnect required",
           "drive.reconnect_hint": "Access to your drive expired. Search still answers from the stored index, but nothing new is indexed until you reconnect.",
@@ -1551,7 +1551,13 @@
           "drive.reconnect": "Reconnect drive",
           "drive.index_searchable": "Searchable items",
           "drive.index_chunks": "Readable passages",
-          "drive.index_model_usage": "Read by the AI model this month: {pages} of {pages_limit} pages, {images} of {images_limit} pictures",
+          "drive.index_model_usage": "AI model use this month (spent of the monthly limit): {classes}",
+          "drive.index_usd_reader": "reading scans",
+          "drive.index_usd_triage": "looking at pictures",
+          "drive.index_usd_profile": "describing documents",
+          "drive.index_usd_passage": "passage keywords",
+          "drive.index_initial_build": "First full description of the drive: {spent} of {allowance} spent",
+          "drive.index_initial_build_done": "First full description of the drive: finished ({spent} spent)",
           "drive.index_kept_hint": "Your drive is disconnected. The index is kept for about 30 days in case it comes back; turn search off to delete it now.",
           "drive.index_pending": "Waiting",
           "drive.index_failed": "Could not be read",
@@ -1561,6 +1567,7 @@
           "drive.index_unread": "Not read yet",
           "drive.index_deleting": "Being removed",
           "drive.index_building": "Indexing in progress…",
+          "drive.index_awaiting_rebuild": "Waiting to be rebuilt for the new search: until then search finds nothing in the drive.",
           "drive.index_full": "Index full: some files are not searchable",
           "drive.index_last_sync": "Last sync",
           "drive.index_never": "not yet",
@@ -1645,7 +1652,7 @@
           "toast.todo_connected": "To Do підключено",
           "toast.drive_connected": "Диск підключено",
           "drive.index_title": "Пошук на диску",
-          "drive.index_disclosure": "Коли увімкнено, бот копіює до своєї бази даних назви й відомості про файли у своїй папці на диску, текст, який з них витягує, і пошукові вектори. Ці пошукові вектори з назв файлів і тексту обчислює Google (Gemini). Уривки потрапляють до ШІ-моделі, коли ти питаєш про свої файли, і зберігаються в службових журналах до 30 днів; уривки, вже показані в чаті, лишаються в розмові. Скани, зображення та складні PDF під час індексації читає постачальник ШІ-моделі (Anthropic або OpenAI); кожне зображення надсилається йому як мала копія, щоб відрізнити фото від документа. Вимкнення видаляє індекс. Після відключення диска або завершення доступу індекс зберігається близько 30 днів — на випадок, якщо той самий диск повернеться.",
+          "drive.index_disclosure": "Коли увімкнено, бот копіює до своєї бази даних назви й відомості про файли у своїй папці на диску, текст, який з них витягує, і пошукові вектори. Ці пошукові вектори з назв файлів і тексту обчислює Google (Gemini). Уривки потрапляють до ШІ-моделі, коли ти питаєш про свої файли, і зберігаються в службових журналах до 30 днів; уривки, вже показані в чаті, лишаються в розмові. Щоб описати твої файли для пошуку, початок і кінець кожного файлу, який можна прочитати, текст твоїх документів уривок за уривком і попередній перегляд кожного зображення надсилаються постачальнику ШІ-моделі: типово OpenAI (з проханням не зберігати їх, store=false; постачальник може тримати їх обмежений час для контролю зловживань), Google Gemini, коли OpenAI недоступний, або Anthropic, якщо ти обрав Claude. Скани, зображення та складні PDF цей постачальник читає повністю під час індексації; кожне зображення надсилається йому як мала копія, щоб відрізнити фото від документа. Вимкнення видаляє індекс. Після відключення диска або завершення доступу індекс зберігається близько 30 днів — на випадок, якщо той самий диск повернеться.",
           "drive.index_off_confirm": "Вимкнути пошук на диску? Індекс буде видалено; файли на диску залишаться.",
           "drive.needs_reconnect": "Потрібне перепідключення",
           "drive.reconnect_hint": "Доступ до диска закінчився. Пошук і далі відповідає зі збереженого індексу, але нічого нового не індексується, доки ти не перепідключиш диск.",
@@ -1653,7 +1660,13 @@
           "drive.reconnect": "Перепідключити диск",
           "drive.index_searchable": "Елементів для пошуку",
           "drive.index_chunks": "Фрагментів для пошуку за змістом",
-          "drive.index_model_usage": "Прочитано ШІ-моделлю цього місяця: {pages} з {pages_limit} сторінок, {images} з {images_limit} зображень",
+          "drive.index_model_usage": "Робота ШІ-моделі цього місяця (витрачено з місячного ліміту): {classes}",
+          "drive.index_usd_reader": "читання сканів",
+          "drive.index_usd_triage": "перегляд зображень",
+          "drive.index_usd_profile": "опис документів",
+          "drive.index_usd_passage": "ключові слова фрагментів",
+          "drive.index_initial_build": "Перший повний опис диска: витрачено {spent} з {allowance}",
+          "drive.index_initial_build_done": "Перший повний опис диска: завершено (витрачено {spent})",
           "drive.index_kept_hint": "Диск відключено. Індекс зберігається близько 30 днів на випадок, якщо диск повернеться; вимкни пошук, щоб видалити його зараз.",
           "drive.index_pending": "В очікуванні",
           "drive.index_failed": "Не вдалося прочитати",
@@ -1663,6 +1676,7 @@
           "drive.index_unread": "Ще не прочитано",
           "drive.index_deleting": "Видаляються",
           "drive.index_building": "Триває індексація…",
+          "drive.index_awaiting_rebuild": "Очікує перебудови для нового пошуку: доти пошук нічого не знаходить на диску.",
           "drive.index_full": "Індекс заповнений: частина файлів недоступна для пошуку",
           "drive.index_last_sync": "Остання синхронізація",
           "drive.index_never": "ще не було",
@@ -1747,7 +1761,7 @@
           "toast.todo_connected": "To Do connect\u00e9",
           "toast.drive_connected": "Disque connect\u00e9",
           "drive.index_title": "Rechercher dans mon disque",
-          "drive.index_disclosure": "Une fois activé, le bot copie dans sa base de données les noms et les détails des fichiers de son dossier sur le disque, le texte qu'il en extrait et des vecteurs de recherche. Google (Gemini) transforme les noms des fichiers et le texte en ces vecteurs de recherche. Des extraits parviennent au modèle d'IA quand tu poses une question sur tes fichiers et restent jusqu'à 30 jours dans les journaux techniques ; les extraits déjà affichés dans le chat restent dans la conversation. Les scans, les images et les PDF difficiles à lire sont lus pendant l'indexation par un fournisseur de modèle d'IA (Anthropic ou OpenAI) ; chaque image lui est envoyée en petit aperçu, pour distinguer les photos des documents. Désactiver supprime l'index. Après une déconnexion ou une connexion expirée, l'index est conservé environ 30 jours au cas où le même disque reviendrait.",
+          "drive.index_disclosure": "Une fois activé, le bot copie dans sa base de données les noms et les détails des fichiers de son dossier sur le disque, le texte qu'il en extrait et des vecteurs de recherche. Google (Gemini) transforme les noms des fichiers et le texte en ces vecteurs de recherche. Des extraits parviennent au modèle d'IA quand tu poses une question sur tes fichiers et restent jusqu'à 30 jours dans les journaux techniques ; les extraits déjà affichés dans le chat restent dans la conversation. Pour décrire tes fichiers pour la recherche, le début et la fin de chaque fichier lisible, le texte de tes documents passage par passage et un aperçu de chaque image sont envoyés à un fournisseur de modèle d'IA : OpenAI par défaut (avec la demande de ne pas les conserver, store=false ; le fournisseur peut les garder un temps limité pour la surveillance des abus), Google Gemini quand OpenAI est indisponible, ou Anthropic si tu as choisi Claude. Les scans, les images et les PDF difficiles à lire sont lus en entier par ce fournisseur pendant l'indexation ; chaque image lui est envoyée en petit aperçu, pour distinguer les photos des documents. Désactiver supprime l'index. Après une déconnexion ou une connexion expirée, l'index est conservé environ 30 jours au cas où le même disque reviendrait.",
           "drive.index_off_confirm": "Désactiver la recherche dans le disque ? L'index sera supprimé ; tes fichiers restent sur le disque.",
           "drive.needs_reconnect": "Reconnexion requise",
           "drive.reconnect_hint": "L'accès à ton disque a expiré. La recherche répond toujours depuis l'index enregistré, mais rien de nouveau n'est indexé tant que tu ne te reconnectes pas.",
@@ -1755,7 +1769,13 @@
           "drive.reconnect": "Reconnecter le disque",
           "drive.index_searchable": "Éléments consultables",
           "drive.index_chunks": "Passages lisibles",
-          "drive.index_model_usage": "Lu par le modèle d'IA ce mois-ci : {pages} pages sur {pages_limit}, {images} images sur {images_limit}",
+          "drive.index_model_usage": "Utilisation du modèle d'IA ce mois-ci (dépensé sur la limite mensuelle) : {classes}",
+          "drive.index_usd_reader": "lecture des scans",
+          "drive.index_usd_triage": "examen des images",
+          "drive.index_usd_profile": "description des documents",
+          "drive.index_usd_passage": "mots-clés des passages",
+          "drive.index_initial_build": "Première description complète du drive : {spent} dépensés sur {allowance}",
+          "drive.index_initial_build_done": "Première description complète du drive : terminée ({spent} dépensés)",
           "drive.index_kept_hint": "Ton disque est déconnecté. L'index est conservé environ 30 jours au cas où il reviendrait ; désactive la recherche pour le supprimer maintenant.",
           "drive.index_pending": "En attente",
           "drive.index_failed": "Illisibles",
@@ -1765,6 +1785,7 @@
           "drive.index_unread": "Pas encore lus",
           "drive.index_deleting": "Suppression en cours",
           "drive.index_building": "Indexation en cours…",
+          "drive.index_awaiting_rebuild": "En attente de reconstruction pour la nouvelle recherche : d’ici là, la recherche ne trouve rien dans le drive.",
           "drive.index_full": "Index plein : certains fichiers ne sont pas consultables",
           "drive.index_last_sync": "Dernière synchronisation",
           "drive.index_never": "pas encore",
@@ -1849,7 +1870,7 @@
           "toast.todo_connected": "To Do conectado",
           "toast.drive_connected": "Disco conectado",
           "drive.index_title": "Buscar en mi disco",
-          "drive.index_disclosure": "Cuando está activado, el bot copia en su base de datos los nombres y detalles de los archivos de su carpeta en el disco, el texto que extrae de ellos y vectores de búsqueda. Google (Gemini) convierte los nombres de los archivos y el texto en estos vectores de búsqueda. Los fragmentos llegan al modelo de IA cuando preguntas por tus archivos y se guardan en los registros técnicos hasta 30 días; los fragmentos ya mostrados en el chat se quedan en la conversación. Los escaneos, las imágenes y los PDF difíciles de leer los lee durante la indexación un proveedor de modelos de IA (Anthropic u OpenAI); cada imagen se le envía como una vista previa pequeña, para distinguir las fotos de los documentos. Desactivarlo borra el índice. Tras una desconexión o una conexión caducada, el índice se conserva unos 30 días por si vuelve el mismo disco.",
+          "drive.index_disclosure": "Cuando está activado, el bot copia en su base de datos los nombres y detalles de los archivos de su carpeta en el disco, el texto que extrae de ellos y vectores de búsqueda. Google (Gemini) convierte los nombres de los archivos y el texto en estos vectores de búsqueda. Los fragmentos llegan al modelo de IA cuando preguntas por tus archivos y se guardan en los registros técnicos hasta 30 días; los fragmentos ya mostrados en el chat se quedan en la conversación. Para describir tus archivos para la búsqueda, el principio y el final de cada archivo legible, el texto de tus documentos fragmento a fragmento y una vista previa de cada imagen se envían a un proveedor de modelos de IA: OpenAI de forma predeterminada (con la petición de no guardarlos, store=false; el proveedor puede conservarlos un tiempo limitado para vigilar abusos), Google Gemini cuando OpenAI no está disponible, o Anthropic si elegiste Claude. Los escaneos, las imágenes y los PDF difíciles de leer los lee enteros ese proveedor durante la indexación; cada imagen se le envía como una vista previa pequeña, para distinguir las fotos de los documentos. Desactivarlo borra el índice. Tras una desconexión o una conexión caducada, el índice se conserva unos 30 días por si vuelve el mismo disco.",
           "drive.index_off_confirm": "¿Desactivar la búsqueda en el disco? El índice se borrará; tus archivos siguen en el disco.",
           "drive.needs_reconnect": "Reconexión necesaria",
           "drive.reconnect_hint": "El acceso a tu disco ha caducado. La búsqueda sigue respondiendo desde el índice guardado, pero no se indexa nada nuevo hasta que vuelvas a conectarlo.",
@@ -1857,7 +1878,13 @@
           "drive.reconnect": "Reconectar disco",
           "drive.index_searchable": "Elementos buscables",
           "drive.index_chunks": "Fragmentos legibles",
-          "drive.index_model_usage": "Leído por el modelo de IA este mes: {pages} de {pages_limit} páginas, {images} de {images_limit} imágenes",
+          "drive.index_model_usage": "Uso del modelo de IA este mes (gastado del límite mensual): {classes}",
+          "drive.index_usd_reader": "lectura de escaneos",
+          "drive.index_usd_triage": "revisión de imágenes",
+          "drive.index_usd_profile": "descripción de documentos",
+          "drive.index_usd_passage": "palabras clave de fragmentos",
+          "drive.index_initial_build": "Primera descripción completa del disco: {spent} gastados de {allowance}",
+          "drive.index_initial_build_done": "Primera descripción completa del disco: terminada ({spent} gastados)",
           "drive.index_kept_hint": "Tu disco está desconectado. El índice se conserva unos 30 días por si vuelve; desactiva la búsqueda para borrarlo ahora.",
           "drive.index_pending": "En espera",
           "drive.index_failed": "No se pudieron leer",
@@ -1867,6 +1894,7 @@
           "drive.index_unread": "Aún sin leer",
           "drive.index_deleting": "Eliminándose",
           "drive.index_building": "Indexación en curso…",
+          "drive.index_awaiting_rebuild": "Pendiente de reconstrucción para la nueva búsqueda: hasta entonces la búsqueda no encuentra nada en el disco.",
           "drive.index_full": "Índice lleno: algunos archivos no se pueden buscar",
           "drive.index_last_sync": "Última sincronización",
           "drive.index_never": "todavía no",
@@ -3116,12 +3144,21 @@
         } else if (enabled) {
           const counts = [`${t("drive.index_searchable")}: ${num(c.carded)}`];
           if (num(ix.readable_chunks)) counts.push(`${t("drive.index_chunks")}: ${num(ix.readable_chunks)}`);
-          // §24.7: this month's model usage against its budgets, shown once anything was sent
-          const usage = num(ix.model_pages_month) || num(ix.triage_images_month)
-            ? t("drive.index_model_usage")
-                .replace("{pages}", num(ix.model_pages_month)).replace("{pages_limit}", num(ix.model_pages_limit))
-                .replace("{images}", num(ix.triage_images_month)).replace("{images_limit}", num(ix.triage_images_limit))
-            : "";
+          // §25.4.5: this month's model dollars per class against its cap, shown once anything was spent, and the
+          // initial build's progress (the §24.7 page and image counters are retired)
+          const usd = (v) => `$${num(v).toFixed(2)}`;
+          const spent = ix.model_usd_month || {};
+          const caps = ix.model_usd_caps || {};
+          const classes = ["reader", "triage", "profile", "passage"].filter((k) => num(spent[k]) > 0)
+            .map((k) => `${t("drive.index_usd_" + k)} ${usd(spent[k])} / ${usd(caps[k])}`);
+          const build = ix.initial_build || {};
+          const usage = [
+            classes.length ? t("drive.index_model_usage").replace("{classes}", classes.join(", ")) : "",
+            num(build.spent_usd) > 0
+              ? t(build.closed ? "drive.index_initial_build_done" : "drive.index_initial_build")
+                  .replace("{spent}", usd(build.spent_usd)).replace("{allowance}", usd(build.allowance_usd))
+              : "",
+          ].filter(Boolean).join("<br>");
           const known = Object.keys(DRIVE_COUNTER_LABELS);
           const keys = known.concat(Object.keys(c).filter((k) => !known.includes(k)));
           for (const key of keys) {
@@ -3137,7 +3174,8 @@
             : null;
           details = `
             <div style="font-size:13px; color:var(--text-muted); margin-top:10px; line-height:1.6;">
-              ${ix.building ? `<div>${t("drive.index_building")}</div>` : ""}
+              ${ix.awaiting_rebuild ? `<div>${t("drive.index_awaiting_rebuild")}</div>`
+                : ix.building ? `<div>${t("drive.index_building")}</div>` : ""}
               <div>${counts.join(" \u00b7 ")}</div>
               ${usage ? `<div>${usage}</div>` : ""}
               <div>${t("drive.index_last_sync")}: ${last}</div>

@@ -13,6 +13,11 @@ text kinds, VTT/SRT reduced to cue text; `striprtf` for RTF; the stdlib `email` 
 through `defusedxml`; XLSX/XLS/CSV/ODS as Markdown tables capped at MAX_SHEET_ROWS rows per sheet (the chunker
 repeats the header row, §8.3). Password-protected PDF/Office/EPUB/ODF → `encrypted`.
 
+Parser@2 (§25.3, D23, review thresholds): HTML pages, and Markdown or text files that are HTML (`html_text.text_is_html`:
+a document marker or tags over 30 % outside code), go through `html_text.html_page_text` — the content landmark,
+no top-level boilerplate or in-page link blocks, metadata lines at the head — and a page with a <script> and under
+500 visible characters comes back `script_rendered`. A text kind whose HTML path fails keeps its decoded text.
+
 Public interface:
     MARKITDOWN_CONVERTERS
     read_content(path, kind) -> ExtractionOutcome          # `extracted_by` is stamped by the parent
@@ -33,10 +38,11 @@ import os
 import re
 import zipfile
 from contextlib import contextmanager
-from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Tuple
-from typing import Iterator
+from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Mapping, NamedTuple, Optional, Sequence, Tuple
+from typing import Iterator, Union
 
 from src.adapters.drive_parser.child import is_memory_failure
+from src.adapters.drive_parser.html_text import html_page_text, text_is_html
 from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus, PdfSplitFailed, failure_label
 from src.domain.drive_index_params import MAX_SHEET_ROWS, MAX_TEXT_CHARS
 from src.utils.document_hardening import ArchiveTooLargeError, check_zip_container
@@ -67,6 +73,16 @@ _ODF = {
     "draw": "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0",
 }
 _Read = Tuple[str, int, bool]    # text, pages_total, truncated
+# The kinds whose text may be a whole HTML page saved under another extension (§25.3, parser@2); never JSON.
+_HTML_CAPABLE_TEXT_KINDS: FrozenSet[str] = frozenset({"text", "markdown"})
+
+
+class _PageRead(NamedTuple):
+    """What an HTML-converting reader returns: a _Read plus the script-rendered flag (§25.3)."""
+    text: str
+    pages_total: int
+    truncated: bool
+    script_rendered: bool
 
 
 class _Encrypted(Exception):
@@ -88,7 +104,7 @@ def read_content(path: str, kind: str) -> ExtractionOutcome:
     try:
         if kind in _ZIP_KINDS:
             _check_container(path, kind)
-        text, pages_total, truncated = reader(path, kind)
+        result = reader(path, kind)
     except ArchiveTooLargeError as exc:
         return ExtractionOutcome(status=ExtractionStatus.TOO_LARGE, detail=str(exc))
     except _Encrypted as exc:
@@ -98,7 +114,9 @@ def read_content(path: str, kind: str) -> ExtractionOutcome:
             raise MemoryError(str(exc)) from exc
         status = ExtractionStatus.UNSUPPORTED if _deterministic(exc) else ExtractionStatus.ERROR
         return ExtractionOutcome(status=status, detail=failure_label(exc))   # never the message (R3 F3-5)
-    return _finish(text, pages_total, truncated)
+    text, pages_total, truncated = result[0], result[1], result[2]
+    return _finish(text, pages_total, truncated,
+                   script_rendered=isinstance(result, _PageRead) and result.script_rendered)
 
 
 def pdf_page_count(path: str) -> int:
@@ -284,16 +302,27 @@ def _read_converter(path: str, kind: str) -> _Read:
     return _read_markitdown(path, kind), 0, False
 
 
-def _read_html(path: str, kind: str) -> _Read:
-    from markitdown.converters import HtmlConverter
-
+def _read_html(path: str, kind: str) -> _PageRead:
     data, cut = _read_prefix(path)
-    return str(HtmlConverter().convert_string(decode_text(data, cut)).markdown or ""), 0, cut
+    text, script_rendered = html_page_text(decode_text(data, cut))
+    return _PageRead(text, 0, cut, script_rendered)
 
 
-def _read_text(path: str, kind: str) -> _Read:
+def _read_text(path: str, kind: str) -> Union[_Read, _PageRead]:
+    """Text as decoded; a Markdown or text file that is HTML (`text_is_html`) goes through the HTML converter whole
+    (§25.3, parser@2). If that path fails, the file keeps its decoded text, as v1 stored it (review m3); a memory
+    failure still ends the child with its memory code."""
     data, cut = _read_prefix(path)
-    return decode_text(data, cut), 0, cut
+    text = decode_text(data, cut)
+    if kind in _HTML_CAPABLE_TEXT_KINDS and text_is_html(text):
+        try:
+            page, script_rendered = html_page_text(text)
+        except Exception as exc:  # the HTML reading is an improvement over the text, never a new way to fail
+            if is_memory_failure(exc):
+                raise
+            return text, 0, cut
+        return _PageRead(page, 0, cut, script_rendered)
+    return text, 0, cut
 
 
 def _read_subtitles(path: str, kind: str) -> _Read:
@@ -467,7 +496,7 @@ def _read_odf(path: str, kind: str) -> _Read:
     return "\n\n".join(block for block in blocks if block.strip()), 0, truncated
 
 
-_READERS: Dict[str, Callable[[str, str], _Read]] = {
+_READERS: Dict[str, Callable[[str, str], Union[_Read, _PageRead]]] = {
     "pdf": _read_pdf, "docx": _read_converter, "pptx": _read_converter, "epub": _read_converter,
     "msg": _read_converter, "xlsx": _read_xlsx, "xls": _read_xls, "odt": _read_odf, "ods": _read_odf,
     "odp": _read_odf, "html": _read_html, "text": _read_text, "markdown": _read_text, "json": _read_text,
@@ -699,7 +728,7 @@ def _decode(data: bytes, encoding: str, cut: bool, errors: str) -> str:
     return str(decoder.decode(data, final=not cut))
 
 
-def _finish(text: str, pages_total: int, truncated: bool) -> ExtractionOutcome:
+def _finish(text: str, pages_total: int, truncated: bool, *, script_rendered: bool = False) -> ExtractionOutcome:
     text = text.replace("\x00", "")
     text = "\n".join(line.rstrip() for line in re.split(r"\r?\n", text))
     text = re.sub(r"\n{3,}", "\n\n", text).strip()
@@ -707,4 +736,5 @@ def _finish(text: str, pages_total: int, truncated: bool) -> ExtractionOutcome:
         text, truncated = text[:MAX_TEXT_CHARS], True
     if not text:
         return ExtractionOutcome(status=ExtractionStatus.NO_TEXT, pages_total=pages_total, truncated=truncated)
-    return ExtractionOutcome(status=ExtractionStatus.TEXT, text=text, pages_total=pages_total, truncated=truncated)
+    return ExtractionOutcome(status=ExtractionStatus.TEXT, text=text, pages_total=pages_total, truncated=truncated,
+                             script_rendered=script_rendered)

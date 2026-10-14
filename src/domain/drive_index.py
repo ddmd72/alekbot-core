@@ -11,15 +11,34 @@ from datetime import datetime
 from enum import Enum, IntEnum
 from typing import Any, Mapping, Optional, Tuple
 
+from .drive_enrichment import DriveProfile, PhotoObject
+
 POLICY_VERSION = 2                            # 2: the Slice 2+4 kinds admitted (§24.1)
-CARD_VERSION = 2                              # 2: brief, caption and lead text in the card (§24.4)
-GEO_TABLE_VERSION = 1
-NAME_KEYS_VERSION = 1                         # the name-stream keyer (drive_name_keys); a change re-keys (§12.3)
+CARD_VERSION = 3                              # 2: brief, caption and lead text in the card (§24.4); 3: profile and
+                                              # photo fields, no lead text but for machine text (§25.2.7)
+# 2: alternate names, country names, large place (§25.4.3). Bumped before P5 by D30 (no v1 migration: the rollout
+# rebuilds from scratch). P5 MUST write `place_forms` (PlaceIndex.place) together with this stamp: `_place` keeps a
+# stored place while the stamp matches, so a record stamped 2 without forms would never get them.
+GEO_TABLE_VERSION = 2
+NAME_KEYS_VERSION = 2                         # the name-stream keyer; 2: drive_keys.name_keys_v2 (§25.2.4)
 EXTRACTION_VERSION = 3                        # chunker, text gate, content_terms normaliser (§12.3, §24.6); 2: maximal query forms (D-M1); 3: written-out dates (F5-5)
-TRIAGE_VERSION = 1                            # image triage prompt and verdict rules (§5.3, §24.5)
+TRIAGE_VERSION = 2                            # image triage prompt and verdict rules (§5.3, §24.5); 2: enriched (§25.4.3)
+
+# Search v2 (§25.4.8, frozen in §25.13.2). In CURRENT_VERSIONS since P5, behind the migration gate (§25.8 as amended
+# by D30): a sync state whose applied_versions lacks MIGRATION_GATE_KEY was built by v1 and is never upgraded — it runs
+# no tick work until the owner's from-scratch rebuild, whose onboarding stamps every key.
+KEYS_VERSION = 3                              # drive_keys and the drive_content_terms normaliser: re-keys from stored text
+                                              # 3: entity spellings the file does not print are `ef:` (xc F1), a Latin
+                                              # word's skeleton is `xl:`/`exl:` (F3), D31 label names (lw:/dw:)
+PROFILE_VERSION = 1                           # profiler prompt, schema, input rules, verification
+PASSAGES_VERSION = 1                          # doc2query prompt and grounding
+SEARCH_V2_VERSIONS: Mapping[str, int] = {"keys": KEYS_VERSION, "profile": PROFILE_VERSION,
+                                         "passages": PASSAGES_VERSION}
+MIGRATION_GATE_KEY = "keys"
 CURRENT_VERSIONS: Mapping[str, int] = {"policy": POLICY_VERSION, "card": CARD_VERSION,
                                        "geo_table": GEO_TABLE_VERSION, "name_keys": NAME_KEYS_VERSION,
-                                       "extraction": EXTRACTION_VERSION, "triage": TRIAGE_VERSION}
+                                       "extraction": EXTRACTION_VERSION, "triage": TRIAGE_VERSION,
+                                       **SEARCH_V2_VERSIONS}
 
 
 class Scope(str, Enum):
@@ -187,6 +206,10 @@ class DriveChunk:
     char_end: int
     kind: str
     content_terms: Tuple[str, ...] = ()
+    # Search v2 (§25.2.2): the chunk's `w:`, `n:`, `m:` keys (at most WORD_KEYS_PER_CHUNK) and the KEYS_VERSION they
+    # were made under. Written by P5; until then empty / 0.
+    word_keys: Tuple[str, ...] = ()
+    keys_version: int = 0
 
 
 @dataclass(frozen=True)
@@ -271,6 +294,49 @@ class DriveIndexRecord:
     readme_item_id: Optional[str] = None
     readme_version: str = ""                  # the README's content_version the lead text was read from
     seen_epoch: int = 0
+    # -- Search v2 (§25.2.1, frozen in §25.13.2): neutral defaults; written from P5 on. States are JobState values,
+    # holds HoldReason values, `profile_source` a ProfileSource value. `lead_text` (above) is v2's machine-text lead.
+    profile: Optional[DriveProfile] = None
+    valid_until: Optional[datetime] = None    # verified dates[valid_until], else dates[due]: 00:00 UTC of that date
+    profile_source: Optional[str] = None
+    profile_input_fingerprint: Optional[str] = None
+    profile_fingerprint: Optional[str] = None
+    profile_version: int = 0
+    profiled_content_version: str = ""
+    profile_state: str = "none"
+    profile_defer_until: Optional[datetime] = None
+    profile_parked_month: str = ""            # "YYYY-MM"
+    profile_hold: Optional[str] = None
+    profile_hold_version: str = ""            # "<PROFILE_VERSION>:<profile_input_fingerprint>"
+    profile_attempts: int = 0
+    passages_state: str = "none"
+    passages_defer_until: Optional[datetime] = None
+    passages_parked_month: str = ""
+    passages_hold: Optional[str] = None       # only "failed"
+    passages_hold_version: str = ""           # "<PASSAGES_VERSION>:<indexed_generation>"
+    passages_attempts: int = 0
+    passages_generation: Optional[int] = None
+    passages_next_index: int = 0
+    passages_done_at: Optional[datetime] = None
+    passages_version: int = 0                 # P5 addition: the PASSAGES_VERSION the generation's hints were made under
+    enrich_ready: bool = False               # derived by the planner: any job `ready`
+    enrich_wake_at: Optional[datetime] = None # derived: the earliest `*_defer_until` of a `deferred` job
+    effective_day: str = ""                   # derived: effective_date as "YYYY-MM-DD" (the queue's order)
+    describe_gap: str = ""                    # derived: what the coverage line counts this file as (§25.5.6, XC-3):
+                                              # "waiting" / "held" (no description yet), "no_passages", or ""
+    keys_pending: bool = False
+    keys_version: int = 0
+    keys_capped: bool = False                 # a key cap cut this record's or its chunks' keys (§25.2.6: "keys cut")
+    about_keys: Tuple[str, ...] = ()          # computed only by about_keys_of(rec) (§25.4.9)
+    place_forms: Tuple[str, ...] = ()         # the spellings of place_name its keys were made from
+    photo_description: str = ""               # enriched triage, photographs only (§25.4.3); replaces caption
+    photo_objects: Tuple[PhotoObject, ...] = ()
+    photo_scene: str = ""
+    visible_text: str = ""
+    readme_excerpt: str = ""                  # a collapsed folder's README profile input (§25.3)
+    readme_excerpt_version: str = ""          # the README content version it came from
+    script_rendered: bool = False             # parser@2 flagged the page script-rendered (§25.3): a template profile;
+                                              # copied from ExtractionOutcome.script_rendered by P5
 
     @property
     def stale(self) -> bool:
@@ -317,6 +383,17 @@ class DriveSyncState:
     usage_month: str = ""                     # "YYYY-MM" the two counters below belong to
     model_pages_used: int = 0
     triage_images_used: int = 0
+    # Search v2 (§25.4.6): one model backoff per agent type (agent type -> until); `model_backoff_until` keeps its v1
+    # meaning for the reader and triage
+    model_backoff_by_agent: Mapping[str, datetime] = field(default_factory=dict)
+    # P5 (§25.8, D30): rebuild progress the tick keeps — profiles `current` (described), and `described_grew_at`: when
+    # enrichment last moved (that count grew, a run changed a record) or had no ready job (review rv_sv2_p5 MINOR 2) —
+    # and the fan-out's once-only alert flags (written only by update_sync_flags, like stale_alerted)
+    described_count: int = 0
+    described_grew_at: Optional[datetime] = None
+    migration_alerted: bool = False           # awaiting the from-scratch rebuild: alerted once
+    stall_alerted: bool = False               # the rebuild stalled for DESCRIBED_STALL_AFTER: alerted once
+    fallback_alerted_day: str = ""            # "YYYY-MM-DD" the fallback alert was posted for
 
     def cards_in_space(self, embedding_space: str) -> bool:
         """The card stream answers queries embedded in `embedding_space`: no card is left in another space."""

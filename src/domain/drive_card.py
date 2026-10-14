@@ -1,6 +1,7 @@
 """
-Card text and its hash (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §8.5). Pure over record fields:
-`name | kind | key facets`; no path, so a folder rename touches no descendant.
+Card text and its hash (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §8.5, §25.2.7). Pure over record fields:
+`name | kind | ... | key facets`; no path, so a folder rename touches no descendant. CARD_VERSION 3 carries the
+profile and the photo fields; no lead text but for machine text, so card kNN and chunk kNN no longer vote on one signal.
 """
 from __future__ import annotations
 
@@ -8,7 +9,9 @@ import hashlib
 from datetime import datetime, timezone
 from typing import Any, List, Mapping, Optional, Tuple
 
-from .drive_index import CARD_VERSION, DocumentBrief, DriveChange, DriveIndexRecord, Reason, RecordState, Scope
+from .drive_index import (
+    CARD_VERSION, DocumentBrief, DriveChange, DriveIndexRecord, Reason, RecordState, Scope, TriageVerdict,
+)
 from .drive_index_policy import is_generated_dir, searchable
 
 _KIND_LABEL = {
@@ -123,18 +126,48 @@ def repository_root(rec: DriveIndexRecord) -> bool:
             and not is_generated_dir(rec.name))
 
 
+def collapsed_folder(rec: DriveIndexRecord) -> bool:
+    """A folder kept as one record (any opaque_root reason: repository, generated, hidden, dense): it gets a profile
+    from its README (§25.3)."""
+    return rec.is_folder and rec.scope is Scope.OPAQUE_ROOT
+
+
+_MACHINE_TEXT = "machine-generated text"
+
+
+def _joined(parts: List[str]) -> str:
+    return " | ".join(p for p in parts if p)
+
+
 def card_text(rec: DriveIndexRecord) -> str:
-    """§24.4: `name | kind | brief | caption | key facets | lead text`, each content segment only when present, so a
-    record without them keeps its Slice 1 text and hash."""
+    """§25.2.7 (CARD_VERSION 3), each segment only when present:
+    - profiled file: `name | kind | doc_type | what_it_is | title | entities (as printed) | topics | topics_native |
+      facets`;
+    - text file without a profile: `name | kind | brief | facets`;
+    - machine text: `name | kind | machine-generated text | lead text`;
+    - photograph: `name | image | description | scene | objects | visible text | facets`;
+    - collapsed folder with a README profile: `name | label | what_it_is | title | topics`; without, its Slice 1
+      card."""
     if rec.is_folder:
-        if repository_root(rec) and rec.lead_text:
-            return f"{rec.name} | repository | {rec.lead_text}"   # its README's lead text (§5.2)
         if rec.scope is Scope.OPAQUE_ROOT:
-            return f"{rec.name} | {_opaque_label(rec)}"
+            p = rec.profile
+            extra = [p.what_it_is, p.title, ", ".join(p.topics)] if p is not None else []
+            return _joined([rec.name, _opaque_label(rec), *extra])
         return f"{rec.name} | folder"
-    return " | ".join([rec.name, _KIND_LABEL.get(rec.kind, "file"), *_brief_segments(rec.brief),
-                       *([rec.caption] if rec.caption else []), *_key_facets(rec),
-                       *([rec.lead_text] if rec.lead_text else [])])
+    kind = _KIND_LABEL.get(rec.kind, "file")
+    if rec.reason is Reason.MACHINE_TEXT:
+        return _joined([rec.name, kind, _MACHINE_TEXT, rec.lead_text])
+    if rec.triage_verdict is TriageVerdict.PHOTO and rec.state is not RecordState.PENDING:
+        return _joined([rec.name, kind, rec.photo_description, rec.photo_scene,
+                        ", ".join(o.name for o in rec.photo_objects if o.name), rec.visible_text, *_key_facets(rec)])
+    p = rec.profile
+    if p is not None:
+        # an entity as the file prints it, never only the profiler's spelling of it (xc F1)
+        return _joined([rec.name, kind, p.doc_type, p.what_it_is, p.title,
+                        ", ".join(e.printed or e.name for e in p.entities if e.printed or e.name),
+                        ", ".join(p.topics),
+                        ", ".join(p.topics_native), *_key_facets(rec)])
+    return _joined([rec.name, kind, *_brief_segments(rec.brief), *_key_facets(rec)])
 
 
 def card_hash(rec: DriveIndexRecord) -> str:

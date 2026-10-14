@@ -58,7 +58,9 @@ class TestStatus:
         status = DriveIndexingStatus(enabled=True, counters={"metadata_only": 40, "carded": 39},
                                      last_success_at=NOW, last_error="throttled", index_as_of=NOW,
                                      index_full=False, building=True,
-                                     readable_chunks=17, model_pages_month=230, triage_images_month=41)
+                                     readable_chunks=17, usd_month={"reader": 0.5, "triage": 0.25},
+                                     usd_caps={"reader": 4.0, "triage": 3.0}, initial_build_spent_usd=40.0,
+                                     initial_build_allowance_usd=40.0, initial_build_closed=True)
         async with _app(_drive(), _search(status)).test_client() as client:
             body = await (await client.get("/api/drive/status", headers=_AUTH)).get_json()
         assert body == {
@@ -67,8 +69,12 @@ class TestStatus:
                          "last_success_at": NOW.isoformat(), "last_error": "throttled",
                          "index_as_of": NOW.isoformat(), "index_full": False, "building": True,
                          "available": False, "access_lost_at": None, "index_kept": True,
-                         "readable_chunks": 17, "model_pages_month": 230, "model_pages_limit": 5000,
-                         "triage_images_month": 41, "triage_images_limit": 20000},
+                         "awaiting_rebuild": False,     # XC-8: a v1 index waiting for its v2 rebuild
+                         # review rv_sv2_p5 MINOR 3 (spec change, §25.4.5): dollars per class against the month's
+                         # cap and the initial build replace the retired §24.7 page and image counters
+                         "readable_chunks": 17, "model_usd_month": {"reader": 0.5, "triage": 0.25},
+                         "model_usd_caps": {"reader": 4.0, "triage": 3.0},
+                         "initial_build": {"spent_usd": 40.0, "allowance_usd": 40.0, "closed": True}},
         }
 
     async def test_needs_reconnect(self):
