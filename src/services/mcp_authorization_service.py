@@ -23,7 +23,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import jwt
 
-from ..domain.mcp import MCPAuthCode, MCPClient, MCPRefreshToken
+from ..domain.mcp import MCPAuthCode, MCPClient, MCPRefreshToken, normalize_client_name
 from ..ports.mcp_client_repository import MCPClientRepository
 from ..utils.logger import logger
 
@@ -167,6 +167,7 @@ class MCPAuthorizationService:
             raise MCPInvalidRedirectURI("redirect_uris is required")
         for uri in client.redirect_uris:
             self._validate_redirect_host(uri)
+        client = client.model_copy(update={"client_name": normalize_client_name(client.client_name)})
         await self._repo.save_client(client)
         logger.info(
             f"🆕 MCP client registered: {client.client_id} "
