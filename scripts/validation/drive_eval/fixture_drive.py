@@ -224,7 +224,10 @@ class FixtureDrive(UserDrivePort):
     async def get_change(self, user_id: str, item_id: str) -> DriveChange:
         if item_id == ROOT_ID:
             return DriveChange(item_id=ROOT_ID, name="root", is_folder=True)
-        return self._items.get(item_id) or DriveChange(item_id=item_id, deleted=True)
+        found = self._items.get(item_id)
+        if found is None:   # the port contract (USER_DRIVE_INDEXING_RFC §26.2, Δ48): "not found" raises, never a deletion
+            raise DriveItemNotFoundError(item_id)
+        return found
 
     async def list_children_changes(self, user_id: str, folder_id: str, limit: int,
                                     cursor: Optional[str] = None) -> DriveChildrenPage:

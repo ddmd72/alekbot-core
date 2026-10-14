@@ -466,7 +466,11 @@ class FileManagementAgent(BaseAgent):
         except DriveNotConnectedError:
             return self._fail(message, self._NOT_CONNECTED)
         except DriveItemNotFoundError:
-            return self._fail(message, self._GONE)
+            # an item the index knows the bot cannot open gets the index's sentence (§26.2, Δ55): a move, a delete or
+            # an update of such a file as well as an open
+            item_id = parse_drive_ref(payload.get("file_ref") or "")
+            note = await self._access_note(user_id, item_id=item_id) if item_id is not None else None
+            return self._fail(message, note or self._GONE)
         except FileNotFoundError:
             # The conversion service has no drive wired.
             return self._fail(message, "The drive is not configured.")

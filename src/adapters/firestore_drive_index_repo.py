@@ -111,6 +111,11 @@ UNREAD_REASONS: Tuple[Reason, ...] = (Reason.TOO_LARGE, Reason.NO_TEXT, Reason.M
 RECORD_FANOUT_FIELDS: Tuple[str, ...] = ("inaccessible_notified_since",)
 RECORD_FIELDS: Tuple[str, ...] = tuple(f.name for f in fields(DriveIndexRecord) if f.name not in RECORD_FANOUT_FIELDS)
 _ALL_RECORD_FIELDS: Tuple[str, ...] = RECORD_FIELDS + RECORD_FANOUT_FIELDS
+# What the tick reads of a marked record (§26.2, review of S1): its counters (drive_access.access_counts, which reads
+# drive_search.is_not_read_yet) and its parent map
+ACCESS_MARK_FIELDS: Tuple[str, ...] = (
+    "user_id", "item_id", "parent_id", "name", "is_folder", "kind", "state", "reason", "indexed_generation",
+    "card_capped", "triage_verdict", "inaccessible_since", "inaccessible_notified_since")
 CHUNK_FIELDS: Tuple[str, ...] = tuple(f.name for f in fields(DriveChunk))
 # search streams (port): no text (windows read it by id) and no content_terms (up to 256 per chunk; the term stream
 # knows its term from its own query, review D-M3)
@@ -708,9 +713,11 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
         return (self._user_query(user_id).where(filter=FieldFilter("inaccessible_since", ">=", _TS_MIN))
                 .order_by("inaccessible_since").limit(limit))
 
-    async def inaccessible_records(self, user_id: str, limit: int) -> List[DriveIndexRecord]:
-        """Ties on `inaccessible_since` are ordered by the document name, `{user_id}:{item_id}`: by item id."""
-        query = self.inaccessible_query(user_id, limit).select(list(_ALL_RECORD_FIELDS))
+    async def inaccessible_records(self, user_id: str, limit: int, *, lean: bool = False) -> List[DriveIndexRecord]:
+        """Ties on `inaccessible_since` are ordered by the document name, `{user_id}:{item_id}`: by item id. `lean`
+        projects ACCESS_MARK_FIELDS."""
+        fields_read = ACCESS_MARK_FIELDS if lean else _ALL_RECORD_FIELDS
+        query = self.inaccessible_query(user_id, limit).select(list(fields_read))
         return [record_from_doc(snap.to_dict()) for snap in await query.get()]
 
     async def set_inaccessible_notified(self, user_id: str, values: Mapping[str, Optional[datetime]]) -> None:

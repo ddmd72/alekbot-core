@@ -101,6 +101,10 @@ class DriveSyncSchedulerService:
         self._ensure_agents = ensure_agents
         self._localization = localization
         self._language = language
+        # user -> (UTC day, `inaccessible_unnotified` then): a notice that could not be delivered (no channel, no file
+        # upload for the user's platform) is not read again that day unless the tick counts more files (review of S1).
+        # Per process: a new instance tries once more, which costs one read and posts nothing that cannot arrive.
+        self._notice_held: Dict[str, Tuple[str, int]] = {}
 
     async def fan_out(self) -> Dict[str, int]:
         """One pass over every candidate. A failure for one user is logged and never stops the rest."""
@@ -282,8 +286,13 @@ class DriveSyncSchedulerService:
 
     async def _inaccessible_notice(self, user_id: str, profile: Any, state: DriveSyncState) -> int:
         """One notice for the files the bot cannot open (module docstring; §26.2). Returns 1 when the list was sent."""
-        if not state.counters.get(INACCESSIBLE_UNNOTIFIED_COUNTER) or state.observed_as_of is None:
+        waiting = int(state.counters.get(INACCESSIBLE_UNNOTIFIED_COUNTER, 0))
+        if not waiting or state.observed_as_of is None:
             return 0
+        day = self._clock().astimezone(timezone.utc).date().isoformat()
+        held = self._notice_held.get(user_id)
+        if held is not None and held[0] == day and waiting <= held[1]:
+            return 0   # undeliverable earlier today and nothing new marked since
         if self._notifier is None or self._localization is None:
             logger.warning(f"[DriveSync] files of {user_id[:8]} the bot cannot open; no notifier or localization")
             return 0
@@ -301,10 +310,12 @@ class DriveSyncSchedulerService:
             user_id=user_id, account_id=account_id, file_bytes=notice_file(paths), filename=NOTICE_FILENAME,
             title=self._localization.get_ui_string(lang, UIMessage.DRIVE_INACCESSIBLE_LIST_TITLE))
         if not sent:
-            await self._repo.set_inaccessible_notified(user_id, previous)   # nothing was sent: retried next pass
+            await self._repo.set_inaccessible_notified(user_id, previous)   # nothing was sent: retried later
+            self._notice_held[user_id] = (day, waiting)
             logger.warning(f"[DriveSync] list of {len(due)} files {user_id[:8]}'s bot cannot open was not sent; "
-                           f"retried on the next fan-out")
+                           f"retried tomorrow or when more are marked")
             return 0
+        self._notice_held.pop(user_id, None)
         text = self._localization.get_ui_string(lang, UIMessage.DRIVE_INACCESSIBLE_NOTICE).format(count=len(due))
         if not await self._notifier.notify_raw(user_id, account_id, text):
             logger.warning(f"[DriveSync] the list went to {user_id[:8]} but its text was not sent; not retried")

@@ -138,8 +138,8 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.DEEP_RESEARCH_DRIVE_COPY_FAILED.value: "No copiado en tu disco: no se pudo guardar.",
     UIMessage.DRIVE_INACCESSIBLE_NOTICE.value: (
         "⚠️ Archivos de tu carpeta en el disco que el bot no puede abrir por su configuración de uso compartido: "
-        "{count}. Para solucionarlo, haz una copia de cada archivo en la misma carpeta; las copias se podrán leer. "
-        "La lista va adjunta."
+        "{count}. Para solucionarlo, copia cada archivo en una carpeta nueva que crees dentro de la carpeta del bot; "
+        "las copias se podrán leer. La lista va adjunta."
     ),
     UIMessage.DRIVE_INACCESSIBLE_LIST_TITLE.value: "Archivos que el bot no puede abrir",
 }

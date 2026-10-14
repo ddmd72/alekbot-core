@@ -138,9 +138,11 @@ class DriveIndexRepository(ABC):
         that could not be read (the other classes); None counts every class (final review F5-2)."""
 
     @abstractmethod
-    async def inaccessible_records(self, user_id: str, limit: int) -> List[DriveIndexRecord]:
+    async def inaccessible_records(self, user_id: str, limit: int, *, lean: bool = False) -> List[DriveIndexRecord]:
         """Up to `limit` records the bot cannot open (`inaccessible_since` set, §26.2), oldest marking first, ties by
-        item id, with `inaccessible_notified_since` (the tick's counters and the fan-out's notice, Δ56, Δ53)."""
+        item id, with `inaccessible_notified_since` (the tick's counters and the fan-out's notice, Δ56, Δ53). `lean`:
+        only the fields the tick's counters and parent map read (an implementation may return more); the other fields
+        take their defaults."""
 
     @abstractmethod
     async def set_inaccessible_notified(self, user_id: str, values: Mapping[str, Optional[datetime]]) -> None:

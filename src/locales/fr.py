@@ -138,8 +138,8 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.DEEP_RESEARCH_DRIVE_COPY_FAILED.value: "Non copié sur ton disque : l'enregistrement a échoué.",
     UIMessage.DRIVE_INACCESSIBLE_NOTICE.value: (
         "⚠️ Fichiers de ton dossier sur le disque que le bot ne peut pas ouvrir à cause de leurs paramètres de "
-        "partage : {count}. Pour corriger cela, fais une copie de chaque fichier dans le même dossier ; les copies "
-        "pourront être lues. La liste est jointe."
+        "partage : {count}. Pour corriger cela, copie chaque fichier dans un nouveau dossier que tu crées dans le "
+        "dossier du bot ; les copies pourront être lues. La liste est jointe."
     ),
     UIMessage.DRIVE_INACCESSIBLE_LIST_TITLE.value: "Fichiers que le bot ne peut pas ouvrir",
 }
