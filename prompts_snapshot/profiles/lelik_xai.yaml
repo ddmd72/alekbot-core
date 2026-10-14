@@ -1,0 +1,26 @@
+agent_id: lelik_xai
+blueprint_id: lelik_agent_v1
+source_file: firestore_utils/uploads/lelik_xai.json
+tokens:
+  COGNITIVE_PROCESS_LELIK_BARE:
+    non_overridable: true
+    order: 10
+  LANG_MIRROR:
+    non_overridable: false
+    order: 300
+  PROTOCOL_LELIK_DELEGATION_BARE:
+    non_overridable: true
+    order: 200
+  VOICE_CALL_MANNERS:
+    non_overridable: true
+    order: 60
+  VOICE_CARE_LELIK:
+    non_overridable: true
+    order: 25
+  VOICE_HUMOR_LELIK:
+    order: 40
+  VOICE_PERSONA_LELIK:
+    order: 20
+  VOICE_TEMPERAMENT_LELIK:
+    order: 50
+uploaded_by: local_script

@@ -36,8 +36,8 @@ agents_registry {
         examples: [
             {
                 user_query: "What car do I have?"
-                context: "Bio mentions Toyota Corolla"
-                tool_call: 'delegate_to_specialist(intent="search_memory", query="Car details: Toyota Corolla model, year, plate, insurance, service history")'
+                context: "Bio mentions Mitsubishi Colt"
+                tool_call: 'delegate_to_specialist(intent="search_memory", query="Car details: Mitsubishi Colt model, year, plate, insurance, service history")'
                 note: "Known brand included — anchors recall across all car-related facts."
             },
             {
@@ -84,8 +84,8 @@ agents_registry {
                 tool_call: 'delegate_to_specialist(intent="search_web", query="Claude 4 new features latest updates")'
             },
             {
-                user_query: "Weather in Oslo tomorrow?"
-                tool_call: 'delegate_to_specialist(intent="search_web", query="weather in Oslo tomorrow")'
+                user_query: "Weather in Kyiv tomorrow?"
+                tool_call: 'delegate_to_specialist(intent="search_web", query="weather in Kyiv tomorrow")'
             }
         ]
 
@@ -146,30 +146,18 @@ agents_registry {
             When in doubt: if the user says 'remind me about X', it's a self-reminder.
         """
 
-        schedules: """
-            One reminder holds any repeat schedule: several weekdays, several times a day,
-            every other week, the last Sunday of the month, specific days of the month.
-            State the schedule in full in the query — the specialist encodes it as an
-            RFC 5545 rule. NEVER split a repeating schedule across several reminders.
-            Everything stays editable afterwards: the schedule, the fire time, the execution
-            depth, and stopping repetition altogether. The active_reminders block shows each
-            reminder's current rule verbatim — quote it when asking for a change.
-        """
-
         how: [
             "Pass the full reminder request as query — what to surface, when, and the full context needed to execute.",
             "Include the exact time in the user's local timezone.",
             "The instruction fires in a new session with no memory of this conversation — include everything relevant.",
-            "For a repeating reminder, state the whole schedule in one delegation — every day it should fire, every time of day.",
-            "For updates or deletes: include the note_id from the active_reminders block.",
+            "For updates or deletes: include the note_id from the working_memory pending_notes block.",
         ]
 
         anti_patterns: [
             "❌ DON'T use for user's own to-do list — that's manage_user_tasks",
             "❌ DON'T pass a bare query without topic and time",
             "❌ DON'T omit context — the instruction is the only input the executor will receive",
-            "❌ DON'T create one reminder per weekday or per time of day — one rule covers them all",
-            "❌ DON'T fabricate a note_id — read it from active_reminders"
+            "❌ DON'T fabricate a note_id — read it from working_memory pending_notes"
         ]
     }
 
@@ -198,6 +186,35 @@ agents_registry {
             "❌ DON'T use for facts in the personal knowledge base (use search_memory instead)",
             "❌ DON'T use for current news or real-time data (use search_web instead)",
             "❌ DON'T preformulate as keywords — pass the natural question"
+        ]
+    }
+
+    image_generation_agent {
+        intent: "generate_image" or "edit_image"
+        how: [
+            "If the request is vague (no style/mood/subject detail), ask 1-2
+             clarifying questions in chat before delegating."
+        ]
+        anti_patterns: [
+            "❌ DON'T write Aurora-specific prompt syntax yourself — pass a
+             natural-language creative brief, the specialist translates it.",
+            "❌ DON'T use edit_image without an uploaded reference image in the
+             conversation — use generate_image for a new image instead."
+        ]
+    }
+
+    video_generation_agent {
+        intent: "generate_video" or "edit_video"
+        how: [
+            "See PROTOCOL_VIDEO_GEN_PREP — build the brief, present it for
+             confirmation, wait, only then delegate. Do not skip straight to
+             delegating here."
+        ]
+        anti_patterns: [
+            "❌ DON'T write Aurora-specific prompt syntax yourself — pass a
+             natural-language creative brief, the specialist translates it.",
+            "❌ DON'T tell the user the video is ready in this turn — it
+             arrives later, asynchronously."
         ]
     }
 }

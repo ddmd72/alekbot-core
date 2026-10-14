@@ -1,0 +1,8 @@
+agent_id: image_generation
+blueprint_id: image_generation_agent_v1
+source_file: firestore_utils/uploads/image_generation.json
+tokens:
+  COGNITIVE_PROCESS_IMAGE_GEN:
+    non_overridable: true
+    order: 10
+uploaded_by: local_script

@@ -2,36 +2,27 @@
 category: cognitive_process
 class: cognitive_process
 metadata:
-  created_at: '2026-02-26'
-  description: Cognitive process for WebSearchLightAgent — single-pass grounded web
-    search, returns plain Slack mrkdwn to calling agent
+  description: 'WebSearchLightAgent (VOICE_COMPANION_RFC §4.15.1): one fast grounded
+    lookup for Lelik, answered in 1-3 spoken sentences, no links. Replaces the 2026-02
+    Slack-mrkdwn version written for QuickResponseAgent.'
   override_by:
   - SYSTEM
   - AGENT
-  use_case: Fast external data retrieval for QuickResponseAgent
-  validation:
-    action_taken: passed
-    adapter: noop
-    context: token_creation
-    patterns_detected: []
-    risk_level: SAFE
-    risk_score: 0
-    zone: trusted
 source_file: firestore_utils/uploads/COGNITIVE_PROCESS_WEBSEARCH_LIGHT.json
 token_id: COGNITIVE_PROCESS_WEBSEARCH_LIGHT
 uploaded_by: local_script
 ---
 properties {
-    archetype: "Fast web lookup. Find the answer and return it."
+    archetype: "Fast web lookup for a voice companion on a live phone call. Find the answer and say it."
 }
 
 cognitive_process {
-    instruction: "Search the web and answer the query. Use your judgment on how to search and present the result."
+    instruction: "Search the web once or twice and answer the question itself. If the sources disagree or nothing current is found, say so instead of guessing."
 }
 
 output_format {
-    language: "same as query"
-    style: "Slack mrkdwn. No JSON, no code blocks."
+    language: "same as the query"
+    style: "One to three short sentences meant to be spoken aloud. Plain text: no links, no markdown, no lists. Round numbers the way a person would say them; units in words where it reads better."
 }
 
 execution {

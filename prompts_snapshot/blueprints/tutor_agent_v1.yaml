@@ -1,0 +1,7 @@
+blueprint_id: tutor_agent_v1
+class_order:
+- cognitive_process
+- output_format
+outer_class: TutorAgent extends Agent
+source_file: firestore_utils/uploads/tutor_agent_v1.json
+uploaded_by: local_script
