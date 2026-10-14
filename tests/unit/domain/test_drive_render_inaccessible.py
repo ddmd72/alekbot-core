@@ -32,11 +32,14 @@ def tiered_result(*cards, coverage=CoverageFacts()):
 
 
 def test_the_texts_match_the_rfc():
+    # Δ75: a new folder the user creates inside the bot's folder (a copy in the same folder can stay closed)
     assert ACCESS_LINE_FILE == ("index: the file exists, but the bot cannot open it (its sharing settings keep the "
-                                "bot out); to fix it, copy the file into a new folder inside the bot's folder: the "
-                                "copy can be read.")
-    assert ACCESS_LINE_FOLDER.startswith("index: the folder exists, but the bot cannot open this folder or its files")
-    assert "copy the files into a new folder inside the bot's folder" in ACCESS_LINE_FOLDER
+                                "bot out); to fix it, copy the file into a new folder you create inside the bot's "
+                                "folder: the copy can be read.")
+    assert ACCESS_LINE_FOLDER == ("index: the folder exists, but the bot cannot open this folder or its files (their "
+                                  "sharing settings keep the bot out); to fix it, copy the files into a new folder you "
+                                  "create inside the bot's folder: the copies can be read.")
+    assert "same folder" not in ACCESS_LINE_FILE + ACCESS_LINE_FOLDER
     assert ACCESS_NOTE_FILE == "The" + ACCESS_LINE_FILE[len("index: the"):]
     assert ACCESS_NOTE_FOLDER == "The" + ACCESS_LINE_FOLDER[len("index: the"):]
 

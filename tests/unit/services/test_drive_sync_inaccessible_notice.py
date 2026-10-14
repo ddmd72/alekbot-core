@@ -6,6 +6,7 @@ the start of a completed delta round (`observed_as_of`), so a file that was in f
 and the fix only; the paths are always in an attached text file, so no file name reaches the chat text or a model; no
 history pair. The list goes first and the text only once it was sent; the records are marked notified before the send
 and unmarked when nothing was sent. The fan-out reads the records only while the tick's counter says some are waiting."""
+from dataclasses import replace
 from datetime import timedelta
 from types import SimpleNamespace
 from typing import List, Optional
@@ -134,13 +135,31 @@ async def test_flags_go_up_before_the_send(env):
 async def test_flags_come_down_when_nothing_was_sent(env):
     await seed(env, closed("f1", "a.pdf"))
     await state(env)
+    reads = []
+    original = env.repo.inaccessible_records
+
+    async def spy(user_id, limit, **kw):
+        reads.append(env.clock.now)
+        return await original(user_id, limit, **kw)
+    env.repo.inaccessible_records = spy
     env.notifier.file_sent = False
     summary = await env.svc.fan_out()
     assert summary["notices"] == 0 and env.notifier.texts == []   # no list sent: no text either
     assert env.repo.records[("u", "f1")].inaccessible_notified_since is None
+    assert len(reads) == 1 and len(env.notifier.files) == 1
+    # Δ76: undeliverable, so held for the rest of the UTC day while the tick counts nothing new: no read, no send
     env.notifier.file_sent = True
+    env.clock.advance(600)
+    assert (await env.svc.fan_out())["notices"] == 0
+    assert len(reads) == 1 and len(env.notifier.files) == 1 and env.notifier.texts == []
+    assert env.repo.records[("u", "f1")].inaccessible_notified_since is None
+    # retried once the UTC day turns
+    next_day = (env.clock.now + timedelta(days=1)).replace(hour=0, minute=0, second=1, microsecond=0)
+    env.clock.advance((next_day - env.clock.now).total_seconds())
+    env.repo.states["u"] = replace(env.repo.states["u"], last_success_at=env.clock.now)
     await env.svc.fan_out()
-    assert len(env.notifier.texts) == 1   # retried on the next pass
+    assert len(reads) == 2 and len(env.notifier.files) == 2 and len(env.notifier.texts) == 1
+    assert env.repo.records[("u", "f1")].inaccessible_notified_since == MARKED
 
 
 async def test_never_again_for_the_same_since(env):
