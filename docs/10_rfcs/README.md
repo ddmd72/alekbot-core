@@ -20,6 +20,7 @@ This directory contains Request for Comments (RFC) documents that describe propo
 | [ADAPTIVE_ROUTING_CACHE](./ADAPTIVE_ROUTING_CACHE_RFC.md) | Partial | Router-centric enrichment + dedup implemented. Cache §8 superseded by HEXAGONAL_PROMPT_CACHING. |
 | [ACP_V2_SIMPLIFIED](./ACP_V2_SIMPLIFIED_RFC.md) | Implemented | Agent registry + sync/async delegation modes — in production. |
 | [DELIBERATE_FACT_MANAGEMENT](./DELIBERATE_FACT_MANAGEMENT_RFC.md) | Implemented | Fact taxonomy, ConsolidationAgent deliberation — in production. |
+| [DRIVE_SEARCH_METRICS](./DRIVE_SEARCH_METRICS_RFC.md) | Proposed | User Drive search metrics: per-search events and per-turn facts in BigQuery (30 days), permanent re-aggregable day rows with versioned metric definitions, a pinned LLM judge with anchors, and a weekly build-vs-build Slack report. S0 baseline copy due before 2026-11-09. |
 | [EXECUTION_CONTEXT_HEXAGONAL](./EXECUTION_CONTEXT_HEXAGONAL_RFC.md) | Postponed | Domain-level ExecutionContext value object. Postponed — 2-3 params still manageable. Note: `AgentExecutionContext` (LLM provider context) IS implemented separately. |
 | [EXTENDED_WEB_SEARCH](./EXTENDED_WEB_SEARCH_RFC.md) | Rejected | Multi-turn loop approach; single Gemini call sufficient. |
 | [GMAIL_EMAIL_INDEXING](./GMAIL_EMAIL_INDEXING_RFC.md) | Phase 1–2 ✅ Phase 3 🔄 | LLM-based email indexing, biographical_signal classification, ConsolidationAgent integration UAT validated. |
