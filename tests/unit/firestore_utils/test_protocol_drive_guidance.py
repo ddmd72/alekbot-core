@@ -33,6 +33,13 @@ def _drive_block(body):
     raise AssertionError("drive_specialist block is not closed")
 
 
+def _skill_body():
+    # the drive rules now live in the drive-search system skill, not in the protocol token (owner decision 2026-10-14)
+    from pathlib import Path
+    from src.adapters.filesystem_skill_loader import load_system_skills
+    return next(s for s in load_system_skills(Path(_ROOT) / "src" / "skills" / "smart") if s.name == "drive-search").body
+
+
 def test_smarts_profile_assigns_this_token():
     with open(_PROFILE, encoding="utf-8") as fh:
         assert "PROTOCOL_AGENT_SELECTION:" in fh.read()
@@ -67,8 +74,13 @@ _LINES = {
 
 
 def test_every_protocol_line_is_said_once():
+    # only the search trigger stays in the protocol block; every other line is said once in the skill body
     block = _drive_block(ser.token_from_file(_text())["content"])
-    assert {line: block.count(phrase) for line, phrase in _LINES.items()} == {line: 1 for line in _LINES}
+    body = _skill_body()
+    trigger = "search when the answer may be in the user's documents"
+    assert block.count(_LINES[trigger]) == 1
+    rest = {line: phrase for line, phrase in _LINES.items() if line != trigger}
+    assert {line: body.count(phrase) for line, phrase in rest.items()} == {line: 1 for line in rest}
 
 
 def test_the_block_does_not_restate_the_tool_contract():
