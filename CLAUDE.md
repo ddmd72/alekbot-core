@@ -65,7 +65,10 @@ chunker infinite loop, not a standing hazard). `make test-unit` / `make check` r
 via pytest-xdist (`-n auto`; cap with `PYTEST_WORKERS=6`): ~1:34 on a 12-core Mac vs ~5:00
 single-process. The `-n` flag lives in the Makefile, not `pytest.ini`, so a targeted
 `pytest path::test` stays one process; integration/e2e targets stay serial. A test that fails only
-under xdist is order-dependent — a real test bug, fixed under the reviewer rule, not re-serialised. Lint scope is `src/` only (default high-signal ruleset: pyflakes + pycodestyle
+under xdist is order-dependent — a real test bug, fixed under the reviewer rule, not re-serialised. The one
+exception is a test that measures CPU time: it is marked `cpu_benchmark` and runs alone after the parallel suite,
+because a saturated runner inflates CPU time (0.72 s idle vs up to 2.2 s under the suite) with no test bug behind
+it. Lint scope is `src/` only (default high-signal ruleset: pyflakes + pycodestyle
 errors). `ruff format` exists as a dev convenience but is not enforced in CI — the codebase is not
 mass-reformatted.
 
