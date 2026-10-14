@@ -30,7 +30,9 @@ The state table (§25.4.5), per job, first match wins:
     deferred  the refresh cooldown is not over (`*_defer_until`), or the record's content run is due (an edit, a
               re-extraction): its readable text is about to be replaced, so no call is made on it and no cooldown
               starts from it; the content run's commit re-plans the job (review rv_sv2_p5 MINOR 1). A model backoff
-              is not a state (§25.4.6).
+              is not a state (§25.4.6). Also while the bot cannot open the file (§26.2): no job starts, the deferral
+              has no wake time, the job counts as settled for the upgrade pass and the file is no describe gap (the
+              coverage line counts it as one the bot cannot open, Δ56); access regained re-plans it.
     parked    one call no longer fits the open initial build plus the month's rest of the class cap (§25.4.5:
               "a file starts only if its expected cost at the primary's price fits"); wakes when the month turns.
     ready     work is due.
@@ -52,7 +54,7 @@ from .drive_enrichment import (
 from .drive_enrichment_calls import ModelReplyStatus, ProfileInput
 from .drive_index import (
     KEYS_VERSION, PASSAGES_VERSION, PROFILE_VERSION, DriveChange, DriveChunk, DriveIndexRecord, Priority, Reason,
-    RecordState, Scope,
+    RecordState, Scope, inaccessible,
 )
 from .drive_index_planner import content_due
 from .drive_index_params import (
@@ -226,6 +228,8 @@ def profile_plan(rec: DriveIndexRecord, ctx: EnrichContext) -> DriveIndexRecord:
         return replace(rec, profile_state=_H)
     if content_due(rec):
         return replace(rec, profile_state=_D)   # the text is about to change: profiled after its content run
+    if inaccessible(rec):
+        return replace(rec, profile_state=_D, profile_parked_month="")   # no job while closed (§26.2)
     bump = rec.profile is not None and rec.profile_version != PROFILE_VERSION
     if (not template and not bump and rec.profile_defer_until is not None and ctx.now < rec.profile_defer_until):
         return replace(rec, profile_state=_D)
@@ -318,8 +322,8 @@ def passages_plan(rec: DriveIndexRecord, ctx: EnrichContext) -> DriveIndexRecord
     key = passages_hold_key(rec)
     if rec.passages_hold is not None and rec.passages_hold_version == key:
         return replace(rec, passages_state=_H)
-    if content_due(rec):
-        return replace(rec, passages_state=_D, passages_defer_until=None)   # hinted after its content run
+    if content_due(rec) or inaccessible(rec):   # hinted after its content run; never while closed (§26.2)
+        return replace(rec, passages_state=_D, passages_defer_until=None, passages_parked_month="")
     if (rec.passages_version == PASSAGES_VERSION and rec.passages_done_at is not None
             and ctx.now < rec.passages_done_at + PASSAGE_REFRESH_COOLDOWN):
         return replace(rec, passages_state=_D, passages_defer_until=rec.passages_done_at + PASSAGE_REFRESH_COOLDOWN)
@@ -400,7 +404,7 @@ def describe_gap(rec: DriveIndexRecord) -> str:
     """What the coverage line counts the file as (§25.5.6): a text file with no description yet whose job waits
     (`waiting`: ready, deferred, parked) or is held (`held`), or a profiled book, sheet or data file (`no_passages`).
     A file that is already described is not "not described" while its re-description waits (XC-3). Never a folder."""
-    if rec.is_folder:
+    if rec.is_folder or inaccessible(rec):   # a closed file is counted as one the bot cannot open (§26.2, Δ56)
         return ""
     jobs = (rec.profile_state, rec.passages_state)
     if not described(rec):
@@ -444,6 +448,8 @@ def profile_settled(rec: DriveIndexRecord, ctx: EnrichContext) -> bool:
     """The profile job, as planned now, is current or none, or held/parked for the current version and fingerprint
     (§25.4.5): the upgrade pass marks `profile` applied only when every record is settled."""
     fresh = profile_plan(rec, ctx)
+    if inaccessible(fresh):
+        return True   # waits for access, like a hold: it never keeps a version from applying (§26.2)
     return fresh.profile_state in (_C, _N) or (fresh.profile_state in (_H, _P)
                                                and fresh.profile_hold_version == profile_hold_key(fresh))
 
@@ -451,6 +457,8 @@ def profile_settled(rec: DriveIndexRecord, ctx: EnrichContext) -> bool:
 def passages_settled(rec: DriveIndexRecord, ctx: EnrichContext) -> bool:
     """The same for the passage-hint job (held/parked for the current version and generation)."""
     fresh = passages_plan(rec, ctx)
+    if inaccessible(fresh):
+        return True
     return fresh.passages_state in (_C, _N) or (fresh.passages_state in (_H, _P)
                                                 and fresh.passages_hold_version == passages_hold_key(fresh))
 

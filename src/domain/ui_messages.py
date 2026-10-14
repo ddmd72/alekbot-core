@@ -71,3 +71,7 @@ class UIMessage(Enum):
     DEEP_RESEARCH_DRIVE_COPIED = "deep_research_drive_copied"
     DEEP_RESEARCH_DRIVE_NOT_CONNECTED = "deep_research_drive_not_connected"
     DEEP_RESEARCH_DRIVE_COPY_FAILED = "deep_research_drive_copy_failed"
+    # Files the bot cannot open (USER_DRIVE_INDEXING_RFC §26.2, D33): the fan-out's notice. The count and the fix
+    # only; the paths travel in the attached list, so no file name is ever part of the chat text.
+    DRIVE_INACCESSIBLE_NOTICE = "drive_inaccessible_notice"
+    DRIVE_INACCESSIBLE_LIST_TITLE = "drive_inaccessible_list_title"

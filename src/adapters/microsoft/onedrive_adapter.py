@@ -440,13 +440,12 @@ class OneDriveAdapter(UserDrivePort):
         )
 
     async def get_change(self, user_id: str, item_id: str) -> DriveChange:
-        """An item that is gone (deleted, or moved out of the App Folder: S0a saw 404 itemNotFound)
-        comes back as a deletion."""
+        """One item by id. A 404 raises DriveItemNotFoundError and is never turned into a deletion
+        (USER_DRIVE_INDEXING_RFC §26.2, Δ48): Graph answers 404 both for an item that is gone (deleted, or
+        moved out of the App Folder, S0a) and for one whose own permission list lacks the app's entry, which
+        `approot/delta` still lists. Existence is decided by delta; the caller decides what its 404 means."""
         async with aiohttp.ClientSession() as s:
-            try:
-                raw = await self._call(s, user_id, "GET", f"/me/drive/items/{_q(item_id)}")
-            except DriveItemNotFoundError:
-                return DriveChange(item_id=item_id, deleted=True)
+            raw = await self._call(s, user_id, "GET", f"/me/drive/items/{_q(item_id)}")
         return _to_change(raw)
 
     async def list_children_changes(self, user_id: str, folder_id: str, limit: int,

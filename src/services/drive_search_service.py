@@ -22,6 +22,11 @@ Public interface:
     DriveSearchService(repo, embeddings, users, drive, *, embedding_space, clock, nonce, monotonic)
     await search(user_id, request) -> DriveSearchResult
     await indexing_status(user_id) -> DriveIndexingStatus     # Cabinet (§6)
+    await access_note(user_id, *, item_id=None, path=None) -> Optional[str]   # list/open on a 404 (§26.2, Δ55)
+
+Files the bot cannot open (§26.2, D33): their cards say so in the `index:` line (drive_search.index_line), the coverage
+line counts them from the tick's `inaccessible` counter (Δ56), and `access_note` gives list and open the same sentence
+when the provider answers "not found" for an item the index knows to be closed.
 """
 from __future__ import annotations
 
@@ -37,7 +42,7 @@ from ..domain.drive_enrich_plan import COVERAGE_COUNTERS, GAP_HELD, GAP_NO_PASSA
 from ..domain.drive_enrichment import USD_CAPS, HintItem, UsageClass
 from ..domain.drive_index import (
     KEYS_VERSION, MIGRATION_GATE_KEY, POLICY_VERSION, DriveIndexRecord, DriveSyncState, EpochPhase, Priority,
-    RecordState, Scope,
+    RecordState, Scope, inaccessible,
 )
 from ..domain.drive_index_lean import ChunkId
 from ..domain.drive_index_params import (
@@ -50,8 +55,9 @@ from ..domain.drive_index_planner import month_key
 from ..domain.drive_indexing_status import DriveIndexingStatus
 from ..domain.drive_keys import fetch_batches, name_match_v2, query_concepts, query_name_keys_v2
 from ..domain.drive_match import Concept, KeyFamily, MatchTier, QueryConcepts
+from ..domain.drive_search_texts import ACCESS_NOTE_FILE, ACCESS_NOTE_FOLDER
 from ..domain.drive_search import (
-    MAX_CHAIN_DEPTH, NOT_READ_YET_COUNTER, STATUS_AMBIGUOUS_FOLDER, STATUS_FOLDER_NOT_FOUND, STATUS_OK, UNREAD_COUNTER,
+    INACCESSIBLE_COUNTER, MAX_CHAIN_DEPTH, NOT_READ_YET_COUNTER, STATUS_AMBIGUOUS_FOLDER, STATUS_FOLDER_NOT_FOUND, STATUS_OK, UNREAD_COUNTER,
     DriveSearchCard, DriveSearchEnvelope, DriveSearchRequest, DriveSearchResult, content_admitted, cosine_distance,
     hides_descendants, in_date_range, kinds_for, make_card, normalize_path, path_match, record_visible,
     render_results, resolve_chain, search_gate,
@@ -332,7 +338,7 @@ class DriveSearchService:
         if result.tiered is not None:
             coverage = replace(result.tiered.coverage, building=envelope.building, reading=envelope.reading,
                                refreshing=envelope.refreshing, not_read_yet=envelope.not_read_yet,
-                               unread=envelope.unread,
+                               unread=envelope.unread, inaccessible=envelope.inaccessible,
                                names_only=result.tiered.coverage.names_only or not envelope.content_search)
             stats.coverage = "complete" if coverage == CoverageFacts() else "incomplete"
             result = replace(result, tiered=replace(result.tiered, coverage=coverage))
@@ -1273,7 +1279,26 @@ class DriveSearchService:
             # the flip's upgrade pass re-plans records it has not reached yet: reading whatever the counters say (F4-1)
             reading=int(state.applied_versions.get("policy", POLICY_VERSION)) != POLICY_VERSION,
             index_full=int(state.counters.get("carded", 0)) >= MAX_CARD_RECORDS_PER_USER,
+            inaccessible=int(state.counters.get(INACCESSIBLE_COUNTER, 0)),
         )
+
+    async def access_note(self, user_id: str, *, item_id: Optional[str] = None,
+                          path: Optional[str] = None) -> Optional[str]:
+        """The search card's sentence for an item the index knows the bot cannot open (§26.2, Δ55), by id or by folder
+        path (resolved in the index as a search scope is); None for an item the index does not know or can read, so
+        the caller keeps its own answer."""
+        rec: Optional[DriveIndexRecord] = None
+        if item_id is not None:
+            rec = (await self._repo.get_records(user_id, [item_id])).get(item_id)
+        elif path:
+            state = await self._repo.get_sync_state(user_id)
+            if state is None or not state.root_item_id:
+                return None
+            found = await self._resolve_folder(user_id, path, _Ancestry(self._repo, user_id, state.root_item_id))
+            rec = found.record if isinstance(found, _Folder) else None
+        if rec is None or not inaccessible(rec):
+            return None
+        return ACCESS_NOTE_FOLDER if rec.is_folder else ACCESS_NOTE_FILE
 
     async def _building(self, user_id: str, state: DriveSyncState) -> bool:
         """The set of items may be incomplete (§10.2): an epoch not idle, a first-seen or re-listing record

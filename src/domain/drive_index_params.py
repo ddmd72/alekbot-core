@@ -175,3 +175,12 @@ MODEL_EXTRACT_PAGES_PER_MONTH = int(READER_USD_PER_MONTH / READER_PAGE_USD_ESTIM
 ENRICH_QUEUE_PAGE = 30                      # enrichment queue records read at once (§25.4.5)
 ENRICH_WAKEUPS_PAGE = 100                   # deferred or parked jobs re-planned per tick
 DESCRIBED_STALL_AFTER = timedelta(hours=24) # a rebuild whose described count does not grow this long alerts (§25.8)
+
+# -- files the bot cannot open (§26.2, §26.12; D33) ----------------------------------------------------------------
+INACCESSIBLE_RETRY_MIN = timedelta(hours=1)      # Δ51: an observation of the item or its parent makes it due, at most
+                                                 # this often (delta re-emits unchanged items often)
+INACCESSIBLE_RETRY_SLOW = timedelta(days=7)      # OQ-C1 (§26.11): whether a permission change alone re-emits an item
+                                                 # in the App Folder's delta is not verified, so a marked item is also
+                                                 # re-read on a timer, one item call each
+INACCESSIBLE_NOTICE_BATCH = 2_000                # files in one notice; the rest on the next pass
+INACCESSIBLE_SCAN_MAX = 2_000                    # marked records one read returns (the tick's counters, the fan-out)

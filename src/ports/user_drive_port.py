@@ -79,7 +79,10 @@ class UserDrivePort(ABC):
 
     @abstractmethod
     async def get_change(self, user_id: str, item_id: str) -> DriveChange:
-        """One item as an observation; an item that no longer exists comes back with deleted=True."""
+        """One item as an observation, read by id. Raises DriveItemNotFoundError when the provider answers "not found":
+        never a deletion, because a provider may report "no access" as "not found" for an item its change feed still
+        lists (USER_DRIVE_INDEXING_RFC §26.2, Δ48). Existence is decided by the change feed; the caller decides what a
+        "not found" means for its call."""
 
     @abstractmethod
     async def list_children_changes(self, user_id: str, folder_id: str, limit: int,

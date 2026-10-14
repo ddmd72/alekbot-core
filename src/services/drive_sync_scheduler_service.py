@@ -21,9 +21,17 @@ Two passes: every user's tick is enqueued first, then the checks run. A notice g
 formatter agent (up to its 120 s SLA), so running checks first would let one slow notice delay every
 later user's tick past the scheduler's attempt deadline.
 
+Files the bot cannot open (§26.2, D33, Δ49, Δ53, Δ54): one notice per pass for the files the tick marked, sent here
+because the indexer has no chat access (RFC Δ6). Read only while the tick's `inaccessible_unnotified` counter is
+non-zero, so a quiet drive costs no query; a file is in it once a delta round that started after its marking has
+completed (`drive_access.notice_due`), and once per `inaccessible_since`. The chat text is a fixed localized UI string
+with the count and the fix only, through `notify_raw` (no formatter model, no history pair); the paths always go in an
+attached text file through `notify_file_bytes`, sent first. The records are marked notified before the send and
+unmarked when the list was not sent; this fan-out is the only writer of `inaccessible_notified_since`.
+
 Public interface:
     DriveSyncSchedulerService(repo, queue, drive, users, connected_users, notifier, alert_sink, *, clock,
-                              ensure_agents)
+                              ensure_agents, localization, language)
     await fan_out() -> Dict[str, int]
 """
 from __future__ import annotations
@@ -32,13 +40,19 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from ..domain import drive_enrich_plan as enrich
+from ..domain.drive_access import NOTICE_FILENAME, notice_batch, notice_file, notice_paths
 from ..domain.drive_enrichment import EnrichJob, JobState, UsageClass
-from ..domain.drive_index import MIGRATION_GATE_KEY, DriveSyncState
-from ..domain.drive_index_params import DESCRIBED_STALL_AFTER, FALLBACK_ALERT_SHARE, TICK_DEADLINE_S
+from ..domain.drive_index import MIGRATION_GATE_KEY, DriveIndexRecord, DriveSyncState
+from ..domain.drive_index_params import (
+    DESCRIBED_STALL_AFTER, FALLBACK_ALERT_SHARE, INACCESSIBLE_NOTICE_BATCH, INACCESSIBLE_SCAN_MAX, TICK_DEADLINE_S,
+)
 from ..domain.drive_index_planner import is_stale, month_key
 from ..domain.drive_profile import PROFILE_POLICY
+from ..domain.drive_search import INACCESSIBLE_UNNOTIFIED_COUNTER, MAX_CHAIN_DEPTH
 from ..domain.drive_task_keys import DRIVE_SYNC_TASK, tick_key, tick_payload
+from ..domain.language import LanguageCode
 from ..domain.notification_kind import NotificationKind
+from ..domain.ui_messages import UIMessage
 from ..domain.user_drive import DriveConnection
 from ..ports.alert_sink import AlertSinkPort
 from ..ports.drive_index_repository import DriveIndexRepository
@@ -48,6 +62,8 @@ from ..ports.user_repository import UserRepository
 from ..utils.logger import logger
 
 if TYPE_CHECKING:
+    from ..ports.language_service_port import LanguageServicePort
+    from .localization_service import LocalizationService
     from .user_notification_service import UserNotificationService
 
 # The notice Smart (through the notification formatter) turns into a message in the user's own
@@ -71,7 +87,9 @@ class DriveSyncSchedulerService:
                  users: UserRepository, connected_users: Callable[[], Awaitable[List[str]]],
                  notifier: Optional["UserNotificationService"], alert_sink: Optional[AlertSinkPort], *,
                  clock: Callable[[], datetime] = _utcnow,
-                 ensure_agents: Optional[Callable[[str], Awaitable[Any]]] = None) -> None:
+                 ensure_agents: Optional[Callable[[str], Awaitable[Any]]] = None,
+                 localization: Optional["LocalizationService"] = None,
+                 language: Optional["LanguageServicePort"] = None) -> None:
         self._repo = repo
         self._queue = queue
         self._drive = drive
@@ -81,6 +99,8 @@ class DriveSyncSchedulerService:
         self._alert_sink = alert_sink
         self._clock = clock
         self._ensure_agents = ensure_agents
+        self._localization = localization
+        self._language = language
 
     async def fan_out(self) -> Dict[str, int]:
         """One pass over every candidate. A failure for one user is logged and never stops the rest."""
@@ -101,6 +121,7 @@ class DriveSyncSchedulerService:
             try:
                 connection = await self._drive.connection(user_id)
                 summary["notices"] += await self._reconnect_notice(user_id, profile, state, connection)
+                summary["notices"] += await self._inaccessible_notice(user_id, profile, state)
                 summary["alerts"] += await self._staleness(user_id, state, now)
                 summary["alerts"] += await self._search_v2_alerts(user_id, state, now)
             except Exception as exc:   # a check never costs anyone their tick: all are enqueued already
@@ -258,3 +279,58 @@ class DriveSyncSchedulerService:
             return 0
         logger.info(f"[DriveSync] reconnect notice sent to {user_id[:8]}")
         return 1
+
+    async def _inaccessible_notice(self, user_id: str, profile: Any, state: DriveSyncState) -> int:
+        """One notice for the files the bot cannot open (module docstring; §26.2). Returns 1 when the list was sent."""
+        if not state.counters.get(INACCESSIBLE_UNNOTIFIED_COUNTER) or state.observed_as_of is None:
+            return 0
+        if self._notifier is None or self._localization is None:
+            logger.warning(f"[DriveSync] files of {user_id[:8]} the bot cannot open; no notifier or localization")
+            return 0
+        marked = await self._repo.inaccessible_records(user_id, INACCESSIBLE_SCAN_MAX)
+        due = notice_batch(marked, state.observed_as_of, INACCESSIBLE_NOTICE_BATCH)
+        if not due:
+            return 0
+        paths = notice_paths(due, await self._ancestors(user_id, due, state.root_item_id), state.root_item_id)
+        lang = await self._ui_language(user_id)
+        account_id = getattr(profile, "account_id", "") or ""
+        previous = {r.item_id: r.inaccessible_notified_since for r in due}
+        # Up BEFORE the send (the reconnect notice's rule): a request cancelled after the list left must not repeat it.
+        await self._repo.set_inaccessible_notified(user_id, {r.item_id: r.inaccessible_since for r in due})
+        sent = await self._notifier.notify_file_bytes(
+            user_id=user_id, account_id=account_id, file_bytes=notice_file(paths), filename=NOTICE_FILENAME,
+            title=self._localization.get_ui_string(lang, UIMessage.DRIVE_INACCESSIBLE_LIST_TITLE))
+        if not sent:
+            await self._repo.set_inaccessible_notified(user_id, previous)   # nothing was sent: retried next pass
+            logger.warning(f"[DriveSync] list of {len(due)} files {user_id[:8]}'s bot cannot open was not sent; "
+                           f"retried on the next fan-out")
+            return 0
+        text = self._localization.get_ui_string(lang, UIMessage.DRIVE_INACCESSIBLE_NOTICE).format(count=len(due))
+        if not await self._notifier.notify_raw(user_id, account_id, text):
+            logger.warning(f"[DriveSync] the list went to {user_id[:8]} but its text was not sent; not retried")
+        logger.info(f"[DriveSync] notice of {len(due)} files the bot cannot open sent to {user_id[:8]}")
+        return 1
+
+    async def _ancestors(self, user_id: str, recs: List[DriveIndexRecord],
+                         root_item_id: str) -> Callable[[str], Optional[DriveIndexRecord]]:
+        """The parent chains of `recs`, read level by level in batches, as a lookup for the paths (§3.1)."""
+        known: Dict[str, Optional[DriveIndexRecord]] = {r.item_id: r for r in recs}
+        frontier = {r.parent_id for r in recs if r.parent_id and r.parent_id != root_item_id} - set(known)
+        for _ in range(MAX_CHAIN_DEPTH):
+            if not frontier:
+                break
+            found = await self._repo.get_records(user_id, sorted(frontier))
+            for item_id in frontier:
+                known[item_id] = found.get(item_id)
+            frontier = {r.parent_id for r in found.values()
+                        if r.parent_id and r.parent_id != root_item_id and r.parent_id not in known}
+        return known.get
+
+    async def _ui_language(self, user_id: str) -> LanguageCode:
+        if self._language is None:
+            return LanguageCode.EN
+        try:
+            return await self._language.resolve_ui_language(user_id)
+        except Exception:
+            logger.warning(f"[DriveSync] UI language lookup failed for {user_id[:8]}", exc_info=True)
+            return LanguageCode.EN

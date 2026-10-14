@@ -74,6 +74,8 @@ def checks(repo: FirestoreDriveIndexRepository, user_id: str) -> List[Tuple[str,
         ("get_chunks", lambda: repo.get_chunks(user_id, "smoke-item", 1, [0, 1])),
         ("get_chunks_with_vectors", lambda: repo.get_chunks_with_vectors(user_id, "smoke-item", 1, [0, 1])),
         *v2_checks(repo, user_id, now),
+        # files the bot cannot open (§26.2, §26.9 step 3): the tick's counters and the fan-out's notice
+        ("inaccessible_records", lambda: repo.inaccessible_records(user_id, 5)),
     ]
 
 

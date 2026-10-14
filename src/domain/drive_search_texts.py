@@ -23,6 +23,9 @@ Public interface:
              FOOTER_NO_CONJUNCTION_SEARCHED (xc F4)
     card:   VALID_UNTIL_LINE, DATE_EXPIRES (xc F5)
     MIGRATION_LINE (superseded), REBUILDING_LINE (D30, xc XC-1)
+    access (§26.2, D33): ACCESS_LINE_FILE, ACCESS_LINE_FOLDER (the card's `index:` line of an item the bot cannot
+            open), ACCESS_NOTE_FILE, ACCESS_NOTE_FOLDER (list and open, Δ55), COVERAGE_INACCESSIBLE (Δ56),
+            ENVELOPE_INACCESSIBLE (a filter listing), STALE_INACCESSIBLE (Δ52)
     manifest: DRIVE_QUERY_DESCRIPTION, DRIVE_KIND_DESCRIPTION, DRIVE_DATE_FROM_DESCRIPTION, DRIVE_DATE_TO_DESCRIPTION
     PROTOCOL_TIERS_LINE
 """
@@ -127,3 +130,18 @@ PROTOCOL_TIERS_LINE = (
     "more. The coverage line says what the search could not see. When a word is held by no file, the result counts "
     "the files that match the other words, so you can tell whether the word was phrasing or the subject."
 )
+
+
+# -- files the bot cannot open (§26.2, D33) --------------------------------------------------------------------------
+ACCESS_LINE_FILE = ("index: the file exists, but the bot cannot open it (its sharing settings keep the bot out); to fix "
+                    "it, copy the file into a new folder inside the bot's folder: the copy can be read.")
+ACCESS_LINE_FOLDER = ("index: the folder exists, but the bot cannot open this folder or its files (their sharing "
+                      "settings keep the bot out); to fix it, copy the files into a new folder inside the bot's "
+                      "folder: the copies can be read.")
+# list and open answer from the index on a "not found" (Δ55): the same sentence, outside a card
+ACCESS_NOTE_FILE = "The" + ACCESS_LINE_FILE[len("index: the"):]
+ACCESS_NOTE_FOLDER = "The" + ACCESS_LINE_FOLDER[len("index: the"):]
+COVERAGE_INACCESSIBLE = "cannot be opened by the bot"            # "{n} files cannot be opened by the bot" (Δ56)
+ENVELOPE_INACCESSIBLE = ("{count} cannot be opened by the bot (their sharing settings keep it out), so their content "
+                         "was not searched.")
+STALE_INACCESSIBLE = "stale: the indexed text is from before the bot lost access to the file, and may be out of date"

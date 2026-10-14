@@ -905,6 +905,14 @@
     ]
   },
   {
+    "collectionGroup": "development_drive_index_records",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "inaccessible_since", "order": "ASCENDING" }
+    ]
+  },
+  {
     "collectionGroup": "development_drive_index_chunks",
     "queryScope": "COLLECTION",
     "fields": [

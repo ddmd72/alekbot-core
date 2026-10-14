@@ -160,4 +160,9 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.DEEP_RESEARCH_DRIVE_COPIED.value: "📁 Copied to your drive: {path}",
     UIMessage.DEEP_RESEARCH_DRIVE_NOT_CONNECTED.value: "Not copied to your drive: the drive is not connected.",
     UIMessage.DEEP_RESEARCH_DRIVE_COPY_FAILED.value: "Not copied to your drive: saving failed.",
+    UIMessage.DRIVE_INACCESSIBLE_NOTICE.value: (
+        "⚠️ Files in your drive folder that the bot cannot open because of their sharing settings: {count}. "
+        "To fix it, make a copy of each file in the same folder; the copies can be read. The list is attached."
+    ),
+    UIMessage.DRIVE_INACCESSIBLE_LIST_TITLE.value: "Files the bot cannot open",
 }

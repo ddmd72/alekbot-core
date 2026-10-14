@@ -579,7 +579,7 @@ FILE_MANAGEMENT = AgentDescriptor(
         ),
         Intent.LIST_FILES_IN_DRIVE: (
             "List a folder on the user's drive (folders first). Results are [Drive: ...] labels with refs. "
-            'Optional context={"folder": "<path>"}; omit for the top level.'
+            'Optional context={"folder": "<path or drive:<id> ref of a folder>"}; omit for the top level.'
         ),
         Intent.OPEN_FILE_FROM_DRIVE: (
             "Open a file from the user's drive and return its content (text, or the image/PDF itself). "
@@ -638,7 +638,8 @@ FILE_MANAGEMENT = AgentDescriptor(
             "name": ("Optional with file_ref (extension kept from the source if omitted). Required with text: "
                      "must end in .md .txt .csv .json .yaml .yml .html .svg or .xml"),
         },
-        Intent.LIST_FILES_IN_DRIVE: {"folder": "Optional. Folder path on the drive; omit for the top level"},
+        Intent.LIST_FILES_IN_DRIVE: {"folder": ("Optional. Folder path on the drive, or a folder's drive:<id> ref; omit "
+                                                "for the top level")},
         Intent.OPEN_FILE_FROM_DRIVE: {"file_ref": "drive:<id> ref from a [Drive: ...] label"},
         Intent.MOVE_FILE_IN_DRIVE: {
             "file_ref": "drive:<id> ref of the file or folder",

@@ -29,6 +29,16 @@ Search v2 (§25.4, P5):
   classes 3-4 (keys work included) within the maintenance share of what is left; then the upgrade pass;
 - model dollars per class are written to the usage documents a purge keeps, the initial build first (§25.4.5); the
   reader's pages and triage's images are cost estimates against them, no longer monthly counters.
+
+Files the bot cannot open (§26.2, D33): existence is decided by delta alone. A 404 on an id-addressed call while working a
+known item marks it inaccessible (`marked_inaccessible`), never deletes it: a download, a rendition or a thumbnail (after
+one re-read by id), a folder's re-listing, README listing or density probe. Marking a file checks its parent with one
+item call, and a 404 marks the parent (one level per marking, never the root, Δ50). A marked record is read again by id
+in class 3 (`_recheck_step`): on an observation of it or of its parent folder at most once per INACCESSIBLE_RETRY_MIN,
+otherwise every INACCESSIBLE_RETRY_SLOW (Δ51, OQ-C1); a readable answer clears the marking silently and the content path
+resumes. A parent lookup's 404 still removes an orphan (RFC Δ29) and a nudge's 404 writes nothing. The tick counts the
+marked files for the coverage line and the fan-out's notice (`_unread_counters`, Δ56); it never writes the fan-out's
+`inaccessible_notified_since` (Δ54).
 """
 from __future__ import annotations
 
@@ -60,14 +70,16 @@ from ..domain.drive_extraction import (
     PARSER, READER, DriveModelUnavailable, ExtractionOutcome, ExtractionRequest, ExtractionStatus, TriageImage,
     TriageResult, chain_for, model_route,
 )
+from ..domain.drive_access import access_counts
 from ..domain.drive_index import (
     CURRENT_VERSIONS, KEYS_VERSION, MIGRATION_GATE_KEY, PASSAGES_VERSION, DriveChange, DriveChanges, DriveChunk,
     DriveIndexRecord, DriveIndexStoreUnavailable, DriveSyncState, EpochPhase, ErrorCategory, FolderProbe, LeaseLost,
-    Nudge, Priority, Reason, RecordState, Scope, TriageVerdict,
+    Nudge, Priority, Reason, RecordState, Scope, TriageVerdict, inaccessible,
 )
 from ..domain.drive_index_params import (
     CASCADE_OPS_PER_TICK, EMBED_FILE_BUDGET_S, EMBED_IN_FLIGHT, ENRICH_FILE_BUDGET_S, ENRICH_IN_FLIGHT,
-    ENRICH_QUEUE_PAGE, ENRICH_SHARE, ENRICH_WAKEUPS_PAGE, FILE_START_MARGIN_S, ITEM_CALLS_PER_TICK, LEASE_MARGIN,
+    ENRICH_QUEUE_PAGE, ENRICH_SHARE, ENRICH_WAKEUPS_PAGE, FILE_START_MARGIN_S, INACCESSIBLE_SCAN_MAX,
+    ITEM_CALLS_PER_TICK, LEASE_MARGIN,
     MAINTENANCE_SHARE, MAX_ATTEMPTS, MAX_CARD_RECORDS_PER_USER, MAX_CHUNKS_PER_USER, MODEL_EXTRACT_PAGES_PER_MONTH,
     MODEL_IN_FLIGHT,
     NUDGE_RETRY_DELAY_S, PASSAGE_CHUNK_USD_ESTIMATE, PASSAGE_CHUNKS_PER_CALL, PASSAGE_IN_FLIGHT, PROBE_CHILDREN,
@@ -76,12 +88,13 @@ from ..domain.drive_index_params import (
     TICK_START_BUDGET, TRIAGE_BATCH, TRIAGE_IMAGE_USD_ESTIMATE, TRIAGE_THUMBNAIL_SIZE,
 )
 from ..domain.drive_index_planner import (
-    AccessAction, ObservationPlan, PlaceOf, PlanContext, access_action, attempt_crashed, can_start_file, capped,
+    AccessAction, ObservationPlan, PlaceOf, PlanContext, access_action, access_observed, access_recheck_due,
+    access_rechecked, access_regained, attempt_crashed, can_start_file, capped,
     card_refused, change_from_record, chunks_reembedded, chunks_refused, content_due, content_retry, deferred, demoted,
-    drops_readable, extractor_stale, generation_started, indexed, model_available, model_outage, model_recovered,
-    month_key, month_parked, needs_probe, next_month_start, outage_charged, quiet_over,
+    drops_readable, extractor_stale, generation_started, indexed, marked_inaccessible, model_available, model_outage,
+    model_recovered, month_key, month_parked, needs_probe, next_month_start, outage_charged, quiet_over,
     parent_scope, plan_observation, readme_read, reembed_in_space, reextraction_due, released, schedule,
-    stale_versions, triage_due, triaged, with_card, with_retry, without_card,
+    stale_versions, structure_stale, triage_due, triaged, with_card, with_retry, without_card,
 )
 from ..domain.drive_keys import word_form_keys, word_keys_capped
 from ..domain.drive_profile import (
@@ -96,7 +109,9 @@ from ..domain.drive_index_run import (
     gate_exempt, image_mime, no_rendition, original_fallback, outcome_step, reader_pages, readme_choice, releasable,
     reread_cooldown_until, routed,
 )
-from ..domain.drive_search import NOT_READ_YET_COUNTER, UNREAD_COUNTER
+from ..domain.drive_search import (
+    INACCESSIBLE_COUNTER, INACCESSIBLE_UNNOTIFIED_COUNTER, MAX_CHAIN_DEPTH, NOT_READ_YET_COUNTER, UNREAD_COUNTER,
+)
 from ..domain.drive_sniff import SNIFF_HEAD_BYTES, sniff_kind
 from ..domain.drive_task_keys import DRIVE_SYNC_TASK, continuation_key, nudge_key, tick_payload
 from ..domain.drive_text_gate import is_machine_text
@@ -150,8 +165,12 @@ class _NotWired(RuntimeError):
 
 
 class _ItemGone(Exception):
-    """The provider has no such item any more (a download or a rendition said so): re-observe it, never read it as
-    "no content" or "no thumbnail"."""
+    """A download or a rendition answered "not found": the item is re-read by id once, never read as "no content" or "no
+    thumbnail". A 404 again means the bot cannot open it (§26.2): it is marked, never deleted."""
+
+
+class _FolderClosed(Exception):
+    """A density probe of a folder answered "not found" (§26.2): the folder is marked and classified without a probe."""
 
 
 # What ends the tick when it escapes an index run or a re-embed (§8.2): the drive connection, a provider's throttling or
@@ -325,6 +344,9 @@ class _Spend:
 
 # Per tick, like the lease: the spend every plan and budget check of the tick reads.
 _TICK_SPEND: ContextVar[Optional[_Spend]] = ContextVar("drive_tick_spend", default=None)
+# Per tick (§26.2, Δ51): parent folder id -> the item ids of its marked records, read when the tick starts, so an
+# observation of the folder makes them due for a re-read. None when the last tick counted no marked file.
+_TICK_CLOSED: ContextVar[Optional[Dict[str, Tuple[str, ...]]]] = ContextVar("drive_tick_closed", default=None)
 
 
 def _count_reader(models: _Models, summary: Dict[str, int], now: datetime, *, calls: int, cost: float,
@@ -462,11 +484,23 @@ class DriveIndexingService:
         spend = _Spend(now, await self._repo.get_model_usage(user_id, month_key(now)),
                        await self._repo.get_initial_build(user_id))
         spend_token = _TICK_SPEND.set(spend)
+        closed_token = _TICK_CLOSED.set(await self._closed_children(user_id, state))
         try:
             return await self._run_spending(user_id, state, nudge, now, enabled, budget, summary, cont, saved,
                                             models, spend)
         finally:
+            _TICK_CLOSED.reset(closed_token)
             _TICK_SPEND.reset(spend_token)
+
+    async def _closed_children(self, user_id: str, state: DriveSyncState) -> Optional[Dict[str, Tuple[str, ...]]]:
+        """Parent id -> marked record ids (§26.2, Δ51), read only while the last tick counted a marked file."""
+        if not state.counters.get(INACCESSIBLE_COUNTER):
+            return None
+        by_parent: Dict[str, List[str]] = {}
+        for rec in await self._repo.inaccessible_records(user_id, INACCESSIBLE_SCAN_MAX):
+            if rec.parent_id:
+                by_parent.setdefault(rec.parent_id, []).append(rec.item_id)
+        return {parent: tuple(kids) for parent, kids in by_parent.items()}
 
     async def _run_spending(self, user_id: str, state: DriveSyncState, nudge: Optional[Nudge], now: datetime,
                             enabled: bool, budget: _Budget, summary: Dict[str, int], cont: _Continuation,
@@ -483,12 +517,17 @@ class DriveIndexingService:
             if state.round_complete and self._enrich_wired():
                 state, job_counts = await self._rebuild_progress(user_id, state, now, spend, settled=not more,
                                                                  progressed=budget.enrich_progressed)
+            # files the bot cannot open are counted while any may exist: the last tick counted some, or this one
+            # marked one (§26.2, Δ56)
+            scan = bool(state.counters.get(INACCESSIBLE_COUNTER) or state.counters.get(INACCESSIBLE_UNNOTIFIED_COUNTER)
+                        or summary.get("inaccessible") or summary.get("inaccessible_folders"))
             if more:
                 cont.request()
                 # unread is what search tells Smart: refreshed every tick, not only once the index settles (F4-1)
-                state = replace(state, counters=await self._unread_counters(user_id, state.counters))
+                state = replace(state, counters=await self._unread_counters(user_id, state.counters,
+                                                                            scan_access=scan))
             else:
-                state = replace(state, counters=await self._counters(user_id))   # settled: refresh
+                state = replace(state, counters=await self._counters(user_id, scan_access=scan))   # settled: refresh
             if job_counts:
                 state = replace(state, counters={**{k: v for k, v in state.counters.items()
                                                     if not k.startswith(("profile_", "passages_", "coverage_"))},
@@ -538,22 +577,37 @@ class DriveIndexingService:
                                            systemic_failures=state.systemic_failures + 1))
             return TickResult("error", summary, models.cost)
 
-    async def _counters(self, user_id: str) -> Dict[str, int]:
+    async def _counters(self, user_id: str, *, scan_access: bool = False) -> Dict[str, int]:
         """Records per state and carded (§3.5), readable chunks and `unread` (§10.2, §12.1). A zero content counter
         is left out: the Cabinet lists only non-zero counters and every reader defaults to 0."""
         counters = dict(await self._repo.count_by_state(user_id))
         content = {"chunks": await self._repo.readable_chunk_total(user_id)}
         counters.update({k: v for k, v in content.items() if v})
-        return await self._unread_counters(user_id, counters)
+        return await self._unread_counters(user_id, counters, scan_access=scan_access)
 
-    async def _unread_counters(self, user_id: str, counters: Mapping[str, int]) -> Dict[str, int]:
+    async def _unread_counters(self, user_id: str, counters: Mapping[str, int], *,
+                               scan_access: bool = False) -> Dict[str, int]:
         """`counters` with `unread` and `not_read_yet` counted now (§10.2, final review F5-2): the documents still
-        waiting and those that could not be read, two count passes; a zero is left out."""
+        waiting and those that could not be read, two count passes; a zero is left out. With `scan_access`, the files
+        the bot cannot open are read (at most INACCESSIBLE_SCAN_MAX) and counted on their own (`inaccessible`, and
+        `inaccessible_unnotified` for the fan-out's notice); they are taken out of `not_read_yet`, which they would
+        otherwise stay in for good (§26.2, Δ56). The count queries are unchanged: no new composite index."""
         waiting, unreadable = await asyncio.gather(
             self._repo.count_unread(user_id, policy.ADMITTED_KINDS, policy.TRIAGED_KINDS, pending=True),
             self._repo.count_unread(user_id, policy.ADMITTED_KINDS, policy.TRIAGED_KINDS, pending=False))
-        out = {k: v for k, v in counters.items() if k not in (UNREAD_COUNTER, NOT_READ_YET_COUNTER)}
-        out.update({k: v for k, v in ((UNREAD_COUNTER, waiting + unreadable), (NOT_READ_YET_COUNTER, waiting)) if v})
+        closed = access_counts(())
+        if scan_access:
+            marked = await self._repo.inaccessible_records(user_id, INACCESSIBLE_SCAN_MAX)
+            if len(marked) >= INACCESSIBLE_SCAN_MAX:
+                logger.warning(f"[DriveIndex] {user_id[:8]} has at least {INACCESSIBLE_SCAN_MAX} records the bot cannot "
+                               f"open; counted up to that")
+            closed = access_counts(marked, frozenset(policy.ADMITTED_KINDS), frozenset(policy.TRIAGED_KINDS))
+        waiting = max(0, waiting - closed.waiting)
+        out = {k: v for k, v in counters.items()
+               if k not in (UNREAD_COUNTER, NOT_READ_YET_COUNTER, INACCESSIBLE_COUNTER, INACCESSIBLE_UNNOTIFIED_COUNTER)}
+        out.update({k: v for k, v in ((UNREAD_COUNTER, waiting + unreadable), (NOT_READ_YET_COUNTER, waiting),
+                                      (INACCESSIBLE_COUNTER, closed.files),
+                                      (INACCESSIBLE_UNNOTIFIED_COUNTER, closed.unnotified)) if v})
         return out
 
     # ------------------------------------------------------------------------------------------
@@ -658,8 +712,29 @@ class DriveIndexingService:
                     and card_eligible(plan.upsert) and plan.upsert.card_hash != card_hash(plan.upsert)):
                 plan = replace(plan, upsert=schedule(plan.upsert, ctx.now, first_seen=False))
             self._fold(plan, cache, writes, deletes, collects)
+        await self._observe_closed_children(user_id, ctx, changes, cache, writes, deletes)
         await self._commit(user_id, list(writes.values()), deletes, collects=collects)
         summary["observed"] = summary.get("observed", 0) + len(changes)
+
+    async def _observe_closed_children(self, user_id: str, ctx: PlanContext, changes: Sequence[DriveChange],
+                                       cache: Dict[str, Optional[DriveIndexRecord]],
+                                       writes: Dict[str, DriveIndexRecord], deletes: Set[str]) -> None:
+        """An observed folder makes its marked children due for a re-read (§26.2, Δ51): a permission change on a folder
+        may re-emit the folder alone. The children come from the tick's map (`_TICK_CLOSED`)."""
+        closed = _TICK_CLOSED.get()
+        if not closed:
+            return
+        kids = [k for c in changes if c.is_folder and not c.deleted for k in closed.get(c.item_id, ())
+                if k not in deletes]
+        if not kids:
+            return
+        missing = [k for k in kids if k not in cache and k not in writes]
+        cache.update(await self._repo.get_records(user_id, missing))
+        for kid in kids:
+            rec = writes.get(kid) or cache.get(kid)
+            if rec is not None and inaccessible(rec) and not rec.inaccessible_reobserved:
+                writes[kid] = access_observed(rec, ctx.now)
+                cache[kid] = writes[kid]
 
     @staticmethod
     def _fold(plan: ObservationPlan, cache: Dict[str, Optional[DriveIndexRecord]],
@@ -687,10 +762,18 @@ class DriveIndexingService:
             return None   # the folder waits as probe_pending; its children are held unresolved (§3.6)
         return await self._probe(user_id, change.item_id, budget)
 
-    async def _probe(self, user_id: str, folder_id: str, budget: _Budget) -> Optional[FolderProbe]:
+    async def _probe(self, user_id: str, folder_id: str, budget: _Budget, *,
+                     report_closed: bool = False) -> Optional[FolderProbe]:
+        """`report_closed`: a "not found" raises _FolderClosed (the probe step marks the folder, §26.2); otherwise it is
+        a failed probe, as on observation, where the folder waits as probe_pending for its probe step."""
         budget.item_calls -= 1
         try:
             page = await self._drive.list_children_changes(user_id, folder_id, limit=PROBE_CHILDREN)
+        except DriveItemNotFoundError as exc:
+            logger.info(f"[DriveIndex] density probe of folder {folder_id} for {user_id[:8]}: not found")
+            if report_closed:
+                raise _FolderClosed() from exc
+            return None
         except _PER_ITEM_ERRORS as exc:
             logger.warning(f"[DriveIndex] density probe failed for {user_id[:8]}: {exc}")
             return None
@@ -904,9 +987,11 @@ class DriveIndexingService:
                 progressed |= await self._resolve_step(user_id, rec, state, ctx, budget)
             elif rec.rescope_pending:
                 progressed |= await self._rescope_step(user_id, rec, ctx, budget, summary)
-            elif rec.reobserve_pending:
+            elif access_recheck_due(rec, now):
+                progressed |= await self._recheck_step(user_id, rec, ctx, budget, summary)
+            elif rec.reobserve_pending and not inaccessible(rec):
                 progressed |= await self._reobserve_step(user_id, rec, ctx, budget, summary)
-            elif rec.readme_pending:
+            elif rec.readme_pending and not inaccessible(rec):
                 progressed |= await self._readme_step(user_id, rec, ctx, budget, summary)
             elif rec.has_card and not card_eligible(rec):
                 await self._commit(user_id, [without_card(rec, now)], set())
@@ -974,7 +1059,12 @@ class DriveIndexingService:
     async def _probe_step(self, user_id: str, rec: DriveIndexRecord, ctx: PlanContext, budget: _Budget) -> bool:
         if not budget.item_call_allowed():
             return False
-        probe = await self._probe(user_id, rec.item_id, budget)
+        try:
+            probe = await self._probe(user_id, rec.item_id, budget, report_closed=True)
+        except _FolderClosed:
+            # the bot cannot list it (§26.2): marked, and classified without a probe, as after MAX_ATTEMPTS (§8.2)
+            logger.info(f"[DriveIndex] folder {rec.item_id} of {user_id[:8]} cannot be opened; marked")
+            rec, probe = marked_inaccessible(rec, ctx.now), FolderProbe(marker_found=False, class_counts={}, sampled=0)
         if probe is None and rec.attempts + 1 < MAX_ATTEMPTS:
             await self._commit(user_id, [with_retry(rec, ctx.now)], set())
             return True
@@ -1007,7 +1097,9 @@ class DriveIndexingService:
         try:
             parent_change = await self._drive.get_change(user_id, rec.parent_id)
         except DriveItemNotFoundError:
-            parent_change = DriveChange(item_id=rec.parent_id, deleted=True)   # definite: the parent is gone
+            # RFC Δ29 stands (§26.2): delta lists the items the bot cannot open, so a parent a complete round never
+            # listed is not in the App Folder; the orphan goes
+            parent_change = DriveChange(item_id=rec.parent_id, deleted=True)
         except _PER_ITEM_ERRORS as exc:
             if rec.attempts + 1 >= MAX_ATTEMPTS:
                 # Transient failures prove nothing about the parent, so the record is never deleted on them; in delta
@@ -1075,8 +1167,11 @@ class DriveIndexingService:
             page = await self._drive.list_children_changes(user_id, folder.item_id, limit=RELIST_PAGE,
                                                            cursor=folder.reobserve_cursor)
         except DriveItemNotFoundError:
-            logger.info(f"[DriveIndex] re-listing target gone for {user_id[:8]}; its tombstone follows")
-            await self._commit(user_id, [_relisted(folder, None, ctx.now)], set())
+            # §26.2: delta decides existence; the bot cannot list it. The re-listing waits for access (not due while
+            # marked) and restarts from its first page
+            logger.info(f"[DriveIndex] folder {folder.item_id} of {user_id[:8]} cannot be listed; marked")
+            await self._commit(user_id, [marked_inaccessible(folder, ctx.now)], set())
+            _inc(summary, "inaccessible_folders")
             return True
         except _PER_ITEM_ERRORS as exc:
             if folder.attempts + 1 >= MAX_ATTEMPTS:
@@ -1230,8 +1325,10 @@ class DriveIndexingService:
             try:
                 page = await self._drive.list_children_changes(user_id, rec.item_id, limit=RELIST_PAGE, cursor=cursor)
             except DriveItemNotFoundError:
-                logger.info(f"[DriveIndex] folder {rec.item_id} of {user_id[:8]} is gone; its tombstone follows")
-                await self._commit(user_id, [readme_read(rec, None, "", "", now)], set())
+                # §26.2: the bot cannot list it; the README waits for access (not due while marked)
+                logger.info(f"[DriveIndex] folder {rec.item_id} of {user_id[:8]} cannot be listed; marked")
+                await self._commit(user_id, [marked_inaccessible(rec, now)], set())
+                _inc(summary, "inaccessible_folders")
                 return True
             except (DriveNotConnectedError, DriveThrottled) as exc:
                 logger.warning(f"[DriveIndex] README listing hit a systemic error for {user_id[:8]}: "
@@ -1952,13 +2049,14 @@ class DriveIndexingService:
 
     async def _item_gone(self, user_id: str, rec: DriveIndexRecord, cls: Optional[int], ctx: PlanContext,
                          budget: _Budget, summary: Dict[str, int], mark: Optional[_RunMark] = None) -> None:
-        """A download or a rendition found no item (§7.6): it is observed again at once instead of waiting for its
-        tombstone. A deletion removes the record and its chunks; an item that is there after all costs a per-file
-        attempt (§8.2), so a provider that keeps contradicting itself cannot loop."""
+        """A download or a rendition answered "not found" (§26.2): the item is re-read by id once. A 404 again means the
+        bot cannot open it: marked, never deleted (Δ48) — existence is decided by delta, whose tombstone removes a file
+        that was really deleted. An item that is readable after all costs a per-file attempt (§8.2), so a provider
+        that keeps contradicting itself cannot loop."""
         try:
-            change = await self._drive.get_change(user_id, rec.item_id)
+            change: Optional[DriveChange] = await self._drive.get_change(user_id, rec.item_id)
         except DriveItemNotFoundError:
-            change = DriveChange(item_id=rec.item_id, deleted=True)
+            change = None
         except (DriveNotConnectedError, DriveThrottled) as exc:
             logger.warning(f"[DriveIndex] re-reading item {rec.item_id} hit a systemic error for {user_id[:8]}: "
                            f"{type(exc).__name__}")
@@ -1967,10 +2065,12 @@ class DriveIndexingService:
             logger.warning(f"[DriveIndex] re-reading item {rec.item_id} failed for {user_id[:8]}: {exc}")
             await self._end_run(user_id, rec, content_retry(rec, Reason.DOWNLOAD_ERROR, ctx.now), cls, summary, mark)
             return
+        if change is None or change.deleted:   # a port still reporting a deletion is read as the 404 it was
+            await self._mark_inaccessible(user_id, rec, ctx, budget, summary, mark)
+            return
         await self._apply(user_id, ctx, [change], budget, summary)
         if mark is not None:
             mark.committed = True   # the re-observation is written: the run's snapshot is outdated
-        summary["gone"] = summary.get("gone", 0) + int(change.deleted)
         fresh = (await self._repo.get_records(user_id, [rec.item_id])).get(rec.item_id)
         if fresh is None:
             return   # deleted, its chunks with it (§7.6)
@@ -1978,6 +2078,84 @@ class DriveIndexingService:
             await self._end_run(user_id, rec, content_retry(fresh, Reason.DOWNLOAD_ERROR, ctx.now), cls, summary, mark)
         elif fresh.attempt_started_at is not None and fresh.attempt_started_at == rec.attempt_started_at:
             await self._commit(user_id, [replace(fresh, attempt_started_at=None)], set())   # a new version: no crash
+
+    async def _mark_inaccessible(self, user_id: str, rec: DriveIndexRecord, ctx: PlanContext, budget: _Budget,
+                                 summary: Dict[str, int], mark: Optional[_RunMark] = None) -> None:
+        """The stored record is marked (a started run ends without an attempt), then its parent is checked (Δ50)."""
+        fresh = (await self._repo.get_records(user_id, [rec.item_id])).get(rec.item_id)
+        if fresh is None:
+            return   # its tombstone was applied meanwhile
+        marked = marked_inaccessible(fresh, ctx.now)
+        await self._commit(user_id, [marked], set())
+        if mark is not None:
+            mark.committed = True
+        _inc(summary, "inaccessible_folders" if marked.is_folder else "inaccessible")
+        logger.info(f"[DriveIndex] item {rec.item_id} of {user_id[:8]} cannot be opened by the bot (404 by id, listed "
+                    f"by delta); marked, not deleted")
+        await self._mark_parent(user_id, marked, ctx, budget, summary)
+
+    async def _mark_parent(self, user_id: str, rec: DriveIndexRecord, ctx: PlanContext, budget: _Budget,
+                           summary: Dict[str, int]) -> None:
+        """Folders are never downloaded, so a folder is checked when one of its files is marked (Δ50): the nearest
+        unmarked ancestor gets one item call (the marked ones are climbed through, so each marking climbs one level
+        more) and a 404 marks it. The root is never marked."""
+        parent_id: str = rec.parent_id
+        parent: Optional[DriveIndexRecord] = None
+        for _ in range(MAX_CHAIN_DEPTH):
+            if not parent_id or parent_id == ctx.root_item_id:
+                return
+            parent = (await self._repo.get_records(user_id, [parent_id])).get(parent_id)
+            if parent is None or not inaccessible(parent):
+                break
+            parent_id = parent.parent_id
+        if parent is None or inaccessible(parent) or not budget.item_call_allowed():
+            return
+        budget.item_calls -= 1
+        try:
+            await self._drive.get_change(user_id, parent.item_id)
+        except DriveItemNotFoundError:
+            await self._commit(user_id, [marked_inaccessible(parent, ctx.now)], set())
+            _inc(summary, "inaccessible_folders")
+            logger.info(f"[DriveIndex] folder {parent.item_id} of {user_id[:8]} cannot be opened by the bot; marked")
+        except (DriveNotConnectedError, DriveThrottled) as exc:
+            logger.warning(f"[DriveIndex] parent check of item {rec.item_id} hit a systemic error for {user_id[:8]}: "
+                           f"{type(exc).__name__}")
+            raise
+        except _PER_ITEM_ERRORS as exc:   # the parent stays as it is; a later marking checks it again
+            logger.warning(f"[DriveIndex] parent check of item {rec.item_id} failed for {user_id[:8]}: {exc}")
+
+    async def _recheck_step(self, user_id: str, rec: DriveIndexRecord, ctx: PlanContext, budget: _Budget,
+                            summary: Dict[str, int]) -> bool:
+        """One id read of a marked record (Δ51): "not found" again restarts its retry clock; a readable answer clears
+        the marking silently (no notice) and the item is observed again, so the ordinary content path resumes."""
+        if not budget.item_call_allowed():
+            return False
+        budget.item_calls -= 1
+        try:
+            change = await self._drive.get_change(user_id, rec.item_id)
+        except DriveItemNotFoundError:
+            await self._commit(user_id, [access_rechecked(rec, ctx.now)], set())
+            _inc(summary, "inaccessible_rechecked")
+            return True
+        except (DriveNotConnectedError, DriveThrottled) as exc:
+            logger.warning(f"[DriveIndex] re-check of item {rec.item_id} hit a systemic error for {user_id[:8]}: "
+                           f"{type(exc).__name__}")
+            raise
+        except _PER_ITEM_ERRORS as exc:   # proves nothing: tried, the next read waits for the retry clock
+            logger.warning(f"[DriveIndex] re-check of item {rec.item_id} failed for {user_id[:8]}: {exc}")
+            await self._commit(user_id, [access_rechecked(rec, ctx.now)], set())
+            return True
+        if change.deleted:   # a port still reporting a deletion: delta decides existence (§26.2)
+            await self._commit(user_id, [access_rechecked(rec, ctx.now)], set())
+            return True
+        regained = access_regained(rec, ctx.now)
+        if extractor_stale(regained, self._extractor_versions):
+            regained = reextraction_due(regained)   # an upgrade pass skipped it while it could not be read
+        await self._commit(user_id, [regained], set())
+        await self._apply(user_id, ctx, [change], budget, summary)
+        _inc(summary, "access_regained")
+        logger.info(f"[DriveIndex] item {rec.item_id} of {user_id[:8]} can be opened again")
+        return True
 
     def _triage_port(self) -> ImageTriagePort:
         if self._triage is None:
@@ -2716,6 +2894,12 @@ class DriveIndexingService:
         return {**dict(CURRENT_VERSIONS), **{f"extractor:{k}": v for k, v in self._extractor_versions.items()}}
 
     def _stale(self, rec: DriveIndexRecord, pending: Optional[Set[str]] = None) -> bool:
+        """A record the bot cannot open (§26.2) is stale only for what a re-plan applies without reading it: its card,
+        name keys and embedding space; its content waits for access, like a record under an unresolved parent, and
+        never keeps the versions from applying (access regained re-plans it)."""
+        if inaccessible(rec):
+            return (structure_stale(rec, embedding_space=self._space)
+                    or (pending is not None and "keys" in pending and not enrich.keys_settled(rec)))
         return (stale_versions(rec, embedding_space=self._space)
                 or extractor_stale(rec, self._extractor_versions)
                 or (pending is not None and self._enrich_stale(rec, pending)))

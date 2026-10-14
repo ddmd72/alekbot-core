@@ -134,18 +134,20 @@ class UserNotificationService:
         text: str,
         channel_id_override: Optional[str] = None,
         platform_override: Optional[str] = None,
-    ) -> None:
+    ) -> bool:
         """
         Deliver text directly to user's channel. No agent reformatting.
 
-        Uses fallback chain: override → primary → last active.
+        Uses fallback chain: override → primary → last active. Returns whether the text was sent; delivery
+        errors are logged and swallowed (USER_DRIVE_INDEXING_RFC §26.2: the drive notice posts its text only
+        after its list was sent). Callers that do not need it ignore the result.
         """
         channel_info = await self.resolve_channel(
             user_id, channel_id_override, platform_override,
         )
         if not channel_info:
             logger.info(f"[Notification] No channel stored for user {user_id[:8]}, skipping")
-            return
+            return False
 
         response_channel = self._channel_factory.create(
             platform=channel_info.platform,
@@ -155,7 +157,7 @@ class UserNotificationService:
             logger.warning(
                 f"[Notification] Cannot create channel: platform={channel_info.platform}"
             )
-            return
+            return False
 
         try:
             # send_long_text so a long raw body threads instead of being truncated;
@@ -165,12 +167,14 @@ class UserNotificationService:
                 f"📬 [Notification] Raw delivery to {channel_info.platform} "
                 f"channel={channel_info.channel_id} user={user_id[:8]}"
             )
+            return True
         except Exception as exc:
             logger.error(
                 f"[Notification] Raw delivery failed for {user_id[:8]} "
                 f"(platform={channel_info.platform} channel={channel_info.channel_id}): {exc}",
                 exc_info=True,
             )
+            return False
 
     async def notify_call_summary(
         self,
@@ -539,10 +543,11 @@ class UserNotificationService:
         title: str,
         channel_id_override: Optional[str] = None,
         platform_override: Optional[str] = None,
-    ) -> None:
+    ) -> bool:
         """
         Upload a file to the user's channel via PlatformMediaPort.
-        Uses fallback chain: override → primary → last active.
+        Uses fallback chain: override → primary → last active. Returns whether the file was uploaded; errors
+        are logged and swallowed (callers that do not need the result ignore it).
 
         Channel ID resolution:
         The stored channel_id may be a Slack user ID (U...) — see ConversationHandler.
@@ -556,14 +561,14 @@ class UserNotificationService:
             logger.warning(
                 f"[Notification] notify_file_bytes: platform_media not configured for {user_id[:8]}"
             )
-            return
+            return False
 
         channel_info = await self.resolve_channel(
             user_id, channel_id_override, platform_override,
         )
         if not channel_info:
             logger.info(f"[Notification] No channel stored for user {user_id[:8]}, skipping file delivery")
-            return
+            return False
 
         response_channel = self._channel_factory.create(
             platform=channel_info.platform,
@@ -573,7 +578,7 @@ class UserNotificationService:
             logger.warning(
                 f"[Notification] Cannot create channel for file delivery: platform={channel_info.platform}"
             )
-            return
+            return False
 
         try:
             # Sending a message resolves a Slack user ID (U...) to the real DM channel ID (D...).
@@ -591,9 +596,11 @@ class UserNotificationService:
                 f"📎 [Notification] File delivered to {channel_info.platform} "
                 f"channel={resolved_channel_id} user={user_id[:8]} filename={filename}"
             )
+            return True
         except Exception as exc:
             logger.error(
                 f"[Notification] File delivery failed for {user_id[:8]} "
                 f"(platform={channel_info.platform} channel={channel_info.channel_id}): {exc}",
                 exc_info=True,
             )
+            return False

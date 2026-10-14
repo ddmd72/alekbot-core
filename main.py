@@ -730,6 +730,8 @@ async def main():
                 notifier=notification_service,
                 alert_sink=_alert_webhook,
                 ensure_agents=agent_factory.ensure_agents_for_user,
+                localization=_localization,
+                language=_language_service,
             )
 
         # Worker handler — dispatches Cloud Tasks to appropriate handlers
