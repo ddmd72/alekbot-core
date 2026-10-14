@@ -15,6 +15,7 @@ import html as html_lib
 from datetime import datetime, timezone
 from typing import Any, Optional, Protocol, TYPE_CHECKING
 
+from ..domain.deep_research_drive_copy import DEEP_RESEARCH_REPORT_CONTEXT_KEY, marker_query
 from ..domain.file_access import DEFAULT_FILE_LINK_TTL
 from ..domain.notification_kind import NotificationKind
 from ..domain.notify_result import NotifyResult
@@ -188,7 +189,9 @@ async def deliver_deep_research(
     Deliver deep research result:
       1. Upload round markdown files + meta.json to GCS.
       2. Send named links to the user (if notification configured).
-      3. Enqueue HtmlPageGenerator Cloud Task → styled HTML report delivered to user.
+      3. Enqueue HtmlPageGenerator Cloud Task → styled HTML report delivered to user. The task's context
+         carries DEEP_RESEARCH_REPORT_CONTEXT_KEY, so its delivery also offers the HTML to the opt-in
+         drive copy (every entry point — Claude runner, Cloud Run Job, OpenAI webhook, polling — ends here).
 
     round1_text — raw first-pass result before the critic second pass.
                   If equal to result_text (second pass disabled), uploaded once as "report".
@@ -272,6 +275,9 @@ async def deliver_deep_research(
                 "account_id": account_id,
                 "session_id": session_id or "",
                 "task_complexity": "deep_reasoning",
+                # Marks the page as a deep research report: AgentWorkerHandler offers it to the drive
+                # copy (decisions/deep_research_drive_copy.md); the question names it if it has no title.
+                DEEP_RESEARCH_REPORT_CONTEXT_KEY: marker_query(query),
                 **({"origin_channel_id": channel_id_override} if channel_id_override else {}),
                 **({"origin_platform": platform_override} if platform_override else {}),
             },
