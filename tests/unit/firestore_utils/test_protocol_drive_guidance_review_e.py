@@ -25,4 +25,6 @@ def test_the_dates_line_is_the_retry_rule_only():
 
 
 def test_a_shortened_passage_is_opened_before_quoting():
-    assert "If a passage is marked shortened, open the file before quoting from it." in _block()
+    # Search v2 P6 wording
+    assert ("A passage is a window cut from the file around what matched. Before quoting more than it shows, open the file."
+            in _block())

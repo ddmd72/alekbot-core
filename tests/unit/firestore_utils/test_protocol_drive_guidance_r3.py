@@ -20,4 +20,5 @@ def test_f5_4_the_date_retry_fires_when_the_file_is_not_shown():
 
 
 def test_f5_8_the_folder_rule_needs_a_name_match():
-    assert "When a folder card matches by name (matched: name)" in _block()
+    # Search v2 P6: the About tier is the name match
+    assert "When a folder card is shown under About (its name holds the words)" in _block()

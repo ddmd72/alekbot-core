@@ -133,13 +133,16 @@ def test_coverage_complete_and_never_says_final():
 
 
 def test_no_passage_keywords_only_when_the_passage_tiers_are_empty():
+    # Spec change (UAT 2026-10-14): policy-excluded files are a neutral note on an empty result, never a coverage gap.
     r = example()
     cov = CoverageFacts(no_passages=2)
-    assert "no passage keywords" not in render_results(replace(r, tiered=replace(r.tiered, coverage=cov)))
-    blocks = tuple(b for b in r.tiered.blocks if b.tier not in (MatchTier.MENTIONED, MatchTier.TRANSLATED))
-    cards = tuple(c for c in r.cards if c.tier not in ("mentioned", "translated"))
+    note = "2 books, sheets and data files were searched by their own words only"
+    assert note not in render_results(replace(r, tiered=replace(r.tiered, coverage=cov)))
+    blocks = tuple(b for b in r.tiered.blocks if b.tier not in (
+        MatchTier.ABOUT, MatchTier.MENTIONED, MatchTier.TRANSLATED, MatchTier.LABELLED))
+    cards = tuple(c for c in r.cards if c.tier not in ("about", "mentioned", "translated", "labelled"))
     text = render_results(replace(r, cards=cards, tiered=replace(r.tiered, coverage=cov, blocks=blocks)))
-    assert "2 books, sheets and data files have no passage keywords" in text
+    assert note in text and "no passage keywords" not in text and "Coverage: complete." in text
 
 
 def test_common_and_cut_words_are_named_in_the_searched_line():
