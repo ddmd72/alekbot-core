@@ -169,6 +169,7 @@ How it works:
 2. I clarify the scope with you and present the research brief for confirmation
 3. After you confirm, I start the research job in the background
 4. The result arrives as a structured, cited HTML report via a public link — you can continue using me normally while it runs
+5. To keep your reports, turn on "Copy deep research reports to my drive" in the Cabinet: each report is also saved to your drive, in a "Deep research" folder, and I tell you in chat whether the copy worked
 
 Use for: market analysis, comparing options in depth, background research on a topic, comprehensive how-to guides, competitor analysis.
 

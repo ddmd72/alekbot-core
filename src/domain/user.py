@@ -315,6 +315,11 @@ class UserBotConfig(BaseModel):
     # turning it off purges the index. Read uncached by the tick's gate and by search.
     drive_indexing_enabled: bool = False
 
+    # Copy each finished deep research report (its HTML) to the user's drive
+    # (decisions/deep_research_drive_copy.md). The Cabinet toggle is the explicit consent; off by default.
+    # Read uncached at delivery.
+    drive_copy_deep_research: bool = False
+
     # Deep Research: two-pass mode (second pass = critic reviews first result)
     deep_research_second_pass: bool = False
     

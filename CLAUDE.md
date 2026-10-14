@@ -161,7 +161,7 @@ Full per-agent detail (mechanics, intents, tiers, gotchas) lives in
 | Notes / Self-Reminders | PERFORMANCE (OpenAI) | `manage_self_reminders` | autonomous deferred firing |
 | Tasks | — | `manage_user_tasks` | MicrosoftToDo (GoogleTasks frozen) |
 | Consolidation | PERFORMANCE (Claude) | — | background memory formation (see below) |
-| DeepResearch | — | `deep_research` | async; default Claude, Cloud Run Job |
+| DeepResearch | — | `deep_research` | async; default Claude, Cloud Run Job; opt-in HTML copy to the user's drive |
 | MapsSearch | BALANCED (OpenAI) | `maps_query` (internal) | auto fan-out from `search_web` |
 | Compute | ECO | `compute_*` | Gemini `code_execution` sandbox, compute-only |
 | ImageGeneration | ECO default (**Grok**-only) | `generate_image`, `edit_image` | grok-imagine-image-2.0 (Aurora) via `ImageGenerationPort`; ASYNC, delivers as document |
@@ -580,6 +580,14 @@ work inside the App Folder (spike A6), so finding files goes through our own ind
 line that keeps file operations out of memory was applied to the live `CONSOLIDATION_TAXONOMY` on 2026-10-10 (dry
 run: leaks 3/3 → 1/3; RFC §4.12). Step 2 Slice 1 (metadata) is live; Slice 2+4 (content, scans and images) is built,
 not live until its deploy; one extraction path (Slice 3), long audio/video transcripts and full editing are not.
+- **Deep research copies (opt-in, 2026-10-14).** The Cabinet switch "Copy deep research reports to my drive"
+  (`UserBotConfig.drive_copy_deep_research`, default off, `/api/drive/deep-research-copy`) is the consent. Only deep
+  research reports are kept (no morning issues or email reviews; the media bucket's TTL is unchanged). Every deep
+  research path ends in `deliver_deep_research`, which marks the HtmlPageGenerator task (`deep_research_report_query`);
+  after that HTML's link is delivered, `AgentWorkerHandler` → `DeepResearchDriveCopyService` saves the same HTML via
+  `UserDriveService.save` into a UI-language folder ("Deep research", "Глибокі дослідження", …) as
+  `YYYY-MM-DD <title>.html`, and posts one line: copied / not connected / failed. Zero-LLM, no retry, never fails the
+  delivery; with indexing on the copy is indexed like any HTML. See `decisions/deep_research_drive_copy.md`.
 
 **User Drive indexing** (`docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md`: Slice 1 finds a file by metadata, its deltas
 from the RFC text are §23, cited in code as `RFC Δn`; Slice 2+4 answers from content, §24; **Search v2**, §25, D14–D31;

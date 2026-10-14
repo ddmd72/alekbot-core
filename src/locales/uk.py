@@ -161,4 +161,8 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.DRIVE_REPLACED.value: "✏️ Замінено: {path} ({before} → {after}; попередня версія — в історії версій)",
     UIMessage.DRIVE_DELETE_FAILED.value: "⚠️ Видалення {path} не завершилося.",
     UIMessage.DRIVE_REPLACE_FAILED.value: "⚠️ Заміна {path} не завершилася.",
+    UIMessage.DEEP_RESEARCH_DRIVE_FOLDER.value: "Глибокі дослідження",
+    UIMessage.DEEP_RESEARCH_DRIVE_COPIED.value: "📁 Скопійовано на твій диск: {path}",
+    UIMessage.DEEP_RESEARCH_DRIVE_NOT_CONNECTED.value: "Не скопійовано на диск: диск не підключено.",
+    UIMessage.DEEP_RESEARCH_DRIVE_COPY_FAILED.value: "Не скопійовано на диск: не вдалося зберегти.",
 }

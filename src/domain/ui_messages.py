@@ -65,3 +65,9 @@ class UIMessage(Enum):
     DRIVE_REPLACED = "drive_replaced"
     DRIVE_DELETE_FAILED = "drive_delete_failed"
     DRIVE_REPLACE_FAILED = "drive_replace_failed"
+    # Deep research report copy to the user's drive (decisions/deep_research_drive_copy.md): the drive
+    # folder's name per UI language, and the one line that follows the delivered report's link.
+    DEEP_RESEARCH_DRIVE_FOLDER = "deep_research_drive_folder"
+    DEEP_RESEARCH_DRIVE_COPIED = "deep_research_drive_copied"
+    DEEP_RESEARCH_DRIVE_NOT_CONNECTED = "deep_research_drive_not_connected"
+    DEEP_RESEARCH_DRIVE_COPY_FAILED = "deep_research_drive_copy_failed"
