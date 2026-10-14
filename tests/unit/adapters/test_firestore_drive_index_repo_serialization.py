@@ -13,7 +13,7 @@ from google.cloud.firestore_v1.async_document import AsyncDocumentReference
 from google.cloud.firestore_v1.async_transaction import AsyncTransaction
 
 from src.adapters.firestore_drive_index_repo import (
-    RECORD_FIELDS, STATE_FIELDS, FirestoreDriveIndexRepository, record_from_doc, record_to_doc, state_from_doc,
+    RECORD_FANOUT_FIELDS, RECORD_FIELDS, STATE_FIELDS, FirestoreDriveIndexRepository, record_from_doc, record_to_doc, state_from_doc,
     state_to_doc,
 )
 from src.domain.drive_enrichment import DriveProfile, KeyValue, PhotoObject, ProfileDate, ProfileEntity
@@ -70,7 +70,10 @@ def full_record() -> DriveIndexRecord:
         about_keys=("e:rome", "y:2026"), place_forms=("Rome", "Roma"), photo_description="a fountain in a square",
         photo_objects=(PhotoObject("fountain", ("fuente", "фонтан")),), photo_scene="city square",
         visible_text="TREVI", readme_excerpt="# Project", readme_excerpt_version="c7",
-        script_rendered=True)
+        script_rendered=True,
+        # §26.2 (D33, Δ47, Δ68): files the bot cannot open; the last is the fan-out's own field (Δ54)
+        inaccessible_since=T - timedelta(days=4), inaccessible_checked_at=T - timedelta(hours=8),
+        inaccessible_reobserved=True, inaccessible_notified_since=T - timedelta(days=5))
 
 
 def full_state() -> DriveSyncState:
@@ -110,6 +113,9 @@ class TestRecordSerialization:
     def test_doc_holds_every_field_as_plain_values(self):
         doc = record_to_doc(full_record())
         assert set(doc) == set(RECORD_FIELDS)
+        # the fan-out's own field is never part of a record write (§26.2, Δ54); every other field is
+        assert not set(RECORD_FANOUT_FIELDS) & set(doc)
+        assert set(doc) | set(RECORD_FANOUT_FIELDS) == {f.name for f in fields(DriveIndexRecord)}
         assert doc["content_class"] == "document" and doc["scope"] == "normal"
         assert doc["state"] == "failed" and doc["reason"] == "extract_error"
         assert doc["name_tokens"] == ["t:abc", "w:a"] and type(doc["priority"]) is int
@@ -117,7 +123,10 @@ class TestRecordSerialization:
         assert doc["modified_at"] == T and doc["modified_at"].tzinfo is not None
 
     def test_round_trip_through_stored_types(self):
-        back = record_from_doc(stored(record_to_doc(full_record())))
+        # the fan-out's field is written by its own field update (set_inaccessible_notified, §26.2, Δ54), not by
+        # record_to_doc: the stored document holds both, and record_from_doc reads every field back
+        fanout = {name: getattr(full_record(), name) for name in RECORD_FANOUT_FIELDS}
+        back = record_from_doc(stored({**record_to_doc(full_record()), **fanout}))
         assert back == full_record()
 
     def test_read_datetimes_are_plain_utc(self):

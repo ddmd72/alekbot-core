@@ -78,8 +78,8 @@ def test_indexes_are_declared_for_the_live_collection_only():
     # count_unread's three for images triaged as text, review D-M4; the not-read-yet count's two, documents and text
     # images, final review F5-2) + 8 Search v2 composites (§25.2.5: about, about by kind, expiring, enrichment queue,
     # wake-ups, profile and passages state counts, keys pending) + 2 per-job enrichment queues (P5 review MINOR 6)
-    # + 2 vector entries
-    assert len(_declared_indexes()) == 33
+    # + 1 for the records the bot cannot open (user_id + inaccessible_since, §26.2, §26.9 step 3) + 2 vector entries
+    assert len(_declared_indexes()) == 34
     assert _declared_indexes("drive_index_records") == []   # RFC Δ22: the unprefixed collections were deleted
 
 
@@ -117,8 +117,11 @@ def test_deploy_creates_the_drive_composites_and_leaves_the_vectors_to_their_scr
     declared = [i for i in _declared_indexes() if not any(mode == "VECTOR" for _, mode in i)]
     # +1 readable_chunk_total's sum, +1 chunk_capped, +3 count_unread, +3 count_unread over text images (review D-M4),
     # +2 the not-read-yet count over documents and text images (F5-2), +8 Search v2 (§25.2.5), +2 per-job enrichment
-    # queues (P5 review MINOR 6); the 2 vector entries: create_drive_vector_indexes.sh
-    assert len(drive) == len(declared) == 31
+    # queues (P5 review MINOR 6), +1 the records the bot cannot open (§26.2, §26.9 step 3); the 2 vector entries:
+    # create_drive_vector_indexes.sh
+    assert len(drive) == len(declared) == 32
+    inaccessible = [c for c in drive if "--field-config=field-path=inaccessible_since,order=ascending" in c]
+    assert len(inaccessible) == 1 and "--field-config=field-path=user_id,order=ascending" in inaccessible[0]
     not_read_yet = [c for c in drive if "--field-config=field-path=card_capped,order=ascending" in c
                     and "--field-config=field-path=indexed_generation,order=ascending" in c]
     assert len(not_read_yet) == 2
