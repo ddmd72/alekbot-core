@@ -16,6 +16,7 @@ functions so the coercion rules are testable without the SDK.
 
 import json
 import re
+import unicodedata
 from datetime import datetime
 from typing import Any, List, Optional
 
@@ -32,6 +33,26 @@ _KEYWORD_SEPARATORS = re.compile(r"[,;/|\s]+")
 # Punctuation left over when a model hand-rolls a list into a string,
 # e.g. '["mcp"' -> 'mcp'.
 _KEYWORD_STRIP_CHARS = "\"'[]{}()"
+
+
+CLIENT_NAME_MAX = 100
+
+
+def normalize_client_name(value: Any) -> str:
+    """
+    A dynamically registered client's display name, as stored.
+
+    Registration is anonymous (RFC 7591), so the name is the registrant's
+    choice. It is logged and shown on the consent page: control and format
+    characters (line breaks, NUL, escapes, bidi overrides) become spaces,
+    whitespace collapses, and the result is cut to CLIENT_NAME_MAX. Never
+    rejected: a client with an odd name still registers.
+    """
+    if value is None:
+        return ""
+    text = value if isinstance(value, str) else str(value)
+    text = "".join(" " if unicodedata.category(ch).startswith("C") else ch for ch in text)
+    return " ".join(text.split())[:CLIENT_NAME_MAX]
 
 
 def normalize_phrase(value: Any) -> str:
