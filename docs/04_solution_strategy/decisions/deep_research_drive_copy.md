@@ -33,7 +33,8 @@ Code: `src/domain/deep_research_drive_copy.py`, `src/services/deep_research_driv
   "Not copied to your drive: the drive is not connected." (also when the grant needs a reconnect, or no drive is
   configured on the deployment), or "Not copied to your drive: saving failed." Toggle off → no line. **No retry, no
   queue**, and the copy can never fail the delivery: every error is caught and logged, and the report link has
-  already been sent.
+  already been sent. The copy is bounded to 60 s (`DEEP_RESEARCH_COPY_TIMEOUT_S`): a slow Graph sequence never holds
+  the delivery task open; on the timeout nothing more is posted.
 - **Indexing:** the copy is an ordinary drive file. With drive indexing on, Search v2 indexes it like any HTML; the
   indexer is unchanged.
 
