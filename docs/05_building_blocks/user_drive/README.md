@@ -1071,16 +1071,27 @@ records by parent, read at the tick's start only while the last tick counted a m
 clock; a readable answer clears the tick's three fields silently and the file goes through the ordinary content path.
 
 **Search (Δ55, Δ56).** The card keeps its tier; its `index:` line reads "the file exists, but the bot cannot open it
-(its sharing settings keep the bot out); to fix it, copy the file into a new folder inside the bot's folder: the copy
-can be read." A folder card says the same of the folder and its files. The coverage line counts them on their own
+(its sharing settings keep the bot out); to fix it, copy the file into a new folder you create inside the bot's folder:
+the copy can be read." A folder card says the same of the folder and its files (RFC Δ75: a copy in the same folder
+stays closed when the whole folder lacks the app's entry). The coverage line counts them on their own
 ("N files cannot be opened by the bot"), never as "not read yet": the tick counts the marked files
 (`inaccessible`, and `inaccessible_unnotified` for the notice) from one read of the marked records
-(`inaccessible_records`, at most 2 000) and takes them out of `not_read_yet`; the count queries are unchanged.
+(`inaccessible_records`, lean, at most 2 000; read once per tick — at its start while the last tick counted a marked
+file, again at the end only if the tick changed a marking — and always on a settled tick, so a tick interrupted right
+after a marking cannot hide it from the notice) and takes them out of `not_read_yet`; the count queries are unchanged.
+The read at the tick's start runs inside the tick's error handling (an index still building ends the tick as an
+error).
 `list_files_in_drive` takes a folder's `drive:` ref as well as a path. When list or open meets "not found" (a 404 by
 id, or a path that does not resolve), the agent asks the index (`DriveSearchService.access_note`): a record it knows to
-be closed answers with the same sentence; anything else keeps "no longer on the drive" or "No folder". The
-`drive-search` skill tells Smart: the file exists; tell the user a copy inside the bot's folder can be read; do not
-try to open it.
+be closed answers with the same sentence; anything else keeps "no longer on the drive" or "No folder". A move, a delete
+or an update of a `drive:` ref that meets "not found" answers the same way. The `drive-search` skill tells Smart: the
+file exists; tell the user to copy each file into a new folder they create inside the bot's folder; do not try to open
+it.
+
+**Sub-folders (RFC Δ78).** A folder marked (through a file, a re-listing, a README listing or a probe) marks its stored
+sub-folders with it — they inherit its permissions — reading at most 400 stored records, no provider call; listing one
+by path then answers the access sentence. Each is re-read on its own schedule; a folder that can be opened again makes
+its marked sub-folders due within the hour.
 
 **The notice (Δ49, Δ53, Δ54).** Sent by the main service's 10-minute fan-out (`DriveSyncSchedulerService`), never by
 the indexer. Read only while the tick's `inaccessible_unnotified` counter is non-zero. A file is in it once a delta round
@@ -1088,8 +1099,8 @@ that **started after** its marking has completed (`observed_as_of > inaccessible
 deleted is gone first, and only while `inaccessible_notified_since != inaccessible_since` (once per marking). All of a
 pass's files (at most 2 000) go in one notice to the user's default chat: first the paths, always as an attached text
 file (`notify_file_bytes`, `drive-files-the-bot-cannot-open.txt`), then — only once the list was sent — a fixed
-localized UI string with the count and the fix ("make a copy of each file in the same folder"; uk, en, fr, es) through
-`notify_raw`. No file name is in the chat text or reaches a model; no history pair. The records are marked notified
+localized UI string with the count and the fix ("copy each file into a new folder you create inside the bot's folder";
+uk, en, fr, es; RFC Δ75) through `notify_raw`. No file name is in the chat text or reaches a model; no history pair. The records are marked notified
 before the list is sent and unmarked when it was not. `inaccessible_notified_since` is written only by the fan-out, with
 a field update (`set_inaccessible_notified`); the tick's record writes leave it out (it is not in `RECORD_FIELDS`), so a
 stale tick snapshot can never clear it and repeat the notice. The original of a copied file stays marked and notified:
@@ -1097,11 +1108,12 @@ never announced again; a file that is readable again and later loses access gets
 notice. A purge (opt-out, rebuild) deletes the records and their flags, so files still closed after a rebuild are
 announced once more.
 
-**Known limits.** The attached list needs the platform's file upload (`notify_file_bytes`); the main service wires only
-Slack's, so for a user whose default chat is Telegram the list is not sent, the flags come down, and the notice is
-retried every fan-out (logged WARNING) without reaching the user. The notice's fix ("a copy in the same folder") heals a
-file shared on its own; a file inside a folder that itself lacks the app's entry needs its copy in another folder —
-the search card's wording ("a new folder inside the bot's folder") covers both.
+**Delivery (RFC Δ76, Δ77).** The list goes through the media port of the default chat's platform
+(`UserNotificationService.register_platform_media`; `main.py` registers Slack's and Telegram's). Slack gets a "📎"
+placeholder first (it turns a stored user id into the DM channel the upload needs); Telegram uploads to the chat id as
+is; a platform with no port returns "not sent" before posting anything. A notice whose list was not sent (no channel,
+no port, a failed upload) is not read again until the next UTC day unless the tick counts more files to tell about
+(held per process: a new instance tries once more).
 
 ---
 
@@ -1766,4 +1778,4 @@ The levers are forward ones; the first two are a code change plus a deploy, the 
 | Deep research copies (§1.1) | `src/domain/deep_research_drive_copy.py`, `src/services/deep_research_drive_copy_service.py`, `AgentWorkerHandler._copy_deep_research_report`, `deliver_deep_research` (the marker), `/api/drive/deep-research-copy` |
 | Eval and checks | `scripts/validation/drive_eval/` (`runner.py`, `smart_dry_run.py`, `live_check.py`, `make_fixtures.py`; Search v2: `search_v2_eval.py`, `v2_metrics.py`, `dump_enrichment.py`, `enrichment_*.py`, `v1_baseline.py`, `scale_calibrate.py`, `make_fixtures_v2.py`), `scripts/validation/drive_model_check.py`, `tests/fixtures/drive_eval/`, `tests/integration/test_drive_g2_end_to_end.py` |
 | Ops and spike scripts | `scripts/infrastructure/drive_index_rebuild.py` (`--all-users`, `--hints-only`), `drive_initial_build_reset.py`, `drive_index_smoke.py`, `create_drive_vector_indexes.sh`, `deploy_firestore_indexes.py`, `drive_extract_s1.py` (S1), `drive_chunk_knn_cost.py` (S3); `scripts/onedrive/probe_renditions.py` (S0g) |
-| Files the bot cannot open (§4.18; branch) | planner `marked_inaccessible` / `access_*` in `drive_index_planner.py`; `inaccessible(rec)` in `drive_index.py`; `src/domain/drive_access.py` (counts, notice batch, paths, list file); texts in `drive_search_texts.py` (`ACCESS_*`); `DriveIndexingService._item_gone`, `_mark_inaccessible`, `_mark_parent`, `_recheck_step`; `DriveSyncSchedulerService._inaccessible_notice`; `DriveSearchService.access_note`; `UserDriveService.list_folder_by_id`; UI strings `DRIVE_INACCESSIBLE_*` in `src/locales/` |
+| Files the bot cannot open (§4.18; branch) | planner `marked_inaccessible` / `access_*` in `drive_index_planner.py`; `inaccessible(rec)` in `drive_index.py`; `src/domain/drive_access.py` (counts, notice batch, paths, list file); texts in `drive_search_texts.py` (`ACCESS_*`); `DriveIndexingService._item_gone`, `_mark_inaccessible`, `_mark_parent`, `_mark_subfolders`, `_recheck_step`, `_start_marks` / `_end_marks`; `UserNotificationService.register_platform_media`; `DriveSyncSchedulerService._inaccessible_notice`; `DriveSearchService.access_note`; `UserDriveService.list_folder_by_id`; UI strings `DRIVE_INACCESSIBLE_*` in `src/locales/` |
