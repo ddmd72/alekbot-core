@@ -134,7 +134,10 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
             raise ValueError(f"records due without a priority: {stuck[:5]}")
         for rec in records:
             key = (rec.user_id, rec.item_id)
-            self.records[key] = rec
+            stored = self.records.get(key)
+            # the fan-out's field is never part of a record write (§26.2, Δ54): the stored value stays
+            self.records[key] = replace(rec, inaccessible_notified_since=stored.inaccessible_notified_since
+                                        if stored is not None else None)
             if card_vectors and rec.item_id in card_vectors:
                 self.vectors[key] = list(card_vectors[rec.item_id])
             elif not rec.has_card:
@@ -190,6 +193,17 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
                    if r.state is RecordState.METADATA_ONLY and r.reason is Reason.USER_CHUNK_CAP]
         refused.sort(key=lambda r: (r.card_rank, -(r.modified_at.timestamp() if r.modified_at else 0.0), r.item_id))
         return refused[:limit]
+
+    async def inaccessible_records(self, user_id: str, limit: int) -> List[DriveIndexRecord]:
+        marked = [r for r in self._user(user_id) if r.inaccessible_since is not None]
+        marked.sort(key=lambda r: (r.inaccessible_since, r.item_id))
+        return marked[:limit]
+
+    async def set_inaccessible_notified(self, user_id: str, values: Mapping[str, Optional[datetime]]) -> None:
+        for item_id, since in values.items():
+            key = (user_id, item_id)
+            if key in self.records:
+                self.records[key] = replace(self.records[key], inaccessible_notified_since=since)
 
     async def count_unread(self, user_id: str, kinds: AbstractSet[str],
                            triaged: AbstractSet[str] = frozenset(), *, pending: Optional[bool] = None) -> int:

@@ -337,10 +337,25 @@ class DriveIndexRecord:
     readme_excerpt_version: str = ""          # the README content version it came from
     script_rendered: bool = False             # parser@2 flagged the page script-rendered (§25.3): a template profile;
                                               # copied from ExtractionOutcome.script_rendered by P5
+    # -- §26.2 (D33, RFC Δ47): files the bot cannot open. Delta lists the item, every id-addressed read answers 404 (its
+    # own permission list lacks the app's entry). Read as a state by `inaccessible(rec)`, never a RecordState value: the
+    # content outcome and a readable generation stay, and the rollback tag still parses every record (§25.8)
+    inaccessible_since: Optional[datetime] = None        # the marking: unchanged while the item stays closed
+    inaccessible_checked_at: Optional[datetime] = None   # the last id read that answered 404 (the retry clock)
+    inaccessible_reobserved: bool = False                # delta or a listing saw the item or its parent since that
+                                                         # read: the next read is due INACCESSIBLE_RETRY_MIN after it
+    # the fan-out's own field (Δ54): the `inaccessible_since` it notified the user of. Never in the tick's record
+    # writes (firestore_drive_index_repo.record_to_doc leaves it out); written by set_inaccessible_notified only
+    inaccessible_notified_since: Optional[datetime] = None
 
     @property
     def stale(self) -> bool:
         return self.indexed_generation is not None and self.content_version != self.indexed_version
+
+
+def inaccessible(rec: DriveIndexRecord) -> bool:
+    """The bot cannot open this item (§26.2): a 404 on an id-addressed read of an item delta still lists."""
+    return rec.inaccessible_since is not None
 
 
 @dataclass(frozen=True)

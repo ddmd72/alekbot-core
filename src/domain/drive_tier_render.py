@@ -18,10 +18,11 @@ from typing import Dict, List, Optional, Sequence, Tuple
 from .drive_index_params import CARD_RENDER_MAX, GROUP_LINES, RESULT_CHARS_MAX
 from .drive_match import MatchTier
 from .drive_search import (
-    REFERENCE_REMINDER, DriveSearchCard, DriveSearchResult, escape_text, wrap_untrusted,
+    REFERENCE_REMINDER, DriveSearchCard, DriveSearchResult, escape_text, index_line, stale_line, wrap_untrusted,
 )
 from .drive_search_texts import (
-    ABOUT_HEADING, ABSENT_IN_SCOPE_LINE, ABSENT_LINE, CONJUNCTION_TERM, COVERAGE_COMPLETE, COVERAGE_INCOMPLETE,
+    ABOUT_HEADING, ABSENT_IN_SCOPE_LINE, ABSENT_LINE, CONJUNCTION_TERM, COVERAGE_COMPLETE, COVERAGE_INACCESSIBLE,
+    COVERAGE_INCOMPLETE,
     COVERAGE_NOT_DESCRIBABLE, COVERAGE_NOT_DESCRIBED, DATE_EXPIRES, DATE_LINE, FOOTER_EXACT, FOOTER_EXACT_SEARCHED,
     FOOTER_NO_CONJUNCTION, FOOTER_NO_CONJUNCTION_SEARCHED, GROUP_LINE, KEYS_CUT, LABELLED_HEADING, MATCHED_LINE,
     MENTIONED_HEADING, NO_PASSAGES_NOTE, PASSAGE_LINE, RELATED_HEADING, RELATED_SMALL_NOTE, SEARCHED_ABSENT_IN_SCOPE_LINE,
@@ -121,6 +122,8 @@ def coverage_parts(cov: CoverageFacts, *, passages_tiers_empty: bool) -> List[st
         parts.append(f"{_plural(cov.not_read_yet, 'document is', 'documents are')} not read yet")
     if cov.unread:
         parts.append(f"{_plural(cov.unread, 'document', 'documents')} could not be read")
+    if cov.inaccessible:
+        parts.append(f"{_plural(cov.inaccessible, 'file', 'files')} {COVERAGE_INACCESSIBLE}")
     if cov.full_page:
         parts.append("a candidate page was full, so more files may match")
     if cov.unchecked:
@@ -151,10 +154,6 @@ def _no_passages_note(tiered: TieredResult) -> Optional[str]:
 
 # -- cards and groups ------------------------------------------------------------------------------------------------
 
-def _index_line(card: DriveSearchCard) -> str:
-    return f"index: {card.state}" + (f" ({card.reason})" if card.reason else "")
-
-
 def card_body(card: DriveSearchCard) -> str:
     lines = [_cut(card.summary, CARD_RENDER_MAX)]
     if card.sources:
@@ -172,9 +171,9 @@ def card_body(card: DriveSearchCard) -> str:
             lines.append(DATE_LINE.format(iso=day, source=card.date_source) if card.date_source else f"date: {day}")
         if until:
             lines.append(VALID_UNTIL_LINE.format(iso=until))
-    lines.append(_index_line(card))
+    lines.append(index_line(card))
     if card.stale:
-        lines.append("stale: the file changed after it was indexed")
+        lines.append(stale_line(card))
     if card.truncated:
         lines.append("truncated: only the beginning of the file was indexed")
     if card.keys_cut:
@@ -188,7 +187,8 @@ def _related_body(card: DriveSearchCard) -> str:
     day = _day(card)
     tail = f" | {day}" if day else ""
     body = _cut(card.summary, _RELATED_CARD_CHARS - len(tail)) + tail
-    return body + (f"\n{SIMILAR_NAME}" if card.similar_name else "")
+    body += f"\n{SIMILAR_NAME}" if card.similar_name else ""
+    return body + (f"\n{index_line(card)}" if card.inaccessible else "")   # the access line (§26.2)
 
 
 def member_of(card: DriveSearchCard) -> GroupMember:

@@ -25,6 +25,7 @@ Drive results say how each file matched. 'About' and 'mentioned in' are exact: t
 - Trust the exact tiers. When the answer depends on an automatic one, check its quoted source or open the file.
 - Mention "related by meaning only" lines only when they help, never as findings.
 - "Coverage: complete" makes a not-found reliable.
+- A result saying the bot cannot open the file: the file exists. Tell the user that a copy of it inside the bot's folder can be read; do not try to open it.
 
 ## When nothing is found
 

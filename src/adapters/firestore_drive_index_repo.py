@@ -3,7 +3,10 @@ FirestoreDriveIndexRepository — DriveIndexRepository on Firestore (docs/10_rfc
 
 Collections (env-prefixed through EnvironmentConfig):
     {prefix}drive_index_records   doc id record_key(user_id, item_id); every DriveIndexRecord field under its own
-                                  name, plus `card_vector` (Vector, 768) and `has_card_vector` (bool, mirrors it)
+                                  name, plus `card_vector` (Vector, 768) and `has_card_vector` (bool, mirrors it).
+                                  `inaccessible_notified_since` is the fan-out's: RECORD_FIELDS (the tick's writes and
+                                  reads) leave it out, `set_inaccessible_notified` writes it with a field update and
+                                  `inaccessible_records` reads it (§26.2, Δ54)
     {prefix}drive_index_chunks    doc id chunk_key(user_id, item_id, generation, index); every DriveChunk field
                                   under its own name, plus `vector` (Vector, 768) (§3.3, §24.6)
     {prefix}drive_sync_state      doc id user_id; every DriveSyncState field under its own name
@@ -103,7 +106,11 @@ _LEASE = ("lease_owner", "lease_until")
 IN_VALUES_MAX = 30                                  # Firestore `in` limit (and the disjunction limit per query)
 # metadata_only reasons that leave an admitted document unread (drive_search.is_unread, §10.2)
 UNREAD_REASONS: Tuple[Reason, ...] = (Reason.TOO_LARGE, Reason.NO_TEXT, Reason.MACHINE_TEXT, Reason.USER_CHUNK_CAP)
-RECORD_FIELDS: Tuple[str, ...] = tuple(f.name for f in fields(DriveIndexRecord))
+# The fan-out's own record field (§26.2, Δ54): the tick merges whole records, so a field in its writes would be cleared by
+# any stale snapshot and the notice repeated. Like the sync state's fan-out flags, it is outside RECORD_FIELDS.
+RECORD_FANOUT_FIELDS: Tuple[str, ...] = ("inaccessible_notified_since",)
+RECORD_FIELDS: Tuple[str, ...] = tuple(f.name for f in fields(DriveIndexRecord) if f.name not in RECORD_FANOUT_FIELDS)
+_ALL_RECORD_FIELDS: Tuple[str, ...] = RECORD_FIELDS + RECORD_FANOUT_FIELDS
 CHUNK_FIELDS: Tuple[str, ...] = tuple(f.name for f in fields(DriveChunk))
 # search streams (port): no text (windows read it by id) and no content_terms (up to 256 per chunk; the term stream
 # knows its term from its own query, review D-M3)
@@ -216,6 +223,8 @@ _RECORD_READERS: Dict[str, Callable[[Any], Any]] = {
     "enrich_wake_at": _dt,
     "about_keys": _strs, "place_forms": _strs,
     "passages_generation": _optional(int),
+    # §26.2 (D33)
+    "inaccessible_since": _dt, "inaccessible_checked_at": _dt, "inaccessible_notified_since": _dt,
 }
 
 _STATE_READERS: Dict[str, Callable[[Any], Any]] = {
@@ -234,13 +243,14 @@ _STATE_READERS: Dict[str, Callable[[Any], Any]] = {
 
 
 def record_to_doc(rec: DriveIndexRecord) -> Dict[str, Any]:
-    """Every record field under its own name; the vector is not part of the record."""
+    """Every record field the tick writes, under its own name; the vector is not part of the record, and neither is the
+    fan-out's `inaccessible_notified_since` (RECORD_FANOUT_FIELDS, Δ54)."""
     return {name: _plain(getattr(rec, name)) for name in RECORD_FIELDS}
 
 
 def record_from_doc(data: Mapping[str, Any]) -> DriveIndexRecord:
     """Missing fields take the dataclass default (schema growth); vector and extra fields are ignored."""
-    kwargs = {name: _RECORD_READERS.get(name, lambda v: v)(data[name]) for name in RECORD_FIELDS if name in data}
+    kwargs = {name: _RECORD_READERS.get(name, lambda v: v)(data[name]) for name in _ALL_RECORD_FIELDS if name in data}
     return DriveIndexRecord(**kwargs)
 
 
@@ -691,6 +701,25 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
         if not queries:
             return 0
         return sum(await asyncio.gather(*(self._count(q) for q in queries)))
+
+    def inaccessible_query(self, user_id: str, limit: int) -> Any:
+        """`inaccessible_records`' query (composite index user_id + inaccessible_since, §26.9 step 3). Not a port
+        method: the smoke script runs it."""
+        return (self._user_query(user_id).where(filter=FieldFilter("inaccessible_since", ">=", _TS_MIN))
+                .order_by("inaccessible_since").limit(limit))
+
+    async def inaccessible_records(self, user_id: str, limit: int) -> List[DriveIndexRecord]:
+        """Ties on `inaccessible_since` are ordered by the document name, `{user_id}:{item_id}`: by item id."""
+        query = self.inaccessible_query(user_id, limit).select(list(_ALL_RECORD_FIELDS))
+        return [record_from_doc(snap.to_dict()) for snap in await query.get()]
+
+    async def set_inaccessible_notified(self, user_id: str, values: Mapping[str, Optional[datetime]]) -> None:
+        """One field `update` per record: never a merge-set, which would re-create a record deleted meanwhile as a stub."""
+        for item_id, since in sorted(values.items()):
+            try:
+                await self._ref(user_id, item_id).update({RECORD_FANOUT_FIELDS[0]: since})
+            except NotFound:
+                logger.info(f"[DriveIndex] record {item_id} of {user_id[:8]} is gone; its notice flag is not written")
 
     async def count_by_state(self, user_id: str) -> Dict[str, int]:
         states = list(RecordState)

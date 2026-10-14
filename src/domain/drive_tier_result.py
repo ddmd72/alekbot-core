@@ -61,6 +61,7 @@ class CoverageFacts:
     rebuilding: bool = False        # frozen-core field, never set since XC-1: a state not rebuilt under v2 (D30) is
                                     # not searched at all (`DriveSearchResult.awaiting_rebuild`)
     unchecked: Tuple[str, ...] = () # words whose full page under a filter no scoped read covered (P6 review M1)
+    inaccessible: int = 0           # files the bot cannot open (§26.2, Δ56): never "not read yet" or "not described"
 
 
 @dataclass(frozen=True)

@@ -165,4 +165,10 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.DEEP_RESEARCH_DRIVE_COPIED.value: "📁 Скопійовано на твій диск: {path}",
     UIMessage.DEEP_RESEARCH_DRIVE_NOT_CONNECTED.value: "Не скопійовано на диск: диск не підключено.",
     UIMessage.DEEP_RESEARCH_DRIVE_COPY_FAILED.value: "Не скопійовано на диск: не вдалося зберегти.",
+    UIMessage.DRIVE_INACCESSIBLE_NOTICE.value: (
+        "⚠️ Файлів у вашій папці на диску, які бот не може відкрити через їхні налаштування спільного доступу: "
+        "{count}. Щоб це виправити, зробіть копію кожного файлу в тій самій папці: копії бот зможе прочитати. "
+        "Список у вкладенні."
+    ),
+    UIMessage.DRIVE_INACCESSIBLE_LIST_TITLE.value: "Файли, які бот не може відкрити",
 }

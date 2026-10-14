@@ -31,6 +31,8 @@ from ..services.drive_sync_scheduler_service import DriveSyncSchedulerService
 from ..utils.logger import logger
 
 if TYPE_CHECKING:
+    from ..ports.language_service_port import LanguageServicePort
+    from ..services.localization_service import LocalizationService
     from ..services.user_notification_service import UserNotificationService
 
 DRIVE_QUEUE_LOCATION = "us-central1"
@@ -75,12 +77,15 @@ def build_drive_sync_scheduler(*, repo: DriveIndexRepository, queue: TaskQueue, 
                                notifier: Optional["UserNotificationService"],
                                alert_sink: Optional[AlertSinkPort],
                                ensure_agents: Optional[Callable[[str], Awaitable[Any]]] = None,
+                               localization: Optional["LocalizationService"] = None,
+                               language: Optional["LanguageServicePort"] = None,
                                ) -> DriveSyncSchedulerService:
     """The `start_drive_sync` fan-out (RFC Δ5, Δ6). The provider name stays here, in composition:
-    the service only sees a callable listing the users with stored drive credentials."""
+    the service only sees a callable listing the users with stored drive credentials. `localization` and
+    `language` render the notice about files the bot cannot open (USER_DRIVE_INDEXING_RFC §26.2)."""
     def connected_users() -> Awaitable[List[str]]:
         return oauth_credentials.list_users_by_provider(ONEDRIVE_PROVIDER)
 
     return DriveSyncSchedulerService(repo=repo, queue=queue, drive=drive, users=users,
                                      connected_users=connected_users, notifier=notifier, alert_sink=alert_sink,
-                                     ensure_agents=ensure_agents)
+                                     ensure_agents=ensure_agents, localization=localization, language=language)
