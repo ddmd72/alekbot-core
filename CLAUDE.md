@@ -631,8 +631,11 @@ tiers About / Mentioned in (exact), By translation / Labelled (automatic), Relat
 z-floor `Z_RELATED` 2.5, uncalibrated); a coverage line names what was not searched or described; results in a
 nonce-tagged `<drive_document>` wrapper; reads only `drive_query` (a time span goes in the date fields). A sync state
 built by v1 (no `keys` in `applied_versions`) is gated (D30): no tick work, search answers "being rebuilt"; the rollout
-rebuilds every user (`docs/07_deployment/README.md` § Search v2). Smart's standing guidance (incl. the `tiers` line) is
-the `drive_specialist` block of `PROTOCOL_AGENT_SELECTION`. Not in `SearchEnrichmentService`. Opt-out purges at once;
+rebuilds every user (`docs/07_deployment/README.md` § Search v2). Smart's drive guidance (incl. the `tiers` line and
+"find is answered from the results; open a file only for its contents") is the system skill `drive-search`
+(`src/skills/smart/drive-search/SKILL.md`, D32), loaded before the first drive search; the `drive_specialist` block of
+`PROTOCOL_AGENT_SELECTION` keeps only when to search the drive, the pointer and the untrusted-text line. Not in
+`SearchEnrichmentService`. Opt-out purges at once;
 lost access keeps the index 30 days. Rebuild one user: `scripts/infrastructure/drive_index_rebuild.py`. Evals:
 `python -m scripts.validation.drive_eval` (G1/G2, v1 bars), `… drive_eval.search_v2_eval` (v2 families, offline by
 default, `bars_v2.json`; results RFC §25.7.1), G3 `… drive_eval.smart_dry_run` (owner-run, `bars_g3.json`). Decisions:

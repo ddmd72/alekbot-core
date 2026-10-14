@@ -1578,6 +1578,16 @@ studies on the live index (private, `scripts/memory/`). Designed in §25.
   label words miss common forms ("медицинские записи" over a lab report), so a class query depended on what one
   reply happened to write. The table names our own enum values the profiler chose for that file; it is not a
   query-side synonym table, so D28 stands: a query word still meets only keys written for that file.
+- **D32 Smart's drive guidance is a system skill, `drive-search` (owner, 2026-10-14).** The guidance moves out of the
+  always-on `drive_specialist` block of `PROTOCOL_AGENT_SELECTION` into `src/skills/smart/drive-search/SKILL.md`,
+  loaded with `use_skill` before the first drive search in a conversation. The protocol keeps three lines: when to
+  search the drive, the pointer to the skill and the untrusted-text rule (defence in depth beside the wrapper's own
+  reminder). The skill carries the moved rules verbatim (the `tiers` line, not-found, numbers, dates, freshness,
+  versions, document vs memory) and adds the owner's strategy: "find" is answered from the results without opening
+  files; a file is opened only for its contents; many results are counted and grouped, never opened one by one.
+  *Reason:* drive searches are rare, yet the block rode in Smart's prompt on every request; and in the UAT Smart
+  re-opened found photos to confirm them. Cost: one `use_skill` turn on the first drive search of a conversation.
+  The live check after the change (a place-name query): one skill load, two searches, no file opened, 58 s.
 
 ---
 

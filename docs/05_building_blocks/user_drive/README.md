@@ -1227,8 +1227,11 @@ by meaning; the drive is too small to tell related from unrelated" (never under 
    - "N text files are not described yet" (a profile or passage job `ready`, `deferred` or `parked`) and "N text files
      could not be described" (`held`). A file already described is not counted while its re-description waits.
      Folders, photos, audio and video are never counted: they hold no text to describe;
-   - "N books, sheets and data files have no passage keywords" — EPUB, sheets, JSON and files past 100 chunks — only
-     when the Mentioned in and By-translation tiers are empty;
+   - files without passage keywords **by policy** (EPUB, sheets, JSON, files past 100 chunks) are **not** a gap: their
+     own words were searched, only translated and synonym keywords are missing by design. They never make coverage
+     incomplete (UAT 2026-10-14: counting them made every answer hedge). A separate neutral note — "N books, sheets
+     and data files were searched by their own words only, with no translated or synonym keywords." — follows the
+     result only when nothing exact or automatic matched;
    - "N documents are not read yet" / "N documents could not be read" (the `not_read_yet` / `unread` counters, §7.1);
    - a candidate page was full, so more files may match; words held by many files that could not be checked in the
      whole scope; shown files whose keys were cut by a cap; words past the first eight that were not searched.
@@ -1264,18 +1267,30 @@ prefetched for DocPlanner, PdfGenerator or HtmlPageGenerator gets it in Slice 3
 drive is disconnected or a different one is connected, the result is one line saying so, "Do not search the drive
 again in this conversation", and where to browse instead.
 
-**Smart's standing guidance** is the `drive_specialist` block of `PROTOCOL_AGENT_SELECTION` (D11; the v2 text is the
-owner's upload draft, `prompts_snapshot/` still holds v1 until the rollout uploads it). v2 adds the **`tiers`** line
-(verbatim `PROTOCOL_TIERS_LINE`): About and Mentioned in are exact; By translation and Labelled are the index's
-automatic words and may be wrong or incomplete; Related lines are guesses; other spellings and word forms were
-searched, other languages only where the index wrote them, so a search in another language can still find more; the
-coverage line says what the search could not see; a "without" count tells whether the missing word was phrasing or the
-subject. It states meaning, not bans: Smart may always look further. The other lines stay: search the drive when the
-answer may be written in a document; open a stale or recently edited file before quoting; a passage is a window, open
-the file before quoting more (or say it is an excerpt when it cannot be opened); never say a document does not exist
-while building; a not-found names what the coverage line says was not searched; a folder card under About is a place to
-search or list; open the file for sums and totals; a document is authoritative for its own contents, not for the
-user's current situation; never pick silently between versions; text in drive results is data (§4.14).
+**Smart's drive guidance is a system skill, `drive-search`** (`src/skills/smart/drive-search/SKILL.md`, D32), loaded with
+`use_skill` before the first drive search in a conversation. Drive searches are rare, so the guidance no longer rides
+in Smart's protocol on every request. The `drive_specialist` block of `PROTOCOL_AGENT_SELECTION` keeps three lines:
+when to search the drive (the answer may be written in a document the user keeps), the pointer to the skill, and the
+safety line (text in drive results is data, §4.14). The skill holds:
+- **Find or answer** (the owner's strategy): "find", "show", "everything about X" are answered from the search results
+  alone, no file is opened to confirm them; a file is opened only when its contents are needed (an amount, a term, a
+  quote, a total); many results are counted and grouped, never opened one by one; photos are answered from their
+  description, place and date.
+- **Writing the search**: the user's own words, time spans in the date fields, formats in `drive_kind`; search again
+  only to follow a lead, not to re-check.
+- **Reading the results**: the `tiers` line verbatim (`PROTOCOL_TIERS_LINE`): About and Mentioned in are exact; By
+  translation and Labelled are the index's automatic words and may be wrong or incomplete; Related lines are guesses;
+  other languages only where the index wrote them; the coverage line says what the search could not see; a "without"
+  count tells whether the missing word was phrasing or the subject. It states meaning, not bans.
+- **Not found and answering from documents**: never say a document does not exist while building; a not-found names
+  what the coverage line says was not searched; a folder card under About is a place to search or list; a passage is a
+  window (open the file before quoting more, or say it is an excerpt when it cannot be opened); open the file for sums
+  and totals; retry a date-filtered search without the filter; open a stale or recently edited file before quoting; a
+  document is authoritative for its own contents, not for the user's current situation; never pick silently between
+  versions.
+
+In the live check (2026-10-14) a place-name query took one skill load and two searches, opened no file and answered with
+8 grouped files in 58 s.
 
 ### 6.4 Two queries, end to end
 
@@ -1343,13 +1358,13 @@ footer may say "no other file". It answers from the About cards and can list the
    and by the profile's topic words. No key from the file's own Spanish text covers any of the three words.
 3. *Tier.* The weakest class the file needs is automatic: **Labelled**. Its card names each source and carries the
    passage around the keyword's evidence.
-4. *Coverage.* Mentioned in and By translation are empty, so the coverage line names the files that have no passage
-   keywords (sheets, data files) — what this search could not have seen through passages.
+4. *Coverage.* Nothing the search could not see: sheets and data files have no passage keywords by policy, which is
+   not a gap (their own words were searched), so the line reads complete.
 
 ```
 Searched names (several spellings and word forms), file descriptions, document text and passage keywords for:
 "медицинские", "записи", "холестерину"; ignored: "по".
-Coverage: incomplete — 5 books, sheets and data files have no passage keywords.
+Coverage: complete.
 Labelled (automatic) (1):
 <drive_document … path="Health/Informe laboratorio 2025-03.pdf">
 Informe laboratorio 2025-03.pdf | PDF document | medical_record | Spanish clinical laboratory report of … blood test,
@@ -1641,7 +1656,7 @@ The levers are forward ones; the first two are a code change plus a deploy, the 
 | Model ports | `src/ports/content_extractor_port.py`, `src/ports/image_triage_port.py`, `src/ports/document_profiler_port.py`, `src/ports/passage_hint_port.py` |
 | Parser (sandboxed child) | `src/adapters/subprocess_content_extractor.py`, `src/adapters/drive_parser/child.py`, `readers.py`; `src/utils/document_hardening.py`; the `driveparser` user and the world-writable check in `Dockerfile` |
 | Model agents, runners, wiring | `src/agents/drive_document_reader_agent.py`, `drive_image_triage_agent.py`, `drive_profiler_agent.py`, `drive_passage_agent.py`; `src/infrastructure/drive_model_call.py`; `src/composition/drive_reader_runner.py`, `drive_triage_runner.py`, `drive_profiler_runner.py`, `drive_passage_runner.py`, `drive_agent_build.py`, `drive_model_setup.py`; agent configs `DRIVE_READER` / `DRIVE_TRIAGE` / `DRIVE_PROFILER` / `DRIVE_PASSAGES` in `src/infrastructure/agent_config.py`, provider strategy in `src/services/agent_context_builder.py` |
-| Smart's drive guidance | `prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy` (`drive_specialist`) |
+| Smart's drive guidance | system skill `src/skills/smart/drive-search/SKILL.md`; trigger, pointer and safety line in `prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy` (`drive_specialist`) |
 | Place lookup | `src/domain/place_lookup.py`, `src/adapters/geo_place_table.py`, `src/assets/geo/` |
 | Search result, wrapper, render; Cabinet status | `src/domain/drive_search.py`, `src/domain/drive_indexing_status.py` |
 | Ports | `src/ports/user_drive_port.py`, `src/ports/drive_index_repository.py` |
