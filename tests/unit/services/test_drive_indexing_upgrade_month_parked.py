@@ -6,11 +6,13 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from src.domain.drive_enrichment import UsageClass
 from src.domain.drive_extraction import PARSER, READER, ExtractionOutcome, ExtractionStatus
-from src.domain.drive_index_params import QUIET
+from src.domain.drive_index_params import QUIET, READER_USD_PER_MONTH
 from src.services import drive_indexing_service as svc_mod
 
 from .drive_content_world import ContentWorld, HookedExtractor, admitted, prose  # noqa: F401  (fixture)
+from .drive_usage_helpers import close_initial_build, spend
 
 pytestmark = pytest.mark.usefixtures("admitted")
 
@@ -37,8 +39,9 @@ async def test_month_held_records_do_not_restart_the_upgrade_pass_on_every_worki
     notes = w.add_doc("notes.md", prose(20))
     await w.settle()
     assert all(w.rec(s).extracted_by == "reader@1" for s in scans)
-    used = (await w.repo.get_sync_state("u")).model_pages_used
-    monkeypatch.setattr(svc_mod, "MODEL_EXTRACT_PAGES_PER_MONTH", used)   # this month's pages are spent
+    # this month's reader dollars are spent (Search v2, §25.4.5: the initial build over, the month's cap used up)
+    await close_initial_build(w.repo, w.clock.now)
+    await spend(w.repo, UsageClass.READER, READER_USD_PER_MONTH, w.clock.now)
     new_reader = HookedExtractor(READER, version=2)
     for i in range(3):
         scan_outcomes(w, new_reader, f"scan{i}.pdf")

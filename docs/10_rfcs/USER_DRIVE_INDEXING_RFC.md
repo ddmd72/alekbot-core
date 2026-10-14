@@ -1,10 +1,12 @@
 # RFC: User Drive Step 2 — Indexing and Search
 
-**Status:** Draft, revision 3.17 (2026-10-13) — **Slice 1 live** (PR #58, deployed and accepted 2026-10-12); where
+**Status:** Draft, revision 3.21 (2026-10-14) — **Slice 1 live** (PR #58, deployed and accepted 2026-10-12); where
 the build differs from this text, §23 says how and why. **Slices 2 and 4 are one slice** (D6), designed in §24 and
 built (not live until its deploy); §24 overrides the text above where they disagree and was brought in line with the
 code in rev 3.15 and again, after the final cross-cutting review, in rev 3.16; rev 3.17 records the owner's model
-switch after the live check. Slice 3 not built. Phase 0 hardening merged (PR #57, §16).
+switch after the live check. **Search v2** (owner decisions D14–D28 and D30, D29 and D31 by the arbiter) is designed
+in §25 and **implemented on branch `asm/drive-search-v2`, not deployed** (results on the synthetic fixture: §25.7.1);
+§25 overrides §5.5, §8.5, §10, §14, §15 and §24 where they disagree. Slice 3 not built. Phase 0 hardening merged (PR #57, §16).
 **Builds on:** [USER_DRIVE_RFC.md](USER_DRIVE_RFC.md) (Step 1, live: CRUD over the user's OneDrive App Folder).
 Replaces that RFC's §5 "Step 2" placeholder.
 **Precedents reused:** email index ([GMAIL_EMAIL_INDEXING_RFC.md](GMAIL_EMAIL_INDEXING_RFC.md), `IndexedEmail`),
@@ -95,6 +97,34 @@ To Do mirror (`TaskSearchIndex`), `src/domain/rrf.py`, `TaskQueue.enqueue_worker
   precise than 176 px; `TRIAGE_VERSION` is not bumped (the owner rebuilds deliberately). Both agents fail over to
   Gemini Flash (`gemini-3.8-flash`, resolved at BALANCED through the strategy's new `fallback_tier`), which needed
   inline file bytes in the Gemini adapter; an outage is now both providers failing (§24.2, §24.8, §24.9, §24.14).
+- Rev 3.18 (2026-10-13): **Search v2** (§25), owner decisions D14–D24 (§21), after the live test of 2026-10-13 and six
+  design studies. Search answers in evidence tiers (about, mentioned in, related by meaning above a relative floor)
+  instead of RRF over four streams and a fixed `K`. At index time, a model profile per text file from its own content
+  (reversing D10 and §2's rejection of per-file LLM summaries), doc2query per chunk with a grounding filter, and
+  enriched photo triage, so search stays zero-LLM. `word_keys` replace `content_terms`; the card loses its lead text;
+  HTML extraction is fixed (parser@2); the `document` family takes Markdown and text. No deep mode and no new Smart
+  field. Migration by one rebuild; rollback to tag `drive-search-v1`. §24.13's thumbnail size corrected to the built
+  `large`.
+- Rev 3.19 (2026-10-13): §25 revised after review round 1 (code fit, search quality, operations; 2 blockers, 33 major,
+  17 minor, all accepted by the arbiter): an enrichment state and queue of its own with a share of every tick; derive
+  work in new generations and hint documents instead of in-place writes; one symmetric normaliser for every key family;
+  the measured idf rule, proximity and commonness by files; an honest related tier and a coverage line per result
+  instead of a "final" protocol line; dollar budgets that survive a purge, an initial-build allowance; README profiles for every collapsed folder; pre-registered bars; a migration gate and runbooks. Then the
+  owner's decisions of the same day: no re-consent (D26), a one-time initial-build allowance of at least $20 (D27),
+  and, after a measurement, D28: query keys from the deterministic normaliser with strict AND, synonyms and
+  translations written only at index time (doc2query, the profile's label words), no model and no keys field at query
+  time.
+- Rev 3.20 (2026-10-13): §25 revised after review round 2 (a verification of round 1 and a fresh "ready to plan?"
+  review; arbitrated under the owner's delegation): form sets instead of truncated stems in the one normaliser; topic,
+  life-area and validity words written at index time in four languages; a By-translation tier from grounded passage
+  keywords with stored evidence; source classes deciding the tier; a count line for a word no file holds (D29) and an
+  allowance for drive-wide common words; per-job enrichment states settled per version key; hint reuse inside the
+  content run; the initial build in its own document; rollback deleting hint documents first; bars per case family; a
+  recorded enrichment snapshot; frozen interfaces and a decomposition appendix (§25.13).
+- Rev 3.21 (2026-10-14): Search v2 implemented on `asm/drive-search-v2` (Part 0, P1–P7, the cross-cutting review's
+  fixes, D30, D31; `make check` green), not deployed. §25.7.1 records the real-vector eval on the synthetic fixture and
+  the arbiter's decision to keep `Z_RELATED` 2.5 until it is calibrated on the owner's drive after the rebuild;
+  §25.12's `WORD_KEYS_PER_CHUNK` corrected to the built 1 500 (§25.2.6 already said so).
 
 **Owner decisions (2026-10-11)**
 - The App Folder is meant to become a real document store. It is empty only because the feature is being built.
@@ -142,6 +172,7 @@ conversation.
   picks them up" does not port as is. Step 1 §2 is corrected accordingly.
 - LLM summaries of every document, code indexing, audio/video (all §14). Text recognition for screenshots and scans,
   a brief for model-read documents and short captions for photographs are in the merged Slice 2+4 (§24).
+  *Superseded by §25 (D15):* every text file gets a model profile from its own content; code and audio/video stay out.
 
 ---
 
@@ -171,7 +202,10 @@ conversation.
 - *No content index, read on demand with long-context models*: fails G2/G3 across many files and puts untrusted
   extraction on the chat path.
 - *An LLM summary per file as the core unit*: an LLM call over every hostile file at index time, and still no pinpoint
-  answers in long documents. It stays a later stage (§14).
+  answers in long documents. It stays a later stage (§14). *Reversed in part by D15 (§25):* a profile per text file is
+  now an index-time **stage** — a record field, not a new unit (point 2 above) — and both objections are answered: the
+  profiler has no tools, its values are verified against the text and its output stays inside the wrapper; chunks
+  stay for pinpoint answers.
 - *An internal UUID per file*: Step 1 refs are `drive:<provider item_id>`; a provider switch rebuilds the index anyway.
   An alias resolver behind `parse_drive_ref` is the seam if ever needed.
 
@@ -755,6 +789,8 @@ hard boundaries, with `CHUNK_OVERLAP`; carry the header row into continued Markd
 
 ### 8.5 Card
 
+*Superseded by §25.2.7 (`CARD_VERSION` 3): no lead text; a profiled file's card is its profile.*
+
 `card_text(record)` is pure over record fields: `name | kind | key facets` plus, for indexed and `machine_text`
 records, the first `CARD_LEAD_CHARS` of text; folders `name | folder`; opaque roots `name | repository`,
 `name | hidden folder`, `name | generated files` or `name | generated files (500+ items)` (§5.2, RFC Δ33). OS
@@ -829,6 +865,10 @@ measures it).
 
 ## 10. Search and the agent surface
 
+*Search v2 (§25.5) replaces steps 2–7 of §10.1 and the card contract of §10.2 (RRF, `K`, cover-first, the
+content-term stream, windows on every content hit) with evidence tiers and a relative meaning floor. The gate, folder
+resolution, read-time visibility, filter-only listings, duplicate collapse, the envelope and the wrapper (§10.4) stay.*
+
 ### 10.1 `DriveSearchService`
 
 Input: `query`, optional `folder` (a `drive:` ref or a path), `kind` (a format, an extension or a family, RFC Δ20),
@@ -860,7 +900,7 @@ written inside a document do go in it, §24.10).
    remaining keys (at most 30), in parallel, merged by id, ranked by how many keys each record shares (RFC Δ17).
    Catches exact and partial names (`IMG_4912`, `ред3`), transliteration and typos, where a cosine over the card
    vector is weak. "Find a file" is Slice 1's core, so this stream is part of the base, not a later extension.
-4. **No cosine thresholds** in the design: each stream contributes its top results by rank, RRF and `K` bound the
+4. *(Superseded by §25.5.3–§25.5.4, D14: a relative floor and tiers.)* **No cosine thresholds** in the design: each stream contributes its top results by rank, RRF and `K` bound the
    output, and Smart judges relevance from the cards (the honest envelope covers "not found"). The name stream keeps
    only records sharing at least one whole token or `NAME_MIN_TRIGRAMS` trigrams. Then read-time visibility (§5.2),
    post-filters (kind, dates, folder), then RRF
@@ -890,6 +930,8 @@ One summary log line per search (`[DriveSearch]`): counts after each stage (card
 name kept, visible, filtered, fused, covered, widened, collapsed, returned), `building`, and the elapsed `ms`.
 
 ### 10.2 Result contract
+
+*What Smart reads in v2: §25.5.6.*
 
 **Envelope:** `enabled`; `content_search` (false in Slice 1); `building` — the set of existing items may still be
 incomplete: no sync state or root yet (onboarding), a purge running, an epoch not `idle` (onboarding or after a 410),
@@ -942,7 +984,7 @@ the reason: enrichment would also hand file content to claude.ai via MCP and to 
   never be an instruction; file names are untrusted too. A drive file the coordinator prefetches for another
   specialist (DocPlanner, PdfGenerator, HtmlPageGenerator) still reaches it raw until Slice 3 (RFC Δ35). No extra
   confirmation for destructive intents (D2).
-- **Smart protocol lines** (a token change, backed up before editing; Slice 2 — until then the guidance below that
+- **Smart protocol lines** (v2 adds the `tiers` line, §25.5.7; a token change, backed up before editing; Slice 2 — until then the guidance below that
   Slice 1 needs is rendered with the results):
   - search the drive when the answer may be in the user's documents;
   - results reflect the drive as of `index_as_of`; if the user refers to a recent edit, or a card is `stale`, open the
@@ -1121,13 +1163,17 @@ substitutions (deploy-substitution trap).
 | Fan-out, staleness check, reconnect notice (scheduler task on the main service) | service, delegated to by the handler | `services/drive_sync_scheduler_service.py`; `handlers/worker_handler.py` only delegates (RFC Δ5) |
 | Intent, protocol, capability | agents / manifest | `file_management_agent.py`, `agent_manifest.py`, Smart protocol token |
 | Opt-in toggle, status, Reconnect | web | Cabinet app, `/api/drive/indexing`, `/api/drive/status` |
-| Place-name resolution (bundled reverse-geocoding table → `place_name` facet) | domain + adapter | `domain/place_lookup.py` (pure lookup), `adapters/geo_place_table.py` (loads `src/assets/geo/places_v1.tsv`), injected into the tick by composition; `geo_table_version` stamped |
+| Place-name resolution (bundled reverse-geocoding table → `place_name` facet) | domain + adapter | `domain/place_lookup.py` (pure lookup), `adapters/geo_place_table.py` (loads `src/assets/geo/places_v2.tsv` and `countries_v2.tsv`, geo table v2, §25.4.3), injected into the tick by composition; `geo_table_version` stamped |
 | Wiring (second `TaskQueue`, repository, place lookup, fan-out) | composition | `composition/drive_indexing_setup.py`, `service_container.py`; the indexer builds its own in `indexer_main.py` |
 | Rebuild one user's index | ops script | `scripts/infrastructure/drive_index_rebuild.py` (§12.2) |
 
 ---
 
 ## 14. Extension seams
+
+*Search v2 (§25) builds three rows below — "a brief for parsed documents" and "LLM summary per document" (the profile,
+§25.4.1), "cosine thresholds per stream" (as a relative floor over one score per file, §25.5.3) — and makes the
+"reranking" and "recency preference" rows steps after the tiers rather than after RRF.*
 
 | Later capability | Seam | Already stored for it |
 |---|---|---|
@@ -1177,7 +1223,7 @@ substitutions (deploy-substitution trap).
 | `MAX_CARD_RECORDS_PER_USER` / `MAX_CHUNKS_PER_USER` | 25 000 / 50 000 | kNN cost — S3 |
 | `MAX_SHEET_ROWS` | 5 000 | — |
 | `CARD_LEAD_CHARS` | 2 000 | — |
-| `K`, `CARD_FETCH`, `CHUNK_FETCH`, `NAME_FETCH` | 8, 50, 300, 100 | Widened once when fewer than K survive |
+| `K`, `CARD_FETCH`, `CHUNK_FETCH`, `NAME_FETCH` | 8, 50, 300, 100 | Widened once when fewer than K survive. *v2 (§25.12): `K` only for filter-only listings and folder candidates* |
 | `DENSE_FOLDER_CHILDREN` | 500 | Class 1 density threshold (with the kind condition) |
 | `MODEL_EXTRACT_DENSITY` / `MODEL_EXTRACT_GARBAGE` / `MODEL_EXTRACT_MAX_PAGES` / `MODEL_EXTRACT_PAGES_PER_MONTH` | 200 chars per page / 5 % / 200 / 5 000 | Parser-first router to the model extractor (§9) |
 | `TRIAGE_BATCH` | 16 thumbnails | Slice 4 image triage, one ECO vision call per batch |
@@ -1424,7 +1470,7 @@ reports are in `scripts/memory/onedrive_s0_*.json`, which is gitignored because 
   text stays verbatim.
 - **D9 Triage also captions photographs** (at most ten words), into the card. Photo descriptions move from §14 into
   this slice; burst sampling is dropped.
-- **D10 No fact-style model metadata for every file.** Exact values come from `content_terms`, meaning from chunks,
+- **D10 No fact-style model metadata for every file.** *Reversed by D15 (2026-10-13, §25).* Exact values come from `content_terms`, meaning from chunks,
   a brief only where the model is already called. A brief for parsed documents stays a §14 extension.
 - **D11 The drive intents stay as they are** (no single commissioning intent now; a later refactor is small). The
   §10.4 protocol lines go into Smart's token in this slice, and the G3 eval with them.
@@ -1433,10 +1479,122 @@ reports are in `scripts/memory/onedrive_s0_*.json`, which is gitignored because 
 - **D13 The document's own date becomes `effective_date`** when the brief has one, the §3.1 principle ("the date a
   user means"). Parsed documents keep the file date until the §14 brief for parsed documents exists; the asymmetry is
   accepted and stated in the search guidance.
+  *Extended by §25.4.1 (2026-10-13): the profile's verified issue date sets `effective_date` for every profiled
+  document, parsed ones included, which ends the asymmetry.*
+
+**Owner decisions for Search v2 (2026-10-13)** — after the live test of 2026-10-13, in which one request for
+everything about a city cost two dozen drive delegations and several hundred thousand Smart tokens, and six design
+studies on the live index (private, `scripts/memory/`). Designed in §25.
+- **D14 Evidence tiers replace the ranked list.** RRF over four streams, the always-filled `K = 8`, cover-first and
+  rev 3.8's "no cosine thresholds; `K` and Smart's judgement bound the output" are replaced by tiers — about and
+  mentioned in (exact), by translation and labelled (automatic, rev 3.20), and at most three lines related by meaning only, above a
+  relative floor and labelled unverified — and a coverage line in every result (§25.5). *Reason:* every study measured the
+  ranked list returning a full page of noise and almost never an honest "nothing"; Smart cannot judge eight
+  same-looking cards and crawls instead.
+- **D15 A model profile per text file, from its own content — reverses D10 and §2's rejection of per-file LLM
+  summaries.** GPT-6 Luna (D7) writes what the file is, its entities with their spellings (native and Latin), its
+  key values and dates verified against the text, and a small fixed label set (type, life domains, valid until; §25.2.3).
+  *Reason:* entity, value and class questions ("everything about X", "all tickets", "what expires") have no other
+  exact path, at about $0.0007 a file; §2's objections are met (no tools, verified values, wrapper; chunks stay for
+  pinpoint answers), and the profile is a record field, not a new unit.
+- **D16 Parsed text goes to the model provider at index time.** OpenAI receives it with `store=false`; the Gemini
+  fallback has no such flag; the Cabinet toggle text says so (§25.6). *Reason:* D15 and D17 cannot work otherwise; the
+  owner accepts it with disclosure.
+- **D17 Doc2query per chunk, with a grounding filter** (the Doc2query-- idea: generated text the chunk does not support
+  is dropped, §25.4.2). Bounded to a file's first 100 chunks and not run on EPUB, sheets or JSON (§25.3; approved by
+  the arbiter under the owner's delegation, 2026-10-13). *Reason:* in the round-2 study it lifted content recall and cut junk with no query-time cost,
+  and it is how synonyms and translations are covered without a query-time model.
+- **D18 Chunks stay a first-class path; `word_keys` replace regex `content_terms`.** The term selectivity machinery
+  and the card's 2 000-character lead text go. *Reason:* passages carried most content-only answers in the study; the
+  regex terms were mostly noise and covered no words; the lead text made card and chunk vote twice on one signal.
+- **D19 No deep mode, no query-time expansion, no new Smart fields; Smart never chooses a mode; search stays
+  zero-LLM** and reads only `drive_query`. *Reason (owner):* Smart would over-use a deep mode or repeat searches with
+  it; doc2query covers synonyms at index time.
+- **D20 Enriched photo triage in the same call** (1–2 sentences, landmarks and objects with spellings, scene, visible
+  text); the caption-shift fix is a gate of the rebuild, so every image is triaged once (§25.4.3). *Reason:* a ten-word caption is too thin to be found by,
+  and a wrong one costs trust in all of them.
+- **D21 The folder rule.** A file's profile and labels come only from its own content; the path is a fact and a
+  filter, never a classifier. A collapsed folder (repository, dense tree) stays one record, profiled from its README.
+  *Reason (owner's concern, by analogy with mail labels):* a folder is where a user filed something, not what it is;
+  a misfiled or moved file must not change its description.
+- **D22 A query-time judge or drive specialist** is designed only if a G3 measurement after v2 still shows Smart
+  crawling. *Reason:* it adds a model call, latency and an outage path to every search; v2 first removes the cause.
+- **D23 Engineering fixes ride with v2:** HTML extraction (HTML inside Markdown converted, navigation stripped,
+  script-rendered pages flagged; parser version bump) and the `document` kind family including Markdown and text.
+- **D24 No runtime dual implementation.** The tag `drive-search-v1` is the rollback; v2 is migrated by one rebuild
+  per user. Both directions follow the runbooks of §25.8 (a migration gate, the queue paused, prompts restored), so no
+  upgrade pass is billed and then purged. *Reason:* the old search is poor and two search paths would double the
+  maintenance; the tag restores the old code without rewriting it.
+
+**Owner decisions (2026-10-13, after review round 1)**
+- **D25 `drive_query` takes document types** ("tickets", "receipts", "contracts", "what expires"); file formats stay in
+  `drive_kind`; the date-filter descriptions say the date is the one written in the document when the index found it.
+  A change of the field descriptions, not a new field (§25.5.7). *Reason:* set queries ("all my tickets") cannot work
+  while the manifest tells Smart to keep type words out of the query.
+- **D26 No re-consent (owner).** Enrichment (profiles, passage hints, enriched triage) runs for every user with
+  indexing on; there is no disclosure version and no acceptance step. The Cabinet disclosure text is corrected to name
+  OpenAI (with `store=false`), the Gemini fallback and the Claude switch (§25.6). *Reason (owner):* a small, known user
+  base; a mechanism would cost more than it protects.
+- **D27 An initial-build allowance (owner).** Separate from the monthly budgets, a one-time `INITIAL_BUILD_USD` per
+  user (at least $20, priced at the model that ran, failover included) pays for the first full description of a drive
+  (onboarding and the v2 rebuild), newest files first. Set at **$40**: at the caps the build costs about $41
+  (§25.4.5), and $20 describes about 7 000 typical text files. *Reason:* the monthly caps would otherwise spread a
+  large drive's first description over months.
+- **D28 Query keys: deterministic, strict AND; synonyms only at index time (owner, after a measurement).** No model at
+  query time and no keys field for Smart: a Router-like key-extraction call in search (option A) and an optional keys
+  field filled by Smart (option B) are both rejected, and D19 stands. A query's keys come from the one normaliser
+  (§25.2.4) after generic search words are removed; a concept found in no file is never dropped, so it blocks the exact
+  tiers and the result is an honest no-match (§25.5.4). Synonyms and translations are written at index time only:
+  passage hints (doc2query) and the profile's document-type and label words in en, es, uk and ru, which feed the
+  Labelled (automatic) tier; there is no hand synonym table. *Evidence* (the studies' golden sets, synthetic and
+  private; generic terms only): the query-time key models found a few more files but brought 1.5–2× the junk,
+  invented keys, and confused "a file named X" with "anything about X"; Smart left an optional keys field empty in
+  40 % of the calls that needed it; strict AND doubled the honest no-matches (3 of 8 → 6 of 8) with no recall loss on
+  content and synonym queries; doc2query reached content recall 1.00 at half the junk. *Deferred, not v2:* if G3 shows
+  synonym misses that matter, a flash-lite key call used only on a weak fast pass — never per search, never chosen by
+  Smart (§25.11).
+- **D29 A word no file holds gets a count line (arbiter, under the owner's delegation, 2026-10-13).** A refinement of
+  D28, not a reversal: when a query word is held by no file (`df = 0`), every tier but Related stays empty and nothing
+  is forgiven, but the result adds one line without cards — "No file holds '<word>'. Without '<word>': N files match the
+  other words." *Reason:* the search cannot tell a phrasing word (a user's "records" in "medical records about
+  cholesterol") from an absent subject ("dog vaccination"); Smart can, from the user's words, and may search again on
+  its own initiative. A count without cards gives it that judgement without inviting a crawl; an uncapped or counted
+  related tier was rejected for the same reason (counts on negatives invite crawling). The same rev adds topic and
+  life-area words in four languages at index time and an allowance for words held by more than 30 % of the drive
+  (§25.5.4), both inside D28.
+- **D30 No migration of v1 indexes: v2 starts from an empty index (owner, 2026-10-13).** The rollout pauses the queue,
+  deploys v2, purges every user's v1 index and re-indexes from scratch; nothing in v2 reads, upgrades or enriches a v1
+  record. *Consequences:* v2 code carries no v1→v2 upgrade path. The migration gate shrinks to a guard: a sync state
+  that has not been rebuilt under v2 runs no tick work and raises an ops alert, so a forgotten rebuild cannot bill v1
+  records. The rollback is the same in reverse: the tag plus a from-scratch v1 rebuild, with the v1 `content_terms`
+  indexes redeployed first if they were dropped. OQ-V9 is closed by this decision. The upgrade pass stays, for v2→v2.x
+  version bumps over stored text.
+- **D31 Deterministic names of the fixed labels (arbiter, under the owner's delegation, 2026-10-13).** Every
+  `DOC_TYPES` and `LIFE_DOMAINS` value has a fixed table of its names in en, es, uk and ru, singular and plural
+  (`drive_labels.DOC_TYPE_NAMES`, `LIFE_DOMAIN_NAMES`; medical_record → "medical record(s)", "historial médico",
+  "медичний запис/записи", "медицинская запись/записи", …). The keyer writes the record's doc type's names as `lw:`
+  keys beside the profiler's `label_words`, and its life areas' names as `dw:` keys beside its `domain_words`, as the
+  `k:` kind table already is (`KEYS_VERSION` 3; a hash test pins the table). *Reason:* the P7 eval showed the model's
+  label words miss common forms ("медицинские записи" over a lab report), so a class query depended on what one
+  reply happened to write. The table names our own enum values the profiler chose for that file; it is not a
+  query-side synonym table, so D28 stands: a query word still meets only keys written for that file.
+- **D32 Smart's drive guidance is a system skill, `drive-search` (owner, 2026-10-14).** The guidance moves out of the
+  always-on `drive_specialist` block of `PROTOCOL_AGENT_SELECTION` into `src/skills/smart/drive-search/SKILL.md`,
+  loaded with `use_skill` before the first drive search in a conversation. The protocol keeps three lines: when to
+  search the drive, the pointer to the skill and the untrusted-text rule (defence in depth beside the wrapper's own
+  reminder). The skill carries the moved rules verbatim (the `tiers` line, not-found, numbers, dates, freshness,
+  versions, document vs memory) and adds the owner's strategy: "find" is answered from the results without opening
+  files; a file is opened only for its contents; many results are counted and grouped, never opened one by one.
+  *Reason:* drive searches are rare, yet the block rode in Smart's prompt on every request; and in the UAT Smart
+  re-opened found photos to confirm them. Cost: one `use_skill` turn on the first drive search of a conversation.
+  The live check after the change (a Valencia query): one skill load, two searches, no file opened, 58 s.
 
 ---
 
 ## 22. Where to continue (handoff, 2026-10-13)
+
+*Search v2 (§25) is the next step: an implementation plan against §25 on branch `asm/drive-search-v2`, reviewed
+adversarially, then one rebuild (§25.8).*
 
 **Slice 1 is live** (PR #58, deployed and accepted with the owner 2026-10-12); its deltas are §23. Owner decisions
 D1–D13 are taken (§21). **Slice 2+4 is designed in §24**; its implementation plan is written next, against a frozen,
@@ -1511,6 +1669,9 @@ of the decision. Code and tests cite these rows as `RFC Δn`.
 ---
 
 ## 24. Slice 2+4 design (rev 3.17)
+
+*Search v2 (§25) supersedes §24.4's card text and caption, §24.6's content-term stream, selectivity, fusion and
+windows, and §24.10's protocol and render where they disagree; the rest of §24 stands.*
 
 One slice (D6): content extraction with the parser first and the model second, chunks, the content streams, image
 triage with captions, the brief, the protocol lines, the full eval. Where this section and the text above disagree,
@@ -1662,7 +1823,7 @@ this section wins; the text above was corrected where it was plainly false. Slic
 - **Caption** (triage, photographs only): at most ten words, in English, stored as `caption`. It lives with the `photo`
   verdict: when the record's kind leaves triage (a rename away from an image) both are cleared together, and renamed
   back the image is triaged again (one more triage call), so a verdict never stands without its caption.
-- **Card text** (`card_text`, `CARD_VERSION` 2): `name | kind | brief | caption | key facets | lead text`, each content
+- **Card text** (`card_text`, `CARD_VERSION` 2; *v2: §25.2.7*): `name | kind | brief | caption | key facets | lead text`, each content
   segment only when present, the brief as `doc_type | description | doc_date | parties: … | amount`. The lead text is
   the first `CARD_LEAD_CHARS` of every indexed document's text, parsed or read (a `machine_text` demotion keeps it
   too); a photograph's card is `name | image | caption | key facets`. Brief, caption and lead text are model output or
@@ -1700,6 +1861,9 @@ this section wins; the text above was corrected where it was plainly false. Slic
 - Done-when of §16 Slice 4 holds: 100 holiday photos cost ⌈100 / `TRIAGE_BATCH`⌉ triage calls and no reader call.
 
 ### 24.6 Chunks and the content streams
+
+*v2 (§25.2.2, §25.5.2): `word_keys` and passage hints replace `content_terms` and the term stream; the selectivity
+rule, RRF and the window budget below are retired; the chunk kNN stays as one input of the per-file meaning score.*
 - Collection `{prefix}drive_index_chunks`, doc id `{user_id}:{item_id}:{generation}:{index}`, fields of §3.3 plus
   `content_terms`. Vector indexes under `user_id` and `user_id + kind`; composites for the term stream (with and
   without `kind`) and for generation collection; single-field exemptions for `text` and `vector`. Stream reads project
@@ -1776,8 +1940,9 @@ this section wins; the text above was corrected where it was plainly false. Slic
 re-served on the Gemini Flash fallback by `BaseAgent._call_llm`; only when that fails too (or there is no fallback:
 no `GEMINI_API_KEY`, a Gemini primary, an open Gemini breaker) does the call raise `BothProvidersUnavailableError`,
 which the table below reads by the **primary's** cause — so what is charged to a file is unchanged. A 4xx on the
-primary (an account error, a key, a permission, a model id) is not failed over. A 4xx the fallback raises is not
-wrapped and is sorted as if the primary had raised it (§24.14).
+primary (an account error, a key, a permission, a model id) is not failed over. A non-account 4xx the fallback raises
+is `LLMFallbackClientError`, carrying the fallback's name: a charged outage retried on the primary after the backoff,
+never a refusal of the input (Search v2, §25.4.4 N7; until then it was sorted as if the primary had raised it).
 
 `src/infrastructure/drive_model_call.py` sorts every failed call by what it says about the input:
 
@@ -1899,7 +2064,7 @@ Values in `src/domain/drive_index_params.py` unless named otherwise.
 | `MODEL_EXTRACT_PAGES_PER_MONTH` | 5 000 | ≈ $3 per user per month |
 | `TRIAGE_IMAGES_PER_MONTH` | 20 000 | ≈ 1 250 triage calls |
 | `TRIAGE_BATCH` | 16 | §15 |
-| `TRIAGE_THUMBNAIL_SIZE` / `READER_RENDITION_SIZE` | `medium` (176 px) / `c2048x2048` | Live check / spike S0g |
+| `TRIAGE_THUMBNAIL_SIZE` / `READER_RENDITION_SIZE` | `large` (800 px, rev 3.17) / `c2048x2048` | Live check / spike S0g |
 | `MODEL_BACKOFF_BASE_S` / `MODEL_BACKOFF_CAP_S` | 60 s / 3 600 s | §7.7 doubling backoff |
 | `MODEL_REREAD_COOLDOWN` | 24 h | An edited, reader-read file is read again at most once per cooldown (§7.3) |
 | `MAX_CARD_RECORDS_PER_USER` | 25 000 | Slice 1 card cap; decided before content and triage from Slice 2+4 (§5.4) |
@@ -1932,7 +2097,8 @@ Values in `src/domain/drive_index_params.py` unless named otherwise.
   kills, or whose lease is lost, keeps what it already wrote; only the usage of the file or batch in progress when
   the lease went (at most `MODEL_EXTRACT_MAX_PAGES` pages or `TRIAGE_BATCH` images) is not counted against the month
   (it is still billed to the account per call).
-- **A content-terms rule change re-reads the model-routed files.** The terms live in `EXTRACTION_VERSION` with the
+- **A content-terms rule change re-reads the model-routed files.** *Closed by v2 (§25.4.8): word keys have their own
+  `KEYS_VERSION` and are rebuilt from stored text.* The terms live in `EXTRACTION_VERSION` with the
   chunker and the text gate, so a terms-only change re-reads every file, scans included, and re-bills their reader
   pages. Deriving the terms again from the stored chunk text is a §14 follow-up. Slice 2+4 has no live chunks before
   its first deploy, so the bumps to 3 cost nothing there.
@@ -1965,3 +2131,1343 @@ Values in `src/domain/drive_index_params.py` unless named otherwise.
   still read as machine text. The value was lowered from 0.12 to 0.04 on synthetic text only; no real statement has
   been measured. *Trigger:* a statement or ledger demoted `machine_text` in the live check. Decision:
   `decisions/drive_text_gate_financial_documents.md`.
+
+---
+
+## 25. Search v2 (rev 3.20 design, 2026-10-13; implemented on `asm/drive-search-v2`, not deployed, rev 3.21)
+
+Owner decisions D14–D28, and D29 by the arbiter under the owner's delegation (§21). Built on branch
+`asm/drive-search-v2`, created from tag `drive-search-v1` (the Slice 2+4 tip after the GPT-6 Luna switch). There is
+no runtime dual implementation: v2 replaces the v1 search path, and the tag is the way back (§25.8). **Where this
+section and §3.2, §3.3, §5.5, §6, §7.1 (step 2), §8.5, §10, §12.3, §12.5, §14, §15, §24.2–§24.13 disagree, this
+section wins.** The indexing engine (tick, lease, fence, policy, sandbox, reader, cascades, caps, envelope) is
+otherwise unchanged. Rev 3.19 answered review round 1 (code fit, search quality, operations); rev 3.20 answers review
+round 2 (a verification of round 1 and a fresh "ready to plan?" review) and freezes the interfaces an implementation
+plan splits on (§25.13, Appendix).
+
+### 25.1 Why, and the principles
+**What failed.** In the live test of 2026-10-13 one request for everything about a city took two dozen drive
+delegations and several hundred thousand Smart tokens before it answered. Six design studies (private, gitignored,
+`scripts/memory/`) replayed it on the live index and agreed on the cause: retrieval found the right files, the
+fusion and the contract failed.
+1. **Rank-only fusion of streams that cannot abstain.** Every kNN stream returns a full page; RRF turns "the nearest
+   of the noise" into votes and drops the distance. `K = 8` was always filled; negative queries got an honest
+   "nothing" in none of the studies' negative sets.
+2. **Correlated double votes.** A document's card embedded its first 2 000 characters, so card kNN and chunk kNN
+   voted twice on one signal, while a photo, a folder or a media file got one vote.
+3. **Words had no exact path.** `content_terms` holds only number-like tokens; a place, an organisation or a topic
+   inside a document was reachable only by embedding a one-word query, and embedding distances are compressed.
+4. **The contract hid confidence.** Eight cards with the same label and about 20 000 characters per result left Smart
+   no way to tell signal from filler; crawling was its rational response.
+
+**Principles of v2**
+- **P1 Intelligence at index time; search stays zero-LLM.** A model describes each text file once (the profile),
+  writes keywords and questions for each passage (doc2query), and describes each photograph (enriched triage). A
+  search makes no model call (D19, D28).
+- **P2 Evidence, stated per result.** A result says *how* it matched, from most to least certain: **about** (the
+  file's verified name, entities, values, place, kind or dates), **mentioned in** (the words, in a passage, close
+  together), **by translation** (a grounded passage keyword, with its evidence quote), **labelled** (the index's
+  automatic type, topic, life-area or photo description words), or **related by meaning only** (unverified, ≤ 3).
+- **P3 One normaliser.** The index and the query build every key with the same functions; each token has a **set of
+  forms** (no truncation), so an inflected or plural form a user types meets the forms the index stored (§25.2.4).
+- **P4 A file is described only by its own content.** The path is a fact and a filter, never a classifier input (D21).
+- **P5 Every model output is verified against the text or labelled automatic.**
+- **P6 Enrichment and content work never block each other.** Separate states, separate tick shares (§25.4.5); a file
+  whose enrichment waits is searchable by name, text and vectors, and the result says which files are not described.
+- **P7 Completeness is a fact in the result, not a promise in the prompt.** Every result states what it covered and
+  what it could not; Smart's protocol explains what those facts mean and never forbids it to look further.
+- **P8 Translations and synonyms are written at index time only** (D28): the profile's forms, topic, label and
+  life-area words in en, es, uk and ru; doc2query keywords per passage. No query-time table or model.
+
+### 25.2 Index model
+
+#### 25.2.1 Record fields (added to §3.2; types frozen in §25.13.2)
+| Field | Meaning |
+|---|---|
+| `profile` | `DriveProfile` or `None` (§25.13.2): `title`, `what_it_is`, `language`, `doc_type`, `life_domains`, `dates`, `entities`, `key_values`, `topics`, `topics_native`, and the index-time word lists `topic_words`, `label_words`, `domain_words`, `validity_words` (each in en, es, uk, ru, singular and plural) |
+| `valid_until` | Top level, so it can be indexed: the verified `dates[valid_until]` entry, else the verified `dates[due]` entry, else `None` |
+| `profile_source` | `model`, `template` (a note under `PROFILE_MIN_CHARS`, a script-rendered page, a machine-text file, §25.3) or `None` |
+| `profile_input_fingerprint` | Hash of the profiler's text input (kind, text slices, `PROFILE_VERSION`; **not** the name and not the previous labels), computed by the index run and the derive step from the stored text, so the planner can compare without the text |
+| `profile_fingerprint`, `profile_version`, `profiled_content_version` | The fingerprint and version the current profile was made under; the content version it was made from |
+| `profile_state`, `profile_defer_until`, `profile_parked_month`, `profile_hold`, `profile_hold_version`, `profile_attempts` | The profile job's state (§25.4.5): `current`, `ready`, `deferred`, `parked`, `held`, `none`; its defer time, parked month, hold reason (`refused` / `failed`) and the `PROFILE_VERSION` and fingerprint the hold or park was recorded under (`profile_hold_version` = `"<version>:<fingerprint>"`); charged failures |
+| `passages_state`, `passages_defer_until`, `passages_parked_month`, `passages_hold`, `passages_hold_version`, `passages_attempts`, `passages_generation`, `passages_next_index`, `passages_done_at` | The passage-hint job's state, same values; `passages_hold` is only `failed` (a refused chunk gets no hints, it never holds the file); the generation it is working on and the next chunk index to send (resume); when it last finished (cooldown) |
+| `enrich_ready`, `enrich_wake_at`, `effective_day` | Derived by the planner: any job `ready`; the earliest defer time of any `deferred` job; `effective_date` as a `YYYY-MM-DD` string (the queue's order) |
+| `keys_pending`, `keys_version`, `keys_capped` | Keys work due (a `KEYS_VERSION` bump, a missing key set): scheduled in the content `_works` at class 3 like `chunk_reembed_pending`, never budgeted, parked or held; the keyer version every key of the record and its readable chunks were made under; a key cap cut the record's or its chunks' keys (§25.2.6, "keys cut") |
+| `about_keys` | The record's keys (§25.2.4), recomputed only by `about_keys_of(rec)` (§25.4.9) |
+| `place_forms` | The spellings of `place_name` its keys were made from (English, local, geo table v2's alternate names, the country's names, the nearest large city's), written with `place_name` |
+| `photo_description`, `photo_objects`, `photo_scene`, `visible_text` | Enriched triage (§25.4.3), photographs only; they replace `caption` |
+| `readme_excerpt`, `readme_excerpt_version` | A collapsed folder's README profile input (head 6 000 + tail 1 500 chars, ≤ 200 child names) and the README content version it came from |
+| `script_rendered` | Parser@2 flagged the page script-rendered (§25.3): `PROFILE_POLICY` gives it a `template` profile. Copied from `ExtractionOutcome.script_rendered` with the content (arbiter addition, P2) |
+| `lead_text` | Written only for `machine_text` demotions (2 000 chars): their card's only content signal; they have no chunks, so no double vote (§5.5 stays true) |
+
+Removed: `caption`. Kept: `brief` (the reader still writes it, §25.4.1). Retired in v2, left unread (the tag still reads
+them): the sync state's `usage_month`, `model_pages_used`, `triage_images_used` (§25.4.5).
+
+#### 25.2.2 Chunks and hint documents (§3.3; types frozen in §25.13.2)
+- **Chunks** gain `word_keys` (≤ `WORD_KEYS_PER_CHUNK`) and `keys_version`, and lose `content_terms`. Every chunk
+  document carries `user_id`. Chunks are never updated in place: new derived chunk fields come with a new generation
+  (§25.4.8).
+- **Hint documents**, collection `{prefix}drive_index_hints`, doc id `{user_id}:{item_id}:{generation}:{index}`, one per
+  chunk with passage hints: `user_id`, `item_id`, `generation`, `index`, `kind`, `chunk_text_hash`, `items` (each
+  `{text, type: keyword | question, evidence, evidence_start, evidence_end}`: the keyword or question, the verbatim
+  evidence quote and its character span in the chunk text), `hint_keys` (key forms of the keywords not already in the
+  chunk's `word_keys`, ≤ `HINT_KEYS_PER_CHUNK`), `hint_vector` (embedding of the kept items' text), `passages_version`.
+  Fenced exactly like chunks (§7.4): readable only while the record's `indexed_generation` equals `generation`.
+- **Lifecycle.** Hint documents are deleted **before** chunks wherever a generation is collected
+  (`delete_hints_except` then `delete_chunks_except`), by the purge (`delete_user_hints` first), and by the sweep, which
+  pages hint documents as well as chunks (`hints_page`), so a hint document whose chunks are gone is still found. The
+  passage writer re-reads the record after each batch and deletes its own documents if the generation moved meanwhile
+  (as the index run does for chunks).
+
+#### 25.2.3 The fixed label set (D15)
+Closed enums in `src/domain/drive_labels.py`; the model may not add values. No query-time synonym table: the words a user
+may say for a label, a topic or a life area are written per file at index time (P8). From the round-2 profile study,
+where they labelled 38 synthetic documents correctly in both runs:
+- `DOC_TYPES` (31): `receipt, invoice, bill, bank_statement, payslip, tax_document, contract, insurance_policy,
+  warranty, ticket, booking, certificate, id_document, medical_record, prescription, fine, letter, form, manual, book,
+  article, report, plan, notes, recipe, newsletter, web_page, spreadsheet, data, presentation, other`.
+- `LIFE_DOMAINS` (14): `finance, health, travel, home, vehicle, work, education, legal_admin, shopping, leisure,
+  family, tech, news_reference, other` (its own enum, not `FactDomain`).
+- `DATE_LABELS`: `issued, event, valid_from, valid_until, due, period_end, other`. `ENTITY_TYPES`: `place,
+  organization, person, event, product, work, other`. `VALUE_LABELS`: `order_number, ticket_number, booking_reference,
+  invoice_number, receipt_number, account_number, iban, card_number_masked, policy_number, contract_number,
+  customer_number, reference, tax_id, phone, amount_total, amount_due, price, other_id`.
+- Not in the set (unstable or ambiguous in the study): free tags, `personal_record`, `issuer` (an issuer is an entity).
+
+#### 25.2.4 Keys: one normaliser with form sets (`src/domain/drive_keys.py`, `drive_key_forms.py`, pure)
+Every key is a short string with a family prefix. Index and query call the same functions. A table of word groups
+(§25.13.4) is pinned as unit tests of index/query parity. Two digests are pinned per (`KEYS_VERSION`,
+`NAME_KEYS_VERSION`): a hash of the form tables, and a hash of the keyer's output on a fixed multilingual fixture, so a
+change to a rule's code fails the pin too. Either fails unless the versions are bumped with it.
+
+**Tokens** (P1 review, `KEYS_VERSION` 2; the cross-cutting review's F1, F3 and D31 are `KEYS_VERSION` 3). The
+tokeniser:
+- splits on Unicode punctuation, symbols, separators and controls, and on letter/digit boundaries; "ред3" → "ред", "3";
+- does **not** split on case: "iPhone", "PayPal", "McDonalds" are one token each (casefolded). The index also stores
+  the case parts' forms ("phone" finds "iPhone"); a query word is never stood for by a part;
+- applies NFC and casefold; in Cyrillic it drops stress marks and folds `ё` to `е`;
+- keeps a Ukrainian apostrophe between two Cyrillic letters inside the word, as one code point (U+02BC), in any of its
+  spellings (`'` `’` `ʼ` `` ` `` `´` `ʹ` `ʻ` `ʽ` `‘`). A Latin apostrophe still separates ("O'Brien");
+- deletes a soft hyphen (U+00AD) and joins a line-break hyphenation ("квар-\nтира");
+- treats a hyphen compound ("Wi-Fi", "e-mail", "Нью-Йорк") and a short letter-digit run of at most 6 characters ("X5",
+  "A4") as one query word. The index stores the joined form beside the parts.
+
+Each token gets a **set of native forms**, each of 3 letters or more; the index stores the set and a query ORs it.
+- **Cyrillic forms:**
+  - (a) the token;
+  - (b) the token less its **longest and its second-longest** listed ending, each leaving 3 letters or more. The
+    endings are `ами ями ого его ому ему ой ей ий ый ым им ых их ая яя ое ее ую юю ою ею ые ие ыми ими ові еві ої ій
+    ім іх іми ів ом ем ах ях ам ям ов ев ы и а я у ю е є і ї о`; the second strip keeps здание/здания and
+    медицинские/медицинская linked;
+  - (c) the token without a final `й` or `ь`;
+  - (d) a fleeting-vowel form: `-ок`, `-ек`, `-ец`, `-ень` lose their `о`/`е` ("квиток" → "квитк");
+  - (e) on stems of 4 letters or more, the Ukrainian last-syllable alternation, `і` → `о`, `е` and `ї` → `є` ("Київ"
+    → "києв", "Харків" → "харков"), with (b) of each.
+
+  A word with an apostrophe also gets its forms without it, except a stem ending at the apostrophe: "сімʼ" links
+  сім'я and сім'ї, and "сім" stays another word. **No truncation.**
+- **Latin forms:** (a) the token, accents stripped (`_LATIN_FOLDS` too); (b) its singular: `-sses` → `-ss`, `-ies` →
+  `-i`, `-es` dropped after `x`, `z`, `ch`, `sh`, else a final `-s` unless the token ends in `-ss`, `-us` or `-is`; then,
+  on 4 letters or more, a final `-e` dropped and a final `-y` turned into `-i`. "house"/"houses" → `hous`;
+  "lease"/"leases" → `leas`; "movie"/"movies" → `movi`; "policy"/"policies" → `polici`; "receipt"/"receipts" →
+  `receipt`; "Paris" and "analysis" stay. Residual: "taxis", "menus" are kept by the `-is`/`-us` exception.
+- **Two-letter words** ("ИП", "ЖК", "TV", "CV", "X5") are keyed by their exact form (a) only: no stripping, no skeleton.
+  The explicit 1–2-letter function words per language (`SHORT_FUNCTION_WORDS`: "на", "по", "in", "de", "et", …) are
+  never keyed. A 1-letter word is never keyed.
+- **Digits:** a digit token below the number-term minimum (fewer than 3 digits) is the word form `w:3` on both sides;
+  longer numbers are number terms.
+- **Transliteration (review B2, M6, M8).** The index stores **one skeleton per word**, not transliterated spellings.
+  The skeleton is the word's Cyrillic stem, form (b); a Latin word is first spelled in Cyrillic Russian-style, with `c`
+  before `e`, `i`, `y` → `с`. That stem is written in a sound-class Latin alphabet (г/ґ/х → h; е/є/э/ё → e; и/і/ї/й/ы →
+  i; ю → u; я → a; ь, ъ and the apostrophe dropped; doubled letters collapsed), so Russian and Ukrainian spellings and
+  both schemes meet. The query generates every variant:
+  - for a Cyrillic word, the skeletons of its forms, of their stems, and of the nominative a Ukrainian locative stem
+    comes from ("києв" → "київ");
+  - for a Latin word, its Cyrillic spellings by the Russian-style table and by the Ukrainian national scheme in reverse
+    ("kyiv" → "киів", "kharkiv" → "харків"), and those spellings' forms (a)–(e) and stems.
+
+  "Kyiv" reaches "у Києві", "Kharkiv" reaches "в Харкові", "Барселону" reaches "Barcelona". "Lviv" does not reach
+  "Львові" (the soft sign); accepted. A match through a skeleton crosses scripts or spellings: it is a translation,
+  never exact (§25.5.4).
+- **Measured** (review round 2, on a targeted list of 27 inflection groups — surnames, `-ей` names, nouns ending in a
+  listed ending, soft sign, fleeting vowels, Ukrainian locatives — and a 1 216-word Russian/Ukrainian corpus): the
+  rev 3.19 rule (one ending, then 5 letters) keyed 12 of 27 groups together and linked 177 pairs of different words
+  ("барсетка" with "Барселона", "Валентина" with "Валенсия"); the form set keys 26 of 27 (the last fixed by the
+  extended endings) and links 47 pairs, most of them true inflections. P1 review, on a synthetic table of 172 words
+  with their inflections (551 forms):
+  - native forms link 664 of 702 same-word pairs (95 %), and 16 different-word pairs share a native form, all of
+    them translations (договор/договір, hotels/hoteles);
+  - skeletons link 7 more same-word pairs, and 47 different-word pairs only by skeleton (translation tier): all are
+    translations (Киев/Київ, Одесса/Одеса, Barcelona/Барселона, bank/банк) except valentine/Валентина;
+  - a ru/uk contract or UI chunk of 2 400 characters holds 650–715 keys.
+
+**Families**
+- `w:` **words** — the native forms of a token (chunks, names): exact.
+- `x:` **skeletons** — one per word (chunks, names): a translation (§25.5.4). The family records the script the word
+  came from (xc F3): `x:` for a Cyrillic word, `xl:` for a Latin one. A Latin query word reads only `x:` (it meets a
+  Latin word through its `w:` forms: the Cyrillic stem of a Latin word would join "Mario" and "Maria", "casa" and
+  "caso"); a Cyrillic query word reads both, so "Барселоне" still meets "Barcelona" and "kyiv" "Київ".
+- `n:` **number terms** — today's normaliser (`drive_content_terms`: amounts, numeric and written-out dates in five
+  languages, ids, digit groups): index-side forms per chunk (the 256-term cap applies per chunk), maximal forms on the
+  query side. Its rules now belong to `KEYS_VERSION` (§25.4.8).
+- `m:` **months** — `m:YYYY-MM` for every date term and every month-year span ("March 2023", "березень 2023", "в марте
+  2023", "у березні 2023") in a chunk's text, and for every verified date and `effective_date` on a record. A month
+  query emits only `m:`.
+- `y:` **years** — `y:YYYY` of every verified date and of `effective_date` (records); a 4-digit number from 1900 to
+  2099 in a query also emits `y:`.
+- `e:` **entity phrases** — a named thing's spelling the file prints (an entity's `printed`, and those of its `name`
+  and `forms` verification found in the text or the name, kept as the entity's `found`; the photo place's
+  `place_forms`). An entity spelling the profiler wrote that the file does not print is `ef:` (xc F1): the index's
+  own spelling, a translation, never exact, and its match line names what the file prints ('place "Барселона"
+  (spelling by the index; named in the file as "BARCELONA")'). The card text shows the printed spellings. Rules for
+  both families:
+  - a single-token name gets its native form set;
+  - a multi-token phrase joins each token's form (b) with `_`, articles kept: "Le Havre" → `e:le_havr`,
+    "Нью-Йорке" → `e:нью_йорк`. A hyphen compound also gets its joined form ("Нью-Йорк" → `e:ньюйорк`);
+  - a person or place of several words also keys its last word alone (the surname: "Сергей Иванов" is about
+    "Иванову").
+- `ex:` **entity skeletons** — the same phrases built from each token's skeleton: a translation; `exl:` when every
+  token is Latin (xc F3, read only by a Cyrillic query word).
+- `pe:` **photo-object phrases** — a photo object's `name` and `forms`, built exactly as `e:` phrases; the query emits
+  `pe:` beside `e:`. A family of its own so a key's source class follows from its prefix and tiers are decided on lean
+  records (Part 0 review M3).
+- `v:` **values** — a verified key value in the form the query produces (P1 review M3). From both `canonical` and
+  `printed`, it is each maximal number-term form ("INV-2024/0012" → `v:inv20240012`, "1.250,00" → `v:1250.00`), or, for
+  a value with no number term, its casefolded letters and digits ("XKJQPL" → `v:xkjqpl`; a word concept emits `v:` of
+  its letters and digits). A verified date gives its ISO form.
+- `k:` **kind** — the native forms of the record's kind names in en, es, fr, uk and ru (the table in §25.13.5; "photo"
+  words for images whose triage verdict is `photo`), written by the keyer at index time; a fixed table of format
+  names, on the index side only.
+- `lw:` **label words**, `tw:` **topic words**, `dw:` **life-area words**, `lv:` **validity words** — the native forms of
+  the profile's `label_words`, `topic_words`, `domain_words`, and of `validity_words` (written only when `valid_until`
+  is set); `pw:` **photo words** — the native forms of the photo description, scene, objects and `visible_text`;
+  `pn:` **photo numbers** — the number terms of `visible_text`. All automatic.
+- `l:` **labels** — `l:type:<doc_type>`, `l:domain:<domain>`, `l:valid`: stored for grouping and display; no query
+  produces them.
+- **D31:** the record's doc type's fixed names (`DOC_TYPE_NAMES`) join its `lw:` keys after the profiler's
+  `label_words`, and its life areas' names (`LIFE_DOMAIN_NAMES`) its `dw:` keys after its `domain_words`.
+- **Name keys** (`name_tokens`, the name stream; `NAME_KEYS_VERSION` 2):
+  - kept: the native `w:` forms (with case parts and compounds); the `x:` skeleton of each word; the `n:`/`y:` forms of
+    digit tokens and of the name's number terms, with and without its extension; the trigrams (`t:`) of each token
+    and skeleton;
+  - dropped: v1's transliterated `w:` variants.
+
+  Trigrams never count as coverage.
+
+**Where keys live.** `word_keys` (chunk) = `w:`, `x:`, `n:`, `m:` of its text. `about_keys` (record) = `e:`, `ex:`, `v:`,
+`y:`, `m:`, `k:`, `lw:`, `tw:`, `dw:`, `lv:`, `pw:`, `pe:`, `pn:`, `l:`. `hint_keys` (hint document) = `w:` of grounded
+keywords. Which source gave an about key is recomputed at render time (`about_sources(rec)`, using `place_forms`); it is
+not stored.
+
+**Source classes** (they decide the tier, §25.5.4):
+- **verified record** — name keys `w:`, `n:`, `y:`, and the record's `e:`, `v:`, `y:`, `m:`, `k:`;
+- **passage words** — `word_keys` `w:`, `n:`, `m:`;
+- **translation** — `hint_keys`, every skeleton (`x:`/`xl:` in chunks and names, `ex:`/`exl:` in records), and an
+  entity spelling the file does not print (`ef:`);
+- **automatic record** — `lw:`, `tw:`, `dw:`, `lv:`, `pw:`, `pe:`, `pn:`.
+
+The class follows from the prefix and the field (`drive_match.FAMILY_SOURCE_CLASS`,
+`drive_keys.source_class_of_*_key`).
+
+#### 25.2.5 Firestore indexes (`config/firestore.indexes.json`, `development_` collections)
+- **Records:** `user_id + about_keys (CONTAINS) + effective_date DESC + item_id DESC`; `user_id + kind + about_keys
+  (CONTAINS) + effective_date DESC + item_id DESC` (single-kind filters only, §25.5.5; `item_id DESC` is the tie-break
+  the item-id cursor needs); `user_id + about_keys (CONTAINS) + valid_until ASC + item_id`;
+  `user_id + enrich_ready + effective_day DESC + parent_id + item_id` (the enrichment queue), and the same with
+  `profile_state` and with `passages_state` in place of `enrich_ready` (one agent type's own queue, §25.4.6);
+  `user_id + enrich_wake_at + item_id` (wake-ups); `user_id + profile_state + kind` and `user_id + passages_state +
+  kind` (counts, `kind in` batches of 30); `user_id + keys_pending + item_id`; the card vector, name-token and
+  filter-only composites stay.
+- **Chunks:** `user_id + word_keys (CONTAINS) + item_id + generation + index`; the chunk vector and generation
+  composites stay.
+- **Hint documents:** `user_id + hint_keys (CONTAINS) + item_id + generation + index` (the stream's order);
+  `user_id + item_id + generation + index` (serves both `get_hints`, by generation, and `hints_page`); vector indexes
+  on `hint_vector` under `user_id` and `user_id + kind` (the vector script creates them). No `kind + hint_keys`
+  composite (kind is post-filtered, §25.5.5).
+- **Single-field exemptions:** `about_keys`, `profile`, `readme_excerpt`, `place_forms`, the photo fields on records;
+  `word_keys` on chunks; `hint_keys`, `items`, `hint_vector` on hint documents.
+- **Kept until acceptance:** the two `content_terms` composites (rollback, §25.8).
+- A missing or building index is `FailedPrecondition`, a store outage (§12.5): every index is `READY` before deploy.
+
+#### 25.2.6 Sizes
+- Caps: `WORD_KEYS_PER_CHUNK` 1 500 (P1 review B2: native forms plus one skeleton per word put a 2 400-char ru/uk
+  contract or UI chunk at 650–715 keys, and es/fr/en at 450–520; the cap only guards dense synthetic text), `HINT_KEYS_PER_CHUNK` 60,
+  `ABOUT_KEYS_PER_RECORD` 600, entities 12 × 8 forms, key values 12, dates 5, topics 8 + 8, each word list ≤ 24 words.
+  Over a cap the keyer keeps the earliest text's or entries' keys, counts `keys_capped`, and the card says "keys cut".
+- **Write batches by bytes:** at most `WRITE_BATCH_BYTES` (6 MB) and `RECORD_WRITE_BATCH` documents per batch
+  (Firestore's request limit is 10 MiB; a v2 chunk is ≈ 25–35 KB).
+- **Lean projections:** stream reads project only what coverage needs (§25.13.3); full records are read only for the
+  shown cards and their ancestors.
+
+#### 25.2.7 Card text (`CARD_VERSION` 3)
+`card_text(record)`, pure over record fields:
+- **Profiled file:** `name | kind label | doc_type | what_it_is | title | entities' names | topics | topics_native |
+  key facets`. No lead text: card kNN and chunk kNN no longer vote on one signal.
+- **Text file without a profile** (waiting or held): `name | kind label | key facets`, plus the reader's brief when
+  there is one; re-embedded when the profile arrives.
+- **Machine-text file:** `name | kind label | machine-generated text | lead text`.
+- **Photograph:** `name | image | photo_description | photo_scene | objects' names | visible_text | key facets`.
+- **Collapsed folder with a README profile:** `name | <repository / generated files / hidden folder / generated files
+  (500+ items)> | what_it_is | title | topics`; without one, its Slice 1 card.
+- `CARD_RENDER_MAX` (700 chars) bounds what one card shows Smart (§25.5.6); the embedded text is not cut.
+
+### 25.3 Per-kind policy (D15, D17, D21)
+One pure table, `PROFILE_POLICY: kind → (profile input, profile output, doc2query?)` in `src/domain/drive_profile.py`.
+Every input comes from **stored** text (§25.4.1). "Head"/"tail" are cut at a paragraph or sentence boundary;
+"headings" are the Markdown heading lines of the stored text where the parser writes them (DOCX, ODT/ODP, PPTX, HTML,
+Markdown; sheet names for tables); PDF text has none.
+
+| Kind | Profile input | Profile output | Doc2query |
+|---|---|---|---|
+| PDF, DOCX, ODT, RTF (parsed) | name; head 6 000 + tail 1 500; headings (≤ 1 500) over 20 000 chars | full profile | yes, first `PASSAGE_MAX_CHUNKS_PER_FILE` chunks |
+| Scans, screenshots, model-read PDFs | the same, over the reader's stored text | full profile; supersedes the brief | yes |
+| HTML, HTML inside Markdown or text (parser@2) | parser@2's metadata lines (title, description, `og:*`, language) at the head, then head 6 000 + tail 1 500; headings | full profile | yes |
+| Script-rendered page (parser@2 flag) | none | `template`, `doc_type = web_page` | no |
+| Markdown, plain text, notes | head 6 000 + tail 1 500; headings | full profile; under `PROFILE_MIN_CHARS` (200) a `template` (the text as `what_it_is`, `doc_type = notes`) | yes (not under 200 chars) |
+| EPUB | markitdown's metadata lines and the first 3 000 chars of the body | profile without key values | no |
+| PPTX, ODP | slide titles; head 6 000; tail 1 500 | full profile | yes |
+| XLSX, XLS, ODS, CSV | sheet names, header rows, first 20 rows per sheet (≤ 6 000) | profile without key values | no |
+| JSON | head 6 000 | profile without key values | no |
+| `machine_text` | none | `template` "machine-generated text"; card keeps its lead text | no |
+| EML, MSG | headers + head 6 000 + tail 1 500 of the body | full profile | yes |
+| VTT, SRT | head 6 000 + tail 1 500 of the cue text | full profile | yes |
+| Photographs | no profile: enriched triage (§25.4.3) | photo fields | — |
+| Code, logs, archives, disk images, databases, executables, audio, video, ordinary folders | none | — | — |
+| Every collapsed folder (any `opaque_root` reason) with a README child | its `readme_excerpt` | profile without key values | no |
+
+**Doc2query's bounds (D17 acknowledgement).** "Per chunk" is bounded: the first 100 chunks of a file
+(`PASSAGE_MAX_CHUNKS_PER_FILE`, ≈ 240 000 chars), and no EPUB, sheet or JSON chunks (cost; a book's passages are the
+main source of long-document junk; rows yield questions about numbers the grounding drops). The coverage line names
+these files when they matter (§25.5.6). Approved by the arbiter under the owner's delegation.
+
+**The folder rule (D21).** A file's profile and words come only from its own content and name; the model never sees its
+path, folder or siblings; a moved file keeps its profile; a rename does not re-profile (the name is in the input, not
+in the fingerprint).
+
+**The README of a collapsed folder.** `readme_pending` (today repository roots only: `_readme_due`, and
+`_readme_touched` for a README edit) is extended to every collapsed folder, on first sight, when its child count
+moves, and when the README's content version moves; not on a `PROFILE_VERSION` bump, which re-profiles from the
+stored `readme_excerpt`. The README step lists children page by page (`list_children_changes`, `RELIST_PAGE` per item
+call from `ITEM_CALLS_PER_TICK`) until `readme_choice` finds one or `README_SCAN_CHILDREN` (1 000) were listed, keeps the
+first 200 child names, downloads and parses the README (parser only, `README_MAX_BYTES`), stores `readme_excerpt`
+and `readme_excerpt_version`, and sets the profile job `ready`.
+
+**Parser@2 (D23).** `SubprocessContentExtractor.VERSION` 2: HTML inside Markdown or text goes through the HTML
+converter (a tag share over 5 % sends the whole text); HTML pages keep `<main>`/`<article>` (else the body without
+`nav`, `header`, `footer`, `aside`), drop in-page `#` links, keep external links as text plus domain, and write title,
+meta description, `og:*` and `lang` as plain lines at the head of the text; a page whose text is under 1 % of its
+bytes is flagged `script_rendered` on the `text` outcome (a new `ExtractionOutcome` field, not a status). The bump
+re-extracts every parser-decided record (all parser kinds); in the migration it costs nothing extra (§25.8).
+
+### 25.4 Model calls and the enrichment machinery
+
+#### 25.4.1 The profiler (`DriveProfilerAgent`, agent type `drive_profiler`)
+- One agent for profile, key values and the index-time word lists. No tools, history, biography or user overrides;
+  `OUTPUT_FORMAT_DRIVE_PROFILER` + response schema, `json.loads`, one parse retry, no regex fallback. The file text is
+  data.
+- **Input** per §25.3, assembled by pure `profile_input(record, chunks, kind)`. Reassembly: chunks in index order;
+  from each the last `char_end − char_start` characters of its `text` (a continued table chunk starts with a repeated
+  header outside its span); overlaps cut by offsets; gaps become a paragraph break. The previous `doc_type`,
+  `life_domains` and `valid_until` are passed on a re-profile ("keep unless the text contradicts"), outside the
+  fingerprint.
+- **Output** (§25.13.2 `DriveProfile`): besides the descriptive fields, `topic_words` (each topic in en, es, uk, ru),
+  `label_words` (the document type's common names in the four languages, singular and plural: "ticket", "entrada",
+  "квиток", "квитки", "билет", "билеты"), `domain_words` (its life areas' common words: vehicle → "car", "coche",
+  "машина", "автомобіль", …), `validity_words` (only when a validity or due date is printed: "valid until",
+  "expires", "caduca", "діє до", "истекает", …). About 150 more output tokens than rev 3.19's profile.
+- **Verification** (`drive_profile.verify(profile, chunks, name)`, pure, over the whole stored text): an entity whose
+  `printed` occurs neither in the text nor in the name is dropped (`forms` kept within caps); a key value only when its
+  canonical form is in the union of the per-chunk `n:` terms or its `printed` occurs verbatim; a date only when its ISO
+  form is among those terms; enums outside their lists become `other` / are dropped; descriptive fields and word lists
+  are unverifiable (automatic, shown inside the wrapper as such). Drops are counted (`verify_dropped_*`).
+- **Effective date (D13 extended).** The verified `dates[issued]` becomes `effective_date` for every profiled document,
+  labelled `written in the document`; else the brief's date; else §3.1. `_effective` reads the profile first.
+- **The reader's brief.** Unchanged reader (no re-bill); the profile supersedes its brief once it exists (OQ-V2).
+
+#### 25.4.2 Passage hints (doc2query) (`DrivePassageAgent`, agent type `drive_passages`)
+- **Input:** `PASSAGE_CHUNKS_PER_CALL` (2) chunks under opaque indexes, plus the profile's `title` and `what_it_is`.
+- **Output per chunk:** `items`: ≤ 12 `keyword`s (subjects, names, synonyms, translations in en, es, fr, uk, ru) and
+  ≤ 3 `question`s, each with an `evidence` quote of ≤ 12 words copied from the chunk.
+- **Grounding** (`drive_hints.ground(chunk_text, items)`, pure; the Doc2query-- idea, Gospodinov et al., ECIR 2023,
+  with evidence anchoring in place of a learned relevance model): (1) the evidence must occur in the chunk after NFC,
+  casefold and whitespace collapse — its span is stored; (2) a number, date or id in an item must be among the chunk's
+  `n:` terms; (3) a keyword whose forms are all in the chunk's `word_keys` adds no `hint_keys` (it would be a plain
+  mention); (4) a set whose `hint_vector` is further from the chunk's vector than `PASSAGE_MIN_SIMILARITY` (calibrated)
+  is dropped whole. Drops are counted per rule; the hint-to-chunk similarity is logged by deciles. Grounding proves the
+  quote is in the passage, not that the keyword translates it: a hint match is automatic, never exact (§25.5.4).
+
+#### 25.4.3 Enriched triage (D20, `TRIAGE_VERSION` 2)
+- Same call and thumbnails as §24.5, `TRIAGE_BATCH` 8. A `photo` verdict returns `description` (≤ 240 chars),
+  `objects` (≤ 8, `{name, forms ≤ 6}`), `scene` (≤ 6 words), `visible_text` (≤ 200 chars). Automatic.
+- **The place** is the GPS facet. Geo table v2 (`GEO_TABLE_VERSION` 2) adds each row's alternate names in en, es, fr,
+  uk, ru, its country's names, and the nearest place of 100 000 people or more within `PLACE_MAX_DISTANCE_KM`; the
+  lookup writes them as `place_forms` (index side only; no query-side table).
+- **The caption-shift fix gates the rebuild** (OQ-V1): zero descriptions on the wrong image over ≥ 5 runs of the eval
+  photo fixture (distinct subjects, byte-identical duplicates at different batch positions) and the owner's live
+  check; every image is then triaged once.
+
+#### 25.4.4 Providers, caps, ports
+- **Providers per D7:** `STRATEGIES` entries for `drive_profiler` and `drive_passages` like `drive_reader` without
+  `vision`: default `openai`, allowed `claude`/`openai`, fallback `gemini` at `fallback_tier: BALANCED`; ECO tier;
+  `allow_provider_storage=False`; thinking `low`.
+- **Output caps** (schema worst case + reasoning allowance, unit-tested): profiler 4 096, passages 4 096 for 2 chunks,
+  triage 8 192 for 8 photos; timeouts 60 / 60 / 120 s. A reply stopped at the cap is halved like the reader's windows:
+  a passages or triage batch split and asked again; a single chunk or image still stopped gets no hints or description
+  (counted); a profile asked once more with halved list caps, then held `failed`.
+- **The fallback's refusals (shared change, N7).** `BaseAgent._call_llm` wraps a non-failover error raised by the
+  fallback in `LLMFallbackClientError(LLMClientError)` carrying `provider_name`; existing callers see an
+  `LLMClientError` as before. `classify_model_error` maps it to a charged attempt, never a refusal. Wire tests for both
+  providers (ADAPTER_WIRE_TESTING).
+- **Ports and wiring:** `DocumentProfilerPort`, `PassageHintPort` and the triage v2 reply (§25.13.1); runners in
+  `composition/` (the `DriveReaderRunner` pattern), built by `drive_model_setup.py`; replies carry the model that served
+  and the cost.
+- **Prompts** in Firestore, uploaded by the owner after a backup; the triage tokens are replaced for version 2.
+
+#### 25.4.5 Scheduling, budgets and time
+**Three jobs, three states.**
+- **Keys** — deterministic, never budgeted, parked or held: `keys_pending` is set by the planner when `keys_version` is
+  not `KEYS_VERSION` (any record, whatever its enrichment states), and the work runs in the content loop's class 3,
+  like `chunk_reembed_pending` (§25.4.8). It is due **now** even on a record scheduled later (next month's reader
+  budget, a quiet period, a backoff): those waits live in `defer_until` and the quiet period, which the content work
+  still honours; the upgrade pass re-plans a month-held record whose keys are stale (P5 review MINOR 9).
+- **Profile** and **passages** — each with its own state (`current`, `ready`, `deferred`, `parked`, `held`, `none`),
+  decided by the pure `profile_plan(rec, ctx)` and `passages_plan(rec, ctx)`, where `ctx: EnrichContext` (§25.13.2)
+  carries `now`, the month's usage per class, the caps and the initial-build balance; it reaches the planner through
+  `PlanContext`, and the plans run once per record write in the service's `_commit` (not inside every constructor).
+
+| State | When (profile; passages alike with their own inputs) |
+|---|---|
+| `none` | `PROFILE_POLICY` gives the kind no profile (no doc2query), or the record has no readable generation and no `readme_excerpt` |
+| `held` | `profile_hold` is set **and** `profile_hold_version` equals `"<PROFILE_VERSION>:<profile_input_fingerprint>"` (passages: `passages_hold_version` = `"<PASSAGES_VERSION>:<indexed_generation>"`) |
+| `parked` | the month's cap for the class and the initial-build balance are spent, recorded under the current version (`profile_parked_month` = the month) |
+| `deferred` | the cooldown (`PROFILE_REFRESH_COOLDOWN` / `PASSAGE_REFRESH_COOLDOWN`) not over: `*_defer_until`; or the record's content run is due (an edit, a re-extraction): its readable text is about to be replaced, so no call is made on it and no cooldown starts from it, and the content run's commit re-plans the job (no wake time of its own; P5 review MINOR 1). An agent-type model backoff is **not** a job state: the job stays `ready` and the backoff (`model_backoff_by_agent`) gates the enrichment queue read (§25.4.6; Part 0 review MINOR 2) |
+| `ready` | work is due: no profile, `profile_fingerprint`/`profile_version` differ from the current input fingerprint and version, a new content version; passages: `passages_version` or generation differs, or `passages_next_index` < the chunks to hint |
+| `current` | nothing to do |
+
+A hold or park recorded under an older version or fingerprint is not a match, so a bump makes the job `ready`. The
+derived `enrich_ready` (any job `ready`) and `enrich_wake_at` (the earliest `deferred` time still ahead) feed the
+queue. **No ready job without progress** (P5 review M4): a run that can write nothing for a ready job holds it
+`failed` for the current version and fingerprint (profile: no stored text for a short note's template, no profiler
+input) or generation (passages: no stored chunk at all); a missing chunk is skipped and counted
+(`passage_missing_chunks`), and a passage wave shrinks to the batches the dollars left pay for. As a backstop, a file
+whose run left its record unchanged is not waited for again in that tick (`enrich_idle`): the tick chain never
+continues at zero delay for it, and the next fan-out tries it again.
+
+**The queue and the order inside a tick.** `enrich_queue` reads `enrich_ready`, `effective_day` newest first, then
+`parent_id`, then `item_id` (so a rebuild describes recent files first and a folder's same-day files together);
+`enrich_wakeups` reads `enrich_wake_at <= now` and re-plans; when the month turns, `parked` jobs are re-planned. When a
+full queue page holds no job an available agent can do (one agent type backed off, its records first), each available
+agent type's own queue is read (`enrich_queue(…, job=)`: `profile_state` or `passages_state` = `ready`, same order), so
+one agent's backoff never hides the other's work (P5 review MINOR 6). §7.1 step 2 becomes: content classes 0–2 start
+within at most `1 − ENRICH_SHARE` of the start budget; enrichment gets a **start window** of at least `ENRICH_SHARE`
+(40 %); classes 3–4 (keys work included) with `MAINTENANCE_SHARE` of what is left; then the upgrade pass. The shares
+bound when work **starts**, not how long it runs (P5 review MINOR 8): a routed file started late in the content window
+may run past it (its worst case is in the §7.1 deadline sum), and enrichment then starts nothing that tick; the fence
+holds (content worst case ≈ 1 500 s, enrichment started before 480 s ends before ≈ 780 s, the deadline is 1 800 s).
+Bounding run time would mean refusing routed files outright. Enrichment runs up to `ENRICH_IN_FLIGHT` (3) files at
+once, each with up to `PASSAGE_IN_FLIGHT` (2) passage calls, all under `MODEL_IN_FLIGHT`; a file's fatal error (the
+lease, the gate, a systemic store or embedding error) cancels its siblings at once. A first-seen file whose profile is
+`ready` when its content commits is **profiled** in the same run (the profile and its card re-embed only; P5 review
+M3), charged to the enrichment share, so its card is embedded once; its passages go through the enrichment phase.
+
+**Per-file time.** `ENRICH_FILE_BUDGET` (300 s) is a hard `asyncio.wait_for` around one file's profile call, passage
+batches, hint embeddings and card re-embed; it joins the §7.1 deadline sum. Passage progress is saved per batch
+(hint documents, `passages_next_index`), so a cut file resumes. A spend write is shielded from the cut: a paid reply
+is always recorded, whole (P5 review MINOR 5).
+
+**The upgrade pass is settled per version key.** `CURRENT_VERSIONS` gains `keys`, `profile`, `passages` (§25.4.8). A
+pass marks `profile` applied only when every record's profile job is `current` or `none`, or `held`/`parked` **for the
+current version and fingerprint**; `passages` likewise; `keys` only when every record's `keys_version` is current.
+Records it finds unsettled it re-plans (making the job `ready`, or `keys_pending`), so held or parked records are
+re-evaluated on every bump and the pass converges after one sweep plus the work.
+
+**Budgets in dollars.** Per user per calendar month, priced by the ledger at the model that ran (failover included):
+`READER_USD_PER_MONTH` 4, `TRIAGE_USD_PER_MONTH` 3, `PROFILE_USD_PER_MONTH` 4, `PASSAGE_USD_PER_MONTH` 20. The §24.7
+page and image monthly caps and the sync-state counters are retired; page and image counts remain per-file cost
+estimates (a file starts only if its expected cost at the primary's price fits). Usage is kept in documents a purge
+does not delete:
+- `{prefix}drive_model_usage/{user_id}:{YYYY-MM}`: `reader_usd`, `triage_usd`, `profile_usd`, `passage_usd`,
+  `fallback_usd`, `calls`, and `daily: {YYYY-MM-DD: {total_usd, fallback_usd}}`; and per class `<cls>_initial_usd`,
+  the share of `<cls>_usd` the initial build paid (written only when there is one). A month's cap counts only
+  `<cls>_usd − <cls>_initial_usd`: the build is spent first, so its dollars never exhaust the caps (P5 review M1); the
+  Cabinet and the fallback alert read the totals. TTL 400 days;
+- `{prefix}drive_model_usage/{user_id}:initial`: `allowance_usd`, `spent_usd`, `opened_at`, `closed_at`; no TTL.
+
+**The initial build (D27).** Spent first, before the monthly caps, on every model class of the first full description
+of the drive (onboarding, the v2 rebuild). It **closes** when spent, or when the first onboarding has completed
+(`initial_enumeration_done`) and no record has a profile or passages job `ready` or `parked`; once closed it never
+reopens (a purge, a rebuild or a toggle does not renew it; only an owner script, `drive_initial_build_reset.py`,
+does).
+
+*Note on the close (P5 review MINOR 7):* the built rule also requires the index to have **settled** (no due work and
+nothing to enrich). Right after the first enumeration no file has been read, so no record has a job at all and D27's
+test alone would close the build before any content it is meant to describe was read. With steady churn the build may
+stay open until it is spent, which is bounded by its allowance. Sizing at the caps: 25 000 profiles × $0.0008 ≈ $20, 50 000 passage chunks × $0.0004 ≈ $20, enriched triage of
+20 000 images ≥ $2.5, the reader's re-read of scans ≈ $0.0006 a page: about **$43**. $20 (the owner's minimum) covers
+about 6 500 typical text files (a profile and five passage chunks ≈ $0.003 each). `INITIAL_BUILD_USD` = **$40**.
+
+**Fallback alert.** When the fallback served more than `FALLBACK_ALERT_SHARE` (50 %) of a user's model cost in a day
+(the `daily` map), the fan-out posts once that day to `AlertSinkPort`.
+
+**The Cabinet** shows dollars per class this month — what each class's cap has paid, the initial build's dollars left
+out (XC-4) — the initial build's progress on its own line, and "waiting to be rebuilt" for a state the D30 gate holds
+(XC-8) (spent / allowance, open or
+closed) instead of pages and images (`model_usd_month`, `model_usd_caps`, `initial_build` in `/api/drive/status`). The
+reader's page clamp is derived from dollars: `MODEL_EXTRACT_PAGES_PER_MONTH` = the pages `READER_USD_PER_MONTH` pays
+at `READER_PAGE_USD_ESTIMATE`; only a file over it is cut to it, so no file waits for a month that could never pay for
+it (P5 review MINOR 4).
+
+#### 25.4.6 Failures and charges
+One backoff **per agent type**: a new sync-state map `model_backoff_by_agent` (agent type → until); the v1 field
+`model_backoff_until` keeps its type and its meaning for the reader and triage, so the tag still reads the state.
+
+| Outcome | Effect |
+|---|---|
+| Provider unavailable (429, network, open breaker, account-level 4xx, missing key, both providers down) | Uncharged outage: backoff for this agent type; the job stays `ready`, waking after the backoff; content work and keys go on |
+| A missing or malformed prompt for this agent type | Uncharged outage for this agent type only, logged ERROR |
+| A 5xx, timeout or unexpected error (after any failover) | As v1: charged (`*_attempts` + 1) **and** a backoff for this agent type; at `MAX_ATTEMPTS` the job is held `failed` for the current version and fingerprint (passages: generation). Never a content failure |
+| Invalid output after the parse retry; a reply still stopped at the cap after halving | Charged, **no backoff** |
+| A refusal (400, 413, 422) by the primary | Profile: held `refused` for the current version and fingerprint. Passages: halved to one chunk; a chunk still refused gets no hints (counted); the file is not held |
+| A refusal by the fallback (`LLMFallbackClientError`) | A charged attempt, retried on the primary after the backoff |
+| Verification drops every entity and value | Not a failure |
+
+#### 25.4.7 Edits
+- Quiet period and `MAX_DEFER` (§7.3) unchanged; a re-index runs on a content change; word keys recomputed and the
+  stored profile re-verified against the new text at once, before any model call.
+- **Profile:** no call while `profile_input_fingerprint` equals `profile_fingerprint`; otherwise at most one re-profile
+  per `PROFILE_REFRESH_COOLDOWN` (24 h).
+- **Passage hints are reused inside the content run** (N4): between the fence re-read and the commit, the run reads the
+  readable generation's chunk texts and hint documents; a new chunk takes an old chunk's hint items when its
+  `chunk_text_hash` matches, or when at least `PASSAGE_REUSE_SHARE` (80 %) of its paragraphs, by paragraph-text hash,
+  came from that one old chunk; reused items are grounded again against the new text (rules 1–2, evidence spans
+  recomputed) and written as hint documents of the **new** generation (fenced, invisible until it commits); then the run
+  commits and deletes the old generation's hints and chunks. Chunks left without hints wait for passage enrichment,
+  at most once per `PASSAGE_REFRESH_COOLDOWN` (24 h) per file.
+- Reader-read files keep `MODEL_REREAD_COOLDOWN` upstream.
+
+#### 25.4.8 Versions, derive work and the fence
+| Version (map key) | Covers | A bump redoes |
+|---|---|---|
+| `PROFILE_VERSION` (`profile`) | profiler prompt, schema, input rules, verification | profiles, from stored text or `readme_excerpt` |
+| `PASSAGES_VERSION` (`passages`) | doc2query prompt and grounding | hint documents, from stored chunk text |
+| `KEYS_VERSION` (`keys`) | `drive_keys` **and** the `drive_content_terms` normaliser | keys from stored text, as a new generation; no model call |
+| `NAME_KEYS_VERSION` 2 (`name_keys`) | name keys with forms and digit forms | name keys |
+| `TRIAGE_VERSION` 2 (`triage`) | enriched triage | every image's triage |
+| `CARD_VERSION` 3 (`card`) | card text | cards whose text changed |
+| `GEO_TABLE_VERSION` 2 (`geo_table`) | alternate names, large-city key | `place_forms` and keys of located photos |
+| parser `VERSION` 2 (`extractor:parser`) | HTML fixes | parser-decided records |
+| `EXTRACTION_VERSION` 3 (`extraction`) | **chunker and text gate only** (the normaliser left it for `keys`) | — |
+| `POLICY_VERSION` 2 (`policy`) | unchanged | — |
+
+**No in-place writes.** A keys job re-keys a file into a **new generation**, the way `_reembed_run` re-embeds: persist
+`index_generation + 1`; copy each stored chunk's text, offsets, kind, vector and `user_id` with the new `word_keys`; copy
+its hint documents (text, items, vector unchanged; `hint_keys` re-keyed); write in byte-sized batches; re-read the
+record and commit `indexed_generation` under the §7.4 fence (dropping the result if the content version or generation
+moved); delete the other generations' hints, then chunks; recompute `about_keys`; stamp `keys_version`. During a keys
+pass the coverage line says the index is being re-keyed (§25.5.6). Profiles touch only the record.
+
+**Migration is one rebuild (D24).** The stored-text paths are for later bumps.
+
+#### 25.4.9 Planner integration
+- `about_keys` is computed only by the pure `about_keys_of(rec)`; it runs, with the job plans, in `_commit` on every
+  record write, so a rename, a move, a facet change (a new `place_name`), an index run, a demotion, a verdict, a cap, a
+  README read, a re-embed, a re-key or a profile all leave consistent keys. `_effective` reads the profile's issue date
+  first in `_build`, `indexed`, `demoted` and `triaged`.
+- **Clearing rules:**
+
+| Transition | Clears |
+|---|---|
+| A write that drops a readable generation (`drops_readable`) | `profile` and its fields, `valid_until`, `passages_*`; hints with the chunks; both jobs re-planned. Kept (XC-6): the profile's refresh cooldown (`profile_defer_until`, also kept through a template write) and `passages_done_at` / `passages_version`, so a file whose text drops and comes back, or a note whose edits cross `PROFILE_MIN_CHARS`, is described at most once per cooldown |
+| Verdict `text` → `photo` | the profile and hints (as above) |
+| Verdict `photo` → `text`, or the kind leaving triage | the photo fields |
+| A new content version | `*_attempts` and holds (they are per version and fingerprint or generation); the profile is kept and re-verified until the new one |
+| Rename or move | nothing but the name keys (the name is not in the fingerprint) |
+| A collapsed folder that stops being one | `readme_excerpt` and its profile |
+
+### 25.5 Search
+`DriveSearchService.search` keeps its gate, envelope, folder resolution, read-time visibility, filter-only listing,
+duplicate collapse, the nonce wrapper and the refusal of an empty request.
+
+#### 25.5.1 Query normalisation (`drive_keys.query_concepts(drive_query) -> QueryConcepts`)
+1. Clip to `QUERY_TERM_CHARS` (1 000) at a word boundary; tokenise as §25.2.4. A hyphen compound ("Wi-Fi") and a short
+   letter-digit run ("X5") are one word; a short run whose parts all have keys ("ред3") is its parts.
+2. **Phrase runs first:** every contiguous run of 2–3 tokens of the original sequence, function words included (a run
+   ending in a function word excepted), gives `e:`, `ex:`, `k:` and `pe:` phrase keys to the words it holds.
+3. **Number concepts:** maximal forms (`n:`, `v:`, `pn:`); a 1900–2099 number also `y:`; a month name (any case form,
+   locatives included) with a year is one month concept emitting only `m:YYYY-MM`. A letter-digit id of at most 5
+   characters ("ред3") is not a number concept.
+4. **Generic search words are removed:**
+   - function words (en, ru, uk, es, fr), with an explicit list for 1–2-letter ones;
+   - `drive_keys.GENERIC_WORDS`: "documents", "files", "all", "everything", "всё", "все", "усі", "файли", "документы",
+     "todo", "todos", ….
+
+   - `drive_keys.TIME_WORDS` (P6 review M2): time-expression words in en, es, uk and ru with their case forms ("this
+     year", "в этом году", "цього року", "este año", "last year", "за последний месяц" …; the demonstratives "этом",
+     "цього" … are function words). The manifest sends a time span to the date fields (D25 wording, §25.5.7); a span
+     left in the words is removed, named in the ignored list, and never becomes a concept that D29 would block.
+
+   A place-like word is not on either list ("como"), and neither is "list". A 1-letter word is ignored; a 2-letter
+   one is a concept (§25.2.4). Interrogative phrasing words ("what", "which", "how much/many", "сколько", "скільки",
+   "какой", "який", "cuánto", "qué", with their forms) are generic words (P7 eval). Time words are matched without
+   accents ("ano" as "año", xc F2). A query left with no concept is a filter-only request; when it held generic words and
+   no filter is set ("todo", "files"), those words are searched as name words by the name stream alone, never by
+   content and never with a D29 line (P6 review m6); a query of function or time words only ("my", "mañana", "the
+   the", "où") has its ignored words of 2 letters or more searched that way (xc F2), and a name whose stem holds only
+   2-letter function words ("My.docx", "Où.txt") keys them exactly. A filter-only listing names the words it did
+   not search for.
+5. **Word concepts:** every remaining word. **Emitted keys per concept, uncut** (P1 review B1: coverage is tested on
+   the whole list, so a word's coverage never depends on its neighbours):
+   - word keys: `w:` native forms and `x:` skeletons;
+   - hint keys: `w:` native forms;
+   - about keys: `e:` forms and runs, `ex:` skeletons and runs, `k:` forms and runs, `lw:`, `tw:`, `dw:`, `lv:`, `pw:`
+     forms, `pe:` forms and runs, and `v:` of the word's letters and digits.
+
+   The fetch splits each list in order into lists of at most 30 (Firestore's `array-contains-any` limit,
+   `drive_keys.fetch_batches`): about 2–3 queries per concept, word and hint 1.
+6. At most `MAX_CONCEPTS` (8): numbers first, then words in query order. Every removed or cut word is named in the
+   result's searched line.
+
+The delegate's `query` sentence is not read (D19).
+
+**Walk-throughs** (synthetic):
+- **"про Барселону"** → "про" is a function word (after the runs). *барселону*: forms `барселону`, `барселон`, skeleton
+  `barselon`.
+  - A photo with `place_forms` "Barcelona, Барселона, …, Spain, Испания" holds `e:барселона`, `e:барселон` → covers →
+    **About** ("place (photo location)").
+  - A document whose entity has the form "Барселона" → About ("named in the file").
+  - A note saying "в Барселоне" → `w:барселон` → **Mentioned in**.
+  - A Latin passage naming the city ("Barcelona") → `x:barselon` → **By translation**, as is a passage with a grounded
+    keyword "Барселона".
+- **"медицинские записи по холестерину"** over a Spanish lab report ("colesterol"). Concepts *медицинские*, *записи*,
+  *холестерину* ("по" removed). The profile wrote `topic_words` ("cholesterol", "colesterol", "холестерин", …) and
+  `label_words` for `medical_record` ("medical record", "historia clínica", "медична картка", "медицинская запись",
+  "медицинские записи", …): `tw:холестерин` covers *холестерину* (form (b) of both is `холестерин`); `lw:` covers
+  *медицинские* and *записи* → **Labelled** ("topic", "type label"). A passage with a grounded keyword
+  "холестерин" covers *холестерину* more strongly (translation); the file stays **Labelled** (its weakest needed
+  class) and its card shows the passage keyword with the evidence window (P6 review m3). If no file anywhere holds *записи* (`df = 0`), the
+  exact and automatic tiers are empty and the result says: "No file holds 'записи'. Without 'записи': 3 files match the
+  other words." (D29), and Smart may search again with the subject alone.
+- **"Paris 2023"** → *paris* and *2023* (`n:2023`, `v:2023`, `y:2023`, `pn:2023`): a photo in Paris taken in 2023 holds
+  `e:paris` and `y:2023` → About. "Париж 2023" meets the alternate name "Париж" in `place_forms`.
+- **"all my receipts"** → "all", "my" removed; *receipts* (`receipts`, `receipt`): a profiled receipt's `lw:receipt` →
+  **Labelled**; a file named "Receipt …" → About ("name"); a note saying "receipt" → Mentioned in; "квитанции" meets
+  the Russian label words.
+- **"what expires"** → *expires* (`expires`, `expir`): files whose profile wrote `validity_words` hold `lv:expir` →
+  **Labelled**, ordered by `valid_until` from today (`find_expiring`), expired ones counted on one line.
+
+#### 25.5.2 Candidate sources (in parallel; Firestore only; lean projections)
+- **About stream:** one `find_by_about_keys` per concept (`ABOUT_FETCH` 500, newest first; a date filter in the query;
+  a single-kind filter by the kind composite; a family post-filtered, §25.5.5).
+- **Name stream:** on name keys v2, **per concept** (P6 review M4): each concept's whole keys (`w:`, `x:`, `n:`, `y:`)
+  in fetches of at most 30 (`fetch_batches`), so a word's hits never depend on the other words; past a full page
+  under a single kind, the kind-prefiltered page too (P6 review M1). Then single-trigram queries (the word's native
+  and skeleton trigrams, round-robin over the words, at most `NAME_KEY_QUERIES`): they find similar names, never
+  cover.
+- **Word stream:** per concept, `find_chunks_by_word_keys` (`WORD_FETCH` 300 chunks, ordered by item), grouped by file;
+  a full page with fewer than `WORD_FILES_MAX` (60) files continues after its last item until 60 files or exhaustion.
+- **Hint stream:** per concept, `find_hints_by_keys` over hint documents (`HINT_FETCH` 300), grouped by file.
+- **Document frequency** (`df`, per concept): the number of distinct files in the union of its about, word and hint
+  hits and its whole-token name-key hits (trigrams never count), **user-wide** (before kind, date and folder
+  filters), with a `lower_bound` flag when any of those pages was full; capped at the largest page.
+- **Candidates:** the in-scope hits of the rarest **required** concept (neither common nor the low-weight one: every
+  match covers it), all its streams' hits including its whole-token name hits; when its page was full, the next
+  required concept's in-scope hits join (P6 review m2; the built form of this line, equivalent on complete pages).
+  Each candidate's coverage is tested on its `about_keys`, name keys and the `word_keys` of its matching chunks (read by
+  id, `get_chunk_keys`) and its hint documents' `hint_keys`.
+- **Meaning:** one query embedding; card kNN (`CARD_FETCH` 50), chunk kNN (`CHUNK_FETCH` 300), hint kNN (`HINT_FETCH`
+  300), with distances; under a kind filter, pre-filtered by kind (one per member kind, RFC Δ37), so the floor is that
+  of the filtered pool; date and folder filters are post-filters.
+
+#### 25.5.3 The meaning score and the relative floor (`drive_tiers.py`)
+- **Per source:** each source's pool is the visible files of its kNN page, best `MEANING_POOL` (50). A source whose pool
+  has fewer than `MEANING_POOL_MIN` (12) files **abstains** (no `z` from it). Otherwise `z = (s − median) /
+  max(1.4826 · MAD, MIN_SPREAD)` with `s = 1 − d`. Chunk and hint `z` of a file with `n > 4` readable chunks are reduced
+  by `√(2 ln n) − √(2 ln 4)`; EPUBs give no chunk score; files under `PROFILE_MIN_CHARS` give no chunk or hint score.
+  `meaning(file) = max` over the sources that did not abstain.
+- **Related** when `meaning ≥ Z_RELATED`, set per drive-size band (§25.7: under 200, 200–2 000, 2 000–10 000, over
+  10 000 carded files). When **every** source abstains and the drive has fewer than 200 carded files, the related tier
+  holds the best `RELATED_SMALL` (2) files, labelled "closest by meaning; the drive is too small to tell related from
+  unrelated"; never under a kind filter.
+- The related tier is a guess: "by meaning only, unverified", at most `RELATED_MAX` (3) lines, never described as a
+  match, never counted for coverage. No count of related files is ever shown (D29's reason).
+
+#### 25.5.4 Tiers, strict AND and the source classes
+**Coverage.** A concept is covered in a file by a key of one of the four source classes (§25.2.4): verified record,
+passage words, translation, automatic record. A file's tier is decided by the weakest class it **needs**:
+1. **About** (exact): every concept covered by verified-record keys, or the name covers every query token.
+2. **Mentioned in** (exact): every concept covered by verified-record keys or by one chunk's `word_keys`, at least one
+   by the chunk; with two or more chunk-covered concepts, a **minimum window** of the chunk text of at most
+   `PROXIMITY_CHARS` (400) holds one occurrence of each (`match_spans` from the same tokeniser); record-covered concepts
+   are exempt from the window.
+3. **By translation** (automatic): as Mentioned in or About, but at least one concept is covered only by a translation
+   key:
+   - the same chunk's hint document's `hint_keys`, shown with the window around that keyword's stored evidence span;
+   - or a **skeleton** (P1 review M8): `x:` in the chunk's `word_keys` or in the name keys, `ex:` in the record's
+     `about_keys`.
+
+   A skeleton match crosses scripts or spellings ("Barcelona" in a Russian note, "hotel" against "хотел"). It is never
+   exact: it is shown with the window around the matched word, labelled "by spelling in another script (automatic)",
+   or "by another spelling (automatic)" when both words are Cyrillic ("Киев" / "Київ"). Two Latin words never meet
+   through a skeleton (`xl:`/`exl:` are read only by a Cyrillic query word, xc F3). A native-script match and a
+   spelling the file prints (an entity's verified spelling or a place's own form, `e:`) stay exact; an entity
+   spelling only the profiler wrote (`ef:`) is a translation (xc F1), shown as 'person "<spelling>" (spelling by the
+   index; named in the file as "<printed>")'.
+4. **Labelled** (automatic): at least one concept is covered only by automatic-record keys (`lw:`, `tw:`, `dw:`, `lv:`,
+   `pw:`, `pe:`), the others by any class.
+5. **Related by meaning only:** `meaning ≥ Z_RELATED`; or a name over the `name_match_v2` floor that does not cover
+   the query ("similar name"). At most 3 lines. The floor counts the keys name keys v2 write for a whole token — `w:`,
+   `x:`, `n:`, `y:` — as whole, and needs `NAME_MIN_TRIGRAMS` trigrams otherwise; the folder in-memory ranking tests
+   names with the same function, so a number or a skeleton alone matches there too (P5 review M2: v1's `name_match`
+   counted only `w:`).
+Each file is shown once, in its best tier. One test per combination of classes is required.
+
+**Strict AND (D28) with two allowances.** A concept's weight is `log(1 + N / df)` (`N` the carded files).
+- **Absent (`df = 0` user-wide)** — never dropped, never forgiven: every tier but Related is empty. The result names it,
+  "No file holds '<word>'", and (D29) adds one count line, no cards: "Without '<word>': N files match the other words"
+  (N from the same streams; "at least N" when a page was full). Under a filter or folder the wording is "no file in
+  this scope holds" when the word exists outside it — **only when the scope was read**: a concept whose page was full
+  and no scoped read covered it (a folder, a kind family, a date range on the name, word or hint streams) is never
+  stated absent; the coverage line names it ("could not be checked in the whole scope", P6 review M1).
+- **Low weight** — with three or more concepts, a file may miss the single lowest-weight concept with `df > 0`; never a
+  number or year concept ("electricity bill 2024" must not return a 2026 bill: P7 eval, as the m7 ruling for common).
+- **Common** — a concept held by more than `COMMON_SHARE` (30 %) of the carded files may also be missed (any number of
+  concepts), and is named in the searched line ("ignored as common: <word>") and on the card ("not matched (common)").
+  Absent and rare subject words still block, so honest negatives keep their strict-AND behaviour; the share is
+  measured on the negative set before it is fixed (§25.7). A number (an amount, an id, a year) is never common (P6
+  review m7).
+- Within a concept keys are OR; across concepts AND. Keys never filter.
+
+**Validity words.** A concept covered by `lv:` keys runs its about query on the `valid_until` composite from today
+(`find_expiring`, soonest first; expired files counted on one line). No query-time mapping: the trigger is which key
+family matched. **For such a query the date fields bound the expiry date** (P6 review M2): a record holding a
+validity key of the query is dated by its `valid_until`, `find_expiring` reads from `drive_date_from`, and with
+`drive_date_from` set nothing is counted as expired (the span is the user's). "что истекает в этом году" works both
+ways: the span in the date fields, or left in the words (removed as time words, named in the ignored list). The
+manifest's date texts say so in one clause (§25.13.6).
+
+**Labels never become a filter on their own** (the round-2 study: mapping a specific request to its broad label turned
+honest negatives into junk). No judge; a judge stays D22's trigger.
+
+#### 25.5.5 Filters, folder scope, the family fix
+- **Kind filters and Firestore's disjunction limit.** A single kind filters the about query through its composite. A
+  family (up to 7 kinds) is never put in a query with `array-contains-any` (7 × 30 disjunctions pass Firestore's limit
+  of 30): the about, word and hint streams post-filter a family, and the kNN queries run one per member kind (RFC
+  Δ37). The smoke script runs a family query once against live Firestore.
+- Date and folder filters: post-filters (the about stream takes a date range in the query). The `capped` hedge stays.
+- **Folder scope:** a subtree within `FOLDER_INMEM_CARDS` is ranked in memory over `about_keys`, chunk `word_keys`,
+  hint documents and vectors (within `FOLDER_INMEM_CHUNKS`); beyond, the user-wide streams with the folder post-filter.
+- **The `document` family (D23):** {docx, doc, odt, rtf, pdf, markdown, text}.
+
+#### 25.5.6 What Smart receives (`render_results`; verbatim contract in §25.13.6)
+The reference reminder, the envelope lines, then: the searched line (concepts, ignored words, ignored as common), the
+coverage line, the tiers in order (About, Mentioned in, By translation, Labelled, Related), and one footer.
+- **Shown counts:** `ABOUT_SHOWN` 10, `MENTIONED_SHOWN` 6, `TRANSLATED_SHOWN` 6, `LABELLED_SHOWN` 8, `RELATED_MAX` 3;
+  beyond, "showing n of N" (or "of at least N" when a page was full; the smallest concept's pages read through the
+  cursor up to `GROUP_READ_MAX` 1 000) and up to `GROUP_LINES` (6) group lines per tier (top folder × kind × date
+  range) in one wrapper.
+- **Cards:** at most `CARD_RENDER_MAX` (700) characters of card text; About and Labelled cards carry the match source
+  and printed form; Mentioned, By-translation and Labelled cards whose match came from a chunk or a grounded keyword
+  (P6 review m3) carry a passage cut `WINDOW_PAD` (300) characters around the
+  matched words or the evidence span, ≤ `WINDOW_MAX` (900) per file, all passages sharing `WINDOW_CHARS_TOTAL` (5 000).
+- **Ceiling:** 10 × (700 + 150) + 6 × (700 + 150) + 6 × (700 + 150) + 8 × (700 + 150) + 5 000 (passages) + 3 × 300 +
+  4 × 6 × 120 (groups) + 1 500 (header lines) ≈ 38 000 characters in the worst case; the median target stays
+  ≤ 3 000 (§25.7). Exceeding `RESULT_CHARS_MAX` (16 000) cuts the lowest tiers' shown counts first, saying so.
+- **The coverage line (P7).** "Coverage: complete." unless one of these holds, each then named with its count:
+  text files whose profile or passages job is `ready`, `deferred`, `parked` or `held` ("not described yet" /
+  "could not be described"); text files without doc2query by policy, **only when a Mentioned/By-translation tier is
+  empty** (EPUB, sheets, JSON, chunks past 100); documents not read yet or that could not be read (`not_read_yet`,
+  `unread`); `building`, `reading`, `refreshing`; a keys pass in progress; a full page; keys cut on a shown file;
+  concepts cut past `MAX_CONCEPTS`; the index being rebuilt (a state not rebuilt under v2, §25.8); words whose full
+  page no scoped read covered. **Never** folders, photos, audio, video or other kinds that hold no text: they are
+  not "not described". A file already described (a profile, and a passage run finished once when its policy has
+  doc2query) is not counted while its re-description waits (XC-3): each record's derived `describe_gap` says what
+  it counts as, and the tick stores the three counts in the sync state's counters (`coverage_*`,
+  `count_describe_gaps`); search reads them and runs no count query (XC-9).
+- **Footers:** after non-empty exact tiers, "No other file is about or mentions all of these words."; when no file
+  holds all concepts but each exists, "No file matches all of: <w1> (n1 files), <w2> (n2 files)."; when a concept is
+  absent, the D29 lines. None says "final". Whenever the coverage line is incomplete, each of them speaks of the
+  files searched: 'No searched file holds "<word>".', "No other searched file is about or mentions all of these
+  words.", "No searched file matches all of: …" (xc F4).
+- **Validity (xc F5):** every card of a file with `valid_until` carries `valid until: YYYY-MM-DD`; when its match came
+  through validity words, its date line is `date: <valid_until> (expires)` instead.
+
+#### 25.5.7 Agent surface (D11, D19, D25)
+- No new fields, no modes, no query-time model (D19, D28).
+- **Contract text (D25):** `drive_query` takes the subject, a document type or purpose ("tickets", "receipts",
+  "contracts", "what expires"), or what to find inside; a file format goes in `drive_kind`; **a time span ("last
+  year", "за последние годы", "2023–2024") goes in `drive_date_from`/`drive_date_to`, not in the words**; "everything
+  about X" puts X. `drive_kind` lists the `document` family with markdown and text. `drive_date_from`/`drive_date_to`:
+  "a photo's taken date, otherwise the date written in the document when the index found one, otherwise the file's
+  date". Verbatim texts in §25.13.6.
+- **Protocol (`drive_specialist`):** a `tiers` line stating meaning, not bans (verbatim in §25.13.6): what each tier
+  means; that the coverage line says what the search could not see; that other spellings and word forms were
+  searched, and other languages only where the index wrote them (profile words, passage keywords), so a search in
+  another language can still help when the coverage line or the result's sources suggest it; that a "without
+  '<word>'" count is a hint to decide whether the word was phrasing or the subject. The `not_found` and folder lines
+  stay (a folder card in About is a place to look). The guard tests change under the reviewer rule.
+- **Log line:** `[DriveSearch]` gains `concepts`, `ignored`, `common`, `absent`, `about`, `mentioned`, `translated`,
+  `labelled`, `related`, `pool_*`, `band`, `coverage`, `chars`; loses `term_*`, `fused`, `covered`.
+
+### 25.6 Privacy and cost
+**At index time** (D16), for every user with indexing on (D26: no re-consent), OpenAI by default receives with
+`store=false` (no copy kept for retrieval; its abuse-monitoring retention still applies): the profiler input of every
+profiled file (§25.3); the text of document passages up to 100 chunks per file; every image's 800 px thumbnail and the
+scans the reader reads (as today). On a failover the same goes to Google Gemini (no storage switch); a user who chose
+Claude sends it to Anthropic. Not sent: photographs beyond thumbnails, audio, video, code, logs, archives, files under
+200 characters. At search time no file text goes to any model.
+
+**Disclosure text (D26).** The Cabinet text (`drive.index_disclosure`, en/uk/fr/es) gains one sentence: "To describe
+your files for search, the beginning and end of every readable file, the text of your documents passage by passage,
+and a preview of every picture go to an AI model provider: OpenAI by default (asked not to store them, `store=false`;
+the provider may keep them for a limited time for abuse monitoring), Google Gemini when OpenAI is unavailable, or
+Anthropic if you chose Claude." No disclosure version and no acceptance step.
+
+**Cost** (`billing.py`: `gpt-6-luna` and `claude-haiku-5-5` $0.10 / $0.50 per million input / output tokens,
+`gemini-3.8-flash` $1.50 / $7.50; token counts are estimates from the studies adjusted for the final schemas, to be
+re-measured by the live model check):
+| Path | Per unit | Bound |
+|---|---|---|
+| Profile | ≈ 3 500 in + 750 out (with the word lists) ≈ **$0.0008 per file**; templates $0 | `PROFILE_USD_PER_MONTH` $4 |
+| Passages | ≈ 750 in + 650 out (keywords, questions, evidence) ≈ **$0.0004 per chunk** | `PASSAGE_USD_PER_MONTH` $20 |
+| Enriched triage | + ≈ 250 output tokens per photo ≈ + $0.000125 (input unpriced per image, §24.9) | `TRIAGE_USD_PER_MONTH` $3 |
+| Reader | ≈ $0.0006 per page (§24.9) | `READER_USD_PER_MONTH` $4 |
+| Failover | 15× the primary's token price, counted in dollars | the caps; the fallback alert |
+| Initial build | — | `INITIAL_BUILD_USD` $40 once (D27) |
+| Embeddings | `gemini-embedding-2`, not in `billing.py`, not billed to the user, a real cost to the owner: ≈ 50 M tokens for a cap-sized rebuild | the chunk cap |
+| **Search** | **0 model calls**, 1 query embedding | — |
+
+- **Monthly ceiling per user:** $31 at whatever model served, plus the one-time $40.
+- **Firestore per search:** three kNN queries (one read per 100 index entries scanned: at the caps ≈ 250 / 500 / 500);
+  up to 8 about pages of 500 lean records, 8 word concepts (one or a few pages of 300 lean chunks), 8 hint concepts,
+  the name queries, the candidates' `word_keys` and hint reads, the windows and the shown records. Worst case several
+  thousand reads and a few MB; the scale test measures it with a broad concept that fills `ABOUT_FETCH`.
+- **Index storage:** the form set gives ≈ 700–900 `word_keys` entries per chunk, ≈ 35–45 M composite entries at the
+  50 000-chunk cap, plus up to 600 `about_keys` entries × 3 composites per record. The largest new cost line, measured
+  before deploy (OQ-V5).
+
+### 25.7 Evaluation
+**Pre-registered bars, per case family** (set now; the v1 baseline is the tag run on the same fixture; bars are
+recorded only if they meet these numbers):
+| Family | Pass | Bar |
+|---|---|---|
+| Exact families (name, value, date, place, entity, content-only, inflection, article, year/month) | the expected file in About or Mentioned in | recall ≥ 0.95; junk in those tiers ≤ 0.3 per case |
+| Semantic and cross-language (a concept asked in another language than the file) | the expected file in By translation, Labelled or Related | recall ≥ 0.85 |
+| Class (all tickets, receipts of a year, what expires, a type plus a life area) | the expected files in Labelled (or exact) | recall ≥ 0.85 |
+| Misspellings | an honest no-match with the D29 count line, or the file under "similar name" | 100 % one of the two |
+| Negatives (`expect_none`; incl. related-but-absent topics built to tempt the translation and labelled tiers) | About, Mentioned, By translation and Labelled empty | ≥ 0.9 |
+| Related lines on negatives | — | ≤ 1.0 per case on average |
+| Junk in By translation / Labelled on positives | — | reported, ≤ 0.5 per case |
+| The book distractor in an exact tier on unrelated multi-word cases | — | 0 |
+| Characters per result | — | median ≤ 3 000; max ≤ `RESULT_CHARS_MAX` |
+| Every v1-passing G1/G2 case, by its family's pass rule | — | all |
+
+- **Case families** (synthetic, PII-free, `make_fixtures.py`): an entity named only inside a body, in another script;
+  inflection groups (the §25.13.4 table: surnames, `-ей` names, soft sign, fleeting vowels, Ukrainian locatives,
+  English `-se`/`-ie` plurals); a context or purpose word; multi-word places with an article; photos by place (Latin,
+  Cyrillic), with a year, by month; concept queries in another language than the files ("medical records about
+  cholesterol" over a Spanish lab report; "documents about the car" over English and Spanish car papers; "flat
+  repair" over Spanish invoices); a phrasing word absent from every file (D29 line expected); a time span in the query
+  (G3: Smart moves it to the date fields); class queries; label-word false positives ("home address", "plan", "car
+  insurance"); stray kind words; values; content-only; synonyms; a misleading name; a book distractor; negatives.
+  Each case has `expect_tier`; broad cases `exact_set`.
+- **An incident-shaped case:** "everything about X" with more than `ABOUT_SHOWN` matches (photos by place, documents
+  naming X in another script, a note mentioning it) plus a book mentioning X once far from any other query word.
+- **Label, topic and life-area words (measured, not a blocker):** on synthetic documents of every `DOC_TYPES` value and
+  life domain in en, es, uk, ru, how often the profile's word lists hold the forms a user types, and the Labelled-tier
+  recall per language; reported with the bars.
+- **`COMMON_SHARE`** is fixed only after the negative set shows it costs no honest negative.
+- **Recorded enrichment snapshot (F-22).** `tests/fixtures/drive_eval/enrichment.json` holds the fixture's profiles,
+  hint documents (with evidence spans) and photo fields, produced once by `dump_enrichment.py` from a live run; G1/G2
+  search tests and every search unit test replay it with no model call, so search is developed and regression-tested
+  deterministically. An owner-run live mode re-records it; a re-record is a deliberate commit.
+- **Realistic scale and calibration:** synthetic corpora of 200, 1 000, 3 000 and 10 000 files on live Firestore under a
+  `zz-synthetic-…` user, then purged: p50/p95 latency (gate: p95 ≤ 3 s at 3 000), reads per search, write batch sizes,
+  index entries and storage, rebuild throughput and cost, per-source pool statistics. `Z_RELATED` per band,
+  `PASSAGE_MIN_SIMILARITY`, `COMMON_SHARE` and the long-document correction are calibrated on related lines per
+  negative (≤ 1.0) and related recall of true near-misses (≥ 0.7), and confirmed on the owner's live check.
+- **The studies' gold on the owner's data stays private** (`scripts/memory/`); `dump_enrichment.py` also writes one
+  user's profiles and hints there for the owner's check.
+- **G3** (Smart dry run): searches, opens and folder listings counted per case, and the answer checked (expected files
+  named, or an honest not-found with its reason). Hard checks: the incident-shaped case ≤ 2 searches, ≤ 2 opens,
+  ≤ 1 listing, right files in the answer; a time-span case puts the span in the date fields; a D29 case searches again
+  at most once; §24.11's checks. If G3 still shows crawling, D22 applies.
+- **Tests:** new behaviour gets new tests (§25.13 lists the parts); every existing test that encodes v1 behaviour is
+  changed only by a reviewer under the standing rule; the expected breakages are listed in §25.13.8.
+- **Telemetry:** the tick line adds `profiles`, `profile_usd`, `passage_chunks`, `passage_usd`, `fallback_usd`,
+  `initial_build_usd`, `verify_dropped_*`, `hints_dropped_*` and similarity deciles, `hints_reused`, job states,
+  `keys_capped`, `stopped_at_cap`; rebuild progress as described / text records.
+
+#### 25.7.1 Results (2026-10-14, synthetic fixture)
+`search_v2_eval --embeddings gemini` at the branch tip (`fdea786f`), with real `gemini-embedding-2/768` vectors over the
+synthetic, PII-free fixture (`tree.json` + `tree_v2.json`: about 1 450 indexed items, 2 521 carded records, so the
+drive-size band is 200–2 000) and the recorded enrichment (`enrichment.json`); no parameter was changed for the run.
+Two runs gave identical numbers. v1 is `baseline_v1.json`, the tag's run on the same fixture.
+
+| Family | v2 cases passed | v2 files found | Bar | v1 cases passed |
+|---|---|---|---|---|
+| Exact | 23 / 23 | 39 / 39 | 0.95 | 13 / 23 |
+| Semantic and cross-language | 11 / 12 | 14 / 16 | 0.85 | 1 / 12 |
+| Class | 7 / 7 | 18 / 18 | 0.85 | 1 / 7 |
+| Incident-shaped | 2 / 2 | 27 / 27 | 1.0 | 0 / 2 |
+| Misspellings | 4 / 4 | — | 1.0 | 1 / 4 |
+| Negatives | 12 / 13 | — | 0.9 | 0 / 13 |
+
+| Metric | v2 | Bar | v1 |
+|---|---|---|---|
+| Junk in the exact tiers, per case | 0.087 | ≤ 0.3 | 6.91 |
+| Junk in By translation / Labelled, per positive case | 0.636 | ≤ 0.5 | — |
+| Related lines per negative | 2.92 | ≤ 1.0 | — |
+| The book distractor in an exact tier | 0 cases | 0 | 3 cases |
+| Characters per result, median / max | 2 131 / 8 864 | ≤ 3 000 / ≤ 16 000 | 7 606 / 15 106 |
+| v1 G1/G2 cases passing under v2 | 81 / 87 | every v1-passing case | — |
+
+**Verdict: bars missed.** Every family's pass bar is met. Missed:
+- **Related lines per negative, 2.92 against ≤ 1.0.** The tier filled its cap of 3 on 12 of 13 negatives (2 on the
+  last). The relative floor is too low for real vectors: on this fixture a floor of about 5.25 reaches ≤ 1.0 related
+  line per negative; on a 200-file synthetic corpus (`scale_calibrate.py` with real vectors) about 4.0, where
+  near-miss recall falls to 0.10. Neither corpus can set the floor: the fixture's three cases that live only on the
+  Related tier cannot be told apart per floor without another full embedding run, and the synthetic corpus's
+  near-miss recall is bounded by its template texts (0.37 even at a floor of 0.5).
+- **Automatic-tier junk, 0.64 against ≤ 0.5 per positive case** (a reported bar).
+- **Three v1-passing G1/G2 cases lost:** one "latest version" case (`family-latest-dogovor`) and two content cases
+  (`g2-amount-deposit-porto`, `g2-clause-nda-term`) whose expected substring is not in the shown card
+  (`substring_not_in_card`; so are two cases v1 missed too, `g2-date-written-out` and `g2-ocr-bank`).
+- One semantic case (`sem-flat-repair`) and one negative (`neg-pool-booking`) fail.
+
+**Arbiter's decision (under the owner's delegation, 2026-10-14).** `Z_RELATED` stays **2.5** for every band. The
+Related tier is capped at 3 lines, labelled "by meaning only, unverified", never counted and never a match, so a
+generous floor costs Smart at most three labelled guesses; raising it on synthetic evidence would trade away the
+near-misses the tier exists for, with no measurement of that cost. The floor (per band), `COMMON_SHARE` and
+`PASSAGE_MIN_SIMILARITY` are calibrated on the owner's real drive after its v2 rebuild (rollout step 9, the live
+check), with the procedure above (related lines per negative ≤ 1.0, near-miss recall ≥ 0.7). The other misses are
+recorded for the same check.
+
+### 25.8 Rollout, rebuild and rollback (runbooks)
+**The gate.** A sync state whose `applied_versions` lacks the key `keys` is **awaiting migration**: v2 does no tick
+work for it at all (no observation, no content run, no upgrade pass, no enrichment) and the fan-out raises an ops
+alert once. Search has **no migration mode** (D30, P6 review M3, XC-1): it runs no stream at all — no query embedding,
+no read — and answers "The index is being rebuilt for a new search format, so nothing could be searched yet: this
+result says nothing about what the drive holds." with no tier, no count and no absence; a filter-only listing answers
+the same, never with v1 records. The Cabinet shows the state as waiting to be rebuilt (XC-8). A fresh v2 onboarding
+stamps every key (as today), so new users are not caught. `DRIVE_UPGRADE_PASS` (`os.getenv`, default on) stops every
+upgrade pass in an emergency; the indexer's deploy sets it from `DRIVE_UPGRADE_PASS_DEV` in `.env` (the
+`_DRIVE_UPGRADE_PASS` substitution, default on), because its `--set-env-vars` replaces every variable: a switch set
+with `gcloud run services update` alone turns back on at the next deploy (XC-7).
+
+**Rollout** (the commands: `docs/07_deployment/README.md` § Search v2 — rollout and rollback; the order below was
+fixed by the cross-cutting operations review, XC-2)
+1. Code on `asm/drive-search-v2`; the eval meets the bars (`search_v2_eval.py`, `bars_v2.json`); G3 has no hard
+   failure; the caption-shift fix passes (§25.4.3).
+2. The owner backs up the prompt layer.
+3. New composites and vector indexes `READY` (`make deploy-indexes` does not create vector indexes:
+   `create_drive_vector_indexes.sh` too); the usage TTL; `drive_index_smoke.py` runs every new repository read once
+   (a family query included). Every v2 search, a gated one included, needs them.
+4. Pause the drive queue and the fan-out job; wait for a running v1 tick to release its lease (up to 30 minutes).
+5. The owner uploads the profiler, passages and triage-v2 prompts while paused (triage v2 with the v1 tokens fails
+   silently); the manifest wording and the Cabinet sentence ship with the code.
+6. Deploy main and indexer; check the queue and the job are still paused; upload the Smart protocol token.
+7. **Resume the queue and the job before any rebuild:** the purge is done by a tick.
+8. **Rebuild, one user at a time, the owner first** (`drive_index_rebuild.py --user … --apply`): purge, then onboarding
+   under v2, the initial build spent newest-first. Sizing from the parameters: the enrichment share is ≈ 190 s per
+   8-minute tick; with 3 files in flight and ≈ 40–90 s per text file (a profile and its passage calls, 2 in flight),
+   ≈ 6–15 text files per tick, ≈ 40–100 an hour with ticks chained, so ≈ 1 000–2 400 a day: a few hundred text files in
+   hours, a cap-sized drive in two to four weeks (measured in the scale test). Search is empty while the purge runs
+   and fills as onboarding proceeds (`building`); scans are re-read once. The advisory $5 daily-cost alert fires on
+   most days of a rebuild; embeddings are the owner's cost. A stalled rebuild alerts: the fan-out also
+   fires when a user's enrichment has not moved for 24 h while jobs are `ready` and budget is left
+   (`described_grew_at`: refreshed when the described count grows, when a run changes a record, or when no job is
+   ready; P5 review MINOR 2: a quiet day before one new file, passage-only progress, or a delete plus an add is no
+   stall). A v1 index's tick logs WARNING once per instance until the ops alert, INFO afterwards (MINOR 10).
+9. The owner's live check.
+10. After acceptance, drop the two `content_terms` composites.
+
+**Rollback** (to tag `drive-search-v1`; v1 never serves a v2 record)
+1. Pause the drive queue and the fan-out scheduler job; wait for the running tick.
+2. **Mark every user `purging` while v2 is still deployed** (`drive_index_rebuild.py --all-users --apply`): v2's search
+   answers "building", and the tag's first tick purges before anything else and never starts an upgrade pass over v2
+   records.
+3. **Delete every user's hint documents** with v2's `delete_user_hints` (`drive_index_rebuild.py --all-users
+   --hints-only --apply`, v2 code, before the tag deploy): the tag's purge does not know `drive_index_hints`, which
+   holds text derived from the user's passages.
+4. Restore the backed-up v1 prompt tokens (triage v1 schema, the Smart protocol token).
+5. If the `content_terms` composites were dropped, `make deploy-indexes` from the tag and wait for `READY`.
+6. Deploy the tag (main and indexer).
+7. Resume the queue and the scheduler job. The usage documents survive (the tag does not read them).
+8. Before any later roll-forward, `drive_initial_build_reset.py` reopens each user's initial build (no purge does).
+
+`DRIVE_UPGRADE_PASS=off`, set on the running indexer, does not survive the next `make deploy` (the indexer is
+deployed with `--set-env-vars`): set it again after each deploy while it is needed (XC-7).
+v1 reads v2 records because v2 adds no value to an enum v1 parses; new categories are new string fields.
+
+### 25.9 Deltas: v1 (tag `drive-search-v1`) → v2
+| Area | v1 | v2 |
+|---|---|---|
+| Fusion | RRF over card, name, chunk and term streams; names covering the query first | Tiers by source class: about, mentioned in (exact); by translation, labelled (automatic); related (≤ 3) |
+| Output size | Always up to 8 cards, windows (12 000 chars) | Shown counts per tier, then "n of N" and groups; median ≤ 3 000 chars |
+| Completeness | Envelope counters | A coverage line per result (P7) |
+| Relevance threshold | None | A relative floor per source, per drive-size band; only for the unverified tier |
+| Card text | name, kind, brief, caption, facets, 2 000-char lead | name, kind, profile, facets; lead only for machine text |
+| Exact content | `content_terms` (number-like), selectivity probes | `word_keys` (form sets of every word, number terms, months); commonness by files; proximity |
+| Exact "about" | Name stream | Verified record keys + name keys, one normaliser |
+| Cross-language | Embeddings only | Index-time forms, topic, label, life-area and validity words; grounded passage keywords with evidence |
+| Unmatched words | Ignored by RRF | Strict AND; one low-weight or common word may be missed; an absent word blocks, with a count line (D29) |
+| Per-file model metadata | None for parsed documents (D10) | A profile for every text file and collapsed folder with a README (D15) |
+| Photos | Ten-word caption | Description, objects, scene, visible text; `place_forms` from geo table v2 |
+| Effective date | Brief date for reader-read files | Profile date for every profiled document |
+| `document` family | docx, doc, odt, rtf, pdf | + markdown, text |
+| `drive_query` | no type words | document types allowed; formats in `drive_kind`; time spans in the date fields (D25) |
+| Budgets | Pages and images per month on the sync state | Dollars per class at the model that ran, in usage documents a purge keeps; a one-time initial build |
+| Disclosure | Anthropic or OpenAI for scans and images | OpenAI (`store=false`, abuse-monitoring retention), the Gemini fallback, the Claude switch (D26) |
+| Keyer change | `EXTRACTION_VERSION` bump re-bills scans | `KEYS_VERSION`: a new generation from stored text |
+| Search cost | 0 model calls | 0 model calls |
+
+### 25.10 Gap check, and what the reviews changed
+**Against the code** (verified): the `document` family excludes markdown and text; the card carries 2 000 chars of
+lead text; `content_terms` are number-like and capped at 256 per call; kNN pages return distances; `_readme_due` and
+`_readme_touched` serve repository roots only and `_readme_step` returns early on an unchanged README; `ExtractionOutcome`
+has no page metadata; `_reembed_run` writes a new generation; the planner has one `due_at` and content-owned
+`defer_until`; `_effective` reads only the brief; `place_name` is a display string; usage counters live on the sync
+state, which a purge deletes; `BaseAgent._call_llm` lets a fallback 4xx escape as a plain `LLMClientError` with no
+provider; the triage cap was sized for ten-word captions; a 400-document v2 chunk batch passes 10 MiB; the tag's purge
+does not know hint documents; `_sweep_chunks` pages chunks only; Firestore caps a query at 30 disjunctions; the
+caption-shift has no fix in the code; the Cabinet disclosure omits the Gemini fallback. Not code, but checked by a
+study: the database is Firestore Standard, with no native full-text search.
+
+**Not taken, by decision:** a query-time judge, a drive specialist intent, a deep mode, reading Smart's delegate
+sentence, regex `content_terms` as a fallback, a query-time key model or keys field (D19, D22, D11, D18, D28), a
+separate proper-noun list on passages and a query-side place table (the owner: proper nouns are not a special case;
+one general rule — grounded keywords with stored evidence — covers names and concepts alike), an uncapped or counted
+related tier (D29's reason).
+
+**Review round 1** (C1–C19, Q-01–Q-20, OPS-1–OPS-13): see rev 3.19's history line; every item stands as revised in
+round 2 below.
+
+**Review round 2** (verification N1–N17, fresh review F-01–F-34, the concept-query walk-throughs): form sets instead of
+truncation, the Latin plural fix, `ь`, digits and the `c` rule (N1, N2, F-C, F-19, §25.2.4); per-job states, settled
+per version key, `EnrichContext`, stored fingerprints, resume fields (N3, F-02, F-03, §25.4.5); hint reuse inside the
+content run (N4, F-06); the initial build in its own document with an end condition (N5, F-04); the rollback deletes
+hint documents first, purge and sweep know them (N6, N14, F-16); `LLMFallbackClientError` (N7); the By-translation tier
+with stored evidence (N8, the arbiter's general rule); footers (N9); month keys in `word_keys` (N10); `lv:` validity
+words (N11, F-09); concurrency and sizing (N12, F-21); the name outside the fingerprint (N13); candidates ∪ name hits
+(N15, F-07); the disclosure sentence (N16); README triggers (N17, F-27); bars per family (F-01); daily fallback usage
+(F-05); `df` by union, user-wide, with a lower-bound flag (F-07, F-33); mixed coverage by source class (F-08); port
+signatures, types, version keys, the render contract (F-10, F-11, F-15, F-30, §25.13); shown counts and the ceiling
+(F-12); the coverage rule without folders and photos (F-13); the normaliser under `KEYS_VERSION` (F-14); the family
+disjunction limit (F-17); per-source abstention (F-18); minimum-window proximity (F-20); the enrichment snapshot (F-22);
+the emitted key list (F-23); "marked by source" deleted (F-24); `passages_refused` removed (F-25); the photo
+walk-through (F-26); the precedence list (F-28); retired page/image caps and the Cabinet (F-29); the `k:` table (F-31);
+`effective_day` (F-32); D17's acknowledgement (F-34); translated topics and life-area words (F-A, F-B, the arbiter);
+common-word allowance (F-D); time spans to the date fields (F-E); verified and automatic sources separated (F-F); D29.
+
+### 25.11 Open questions (each with a recommendation)
+- **OQ-V1 The caption-shift fix.** *Recommend:* index text before each image (as now), the index echoed per entry, a
+  same-verdict check for byte-identical duplicates in a batch, batches of 8; of 4 if the fixture still shows a shift.
+  A gate of the rebuild.
+- **OQ-V2 When the reader stops returning a brief.** *Recommend:* at its next bump made for another reason.
+- **OQ-V3 Place spellings.** Decided: geo table v2 on the index side; no query-side table.
+- **OQ-V5 Index storage at the caps.** *Recommend:* measure; if too costly, cap word keys per chunk keeping the rarest
+  by an index-time document frequency, or the §14 full-text seam (per-user SQLite FTS5) for body words.
+- **OQ-V6 The long-document correction.** *Recommend:* start with §25.5.3's and tune it on the scale test.
+- **OQ-V8 HTML, e-mail and e-books in the `document` family.** *Recommend:* not now.
+- **OQ-V9 Migration without a rebuild.** *Closed by D30:* no migration; every user is re-indexed from scratch.
+- **OQ-V10 Profiles of the bot's own reports.** *Recommend:* yes; a narration preamble is a parser@2 follow-up.
+- Decided and closed: OQ-V4 (D27), OQ-V7 and OQ-V11 (D28, D29).
+- **Deferred extension, not v2 scope (D28):** a flash-lite key call on a weak fast pass only, never per search, never
+  chosen by Smart. *Trigger:* G3 or the live check shows synonym misses that matter.
+
+### 25.12 Parameters (initial)
+| Name | Initial | Basis |
+|---|---|---|
+| `PROFILE_MIN_CHARS` | 200 | §25.3 |
+| `PROFILE_REFRESH_COOLDOWN` / `PASSAGE_REFRESH_COOLDOWN` | 24 h / 24 h | §25.4.7 |
+| `PASSAGE_CHUNKS_PER_CALL` / `PASSAGE_MAX_CHUNKS_PER_FILE` / `PASSAGE_REUSE_SHARE` / `PASSAGE_MIN_SIMILARITY` | 2 / 100 / 0.8 / 0.5 | §25.4.2, §25.4.7; calibrated |
+| `TRIAGE_BATCH` | 8 | §25.4.3 |
+| Output caps: profiler / passages / triage | 4 096 / 4 096 / 8 192 tokens | unit-tested against the schemas |
+| `READER_` / `TRIAGE_` / `PROFILE_` / `PASSAGE_USD_PER_MONTH` | $4 / $3 / $4 / $20 | §25.4.5 |
+| `INITIAL_BUILD_USD` | $40 (owner minimum $20, D27) | sizing §25.4.5 |
+| `FALLBACK_ALERT_SHARE` | 0.5 a day | |
+| `ENRICH_SHARE` / `ENRICH_IN_FLIGHT` / `PASSAGE_IN_FLIGHT` / `ENRICH_FILE_BUDGET` | 40 % / 3 / 2 / 300 s | §25.4.5 |
+| `WORD_KEYS_PER_CHUNK` / `HINT_KEYS_PER_CHUNK` / `ABOUT_KEYS_PER_RECORD` | 1 500 / 60 / 600 | §25.2.6 |
+| `WRITE_BATCH_BYTES` | 6 MB | |
+| `README_SCAN_CHILDREN` | 1 000 | |
+| `MAX_CONCEPTS` | 8 | |
+| `ABOUT_FETCH` / `WORD_FETCH` / `HINT_FETCH` / `WORD_FILES_MAX` | 500 / 300 / 300 / 60 | §25.5.2 |
+| `CARD_FETCH` / `CHUNK_FETCH` | 50 / 300 | unchanged |
+| `MEANING_POOL` / `MEANING_POOL_MIN` / `MIN_SPREAD` | 50 / 12 / 0.01 | §25.5.3 |
+| `Z_RELATED` | 2.5, then per band | calibrated |
+| `RELATED_MAX` / `RELATED_SMALL` | 3 / 2 | |
+| `COMMON_SHARE` | 0.3 | measured on negatives before fixed |
+| `PROXIMITY_CHARS` | 400 | minimum window |
+| `ABOUT_SHOWN` / `MENTIONED_SHOWN` / `TRANSLATED_SHOWN` / `LABELLED_SHOWN` | 10 / 6 / 6 / 8 | §25.5.6 |
+| `CARD_RENDER_MAX` / `RESULT_CHARS_MAX` | 700 / 16 000 | §25.5.6 |
+| `WINDOW_PAD` / `WINDOW_MAX` / `WINDOW_CHARS_TOTAL` | 300 / 900 / 5 000 | |
+| `GROUP_LINES` / `GROUP_READ_MAX` | 6 / 1 000 | |
+| Shared caps (named in `drive_index_params`) | profile lists 12 entities × 8 forms, 12 values, 5 dates, 8 + 8 topics, word lists 24; hints 12 keywords, 3 questions, evidence 12 words; photos 240 chars, 8 objects × 6 forms, scene 6 words, visible text 200; input head 6 000, tail 1 500, headings 1 500 over 20 000, EPUB 3 000, 20 rows per sheet; README excerpt 6 000 + 1 500, 200 child names; phrase runs ≤ 3; timeouts 60 / 60 / 120 s | §25.2.6, §25.3, §25.4 (Part 0 review M6) |
+| Retired | `RRF_K`, `CONTENT_TERM_QUERIES`, `CONTENT_TERM_FETCH`, `TERM_NONSELECTIVE_FILES`, `MODEL_EXTRACT_PAGES_PER_MONTH`, `TRIAGE_IMAGES_PER_MONTH`; `K` only for filter-only listings and folder candidates; `CARD_LEAD_CHARS` only for machine text | §25.9 |
+
+### 25.13 Appendix: frozen interfaces and the decomposition
+The plan's **Part 0 (frozen core)** commits §25.13.1–§25.13.6 as domain types, constants and ABC stubs, with no
+behaviour and `make check` green, before any parallel work.
+
+#### 25.13.1 Ports
+`DriveIndexRepository` gains, as abstract methods (Firestore and `InMemoryDriveIndexRepository`, stubbed with
+`NotImplementedError` by Part 0 and implemented by P2 with parity tests on order, limits and cursors; ordering, cursor
+and date conventions in the port's docstrings):
+```
+find_by_about_keys(user_id, keys: Sequence[str], limit: int, *, kind: Optional[str] = None,
+                   date_from: Optional[datetime] = None, date_to: Optional[datetime] = None,
+                   after: Optional[str] = None) -> List[DriveRecordLean]          # newest first; cursor = item id
+find_expiring(user_id, keys: Sequence[str], after_date: date, limit: int) -> List[DriveRecordLean]  # valid_until ASC
+find_chunks_by_word_keys(user_id, keys: Sequence[str], limit: int,
+                         after_item_id: Optional[str] = None) -> List[DriveChunkLean]   # item, generation, index
+get_chunk_keys(user_id, ids: Sequence[ChunkId]) -> Dict[ChunkId, Tuple[str, ...]]
+find_hints_by_keys(user_id, keys: Sequence[str], limit: int,
+                   after_item_id: Optional[str] = None) -> List[DriveHintLean]                 # item, generation, index
+get_hint_keys(user_id, ids: Sequence[ChunkId]) -> Dict[ChunkId, Tuple[str, ...]]
+find_nearest_hints(user_id, vector: Sequence[float], limit: int, kind: Optional[str] = None
+                   ) -> List[Tuple[DriveHintLean, float]]
+get_hints(user_id, item_id: str, generation: int) -> List[DriveHintDoc]
+get_hints_with_vectors(user_id, item_id: str, generation: int) -> List[Tuple[DriveHintDoc, List[float]]]  # keys pass
+write_hints(docs: Sequence[DriveHintDoc], vectors: Sequence[Sequence[float]]) -> None   # byte-sized batches
+delete_hints_except(user_id, item_id: str, keep_generation: Optional[int]) -> int
+delete_user_hints(user_id, limit: int) -> int
+hints_page(user_id, after: Optional[ChunkId], limit: int) -> List[DriveHintLean]
+enrich_queue(user_id, limit: int, job: Optional[str] = None) -> List[DriveIndexRecord]
+                                         # enrich_ready (or <job>_state = ready), effective_day DESC (P5 review MINOR 6)
+enrich_wakeups(user_id, now: datetime, limit: int) -> List[DriveIndexRecord]
+count_by_job_state(user_id, kinds: AbstractSet[str]) -> Dict[str, Dict[str, int]]   # job -> state -> count
+keys_pending_page(user_id, after: Optional[str], limit: int) -> List[DriveIndexRecord]
+get_records_lean(user_id, item_ids: Sequence[str]) -> Dict[str, DriveRecordLean]
+get_model_usage(user_id, month: str) -> ModelUsageMonth
+add_model_usage(user_id, month: str, day: str, cls: str, usd: float, fallback_usd: float, calls: int,
+                covered_usd: float = 0.0) -> None    # covered_usd: the initial build's share (P5 review M1)
+get_initial_build(user_id) -> InitialBuild
+spend_initial_build(user_id, usd: float, now: datetime) -> Tuple[InitialBuild, float]   # (after, usd covered)
+close_initial_build(user_id, now: datetime) -> None
+```
+Model ports (in `ports/`):
+```
+DocumentProfilerPort.profile(request: ProfileRequest) -> ProfileReply
+PassageHintPort.hints(request: HintRequest) -> HintReply
+ImageTriagePort.triage(...) -> TriageReply            # v2 reply (P3 switches the port)
+ModelReplyStatus: ok | refused | failed | invalid | stopped_at_cap | unavailable   # §25.4.6 table in its docstring
+ProfileRequest(user_id, account_id, item_id, kind, name, input: ProfileInput, previous: Optional[ProfileLabels])
+ProfileInput(head: str, tail: str, headings: Tuple[str, ...], child_names: Tuple[str, ...])
+ProfileLabels(doc_type: str, life_domains: Tuple[str, ...], valid_until: Optional[date])
+ProfileReply(status, profile: Optional[DriveProfile], model: str, usd: float, fallback_usd: float)
+HintRequest(user_id, account_id, item_id, chunks: Sequence[Tuple[int, str]], title: str, what_it_is: str)
+HintReply(status, items_by_index: Mapping[int, Sequence[HintItem]], model: str, usd: float, fallback_usd: float,
+          outcome_by_index: Mapping[int, ModelReplyStatus])        # items of `ok` chunks only, kept whatever status
+TriageReply(status, results: Tuple[TriageResultV2, ...], model: str, usd: float, fallback_usd: float,
+            model_calls: int, capped_item_ids: Tuple[str, ...], refused_item_ids: Tuple[str, ...])
+TriageResultV2(item_id, verdict: TriageVerdict, photo: Optional[PhotoDescription])
+```
+Every model port reports outages as a status, never an exception. `invalid` (charged, no backoff) is split from
+`failed` (charged, backoff), and the fallback's share is in dollars, not a flag (Part 0 review M1, M2, MINOR 7, 8).
+
+#### 25.13.2 Types (frozen dataclasses in `domain/`)
+```
+DriveProfile(title: str, what_it_is: str, language: str, doc_type: str, life_domains: Tuple[str, ...],
+             dates: Tuple[ProfileDate, ...], entities: Tuple[ProfileEntity, ...], key_values: Tuple[KeyValue, ...],
+             topics: Tuple[str, ...], topics_native: Tuple[str, ...], topic_words: Tuple[str, ...],
+             label_words: Tuple[str, ...], domain_words: Tuple[str, ...], validity_words: Tuple[str, ...])
+ProfileDate(label: str, iso: date)          ProfileEntity(name: str, type: str, printed: str, forms: Tuple[str, ...])
+KeyValue(label: str, printed: str, canonical: str)
+PhotoDescription(description: str, objects: Tuple[PhotoObject, ...], scene: str, visible_text: str)
+PhotoObject(name: str, forms: Tuple[str, ...])
+HintItem(text: str, type: str, evidence: str, evidence_start: int = -1, evidence_end: int = -1)   # -1: ungrounded
+DriveHintDoc(user_id, item_id, generation: int, index: int, kind: str, chunk_text_hash: str,
+             items: Tuple[HintItem, ...], hint_keys: Tuple[str, ...], passages_version: int)
+EnrichContext(now: datetime, month_usd: Mapping[str, float], caps_usd: Mapping[str, float],
+              initial_balance_usd: float, initial_open: bool)
+ModelUsageMonth(reader_usd, triage_usd, profile_usd, passage_usd, fallback_usd: float, calls: int,
+                daily: Mapping[str, Tuple[float, float]], reader_initial_usd, triage_initial_usd,
+                profile_initial_usd, passage_initial_usd: float)   # cap_usd(cls): what the month's cap paid
+InitialBuild(allowance_usd: float, spent_usd: float, opened_at: Optional[datetime], closed_at: Optional[datetime])
+DriveRecordLean(item_id, parent_id, name, kind, effective_date, about_keys, name_tokens, state, scope, has_card,
+                indexed_generation, content_hash, valid_until)
+DriveChunkLean(user_id, item_id, generation: int, index: int, kind: str)
+DriveHintLean(user_id, item_id, generation: int, index: int, kind: str, hint_keys: Tuple[str, ...])
+QueryConcepts(concepts: Tuple[Concept, ...], ignored: Tuple[str, ...], cut: Tuple[str, ...])
+Concept(word: str, about_keys: Tuple[str, ...], word_keys: Tuple[str, ...], hint_keys: Tuple[str, ...],
+        is_number: bool)
+```
+Record and chunk fields: §25.2.1, §25.2.2 (types as named there; states are `str`), added by Part 0 with neutral
+defaults and codec support (`caption` and `content_terms` stay until P3/P5 retire them), plus the sync state's
+`model_backoff_by_agent: Mapping[str, datetime]` (§25.4.6). `valid_until` is stored as 00:00 UTC of the printed date.
+The version constants are defined beside `CURRENT_VERSIONS` (`SEARCH_V2_VERSIONS`); **P5** adds `"keys"`,
+`"profile"`, `"passages"` to `CURRENT_VERSIONS` behind the migration gate (adding them earlier would start the v1
+upgrade pass); the gate tests `"keys" in applied_versions`. Shared caps and input slices are in
+`drive_index_params` (§25.12's block); `JOB_USAGE_CLASS` and `USD_CAPS` map jobs and classes to the monthly caps.
+
+#### 25.13.3 Lean projections
+Records for streams: the `DriveRecordLean` fields. Chunks for streams: `user_id`, `item_id`, `generation`, `index`,
+`kind` (no text, no keys, no vector). Hint documents for streams: `DriveHintLean`. Windows read chunk text and hint
+items by id.
+
+#### 25.13.4 Pinned normaliser groups (unit tests, index/query parity)
+Cyrillic: Барселона/Барселону/Барселоне/Барселоной; Париж/Париже; Рим/Риме; Киев/Киеве; Київ/Києві; Львів/Львові;
+Харків/Харкові; Иванов/Иванова/Ивановым; Петров/Петрова; Сергей/Сергея; Андрей/Андрея; музей/музея; альбом/альбома;
+диплом/диплома; герой/героя; Ростов/Ростове; Чехов/Чехова; отель/отеля; кровь/крови; Казань/Казани; квиток/квитки;
+чек/чеки; Нью-Йорк/Нью-Йорке; холестерин/холестерину. Latin: house/houses; lease/leases; bus/buses; glass/glasses;
+cache/caches; movie/movies; policy/policies; box/boxes; receipt/receipts; invoice/invoices; Paris; analysis. Digits:
+"ред3" → `w:ред`, `w:3`. Negative pins (must not share a form): барсетка/Барселона; Валентина/Валенсия.
+
+P1 review (`KEYS_VERSION` 2) adds:
+- **Adjectives (exact):** новые/новая; нової/нова; медичної/медична; медицинские/медицинская; здание/здания;
+  красными/красная; синіми/синій.
+- **Casing (exact):** iphone/iPhone; paypal/PayPal; mcdonalds/McDonalds.
+- **Apostrophe (exact):** компютер/комп'ютера in five apostrophe spellings; сім'я/сім'ї.
+- **Compounds and artefacts (exact):** email/e-mail; Wi-Fi/WiFi; квартира/"квар-\ntира"/"квар\u00adтира";
+  замок/за́мок; ёлка/елка.
+- **Two-letter words (exact):** ИП, ЖК, TV, CV, X5.
+- **Across scripts (translation only):** Kyiv/Києві; Kharkiv/Харкові; Барселону/Barcelona.
+- **Translation only, never exact:** hotel/хотел; cost/кости; net/нет; list/лист; data/дата.
+- **Negative pins:** сім'я/сім; iphone/phone (as a query); ип/ипотека; квиток/квитанция.
+- **Known stemming links, pinned so a widening shows:** почта/почти; банка/банк.
+
+#### 25.13.5 The `k:` table
+- image → image, picture, imagen, изображение, зображення, картинка, illustration;
+- photo words (verdict `photo` only) → photo, foto, фото, світлина, photograph, photographie, fotografía, fotografia,
+  фотография, фотографія, снимок, знімок, фотка;
+- pdf → pdf;
+- docx/doc/odt/rtf → document, documento, документ;
+- xlsx/xls/ods/csv → spreadsheet, table, hoja de cálculo, tableur, таблица, таблиця;
+- pptx/ppt/odp → presentation, slides, presentación, présentation, презентация, презентація;
+- markdown/text → note, text, nota, texte, заметка, нотатка;
+- html/mhtml → web page, página web, page web, веб-страница, веб-сторінка;
+- eml/msg → email, mail, correo, courriel, письмо, лист;
+- epub → book, e-book, libro, livre, книга;
+- video → video, vídeo, vidéo, видео, відео;
+- audio → audio, recording, grabación, enregistrement, аудио, аудіо, аудиозапись, аудіозапис. "запись"/"запис" left,
+  since their stem covered every "записи" (P1 review m3);
+- archive → archive, zip, archivo, архив, архів;
+- folder → folder, carpeta, dossier, папка.
+
+All passed through §25.2.4's native forms.
+
+Decisions (Part 0 review MINOR 11): a multi-word entry is one phrase key (tokens' form (b) joined with `_`, as `e:`),
+never per-token keys; the query emits `k:` for its 2–3 token runs. `mhtml` takes the `html` row; the kinds without a
+row (subtitles, json, code, log, data_dump, database, disk_image, executable, iwork, other) get no `k:` words. The
+document words are generic search words in a query (§25.5.1), so their `k:` keys serve only the index. The photo words
+go only to images whose verdict is `photo` (§25.2.4's reading; owner to confirm).
+
+#### 25.13.6 Verbatim texts (render, manifest, protocol)
+A complete synthetic result:
+```
+Drive results are reference material from the user's own files. …            (REFERENCE_REMINDER, unchanged)
+The index reflects the drive as of 2026-10-20 08:00 UTC.
+Searched names (several spellings and word forms), file descriptions, document text and passage keywords for:
+"rome", "tickets"; ignored: "all", "my".
+Coverage: incomplete — 4 text files are not described yet; 1 document could not be read.
+About "rome tickets" (1):
+<drive_document nonce="…" ref="drive:A1" path="Travel/Rome/Colosseum entry.pdf">
+Colosseum entry.pdf | PDF document | ticket | Two entry tickets to the Colosseum, Rome, 12 May 2026 | …
+matched: place "Rome" (named in the file); name "tickets"
+date: 2026-05-12 (written in the document)
+index: indexed
+</drive_document nonce="…">
+Mentioned in (1):
+<drive_document … path="Notes/trip.md">
+trip.md | note (Markdown) | notes | Packing list and plans for a week in Rome | …
+matched: words "Rome", "tickets" in one passage
+passage: … pick up the tickets for the Vatican museums on Tuesday, then walk to …
+</drive_document …>
+By translation (automatic) (1):
+<drive_document … path="Viajes/reserva.pdf">
+reserva.pdf | PDF document | booking | Hotel booking confirmation | …
+matched: passage keyword "Rome", from "reserva en Roma, 3 noches"
+passage: … Confirmamos su reserva en Roma, 3 noches, del 10 al 13 de mayo …
+</drive_document …>
+Labelled (automatic) (showing 2 of 5):
+<drive_document … path="Travel/train.pdf"> … matched: type label "ticket" (automatic); place "Rome" … </drive_document …>
+<drive_document … path="Travel/bus.pdf"> … </drive_document …>
+<drive_document …> Travel/Rome: 3 more labelled files (PDF, 2026-05) </drive_document …>
+Related by meaning only, unverified (1):
+<drive_document … path="Photos/IMG_2210.jpg"> IMG_2210.jpg | image | a square with a fountain at night | 2026-05-11 </drive_document …>
+No other searched file is about or mentions all of these words.
+```
+(The coverage line above is incomplete, so the footer speaks of the files searched; under "Coverage: complete." it
+reads "No other file is about or mentions all of these words.", xc F4.) A blocked concept: `No file holds
+"vaccination". Without "vaccination": 3 files match the other words.` (`No searched file holds …` under incomplete
+coverage). An empty conjunction: `No file matches all of: "barcelona" (41 files), "trip" (2 files).` Migration: `The
+index is being migrated to a new search format: only names, meaning and filters were searched.` (superseded by D30:
+never rendered; a state not rebuilt under v2 is not searched and answers `REBUILDING_LINE`, §25.8, XC-1).
+
+Manifest (D25), `drive_query`: "search_files_in_drive: REQUIRED unless the request is filter-only; the `query` field is
+not read for search. The subject in the user's words (any language): the words of a file or folder name, a place,
+a person, a topic, a document type or purpose ('tickets', 'receipts', 'contracts', 'what expires'), or what to find
+inside (a phrase, a number, an amount, an id). For 'everything about X' put X. A file format goes in drive_kind
+('photos', 'PDF', 'spreadsheet'); a time span ('last year', '2023–2024') goes in drive_date_from / drive_date_to, not
+in the words. Leave EMPTY only for filter-only requests." `drive_date_from`: "search_files_in_drive: optional earliest
+date, YYYY-MM-DD, inclusive: a photo's taken date, otherwise the date written in the document when the index found one,
+otherwise the file's date. Use it for a time span the user gives. For what expires, it bounds the expiry
+date." `drive_date_to`: "search_files_in_drive: optional latest date, YYYY-MM-DD, inclusive (the whole day counts): a
+photo's taken date, otherwise the date written in the document when the index found one, otherwise the file's date. Use
+it for a time span the user gives. For what expires, it bounds the expiry date." `drive_kind`:
+the v1 text with "document (docx, doc, odt, rtf, pdf, markdown, text)".
+
+Only these strings are frozen (`drive_search_texts`): the example's lines, the D29, footer and migration lines, the
+manifest field texts and the tiers line. The other coverage parts and match sources, the card's `index:` line, the
+intent's capability description and plural forms are P6's, in the same style.
+
+Protocol `tiers` line: "Drive results say how each file matched. 'About' and 'mentioned in' are exact: the file's own
+name, details, place or text holds the words, in their spellings and word forms. 'By translation' and 'labelled' are
+the index's automatic words — passage keywords with their source quote, type, topic and life-area words — and may be
+wrong or incomplete. 'Related by meaning only' lines are guesses. Other spellings and word forms were searched; other
+languages only where the index wrote them, so a search in another language can still find more. The coverage line
+says what the search could not see. When a word is held by no file, the result counts the files that match the other
+words, so you can tell whether the word was phrasing or the subject."
+
+#### 25.13.7 The decomposition (seed for the plan)
+| Part | Builds | Interfaces it owns | Depends on |
+|---|---|---|---|
+| **Part 0 — Frozen core** | §25.13.1–§25.13.6 as types, constants, ABC stubs, the render and manifest texts | everything above | — |
+| **P1 — Keyer** (pure) | `drive_keys.py` (forms, families, `word_keys`, `about_keys_of`, `about_sources`, `query_concepts`, `match_spans`, `GENERIC_WORDS`), name keys v2, the `k:` table, `c`-rule in transliteration; pinned groups and the table-hash test | `QueryConcepts`, key grammar | Part 0 |
+| **P2 — Storage** | Firestore + in-memory methods, codecs, indexes, vector script, smoke script, hint deletion in collect/sweep/purge, usage and initial-build documents, byte-sized batches | §25.13.1 repository | Part 0 |
+| **P3 — Model agents and pure enrichment** | profiler and passages agents, triage v2, runners with caps and halving, strategies and tiers, `LLMFallbackClientError` in `BaseAgent`, `drive_profile.py` (`PROFILE_POLICY`, `profile_input`, reassembly, `verify`), `drive_hints.py` (`ground`, reuse matching); prompt drafts; wire tests, live model check | model ports | Part 0; P1's `word_keys` by signature |
+| **P4 — Parser@2, geo v2, family** | child HTML changes and `script_rendered`; geo table v2 and `place_forms`; `KIND_FAMILIES` | `ExtractionOutcome.script_rendered`, `place_forms` | Part 0 |
+| **P5 — Indexer integration** | planner (`profile_plan`, `passages_plan`, `keys_pending`, `about_keys_of` in `_commit`, clearing rules, `_effective`), tick order and shares, enrichment queue and concurrency, budgets and initial build, per-agent backoff, keys pass as a new generation, hint reuse in the content run, README for every collapsed folder, migration gate, telemetry, fan-out alerts | — | P1, P2, P3 (merge P1 → P2 → P3 → P5); P4 for its bumps |
+| **P6 — Search and agent surface** | `drive_tiers.py` (source classes, strict AND and allowances, D29 counts, floor per source and band, proximity), `DriveSearchService` streams and candidates, `render_results`, envelope and coverage, manifest, protocol, Cabinet sentence, log line | render contract | P1, P2 (in-memory), Part 0; the enrichment snapshot |
+| **P7 — Eval, scale, runbooks** | fixture families and `expect_tier`, bars per family, `enrichment.json` record/replay and `dump_enrichment.py`, scale corpora and calibration, G3 hard checks, rebuild (`--hints-only`) and `drive_initial_build_reset.py` scripts | snapshot format | P5 + P6 for the full run; the fixture and snapshot format after Part 0 |
+
+#### 25.13.8 Tests expected to break (each under the reviewer rule)
+- **Search (v1 fusion, terms, render):** `tests/unit/services/test_drive_search_service.py` and its `…_content_streams`,
+  `…_term_selectivity`, `…_term_selectivity_by_files`, `…_term_selectivity_probe`, `…_query_term_cap`,
+  `…_folder_memory_reads`, `…_matched_shown`, `…_accent_cover`, `…_pools_folders_widening`,
+  `…_indexing_status_content` siblings; `tests/unit/domain/test_drive_search.py`, `…_search_content_render.py`,
+  `test_drive_content_search*.py`, `test_drive_window_shortened_best_chunk.py`.
+- **Chunks and `content_terms` storage:** `tests/unit/adapters/test_firestore_drive_index_chunks.py`,
+  `…_codec_content.py`, `…_repo_serialization.py`, `…_stream_projection.py`, `…_chunk_provisioning.py`,
+  `test_in_memory_drive_index_repo_chunks.py`, `…_content_queries.py`, `test_drive_index_repo_next_file_with_term.py`,
+  `firestore_drive_chunk_fakes.py`, `tests/unit/ports/test_drive_index_repository_port.py`,
+  `tests/unit/scripts/test_drive_index_smoke_chunks.py`.
+- **Card, README, caption:** `tests/unit/domain/test_drive_card_content.py`,
+  `test_drive_index_planner_readme_extractors.py`, `tests/unit/services/test_drive_indexing_readme.py`,
+  `…_photo_rename_caption.py`, `…_card_text_changes.py`.
+- **Triage v2:** `tests/unit/agents/test_drive_image_triage_agent.py`, `tests/unit/composition/test_drive_triage_runner.py`,
+  `…_triage_runner_halving.py`, `tests/unit/services/test_drive_indexing_triage.py`, `test_drive_unread_triaged_images.py`.
+- **Usage, budgets, backoff:** `test_drive_indexing_usage_persisted.py`, `…_partial_usage.py`,
+  `…_partial_usage_backoff.py`, `…_upgrade_month_parked.py`, `…_opt_out_budget_refusals.py`, `…_content_models.py`,
+  `…_outage_charged.py`, `tests/unit/web/test_cabinet_drive_index_content.py`, codec type tests.
+- **Versions and upgrade:** `test_drive_index_pinning.py`, `test_drive_index_types.py`,
+  `test_drive_index_name_keys_version.py`, `test_drive_indexing_slice2_upgrade.py`, `…_extractor_versions.py`,
+  `…_name_keys_upgrade.py`, `…_systemic_progress_and_upgrade.py`, `test_drive_sync_minimal_state.py`.
+- **Tick order:** `test_drive_indexing_service.py`, `…_content_deadline.py`, `…_retry_and_busy.py`, `…_properties.py`.
+- **Agent surface:** `tests/unit/infrastructure/test_agent_manifest_drive_search.py`, `…_drive_content.py`,
+  `…_drive_date_rule.py`; `tests/unit/firestore_utils/test_protocol_drive_guidance.py`, `…_r3.py`, `…_review_e.py`;
+  `tests/unit/agents/test_file_management_agent_drive_search*.py`.
+- **Cabinet disclosure:** `tests/unit/web/test_cabinet_drive_disclosure_clauses.py`, `…_embeddings.py`,
+  `test_cabinet_drive_index_strings.py`.
+- **Eval:** `tests/unit/scripts/test_drive_eval_*`, `tests/unit/fixtures/test_drive_eval_*`, `test_drive_model_check*.py`,
+  `test_create_drive_vector_indexes*.py`.
+- **Model wiring:** `tests/unit/composition/test_drive_model_setup*.py`, `test_drive_model_provider_strategy.py`,
+  `test_drive_model_fallback_strategy.py`; `BaseAgent` failover tests (`LLMFallbackClientError`).
+- **Part 0 scaffolds, meant to flip:** `test_drive_search_v2_frozen_core.py::TestVersions::test_v2_keys_are_not_current_yet`
+  (P5) and `TestParameters::test_v1_values_still_in_use_are_unchanged` (P3, P6);
+  `test_drive_search_v2_ports.py::TestModelPorts::test_image_triage_port_is_unchanged` (P3) and
+  `TestRepositoryV2Methods::test_both_adapters_stub_them_until_p2` (P2).
+- **Part 0 itself broke** (record and state fixtures, port contract): `test_firestore_drive_index_repo_serialization.py`
+  (both `test_fixture_sets_every_field`), `test_firestore_drive_index_codec_types.py::
+  test_state_timestamp_reads_back_as_plain_utc_datetime[model_backoff_by_agent]`,
+  `test_drive_index_repository_port.py::test_abstract_methods_are_exactly_the_contract`.

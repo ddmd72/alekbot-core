@@ -1,0 +1,218 @@
+{
+ "note": "Search v2 overlay on tree.json (USER_DRIVE_INDEXING_RFC §25.7): the families the v1 fixture lacks. The v2 eval's drive is tree.json plus these items (search_v2_eval.v2_drive); G1/G2 keep their pinned tree and bytes. Files in files_v2/, made by make_fixtures_v2.py; words in fixture_texts_v2.py.",
+ "items": [
+  {
+   "path": "Health/Informe laboratorio 2025-03.pdf",
+   "folder": false,
+   "mime": "application/pdf",
+   "size": 0,
+   "fs_modified": "2025-03-15T10:00:00Z",
+   "facets": {},
+   "content": "files_v2/lab_report_2025_03.pdf"
+  },
+  {
+   "path": "Receipts/Ticket supermercado 2026-02-14.pdf",
+   "folder": false,
+   "mime": "application/pdf",
+   "size": 0,
+   "fs_modified": "2026-02-14T18:40:00Z",
+   "facets": {},
+   "content": "files_v2/receipt_supermarket_es.pdf"
+  },
+  {
+   "path": "Receipts/Example Hardware 2026-05-03.pdf",
+   "folder": false,
+   "mime": "application/pdf",
+   "size": 0,
+   "fs_modified": "2026-05-03T11:10:00Z",
+   "facets": {},
+   "content": "files_v2/receipt_hardware_en.pdf"
+  },
+  {
+   "path": "Покупки/Аптека 21.04.txt",
+   "folder": false,
+   "mime": "text/plain",
+   "size": 0,
+   "fs_modified": "2026-04-21T12:50:00Z",
+   "facets": {},
+   "content": "files_v2/receipt_pharmacy_ru.txt"
+  },
+  {
+   "path": "Vehicle/Motor policy MP-2026-118204.pdf",
+   "folder": false,
+   "mime": "application/pdf",
+   "size": 0,
+   "fs_modified": "2026-03-20T09:00:00Z",
+   "facets": {},
+   "content": "files_v2/motor_policy_en.pdf"
+  },
+  {
+   "path": "Vehicle/ITV 2025.pdf",
+   "folder": false,
+   "mime": "application/pdf",
+   "size": 0,
+   "fs_modified": "2025-09-12T12:00:00Z",
+   "facets": {},
+   "content": "files_v2/vehicle_inspection_es.pdf"
+  },
+  {
+   "path": "Home/Garantía lavadora.pdf",
+   "folder": false,
+   "mime": "application/pdf",
+   "size": 0,
+   "fs_modified": "2024-11-30T17:00:00Z",
+   "facets": {},
+   "content": "files_v2/warranty_washer_es.pdf"
+  },
+  {
+   "path": "Спорт/Абонемент 2026.md",
+   "folder": false,
+   "mime": "text/markdown",
+   "size": 0,
+   "fs_modified": "2026-01-02T19:00:00Z",
+   "facets": {},
+   "content": "files_v2/gym_pass_uk.md"
+  },
+  {
+   "path": "Piso/Factura F-2026-0311.pdf",
+   "folder": false,
+   "mime": "application/pdf",
+   "size": 0,
+   "fs_modified": "2026-03-11T16:00:00Z",
+   "facets": {},
+   "content": "files_v2/invoice_bathroom_es.pdf"
+  },
+  {
+   "path": "Piso/Factura 2026-078.pdf",
+   "folder": false,
+   "mime": "application/pdf",
+   "size": 0,
+   "fs_modified": "2026-04-22T16:00:00Z",
+   "facets": {},
+   "content": "files_v2/invoice_painting_es.pdf"
+  },
+  {
+   "path": "Travel/Бронь отеля.docx",
+   "folder": false,
+   "mime": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+   "size": 0,
+   "fs_modified": "2025-07-20T20:00:00Z",
+   "facets": {},
+   "content": "files_v2/hotel_booking_ru.docx"
+  },
+  {
+   "path": "Notes/Weekend ideas.md",
+   "folder": false,
+   "mime": "text/markdown",
+   "size": 0,
+   "fs_modified": "2026-02-08T21:00:00Z",
+   "facets": {},
+   "content": "files_v2/weekend_ideas.md"
+  },
+  {
+   "path": "Notes/Мысли о поездке.md",
+   "folder": false,
+   "mime": "text/markdown",
+   "size": 0,
+   "fs_modified": "2026-01-25T22:00:00Z",
+   "facets": {},
+   "content": "files_v2/trip_notes_ru.md"
+  },
+  {
+   "path": "Notes/Огляд квартири.md",
+   "folder": false,
+   "mime": "text/markdown",
+   "size": 0,
+   "fs_modified": "2026-06-14T20:00:00Z",
+   "facets": {},
+   "content": "files_v2/flat_viewing_uk.md"
+  },
+  {
+   "path": "Notes/House hunting.md",
+   "folder": false,
+   "mime": "text/markdown",
+   "size": 0,
+   "fs_modified": "2026-05-30T20:00:00Z",
+   "facets": {},
+   "content": "files_v2/house_hunting.md"
+  },
+  {
+   "path": "Books/A Short History of Bridges.docx",
+   "folder": false,
+   "mime": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+   "size": 0,
+   "fs_modified": "2023-11-05T10:00:00Z",
+   "facets": {},
+   "content": "files_v2/history_of_bridges.docx"
+  },
+  {
+   "path": "Photos/Le Havre/IMG_7001.HEIC",
+   "folder": false,
+   "mime": "image/heic",
+   "size": 3000000,
+   "fs_modified": "2025-06-25T20:00:00Z",
+   "facets": {
+    "photo": {
+     "takenDateTime": "2025-06-21T15:10:00Z",
+     "cameraMake": "Apple",
+     "cameraModel": "iPhone 15"
+    },
+    "location": {
+     "latitude": 49.4938,
+     "longitude": 0.1077
+    },
+    "image": {
+     "width": 4032,
+     "height": 3024
+    }
+   },
+   "thumbnail": "files/photo_porto.jpg"
+  },
+  {
+   "path": "Photos/Barcelona 2024/IMG_7101.HEIC",
+   "folder": false,
+   "mime": "image/heic",
+   "size": 3000000,
+   "fs_modified": "2024-05-10T20:00:00Z",
+   "facets": {
+    "photo": {
+     "takenDateTime": "2024-05-04T11:00:00Z",
+     "cameraMake": "Apple",
+     "cameraModel": "iPhone 15"
+    },
+    "location": {
+     "latitude": 41.387,
+     "longitude": 2.17
+    },
+    "image": {
+     "width": 4032,
+     "height": 3024
+    }
+   },
+   "thumbnail": "files/photo_porto.jpg"
+  },
+  {
+   "path": "Photos/Barcelona 2024/IMG_7102.HEIC",
+   "folder": false,
+   "mime": "image/heic",
+   "size": 3000000,
+   "fs_modified": "2024-05-10T20:00:00Z",
+   "facets": {
+    "photo": {
+     "takenDateTime": "2024-05-05T19:30:00Z",
+     "cameraMake": "Apple",
+     "cameraModel": "iPhone 15"
+    },
+    "location": {
+     "latitude": 41.379,
+     "longitude": 2.176
+    },
+    "image": {
+     "width": 4032,
+     "height": 3024
+    }
+   },
+   "thumbnail": "files/photo_porto.jpg"
+  }
+ ]
+}

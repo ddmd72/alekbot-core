@@ -1,0 +1,12 @@
+{
+ "note": "Pre-registered Search v2 bars (USER_DRIVE_INDEXING_RFC §25.7), set before any v2 run and never written by a run. pass_rate: the share of a family's cases that meet its pass rule (v2_metrics.py); file_recall: the class family's expected files found, pooled. A change here is a decision, made in a commit of its own with its reason.",
+ "set_at": "2026-10-13",
+ "pass_rate": {"exact": 0.95, "semantic": 0.85, "misspelling": 1.0, "negative": 0.9, "incident": 1.0},
+ "file_recall": {"class": 0.85},
+ "exact_junk_per_case_max": 0.3,
+ "automatic_junk_per_case_max": 0.5,
+ "related_per_negative_max": 1.0,
+ "book_in_exact_max": 0,
+ "chars_median_max": 3000,
+ "chars_max": 16000
+}

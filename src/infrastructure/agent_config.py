@@ -27,6 +27,10 @@ import os
 from dataclasses import dataclass, field
 from typing import Dict, Optional
 
+from ..domain.drive_index_params import (
+    PASSAGES_OUTPUT_TOKENS, PASSAGES_TIMEOUT_S, PROFILER_OUTPUT_TOKENS, PROFILER_TIMEOUT_S, TRIAGE_OUTPUT_TOKENS,
+    TRIAGE_TIMEOUT_S,
+)
 from ..domain.user import PerformanceTier
 
 
@@ -332,9 +336,29 @@ class DriveReaderAgentConfig:
 
 @dataclass
 class DriveTriageAgentConfig:
-    call_timeout_s: int = 120
-    # TRIAGE_BATCH verdicts of a few words each, plus thinking.
-    max_tokens: int = 4_096
+    call_timeout_s: int = TRIAGE_TIMEOUT_S
+    # Triage v2 (USER_DRIVE_INDEXING_RFC §25.4.3, §25.4.4): TRIAGE_BATCH photo descriptions (description, objects with
+    # forms, scene, visible text) — the schema's worst case plus a reasoning allowance.
+    max_tokens: int = TRIAGE_OUTPUT_TOKENS
+    max_parse_retries: int = 1
+    thinking: str = "low"
+
+
+# DriveProfilerAgent / DrivePassageAgent (Search v2, USER_DRIVE_INDEXING_RFC §25.4.1, §25.4.2, §25.4.4): one call per
+# file profile or per PASSAGE_CHUNKS_PER_CALL chunks; the caps are the schemas' worst case plus a "low" reasoning
+# allowance (unit-tested); a reply stopped at the cap is halved by the runner.
+@dataclass
+class DriveProfilerAgentConfig:
+    call_timeout_s: int = PROFILER_TIMEOUT_S
+    max_tokens: int = PROFILER_OUTPUT_TOKENS
+    max_parse_retries: int = 1
+    thinking: str = "low"
+
+
+@dataclass
+class DrivePassageAgentConfig:
+    call_timeout_s: int = PASSAGES_TIMEOUT_S
+    max_tokens: int = PASSAGES_OUTPUT_TOKENS
     max_parse_retries: int = 1
     thinking: str = "low"
 
@@ -361,6 +385,8 @@ COMPUTE = ComputeAgentConfig()
 WEB_SEARCH_LIGHT = WebSearchLightAgentConfig()
 DRIVE_READER = DriveReaderAgentConfig()
 DRIVE_TRIAGE = DriveTriageAgentConfig()
+DRIVE_PROFILER = DriveProfilerAgentConfig()
+DRIVE_PASSAGES = DrivePassageAgentConfig()
 
 
 # ---------------------------------------------------------------------------

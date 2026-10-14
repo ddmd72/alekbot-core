@@ -4,7 +4,11 @@ from tests.unit.firestore_utils.test_protocol_drive_guidance import _drive_block
 
 
 def _block():
-    return _drive_block(ser.token_from_file(_text())["content"])
+    # the rules these tests pin now live in the drive-search system skill (owner decision 2026-10-14)
+    from pathlib import Path
+    from src.adapters.filesystem_skill_loader import load_system_skills
+    root = Path(__file__).resolve().parents[3]
+    return next(s for s in load_system_skills(root / "src" / "skills" / "smart") if s.name == "drive-search").body
 
 
 def test_f5_1_an_unopenable_file_is_quoted_as_an_excerpt():
@@ -14,10 +18,10 @@ def test_f5_1_an_unopenable_file_is_quoted_as_an_excerpt():
 
 def test_f5_4_the_date_retry_fires_when_the_file_is_not_shown():
     block = _block()
-    assert ('dates: "If a date-filtered search does not show the file asked for, search again without the filter."'
-            in block)
+    assert "If a date-filtered search does not show the file asked for, search again without the filter." in block
     assert "If a date filter finds nothing" not in block
 
 
 def test_f5_8_the_folder_rule_needs_a_name_match():
-    assert "When a folder card matches by name (matched: name)" in _block()
+    # Search v2 P6: the About tier is the name match
+    assert "When a folder card is shown under About (its name holds the words)" in _block()

@@ -1,16 +1,21 @@
-"""Image triage in the tick (USER_DRIVE_INDEXING_RFC §5.3, §24.5, §24.7, §24.8, §16 Slice 4 photo invariant)."""
+"""Image triage in the tick (USER_DRIVE_INDEXING_RFC §5.3, §24.5, §24.7, §24.8, §16 Slice 4 photo invariant). Search
+v2: a photograph's description (§25.4.3) replaces the caption, and the image budget is triage's dollars (§25.4.5)."""
 import math
 from datetime import datetime, timezone
 
 import pytest
 
 from src.domain.drive_card import card_text
-from src.domain.drive_extraction import TriageBatchOutcome
+from src.domain.drive_enrichment_calls import ModelReplyStatus, TriageReply
 from src.domain.drive_index import Priority, Reason, RecordState, TriageVerdict
-from src.domain.drive_index_params import MAX_ATTEMPTS, QUIET, RETRY_CAP, TRIAGE_BATCH, TRIAGE_IMAGES_PER_MONTH, TRIAGE_THUMBNAIL_SIZE
+from src.domain.drive_enrichment import UsageClass
+from src.domain.drive_index_params import (
+    MAX_ATTEMPTS, QUIET, RETRY_CAP, TRIAGE_BATCH, TRIAGE_IMAGE_USD_ESTIMATE, TRIAGE_THUMBNAIL_SIZE, TRIAGE_USD_PER_MONTH,
+)
 from src.domain.user_drive import DriveAccessDenied
 
 from .drive_content_world import ContentWorld, admitted, prose  # noqa: F401  (fixture)
+from .drive_usage_helpers import close_initial_build, month_usd, spend
 
 pytestmark = pytest.mark.usefixtures("admitted")
 
@@ -27,6 +32,7 @@ async def test_holiday_photos_cost_only_batched_triage(w, photos):
     folder = w.drive.add("Holiday", folder=True)
     ids = [w.add_image(f"IMG_{i:04d}.jpg", parent=folder, camera=i % 2 == 0) for i in range(photos)]
     w.triage.verdicts = {i: (TriageVerdict.PHOTO, f"a beach at dusk {n}") for n, i in enumerate(ids)}
+    w.triage.cost_per_call = 0.002
     await w.settle()
     assert len(w.triage.calls) == math.ceil(photos / TRIAGE_BATCH)
     assert all(len(batch) <= TRIAGE_BATCH for batch in w.triage.calls)
@@ -34,13 +40,14 @@ async def test_holiday_photos_cost_only_batched_triage(w, photos):
     assert {size for _, size in w.drive.thumbnail_calls} == {TRIAGE_THUMBNAIL_SIZE}
     for n, item in enumerate(ids):
         rec = w.rec(item)
-        assert (rec.state, rec.reason, rec.caption) == (RecordState.METADATA_ONLY, Reason.PHOTOGRAPH,
-                                                        f"a beach at dusk {n}")
-        assert rec.has_card and rec.caption in card_text(rec)
+        assert (rec.state, rec.reason, rec.photo_description) == (RecordState.METADATA_ONLY, Reason.PHOTOGRAPH,
+                                                                  f"a beach at dusk {n}")
+        assert rec.has_card and rec.photo_description in card_text(rec)
     card_calls = [t for t in w.emb.calls if t.startswith("IMG_")]
-    assert len(card_calls) == photos   # each photo is carded once, after its caption
-    state = await w.repo.get_sync_state("u")
-    assert state.triage_images_used == photos and w.summary_total("triage_images") == photos
+    assert len(card_calls) == photos   # each photo is carded once, after its description
+    assert w.summary_total("triage_images") == photos
+    assert await month_usd(w.repo, UsageClass.TRIAGE, "2026-10") == pytest.approx(
+        0.002 * math.ceil(photos / TRIAGE_BATCH))   # only the batched calls are paid
 
 
 async def test_the_camera_prior_travels_with_each_thumbnail(w):
@@ -60,7 +67,7 @@ async def test_a_text_verdict_sends_the_image_to_the_reader(w):
                                                        pages_total=1, pages_sent=1)
     await w.settle()
     rec = w.rec(receipt)
-    assert (rec.state, rec.triage_verdict, rec.caption) == (RecordState.INDEXED, TriageVerdict.TEXT, "")
+    assert (rec.state, rec.triage_verdict, rec.photo_description) == (RecordState.INDEXED, TriageVerdict.TEXT, "")
     assert len(w.reader.requests) == 1 and w.readable(receipt)
 
 
@@ -74,7 +81,7 @@ async def test_no_thumbnail_is_a_photograph_without_a_caption(w):
         w.clock.advance(int(RETRY_CAP.total_seconds()))
     await w.settle()
     rec = w.rec(img)
-    assert (rec.reason, rec.caption, rec.triage_verdict) == (Reason.PHOTOGRAPH, "", TriageVerdict.PHOTO)
+    assert (rec.reason, rec.photo_description, rec.triage_verdict) == (Reason.PHOTOGRAPH, "", TriageVerdict.PHOTO)
     assert rec.state is RecordState.METADATA_ONLY and rec.due_at is None
     assert w.triage.calls == [] and [i for i, _ in w.drive.thumbnail_calls] == [img] * MAX_ATTEMPTS
 
@@ -94,11 +101,12 @@ async def test_a_thumbnail_error_backs_off_then_fails(w):
 
 
 async def test_a_missing_result_is_a_per_file_failure(w):
+    """An image the reply leaves unsettled (no result, not capped, not refused: triage v2, §25.13.1) is retried."""
     img = w.add_image("a.jpg")
 
     async def silent(user_id, account_id, images):
         w.triage.calls.append(list(images))
-        return TriageBatchOutcome(results=(), model_calls=1)
+        return TriageReply(status=ModelReplyStatus.INVALID, results=(), model="m", usd=0.0, model_calls=1)
     w.triage.triage = silent
     await w.settle()
     rec = w.rec(img)
@@ -123,9 +131,8 @@ async def test_a_triage_outage_defers_images_and_lets_documents_through(w):
 
 async def test_spent_images_wait_for_the_next_month(w):
     await w.settle()
-    state = await w.repo.get_sync_state("u")
-    await w.repo.save_sync_state(state.__class__(**{**state.__dict__, "usage_month": "2026-10",
-                                                    "triage_images_used": TRIAGE_IMAGES_PER_MONTH - 2}))
+    await close_initial_build(w.repo, w.clock.now)   # the month's cap is what pays: two images' worth left
+    await spend(w.repo, UsageClass.TRIAGE, TRIAGE_USD_PER_MONTH - 2 * TRIAGE_IMAGE_USD_ESTIMATE, w.clock.now)
     ids = [w.add_image(f"p{i}.jpg") for i in range(5)]
     await w.settle()
     triaged = [i for i in ids if w.rec(i).triage_verdict is not None]
@@ -143,7 +150,7 @@ async def test_a_renamed_photo_keeps_its_verdict(w):
     await w.settle()
     w.drive.rename(img, "beach.jpg")
     await w.settle()
-    assert len(w.triage.calls) == 1 and w.rec(img).caption == "a photo"
+    assert len(w.triage.calls) == 1 and w.rec(img).photo_description == "a photo"
 
 
 async def test_new_content_is_triaged_again(w):

@@ -5,9 +5,10 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
+from src.domain.drive_enrichment import PhotoDescription
+from src.domain.drive_enrichment_calls import ModelReplyStatus, TriageReply, TriageResultV2
 from src.domain.drive_extraction import (
-    PARSER, DriveModelUnavailable, ExtractionOutcome, ExtractionRequest, ExtractionStatus, TriageBatchOutcome, TriageImage,
-    TriageResult,
+    PARSER, DriveModelUnavailable, ExtractionOutcome, ExtractionRequest, ExtractionStatus, TriageImage,
 )
 from src.domain.drive_index import TriageVerdict
 from src.domain.user_drive import DriveFileTooLarge, DriveItemNotFoundError
@@ -59,8 +60,10 @@ class FakeExtractor(ContentExtractorPort):
 
 
 class FakeTriage(ImageTriagePort):
-    """Verdicts scripted by item id as (verdict, caption); unscripted images are photographs captioned "a photo".
-    `unavailable=True` raises DriveModelUnavailable. Every batch is recorded and costs one call at `cost_per_call`."""
+    """Triage v2 (USER_DRIVE_INDEXING_RFC §25.13.1): verdicts scripted by item id as (verdict, description);
+    unscripted images are photographs described "a photo". A photograph's result carries a PhotoDescription, a text
+    image's none. `unavailable=True` answers the batch with the `unavailable` status and no results (an outage is a
+    status, never an exception). Every batch is recorded and costs one call at `cost_per_call`."""
 
     def __init__(self, verdicts: Optional[Mapping[str, Tuple[TriageVerdict, str]]] = None,
                  default: TriageVerdict = TriageVerdict.PHOTO, cost_per_call: float = 0.0) -> None:
@@ -70,17 +73,18 @@ class FakeTriage(ImageTriagePort):
         self.calls: List[List[TriageImage]] = []
         self.unavailable = False
 
-    async def triage(self, user_id: str, account_id: str, images: Sequence[TriageImage]) -> TriageBatchOutcome:
+    async def triage(self, user_id: str, account_id: str, images: Sequence[TriageImage]) -> TriageReply:
         self.calls.append(list(images))
         if self.unavailable:
-            raise DriveModelUnavailable("scripted outage")
-        results: List[TriageResult] = []
+            return TriageReply(status=ModelReplyStatus.UNAVAILABLE, results=(), model="", usd=0.0)
+        results: List[TriageResultV2] = []
         for image in images:
-            verdict, caption = self.verdicts.get(
+            verdict, description = self.verdicts.get(
                 image.item_id, (self.default, "a photo" if self.default is TriageVerdict.PHOTO else ""))
-            results.append(TriageResult(item_id=image.item_id, verdict=verdict, caption=caption))
-        return TriageBatchOutcome(results=tuple(results), model_calls=1 if images else 0,
-                                  model_cost=self.cost_per_call if images else 0.0)
+            photo = PhotoDescription(description=description) if verdict is TriageVerdict.PHOTO else None
+            results.append(TriageResultV2(item_id=image.item_id, verdict=verdict, photo=photo))
+        return TriageReply(status=ModelReplyStatus.OK, results=tuple(results), model="fake-triage" if images else "",
+                           usd=self.cost_per_call if images else 0.0, model_calls=1 if images else 0)
 
 
 class FakeContentDrive(FakeDrive):

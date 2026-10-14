@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Measures the "heavier place names the photo" preference of PlaceIndex over the bundled table
-(src/assets/geo/places_v1.tsv; docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §5.3). Read-only, offline.
+(src/assets/geo/places_v2.tsv; docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §5.3). Read-only, offline.
 
 For each PLACE_PREFER_WEIGHT_FACTOR candidate (at the current PLACE_FOOTPRINT_K) and each PLACE_FOOTPRINT_K candidate
 (at the current factor) it reports:

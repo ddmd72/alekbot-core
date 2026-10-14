@@ -453,8 +453,11 @@ def test_strategies_has_no_orphans():
     #   per-user eager instance.
     # - drive_reader / drive_triage: built per call by DriveReaderRunner / DriveTriageRunner
     #   (composition/) for the drive indexer, not UserAgentFactory (USER_DRIVE_INDEXING_RFC §24.2).
+    # - drive_profiler / drive_passages: built per call by DriveProfilerRunner / DrivePassageRunner (composition/)
+    #   for the drive indexer, the same way (USER_DRIVE_INDEXING_RFC §25.4.4).
     _NON_FACTORY_STRATEGIES = {
         "email_classifier", "deep_research", "tutor_extractor", "drive_reader", "drive_triage",
+        "drive_profiler", "drive_passages",
     }
 
     all_strategies = set(AgentProviderStrategy.STRATEGIES.keys())

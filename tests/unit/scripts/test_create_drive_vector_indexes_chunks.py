@@ -18,9 +18,9 @@ def _calls(tmp_path, **env_extra):
     return (tmp_path / "calls").read_text().splitlines()
 
 
-def test_four_indexes_two_of_them_on_the_chunk_vector(tmp_path):
+def test_six_indexes_two_of_them_on_the_chunk_vector(tmp_path):
     calls = _calls(tmp_path)
-    assert len(calls) == 4
+    assert len(calls) == 6   # + the two Search v2 hint vector indexes (§25.2.5)
     chunk_calls = [c for c in calls if "--collection-group=development_drive_index_chunks" in c]
     assert len(chunk_calls) == 2
     assert all("field-path=vector" in c and '"dimension":"768"' in c for c in chunk_calls)

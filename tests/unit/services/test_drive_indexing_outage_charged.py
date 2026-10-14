@@ -12,7 +12,11 @@ from src.domain.drive_extraction import DriveModelUnavailable, ExtractionOutcome
 from src.domain.drive_index import Priority, Reason, RecordState
 from src.domain.drive_index_params import MAX_ATTEMPTS
 
+from src.domain.drive_enrichment import UsageClass
+from src.domain.drive_index_planner import month_key
+
 from .drive_content_world import ContentWorld, admitted  # noqa: F401  (fixture)
+from .drive_usage_helpers import month_usd
 
 pytestmark = pytest.mark.usefixtures("admitted")
 
@@ -62,8 +66,10 @@ async def test_charged_outages_end_in_failed():
     assert (rec.state, rec.reason) == (RecordState.FAILED, Reason.EXTRACT_ERROR)
     assert rec.extracted_by == "reader@1"   # a new reader version gives it a fresh try
     assert _reads_of(w, "poison.pdf") == MAX_ATTEMPTS
-    state = await w.repo.get_sync_state("u")
-    assert state.model_pages_used == 20 * MAX_ATTEMPTS   # bounded: each charged try counted, then no more
+    # bounded: each charged try counted, then no more — v2 (§25.4.5) counts the reader's dollars, and the pages
+    # each try sent still reach the tick line
+    assert await month_usd(w.repo, UsageClass.READER, month_key(w.clock.now)) == pytest.approx(0.01 * MAX_ATTEMPTS)
+    assert w.summary_total("model_pages") == 20 * MAX_ATTEMPTS
 
 
 async def test_a_charged_file_waits_behind_other_due_work(w):

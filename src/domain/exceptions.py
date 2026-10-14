@@ -64,6 +64,25 @@ class LLMAccountError(LLMClientError):
     """
 
 
+class LLMRefusalError(LLMClientError):
+    """The model declined the request for its content (Claude's safety classifier: HTTP 200 with
+    ``stop_reason="refusal"``), raised by the adapter before any answer is used. An ``LLMClientError`` for every
+    caller (no failover, alerted); the drive indexer reads it as a refusal of the input, not as invalid output
+    (USER_DRIVE_INDEXING_RFC §25.4.6, review m6)."""
+
+
+class LLMFallbackClientError(LLMClientError):
+    """A non-failover client error raised by the FALLBACK provider after a failover (USER_DRIVE_INDEXING_RFC §25.4.4,
+    review N7), with ``provider_name`` naming it. Every caller that catches ``LLMClientError`` sees it as before; the
+    drive indexer reads it as a charged attempt retried on the primary, never as the primary's refusal of the input
+    (the same bytes may be fine on the primary). ``BaseAgent._call_llm`` raises it ``from`` the fallback's own error;
+    an ``LLMAccountError`` of the fallback is not wrapped (an outage for everyone, not a refusal)."""
+
+    def __init__(self, message: str, http_status: Optional[int] = None, provider_name: str = "") -> None:
+        super().__init__(message, http_status=http_status)
+        self.provider_name = provider_name
+
+
 class LLMServerError(LLMError):
     """5xx HTTP response that is NOT 503.
 

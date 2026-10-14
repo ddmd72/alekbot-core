@@ -22,7 +22,7 @@ def test_a_record_stamps_the_version_its_keys_were_made_under():
 def test_a_re_plan_under_a_new_keyer_rewrites_the_keys(monkeypatch):
     stored = observe(ch("a", "Report.pdf")).upsert
     monkeypatch.setattr(planner, "NAME_KEYS_VERSION", NAME_KEYS_VERSION + 1)
-    monkeypatch.setattr(planner, "name_keys", lambda name: ("w:new",))
+    monkeypatch.setattr(planner, "name_keys_v2", lambda name: ("w:new",))   # the planner's keyer since v2 (§25.2.4)
     assert stale_versions(stored)
     rec = observe(ch("a", "Report.pdf"), stored).upsert
     assert rec.name_tokens == ("w:new",) and rec.name_keys_version == NAME_KEYS_VERSION + 1

@@ -4,7 +4,9 @@ from dataclasses import replace
 
 import pytest
 
-from src.domain.drive_index import DriveChange, DriveIndexRecord, Priority, Reason, RecordState, Scope
+from src.domain.drive_index import (
+    SEARCH_V2_VERSIONS, DriveChange, DriveIndexRecord, Priority, Reason, RecordState, Scope,
+)
 from src.services import drive_indexing_service as svc_mod
 
 from .test_drive_indexing_service import World
@@ -74,7 +76,10 @@ class TestSweepSpanningTicks:
             scope=Scope.NORMAL, state=RecordState.METADATA_ONLY, reason=Reason.KIND_NOT_ADMITTED,
             policy_version=0, seen_epoch=1)
         state = await w.repo.get_sync_state("u")
-        await w.repo.save_sync_state(replace(state, applied_versions={"policy": 0, "card": 1, "geo_table": 1}))
+        # older policy/card/geo stamps start an upgrade pass; the Search v2 keys stay stamped, as on any v2 index —
+        # a state without them is a v1 index the migration gate stops before any work (D30)
+        await w.repo.save_sync_state(replace(state, applied_versions={"policy": 0, "card": 1, "geo_table": 1,
+                                                                      **SEARCH_V2_VERSIONS}))
         w.drive.resync_next = True   # 410: epoch 2 enumerates the drive, the ghost is not in it
         await w.settle()
         assert w.rec("zz-ghost") is None, "a record gone from the drive survived the sweep via the upgrade re-plan"
