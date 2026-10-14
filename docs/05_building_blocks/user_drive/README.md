@@ -6,7 +6,9 @@ Find the kind of question, then read the section named. The code paths in each s
 RFC ([USER_DRIVE_INDEXING_RFC.md](../../10_rfcs/USER_DRIVE_INDEXING_RFC.md)) holds the reasoning, §23 the Slice 1
 deltas, §24 the Slice 2+4 design and §25 Search v2 (decisions D14–D31; results in §25.7.1).
 RFC §26 (card accuracy score, capture facet — scan, document photo, screenshot — and files the bot cannot open;
-decisions D33–D38) is **proposed, not built**: nothing below describes it yet.
+decisions D33–D38): **slice S1, files the bot cannot open (§26.2, D33), is built on the branch `feat/drive-card-accuracy`,
+not deployed** and described in §4.18; the other slices (capture, accuracy, the small fixes, the scripts) are not built
+and nothing below describes them.
 
 | Question | Read |
 |---|---|
@@ -35,6 +37,7 @@ decisions D33–D38) is **proposed, not built**: nothing below describes it yet.
 | What v1 search did (RRF, always 8, `content_terms`) and why it was replaced | §6.6 |
 | How quality is measured (G1, G2, OCR, G3), the live checks, logs, indexes | §7 |
 | Why a given file was not indexed: which record fields and log lines answer it | §7.1 |
+| A file or folder "the bot cannot open"; why it was not deleted; the chat notice with the attached list; how it heals | §4.18 (built on the branch, not deployed) |
 | Smart said "N documents could not be read": what counts, and how to find which and why | §7.1 (could not be read) |
 | Deploy order, owner steps, and why there is no rollback to Slice 1; the Search v2 rollout (D30 gate, rebuild) | §7.2 |
 | Where a piece of code lives | §8 |
@@ -638,6 +641,7 @@ The profile and passage-hint jobs run in the tick's enrichment share, after the 
 | parser | `timeout`, `memory` (a bomb) | `pending`, backoff 10 min, 20 min, then `failed / extract_timeout` or `extract_memory` | yes, `MAX_ATTEMPTS` 3 |
 | parser / reader / run | `error` (parser error, invalid model output, a half that timed out again, a refusal raised before any HTTP exchange, a budget cut with no text found), crashed run, chunk refused (400) | `pending` → `failed / extract_error` | yes, 3 |
 | fetch / triage | download or thumbnail failed; no rendition yet | `pending` → `failed / download_error` (a missing rendition ends as a photograph without description) | yes, 3 |
+| fetch / triage / folder listing | **"not found" by id for an item delta lists** (the bot cannot open it, §4.18; branch, not deployed) | state and readable generation kept, `inaccessible_since` set; no attempt counted | one id read on an observation (≤ 1 per hour) or every 7 days |
 | embeddings | per-file 180 s passed | `pending` → `failed / embed_timeout` | yes, 3 |
 | reader / triage | the class's dollars spent for the month, initial build included (`budget_exhausted`, or the hold before the call) | `pending`, class 3, due at the UTC month start | waits |
 | reader / triage | **model outage, not charged**: 429, network, open breaker, an account-level 4xx other than 400/413/422 (401 key, 403 permission, 404 model id), missing prompt, a provider with no key; any triage outage | `pending`, due at `model_backoff_until` (60 s doubling to 1 h); attempts untouched | waits |
@@ -1028,6 +1032,76 @@ name, text and meaning, and the coverage line counts it (§6.3).
 user=… described=n/m` when the described count moves and `initial build closed` once; the fan-out alerts when a
 user's enrichment has not moved for 24 h while jobs are ready and budget is left, and when the Gemini fallback served
 more than half of a user's model dollars in a day.
+
+### 4.18 Files the bot cannot open (RFC §26.2, D33; built on `feat/drive-card-accuracy`, not deployed)
+
+**Why it happens.** The bot's access to the drive is one ordinary permission entry for the app, set on the App Folder
+and inherited by everything in it. An item with its own permission list that lacks that entry — a folder that was
+shared with people while it was outside the App Folder and moved in later, or a file shared on its own — is still
+listed by the change feed (`approot/delta`), but every call that addresses it by id answers 404: the provider reports
+"no access" as "not found". A copy of such a file takes its new folder's permissions and can be read.
+
+**What the index does (existence is decided by delta alone).** Before §26 a 404 on a download made the tick re-read the
+item, get the same 404, and delete the record and its card as "gone" — the folder stayed, empty. Now:
+- `OneDriveAdapter.get_change` raises `DriveItemNotFoundError` on a 404 and never turns it into a deletion; every
+  caller decides (RFC Δ48).
+- A download, a reader rendition or a triage thumbnail that answers "not found" re-reads the item by id once
+  (`_item_gone`); a 404 again **marks** it (`marked_inaccessible`): `inaccessible_since` (when it was marked),
+  `inaccessible_checked_at` (the last read that answered 404) and `inaccessible_reobserved` are set. The run ends
+  without an attempt (no `content_retry`, never `failed`). The record keeps its state, its metadata card, its name
+  keys and a readable generation it had before — shown `stale` on its card (Δ47, Δ52). A readable answer to the
+  re-read keeps today's path (a per-file attempt).
+- A folder's re-listing, README listing or density probe that answers "not found" marks the folder; the re-listing and
+  the README read are not due while it is marked, and a probe classifies without a probe (not dense).
+- Marking a file checks its parent folder with one item call (the nearest unmarked ancestor: each marking climbs one
+  level more); a 404 marks the parent. The root is never marked (Δ50).
+- A parent lookup of an unresolved record still removes it as an orphan on a 404 (RFC Δ29: a parent a complete round
+  never listed is not in the App Folder). A nudge read's 404 writes nothing; the delta read decides.
+- Only a tombstone in the change feed removes a marked record.
+- While marked: no content run, no triage, no profile or passage job (their state is `deferred` without a wake time;
+  they count as settled for the upgrade pass and the file is no "not described" gap). Card, keys from stored text and
+  re-embeds go on. An upgrade pass re-plans only what needs no read (card, name keys, embedding space).
+
+**Healing (Δ51, OQ-C1).** A marked record is due for one id read in class 3 (`_recheck_step`, one item call): one hour
+after the last read once delta or a listing saw the item **or its parent folder** again (`INACCESSIBLE_RETRY_MIN`;
+delta re-emits unchanged items often, so the cap keeps a closed item from costing a call every tick), and otherwise
+every 7 days (`INACCESSIBLE_RETRY_SLOW` — whether a permission change alone re-emits an item in the App Folder's delta
+is not verified, so a timed retry backs it up). The parent's observation is found through the tick's map of marked
+records by parent, read at the tick's start only while the last tick counted a marked file. A 404 again restarts the
+clock; a readable answer clears the tick's three fields silently and the file goes through the ordinary content path.
+
+**Search (Δ55, Δ56).** The card keeps its tier; its `index:` line reads "the file exists, but the bot cannot open it
+(its sharing settings keep the bot out); to fix it, copy the file into a new folder inside the bot's folder: the copy
+can be read." A folder card says the same of the folder and its files. The coverage line counts them on their own
+("N files cannot be opened by the bot"), never as "not read yet": the tick counts the marked files
+(`inaccessible`, and `inaccessible_unnotified` for the notice) from one read of the marked records
+(`inaccessible_records`, at most 2 000) and takes them out of `not_read_yet`; the count queries are unchanged.
+`list_files_in_drive` takes a folder's `drive:` ref as well as a path. When list or open meets "not found" (a 404 by
+id, or a path that does not resolve), the agent asks the index (`DriveSearchService.access_note`): a record it knows to
+be closed answers with the same sentence; anything else keeps "no longer on the drive" or "No folder". The
+`drive-search` skill tells Smart: the file exists; tell the user a copy inside the bot's folder can be read; do not
+try to open it.
+
+**The notice (Δ49, Δ53, Δ54).** Sent by the main service's 10-minute fan-out (`DriveSyncSchedulerService`), never by
+the indexer. Read only while the tick's `inaccessible_unnotified` counter is non-zero. A file is in it once a delta round
+that **started after** its marking has completed (`observed_as_of > inaccessible_since`), so a file that was really
+deleted is gone first, and only while `inaccessible_notified_since != inaccessible_since` (once per marking). All of a
+pass's files (at most 2 000) go in one notice to the user's default chat: first the paths, always as an attached text
+file (`notify_file_bytes`, `drive-files-the-bot-cannot-open.txt`), then — only once the list was sent — a fixed
+localized UI string with the count and the fix ("make a copy of each file in the same folder"; uk, en, fr, es) through
+`notify_raw`. No file name is in the chat text or reaches a model; no history pair. The records are marked notified
+before the list is sent and unmarked when it was not. `inaccessible_notified_since` is written only by the fan-out, with
+a field update (`set_inaccessible_notified`); the tick's record writes leave it out (it is not in `RECORD_FIELDS`), so a
+stale tick snapshot can never clear it and repeat the notice. The original of a copied file stays marked and notified:
+never announced again; a file that is readable again and later loses access gets a new `inaccessible_since`: one new
+notice. A purge (opt-out, rebuild) deletes the records and their flags, so files still closed after a rebuild are
+announced once more.
+
+**Known limits.** The attached list needs the platform's file upload (`notify_file_bytes`); the main service wires only
+Slack's, so for a user whose default chat is Telegram the list is not sent, the flags come down, and the notice is
+retried every fan-out (logged WARNING) without reaching the user. The notice's fix ("a copy in the same folder") heals a
+file shared on its own; a file inside a folder that itself lacks the app's entry needs its copy in another folder —
+the search card's wording ("a new folder inside the bot's folder") covers both.
 
 ---
 
@@ -1624,6 +1698,14 @@ tag `drive-search-v1` after marking every user `purging` and deleting every hint
 (default on) stops every upgrade pass in an emergency; set it through `.env` (`DRIVE_UPGRADE_PASS_DEV`), since a value
 set with `gcloud run services update` is lost at the next deploy.
 
+**Files the bot cannot open (RFC §26.2; branch, not deployed)** add no prompt and no version bump. Owner steps
+before the deploy: the composite index `user_id + inaccessible_since` on `{prefix}drive_index_records` (declared in
+`config/firestore.indexes.json`; `make deploy-indexes`) `READY`, then `drive_index_smoke.py <user_id>` (it runs the
+new read, `inaccessible_records`); deploy main and the indexer together (the fan-out sends the notice, the indexer marks;
+the skill, the locales and the manifest text ship with the code). Records deleted as "gone" before this code (§4.18)
+come back only when delta lists them again or on the §26 rebuild (D38). Rollback: the previous revision parses the new
+records (plain new fields, no enum value, §25.8); it would treat a marked file's next 404 as a deletion again.
+
 The Slice 2+4 deploy, for reference (full commands: [docs/07_deployment/README.md](../../07_deployment/README.md) →
 Slice 2+4). In order:
 1. the first image build of this branch, which must create the `driveparser` user and pass the world-writable
@@ -1684,3 +1766,4 @@ The levers are forward ones; the first two are a code change plus a deploy, the 
 | Deep research copies (§1.1) | `src/domain/deep_research_drive_copy.py`, `src/services/deep_research_drive_copy_service.py`, `AgentWorkerHandler._copy_deep_research_report`, `deliver_deep_research` (the marker), `/api/drive/deep-research-copy` |
 | Eval and checks | `scripts/validation/drive_eval/` (`runner.py`, `smart_dry_run.py`, `live_check.py`, `make_fixtures.py`; Search v2: `search_v2_eval.py`, `v2_metrics.py`, `dump_enrichment.py`, `enrichment_*.py`, `v1_baseline.py`, `scale_calibrate.py`, `make_fixtures_v2.py`), `scripts/validation/drive_model_check.py`, `tests/fixtures/drive_eval/`, `tests/integration/test_drive_g2_end_to_end.py` |
 | Ops and spike scripts | `scripts/infrastructure/drive_index_rebuild.py` (`--all-users`, `--hints-only`), `drive_initial_build_reset.py`, `drive_index_smoke.py`, `create_drive_vector_indexes.sh`, `deploy_firestore_indexes.py`, `drive_extract_s1.py` (S1), `drive_chunk_knn_cost.py` (S3); `scripts/onedrive/probe_renditions.py` (S0g) |
+| Files the bot cannot open (§4.18; branch) | planner `marked_inaccessible` / `access_*` in `drive_index_planner.py`; `inaccessible(rec)` in `drive_index.py`; `src/domain/drive_access.py` (counts, notice batch, paths, list file); texts in `drive_search_texts.py` (`ACCESS_*`); `DriveIndexingService._item_gone`, `_mark_inaccessible`, `_mark_parent`, `_recheck_step`; `DriveSyncSchedulerService._inaccessible_notice`; `DriveSearchService.access_note`; `UserDriveService.list_folder_by_id`; UI strings `DRIVE_INACCESSIBLE_*` in `src/locales/` |

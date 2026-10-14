@@ -646,7 +646,13 @@ rebuilds every user (`docs/07_deployment/README.md` § Search v2). Smart's drive
 "find is answered from the results; open a file only for its contents") is the system skill `drive-search`
 (`src/skills/smart/drive-search/SKILL.md`, D32), loaded before the first drive search; the `drive_specialist` block of
 `PROTOCOL_AGENT_SELECTION` keeps only when to search the drive, the pointer and the untrusted-text line. Not in
-`SearchEnrichmentService`. Opt-out purges at once;
+`SearchEnrichmentService`. **Files the bot cannot open** (RFC §26.2, D33; built on `feat/drive-card-accuracy`, not
+deployed): an item with its own permission list lacking the app's entry is listed by delta but 404s on every id call, so
+`get_change` raises on a 404 (never a deletion) and the tick marks the record `inaccessible_since` (card and readable
+generation kept, no content work), re-reads it by id on an observation (≤ 1/h) or every 7 days, and only a tombstone
+deletes it; search shows an access line, list/open answer from the index (`access_note`), and the main service's fan-out
+sends one localized notice with the paths as an attached file (`inaccessible_notified_since` is fan-out-only, never in
+the tick's record writes). Opt-out purges at once;
 lost access keeps the index 30 days. Rebuild one user: `scripts/infrastructure/drive_index_rebuild.py`. Evals:
 `python -m scripts.validation.drive_eval` (G1/G2, v1 bars), `… drive_eval.search_v2_eval` (v2 families, offline by
 default, `bars_v2.json`; results RFC §25.7.1), G3 `… drive_eval.smart_dry_run` (owner-run, `bars_g3.json`). Decisions:
