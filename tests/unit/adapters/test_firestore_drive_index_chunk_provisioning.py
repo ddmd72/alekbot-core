@@ -1,0 +1,134 @@
+"""Provisioning of the chunk queries (USER_DRIVE_INDEXING_RFC §12.5, §24.6, RFC Δ22): every chunk query that needs a
+composite has one in config/firestore.indexes.json, under the live collection only; the readable-chunk sum has its
+records index with `chunk_count` in it (an aggregation reads index entries only); `text` and `vector` are exempt from
+single-field indexing, and no chunk query relies on a single-field index of an exempt field; `make deploy-indexes`
+creates the composites and the exemptions while the vector entries are left to create_drive_vector_indexes.sh."""
+import json
+from pathlib import Path
+
+import pytest
+
+from tests.unit.adapters.firestore_drive_chunk_fakes import CHUNKS, ChunkDb, make_chunk_repo
+from tests.unit.adapters.firestore_drive_fakes import RECS, executed
+from tests.unit.adapters.test_firestore_drive_index_provisioning import _deploy_commands
+
+_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _raw():
+    return json.loads((_ROOT / "config" / "firestore.indexes.json").read_text())
+
+
+def _declared(collection):
+    return [[(f["fieldPath"], f.get("order") or f.get("arrayConfig") or "VECTOR") for f in idx["fields"]]
+            for idx in _raw() if idx["collectionGroup"] == collection and "fields" in idx]
+
+
+def _exempt(collection):
+    return {idx["fieldPath"] for idx in _raw()
+            if idx["collectionGroup"] == collection and "fields" not in idx and idx.get("indexes") == []}
+
+
+def _required(ops):
+    """Equality / array filters (any order) first, then the range field, then the orderings or the vector field.
+    None for equality-only queries without ordering (single-field indexes serve them)."""
+    prefix = {(op[1], "CONTAINS" if op[2] == "array_contains" else "EQ")
+              for op in ops if op[0] == "where" and op[2] in ("==", "array_contains")}
+    ranged = [(op[1], "ASCENDING") for op in ops if op[0] == "where" and op[2] in (">", ">=", "<", "<=")]
+    nearest = [op[1] for op in ops if op[0] == "find_nearest"]
+    tail = ([(nearest[0]["vector_field"], "VECTOR")] if nearest
+            else ranged + [(op[1], op[2]) for op in ops if op[0] == "order_by"])
+    summed = [(op[1], "ASCENDING") for op in ops if op[0] == "sum"]
+    tail = tail + summed if tail else tail
+    return (prefix, tail) if tail else None
+
+
+def _covered(required, index):
+    prefix, tail = required
+    head, rest = index[:len(index) - len(tail)], index[len(index) - len(tail):]
+    return rest == tail and {(p, "CONTAINS" if m == "CONTAINS" else "EQ") for p, m in head} == prefix
+
+
+@pytest.fixture
+def db():
+    return ChunkDb()
+
+
+async def test_every_chunk_query_has_a_declared_index(db, mock_env_config):
+    repo = make_chunk_repo(db, mock_env_config)
+    await repo.find_nearest_chunks("u", [1.0], 5)
+    await repo.find_nearest_chunks("u", [1.0], 5, kind="pdf")
+    await repo.find_chunks_by_term("u", "1250", 5)
+    await repo.find_chunks_by_term("u", "1250", 5, kind="pdf")
+    await repo.chunks_page("u", None, 5)
+    await repo.chunks_page("u", ("a", 1, 0), 5)
+    await repo.delete_chunks_except("u", "a", 1)
+    await repo.delete_user_chunks("u", 5)
+    queries = executed(db, CHUNKS)
+    assert len(queries) == 8
+    declared = _declared("development_drive_index_chunks")
+    needing = [ops for ops in queries if _required(ops) is not None]
+    assert len(needing) == 6   # the two deletes read by equality only
+    assert [ops for ops in needing if not any(_covered(_required(ops), i) for i in declared)] == []
+
+
+async def test_the_readable_sum_has_its_records_index(db, mock_env_config):
+    await make_chunk_repo(db, mock_env_config).readable_chunk_total("u")
+    (ops,) = executed(db, RECS)
+    required = _required(ops)
+    assert required == ({("user_id", "EQ")}, [("indexed_generation", "ASCENDING"), ("chunk_count", "ASCENDING")])
+    assert any(_covered(required, i) for i in _declared("development_drive_index_records"))
+
+
+def test_chunk_indexes_are_declared_for_the_live_collection_only():
+    assert len(_declared("development_drive_index_chunks")) == 5   # 3 composites + 2 vector entries
+    assert _declared("drive_index_chunks") == []
+
+
+def test_text_and_vector_are_exempt_from_single_field_indexes_on_the_live_collection_only():
+    assert _exempt("development_drive_index_chunks") == {"text", "vector"}
+    assert not any("fields" not in idx and not idx["collectionGroup"].startswith("development_") for idx in _raw())
+
+
+async def test_no_chunk_query_relies_on_an_exempt_field(db, mock_env_config):
+    """Equality-only reads are served by single-field indexes, and composites never list an exempt field: an
+    exemption must not take away an index a query uses (the vector field is served by its vector index)."""
+    repo = make_chunk_repo(db, mock_env_config)
+    await repo.delete_chunks_except("u", "a", 1)
+    await repo.delete_user_chunks("u", 5)
+    await repo.find_chunks_by_term("u", "1250", 5)
+    await repo.chunks_page("u", ("a", 1, 0), 5)
+    used = {op[1] for ops in executed(db, CHUNKS) for op in ops if op[0] in ("where", "order_by")}
+    exempt = _exempt("development_drive_index_chunks")
+    assert used and not used & exempt
+    assert not any(path in exempt for idx in _declared("development_drive_index_chunks") for path, mode in idx
+                   if mode != "VECTOR")
+
+
+def test_deploy_creates_the_chunk_composites_and_the_exemptions():
+    chunk = [c for c in _deploy_commands() if "--collection-group=development_drive_index_chunks" in c]
+    composites = [c for c in chunk if c[3] == "composite"]
+    exemptions = [c for c in chunk if c[3] == "fields"]
+    assert len(composites) == 3
+    assert sum("--field-config=field-path=content_terms,array-config=contains" in c for c in composites) == 2
+    assert sorted(c[5] for c in exemptions) == ["text", "vector"]
+    assert all("--disable-indexes" in c for c in exemptions)
+    records = [c for c in _deploy_commands() if "--collection-group=development_drive_index_records" in c]
+    assert sum("--field-config=field-path=chunk_count,order=ascending" in c for c in records) == 1
+
+
+async def test_the_chunk_cap_and_unread_queries_have_their_records_indexes(db, mock_env_config):
+    """Part B's release query and unread counts (§5.4, §10.2): an `in` or a null filter is an equality here."""
+    repo = make_chunk_repo(db, mock_env_config)
+    await repo.chunk_capped("u", 5)
+    await repo.count_unread("u", {"pdf", "docx"})
+    queries = executed(db, RECS)
+    assert len(queries) == 7
+    declared = _declared("development_drive_index_records")
+    for ops in queries:
+        prefix = {(op[1], "EQ") for op in ops if op[0] == "where" and op[2] in ("==", "IS_NULL", "in")}
+        tail = [(op[1], op[2]) for op in ops if op[0] == "order_by"]
+        if not tail:   # a count over equalities only: the composite holds exactly its fields, in any order
+            assert any({(p, "EQ") for p, _ in i} == prefix for i in declared), ops
+        else:
+            assert any(_covered((prefix, tail), i) for i in declared), ops

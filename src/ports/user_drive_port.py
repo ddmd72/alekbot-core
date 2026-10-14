@@ -95,3 +95,15 @@ class UserDrivePort(ABC):
     @abstractmethod
     async def flag_reconnect(self, user_id: str) -> bool:
         """Mark the stored grant as needing a reconnect; True only on the False->True transition (§7.7)."""
+
+    # -- content for the index (USER_DRIVE_INDEXING_RFC §8.1, §24.5) -----------------------------
+
+    @abstractmethod
+    async def download_to_file(self, user_id: str, item_id: str, dest_path: str, max_bytes: int) -> int:
+        """Stream a file's content to `dest_path` (never held whole in memory) and return the bytes written. Raises
+        DriveFileTooLarge as soon as the stream passes `max_bytes`, DriveItemNotFoundError for a missing item."""
+
+    @abstractmethod
+    async def get_thumbnail(self, user_id: str, item_id: str, size: str) -> Optional[bytes]:
+        """A provider-rendered image of the item (`size` e.g. "medium" or "c2048x2048"), JPEG or PNG; None when the
+        provider has no rendition for it. The indexer never decodes or scales an image itself (§5.3)."""

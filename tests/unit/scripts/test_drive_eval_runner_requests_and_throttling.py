@@ -15,7 +15,7 @@ from src.services.drive_indexing_service import TickResult
 from src.domain.user_drive import make_drive_ref
 
 from ..services.drive_index_fakes import FakeEmbeddings
-from .drive_eval_samples import GOLD, MANIFEST, rome
+from .drive_eval_samples import GOLD, MANIFEST, fake_content, rome
 
 LEASE_CONTRACTS = "Contracts/Lease agreement — Porto.pdf"
 LEASE_INBOX = "Inbox/Lease agreement — Porto.pdf"
@@ -32,7 +32,8 @@ def _write(tmp_path, gold):
 async def _eval(tmp_path, gold, embeddings=None, record=True):
     tree, gold_path, bars, report = _write(tmp_path, gold)
     return await run_eval(tree, gold_path, bars, report, embeddings=embeddings or FakeEmbeddings(),
-                          embedding_space="fake/8", place_of=rome, record=record, throttle_pause_s=0)
+                          embedding_space="fake/8", place_of=rome, record=record, throttle_pause_s=0,
+                          **fake_content())
 
 
 # ---------------------------------------------------------------------------------------------
@@ -98,7 +99,7 @@ class TestThrottledTicks:
         monkeypatch.setattr(runner, "_RecordingQueue", _Queue)
         with pytest.raises(EvalError, match=f"{runner.MAX_THROTTLED} consecutive ticks were throttled"):
             await index_fixture(FixtureDrive(MANIFEST), InMemoryDriveIndexRepository(), _Throttled(), rome,
-                                "fake/8", EvalClock(), throttle_pause_s=pause)
+                                "fake/8", EvalClock(), throttle_pause_s=pause, **fake_content())
         (queue,) = queues
         return sleeps, [task["delay"] for task in queue.tasks]
 
@@ -129,6 +130,9 @@ class TestThrottledTicks:
 
             async def count_by_state(self, user_id):
                 return {"carded": 1}
+
+            async def oldest_due_at(self, user_id, priority):
+                return None
 
         class _Scripted:
             def __init__(self, drive, repo, embeddings, queue, *args, **kwargs):
@@ -206,4 +210,4 @@ class TestRunnerGaps:
         monkeypatch.setattr(runner.asyncio, "sleep", fake_sleep)
         with pytest.raises(EvalError, match=f"{MAX_ERRORS} ticks ended in error"):
             await index_fixture(FixtureDrive(MANIFEST), InMemoryDriveIndexRepository(), _Broken(), rome,
-                                "fake/8", EvalClock(), throttle_pause_s=0, max_ticks=50)
+                                "fake/8", EvalClock(), throttle_pause_s=0, max_ticks=50, **fake_content())

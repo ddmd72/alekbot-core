@@ -5,18 +5,26 @@ from datetime import timedelta
 import pytest
 
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
-from src.domain.drive_index import EpochPhase, ErrorCategory, Nudge, Reason, Scope
-from src.domain.drive_index_params import ACCESS_LOSS_TTL, TICK_START_BUDGET
+from src.domain.drive_extraction import PARSER, READER
+from src.domain.drive_index import CURRENT_VERSIONS, POLICY_VERSION, EpochPhase, ErrorCategory, Nudge, Reason, Scope
+from src.domain.drive_index_params import ACCESS_LOSS_TTL, MAX_ATTEMPTS, TICK_START_BUDGET
 from src.domain.user_drive import DriveConnection, DriveReauthRequired, DriveThrottled
 from src.services import drive_indexing_service as svc_mod
 from src.services.drive_indexing_service import DriveIndexingService
 
-from .drive_index_fakes import ROOT, Clock, FakeDrive, FakeEmbeddings, FakeQueue, FakeUsers
+from .drive_content_fakes import FakeContentDrive, FakeExtractor, FakeTriage
+from .drive_index_fakes import ROOT, Clock, FakeEmbeddings, FakeQueue, FakeUsers
+
+
+# The version keys the harness's wired extractors add to the verified map (CORE-DELTA 5, §9, §12.3).
+EXTRACTOR_VERSIONS = {"extractor:parser": 1, "extractor:reader": 1}
 
 
 class World:
     def __init__(self, page_size=50):
-        self.drive = FakeDrive(page_size=page_size)
+        # wired as production wires it (indexer_main): a parser, a reader and triage; a file added without bytes
+        # downloads empty, so its sniffed kind is `other` and it stays metadata-only as in Slice 1 (§8.1 step 4)
+        self.drive = FakeContentDrive(page_size=page_size)
         self.repo = InMemoryDriveIndexRepository()
         self.emb = FakeEmbeddings()
         self.queue = FakeQueue()
@@ -24,7 +32,8 @@ class World:
         self.clock = Clock()
         self.svc = DriveIndexingService(self.drive, self.repo, self.emb, self.queue, self.users,
                                         lambda lat, lon: "Rome (Roma), Italy", "test-space/8",
-                                        clock=self.clock, monotonic=self.clock.monotonic)
+                                        extractors={PARSER: FakeExtractor(PARSER), READER: FakeExtractor(READER)},
+                                        triage=FakeTriage(), clock=self.clock, monotonic=self.clock.monotonic)
 
     async def tick(self, nudge=None):
         return await self.svc.tick("u", nudge)
@@ -39,6 +48,19 @@ class World:
                 return result
             self.clock.advance(max(1, max(t["delay"] for t in continued)))
         raise AssertionError("did not settle")
+
+    async def settle_due(self, max_ticks=200, max_rounds=MAX_ATTEMPTS):
+        """`settle`, then as the scheduler's fan-out would: let time run until every record is due again (an image
+        without a rendition is retried with backoff, review B minor) and settle once more, until nothing is due.
+        `max_rounds` bounds it: a retried item must converge within MAX_ATTEMPTS attempts (§8.2, §24.5)."""
+        result = await self.settle(max_ticks)
+        for _ in range(max_rounds):
+            due = [r.due_at for (user, _), r in self.repo.records.items() if user == "u" and r.due_at is not None]
+            if not due:
+                return result
+            self.clock.advance(max(1.0, (max(due) - self.clock.now).total_seconds()))
+            result = await self.settle(max_ticks)
+        return result
 
     def rec(self, item_id):
         return self.repo.records.get(("u", item_id))
@@ -70,7 +92,7 @@ async def test_onboarding_builds_records_cards_and_epoch_one(w):
     assert state.cursor.startswith("delta:") and state.root_item_id == ROOT and state.observed_as_of is not None
     assert w.rec(doc).reason is Reason.KIND_NOT_ADMITTED and w.rec(doc).has_card
     assert w.carded() == {contracts, doc}
-    assert dict(state.applied_versions) == {"policy": 1, "card": 1, "geo_table": 1, "name_keys": 1}
+    assert dict(state.applied_versions) == {**CURRENT_VERSIONS, **EXTRACTOR_VERSIONS}
     assert state.counters == {"metadata_only": 2, "carded": 2}
 
 
@@ -315,8 +337,9 @@ async def test_version_bump_restamps_and_applies_after_clean_pass(w, monkeypatch
     for i in range(3):
         w.drive.add(f"f{i}.pdf")
     await w.settle()
-    monkeypatch.setattr(planner, "POLICY_VERSION", 2)
-    monkeypatch.setattr(svc_mod, "CURRENT_VERSIONS", {"policy": 2, "card": 1, "geo_table": 1})
+    bumped = POLICY_VERSION + 1
+    monkeypatch.setattr(planner, "POLICY_VERSION", bumped)
+    monkeypatch.setattr(svc_mod, "CURRENT_VERSIONS", {**CURRENT_VERSIONS, "policy": bumped})
     await w.settle()
-    assert all(r.policy_version == 2 for r in w.repo.records.values())
-    assert dict((await w.repo.get_sync_state("u")).applied_versions)["policy"] == 2
+    assert all(r.policy_version == bumped for r in w.repo.records.values())
+    assert dict((await w.repo.get_sync_state("u")).applied_versions)["policy"] == bumped

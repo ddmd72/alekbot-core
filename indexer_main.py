@@ -6,11 +6,13 @@ the whole `drive_sync` tick, so the main service (1 GiB, already at 74-90 % memo
 
 Builds only what the tick needs: Firestore (`us-production`), the user repository (the tick's gate
 reads the opt-in flag uncached), OAuth credentials + the drive adapter, the drive index repository,
-the Gemini embedding adapter, the place table and a task queue bound to the drive queue and to this
-service's own `/worker` (continuations and nudge re-queues come back here). No `ServiceContainer`:
-it would build every agent, LLM adapter and chat surface for a process that uses none of them. No
-`load_settings()`: it would chase every key this service does not have into Secret Manager on each
-cold start.
+the Gemini embedding adapter, the place table, a task queue bound to the drive queue and to this
+service's own `/worker` (continuations and nudge re-queues come back here), and the content side of
+Slice 2+4 (§24.2): the child-process parser, the document reader and image triage agents over Claude
+and OpenAI, the Firestore prompt builder and the quota service that bills their calls to the user's
+account (`src/composition/drive_model_setup.py`). No `ServiceContainer`: it would build every agent,
+LLM adapter and chat surface for a process that uses none of them. No `load_settings()`: it would
+chase every key this service does not have into Secret Manager on each cold start.
 
 HTTP: Quart on hypercorn, the main service's stack. The relay's plain `websockets` server is
 built for WebSockets, not POST routes; `aiohttp.web` would add a second HTTP framework idiom to the
@@ -22,7 +24,10 @@ Environment variables (set at deploy time in cloudbuild-dev.yaml):
   APP_ENV                       "development" -> `development_` collections, queue `drive-sync-dev`.
   DRIVE_INDEXER_URL             This service's own URL: the drive queue's target. Empty on the first
                                 pass of the two-pass first deploy: the service starts, /worker answers 503.
-  GEMINI_API_KEY                Secret: card embeddings.
+  GEMINI_API_KEY                Secret: card and chunk embeddings, and the drive agents' Gemini Flash fallback.
+  ANTHROPIC_API_KEY             Secret: the drive reader and triage agents for a user whose configuration picks Claude.
+  OPENAI_API_KEY                Secret: the same agents on OpenAI (the default, §24.2).
+  BILLING_SLACK_WEBHOOK_URL     Secret, optional: the advisory daily budget alert of the quota service.
   MICROSOFT_TODO_CLIENT_ID      Secret: the drive app registration (token refresh).
   MICROSOFT_TODO_CLIENT_SECRET  Secret: same.
   SERVICE_ACCOUNT_EMAIL         Secret: the /worker OIDC gate and the OIDC identity of the tasks this
@@ -49,9 +54,13 @@ from src.adapters.firestore_oauth_credentials_adapter import FirestoreOAuthCrede
 from src.adapters.firestore_user_repo import FirestoreUserRepository
 from src.adapters.gemini_embedding_adapter import GeminiEmbeddingAdapter
 from src.adapters.microsoft import OneDriveAdapter
+from src.adapters.slack.webhook_adapter import SlackWebhookAdapter
+from src.adapters.subprocess_content_extractor import PARSER_USER_ENV, SubprocessContentExtractor
 from src.composition.drive_indexing_setup import (
     build_drive_index_repository, build_drive_task_queue, build_place_lookup,
 )
+from src.composition.drive_model_setup import build_drive_model_extractors
+from src.composition.prompt_assembly_setup import build_prompt_assembly_service
 from src.config.environment import EnvironmentConfig
 from src.services.drive_indexing_service import DriveIndexingService
 from src.utils.logger import logger
@@ -83,6 +92,19 @@ def build_app() -> Quart:
     oauth_credentials = FirestoreOAuthCredentialsAdapter(db, env_config)
     account_repo = FirestoreAccountRepository(db_client=db, collection_name=env_config.account_collection_name)
     embeddings = GeminiEmbeddingAdapter(api_key=os.environ["GEMINI_API_KEY"])
+    users = FirestoreUserRepository(db, env_config, account_repo)
+    # The reader and triage prompts live in Firestore (§24.2); a failure here fails the start, never a fallback prompt.
+    assembly_service, _ = build_prompt_assembly_service(db, env_config)
+    billing_webhook = (os.environ.get("BILLING_SLACK_WEBHOOK_URL") or "").strip()
+    extractors, triage = build_drive_model_extractors(
+        # the image's unprivileged user (Dockerfile); a named user missing from the container fails the start (R3 F3-1)
+        parser=SubprocessContentExtractor(sandbox_user=os.environ.get(PARSER_USER_ENV)),
+        users=users,
+        account_repo=account_repo,
+        assembly_service=assembly_service,
+        keys={key: os.environ.get(key) for key in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY")},
+        alert_sink=SlackWebhookAdapter(billing_webhook) if billing_webhook else None,
+    )
     indexing = DriveIndexingService(
         drive=OneDriveAdapter(
             oauth_credentials=oauth_credentials,
@@ -92,9 +114,11 @@ def build_app() -> Quart:
         repo=build_drive_index_repository(db, env_config),
         embeddings=embeddings,
         queue=queue,
-        users=FirestoreUserRepository(db, env_config, account_repo),
+        users=users,
         place_of=build_place_lookup(),
         embedding_space=GeminiEmbeddingAdapter.EMBEDDING_SPACE,
+        extractors=extractors,
+        triage=triage,
     )
 
     app.register_blueprint(create_indexer_worker_blueprint(indexing, gate))

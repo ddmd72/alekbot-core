@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
+from src.domain.drive_extraction import PARSER, READER
 from src.domain.drive_index import EpochPhase, RecordState
 from src.domain.drive_index_params import ACCESS_LOSS_TTL, CARD_FETCH, FETCH_MAX, NAME_FETCH
 from src.domain.drive_search import (
@@ -18,7 +19,8 @@ from src.services import drive_search_service as search_mod
 from src.services.drive_indexing_service import DriveIndexingService
 from src.services.drive_search_service import DriveSearchService
 
-from .drive_index_fakes import Clock, FakeDrive, FakeEmbeddings, FakeQueue, FakeUsers
+from .drive_content_fakes import FakeContentDrive, FakeExtractor, FakeTriage
+from .drive_index_fakes import Clock, FakeEmbeddings, FakeQueue, FakeUsers
 
 
 class SpyRepo(InMemoryDriveIndexRepository):
@@ -49,14 +51,15 @@ class SpyRepo(InMemoryDriveIndexRepository):
 
 class World:
     def __init__(self, page_size=50):
-        self.drive = FakeDrive(page_size=page_size)
+        self.drive = FakeContentDrive(page_size=page_size)   # wired as in production; see test_drive_indexing_service
         self.repo = SpyRepo()
         self.emb = FakeEmbeddings()
         self.users = FakeUsers()
         self.clock = Clock()
         self.indexer = DriveIndexingService(self.drive, self.repo, self.emb, FakeQueue(), self.users,
                                             lambda lat, lon: "Rome (Roma), Italy", "test-space/8",
-                                            clock=self.clock, monotonic=self.clock.monotonic)
+                                            extractors={PARSER: FakeExtractor(PARSER), READER: FakeExtractor(READER)},
+                                            triage=FakeTriage(), clock=self.clock, monotonic=self.clock.monotonic)
         counter = itertools.count(1)
         self.search_svc = DriveSearchService(self.repo, self.emb, self.users, self.drive, clock=self.clock,
                                              nonce=lambda: f"nonce{next(counter):04d}",
@@ -131,7 +134,10 @@ class TestGate:
     async def test_enabled_before_the_first_tick_is_building(self, w):
         result = await w.search("lease")
         assert result.status == STATUS_OK and result.cards == () and result.envelope.building
-        assert "do not say a file does not exist" in render_results(result)
+        text = render_results(result)
+        # The building fact stays; the standing guidance moved to Smart's protocol token (§10.4, §24.10)
+        assert "The index is still being built: some files and folders may not be in it yet." in text
+        assert "do not say a file does not exist" not in text
 
 
 # --- envelope (§10.2) ---------------------------------------------------------------------------
@@ -143,7 +149,7 @@ class TestEnvelope:
         result = await w.search("doc")
         state = await w.repo.get_sync_state("u")
         assert not result.envelope.building and result.envelope.index_as_of == state.observed_as_of
-        assert result.envelope.content_search is False and result.envelope.enabled
+        assert result.envelope.content_search is True and result.envelope.enabled   # the flip (§24.1, §10.2)
 
     @pytest.mark.parametrize("change", [
         dict(epoch_phase=EpochPhase.ENUMERATING), dict(epoch_phase=EpochPhase.SWEEPING),

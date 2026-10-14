@@ -6,12 +6,13 @@ from src.services import drive_indexing_service as svc_mod
 from src.services.drive_indexing_service import DriveIndexingService
 
 from .test_drive_indexing_card_embedding_outcomes import _refuse_cards_starting_with
-from .test_drive_indexing_service import World
+from .test_drive_indexing_service import EXTRACTOR_VERSIONS, World
 
 
 def _switch_space(w, space):
     w.svc = DriveIndexingService(w.drive, w.repo, w.emb, w.queue, w.users, lambda lat, lon: "Rome (Roma), Italy",
-                                 space, clock=w.clock, monotonic=w.clock.monotonic)
+                                 space, extractors=w.svc._extractors, triage=w.svc._triage, clock=w.clock,
+                                 monotonic=w.clock.monotonic)
 
 
 async def test_onboarding_records_the_space_its_cards_are_in():
@@ -62,4 +63,5 @@ async def test_a_space_change_alone_keeps_the_version_map(monkeypatch):
     versions = dict((await w.repo.get_sync_state("u")).applied_versions)
     _switch_space(w, "new-space/768")
     await w.settle()
-    assert dict((await w.repo.get_sync_state("u")).applied_versions) == versions == dict(svc_mod.CURRENT_VERSIONS)
+    assert dict((await w.repo.get_sync_state("u")).applied_versions) == versions == {**svc_mod.CURRENT_VERSIONS,
+                                                                                     **EXTRACTOR_VERSIONS}

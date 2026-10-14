@@ -44,3 +44,12 @@ GOLD = [
 
 def rome(lat: float, lon: float) -> str:
     return "Rome (Roma), Italy"
+
+
+def fake_content():
+    """The content ports as the eval CLI wires the real ones since the flip (§24.1), faked: a parser, a reader and
+    image triage, as keyword arguments of index_fixture / run_eval / live_check."""
+    from src.domain.drive_extraction import PARSER, READER
+
+    from ..services.drive_content_fakes import FakeExtractor, FakeTriage
+    return {"extractors": {PARSER: FakeExtractor(PARSER), READER: FakeExtractor(READER)}, "triage": FakeTriage()}

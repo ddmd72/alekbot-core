@@ -7,13 +7,13 @@ from datetime import timedelta
 import pytest
 
 from src.domain import drive_card, drive_index_planner as planner
-from src.domain.drive_index import EpochPhase, Reason, RecordState, Scope
+from src.domain.drive_index import CARD_VERSION, CURRENT_VERSIONS, EpochPhase, Reason, RecordState, Scope
 from src.domain.drive_index_params import TICK_START_BUDGET
 from src.domain.exceptions import LLMRateLimitError
 from src.domain.user_drive import DriveAccessDenied, DriveResyncRequired
 from src.services import drive_indexing_service as svc_mod
 
-from .test_drive_indexing_service import World
+from .test_drive_indexing_service import EXTRACTOR_VERSIONS, World
 
 
 async def test_card_version_bump_reembeds_and_completes(monkeypatch):
@@ -21,13 +21,13 @@ async def test_card_version_bump_reembeds_and_completes(monkeypatch):
     for i in range(3):
         w.drive.add(f"f{i}.pdf")
     await w.settle()
-    monkeypatch.setattr(drive_card, "CARD_VERSION", 2)
-    monkeypatch.setattr(planner, "CARD_VERSION", 2)
-    monkeypatch.setattr(svc_mod, "CURRENT_VERSIONS", {"policy": 1, "card": 2, "geo_table": 1})
+    monkeypatch.setattr(drive_card, "CARD_VERSION", CARD_VERSION + 1)
+    monkeypatch.setattr(planner, "CARD_VERSION", CARD_VERSION + 1)
+    monkeypatch.setattr(svc_mod, "CURRENT_VERSIONS", {**CURRENT_VERSIONS, "card": CARD_VERSION + 1})
     w.emb.calls.clear()
     await w.settle(max_ticks=60)          # raises "did not settle" if the upgrade never completes
     assert len(w.emb.calls) == 3
-    assert dict((await w.repo.get_sync_state("u")).applied_versions)["card"] == 2
+    assert dict((await w.repo.get_sync_state("u")).applied_versions)["card"] == CARD_VERSION + 1
 
 
 # 2. §8.2: a re-listing that keeps failing is dropped after MAX_ATTEMPTS; the chain must stop.
@@ -240,14 +240,16 @@ async def test_every_version_bump_completes_and_applies(monkeypatch, constant, m
     w = World()
     for i in range(4):
         w.drive.add(f"IMG_{i}.jpg", facets={"location": {"latitude": 41.9, "longitude": 12.5}})
-    await w.settle()
+    await w.settle_due()   # images without a rendition reach their verdict only after retries (review B minor)
+    assert all(r.due_at is None for r in w.repo.records.values())
+    bumped = CURRENT_VERSIONS[constant] + 1
     for module, attr in module_attrs:
-        monkeypatch.setattr(module, attr, 2)
-    target = {"policy": 1, "card": 1, "geo_table": 1, constant: 2}
+        monkeypatch.setattr(module, attr, bumped)
+    target = {**CURRENT_VERSIONS, constant: bumped}
     monkeypatch.setattr(svc_mod, "CURRENT_VERSIONS", target)
-    await w.settle(max_ticks=60)
+    await w.settle_due(max_ticks=60)
     state = await w.repo.get_sync_state("u")
-    assert dict(state.applied_versions) == target
+    assert dict(state.applied_versions) == {**target, **EXTRACTOR_VERSIONS}
     assert not planner.stale_versions(next(iter(w.repo.records.values())))
 
 

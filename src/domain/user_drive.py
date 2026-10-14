@@ -104,6 +104,15 @@ class DriveFileTooLargeError(Exception):
         self.limit_bytes = limit_bytes
 
 
+class DriveFileTooLarge(Exception):
+    """A streamed download passed its byte cap (USER_DRIVE_INDEXING_RFC §5.4, §8.1 step 3): metadata can understate a
+    size, so the stream is cut and the partial file is the caller's to delete."""
+
+    def __init__(self, limit_bytes: int) -> None:
+        super().__init__(f"download exceeded {format_size(limit_bytes)}")
+        self.limit_bytes = limit_bytes
+
+
 @dataclass
 class FolderResolution:
     folder: DriveItem

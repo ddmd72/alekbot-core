@@ -4,6 +4,8 @@ FirestoreDriveIndexRepository — DriveIndexRepository on Firestore (docs/10_rfc
 Collections (env-prefixed through EnvironmentConfig):
     {prefix}drive_index_records   doc id record_key(user_id, item_id); every DriveIndexRecord field under its own
                                   name, plus `card_vector` (Vector, 768) and `has_card_vector` (bool, mirrors it)
+    {prefix}drive_index_chunks    doc id chunk_key(user_id, item_id, generation, index); every DriveChunk field
+                                  under its own name, plus `vector` (Vector, 768) (§3.3, §24.6)
     {prefix}drive_sync_state      doc id user_id; every DriveSyncState field under its own name
 
 Reference semantics: InMemoryDriveIndexRepository. The deliberate differences are Firestore's own:
@@ -29,19 +31,31 @@ Writes:
       document); otherwise LeaseLost and nothing is written (§7.1 fencing).
 
 Vectors: record queries, `get_records` and `find_nearest_cards` project the record fields, so they never load
-`card_vector`; only `card_vectors` reads it (its purpose). The kNN projection lists `card_distance` as well.
+`card_vector`; only `card_vectors` reads it (its purpose). The kNN projection lists `card_distance` as well. Chunk
+reads likewise project the chunk fields (`chunk_distance` with the kNN); only `get_chunks_with_vectors` reads `vector`.
+The two search streams (`find_nearest_chunks`, `find_chunks_by_term`) leave out `text` and `content_terms` as well:
+a widened page is up to FETCH_MAX chunks, and windows are read by id with `get_chunks`.
+Chunk reads are never fenced: the search service compares each chunk's generation with its record (§7.4).
+Errors: Firestore's transient errors (DeadlineExceeded, ServiceUnavailable, InternalServerError, Aborted,
+ResourceExhausted) and FailedPrecondition (a composite index missing or still building, logged ERROR) leave every
+public method as DriveIndexStoreUnavailable, which the tick treats as systemic (§8.2); any other error keeps its type.
 Datetimes come back as plain tz-aware UTC datetimes, never DatetimeWithNanoseconds (see
 firestore_oauth_credentials_adapter.py: `.replace()` on one breaks write-back).
 """
 from __future__ import annotations
 
 import asyncio
+import functools
+import inspect
 from dataclasses import fields, replace
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import AbstractSet, Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
-from google.api_core.exceptions import AlreadyExists, NotFound
+from google.api_core.exceptions import (
+    Aborted, AlreadyExists, DeadlineExceeded, FailedPrecondition, InternalServerError, NotFound, ResourceExhausted,
+    ServiceUnavailable,
+)
 from google.cloud import firestore
 from google.cloud.firestore import FieldFilter
 from google.cloud.firestore_v1.base_vector_query import DistanceMeasure
@@ -50,8 +64,8 @@ from google.cloud.firestore_v1.vector import Vector
 
 from ..config.environment import EnvironmentConfig
 from ..domain.drive_index import (
-    ContentClass, DriveIndexRecord, DriveSyncState, EpochPhase, ErrorCategory, LeaseLost, Priority, Reason,
-    RecordState, Scope, record_key,
+    ContentClass, DocumentBrief, DriveChunk, DriveIndexRecord, DriveIndexStoreUnavailable, DriveSyncState, EpochPhase,
+    ErrorCategory, LeaseLost, Priority, Reason, RecordState, Scope, TriageVerdict, record_key,
 )
 from ..domain.drive_index_params import NAME_QUERY_KEYS_MAX, RECORD_WRITE_BATCH
 from ..ports.drive_index_repository import DriveIndexRepository
@@ -60,10 +74,19 @@ from ..utils.logger import logger
 CARD_VECTOR = "card_vector"
 HAS_CARD_VECTOR = "has_card_vector"
 CARD_DISTANCE = "card_distance"
+CHUNK_VECTOR = "vector"
+CHUNK_DISTANCE = "chunk_distance"
 _TS_MIN = datetime(1, 1, 1, tzinfo=timezone.utc)   # Firestore's smallest timestamp: `>=` it excludes nulls
 _FLAGS = ("stale_alerted", "reconnect_notified")
 _LEASE = ("lease_owner", "lease_until")
+IN_VALUES_MAX = 30                                  # Firestore `in` limit (and the disjunction limit per query)
+# metadata_only reasons that leave an admitted document unread (drive_search.is_unread, §10.2)
+UNREAD_REASONS: Tuple[Reason, ...] = (Reason.TOO_LARGE, Reason.NO_TEXT, Reason.MACHINE_TEXT, Reason.USER_CHUNK_CAP)
 RECORD_FIELDS: Tuple[str, ...] = tuple(f.name for f in fields(DriveIndexRecord))
+CHUNK_FIELDS: Tuple[str, ...] = tuple(f.name for f in fields(DriveChunk))
+# search streams (port): no text (windows read it by id) and no content_terms (up to 256 per chunk; the term stream
+# knows its term from its own query, review D-M3)
+STREAM_FIELDS: Tuple[str, ...] = tuple(name for name in CHUNK_FIELDS if name not in ("text", "content_terms"))
 _DOC_FIELDS: Tuple[str, ...] = tuple(f.name for f in fields(DriveSyncState) if f.name not in _FLAGS)
 STATE_FIELDS: Tuple[str, ...] = tuple(name for name in _DOC_FIELDS if name not in _LEASE)   # save_sync_state's
 
@@ -72,6 +95,8 @@ STATE_FIELDS: Tuple[str, ...] = tuple(name for name in _DOC_FIELDS if name not i
 
 def _plain(value: Any) -> Any:
     """Firestore-encodable copy: enums as values, mappings as dicts, tuples as lists (recursively)."""
+    if isinstance(value, DocumentBrief):
+        return {f.name: _plain(getattr(value, f.name)) for f in fields(DocumentBrief)}
     if isinstance(value, Enum):
         return value.value
     if isinstance(value, Mapping):
@@ -98,6 +123,14 @@ def _int_map(value: Any) -> Dict[str, int]:
     return {str(k): int(v) for k, v in (value or {}).items()}
 
 
+def _brief(value: Any) -> Optional[DocumentBrief]:
+    if not value:
+        return None
+    return DocumentBrief(doc_type=value.get("doc_type", ""), description=value.get("description", ""),
+                         doc_date=_dt(value.get("doc_date")), parties=tuple(value.get("parties") or ()),
+                         amount=value.get("amount", ""))
+
+
 _RECORD_READERS: Dict[str, Callable[[Any], Any]] = {
     "facets": lambda v: dict(v or {}),
     "content_class": ContentClass,
@@ -105,9 +138,11 @@ _RECORD_READERS: Dict[str, Callable[[Any], Any]] = {
     "state": RecordState,
     "reason": _optional(Reason),
     "modified_at": _dt, "fs_modified_at": _dt, "effective_date": _dt,
-    "dirty_since": _dt, "due_at": _dt, "attempt_started_at": _dt,
+    "dirty_since": _dt, "due_at": _dt, "attempt_started_at": _dt, "defer_until": _dt, "model_read_at": _dt,
     "name_tokens": lambda v: tuple(v or ()),
-    "priority": _optional(int),
+    "priority": _optional(int), "defer_priority": _optional(int),
+    "brief": _brief,
+    "triage_verdict": _optional(TriageVerdict),
 }
 
 _STATE_READERS: Dict[str, Callable[[Any], Any]] = {
@@ -118,6 +153,7 @@ _STATE_READERS: Dict[str, Callable[[Any], Any]] = {
     "round_started_at": _dt, "lease_until": _dt, "continuation_enqueued_at": _dt,
     "observed_as_of": _dt, "access_lost_at": _dt, "last_success_at": _dt,
     "stale_alerted": bool, "reconnect_notified": bool,
+    "model_backoff_until": _dt, "model_failures": int, "model_pages_used": int, "triage_images_used": int,
 }
 
 
@@ -144,6 +180,23 @@ def state_from_doc(user_id: str, data: Mapping[str, Any]) -> DriveSyncState:
     return DriveSyncState(user_id=user_id, **kwargs)
 
 
+def chunk_key(user_id: str, item_id: str, generation: int, index: int) -> str:
+    return f"{user_id}:{item_id}:{generation}:{index}"
+
+
+def chunk_to_doc(chunk: DriveChunk) -> Dict[str, Any]:
+    """Every chunk field under its own name; the vector is not part of the chunk."""
+    return {name: _plain(getattr(chunk, name)) for name in CHUNK_FIELDS}
+
+
+def chunk_from_doc(data: Mapping[str, Any]) -> DriveChunk:
+    """Vector, distance and extra fields are ignored."""
+    return DriveChunk(user_id=data["user_id"], item_id=data["item_id"], generation=int(data["generation"]),
+                      index=int(data["index"]), text=data.get("text", ""), char_start=int(data.get("char_start", 0)),
+                      char_end=int(data.get("char_end", 0)), kind=data.get("kind", ""),
+                      content_terms=tuple(data.get("content_terms") or ()))
+
+
 def _chunks(items: Sequence[Any], size: int = RECORD_WRITE_BATCH) -> List[Sequence[Any]]:
     return [items[i:i + size] for i in range(0, len(items), size)]
 
@@ -168,8 +221,9 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
         self._db = db_client
         self._records = db_client.collection(env_config.drive_index_records_collection)
         self._states = db_client.collection(env_config.drive_sync_state_collection)
+        self._chunks_name = env_config.drive_index_chunks_collection   # resolved per call, like a reference
         logger.info(f"📂 DriveIndex repo initialized (records={env_config.drive_index_records_collection}, "
-                    f"state={env_config.drive_sync_state_collection})")
+                    f"chunks={self._chunks_name}, state={env_config.drive_sync_state_collection})")
 
     # -- sync state --------------------------------------------------------------------------
 
@@ -390,6 +444,57 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
                  .order_by("card_rank").order_by("modified_at", direction=firestore.Query.DESCENDING).limit(limit))
         return await self._read(query)
 
+    async def chunk_capped(self, user_id: str, limit: int) -> List[DriveIndexRecord]:
+        """Best card_rank first, then newest modified_at (a missing date last: null is lowest), then item_id (§5.4)."""
+        query = (self._user_query(user_id)
+                 .where(filter=FieldFilter("state", "==", RecordState.METADATA_ONLY.value))
+                 .where(filter=FieldFilter("reason", "==", Reason.USER_CHUNK_CAP.value))
+                 .order_by("card_rank").order_by("modified_at", direction=firestore.Query.DESCENDING)
+                 .order_by("item_id").limit(limit))
+        return await self._read(query)
+
+    def unread_count_queries(self, user_id: str, kinds: AbstractSet[str],
+                             triaged: AbstractSet[str] = frozenset(), pending: Optional[bool] = None) -> List[Any]:
+        """The count queries of `count_unread`: one per unread class — failed, pending without a readable generation,
+        and one per metadata_only reason — each with one `kind in [...]` filter of at most IN_VALUES_MAX kinds, so a
+        query never exceeds Firestore's disjunction limit; the triaged kinds (not also in `kinds`) get the same
+        classes with `triage_verdict == text` (§24.5, review D-M4). Folders are excluded by kind ("folder" is no
+        content kind). Not a port method: the smoke script runs them directly. `pending=True`: only the not-read-yet
+        class (pending without a readable generation, not `card_capped`); `pending=False`: only the could-not-be-read
+        classes (final review F5-2)."""
+        documents = sorted(set(kinds))
+        images = sorted(set(triaged) - set(kinds))
+        verdict = (("triage_verdict", "==", TriageVerdict.TEXT.value),)
+        waiting = (("state", "==", RecordState.PENDING.value), ("indexed_generation", "==", None))
+        unreadable = ([(("state", "==", RecordState.FAILED.value),)]
+                      + [(("state", "==", RecordState.METADATA_ONLY.value), ("reason", "==", reason.value))
+                         for reason in UNREAD_REASONS])
+        if pending is None:
+            classes = unreadable[:1] + [waiting] + unreadable[1:]
+        elif pending:
+            classes = [(*waiting, ("card_capped", "==", False))]   # held by the card cap is not waiting
+        else:
+            classes = unreadable
+        queries = []
+        for wanted, extra in ((documents, ()), (images, verdict)):
+            for part in _chunks(wanted, IN_VALUES_MAX):
+                for filters in classes:
+                    query = self._user_query(user_id)
+                    for field_path, op, value in (*filters, *extra):
+                        query = query.where(filter=FieldFilter(field_path, op, value))
+                    queries.append(query.where(filter=FieldFilter("kind", "in", list(part))))
+        return queries
+
+    async def count_unread(self, user_id: str, kinds: AbstractSet[str],
+                           triaged: AbstractSet[str] = frozenset(), *, pending: Optional[bool] = None) -> int:
+        """Count aggregations over the unread classes (six per 30 kinds, for the documents and for the text images),
+        summed; never a scan. The classes are disjoint (by state, then by reason; a kind in one list only), so the
+        sum counts each record once."""
+        queries = self.unread_count_queries(user_id, kinds, triaged, pending)
+        if not queries:
+            return 0
+        return sum(await asyncio.gather(*(self._count(q) for q in queries)))
+
     async def count_by_state(self, user_id: str) -> Dict[str, int]:
         states = list(RecordState)
         counts = await asyncio.gather(
@@ -461,3 +566,164 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
                 if data and data.get(CARD_VECTOR) is not None:
                     vectors[data["item_id"]] = [float(x) for x in data[CARD_VECTOR]]
         return vectors
+
+    # -- chunks (§3.3, §7.4, §24.6) -------------------------------------------------------------
+
+    @property
+    def _chunk_col(self) -> Any:
+        return self._db.collection(self._chunks_name)
+
+    def _chunk_ref(self, user_id: str, item_id: str, generation: int, index: int) -> Any:
+        return self._chunk_col.document(chunk_key(user_id, item_id, generation, index))
+
+    def _user_chunks(self, user_id: str) -> Any:
+        return self._chunk_col.where(filter=FieldFilter("user_id", "==", user_id))
+
+    async def write_chunks(self, chunks: Sequence[DriveChunk], vectors: Sequence[Sequence[float]]) -> None:
+        if len(chunks) != len(vectors):
+            logger.error(f"[DriveIndex] refused chunk write: {len(chunks)} chunks but {len(vectors)} vectors")
+            raise ValueError(f"{len(chunks)} chunks but {len(vectors)} vectors")
+        pairs = list(zip(chunks, vectors))
+        for part in _chunks(pairs):
+            batch = self._db.batch()
+            for chunk, vector in part:
+                data = chunk_to_doc(chunk)
+                data[CHUNK_VECTOR] = Vector([float(x) for x in vector])
+                batch.set(self._chunk_ref(chunk.user_id, chunk.item_id, chunk.generation, chunk.index), data)
+            await batch.commit()
+
+    async def delete_chunks_except(self, user_id: str, item_id: str, keep_generation: Optional[int]) -> int:
+        """Equality filters only (single-field indexes); the generation is compared here. An item holds at most a
+        few generations of MAX_CHUNKS_PER_FILE chunks: collection runs after every commit (§7.4)."""
+        query = self._user_chunks(user_id).where(filter=FieldFilter("item_id", "==", item_id)).select(["generation"])
+        doomed = [snap.reference for snap in await query.get()
+                  if (snap.to_dict() or {}).get("generation") != keep_generation]
+        await self._delete_refs(doomed)
+        return len(doomed)
+
+    def nearest_chunks_query(self, user_id: str, vector: Sequence[float], limit: int,
+                             kind: Optional[str] = None) -> Any:
+        """The vector query `find_nearest_chunks` runs. Not a port method: the S3 cost script
+        (scripts/infrastructure/drive_chunk_knn_cost.py) runs it with explain options to read its billed reads."""
+        query = self._user_chunks(user_id)
+        if kind is not None:
+            query = query.where(filter=FieldFilter("kind", "==", kind))
+        # as find_nearest_cards: under a projection the distance comes back only when its name is selected too
+        projected = query.select([*STREAM_FIELDS, CHUNK_DISTANCE])
+        return projected.find_nearest(vector_field=CHUNK_VECTOR, query_vector=Vector([float(x) for x in vector]),
+                                      limit=limit, distance_measure=DistanceMeasure.COSINE,
+                                      distance_result_field=CHUNK_DISTANCE)
+
+    async def find_nearest_chunks(self, user_id: str, vector: Sequence[float], limit: int,
+                                  kind: Optional[str] = None) -> List[Tuple[DriveChunk, float]]:
+        hits: List[Tuple[DriveChunk, float]] = []
+        for snap in await self.nearest_chunks_query(user_id, vector, limit, kind).get():
+            data = snap.to_dict()
+            hits.append((chunk_from_doc(data), float(data[CHUNK_DISTANCE])))
+        return hits
+
+    async def find_chunks_by_term(self, user_id: str, term: str, limit: int,
+                                  kind: Optional[str] = None) -> List[DriveChunk]:
+        """One `array_contains` per term, never `array_contains_any`: a shared query returns its first matches by
+        id, so a common term would crowd out a rare one (§24.6, RFC Δ17)."""
+        query = self._user_chunks(user_id)
+        if kind is not None:
+            query = query.where(filter=FieldFilter("kind", "==", kind))
+        query = (query.where(filter=FieldFilter("content_terms", "array_contains", term))
+                 .order_by("item_id").order_by("generation").order_by("index").limit(limit))
+        return [chunk_from_doc(snap.to_dict()) for snap in await query.select(list(STREAM_FIELDS)).get()]
+
+    async def find_next_file_with_term(self, user_id: str, term: str, after_item_id: str,
+                                       kind: Optional[str] = None) -> Optional[DriveChunk]:
+        """The term page's query with a cursor on item_id alone: a cursor shorter than the ordering positions past
+        every document sharing its prefix, so past all of the item's chunks (arbiter R2 S-M1). Same composite index
+        as `find_chunks_by_term`."""
+        query = self._user_chunks(user_id)
+        if kind is not None:
+            query = query.where(filter=FieldFilter("kind", "==", kind))
+        query = (query.where(filter=FieldFilter("content_terms", "array_contains", term))
+                 .order_by("item_id").order_by("generation").order_by("index")
+                 .start_after({"item_id": after_item_id}).limit(1))
+        snaps = await query.select(list(STREAM_FIELDS)).get()
+        return chunk_from_doc(snaps[0].to_dict()) if snaps else None
+
+    async def _get_chunk_docs(self, user_id: str, item_id: str, generation: int, indexes: Sequence[int],
+                              field_paths: List[str]) -> List[Mapping[str, Any]]:
+        wanted = sorted(set(indexes))
+        refs = [self._chunk_ref(user_id, item_id, generation, i) for i in wanted]
+        found: Dict[int, Mapping[str, Any]] = {}
+        for part in _chunks(refs):
+            async for snap in self._db.get_all(part, field_paths=field_paths):
+                data = snap.to_dict() if snap.exists else None
+                if data:
+                    found[int(data["index"])] = data
+        return [found[i] for i in wanted if i in found]
+
+    async def get_chunks(self, user_id: str, item_id: str, generation: int,
+                         indexes: Sequence[int]) -> List[DriveChunk]:
+        docs = await self._get_chunk_docs(user_id, item_id, generation, indexes, list(CHUNK_FIELDS))
+        return [chunk_from_doc(d) for d in docs]
+
+    async def get_chunks_with_vectors(self, user_id: str, item_id: str, generation: int, indexes: Sequence[int], *,
+                                      text: bool = True, terms: bool = True,
+                                      vectors: bool = True) -> List[Tuple[DriveChunk, List[float]]]:
+        skipped = {name for name, wanted in (("text", text), ("content_terms", terms)) if not wanted}
+        paths = [name for name in CHUNK_FIELDS if name not in skipped] + ([CHUNK_VECTOR] if vectors else [])
+        docs = await self._get_chunk_docs(user_id, item_id, generation, indexes, paths)
+        if not vectors:
+            return [(chunk_from_doc(d), []) for d in docs]
+        return [(chunk_from_doc(d), [float(x) for x in d[CHUNK_VECTOR]]) for d in docs if d.get(CHUNK_VECTOR)]
+
+    async def readable_chunk_total(self, user_id: str) -> int:
+        """Σ chunk_count over records with a readable generation: one sum aggregation. An aggregation reads index
+        entries only, so its composite index carries chunk_count (§12.5)."""
+        query = self._user_query(user_id).where(filter=FieldFilter("indexed_generation", ">=", 0))
+        result = await query.sum("chunk_count", alias="n").get()
+        return int(result[0][0].value or 0)
+
+    async def chunks_page(self, user_id: str, after: Optional[Tuple[str, int, int]],
+                          limit: int) -> List[DriveChunk]:
+        query = (self._user_chunks(user_id).order_by("item_id").order_by("generation").order_by("index"))
+        if after is not None:
+            query = query.start_after({"item_id": after[0], "generation": after[1], "index": after[2]})
+        return [chunk_from_doc(snap.to_dict()) for snap in await query.select(list(CHUNK_FIELDS)).limit(limit).get()]
+
+    async def delete_user_chunks(self, user_id: str, limit: int) -> int:
+        snaps = await self._user_chunks(user_id).select([FieldPath.document_id()]).limit(limit).get()
+        await self._delete_refs([snap.reference for snap in snaps])
+        return len(snaps)
+
+    async def _delete_refs(self, refs: Sequence[Any]) -> None:
+        for part in _chunks(refs):
+            batch = self._db.batch()
+            for ref in part:
+                batch.delete(ref)
+            await batch.commit()
+
+
+# Transient on Firestore's side: the same call may succeed later, so it is never one file's failure (§8.2).
+_TRANSIENT = (DeadlineExceeded, ServiceUnavailable, InternalServerError, Aborted, ResourceExhausted)
+# A query whose composite index is missing or still building (final review F4-2): no file's fault, and it does not heal
+# by itself — logged as an error, and systemic for the tick like a transient error, so no file is counted for it.
+_MISSING_INDEX = (FailedPrecondition,)
+
+
+def _store_errors(method: Callable[..., Any]) -> Callable[..., Any]:
+    @functools.wraps(method)
+    async def run(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return await method(*args, **kwargs)
+        except _TRANSIENT as exc:
+            logger.warning(f"[DriveIndex] index store {method.__name__} failed: {type(exc).__name__}: {exc}")
+            raise DriveIndexStoreUnavailable(f"{method.__name__}: {type(exc).__name__}") from exc
+        except _MISSING_INDEX as exc:
+            logger.error(f"[DriveIndex] index store {method.__name__} failed, an index is missing or building: "
+                         f"{type(exc).__name__}: {exc}")
+            # the provider's message names the index to create (the smoke check and the deploy step print it)
+            raise DriveIndexStoreUnavailable(f"{method.__name__}: {type(exc).__name__}: {exc}") from exc
+    return run
+
+
+for _name, _method in list(vars(FirestoreDriveIndexRepository).items()):
+    if not _name.startswith("_") and inspect.iscoroutinefunction(_method):
+        setattr(FirestoreDriveIndexRepository, _name, _store_errors(_method))

@@ -19,6 +19,7 @@ from ..ports.llm_port import (
 from ..domain.llm import FinishReason
 from ..domain.user import PerformanceTier
 from ..domain.exceptions import (
+    LLMAccountError,
     LLMClientError,
     LLMNetworkError,
     LLMRateLimitError,
@@ -27,6 +28,18 @@ from ..domain.exceptions import (
     LLMUnavailableError,
 )
 from ..utils.logger import logger
+
+
+def _is_account_error(e: Any) -> bool:
+    """Whether a 4xx is about the account, not the request (LLMAccountError). Anthropic sends an exhausted credit
+    balance as HTTP 400 ``invalid_request_error`` — the status and type of a request refused for its content — so
+    the message decides; ``billing_error`` is the account by type. Read from the SDK's ``.type`` and error body."""
+    if getattr(e, "type", None) == "billing_error":
+        return True
+    body = getattr(e, "body", None)
+    error = body.get("error") if isinstance(body, dict) else None
+    message = error.get("message") if isinstance(error, dict) else None
+    return "credit balance" in (message if isinstance(message, str) else str(e)).lower()
 
 
 def _strip_nullable(schema: Any) -> Any:
@@ -118,6 +131,22 @@ def _make_strict(schema: Any) -> Any:
     if isinstance(schema, list):
         return [_make_strict(i) for i in schema]
     return schema
+
+
+def _drop_document_citations(claude_messages: List[Dict[str, Any]]) -> None:
+    """Remove `citations` from every document block we built, including one nested in a tool_result: Anthropic
+    rejects citations next to output_config.format with a 400. raw_content blocks (SDK objects) are left alone."""
+    for msg in claude_messages:
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            nested = block.get("content") if block.get("type") == "tool_result" else None
+            for doc in [block, *(nested if isinstance(nested, list) else [])]:
+                if isinstance(doc, dict) and doc.get("type") == "document":
+                    doc.pop("citations", None)
 
 
 class ClaudeAdapter(LLMPort):
@@ -348,6 +377,9 @@ class ClaudeAdapter(LLMPort):
                 "schema": _make_strict(_nullable_to_union(response_schema)),
             }
             create_kwargs["output_config"] = _oc
+            # Citations and output_config.format are mutually exclusive (HTTP 400): a PDF read for
+            # structured output (the drive reader, USER_DRIVE_INDEXING_RFC §24.2) goes without them.
+            _drop_document_citations(claude_messages)
 
         # Always stream: Anthropic SDK requires streaming for requests >10 min
         # (multi-turn tool loops like consolidation regularly exceed this threshold).
@@ -419,9 +451,13 @@ class ClaudeAdapter(LLMPort):
                     # the persistent case, rather than masking it.
                     if status == 400 and "Grammar compilation timed out" in str(e):
                         raise LLMServerError(str(e), http_status=status) from e
-                    # 4xx (non-429, e.g. 400 credit-balance / bad request) → deterministic
-                    # client error. Not a failover trigger; surfaces immediately + alerts.
+                    # 4xx (non-429) → deterministic client error. Not a failover trigger;
+                    # surfaces immediately + alerts. An account-level one (credit balance,
+                    # billing) is LLMAccountError: the same status as a refusal of the
+                    # request, but not about the request (drive indexer: an outage).
                     if isinstance(status, int) and 400 <= status < 500:
+                        if _is_account_error(e):
+                            raise LLMAccountError(str(e), http_status=status) from e
                         raise LLMClientError(str(e), http_status=status) from e
                     raise
 
@@ -577,6 +613,8 @@ class ClaudeAdapter(LLMPort):
                 if isinstance(status, int) and 500 <= status < 600:
                     raise LLMServerError(str(e), http_status=status) from e
                 if isinstance(status, int) and 400 <= status < 500:
+                    if _is_account_error(e):
+                        raise LLMAccountError(str(e), http_status=status) from e
                     raise LLMClientError(str(e), http_status=status) from e
                 raise
 

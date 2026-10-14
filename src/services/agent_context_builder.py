@@ -23,6 +23,10 @@ __all__ = ["AgentExecutionContext", "AgentContextBuilder"]
 class AgentProviderStrategy:
     """
     Defines default providers and allowed overrides for different agent types.
+
+    Keys per entry: `default_provider`, `allowed_providers`, `required_capabilities`, `fallback` (the provider
+    BaseAgent._call_llm fails over to on a FAILOVER_TRIGGER_TYPES error, or None) and, optionally, `fallback_tier`
+    (the PerformanceTier the fallback's model is resolved at; absent = the primary's tier).
     """
     STRATEGIES = {
         "router": {
@@ -185,6 +189,30 @@ class AgentProviderStrategy:
             "allowed_providers": ["grok", "gemini", "claude", "openai"],
             "required_capabilities": [],
             "fallback": "gemini"
+        },
+        # Drive indexer agents (USER_DRIVE_INDEXING_RFC §24.2, D7 rev 3.17): a PDF window or an image in, structured
+        # JSON out. The primary is a configuration switch; the pick is checked live on the owner's files. Fallback:
+        # Gemini Flash (owner decision 2026-10-13) — `fallback_tier` resolves it at BALANCED (gemini-3.8-flash), not
+        # at the agents' ECO tier, which on Gemini is flash-lite. Only when both fail is it an outage that defers
+        # model work (§24.8). An account-level 4xx on the primary is not failed over (LLMClientError).
+        # The reader defaults to OpenAI (gpt-6-luna at ECO) with triage: one provider for both drive model calls,
+        # the one the live check (2026-10-13) found exact.
+        "drive_reader": {
+            "default_provider": "openai",
+            "allowed_providers": ["claude", "openai"],   # gemini is the fallback only, never a primary
+            "required_capabilities": ["vision"],
+            "fallback": "gemini",
+            "fallback_tier": PerformanceTier.BALANCED,
+        },
+        # Triage defaults to OpenAI (gpt-6-luna at ECO): in the live check (2026-10-13) Claude Haiku 5.5 shifted the
+        # captions of a 16-image batch by one image in 1 call of 5 (11 captions on the wrong files); Luna shifted
+        # none in 8, at a third of the cost.
+        "drive_triage": {
+            "default_provider": "openai",
+            "allowed_providers": ["claude", "openai"],   # gemini is the fallback only, never a primary
+            "required_capabilities": ["vision"],
+            "fallback": "gemini",
+            "fallback_tier": PerformanceTier.BALANCED,
         },
         # Image generation: text-LLM axis (prompt-crafting call) — see
         # resolve_image_generation_context() below for the image-rendering axis,
@@ -375,7 +403,9 @@ class AgentContextBuilder:
             try:
                 fb_raw = self.registry.get(fallback_name)
                 fallback_llm = self._alerting_proxy_factory(fb_raw) if self._alerting_proxy_factory else fb_raw
-                fallback_model_name = fb_raw.get_model_for_tier(tier)
+                # A strategy may pin the fallback's tier (the drive agents: Gemini Flash, not ECO's flash-lite);
+                # otherwise the fallback runs at the primary's tier.
+                fallback_model_name = fb_raw.get_model_for_tier(strategy.get("fallback_tier") or tier)
                 resolved_fallback_name = fallback_name
             except Exception:
                 logger.warning(

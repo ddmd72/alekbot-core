@@ -3,13 +3,13 @@ enumeration to settle a record whose parent lookup keeps failing, so it is retri
 a transient failure; a record parked under an unresolved parent holds no card and does not block an upgrade."""
 from src.domain import drive_card
 from src.domain import drive_index_planner as planner
-from src.domain.drive_index import DriveChange, DriveIndexRecord, Priority, RecordState, Scope
+from src.domain.drive_index import CARD_VERSION, CURRENT_VERSIONS, POLICY_VERSION, DriveChange, DriveIndexRecord, Priority, RecordState, Scope
 from src.domain.drive_index_params import MAX_ATTEMPTS, RETRY_CAP
 from src.domain.user_drive import DriveAccessDenied, DriveItemNotFoundError
 from src.services import drive_indexing_service as svc_mod
 
 from .drive_index_fakes import ROOT
-from .test_drive_indexing_service import World
+from .test_drive_indexing_service import EXTRACTOR_VERSIONS, World
 
 
 async def _onboarded():
@@ -32,7 +32,7 @@ class TestTransientParentLookupKeepsRetrying:
     async def test_exhausted_lookups_retry_at_the_cap_and_resolve_once_the_provider_recovers(self):
         w = await _onboarded()
         w.drive.items["far"] = DriveChange(item_id="far", name="Far", parent_id=ROOT, is_folder=True)
-        await _seed_unresolved(w, "kid", "plan.pdf", "far")
+        await _seed_unresolved(w, "kid", "plan.doc", "far")   # index-only: a kind with no download
         lookups = []
         failing = {"on": True}
         real_get = w.drive.get_change
@@ -112,9 +112,9 @@ class TestParkedRecords:
         """A card bump re-plans the children under their unresolved parent; each is parked, and its card goes."""
         w = World(page_size=2000)
         f = await _photos_waiting_for_their_probe(w)
-        monkeypatch.setattr(drive_card, "CARD_VERSION", 2)
-        monkeypatch.setattr(planner, "CARD_VERSION", 2)
-        monkeypatch.setattr(svc_mod, "CURRENT_VERSIONS", {"policy": 1, "card": 2, "geo_table": 1})
+        monkeypatch.setattr(drive_card, "CARD_VERSION", CARD_VERSION + 1)
+        monkeypatch.setattr(planner, "CARD_VERSION", CARD_VERSION + 1)
+        monkeypatch.setattr(svc_mod, "CURRENT_VERSIONS", {**CURRENT_VERSIONS, "card": CARD_VERSION + 1})
         await w.settle(max_ticks=100)
         kids = [r for r in w.repo.records.values() if r.parent_id == f]
         parked = [r for r in kids if r.state is RecordState.UNRESOLVED and r.due_at is None]
@@ -125,8 +125,8 @@ class TestParkedRecords:
     async def test_a_stale_parked_record_does_not_block_an_upgrade(self, monkeypatch):
         w = World(page_size=2000)
         f = await _photos_waiting_for_their_probe(w)
-        target = {"policy": 2, "card": 1, "geo_table": 1}
-        monkeypatch.setattr(planner, "POLICY_VERSION", 2)
+        target = {**CURRENT_VERSIONS, "policy": POLICY_VERSION + 1}
+        monkeypatch.setattr(planner, "POLICY_VERSION", POLICY_VERSION + 1)
         monkeypatch.setattr(svc_mod, "CURRENT_VERSIONS", target)
         parked = DriveIndexRecord(user_id="u", item_id="zz_parked", parent_id=f, name="late.pdf", kind="pdf",
                                   scope=Scope.UNRESOLVED, state=RecordState.UNRESOLVED, policy_version=1,
@@ -134,4 +134,4 @@ class TestParkedRecords:
         await w.repo.upsert_records([parked])
         await w.settle(max_ticks=100)
         assert planner.stale_versions(w.rec("zz_parked")) and w.rec("zz_parked").due_at is None
-        assert dict((await w.repo.get_sync_state("u")).applied_versions) == target
+        assert dict((await w.repo.get_sync_state("u")).applied_versions) == {**target, **EXTRACTOR_VERSIONS}

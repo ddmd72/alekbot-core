@@ -4,7 +4,7 @@ from src.domain import drive_index_planner as planner
 from src.domain.drive_index import CURRENT_VERSIONS
 from src.services import drive_indexing_service as svc_mod
 
-from .test_drive_indexing_service import World
+from .test_drive_indexing_service import EXTRACTOR_VERSIONS, World
 
 
 async def test_a_keyer_bump_re_keys_every_record_without_re_embedding(monkeypatch):
@@ -17,7 +17,7 @@ async def test_a_keyer_bump_re_keys_every_record_without_re_embedding(monkeypatc
     monkeypatch.setattr(svc_mod, "CURRENT_VERSIONS", target)
     w.emb.calls.clear()
     await w.settle()
-    assert dict((await w.repo.get_sync_state("u")).applied_versions) == target
+    assert dict((await w.repo.get_sync_state("u")).applied_versions) == {**target, **EXTRACTOR_VERSIONS}
     for item_id in names:
         rec = w.rec(item_id)
         assert rec.name_tokens == (f"v2:{rec.name}",) and rec.name_keys_version == target["name_keys"]

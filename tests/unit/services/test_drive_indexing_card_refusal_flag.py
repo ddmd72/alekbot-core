@@ -1,5 +1,6 @@
 """A terminally refused card is a flag on the record, not a record state (USER_DRIVE_INDEXING_RFC §3.4, §8.2): the
 state and reason stay what the structure says, and the refusal binds the refused card text only."""
+from src.domain import drive_card
 from src.domain import drive_index_planner as planner
 from src.domain.drive_index import Reason, RecordState
 from src.domain.drive_index_params import MAX_ATTEMPTS, RETRY_CAP
@@ -59,7 +60,7 @@ async def test_a_card_builder_bump_retries_and_converges(monkeypatch):
         await w.tick()
         per_tick.append(len(pages) - before)
     rec = w.rec(bad)
-    assert len(refused) == MAX_ATTEMPTS and rec.card_refused and rec.card_version == 2
+    assert len(refused) == MAX_ATTEMPTS and rec.card_refused and rec.card_version == drive_card.CARD_VERSION
     assert rec.state is RecordState.METADATA_ONLY and not planner.stale_versions(rec)
     assert dict((await w.repo.get_sync_state("u")).applied_versions) == target
     assert per_tick == [0] * 6

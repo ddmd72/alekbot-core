@@ -8,6 +8,28 @@ def run_command(cmd):
     result = subprocess.run(cmd, capture_output=True, text=True)
     return result
 
+def apply_field_override(override, project_id, database_id):
+    """Exempt one field from single-field indexing; any other override is refused, never half-applied."""
+    collection, path = override.get("collectionGroup"), override["fieldPath"]
+    if override.get("indexes") != []:
+        print(f"❌ Unsupported field override for {collection}.{path}: only an exemption (\"indexes\": []) is applied")
+        return False
+    result = run_command([
+        "gcloud", "firestore", "indexes", "fields", "update", path,
+        f"--collection-group={collection}",
+        f"--project={project_id}",
+        f"--database={database_id}",
+        "--disable-indexes",
+        "--async",
+    ])
+    if result.returncode == 0:
+        print(f"✅ Single-field indexes disabled for {collection}.{path}")
+        return True
+    print(f"❌ Error exempting {collection}.{path}:")
+    print(result.stderr)
+    return False
+
+
 def deploy_indexes(file_path, project_id, database_id="us-production"):
     if not os.path.exists(file_path):
         print(f"❌ File not found: {file_path}")
@@ -21,6 +43,11 @@ def deploy_indexes(file_path, project_id, database_id="us-production"):
     failures = []
     for idx in indexes:
         collection = idx.get("collectionGroup")
+        if "fieldPath" in idx and "fields" not in idx:
+            # A single-field override (Firebase's fieldOverrides entry): `"indexes": []` exempts the field.
+            if not apply_field_override(idx, project_id, database_id):
+                failures.append(f"{collection}.{idx['fieldPath']}")
+            continue
         fields = idx.get("fields", [])
         query_scope = idx.get("queryScope", "COLLECTION").lower()
 

@@ -191,8 +191,9 @@ class TestUnread:
         assert not is_unread(rec("k", reason=Reason.KIND_NOT_ADMITTED, kind="image"), admitted)
         assert not is_unread(rec("d", folder=True), admitted)
 
-    def test_slice_one_admits_nothing_so_nothing_is_unread(self):
-        assert not is_unread(rec("p", state=RecordState.FAILED))
+    def test_the_default_is_the_live_admission(self):   # since the flip (§24.1) a failed PDF is unread
+        assert is_unread(rec("p", state=RecordState.FAILED))
+        assert not is_unread(rec("c", state=RecordState.FAILED, kind="code"))
 
 
 class TestWrapper:
@@ -237,7 +238,9 @@ class TestRender:
         text = render_results(DriveSearchResult(status=STATUS_OK, envelope=env,
                                                 request=DriveSearchRequest(query="lease")))
         assert text.startswith(REFERENCE_REMINDER)
-        assert "do not say a file does not exist" in text
+        # The building fact stays; the standing guidance moved to Smart's protocol token (§10.4, §24.10)
+        assert "The index is still being built: some files and folders may not be in it yet." in text
+        assert "do not say a file does not exist" not in text
         assert "Only file and folder names and metadata" in text
         assert "as of 2026-10-11 12:00 UTC" in text
         assert "reconnect the drive" in text and "3 documents could not be read" in text

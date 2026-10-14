@@ -51,6 +51,19 @@ class LLMClientError(LLMError):
     """
 
 
+class LLMAccountError(LLMClientError):
+    """A 4xx about the provider account, not the request: credit balance exhausted, billing inactive, a hard
+    billing limit reached.
+
+    Status alone cannot tell it apart — Anthropic sends an exhausted credit balance as HTTP 400
+    ``invalid_request_error``, the same status and type as a request refused for its content — so the adapter,
+    the only layer that sees the provider's error body, recognises it by the provider's error type, code or
+    message. Everywhere else it is an ``LLMClientError`` (no failover, ``AlertingLLMProxy`` alerts). Where a 400
+    would be read as a refusal of the input (the drive indexer, USER_DRIVE_INDEXING_RFC §24.14) it is an outage
+    for everyone instead. An exhausted OpenAI quota arrives as HTTP 429 and stays ``LLMRateLimitError``.
+    """
+
+
 class LLMServerError(LLMError):
     """5xx HTTP response that is NOT 503.
 

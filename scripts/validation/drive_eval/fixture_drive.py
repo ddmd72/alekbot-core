@@ -1,12 +1,19 @@
 """
 FixtureDrive — a UserDrivePort over the eval manifest (tests/fixtures/drive_eval/tree.json).
 
-Serves the indexing reads only (USER_DRIVE_INDEXING_RFC §4). The first `get_changes` call pages a full
+Read-only (USER_DRIVE_INDEXING_RFC §4). The first `get_changes` call pages a full
 enumeration in parent-first order; the cursor it ends with yields delta rounds with no real change from
 then on. As in S0a, every round carries the App Folder root itself first. Ids are a hash of the path, so
 they are stable across runs and recorded bars always mean the same items. Facets keep Graph's raw shape
 (S0e: `photo` may be `{}`, audio has no facet) with `file.hashes` lifted to `hashes`, where the domain
 reads it (`drive_card.content_hash_of`). Folder listings are paged like Graph's (`limit`, opaque cursor).
+
+File bytes (Slice 2+4, §8.1, §24.5): an item's `content` names a file under the manifest's folder
+(tests/fixtures/drive_eval/files/, made by make_fixtures.py) and its size becomes that file's length; `thumbnail` names
+the provider rendition served for every size (an image item's own bytes when it has none). A generate entry's
+`content_template` names a template in fixture_texts, rendered per item (a PDF for `.pdf` names, UTF-8 text
+otherwise), so the bulk folders are never committed. An item without bytes downloads as an empty file. The Step 1
+reads (`get_root`, `get_item`, `list_children`, `download`) serve the Smart dry run (G3).
 """
 from __future__ import annotations
 
@@ -16,13 +23,16 @@ import json
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 from src.domain.drive_index import DriveChange, DriveChanges, DriveChildrenPage
 from src.domain.user_drive import (
-    DriveConnection, DriveItem, DriveItemNotFoundError, DriveResyncRequired,
+    DriveConnection, DriveFileTooLarge, DriveItem, DriveItemNotFoundError, DriveResyncRequired,
 )
 from src.ports.user_drive_port import UserDrivePort
+
+from . import fixture_texts
+from .mini_pdf import text_pdf
 
 ROOT_ID = "fx-root"
 DRIVE_ID = "fx-drive"
@@ -32,6 +42,21 @@ _DELTA = "fx:delta"
 _CHILDREN = "fx:children:"
 _ROOT_CHANGE = DriveChange(item_id=ROOT_ID, name="root", is_folder=True)   # S0a: in every round, no `root` facet
 _RAW_FACETS = ("photo", "location", "image", "video", "audio", "remoteItem", "package", "malware")
+
+
+# content_template name -> the template text; `{n}` is the generated item's number
+TEMPLATES: Mapping[str, str] = {
+    "vault_note": fixture_texts.VAULT_NOTE_TEMPLATE,
+    "invoice_2024": fixture_texts.INVOICE_2024_TEMPLATE,
+    "g3_injected_note": fixture_texts.G3_INJECTED_NOTE_TEMPLATE,   # tree_g3.json only (final review F3-2)
+}
+
+
+def render_template(name: str, n: int, file_name: str) -> bytes:
+    text = TEMPLATES[name].format(n=n)
+    if file_name.lower().endswith(".pdf"):
+        return text_pdf(text.splitlines())
+    return text.encode("utf-8")
 
 
 def item_id_for(path: str) -> str:
@@ -63,20 +88,26 @@ def _facets(raw: Mapping[str, Any]) -> Dict[str, Any]:
 
 
 class FixtureDrive(UserDrivePort):
-    def __init__(self, manifest: Mapping[str, Any], page_size: int = 200) -> None:
+    def __init__(self, manifest: Mapping[str, Any], page_size: int = 200, base_dir: Optional[Path] = None) -> None:
         self.page_size = page_size
+        self._base_dir = base_dir
         self._items: Dict[str, DriveChange] = {}
         self._paths: Dict[str, str] = {}                 # item_id -> path
+        self._content: Dict[str, bytes] = {}             # item_id -> file bytes
+        self._thumbnails: Dict[str, bytes] = {}          # item_id -> provider rendition
+        self.downloads: List[str] = []
+        self.thumbnail_calls: List[Tuple[str, str]] = []
         for entry in manifest.get("items", []):
             self._add(entry["path"], bool(entry.get("folder")), entry)
         for gen in manifest.get("generate", []):
             for n in range(int(gen["count"])):
-                path = f"{gen['folder']}/{gen['pattern'].format(n=n)}"
-                self._add(path, False, {
+                name = gen["pattern"].format(n=n)
+                template = gen.get("content_template")
+                self._add(f"{gen['folder']}/{name}", False, {
                     "mime": gen.get("mime", ""), "size": gen.get("size", 0),
                     "fs_modified": gen.get("fs_modified", DEFAULT_FS_MODIFIED),
                     "facets": _format_strings(gen.get("facets_template") or {}, n),
-                })
+                }, render=(lambda t=template, k=n, f=name: render_template(t, k, f)) if template else None)
         counts: Dict[str, int] = {}
         for change in self._items.values():
             counts[change.parent_id] = counts.get(change.parent_id, 0) + 1
@@ -87,7 +118,12 @@ class FixtureDrive(UserDrivePort):
 
     @classmethod
     def from_file(cls, path: Path, page_size: int = 200) -> "FixtureDrive":
-        return cls(json.loads(path.read_text(encoding="utf-8")), page_size)
+        return cls(json.loads(path.read_text(encoding="utf-8")), page_size, base_dir=path.parent)
+
+    def _read(self, relative: str) -> bytes:
+        if self._base_dir is None:
+            raise ValueError(f"{relative}: a manifest with file bytes needs base_dir (FixtureDrive.from_file)")
+        return (self._base_dir / relative).read_bytes()
 
     # -- manifest -> observations ----------------------------------------------------------------
 
@@ -99,16 +135,26 @@ class FixtureDrive(UserDrivePort):
             self._add(path, True, {})
         return item_id
 
-    def _add(self, path: str, folder: bool, entry: Mapping[str, Any]) -> None:
+    def _add(self, path: str, folder: bool, entry: Mapping[str, Any],
+             render: Optional[Callable[[], bytes]] = None) -> None:
         path = path.strip("/")
         parent_path, _, name = path.rpartition("/")
         parent_id = self._ensure_folder(parent_path)
         item_id = item_id_for(path)
         modified = _parse_dt(entry.get("fs_modified") or DEFAULT_FS_MODIFIED)
+        size = int(entry.get("size", 0))
+        if not folder and entry.get("content"):
+            self._content[item_id] = self._read(entry["content"])
+        elif not folder and render is not None:
+            self._content[item_id] = render()
+        if item_id in self._content:
+            size = len(self._content[item_id])
+        if not folder and entry.get("thumbnail"):
+            self._thumbnails[item_id] = self._read(entry["thumbnail"])
         self._paths[item_id] = path
         self._items[item_id] = DriveChange(
             item_id=item_id, parent_id=parent_id, name=name, is_folder=folder,
-            size_bytes=0 if folder else int(entry.get("size", 0)),
+            size_bytes=0 if folder else size,
             mime_type="" if folder else str(entry.get("mime", "")),
             content_version="" if folder else f"ctag-{item_id}",
             modified_at=modified, fs_modified_at=modified, facets=_facets(entry.get("facets") or {}),
@@ -121,6 +167,30 @@ class FixtureDrive(UserDrivePort):
 
     def paths(self) -> List[str]:
         return [self._paths[i] for i in self._order]
+
+    def has_content(self, path: str) -> bool:
+        return item_id_for(path) in self._content
+
+    def content_sha256(self) -> str:
+        """One hash over every byte the drive serves (files, renditions, rendered templates), keyed by path: the bars
+        pin it, so a regenerated fixture or an edited template gives no verdict until the bars are recorded again."""
+        digest = hashlib.sha256()
+        for item_id in self._order:
+            for label, store in (("c", self._content), ("t", self._thumbnails)):
+                if item_id in store:
+                    digest.update(f"{label}:{self._paths[item_id]}:".encode("utf-8"))
+                    digest.update(hashlib.sha256(store[item_id]).digest())
+        return digest.hexdigest()
+
+    def _item(self, item_id: str) -> DriveItem:
+        if item_id == ROOT_ID:
+            return DriveItem(item_id=ROOT_ID, name="root", path="", is_folder=True)
+        change = self._items.get(item_id)
+        if change is None:
+            raise DriveItemNotFoundError(item_id)
+        return DriveItem(item_id=item_id, name=change.name, path=self._paths[item_id], is_folder=change.is_folder,
+                         size_bytes=change.size_bytes, mime_type=change.mime_type, modified_at=change.modified_at,
+                         child_count=change.child_count or 0)
 
     # -- indexing reads (USER_DRIVE_INDEXING_RFC §4) -------------------------------------------
 
@@ -157,7 +227,7 @@ class FixtureDrive(UserDrivePort):
     async def flag_reconnect(self, user_id: str) -> bool:
         return False
 
-    # -- Step 1 surface: not used by indexing or search -----------------------------------------
+    # -- Step 1 surface: reads for the Smart dry run (G3); writes are refused ---------------------
 
     @property
     def display_name(self) -> str:
@@ -167,36 +237,67 @@ class FixtureDrive(UserDrivePort):
         return True
 
     async def disconnect(self, user_id: str) -> None:
-        raise NotImplementedError("the eval drive serves indexing reads only")
+        raise NotImplementedError("the eval drive is read-only")
 
     async def get_root(self, user_id: str) -> DriveItem:
-        raise NotImplementedError("the eval drive serves indexing reads only")
+        return self._item(ROOT_ID)
 
     async def get_item(self, user_id: str, item_id: str) -> DriveItem:
-        raise NotImplementedError("the eval drive serves indexing reads only")
+        return self._item(item_id)
 
     async def list_children(self, user_id: str, folder_id: str) -> List[DriveItem]:
-        raise NotImplementedError("the eval drive serves indexing reads only")
+        if folder_id != ROOT_ID and folder_id not in self._items:
+            raise DriveItemNotFoundError(folder_id)
+        kids = sorted((c for c in self._items.values() if c.parent_id == folder_id), key=lambda c: c.name)
+        return [self._item(c.item_id) for c in kids]
 
     async def search(self, user_id: str, query: str, limit: int) -> List[DriveItem]:
-        raise NotImplementedError("the eval drive serves indexing reads only")
+        raise NotImplementedError("the eval drive is read-only")
 
     async def download(self, user_id: str, item_id: str) -> bytes:
-        raise NotImplementedError("the eval drive serves indexing reads only")
+        if item_id not in self._items:
+            raise DriveItemNotFoundError(item_id)
+        return self._content.get(item_id, b"")
 
     async def upload(self, user_id: str, parent_id: str, filename: str, data: bytes,
                      content_type: str) -> DriveItem:
-        raise NotImplementedError("the eval drive serves indexing reads only")
+        raise NotImplementedError("the eval drive is read-only")
 
     async def replace_content(self, user_id: str, item_id: str, data: bytes, content_type: str) -> DriveItem:
-        raise NotImplementedError("the eval drive serves indexing reads only")
+        raise NotImplementedError("the eval drive is read-only")
 
     async def move(self, user_id: str, item_id: str, new_parent_id: Optional[str] = None,
                    new_name: Optional[str] = None) -> DriveItem:
-        raise NotImplementedError("the eval drive serves indexing reads only")
+        raise NotImplementedError("the eval drive is read-only")
 
     async def create_folder(self, user_id: str, parent_id: str, name: str) -> DriveItem:
-        raise NotImplementedError("the eval drive serves indexing reads only")
+        raise NotImplementedError("the eval drive is read-only")
 
     async def delete(self, user_id: str, item_id: str) -> None:
-        raise NotImplementedError("the eval drive serves indexing reads only")
+        raise NotImplementedError("the eval drive is read-only")
+
+    # -- content for the index (USER_DRIVE_INDEXING_RFC §8.1, §24.5) -----------------------------------
+
+    async def download_to_file(self, user_id: str, item_id: str, dest_path: str, max_bytes: int) -> int:
+        """As a cut stream: what fits under `max_bytes` is written, then DriveFileTooLarge (§5.4)."""
+        self.downloads.append(item_id)
+        if item_id not in self._items or self._items[item_id].is_folder:
+            raise DriveItemNotFoundError(item_id)
+        data = self._content.get(item_id, b"")
+        with open(dest_path, "wb") as fh:
+            fh.write(data[:max_bytes])
+        if len(data) > max_bytes:
+            raise DriveFileTooLarge(max_bytes)
+        return len(data)
+
+    async def get_thumbnail(self, user_id: str, item_id: str, size: str) -> Optional[bytes]:
+        """The same rendition for every size: the fixture's pictures are already small (S0f, S0g)."""
+        self.thumbnail_calls.append((item_id, size))
+        change = self._items.get(item_id)
+        if change is None:
+            raise DriveItemNotFoundError(item_id)
+        if item_id in self._thumbnails:
+            return self._thumbnails[item_id]
+        if change.mime_type.startswith("image/") and item_id in self._content:
+            return self._content[item_id]
+        return None

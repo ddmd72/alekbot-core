@@ -21,6 +21,10 @@ fi
 jq -c '.[]' "$CONFIG_FILE" | while read -r index; do
     COLLECTION=$(echo "$index" | jq -r '.collectionGroup')
     FIELDS=$(echo "$index" | jq -c '.fields')
+    if [[ "$FIELDS" == "null" ]]; then
+        echo "⏭️  Skipping a single-field override for $COLLECTION (make deploy-indexes applies it)"
+        continue
+    fi
     
     echo "---------------------------------------------------"
     echo "Processing index for collection: $COLLECTION"

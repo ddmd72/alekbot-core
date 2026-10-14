@@ -250,12 +250,12 @@ async def test_convert_input_vision_base64():
 
 @pytest.mark.asyncio
 async def test_convert_input_pdf_upload():
-    """PDF files are uploaded via Files API and referenced by file_id."""
-    adapter = OpenAIAdapter(api_key="test-key")
+    """PDF files go inline as input_file with a filename and base64 data — no Files API upload
+    (USER_DRIVE_INDEXING_RFC §24.2: the uploaded files were never deleted)."""
+    import base64
 
-    mock_file = MagicMock()
-    mock_file.id = "file-test123"
-    adapter.client.files.create = AsyncMock(return_value=mock_file)
+    adapter = OpenAIAdapter(api_key="test-key")
+    adapter.client.files.create = AsyncMock()
 
     messages = [Message(
         role="user",
@@ -269,8 +269,12 @@ async def test_convert_input_pdf_upload():
         result = await adapter._convert_input(messages)
 
     assert len(result) == 1
-    assert result[0]["content"][0]["type"] == "input_file"
-    assert result[0]["content"][0]["file_id"] == "file-test123"
+    part = result[0]["content"][0]
+    assert part["type"] == "input_file"
+    assert part["filename"] == "test.pdf"
+    assert part["file_data"] == "data:application/pdf;base64," + base64.b64encode(b"fake pdf").decode()
+    assert "file_id" not in part
+    adapter.client.files.create.assert_not_called()
 
 
 @pytest.mark.asyncio

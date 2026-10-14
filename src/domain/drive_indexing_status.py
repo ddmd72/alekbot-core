@@ -1,7 +1,8 @@
 """
 DriveIndexingStatus — what the Cabinet shows about a user's drive index (USER_DRIVE_INDEXING_RFC §6):
-counters, freshness, the error category. Built by DriveSearchService.indexing_status, so the Cabinet and
-search derive `building` and `index_full` one way. Pure value object.
+counters, freshness, the error category, and from Slice 2+4 the readable chunks and this month's model usage against
+its budgets (§24.7). Built by DriveSearchService.indexing_status, so the Cabinet and search derive `building` and
+`index_full` one way. Pure value object.
 """
 from __future__ import annotations
 
@@ -23,6 +24,9 @@ class DriveIndexingStatus:
     building: bool = False
     access_lost_at: Optional[datetime] = None
     purging: bool = False
+    readable_chunks: int = 0                  # chunks of the generations search may return (§3.3, §7.4)
+    model_pages_month: int = 0                # pages sent to the reader this calendar month (§24.7)
+    triage_images_month: int = 0              # images sent to triage this calendar month (§24.7)
 
     def index_kept(self, now: datetime) -> bool:
         """A stored index exists and is inside the access-loss grace period (§7.7): the only time the Cabinet

@@ -8,7 +8,7 @@ import hashlib
 from datetime import datetime, timezone
 from typing import Any, List, Mapping, Optional, Tuple
 
-from .drive_index import CARD_VERSION, DriveChange, DriveIndexRecord, Reason, RecordState, Scope
+from .drive_index import CARD_VERSION, DocumentBrief, DriveChange, DriveIndexRecord, Reason, RecordState, Scope
 from .drive_index_policy import is_generated_dir, searchable
 
 _KIND_LABEL = {
@@ -40,6 +40,11 @@ def photo_location(facets: Mapping[str, Any]) -> Optional[Tuple[float, float]]:
     if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
         return float(lat), float(lon)
     return None
+
+
+def taken_at(facets: Mapping[str, Any]) -> Optional[datetime]:
+    """A photo's taken date, from its `photo` facet."""
+    return _parse_dt((facets.get("photo") or {}).get("takenDateTime"))
 
 
 def effective_date(change: DriveChange, fallback: datetime) -> datetime:
@@ -99,12 +104,37 @@ def _opaque_label(rec: DriveIndexRecord) -> str:
     return "generated files" if is_generated_dir(rec.name) else "repository"
 
 
+def _brief_segments(brief: Optional[DocumentBrief]) -> List[str]:
+    if brief is None:
+        return []
+    out = [p for p in (brief.doc_type, brief.description) if p]
+    if brief.doc_date is not None:
+        out.append(brief.doc_date.date().isoformat())
+    if brief.parties:
+        out.append("parties: " + ", ".join(brief.parties))
+    if brief.amount:
+        out.append(brief.amount)
+    return out
+
+
+def repository_root(rec: DriveIndexRecord) -> bool:
+    """A folder made opaque by a marker child (`.git`, `pyvenv.cfg`): its card reads `repository` (§5.2, RFC Δ33)."""
+    return (rec.is_folder and rec.scope is Scope.OPAQUE_ROOT and rec.reason is Reason.OPAQUE_ROOT
+            and not is_generated_dir(rec.name))
+
+
 def card_text(rec: DriveIndexRecord) -> str:
+    """§24.4: `name | kind | brief | caption | key facets | lead text`, each content segment only when present, so a
+    record without them keeps its Slice 1 text and hash."""
     if rec.is_folder:
+        if repository_root(rec) and rec.lead_text:
+            return f"{rec.name} | repository | {rec.lead_text}"   # its README's lead text (§5.2)
         if rec.scope is Scope.OPAQUE_ROOT:
             return f"{rec.name} | {_opaque_label(rec)}"
         return f"{rec.name} | folder"
-    return " | ".join([rec.name, _KIND_LABEL.get(rec.kind, "file"), *_key_facets(rec)])
+    return " | ".join([rec.name, _KIND_LABEL.get(rec.kind, "file"), *_brief_segments(rec.brief),
+                       *([rec.caption] if rec.caption else []), *_key_facets(rec),
+                       *([rec.lead_text] if rec.lead_text else [])])
 
 
 def card_hash(rec: DriveIndexRecord) -> str:

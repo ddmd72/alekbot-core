@@ -17,7 +17,8 @@ from src.adapters.firestore_drive_index_repo import (
     state_to_doc,
 )
 from src.domain.drive_index import (
-    ContentClass, DriveIndexRecord, DriveSyncState, EpochPhase, ErrorCategory, Reason, RecordState, Scope,
+    ContentClass, DocumentBrief, DriveIndexRecord, DriveSyncState, EpochPhase, ErrorCategory, Reason, RecordState,
+    Scope, TriageVerdict,
 )
 
 T = datetime(2026, 10, 11, 12, 30, 15, 123456, tzinfo=timezone.utc)
@@ -40,7 +41,14 @@ def full_record() -> DriveIndexRecord:
         attempt_started_at=T - timedelta(minutes=1), probe_pending=True, rescope_pending=True, cascade_cursor="K",
         probed_child_count=600, reobserve_pending=True, reobserve_cursor="next-page", index_generation=5,
         indexed_generation=4, indexed_version="c0", extracted_by="markitdown@1", text_chars=100, pages_total=2,
-        chunk_count=3, truncated=True, seen_epoch=7)
+        chunk_count=3, chunk_space="old-space/768", chunk_reembed_pending=True, truncated=True,
+        lead_text="Договор поставки",
+        brief=DocumentBrief(doc_type="contract", description="Supply contract", doc_date=T - timedelta(days=30),
+                            parties=("ACME", "Иванов"), amount="1 250.00 EUR"),
+        triage_verdict=TriageVerdict.PHOTO, triage_version=1, triaged_content_version="c1",
+        caption="a beach at sunset", defer_until=T + timedelta(hours=2), defer_priority=3, seen_epoch=7,
+        readme_pending=True, readme_item_id="RM1", readme_version="c7", chunks_refused_space="new-space/3072",
+        model_outages=2, model_read_at=T - timedelta(hours=3))
 
 
 def full_state() -> DriveSyncState:
@@ -51,7 +59,9 @@ def full_state() -> DriveSyncState:
         applied_versions={"policy": 1}, target_versions={"policy": 2}, applied_space="old/768",
         target_space="new/3072", upgrade_cursor="I9", upgrade_found_stale=True,
         observed_as_of=T, access_lost_at=T, last_success_at=T, last_error=ErrorCategory.THROTTLED,
-        stale_alerted=True, reconnect_notified=True, systemic_failures=2, counters={"indexed": 3})
+        stale_alerted=True, reconnect_notified=True, systemic_failures=2, counters={"indexed": 3},
+        model_backoff_until=T + timedelta(minutes=10), model_failures=3, usage_month="2026-10", model_pages_used=40,
+        triage_images_used=12, upgrade_parked_month="2026-10")
 
 
 def stored(value):
@@ -87,7 +97,8 @@ class TestRecordSerialization:
 
     def test_read_datetimes_are_plain_utc(self):
         back = record_from_doc(stored(record_to_doc(full_record())))
-        for name in ("modified_at", "fs_modified_at", "effective_date", "dirty_since", "due_at", "attempt_started_at"):
+        for name in ("modified_at", "fs_modified_at", "effective_date", "dirty_since", "due_at", "attempt_started_at",
+                     "model_read_at"):
             value = getattr(back, name)
             assert type(value) is datetime and value.utcoffset() == timedelta(0), name
 
