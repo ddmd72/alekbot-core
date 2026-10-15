@@ -142,3 +142,92 @@ def test_failing_contributor_is_dropped_but_others_survive():
 def test_emit_failure_is_swallowed():
     svc = MemoryTelemetryService(FakeProbe([1 * MIB]), "s", "r", emit=lambda m, f: 1 / 0)
     assert svc.sample_once() is not None
+
+
+# -- census ----------------------------------------------------------------
+
+from src.domain.memory_telemetry import CensusReport, CensusSite, ReleaseResult  # noqa: E402
+from src.ports.memory_census import MemoryCensusPort  # noqa: E402
+
+
+class FakeCensus(MemoryCensusPort):
+    def __init__(self, fail=False):
+        self.calls = []
+        self.fail = fail
+
+    def start(self): self.calls.append("start")
+    def stop(self): self.calls.append("stop")
+
+    def snapshot(self, top_n):
+        self.calls.append("snapshot")
+        if self.fail:
+            raise RuntimeError("no tracing")
+        return CensusReport(10 * MIB, 12 * MIB, (CensusSite("a.py:1", 8 * MIB, 4),))
+
+    def release(self):
+        self.calls.append("release")
+        return ReleaseResult(gc_collected=3, trimmed=True)
+
+
+@pytest.mark.asyncio
+async def test_long_chat_turn_triggers_census_cycle_with_release():
+    census = FakeCensus()
+    records = []
+    svc = MemoryTelemetryService(FakeProbe([500 * MIB] * 3 + [300 * MIB] * 20), "s", "r",
+                                 emit=lambda m, f: records.append(f), census=census, census_idle_delay_s=0.01)
+    svc._census_last = None
+    memory_scope.install_hooks(svc)
+    svc.on_scope_end(ScopeRecordLike(kind="chat_turn", duration_s=120.0))
+    await svc._census_task
+
+    phases = [r["phase"] for r in records if r["event"] == "memory.census"]
+    assert phases == ["turn_end", "idle", "released"]
+    assert census.calls == ["snapshot", "snapshot", "release", "snapshot"]
+    released = [r for r in records if r.get("phase") == "released"][0]
+    assert released["gc_collected"] == 3 and released["trimmed"] is True
+    assert released["usage_before_mb"] > released["usage_after_mb"]
+    assert released["sites"][0]["site"] == "a.py:1"
+
+
+def ScopeRecordLike(kind, duration_s):
+    from src.domain.memory_telemetry import ScopeRecord
+    return ScopeRecord(kind, "chat", "tr", duration_s, None, None, None, 1)
+
+
+@pytest.mark.asyncio
+async def test_short_turn_and_other_kinds_do_not_trigger_census():
+    census = FakeCensus()
+    svc = MemoryTelemetryService(FakeProbe([1 * MIB] * 5), "s", "r", emit=lambda m, f: None, census=census)
+    svc.on_scope_end(ScopeRecordLike("chat_turn", 5.0))
+    svc.on_scope_end(ScopeRecordLike("agent_execution", 500.0))
+    assert svc._census_task is None and census.calls == []
+
+
+@pytest.mark.asyncio
+async def test_cooldown_blocks_a_second_cycle():
+    census = FakeCensus()
+    svc = MemoryTelemetryService(FakeProbe([1 * MIB] * 50), "s", "r", emit=lambda m, f: None,
+                                 census=census, census_idle_delay_s=0.01)
+    svc.on_scope_end(ScopeRecordLike("chat_turn", 100.0))
+    first = svc._census_task
+    await first
+    svc.on_scope_end(ScopeRecordLike("chat_turn", 100.0))
+    assert svc._census_task is first  # cooldown: no new task
+
+
+@pytest.mark.asyncio
+async def test_census_failure_is_contained():
+    svc = MemoryTelemetryService(FakeProbe([1 * MIB] * 10), "s", "r", emit=lambda m, f: None,
+                                 census=FakeCensus(fail=True), census_idle_delay_s=0.01)
+    svc.on_scope_end(ScopeRecordLike("chat_turn", 100.0))
+    await svc._census_task  # must not raise
+
+
+@pytest.mark.asyncio
+async def test_stop_cancels_a_running_census():
+    svc = MemoryTelemetryService(FakeProbe([1 * MIB] * 10), "s", "r", emit=lambda m, f: None,
+                                 census=FakeCensus(), census_idle_delay_s=30.0)
+    svc.on_scope_end(ScopeRecordLike("chat_turn", 100.0))
+    await asyncio.sleep(0.05)
+    await svc.stop()
+    assert svc._census_task is None
