@@ -39,16 +39,16 @@ def test_claude_model_for_tier():
     adapter = ClaudeAdapter(api_key="test-key")
 
     assert adapter.get_model_for_tier(PerformanceTier.ECO) == "claude-haiku-5-5"
-    assert adapter.get_model_for_tier(PerformanceTier.BALANCED) == "claude-haiku-5-5"
-    assert adapter.get_model_for_tier(PerformanceTier.PERFORMANCE) == "claude-sonnet-5-5"
+    assert adapter.get_model_for_tier(PerformanceTier.BALANCED) == "claude-sonnet-5-5"
+    assert adapter.get_model_for_tier(PerformanceTier.PERFORMANCE) == "claude-opus-5-5"
     assert adapter.get_model_for_tier(PerformanceTier.ULTRA) == "claude-fable-5-1"
 
 
 def test_claude_performance_tier_env_override(monkeypatch):
     """CLAUDE_PERFORMANCE_MODEL env / constructor arg overrides the PERFORMANCE model (rollback lever)."""
-    # Default (no override): Sonnet 5.5.
+    # Default (no override): Opus 5.5.
     monkeypatch.delenv("CLAUDE_PERFORMANCE_MODEL", raising=False)
-    assert ClaudeAdapter(api_key="k").get_model_for_tier(PerformanceTier.PERFORMANCE) == "claude-sonnet-5-5"
+    assert ClaudeAdapter(api_key="k").get_model_for_tier(PerformanceTier.PERFORMANCE) == "claude-opus-5-5"
     # Constructor arg wins.
     arg_adapter = ClaudeAdapter(api_key="k", performance_model="claude-sonnet-4-6")
     assert arg_adapter.get_model_for_tier(PerformanceTier.PERFORMANCE) == "claude-sonnet-4-6"
@@ -2039,9 +2039,11 @@ async def _haiku_5_5_kwargs(**request_kwargs):
 
 def test_small_tiers_resolve_to_haiku_5_5():
     adapter = ClaudeAdapter(api_key="test-key")
-    for tier in (PerformanceTier.ECO, PerformanceTier.BALANCED, PerformanceTier.TIER1,
+    for tier in (PerformanceTier.ECO, PerformanceTier.TIER1,
                  PerformanceTier.TIER2, PerformanceTier.TIER3):
         assert adapter.get_model_for_tier(tier) == "claude-haiku-5-5"
+    # BALANCED left the small-model group on 2026-10-15: it is Sonnet 5.5 now.
+    assert adapter.get_model_for_tier(PerformanceTier.BALANCED) == "claude-sonnet-5-5"
 
 
 def test_claude_small_model_env_repoints_small_tiers_only(monkeypatch):
@@ -2049,7 +2051,15 @@ def test_claude_small_model_env_repoints_small_tiers_only(monkeypatch):
     adapter = ClaudeAdapter(api_key="test-key")
     assert adapter.get_model_for_tier(PerformanceTier.ECO) == "claude-haiku-4-5-20251001"
     assert adapter.get_model_for_tier(PerformanceTier.TIER3) == "claude-haiku-4-5-20251001"
-    assert adapter.get_model_for_tier(PerformanceTier.PERFORMANCE) == "claude-sonnet-5-5"
+    assert adapter.get_model_for_tier(PerformanceTier.PERFORMANCE) == "claude-opus-5-5"
+
+
+def test_claude_small_model_env_leaves_balanced_on_sonnet(monkeypatch):
+    """CLAUDE_SMALL_MODEL is a Haiku rollback lever; BALANCED (Sonnet 5.5) must not follow it."""
+    monkeypatch.setenv("CLAUDE_SMALL_MODEL", "claude-haiku-4-5-20251001")
+    adapter = ClaudeAdapter(api_key="test-key")
+    assert adapter.get_model_for_tier(PerformanceTier.BALANCED) == "claude-sonnet-5-5"
+    assert adapter.get_model_for_tier(PerformanceTier.ULTRA) == "claude-fable-5-1"
 
 
 @pytest.mark.asyncio

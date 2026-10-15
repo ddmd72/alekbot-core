@@ -76,3 +76,27 @@ def test_payload_fields():
         "event": "memory.payload", "provider": "openai", "model": "gpt-6-luna",
         "n_items": 62, "n_file_parts": 5, "file_mb": 23.0,
     }
+
+
+def test_census_due_only_after_long_chat_turns_and_outside_cooldown():
+    from src.domain.memory_telemetry import is_census_due
+    assert not is_census_due("agent_execution", 600.0, None)
+    assert not is_census_due("chat_turn", 29.9, None)
+    assert is_census_due("chat_turn", 30.0, None)
+    assert not is_census_due("chat_turn", 400.0, 119.0)
+    assert is_census_due("chat_turn", 400.0, 120.0)
+
+
+def test_census_fields_sorted_capped_and_release_only_when_given():
+    from src.domain.memory_telemetry import CensusReport, CensusSite, ReleaseResult, census_fields
+    sites = tuple(CensusSite(f"f{i}.py:{i}", i * MIB, i) for i in range(1, 21))
+    sites = sites[:19] + (CensusSite("big.py:1", 90 * MIB, 3, stack=("a.py:1", "b.py:2")),)
+    report = CensusReport(traced_bytes=300 * MIB, peak_bytes=350 * MIB, sites=sites)
+
+    f = census_fields("idle", report, 600 * MIB)
+    assert f["event"] == "memory.census" and f["traced_mb"] == 300.0 and f["traced_peak_mb"] == 350.0
+    assert len(f["sites"]) == 15 and f["sites"][0] == {"site": "big.py:1", "mb": 90.0, "n": 3, "stack": ["a.py:1", "b.py:2"]}
+    assert "stack" not in f["sites"][1] and "gc_collected" not in f and "usage_after_mb" not in f
+
+    g = census_fields("released", report, 600 * MIB, 420 * MIB, ReleaseResult(gc_collected=12, trimmed=True))
+    assert (g["usage_before_mb"], g["usage_after_mb"], g["gc_collected"], g["trimmed"]) == (600.0, 420.0, 12, True)
