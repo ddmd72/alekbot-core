@@ -163,8 +163,8 @@ class ClaudeAdapter(LLMPort):
     # ========================================================================
     MODEL_TIERS = {
         PerformanceTier.ECO:         "claude-haiku-5-5",
-        PerformanceTier.BALANCED:    "claude-haiku-5-5",
-        PerformanceTier.PERFORMANCE: "claude-sonnet-5-5",
+        PerformanceTier.BALANCED:    "claude-sonnet-5-5",
+        PerformanceTier.PERFORMANCE: "claude-opus-5-5",
         PerformanceTier.ULTRA:       "claude-fable-5-1",
         PerformanceTier.TIER1:       "claude-haiku-5-5",
         PerformanceTier.TIER2:       "claude-haiku-5-5",
@@ -174,7 +174,7 @@ class ClaudeAdapter(LLMPort):
     # Tiers served by the small model; CLAUDE_SMALL_MODEL repoints all of them at once
     # (e.g. back to claude-haiku-4-5-20251001) without a redeploy. See __init__.
     _SMALL_MODEL_TIERS = (
-        PerformanceTier.ECO, PerformanceTier.BALANCED,
+        PerformanceTier.ECO,
         PerformanceTier.TIER1, PerformanceTier.TIER2, PerformanceTier.TIER3,
     )
 

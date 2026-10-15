@@ -303,13 +303,14 @@ services: ## Show service URL
 
 # --- Claude PERFORMANCE-tier model kill-switch (Sonnet 5.5 rollout) -----------
 # The Claude PERFORMANCE tier (Consolidation + Claude-tier Smart) defaults to
-# claude-sonnet-5-5 (set in cloudbuild-dev.yaml). These flip the LIVE env var with
+# claude-opus-5-5 in code, but cloudbuild-dev.yaml pins CLAUDE_PERFORMANCE_MODEL=claude-sonnet-5-5
+# (remove the pin to let the code default govern). These flip the LIVE env var with
 # no rebuild/redeploy — the instant rollback lever. `make deploy` resets the env
 # to the cloudbuild default (claude-sonnet-5-5); for a permanent rollback also edit
 # CLAUDE_PERFORMANCE_MODEL in cloudbuild-dev.yaml.
-claude-model: ## Show the live CLAUDE_PERFORMANCE_MODEL (unset => default claude-sonnet-5-5)
+claude-model: ## Show the live CLAUDE_PERFORMANCE_MODEL (unset => code default claude-opus-5-5)
 	@gcloud run services describe $(SERVICE_NAME) --region=$(REGION) --format=export 2>/dev/null \
-		| grep -A1 "name: CLAUDE_PERFORMANCE_MODEL" || echo "  CLAUDE_PERFORMANCE_MODEL unset => default claude-sonnet-5-5"
+		| grep -A1 "name: CLAUDE_PERFORMANCE_MODEL" || echo "  CLAUDE_PERFORMANCE_MODEL unset => code default claude-opus-5-5"
 
 claude-rollback: ## KILL-SWITCH: flip PERFORMANCE tier live -> Sonnet 5 (no redeploy)
 	@echo "⏪ Rolling Claude PERFORMANCE tier back to claude-sonnet-5 (live)..."
