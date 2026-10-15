@@ -303,11 +303,11 @@ services: ## Show service URL
 
 # --- Claude PERFORMANCE-tier model kill-switch (Sonnet 5.5 rollout) -----------
 # The Claude PERFORMANCE tier (Consolidation + Claude-tier Smart) defaults to
-# claude-opus-5-5 in code, but cloudbuild-dev.yaml pins CLAUDE_PERFORMANCE_MODEL=claude-sonnet-5-5
-# (remove the pin to let the code default govern). These flip the LIVE env var with
-# no rebuild/redeploy — the instant rollback lever. `make deploy` resets the env
-# to the cloudbuild default (claude-sonnet-5-5); for a permanent rollback also edit
-# CLAUDE_PERFORMANCE_MODEL in cloudbuild-dev.yaml.
+# claude-opus-5-5 in code (ClaudeAdapter.MODEL_TIERS); cloudbuild-dev.yaml no longer pins it
+# (pin removed 2026-10-15). These flip the LIVE env var with
+# no rebuild/redeploy — the instant rollback lever. `make deploy` drops the live override
+# (back to the code default, claude-opus-5-5); for a permanent pin add
+# CLAUDE_PERFORMANCE_MODEL to the --set-env-vars in cloudbuild-dev.yaml.
 claude-model: ## Show the live CLAUDE_PERFORMANCE_MODEL (unset => code default claude-opus-5-5)
 	@gcloud run services describe $(SERVICE_NAME) --region=$(REGION) --format=export 2>/dev/null \
 		| grep -A1 "name: CLAUDE_PERFORMANCE_MODEL" || echo "  CLAUDE_PERFORMANCE_MODEL unset => code default claude-opus-5-5"
@@ -316,7 +316,7 @@ claude-rollback: ## KILL-SWITCH: flip PERFORMANCE tier live -> Sonnet 5 (no rede
 	@echo "⏪ Rolling Claude PERFORMANCE tier back to claude-sonnet-5 (live)..."
 	gcloud run services update $(SERVICE_NAME) --region=$(REGION) \
 		--update-env-vars CLAUDE_PERFORMANCE_MODEL=claude-sonnet-5
-	@echo "✅ Live env flipped. (make deploy resets it to the cloudbuild default: claude-sonnet-5-5)"
+	@echo "✅ Live env flipped. (make deploy drops it: the code default claude-opus-5-5 governs again)"
 
 claude-forward: ## Flip PERFORMANCE tier live -> Sonnet 5.5 (no redeploy)
 	@echo "⏩ Rolling Claude PERFORMANCE tier forward to claude-sonnet-5-5 (live)..."
