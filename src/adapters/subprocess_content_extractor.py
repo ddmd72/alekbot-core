@@ -46,7 +46,9 @@ from src.domain.drive_extraction import (
 from src.domain.drive_index_params import EXTRACT_WALL_TIMEOUT_S, MAX_TEXT_CHARS
 from src.domain.drive_index_policy import size_cap
 from src.ports.content_extractor_port import ContentExtractorPort
+from src.domain.memory_telemetry import SCOPE_SUBPROCESS
 from src.utils.logger import logger
+from src.utils.memory_scope import memory_scope
 
 EXTRACT_MEMORY_LIMIT_BYTES = 1024 * 1024 * 1024    # RLIMIT_AS of the child (S1 placeholder; indexer has 2 GiB)
 EXTRACT_CPU_LIMIT_S = 90                           # RLIMIT_CPU soft limit (S1 placeholder; below the wall clock)
@@ -206,6 +208,10 @@ class SubprocessContentExtractor(ContentExtractorPort):
         return staged, window
 
     async def _spawn(self, request: Mapping[str, Any], workdir: str, stderr: IO[bytes]) -> Tuple[int, bool]:
+        with memory_scope(SCOPE_SUBPROCESS, "drive_parser"):
+            return await self._spawn_child(request, workdir, stderr)
+
+    async def _spawn_child(self, request: Mapping[str, Any], workdir: str, stderr: IO[bytes]) -> Tuple[int, bool]:
         identity: Dict[str, Any] = {}
         if self._sandbox is not None:   # no supplementary groups: root's would otherwise be inherited
             identity = {"user": self._sandbox[0], "group": self._sandbox[1], "extra_groups": []}

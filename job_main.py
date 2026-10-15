@@ -40,6 +40,9 @@ from src.domain.billing import calculate_cost
 from src.infrastructure.agent_manifest import Intent
 from src.services.deep_research_delivery import deliver_deep_research
 from src.utils.logger import logger
+from src.composition.memory_telemetry_setup import build_memory_telemetry
+from src.domain.memory_telemetry import SCOPE_WORKER_TASK
+from src.utils.memory_scope import memory_scope
 from src.utils.telemetry import init_telemetry
 
 
@@ -151,6 +154,19 @@ async def main() -> None:
     # to tracing — the deep-research path was the one blind spot in the stack.
     init_telemetry("alek-research-job")
 
+    memory_telemetry = build_memory_telemetry("alek-research-job")
+    if memory_telemetry:
+        await memory_telemetry.start()
+    try:
+        with memory_scope(SCOPE_WORKER_TASK, "deep_research_job"):
+            await _run_job()
+    finally:
+        if memory_telemetry:
+            memory_telemetry.sample_once()  # last look before the process exits
+            await memory_telemetry.stop()
+
+
+async def _run_job() -> None:
     query = os.environ["JOB_QUERY"]
     context = json.loads(os.environ["JOB_CONTEXT_JSON"])
 

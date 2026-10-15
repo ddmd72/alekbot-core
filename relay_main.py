@@ -54,6 +54,7 @@ from src.adapters.http_call_control_plane_adapter import HttpCallControlPlaneAda
 from src.adapters.openai_realtime_adapter import OpenAIRealtimeAdapter
 from src.adapters.xai_realtime_adapter import XaiRealtimeAdapter
 from src.adapters.slack.webhook_adapter import SlackWebhookAdapter
+from src.composition.memory_telemetry_setup import build_memory_telemetry
 from src.domain.voice_audio_format import MULAW_8K, PCM16_24K, AudioFormat
 from src.domain.voice_session_spec import VoiceSessionSpec
 from src.handlers.media_stream_handler import MediaStreamHandler
@@ -116,6 +117,9 @@ def _fetch_id_token(audience: str) -> str:
 
 
 async def main() -> None:
+    memory_telemetry = build_memory_telemetry("alek-voice-relay")
+    if memory_telemetry:
+        await memory_telemetry.start()
     main_service_url = os.environ["CLOUD_RUN_SERVICE_URL"]
     api_keys = {
         "openai": os.environ["OPENAI_API_KEY"],
@@ -206,6 +210,8 @@ async def main() -> None:
         logger.info(f"voice relay listening on :{port}")
         await shutdown_event.wait()
         logger.info("voice relay shutting down")
+    if memory_telemetry:
+        await memory_telemetry.stop()
 
 
 if __name__ == "__main__":
