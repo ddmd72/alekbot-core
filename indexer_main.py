@@ -63,6 +63,7 @@ from src.composition.drive_indexing_setup import (
     build_drive_index_repository, build_drive_task_queue, build_place_lookup,
 )
 from src.composition.drive_model_setup import build_drive_models
+from src.composition.memory_telemetry_setup import build_memory_telemetry
 from src.composition.prompt_assembly_setup import build_prompt_assembly_service
 from src.config.environment import EnvironmentConfig
 from src.services.drive_indexing_service import DriveIndexingService
@@ -164,6 +165,9 @@ async def serve_until_shutdown(app: Any, config: Any, shutdown: asyncio.Event, *
 
 
 async def main() -> None:
+    memory_telemetry = build_memory_telemetry("alek-indexer")
+    if memory_telemetry:
+        await memory_telemetry.start()
     app = build_app()
     config = HypercornConfig()
     config.bind = [f"0.0.0.0:{int(os.environ.get('PORT', '8080'))}"]
@@ -176,6 +180,8 @@ async def main() -> None:
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, shutdown.set)
     await serve_until_shutdown(app, config, shutdown)
+    if memory_telemetry:
+        await memory_telemetry.stop()
     logger.info("[Indexer] shut down")
 
 

@@ -15,6 +15,7 @@ from abc import ABC, abstractmethod
 from typing import Any, ClassVar, Dict, Iterator, Optional, List, TYPE_CHECKING
 from ..domain.agent import AgentMessage, AgentResponse, AgentConfig
 from ..domain.billing import TokenLedger
+from ..domain.memory_telemetry import SCOPE_AGENT_EXECUTION
 from ..domain.exceptions import (
     _ERROR_TYPE_LOG_LABEL,
     BothProvidersUnavailableError,
@@ -34,6 +35,7 @@ from ..domain.llm import LLMResponse as _LLMResponse
 from ..ports.llm_port import Message, MessagePart
 from ..ports.session_store import SessionStore
 from ..utils.logger import logger
+from ..utils.memory_scope import memory_scope
 from ..utils.retry import retry_async
 from ..utils.telemetry import get_tracer
 
@@ -533,7 +535,8 @@ class BaseAgent(ABC):
         # The billing scope wraps the whole retry loop: retries of one execution share
         # one ledger (their tokens all belong to this execution), while concurrent
         # executions of this same instance each get their own.
-        with self._execution_billing_scope(message.context.get("account_id")):
+        with self._execution_billing_scope(message.context.get("account_id")), \
+                memory_scope(SCOPE_AGENT_EXECUTION, self.config.agent_type):
             return await self._run_retry_loop(message)
 
     @contextmanager
