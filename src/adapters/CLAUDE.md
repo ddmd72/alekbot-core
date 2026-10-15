@@ -25,9 +25,8 @@ mocks cannot detect translation regressions) + contract validators in
   ECO and TIER1–3 → `claude-haiku-5-5` (accepts effort; `CLAUDE_SMALL_MODEL` env repoints those, **not**
   BALANCED any more), BALANCED → `claude-sonnet-5-5`, PERFORMANCE → **`claude-opus-5-5`**, ULTRA →
   `claude-fable-5-1`. ConsolidationAgent's default `PERFORMANCE` therefore resolves to Opus 5.5 unless
-  `CLAUDE_PERFORMANCE_MODEL` pins it (instant rollback lever — `make claude-rollback` → Sonnet 5).
-  **`cloudbuild-dev.yaml` still pins `CLAUDE_PERFORMANCE_MODEL=claude-sonnet-5-5`, so the live PERFORMANCE tier
-  stays on Sonnet 5.5 until that pin is removed.** See
+  `CLAUDE_PERFORMANCE_MODEL` pins it (instant rollback lever — `make claude-rollback` → Sonnet 5;
+  `cloudbuild-dev.yaml` carries no pin since 2026-10-15, so a deploy returns to the Opus default). See
   `docs/05_building_blocks/provider_resolution/README.md` §2.1, §2.4 and the gates below.
 - **Claude sampling / thinking / tool-choice gates — substring traps.** Model ids nest
   (`claude-sonnet-5` is a prefix of `claude-sonnet-5-5`), so every gate is either a deliberate
