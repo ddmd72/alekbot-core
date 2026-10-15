@@ -46,7 +46,10 @@ Four record kinds, all with `event`, `svc`, `rev`, `boot` (random per process st
 3. `memory.payload` — one per OpenAI request that carries attachments: file parts and base64 megabytes
    on the wire. This is the figure the 2026-10-15 investigation lacked: what a long turn re-sends on every
    round. Other providers: later.
-4. `memory.pressure` (slice 2) — on crossing 85%: contributors, top children, scopes and the top
+4. `memory.census` (slice 2, opt-in via `MEMORY_TRACEMALLOC`) — after a long chat turn: the heaviest allocation
+   sites still alive, a minute later, and after an explicit `gc.collect` + `malloc_trim`. Separates "something
+   still references it" from "the allocator did not return pages", and names the line.
+5. `memory.pressure` (later) — on crossing 85%: contributors, top children, scopes and the top
    Python object types by count, with a cooldown. This is the black box for the next OOM.
 
 ## Layering

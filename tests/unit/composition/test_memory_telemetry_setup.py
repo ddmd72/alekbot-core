@@ -44,3 +44,26 @@ def test_cloud_run_job_identity(monkeypatch):
 def test_interval_parsing_is_clamped_and_forgiving(monkeypatch, raw, expected):
     monkeypatch.setenv("MEMORY_SAMPLE_INTERVAL_S", raw)
     assert sample_interval_from_env() == expected
+
+
+def test_tracemalloc_is_off_unless_asked(monkeypatch):
+    import tracemalloc
+    from src.composition.memory_telemetry_setup import tracemalloc_enabled
+    assert not tracemalloc_enabled()
+    svc = build_memory_telemetry("alek-core")
+    assert svc is not None and svc._census is None and not tracemalloc.is_tracing()
+    for v in ("0", "off", "false"):
+        monkeypatch.setenv("MEMORY_TRACEMALLOC", v)
+        assert not tracemalloc_enabled()
+
+
+def test_tracemalloc_flag_builds_a_census_and_starts_tracing(monkeypatch):
+    import tracemalloc
+    monkeypatch.setenv("MEMORY_TRACEMALLOC", "1")
+    monkeypatch.setenv("MEMORY_TRACEMALLOC_FRAMES", "3")
+    try:
+        svc = build_memory_telemetry("alek-core")
+        assert svc is not None and svc._census is not None and tracemalloc.is_tracing()
+        assert tracemalloc.get_traceback_limit() == 3
+    finally:
+        tracemalloc.stop()

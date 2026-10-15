@@ -188,3 +188,75 @@ def payload_fields(provider: str, model: str, n_items: int, n_file_parts: int, f
         "n_file_parts": n_file_parts,
         "file_mb": to_mib(file_chars),
     }
+
+
+EVENT_CENSUS = "memory.census"
+CENSUS_PHASE_TURN_END = "turn_end"
+CENSUS_PHASE_IDLE = "idle"
+CENSUS_PHASE_RELEASED = "released"
+CENSUS_MIN_TURN_S = 30.0       # only long turns are worth a census (it is slow by design)
+CENSUS_IDLE_DELAY_S = 60.0     # how long after the turn the idle census runs
+CENSUS_COOLDOWN_S = 120.0      # at most one census cycle per this interval
+
+
+@dataclass(frozen=True)
+class CensusSite:
+    """One allocation site and the memory it still holds."""
+    site: str          # "path/to/file.py:123"
+    size_bytes: int
+    count: int
+    stack: Tuple[str, ...] = ()   # innermost-last frames, only for the heaviest sites
+
+
+@dataclass(frozen=True)
+class CensusReport:
+    traced_bytes: int
+    peak_bytes: int
+    sites: Tuple[CensusSite, ...]
+
+
+@dataclass(frozen=True)
+class ReleaseResult:
+    """What an explicit release pass achieved (gc.collect + returning free heap to the OS)."""
+    gc_collected: int
+    trimmed: bool
+
+
+def is_census_due(kind: str, duration_s: float, since_last_s: Optional[float]) -> bool:
+    """A census follows a long chat turn, at most once per cooldown."""
+    if kind != SCOPE_CHAT_TURN or duration_s < CENSUS_MIN_TURN_S:
+        return False
+    return since_last_s is None or since_last_s >= CENSUS_COOLDOWN_S
+
+
+def census_fields(
+    phase: str,
+    report: CensusReport,
+    usage_before_bytes: Optional[int],
+    usage_after_bytes: Optional[int] = None,
+    release: Optional[ReleaseResult] = None,
+    top_n: int = 15,
+) -> Dict[str, Any]:
+    """Flat ``jsonPayload`` for one ``memory.census`` record.
+
+    ``usage_after_mb`` / ``gc_collected`` / ``trimmed`` appear only for a pass that tried to release
+    memory: if usage drops after it, the process was holding free pages; if it does not, something
+    still references the memory, and ``sites`` says which line allocated it.
+    """
+    ordered = sorted(report.sites, key=lambda s: s.size_bytes, reverse=True)[:top_n]
+    fields: Dict[str, Any] = {
+        "event": EVENT_CENSUS,
+        "phase": phase,
+        "traced_mb": to_mib(report.traced_bytes),
+        "traced_peak_mb": to_mib(report.peak_bytes),
+        "sites": [
+            {"site": s.site, "mb": to_mib(s.size_bytes), "n": s.count, **({"stack": list(s.stack)} if s.stack else {})}
+            for s in ordered
+        ],
+    }
+    _put(fields, "usage_before_mb", to_mib(usage_before_bytes))
+    _put(fields, "usage_after_mb", to_mib(usage_after_bytes))
+    if release is not None:
+        fields["gc_collected"] = release.gc_collected
+        fields["trimmed"] = release.trimmed
+    return fields

@@ -9,6 +9,7 @@ import os
 from typing import Optional
 
 from src.adapters.proc_memory_probe import ProcMemoryProbe
+from src.adapters.tracemalloc_census import TracemallocCensus
 from src.domain.memory_telemetry import BASE_SAMPLE_INTERVAL_S
 from src.services.memory_telemetry_service import MemoryTelemetryService
 from src.utils.logger import logger
@@ -32,6 +33,18 @@ def sample_interval_from_env() -> float:
         return BASE_SAMPLE_INTERVAL_S
 
 
+def tracemalloc_enabled() -> bool:
+    return os.getenv("MEMORY_TRACEMALLOC", "").strip().lower() not in _OFF | {""}
+
+
+def tracemalloc_frames_from_env() -> int:
+    raw = os.getenv("MEMORY_TRACEMALLOC_FRAMES", "").strip()
+    try:
+        return max(1, min(16, int(raw))) if raw else 4
+    except ValueError:
+        return 4
+
+
 def build_memory_telemetry(default_service: str) -> Optional[MemoryTelemetryService]:
     """The service for this process, or None when switched off."""
     if not memory_telemetry_enabled():
@@ -39,6 +52,11 @@ def build_memory_telemetry(default_service: str) -> Optional[MemoryTelemetryServ
         return None
     service = os.getenv("K_SERVICE") or os.getenv("CLOUD_RUN_JOB") or default_service
     revision = os.getenv("K_REVISION") or os.getenv("CLOUD_RUN_EXECUTION") or "local"
+    census = None
+    if tracemalloc_enabled():
+        census = TracemallocCensus(frames=tracemalloc_frames_from_env())
+        census.start()  # as early as possible: only allocations made after this point are attributed
     return MemoryTelemetryService(
         ProcMemoryProbe(), service=service, revision=revision, base_interval_s=sample_interval_from_env(),
+        census=census,
     )

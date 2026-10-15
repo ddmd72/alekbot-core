@@ -11,6 +11,7 @@ What it records, how to read it, and what it cannot tell you. Decision and ratio
 | `memory.sample` | every 15 s; every 1 s at ≥ 75% of the limit | `usage_mb`, `limit_mb`, `usage_pct`, `rss_mb`, `rss_peak_mb`, `cache_mb`, `tmp_mb`, `children[]`, `n_scopes`, `scopes[]`, `threads`, `fds`, `tasks`, `contrib{}` |
 | `memory.scope` | a work unit ends | `kind` (`worker_task`/`chat_turn`/`agent_execution`/`subprocess`), `name`, `trace_id`, `dur_s`, `usage_start_mb`, `usage_end_mb`, `usage_peak_mb`, `delta_mb`, `concurrent`, `outcome` |
 | `memory.payload` | an OpenAI request carries attachments | `model`, `n_file_parts`, `file_mb` (base64 on the wire) |
+| `memory.census` | opt-in (`MEMORY_TRACEMALLOC=1`), after a chat turn of ≥ 30 s: at `turn_end`, 60 s later at `idle`, then `released` | `phase`, `traced_mb`, `sites[]` (`site` = file:line, `mb`, `n`, `stack` for the heaviest), and for `released`: `usage_before_mb`, `usage_after_mb`, `gc_collected`, `trimmed` |
 
 `usage_mb` is the container's metered memory (cgroup), the figure Cloud Run kills on. It includes the
 in-memory writable layer (`/tmp`), which RSS does not.
@@ -65,8 +66,29 @@ WHERE jsonPayload.event = 'memory.scope' AND jsonPayload.concurrent = 1
 GROUP BY kind, name ORDER BY avg_delta_mb DESC
 ```
 
+## Census (opt-in, slow by design)
+
+`MEMORY_TRACEMALLOC=1` (optional `MEMORY_TRACEMALLOC_FRAMES`, default 4) starts `tracemalloc` at process start;
+the process then runs noticeably slower and holds bookkeeping memory, so use it for one investigation window and
+switch it off after. Reading a cycle:
+
+- `turn_end` — which lines still hold memory the moment the turn finishes.
+- `idle` — the same a minute later, with nothing running. Sites that stay are referenced, not free.
+- `released` — after `gc.collect()` and `malloc_trim(0)`. If `usage_after_mb` drops well below
+  `usage_before_mb`, the process was holding free pages (allocator), not live objects. If it does not drop and
+  `traced_mb` stays high, a reference keeps the memory alive and `sites[0]` names the allocating line.
+
+**Cloud Run throttles CPU outside requests** (default request-based billing). The sampler then runs in
+bursts (observed: 10–24 s gaps at a 5 s interval) and a census, which needs tens of seconds of CPU after the
+turn's response has gone out, never completes. For a census window deploy with `--no-cpu-throttling`
+(`gcloud run services update alek-bot-dev --no-cpu-throttling`, instance-based billing while it is set) and
+revert with `--cpu-throttling` afterwards.
+
+`traced_mb` counts only Python allocations made after tracing started; `usage_mb` is the whole container, so the
+two differ by the interpreter, native libraries and the tracing bookkeeping itself.
+
 ## Not covered yet
 
-`memory.pressure` (object-type census on crossing 85%), payload size for non-OpenAI providers, named
-contributors for caches, and leftover `/tmp` files created by `open_file_from_drive` (the `tmp_mb` figure
-shows the effect; the files are not yet deleted).
+`memory.pressure` (a census on crossing 85% of the limit instead of after a long turn), payload size for
+non-OpenAI providers, named contributors for caches, and leftover `/tmp` files created by `open_file_from_drive`
+(the `tmp_mb` figure shows the effect; the files are not yet deleted).

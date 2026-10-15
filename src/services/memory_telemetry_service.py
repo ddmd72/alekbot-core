@@ -15,19 +15,27 @@ failed probe or contributor is logged once and skipped.
 import asyncio
 import os
 import platform
+import time
 import uuid
 from typing import Any, Callable, Dict, Optional, Set
 
 from src.domain.memory_telemetry import (
     BASE_SAMPLE_INTERVAL_S,
+    CENSUS_IDLE_DELAY_S,
+    CENSUS_PHASE_IDLE,
+    CENSUS_PHASE_RELEASED,
+    CENSUS_PHASE_TURN_END,
     EVENT_BOOT,
     ProbeReading,
     ScopeRecord,
+    census_fields,
+    is_census_due,
     sample_fields,
     sample_interval_s,
     scope_fields,
     usage_pct,
 )
+from src.ports.memory_census import MemoryCensusPort
 from src.ports.memory_probe import MemoryProbePort
 from src.utils import memory_scope
 from src.utils.logger import logger
@@ -48,6 +56,8 @@ class MemoryTelemetryService:
         revision: str,
         base_interval_s: float = BASE_SAMPLE_INTERVAL_S,
         emit: Emit = log_emit,
+        census: Optional[MemoryCensusPort] = None,
+        census_idle_delay_s: float = CENSUS_IDLE_DELAY_S,
     ) -> None:
         self._probe = probe
         self._service = service
@@ -59,6 +69,10 @@ class MemoryTelemetryService:
         self._warned: Set[str] = set()
         self._task: Optional["asyncio.Task[None]"] = None
         self._last_pct: Optional[float] = None
+        self._census = census
+        self._census_idle_delay_s = census_idle_delay_s
+        self._census_task: Optional["asyncio.Task[None]"] = None
+        self._census_last: Optional[float] = None
 
     # -- configuration -----------------------------------------------------
 
@@ -76,10 +90,14 @@ class MemoryTelemetryService:
 
     async def stop(self) -> None:
         task, self._task = self._task, None
+        census_task, self._census_task = self._census_task, None
         memory_scope.uninstall_hooks()
-        if task is not None:
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
+        for t in (task, census_task):
+            if t is not None:
+                t.cancel()
+        pending = [t for t in (task, census_task) if t is not None]
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
 
     # -- scope hooks (memory_scope.ScopeHooks) ------------------------------
 
@@ -94,6 +112,54 @@ class MemoryTelemetryService:
         fields = self._with_identity(scope_fields(record))
         self._safe_emit(f"memory.scope {record.kind}/{record.name} {fields.get('dur_s')}s "
                         f"delta={fields.get('delta_mb')}MB", fields)
+        self._maybe_start_census(record)
+
+    # -- census (diagnostic, opt-in) -----------------------------------------
+
+    def _maybe_start_census(self, record: ScopeRecord) -> None:
+        if self._census is None or (self._census_task is not None and not self._census_task.done()):
+            return
+        now = time.monotonic()
+        since = None if self._census_last is None else now - self._census_last
+        if not is_census_due(record.kind, record.duration_s, since):
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return  # scope ended outside an event loop; nothing to schedule on
+        self._census_last = now
+        self._census_task = loop.create_task(self._census_cycle(), name="memory-census")
+
+    async def _census_cycle(self) -> None:
+        """Turn end → wait for idle → snapshot → release → snapshot again. Never raises."""
+        census = self._census
+        if census is None:
+            return
+        try:
+            await self._census_record(CENSUS_PHASE_TURN_END)
+            await asyncio.sleep(self._census_idle_delay_s)
+            await self._census_record(CENSUS_PHASE_IDLE)
+            before = self.usage_bytes()
+            release = await asyncio.to_thread(census.release)
+            report = await asyncio.to_thread(census.snapshot, 15)
+            fields = self._with_identity(census_fields(
+                CENSUS_PHASE_RELEASED, report, before, self.usage_bytes(), release))
+            self._safe_emit(f"memory.census {CENSUS_PHASE_RELEASED} usage {fields.get('usage_before_mb')}"
+                            f"->{fields.get('usage_after_mb')}MB traced={fields.get('traced_mb')}MB", fields)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            self._warn_once("census", e)
+
+    async def _census_record(self, phase: str) -> None:
+        census = self._census
+        if census is None:
+            return
+        usage = self.usage_bytes()
+        report = await asyncio.to_thread(census.snapshot, 15)
+        fields = self._with_identity(census_fields(phase, report, usage))
+        self._safe_emit(f"memory.census {phase} usage={fields.get('usage_before_mb')}MB "
+                        f"traced={fields.get('traced_mb')}MB", fields)
 
     # -- sampling ----------------------------------------------------------
 
