@@ -976,6 +976,7 @@ the local file** — far faster and cheaper than repeated remote `gcloud logging
 | Operational events, errors, tracebacks, control flow | **Cloud Logging** | `make fetch-logs` (above) |
 | Actual LLM prompt/response **content** + tokens | **BigQuery** `alek_observability_dev.prompt_content` | `bq query` (below) |
 | The **cascade** — who delegated to whom, what each agent got and returned, failed calls | **Logfire** | trace tree in the UI, or SQL via the Logfire MCP server |
+| **Memory** over time — per process, per work unit, how long, what was open at a spike | **BigQuery** `alek_memory_dev` (log sink, 90 days) | queries in `docs/05_building_blocks/memory_telemetry/README.md`; Cloud Run's own metric only says *that* memory grew |
 
 **Logfire holds prompt/response content too since 2026-07-30** (`LOGFIRE_CAPTURE_CONTENT=true`).
 Prefer it whenever the question involves *relationships between calls* — BigQuery cannot express

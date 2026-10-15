@@ -14,7 +14,9 @@ import os
 import tempfile
 
 from ..ports.docx_runner_port import DocxRunnerError, DocxRunnerPort
+from ..domain.memory_telemetry import SCOPE_SUBPROCESS
 from ..utils.logger import logger
+from ..utils.memory_scope import memory_scope
 
 
 # docx_generator/ directory at project root — Node.js resolves node_modules from here.
@@ -76,6 +78,10 @@ class NodeDocxRunner(DocxRunnerPort):
     """Runs a Node.js script via asyncio subprocess and returns DOCX bytes."""
 
     async def run(self, js_code: str, spec_json: str, timeout: int) -> bytes:
+        with memory_scope(SCOPE_SUBPROCESS, "node_docx"):
+            return await self._run(js_code, spec_json, timeout)
+
+    async def _run(self, js_code: str, spec_json: str, timeout: int) -> bytes:
         os.makedirs(_DOCX_GENERATOR_DIR, exist_ok=True)
 
         tmp = tempfile.NamedTemporaryFile(

@@ -20,6 +20,7 @@ from ..domain.long_turn import LongTurnStatus, RetryVerdict
 from ..domain.turn_clock import (
     CURRENT_TURN_CLOCK, HARD_STOP_MARGIN_S, LONG_TURN_BUDGET_S, TurnClock, render_late_answer_note,
 )
+from ..domain.memory_telemetry import SCOPE_CHAT_TURN
 from ..domain.notification_kind import NotificationKind
 from ..domain.llm import Message, MessagePart
 from ..domain.exceptions import SkillCapExceeded, SkillDraftNotFound, SkillNameReserved, SkillRejected
@@ -42,6 +43,7 @@ if TYPE_CHECKING:
     from ..services.short_link_service import ShortLinkService
     from ..services.skill_service import SkillService
     from ..services.long_turn_service import LongTurnService
+from ..utils.memory_scope import memory_scope
 from ..utils.file_conversion import (
     convert_file_to_text, download_alert, is_native_binary, make_history_stub,
     transcription_alert,
@@ -570,6 +572,14 @@ class ConversationHandler(ConversationHandlerPort):
         return SessionMode()  # default: full orchestrator flow
 
     async def handle_message(
+        self,
+        context: MessageContext,
+        response_channel: ResponseChannel
+    ) -> None:
+        with memory_scope(SCOPE_CHAT_TURN, "chat", user_id=context.user_id):
+            await self._handle_message(context, response_channel)
+
+    async def _handle_message(
         self,
         context: MessageContext,
         response_channel: ResponseChannel

@@ -13,7 +13,9 @@ import asyncio
 import os
 
 from ..ports.puppeteer_runner_port import PuppeteerRunnerError, PuppeteerRunnerPort
+from ..domain.memory_telemetry import SCOPE_SUBPROCESS
 from ..utils.logger import logger
+from ..utils.memory_scope import memory_scope
 
 
 # pdf_generator/ directory at project root — Node.js resolves node_modules from here.
@@ -46,6 +48,10 @@ class NodePuppeteerRunner(PuppeteerRunnerPort):
     """Renders HTML to PDF via the fixed pdf_generator/runner.js subprocess."""
 
     async def run(self, html_code: str, timeout: int) -> bytes:
+        with memory_scope(SCOPE_SUBPROCESS, "puppeteer"):
+            return await self._run(html_code, timeout)
+
+    async def _run(self, html_code: str, timeout: int) -> bytes:
         if not os.path.isfile(_RUNNER_SCRIPT):
             raise PuppeteerRunnerError(
                 f"pdf_generator/runner.js not found at {_RUNNER_SCRIPT}. "
