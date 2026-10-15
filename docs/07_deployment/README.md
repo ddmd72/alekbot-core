@@ -612,10 +612,12 @@ gcloud logging sinks create alek-memory-telemetry \
   --project=<PROJECT_ID> --use-partitioned-tables \
   --log-filter='(resource.type="cloud_run_revision" OR resource.type="cloud_run_job") AND jsonPayload.event=~"^memory\\."'
 
-# 3. Let the sink write: it prints a writerIdentity; grant it BigQuery Data Editor on the dataset
+# 3. Let the sink write: add its writerIdentity (printed by `describe`) as a WRITER on the dataset ACL.
+#    (`bq add-iam-policy-binding` fails on datasets with bq 2.1.39; use the ACL round-trip.)
 gcloud logging sinks describe alek-memory-telemetry --project=<PROJECT_ID> --format='value(writerIdentity)'
-bq --project_id=<PROJECT_ID> add-iam-policy-binding \
-   --member=<writerIdentity> --role=roles/bigquery.dataEditor <PROJECT_ID>:alek_memory_dev
+bq --project_id=<PROJECT_ID> show --format=prettyjson alek_memory_dev > ds.json
+#    edit ds.json: append {"role": "WRITER", "userByEmail": "<writerIdentity without the serviceAccount: prefix>"} to "access"
+bq --project_id=<PROJECT_ID> update --source ds.json alek_memory_dev
 ```
 
 BigQuery creates the table (`run_googleapis_com_stdout`) on the first matching record and widens its
