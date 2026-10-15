@@ -78,6 +78,12 @@ switch it off after. Reading a cycle:
   `usage_before_mb`, the process was holding free pages (allocator), not live objects. If it does not drop and
   `traced_mb` stays high, a reference keeps the memory alive and `sites[0]` names the allocating line.
 
+**Cloud Run throttles CPU outside requests** (default request-based billing). The sampler then runs in
+bursts (observed: 10–24 s gaps at a 5 s interval) and a census, which needs tens of seconds of CPU after the
+turn's response has gone out, never completes. For a census window deploy with `--no-cpu-throttling`
+(`gcloud run services update alek-bot-dev --no-cpu-throttling`, instance-based billing while it is set) and
+revert with `--cpu-throttling` afterwards.
+
 `traced_mb` counts only Python allocations made after tracing started; `usage_mb` is the whole container, so the
 two differ by the interpreter, native libraries and the tracing bookkeeping itself.
 
