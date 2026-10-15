@@ -606,11 +606,12 @@ the sink's writer identity come from `.env` / the command output, never from thi
 bq --project_id=<PROJECT_ID> mk --dataset --location=US \
    --default_partition_expiration=7776000 alek_memory_dev
 
-# 2. Sink: only the memory.* records, into date-partitioned tables
+# 2. Sink: only the memory.* records, into date-partitioned tables.
+#    Use the substring operator `:`; the regex form `=~"^memory\\."` matches nothing in Cloud Logging filters.
 gcloud logging sinks create alek-memory-telemetry \
   bigquery.googleapis.com/projects/<PROJECT_ID>/datasets/alek_memory_dev \
   --project=<PROJECT_ID> --use-partitioned-tables \
-  --log-filter='(resource.type="cloud_run_revision" OR resource.type="cloud_run_job") AND jsonPayload.event=~"^memory\\."'
+  --log-filter='(resource.type="cloud_run_revision" OR resource.type="cloud_run_job") AND jsonPayload.event:"memory."'
 
 # 3. Let the sink write: add its writerIdentity (printed by `describe`) as a WRITER on the dataset ACL.
 #    (`bq add-iam-policy-binding` fails on datasets with bq 2.1.39; use the ACL round-trip.)
