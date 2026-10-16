@@ -269,7 +269,7 @@ class GmailProviderAdapter(EmailProviderPort):
         try:
             email_date = parsedate_to_datetime(date_str).astimezone(timezone.utc).replace(tzinfo=None)
         except Exception:
-            email_date = datetime.now(timezone.utc)
+            email_date = datetime.now(timezone.utc).replace(tzinfo=None)
 
         return EmailMetadata(
             email_id=msg["id"],
