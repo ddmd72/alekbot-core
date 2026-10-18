@@ -343,13 +343,15 @@ class BaseAgent(ABC):
             tz = ZoneInfo(self._user_timezone or "UTC")
         except (ZoneInfoNotFoundError, KeyError):
             tz = ZoneInfo("UTC")
-        tz_abbr = datetime.now(tz).strftime("%Z") or self._user_timezone or "UTC"
 
         result = []
         for msg in history:
             if msg.role == "user" and msg.created_at:
                 local_dt = datetime.fromtimestamp(msg.created_at, tz=tz)
-                ts = local_dt.strftime(f"[%b %d, %H:%M {tz_abbr}]")
+                # Abbreviation of the message's own date: a November message must say CET even
+                # when it is read in July (CEST).
+                tz_abbr = local_dt.strftime("%Z") or self._user_timezone or "UTC"
+                ts = local_dt.strftime(f"[%Y-%m-%d %a %H:%M {tz_abbr}]")
                 new_parts = []
                 for i, part in enumerate(msg.parts):
                     if i == 0 and part.text and not part.tool_call and not part.file_data:
