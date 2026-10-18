@@ -16,7 +16,7 @@ from ..ports.llm_port import (
     LLMRequest,
     PROMPT_CACHE_BOUNDARY,
 )
-from ..domain.llm import FinishReason
+from ..domain.llm import FinishReason, USER_TURN_SYSTEM_ANCHOR, build_persona_anchor
 from ..domain.user import PerformanceTier
 from ..domain.exceptions import (
     LLMAccountError,
@@ -305,6 +305,8 @@ class ClaudeAdapter(LLMPort):
             # Empty or None system_instruction → no system parts.
             # Claude API rejects empty text content blocks (400 invalid_request_error).
             system_parts = [{"type": "text", "text": system_instruction}] if system_instruction else []
+
+        messages = self._add_persona_anchor(messages, system_instruction)
 
         # Convert messages to Anthropic format
         cache_last_message = bool(
@@ -834,6 +836,40 @@ class ClaudeAdapter(LLMPort):
             tool_name, sorted(i for i in used_ids if i and i != "unknown"), _seen,
         )
         return "unknown"
+
+    @staticmethod
+    def _add_persona_anchor(
+        messages: List[Message], system_instruction: Optional[str]
+    ) -> List[Message]:
+        """Place the persona anchor right after USER_TURN_SYSTEM_ANCHOR.
+
+        Claude has no `developer` role, so the turn anchor stays in the user message
+        (where it is followed well). OpenAI/Grok get the persona block in their
+        developer item; here it rides next to the turn anchor, in the same channel.
+        Searches backwards through ALL messages: from delegation turn 2 the last user
+        message is a tool-result turn, and the anchor sits further up. No-op when the
+        prompt carries no persona sections or no anchor is present.
+        """
+        persona_anchor = build_persona_anchor(system_instruction)
+        if not persona_anchor:
+            return messages
+        for idx in range(len(messages) - 1, -1, -1):
+            message = messages[idx]
+            if message.role != "user":
+                continue
+            for i, part in enumerate(message.parts):
+                if not part.text or USER_TURN_SYSTEM_ANCHOR not in part.text:
+                    continue
+                new_part = part.model_copy(update={"text": part.text.replace(
+                    USER_TURN_SYSTEM_ANCHOR,
+                    f"{USER_TURN_SYSTEM_ANCHOR}\n\n{persona_anchor}",
+                    1,
+                )})
+                new_message = message.model_copy(update={
+                    "parts": message.parts[:i] + [new_part] + message.parts[i + 1:],
+                })
+                return messages[:idx] + [new_message] + messages[idx + 1:]
+        return messages
 
     async def _convert_messages(
         self,

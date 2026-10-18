@@ -57,6 +57,10 @@ mocks cannot detect translation regressions) + contract validators in
   - `_NO_XHIGH_MODELS` — the 4.6 generation's effort scale stops at `high`; `xhigh` is clamped.
   New tokenizer (~30% more tokens) — keep `max_tokens` headroom.
   Decisions: `decisions/claude_sonnet_5_adoption.md`, `decisions/model_refresh_2026_10.md`.
+- **Per-turn anchors by provider.** `USER_TURN_SYSTEM_ANCHOR` (prepended to the latest user message by
+  `BaseAgent`) and `build_persona_anchor` reach OpenAI/Grok in one `developer` item. Claude has no
+  `developer` role: the turn anchor stays in the user message and `ClaudeAdapter._add_persona_anchor` puts the
+  persona block right after it (same channel, 2026-10-18). Gemini still gets the turn anchor only.
 - **ProviderRegistry** — runtime LLM provider selection (gemini/claude/grok).
 - **Adapter capability gates** — each adapter silently drops/clamps parameters the resolved model
   doesn't accept instead of forwarding and crashing on 400. ClaudeAdapter gates `thinking`,
