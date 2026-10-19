@@ -20,6 +20,9 @@ passed) but guards nothing — no pass rate, recall, junk, book or size line cou
 owner has not decided yet, kept visible instead of dropped (G1 has the same key, runner.py).
 A case may add `expect_inaccessible: true` (§26.2): every expected file must also be a card whose `index:` line says the bot
 cannot open it (the row's `inaccessible` paths), on top of the family's tier rule.
+A case may add `expect_accuracy: {path: true|false}` (§26.4): the card shown for that path does (true) or does not
+(false: a photograph) carry the `card accuracy: N%` line (the row's `accuracy` map, None = no line), on top of the
+family's tier rule. A path the search did not show as a card fails a `true`.
 Junk: in an exact family case, the About/Mentioned files that are neither expected nor `acceptable_paths`; on every
 positive case, the same for By translation and Labelled. The book distractor counts on cases of two or more concepts
 whose expected and acceptable files do not include it.
@@ -72,6 +75,13 @@ def validate_gold_v2(gold: Sequence[Mapping[str, Any]], paths: Iterable[str]) ->
             problems.append(f"{cid}: needs expected_paths (family {family})")
         if "expect_inaccessible" in case and (case["expect_inaccessible"] is not True or family not in POSITIVE_FAMILIES):
             problems.append(f"{cid}: expect_inaccessible must be true, on a positive case")
+        if "expect_accuracy" in case:
+            wanted = case["expect_accuracy"]
+            if not (isinstance(wanted, dict) and wanted and all(isinstance(v, bool) for v in wanted.values())
+                    and family in POSITIVE_FAMILIES):
+                problems.append(f"{cid}: expect_accuracy must be a non-empty {{path: bool}} map, on a positive case")
+            problems += [f"{cid}: expect_accuracy names unknown path {p}" for p in wanted if p not in known] \
+                if isinstance(wanted, dict) else []
         if "known_hard" in case and not (isinstance(case["known_hard"], str) and case["known_hard"].strip()):
             problems.append(f"{cid}: known_hard must be a non-empty reason")
         if family == "negative" and expected:
@@ -130,6 +140,11 @@ def case_pass(case: Mapping[str, Any], row: Mapping[str, Any], *, family: Option
         shown = set(row.get("inaccessible") or ())
         if not all(p in shown for p in expected):
             return False
+    if case.get("expect_accuracy") and not v1:
+        shown = row.get("accuracy") or {}
+        for path, has_line in case["expect_accuracy"].items():
+            if has_line != (shown.get(path) is not None):
+                return False
     return all(_in(tiers, p, _allowed(fam, v1)) for p in expected)
 
 

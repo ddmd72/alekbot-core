@@ -118,6 +118,16 @@ line), "sunsets" / "закаты" / "puesta de sol" / "sunset" + photo and "beac
 by place and by landmark name. `gold_g3_v2.json` gains `must_open` (a value question on the scan's card, which is under
 90 % accuracy) and `must_not_open` (a find question on it): hard checks, see `smart_dry_run.py`.
 
+**What the landmark cases test.** The landmark photo cases (by place and by landmark name) test the description and
+object keys (`sl:`, `e:`/`ef:` from the synthetic triage's description), **not** the D39 location prior: the synthetic
+triage never sees the location line the live indexer passes it, so the prior's effect is only measurable after a live
+re-record (`dump_enrichment.py --fixture`).
+
+`expect_accuracy: {path: true|false}` (v2 gold, positive cases) checks the rendered card: `true` = the card shown for
+that path carries the `card accuracy: N%` line (the scan, `cls-scans-en`), `false` = it carries none (a photograph,
+`cls-sunsets-en`). The row's `accuracy` map holds each shown card's percent (None = no line). The parse cache key
+includes a digest of `src/adapters/drive_parser/capture.py`, so a capture edit misses a warm cache.
+
 **The enrichment of these files is synthetic** (`enrichment.json`, entries marked `"synthetic": true`, written by
 `python -m scripts.validation.drive_eval.synthetic_s26` through the same recording ports a live record uses, so the keys
 come from the real indexer). The scan's profile misreads the birth date on purpose (the card prints `03 11 1990`, the
