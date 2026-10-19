@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
+from ..domain.email_dates import to_naive_utc
 from ..domain.email import (
     EmailClassificationResult,
     EmailExclusion,
@@ -389,10 +390,10 @@ class EmailIndexingService:
                 # Deduplication handles any overlap — no emails are dropped.
                 if date_from is not None:
                     page_dates = [e.date for e in emails_page if e.date]
-                    if page_dates and min(page_dates) < date_from:
+                    if page_dates and min(map(to_naive_utc, page_dates)) < to_naive_utc(date_from):
                         logger.info(
                             f"📧 Job {job.job_id[:8]} [{mode}]: boundary reached "
-                            f"(oldest_in_page={min(page_dates).strftime('%Y-%m-%d')} < "
+                            f"(oldest_in_page={min(map(to_naive_utc, page_dates)).strftime('%Y-%m-%d')} < "
                             f"date_from={date_from.strftime('%Y-%m-%d')}) — terminal page"
                         )
                         next_page_token = None
@@ -476,11 +477,11 @@ class EmailIndexingService:
                 #    Persisted to job doc — cursors in IndexingState written ONLY at completion.
                 chunk_dates = [e.date for e in emails_page if e.date]
                 if chunk_dates:
-                    chunk_max = max(chunk_dates)
-                    chunk_min = min(chunk_dates)
-                    if job.max_email_date is None or chunk_max > job.max_email_date:
+                    chunk_max = max(map(to_naive_utc, chunk_dates))
+                    chunk_min = min(map(to_naive_utc, chunk_dates))
+                    if job.max_email_date is None or chunk_max > to_naive_utc(job.max_email_date):
                         job.max_email_date = chunk_max
-                    if job.min_email_date is None or chunk_min < job.min_email_date:
+                    if job.min_email_date is None or chunk_min < to_naive_utc(job.min_email_date):
                         job.min_email_date = chunk_min
 
                 # 8. Update job progress (persisted — Cloud Tasks resume point)
@@ -554,7 +555,7 @@ class EmailIndexingService:
                 {"status": job.status, "updated_at": job.updated_at},
             )
             logger.error(
-                f"💥 Job {job.job_id[:8]} {job.status}: {exc}"
+                f"💥 Job {job.job_id[:8]} {job.status}: {exc}", exc_info=True
             )
             raise
 
@@ -616,7 +617,7 @@ class EmailIndexingService:
         else:  # incremental
             if job.max_email_date is None:
                 return
-            candidates = [d for d in [existing_indexed_through, job.max_email_date] if d is not None]
+            candidates = [to_naive_utc(d) for d in [existing_indexed_through, job.max_email_date] if d is not None]
             new_indexed_through = max(candidates) if candidates else None
             if new_indexed_through is None:
                 return

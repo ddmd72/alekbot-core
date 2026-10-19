@@ -21,11 +21,12 @@ mocks cannot detect translation regressions) + contract validators in
 - **PerformanceTier** (ECO/BALANCED/PERFORMANCE) — abstraction between agents and concrete models.
   When picking a default tier for a new agent, verify the resolved model accepts every
   parameter the agent sends. Concrete trap (historical): `BALANCED` on Claude was `claude-haiku-4-5-20251001`,
-  which rejects `output_config.effort` (HTTP 400); the small tiers are `claude-haiku-5-5` since
-  2026-10-08 (accepts effort; `CLAUDE_SMALL_MODEL` env repoints them). ConsolidationAgent default is therefore
-  `PERFORMANCE` → **`claude-sonnet-5-5`** in `ClaudeAdapter.MODEL_TIERS` (Sonnet 5 from 2026-07,
-  5.5 since 2026-10-03; env-overridable via `CLAUDE_PERFORMANCE_MODEL` for instant rollback —
-  `make claude-rollback` → Sonnet 5). ULTRA → `claude-fable-5-1` (top model, for consistency). See
+  which rejects `output_config.effort` (HTTP 400). `ClaudeAdapter.MODEL_TIERS` since 2026-10-15:
+  ECO and TIER1–3 → `claude-haiku-5-5` (accepts effort; `CLAUDE_SMALL_MODEL` env repoints those, **not**
+  BALANCED any more), BALANCED → `claude-sonnet-5-5`, PERFORMANCE → **`claude-opus-5-5`**, ULTRA →
+  `claude-fable-5-1`. ConsolidationAgent's default `PERFORMANCE` therefore resolves to Opus 5.5 unless
+  `CLAUDE_PERFORMANCE_MODEL` pins it (instant rollback lever — `make claude-rollback` → Sonnet 5;
+  `cloudbuild-dev.yaml` carries no pin since 2026-10-15, so a deploy returns to the Opus default). See
   `docs/05_building_blocks/provider_resolution/README.md` §2.1, §2.4 and the gates below.
 - **Claude sampling / thinking / tool-choice gates — substring traps.** Model ids nest
   (`claude-sonnet-5` is a prefix of `claude-sonnet-5-5`), so every gate is either a deliberate
@@ -56,6 +57,10 @@ mocks cannot detect translation regressions) + contract validators in
   - `_NO_XHIGH_MODELS` — the 4.6 generation's effort scale stops at `high`; `xhigh` is clamped.
   New tokenizer (~30% more tokens) — keep `max_tokens` headroom.
   Decisions: `decisions/claude_sonnet_5_adoption.md`, `decisions/model_refresh_2026_10.md`.
+- **Per-turn anchors by provider.** `USER_TURN_SYSTEM_ANCHOR` (prepended to the latest user message by
+  `BaseAgent`) and `build_persona_anchor` reach OpenAI/Grok in one `developer` item. Claude has no
+  `developer` role: the turn anchor stays in the user message and `ClaudeAdapter._add_persona_anchor` puts the
+  persona block right after it (same channel, 2026-10-18). Gemini still gets the turn anchor only.
 - **ProviderRegistry** — runtime LLM provider selection (gemini/claude/grok).
 - **Adapter capability gates** — each adapter silently drops/clamps parameters the resolved model
   doesn't accept instead of forwarding and crashing on 400. ClaudeAdapter gates `thinking`,

@@ -23,6 +23,9 @@ from src.composition.user_agent_factory import UserAgentFactory
 from src.composition.slack_adapter_factory import SlackAdapterFactory
 from src.utils.logger import logger
 from src.utils.telemetry import init_telemetry
+from src.composition.memory_telemetry_setup import build_memory_telemetry
+from src.domain.memory_telemetry import SCOPE_WORKER_TASK
+from src.utils.memory_scope import memory_scope
 from src.adapters.firestore_repo import FirestoreFactRepository
 from src.services.file_upload_service import FileUploadService
 from src.composition.service_container import ServiceContainer
@@ -74,6 +77,10 @@ async def main():
     print("=" * 80)
 
     init_telemetry("alek-core")
+
+    memory_telemetry = build_memory_telemetry("alek-core")
+    if memory_telemetry:
+        await memory_telemetry.start()
 
     # Set external libraries to WARNING to reduce noise, but keep our logs at DEBUG
     logging.getLogger("slack_bolt").setLevel(logging.WARNING)
@@ -1233,15 +1240,16 @@ async def main():
                             payload.get("task_type"), delivery.task_name,
                             delivery.retry_count, delivery.execution_count,
                         )
-                    if payload.get("task_type") == "telegram_update" and telegram_adapter is not None:
-                        body, status = await telegram_adapter.handle_queued_update(payload)
-                        return jsonify(body), status
-                    result = await worker_handler.handle(payload, delivery=delivery)
-                    if result is not None:
-                        body, status = result
-                        return jsonify(body), status
-                    # Unknown task_type — fall back to slack adapter handler
-                    return await slack_adapter._handle_worker_task()
+                    with memory_scope(SCOPE_WORKER_TASK, str(payload.get("task_type") or "slack_event")):
+                        if payload.get("task_type") == "telegram_update" and telegram_adapter is not None:
+                            body, status = await telegram_adapter.handle_queued_update(payload)
+                            return jsonify(body), status
+                        result = await worker_handler.handle(payload, delivery=delivery)
+                        if result is not None:
+                            body, status = result
+                            return jsonify(body), status
+                        # Unknown task_type — fall back to slack adapter handler
+                        return await slack_adapter._handle_worker_task()
 
                 # ====================================================================
                 # Remote MCP connector for claude.ai Custom Connectors
@@ -1402,6 +1410,8 @@ async def main():
         await logger_agent.shutdown()
         if html_renderer:
             await html_renderer.stop()
+        if memory_telemetry:
+            await memory_telemetry.stop()
         logger.info("✅ Graceful shutdown complete")
 
     except Exception as e:

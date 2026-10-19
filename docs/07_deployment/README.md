@@ -593,6 +593,40 @@ lists every user with a sync state.
 --project=$GOOGLE_CLOUD_PROJECT`. The next `make deploy` deploys the indexer with `--set-env-vars`, which replaces
 every variable, so the switch silently turns back on: set it again after each deploy while it is needed.
 
+## Memory telemetry sink
+
+Every process (main service, indexer, voice relay, research Job) writes `memory.boot`, `memory.sample`,
+`memory.scope` and `memory.payload` records as structured log lines
+(`docs/04_solution_strategy/decisions/memory_telemetry.md`). They reach BigQuery through a log sink; the
+sink and the dataset are infrastructure outside the repo. One-time setup (owner step; `<PROJECT_ID>` and
+the sink's writer identity come from `.env` / the command output, never from this file):
+
+```bash
+# 1. Dataset with 90-day partition expiry (separate from alek_observability_dev: that one has a 30-day TTL)
+bq --project_id=<PROJECT_ID> mk --dataset --location=US \
+   --default_partition_expiration=7776000 alek_memory_dev
+
+# 2. Sink: only the memory.* records, into date-partitioned tables.
+#    Use the substring operator `:`; the regex form `=~"^memory\\."` matches nothing in Cloud Logging filters.
+gcloud logging sinks create alek-memory-telemetry \
+  bigquery.googleapis.com/projects/<PROJECT_ID>/datasets/alek_memory_dev \
+  --project=<PROJECT_ID> --use-partitioned-tables \
+  --log-filter='(resource.type="cloud_run_revision" OR resource.type="cloud_run_job") AND jsonPayload.event:"memory."'
+
+# 3. Let the sink write: add its writerIdentity (printed by `describe`) as a WRITER on the dataset ACL.
+#    (`bq add-iam-policy-binding` fails on datasets with bq 2.1.39; use the ACL round-trip.)
+gcloud logging sinks describe alek-memory-telemetry --project=<PROJECT_ID> --format='value(writerIdentity)'
+bq --project_id=<PROJECT_ID> show --format=prettyjson alek_memory_dev > ds.json
+#    edit ds.json: append {"role": "WRITER", "userByEmail": "<writerIdentity without the serviceAccount: prefix>"} to "access"
+bq --project_id=<PROJECT_ID> update --source ds.json alek_memory_dev
+```
+
+BigQuery creates the table (`run_googleapis_com_stdout`) on the first matching record and widens its
+schema as new fields appear. Analysis examples (SQL over `jsonPayload`) live in
+`docs/05_building_blocks/memory_telemetry/README.md`. Knobs: `MEMORY_TELEMETRY=off` disables the sampler;
+`MEMORY_SAMPLE_INTERVAL_S` (default 15, minimum 1) sets the idle interval — under pressure (≥ 75% of the
+limit) it samples every second.
+
 ## Cost Optimization
 
 | Strategy             | Cost/Month | Pros        | Cons                      |

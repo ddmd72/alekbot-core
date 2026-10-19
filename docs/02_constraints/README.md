@@ -85,7 +85,7 @@
 
 | Constraint          | Limit                 | Impact                                            |
 | ------------------- | --------------------- | ------------------------------------------------- |
-| **Memory**          | 1024Mi (1GB)          | Per-user agent cache limited, no heavy ML models  |
+| **Memory**          | 2Gi (main service)    | Per-user agent cache limited, no heavy ML models  |
 | **CPU**             | 1 vCPU                | Single-threaded bottleneck, async I/O compensates |
 | **Request Timeout** | 60 minutes (max)      | Long-running tasks must use Cloud Tasks           |
 | **Cold Start**      | 3-5 seconds           | Min instances = 1 for prod to avoid cold starts   |
