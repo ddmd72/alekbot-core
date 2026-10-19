@@ -66,10 +66,11 @@ def test_place_cases_call_as_the_manifest_says_and_their_type_word_twins_are_kno
     assert len(calls) >= 4 and set(twins) == {f"{cid}-type-word" for cid in calls}
     for cid, case in calls.items():
         assert case["filters"] == {"kind": "photo"}, cid
-        assert "min_hits" not in case and "known_hard" not in case, cid
+        assert case["min_hits"] == 3 and "known_hard" not in case, cid    # a kind=photo query returns no folder card
         assert not set(case["query"].casefold().split()) & type_words, cid
         twin = twins[f"{cid}-type-word"]
         assert twin["filters"] == {} and twin["min_hits"] == 5 and twin["known_hard"].strip(), cid
+        assert twin["folder_path"] and all(p.startswith(twin["folder_path"] + "/") for p in twin["expected_paths"]), cid
         assert twin["expected_paths"] == case["expected_paths"] and twin["lang"] == case["lang"], cid
         assert set(twin["query"].casefold().split()) & type_words, cid
     assert "date-rome-august" not in gold
