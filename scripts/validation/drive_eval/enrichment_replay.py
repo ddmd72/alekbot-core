@@ -127,7 +127,8 @@ class ReplayTriage(ImageTriagePort):
             if verdict is TriageVerdict.PHOTO and photo is None:
                 refused.append(image.item_id)   # recorded as a photo without a description: what the runner refused
                 continue
-            results.append(TriageResultV2(item_id=image.item_id, verdict=verdict, photo=photo))
+            results.append(TriageResultV2(item_id=image.item_id, verdict=verdict, photo=photo,
+                                          capture=str(entry.get("capture", "")) if photo is None else ""))
         return TriageReply(status=ModelReplyStatus.OK, results=tuple(results), model=REPLAY_MODEL, usd=0.0,
                            model_calls=0, refused_item_ids=tuple(refused))
 

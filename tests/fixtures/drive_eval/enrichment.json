@@ -12,7 +12,8 @@
   "passages_version": 1,
   "triage_version": 2,
   "reader_version": 1,
-  "ticks": 48
+  "ticks": 48,
+  "synthetic_entries": 14
  },
  "profiles": {
   "01b85de0ff2206a24e8a020c69fd53dee98103d2ba82ba967188945ca0bd9870": {
@@ -3123,6 +3124,102 @@
     "validity_words": []
    }
   },
+  "ac74c1adf4de486107380c089ad874b34cb67947bcfbc9e86b3375db1b33145f": {
+   "path": "Documents/DOC_20260610_0042.pdf",
+   "status": "ok",
+   "profile": {
+    "title": "Identity card",
+    "what_it_is": "A scanned identity card of Sample Person Example, valid until 07 05 2031.",
+    "language": "en",
+    "doc_type": "id_document",
+    "life_domains": [
+     "legal_admin"
+    ],
+    "dates": [
+     {
+      "label": "issued",
+      "iso": "2021-05-07",
+      "printed": "07 05 2021"
+     },
+     {
+      "label": "valid_until",
+      "iso": "2031-05-07",
+      "printed": "07 05 2031"
+     },
+     {
+      "label": "other",
+      "iso": "1990-11-08",
+      "printed": "08 11 1990"
+     }
+    ],
+    "entities": [
+     {
+      "name": "Sample Person Example",
+      "type": "person",
+      "printed": "SAMPLE PERSON EXAMPLE",
+      "forms": [],
+      "found": []
+     }
+    ],
+    "key_values": [
+     {
+      "label": "document_number",
+      "printed": "QX 4471902",
+      "canonical": "QX4471902"
+     }
+    ],
+    "topics": [
+     "identity card",
+     "personal identification"
+    ],
+    "topics_native": [
+     "identity card",
+     "personal identification"
+    ],
+    "topic_words": [
+     "identity card",
+     "tarjeta de identidad",
+     "посвідчення особи",
+     "удостоверение личности"
+    ],
+    "label_words": [
+     "identity document",
+     "identity documents",
+     "documento de identidad",
+     "documentos de identidad",
+     "документ, що посвідчує особу",
+     "документи, що посвідчують особу",
+     "документ, удостоверяющий личность",
+     "документы, удостоверяющие личность"
+    ],
+    "domain_words": [
+     "legal",
+     "administrative",
+     "trámites",
+     "documentos oficiales",
+     "юридичні питання",
+     "документи",
+     "юридические вопросы",
+     "документы"
+    ],
+    "validity_words": [
+     "valid until",
+     "expires",
+     "expiry date",
+     "válido hasta",
+     "caduca",
+     "vence",
+     "діє до",
+     "термін дії",
+     "закінчується",
+     "действует до",
+     "истекает",
+     "срок действия"
+    ],
+    "graded": []
+   },
+   "synthetic": true
+  },
   "ad10d7cce77b91a4e095301c9bf9c034b7306a13db6198f44b7c4ffba616cfe1": {
    "path": "Health/Informe laboratorio 2025-03.pdf",
    "status": "ok",
@@ -3509,6 +3606,59 @@
     ],
     "validity_words": []
    }
+  },
+  "b3e841e19dba970af33b956a5acff20baee37c10b6452129ed266a5381c62ac0": {
+   "path": "Documents/Phone photos/IMG_20260702_091503.jpg",
+   "status": "ok",
+   "profile": {
+    "title": "Meter reading card",
+    "what_it_is": "A meter reading card: meter GM-30517, reading 04412, dated 02/07/2026.",
+    "language": "en",
+    "doc_type": "form",
+    "life_domains": [
+     "other"
+    ],
+    "dates": [
+     {
+      "label": "event",
+      "iso": "2026-07-02",
+      "printed": "02/07/2026"
+     }
+    ],
+    "entities": [],
+    "key_values": [
+     {
+      "label": "other_id",
+      "printed": "GM-30517",
+      "canonical": "GM30517"
+     }
+    ],
+    "topics": [
+     "meter reading"
+    ],
+    "topics_native": [
+     "meter reading"
+    ],
+    "topic_words": [
+     "meter reading",
+     "lectura del contador",
+     "показання лічильника",
+     "показания счётчика"
+    ],
+    "label_words": [
+     "form",
+     "forms",
+     "formulario",
+     "formularios",
+     "форма",
+     "форми",
+     "формы"
+    ],
+    "domain_words": [],
+    "validity_words": [],
+    "graded": []
+   },
+   "synthetic": true
   },
   "b40a157436439d6fcc392e1c1223d3b27c404681352a1ab0bd92277faf1c129d": {
    "path": "Scans/Scan_0012.pdf",
@@ -5452,6 +5602,60 @@
     "validity_words": []
    }
   },
+  "f3527e58822e9932bacc6e743e2196e8286434b0432ffccbe80fc988ea33b01f": {
+   "path": "Screenshots/IMG_0412.png",
+   "status": "ok",
+   "profile": {
+    "title": "Library loan reminder",
+    "what_it_is": "A loan reminder from Example Library for Atlas of Birds, to return by 24/09/2026.",
+    "language": "en",
+    "doc_type": "other",
+    "life_domains": [
+     "leisure"
+    ],
+    "dates": [
+     {
+      "label": "due",
+      "iso": "2026-09-24",
+      "printed": "24/09/2026"
+     }
+    ],
+    "entities": [
+     {
+      "name": "Example Library",
+      "type": "organization",
+      "printed": "Example Library",
+      "forms": [],
+      "found": []
+     }
+    ],
+    "key_values": [],
+    "topics": [
+     "library loan",
+     "book return"
+    ],
+    "topics_native": [
+     "library loan",
+     "book return"
+    ],
+    "topic_words": [
+     "library loan",
+     "préstamo de biblioteca",
+     "позика бібліотеки",
+     "заём библиотеки"
+    ],
+    "label_words": [],
+    "domain_words": [
+     "leisure",
+     "ocio",
+     "дозвілля",
+     "досуг"
+    ],
+    "validity_words": [],
+    "graded": []
+   },
+   "synthetic": true
+  },
   "f69c2247ddfe87b363d55363451b506b46382e505644d023b1f00ed5be24b387": {
    "path": "Спорт/Абонемент 2026.md",
    "status": "ok",
@@ -6130,6 +6334,13 @@
      "evidence_end": -1
     }
    ]
+  },
+  "19f4097ed2331443a81bbd86306c073b45f9891e722f9aa449b76849ca9bcbce": {
+   "path": "Documents/Phone photos/IMG_20260702_091503.jpg",
+   "index": 0,
+   "status": "ok",
+   "items": [],
+   "synthetic": true
   },
   "1c21edfba7416d7311c4b819fefe860e53f3e472af17eec181beadb4b94258c8": {
    "path": "Notes/Plan de viaje Roma.md",
@@ -7971,6 +8182,13 @@
      "evidence_end": -1
     }
    ]
+  },
+  "6b8ae037f68b9274dd2ae95674cfe0f492dc3e41cb9376a133826d87526e0f35": {
+   "path": "Screenshots/IMG_0412.png",
+   "index": 0,
+   "status": "ok",
+   "items": [],
+   "synthetic": true
   },
   "710c5b11d80a4a9aa4659d0e0239188d40b64603b049855ec0b416e5a3ed88ea": {
    "path": "Books/A Short History of Bridges.docx",
@@ -11038,6 +11256,13 @@
     }
    ]
   },
+  "fda7690ed859e077e09a6b18956f66f5dd9d459725b15bcc64c0d8ead21de3bc": {
+   "path": "Documents/DOC_20260610_0042.pdf",
+   "index": 0,
+   "status": "ok",
+   "items": [],
+   "synthetic": true
+  },
   "fe086754bec7c6b622b09155cb01ce042c13b68294f2198cbb9de9ea53fcdb1d": {
    "path": "Inbox/Quarterly review.pptx",
    "index": 0,
@@ -11103,12 +11328,124 @@
   }
  },
  "photos": {
+  "07eb9584490465fcd86b0bf9e949e77abd192fa388c36600c86c5e8ba32fdcee:1": {
+   "paths": [
+    "Photos/Camera/IMG_20260720_131644.jpg"
+   ],
+   "verdict": "photo",
+   "photo": {
+    "description": "A wide sandy beach with calm blue sea under a clear sky.",
+    "objects": [
+     {
+      "name": "sand",
+      "forms": [
+       "arena",
+       "пісок",
+       "песок",
+       "sand"
+      ]
+     },
+     {
+      "name": "waves",
+      "forms": [
+       "olas",
+       "хвилі",
+       "волны",
+       "waves"
+      ]
+     }
+    ],
+    "scene": "sandy beach by the sea",
+    "visible_text": "",
+    "scene_labels": [
+     "beach",
+     "sea",
+     "sunny",
+     "travel"
+    ]
+   },
+   "synthetic": true
+  },
+  "0bcc3671070598095ffd007342d128e13b5f9ce838cac50dd56cb1d375074e0f:1": {
+   "paths": [
+    "Photos/Camera/IMG_20260905_172209.jpg"
+   ],
+   "verdict": "photo",
+   "photo": {
+    "description": "A tall iron lattice tower rising above the roofs of a city, in Paris.",
+    "objects": [
+     {
+      "name": "Eiffel Tower",
+      "forms": [
+       "Torre Eiffel",
+       "Ейфелева вежа",
+       "Эйфелева башня",
+       "Eiffel Tower"
+      ]
+     }
+    ],
+    "scene": "city landmark",
+    "visible_text": "",
+    "scene_labels": [
+     "architecture",
+     "city_street",
+     "travel"
+    ]
+   },
+   "synthetic": true
+  },
   "42611221e168455deaef01fb1caa2f518a3701e1b01eeed3a02f960f3c9325f6:0": {
    "paths": [
     "Screenshots/Screenshot 2026-05-12 at 10.14.03.png"
    ],
    "verdict": "text",
    "photo": null
+  },
+  "6333bd92ad4aa829c69dd476c5990f47adec1f1948911f069f32f14d500bc9ea:1": {
+   "paths": [
+    "Photos/Camera/IMG_20260814_204712.jpg"
+   ],
+   "verdict": "photo",
+   "photo": {
+    "description": "A large orange sun sinking behind dark hills under a purple and orange sky.",
+    "objects": [
+     {
+      "name": "sun",
+      "forms": [
+       "sol",
+       "сонце",
+       "солнце",
+       "sun"
+      ]
+     },
+     {
+      "name": "hills",
+      "forms": [
+       "colinas",
+       "пагорби",
+       "холмы",
+       "hills"
+      ]
+     }
+    ],
+    "scene": "sunset over hills",
+    "visible_text": "",
+    "scene_labels": [
+     "sunset",
+     "golden_hour",
+     "landscape"
+    ]
+   },
+   "synthetic": true
+  },
+  "7a38fbca40fe4fee9c8c57ce9e08c6939a256ec7532365a36af1557a0525ac21:0": {
+   "paths": [
+    "Screenshots/IMG_0412.png"
+   ],
+   "verdict": "text",
+   "photo": null,
+   "capture": "screenshot",
+   "synthetic": true
   },
   "7dd32b27c9c7a2bbf57b735661933b6d71010882ca375efc2c15b9d08925e7d5:0": {
    "paths": [
@@ -11138,6 +11475,14 @@
    ],
    "verdict": "text",
    "photo": null
+  },
+  "9b4bb7992dd4717fed3a889c60e585745de88fd75e0582517e02501c2dfa47eb:1": {
+   "paths": [
+    "Documents/Phone photos/IMG_20260702_091503.jpg"
+   ],
+   "verdict": "text",
+   "photo": null,
+   "synthetic": true
   },
   "bb4cf8dff9d51883455ac2aa537f65cf7f95acaa08b038f1dd7948bcb0a74bf9:1": {
    "paths": [
@@ -11271,6 +11616,56 @@
     "script_rendered": false
    }
   },
+  "5fd4ff31b6092ffc8a2d4f92d66f87db99ec6f039bd7b9560ac0812314ba36e5": {
+   "path": "Documents/DOC_20260610_0042.pdf",
+   "outcome": {
+    "status": "text",
+    "text": "IDENTITY CARD\nSAMPLE - NOT A REAL DOCUMENT\nName: SAMPLE PERSON EXAMPLE\nDate of birth: 03 11 1990\nDocument no.: QX 4471902\nIssued: 07 05 2021\nValid until: 07 05 2031",
+    "pages_total": 1,
+    "pages_sent": 1,
+    "truncated": false,
+    "brief": {
+     "doc_type": "id_document",
+     "description": "Scanned identity card of Sample Person Example.",
+     "doc_date": "2021-05-07T00:00:00+00:00",
+     "parties": [
+      "SAMPLE PERSON EXAMPLE"
+     ],
+     "amount": ""
+    },
+    "extracted_by": "reader",
+    "pages_refused": 0,
+    "model_calls": 0,
+    "model_cost": 0.0,
+    "script_rendered": false
+   },
+   "synthetic": true
+  },
+  "7a38fbca40fe4fee9c8c57ce9e08c6939a256ec7532365a36af1557a0525ac21": {
+   "path": "Screenshots/IMG_0412.png",
+   "outcome": {
+    "status": "text",
+    "text": "Example Library\nLoan reminder\nItem: Atlas of Birds\nReturn by 24/09/2026",
+    "pages_total": 1,
+    "pages_sent": 1,
+    "truncated": false,
+    "brief": {
+     "doc_type": "other",
+     "description": "A library loan reminder.",
+     "doc_date": "2026-09-24T00:00:00+00:00",
+     "parties": [
+      "Example Library"
+     ],
+     "amount": ""
+    },
+    "extracted_by": "reader",
+    "pages_refused": 0,
+    "model_calls": 0,
+    "model_cost": 0.0,
+    "script_rendered": false
+   },
+   "synthetic": true
+  },
   "8d3051c7265a3879b72d67f1377276b14de263543509500528f831e024255c4d": {
    "path": "Finance/Счёт-фактура №1847.pdf",
    "outcome": {
@@ -11319,6 +11714,29 @@
     "model_cost": 0.000323,
     "script_rendered": false
    }
+  },
+  "9b4bb7992dd4717fed3a889c60e585745de88fd75e0582517e02501c2dfa47eb": {
+   "path": "Documents/Phone photos/IMG_20260702_091503.jpg",
+   "outcome": {
+    "status": "text",
+    "text": "METER READING CARD\nSAMPLE - NOT A REAL DOCUMENT\nMeter no. GM-30517\nReading: 04412\nDate: 02/07/2026",
+    "pages_total": 1,
+    "pages_sent": 1,
+    "truncated": false,
+    "brief": {
+     "doc_type": "form",
+     "description": "A meter reading card with a reading and a date.",
+     "doc_date": "2026-07-02T00:00:00+00:00",
+     "parties": [],
+     "amount": ""
+    },
+    "extracted_by": "reader",
+    "pages_refused": 0,
+    "model_calls": 0,
+    "model_cost": 0.0,
+    "script_rendered": false
+   },
+   "synthetic": true
   },
   "c75cab64e47e1667d79bd7c2150317ba09acff5a77a38302eee2c6eae45ccac3": {
    "path": "Scans/Scan_0013.pdf",

@@ -14,6 +14,11 @@ the provider rendition served for every size (an image item's own bytes when it 
 `content_template` names a template in fixture_texts, rendered per item (a PDF for `.pdf` names, UTF-8 text
 otherwise), so the bulk folders are never committed. An item without bytes downloads as an empty file. The Step 1
 reads (`get_root`, `get_item`, `list_children`, `download`) serve the Smart dry run (G3).
+
+An item with `"inaccessible": true` (USER_DRIVE_INDEXING_RFC §26.2, D33) is listed by delta as any other but answers
+"not found" to every id-addressed call (`get_change`, `get_item`, `download`, `download_to_file`, `get_thumbnail`),
+as Graph does for an item whose own permission list lacks the app's entry; it still has bytes in the manifest, so the
+fixture check "every file the indexer would read has bytes" holds, and the drive never serves them.
 """
 from __future__ import annotations
 
@@ -96,6 +101,7 @@ class FixtureDrive(UserDrivePort):
         self._content: Dict[str, bytes] = {}             # item_id -> file bytes
         self._thumbnails: Dict[str, bytes] = {}          # item_id -> provider rendition
         self._generated: Dict[str, Tuple[str, int]] = {}  # item_id -> (content_template, n) of a bulk member
+        self._closed: set = set()                        # §26.2: listed by delta, 404 on every id-addressed call
         self.downloads: List[str] = []
         self.thumbnail_calls: List[Tuple[str, str]] = []
         for entry in manifest.get("items", []):
@@ -155,6 +161,8 @@ class FixtureDrive(UserDrivePort):
         if not folder and entry.get("thumbnail"):
             self._thumbnails[item_id] = self._read(entry["thumbnail"])
         self._paths[item_id] = path
+        if entry.get("inaccessible"):
+            self._closed.add(item_id)
         self._items[item_id] = DriveChange(
             item_id=item_id, parent_id=parent_id, name=name, is_folder=folder,
             size_bytes=0 if folder else size,
@@ -178,6 +186,13 @@ class FixtureDrive(UserDrivePort):
         item_id = item_id_for(path.strip("/"))
         self._content[item_id] = data
         self._items[item_id] = replace(self._items[item_id], size_bytes=len(data))
+
+    def is_inaccessible(self, path: str) -> bool:
+        return item_id_for(path.strip("/")) in self._closed
+
+    def _check(self, item_id: str) -> None:
+        if item_id in self._closed:
+            raise DriveItemNotFoundError(item_id)
 
     def paths(self) -> List[str]:
         return [self._paths[i] for i in self._order]
@@ -224,6 +239,7 @@ class FixtureDrive(UserDrivePort):
     async def get_change(self, user_id: str, item_id: str) -> DriveChange:
         if item_id == ROOT_ID:
             return DriveChange(item_id=ROOT_ID, name="root", is_folder=True)
+        self._check(item_id)
         found = self._items.get(item_id)
         if found is None:   # the port contract (USER_DRIVE_INDEXING_RFC §26.2, Δ48): "not found" raises, never a deletion
             raise DriveItemNotFoundError(item_id)
@@ -260,6 +276,7 @@ class FixtureDrive(UserDrivePort):
         return self._item(ROOT_ID)
 
     async def get_item(self, user_id: str, item_id: str) -> DriveItem:
+        self._check(item_id)
         return self._item(item_id)
 
     async def list_children(self, user_id: str, folder_id: str) -> List[DriveItem]:
@@ -272,6 +289,7 @@ class FixtureDrive(UserDrivePort):
         raise NotImplementedError("the eval drive is read-only")
 
     async def download(self, user_id: str, item_id: str) -> bytes:
+        self._check(item_id)
         if item_id not in self._items:
             raise DriveItemNotFoundError(item_id)
         return self._content.get(item_id, b"")
@@ -298,6 +316,7 @@ class FixtureDrive(UserDrivePort):
     async def download_to_file(self, user_id: str, item_id: str, dest_path: str, max_bytes: int) -> int:
         """As a cut stream: what fits under `max_bytes` is written, then DriveFileTooLarge (§5.4)."""
         self.downloads.append(item_id)
+        self._check(item_id)
         if item_id not in self._items or self._items[item_id].is_folder:
             raise DriveItemNotFoundError(item_id)
         data = self._content.get(item_id, b"")
@@ -310,6 +329,7 @@ class FixtureDrive(UserDrivePort):
     async def get_thumbnail(self, user_id: str, item_id: str, size: str) -> Optional[bytes]:
         """The same rendition for every size: the fixture's pictures are already small (S0f, S0g)."""
         self.thumbnail_calls.append((item_id, size))
+        self._check(item_id)
         change = self._items.get(item_id)
         if change is None:
             raise DriveItemNotFoundError(item_id)

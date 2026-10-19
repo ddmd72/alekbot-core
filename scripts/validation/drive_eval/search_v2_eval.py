@@ -118,6 +118,8 @@ def row_of(result: DriveSearchResult, captured: Mapping[str, Any], drive: Fixtur
         tiers.setdefault(_path(drive, item), "related")
         if is_similar:
             similar.append(_path(drive, item))
+    row["inaccessible"] = sorted({p for card in result.cards if getattr(card, "inaccessible", False)
+                                  for p in _card_paths(card, drive)})   # §26.2: cards whose index line says "cannot open"
     row.update(tiers=tiers, similar=similar, concepts=list(tiered.concepts), ignored=list(tiered.ignored),
                common=list(tiered.common), absent=list(tiered.absent), absent_in_scope=list(tiered.absent_in_scope),
                without=tiered.without, without_at_least=tiered.without_at_least,
@@ -277,6 +279,8 @@ def format_table(report: Mapping[str, Any]) -> List[str]:
         if v1 and key in v1:
             text += f"  v1={v1.get(key)!r}"
         lines.append(text)
+    for cid, line in (v2.get("known_hard") or {}).items():
+        lines.append(f"known hard {cid}: {'passes now' if line['passed'] else 'misses'} — {line['reason']}")
     g1 = report.get("g1", {})
     lines.append(f"v1 gold under v2: {g1.get('passed')}/{g1.get('cases')} pass; lost v1-passing: {g1.get('lost')}")
     return lines

@@ -5,7 +5,8 @@ The parser is deterministic (same bytes, kind and parser version, same text), an
 one sandboxed child process per file, about half a second each, over 1 400 bulk files. The cache answers a file it
 has seen from memory or from `directory` (one JSON file per input, under the gitignored scripts/memory/), and passes
 anything else to the real parser. Never used by the indexer: an eval convenience only. Delete the directory after a
-parser change (the parser version is part of the key, so a bump misses anyway).
+parser change (the parser version is part of the key, so a bump misses anyway). An entry written before the capture
+signals were kept (§26.3: no `cap` marker) is a miss: replayed, it would hide every PDF's capture from the eval.
 """
 from __future__ import annotations
 
@@ -18,6 +19,9 @@ from src.domain.drive_extraction import ExtractionOutcome, ExtractionRequest
 from src.ports.content_extractor_port import ContentExtractorPort
 
 from .enrichment_snapshot import outcome_from_json, outcome_to_json
+
+
+_CAPTURE_FORMAT = 1   # entries hold `capture_signals` and `capture` (§26.3)
 
 
 class ParseCache(ContentExtractorPort):
@@ -48,12 +52,14 @@ class ParseCache(ContentExtractorPort):
         stored = self._memory.get(key)
         if stored is None and self._dir is not None and (self._dir / f"{key}.json").exists():
             stored = json.loads((self._dir / f"{key}.json").read_text(encoding="utf-8"))
+        if stored is not None and stored.get("cap") != _CAPTURE_FORMAT:
+            stored = None
         if stored is not None:
             self.hits += 1
             return outcome_from_json(stored)
         self.misses += 1
         outcome = await self._inner.extract(request)
-        data = outcome_to_json(outcome)
+        data = {**outcome_to_json(outcome), "cap": _CAPTURE_FORMAT}
         self._memory[key] = data
         if self._dir is not None:
             (self._dir / f"{key}.json").write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
