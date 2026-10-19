@@ -213,16 +213,18 @@
   "set": "positive",
   "category": "content",
   "lang": "ru",
-  "text": "Какой номер у моего удостоверения личности? Оно лежит где-то в моих файлах.",
+  "text": "Когда выдано мое удостоверение личности? Оно лежит где-то в моих файлах.",
   "expect": "none",
   "must_open": true,
   "answer_must_include": [
    [
-    "QX4471902",
-    "QX 4471902"
+    "2021",
+    "7 мая 2021",
+    "07.05.2021",
+    "07 05 2021"
    ]
   ],
-  "note": "The same card, a value in Russian: the number is on a card under 90 %, so the file is opened."
+  "note": "The same card, another value it prints (the issue date, in Russian): the card's accuracy is under 90 % because of a different, misread value, so only the accuracy rule makes Smart open the file."
  },
  {
   "id": "v2-card-find-no-open",

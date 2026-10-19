@@ -5,7 +5,7 @@ The parser is deterministic (same bytes, kind and parser version, same text), an
 one sandboxed child process per file, about half a second each, over 1 400 bulk files. The cache answers a file it
 has seen from memory or from `directory` (one JSON file per input, under the gitignored scripts/memory/), and passes
 anything else to the real parser. Never used by the indexer: an eval convenience only. Delete the directory after a
-parser change (the parser version is part of the key, so a bump misses anyway). An entry written before the capture
+parser change (the parser version and a digest of `drive_parser/capture.py` are part of the key, so a bump or a capture edit misses anyway). An entry written before the capture
 signals were kept (§26.3: no `cap` marker) is a miss: replayed, it would hide every PDF's capture from the eval.
 """
 from __future__ import annotations
@@ -22,6 +22,16 @@ from .enrichment_snapshot import outcome_from_json, outcome_to_json
 
 
 _CAPTURE_FORMAT = 1   # entries hold `capture_signals` and `capture` (§26.3)
+_CAPTURE_SOURCE = Path(__file__).resolve().parents[3] / "src" / "adapters" / "drive_parser" / "capture.py"
+
+
+def _capture_digest() -> str:
+    """Digest of the capture code: it has no version constant, so its source is the version. An edit to it misses
+    every warm entry, so a capture regression is not hidden by a cache written under the old code."""
+    return hashlib.sha256(_CAPTURE_SOURCE.read_bytes()).hexdigest()[:16]
+
+
+CAPTURE_DIGEST = _capture_digest()
 
 
 class ParseCache(ContentExtractorPort):
@@ -43,7 +53,7 @@ class ParseCache(ContentExtractorPort):
         return self._inner.version
 
     def _key(self, request: ExtractionRequest, data: bytes) -> str:
-        head = f"{self._inner.extractor_id}@{self._inner.version}:{request.kind}:{request.mime_type}:"
+        head = f"{self._inner.extractor_id}@{self._inner.version}:{request.kind}:{request.mime_type}:capture={CAPTURE_DIGEST}:"
         return hashlib.sha256(head.encode("utf-8") + data).hexdigest()
 
     async def extract(self, request: ExtractionRequest) -> ExtractionOutcome:
