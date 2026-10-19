@@ -160,6 +160,8 @@ class RecordingTriage(ImageTriagePort):
                 if result is not None:
                     self._snapshot.photos[key] = {"paths": paths, "verdict": result.verdict.value,
                                                   "photo": photo_to_json(result.photo)}
+                    if result.capture:   # §26.3: how the model said a text image was made
+                        self._snapshot.photos[key]["capture"] = result.capture
                 elif image.item_id in refused:
                     self._snapshot.photos[key] = {"paths": paths, "verdict": TriageVerdict.PHOTO.value,
                                                   "photo": None, "refused": True}
