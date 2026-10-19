@@ -216,7 +216,7 @@ async def evaluate(*, tree: Path, overlay: Path, gold_v2_path: Path, gold_v1_pat
                    snapshot_path: Path, embeddings: EmbeddingService, space: str, place_of: PlaceOf,
                    parser: ContentExtractorPort, baseline_v1: Optional[Mapping[str, Any]] = None,
                    v1_bars: Optional[Mapping[str, Any]] = None,
-                   allow_misses: bool = False) -> Dict[str, Any]:
+                   allow_misses: bool = False, embeddings_kind: str = "gemini") -> Dict[str, Any]:
     drive = v2_drive(tree, overlay)
     gold_v2 = json.loads(gold_v2_path.read_text(encoding="utf-8"))
     v2_metrics.validate_gold_v2(gold_v2, drive.paths())
@@ -236,13 +236,14 @@ async def evaluate(*, tree: Path, overlay: Path, gold_v2_path: Path, gold_v1_pat
     rows = await run_rows(search, drive, gold_v2)
     rows_v1_gold = await run_rows(search, drive, gold_v1)
     errors = sorted(cid for cid, r in {**rows, **rows_v1_gold}.items() if r.get("error"))
-    table = v2_metrics.family_table(gold_v2, rows)
+    scored, skipped = v2_metrics.split_by_embeddings(gold_v2, embeddings_kind)
+    table = v2_metrics.family_table(scored, rows)
     v1_passed = _v1_passed(baseline_v1, v1_bars)
     g1 = v2_metrics.g1_table(gold_v1, rows_v1_gold, v1_passed)
-    report.update(families=table, g1=g1, rows=rows, rows_v1_gold=rows_v1_gold, errors=errors,
+    report.update(families=table, g1=g1, skipped=[c["id"] for c in skipped], rows=rows, rows_v1_gold=rows_v1_gold, errors=errors,
                   bars=bars, misses_allowed=bool(facts["misses"]))
     if baseline_v1 is not None:
-        report["v1"] = v2_metrics.family_table(gold_v2, baseline_v1.get("rows", {}), v1=True)
+        report["v1"] = v2_metrics.family_table(scored, baseline_v1.get("rows", {}), v1=True)
     failures = v2_metrics.judge(table, g1, bars)
     report["bar_failures"] = failures
     report["verdict"] = "search_errors" if errors else ("pass" if not failures else "bars_missed")
@@ -285,6 +286,10 @@ def format_table(report: Mapping[str, Any]) -> List[str]:
         lines.append(f"known hard {cid}: {'passes now' if line['passed'] else 'misses'} — {line['reason']}")
     g1 = report.get("g1", {})
     lines.append(f"v1 gold under v2: {g1.get('passed')}/{g1.get('cases')} pass; lost v1-passing: {g1.get('lost')}")
+    for cid, reason in (g1.get("accepted_losses") or {}).items():
+        lines.append(f"accepted loss {cid}: {reason}")
+    for cid in report.get("skipped") or ():
+        lines.append(f"skipped (needs semantic embeddings) {cid}")
     return lines
 
 
@@ -327,7 +332,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             tree=args.tree, overlay=args.overlay, gold_v2_path=args.gold_v2, gold_v1_paths=args.gold,
             bars_path=args.bars, snapshot_path=args.snapshot, embeddings=embeddings, space=space,
             place_of=build_place_lookup(), parser=ParseCache(SubprocessContentExtractor(), args.parse_cache),
-            baseline_v1=baseline, v1_bars=v1_bars, allow_misses=args.allow_snapshot_misses))
+            baseline_v1=baseline, v1_bars=v1_bars, allow_misses=args.allow_snapshot_misses,
+            embeddings_kind=args.embeddings))
     except (EvalError, v2_metrics.GoldError, FileNotFoundError, ValueError) as exc:
         print(f"drive search v2 eval: no verdict — {exc}", file=sys.stderr)
         return EXIT_SETUP

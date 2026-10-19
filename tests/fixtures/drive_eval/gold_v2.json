@@ -453,6 +453,7 @@
   "expected_paths": [
    "Books/A Short History of Bridges.docx"
   ],
+  "requires_embeddings": "semantic",
   "expect_tier": "related",
   "note": "no index word in German: only the meaning streams can find it (lexical vectors: expected miss)"
  },
@@ -466,6 +467,7 @@
   "expected_paths": [
    "Photos/WhatsApp/IMG-20251120-WA0005.jpg"
   ],
+  "requires_embeddings": "semantic",
   "expect_tier": "related",
   "note": "German query, Russian screenshot: meaning only"
  },

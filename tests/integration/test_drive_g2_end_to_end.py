@@ -52,9 +52,14 @@ async def test_text_layer_g2_cases_find_their_substring_in_the_window(admitted):
     # the hand-written items only: the generated thousands (Vault, invoices, camera roll) add minutes, not coverage
     drive = FixtureDrive({"items": tree["items"]}, base_dir=FIXTURES)
     paths = set(drive.paths())
-    gold = [case for case in json.loads((FIXTURES / "gold_g2.json").read_text(encoding="utf-8"))
-            if not case.get("ocr") and set(case["expected_paths"]) <= paths]
-    assert len(gold) >= 20
+    candidates = [case for case in json.loads((FIXTURES / "gold_g2.json").read_text(encoding="utf-8"))
+                  if not case.get("ocr") and set(case["expected_paths"]) <= paths]
+    # owner-accepted v2 strict-AND losses (Δ94) and cases found only through recorded enrichment this test never loads
+    accepted = [c["id"] for c in candidates if c.get("accepted_loss")]
+    enrichment = [c["id"] for c in candidates if c.get("requires_enrichment") and not c.get("accepted_loss")]
+    gold = [c for c in candidates if not c.get("accepted_loss") and not c.get("requires_enrichment")]
+    print(f"excluded as accepted_loss: {accepted}; skipped as requires_enrichment: {enrichment}")
+    assert len(candidates) >= 20 and len(gold) >= 18   # the text-layer set must not shrink silently
     repo, embeddings, clock = InMemoryDriveIndexRepository(), BagOfWordsEmbeddings(), EvalClock()
     reader = FakeExtractor(READER)
     indexed = await index_fixture(drive, repo, embeddings, lambda lat, lon: "Rome (Roma), Italy", SPACE, clock,
@@ -68,4 +73,4 @@ async def test_text_layer_g2_cases_find_their_substring_in_the_window(admitted):
     search = DriveSearchService(repo, embeddings, _EnabledUsers(), drive, clock=clock, embedding_space=SPACE)
     run = await run_cases(search, drive, gold)
     missed = {row["id"]: row.get("windows") or row["top"] for row in run.cases if not row["hit"]}
-    assert not missed, missed
+    assert not missed, (missed, f"accepted_loss: {accepted}", f"requires_enrichment: {enrichment}")

@@ -18,6 +18,11 @@ Pass rules per family (§25.7's table):
 A case may carry `known_hard` (a reason): it is run and reported (`known_hard` in the table: id, reason, whether it
 passed) but guards nothing — no pass rate, recall, junk, book or size line counts it — for a gap the eval found and the
 owner has not decided yet, kept visible instead of dropped (G1 has the same key, runner.py).
+A case may carry `requires_embeddings: "semantic"` (a meaning-only case that lexical vectors cannot represent): under
+`--embeddings lexical` it is reported as skipped (`split_by_embeddings`) and counted in no family rate; under `gemini`
+it counts like any other.
+A G1/G2 case may carry `accepted_loss` (a reason): the owner accepted that v2 no longer finds it (e.g. D29 strict AND).
+`g1_table` lists it under `accepted_losses` and leaves it out of the "v1-passing cases lost" bar.
 A case may add `expect_inaccessible: true` (§26.2): every expected file must also be a card whose `index:` line says the bot
 cannot open it (the row's `inaccessible` paths), on top of the family's tier rule.
 A case may add `expect_accuracy: {path: true|false}` (§26.4): the card shown for that path does (true) or does not
@@ -50,6 +55,7 @@ EXPECT_TIERS = frozenset(TIERS) | {"exact", "automatic", "any", "none"}
 V1_TIER = "v1"            # a v1 card: presented as a match, no tier
 LISTING = "listing"       # a filter-only listing's card (no tier in v2 either)
 BOOK = "Books/A Short History of Bridges.docx"
+SEMANTIC = "semantic"
 G1_FAMILY = {"misspelled": "misspelling", "translit": "semantic", "semantic": "semantic",
              "clause": "class", "amount": "class", "invoice_number": "class", "table": "class", "two_column": "class",
              "fact": "class"}
@@ -84,6 +90,10 @@ def validate_gold_v2(gold: Sequence[Mapping[str, Any]], paths: Iterable[str]) ->
                 if isinstance(wanted, dict) else []
         if "known_hard" in case and not (isinstance(case["known_hard"], str) and case["known_hard"].strip()):
             problems.append(f"{cid}: known_hard must be a non-empty reason")
+        if "requires_embeddings" in case and case["requires_embeddings"] != SEMANTIC:
+            problems.append(f"{cid}: requires_embeddings must be {SEMANTIC!r}")
+        if "requires_enrichment" in case and case["requires_enrichment"] is not True:
+            problems.append(f"{cid}: requires_enrichment must be true")
         if family == "negative" and expected:
             problems.append(f"{cid}: a negative case expects no file")
         if family == "misspelling" and not (expected or case.get("expect_absent")):
@@ -95,6 +105,15 @@ def validate_gold_v2(gold: Sequence[Mapping[str, Any]], paths: Iterable[str]) ->
             problems.append(f"{cid}: a v2 case needs words (filter-only listings are G1's)")
     if problems:
         raise GoldError("malformed v2 gold: " + "; ".join(problems))
+
+
+def split_by_embeddings(gold: Sequence[Mapping[str, Any]], kind: str
+                        ) -> "tuple[List[Mapping[str, Any]], List[Mapping[str, Any]]]":
+    """(cases to score, cases skipped): a `requires_embeddings: semantic` case is skipped under lexical vectors."""
+    if kind == "gemini":
+        return list(gold), []
+    kept = [c for c in gold if c.get("requires_embeddings") != SEMANTIC]
+    return kept, [c for c in gold if c.get("requires_embeddings") == SEMANTIC]
 
 
 def g1_family(case: Mapping[str, Any]) -> str:
@@ -233,6 +252,7 @@ def g1_table(gold: Sequence[Mapping[str, Any]], rows: Mapping[str, Mapping[str, 
              v1_passed: Mapping[str, bool]) -> Dict[str, Any]:
     """The v1 gold under v2 by its family's rule: every case v1 passed must pass (§25.7's last bar)."""
     lost = []
+    accepted = []
     passed = []
     substring_misses = []
     for case in gold:
@@ -243,11 +263,12 @@ def g1_table(gold: Sequence[Mapping[str, Any]], rows: Mapping[str, Mapping[str, 
         if ok:
             passed.append(case["id"])
         if v1_passed.get(case["id"]) and not ok:
-            lost.append(case["id"])
+            (accepted if case.get("accepted_loss") else lost).append(case["id"])
         if row.get("substring_hit") is False:
             substring_misses.append(case["id"])
     guarded = [c["id"] for c in gold if v1_passed.get(c["id"])]
     return {"cases": len(gold), "passed": len(passed), "v1_passed": len(guarded), "lost": sorted(lost),
+            "accepted_losses": {c: next(g["accepted_loss"] for g in gold if g["id"] == c) for c in sorted(accepted)},
             "substring_not_in_card": sorted(substring_misses)}
 
 
