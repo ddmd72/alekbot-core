@@ -149,5 +149,7 @@ class TestFailures:
 
 def test_the_schema_requires_every_field_and_has_no_null():
     item = _RESPONSE_SCHEMA["properties"]["images"]["items"]
-    assert set(item["required"]) == {"index", "verdict", "description", "objects", "scene", "visible_text"}
+    # TRIAGE_VERSION 3 (USER_DRIVE_INDEXING_RFC §26.3): every image is asked for its capture; D40: its scene labels
+    assert set(item["required"]) == {"index", "verdict", "capture", "description", "objects", "scene",
+                                     "scene_labels", "visible_text"}
     assert "null" not in str(_RESPONSE_SCHEMA)

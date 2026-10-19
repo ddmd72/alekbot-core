@@ -40,6 +40,7 @@ import tempfile
 import time
 from typing import IO, Any, Dict, Mapping, Optional, Tuple
 
+from src.domain.drive_capture import signals_from_json
 from src.domain.drive_extraction import (
     PARSER, ExtractionOutcome, ExtractionRequest, ExtractionStatus, PdfSplitFailed, text_digest,
 )
@@ -76,8 +77,9 @@ class SubprocessContentExtractor(ContentExtractorPort):
     """The `parser` link of every extractor chain; also counts a routed PDF's pages and cuts its page windows for
     the reader, one window per call (§24.3)."""
 
-    # 2: parser@2's HTML policy (§25.3, D23). A bump re-extracts every parser-decided record (§25.4.8).
-    VERSION = 2
+    # 2: parser@2's HTML policy (§25.3, D23); 3: a PDF's capture signals (§26.3, D34). A bump re-extracts every
+    # parser-decided record (§25.4.8).
+    VERSION = 3
 
     def __init__(self, *, memory_limit_bytes: int = EXTRACT_MEMORY_LIMIT_BYTES,
                  cpu_limit_s: int = EXTRACT_CPU_LIMIT_S, wall_timeout_s: float = EXTRACT_WALL_TIMEOUT_S,
@@ -271,10 +273,13 @@ class SubprocessContentExtractor(ContentExtractorPort):
         if status is ExtractionStatus.TEXT and not text.strip():
             status = ExtractionStatus.NO_TEXT
         is_text = status is ExtractionStatus.TEXT
+        signals = signals_from_json(result["capture_signals"]) if "capture_signals" in result else None
+        if "capture_signals" in result and signals is None:
+            logger.warning("[DriveExtract] child capture signals have an invalid shape; dropped")
         return ExtractionOutcome(status=status, text=text if is_text else "",
                                  pages_total=pages_total, truncated=truncated, extracted_by=self.stamp,
                                  detail=str(result.get("detail", ""))[:300],
-                                 script_rendered=is_text and script_rendered)
+                                 script_rendered=is_text and script_rendered, capture_signals=signals)
 
     async def _pdf_op(self, payload: Mapping[str, Any]) -> Dict[str, Any]:
         """The child's result of a page-window op, or PdfSplitFailed with the outcome status."""

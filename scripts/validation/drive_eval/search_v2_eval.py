@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
+from src.composition.drive_reader_runner import READER_VERSION as _RUNNER_READER_VERSION
 from src.domain.drive_extraction import PARSER, READER
 from src.domain.drive_index_planner import PlaceOf
 from src.domain.drive_search import DriveSearchResult, render_results
@@ -50,7 +51,7 @@ from .runner import EVAL_USER, EvalClock, EvalError, _EnabledUsers, index_fixtur
 
 _REPO = Path(__file__).resolve().parents[3]
 FIXTURES = _REPO / "tests" / "fixtures" / "drive_eval"
-READER_VERSION = 1      # composition.drive_reader_runner.READER_VERSION, pinned so the replay carries the same stamp
+READER_VERSION = _RUNNER_READER_VERSION   # the replay carries the runner's own stamp (a bump there is followed here)
 EXIT_OK, EXIT_BARS, EXIT_SETUP = 0, 1, 2
 
 
@@ -118,6 +119,9 @@ def row_of(result: DriveSearchResult, captured: Mapping[str, Any], drive: Fixtur
         tiers.setdefault(_path(drive, item), "related")
         if is_similar:
             similar.append(_path(drive, item))
+    row["inaccessible"] = sorted({p for card in result.cards if getattr(card, "inaccessible", False)
+                                  for p in _card_paths(card, drive)})   # §26.2: cards whose index line says "cannot open"
+    row["accuracy"] = {p: card.card_accuracy for card in result.cards for p in _card_paths(card, drive)}
     row.update(tiers=tiers, similar=similar, concepts=list(tiered.concepts), ignored=list(tiered.ignored),
                common=list(tiered.common), absent=list(tiered.absent), absent_in_scope=list(tiered.absent_in_scope),
                without=tiered.without, without_at_least=tiered.without_at_least,
@@ -277,6 +281,8 @@ def format_table(report: Mapping[str, Any]) -> List[str]:
         if v1 and key in v1:
             text += f"  v1={v1.get(key)!r}"
         lines.append(text)
+    for cid, line in (v2.get("known_hard") or {}).items():
+        lines.append(f"known hard {cid}: {'passes now' if line['passed'] else 'misses'} — {line['reason']}")
     g1 = report.get("g1", {})
     lines.append(f"v1 gold under v2: {g1.get('passed')}/{g1.get('cases')} pass; lost v1-passing: {g1.get('lost')}")
     return lines

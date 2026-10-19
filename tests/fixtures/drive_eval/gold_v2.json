@@ -524,7 +524,8 @@
    "Contracts/Contrato de alquiler 2026.pdf",
    "Contracts/Lease agreement — Porto.pdf",
    "Inbox/Lease agreement — Porto.pdf",
-   "Inbox/Super important agreement.pdf"
+   "Inbox/Super important agreement.pdf",
+   "Documents/DOC_20260610_0042.pdf"
   ]
  },
  {
@@ -860,5 +861,284 @@
    "Notes/Weekend ideas.md",
    "Books/A Short History of Bridges.docx"
   ]
+ },
+ {
+  "id": "cls-scans-en",
+  "family": "class",
+  "sub": "capture",
+  "lang": "en",
+  "query": "scans",
+  "filters": {},
+  "expected_paths": [
+   "Documents/DOC_20260610_0042.pdf",
+   "Scans/Scan_0012.pdf",
+   "Scans/Scan_0013.pdf"
+  ],
+  "expect_tier": "about",
+  "note": "The two Chromium scans of the v1 fixture are scans too (detected: one full-page raster, no EXIF camera); the folder `Scans` is a name match.",
+  "expect_accuracy": {
+   "Documents/DOC_20260610_0042.pdf": true
+  }
+ },
+ {
+  "id": "cls-scans-uk",
+  "family": "class",
+  "sub": "capture",
+  "lang": "uk",
+  "query": "скани",
+  "filters": {},
+  "expected_paths": [
+   "Documents/DOC_20260610_0042.pdf",
+   "Scans/Scan_0012.pdf",
+   "Scans/Scan_0013.pdf"
+  ],
+  "expect_tier": "about",
+  "note": "The two Chromium scans of the v1 fixture are scans too (detected: one full-page raster, no EXIF camera); the folder `Scans` is a name match.",
+  "acceptable_paths": [
+   "Scans"
+  ]
+ },
+ {
+  "id": "cls-scans-es",
+  "family": "class",
+  "sub": "capture",
+  "lang": "es",
+  "query": "escaneos",
+  "filters": {},
+  "expected_paths": [
+   "Documents/DOC_20260610_0042.pdf",
+   "Scans/Scan_0012.pdf",
+   "Scans/Scan_0013.pdf"
+  ],
+  "expect_tier": "about",
+  "note": "The two Chromium scans of the v1 fixture are scans too (detected: one full-page raster, no EXIF camera); the folder `Scans` is a name match."
+ },
+ {
+  "id": "cls-screenshot-ru",
+  "family": "class",
+  "sub": "capture",
+  "lang": "ru",
+  "query": "скриншот",
+  "filters": {},
+  "expected_paths": [
+   "Screenshots/IMG_0412.png"
+  ],
+  "expect_tier": "labelled",
+  "acceptable_paths": [
+   "Screenshots/Screenshot 2026-05-12 at 10.14.03.png",
+   "Screenshots/Знімок екрана 2026-06-01 093512.png",
+   "Screenshots/Captura de pantalla 2026-03-09 184410.png"
+  ],
+  "note": "The v1 fixture's three phone screenshots are screenshots too: `acceptable_paths` (they get `cpa:` after a live re-record; the synthetic enrichment names only the overlay's one)."
+ },
+ {
+  "id": "cls-screenshots-en",
+  "family": "class",
+  "sub": "capture",
+  "lang": "en",
+  "query": "screenshots",
+  "filters": {},
+  "expected_paths": [
+   "Screenshots/IMG_0412.png"
+  ],
+  "expect_tier": "labelled",
+  "acceptable_paths": [
+   "Screenshots/Screenshot 2026-05-12 at 10.14.03.png",
+   "Screenshots/Знімок екрана 2026-06-01 093512.png",
+   "Screenshots/Captura de pantalla 2026-03-09 184410.png"
+  ],
+  "note": "The v1 fixture's three phone screenshots are screenshots too: `acceptable_paths` (they get `cpa:` after a live re-record; the synthetic enrichment names only the overlay's one)."
+ },
+ {
+  "id": "ex-date-expiry-dotted",
+  "family": "exact",
+  "sub": "date",
+  "lang": "en",
+  "query": "07.05.2031",
+  "filters": {},
+  "expected_paths": [
+   "Documents/DOC_20260610_0042.pdf"
+  ],
+  "expect_tier": "exact"
+ },
+ {
+  "id": "ex-date-expiry-spaced",
+  "family": "exact",
+  "sub": "date",
+  "lang": "en",
+  "query": "07 05 2031",
+  "filters": {},
+  "expected_paths": [
+   "Documents/DOC_20260610_0042.pdf"
+  ],
+  "expect_tier": "exact"
+ },
+ {
+  "id": "ex-date-valid-until",
+  "family": "exact",
+  "sub": "date",
+  "lang": "en",
+  "query": "valid until 07.05.2031",
+  "filters": {},
+  "expected_paths": [
+   "Documents/DOC_20260610_0042.pdf"
+  ],
+  "expect_tier": "exact"
+ },
+ {
+  "id": "ex-value-id-number",
+  "family": "exact",
+  "sub": "value",
+  "lang": "en",
+  "query": "QX4471902",
+  "filters": {},
+  "expected_paths": [
+   "Documents/DOC_20260610_0042.pdf"
+  ],
+  "expect_tier": "exact",
+  "known_hard": "the card prints the number with a space (`QX 4471902`); grading keeps the first number term of a printed value that the text holds (`4471902`, RFC §26.4, drive_grade.value_grade), so the unspaced query `qx4471902` meets no key"
+ },
+ {
+  "id": "ex-value-id-number-spaced",
+  "family": "exact",
+  "sub": "value",
+  "lang": "en",
+  "query": "QX 4471902",
+  "filters": {},
+  "expected_paths": [
+   "Documents/DOC_20260610_0042.pdf"
+  ],
+  "expect_tier": "exact"
+ },
+ {
+  "id": "ex-inaccessible-name",
+  "family": "exact",
+  "sub": "inaccessible",
+  "lang": "en",
+  "query": "chimney inspection certificate",
+  "filters": {},
+  "expected_paths": [
+   "Shared/Chimney inspection certificate.pdf"
+  ],
+  "expect_tier": "about",
+  "expect_inaccessible": true
+ },
+ {
+  "id": "cls-sunsets-en",
+  "family": "class",
+  "sub": "scene",
+  "lang": "en",
+  "query": "sunsets",
+  "filters": {},
+  "expected_paths": [
+   "Photos/Camera/IMG_20260814_204712.jpg"
+  ],
+  "expect_tier": "labelled",
+  "expect_accuracy": {
+   "Photos/Camera/IMG_20260814_204712.jpg": false
+  }
+ },
+ {
+  "id": "cls-sunsets-ru",
+  "family": "class",
+  "sub": "scene",
+  "lang": "ru",
+  "query": "закаты",
+  "filters": {},
+  "expected_paths": [
+   "Photos/Camera/IMG_20260814_204712.jpg"
+  ],
+  "expect_tier": "labelled"
+ },
+ {
+  "id": "cls-sunsets-es",
+  "family": "class",
+  "sub": "scene",
+  "lang": "es",
+  "query": "puesta de sol",
+  "filters": {},
+  "expected_paths": [
+   "Photos/Camera/IMG_20260814_204712.jpg"
+  ],
+  "expect_tier": "labelled"
+ },
+ {
+  "id": "cls-sunset-photos",
+  "family": "class",
+  "sub": "scene",
+  "lang": "en",
+  "query": "sunset",
+  "filters": {
+   "kind": "photo"
+  },
+  "expected_paths": [
+   "Photos/Camera/IMG_20260814_204712.jpg"
+  ],
+  "expect_tier": "labelled"
+ },
+ {
+  "id": "cls-beach-ru",
+  "family": "class",
+  "sub": "scene",
+  "lang": "ru",
+  "query": "пляж",
+  "filters": {},
+  "expected_paths": [
+   "Photos/Camera/IMG_20260720_131644.jpg"
+  ],
+  "expect_tier": "labelled"
+ },
+ {
+  "id": "cls-beach-en",
+  "family": "class",
+  "sub": "scene",
+  "lang": "en",
+  "query": "beach",
+  "filters": {},
+  "expected_paths": [
+   "Photos/Camera/IMG_20260720_131644.jpg"
+  ],
+  "expect_tier": "labelled",
+  "acceptable_paths": [
+   "Notes/Fiestas del año.md"
+  ]
+ },
+ {
+  "id": "ex-place-paris",
+  "family": "exact",
+  "sub": "place",
+  "lang": "en",
+  "query": "Paris",
+  "filters": {
+   "kind": "photo"
+  },
+  "expected_paths": [
+   "Photos/Camera/IMG_20260905_172209.jpg"
+  ],
+  "expect_tier": "about"
+ },
+ {
+  "id": "sem-landmark-eiffel",
+  "family": "semantic",
+  "sub": "landmark",
+  "lang": "en",
+  "query": "Eiffel Tower",
+  "filters": {},
+  "expected_paths": [
+   "Photos/Camera/IMG_20260905_172209.jpg"
+  ],
+  "expect_tier": "labelled"
+ },
+ {
+  "id": "sem-landmark-eiffel-ru",
+  "family": "semantic",
+  "sub": "landmark",
+  "lang": "ru",
+  "query": "Эйфелева башня",
+  "filters": {},
+  "expected_paths": [
+   "Photos/Camera/IMG_20260905_172209.jpg"
+  ],
+  "expect_tier": "labelled"
  }
 ]

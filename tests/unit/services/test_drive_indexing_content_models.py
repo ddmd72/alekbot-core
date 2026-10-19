@@ -1,6 +1,7 @@
 """The reader in the tick (USER_DRIVE_INDEXING_RFC §9 router, §24.3, §24.5, §24.7, §24.8, §24.9): routing, model
 outages that never end the tick, budgets across a month boundary, images read from renditions. Search v2 (§25.4.5):
 the page budget is the reader's dollars (the open initial build, then the month's cap) at the per-page estimate."""
+from dataclasses import replace
 from datetime import datetime, timezone
 
 import pytest
@@ -34,12 +35,14 @@ def w():
 async def test_a_scan_goes_to_the_reader(w):
     w.parser.outcomes["scan.pdf"] = SCAN
     brief = DocumentBrief(doc_type="receipt", doc_date=datetime(2024, 3, 15, tzinfo=timezone.utc))
-    w.reader.outcomes["scan.pdf"] = read(brief=brief, model_cost=0.002)
+    # the text the reader read prints the brief's date, so it is the file's date (Δ60 grades it first)
+    w.reader.outcomes["scan.pdf"] = read(text="Receipt 15.03.2024. Total 12.50 EUR. Thank you.", brief=brief,
+                                         model_cost=0.002)
     doc = w.add_doc("scan.pdf", "")
     await w.settle()
     rec = w.rec(doc)
     assert (rec.state, rec.extracted_by, rec.brief, rec.effective_date) == \
-        (RecordState.INDEXED, "reader@1", brief, brief.doc_date)
+        (RecordState.INDEXED, "reader@1", replace(brief, date_grade="in_text"), brief.doc_date)
     (request,) = w.reader.requests
     every_page = affordable(INITIAL_BUILD_USD + READER_USD_PER_MONTH, READER_PAGE_USD_ESTIMATE)
     assert (request.kind, request.max_model_pages, request.account_id) == ("pdf", every_page, "a")
@@ -48,6 +51,19 @@ async def test_a_scan_goes_to_the_reader(w):
     assert (await w.repo.get_initial_build("u")).spent_usd == pytest.approx(0.002)
     assert w.summary_total("model_pages") == 3 and w.summary_total("model_calls") == 1
     assert sum(r.model_cost for r in w.results) == pytest.approx(0.002)
+
+
+async def test_a_brief_date_the_read_text_lacks_is_not_the_files_date(w):
+    """Δ60 on the brief path: the reader's brief date, absent from the text it read, stays on the brief graded
+    not_in_text and never becomes the effective date."""
+    w.parser.outcomes["scan.pdf"] = SCAN
+    brief = DocumentBrief(doc_type="receipt", doc_date=datetime(2024, 3, 15, tzinfo=timezone.utc))
+    w.reader.outcomes["scan.pdf"] = read(brief=brief, model_cost=0.002)   # the text holds no date
+    doc = w.add_doc("scan.pdf", "")
+    await w.settle()
+    rec = w.rec(doc)
+    assert rec.brief == replace(brief, date_grade="not_in_text") and rec.brief.held_date is None
+    assert rec.effective_date is not None and rec.effective_date != brief.doc_date
 
 
 @pytest.mark.parametrize("parser", [

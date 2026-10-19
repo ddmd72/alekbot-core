@@ -1,4 +1,4 @@
-"""Parser@2 across the sandbox boundary (USER_DRIVE_INDEXING_RFC §25.3, §25.4.8): the version is 2, the child reports
+"""Parser@2 across the sandbox boundary (USER_DRIVE_INDEXING_RFC §25.3, §25.4.8): the version is 2 (3 since §26.3), the child reports
 `script_rendered` only when set, and the parent passes it on a `text` outcome after checking its type."""
 import json
 import subprocess
@@ -13,9 +13,10 @@ _SCRIPT_PAGE = ("<html lang='en'><head><title>Planner</title><script>" + "var x=
                 "<body><div id='root'></div></body></html>")
 
 
-def test_parser_version_is_2():
-    assert SubprocessContentExtractor.VERSION == 2
-    assert SubprocessContentExtractor().stamp == f"{PARSER}@2"
+def test_parser_version_is_3():
+    # 3: a PDF's capture signals (USER_DRIVE_INDEXING_RFC §26.3, §26.7) on top of parser@2's HTML policy
+    assert SubprocessContentExtractor.VERSION == 3
+    assert SubprocessContentExtractor().stamp == f"{PARSER}@3"
 
 
 def test_outcome_has_the_flag_off_by_default():
@@ -50,7 +51,7 @@ def test_the_parent_passes_the_flag_on_a_text_outcome():
     outcome = extractor._from_result({"status": "text", "text": "Title: Planner", "pages_total": 0,
                                       "truncated": False, "script_rendered": True})
     assert outcome.status is ExtractionStatus.TEXT and outcome.script_rendered is True
-    assert outcome.extracted_by == f"{PARSER}@2"
+    assert outcome.extracted_by == f"{PARSER}@3"   # parser@3 (§26.7) keeps parser@2's flag
 
 
 def test_the_parent_refuses_a_flag_that_is_not_a_bool():

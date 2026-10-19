@@ -22,6 +22,11 @@ Public interface:
     DriveSearchService(repo, embeddings, users, drive, *, embedding_space, clock, nonce, monotonic)
     await search(user_id, request) -> DriveSearchResult
     await indexing_status(user_id) -> DriveIndexingStatus     # Cabinet (§6)
+    await access_note(user_id, *, item_id=None, path=None) -> Optional[str]   # list/open on a 404 (§26.2, Δ55)
+
+Files the bot cannot open (§26.2, D33): their cards say so in the `index:` line (drive_search.index_line), the coverage
+line counts them from the tick's `inaccessible` counter (Δ56), and `access_note` gives list and open the same sentence
+when the provider answers "not found" for an item the index knows to be closed.
 """
 from __future__ import annotations
 
@@ -37,12 +42,12 @@ from ..domain.drive_enrich_plan import COVERAGE_COUNTERS, GAP_HELD, GAP_NO_PASSA
 from ..domain.drive_enrichment import USD_CAPS, HintItem, UsageClass
 from ..domain.drive_index import (
     KEYS_VERSION, MIGRATION_GATE_KEY, POLICY_VERSION, DriveIndexRecord, DriveSyncState, EpochPhase, Priority,
-    RecordState, Scope,
+    RecordState, Scope, inaccessible,
 )
 from ..domain.drive_index_lean import ChunkId
 from ..domain.drive_index_params import (
     ABOUT_FETCH, ABOUT_SHOWN, CARD_FETCH, CHUNK_FETCH, FETCH_MAX, FOLDER_INMEM_CARDS, FOLDER_INMEM_CHUNKS,
-    GROUP_READ_MAX, HINT_FETCH, K, LABELLED_SHOWN, MAX_CARD_RECORDS_PER_USER, MENTIONED_SHOWN, NAME_FETCH,
+    GROUP_READ_MAX, HINT_FETCH, INACCESSIBLE_SCAN_MAX, K, LABELLED_SHOWN, MAX_CARD_RECORDS_PER_USER, MENTIONED_SHOWN, NAME_FETCH,
     NAME_KEY_QUERIES, PASSAGE_MAX_CHUNKS_PER_FILE, PROFILE_MIN_CHARS, RELATED_MAX, RELATED_SMALL, TRANSLATED_SHOWN, WINDOW_CHARS_TOTAL_V2,
     WINDOW_MAX, WORD_FETCH, WORD_FILES_MAX,
 )
@@ -50,15 +55,17 @@ from ..domain.drive_index_planner import month_key
 from ..domain.drive_indexing_status import DriveIndexingStatus
 from ..domain.drive_keys import fetch_batches, name_match_v2, query_concepts, query_name_keys_v2
 from ..domain.drive_match import Concept, KeyFamily, MatchTier, QueryConcepts
+from ..domain.drive_search_texts import ACCESS_NOTE_FILE, ACCESS_NOTE_FOLDER
 from ..domain.drive_search import (
-    MAX_CHAIN_DEPTH, NOT_READ_YET_COUNTER, STATUS_AMBIGUOUS_FOLDER, STATUS_FOLDER_NOT_FOUND, STATUS_OK, UNREAD_COUNTER,
+    INACCESSIBLE_COUNTER, MAX_CHAIN_DEPTH, NOT_READ_YET_COUNTER, STATUS_AMBIGUOUS_FOLDER, STATUS_FOLDER_NOT_FOUND, STATUS_OK, UNREAD_COUNTER,
     DriveSearchCard, DriveSearchEnvelope, DriveSearchRequest, DriveSearchResult, content_admitted, cosine_distance,
     hides_descendants, in_date_range, kinds_for, make_card, normalize_path, path_match, record_visible,
     render_results, resolve_chain, search_gate,
 )
 from ..domain.drive_tier_explain import explain, not_matched, passage_window
 from ..domain.drive_tier_pool import (
-    ConceptHits, candidate_ids, concept_trigrams, document_frequency, name_word_concepts, tier_order_key,
+    ConceptHits, candidate_ids, concept_trigrams, document_frequency, document_frequency_common, name_word_concepts,
+    tier_order_key,
 )
 from ..domain.drive_tier_result import CoverageFacts, GroupMember, TierBlock, TieredResult
 from ..domain.drive_tiers import (
@@ -334,7 +341,7 @@ class DriveSearchService:
                                refreshing=envelope.refreshing, not_read_yet=envelope.not_read_yet,
                                unread=envelope.unread,
                                names_only=result.tiered.coverage.names_only or not envelope.content_search)
-            stats.coverage = "complete" if coverage == CoverageFacts() else "incomplete"
+            stats.coverage = "complete" if replace(coverage, inaccessible=0) == CoverageFacts() else "incomplete"
             result = replace(result, tiered=replace(result.tiered, coverage=coverage))
         return result
 
@@ -419,7 +426,7 @@ class DriveSearchService:
         blocked = set(absent) | set(absent_in_scope)
         stats.absent = len(blocked)
         others = [c for c in concepts if c.word not in blocked]
-        df_of = {c.word: n for c, n in zip(concepts, df)}
+        df_of = {c.word: n for c, n in zip(concepts, document_frequency_common(pool.hits))}   # Δ90: no `sl:` hits
         allowance = allowances(others, df_of, carded)
         stats.common = len(allowance.common)
         tested = [i for i, c in enumerate(concepts) if c.word not in blocked]
@@ -451,7 +458,7 @@ class DriveSearchService:
         conjunction: Tuple[Tuple[str, int], ...] = ()
         if not names_only and not blocked and not unchecked and not matches and len(concepts) >= 2:
             conjunction = tuple((c.word, len(s)) for c, s in zip(concepts, in_scope))
-        keys_v = state.applied_versions.get(MIGRATION_GATE_KEY)
+        keys_v = state.applied_versions.get("keys")   # not the gate key (Δ65: that is `accuracy`)
         not_described, not_describable, no_passages = self._job_counts(state)
         long_docs = sum(1 for i, r in pool.fulls.items()
                         if i in scope.passing and r.chunk_count > PASSAGE_MAX_CHUNKS_PER_FILE)
@@ -459,7 +466,7 @@ class DriveSearchService:
             rekeying=keys_v is not None and int(keys_v) != KEYS_VERSION, full_page=page_full,
             keys_cut=sum(1 for c in built if c.keys_cut), cut=q.cut, not_described=not_described,
             not_describable=not_describable, no_passages=no_passages + long_docs, unchecked=tuple(unchecked),
-            names_only=names_only)
+            names_only=names_only, inaccessible=await self._closed_in_scope(user_id, state, folder, subtree, ancestry))
         position = request.query.casefold()
         ordered = sorted(concepts, key=lambda c: (position.find(c.word) % (len(position) + 1), concepts.index(c)))
         tiered = TieredResult(
@@ -495,7 +502,7 @@ class DriveSearchService:
         for i, (recs, full, scoped) in enumerate(about_pages):
             for rec in recs:
                 if pool.add(rec):
-                    pool.hits[i].about.add(rec.item_id)
+                    pool.hits[i].add_about(rec.item_id, set(rec.about_keys) & set(concepts[i].about_keys))
             pool.hits[i].full |= full
             pool.hits[i].unchecked |= full and not (scoped and not post.family and not post.folder)
         for i, (chunks, full) in enumerate(word_pages):
@@ -687,7 +694,7 @@ class DriveSearchService:
                 held = set(rec.about_keys)
                 for i, concept in enumerate(concepts):
                     if held & set(concept.about_keys):
-                        pool.hits[i].about.add(rec.item_id)
+                        pool.hits[i].add_about(rec.item_id, held & set(concept.about_keys))
         vector: Optional[List[float]] = None
         if use_cards:
             vector = await self._embeddings.get_embedding(query, task_type="RETRIEVAL_QUERY")
@@ -1273,7 +1280,52 @@ class DriveSearchService:
             # the flip's upgrade pass re-plans records it has not reached yet: reading whatever the counters say (F4-1)
             reading=int(state.applied_versions.get("policy", POLICY_VERSION)) != POLICY_VERSION,
             index_full=int(state.counters.get("carded", 0)) >= MAX_CARD_RECORDS_PER_USER,
+            inaccessible=int(state.counters.get(INACCESSIBLE_COUNTER, 0)),
         )
+
+    async def _closed_in_scope(self, user_id: str, state: DriveSyncState, folder: Optional[_Folder],
+                               subtree: Optional[List[DriveIndexRecord]], ancestry: _Ancestry) -> int:
+        """Files the bot cannot open that this search's scope holds (B-minor 2): all of them for an unscoped search
+        (the tick's counter), inside the folder for a folder-scoped one."""
+        total = int(state.counters.get(INACCESSIBLE_COUNTER, 0))
+        if folder is None or total == 0:
+            return total
+        if subtree is not None:
+            return sum(1 for r in subtree if inaccessible(r))
+        marked = await self._repo.inaccessible_records(user_id, INACCESSIBLE_SCAN_MAX, lean=True)
+        await ancestry.load(marked)
+        top = folder.record.item_id
+        count = 0
+        for rec in marked:
+            parent_id, seen = rec.parent_id, {rec.item_id}
+            while parent_id and parent_id not in seen and len(seen) <= MAX_CHAIN_DEPTH:
+                if parent_id == top:
+                    count += 1
+                    break
+                parent = ancestry.cache.get(parent_id)
+                if parent is None:
+                    break
+                seen.add(parent_id)
+                parent_id = parent.parent_id
+        return count
+
+    async def access_note(self, user_id: str, *, item_id: Optional[str] = None,
+                          path: Optional[str] = None) -> Optional[str]:
+        """The search card's sentence for an item the index knows the bot cannot open (§26.2, Δ55), by id or by folder
+        path (resolved in the index as a search scope is); None for an item the index does not know or can read, so
+        the caller keeps its own answer."""
+        rec: Optional[DriveIndexRecord] = None
+        if item_id is not None:
+            rec = (await self._repo.get_records(user_id, [item_id])).get(item_id)
+        elif path:
+            state = await self._repo.get_sync_state(user_id)
+            if state is None or not state.root_item_id:
+                return None
+            found = await self._resolve_folder(user_id, path, _Ancestry(self._repo, user_id, state.root_item_id))
+            rec = found.record if isinstance(found, _Folder) else None
+        if rec is None or not inaccessible(rec):
+            return None
+        return ACCESS_NOTE_FOLDER if rec.is_folder else ACCESS_NOTE_FILE
 
     async def _building(self, user_id: str, state: DriveSyncState) -> bool:
         """The set of items may be incomplete (§10.2): an epoch not idle, a first-seen or re-listing record

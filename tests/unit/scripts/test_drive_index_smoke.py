@@ -21,6 +21,8 @@ _SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "infrastructure" / "
 _FAMILY = len(max(KIND_FAMILIES.values(), key=len))
 _V2_RECORD_QUERIES = 4 + 1 + 1 + 2 + 1 + 1 + 12 * ((len(SLICE2_CONTENT_KINDS) + 29) // 30) + _FAMILY
 _V2_CHUNK_QUERIES = 2 + _FAMILY
+# §26.2 (§26.9 step 3): the records the bot cannot open, one read (the tick's counters and the fan-out's notice)
+_ACCESS_RECORD_QUERIES = 1
 
 
 @pytest.fixture
@@ -40,8 +42,9 @@ async def test_every_read_runs_once_and_nothing_is_written(smoke, mock_env_confi
     # eviction queries + children, records_page, records_seen_before, card_capped, 2 nearest, 2 name, 2 filter
     # + readable_chunk_total's sum (§24.6) + chunk_capped 1 + count_unread's 6 counts (one kind batch x 6 classes)
     # + 6 more over the images triaged as text (review D-M4) = 45; + the Search v2 record reads
-    assert len(queries) == 45 + _V2_RECORD_QUERIES
+    assert len(queries) == 45 + _V2_RECORD_QUERIES + _ACCESS_RECORD_QUERIES
     assert any(("where", "modified_at", "IS_NULL", None) in ops for ops in queries)
+    assert sum(1 for ops in queries if any(op[:2] == ("order_by", "inaccessible_since") for op in ops)) == 1
     assert sum(1 for ops in queries if any(op[0] == "sum" for op in ops)) == 1
     assert len(db.cols[CHUNKS].executed) == 5 + _V2_CHUNK_QUERIES  # 2 nearest, 2 term, 1 page; + v2
     assert len(db.cols[STATES].executed) == 1                      # list_sync_user_ids
@@ -68,5 +71,5 @@ async def test_a_missing_index_is_reported_and_the_rest_still_runs(smoke, mock_e
     assert [name for name, _ in failures] == ["find_nearest_cards", "find_nearest_cards[kind]", f"family kNN[{family}]"]
     assert "requires an index" in failures[0][1] and "requires an index" in failures[2][1]
     # the failing ones were sent, and every other query still ran (the family check stops after its first card kNN)
-    assert len(db.cols[RECS].executed) == 45 + _V2_RECORD_QUERIES - (_FAMILY - 1)
+    assert len(db.cols[RECS].executed) == 45 + _V2_RECORD_QUERIES + _ACCESS_RECORD_QUERIES - (_FAMILY - 1)
     assert len(db.cols[CHUNKS].executed) == 5 + 2   # including the chunk reads after them (no family chunk kNN)

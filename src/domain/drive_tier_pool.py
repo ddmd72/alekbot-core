@@ -20,11 +20,11 @@ from typing import Dict, List, Optional, Sequence, Set, Tuple
 from .drive_index_lean import ChunkId
 from .drive_key_forms import query_skeletons
 from .drive_keys import name_word_concepts
-from .drive_match import Concept
+from .drive_match import Concept, KeyFamily
 from .drive_name_keys import _strip_accents, _trigrams
 from .drive_tiers import Allowance
 
-__all__ = ["ConceptHits", "candidate_ids", "concept_trigrams", "document_frequency", "name_word_concepts",
+__all__ = ["ConceptHits", "candidate_ids", "concept_trigrams", "document_frequency", "document_frequency_common", "name_word_concepts",
            "tier_order_key"]
 
 _EPOCH = datetime.min
@@ -39,17 +39,39 @@ class ConceptHits:
     words: Dict[str, Set[ChunkId]] = field(default_factory=dict)
     hints: Dict[str, Set[ChunkId]] = field(default_factory=dict)
     names: Set[str] = field(default_factory=set)
+    scene: Set[str] = field(default_factory=set)   # Δ90: about hits whose every matched key is `sl:` (a photo's scene label)
     full: bool = False
     unchecked: bool = False         # a full page no scoped read covered: absence in a filtered scope is unknown
 
     def files(self) -> Set[str]:
         return self.about | set(self.words) | set(self.hints) | self.names
 
+    def document_files(self) -> Set[str]:
+        """`files()` without those found only through a scene label (Δ90): a photo labelled `home` says nothing of
+        how common `home` is among documents."""
+        return self.files() - (self.scene - set(self.words) - set(self.hints) - self.names)
+
+    def add_about(self, item_id: str, matched_keys: Set[str]) -> None:
+        """An about hit; `matched_keys` are the concept's about keys the record holds."""
+        self.about.add(item_id)
+        if matched_keys and all(k.startswith(KeyFamily.SCENE_LABEL.value) for k in matched_keys):
+            self.scene.add(item_id)
+
 
 def document_frequency(hits: Sequence[ConceptHits]) -> Tuple[List[int], List[bool]]:
     """`df` per concept (§25.5.2): distinct files in the union of its about, word, hint and name hits, user-wide,
     and whether it is a lower bound (a page was full)."""
     return [len(h.files()) for h in hits], [h.full for h in hits]
+
+
+def document_frequency_common(hits: Sequence[ConceptHits]) -> List[int]:
+    """`df` for the common-word and low-weight tests (Δ90): `document_frequency` without the files found only through
+    `sl:` keys. A word held only by photos' scene labels keeps df 1 (present, never common)."""
+    out = []
+    for h in hits:
+        total = len(h.files())
+        out.append(len(h.document_files()) or (1 if total else 0))
+    return out
 
 
 def candidate_ids(concepts: Sequence[Concept], in_scope: Sequence[Set[str]], df: Sequence[int],

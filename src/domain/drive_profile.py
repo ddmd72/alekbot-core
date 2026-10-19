@@ -1,5 +1,5 @@
 """
-Drive profile — the per-kind profile policy, the profiler's input from stored text, and the verification of its output
+Drive profile — the per-kind profile policy, the profiler's input from stored text, and the grading of its output
 (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §25.3, §25.4.1). Pure: no I/O, no clock.
 
 Public interface:
@@ -14,8 +14,11 @@ Public interface:
     input_fingerprint(kind, inp) -> str                          `profile_input_fingerprint` (not the name)
     readme_excerpt(readme_text, child_names) -> str              a collapsed folder's `readme_excerpt`
     template_profile(reason, kind, text) -> DriveProfile         `profile_source = template`
-    VerifyDrops; verify(profile, chunks, name, *, key_values=True) -> (DriveProfile, VerifyDrops)
-    valid_until_of(profile), issued_of(profile) -> Optional[date]
+    GradeCounts; grade(profile, chunks, name, *, key_values=True) -> (DriveProfile, GradeCounts)
+    grade_brief(brief, chunks, name) -> (GradedValue, ...)          a brief-only card's date, amount, parties
+    brief_date_grade(brief, chunks, name) -> str                    the brief date's Grade value ("" without a date)
+    grade_entity(evidence, printed, spellings) -> (Grade, found, seen_as)
+    valid_until_of(profile), issued_of(profile) -> Optional[date]    a `not_in_text` date never counts (Δ60)
 
 Every input is cut from the STORED text (§25.4.1): chunks in index order, each contributing the last
 `char_end - char_start` characters of its text (a continued table chunk starts with a repeated header outside its
@@ -23,33 +26,36 @@ span), overlaps cut by offsets, gaps as a paragraph break. "Head" and "tail" end
 boundary. The file's name and the previous labels travel on the request, outside the fingerprint (D21, N13): the
 profile comes only from the file's own content.
 
-Verification (P5) runs over the whole stored text: an entity is kept only when its `printed` occurs in the text or the
-name; a key value only when one of its number terms (`drive_content_terms`, the `n:` normaliser) is among the text's,
-or its `printed` occurs verbatim, and its `canonical` becomes that normaliser form (the `v:` key the query meets); a
-date only when its ISO form is among the text's number terms. Labels outside `drive_labels` become `other` (dates,
-entity types, the document type), `other_id` (value labels) or are dropped (life domains). Descriptive fields and the
-word lists are not verifiable: automatic (an entry joined with commas is split into its words). Matching is NFC +
-casefold + whitespace collapse, on word boundaries.
+Grading (P5, §26.4) runs over the whole stored text and keeps every value (see `grade`). An entity is `in_text` when its
+`printed` occurs in the text or the name; a key value when its maximal number term is among the text's, or its
+`printed` occurs verbatim (its `canonical` becomes that normaliser form, the `v:` key the query meets); a date when its
+ISO form is among the text's number terms. A value the text holds written differently is `in_text_as`; the rest is
+`not_in_text`: kept, keyed apart (`va:`, `ya:`, `ma:`, `ef:`), never exact. Labels outside `drive_labels` become `other`
+(dates, entity types, the document type), `other_id` (value labels) or are dropped (life domains). Descriptive fields
+and the word lists are not gradable: automatic (an entry joined with commas is split into its words). Matching is NFC +
+casefold + whitespace collapse, on word boundaries (`drive_grade`).
 """
 from __future__ import annotations
 
 import hashlib
 import re
-import unicodedata
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import date
 from enum import Enum
 from typing import Dict, Iterable, List, Mapping, Optional, Protocol, Sequence, Set, Tuple
 
-from .drive_content_terms import content_terms, query_terms
-from .drive_enrichment import DriveProfile, KeyValue, ProfileDate, ProfileEntity
+from .drive_content_terms import query_terms
+from .drive_enrichment import (
+    DriveProfile, Grade, GradedField, GradedValue, KeyValue, ProfileDate, ProfileEntity, is_unconfirmed,
+)
+from .drive_grade import TextEvidence, prose_terms
 from .drive_enrichment_calls import ProfileInput
-from .drive_index import PROFILE_VERSION, DriveIndexRecord, Reason, TriageVerdict
+from .drive_index import PROFILE_VERSION, DocumentBrief, DriveIndexRecord, Reason, TriageVerdict
 from .drive_index_params import (
     ENTITY_FORMS_MAX, PROFILE_DATES_MAX, PROFILE_ENTITIES_MAX, PROFILE_EPUB_BODY_CHARS, PROFILE_HEAD_CHARS,
     PROFILE_HEADINGS_CHARS, PROFILE_HEADINGS_MIN_TEXT, PROFILE_KEY_VALUES_MAX, PROFILE_MIN_CHARS, PROFILE_SHEET_ROWS,
-    PROFILE_TAIL_CHARS, PROFILE_TOPICS_MAX, PROFILE_WORD_LIST_MAX, README_CHILD_NAMES, README_EXCERPT_HEAD_CHARS,
-    README_EXCERPT_TAIL_CHARS,
+    PROFILE_TAIL_CHARS, PROFILE_TOPICS_MAX, PROFILE_WORD_LIST_MAX, PROSE_NUMBERS_MAX, README_CHILD_NAMES,
+    README_EXCERPT_HEAD_CHARS, README_EXCERPT_TAIL_CHARS,
 )
 from .drive_labels import DATE_LABELS, DOC_TYPES, ENTITY_TYPES, LIFE_DOMAINS, VALUE_LABELS
 
@@ -242,28 +248,57 @@ def template_profile(reason: TemplateReason, kind: str, text: str) -> DriveProfi
                         doc_type="notes" if note else "other")
 
 
-# -- verification ---------------------------------------------------------------------------------------------------
+# -- grading --------------------------------------------------------------------------------------------------------
+
+_RANK = {Grade.IN_TEXT.value: 0, Grade.IN_TEXT_AS.value: 1, Grade.NOT_IN_TEXT.value: 2}
+
 
 @dataclass(frozen=True)
-class VerifyDrops:
-    """What verification removed or relabelled (telemetry `verify_dropped_*`, §25.7)."""
-    entities: int = 0
-    values: int = 0
-    dates: int = 0
-    labels: int = 0          # enum values outside the fixed set, relabelled or dropped
+class GradeCounts:
+    """What grading found, for telemetry (`graded_not_in_text_<field>`, §25.7): `not_in_text` maps a `GradedField`
+    value to the number of its values the text does not hold; `labels` counts enum values outside the fixed set,
+    relabelled or dropped."""
+    not_in_text: Mapping[str, int] = field(default_factory=dict)
+    labels: int = 0
 
 
-def verify(profile: DriveProfile, chunks: Sequence[_HasText], name: str, *,
-           key_values: bool = True) -> Tuple[DriveProfile, VerifyDrops]:
-    """The profile with only what the stored text (the chunks' texts) and the name support (§25.4.1), within the
-    shared caps. `key_values=False` for kinds whose profile has none (§25.3). Dropping everything is not a
-    failure."""
-    texts = [c.text for c in chunks]
-    haystack = _norm("\n".join(texts))
-    name_norm = _norm(name)
-    terms: Set[str] = set()
-    for text in texts:
-        terms.update(content_terms(text))
+class _Graded:
+    """The grades of one profile (or brief) being built: one entry per (field, value), the best grade winning."""
+
+    def __init__(self) -> None:
+        self._by_key: Dict[Tuple[str, str], GradedValue] = {}
+
+    def add(self, gfield: GradedField, value: str, grade: Grade, seen_as: str = "") -> None:
+        key = (gfield.value, value)
+        known = self._by_key.get(key)
+        if known is None or _RANK[grade.value] < _RANK[known.grade]:
+            self._by_key[key] = GradedValue(field=gfield.value, value=value, grade=grade.value, seen_as=seen_as)
+
+    def values(self) -> Tuple[GradedValue, ...]:
+        return tuple(self._by_key.values())
+
+    def ids(self, gfield: GradedField) -> Set[str]:
+        return {v.value for v in self._by_key.values() if v.field == gfield.value}
+
+    def counts(self, labels: int) -> GradeCounts:
+        misses: Dict[str, int] = {}
+        for v in self._by_key.values():
+            if v.grade == Grade.NOT_IN_TEXT.value:
+                misses[v.field] = misses.get(v.field, 0) + 1
+        return GradeCounts(not_in_text=misses, labels=labels)
+
+
+def grade(profile: DriveProfile, chunks: Sequence[_HasText], name: str, *,
+          key_values: bool = True) -> Tuple[DriveProfile, GradeCounts]:
+    """The profile with every value it holds, each graded against the stored text (the chunks' texts) and the name
+    (§26.4, Δ59), within the shared caps. Nothing is dropped for being absent from the text: `graded` says which values
+    the text holds (`in_text`), holds written differently (`in_text_as`, with `seen_as`) or does not hold
+    (`not_in_text`). Enum values outside `drive_labels` become `other` / `other_id` (life areas are dropped). Dates, key
+    values, entities, the number terms of `title` and `what_it_is`, and `topics_native` are graded; the document type,
+    life areas, English topics and word lists are interpretation, never graded. `key_values=False` for kinds whose
+    profile has none (§25.3). Re-grading a graded profile gives the same profile."""
+    evidence = TextEvidence([c.text for c in chunks], name)
+    graded = _Graded()
     labels = 0
 
     doc_type = profile.doc_type if profile.doc_type in DOC_TYPES else "other"
@@ -272,74 +307,130 @@ def verify(profile: DriveProfile, chunks: Sequence[_HasText], name: str, *,
     labels += sum(1 for d in profile.life_domains if d not in LIFE_DOMAINS)
 
     entities: List[ProfileEntity] = []
-    dropped_entities = 0
-    for entity in profile.entities:
-        if not entity.printed.strip() or not (_occurs(entity.printed, haystack) or _occurs(entity.printed,
-                                                                                          name_norm)):
-            dropped_entities += 1
+    for entity in profile.entities[:PROFILE_ENTITIES_MAX]:
+        entity_name = entity.name.strip() or entity.printed.strip()
+        if not entity_name:
             continue
+        printed = entity.printed.strip() or entity_name
+        forms = _unique(f.strip() for f in entity.forms)[:ENTITY_FORMS_MAX]
+        egrade, found, seen = grade_entity(evidence, printed, (entity_name, *forms))
+        graded.add(GradedField.ENTITY, printed, egrade, seen)
         etype = entity.type if entity.type in ENTITY_TYPES else "other"
         labels += etype != entity.type
-        forms = _unique(f.strip() for f in entity.forms)[:ENTITY_FORMS_MAX]
-        name = entity.name.strip() or entity.printed.strip()
-        # which of the model's own spellings the file (or its name) prints: only those are exact keys (xc F1)
-        found = tuple(s for s in _unique((name, *forms))
-                      if s != entity.printed.strip() and (_occurs(s, haystack) or _occurs(s, name_norm)))
-        entities.append(ProfileEntity(name=name, type=etype, printed=entity.printed.strip(), forms=forms,
-                                      found=found))
+        entities.append(ProfileEntity(name=entity_name, type=etype, printed=printed, forms=forms, found=found))
 
     values: List[KeyValue] = []
-    dropped_values = 0
-    for kv in profile.key_values:
-        canonical = _verified_value(kv, terms, haystack) if key_values else None
-        if canonical is None:
-            dropped_values += 1
+    for kv in profile.key_values[:PROFILE_KEY_VALUES_MAX] if key_values else ():
+        printed, canonical = kv.printed.strip(), kv.canonical.strip()
+        if not printed and not canonical:
             continue
+        vgrade, kept, seen = evidence.value_grade(printed, canonical)
+        graded.add(GradedField.VALUE, printed or kept, vgrade, seen)
         label = kv.label if kv.label in VALUE_LABELS else "other_id"
         labels += label != kv.label
-        values.append(KeyValue(label=label, printed=kv.printed.strip(), canonical=canonical))
+        values.append(KeyValue(label=label, printed=printed, canonical=kept))
 
     dates: List[ProfileDate] = []
-    dropped_dates = 0
-    for d in profile.dates:
-        if d.iso.isoformat() not in terms:
-            dropped_dates += 1
-            continue
+    for d in profile.dates[:PROFILE_DATES_MAX]:
+        dgrade, seen = evidence.date_grade(d.iso, d.printed)
+        graded.add(GradedField.DATE, d.iso.isoformat(), dgrade, seen)
         label = d.label if d.label in DATE_LABELS else "other"
         labels += label != d.label
-        dates.append(ProfileDate(label=label, iso=d.iso))
-    dates = dates[:PROFILE_DATES_MAX]
+        dates.append(ProfileDate(label=label, iso=d.iso, printed=d.printed))
 
-    verified = DriveProfile(
-        title=" ".join(profile.title.split())[:TITLE_MAX_CHARS],
-        what_it_is=" ".join(profile.what_it_is.split())[:WHAT_IT_IS_MAX_CHARS],
+    title = " ".join(profile.title.split())[:TITLE_MAX_CHARS]
+    what_it_is = " ".join(profile.what_it_is.split())[:WHAT_IT_IS_MAX_CHARS]
+    own = graded.ids(GradedField.DATE) | {v.canonical for v in values} | {t for v in values
+                                                                           for t in query_terms(v.printed)}
+    for term in [t for t in prose_terms(title, what_it_is) if t not in own][:PROSE_NUMBERS_MAX]:
+        ngrade, seen = evidence.term_grade(term)
+        graded.add(GradedField.NUMBER, term, ngrade, seen)
+
+    topics_native = _words(profile.topics_native, PROFILE_TOPICS_MAX)
+    for topic in topics_native:
+        graded.add(GradedField.TOPIC_NATIVE, topic, evidence.words_grade(topic))
+
+    result = DriveProfile(
+        title=title,
+        what_it_is=what_it_is,
         language=profile.language.strip()[:16],
         doc_type=doc_type,
         life_domains=domains,
         dates=tuple(dates),
-        entities=tuple(entities)[:PROFILE_ENTITIES_MAX],
-        key_values=tuple(values)[:PROFILE_KEY_VALUES_MAX],
+        entities=tuple(entities),
+        key_values=tuple(values),
         topics=_words(profile.topics, PROFILE_TOPICS_MAX),
-        topics_native=_words(profile.topics_native, PROFILE_TOPICS_MAX),
+        topics_native=topics_native,
         topic_words=_words(_split(profile.topic_words), PROFILE_WORD_LIST_MAX),
         label_words=_words(_split(profile.label_words), PROFILE_WORD_LIST_MAX),
         domain_words=_words(_split(profile.domain_words), PROFILE_WORD_LIST_MAX),
         validity_words=(),
+        graded=graded.values(),
     )
-    if _validity_date(verified) is not None:
-        verified = replace(verified, validity_words=_words(_split(profile.validity_words), PROFILE_WORD_LIST_MAX))
-    return verified, VerifyDrops(entities=dropped_entities, values=dropped_values, dates=dropped_dates,
-                                 labels=labels)
+    if _validity_date(result) is not None:           # a validity date the text does not hold gets no words (Δ60)
+        result = replace(result, validity_words=_words(_split(profile.validity_words), PROFILE_WORD_LIST_MAX))
+    return result, graded.counts(labels)
+
+
+def grade_entity(evidence: TextEvidence, printed: str, spellings: Sequence[str]) -> Tuple[Grade, Tuple[str, ...], str]:
+    """(grade, found, seen_as) of a named thing (§26.4). `in_text`: `printed` occurs in the text or the name.
+    `in_text_as`: only another of its `spellings` occurs there (those are `found`), or only a transliteration skeleton
+    of one of them does (`seen_as`: the text's word). `not_in_text` otherwise. `found`: the spellings other than
+    `printed` that the text or the name prints (the exact `e:` keys next to `printed`)."""
+    found = tuple(s for s in _unique(spellings) if s != printed and evidence.occurs(s, in_name=True))
+    if evidence.occurs(printed, in_name=True):
+        return Grade.IN_TEXT, found, ""
+    if found:
+        return Grade.IN_TEXT_AS, found, found[0]
+    seen = next((w for s in (printed, *spellings) if (w := evidence.skeleton_seen(s))), "")
+    return (Grade.IN_TEXT_AS, (), seen) if seen else (Grade.NOT_IN_TEXT, (), "")
+
+
+def grade_brief(brief: DocumentBrief, chunks: Sequence[_HasText], name: str) -> Tuple[GradedValue, ...]:
+    """The grades of a reader brief's date, amount and parties (§26.4 "What carries it"): a brief-only card has no
+    profile to carry them. The date is `in_text` like a profile date; written another way the text prints, `in_text_as`.
+    The amount is graded as a key value, each party as an entity (its own spelling is `printed`)."""
+    evidence = TextEvidence([c.text for c in chunks], name)
+    graded = _Graded()
+    if brief.doc_date is not None:
+        day = brief.doc_date.date()
+        dgrade, seen = _brief_date(evidence, day)
+        graded.add(GradedField.DATE, day.isoformat(), dgrade, seen)
+    amount = brief.amount.strip()
+    if amount:
+        vgrade, _, seen = evidence.value_grade(amount, "")
+        graded.add(GradedField.VALUE, amount, vgrade, seen)
+    for party in _unique(p.strip() for p in brief.parties):
+        egrade, _, seen = grade_entity(evidence, party, (party,))
+        graded.add(GradedField.ENTITY, party, egrade, seen)
+    return graded.values()
+
+
+def _brief_date(evidence: TextEvidence, day: date) -> Tuple[Grade, str]:
+    dgrade, seen = evidence.date_grade(day, "")
+    if dgrade is Grade.NOT_IN_TEXT and evidence.prints_date(day):
+        return Grade.IN_TEXT_AS, seen
+    return dgrade, seen
+
+
+def brief_date_grade(brief: DocumentBrief, chunks: Sequence[_HasText], name: str) -> str:
+    """The `Grade` value of the brief's date against the text, or "" when the brief has no date (stored as
+    `DocumentBrief.date_grade`, which `held_date` reads, Δ60)."""
+    if brief.doc_date is None:
+        return ""
+    return _brief_date(TextEvidence([c.text for c in chunks], name), brief.doc_date.date())[0].value
 
 
 def valid_until_of(profile: DriveProfile) -> Optional[date]:
-    """`valid_until` (§25.2.1): the verified `valid_until` date, else the verified `due` date."""
+    """`valid_until` (§25.2.1): the `valid_until` date, else the `due` date, among the dates the text holds
+    (a `not_in_text` date never counts, Δ60; `in_text_as` does)."""
     return _validity_date(profile)
 
 
 def issued_of(profile: DriveProfile) -> Optional[date]:
-    """The verified `issued` date: the profiled document's `effective_date` (D13 extended, §25.4.1)."""
-    return next((d.iso for d in profile.dates if d.label == "issued"), None)
+    """The `issued` date the text holds: the profiled document's `effective_date` (D13 extended, §25.4.1; a
+    `not_in_text` date never counts, Δ60)."""
+    return next((d.iso for d in profile.dates if d.label == "issued" and _counts(profile, d)), None)
 
 
 # -- implementation -------------------------------------------------------------------------------------------------
@@ -447,33 +538,16 @@ def _epub_parts(text: str) -> Tuple[str, str]:
     return "\n".join(meta), "\n".join(lines).strip()
 
 
-def _norm(text: str) -> str:
-    return " ".join(unicodedata.normalize("NFC", text).casefold().split())
-
-
-def _occurs(printed: str, haystack: str) -> bool:
-    needle = _norm(printed)
-    return bool(needle) and re.search(rf"(?<!\w){re.escape(needle)}(?!\w)", haystack) is not None
-
-
-def _verified_value(kv: KeyValue, terms: Set[str], haystack: str) -> Optional[str]:
-    """The value's normaliser form when the maximal number term of its `printed`, else of its `canonical`, is the
-    text's — never a fragment of it (review m7) — or when `printed` occurs verbatim (then its first number term, else
-    its casefolded spelling without spaces); None otherwise."""
-    candidates = [terms_[0] for terms_ in (query_terms(kv.printed), query_terms(kv.canonical)) if terms_]
-    hit = next((t for t in candidates if t in terms), None)
-    if hit is not None:
-        return hit
-    if kv.printed.strip() and _occurs(kv.printed, haystack):
-        printed_terms = query_terms(kv.printed)
-        return printed_terms[0] if printed_terms else "".join(_norm(kv.printed).split())
-    return None
+def _counts(profile: DriveProfile, d: ProfileDate) -> bool:
+    """A profile date moves a file in time unless grading found it absent from the text (Δ60)."""
+    return not is_unconfirmed(profile, GradedField.DATE, d.iso.isoformat())
 
 
 def _validity_date(profile: DriveProfile) -> Optional[date]:
     by_label: Dict[str, date] = {}
     for d in profile.dates:
-        by_label.setdefault(d.label, d.iso)
+        if _counts(profile, d):
+            by_label.setdefault(d.label, d.iso)
     return by_label.get("valid_until") or by_label.get("due")
 
 

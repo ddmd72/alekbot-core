@@ -10,7 +10,7 @@ from src.domain.drive_keys import (
 )
 from src.domain.drive_labels import DOC_TYPE_NAMES, DOC_TYPES, LIFE_DOMAIN_NAMES, LIFE_DOMAINS, label_names_digest
 from src.domain.drive_match import Concept, SourceClass
-from src.domain.drive_profile import verify
+from src.domain.drive_profile import grade
 from src.domain.drive_tier_explain import explain
 from src.domain.drive_tiers import FileKeys, allowances, classify, record_cover
 
@@ -33,9 +33,10 @@ def _record(entity: ProfileEntity, **profile) -> RecordKeyInputs:
 # -- F1: only spellings the file prints are exact ------------------------------------------------------------------
 
 def test_verification_records_which_model_spellings_the_file_prints():
+    # Δ59: `grade` replaced `verify`; it records the printed spellings the same way
     text = [_Chunk("Boarding pass. Destination: BARCELONA (BCN). Gate 12.")]
     entity = ProfileEntity(name="Барселона", type="place", printed="BARCELONA", forms=("Barcelona", "Барселоне"))
-    profile, _ = verify(DriveProfile("t", "w", "en", "ticket", entities=(entity,)), text, "pass.pdf")
+    profile, _ = grade(DriveProfile("t", "w", "en", "ticket", entities=(entity,)), text, "pass.pdf")
     (kept,) = profile.entities
     assert kept.found == ("Barcelona",)          # case-insensitive occurrence; the Cyrillic spellings are not printed
 
@@ -73,7 +74,7 @@ def test_the_match_line_of_an_index_spelling_names_what_the_file_prints():
 
 
 def test_keys_version_is_bumped_for_the_review_fixes():
-    assert KEYS_VERSION == 3
+    assert KEYS_VERSION == 4   # 3: the review fixes; 4: §26.7 (capture names, then S3's keys)
 
 
 # -- F3: two Latin words never meet through a skeleton --------------------------------------------------------------

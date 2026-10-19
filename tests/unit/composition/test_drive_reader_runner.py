@@ -98,7 +98,8 @@ def _request(tmp_path, kind="pdf", data=b"SOURCE", pages=500, mime="application/
 class TestIdentity:
     def test_reader_id_and_version(self):
         runner, _, _ = _runner(_text)
-        assert (runner.extractor_id, runner.version) == (READER, READER_VERSION) == ("reader", 1)
+        # 2: `capture`, no brief doc type (USER_DRIVE_INDEXING_RFC §26.3, §26.7, Δ64)
+        assert (runner.extractor_id, runner.version) == (READER, READER_VERSION) == ("reader", 2)
 
 
 class TestGates:
@@ -127,7 +128,8 @@ class TestWindows:
         assert out.text == "text of SOURCE|w1\n\ntext of SOURCE|w2\n\ntext of SOURCE|w3"
         assert sorted(splitter.cuts) == [(0, MODEL_PAGES_PER_CALL), (10, MODEL_PAGES_PER_CALL), (20, 5)]
         assert (out.pages_total, out.pages_sent, out.model_calls, out.truncated) == (25, 25, 3, False)
-        assert out.brief.doc_type == "contract" and out.extracted_by == "reader@1"
+        # reader 2 (Δ64): the model's brief doc type is not read; the description is
+        assert out.brief.doc_type == "" and out.brief.description == "Lease" and out.extracted_by == "reader@2"
         assert out.model_cost == pytest.approx(3 * (1000 * 0.10e-6 + 200 * 0.50e-6))
         names = sorted(r.messages[0].parts[0].file_data["name"] for r in llm.requests)
         assert names == ["window-001.pdf", "window-002.pdf", "window-003.pdf"]

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from src.agents.drive_document_reader_agent import AGENT_TYPE, DOC_TYPES, DriveDocumentReaderAgent
+from src.agents.drive_document_reader_agent import AGENT_TYPE, DriveDocumentReaderAgent
 from src.infrastructure.drive_model_call import DriveModelCallFailed
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus
 from src.domain.drive_extraction import DriveModelUnavailable
@@ -42,7 +42,7 @@ class TestRequest:
         req = llm.requests[0]
         assert req.system_instruction == PROMPT
         assert req.response_mime_type == "application/json"
-        assert req.response_schema["required"] == ["text", "brief"]
+        assert req.response_schema["required"] == ["text", "capture", "brief"]   # reader 2 (§26.3)
         assert req.max_tokens == DRIVE_READER.max_tokens and req.timeout == DRIVE_READER.call_timeout_s
         assert req.thinking == "low" and req.tools is None
         assert req.allow_provider_storage is False   # no verbatim scan kept at the provider (§24.2)
@@ -69,9 +69,13 @@ class TestRequest:
         builder.build_for_agent.assert_awaited_once_with(agent_type="drive_reader", user_id=None, account_id=None,
                                                          include_biographical=False, include_directives=False)
 
-    def test_doc_types_match_the_rfc(self):
-        assert DOC_TYPES == ("invoice", "receipt", "contract", "statement", "letter", "ticket", "certificate",
-                             "form", "other")
+    async def test_the_brief_asks_for_no_doc_type(self):
+        # reader 2 (Δ64): the profile's doc type is the card's only one; the brief keeps the rest
+        agent, llm = _agent([reply({"text": "x", "brief": None})])
+        await _read(agent)
+        brief = llm.requests[0].response_schema["properties"]["brief"]
+        assert brief["required"] == ["description", "doc_date", "parties", "amount"]
+        assert set(brief["properties"]) == {"description", "doc_date", "parties", "amount"}
 
 
 class TestParse:
@@ -79,7 +83,8 @@ class TestParse:
         agent, _ = _agent([reply({"text": "  Рахунок № 17\n| a | b |\n", "brief": BRIEF})])
         out = await _read(agent)
         assert out.text == "Рахунок № 17\n| a | b |"
-        assert out.brief.doc_type == "invoice" and out.brief.description == BRIEF["description"]
+        # Δ64: a doc type the model still sends is not read
+        assert out.brief.doc_type == "" and out.brief.description == BRIEF["description"]
         assert out.brief.doc_date == datetime(2026, 9, 30, tzinfo=timezone.utc)
         assert out.brief.parties == ("ТОВ Енерго", "Dmytro") and out.brief.amount == "1 250,00 UAH"
         assert out.output_limited is False
@@ -98,7 +103,7 @@ class TestParse:
                  "parties": [f"P{i}" for i in range(9)] + [""], "doc_date": "30.09.2026"}
         agent, _ = _agent([reply({"text": "x", "brief": brief})])
         out = await _read(agent)
-        assert out.brief.doc_type == "other"
+        assert out.brief.doc_type == ""   # Δ64: not read at all, so no longer mapped to "other"
         assert len(out.brief.description) == 300 and "\n" not in out.brief.description
         assert out.brief.parties == ("P0", "P1", "P2", "P3", "P4")
         assert out.brief.doc_date is None

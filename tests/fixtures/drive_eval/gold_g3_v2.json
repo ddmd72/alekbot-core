@@ -190,5 +190,73 @@
     "MP-2026"
    ]
   ]
+ },
+ {
+  "id": "v2-card-value-opens",
+  "set": "positive",
+  "category": "content",
+  "lang": "en",
+  "text": "When does my identity card expire? It is somewhere in my files.",
+  "expect": "none",
+  "must_open": true,
+  "answer_must_include": [
+   [
+    "2031",
+    "7 May 2031",
+    "07.05.2031"
+   ]
+  ],
+  "note": "Card accuracy (§26.4, D36): the scan's card carries a misread birth date, so its accuracy is under 90 %. A question about a VALUE in the file: Smart checks the file (opens it) before answering, and the answer says 2031."
+ },
+ {
+  "id": "v2-card-value-opens-ru",
+  "set": "positive",
+  "category": "content",
+  "lang": "ru",
+  "text": "Когда выдано мое удостоверение личности? Оно лежит где-то в моих файлах.",
+  "expect": "none",
+  "must_open": true,
+  "answer_must_include": [
+   [
+    "2021",
+    "7 мая 2021",
+    "07.05.2021",
+    "07 05 2021"
+   ]
+  ],
+  "note": "The same card, another value it prints (the issue date, in Russian): the card's accuracy is under 90 % because of a different, misread value, so only the accuracy rule makes Smart open the file."
+ },
+ {
+  "id": "v2-card-find-no-open",
+  "set": "positive",
+  "category": "find",
+  "lang": "en",
+  "text": "Do I have a scan of my identity card? Which file is it?",
+  "expect": "none",
+  "must_not_open": true,
+  "answer_must_include": [
+   [
+    "DOC_20260610_0042",
+    "identity card",
+    "Identity card"
+   ]
+  ],
+  "note": "Card accuracy (§26.4, D36): a find is answered from the cards at any accuracy; the same under-90 % card, and Smart opens nothing."
+ },
+ {
+  "id": "v2-card-find-no-open-uk",
+  "set": "positive",
+  "category": "find",
+  "lang": "uk",
+  "text": "Чи є в мене скан посвідчення особи? Який це файл?",
+  "expect": "none",
+  "must_not_open": true,
+  "answer_must_include": [
+   [
+    "DOC_20260610_0042",
+    "identity",
+    "посвідчен"
+   ]
+  ]
  }
 ]

@@ -78,7 +78,8 @@ class DriveIndexRepository(ABC):
     async def upsert_records(self, records: Sequence[DriveIndexRecord],
                              card_vectors: Optional[Mapping[str, Sequence[float]]] = None) -> None:
         """Write whole records. A vector given for an item is stored as its card vector; a record
-        with has_card=False loses its vector; otherwise the stored vector is kept."""
+        with has_card=False loses its vector; otherwise the stored vector is kept. The fan-out's
+        `inaccessible_notified_since` is never written here: the stored value is kept (§26.2, Δ54)."""
 
     @abstractmethod
     async def delete_records(self, user_id: str, item_ids: Sequence[str]) -> None:
@@ -135,6 +136,18 @@ class DriveIndexRepository(ABC):
         (count aggregation queries). A kind in both lists counts as a document. `pending=True` counts only the
         documents not read yet (drive_search.is_not_read_yet: pending, not `card_capped`), `pending=False` only those
         that could not be read (the other classes); None counts every class (final review F5-2)."""
+
+    @abstractmethod
+    async def inaccessible_records(self, user_id: str, limit: int, *, lean: bool = False) -> List[DriveIndexRecord]:
+        """Up to `limit` records the bot cannot open (`inaccessible_since` set, §26.2), oldest marking first, ties by
+        item id, with `inaccessible_notified_since` (the tick's counters and the fan-out's notice, Δ56, Δ53). `lean`:
+        only the fields the tick's counters and parent map read (an implementation may return more); the other fields
+        take their defaults."""
+
+    @abstractmethod
+    async def set_inaccessible_notified(self, user_id: str, values: Mapping[str, Optional[datetime]]) -> None:
+        """Field-level write of `inaccessible_notified_since` per item id (the fan-out only, Δ54); a record that is gone
+        is skipped, never re-created. Every other record write leaves this field as it is stored."""
 
     @abstractmethod
     async def count_by_state(self, user_id: str) -> Dict[str, int]:
