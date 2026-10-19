@@ -5,10 +5,11 @@
 Find the kind of question, then read the section named. The code paths in each section are the ground truth; the
 RFC ([USER_DRIVE_INDEXING_RFC.md](../../10_rfcs/USER_DRIVE_INDEXING_RFC.md)) holds the reasoning, §23 the Slice 1
 deltas, §24 the Slice 2+4 design and §25 Search v2 (decisions D14–D31; results in §25.7.1).
-RFC §26 (card accuracy score, capture facet — scan, document photo, screenshot — and files the bot cannot open;
-decisions D33–D38): **slice S1, files the bot cannot open (§26.2, D33), is built on the branch `feat/drive-card-accuracy`,
-not deployed** and described in §4.18; the other slices (capture, accuracy, the small fixes, the scripts) are not built
-and nothing below describes them.
+RFC §26 (card accuracy score, capture facet — scan, document photo, screenshot — files the bot cannot open, photo
+location prior and scene labels; decisions D33–D40): **all six slices are built on the branch `feat/drive-card-accuracy`
+and not deployed.** S1 files the bot cannot open is §4.18, S2 capture §4.19, S3/S4 card accuracy and the small fixes
+§4.20, S6 the location prior and scene labels §4.21, S5 the owner scripts and the eval additions §4.22. Everything
+marked "(branch)" below describes the branch; the deployed code is what the rest of this file says.
 
 | Question | Read |
 |---|---|
@@ -38,6 +39,10 @@ and nothing below describes them.
 | How quality is measured (G1, G2, OCR, G3), the live checks, logs, indexes | §7 |
 | Why a given file was not indexed: which record fields and log lines answer it | §7.1 |
 | A file or folder "the bot cannot open"; why it was not deleted; the chat notice with the attached list; how it heals | §4.18 (built on the branch, not deployed) |
+| How a file's capture (scan, photo of a document, screenshot, digital) is decided; why a mixed PDF has none; why "scans" finds files | §4.19 (branch) |
+| What `card accuracy: N%` is, how a value is graded, why a value can be searchable but never exact, when Smart opens a file anyway; what changes when a weight changes | §4.20 (branch) |
+| What triage is told about a photo's place; what a `scene:` line is; why "sunsets" finds a photo | §4.21 (branch) |
+| How the owner reviews low-accuracy cards, measures vocabulary misses, rebuilds a user, and what the eval now checks | §4.22 (branch), §7.2 |
 | Smart said "N documents could not be read": what counts, and how to find which and why | §7.1 (could not be read) |
 | Deploy order, owner steps, and why there is no rollback to Slice 1; the Search v2 rollout (D30 gate, rebuild) | §7.2 |
 | Where a piece of code lives | §8 |
@@ -698,7 +703,7 @@ No alert of its own: the outage shows as ERROR / WARNING lines (`[drive_reader]`
 | Triage dollars per user per month | $3 (`TRIAGE_USD_PER_MONTH`) | the rest wait in class 3 for the next month |
 | Profile dollars per user per month (Search v2) | $4 (`PROFILE_USD_PER_MONTH`; ≈ $0.0008 a file) | the job is `parked` until the month turns |
 | Passage-hint dollars per user per month (Search v2) | $20 (`PASSAGE_USD_PER_MONTH`; ≈ $0.0004 a chunk) | `parked`; a wave shrinks to the batches the dollars left pay for |
-| Initial build, once per user (D27) | $40 (`INITIAL_BUILD_USD`) | spent first, on every class, before the monthly caps; closes when spent or when the first onboarding has settled with no job ready or parked; never reopens (a purge, rebuild or toggle does not renew it; only `drive_initial_build_reset.py` does) |
+| Initial build, once per user (D27) | $40 (`INITIAL_BUILD_USD`) | spent first, on every class, before the monthly caps; closes when spent or when the first onboarding has settled with no job ready or parked; never reopens (a purge, rebuild or toggle does not renew it; only `drive_initial_build_reset.py` does — and the §26 rebuild does not use it, owner rule 2026-10-19: it runs under the monthly caps) |
 | Enrichment per file | 300 s (`ENRICH_FILE_BUDGET_S`), 3 files at once, 2 passage calls per file | the file resumes from its saved passage progress next time |
 | Enrichment share of the start budget | at least 40 % (`ENRICH_SHARE`); content classes 0–2 get the other 60 % | a start window: work started in it runs to its own budget |
 | Pages read per file | 200 | `truncated` |
@@ -757,6 +762,9 @@ within the maintenance share, and re-plans each stale record (`stale_versions`, 
   chunks or `readme_excerpt`, hints from the stored chunk text): model calls, billed against the dollar caps.
 - An extractor's version (`extractor:parser`, `extractor:reader` in the target map) → only the files that link
   decided (`extracted_by`) are re-read (`reextraction_due`). Parser@2 (Search v2's HTML converter) is such a bump.
+- **`ACCURACY_VERSION`** (branch, §4.20) → each scorable record is re-graded from its stored profile and stored chunk
+  text and re-scored: Firestore reads only, no download, no model call, no re-embed (the score is not in the card text).
+  The keys follow, since `about_keys_of` runs on every record write.
 - `TRIAGE_VERSION` → images are triaged again.
 - The pass marks `keys`, `profile` and `passages` applied only when every record is settled for them (its keys at the
   current version; each job `current` or `none`, or held / parked for the current version and fingerprint), so held
@@ -1117,6 +1125,111 @@ placeholder first (it turns a stored user id into the DM channel the upload need
 is; a platform with no port returns "not sent" before posting anything. A notice whose list was not sent (no channel,
 no port, a failed upload) is not read again until the next UTC day unless the tick counts more files to tell about
 (held per process: a new instance tries once more).
+
+### 4.19 Capture: how a text-bearing file was made (RFC §26.3, D34; built on `feat/drive-card-accuracy`, not deployed)
+
+Every file whose text is searchable records `capture` — `scan`, `document_photo`, `screenshot` or `digital` — and
+`capture_source`: `detected` (code decided from the file's own structure) or `automatic` (a model said it). A photograph
+has none: it is a photo already, by its `k:` words.
+
+- **PDF, in the parser child.** `drive_parser/capture.py` walks the first `CAPTURE_PAGES_MAX` (50) pages with pypdf under
+  its own `CAPTURE_BUDGET_S` (5 s; out of time: no signals, the text outcome kept) and returns `CaptureSignals`: which
+  pages draw text (a text layer, an OCR layer included), which pages hold one image covering at least `FULL_PAGE_COVER`
+  of the page, the median effective dpi, the page size, and whether the JPEG of a page whose only content is one image
+  (whatever its cover) names a camera in its EXIF (read from raw bytes, never decoded). The parser's `VERSION` is 3.
+- **The rules** (`drive_capture.detect`, pure): a camera in EXIF → `document_photo`; every page a full-page raster in
+  150–600 dpi on a page no larger than a scanner glass → `scan` (with or without an OCR layer: a searchable scan is
+  still a machine reading); a text layer on every page and no full-page raster → `digital`; anything else is ambiguous.
+- **Everything else settles in `drive_capture.file_capture`.** A PDF: signals, then the reader's answer (the capture
+  most windows agreed on). An image the triage called `text`: Graph's camera facet, then the reader, then triage. Every
+  other text kind the parser reads (DOCX, XLSX, PPTX, TXT, MD, HTML, EML, EPUB, …): `digital`, `detected`. A deterministic
+  answer always beats a model's. **An ambiguous PDF the parser read keeps no capture** — it is not sent to the model for
+  that alone (it would bill every mixed PDF); it gets one when the reader reads it for its text anyway.
+- **Kept:** a demotion keeps the capture when the text was read; a re-triage of an indexed image keeps the reader's; a
+  `detected` capture stays on a record waiting for the reader's monthly cap; a `metadata_only` record that was never read
+  has none. A capture change on a re-triage resets `accuracy_version` (re-score).
+- **Index words.** `CAPTURE_NAMES` (`drive_labels.py`, en/es/uk/ru, pinned by `capture_names_digest`): `cp:` when
+  detected (About class), `cpa:` when a model said it (Labelled); `digital` has no words. "Photo of a document" reduces
+  to the concept "photo" before it could reach `cp:`, so the table holds single-word and compound substitutes; the query
+  side emits `cp:`/`cpa:` only for forms in the table (no extra Firestore batches for ordinary words).
+- **The card:** a `capture` segment in the card text (`CARD_VERSION` 4) and a rendered line `capture: scan (detected)`.
+  The capture is also the text's source in the accuracy score (§4.20).
+
+### 4.20 Card accuracy and the small fixes (RFC §26.4, §26.5, D35, D36; branch, not deployed)
+
+**Nothing is dropped any more.** The profiler's `verify` is replaced by `grade` (`drive_profile.py`, `drive_grade.py`):
+every date, key value, entity and number inside the title and `what_it_is` stays in the profile, the card and the keys
+with an evidence grade — `in_text`, `in_text_as` (found, written differently; `seen_as` keeps the text's form) or
+`not_in_text`. The profiler returns each date's `printed` form. Readings (Δ86): at most 12 prose numbers from maximal
+terms; lenient dates day-first; separator-free match for IDs and digit groups only; entities across scripts only;
+duplicates collapse to the best grade. A value the text does not hold stays searchable in an automatic class (`va:`,
+`ya:`, `ma:`, entities as `ef:` only) and **never** sets `effective_date` / `valid_until` or answers `find_expiring`.
+An ID or digit-group value is also keyed without separators (Δ91): "QX4471902" finds "QX 4471902".
+
+**The score** (`drive_accuracy.py`, every weight in one hashed table, `ACCURACY_VERSION` 1):
+`accuracy = clamp(round(100 · (1 − S) · (1 − V)) − R, 0, 100)`.
+- `V`: weighted share of graded values the text does not confirm — weights: dates, key values, prose numbers 3,
+  entities 2, **native topics 0** (Δ89: graded and reported, never moving the score); misses: `in_text` 0, `in_text_as`
+  0.1, `not_in_text` 1.
+- `S`, the source: native text 0, screenshot 0.03, scan 0.05, document photo 0.08, model-read unknown 0.05, and a file the
+  reader read and called `digital` 0.03 (Δ85).
+- `R`: pages refused 5, read by the fallback model 3, truncated 2.
+A photograph, a folder, a metadata-only card and a template profile without a brief carry no score. A brief-only card
+grades its brief against its chunks (grades not stored). The score is stored (`card_accuracy`, `accuracy_version`) and
+rendered `card accuracy: 88%` on tier cards and Related cards; it is **never in the card text**, so changing a weight
+re-scores without a re-embed. Telemetry: `graded_not_in_text_<field>`, `graded_labels_normalised`.
+
+**Smart's rule is in the `drive-search` skill** (a git file; the number 90 lives only there): find / which files / do I
+have is answered from the cards at any accuracy; a question about a value is answered from the card at 90 % or more,
+and below that Smart opens the file; for a scan or a photo of a document it says where it read the value. The access
+line (§4.18) overrides the stale and accuracy rules. G3 checks both directions (§4.22).
+
+**Small fixes (S4).** Space-separated dates (`07 05 2031`) are read as dates on both sides (validated, never inside a
+phone or IBAN run); `VALUE_LABELS` gains `document_number` and `personal_id_number`; the profile's `doc_type` is the only
+doc type a card shows (the reader's brief returns none from `READER_VERSION` 2); `list_files_in_drive` takes a `drive:`
+ref. Coverage counts closed files only in scope, as their own sentence, never as the reason for "incomplete".
+
+**Rollout facts.** The migration gate key is now `accuracy` (`MIGRATION_GATE_KEY`): every existing sync state is gated
+(no tick work, search says "being rebuilt", one ops alert, and a gated state is not also reported stale) until its rebuild.
+
+### 4.21 Photo location prior and scene labels (RFC §26.13, D39, D40; branch, not deployed)
+
+- **The prior.** Triage's line for each thumbnail continues with the place and the coordinates when the record has them:
+  `Image 3: camera metadata present; taken near Barcelona, Spain (41.403, 2.174)` (`taken at (lat, lon)` with no place
+  name). Built in `DriveIndexingService` from `rec.place_name` and `coarse_location(rec.facets)` (`drive_card.py`),
+  rounded to **3 decimals** (~110 m) — the full-precision GPS never leaves the index, and `image_label` rounds again.
+  No camera model, no date. The rule is in `COGNITIVE_PROCESS_DRIVE_TRIAGE`: name a landmark only when recognised in the
+  image; the location decides between look-alikes, never invents; otherwise generic plus the place. Landmark names stay
+  in the description and objects (automatic, never exact).
+- **Scene labels.** Triage returns `scene_labels` for a photograph from the fixed 32 of `SCENE_LABELS`
+  (`drive_labels.py`); unknown values are dropped with a warning, deduped, capped at `PHOTO_SCENE_LABELS_MAX` (6); a text
+  image returns none. Stored as `photo_scene_labels` (plain strings). Keyed `sl:` (automatic class) from `SCENE_NAMES`
+  (en/es/uk/ru, pinned by a digest tied to `KEYS_VERSION`); a query word emits `sl:` only for a form in that table, and
+  the strict-AND allowances ignore `sl:` keys (Δ90). The card text gains the English names after `scene`; the rendered
+  card shows `scene: sunset, beach`; a tier explanation through `sl:` says "(automatic)".
+- Both ride the unreleased `TRIAGE_VERSION` 3 / `CARD_VERSION` 4 / `KEYS_VERSION` 4: no extra rebuild.
+
+### 4.22 Owner scripts and the eval additions (RFC §26.6, §26.8; branch)
+
+- **Revision of cards:** `venv/bin/python -m scripts.validation.drive_card_review --user <id> [--below 90] [--weights
+  <file.json>] [--out scripts/memory/<file>.md]` — read-only; lowest-scoring cards with their graded values, `not_in_text`
+  values grouped by field and by the *shape* of the printed form (a shape recurring across files is a format the grader
+  or normaliser misses: fix the rule, not the card), distributions by doc type, capture, extractor and fallback, and with
+  `--weights` the same cards re-scored under a candidate table. Output only under `scripts/memory/` (it names files).
+- **Vocabulary misses:** `… scripts.validation.drive_query_vocabulary --user <id> [--since <date>] [--until <date>]` —
+  read-only; every recorded `search_files_in_drive` query from BigQuery `prompt_content` (30 days) run through the
+  concepts, per word how often no file holds it, only an automatic class holds it, or it is held exactly; and whether
+  the file the user then opened was in an exact tier. Run after the deploy has collected real queries; tune the profiler
+  for words that repeat, not for one query. Output under `scripts/memory/`.
+- **Rebuild:** `drive_index_rebuild.py --user <id> [--apply]` skips a state that already carries the gate key unless
+  `--force`; `drive_index_smoke.py` also runs `inaccessible_records`. `drive_capture_fixtures.py` regenerates the
+  synthetic capture PDFs/JPEG under `tests/fixtures/drive_capture/` (a deliberate fixture change).
+- **Eval:** `gold_v2.json` gains class cases for scans, screenshots and sunsets/beach, expiry-date and ID-number cases,
+  an inaccessible-name case (`expect_inaccessible`), place and landmark cases; a case may carry `known_hard` (reported,
+  guards nothing). `gold_g3_v2.json` gains `must_open` / `must_not_open` cases: a value question on a card under 90 %
+  must open the file, a find on one must open none — hard checks of `smart_dry_run.py`, no tolerance. New synthetic
+  fixtures: `fixture_texts_s26.py`, `fixture_images_s26.py`, `synthetic_s26.py` (an ID-card-like scan, a phone photo of a
+  document, a screenshot, a landmark photo, a closed item in the fake drive).
 
 ---
 
@@ -1713,7 +1826,17 @@ tag `drive-search-v1` after marking every user `purging` and deleting every hint
 (default on) stops every upgrade pass in an emergency; set it through `.env` (`DRIVE_UPGRADE_PASS_DEV`), since a value
 set with `gcloud run services update` is lost at the next deploy.
 
-**Files the bot cannot open (RFC §26.2; branch, not deployed)** add no prompt and no version bump. Owner steps
+**The §26 rollout (branch, not deployed)** has its own runbook: [docs/07_deployment/README.md](../../07_deployment/README.md)
+→ "Card accuracy (§26) — rollout and rollback". In short: back up the prompt layer; composites `READY` and the smoke;
+pause; **upload the six changed tokens inside the paused window** (`OUTPUT_FORMAT_` and `COGNITIVE_PROCESS_` for the
+profiler, the reader and triage); deploy main and the indexer; **verify both serve the new image**; resume; rebuild per
+user, the owner first, with **no initial-build reset** (owner rule 2026-10-19: the rebuild runs under the monthly caps —
+profiles ≈ 165 a day, reader ≈ 6 600 pages a month, passages ≈ 50 000 chunks a month); validate on scans the reader has
+already read, then run the revision script. Rollback: restore the six-token backup, mark every user `purging`, deploy
+the previous tip; the purge is mandatory and the second re-index runs under the caps the first spent. The paragraph that
+follows is slice S1 alone; it is part of the same rollout.
+
+**Files the bot cannot open (RFC §26.2; branch, not deployed)** add no prompt and no version bump of their own. Owner steps
 before the deploy: the composite index `user_id + inaccessible_since` on `{prefix}drive_index_records` (declared in
 `config/firestore.indexes.json`; `make deploy-indexes`) `READY`, then `drive_index_smoke.py <user_id>` (it runs the
 new read, `inaccessible_records`); deploy main and the indexer together (the fan-out sends the notice, the indexer marks;
@@ -1781,4 +1904,8 @@ The levers are forward ones; the first two are a code change plus a deploy, the 
 | Deep research copies (§1.1) | `src/domain/deep_research_drive_copy.py`, `src/services/deep_research_drive_copy_service.py`, `AgentWorkerHandler._copy_deep_research_report`, `deliver_deep_research` (the marker), `/api/drive/deep-research-copy` |
 | Eval and checks | `scripts/validation/drive_eval/` (`runner.py`, `smart_dry_run.py`, `live_check.py`, `make_fixtures.py`; Search v2: `search_v2_eval.py`, `v2_metrics.py`, `dump_enrichment.py`, `enrichment_*.py`, `v1_baseline.py`, `scale_calibrate.py`, `make_fixtures_v2.py`), `scripts/validation/drive_model_check.py`, `tests/fixtures/drive_eval/`, `tests/integration/test_drive_g2_end_to_end.py` |
 | Ops and spike scripts | `scripts/infrastructure/drive_index_rebuild.py` (`--all-users`, `--hints-only`), `drive_initial_build_reset.py`, `drive_index_smoke.py`, `create_drive_vector_indexes.sh`, `deploy_firestore_indexes.py`, `drive_extract_s1.py` (S1), `drive_chunk_knn_cost.py` (S3); `scripts/onedrive/probe_renditions.py` (S0g) |
+| Capture (§4.19; branch) | `src/domain/drive_capture.py` (`detect`, `file_capture`, `CaptureSignals`), `src/adapters/drive_parser/capture.py` (the child's PDF walk), `readers.py`, `child.py`, `subprocess_content_extractor.py`; `CAPTURE_NAMES` in `drive_labels.py`; params in `drive_index_params.py` |
+| Card accuracy (§4.20; branch) | `src/domain/drive_grade.py` (evidence grading), `drive_accuracy.py` (formula, weights, `scored`), `drive_profile.py` (`grade`, `grade_brief`), `drive_key_sources.py`, `drive_content_terms.py` (spaced dates); `DriveIndexingService` (scoring wherever the profile, brief, capture or reading facts change; the `accuracy` upgrade); `drive_search.py` (`accuracy_line`, `capture_line`); `src/skills/smart/drive-search/SKILL.md` |
+| Location prior and scene labels (§4.21; branch) | `drive_card.coarse_location`, `drive_image_triage_agent.image_label`, `drive_triage_runner.py`, `SCENE_LABELS` / `SCENE_NAMES` in `drive_labels.py`, `sl:` in `drive_keys.py`, `scene_line` in `drive_search.py`; tokens `COGNITIVE_PROCESS_DRIVE_TRIAGE` / `OUTPUT_FORMAT_DRIVE_TRIAGE` in `prompts_snapshot/tokens/system/` |
+| Owner scripts (§4.22; branch) | `scripts/validation/drive_card_review.py` (+ `_logic`), `drive_query_vocabulary.py` (+ `_logic`), `drive_capture_fixtures.py`, `drive_eval/{fixture_texts_s26,fixture_images_s26,synthetic_s26}.py` |
 | Files the bot cannot open (§4.18; branch) | planner `marked_inaccessible` / `access_*` in `drive_index_planner.py`; `inaccessible(rec)` in `drive_index.py`; `src/domain/drive_access.py` (counts, notice batch, paths, list file); texts in `drive_search_texts.py` (`ACCESS_*`); `DriveIndexingService._item_gone`, `_mark_inaccessible`, `_mark_parent`, `_mark_subfolders`, `_recheck_step`, `_start_marks` / `_end_marks`; `UserNotificationService.register_platform_media`; `DriveSyncSchedulerService._inaccessible_notice`; `DriveSearchService.access_note`; `UserDriveService.list_folder_by_id`; UI strings `DRIVE_INACCESSIBLE_*` in `src/locales/` |
