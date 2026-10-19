@@ -34,8 +34,10 @@ async def test_the_card_says_the_file_cannot_be_opened_and_coverage_counts_it(w)
     result = await w.search("residence card")
     text = render_results(result)
     assert ACCESS_LINE_FILE in text
-    assert "1 file cannot be opened by the bot" in text
-    assert result.envelope.inaccessible == 1
+    assert "cannot be opened by the bot" not in text.replace(ACCESS_LINE_FILE, "")     # Δ93: results found
+    empty = await w.search("residence card", kind="docx")     # nothing found: the sentence returns
+    assert "1 file cannot be opened by the bot" in render_results(empty)
+    assert not empty.cards and empty.envelope.inaccessible == 1
 
 
 async def test_access_note_by_ref(w):

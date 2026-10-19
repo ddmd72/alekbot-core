@@ -138,7 +138,9 @@ def _coverage_line(tiered: TieredResult) -> str:
     empty = not tiered.block(MatchTier.MENTIONED) and not tiered.block(MatchTier.TRANSLATED)
     parts = coverage_parts(tiered.coverage, passages_tiers_empty=empty)
     line = COVERAGE_INCOMPLETE.format(parts="; ".join(parts)) if parts else COVERAGE_COMPLETE
-    if tiered.coverage.inaccessible:   # B-minor 2: closed files are a fact of the scope, not a gap in the search
+    # Δ93: closed files explain a not-found that may be incomplete; with results they are noise (a matching closed
+    # file carries its own access line on its card).
+    if tiered.coverage.inaccessible and not any(b.total for b in tiered.blocks):
         line += f" {_plural(tiered.coverage.inaccessible, 'file', 'files').capitalize()} {COVERAGE_INACCESSIBLE}."
     return line
 

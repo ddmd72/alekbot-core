@@ -1188,7 +1188,7 @@ line (§4.18) overrides the stale and accuracy rules. G3 checks both directions 
 **Small fixes (S4).** Space-separated dates (`07 05 2031`) are read as dates on both sides (validated, never inside a
 phone or IBAN run); `VALUE_LABELS` gains `document_number` and `personal_id_number`; the profile's `doc_type` is the only
 doc type a card shows (the reader's brief returns none from `READER_VERSION` 2); `list_files_in_drive` takes a `drive:`
-ref. Coverage counts closed files only in scope, as their own sentence, never as the reason for "incomplete".
+ref. Coverage counts closed files only in scope, as their own sentence, never as the reason for "incomplete", and only when the search found nothing (RFC Δ93): with results the sentence is omitted, the closed file's own card carries the access line.
 
 **Rollout facts.** The migration gate key is now `accuracy` (`MIGRATION_GATE_KEY`): every existing sync state is gated
 (no tick work, search says "being rebuilt", one ops alert, and a gated state is not also reported stale) until its rebuild.

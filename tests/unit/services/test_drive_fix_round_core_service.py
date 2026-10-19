@@ -100,11 +100,14 @@ class TestClosedFilesInCoverage:     # B-minor 2
     async def test_they_are_their_own_sentence_not_an_incomplete_coverage(self, w):
         text = render_results(await w.search("lease agreement"))
         assert "Coverage: complete." in text and "Coverage: incomplete" not in text
-        assert "1 file cannot be opened by the bot" in text
+        assert "cannot be opened by the bot" not in text     # Δ93: results found, so the sentence is omitted
+        nothing = render_results(await w.search("lease agreement", kind="docx"))
+        assert "1 file cannot be opened by the bot" in nothing and "Coverage: incomplete" not in nothing
 
     async def test_a_folder_search_counts_only_the_closed_files_inside_it(self, w):
-        inside = await w.search("lease agreement", folder="Shared")
-        outside = await w.search("lease agreement", folder="Mine")
+        inside = await w.search("lease", folder="Shared", kind="docx")     # Δ93: counted only where nothing was found
+        outside = await w.search("lease", folder="Mine", kind="docx")
+        assert not inside.cards and not outside.cards
         assert inside.tiered.coverage.inaccessible == 1
         assert outside.tiered.coverage.inaccessible == 0
         assert "cannot be opened by the bot" not in render_results(outside)
@@ -113,5 +116,10 @@ class TestClosedFilesInCoverage:     # B-minor 2
         result = await w.search("lease agreement")
         result = replace(result, tiered=replace(result.tiered, coverage=replace(result.tiered.coverage, not_read_yet=2)))
         text = render_results(result)
+        assert "Coverage: incomplete" in text and "2 documents are not read yet" in text
+        assert "cannot be opened by the bot" not in text     # Δ93: results found, sentence omitted
+        empty = await w.search("lease agreement", kind="docx")
+        empty = replace(empty, tiered=replace(empty.tiered, coverage=replace(empty.tiered.coverage, not_read_yet=2)))
+        text = render_results(empty)
         assert "Coverage: incomplete" in text and "2 documents are not read yet" in text
         assert "1 file cannot be opened by the bot" in text and "cannot be opened by the bot." in text
