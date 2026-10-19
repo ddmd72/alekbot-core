@@ -43,8 +43,8 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     prompt — tracked exception, IMPLEMENTATION_ROADMAP.md TD-6. Its wording is tuned and
     load-bearing; read the comment before editing it.
 - Memory — MemorySearchAgent (ECO): LLM extracts search keys → multi-vector RRF. Intents:
-  `search_memory`; `save_to_memory` (zero LLM — orchestrator fills `context.text` via `context_schemas`;
-  agent attaches `consolidation_text` on `MessagePart` → picked up in the normal consolidation batch).
+  `search_memory` only. There is no save intent: facts read from a document go through Smart's local tool
+  `propose_memory_facts` and the owner's `$memory save` (`MEMORY_FACT_CONFIRMATION_RFC.md`).
 - EmailSearch — EmailSearchAgent (ECO, `internal=False`). Intents: `search_emails`,
   `get_email_details`, `get_email_attachment` (markitdown).
 - EmailClassification — shared ServiceContainer singleton, called by EmailIndexingService (not agents);
@@ -435,7 +435,7 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   hides it from LLM tool declarations); (B) `requirements` — `allowed_intents` (`None` = all
   non-internal) + `intent_remap` (dispatch-time intent substitution; currently unused — Quick's is `{}`);
   (C) `context_schemas` — per-intent typed param contracts; when present the orchestrator fills
-  structured `context` instead of a bare `query` (used by `save_to_memory`, `get_email_details`,
+  structured `context` instead of a bare `query` (used by `get_email_details`,
   `get_email_attachment`). **Every field a `capability_descriptions` prose names in `payload: {…}` /
   `context={…}` must be declared here** — `context` is generated from `context_schemas` only, and an
   undeclared key the prose asks for caused 64k-token whitespace runaways on OpenAI (2026-10-07/09).
@@ -497,7 +497,8 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   production caller uses it any more (`/voice/delegate` calls `delegate_outcome` directly), but it
   stays for anything that only needs the text and not the failure flag.
   **Local tools** (`local_tools: Mapping[str, LocalToolHandler]`) — a tool the agent serves itself
-  (Smart's `use_skill`, built by `src/infrastructure/skill_tools.py` — not `agents/core/`, since
+  (Smart's `use_skill`, built by `src/infrastructure/skill_tools.py`, and `propose_memory_facts`, built by
+  `src/infrastructure/memory_fact_tools.py` — not `agents/core/`, since
   REQ-ARCH-24 forbids an agent importing a sibling `agents/` module). Dispatched to the handler,
   never the coordinator; results, `delivery_items` and `history_context` fold exactly like a
   delegation's; one `delegation.local_tool` span each. On the terminal-sibling path a local tool's

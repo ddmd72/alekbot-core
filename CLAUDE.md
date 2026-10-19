@@ -153,7 +153,7 @@ Full per-agent detail (mechanics, intents, tiers, gotchas) lives in
 | Smart | per-config | `delegate_to_specialist` | primary path; re-evaluates after tool results |
 | Quick | ECO | — | emergency fallback + `notify` formatter (never primary) |
 | WebSearch | BALANCED / **ECO on `fetch_url`** | `search_web`, `fetch_url` | provider-native grounded search |
-| Memory | ECO | `search_memory`, `save_to_memory` | multi-vector RRF; save = zero-LLM |
+| Memory | ECO | `search_memory` | multi-vector RRF; search only. Facts from a document: Smart's local tool `propose_memory_facts` + the owner's `$memory save` (below) |
 | EmailSearch | ECO | `search_emails`, `get_email_details`, `get_email_attachment` | |
 | EmailClassification | BALANCED | — | called by EmailIndexingService, not by agents |
 | DocPlanner | PERFORMANCE | `create_document` | JSON layout spec → DocGenerator |
@@ -462,7 +462,20 @@ ConsolidationAgent ("Life Chronicler") extracts facts/principles from raw messag
 Thresholds (per-user): prod threshold=50/batch=30, dev threshold=70/batch=50. Dedup 0.96 (number-aware —
 a duplicate beats a loss). 3 vectors/fact + SCD2; biographical cache updated for next conversation.
 **Serialization:** model parts use `p.text` (summary), NOT `p.full_text` (verbose + web_search_context);
-user parts `p.consolidation_text or p.text` (prefixed `\n\n`).
+user parts `p.consolidation_text or p.text` (prefixed `\n\n`; `consolidation_text` is legacy, see below).
+
+**Memory facts the owner confirms** — the bot never writes to memory itself. The consolidator reads
+every user message as the owner's own words, so the removed `save_to_memory` intent let bot-written
+text (procedures, file notes) become facts and `AGENT_DIRECTIVE`s. Now Smart's local tool
+`propose_memory_facts` (interactive turns only, max 20 facts) stores a 7-day draft tagged with
+`origin_session_id`; the owner reads the facts in a `memory-facts.txt` file (chat adapters truncate
+long text) and pastes `$memory save <code>`. `MemoryFactService.confirm` appends a user/model pair to the
+**origin** session with `append_messages_batch(..., raise_on_error=True)` (the session store otherwise
+swallows errors) and deletes the draft only after that. The facts must first appear in that user message,
+never in a model message (the consolidator's echo-trap rule discards what an assistant stated). Residual:
+Smart sees only the last 30 messages, so the pair can leave its view before consolidation. Legacy:
+`MessagePart.consolidation_text` has no writer; its readers stay until stored sessions drop the field.
+See `docs/10_rfcs/MEMORY_FACT_CONFIRMATION_RFC.md` + `decisions/memory_facts_owner_confirmed.md`.
 
 **Standing Directives** — user behavioral rules ("never give partial answers", "trace conditional
 logic before judging") are a first-class fact domain `FactDomain.AGENT_DIRECTIVE`, rendered as a
@@ -709,7 +722,7 @@ src/
   domain/       — Models, enums, value objects. ZERO external deps (stdlib + pydantic only).
                   Key: llm.py (LLMRequest/LLMResponse/Message/MessagePart/ToolCall, PROMPT_CACHE_BOUNDARY,
                   build_tool_turn), auth.py, retry_policy.py, exceptions.py. MessagePart.consolidation_text
-                  is visible only to the consolidation serializer (used by save_to_memory).
+                  is visible only to the consolidation serializer (legacy: no writer left, readers kept until stored sessions drop it).
   ports/        — ~58 ABC interfaces (domain/ + stdlib only). One port per system boundary.
   adapters/     — Port implementations: LLM (Gemini/Claude/Grok/OpenAI), Firestore repos, Slack/Telegram,
                   Gmail, MicrosoftToDo (GoogleTasks frozen), Node runners (DOCX/Puppeteer), Unsplash, MCP repo.
