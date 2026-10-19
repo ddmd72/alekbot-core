@@ -14,7 +14,7 @@ from src.domain.drive_index import (
 
 IN, AS, NOT = Grade.IN_TEXT.value, Grade.IN_TEXT_AS.value, Grade.NOT_IN_TEXT.value
 # ACCURACY_VERSION 1 is unreleased: Δ85's `digital_model_read` row re-pins it (without the row: f0fb92a4…)
-WEIGHTS_PINS = {1: "f0bc74243269bcc9311e1d0fc0206f2cf93ee82ed22998fb7886e5dba25b7879"}      # ACCURACY_VERSION -> weights_digest(); a changed weight is a version bump
+WEIGHTS_PINS = {1: "925598b63241851381294e996eefcb893ec1a7f5b1774ca00319df4ffa75369b"}      # ACCURACY_VERSION -> weights_digest(); a changed weight is a version bump
 
 
 def gv(field, grade, value="v"):
@@ -55,7 +55,7 @@ class TestWorkedExamples:
 
 class TestWeights:
     def test_the_table(self):
-        assert acc.FIELD_WEIGHTS == {"date": 3, "value": 3, "number": 3, "entity": 2, "topic_native": 1}
+        assert acc.FIELD_WEIGHTS == {"date": 3, "value": 3, "number": 3, "entity": 2, "topic_native": 0}
         assert acc.GRADE_MISS == {IN: 0.0, AS: 0.1, NOT: 1.0}
         assert acc.SOURCE_SHARE == {"native": 0.0, "digital": 0.0, "screenshot": 0.03, "scan": 0.05,
                                     "document_photo": 0.08, "model_unknown": 0.05,

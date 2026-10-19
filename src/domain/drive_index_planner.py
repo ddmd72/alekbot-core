@@ -63,7 +63,7 @@ from .drive_card import (
 from .drive_enrichment import DriveProfile, PhotoDescription
 from .drive_extraction import ExtractionOutcome, TriageResult, chain_for
 from .drive_index import (
-    CARD_VERSION, EXTRACTION_VERSION, GEO_TABLE_VERSION, KEYS_VERSION, NAME_KEYS_VERSION, POLICY_VERSION,
+    CARD_VERSION, EXTRACTION_VERSION, GEO_TABLE_VERSION, KEYS_VERSION, MIGRATION_GATE_KEY, NAME_KEYS_VERSION, POLICY_VERSION,
     TRIAGE_VERSION, ContentClass, DocumentBrief, DriveChange, DriveIndexRecord, DriveSyncState, EpochPhase, FolderProbe,
     Priority, Reason, RecordState, Scope, TriageVerdict, inaccessible,
 )
@@ -311,7 +311,7 @@ def _build(change: DriveChange, cls: Classification, existing: Optional[DriveInd
         # that stays one keeps its README excerpt (§5.2, §25.3). Decided from metadata, it carries no extraction stamp:
         # nothing was read, so a later observation that admits the file again reads it (a rename away and back)
         base = replace(base, indexed_generation=None, brief=None, extraction_version=0, extracted_by=None,
-                       chunk_space="", chunk_reembed_pending=False)
+                       chunk_space="", chunk_reembed_pending=False, capture="", capture_source="")
         if not (existing is not None and collapsed_folder(existing) and _collapsed(change, cls)):
             base = replace(base, lead_text="", readme_pending=False, readme_item_id=None, readme_version="",
                            readme_excerpt="", readme_excerpt_version="")
@@ -840,8 +840,11 @@ def access_action(enabled: bool, state: Optional[DriveSyncState], connection: Dr
 
 
 def is_stale(state: DriveSyncState, oldest_edit_due_at: Optional[datetime], now: datetime) -> bool:
-    """Staleness criterion (§12.1): no clean tick, or a class-0 record overdue, for STALE_ALERT_AFTER."""
+    """Staleness criterion (§12.1): no clean tick, or a class-0 record overdue, for STALE_ALERT_AFTER. A gated state
+    (written by an older build, awaiting the owner's rebuild) does no tick work by design and has its own alert (A5)."""
     if state.access_lost_at is not None:
+        return False
+    if state.applied_versions and MIGRATION_GATE_KEY not in state.applied_versions:
         return False
     since = state.last_success_at or state.created_at
     if since is None:
@@ -1012,8 +1015,13 @@ def triaged(rec: DriveIndexRecord, result: TriageResult, now: datetime,
     # the reader's stored word (an already indexed image) outranks triage's, as in file_capture
     model = (model_capture(rec.capture) if state is RecordState.INDEXED else None) or model_capture(result.capture)
     capture, source = settle(camera_capture(rec.facets), model)
+    # a capture that changed on an indexed image changes its source share: the score is stale, and `accuracy_version` 0
+    # sends it to the upgrade pass, which re-scores it from the stored profile and chunks (`scored`, B-minor 4)
+    stale = state is RecordState.INDEXED and (capture, source) != (rec.capture, rec.capture_source)
     return schedule(_without_photo(replace(rec, state=state, reason=None, caption="", capture=capture,
-                                           capture_source=source)), now, first_seen=first_seen)
+                                           capture_source=source,
+                                           accuracy_version=0 if stale else rec.accuracy_version)),
+                    now, first_seen=first_seen)
 
 
 def can_start_file(elapsed_s: float, *, routed: bool) -> bool:

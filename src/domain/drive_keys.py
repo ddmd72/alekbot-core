@@ -43,7 +43,7 @@ from typing import Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence,
 
 from .drive_content_terms import (
     _AMOUNT, _DAY_MONTH_YEAR, _DMY, _DMY_SPACED, _GROUP_MIN_DIGITS, _GROUPS, _ID, _MIN_DIGITS, _MONTH, _MONTH_DAY_YEAR,
-    _MONTH_FORMS, _MONTH_OF, _YMD, CONTENT_TERMS_PER_CHUNK, capped_terms, clip_query, content_terms, query_term_spans,
+    _MONTH_FORMS, _MONTH_OF, _YMD, CONTENT_TERMS_PER_CHUNK, amount_or_date, capped_terms, clip_query, content_terms, query_term_spans,
     term_spans,
 )
 from .drive_enrichment import DriveProfile, Grade, GradedField, KeyValue, PhotoObject, ProfileEntity, is_unconfirmed
@@ -340,6 +340,18 @@ def _value_forms(text: str) -> List[str]:
     return [plain] if plain else []
 
 
+def _unspaced_id_forms(printed: str) -> List[str]:
+    """An ID or digit group printed with separators (Δ91): its separator-free casefolded alphanumeric form, so
+    `QX4471902` finds "QX 4471902"; and its alphabetic tokens ("qx"), which the digits' number term leaves out, so the
+    spaced query's word `QX` is covered too. At least three characters and one digit; never an amount or a date
+    (their separators carry meaning)."""
+    plain = "".join(ch for ch in _strip_accents(printed.casefold()) if ch.isalnum())
+    if len(plain) < 3 or not any(ch.isdigit() for ch in plain) or amount_or_date(printed):
+        return []
+    words = ["".join(ch for ch in _strip_accents(t.casefold()) if ch.isalnum()) for t in printed.split()]
+    return [plain, *(w for w in words if len(w) >= 2 and w.isalpha())]
+
+
 def _date_items(year: int, month: int, field: AboutField, detail: str, printed: str, *,
                 held: bool = True) -> List[_Item]:
     """`y:` and `m:` keys of a date; `ya:` and `ma:` (automatic) of one the file's text does not hold (Δ60)."""
@@ -411,6 +423,8 @@ def _about_items(rec: KeyedRecord) -> List[_Item]:
         for kv in profile.key_values[:PROFILE_KEY_VALUES_MAX]:
             forms = dict.fromkeys(_value_forms(kv.canonical) + _value_forms(kv.printed))
             held = not is_unconfirmed(profile, GradedField.VALUE, kv.printed.strip() or kv.canonical)
+            if held:     # Δ91: "QX 4471902" is also found as the unspaced "QX4471902" (never for an unconfirmed value)
+                forms.update(dict.fromkeys(_unspaced_id_forms(kv.printed)))
             add([(_V if held else _VA) + f for f in forms], AboutField.VALUE, kv.label, kv.printed)
         for d in profile.dates[:PROFILE_DATES_MAX]:
             iso = d.iso.isoformat()
