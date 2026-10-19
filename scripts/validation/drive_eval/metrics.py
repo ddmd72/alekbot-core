@@ -7,8 +7,8 @@ the file must come first), or for fewer hits (`"min_hits": 5`: five of a trip's 
 rest of its top K is the trip's folder and other right answers). A collapsed duplicate card covers its own
 path and its `also_at` paths.
 
-A G2 case (Slice 2+4, §24.11) is a hit when its paths are, and when every expected substring is in the window of
-the card that holds its path: the best chunk and its neighbours, as Smart reads them (§10.2). Substrings are
+A G2 case (Slice 2+4, §24.11) is a hit when its paths are, and when every expected substring is in the passage of
+the card that holds its path (v2 cards: `passage`; an About card carries none), as Smart reads it (§10.2). Substrings are
 compared after NFKC, casefold and whitespace collapsing, so a scan's thin spaces or a model's line breaks do not
 decide a case. A case's labels (its goal, `ocr`) are scopes of their own next to its case type.
 
@@ -57,7 +57,7 @@ def expected_substrings(expected_paths: Sequence[str], substring: Optional[Subst
 
 
 def substring_hit(wanted: Mapping[str, str], windows: Mapping[str, str]) -> bool:
-    """Every expected substring is in the window shown for its path (§10.2)."""
+    """Every expected substring is in the passage shown for its path (§10.2)."""
     return all(normalize_snippet(text) in normalize_snippet(windows.get(path, "")) for path, text in wanted.items())
 
 

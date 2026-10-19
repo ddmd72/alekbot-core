@@ -139,3 +139,11 @@ is below 90 %.
 The snapshot format now also carries `printed` on a profile date and `capture` on a text image's triage entry; the
 parse cache keeps the parser's capture signals (an entry without its `cap` marker is a miss; before, every PDF came
 back from the cache with no capture and the offline eval could never see a scan).
+
+**Two gold flags (RFC §26.10 Δ94).** `requires_embeddings: "semantic"` (v2 gold): a meaning-only case that lexical vectors
+cannot represent; `search_v2_eval` reports it as skipped under `--embeddings lexical` and counts it under `gemini`.
+`accepted_loss: "<reason>"` (G1/G2 gold): the owner accepted that v2 no longer finds the case; it is listed under
+"accepted losses" and excluded from the "v1-passing cases lost" bar. `bars.json` pins the gold files' SHA-256, so a
+live v1 run needs its bars re-recorded after these flags were added.
+`requires_enrichment: true` (G2 gold, either validator): the case is found only through recorded enrichment (profile and
+passage hints), which `tests/integration/test_drive_g2_end_to_end.py` does not load; that test skips it and names it.

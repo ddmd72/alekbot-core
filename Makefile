@@ -86,7 +86,7 @@ K ?= 300
 
 .PHONY: help
 .PHONY: install install-dev clean auth
-.PHONY: test test-unit test-coverage test-integration lint format check
+.PHONY: test test-unit test-coverage test-integration test-g2-offline lint format check
 .PHONY: deploy deploy-indexes
 .PHONY: start stop restart
 .PHONY: logs logs-tail logs-tail-clean logs-tail-full logs-perf fetch-logs
@@ -255,7 +255,11 @@ check-types: ## mypy (lenient) on src/adapters — informational, never fails
 	@echo "🔎 mypy on adapters/ (informational)..."
 	@$(PYTHON) -m mypy --config-file mypy-adapters.ini | tail -n 1 || true
 
-check: lint typecheck test-unit ## CI gate: ruff lint + mypy (domain/ports) + unit/architecture tests
+test-g2-offline: ## G2 end to end on the fixture folder (real parser, scripted models, offline)
+	@echo "🧪 Running the offline G2 end-to-end test..."
+	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/integration/test_drive_g2_end_to_end.py -q --asyncio-mode=auto
+
+check: lint typecheck test-unit test-g2-offline ## CI gate: ruff lint + mypy (domain/ports) + unit/architecture tests + offline G2 end to end
 	@echo "✅ All checks passed"
 
 # ============================================================================
