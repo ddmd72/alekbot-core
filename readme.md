@@ -114,7 +114,7 @@ crashing the request.
 | Router | Gemini | sync | LLM triage on every request: complexity, tone, semantic lens, search intent; triggers memory/web enrichment. Always routes to Smart |
 | Smart | provider-agnostic (Gemini) | sync | Primary path for every request; multi-turn reasoning, re-evaluates after tool results; complexity → model tier |
 | Quick | Claude (ECO) | sync | Not on the primary path. Emergency fallback when Smart fails/times out, and formatter for system notifications |
-| Memory | Gemini (ECO) | sync | LLM formulates search keys → multi-vector RRF retrieval; also handles explicit `save_to_memory` |
+| Memory | Gemini (ECO) | sync | LLM formulates search keys → multi-vector RRF retrieval. Facts from documents: Smart proposes, you confirm with `$memory save` |
 | WebSearch | OpenAI (BALANCED; `fetch_url` ECO) | sync | Provider-native grounded web search; called by Smart. Intents: `search_web`, `fetch_url` |
 | EmailSearch | Gemini (BALANCED) | sync | Email archive specialist: semantic search, full-body fetch, attachment parsing |
 | EmailClassification | — | sync | Classifies raw emails during indexing; extracts fact sentences — not user-facing |
