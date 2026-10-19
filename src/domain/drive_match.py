@@ -44,15 +44,17 @@ class KeyFamily(str, Enum):
     PHOTO_WORD = "pw:"     # photo description, scene, objects and visible text
     PHOTO_NUMBER = "pn:"   # number terms of a photo's visible text: automatic (P1 review, M3 of Part 0)
     LABEL = "l:"           # l:type:<doc_type>, l:domain:<domain>, l:valid — stored for grouping, never queried
+    CAPTURE = "cp:"        # the capture's names (drive_labels.CAPTURE_NAMES) when code detected it: verified (§26.3)
+    CAPTURE_AUTO = "cpa:"  # ... when a model said it: automatic (Δ58)
 
 
 class SourceClass(str, Enum):
     """The class of key that covers a concept in a file; a file's tier is set by the weakest class it needs (§25.5.4).
-    Verified record: name keys (`w:`, `n:`, `y:`), `e:`, `v:`, `y:`, `m:`, `k:`. Passage words: `word_keys` `w:`,
+    Verified record: name keys (`w:`, `n:`, `y:`), `e:`, `v:`, `y:`, `m:`, `k:`, `cp:`. Passage words: `word_keys` `w:`,
     `n:`, `m:`. Translation: `hint_keys`, every transliteration skeleton (`x:`/`xl:` in chunks and names, `ex:`/`exl:`
     in records: a match across scripts is never exact, review M8), and an entity spelling the file does not print
     (`ef:`, xc F1). Automatic record: `lw:`, `tw:`, `dw:`, `lv:`, `pw:`,
-    `pe:`, `pn:`. An about key's class follows from its prefix alone, so
+    `pe:`, `pn:`, `cpa:`. An about key's class follows from its prefix alone, so
     tiers are decided on lean records."""
     VERIFIED_RECORD = "verified_record"
     PASSAGE_WORDS = "passage_words"
@@ -64,11 +66,12 @@ class SourceClass(str, Enum):
 FAMILY_SOURCE_CLASS: Mapping[KeyFamily, SourceClass] = {
     KeyFamily.ENTITY: SourceClass.VERIFIED_RECORD, KeyFamily.VALUE: SourceClass.VERIFIED_RECORD,
     KeyFamily.YEAR: SourceClass.VERIFIED_RECORD, KeyFamily.MONTH: SourceClass.VERIFIED_RECORD,
-    KeyFamily.KIND: SourceClass.VERIFIED_RECORD,
+    KeyFamily.KIND: SourceClass.VERIFIED_RECORD, KeyFamily.CAPTURE: SourceClass.VERIFIED_RECORD,
     KeyFamily.LABEL_WORD: SourceClass.AUTOMATIC_RECORD, KeyFamily.TOPIC_WORD: SourceClass.AUTOMATIC_RECORD,
     KeyFamily.DOMAIN_WORD: SourceClass.AUTOMATIC_RECORD, KeyFamily.VALIDITY_WORD: SourceClass.AUTOMATIC_RECORD,
     KeyFamily.PHOTO_WORD: SourceClass.AUTOMATIC_RECORD, KeyFamily.PHOTO_ENTITY: SourceClass.AUTOMATIC_RECORD,
-    KeyFamily.PHOTO_NUMBER: SourceClass.AUTOMATIC_RECORD, KeyFamily.ENTITY_TRANSLIT: SourceClass.TRANSLATION,
+    KeyFamily.PHOTO_NUMBER: SourceClass.AUTOMATIC_RECORD, KeyFamily.CAPTURE_AUTO: SourceClass.AUTOMATIC_RECORD,
+    KeyFamily.ENTITY_TRANSLIT: SourceClass.TRANSLATION,
     KeyFamily.ENTITY_TRANSLIT_LATIN: SourceClass.TRANSLATION, KeyFamily.ENTITY_FORM: SourceClass.TRANSLATION,
 }
 

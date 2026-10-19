@@ -55,6 +55,7 @@ from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, Callable, List, Mapping, Optional, Tuple, Union
 
+from .drive_capture import camera_capture, model_capture, settle
 from .drive_card import (
     card_eligible, card_hash, collapsed_folder, content_hash_of, effective_date, photo_location,
     structurally_card_eligible,
@@ -915,7 +916,8 @@ def indexed(rec: DriveIndexRecord, *, outcome: ExtractionOutcome, generation: in
                    indexed_version=rec.content_version, extraction_version=EXTRACTION_VERSION,
                    extracted_by=outcome.extracted_by, text_chars=len(outcome.text), pages_total=outcome.pages_total,
                    chunk_count=chunk_count, truncated=outcome.truncated, lead_text="", brief=outcome.brief,
-                   script_rendered=outcome.script_rendered, keys_version=KEYS_VERSION, keys_pending=False,
+                   script_rendered=outcome.script_rendered, capture=outcome.capture,
+                   capture_source=outcome.capture_source, keys_version=KEYS_VERSION, keys_pending=False,
                    keys_capped=keys_capped, profile_input_fingerprint=profile_fingerprint,
                    effective_date=_effective(change_from_record(rec), outcome.brief, rec.effective_date or now,
                                              rec.profile))
@@ -940,6 +942,8 @@ def demoted(rec: DriveIndexRecord, reason: Reason, now: datetime, *, outcome: Op
                    truncated=outcome.truncated if outcome is not None else False,
                    chunk_count=chunk_count if reason is Reason.USER_CHUNK_CAP else 0,
                    lead_text=text.strip()[:CARD_LEAD_CHARS] if reason is Reason.MACHINE_TEXT else "", brief=brief,
+                   capture=outcome.capture if outcome is not None else "",   # a text that was read keeps its capture
+                   capture_source=outcome.capture_source if outcome is not None else "",
                    effective_date=_effective(change_from_record(rec), brief, rec.effective_date or now))
     return _settled(done, now)
 
@@ -989,14 +993,19 @@ def triaged(rec: DriveIndexRecord, result: TriageResult, now: datetime,
     if result.verdict is TriageVerdict.PHOTO:
         done = replace(rec, state=RecordState.METADATA_ONLY, reason=Reason.PHOTOGRAPH, caption="",
                        indexed_generation=None, chunk_space="", chunk_reembed_pending=False, lead_text="", brief=None,
-                       dirty_since=None, effective_date=_effective(change_from_record(rec), None,
-                                                                   rec.effective_date or now))
+                       dirty_since=None, capture="", capture_source="",   # a photograph has none (Δ57)
+                       effective_date=_effective(change_from_record(rec), None, rec.effective_date or now))
         done = _without_photo(done) if photo is None else replace(
             done, photo_description=photo.description, photo_objects=tuple(photo.objects), photo_scene=photo.scene,
             visible_text=photo.visible_text)
         return schedule(done, now, first_seen=first_seen)
     state = RecordState.INDEXED if _indexed_now(rec) else RecordState.PENDING
-    return schedule(_without_photo(replace(rec, state=state, reason=None, caption="")), now, first_seen=first_seen)
+    # §26.3 rule 1: the provider's camera facet decides; else what triage said (kept until the reader's own answer)
+    # the reader's stored word (an already indexed image) outranks triage's, as in file_capture
+    model = (model_capture(rec.capture) if state is RecordState.INDEXED else None) or model_capture(result.capture)
+    capture, source = settle(camera_capture(rec.facets), model)
+    return schedule(_without_photo(replace(rec, state=state, reason=None, caption="", capture=capture,
+                                           capture_source=source)), now, first_seen=first_seen)
 
 
 def can_start_file(elapsed_s: float, *, routed: bool) -> bool:

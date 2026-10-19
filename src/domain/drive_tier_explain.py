@@ -48,6 +48,7 @@ _MATCH_VALUE = '{label} "{word}"'
 _MATCH_DATE = 'date "{word}" ({label})'
 _MATCH_FILE_DATE = 'date "{word}"'
 _MATCH_KIND = 'kind "{word}"'
+_MATCH_CAPTURE = 'capture "{word}"'          # §26.3: detected by code (`cp:`); a model's (`cpa:`) is "(automatic)"
 _MATCH_AUTOMATIC = '{field} "{word}" (automatic)'
 _NOT_MATCHED = "not matched"
 _AUTOMATIC_FIELD = {
@@ -106,6 +107,10 @@ def _about_text(source: AboutSource, keys: Sequence[str]) -> str:
         return _MATCH_FILE_DATE.format(word=printed)
     if field is AboutField.KIND:
         return _MATCH_KIND.format(word=printed)
+    if field is AboutField.CAPTURE:
+        if source.source_class is SourceClass.AUTOMATIC_RECORD:
+            return _MATCH_AUTOMATIC.format(field="capture", word=printed)
+        return _MATCH_CAPTURE.format(word=printed)
     if field is AboutField.LABEL_WORD:
         return MATCH_TYPE_LABEL.format(word=_word_in(printed, "lw:", keys) if " " in printed else printed)
     if field is AboutField.PHOTO_WORD:

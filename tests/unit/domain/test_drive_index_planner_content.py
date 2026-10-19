@@ -340,7 +340,7 @@ class TestRuns:
 
     def test_a_carded_record_refreshes_its_card_in_class_0(self):
         # v2: the read text no longer reaches the card by itself (no lead text); a brief does, so the card changes
-        brief = DocumentBrief(doc_type="invoice")
+        brief = DocumentBrief(description="an invoice")   # Δ64: a brief's doc type is no longer a card segment
         rec = indexed(generation_started(stored(ch()), NOW), outcome=text(brief=brief), generation=1, chunk_count=1,
                       now=NOW)
         assert (rec.due_at, rec.priority) == (NOW, Priority.EDIT)

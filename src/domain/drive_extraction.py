@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Mapping, Optional, Tuple
 
+from .drive_capture import CaptureSignals
 from .drive_index import DocumentBrief, TriageVerdict
 from .drive_index_params import MODEL_EXTRACT_DENSITY, MODEL_EXTRACT_GARBAGE
 
@@ -74,6 +75,13 @@ class ExtractionOutcome:
     # Parser@2 (§25.3): a `text` outcome of an HTML page whose text is under 1 % of its bytes. Its text is then
     # mostly the page's metadata lines; the profile is a `template` (doc_type web_page) and it gets no doc2query.
     script_rendered: bool = False
+    # §26.3 (D34): parser@3's capture signals of a PDF (None for other kinds, or when the child could not read them),
+    # and the file's capture with its source (`drive_capture.Capture` / `CaptureSource` values; "" for none). The
+    # reader sets what its model said (`automatic`); the indexing service settles it against the parser's signals
+    # (`drive_capture.settle`: a deterministic answer wins) before the record is written.
+    capture_signals: Optional[CaptureSignals] = None
+    capture: str = ""
+    capture_source: str = ""
 
 
 class PdfSplitFailed(Exception):
@@ -122,6 +130,7 @@ class TriageResult:
     item_id: str
     verdict: TriageVerdict
     caption: str = ""            # photographs only
+    capture: str = ""            # §26.3: what triage said of a text image (a `Capture` value); "" for a photograph
 
 
 @dataclass(frozen=True)

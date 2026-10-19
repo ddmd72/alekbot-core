@@ -8,7 +8,7 @@ Public interface:
 
 Per call it builds the agent from the user's UserBotConfig through AgentContextBuilder and bills to `account_id`
 (no prompt-content store, §24.2). Images go in batches of TRIAGE_BATCH, each thumbnail under an opaque index 1..n.
-One `TriageResultV2` per image answered:
+One `TriageResultV2` per image answered (a text image carries triage's capture, §26.3):
 - a thumbnail the providers do not take (type, or over MAX_VISION_IMAGE_BYTES) is never sent: `refused_item_ids`;
 - a batch stopped at the output cap keeps the answers received and asks again, halved, for the rest; a batch refused
   by the primary (400/413/422, a safety stop) is halved down to the image; an image still stopped / refused alone goes to `capped_item_ids` / `refused_item_ids` (no description);
@@ -45,6 +45,7 @@ S = ModelReplyStatus
 @dataclass
 class _Run:
     results: Dict[int, Tuple[TriageVerdict, Optional[PhotoDescription]]] = field(default_factory=dict)
+    captures: Dict[int, str] = field(default_factory=dict)         # text images: what triage said of the capture
     capped: Set[int] = field(default_factory=set)
     refused: Set[int] = field(default_factory=set)
     charged: Set[ModelReplyStatus] = field(default_factory=set)   # invalid / stopped_at_cap seen
@@ -93,7 +94,8 @@ class DriveTriageRunner(ImageTriagePort):
                 for start in range(0, len(inputs), TRIAGE_BATCH):
                     await self._batch(agent, inputs[start:start + TRIAGE_BATCH], account_id, run)
         by_index = {index: image.item_id for index, image in enumerate(images, start=1)}
-        results = tuple(TriageResultV2(item_id=by_index[i], verdict=verdict, photo=photo)
+        results = tuple(TriageResultV2(item_id=by_index[i], verdict=verdict, photo=photo,
+                                       capture=run.captures.get(i, ""))
                         for i, (verdict, photo) in sorted(run.results.items()))
         status = _status(run)
         logger.info(f"[DriveTriage] user={user_id[:8]} images={len(images)} sent={len(inputs)} "
@@ -132,6 +134,7 @@ class DriveTriageRunner(ImageTriagePort):
             return
         run.spent(answer.model, answer.usd, answer.fallback_usd, answer.calls)
         run.results.update(answer.results)
+        run.captures.update(answer.captures)
         if answer.output_limited:
             left = [i for i in inputs if i.index not in answer.results]
             if len(inputs) == 1 and left:

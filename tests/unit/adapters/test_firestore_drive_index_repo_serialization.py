@@ -71,6 +71,7 @@ def full_record() -> DriveIndexRecord:
         photo_objects=(PhotoObject("fountain", ("fuente", "фонтан")),), photo_scene="city square",
         visible_text="TREVI", readme_excerpt="# Project", readme_excerpt_version="c7",
         script_rendered=True,
+        capture="scan", capture_source="detected",   # §26.3 (D34)
         # §26.2 (D33, Δ47, Δ68): files the bot cannot open; the last is the fan-out's own field (Δ54)
         inaccessible_since=T - timedelta(days=4), inaccessible_checked_at=T - timedelta(hours=8),
         inaccessible_reobserved=True, inaccessible_notified_since=T - timedelta(days=5))

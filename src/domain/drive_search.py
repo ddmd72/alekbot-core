@@ -36,8 +36,10 @@ from .drive_index_params import ACCESS_LOSS_TTL, WRAPPER_TAG_GAP_MAX
 from .drive_index_policy import Admission, admission, kind_of
 from .drive_keys import name_word_concepts, query_concepts
 from .drive_profile import issued_of
+from .drive_capture import CAPTURE_LABELS
 from .drive_search_texts import (
-    ACCESS_LINE_FILE, ACCESS_LINE_FOLDER, ENVELOPE_INACCESSIBLE, REBUILDING_LINE, STALE_INACCESSIBLE, VALID_UNTIL_LINE,
+    ACCESS_LINE_FILE, ACCESS_LINE_FOLDER, CAPTURE_LINE, ENVELOPE_INACCESSIBLE, REBUILDING_LINE, STALE_INACCESSIBLE,
+    VALID_UNTIL_LINE,
 )
 from .drive_tier_result import TieredResult
 from .user_drive import DriveConnection, DriveItem, make_drive_ref
@@ -194,6 +196,8 @@ class DriveSearchCard:
     valid_until: Optional[datetime] = None   # the file's validity or due date (xc F5): shown on its card
     expiry_match: bool = False           # it matched through validity words: its date line is the expiry date
     inaccessible: bool = False           # the bot cannot open it (§26.2): its `index:` line says so and how to fix it
+    capture: str = ""                    # how the file was captured, and by whom (§26.3): its `capture:` line
+    capture_source: str = ""
 
     def drive_item(self) -> DriveItem:
         """The Step 1 item, built only now that a path is derived (§3.1)."""
@@ -490,7 +494,7 @@ def make_card(rec: DriveIndexRecord, path: str, summary: str, nonce: str) -> Dri
         reason=rec.reason.value if rec.reason else None,
         stale=rec.stale or (closed and rec.indexed_generation is not None), truncated=rec.truncated,
         content_hash=rec.content_hash, nonce=nonce, date_source=date_source(rec), valid_until=rec.valid_until,
-        inaccessible=closed,
+        inaccessible=closed, capture=rec.capture, capture_source=rec.capture_source,
     )
 
 
@@ -500,6 +504,14 @@ def index_line(card: DriveSearchCard) -> str:
     if card.inaccessible:
         return ACCESS_LINE_FOLDER if card.is_folder else ACCESS_LINE_FILE
     return f"index: {card.state}" + (f" ({card.reason})" if card.reason else "")
+
+
+def capture_line(card: DriveSearchCard) -> Optional[str]:
+    """`capture: scan (detected)` (§26.3), or None for a card without a capture (a photograph, a file not read)."""
+    if not card.capture:
+        return None
+    return CAPTURE_LINE.format(capture=CAPTURE_LABELS.get(card.capture, card.capture),
+                               source=card.capture_source or "automatic")
 
 
 def stale_line(card: DriveSearchCard) -> str:
@@ -545,6 +557,9 @@ def _card_body(card: DriveSearchCard) -> str:
     lines = [card.summary, f"path: {card.path or '/'}", f"date: {dated}"]
     if card.valid_until is not None:
         lines.append(VALID_UNTIL_LINE.format(iso=card.valid_until.date().isoformat()))
+    captured = capture_line(card)
+    if captured:
+        lines.append(captured)
     lines.append(index_line(card))
     if card.stale:
         lines.append(stale_line(card))

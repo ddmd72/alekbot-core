@@ -162,16 +162,20 @@ class TestEnums:
                                                    "automatic_record"]
 
     def test_key_families(self):
-        # xc F1 adds `ef:` (an unprinted entity spelling), xc F3 adds `xl:`/`exl:` (Latin skeletons)
+        # xc F1 adds `ef:` (an unprinted entity spelling), xc F3 adds `xl:`/`exl:` (Latin skeletons); §26.3 (Δ58)
+        # adds the capture names `cp:` (detected) / `cpa:` (a model's)
         assert [f.value for f in KeyFamily] == ["w:", "x:", "xl:", "n:", "m:", "y:", "e:", "ef:", "ex:", "exl:", "pe:",
-                                                "v:", "k:", "lw:", "tw:", "dw:", "lv:", "pw:", "pn:", "l:"]
+                                                "v:", "k:", "lw:", "tw:", "dw:", "lv:", "pw:", "pn:", "l:", "cp:",
+                                                "cpa:"]
 
     def test_family_source_classes(self):
         """A key's class follows from its prefix alone: photo objects are `pe:` and photo numbers `pn:`, automatic
         (review M3); an entity skeleton `ex:` is a translation, never exact (P1 review M8)."""
-        verified = {KeyFamily.ENTITY, KeyFamily.VALUE, KeyFamily.YEAR, KeyFamily.MONTH, KeyFamily.KIND}
+        # §26.3 (Δ58): a capture code detected is verified (`cp:`), one a model said is automatic (`cpa:`)
+        verified = {KeyFamily.ENTITY, KeyFamily.VALUE, KeyFamily.YEAR, KeyFamily.MONTH, KeyFamily.KIND,
+                    KeyFamily.CAPTURE}
         automatic = {KeyFamily.LABEL_WORD, KeyFamily.TOPIC_WORD, KeyFamily.DOMAIN_WORD, KeyFamily.VALIDITY_WORD,
-                     KeyFamily.PHOTO_WORD, KeyFamily.PHOTO_ENTITY, KeyFamily.PHOTO_NUMBER}
+                     KeyFamily.PHOTO_WORD, KeyFamily.PHOTO_ENTITY, KeyFamily.PHOTO_NUMBER, KeyFamily.CAPTURE_AUTO}
         # xc F3: Latin skeletons `exl:` too; xc F1: an unprinted entity spelling `ef:` is index-made, never exact
         translation = {KeyFamily.ENTITY_TRANSLIT, KeyFamily.ENTITY_TRANSLIT_LATIN, KeyFamily.ENTITY_FORM}
         assert {f for f, c in FAMILY_SOURCE_CLASS.items() if c is SourceClass.VERIFIED_RECORD} == verified
@@ -240,7 +244,7 @@ class TestTypes:
         (HintReply, ["status", "items_by_index", "model", "usd", "fallback_usd", "outcome_by_index"]),
         (ProfileInput, ["head", "tail", "headings", "child_names"]),
         (ProfileLabels, ["doc_type", "life_domains", "valid_until"]),
-        (TriageResultV2, ["item_id", "verdict", "photo"]),
+        (TriageResultV2, ["item_id", "verdict", "photo", "capture"]),   # §26.3: a text image's capture, appended
         (TriageReply, ["status", "results", "model", "usd", "fallback_usd", "model_calls", "capped_item_ids",
                        "refused_item_ids"]),
     ])

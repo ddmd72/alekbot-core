@@ -2,6 +2,7 @@
 Card text and its hash (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §8.5, §25.2.7). Pure over record fields:
 `name | kind | ... | key facets`; no path, so a folder rename touches no descendant. CARD_VERSION 3 carries the
 profile and the photo fields; no lead text but for machine text, so card kNN and chunk kNN no longer vote on one signal.
+CARD_VERSION 4 adds the capture (§26.3) and drops the brief's doc type (Δ64).
 """
 from __future__ import annotations
 
@@ -9,6 +10,7 @@ import hashlib
 from datetime import datetime, timezone
 from typing import Any, List, Mapping, Optional, Tuple
 
+from .drive_capture import CAPTURE_LABELS, Capture
 from .drive_index import (
     CARD_VERSION, DocumentBrief, DriveChange, DriveIndexRecord, Reason, RecordState, Scope, TriageVerdict,
 )
@@ -108,9 +110,11 @@ def _opaque_label(rec: DriveIndexRecord) -> str:
 
 
 def _brief_segments(brief: Optional[DocumentBrief]) -> List[str]:
+    """The reader's brief: its doc type never (Δ64: the profile's is the card's only doc type; reader 2 returns
+    none, a v1 brief may still hold one)."""
     if brief is None:
         return []
-    out = [p for p in (brief.doc_type, brief.description) if p]
+    out = [brief.description] if brief.description else []
     if brief.doc_date is not None:
         out.append(brief.doc_date.date().isoformat())
     if brief.parties:
@@ -135,15 +139,23 @@ def collapsed_folder(rec: DriveIndexRecord) -> bool:
 _MACHINE_TEXT = "machine-generated text"
 
 
+def _capture_segment(rec: DriveIndexRecord) -> str:
+    """§26.3: how the file was captured, in words; none for `digital` (it would only shift every native file's
+    embedding) and none without a capture."""
+    if not rec.capture or rec.capture == Capture.DIGITAL.value:
+        return ""
+    return CAPTURE_LABELS.get(rec.capture, "")
+
+
 def _joined(parts: List[str]) -> str:
     return " | ".join(p for p in parts if p)
 
 
 def card_text(rec: DriveIndexRecord) -> str:
-    """§25.2.7 (CARD_VERSION 3), each segment only when present:
-    - profiled file: `name | kind | doc_type | what_it_is | title | entities (as printed) | topics | topics_native |
-      facets`;
-    - text file without a profile: `name | kind | brief | facets`;
+    """§25.2.7 (CARD_VERSION 4: §26.3's capture), each segment only when present:
+    - profiled file: `name | kind | capture | doc_type | what_it_is | title | entities (as printed) | topics |
+      topics_native | facets`;
+    - text file without a profile: `name | kind | capture | brief (no doc type, Δ64) | facets`;
     - machine text: `name | kind | machine-generated text | lead text`;
     - photograph: `name | image | description | scene | objects | visible text | facets`;
     - collapsed folder with a README profile: `name | label | what_it_is | title | topics`; without, its Slice 1
@@ -163,11 +175,11 @@ def card_text(rec: DriveIndexRecord) -> str:
     p = rec.profile
     if p is not None:
         # an entity as the file prints it, never only the profiler's spelling of it (xc F1)
-        return _joined([rec.name, kind, p.doc_type, p.what_it_is, p.title,
+        return _joined([rec.name, kind, _capture_segment(rec), p.doc_type, p.what_it_is, p.title,
                         ", ".join(e.printed or e.name for e in p.entities if e.printed or e.name),
                         ", ".join(p.topics),
                         ", ".join(p.topics_native), *_key_facets(rec)])
-    return _joined([rec.name, kind, *_brief_segments(rec.brief), *_key_facets(rec)])
+    return _joined([rec.name, kind, _capture_segment(rec), *_brief_segments(rec.brief), *_key_facets(rec)])
 
 
 def card_hash(rec: DriveIndexRecord) -> str:

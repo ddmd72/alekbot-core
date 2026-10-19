@@ -41,6 +41,7 @@ class AboutField(str, Enum):
     PHOTO_WORD = "photo_word"             # description, scene, objects, visible text; `detail` names which
     PHOTO_OBJECT = "photo_object"         # an object's name or spelling, as a phrase
     VISIBLE_TEXT_NUMBER = "visible_text_number"
+    CAPTURE = "capture"                   # the capture's names (§26.3); `detail` is the capture value
 
 
 @dataclass(frozen=True)
@@ -88,6 +89,12 @@ class KeyedRecord(Protocol):
     @property
     def visible_text(self) -> str: ...
 
+    @property
+    def capture(self) -> str: ...
+
+    @property
+    def capture_source(self) -> str: ...
+
 
 @dataclass(frozen=True)
 class RecordKeyInputs:
@@ -102,3 +109,5 @@ class RecordKeyInputs:
     photo_objects: Tuple[PhotoObject, ...] = ()
     photo_scene: str = ""
     visible_text: str = ""
+    capture: str = ""                  # §26.3: a drive_capture.Capture value, or ""
+    capture_source: str = ""           # a drive_capture.CaptureSource value, or ""
