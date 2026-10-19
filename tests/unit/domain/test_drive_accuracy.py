@@ -14,7 +14,9 @@ from src.domain.drive_index import (
 
 IN, AS, NOT = Grade.IN_TEXT.value, Grade.IN_TEXT_AS.value, Grade.NOT_IN_TEXT.value
 # ACCURACY_VERSION 1 is unreleased: Δ85's `digital_model_read` row re-pins it (without the row: f0fb92a4…)
-WEIGHTS_PINS = {1: "925598b63241851381294e996eefcb893ec1a7f5b1774ca00319df4ffa75369b"}      # ACCURACY_VERSION -> weights_digest(); a changed weight is a version bump
+# ACCURACY_VERSION 2: the grader recognises more printed date forms (grades change, weights table does not) -> same digest
+WEIGHTS_PINS = {1: "925598b63241851381294e996eefcb893ec1a7f5b1774ca00319df4ffa75369b",
+                2: "925598b63241851381294e996eefcb893ec1a7f5b1774ca00319df4ffa75369b"}      # ACCURACY_VERSION -> weights_digest(); a changed weight is a version bump
 
 
 def gv(field, grade, value="v"):
@@ -63,7 +65,7 @@ class TestWeights:
         assert acc.READING_POINTS == {"pages_refused": 5, "read_by_fallback": 3, "truncated": 2}
 
     def test_the_weights_digest_is_pinned_to_the_version(self):
-        assert ACCURACY_VERSION == 1
+        assert ACCURACY_VERSION == 2
         # a change to any weight changes this digest: bump ACCURACY_VERSION and pin the new digest beside the old one
         assert WEIGHTS_PINS.get(ACCURACY_VERSION) == acc.weights_digest(), acc.weights_digest()
 

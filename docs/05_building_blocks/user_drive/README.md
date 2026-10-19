@@ -1166,7 +1166,8 @@ duplicates collapse to the best grade. A value the text does not hold stays sear
 `ya:`, `ma:`, entities as `ef:` only) and **never** sets `effective_date` / `valid_until` or answers `find_expiring`.
 An ID or digit-group value is also keyed without separators (Δ91): "QX4471902" finds "QX 4471902".
 
-**The score** (`drive_accuracy.py`, every weight in one hashed table, `ACCURACY_VERSION` 1):
+**The score** (`drive_accuracy.py`, every weight in one hashed table; `ACCURACY_VERSION` 2 since the first revision
+report taught the grader passport, compact and ISO-basic date forms, RFC Δ92):
 `accuracy = clamp(round(100 · (1 − S) · (1 − V)) − R, 0, 100)`.
 - `V`: weighted share of graded values the text does not confirm — weights: dates, key values, prose numbers 3,
   entities 2, **native topics 0** (Δ89: graded and reported, never moving the score); misses: `in_text` 0, `in_text_as`
