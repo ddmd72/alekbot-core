@@ -104,7 +104,8 @@ DRIVE_QUERY_DESCRIPTION = (
     "a document type or purpose ('tickets', 'receipts', 'contracts', 'what expires'), or what to find inside (a "
     "phrase, a number, an amount, an id). For 'everything about X' put X. A file format goes in drive_kind ('photos', "
     "'PDF', 'spreadsheet'); a time span ('last year', '2023–2024') goes in drive_date_from / drive_date_to, not in "
-    "the words. Leave EMPTY only for filter-only requests."
+    "the words. Leave EMPTY only for filter-only requests. All words must match: use the user's few key words in "
+    "one language."
 )
 DRIVE_KIND_DESCRIPTION = (
     "search_files_in_drive: optional file type. A family covers every format of its kind: "
@@ -129,8 +130,7 @@ PROTOCOL_TIERS_LINE = (
     "place or text holds the words, in their spellings and word forms. 'By translation' and 'labelled' are the "
     "index's automatic words — passage keywords with their source quote, type, topic and life-area words — and may "
     "be wrong or incomplete. 'Related by meaning only' lines are guesses. Other spellings and word forms were "
-    "searched; other languages only where the index wrote them, so a search in another language can still find "
-    "more. The coverage line says what the search could not see. When a word is held by no file, the result counts "
+    "searched; other languages only where the index wrote them. The coverage line says what the search could not see. When a word is held by no file, the result counts "
     "the files that match the other words, so you can tell whether the word was phrasing or the subject."
 )
 

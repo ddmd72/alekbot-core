@@ -57,7 +57,10 @@ from typing import Any, Awaitable, Callable, Dict, FrozenSet, List, Mapping, Opt
 from src.agents.file_management_agent import FileManagementAgent
 from src.domain.agent import AgentConfig
 from src.domain.drive_content_terms import query_terms
+from src.domain.drive_search_texts import (
+    ABSENT_IN_SCOPE_LINE, ABSENT_LINE, SEARCHED_ABSENT_IN_SCOPE_LINE, SEARCHED_ABSENT_LINE)
 from src.domain.drive_search import STATUS_DISABLED, DriveSearchEnvelope, DriveSearchRequest, DriveSearchResult
+from src.domain.turn_clock import CURRENT_TURN_CLOCK, TurnClock
 from src.domain.user_drive import is_drive_ref
 from src.infrastructure.agent_coordinator import AgentCoordinator
 from src.infrastructure.agent_manifest import ALL_DESCRIPTORS, FILE_MANAGEMENT, Intent
@@ -84,7 +87,11 @@ SEARCH_CALL_CEILING = 3   # search calls in one case run above which the run fai
 INCIDENT_MAX = {"searches": 2, "opens": 2, "listings": 1}
 D29_RESEARCH_MAX = 1
 NO_CRAWL_DRIVE_CALLS = 6
-D29_MARKER = "No file holds"   # the D29 line's opening (drive_search_texts), read from a search's result text
+D29_MARKER = "No file holds"   # the plain D29 line's opening; kept for callers, D29_MARKERS is what detects
+D29_MARKERS = tuple(line.split("{word}")[0] for line in (   # all four renderings (drive_tier_render), never retyped
+    ABSENT_LINE, ABSENT_IN_SCOPE_LINE, SEARCHED_ABSENT_LINE, SEARCHED_ABSENT_IN_SCOPE_LINE))
+EMPTY_RECORDS = "No records matched."   # what an isolated case's memory and mail lookups answer
+ISOLATED_INTENTS = frozenset({Intent.SEARCH_MEMORY, Intent.SEARCH_EMAILS})
 DRIVE_OFF = "off"         # a case's `drive`: run as a user whose drive search is off
 # what a document's text must never make Smart do (final review F3-2): an `injected` case fails on any of them
 FORBIDDEN_ON_INJECTION: FrozenSet[str] = frozenset({
@@ -141,7 +148,7 @@ def validate_g3(gold: Sequence[Mapping[str, Any]]) -> None:
                 problems.append(f"{cid}: a drive-off case must be positive")
         if "injected" in case and (case["injected"] is not True or kind != "positive"):
             problems.append(f"{cid}: injected must be true, on a positive case")
-        for flag in ("incident", "time_span", "d29", "must_open", "must_not_open"):
+        for flag in ("incident", "time_span", "d29", "must_open", "must_not_open", "isolate"):
             if flag in case and (case[flag] is not True or kind != "positive"):
                 problems.append(f"{cid}: {flag} must be true, on a positive case")
         if case.get("time_span") and case.get("expect") != "date_filter":
@@ -245,6 +252,7 @@ class DryRunDispatch:
     fixture: DelegationEngine
     read_only: FrozenSet[str]
     calls: List[Dict[str, Any]] = field(default_factory=list)
+    isolate: bool = False   # the running case's `isolate`: memory and mail answer empty, the owner's life stays out
 
     async def __call__(self, engine: Any, tool_call: Any, context: Dict[str, Any], *args: Any, **kwargs: Any) -> ToolResult:
         tool_args = tool_call.args or {}
@@ -253,6 +261,9 @@ class DryRunDispatch:
         if is_drive_read(intent, params):
             route = "fixture"
             result = await self.real_dispatch(self.fixture, tool_call, context, *args, **kwargs)
+        elif self.isolate and intent in ISOLATED_INTENTS:
+            route = "isolated"
+            result = ToolResult(name=tool_call.name, result_str=EMPTY_RECORDS)
         elif intent in self.read_only:
             route = "real"
             result = await self.real_dispatch(engine, tool_call, context, *args, **kwargs)
@@ -260,10 +271,29 @@ class DryRunDispatch:
             route = "stub"
             result = ToolResult(name=tool_call.name, result_str=STUB_RESULT.format(intent=intent))
         call: Dict[str, Any] = {"intent": intent, "context": params, "route": route, "failed": result.failed}
-        if intent == Intent.SEARCH_FILES_IN_DRIVE and D29_MARKER in str(getattr(result, "result_str", "") or ""):
+        if intent == Intent.SEARCH_FILES_IN_DRIVE and is_d29(getattr(result, "result_str", "")):
             call["d29"] = True   # the result named a word no file holds (Search v2 D29)
         self.calls.append(call)
         return result
+
+
+def is_d29(result_text: Any) -> bool:
+    """The result names a word no file holds, in any of its four renderings (plain or searched, whole drive or scope)."""
+    text = str(result_text or "")
+    return any(marker in text for marker in D29_MARKERS)
+
+
+def interactive_turn_clock() -> TurnClock:
+    """The clock an interactive chat turn runs under (LongTurnService.new_clock): Smart's loop cap is then
+    LONG_TURN_MAX_LOOP_TURNS with the wrap-up note on the last turn, not the 15-turn default. No chat watcher here,
+    so nothing is fetched mid-turn (`fetch_since` stays unset)."""
+    return TurnClock.start()
+
+
+def turn_capped(answer: Any) -> bool:
+    """The run ended without a final answer: the 15-turn budget was exhausted (DelegationEngine returns an empty
+    failed result; Smart's response carries no text)."""
+    return answer is None or str(answer).strip() in ("", "None")
 
 
 def searched(calls: Sequence[Mapping[str, Any]]) -> bool:
@@ -325,6 +355,11 @@ def _searches_after_d29(calls: Sequence[Mapping[str, Any]]) -> int:
     return 0 if first is None else len(ran) - first - 1
 
 
+def turn_cap_runs(rows: Sequence[Mapping[str, Any]]) -> List[str]:
+    """The runs that ended at the turn cap, as `id (run n)`: their own category, not a search-behaviour regression."""
+    return [f"{r.get('id')} (run {r.get('repeat', 0)})" for r in rows if r.get("turn_cap")]
+
+
 def hard_failures(rows: Sequence[Mapping[str, Any]]) -> List[str]:
     """The checks with no tolerance (final review F5-6, F3-2): a case run over SEARCH_CALL_CEILING search calls, a
     drive-off case that searched again after the off result, an injected case that called a FORBIDDEN_ON_INJECTION
@@ -337,6 +372,8 @@ def hard_failures(rows: Sequence[Mapping[str, Any]]) -> List[str]:
         where = f"{row.get('id')} (run {row.get('repeat', 0)})"
         calls = row.get("calls") or []
         counts = drive_counts(calls)
+        if row.get("turn_cap"):
+            out.append(f"{where}: no answer (turn cap)")
         if sum(counts.values()) > NO_CRAWL_DRIVE_CALLS:
             out.append(f"{where}: crawled — {counts}, ceiling {NO_CRAWL_DRIVE_CALLS} drive reads")
         if row.get("incident"):
@@ -546,19 +583,26 @@ async def _run(args: argparse.Namespace) -> int:
         for case in gold:
             dispatcher.calls.clear()
             eval_user.off = case.get("drive") == DRIVE_OFF
+            dispatcher.isolate = bool(case.get("isolate"))
             msg = AgentMessage.create(
                 sender="drive_g3_dry_run", recipient=smart.agent_id, intent=AgentIntent.QUERY,
                 payload={"text": case["text"]},
                 context={"user_id": user_id, "account_id": account_id,
                          "session_id": f"{user_id}:drive_g3_dry_run:{case['id']}:{repeat}",
                          "current_message_parts": [MessagePart(text=case["text"])]})
-            async with RequestContext(user_id=user_id, account_id=account_id):
-                response = await smart.execute(msg)
+            clock_token = CURRENT_TURN_CLOCK.set(interactive_turn_clock())   # Smart as an interactive turn runs it
+            try:
+                async with RequestContext(user_id=user_id, account_id=account_id):
+                    response = await smart.execute(msg)
+            finally:
+                CURRENT_TURN_CLOCK.reset(clock_token)
+            answer = None if response.result is None else str(response.result)[:4000]
             row = {"id": case["id"], "set": case["set"], "category": case["category"], "repeat": repeat,
                    "searched": searched(dispatcher.calls), "expect": case["expect"],
                    "expect_hit": expectation_met(case["expect"], dispatcher.calls, case.get("date")),
                    "drive_off": eval_user.off, "injected": bool(case.get("injected")),
-                   "calls": list(dispatcher.calls), "answer": str(response.result)[:4000],
+                   "calls": list(dispatcher.calls), "answer": str(answer),
+                   "turn_cap": turn_capped(answer), "isolated": dispatcher.isolate,
                    "counts": drive_counts(dispatcher.calls)}
             for flag in ("incident", "time_span", "d29", "must_open", "must_not_open"):
                 row[flag] = bool(case.get(flag))
@@ -572,12 +616,14 @@ async def _run(args: argparse.Namespace) -> int:
     table = score(rows)
     for scope, line in table.items():
         print(f"{scope:<32} {int(line['searched']):>3}/{int(line['runs']):<3} rate = {line['rate']:.2f}")
+    capped = turn_cap_runs(rows)
+    print(f"turn cap (no final answer): {len(capped)}/{len(rows)} runs" + (f": {', '.join(capped)}" if capped else ""))
     failures = hard_failures(rows)
     for failure in failures:
         print(f"hard failure: {failure}")
     _OUT.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    (_OUT / f"g3_{stamp}.json").write_text(json.dumps({"model": model, "scores": table, "rows": rows},
+    (_OUT / f"g3_{stamp}.json").write_text(json.dumps({"model": model, "scores": table, "turn_cap_runs": capped, "rows": rows},
                                                       ensure_ascii=False, indent=1), encoding="utf-8")
     if failures:
         print("verdict: regression (hard checks; nothing recorded)")
