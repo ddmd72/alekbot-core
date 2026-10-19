@@ -6,10 +6,10 @@ Find the kind of question, then read the section named. The code paths in each s
 RFC ([USER_DRIVE_INDEXING_RFC.md](../../10_rfcs/USER_DRIVE_INDEXING_RFC.md)) holds the reasoning, §23 the Slice 1
 deltas, §24 the Slice 2+4 design and §25 Search v2 (decisions D14–D31; results in §25.7.1).
 RFC §26 (card accuracy score, capture facet — scan, document photo, screenshot — files the bot cannot open, photo
-location prior and scene labels; decisions D33–D40): **all six slices are built on the branch `feat/drive-card-accuracy`
-and not deployed.** S1 files the bot cannot open is §4.18, S2 capture §4.19, S3/S4 card accuracy and the small fixes
+location prior and scene labels; decisions D33–D40): **all six slices are built and were deployed on 2026-10-19 (PRs #81–#84;
+the owner's index rebuilt, gate key `accuracy` applied).** S1 files the bot cannot open is §4.18, S2 capture §4.19, S3/S4 card accuracy and the small fixes
 §4.20, S6 the location prior and scene labels §4.21, S5 the owner scripts and the eval additions §4.22. Everything
-marked "(branch)" below describes the branch; the deployed code is what the rest of this file says.
+marked "(branch)" below is now deployed code (2026-10-19).
 
 | Question | Read |
 |---|---|
@@ -38,7 +38,7 @@ marked "(branch)" below describes the branch; the deployed code is what the rest
 | What v1 search did (RRF, always 8, `content_terms`) and why it was replaced | §6.6 |
 | How quality is measured (G1, G2, OCR, G3), the live checks, logs, indexes | §7 |
 | Why a given file was not indexed: which record fields and log lines answer it | §7.1 |
-| A file or folder "the bot cannot open"; why it was not deleted; the chat notice with the attached list; how it heals | §4.18 (built on the branch, not deployed) |
+| A file or folder "the bot cannot open"; why it was not deleted; the chat notice with the attached list; how it heals | §4.18 (deployed 2026-10-19) |
 | How a file's capture (scan, photo of a document, screenshot, digital) is decided; why a mixed PDF has none; why "scans" finds files | §4.19 (branch) |
 | What `card accuracy: N%` is, how a value is graded, why a value can be searchable but never exact, when Smart opens a file anyway; what changes when a weight changes | §4.20 (branch) |
 | What triage is told about a photo's place; what a `scene:` line is; why "sunsets" finds a photo | §4.21 (branch) |
@@ -646,7 +646,7 @@ The profile and passage-hint jobs run in the tick's enrichment share, after the 
 | parser | `timeout`, `memory` (a bomb) | `pending`, backoff 10 min, 20 min, then `failed / extract_timeout` or `extract_memory` | yes, `MAX_ATTEMPTS` 3 |
 | parser / reader / run | `error` (parser error, invalid model output, a half that timed out again, a refusal raised before any HTTP exchange, a budget cut with no text found), crashed run, chunk refused (400) | `pending` → `failed / extract_error` | yes, 3 |
 | fetch / triage | download or thumbnail failed; no rendition yet | `pending` → `failed / download_error` (a missing rendition ends as a photograph without description) | yes, 3 |
-| fetch / triage / folder listing | **"not found" by id for an item delta lists** (the bot cannot open it, §4.18; branch, not deployed) | state and readable generation kept, `inaccessible_since` set; no attempt counted | one id read on an observation (≤ 1 per hour) or every 7 days |
+| fetch / triage / folder listing | **"not found" by id for an item delta lists** (the bot cannot open it, §4.18; deployed 2026-10-19) | state and readable generation kept, `inaccessible_since` set; no attempt counted | one id read on an observation (≤ 1 per hour) or every 7 days |
 | embeddings | per-file 180 s passed | `pending` → `failed / embed_timeout` | yes, 3 |
 | reader / triage | the class's dollars spent for the month, initial build included (`budget_exhausted`, or the hold before the call) | `pending`, class 3, due at the UTC month start | waits |
 | reader / triage | **model outage, not charged**: 429, network, open breaker, an account-level 4xx other than 400/413/422 (401 key, 403 permission, 404 model id), missing prompt, a provider with no key; any triage outage | `pending`, due at `model_backoff_until` (60 s doubling to 1 h); attempts untouched | waits |
@@ -1041,7 +1041,7 @@ user=… described=n/m` when the described count moves and `initial build closed
 user's enrichment has not moved for 24 h while jobs are ready and budget is left, and when the Gemini fallback served
 more than half of a user's model dollars in a day.
 
-### 4.18 Files the bot cannot open (RFC §26.2, D33; built on `feat/drive-card-accuracy`, not deployed)
+### 4.18 Files the bot cannot open (RFC §26.2, D33; deployed 2026-10-19)
 
 **Why it happens.** The bot's access to the drive is one ordinary permission entry for the app, set on the App Folder
 and inherited by everything in it. An item with its own permission list that lacks that entry — a folder that was
@@ -1126,7 +1126,7 @@ is; a platform with no port returns "not sent" before posting anything. A notice
 no port, a failed upload) is not read again until the next UTC day unless the tick counts more files to tell about
 (held per process: a new instance tries once more).
 
-### 4.19 Capture: how a text-bearing file was made (RFC §26.3, D34; built on `feat/drive-card-accuracy`, not deployed)
+### 4.19 Capture: how a text-bearing file was made (RFC §26.3, D34; deployed 2026-10-19)
 
 Every file whose text is searchable records `capture` — `scan`, `document_photo`, `screenshot` or `digital` — and
 `capture_source`: `detected` (code decided from the file's own structure) or `automatic` (a model said it). A photograph
@@ -1155,7 +1155,7 @@ has none: it is a photo already, by its `k:` words.
 - **The card:** a `capture` segment in the card text (`CARD_VERSION` 4) and a rendered line `capture: scan (detected)`.
   The capture is also the text's source in the accuracy score (§4.20).
 
-### 4.20 Card accuracy and the small fixes (RFC §26.4, §26.5, D35, D36; branch, not deployed)
+### 4.20 Card accuracy and the small fixes (RFC §26.4, §26.5, D35, D36; deployed 2026-10-19)
 
 **Nothing is dropped any more.** The profiler's `verify` is replaced by `grade` (`drive_profile.py`, `drive_grade.py`):
 every date, key value, entity and number inside the title and `what_it_is` stays in the profile, the card and the keys
@@ -1193,7 +1193,7 @@ ref. Coverage counts closed files only in scope, as their own sentence, never as
 **Rollout facts.** The migration gate key is now `accuracy` (`MIGRATION_GATE_KEY`): every existing sync state is gated
 (no tick work, search says "being rebuilt", one ops alert, and a gated state is not also reported stale) until its rebuild.
 
-### 4.21 Photo location prior and scene labels (RFC §26.13, D39, D40; branch, not deployed)
+### 4.21 Photo location prior and scene labels (RFC §26.13, D39, D40; deployed 2026-10-19)
 
 - **The prior.** Triage's line for each thumbnail continues with the place and the coordinates when the record has them:
   `Image 3: camera metadata present; taken near Barcelona, Spain (41.403, 2.174)` (`taken at (lat, lon)` with no place
@@ -1827,7 +1827,7 @@ tag `drive-search-v1` after marking every user `purging` and deleting every hint
 (default on) stops every upgrade pass in an emergency; set it through `.env` (`DRIVE_UPGRADE_PASS_DEV`), since a value
 set with `gcloud run services update` is lost at the next deploy.
 
-**The §26 rollout (branch, not deployed)** has its own runbook: [docs/07_deployment/README.md](../../07_deployment/README.md)
+**The §26 rollout (done 2026-10-19)** has its own runbook: [docs/07_deployment/README.md](../../07_deployment/README.md)
 → "Card accuracy (§26) — rollout and rollback". In short: back up the prompt layer; composites `READY` and the smoke;
 pause; **upload the six changed tokens inside the paused window** (`OUTPUT_FORMAT_` and `COGNITIVE_PROCESS_` for the
 profiler, the reader and triage); deploy main and the indexer; **verify both serve the new image**; resume; rebuild per
@@ -1837,7 +1837,7 @@ already read, then run the revision script. Rollback: restore the six-token back
 the previous tip; the purge is mandatory and the second re-index runs under the caps the first spent. The paragraph that
 follows is slice S1 alone; it is part of the same rollout.
 
-**Files the bot cannot open (RFC §26.2; branch, not deployed)** add no prompt and no version bump of their own. Owner steps
+**Files the bot cannot open (RFC §26.2; deployed 2026-10-19)** add no prompt and no version bump of their own. Owner steps
 before the deploy: the composite index `user_id + inaccessible_since` on `{prefix}drive_index_records` (declared in
 `config/firestore.indexes.json`; `make deploy-indexes`) `READY`, then `drive_index_smoke.py <user_id>` (it runs the
 new read, `inaccessible_records`); deploy main and the indexer together (the fan-out sends the notice, the indexer marks;
