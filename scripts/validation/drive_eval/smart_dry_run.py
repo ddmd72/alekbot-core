@@ -60,6 +60,7 @@ from src.domain.drive_content_terms import query_terms
 from src.domain.drive_search_texts import (
     ABSENT_IN_SCOPE_LINE, ABSENT_LINE, SEARCHED_ABSENT_IN_SCOPE_LINE, SEARCHED_ABSENT_LINE)
 from src.domain.memory_fact import PROPOSE_MEMORY_FACTS_TOOL
+from src.domain.skill import DRAFT_SKILL_TOOL
 from src.domain.drive_search import STATUS_DISABLED, DriveSearchEnvelope, DriveSearchRequest, DriveSearchResult
 from src.domain.turn_clock import CURRENT_TURN_CLOCK, TurnClock
 from src.domain.user_drive import is_drive_ref
@@ -251,6 +252,25 @@ class RecordingMemoryFacts:
 
     async def propose(self, user_id: str, origin_session_id: Optional[str], draft: Any) -> str:
         return "dryrun"
+
+
+class DryRunSkills:
+    """Wraps the real SkillService for the dry run. The harness must never write: `list_skills` stays real (Smart's
+    catalog), `draft` records nothing to Firestore and returns a valid DraftResult. With interactive_delivery Smart
+    also declares draft_skill; the `_dispatch_local` wrapper logs those calls."""
+
+    def __init__(self, real: Any) -> None:
+        self._real = real
+
+    async def list_skills(self, user_id: str) -> Any:
+        return await self._real.list_skills(user_id)
+
+    async def draft(self, user_id: str, skill: Any, changes: Sequence[Any] = ()) -> Any:
+        from src.domain.skill import DraftResult
+        return DraftResult(code="dryrun", skill=skill)
+
+    def __getattr__(self, name: str) -> Any:   # reads only; anything else the real service offers is not stubbed here
+        return getattr(self._real, name)
 
 
 @dataclass
@@ -571,6 +591,8 @@ async def _run(args: argparse.Namespace) -> int:
     factory = UserAgentFactory(config=settings, env_config=env_config, coordinator=AgentCoordinator(registry=registry),
                                user_repo=user_repo, account_repo=account_repo, **container.agent_services())
     smart = (await factory.ensure_agents_for_user(user_id))["smart_agent"]
+    if smart.skill_service is not None:
+        smart.skill_service = DryRunSkills(smart.skill_service)   # no draft is ever stored
     smart.memory_fact_service = RecordingMemoryFacts()   # no Firestore write: the tool is declared, never stored
     eval_user = AsEvalUser(search)
     dispatcher = DryRunDispatch(DelegationEngine.dispatch, fixture_engine(user_id, drive, search, eval_user),
@@ -583,9 +605,9 @@ async def _run(args: argparse.Namespace) -> int:
     real_local = DelegationEngine._dispatch_local
 
     async def local_logged(self: DelegationEngine, tool_call: Any, handler: Any) -> ToolResult:
-        # local tools bypass `dispatch`: log the memory proposal here so the injection bar sees it
-        if tool_call.name == PROPOSE_MEMORY_FACTS_TOOL:
-            dispatcher.calls.append({"intent": PROPOSE_MEMORY_FACTS_TOOL, "context": tool_call.args or {},
+        # local tools bypass `dispatch`: log the memory proposal and skill draft here so the injection bar sees it
+        if tool_call.name in (PROPOSE_MEMORY_FACTS_TOOL, DRAFT_SKILL_TOOL):
+            dispatcher.calls.append({"intent": tool_call.name, "context": tool_call.args or {},
                                      "route": "stub", "failed": False})
         return await real_local(self, tool_call, handler)
 

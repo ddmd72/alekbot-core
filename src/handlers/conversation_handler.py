@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import base64
 import os
+import re
 import json
 import asyncio
 import time
@@ -73,6 +74,7 @@ from ..services.channel_binding_service import ChannelBindingService
 from ..domain.channel_binding import ChannelBinding
 from ..domain.session_mode import SessionMode
 
+_MEMORY_CODE = re.compile(r"[0-9a-f]{4}")   # secrets.token_hex(2): the only shape a memory draft code has
 # Content types that require external fetch + platform upload (not Block Kit)
 _MEDIA_CONTENT_TYPES = frozenset({"weather_image", "map_image", "file", "widget"})
 
@@ -396,9 +398,9 @@ class ConversationHandler(ConversationHandlerPort):
         long text), a header, then the save command alone. If the file or the header fails, the
         command is not sent: the owner must never confirm facts they were not shown."""
         language = getattr(response_channel, "language", None)
-        facts = [ProposedFact(**f) for f in item.data["facts"]]
-        count = len(facts)
         try:
+            facts = [ProposedFact(**f) for f in item.data["facts"]]
+            count = len(facts)
             await response_channel.send_file(
                 content=render_preview_file(MemoryFactDraft(facts=facts)).encode("utf-8"),
                 filename="memory-facts.txt",
@@ -1837,6 +1839,12 @@ class ConversationHandler(ConversationHandlerPort):
             )
             return
         code = parts[2]
+        if not _MEMORY_CODE.fullmatch(code):
+            await response_channel.send_message(
+                self._ui_string(context, UIMessage.MEMORY_DRAFT_NOT_FOUND, code=code),
+                thread_id=context.thread_id,
+            )
+            return
 
         try:
             count = await self._memory_facts.confirm(
