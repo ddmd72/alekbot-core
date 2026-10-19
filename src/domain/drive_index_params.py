@@ -37,6 +37,9 @@ PLACE_PREFER_RADIUS_KM = 15.0               # a heavier place within it may name
 SYSTEMIC_BACKOFF_BASE_S = 60                # continuation delay after a systemic error, doubled per failure
 SYSTEMIC_BACKOFF_CAP_S = 1800               # = 3 x TICK_INTERVAL
 RECORD_WRITE_BATCH = 400
+KEYED_DELETE_BATCH = 50                     # chunks and hints per delete commit: a delete's index entries count toward
+                                            # Firestore's transaction size, and a v2 chunk carries up to 900 keys
+                                            # (400 failed the first purge of a v2 index, "Transaction too big")
 WRAPPER_TAG_GAP_MAX = 16                    # spaces / invisible characters a wrapper-tag look-alike may hold
                                             # between its parts: bounded so the escape stays linear on hostile
                                             # whitespace (final review F3-3); the per-result nonce is the defence
