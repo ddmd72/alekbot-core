@@ -1,0 +1,141 @@
+"""
+The pictures of the §26 / D39 / D40 additions to the Search v2 overlay (fixture_texts_s26.py says what each serves),
+drawn with Pillow: legible text on a page (so a live reader could transcribe it), wordless scenes for the photographs.
+Committed, like the capture fixtures (scripts/validation/drive_capture_fixtures.py, whose PDF writer the scan reuses):
+Pillow's encoders may change their bytes between versions, and the enrichment snapshot is keyed by these bytes, so
+regenerating is a deliberate fixture change followed by `synthetic_s26.py`.
+
+Pillow is imported inside the builders: make_fixtures_v2 stays importable without it.
+"""
+from __future__ import annotations
+
+import io
+from typing import Sequence, Tuple
+
+from scripts.validation.drive_capture_fixtures import DPI, PAGE_PX, pdf as raster_pdf
+
+_EXIF_MAKE, _EXIF_MODEL, _EXIF_X_RES, _EXIF_Y_RES, _EXIF_RES_UNIT = 0x010F, 0x0110, 0x011A, 0x011B, 0x0128
+CAMERA_MAKE, CAMERA_MODEL = "SyntheticPhone", "Model S2"   # the capture fixtures' camera
+
+
+def _font(size: int):
+    from PIL import ImageFont
+
+    return ImageFont.load_default(size=size)
+
+
+def _text_block(draw, lines: Sequence[str], left: int, top: int, step: int, size: int, fill) -> None:
+    font = _font(size)
+    for number, line in enumerate(lines):
+        if line:
+            draw.text((left, top + number * step), line, font=font, fill=fill)
+
+
+def card_page_jpeg(lines: Sequence[str]) -> bytes:
+    """A scanner's page: a grey sheet at 200 dpi holding a card in a frame, the lines printed on it. EXIF with only the
+    resolution (no Make, no Model); no text layer once it is a PDF."""
+    from PIL import Image, ImageDraw
+
+    width, height = PAGE_PX
+    image = Image.new("L", (width, height), 245)
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((90, 150, width - 90, 150 + 60 + 80 * len(lines)), outline=70, width=4)
+    draw.rectangle((110, 170, 330, 270), outline=120, width=3)   # the card's "photo" box
+    _text_block(draw, lines, 350, 190, 80, 36, 25)
+    exif = Image.Exif()
+    exif[_EXIF_X_RES], exif[_EXIF_Y_RES], exif[_EXIF_RES_UNIT] = DPI, DPI, 2
+    out = io.BytesIO()
+    image.save(out, "JPEG", quality=60, dpi=(DPI, DPI), exif=exif.tobytes())
+    return out.getvalue()
+
+
+def id_card_scan_pdf(lines: Sequence[str]) -> bytes:
+    """One page, one full-page raster at 200 dpi, no text layer, no EXIF camera: `scan`, detected (§26.3 rule 2)."""
+    return raster_pdf([(card_page_jpeg(lines), None, False)])
+
+
+def document_photo_jpeg(lines: Sequence[str]) -> bytes:
+    """A card held under a phone camera: slightly turned, on a darker table, EXIF naming a camera (§26.3 rule 1)."""
+    from PIL import Image, ImageDraw
+
+    sheet = Image.new("RGB", (760, 420), (238, 234, 222))
+    draw = ImageDraw.Draw(sheet)
+    draw.rectangle((10, 10, 749, 409), outline=(120, 120, 110), width=3)
+    _text_block(draw, lines, 40, 40, 70, 40, (40, 40, 45))
+    table = Image.new("RGB", (960, 720), (92, 72, 58))
+    table.paste(sheet.rotate(-3, expand=True, fillcolor=(92, 72, 58)), (90, 150))
+    exif = Image.Exif()
+    exif[_EXIF_MAKE], exif[_EXIF_MODEL] = CAMERA_MAKE, CAMERA_MODEL
+    out = io.BytesIO()
+    table.save(out, "JPEG", quality=70, exif=exif.tobytes())
+    return out.getvalue()
+
+
+def screenshot_png(lines: Sequence[str]) -> bytes:
+    """A phone screen: a status bar, a title bar, white body text. No EXIF; the model, not code, calls it a screenshot."""
+    from PIL import Image, ImageDraw
+
+    image = Image.new("RGB", (430, 720), (250, 250, 252))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((0, 0, 430, 36), fill=(30, 30, 36))
+    draw.rectangle((0, 36, 430, 96), fill=(36, 99, 160))
+    _text_block(draw, lines[:1], 20, 52, 0, 28, (255, 255, 255))
+    _text_block(draw, lines[1:], 20, 130, 64, 26, (30, 30, 36))
+    out = io.BytesIO()
+    image.save(out, "PNG", optimize=False, compress_level=6)
+    return out.getvalue()
+
+
+def _gradient(draw, box: Tuple[int, int, int, int], top, bottom) -> None:
+    left, upper, right, lower = box
+    for y in range(upper, lower):
+        t = (y - upper) / max(1, lower - upper - 1)
+        draw.line((left, y, right, y), fill=tuple(int(a + (b - a) * t) for a, b in zip(top, bottom)))
+
+
+def _jpeg(image) -> bytes:
+    out = io.BytesIO()
+    image.save(out, "JPEG", quality=72)
+    return out.getvalue()
+
+
+def sunset_jpeg() -> bytes:
+    """A wordless picture: an orange-to-purple sky, a low sun, dark hills."""
+    from PIL import Image, ImageDraw
+
+    image = Image.new("RGB", (640, 480), (0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    _gradient(draw, (0, 0, 640, 340), (84, 48, 110), (244, 128, 48))
+    draw.ellipse((250, 250, 390, 390), fill=(255, 196, 80))
+    draw.polygon([(0, 480), (0, 330), (120, 300), (240, 345), (380, 310), (520, 350), (640, 320), (640, 480)],
+                 fill=(26, 22, 38))
+    return _jpeg(image)
+
+
+def beach_jpeg() -> bytes:
+    """A wordless picture: a blue sky, a band of sea, a sand foreground."""
+    from PIL import Image, ImageDraw
+
+    image = Image.new("RGB", (640, 480), (0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    _gradient(draw, (0, 0, 640, 200), (96, 168, 232), (190, 224, 246))
+    _gradient(draw, (0, 200, 640, 310), (22, 110, 176), (70, 160, 200))
+    draw.rectangle((0, 310, 640, 480), fill=(232, 208, 156))
+    draw.line((0, 312, 640, 312), fill=(250, 250, 250), width=5)
+    return _jpeg(image)
+
+
+def landmark_jpeg() -> bytes:
+    """A wordless picture: a tall lattice tower (a triangle with cross-bars) over a row of roofs."""
+    from PIL import Image, ImageDraw
+
+    image = Image.new("RGB", (640, 480), (0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    _gradient(draw, (0, 0, 640, 480), (176, 200, 226), (226, 232, 238))
+    draw.polygon([(320, 40), (270, 400), (370, 400)], outline=(70, 56, 48), width=6)
+    for y in range(120, 400, 55):
+        half = 8 + (y - 40) * 0.14
+        draw.line((320 - half, y, 320 + half, y), fill=(70, 56, 48), width=5)
+    for x in range(0, 640, 80):
+        draw.rectangle((x, 400, x + 70, 480), fill=(120, 108, 100))
+    return _jpeg(image)

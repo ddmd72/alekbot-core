@@ -6,7 +6,8 @@ these bytes and their text, so regenerating is a deliberate fixture change follo
     venv/bin/python -m scripts.validation.drive_eval.make_fixtures_v2
 
 Every format here is byte-deterministic (one-page PDFs written byte for byte by mini_pdf, DOCX with fixed core
-properties and zip entry times, UTF-8 text): no Chromium, so any machine makes the same bytes. Words in fixture_texts_v2.py.
+properties and zip entry times, UTF-8 text): no Chromium, so any machine makes the same bytes. The §26 pictures are
+drawn with Pillow (fixture_images_s26.py): the same bytes for the same Pillow version. Words in fixture_texts_v2.py.
 """
 from __future__ import annotations
 
@@ -17,6 +18,8 @@ import zipfile
 from pathlib import Path
 from typing import Callable, Dict, List, Sequence
 
+from . import fixture_images_s26 as IMG
+from . import fixture_texts_s26 as S26
 from . import fixture_texts_v2 as T
 from .make_fixtures import FIXED_TIME, docx_bytes, text_bytes
 from .mini_pdf import text_pdf
@@ -54,6 +57,14 @@ FIXTURES_V2: Dict[str, Callable[[], bytes]] = {
     "flat_viewing_uk.md": lambda: text_bytes(T.FLAT_VIEWING_UK),
     "house_hunting.md": lambda: text_bytes(T.HOUSE_HUNTING_EN),
     "history_of_bridges.docx": lambda: fixed_docx(T.book_paragraphs()),
+    # §26.8 Eval, D39, D40 (fixture_texts_s26.py): drawn with Pillow, so these pin its encoders (fixture_images_s26.py)
+    "id_card_scan.pdf": lambda: IMG.id_card_scan_pdf(S26.ID_CARD_LINES),
+    "meter_card_photo.jpg": lambda: IMG.document_photo_jpeg(S26.METER_CARD_LINES),
+    "loan_screenshot.png": lambda: IMG.screenshot_png(S26.LOAN_SCREEN_LINES),
+    "chimney_certificate.pdf": lambda: text_pdf(S26.CHIMNEY_CERT_LINES),
+    "photo_sunset.jpg": IMG.sunset_jpeg,
+    "photo_beach.jpg": IMG.beach_jpeg,
+    "photo_landmark.jpg": IMG.landmark_jpeg,
 }
 
 
