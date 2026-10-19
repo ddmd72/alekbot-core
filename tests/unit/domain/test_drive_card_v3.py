@@ -31,7 +31,8 @@ def test_a_profiled_file_never_carries_lead_text():
 
 def test_a_text_file_without_a_profile_keeps_the_readers_brief():
     brief = DocumentBrief(doc_type="receipt", description="a receipt")
-    assert card_text(rec(brief=brief, lead_text="LEAD")) == "entry.pdf | PDF document | receipt | a receipt"
+    # CARD_VERSION 4 (Δ64): the brief's doc type is not on the card
+    assert card_text(rec(brief=brief, lead_text="LEAD")) == "entry.pdf | PDF document | a receipt"
 
 
 def test_machine_text_keeps_its_lead_text():

@@ -126,6 +126,7 @@ class TriageResultV2:
     item_id: str
     verdict: TriageVerdict
     photo: Optional[PhotoDescription] = None
+    capture: str = ""            # §26.3: what triage said of a text image (a `Capture` value); "" for a photograph
 
 
 @dataclass(frozen=True)

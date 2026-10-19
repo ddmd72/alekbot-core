@@ -55,6 +55,7 @@ from typing import Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 from ..domain import drive_enrich_plan as enrich
 from ..domain import drive_index_policy as policy
+from ..domain.drive_capture import CaptureSignals, file_capture
 from ..domain.drive_card import card_eligible, card_hash, card_text, collapsed_folder, structurally_card_eligible
 from ..domain.drive_chunker import chunk_text
 from ..domain.drive_enrich_plan import COVERAGE_COUNTERS, PASSAGES_AGENT, PROFILER_AGENT
@@ -1552,6 +1553,7 @@ class DriveIndexingService:
         deferral keeps `cls`, the class the run started from. Returns the last link's outcome (for the run's log
         line, F4-6) and, when that outcome is not text to index, the record to write instead."""
         outcome: Optional[ExtractionOutcome] = None
+        signals: Optional[CaptureSignals] = None   # parser@3's, kept past the reader's outcome (§26.3)
         for position, extractor_id in enumerate(chain_for(kind)):
             if position > 0:
                 why = model_route(outcome, kind) if outcome is not None else None
@@ -1583,6 +1585,8 @@ class DriveIndexingService:
                 outcome = await extractor.extract(request)
                 if not outcome.extracted_by:   # the link that decided, whatever the outcome (§9 upgrade compares it)
                     outcome = replace(outcome, extracted_by=f"{extractor_id}@{extractor.version}")
+                if position == 0:
+                    signals = outcome.capture_signals
             except DriveModelUnavailable as exc:
                 logger.warning(f"[DriveIndex] reader unavailable for {user_id[:8]}: {exc}; model work deferred")
                 _count_reader(models, summary, now, calls=exc.model_calls, cost=exc.model_cost, pages=exc.pages_sent,
@@ -1612,6 +1616,13 @@ class DriveIndexingService:
                 await self._persist_usage(models)
         if outcome is None:   # an empty chain: no kind is admitted without an extractor (§5.1)
             raise _NotWired(f"no extractor chain for kind {kind}")
+        # §26.3: a deterministic answer (the parser's signals, the camera facet) wins over the reader's model
+        triaged_here = (run.triage_verdict is TriageVerdict.TEXT and run.triaged_content_version == run.content_version)
+        capture, source = "", ""
+        if outcome.status in (ExtractionStatus.TEXT, ExtractionStatus.NO_TEXT):   # only a file that was read (Δ79)
+            capture, source = file_capture(kind, signals=signals, facets=run.facets, model=outcome.capture,
+                                           triaged=run.capture if triaged_here else "")
+        outcome = replace(outcome, capture_signals=signals, capture=capture, capture_source=source)
         step, reason = outcome_step(outcome.status)
         if step is RunStep.WAIT_MONTH:
             return outcome, deferred(_cleared(run), next_month_start(now), now, maintenance=True)
@@ -3101,7 +3112,7 @@ def _maintenance_kept(rec: DriveIndexRecord, cls: Optional[int]) -> DriveIndexRe
 def _verdict(rec: DriveIndexRecord, result: TriageResultV2, now: datetime) -> DriveIndexRecord:
     """A stored verdict with its photo fields (§24.5, §25.4.3); an upgrade's image keeps class 3 for what follows
     (§7.8)."""
-    verdict = TriageResult(item_id=result.item_id, verdict=result.verdict)
+    verdict = TriageResult(item_id=result.item_id, verdict=result.verdict, capture=result.capture)
     return _maintenance_kept(triaged(rec, verdict, now, photo=result.photo), rec.priority)
 
 

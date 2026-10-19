@@ -28,9 +28,13 @@ A transliteration crosses scripts and spellings through ONE skeleton per word on
 never exact. A Latin query word never reads a Latin word's skeleton (`xl:`, `exl:`): two Latin words meeting through a
 Cyrillic stem ("Mario" and "Maria") are not a translation, and Latin-to-Latin spelling is the `w:` forms' job (xc F3).
 A photo object's phrases are `pe:` and a photo's visible-text numbers `pn:`: automatic, so a key's class follows from
-its prefix alone. The D31 tables name the profile's own doc type (`lw:`) and life areas (`dw:`) in four languages.
+its prefix alone. The D31 tables name the profile's own doc type (`lw:`) and life areas (`dw:`) in four languages. A
+file's capture (§26.3, Δ58) is keyed by the CAPTURE_NAMES table as phrases, like the `k:` table: `cp:` when code
+detected it (verified), `cpa:` when a model said it (automatic); a query word emits both, as it emits `k:`.
 """
 from __future__ import annotations
+
+from functools import lru_cache
 
 import hashlib
 import os
@@ -54,7 +58,10 @@ from .drive_key_forms import (
     token_forms, token_spans,
 )
 from .drive_key_sources import AboutField, AboutSource, KeyedRecord, RecordKeyInputs
-from .drive_labels import DOC_TYPE_NAMES, KIND_WORDS, LIFE_DOMAIN_NAMES, PHOTO_KIND_WORDS, label_names_digest
+from .drive_labels import (
+    CAPTURE_NAMES, DOC_TYPE_NAMES, KIND_WORDS, LIFE_DOMAIN_NAMES, PHOTO_KIND_WORDS, capture_names_digest,
+    label_names_digest,
+)
 from .drive_match import FAMILY_SOURCE_CLASS, Concept, KeyFamily, QueryConcepts, SourceClass
 from .drive_name_keys import _is_cyrillic, _strip_accents, _trigrams
 
@@ -72,6 +79,8 @@ _W, _X, _N, _M, _Y = (KeyFamily.WORD.value, KeyFamily.TRANSLIT.value, KeyFamily.
 _E, _EX, _PE, _V, _K = (KeyFamily.ENTITY.value, KeyFamily.ENTITY_TRANSLIT.value, KeyFamily.PHOTO_ENTITY.value,
                         KeyFamily.VALUE.value, KeyFamily.KIND.value)
 _PN = KeyFamily.PHOTO_NUMBER.value
+_CP, _CPA = KeyFamily.CAPTURE.value, KeyFamily.CAPTURE_AUTO.value
+_DETECTED = "detected"   # drive_capture.CaptureSource.DETECTED (the value the record stores)
 _XL, _EXL, _EF = (KeyFamily.TRANSLIT_LATIN.value, KeyFamily.ENTITY_TRANSLIT_LATIN.value,
                   KeyFamily.ENTITY_FORM.value)
 _LATIN_SKELETONS = frozenset({_XL, _EXL})
@@ -361,6 +370,11 @@ def _about_items(rec: KeyedRecord) -> List[_Item]:
         kind_words += PHOTO_KIND_WORDS
     for word in kind_words:
         add_phrase(_K, word, AboutField.KIND, rec.kind)
+    if rec.capture and rec.triage_verdict is not TriageVerdict.PHOTO:
+        # §26.3 (Δ57, Δ58): a photograph has no capture; `digital` has no words
+        prefix = _CP if rec.capture_source == _DETECTED else _CPA
+        for word in CAPTURE_NAMES.get(rec.capture, ()):
+            add_phrase(prefix, word, AboutField.CAPTURE, rec.capture)
 
     if profile is not None:
         for entity in profile.entities[:PROFILE_ENTITIES_MAX]:
@@ -429,8 +443,8 @@ def about_keys_capped(rec: KeyedRecord) -> Tuple[Tuple[str, ...], bool]:
 
 
 def about_keys_of(rec: KeyedRecord) -> Tuple[str, ...]:
-    """`about_keys` (§25.2.4): `e:`, `ef:`, `ex:`, `exl:`, `v:`, `y:`, `m:`, `k:`, `lw:`, `tw:`, `dw:`, `lv:`, `pw:`,
-    `pe:`, `pn:`, `l:`."""
+    """`about_keys` (§25.2.4): `e:`, `ef:`, `ex:`, `exl:`, `v:`, `y:`, `m:`, `k:`, `cp:`, `cpa:`, `lw:`, `tw:`, `dw:`,
+    `lv:`, `pw:`, `pe:`, `pn:`, `l:`."""
     return about_keys_capped(rec)[0]
 
 
@@ -530,10 +544,20 @@ def _query_skel_keys(skels: Sequence[str], latin: bool, cyr_prefix: str, lat_pre
     return [p + s for s in skels for p in prefixes]
 
 
+@lru_cache(maxsize=1)
+def _capture_suffixes() -> FrozenSet[str]:
+    """The keys CAPTURE_NAMES are stored under, without their `cp:` prefix: the index side run over every name."""
+    suffixes: Set[str] = set()
+    for capture in CAPTURE_NAMES:
+        rec = RecordKeyInputs(kind="pdf", capture=capture, capture_source="detected")
+        suffixes.update(k[len(_CP):] for k in about_keys_of(rec) if k.startswith(_CP))
+    return frozenset(suffixes)
+
+
 def _word_concept(word: str, run_native: Sequence[str], run_skel: Sequence[Skel]) -> Concept:
     """§25.5.1 step 5, uncut: `w:` native forms and `x:` (and, for a Cyrillic word, `xl:`) skeletons for chunks; `w:`
     native forms for hints; for records `e:` and `ef:` forms and runs, `ex:` (`exl:`) skeletons and runs, `k:` forms
-    and runs, the word families, `pe:` forms and runs, and `v:` of the word as typed (a value without digits, review
+    and runs, `cp:` and `cpa:` forms and runs (§26.3), the word families, `pe:` forms and runs, and `v:` of the word as typed (a value without digits, review
     M3)."""
     own = token_forms(word)
     latin = _latin_word(word)
@@ -544,6 +568,8 @@ def _word_concept(word: str, run_native: Sequence[str], run_skel: Sequence[Skel]
     for run, run_latin in run_skel:
         about += _query_skel_keys([run], run_latin, _EX, _EXL)
     about += [_K + f for f in own] + [_K + r for r in run_native]
+    stored = _capture_suffixes()   # only forms a capture name can be stored under: no cp/cpa key for other words
+    about += [fam + k for fam in (_CP, _CPA) for k in [*own, *run_native] if k in stored]
     about += [fam + f for fam in _WORD_FAMILIES for f in own]
     about += [_PE + f for f in own] + [_PE + r for r in run_native]
     plain = "".join(ch for ch in _strip_accents(word) if ch.isalnum())
@@ -678,7 +704,7 @@ def index_tables_digest() -> str:
         (PROFILE_ENTITIES_MAX, ENTITY_FORMS_MAX, PROFILE_KEY_VALUES_MAX, PROFILE_DATES_MAX, PROFILE_WORD_LIST_MAX,
          PHOTO_OBJECTS_MAX, PHOTO_OBJECT_FORMS_MAX, WORD_KEYS_PER_CHUNK, ABOUT_KEYS_PER_RECORD),
         sorted((k, v) for k, v in KIND_WORDS.items()), PHOTO_KIND_WORDS, [f.value for f in KeyFamily],
-        label_names_digest(),
+        label_names_digest(), capture_names_digest(),
         sorted(_MONTH_FORMS.items()), _MONTH_YEAR.pattern, CONTENT_TERMS_PER_CHUNK, _MIN_DIGITS, _GROUP_MIN_DIGITS,
         _AMOUNT.pattern, _DMY.pattern, _YMD.pattern, _ID.pattern, _GROUPS.pattern, _DAY_MONTH_YEAR.pattern,
         _MONTH_DAY_YEAR.pattern,

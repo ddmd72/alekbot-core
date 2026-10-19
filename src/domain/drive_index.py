@@ -14,22 +14,25 @@ from typing import Any, Mapping, Optional, Tuple
 from .drive_enrichment import DriveProfile, PhotoObject
 
 POLICY_VERSION = 2                            # 2: the Slice 2+4 kinds admitted (§24.1)
-CARD_VERSION = 3                              # 2: brief, caption and lead text in the card (§24.4); 3: profile and
-                                              # photo fields, no lead text but for machine text (§25.2.7)
+CARD_VERSION = 4                              # 2: brief, caption and lead text in the card (§24.4); 3: profile and
+                                              # photo fields, no lead text but for machine text (§25.2.7); 4: the
+                                              # capture segment, no brief doc type (§26.3, Δ64)
 # 2: alternate names, country names, large place (§25.4.3). Bumped before P5 by D30 (no v1 migration: the rollout
 # rebuilds from scratch). P5 MUST write `place_forms` (PlaceIndex.place) together with this stamp: `_place` keeps a
 # stored place while the stamp matches, so a record stamped 2 without forms would never get them.
 GEO_TABLE_VERSION = 2
 NAME_KEYS_VERSION = 2                         # the name-stream keyer; 2: drive_keys.name_keys_v2 (§25.2.4)
 EXTRACTION_VERSION = 3                        # chunker, text gate, content_terms normaliser (§12.3, §24.6); 2: maximal query forms (D-M1); 3: written-out dates (F5-5)
-TRIAGE_VERSION = 2                            # image triage prompt and verdict rules (§5.3, §24.5); 2: enriched (§25.4.3)
+TRIAGE_VERSION = 3                            # image triage prompt and verdict rules (§5.3, §24.5); 2: enriched (§25.4.3);
+                                              # 3: a text image's capture (§26.3)
 
 # Search v2 (§25.4.8, frozen in §25.13.2). In CURRENT_VERSIONS since P5, behind the migration gate (§25.8 as amended
 # by D30): a sync state whose applied_versions lacks MIGRATION_GATE_KEY was built by v1 and is never upgraded — it runs
 # no tick work until the owner's from-scratch rebuild, whose onboarding stamps every key.
-KEYS_VERSION = 3                              # drive_keys and the drive_content_terms normaliser: re-keys from stored text
+KEYS_VERSION = 4                              # drive_keys and the drive_content_terms normaliser: re-keys from stored text
                                               # 3: entity spellings the file does not print are `ef:` (xc F1), a Latin
                                               # word's skeleton is `xl:`/`exl:` (F3), D31 label names (lw:/dw:)
+                                              # 4 (§26.7, unreleased: S3 adds to it): capture names `cp:`/`cpa:`
 PROFILE_VERSION = 1                           # profiler prompt, schema, input rules, verification
 PASSAGES_VERSION = 1                          # doc2query prompt and grounding
 SEARCH_V2_VERSIONS: Mapping[str, int] = {"keys": KEYS_VERSION, "profile": PROFILE_VERSION,
@@ -347,6 +350,12 @@ class DriveIndexRecord:
     # the fan-out's own field (Δ54): the `inaccessible_since` it notified the user of. Never in the tick's record
     # writes (firestore_drive_index_repo.record_to_doc leaves it out); written by set_inaccessible_notified only
     inaccessible_notified_since: Optional[datetime] = None
+    # -- §26.3 (D34): how a text-bearing file was captured, a drive_capture.Capture value ("" for none: a photograph, a
+    # file not read, an ambiguous PDF no model read), and its source, a CaptureSource value: `detected` by code from
+    # the file's structure (keyed `cp:`) or said by a model, `automatic` (`cpa:`). Plain strings, no enum (Δ47's
+    # rollback invariant): the rollback tag ignores them.
+    capture: str = ""
+    capture_source: str = ""
 
     @property
     def stale(self) -> bool:

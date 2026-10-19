@@ -18,7 +18,8 @@ from typing import Dict, List, Optional, Sequence, Tuple
 from .drive_index_params import CARD_RENDER_MAX, GROUP_LINES, RESULT_CHARS_MAX
 from .drive_match import MatchTier
 from .drive_search import (
-    REFERENCE_REMINDER, DriveSearchCard, DriveSearchResult, escape_text, index_line, stale_line, wrap_untrusted,
+    REFERENCE_REMINDER, DriveSearchCard, DriveSearchResult, capture_line, escape_text, index_line, stale_line,
+    wrap_untrusted,
 )
 from .drive_search_texts import (
     ABOUT_HEADING, ABSENT_IN_SCOPE_LINE, ABSENT_LINE, CONJUNCTION_TERM, COVERAGE_COMPLETE, COVERAGE_INACCESSIBLE,
@@ -171,6 +172,9 @@ def card_body(card: DriveSearchCard) -> str:
             lines.append(DATE_LINE.format(iso=day, source=card.date_source) if card.date_source else f"date: {day}")
         if until:
             lines.append(VALID_UNTIL_LINE.format(iso=until))
+    captured = capture_line(card)
+    if captured:
+        lines.append(captured)                 # §26.3
     lines.append(index_line(card))
     if card.stale:
         lines.append(stale_line(card))

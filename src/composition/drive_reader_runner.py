@@ -3,7 +3,7 @@ DriveReaderRunner — the document reader agent as a ContentExtractorPort, on th
 (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §24.2, §24.3, §24.8, §24.9).
 
 Public interface:
-    READER_VERSION = 1
+    READER_VERSION = 2
     PdfSplitter (Protocol): async pdf_page_count(path) -> int
                             async cut_pdf_window(path, first_page, page_count, out_path) -> None
     DriveReaderRunner(context_builder, user_repo, prompt_builder, splitter, quota_service=None,
@@ -39,6 +39,7 @@ import contextlib
 import math
 import os
 import tempfile
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, List, Optional, Protocol
@@ -62,7 +63,7 @@ from ..ports.quota_service import QuotaService
 from ..ports.user_repository import UserRepository
 from ..utils.logger import logger
 
-READER_VERSION = 1
+READER_VERSION = 2   # 2: `capture`, no brief doc type (§26.3, Δ64)
 # The vision input cap of both reader providers, base64-safe (drive_image_mime); a bigger image is not sent.
 MAX_IMAGE_BYTES = MAX_VISION_IMAGE_BYTES
 
@@ -84,6 +85,7 @@ class _WindowRun:
     pages: int
     text: str = ""
     brief: Optional[DocumentBrief] = None
+    captures: List[str] = field(default_factory=list)   # what this window's kept pieces said of the capture (§26.3)
     finished: bool = False
     truncated: bool = False
     calls: int = 0
@@ -184,7 +186,7 @@ class DriveReaderRunner(ContentExtractorPort):
                                      model_fallback_cost=getattr(exc, "model_fallback_cost", 0.0), detail=str(exc))
         return self._outcome(reply.text, reply.brief, pages_total=1, pages_sent=1, truncated=reply.output_limited,
                              calls=reply.calls, cost=reply.cost, fallback_cost=reply.fallback_cost, timed_out=False,
-                             detail="image")
+                             detail="image", capture=reply.capture)
 
     # -- pdf ----------------------------------------------------------------------------------------------------
 
@@ -254,6 +256,7 @@ class DriveReaderRunner(ContentExtractorPort):
             truncated=pages_total > covered or bool(cut) or any(w.truncated for w in run.windows),
             calls=run.total("calls"), cost=run.total("cost"), fallback_cost=run.total("fallback_cost"),
             timed_out=bool(cut) and not text, pages_refused=refused,
+            capture=_dominant([_dominant(w.captures) for w in finished]),
             detail=f"windows={len(run.windows)} halves={run.total('halves')} cut={cut} refused={refused}")
 
     async def _window(self, agent: DriveDocumentReaderAgent, request: ExtractionRequest, index: int,
@@ -300,6 +303,8 @@ class DriveReaderRunner(ContentExtractorPort):
         if not reply.output_limited:
             if brief and win.brief is None:
                 win.brief = reply.brief
+            if reply.capture:
+                win.captures.append(reply.capture)
             return [reply.text]
         if pages <= 1 or not may_halve:
             logger.warning(f"[DriveReader] window {index + 1} pages {first_page + 1}+{pages} hit the output limit; "
@@ -353,18 +358,26 @@ class DriveReaderRunner(ContentExtractorPort):
     @staticmethod
     def _outcome(text: str, brief: Optional[DocumentBrief], *, pages_total: int, pages_sent: int, truncated: bool,
                  calls: int, cost: float, timed_out: bool, detail: str, pages_refused: int = 0,
-                 fallback_cost: float = 0.0) -> ExtractionOutcome:
+                 fallback_cost: float = 0.0, capture: str = "") -> ExtractionOutcome:
         if text.strip():
+            # the model's capture is `automatic`; the indexing service settles it against the parser's (§26.3)
             return ExtractionOutcome(status=S.TEXT, text=text, brief=brief, pages_total=pages_total,
                                      pages_sent=pages_sent, truncated=truncated,
                                      extracted_by=f"{READER}@{READER_VERSION}", detail=detail, model_calls=calls,
-                                     model_cost=cost, model_fallback_cost=fallback_cost, pages_refused=pages_refused)
+                                     model_cost=cost, model_fallback_cost=fallback_cost, pages_refused=pages_refused,
+                                     capture=capture, capture_source="automatic" if capture else "")
         # No text while the budget cut any window is not "the file has no text" (deterministic, §24.8) — the cut
         # windows were never read (R2 P-m4) — nor a parser bomb (`timeout`): a per-file transient, retried with
         # backoff (§8.2).
         return ExtractionOutcome(status=S.ERROR if timed_out else S.NO_TEXT, pages_total=pages_total,
                                  pages_sent=pages_sent, truncated=truncated, detail=detail, model_calls=calls,
                                  model_cost=cost, model_fallback_cost=fallback_cost, pages_refused=pages_refused)
+
+
+def _dominant(captures: List[str]) -> str:
+    """The capture most of `captures` agree on, the first seen winning a tie; "" when none said one. A window's pieces
+    (a halved window) are one vote: `_dominant` of them is the window's, and the file's is `_dominant` of those."""
+    return Counter(c for c in captures if c).most_common(1)[0][0] if any(captures) else ""
 
 
 def _failed_status(exc: DriveModelCallFailed) -> ExtractionStatus:

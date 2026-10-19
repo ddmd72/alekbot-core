@@ -73,7 +73,7 @@ def test_the_match_line_of_an_index_spelling_names_what_the_file_prints():
 
 
 def test_keys_version_is_bumped_for_the_review_fixes():
-    assert KEYS_VERSION == 3
+    assert KEYS_VERSION == 4   # 3: the review fixes; 4: §26.7 (capture names, then S3's keys)
 
 
 # -- F3: two Latin words never meet through a skeleton --------------------------------------------------------------

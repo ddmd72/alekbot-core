@@ -97,6 +97,10 @@ def dispatch(request: Dict[str, Any]) -> Dict[str, Any]:
                                   "detail": outcome.detail}
         if outcome.script_rendered:          # parser@2 (§25.3); absent means False
             result["script_rendered"] = True
+        if outcome.capture_signals is not None:   # parser@3 (§26.3): PDFs only; absent means none
+            from src.domain.drive_capture import signals_to_json
+
+            result["capture_signals"] = signals_to_json(outcome.capture_signals)
         return result
     if op in ("pdf_page_count", "cut_pdf_window"):
         from src.adapters.drive_parser.readers import cut_pdf_window, pdf_page_count

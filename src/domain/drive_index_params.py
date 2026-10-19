@@ -185,3 +185,12 @@ INACCESSIBLE_RETRY_SLOW = timedelta(days=7)      # OQ-C1 (§26.11): whether a pe
 INACCESSIBLE_NOTICE_BATCH = 2_000                # files in one notice; the rest on the next pass
 INACCESSIBLE_SCAN_MAX = 2_000                    # marked records one read returns (the tick's counters, the fan-out)
 SUBFOLDER_SCAN_MAX = 400                         # stored records read to mark a closed folder's sub-folders with it
+
+# -- capture (§26.3, §26.12; D34) -----------------------------------------------------------------------------------
+FULL_PAGE_COVER = 0.95                           # rule 2: a page's one raster covers at least this share of the page
+SCAN_DPI_MIN = 150                               # rule 2: a scanner's effective resolution (200 dpi observed, §26.1)
+SCAN_DPI_MAX = 600
+SCAN_GLASS_MAX_MM = (220, 360)                   # rule 2: (short, long) side of a scanner glass: A4, Letter and Legal
+CAPTURE_PAGES_MAX = 50                           # the parser child inspects at most the first this many pages for the
+                                                 # capture signals: "every page" rules hold on the pages inspected
+CAPTURE_BUDGET_S = 5.0                           # the signals walk's own time budget in the child; out of it: no signals

@@ -181,7 +181,8 @@ async def test_the_brief_comes_from_the_first_piece_that_answered(tmp_path):
     runner, llm, _ = _runner(handler)
     out = await runner.extract(_request(tmp_path))
     asked = {_key(r) for r in llm.requests if "fill `brief`" in r.messages[0].parts[-1].text}
-    assert asked == {"1-10", "1-5"} and out.brief is not None and out.brief.doc_type == "invoice"
+    # reader 2 reads no brief doc type (Δ64): the brief is known by its description
+    assert asked == {"1-10", "1-5"} and out.brief is not None and out.brief.description == "x"
 
 
 async def test_a_single_page_still_too_large_is_skipped_and_the_rest_is_read(tmp_path, caplog):

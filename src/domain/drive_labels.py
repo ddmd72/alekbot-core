@@ -11,6 +11,8 @@ Public interface:
     KIND_WORDS: kind -> words (the `k:` table, before §25.2.4's forms);  PHOTO_KIND_WORDS (images, verdict `photo`)
     DOC_TYPE_NAMES, LIFE_DOMAIN_NAMES: label value -> its names (D31, keyed `lw:` / `dw:` at index time)
     label_names_digest() -> str                  pinned by a test (a change is a KEYS_VERSION bump)
+    CAPTURE_NAMES: capture -> its names (§26.3, Δ58; keyed `cp:` detected / `cpa:` automatic)
+    capture_names_digest() -> str                pinned by a test per KEYS_VERSION
 """
 import hashlib
 from typing import Mapping, Tuple
@@ -174,3 +176,32 @@ def label_names_digest() -> str:
     """SHA-256 of the D31 tables: a test pins it, so a change fails until KEYS_VERSION moves with it."""
     tables = (sorted(DOC_TYPE_NAMES.items()), sorted(LIFE_DOMAIN_NAMES.items()))
     return hashlib.sha256(repr(tables).encode("utf-8")).hexdigest()
+
+
+# §26.3 (D34, Δ58): the names of a file's capture in en, es, uk and ru, singular and plural, written by the keyer at
+# index time as the `k:` table is: a multi-word name is ONE phrase key (its tokens' form (b) joined with "_"), and a
+# query word emits `cp:` / `cpa:` for its forms and its 2-3 token runs (PHRASE_RUN_MAX), so a name of four tokens or
+# more could never be met ("photo of a document": "document photo" and "photo of document" stand for it). Keyed `cp:`
+# when code detected the capture and `cpa:` when a model said it. `digital` has no words: no user asks for "digital
+# files", and the word would only add junk. Like D31's tables, it names our own value; it is not a query-side synonym
+# table (D28 stands). Plural phrases are listed apart: a phrase key is built from form (b), which a plural may change
+# ("знімок" / "знімки").
+CAPTURE_NAMES: Mapping[str, Tuple[str, ...]] = {
+    "scan": ("scan", "scans", "scanned", "scanned copy", "escaneo", "escaneos", "escaneado", "escaneada",
+             "escaneados", "escaneadas", "copia escaneada", "скан", "скани", "сканкопія", "сканкопії", "скан-копія",
+             "скан-копії", "сканований", "сканована", "скановані", "сканы", "сканкопия", "сканкопии", "скан-копия",
+             "скан-копии", "сканированный", "сканированная", "сканированные", "отсканированный"),
+    "document_photo": ("document photo", "document photos", "photo of document", "photo of documents",
+                       "foto de documento", "fotos de documentos", "documento fotografiado", "фото документа",
+                       "фото документів", "фотографія документа", "фото документов", "фотография документа"),
+    "screenshot": ("screenshot", "screenshots", "screen capture", "screen shot", "captura de pantalla",
+                   "capturas de pantalla", "pantallazo", "pantallazos", "скріншот", "скріншоти", "скрін",
+                   "знімок екрана", "знімки екрана", "знімок екрану", "скриншот", "скриншоты", "скрин",
+                   "снимок экрана", "снимки экрана"),
+    "digital": (),
+}
+
+
+def capture_names_digest() -> str:
+    """SHA-256 of CAPTURE_NAMES: a test pins it, so a change fails until KEYS_VERSION moves with it."""
+    return hashlib.sha256(repr(sorted(CAPTURE_NAMES.items())).encode("utf-8")).hexdigest()
