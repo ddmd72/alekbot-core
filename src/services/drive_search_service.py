@@ -466,7 +466,7 @@ class DriveSearchService:
             rekeying=keys_v is not None and int(keys_v) != KEYS_VERSION, full_page=page_full,
             keys_cut=sum(1 for c in built if c.keys_cut), cut=q.cut, not_described=not_described,
             not_describable=not_describable, no_passages=no_passages + long_docs, unchecked=tuple(unchecked),
-            names_only=names_only, inaccessible=await self._closed_in_scope(user_id, state, folder, subtree, ancestry))
+            names_only=names_only, inaccessible=0 if built else await self._closed_in_scope(user_id, state, folder, subtree, ancestry))   # Δ93
         position = request.query.casefold()
         ordered = sorted(concepts, key=lambda c: (position.find(c.word) % (len(position) + 1), concepts.index(c)))
         tiered = TieredResult(
