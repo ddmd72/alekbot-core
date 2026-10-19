@@ -2971,8 +2971,7 @@ coverage line, the tiers in order (About, Mentioned in, By translation, Labelled
   date". Verbatim texts in §25.13.6.
 - **Protocol (`drive_specialist`):** a `tiers` line stating meaning, not bans (verbatim in §25.13.6): what each tier
   means; that the coverage line says what the search could not see; that other spellings and word forms were
-  searched, and other languages only where the index wrote them (profile words, passage keywords), so a search in
-  another language can still help when the coverage line or the result's sources suggest it; that a "without
+  searched, and other languages only where the index wrote them (profile words, passage keywords); that a "without
   '<word>'" count is a hint to decide whether the word was phrasing or the subject. The `not_found` and folder lines
   stay (a folder card in About is a place to look). The guard tests change under the reviewer rule.
 - **Log line:** `[DriveSearch]` gains `concepts`, `ignored`, `common`, `absent`, `about`, `mentioned`, `translated`,
@@ -3470,7 +3469,8 @@ not read for search. The subject in the user's words (any language): the words o
 a person, a topic, a document type or purpose ('tickets', 'receipts', 'contracts', 'what expires'), or what to find
 inside (a phrase, a number, an amount, an id). For 'everything about X' put X. A file format goes in drive_kind
 ('photos', 'PDF', 'spreadsheet'); a time span ('last year', '2023–2024') goes in drive_date_from / drive_date_to, not
-in the words. Leave EMPTY only for filter-only requests." `drive_date_from`: "search_files_in_drive: optional earliest
+in the words. Leave EMPTY only for filter-only requests. All words must match: use the user's few key words in one
+language." `drive_date_from`: "search_files_in_drive: optional earliest
 date, YYYY-MM-DD, inclusive: a photo's taken date, otherwise the date written in the document when the index found one,
 otherwise the file's date. Use it for a time span the user gives. For what expires, it bounds the expiry
 date." `drive_date_to`: "search_files_in_drive: optional latest date, YYYY-MM-DD, inclusive (the whole day counts): a
@@ -3486,7 +3486,7 @@ Protocol `tiers` line: "Drive results say how each file matched. 'About' and 'me
 name, details, place or text holds the words, in their spellings and word forms. 'By translation' and 'labelled' are
 the index's automatic words — passage keywords with their source quote, type, topic and life-area words — and may be
 wrong or incomplete. 'Related by meaning only' lines are guesses. Other spellings and word forms were searched; other
-languages only where the index wrote them, so a search in another language can still find more. The coverage line
+languages only where the index wrote them. The coverage line
 says what the search could not see. When a word is held by no file, the result counts the files that match the other
 words, so you can tell whether the word was phrasing or the subject."
 
@@ -4071,6 +4071,7 @@ the first; no reset reopens them.
 | Δ92 | The lenient date reader knew spaced/dotted day-month-year forms and full month names | Also bilingual abbreviated months with a 2- or 4-digit year (`27 ЛИП/JUL 22`), compact `13JUN2024`, ISO basic `20261009T180724Z`, and day + month without a year when the year is elsewhere in the text; `ACCURACY_VERSION` 2 (re-grade from stored text, no model call) | The first revision report on the live index (2026-10-19, D37) listed these shapes recurring across files; one document class averaged 76 % |
 | Δ93 | The coverage line (and a filter listing's envelope) always said "N files cannot be opened by the bot" when the scope held closed files | Said only when the search found nothing (any scope), where it explains why a not-found may be incomplete; with results it is omitted (a matching closed file keeps the access line on its card), and the folder-scoped closed-file read is skipped | The owner, live 2026-10-19: noise on every found result |
 | Δ94 | The offline Search v2 eval exited 1 on three lost v1-passing cases and on two meaning-only cases under lexical vectors; the G2 integration test read `card.window` (removed by the v2 card) | Gold flag `accepted_loss` (reason) on `family-latest-dogovor`, `g2-amount-deposit-porto`, `g2-clause-nda-term`: listed under "accepted losses", out of the "v1-passing cases lost" bar. Gold flag `requires_embeddings: "semantic"` on `sem-related-german` and `sem-related-dentist`: skipped under `--embeddings lexical`, counted under `gemini`. The harness (`runner._windows`, `metrics.py`) reads `card.passage`. `bars_v2.json` and `Z_RELATED` unchanged (related lines per negative stays a known miss until calibrated) | D29 strict AND blocks a conversational query word no file holds (owner accepted v2, 2026-10-19); lexical vectors cannot represent meaning; the window field was renamed in 6e1a4dc0 |
+| Δ127 | The manifest `drive_query` text (§25.13.6) said "the subject in the user's words (any language)" and never that every word must match | Appends "All words must match: use the user's few key words in one language."; the `drive-search` skill gains the same discipline (one language, no synonyms or translations, at most one re-search after a "no file holds" line, "all" is still a find, a value question opens the file) | G3 2026-10-19: Smart wrote synonym and translation bags under strict AND, each "No file holds" line started another bag, and 26 of 147 runs hit the 15-turn cap; the Protocol `tiers` line (§25.5.7) lost its clause ", so a search in another language can still find more", which contradicted the one-language rule |
 | A4 | A deterministic capture is lost when a record waits | Kept on a record held for the reader's monthly cap or `WAIT_MONTH`; `metadata_only` without a read clears it | The detected capture costs nothing and stays true |
 | A5 | A gated state counts as stale | Not stale: one alert, the migration one | A second alert on the same state is noise |
 | A6 | The rebuild script purges whatever it is given | Skips a state already carrying the gate key unless `--force` | A re-run must not purge a rebuilt user |
