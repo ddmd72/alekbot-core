@@ -33,7 +33,7 @@ A described file's result carries `card accuracy: N%`. 100% — everything in th
 - "Find", "which files", "do I have": answer from the cards at any accuracy. Never open files for this.
 - A question about a value in a file — a number, a date, an amount, an expiry: answer from the card when its accuracy is 90% or more. Below that, open the file and check the value before answering.
 - For a scan or a photo of a document, the file's text is a reading of the image; when a value matters to the user, say where you read it.
-- A result saying the bot cannot open the file: the file exists. Tell the user to copy each file into a new folder they create inside the bot's folder (a copy in the same folder can stay closed); the copy can be read. Do not try to open it.
+- A result saying the bot cannot open the file: the file exists. Tell the user to copy each file into a new folder they create inside the bot's folder (a copy in the same folder can stay closed); the copy can be read. Do not try to open it. This line overrides the stale and accuracy rules: answer from the card and say it may be out of date; do not open the file.
 
 ## When nothing is found
 

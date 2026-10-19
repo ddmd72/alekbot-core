@@ -875,7 +875,10 @@
    "Scans/Scan_0013.pdf"
   ],
   "expect_tier": "about",
-  "note": "The two Chromium scans of the v1 fixture are scans too (detected: one full-page raster, no EXIF camera); the folder `Scans` is a name match."
+  "note": "The two Chromium scans of the v1 fixture are scans too (detected: one full-page raster, no EXIF camera); the folder `Scans` is a name match.",
+  "expect_accuracy": {
+   "Documents/DOC_20260610_0042.pdf": true
+  }
  },
  {
   "id": "cls-scans-uk",
@@ -920,7 +923,13 @@
   "expected_paths": [
    "Screenshots/IMG_0412.png"
   ],
-  "expect_tier": "labelled"
+  "expect_tier": "labelled",
+  "acceptable_paths": [
+   "Screenshots/Screenshot 2026-05-12 at 10.14.03.png",
+   "Screenshots/Знімок екрана 2026-06-01 093512.png",
+   "Screenshots/Captura de pantalla 2026-03-09 184410.png"
+  ],
+  "note": "The v1 fixture's three phone screenshots are screenshots too: `acceptable_paths` (they get `cpa:` after a live re-record; the synthetic enrichment names only the overlay's one)."
  },
  {
   "id": "cls-screenshots-en",
@@ -932,7 +941,13 @@
   "expected_paths": [
    "Screenshots/IMG_0412.png"
   ],
-  "expect_tier": "labelled"
+  "expect_tier": "labelled",
+  "acceptable_paths": [
+   "Screenshots/Screenshot 2026-05-12 at 10.14.03.png",
+   "Screenshots/Знімок екрана 2026-06-01 093512.png",
+   "Screenshots/Captura de pantalla 2026-03-09 184410.png"
+  ],
+  "note": "The v1 fixture's three phone screenshots are screenshots too: `acceptable_paths` (they get `cpa:` after a live re-record; the synthetic enrichment names only the overlay's one)."
  },
  {
   "id": "ex-date-expiry-dotted",
@@ -1018,7 +1033,10 @@
   "expected_paths": [
    "Photos/Camera/IMG_20260814_204712.jpg"
   ],
-  "expect_tier": "labelled"
+  "expect_tier": "labelled",
+  "expect_accuracy": {
+   "Photos/Camera/IMG_20260814_204712.jpg": false
+  }
  },
  {
   "id": "cls-sunsets-ru",

@@ -66,7 +66,8 @@ async def test_the_next_ticks_purge_and_rebuild_from_epoch_one(script):
     await w.settle()
     ghost = replace(w.rec(doc), item_id="ghost", name="ghost.pdf")      # what "the index looks wrong" means
     await w.repo.upsert_records([ghost])
-    code, _ = await script.rebuild(w.repo, "u", apply=True, now=w.clock.now, owner="rebuild-1")
+    code, _ = await script.rebuild(w.repo, "u", apply=True, now=w.clock.now, owner="rebuild-1",
+                                  force=True)
     assert code == 0
     await w.settle()
     state = await w.repo.get_sync_state("u")

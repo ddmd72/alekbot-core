@@ -10,6 +10,10 @@ re-indexed from scratch under v2. A dry run says whether the index is a v1 one a
 `drive-search-v1` is deployed — the tag's purge does not know that collection. Records, chunks and the sync state
 are left alone (the tag's own rebuild purges them afterwards).
 
+A state that already carries the migration gate key (`MIGRATION_GATE_KEY`) was rebuilt under the current versions:
+`--apply` skips it (a repeated `--all-users --apply` does not purge a freshly rebuilt index), unless `--force`; the
+dry run says which states would be skipped. `--force` is the answer to "the index looks wrong" on a current index.
+
 Dry run by default: says what it would do and writes nothing. With --apply it takes the user's lease (refused while a
 tick runs: retry in a few minutes), writes under it and releases it. After a rebuild, the next tick — the fan-out's,
 within TICK_INTERVAL, or a continuation already queued — purges and re-onboards the drive.
@@ -17,6 +21,7 @@ within TICK_INTERVAL, or a continuation already queued — purges and re-onboard
 Usage (project and credentials from the environment / ADC, collections from APP_ENV, default development):
     python scripts/infrastructure/drive_index_rebuild.py --user <user_id> [--apply]
     python scripts/infrastructure/drive_index_rebuild.py --all-users [--apply]
+    python scripts/infrastructure/drive_index_rebuild.py --user <user_id> --force [--apply]
     python scripts/infrastructure/drive_index_rebuild.py --user <user_id> --hints-only [--apply]
     python scripts/infrastructure/drive_index_rebuild.py --all-users --hints-only [--apply]
 Exit code: 0 when marked (or a dry run, or a purge already running), 1 when nothing is stored or the lease is busy
@@ -47,14 +52,21 @@ def _v1_note(applied: object) -> str:
     return "" if MIGRATION_GATE_KEY in dict(applied or {}) else " — built under an older index version, awaiting its rebuild (D30)"
 
 
+def _already_rebuilt(applied: object) -> bool:
+    return MIGRATION_GATE_KEY in dict(applied or {})
+
+
 async def rebuild(repo: DriveIndexRepository, user_id: str, *, apply: bool, now: datetime,
-                  owner: str) -> Tuple[int, str]:
-    """Returns (exit code, message)."""
+                  owner: str, force: bool = False) -> Tuple[int, str]:
+    """Returns (exit code, message). A state already carrying the gate key is skipped (exit 0) unless `force`."""
     state = await repo.get_sync_state(user_id)
     if state is None:
         return 1, "no sync state: nothing is indexed for this user"
     if state.purging:
         return 0, "a purge is already running; the next tick finishes it and starts epoch 1"
+    if _already_rebuilt(state.applied_versions) and not force:
+        skipped = "already rebuilt under the current index versions (gate key present); pass --force to rebuild it anyway"
+        return 0, (f"dry run: would skip, {skipped}" if not apply else f"skipped: {skipped}")
     if not apply:
         return 0, (f"dry run: would mark the index purging (epoch {state.epoch}, counters {dict(state.counters)})"
                    f"{_v1_note(state.applied_versions)}; re-run with --apply")
@@ -105,18 +117,20 @@ async def delete_hints(repo: DriveIndexRepository, user_id: str, *, apply: bool,
 
 
 async def run(repo: DriveIndexRepository, user_ids: List[str], *, hints_only: bool, apply: bool,
-              now: datetime) -> Tuple[int, List[str]]:
+              now: datetime, force: bool = False) -> Tuple[int, List[str]]:
     """The step for each user, in order; the worst exit code and one line per user (prefixed when several)."""
     code, lines = 0, []
     step = delete_hints if hints_only else rebuild
     for user_id in user_ids:
-        user_code, message = await step(repo, user_id, apply=apply, now=now, owner=f"rebuild-{uuid.uuid4().hex}")
+        extra = {} if hints_only else {"force": force}
+        user_code, message = await step(repo, user_id, apply=apply, now=now, owner=f"rebuild-{uuid.uuid4().hex}",
+                                        **extra)
         code = max(code, user_code)
         lines.append(f"{user_id}: {message}" if len(user_ids) > 1 else message)
     return code, lines
 
 
-async def _main(user_id: Optional[str], all_users: bool, hints_only: bool, apply: bool) -> int:
+async def _main(user_id: Optional[str], all_users: bool, hints_only: bool, apply: bool, force: bool = False) -> int:
     from google.cloud import firestore
 
     from src.adapters.firestore_drive_index_repo import FirestoreDriveIndexRepository
@@ -126,7 +140,8 @@ async def _main(user_id: Optional[str], all_users: bool, hints_only: bool, apply
     db = firestore.AsyncClient(project=os.getenv("GOOGLE_CLOUD_PROJECT") or None, database=env.firestore_database_id)
     repo = FirestoreDriveIndexRepository(db, env)
     users = sorted(await repo.list_sync_user_ids()) if all_users else [str(user_id)]
-    code, lines = await run(repo, users, hints_only=hints_only, apply=apply, now=datetime.now(timezone.utc))
+    code, lines = await run(repo, users, hints_only=hints_only, apply=apply, force=force,
+                          now=datetime.now(timezone.utc))
     for line in lines:
         print(line)
     return code
@@ -139,6 +154,8 @@ if __name__ == "__main__":
     who.add_argument("--all-users", action="store_true", help="every user with a sync state")
     parser.add_argument("--hints-only", action="store_true",
                         help="delete the user's hint documents only (Search v2 rollback, step 2)")
+    parser.add_argument("--force", action="store_true",
+                        help="rebuild a state that already carries the current versions (default: skipped)")
     parser.add_argument("--apply", action="store_true", help="write (default: dry run)")
     args = parser.parse_args()
-    sys.exit(asyncio.run(_main(args.user, args.all_users, args.hints_only, args.apply)))
+    sys.exit(asyncio.run(_main(args.user, args.all_users, args.hints_only, args.apply, args.force)))

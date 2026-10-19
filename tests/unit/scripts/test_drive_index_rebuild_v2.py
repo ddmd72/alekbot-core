@@ -98,7 +98,7 @@ async def test_hints_only_without_a_sync_state_still_deletes(script):
 async def test_all_users_runs_the_step_for_each_and_reports_the_worst_code(script):
     repo = InMemoryDriveIndexRepository()
     await _state(repo, "a", {"policy": 2})
-    await _state(repo, "b", dict(CURRENT_VERSIONS))
+    await _state(repo, "b", {"policy": 2})
     await repo.acquire_lease("b", "tick", T0, T0 + timedelta(minutes=31), create=False)
     code, lines = await script.run(repo, ["a", "b"], hints_only=False, apply=True, now=T0)
     assert code == 1 and lines[0].startswith("a: marked purging") and lines[1].startswith("b: a tick holds")
