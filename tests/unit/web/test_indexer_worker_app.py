@@ -97,15 +97,16 @@ class TestOidcGate:
     async def test_gate_open_without_service_account_in_local_dev(self, monkeypatch):
         verify = AsyncMock()
         monkeypatch.setattr(indexer_worker_app, "verify_worker_oidc", verify)
-        assert await worker_oidc_gate(None)(None) is True
-        assert await worker_oidc_gate("")("Bearer x") is True
+        # The gate takes the accepted set (IAM least-privilege, Step 0 C1); "no identity" is an empty set.
+        assert await worker_oidc_gate(frozenset())(None) is True
+        assert await worker_oidc_gate(set())("Bearer x") is True
         verify.assert_not_called()
 
     async def test_gate_fails_closed_on_cloud_run_without_service_account(self, monkeypatch, caplog):
         """A dropped secret must not open /worker (RFC Δ21)."""
         verify = AsyncMock()
         monkeypatch.setattr(indexer_worker_app, "verify_worker_oidc", verify)
-        gate = worker_oidc_gate(None, ("https://indexer.example.invalid",), on_cloud_run=True)
+        gate = worker_oidc_gate(frozenset(), ("https://indexer.example.invalid",), on_cloud_run=True)
         assert await gate("Bearer anything") is False
         verify.assert_not_called()
         assert "refuses every call" in caplog.text
@@ -119,11 +120,12 @@ class TestOidcGate:
 
         monkeypatch.setattr(indexer_worker_app, "verify_worker_oidc", fake_verify)
         audiences = indexer_audiences("https://indexer.example.invalid")
-        gate = worker_oidc_gate("sa@example.invalid", audiences, on_cloud_run=True)
+        accepted = frozenset({"sa@example.invalid"})
+        gate = worker_oidc_gate(accepted, audiences, on_cloud_run=True)
         assert await gate("Bearer good") is True
         assert await gate(None) is False
-        assert calls == [("Bearer good", "sa@example.invalid", audiences),
-                         (None, "sa@example.invalid", audiences)]
+        assert calls == [("Bearer good", accepted, audiences),
+                         (None, accepted, audiences)]
 
     def test_audiences_are_the_service_url_and_its_worker_route(self):
         assert indexer_audiences(" https://indexer.example.invalid/ ") == (

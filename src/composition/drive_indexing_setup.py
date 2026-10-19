@@ -59,7 +59,7 @@ def build_drive_task_queue(config: Mapping[str, Any], env_config: EnvironmentCon
         location=DRIVE_QUEUE_LOCATION,
         queue_name=drive_queue_name(env_config),
         service_url=indexer_url,
-        service_account_email=config.get("SERVICE_ACCOUNT_EMAIL"),
+        service_account_email=config.get("DRIVE_INVOKER_SA_EMAIL") or config.get("SERVICE_ACCOUNT_EMAIL"),
     )
     logger.info(f"📬 Drive sync queue initialized: {drive_queue_name(env_config)}")
     return queue

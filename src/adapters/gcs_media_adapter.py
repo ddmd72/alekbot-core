@@ -30,9 +30,8 @@ class GcsMediaAdapter(MediaStoragePort):
 
     def __init__(self, bucket_name: str, service_account_email: str | None = None) -> None:
         self._bucket_name = bucket_name
-        # Used to sign V4 URLs via IAM signBlob on Cloud Run (no local key file).
-        # When None (e.g. local dev with a key file), signing falls back to the
-        # ambient credentials' own signing capability.
+        # Optional explicit signer override for IAM signBlob. When None (the normal case) the
+        # signer is the runtime credential's own service account (see _signed_url_sync).
         self._sa_email = service_account_email
 
     async def store(self, data: bytes, key: str, content_type: str) -> str:
@@ -90,16 +89,29 @@ class GcsMediaAdapter(MediaStoragePort):
             "expiration": timedelta(seconds=ttl_seconds),
             "method": "GET",
         }
-        # On Cloud Run there is no private key file, so blob signing must go
-        # through the IAM signBlob API: provide the SA email + an access token.
-        # roles/iam.serviceAccountTokenCreator on the runtime SA is required.
-        if self._sa_email:
-            import google.auth
-            from google.auth.transport.requests import Request as AuthRequest
+        # Signer = the runtime's own identity. A credential that can sign locally (service-account key file,
+        # local dev) signs as today. Otherwise (Cloud Run metadata credentials) signing goes through the IAM
+        # signBlob API with the refreshed credential's own SA email + access token; that SA needs
+        # signBlob on itself. The constructor email stays as an explicit override.
+        import google.auth
+        import google.auth.exceptions
+        from google.auth.credentials import Signing
+        from google.auth.transport.requests import Request as AuthRequest
 
+        try:
             credentials, _ = google.auth.default()
+        except google.auth.exceptions.DefaultCredentialsError:
+            # No ambient credentials: let the storage client sign (or fail) with what it holds, as before.
+            credentials = None
+        if credentials is not None and not isinstance(credentials, Signing):
             credentials.refresh(AuthRequest())
-            kwargs["service_account_email"] = self._sa_email
+            signer = self._sa_email or getattr(credentials, "service_account_email", None)
+            if not signer or signer == "default":
+                # "default" is the placeholder a compute credential carries before its first refresh
+                # resolves the real email.
+                logger.error("GcsMediaAdapter: cannot sign URL for '%s': runtime service account email unknown", key)
+                raise RuntimeError("Cannot sign GCS URL: the runtime service account email is unknown")
+            kwargs["service_account_email"] = signer
             kwargs["access_token"] = credentials.token
 
         url = blob.generate_signed_url(**kwargs)

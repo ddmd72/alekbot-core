@@ -68,7 +68,7 @@ only by `--command`/`--args` at deploy time.
 | `alek-bot-dev` | Cloud Run service | us-central1 | 1800s | min=0, max=1 | ~30 (Slack, Telegram, LLM providers, OAuth, etc. — see cloudbuild-dev.yaml) | `logs`, `fetch-logs`, `logs-tail` |
 | `alek-research-job-dev` | Cloud Run Job | us-central1 | task-timeout 18000s | on-demand (no min/max-instances — Jobs run to completion) | `ANTHROPIC_API_KEY`, `SERVICE_ACCOUNT_EMAIL` | `logs-job`, `fetch-logs-job`, `list-jobs`, `logs-execution`, `cancel-job` |
 | `alek-voice-relay-dev` | Cloud Run service | us-central1 | **3600s** | min=0, max=1 | `OPENAI_API_KEY`, `XAI_API_KEY`, `BILLING_SLACK_WEBHOOK_URL` | `logs-relay`, `fetch-logs-relay` |
-| `alek-bot-indexer-dev` | Cloud Run service (gen2, 2 GiB, concurrency 1, ingress internal) | us-central1 | 1800s | min=0, max=1 | `GEMINI_API_KEY`, `MICROSOFT_TODO_CLIENT_ID`, `MICROSOFT_TODO_CLIENT_SECRET`, `SERVICE_ACCOUNT_EMAIL` | `logs-indexer`, `fetch-logs-indexer` |
+| `alek-bot-indexer-dev` | Cloud Run service (gen2, 2 GiB, concurrency 1, ingress internal) | us-central1 | 1800s | min=0, max=1 | `GEMINI_API_KEY`, `MICROSOFT_TODO_CLIENT_ID`, `MICROSOFT_TODO_CLIENT_SECRET`, `SERVICE_ACCOUNT_EMAIL` (+ `DRIVE_INVOKER_SA_EMAIL`, `OIDC_TRANSITION_SA_EMAILS` when set) | `logs-indexer`, `fetch-logs-indexer` |
 
 **`alek-voice-relay-dev`** (added for Voice Companion Slice 1, see
 [`../10_rfcs/VOICE_COMPANION_RFC.md`](../10_rfcs/VOICE_COMPANION_RFC.md) §4.14) is `relay_main.py` on
@@ -83,14 +83,14 @@ WebSocket is one long *billed* request under Cloud Run's request-based CPU/memor
   token, so Cloud Run ingress must stay open. The relay's *outbound* calls back into the main
   service's `/voice/session-config` and `/voice/submit-transcript` are still OIDC-protected — see
   next point.
-- **No dedicated service account** — the relay runs as the same default compute service account as
-  `alek-bot-dev`/`alek-research-job-dev` (neither of those overrides `--service-account` either).
-  This is required, not just simplest: `relay_main.py` mints an OIDC identity token from its own
-  Cloud Run runtime identity to call the main service, and `main.py` checks that token with the exact
-  same `verify_worker_oidc(token, expected_sa_email=config.get("SERVICE_ACCOUNT_EMAIL"))` gate used
-  for `/worker` — one shared expected email for every caller. A separate relay service account would
-  401 every one of those calls unless `SERVICE_ACCOUNT_EMAIL` were also changed, which is out of
-  scope here.
+- **No dedicated service account (yet)** — the relay runs as the same default service account as
+  `alek-bot-dev`/`alek-research-job-dev`. `relay_main.py` mints an OIDC identity token from its own
+  Cloud Run runtime identity to call the main service, and `main.py` accepts the set
+  `{SERVICE_ACCOUNT_EMAIL, VOICE_RELAY_SA_EMAIL} ∪ OIDC_TRANSITION_SA_EMAILS` on `/voice/*`
+  (`parse_sa_emails` / `build_oidc_gate`, `src/web/worker_oidc_verifier.py`). A separate relay service
+  account therefore works once `VOICE_RELAY_SA_EMAIL` (a Secret Manager secret holding the relay's
+  runtime SA email) is mounted on the main service; without it, every such call would 401. All three
+  keys are optional: absent, the gate accepts exactly `SERVICE_ACCOUNT_EMAIL`, as before.
 - **`min-instances=0`** — genuinely undecided, not a placeholder: RFC §9 open question 9 notes the
   main service is kept warm by a Cloud Scheduler keep-alive ping today, and the relay has no
   equivalent yet. Revisit once real call volume exists.
@@ -164,11 +164,11 @@ mint SFU sessions server-side.
 2. **Create the two secrets and grant the runtime service account access**, the same pattern as
    every other secret in `cloudbuild-dev.yaml`'s main-service `--set-secrets`:
    ```bash
-   echo -n "<APP_ID>" | gcloud secrets create CLOUDFLARE_SFU_APP_ID --data-file=- --project=<PROJECT_ID>
-   echo -n "<APP_SECRET>" | gcloud secrets create CLOUDFLARE_SFU_APP_SECRET --data-file=- --project=<PROJECT_ID>
+   printf '%s' "<APP_ID>" | gcloud secrets create CLOUDFLARE_SFU_APP_ID --data-file=- --project=<PROJECT_ID>
+   printf '%s' "<APP_SECRET>" | gcloud secrets create CLOUDFLARE_SFU_APP_SECRET --data-file=- --project=<PROJECT_ID>
    for s in CLOUDFLARE_SFU_APP_ID CLOUDFLARE_SFU_APP_SECRET; do
      gcloud secrets add-iam-policy-binding "$s" --project=<PROJECT_ID> \
-       --member="serviceAccount:<SERVICE_ACCOUNT_EMAIL>" --role=roles/secretmanager.secretAccessor
+       --member="serviceAccount:<RUNTIME_SA_OF_THE_SERVICE_THAT_MOUNTS_IT>" --role=roles/secretmanager.secretAccessor
    done
    ```
    `echo -n` matters: a trailing newline in the secret breaks the `Authorization` header.
@@ -262,10 +262,10 @@ new deploy-side value is the redirect URI. The adapter is wired only when both T
 2. Create the Secret Manager secret `ONEDRIVE_REDIRECT_URI_DEV` with the value
    `<service URL>/auth/connect-onedrive/callback` and grant the runtime service account access:
    ```bash
-   echo -n "<SERVICE_URL>/auth/connect-onedrive/callback" | \
+   printf '%s' "<SERVICE_URL>/auth/connect-onedrive/callback" | \
      gcloud secrets create ONEDRIVE_REDIRECT_URI_DEV --data-file=- --project=<PROJECT_ID>
    gcloud secrets add-iam-policy-binding ONEDRIVE_REDIRECT_URI_DEV --project=<PROJECT_ID> \
-     --member="serviceAccount:<SERVICE_ACCOUNT_EMAIL>" --role=roles/secretmanager.secretAccessor
+     --member="serviceAccount:<RUNTIME_SA_OF_THE_SERVICE_THAT_MOUNTS_IT>" --role=roles/secretmanager.secretAccessor
    ```
 3. Register that same URI as a redirect URI (platform "Web") on the `Alek-bot` registration.
 4. Deploy, then connect the drive from the Cabinet (Integrations, "Connect drive").
@@ -281,14 +281,14 @@ the Cabinet hides the drive card only when the adapter itself is absent (To Do k
 [decision](../04_solution_strategy/decisions/drive_indexer_lease_queue_service.md)). It is `indexer_main.py` on the
 same image: a `/worker` that serves `drive_sync` only (plus `/health`), gen2, 2 GiB, concurrency 1, timeout 1800 s,
 min 0, max 1. **Ingress is internal** and the in-app OIDC check stays: a request from outside Google's network gets
-404 before it reaches the app, and on Cloud Run the check fails closed when `SERVICE_ACCOUNT_EMAIL` is unset (RFC
-Δ21). The token audience is pinned to the indexer's own URL (`{url}` or `{url}/worker`), so a manual task sent to a
+404 before it reaches the app, and on Cloud Run the check fails closed when no accepted identity is configured
+(`DRIVE_INVOKER_SA_EMAIL`, else `SERVICE_ACCOUNT_EMAIL`, plus the optional `OIDC_TRANSITION_SA_EMAILS` list; RFC Δ21). The token audience is pinned to the indexer's own URL (`{url}` or `{url}/worker`), so a manual task sent to a
 run.app URL form other than the one in `INDEXER_URL_DEV` gets 401. The main service (1 GiB) never indexes. The
 scheduler job `alek-bot-dev-start-drive-sync` sends it `start_drive_sync` every 10 minutes (minutes 3, 13, …), and
 it fans out one `drive_sync` per user; it also nudges after bot writes, and the Cabinet toggle enqueues one. All of
 them go through the dedicated queue `drive-sync-dev` (`max-concurrent-dispatches=1`) with a 1800 s dispatch
-deadline. Queue, scheduler job and the Cloud Build service account's queue permission
-(`roles/cloudtasks.queueAdmin`, granted once): [SCHEDULERS.md](SCHEDULERS.md). `cloudbuild-dev.yaml` deploys the
+deadline. Queue, scheduler job and the build identity's queue permission
+(`roles/cloudtasks.queueAdmin`, granted on the queue to the identity the build runs as): [SCHEDULERS.md](SCHEDULERS.md). `cloudbuild-dev.yaml` deploys the
 queue and the indexer after the main service, so a failing drive step never blocks a fix of the bot; on the second
 pass of the first deploy a task may meet the indexer's 503 for a minute or two and is retried by the queue.
 
@@ -313,7 +313,7 @@ non-empty, except `_INDEXER_URL` on the first pass below. `make deploy` itself r
 `SERVICE_URL_DEV` is empty, and when `INDEXER_URL_DEV` is empty unless `DRIVE_FIRST_PASS=1` is set: an empty indexer
 URL silently disables indexing in the live environment, with no alert.
 
-0. **Once:** the Cloud Build service account needs `roles/cloudtasks.queueAdmin`
+0. **Once:** the identity Cloud Build runs as needs `roles/cloudtasks.queueAdmin` on the drive queue
    ([SCHEDULERS.md](SCHEDULERS.md) § Start Drive Sync).
    **Indexes first.** Only the drive indexes are new: eleven composites and two `card_vector` vector indexes on
    `development_drive_index_records` (RFC Δ22). **In dev they already exist and are `READY` (created 2026-10-12, all

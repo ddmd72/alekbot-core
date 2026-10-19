@@ -36,6 +36,10 @@ Environment variables (set at deploy time in cloudbuild-dev.yaml):
   SERVICE_ACCOUNT_EMAIL         Secret: the /worker OIDC gate and the OIDC identity of the tasks this
                                 service enqueues. Unset locally (gate open); unset on Cloud Run
                                 (K_SERVICE set) the gate fails closed (RFC Δ21).
+  DRIVE_INVOKER_SA_EMAIL        Secret, optional: the dedicated OIDC identity of the drive queue. When set it is the
+                                accepted /worker identity and the identity of the tasks this service enqueues;
+                                unset, SERVICE_ACCOUNT_EMAIL plays both roles (today's behaviour).
+  OIDC_TRANSITION_SA_EMAILS     Optional comma list of extra accepted /worker identities (migration window).
   K_SERVICE                     Injected by Cloud Run; tells Cloud Run from local dev.
   PORT                          Injected by Cloud Run; 8080 locally.
 
@@ -68,6 +72,7 @@ from src.composition.prompt_assembly_setup import build_prompt_assembly_service
 from src.config.environment import EnvironmentConfig
 from src.services.drive_indexing_service import DriveIndexingService
 from src.utils.logger import logger
+from src.web.worker_oidc_verifier import parse_sa_emails
 from src.web.indexer_worker_app import create_indexer_worker_blueprint, indexer_audiences, worker_oidc_gate
 
 # Cloud Run allows ~10 s between SIGTERM and SIGKILL (a revision rollout on every deploy).
@@ -78,15 +83,20 @@ _GRACEFUL_TIMEOUT_S = 8
 
 def build_app() -> Quart:
     project = os.environ["GOOGLE_CLOUD_PROJECT"]
-    sa_email = os.environ.get("SERVICE_ACCOUNT_EMAIL") or None
-    gate = worker_oidc_gate(sa_email, indexer_audiences(os.environ.get("DRIVE_INDEXER_URL")),
+    sa_email = (os.environ.get("SERVICE_ACCOUNT_EMAIL") or "").strip() or None
+    drive_invoker = (os.environ.get("DRIVE_INVOKER_SA_EMAIL") or "").strip() or None
+    # Accepted: the drive invoker (falls back to the single legacy identity) plus the optional transition list.
+    accepted = parse_sa_emails(drive_invoker or sa_email, os.environ.get("OIDC_TRANSITION_SA_EMAILS"))
+    gate = worker_oidc_gate(accepted, indexer_audiences(os.environ.get("DRIVE_INDEXER_URL")),
                             on_cloud_run=bool(os.environ.get("K_SERVICE")))
     env_config = EnvironmentConfig()
     db = firestore.AsyncClient(project=project, database="us-production")
 
     app = Quart(__name__)
-    queue = build_drive_task_queue({"GOOGLE_CLOUD_PROJECT": project, "SERVICE_ACCOUNT_EMAIL": sa_email},
-                                   env_config)
+    queue = build_drive_task_queue(
+        {"GOOGLE_CLOUD_PROJECT": project, "SERVICE_ACCOUNT_EMAIL": sa_email, "DRIVE_INVOKER_SA_EMAIL": drive_invoker},
+        env_config,
+    )
     if queue is None:
         # First pass of the two-pass first deploy (Makefile, _INDEXER_URL): start anyway so the deploy
         # step succeeds; /worker answers 503 and nothing is enqueued to it until the second pass.

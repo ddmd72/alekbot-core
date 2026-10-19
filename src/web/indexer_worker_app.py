@@ -6,7 +6,7 @@ The indexer service (`indexer_main.py`) serves exactly two routes:
   `--ingress=internal` (RFC Δ21), and the route also checks the OIDC token in-app, stricter than the
   main service's `/worker`: the audience is pinned to this service's own URL (its only caller is
   Cloud Tasks, whose default audience is the target URL), and on Cloud Run a missing
-  `SERVICE_ACCOUNT_EMAIL` fails closed instead of opening the route. Only local dev (no `K_SERVICE`)
+  accepted identity (`DRIVE_INVOKER_SA_EMAIL` / `SERVICE_ACCOUNT_EMAIL`) fails closed instead of opening the route. Only local dev (no `K_SERVICE`)
   bypasses. The verifier is injected (`worker_oidc_gate`), so routing is testable without a real
   Google token. Each delivery's Cloud Tasks headers are logged like main's (task name, retry and
   execution counts: `decisions/worker_task_dedup.md`).
@@ -38,13 +38,17 @@ if TYPE_CHECKING:
 OidcVerifier = Callable[[Optional[str]], Awaitable[bool]]
 
 
-def worker_oidc_gate(service_account_email: Optional[str], audiences: Optional[Collection[str]] = None, *,
+def worker_oidc_gate(accepted_emails: Collection[str], audiences: Optional[Collection[str]] = None, *,
                      on_cloud_run: bool = False) -> OidcVerifier:
-    """The indexer's `/worker` gate (RFC Δ21). With `SERVICE_ACCOUNT_EMAIL` set: signature, SA email and,
-    when given, an audience in `audiences`. Without it: open for local dev, closed on Cloud Run."""
-    if not service_account_email:
+    """The indexer's `/worker` gate (RFC Δ21). With accepted identities: signature, an email in the set and,
+    when given, an audience in `audiences`. Without any: open for local dev, closed on Cloud Run."""
+    if isinstance(accepted_emails, str):
+        raise TypeError("accepted_emails must be a collection of emails, not a str")
+    accepted = frozenset(accepted_emails)
+    if not accepted:
         if on_cloud_run:
-            logger.error("[Indexer] SERVICE_ACCOUNT_EMAIL is not set on Cloud Run: /worker refuses every call")
+            logger.error("[Indexer] no accepted service-account identity is configured on Cloud Run: "
+                         "/worker refuses every call")
 
             async def closed(authorization: Optional[str]) -> bool:
                 return False
@@ -55,7 +59,7 @@ def worker_oidc_gate(service_account_email: Optional[str], audiences: Optional[C
         return open_for_local_dev
 
     async def verify(authorization: Optional[str]) -> bool:
-        return verify_worker_oidc(authorization, service_account_email, audiences)
+        return verify_worker_oidc(authorization, accepted, audiences)
     return verify
 
 
