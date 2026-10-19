@@ -78,7 +78,7 @@ from .drive_index_policy import (
     is_generated_dir, is_marker_child, is_readme_name, item_rule, kind_of, readme_readable, searchable, size_cap,
 )
 from .drive_keys import name_keys_v2
-from .drive_profile import issued_of, readme_excerpt
+from .drive_profile import brief_date_grade, issued_of, readme_excerpt
 from .place_lookup import Place
 from .user_drive import DriveConnection
 
@@ -383,8 +383,8 @@ def _effective(change: DriveChange, brief: Optional[DocumentBrief], now: datetim
     issued = issued_of(profile) if profile is not None else None
     if issued is not None:
         return datetime(issued.year, issued.month, issued.day, tzinfo=timezone.utc)
-    if brief is not None and brief.doc_date is not None:
-        return brief.doc_date
+    if brief is not None and brief.held_date is not None:
+        return brief.held_date
     return effective_date(change, now)
 
 
@@ -937,6 +937,8 @@ def demoted(rec: DriveIndexRecord, reason: Reason, now: datetime, *, outcome: Op
         raise ValueError(f"{reason.value} is not a content outcome")
     text = outcome.text if outcome is not None else ""
     brief = outcome.brief if outcome is not None else None
+    if outcome is not None and brief is not None and brief.doc_date is not None:   # graded before it dates the file (Δ60)
+        brief = replace(brief, date_grade=brief_date_grade(brief, [outcome], rec.name))
     done = replace(rec, state=RecordState.METADATA_ONLY, reason=reason, indexed_generation=None,
                    chunk_space="", chunk_reembed_pending=False, extraction_version=EXTRACTION_VERSION,
                    extracted_by=outcome.extracted_by if outcome is not None else rec.extracted_by,
@@ -999,6 +1001,7 @@ def triaged(rec: DriveIndexRecord, result: TriageResult, now: datetime,
         done = replace(rec, state=RecordState.METADATA_ONLY, reason=Reason.PHOTOGRAPH, caption="",
                        indexed_generation=None, chunk_space="", chunk_reembed_pending=False, lead_text="", brief=None,
                        dirty_since=None, capture="", capture_source="",   # a photograph has none (Δ57)
+                       card_accuracy=None, accuracy_version=0,            # nor a score (§26.4)
                        effective_date=_effective(change_from_record(rec), None, rec.effective_date or now))
         done = _without_photo(done) if photo is None else replace(
             done, photo_description=photo.description, photo_objects=tuple(photo.objects), photo_scene=photo.scene,

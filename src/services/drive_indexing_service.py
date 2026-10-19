@@ -76,7 +76,7 @@ from ..domain.drive_extraction import (
 )
 from ..domain.drive_access import access_counts
 from ..domain.drive_index import (
-    CURRENT_VERSIONS, KEYS_VERSION, MIGRATION_GATE_KEY, PASSAGES_VERSION, DriveChange, DriveChanges, DriveChunk,
+    ACCURACY_VERSION, CURRENT_VERSIONS, KEYS_VERSION, MIGRATION_GATE_KEY, PASSAGES_VERSION, DriveChange, DriveChanges, DriveChunk,
     DriveIndexRecord, DriveIndexStoreUnavailable, DriveSyncState, EpochPhase, ErrorCategory, FolderProbe, LeaseLost,
     Nudge, Priority, Reason, RecordState, Scope, TriageVerdict, inaccessible,
 )
@@ -475,7 +475,7 @@ class DriveIndexingService:
                 # alerts once. A purge (above) and a fresh onboarding (stamped just above) are never caught here.
                 # WARNING until the fan-out's ops alert went out, once per instance; INFO on every later tick (a gated
                 # user is ticked every fan-out until rebuilt; review rv_sv2_p5 MINOR 10)
-                line = f"[DriveIndex] index of {user_id[:8]} awaits its v2 rebuild (D30); no tick work"
+                line = f"[DriveIndex] index of {user_id[:8]} was built under an older index version, awaiting its rebuild (D30); no tick work"
                 if state.migration_alerted or user_id in self._migration_warned:
                     logger.info(line)
                 else:
@@ -1729,6 +1729,7 @@ class DriveIndexingService:
             text = stored_text(chunks)
             done = enrich.profiled(done, template_profile(TemplateReason.SHORT, done.kind, text),
                                    source=ProfileSource.TEMPLATE, fingerprint=fingerprint, now=now)
+        done = enrich.brief_graded(done, chunks, now)   # a brief date the text does not hold is no file date (Δ60)
         done = scored(done, chunks)   # the new brief, capture and reading facts, and the re-graded profile (§26.4)
         return await self._reuse_hints(user_id, before, done, chunks, summary)
 
@@ -2828,7 +2829,14 @@ class DriveIndexingService:
             regraded, _counts = await asyncio.to_thread(grade, rec.profile, chunks, rec.name,
                                                         key_values=policy_.output is ProfileOutput.FULL)
             done = enrich.regraded(done, regraded, now)
-        done = scored(done, chunks)
+        if not chunks and not (rec.profile is not None and rec.profile_source == ProfileSource.MODEL.value):
+            # a brief-only card is graded against the text, and there is none whole: keep the stored score and stamp
+            # the version, never grade the brief against nothing
+            done = replace(done, accuracy_version=ACCURACY_VERSION)
+        else:
+            if chunks:
+                done = enrich.brief_graded(done, chunks, now)
+            done = scored(done, chunks)
         await self._commit(user_id, [done], set())
         _inc(summary, "rescored")
         return done

@@ -177,7 +177,7 @@ def _brief(value: Any) -> Optional[DocumentBrief]:
         return None
     return DocumentBrief(doc_type=value.get("doc_type", ""), description=value.get("description", ""),
                          doc_date=_dt(value.get("doc_date")), parties=tuple(value.get("parties") or ()),
-                         amount=value.get("amount", ""))
+                         amount=value.get("amount", ""), date_grade=value.get("date_grade", ""))
 
 
 def _strs(value: Any) -> Tuple[str, ...]:

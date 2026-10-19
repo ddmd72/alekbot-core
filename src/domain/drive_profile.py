@@ -16,6 +16,7 @@ Public interface:
     template_profile(reason, kind, text) -> DriveProfile         `profile_source = template`
     GradeCounts; grade(profile, chunks, name, *, key_values=True) -> (DriveProfile, GradeCounts)
     grade_brief(brief, chunks, name) -> (GradedValue, ...)          a brief-only card's date, amount, parties
+    brief_date_grade(brief, chunks, name) -> str                    the brief date's Grade value ("" without a date)
     grade_entity(evidence, printed, spellings) -> (Grade, found, seen_as)
     valid_until_of(profile), issued_of(profile) -> Optional[date]    a `not_in_text` date never counts (Δ60)
 
@@ -393,9 +394,7 @@ def grade_brief(brief: DocumentBrief, chunks: Sequence[_HasText], name: str) -> 
     graded = _Graded()
     if brief.doc_date is not None:
         day = brief.doc_date.date()
-        dgrade, seen = evidence.date_grade(day, "")
-        if dgrade is Grade.NOT_IN_TEXT and evidence.prints_date(day):
-            dgrade = Grade.IN_TEXT_AS
+        dgrade, seen = _brief_date(evidence, day)
         graded.add(GradedField.DATE, day.isoformat(), dgrade, seen)
     amount = brief.amount.strip()
     if amount:
@@ -405,6 +404,21 @@ def grade_brief(brief: DocumentBrief, chunks: Sequence[_HasText], name: str) -> 
         egrade, _, seen = grade_entity(evidence, party, (party,))
         graded.add(GradedField.ENTITY, party, egrade, seen)
     return graded.values()
+
+
+def _brief_date(evidence: TextEvidence, day: date) -> Tuple[Grade, str]:
+    dgrade, seen = evidence.date_grade(day, "")
+    if dgrade is Grade.NOT_IN_TEXT and evidence.prints_date(day):
+        return Grade.IN_TEXT_AS, seen
+    return dgrade, seen
+
+
+def brief_date_grade(brief: DocumentBrief, chunks: Sequence[_HasText], name: str) -> str:
+    """The `Grade` value of the brief's date against the text, or "" when the brief has no date (stored as
+    `DocumentBrief.date_grade`, which `held_date` reads, Δ60)."""
+    if brief.doc_date is None:
+        return ""
+    return _brief_date(TextEvidence([c.text for c in chunks], name), brief.doc_date.date())[0].value
 
 
 def valid_until_of(profile: DriveProfile) -> Optional[date]:

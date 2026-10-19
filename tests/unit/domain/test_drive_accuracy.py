@@ -13,7 +13,8 @@ from src.domain.drive_index import (
 )
 
 IN, AS, NOT = Grade.IN_TEXT.value, Grade.IN_TEXT_AS.value, Grade.NOT_IN_TEXT.value
-WEIGHTS_PINS = {1: "f0fb92a4d22d2ebb134b803128bbd621ce41599d6acac2c8c3419b5c6c174a68"}      # ACCURACY_VERSION -> weights_digest(); a changed weight is a version bump
+# ACCURACY_VERSION 1 is unreleased: Δ85's `digital_model_read` row re-pins it (without the row: f0fb92a4…)
+WEIGHTS_PINS = {1: "f0bc74243269bcc9311e1d0fc0206f2cf93ee82ed22998fb7886e5dba25b7879"}      # ACCURACY_VERSION -> weights_digest(); a changed weight is a version bump
 
 
 def gv(field, grade, value="v"):
@@ -57,7 +58,8 @@ class TestWeights:
         assert acc.FIELD_WEIGHTS == {"date": 3, "value": 3, "number": 3, "entity": 2, "topic_native": 1}
         assert acc.GRADE_MISS == {IN: 0.0, AS: 0.1, NOT: 1.0}
         assert acc.SOURCE_SHARE == {"native": 0.0, "digital": 0.0, "screenshot": 0.03, "scan": 0.05,
-                                    "document_photo": 0.08, "model_unknown": 0.05}
+                                    "document_photo": 0.08, "model_unknown": 0.05,
+                                    "digital_model_read": 0.03}   # Δ85
         assert acc.READING_POINTS == {"pages_refused": 5, "read_by_fallback": 3, "truncated": 2}
 
     def test_the_weights_digest_is_pinned_to_the_version(self):
@@ -81,9 +83,13 @@ class TestWeights:
 
 class TestSourceShare:
     @pytest.mark.parametrize("capture, share", [("scan", 0.05), ("document_photo", 0.08), ("screenshot", 0.03),
-                                                ("digital", 0.0)])
+                                                ("digital", 0.03)])   # Δ85: a model's reading of a digital file
     def test_by_capture(self, capture, share):
         assert acc.source_share(rec(capture=capture, capture_source="detected", extracted_by="reader@2")) == share
+
+    def test_a_parser_read_digital_file_is_native_text(self):
+        # Δ85 splits `digital` by extractor: the parser's text layer stays 0
+        assert acc.source_share(rec(capture="digital", capture_source="detected", extracted_by="parser@3")) == 0.0
 
     def test_a_parser_read_text_with_no_capture_is_native(self):
         assert acc.source_share(rec(extracted_by="parser@3")) == 0.0

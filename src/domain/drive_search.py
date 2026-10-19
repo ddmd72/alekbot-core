@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timezone
 from typing import Callable, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Tuple
 
+from .drive_accuracy import scorable
 from .drive_card import taken_at
 from .drive_index import DriveIndexRecord, DriveSyncState, Reason, RecordState, Scope, TriageVerdict, inaccessible
 from .drive_index_params import ACCESS_LOSS_TTL, WRAPPER_TAG_GAP_MAX
@@ -472,7 +473,7 @@ def date_source(rec: DriveIndexRecord) -> Optional[str]:
     issued = issued_of(rec.profile) if rec.profile is not None else None
     if issued is not None and (when.year, when.month, when.day) == (issued.year, issued.month, issued.day):
         return DATE_WRITTEN
-    if rec.brief is not None and rec.brief.doc_date is not None and rec.brief.doc_date == when:
+    if rec.brief is not None and rec.brief.held_date is not None and rec.brief.held_date == when:
         return DATE_WRITTEN
     if taken_at(rec.facets) == when:
         return DATE_TAKEN
@@ -497,7 +498,7 @@ def make_card(rec: DriveIndexRecord, path: str, summary: str, nonce: str) -> Dri
         reason=rec.reason.value if rec.reason else None,
         stale=rec.stale or (closed and rec.indexed_generation is not None), truncated=rec.truncated,
         content_hash=rec.content_hash, nonce=nonce, date_source=date_source(rec), valid_until=rec.valid_until,
-        inaccessible=closed, capture=rec.capture, capture_source=rec.capture_source, card_accuracy=rec.card_accuracy,
+        inaccessible=closed, capture=rec.capture, capture_source=rec.capture_source, card_accuracy=rec.card_accuracy if scorable(rec) else None,
         scene_labels=rec.photo_scene_labels,
     )
 

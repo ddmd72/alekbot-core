@@ -44,7 +44,7 @@ _HINT_COUNT_PAGE = 1000        # hint documents counted per page by a dry run
 
 def _v1_note(applied: object) -> str:
     """D30: a state without the migration gate key was built by v1 and is only ever rebuilt."""
-    return "" if MIGRATION_GATE_KEY in dict(applied or {}) else " — a v1 index awaiting its Search v2 rebuild (D30)"
+    return "" if MIGRATION_GATE_KEY in dict(applied or {}) else " — built under an older index version, awaiting its rebuild (D30)"
 
 
 async def rebuild(repo: DriveIndexRepository, user_id: str, *, apply: bool, now: datetime,

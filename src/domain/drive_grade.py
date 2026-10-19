@@ -33,18 +33,23 @@ import unicodedata
 from datetime import date
 from typing import Dict, FrozenSet, List, Optional, Sequence, Set, Tuple
 
-from .drive_content_terms import _MONTH, _MONTH_OF, content_terms, query_terms
+from .drive_content_terms import _MONTH_OF, content_terms, query_term_spans, query_terms
 from .drive_enrichment import Grade
 from .drive_key_forms import skeleton_key, token_forms, token_spans
 from .drive_keys import word_form_keys
+from .drive_name_keys import _is_cyrillic
 
 _STRIPPED_MIN = 3                      # a separator-free match needs this many letters and digits
 _NUMERIC_DATE = re.compile(r"\d+")
+_MONTH_ALTS = "|".join(re.escape(f) for f in sorted(_MONTH_OF, key=lambda f: (-len(f), f)))
+_MONTH_ONE = rf"(?:{_MONTH_ALTS})\.?(?![\w])"
+# a month name, or a bilingual one as passports print it ("MAY/MAI"): the first name decides the month
+_MONTH = rf"({_MONTH_ALTS})\.?(?![\w])(?:\s*/\s*{_MONTH_ONE})?"
+_ORD = r"(?:st|nd|rd|th|er|e)?"
 _NAMED_DAY_FIRST = re.compile(
-    rf"(?<!\d)(\d{{1,2}})(?:st|nd|rd|th|er|e)?[\W_]+(?:(?:de|of)[\W_]+)?{_MONTH}[\W_]+(?:(?:de|del)[\W_]+)?(\d{{4}})(?!\d)",
+    rf"(?<!\d)(\d{{1,2}}){_ORD}[\W_]+(?:(?:de|of)[\W_]+)?{_MONTH}[\W_]+(?:(?:de|del)[\W_]+)?(\d{{4}})(?!\d)",
     re.IGNORECASE)
-_NAMED_MONTH_FIRST = re.compile(rf"(?<![\w]){_MONTH}[\W_]+(\d{{1,2}})(?:st|nd|rd|th|er|e)?[\W_]+(\d{{4}})(?!\d)",
-                                re.IGNORECASE)
+_NAMED_MONTH_FIRST = re.compile(rf"(?<![\w]){_MONTH}[\W_]+(\d{{1,2}}){_ORD}[\W_]+(\d{{4}})(?!\d)", re.IGNORECASE)
 
 
 def norm(text: str) -> str:
@@ -63,8 +68,10 @@ def _date(y: int, m: int, d: int) -> Optional[date]:
         return None
 
 
-def lenient_date(printed: str) -> Optional[date]:
-    """The one date a printed form reads as (module docstring), or None when it is not a date."""
+def lenient_date(printed: str, expected: Optional[date] = None) -> Optional[date]:
+    """The one date a printed form reads as (module docstring), or None when it is not a date. A two-digit year is read
+    only against `expected` (the profile's ISO date): it is that year when it equals the last two digits of the
+    expected year, no century pivot ("07.05.31" against 2031-05-07); without `expected` it is no date."""
     text = unicodedata.normalize("NFC", printed)
     named = _NAMED_DAY_FIRST.search(text)
     if named is not None:
@@ -80,6 +87,8 @@ def lenient_date(printed: str) -> Optional[date]:
         return _date(int(a), int(b), int(c))
     if len(c) == 4 and len(a) <= 2 and len(b) <= 2:
         return _date(int(c), int(b), int(a)) or _date(int(c), int(a), int(b))
+    if len(c) == 2 and len(a) <= 2 and len(b) <= 2 and expected is not None and expected.year % 100 == int(c):
+        return _date(expected.year, int(b), int(a)) or _date(expected.year, int(a), int(b))
     return None
 
 
@@ -97,7 +106,7 @@ class TextEvidence:
         self._dates: Optional[FrozenSet[date]] = None
         self._stripped: Optional[Tuple[str, List[int]]] = None
         self._word_keys: Optional[FrozenSet[str]] = None
-        self._skeletons: Optional[Dict[str, str]] = None
+        self._skeletons: Optional[Dict[Tuple[str, bool], str]] = None
 
     # -- facts, computed on first use ---------------------------------------------------------------------------
 
@@ -136,13 +145,14 @@ class TextEvidence:
             self._word_keys = frozenset(word_form_keys(self._raw))
         return self._word_keys
 
-    def _skeleton_words(self) -> Dict[str, str]:
+    def _skeleton_words(self) -> Dict[Tuple[str, bool], str]:
+        """The text's words by (skeleton, is Cyrillic): a skeleton match counts across scripts only."""
         if self._skeletons is None:
-            out: Dict[str, str] = {}
+            out: Dict[Tuple[str, bool], str] = {}
             for token, start, end in token_spans(self._raw):
                 key = skeleton_key(token)
-                if key and key not in out:
-                    out[key] = self._raw[start:end].strip() or token
+                if key and (key, _is_cyrillic(token)) not in out:
+                    out[(key, _is_cyrillic(token))] = self._raw[start:end].strip() or token
             self._skeletons = out
         return self._skeletons
 
@@ -161,7 +171,7 @@ class TextEvidence:
         """The text's own spelling of `printed` once separators are ignored ("X1234567A" for "X 1234567 A"), whole
         alphanumeric runs only (it must not start or end inside a word); "" when the text has none."""
         needle = normalise_value(printed)
-        if len(needle) < _STRIPPED_MIN:
+        if len(needle) < _STRIPPED_MIN or _amount_or_date(printed):
             return ""
         stripped, where = self._stripped_text()
         raw = unicodedata.normalize("NFC", self._raw)
@@ -187,7 +197,7 @@ class TextEvidence:
         and its lenient reading is this date; else `not_in_text`."""
         if iso.isoformat() in self.terms:
             return Grade.IN_TEXT, ""
-        if printed.strip() and self.occurs(printed) and lenient_date(printed) == iso:
+        if printed.strip() and self.occurs(printed) and lenient_date(printed, iso) == iso:
             return Grade.IN_TEXT_AS, printed.strip()
         return Grade.NOT_IN_TEXT, ""
 
@@ -220,14 +230,16 @@ class TextEvidence:
 
     def skeleton_seen(self, spelling: str) -> str:
         """The text's words whose transliteration skeletons are the spelling's, in order ("Барселона" for
-        "Barcelona"); "" unless every word of the spelling has one."""
+        "Barcelona"); "" unless every word of the spelling has one. Across scripts only: two Latin spellings
+        ("Maria" and "Mario" share a Cyrillic stem) are not a transliteration (xc F3)."""
         found: List[str] = []
         by_key = self._skeleton_words()
         for token, _, _ in token_spans(spelling):
             key = skeleton_key(token)
-            if key is None or key not in by_key:
+            word = by_key.get((key, not _is_cyrillic(token))) if key else None   # the other script's word
+            if word is None:
                 return ""
-            found.append(by_key[key])
+            found.append(word)
         return " ".join(found)
 
     def words_grade(self, phrase: str) -> Grade:
@@ -242,6 +254,12 @@ class TextEvidence:
         return Grade.NOT_IN_TEXT
 
 
+def _amount_or_date(text: str) -> bool:
+    """The text reads as an amount or a date (the number-term normaliser's categories): with its separators removed it
+    would be another number ("1.250,00" is not "125000"), so it is never matched separator-free (§26.4)."""
+    return any(cat in ("amount", "date") for _, _, _, cat in query_term_spans(text))
+
+
 def _iso_of(term: str) -> Optional[date]:
     if re.fullmatch(r"\d{4}-\d{2}-\d{2}", term):
         try:
@@ -252,8 +270,9 @@ def _iso_of(term: str) -> Optional[date]:
 
 
 def prose_terms(*texts: str) -> Tuple[str, ...]:
-    """The number terms of the profile's prose (title, what_it_is), sorted and unique."""
+    """The number terms of the profile's prose (title, what_it_is), sorted and unique: the maximal form of each span
+    only (`query_terms`), never the fragments a text index also keeps (the "2024" and "0012" of "INV-2024/0012")."""
     seen: Set[str] = set()
     for text in texts:
-        seen.update(content_terms(text))
+        seen.update(query_terms(text))
     return tuple(sorted(seen))

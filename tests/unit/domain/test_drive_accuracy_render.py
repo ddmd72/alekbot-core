@@ -1,6 +1,7 @@
 """The `card accuracy: N%` line (USER_DRIVE_INDEXING_RFC §26.4): on every rendered card that has a score, none on one
 that has not, in the next line after `capture:`; `make_card` carries the record's score."""
-from src.domain.drive_index import DriveIndexRecord, RecordState, Scope
+from src.domain.drive_enrichment import DriveProfile
+from src.domain.drive_index import DriveIndexRecord, RecordState, Scope, TriageVerdict
 from src.domain.drive_search import DriveSearchCard, _card_body, accuracy_line, make_card
 from src.domain.drive_tier_render import card_body
 
@@ -35,7 +36,14 @@ def test_no_score_no_line():
 
 
 def test_make_card_carries_the_score():
+    # a record that carries a score (§26.4 "What carries it"): readable, with a model profile
     rec = DriveIndexRecord(user_id="u", item_id="x", name="scan.pdf", kind="pdf", scope=Scope.NORMAL,
-                           state=RecordState.INDEXED, card_accuracy=71)
+                           state=RecordState.INDEXED, indexed_generation=1, profile_source="model",
+                           profile=DriveProfile(title="t", what_it_is="w", language="en", doc_type="other"),
+                           card_accuracy=71)
     assert make_card(rec, "/Docs/scan.pdf", "s", "abcdefgh").card_accuracy == 71
     assert make_card(DriveIndexRecord(user_id="u", item_id="x"), "/", "s", "abcdefgh").card_accuracy is None
+    # a stored score on a record that no longer carries one (a photograph now) is never shown
+    photo = DriveIndexRecord(user_id="u", item_id="p", name="a.jpg", kind="image", state=RecordState.METADATA_ONLY,
+                             triage_verdict=TriageVerdict.PHOTO, card_accuracy=71)
+    assert make_card(photo, "/a.jpg", "s", "abcdefgh").card_accuracy is None

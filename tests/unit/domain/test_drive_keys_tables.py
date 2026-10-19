@@ -13,21 +13,25 @@ TABLES = {
     (2, 2): "35c2d15703fcf1875fbf7f065fe9a735cd3d2696484d90a9bad048835a8e1140",
     # KEYS_VERSION 3 (xc F1 `ef:`, F3 `xl:`/`exl:`, D31 fixed label names, numbers/interrogatives)
     (3, 2): "f41fa1f4bb1f15a4138ccb08c2e5d405a6ea705e7e50a42f12574ebe0d28ab3a",
-    # KEYS_VERSION 4 (§26.7), S2 so far: CAPTURE_NAMES and the `cp:`/`cpa:` families. Unreleased: S3's keys move it
-    (4, 2): "6df876eccb1e8bce5770c8e3e2d48b8a503ba123189440158d8077ac678422d8",
+    # KEYS_VERSION 4 (§26.7, unreleased): CAPTURE_NAMES and the `cp:`/`cpa:` families (S2), the `va:`/`ya:`/`ma:`
+    # families (S3, Δ60), SCENE_NAMES, PHOTO_SCENE_LABELS_MAX and the `sl:` family (S6, D40), and the spaced-date
+    # pattern (Δ62) now in the digest (without it: cc15faff…)
+    (4, 2): "ec48414c73a7595201b6b86aa5bca87c9d3fe124a7a49ceb8fda7ef57989a23b",
 }
 GOLDEN = {
     (2, 2): "eaddca63bfa2498893cb5644b06e065234c73eab151ec80eace891e3a04a0af5",
     (3, 2): "7c3482296ff0118b7e3e67b5a22e33c6dca74636f2bdd7af68caf2d1484e5341",   # KEYS_VERSION 3, as above
-    # KEYS_VERSION 4, as above: equal to (3, 2) — the fixture holds no capture record, and a query word emits `cp:`/
-    # `cpa:` only for a form a capture name is stored under (none in these texts); CAPTURE_GOLDEN below covers them
-    (4, 2): "7c3482296ff0118b7e3e67b5a22e33c6dca74636f2bdd7af68caf2d1484e5341",
+    # KEYS_VERSION 4, as above: (3, 2) plus the query's `va:`/`ma:` beside `v:`/`m:` (Δ60) and `sl:` for the scene
+    # names in these texts ("квартиры", "houses"; D40). The fixture holds no capture record and no capture word;
+    # CAPTURE_GOLDEN below covers them. Re-pinned when a lease text's city became an invented one (2026-10-24): the
+    # older pins above describe the texts before that change
 }
 # The capture keys (§26.3, Δ57, Δ58) on their own fixture, pinned per KEYS_VERSION like GOLDEN: a detected scan, a
 # camera-detected document photo, a model's screenshot, a digital file (no words), a photograph (no capture keys
 # whatever it holds), and queries holding capture words in four languages.
 CAPTURE_GOLDEN = {
-    (4, 2): "31226bfc3a182be45f5eb0f0a9fc9b8b6d15f1ba722dca66ab1dbf06b3094d1b",
+    # with the queries' `va:` (Δ60); stripped of it, the S2 digest 31226bfc… again
+    (4, 2): "33ca033c785a57620147ef19d558701c98ba0fb09d707620c9e04b8d02745f15",
 }
 
 

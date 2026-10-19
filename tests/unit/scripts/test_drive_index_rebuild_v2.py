@@ -44,14 +44,15 @@ async def test_a_dry_run_names_a_v1_index_awaiting_its_rebuild(script):
     repo = InMemoryDriveIndexRepository()
     await _state(repo, "u", {"policy": 2})
     code, message = await script.rebuild(repo, "u", apply=False, now=T0, owner="r")
-    assert code == 0 and "v1 index" in message and "D30" in message and "--apply" in message
+    # §26.7 (Δ65): the gate now stops any index built before `accuracy`, not only a v1 one
+    assert code == 0 and "built under an older index version" in message and "D30" in message and "--apply" in message
 
 
 async def test_a_dry_run_of_a_v2_index_does_not_call_it_v1(script):
     repo = InMemoryDriveIndexRepository()
     await _state(repo, "u", dict(CURRENT_VERSIONS))
     _, message = await script.rebuild(repo, "u", apply=False, now=T0, owner="r")
-    assert "v1 index" not in message
+    assert "older index version" not in message and "D30" not in message
 
 
 async def test_hints_only_dry_run_counts_and_writes_nothing(script):

@@ -216,41 +216,56 @@ def _profile(**kw):
     return DriveProfile(**base)
 
 
+def _grades(p, field):
+    return [(g.value, g.grade) for g in p.graded if g.field == field]
+
+
 class TestVerify:
+    """Δ59 (§26.4): `grade` replaced `verify`. A value the text does not hold is kept, graded `not_in_text`, and
+    counted in `GradeCounts.not_in_text` (it was a drop counted in `VerifyDrops`)."""
+
     def _verify(self, profile, text=TEXT, name="factura.pdf", **kw):
-        return dp.verify(profile, _chunks(text), name, **kw)
+        return dp.grade(profile, _chunks(text), name, **kw)
 
     def test_entities_printed_in_the_text_or_the_name_stay(self):
-        p, drops = self._verify(_profile(entities=(
+        p, counts = self._verify(_profile(entities=(
             ProfileEntity("Springfield", "place", "Springfield", ("Спрингфилд",)),
             ProfileEntity("Juan Garcia", "person", "JUAN GARCÍA"),
             ProfileEntity("Factura", "other", "factura.pdf"),
             ProfileEntity("Madrid", "place", "Madrid"))))
-        assert [e.name for e in p.entities] == ["Valencia", "Juan Garcia", "Factura"]
-        assert p.entities[0].forms == ("Валенсия",) and drops.entities == 1
+        assert [e.name for e in p.entities] == ["Springfield", "Juan Garcia", "Factura", "Madrid"]   # kept (Δ59)
+        assert _grades(p, "entity") == [("Springfield", "in_text"), ("JUAN GARCÍA", "in_text"),
+                                        ("factura.pdf", "in_text"), ("Madrid", "not_in_text")]
+        assert p.entities[0].forms == ("Спрингфилд",) and counts.not_in_text == {"entity": 1}
 
     def test_key_values_by_number_terms_or_verbatim_and_canonical_rewritten(self):
-        p, drops = self._verify(_profile(key_values=(
+        p, counts = self._verify(_profile(key_values=(
             KeyValue("amount_total", "1.250,00 €", "1250.00 EUR"),
             KeyValue("account_number", "XX12 3456 7890", "xx1234567890"),
             KeyValue("invoice_number", "FA-2024/0137", "FA-2024/0137"),
             KeyValue("amount_due", "999,00", "999.00"))))
         assert [(kv.label, kv.canonical) for kv in p.key_values] == [
             ("amount_total", "1250.00"), ("account_number", "xx1234567890"),
-            ("invoice_number", "fa20240137")]
-        assert drops.values == 1
+            ("invoice_number", "fa20240137"), ("amount_due", "999.00")]   # kept, as the model wrote it (Δ59)
+        assert _grades(p, "value") == [("1.250,00 €", "in_text"), ("XX12 3456 7890", "in_text"),
+                                       ("FA-2024/0137", "in_text"), ("999,00", "not_in_text")]
+        assert counts.not_in_text == {"value": 1}
 
     def test_dates_only_when_their_iso_form_is_a_term(self):
-        p, drops = self._verify(_profile(dates=(
+        p, counts = self._verify(_profile(dates=(
             ProfileDate("issued", date(2024, 3, 15)), ProfileDate("valid_until", date(2024, 4, 30)),
             ProfileDate("due", date(2024, 5, 1)))))
-        assert [d.iso for d in p.dates] == [date(2024, 3, 15), date(2024, 4, 30)] and drops.dates == 1
+        assert [d.iso for d in p.dates] == [date(2024, 3, 15), date(2024, 4, 30), date(2024, 5, 1)]   # kept (Δ59)
+        assert _grades(p, "date") == [("2024-03-15", "in_text"), ("2024-04-30", "in_text"),
+                                      ("2024-05-01", "not_in_text")]
+        assert counts.not_in_text == {"date": 1}
         assert dp.valid_until_of(p) == date(2024, 4, 30) and dp.issued_of(p) == date(2024, 3, 15)
 
     def test_validity_words_need_a_verified_validity_or_due_date(self):
         p, _ = self._verify(_profile(validity_words=("valid until", "caduca"),
                                      dates=(ProfileDate("valid_until", date(2030, 1, 1)),)))
         assert p.validity_words == () and dp.valid_until_of(p) is None
+        assert _grades(p, "date") == [("2030-01-01", "not_in_text")]   # kept, but never a validity date (Δ60)
         p, _ = self._verify(_profile(validity_words=("valid until",),
                                      dates=(ProfileDate("valid_until", date(2024, 4, 30)),)))
         assert p.validity_words == ("valid until",)
@@ -260,20 +275,21 @@ class TestVerify:
         assert dp.valid_until_of(p) == date(2024, 4, 30)
 
     def test_labels_outside_the_fixed_set(self):
-        p, drops = self._verify(_profile(doc_type="spaceship", life_domains=("finance", "space", "finance", "home"),
+        p, counts = self._verify(_profile(doc_type="spaceship", life_domains=("finance", "space", "finance", "home"),
                                          dates=(ProfileDate("printed", date(2024, 3, 15)),),
                                          entities=(ProfileEntity("Springfield", "city", "Springfield"),),
                                          key_values=(KeyValue("vat", "1.250,00", "1250.00"),)))
         assert p.doc_type == "other" and p.life_domains == ("finance", "home")
         assert p.dates[0].label == "other" and p.entities[0].type == "other"
         assert p.key_values[0].label == "other_id"
-        assert drops.labels == 5
+        assert counts.labels == 5
         assert set(p.life_domains) <= set(LIFE_DOMAINS)
 
     def test_no_key_values_for_kinds_that_get_none(self):
-        p, drops = self._verify(_profile(key_values=(KeyValue("amount_total", "1.250,00 €", "1250.00"),)),
-                                key_values=False)
-        assert p.key_values == () and drops.values == 1
+        p, counts = self._verify(_profile(key_values=(KeyValue("amount_total", "1.250,00 €", "1250.00"),)),
+                                 key_values=False)
+        # the kind gets none (§25.3): neither kept nor graded; it is not a value the text lacks (Δ59)
+        assert p.key_values == () and _grades(p, "value") == [] and counts.not_in_text == {}
 
     def test_caps(self):
         many = tuple(ProfileEntity("Springfield", "place", "Springfield", tuple(f"f{i}" for i in range(20)))
@@ -291,7 +307,10 @@ class TestVerify:
         assert p.topics == ()
 
     def test_dropping_everything_is_not_a_failure(self):
-        p, drops = self._verify(_profile(entities=(ProfileEntity("Oslo", "place", "Oslo"),),
-                                         key_values=(KeyValue("price", "7", "7"),)))
-        assert p.entities == () and p.key_values == () and (drops.entities, drops.values) == (1, 1)
+        # Δ59: nothing is dropped; a profile none of whose values the text holds is still a profile
+        p, counts = self._verify(_profile(entities=(ProfileEntity("Oslo", "place", "Oslo"),),
+                                          key_values=(KeyValue("price", "7", "7"),)))
+        assert [e.name for e in p.entities] == ["Oslo"] and [kv.canonical for kv in p.key_values] == ["7"]
+        assert _grades(p, "entity") == [("Oslo", "not_in_text")] and _grades(p, "value") == [("7", "not_in_text")]
+        assert counts.not_in_text == {"entity": 1, "value": 1}
         assert p.what_it_is == "An invoice"

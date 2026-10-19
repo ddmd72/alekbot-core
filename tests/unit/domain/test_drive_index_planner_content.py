@@ -383,8 +383,10 @@ class TestRuns:
 
     def test_demotion_keeps_a_brief(self):
         brief = DocumentBrief(doc_type="receipt", doc_date=datetime(2024, 1, 2, tzinfo=timezone.utc))
-        rec = demoted(observe(ch()), Reason.USER_CHUNK_CAP, NOW, outcome=text(brief=brief), chunk_count=9)
-        assert rec.brief == brief and rec.effective_date == brief.doc_date
+        # the read text prints the brief's date (Δ60: a demotion grades it before it dates the file)
+        rec = demoted(observe(ch()), Reason.USER_CHUNK_CAP, NOW,
+                      outcome=text(body="Receipt of 02.01.2024. " + "Clause one. " * 300, brief=brief), chunk_count=9)
+        assert rec.brief == replace(brief, date_grade="in_text") and rec.effective_date == brief.doc_date
 
     def test_demoted_refuses_a_structural_reason(self):
         with pytest.raises(ValueError):

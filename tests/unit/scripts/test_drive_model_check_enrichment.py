@@ -56,7 +56,7 @@ async def test_profile_writes_the_verified_profile_and_cost(tmp_path):
     assert set(rows) == {"factura.txt", "short.md"}
     assert rows["short.md"]["status"] == "no_model_input"
     assert rows["factura.txt"]["status"] == "ok" and rows["factura.txt"]["cost"] > 0
-    assert rows["factura.txt"]["drops"]["dates"] == 0
+    assert rows["factura.txt"]["graded"]["not_in_text"].get("date", 0) == 0   # Δ59: grades, not drops
     saved = json.loads((out / "profile" / "openai" / "factura.profile.json").read_text())
     assert saved["verified"]["entities"][0]["printed"] == "Barcelona"
     assert summary["openai"]["calls"] == 1 and summary["openai"]["timing"]["calls"] == 1

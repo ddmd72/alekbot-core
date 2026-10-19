@@ -64,8 +64,8 @@ from .drive_index_params import (
 )
 from .drive_keys import about_keys_capped
 from .drive_profile import (
-    KindPolicy, ProfileOutput, TemplateReason, input_fingerprint, issued_of, profile_input, record_policy, stored_text,
-    template_profile, valid_until_of,
+    KindPolicy, ProfileOutput, TemplateReason, _HasText, brief_date_grade, input_fingerprint, issued_of,
+    profile_input, record_policy, stored_text, template_profile, valid_until_of,
 )
 
 PROFILER_AGENT = "drive_profiler"
@@ -129,8 +129,8 @@ def effective_from(rec: DriveIndexRecord, profile: Optional[DriveProfile], *,
     issued = issued_of(profile) if profile is not None else None
     if issued is not None:
         return _utc(issued)
-    if rec.brief is not None and rec.brief.doc_date is not None:
-        return rec.brief.doc_date
+    if rec.brief is not None and rec.brief.held_date is not None:
+        return rec.brief.held_date
     change = DriveChange(item_id=rec.item_id, facets=rec.facets, fs_modified_at=rec.fs_modified_at,
                          modified_at=rec.modified_at)
     fallback = rec.effective_date or now
@@ -198,7 +198,10 @@ def _profile_cleared(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
                   profile_parked_month="", profile_hold=None, profile_hold_version="", profile_attempts=0,
                   profile_input_fingerprint=None if not rec.is_folder else rec.profile_input_fingerprint)
     if had_profile:
-        out = replace(out, effective_date=effective_from(out, None, now=now) or rec.effective_date)
+        # the score read that profile's grades: it is stale with it; the write that gives the record a profile or a
+        # brief scores it again, and until then the upgrade pass sees it unscored (§26.4)
+        out = replace(out, effective_date=effective_from(out, None, now=now) or rec.effective_date,
+                      card_accuracy=None, accuracy_version=0)
     return out
 
 
@@ -272,6 +275,15 @@ def regraded(rec: DriveIndexRecord, profile: DriveProfile, now: datetime) -> Dri
     valid = valid_until_of(profile)
     out = replace(rec, profile=profile, valid_until=_utc(valid) if valid is not None else None)
     return replace(out, effective_date=effective_from(out, profile, now=now) or rec.effective_date)
+
+
+def brief_graded(rec: DriveIndexRecord, chunks: Sequence[_HasText], now: datetime) -> DriveIndexRecord:
+    """The reader brief's date graded against the stored text (§26.4, Δ60), its grade kept on the brief and the effective
+    date following it: a date the text does not hold never becomes the file's date. No brief date, no change."""
+    if rec.brief is None or rec.brief.doc_date is None:
+        return rec
+    out = replace(rec, brief=replace(rec.brief, date_grade=brief_date_grade(rec.brief, chunks, rec.name)))
+    return replace(out, effective_date=effective_from(out, out.profile, now=now) or rec.effective_date)
 
 
 def profile_charged(rec: DriveIndexRecord, status: ModelReplyStatus, now: datetime) -> DriveIndexRecord:
