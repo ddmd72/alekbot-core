@@ -42,7 +42,9 @@ PROFILE_VERSION = 2                           # profiler prompt, schema, input r
                                               # 2: dates carry `printed`, value labels document_number and
                                               # personal_id_number (§26.5 Δ63); grading replaces dropping: every
                                               # value kept with a `graded` evidence grade (§26.4, Δ59)
-ACCURACY_VERSION = 1                          # drive_accuracy: the grader's use of the text and the weights (§26.4, Δ61)
+ACCURACY_VERSION = 2                          # drive_accuracy: the grader's use of the text and the weights (§26.4, Δ61)
+                                              # 2 (D37): bilingual/abbreviated/compact month forms, ISO basic dates and
+                                              # day+month with the year elsewhere grade `in_text_as`
 PASSAGES_VERSION = 1                          # doc2query prompt and grounding
 SEARCH_V2_VERSIONS: Mapping[str, int] = {"keys": KEYS_VERSION, "profile": PROFILE_VERSION,
                                          "passages": PASSAGES_VERSION}

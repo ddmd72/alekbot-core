@@ -17,7 +17,8 @@ Public interface:
         .term_grade(term) -> (Grade, seen_as)
         .skeleton_seen(spelling) -> str           the text's words that share the spelling's skeletons, or ""
         .words_grade(phrase) -> Grade             a native topic against the text's word keys
-    lenient_date(printed) -> Optional[date]       any separators incl. spaces, day-month-year first, month names
+    lenient_date(printed) -> Optional[date]       any separators incl. spaces, day-month-year first, month names (bilingual
+                                                  pairs, abbreviations, compact "13JUN2024") and ISO basic ("20261009T180724Z")
     norm(text) -> str                             NFC + casefold + whitespace collapse (the matching form)
     normalise_value(printed) -> str               the casefolded letters and digits of a value, accents kept
 
@@ -41,15 +42,39 @@ from .drive_name_keys import _is_cyrillic
 
 _STRIPPED_MIN = 3                      # a separator-free match needs this many letters and digits
 _NUMERIC_DATE = re.compile(r"\d+")
-_MONTH_ALTS = "|".join(re.escape(f) for f in sorted(_MONTH_OF, key=lambda f: (-len(f), f)))
-_MONTH_ONE = rf"(?:{_MONTH_ALTS})\.?(?![\w])"
-# a month name, or a bilingual one as passports print it ("MAY/MAI"): the first name decides the month
-_MONTH = rf"({_MONTH_ALTS})\.?(?![\w])(?:\s*/\s*{_MONTH_ONE})?"
+# Month abbreviations the passport and ISO-compact forms print ("ЛИП/JUL", "13JUN2024"), per language; the content-term
+# table keeps its own (full names and a few abbreviations): this one is the grader's, merged under it, never over it.
+_ABBREVIATIONS: Dict[int, Tuple[str, ...]] = {
+    1: ("jan", "ene", "janv", "січ", "янв"),
+    2: ("feb", "févr", "февр", "лют", "фев"),
+    3: ("mar", "мар", "бер"),
+    4: ("apr", "abr", "avr", "кві", "квіт", "апр"),
+    5: ("may", "mai", "тра", "трав", "май"),
+    6: ("jun", "juin", "чер", "черв", "июн"),
+    7: ("jul", "juil", "лип", "июл"),
+    8: ("aug", "ago", "août", "сер", "серп", "авг"),
+    9: ("sep", "sept", "set", "вер", "сен", "сент"),
+    10: ("oct", "жов", "жовт", "окт"),
+    11: ("nov", "лис", "лист", "ноя", "нояб"),
+    12: ("dec", "dic", "déc", "гру", "груд", "дек"),
+}
+_GRADE_MONTH_OF: Dict[str, int] = dict(_MONTH_OF)
+for _month, _forms in _ABBREVIATIONS.items():
+    for _form in _forms:
+        _GRADE_MONTH_OF.setdefault(_form, _month)
+_MONTH_ALTS = "|".join(re.escape(f) for f in sorted(_GRADE_MONTH_OF, key=lambda f: (-len(f), f)))
+_MON_END = r"\.?(?![^\W\d])"          # not followed by a letter: a digit may follow ("13JUN2024")
+# a month name, or a bilingual pair as passports print it ("MAY/MAI", "ЛИП/JUL"): both must read as the same month
+_MONTH = rf"(?P<m1>{_MONTH_ALTS}){_MON_END}(?:\s*/\s*(?P<m2>{_MONTH_ALTS}){_MON_END})?"
 _ORD = r"(?:st|nd|rd|th|er|e)?"
 _NAMED_DAY_FIRST = re.compile(
-    rf"(?<!\d)(\d{{1,2}}){_ORD}[\W_]+(?:(?:de|of)[\W_]+)?{_MONTH}[\W_]+(?:(?:de|del)[\W_]+)?(\d{{4}})(?!\d)",
+    rf"(?<!\d)(?P<d>\d{{1,2}}){_ORD}[\W_]*(?:(?:de|of)[\W_]+)?{_MONTH}[\W_]*(?:(?:de|del)[\W_]+)?(?P<y>\d{{4}}|\d{{2}})(?!\d)",
     re.IGNORECASE)
-_NAMED_MONTH_FIRST = re.compile(rf"(?<![\w]){_MONTH}[\W_]+(\d{{1,2}}){_ORD}[\W_]+(\d{{4}})(?!\d)", re.IGNORECASE)
+_NAMED_MONTH_FIRST = re.compile(rf"(?<![\w]){_MONTH}[\W_]+(?P<d>\d{{1,2}}){_ORD}[\W_]+(?P<y>\d{{4}})(?!\d)", re.IGNORECASE)
+# a day and a month with no year ("5 жовтня", "5 de octubre", "October 5"): graded only with the year found elsewhere
+_DAY_MONTH_ONLY = re.compile(rf"\s*(?P<d>\d{{1,2}}){_ORD}[\W_]*(?:(?:de|of)[\W_]+)?{_MONTH}\s*", re.IGNORECASE)
+_MONTH_DAY_ONLY = re.compile(rf"\s*{_MONTH}[\W_]+(?P<d>\d{{1,2}}){_ORD}\s*", re.IGNORECASE)
+_ISO_BASIC = re.compile(r"\s*(\d{4})(\d{2})(\d{2})(?:T\d{6}Z?)?\s*", re.IGNORECASE)   # 20261009, 20261009T180724Z
 
 
 def norm(text: str) -> str:
@@ -68,6 +93,25 @@ def _date(y: int, m: int, d: int) -> Optional[date]:
         return None
 
 
+def _month_of(m: "re.Match[str]") -> Optional[int]:
+    """The month a (possibly bilingual) month match reads as; None when the two names disagree."""
+    first = _GRADE_MONTH_OF[m.group("m1").casefold()]
+    second = m.group("m2")
+    if second is not None and _GRADE_MONTH_OF[second.casefold()] != first:
+        return None
+    return first
+
+
+def day_month_of(printed: str) -> Optional[Tuple[int, int]]:
+    """(month, day) of a printed form that is a day and a month name and nothing else ("5 жовтня"); None otherwise."""
+    text = unicodedata.normalize("NFC", printed)
+    m = _DAY_MONTH_ONLY.fullmatch(text) or _MONTH_DAY_ONLY.fullmatch(text)
+    if m is None:
+        return None
+    month = _month_of(m)
+    return None if month is None else (month, int(m.group("d")))
+
+
 def lenient_date(printed: str, expected: Optional[date] = None) -> Optional[date]:
     """The one date a printed form reads as (module docstring), or None when it is not a date. A two-digit year is read
     only against `expected` (the profile's ISO date): it is that year when it equals the last two digits of the
@@ -75,10 +119,22 @@ def lenient_date(printed: str, expected: Optional[date] = None) -> Optional[date
     text = unicodedata.normalize("NFC", printed)
     named = _NAMED_DAY_FIRST.search(text)
     if named is not None:
-        return _date(int(named.group(3)), _MONTH_OF[named.group(2).casefold()], int(named.group(1)))
+        month = _month_of(named)
+        year = named.group("y")
+        if month is None:
+            return None
+        if len(year) == 2:
+            if expected is None or expected.year % 100 != int(year):
+                return None
+            return _date(expected.year, month, int(named.group("d")))
+        return _date(int(year), month, int(named.group("d")))
     named = _NAMED_MONTH_FIRST.search(text)
     if named is not None:
-        return _date(int(named.group(3)), _MONTH_OF[named.group(1).casefold()], int(named.group(2)))
+        month = _month_of(named)
+        return None if month is None else _date(int(named.group("y")), month, int(named.group("d")))
+    basic = _ISO_BASIC.fullmatch(text)
+    if basic is not None:
+        return _date(int(basic.group(1)), int(basic.group(2)), int(basic.group(3)))
     groups = _NUMERIC_DATE.findall(text)
     if len(groups) != 3:
         return None
@@ -192,13 +248,20 @@ class TextEvidence:
         """The text prints this date in a format the lenient reader knows (a brief's date has no `printed` form)."""
         return day in self._dates_in_text()
 
+    def _year_elsewhere(self, year: int) -> bool:
+        """The year occurs in the text as a number term (a year printed apart from a day and month)."""
+        return str(year) in self.terms
+
     def date_grade(self, iso: date, printed: str) -> Tuple[Grade, str]:
         """A date (§26.4). `in_text`: its ISO form is among the text's number terms. `in_text_as`: `printed` occurs
         and its lenient reading is this date; else `not_in_text`."""
         if iso.isoformat() in self.terms:
             return Grade.IN_TEXT, ""
-        if printed.strip() and self.occurs(printed) and lenient_date(printed, iso) == iso:
-            return Grade.IN_TEXT_AS, printed.strip()
+        if printed.strip() and self.occurs(printed):
+            if lenient_date(printed, iso) == iso:
+                return Grade.IN_TEXT_AS, printed.strip()
+            if day_month_of(printed) == (iso.month, iso.day) and self._year_elsewhere(iso.year):
+                return Grade.IN_TEXT_AS, printed.strip()     # D37: "5 жовтня", the year printed apart from the day
         return Grade.NOT_IN_TEXT, ""
 
     def value_grade(self, printed: str, canonical: str) -> Tuple[Grade, str, str]:
