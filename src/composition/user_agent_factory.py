@@ -307,6 +307,11 @@ class UserAgentFactory(AgentFactoryPort):
             if cached and (time.time() - cached["last_used"]) < self._cache_ttl:
                 cached["last_used"] = time.time()
                 return cached
+            # An entry can be expired but not yet swept (the sweep lags between requests).
+            # Rebuilding without evicting it leaves the stale agents registered, so every new
+            # registration is refused ("already registered") and the coordinator keeps routing
+            # to the old config snapshot.
+            self._evict_user(user_id)
             return await self._create_and_cache_agents(user_id)
 
     async def _create_and_cache_agents(self, user_id: str) -> Dict[str, object]:

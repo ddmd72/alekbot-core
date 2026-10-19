@@ -79,15 +79,15 @@ high-velocity AI-generated change:
   fix `src/`, never the test. The few exceptions live in a tech-debt registry
   ([`arch_tech_debt.py`](tests/unit/arch_tech_debt.py)) that requires explicit owner sign-off —
   and its cross-port and cross-adapter whitelists are currently empty.
-- **Test density is the enforcement layer.** 6,500+ tests for ~400 source files is a
+- **Test density is the enforcement layer.** 13,000+ tests for ~400 source files is a
   deliberate ratio, not over-testing: tests are the fastest feedback channel an AI
   collaborator has, and the contract files ([`adapter_contracts.py`](tests/contracts/adapter_contracts.py))
   carry the same explicit AI-modification policy as the architecture rules.
 - **Layered context for AI sessions.** A hierarchy of `CLAUDE.md` files (root + per-layer)
   gives any AI session the local invariants — import rules, conventions, things that must
   not be "helpfully fixed" — without relying on the model inferring them from code.
-- **Decisions are recorded so they don't get re-litigated.** 30+ compact decision records
-  and 35 RFCs ([`docs/04_solution_strategy/decisions/`](docs/04_solution_strategy/decisions/),
+- **Decisions are recorded so they don't get re-litigated.** 100+ compact decision records
+  and 50+ RFCs ([`docs/04_solution_strategy/decisions/`](docs/04_solution_strategy/decisions/),
   [`docs/10_rfcs/`](docs/10_rfcs/)) capture trade-offs and rejected alternatives — the third
   defensive layer (after ports and tests) against silent regressions across sessions.
 - **Prompts are data, not code.** Agent prompts are assembled from versioned Firestore

@@ -59,7 +59,7 @@ make fetch-logs [K=300] # Pull last K logs to alek_debug.log (grep locally — s
 Lint + format via `ruff` (`make lint` / `make format`, config in `ruff.toml`). `make check` runs
 `ruff check src/` and `mypy --strict` on `src/domain` + `src/ports` (`mypy.ini`; adapters stay
 informational, `mypy-adapters.ini`, see `decisions/mypy_scoped_rollout.md`) before the unit suite, and CI (`.github/workflows/ci.yml`) runs `make check` on
-every push/PR (posting ✅/❌ to Slack). The full unit/architecture suite (~11 300 tests) is green
+every push/PR (posting ✅/❌ to Slack). The full unit/architecture suite (~13 300 tests) is green
 and **safe to run in full** (any historical "don't run the full suite" warning was a since-fixed
 chunker infinite loop, not a standing hazard). `make test-unit` / `make check` run it in parallel
 via pytest-xdist (`-n auto`; cap with `PYTEST_WORKERS=6`): ~1:34 on a 12-core Mac vs ~5:00
@@ -982,6 +982,7 @@ the local file** — far faster and cheaper than repeated remote `gcloud logging
 | Operational events, errors, tracebacks, control flow | **Cloud Logging** | `make fetch-logs` (above) |
 | Actual LLM prompt/response **content** + tokens | **BigQuery** `alek_observability_dev.prompt_content` | `bq query` (below) |
 | The **cascade** — who delegated to whom, what each agent got and returned, failed calls | **Logfire** | trace tree in the UI, or SQL via the Logfire MCP server |
+| **Memory** over time — per process, per work unit, how long, what was open at a spike | **BigQuery** `alek_memory_dev` (log sink, 90 days) | queries in `docs/05_building_blocks/memory_telemetry/README.md`; Cloud Run's own metric only says *that* memory grew |
 
 **Logfire holds prompt/response content too since 2026-07-30** (`LOGFIRE_CAPTURE_CONTENT=true`).
 Prefer it whenever the question involves *relationships between calls* — BigQuery cannot express

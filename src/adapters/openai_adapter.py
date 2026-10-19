@@ -36,7 +36,7 @@ import hashlib
 import json
 import os
 import openai
-from typing import List, Any, Optional, Set, Dict
+from typing import List, Any, Optional, Set, Dict, Tuple
 from openai import AsyncOpenAI
 from ..ports.llm_port import (
     LLMPort,
@@ -50,6 +50,7 @@ from ..ports.llm_port import (
     PROMPT_CACHE_BOUNDARY,
 )
 from ..domain.llm import FinishReason, USER_TURN_SYSTEM_ANCHOR, build_persona_anchor
+from ..domain.memory_telemetry import payload_fields
 from ..domain.user import PerformanceTier
 from ..domain.exceptions import (
     LLMAccountError,
@@ -304,6 +305,13 @@ class OpenAIAdapter(LLMPort):
         if developer_parts:
             combined_developer = "\n\n".join(developer_parts)
             input_items.insert(0, {"role": "developer", "content": combined_developer})
+
+        n_file_parts, file_chars = self._file_payload(input_items)
+        if n_file_parts:
+            logger.info(
+                "memory.payload openai %s files=%s %.1fMB", model_name, n_file_parts, file_chars / (1024 * 1024),
+                extra={"json_fields": payload_fields("openai", model_name, len(input_items), n_file_parts, file_chars)},
+            )
 
         logger.info(
             "🔍 [OpenAIAdapter] Request: model=%s input_items=%s tools=%s json_mode=%s grounding=%s thinking=%s",
@@ -630,6 +638,23 @@ class OpenAIAdapter(LLMPort):
                         return sig
 
         raise ValueError(f"[OpenAIAdapter] call_id not found for function '{tool_name}'")
+
+    @staticmethod
+    def _file_payload(input_items: List[dict]) -> Tuple[int, int]:
+        """(number of file parts, total characters of their base64 data URLs) in a built request."""
+        count = chars = 0
+        for item in input_items:
+            content = item.get("content") if isinstance(item, dict) else None
+            if not isinstance(content, list):
+                continue
+            for part in content:
+                if not isinstance(part, dict):
+                    continue
+                url = part.get("image_url") if part.get("type") == "input_image" else part.get("file_data")
+                if isinstance(url, str) and part.get("type") in ("input_image", "input_file"):
+                    count += 1
+                    chars += len(url)
+        return count, chars
 
     @staticmethod
     def _file_input_part(file_data: dict) -> dict:

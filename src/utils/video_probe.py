@@ -11,12 +11,20 @@ import asyncio
 import tempfile
 from typing import Optional
 
+from ..domain.memory_telemetry import SCOPE_SUBPROCESS
 from .logger import logger
+from .memory_scope import memory_scope
 
 _PROBE_TIMEOUT_S = 15.0
 
 
 async def probe_video_duration_s(video_data: bytes) -> Optional[float]:
+    """Duration in seconds, or None when unknown (see ``_probe_video_duration_s``)."""
+    with memory_scope(SCOPE_SUBPROCESS, "ffprobe"):
+        return await _probe_video_duration_s(video_data)
+
+
+async def _probe_video_duration_s(video_data: bytes) -> Optional[float]:
     """
     Return the video's duration in seconds, or None if ffprobe fails, times
     out, or is unavailable. Callers must treat None as "unknown" — never
