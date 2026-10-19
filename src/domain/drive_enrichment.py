@@ -14,6 +14,7 @@ is waived here on purpose).
 Public interface:
     JobState, HoldReason, ProfileSource, HintType, UsageClass, EnrichJob
     ProfileDate, ProfileEntity, KeyValue, DriveProfile
+    Grade, GradedField, GradedValue, is_unconfirmed       (evidence grading, §26.4)
     PhotoObject, PhotoDescription
     HintItem, DriveHintDoc, UNGROUNDED
     EnrichContext, ModelUsageMonth, InitialBuild
@@ -69,6 +70,23 @@ class UsageClass(str, Enum):
     PASSAGE = "passage"
 
 
+class Grade(str, Enum):
+    """The evidence grade of one model-written value against the file's own text (§26.4, Δ59)."""
+    IN_TEXT = "in_text"            # the text holds the value as written
+    IN_TEXT_AS = "in_text_as"      # the text holds it, written differently (`GradedValue.seen_as`)
+    NOT_IN_TEXT = "not_in_text"    # the text does not hold it: kept, keyed apart, never exact
+
+
+class GradedField(str, Enum):
+    """What kind of value a grade is about; the accuracy weights are per field (§26.4). Doc type, life areas, English
+    topics and the word lists are interpretation and are never graded."""
+    DATE = "date"                  # a profile date (identified by its ISO form), or a brief's date
+    VALUE = "value"                # a key value (identified by its printed form), or a brief's amount
+    ENTITY = "entity"              # an entity (by its printed form, else its name), or a brief's party
+    NUMBER = "number"              # a number term of the profile's title or what_it_is
+    TOPIC_NATIVE = "topic_native"  # a native-language topic
+
+
 class EnrichJob(str, Enum):
     """The job names `count_by_job_state` keys its counts by (§25.13.1)."""
     PROFILE = "profile"
@@ -77,16 +95,18 @@ class EnrichJob(str, Enum):
 
 @dataclass(frozen=True)
 class ProfileDate:
-    """A date printed in the document; `label` from `drive_labels.DATE_LABELS`. Kept only when its ISO form is among
-    the document's number terms (§25.4.1 verification)."""
+    """A date printed in the document; `label` from `drive_labels.DATE_LABELS`. Graded against the text (§26.4): a
+    `not_in_text` date stays but never moves a file in time. `printed`: the date as the document prints it (§26.4); ""
+    in a profile stored before it."""
     label: str
     iso: date
+    printed: str = ""
 
 
 @dataclass(frozen=True)
 class ProfileEntity:
-    """A named thing; `type` from `drive_labels.ENTITY_TYPES`. Kept only when `printed` occurs in the text or the name.
-    `found`: the spellings among `name` and `forms` that verification also found there. `printed` and `found` are keyed
+    """A named thing; `type` from `drive_labels.ENTITY_TYPES`. Graded (§26.4): `printed` in the text or the name is
+    exact; a `not_in_text` entity is keyed `ef:` only. `found`: the spellings among `name` and `forms` that verification also found there. `printed` and `found` are keyed
     `e:` (exact); the other spellings `ef:`, the index's own, never exact (§25.2.4, xc F1)."""
     name: str
     type: str
@@ -97,8 +117,8 @@ class ProfileEntity:
 
 @dataclass(frozen=True)
 class KeyValue:
-    """A printed value; `label` from `drive_labels.VALUE_LABELS`. Kept only when `canonical` is among the number terms or
-    `printed` occurs verbatim (§25.4.1)."""
+    """A printed value; `label` from `drive_labels.VALUE_LABELS`. Graded (§26.4): `canonical` among the number terms
+    or `printed` occurring verbatim is `in_text`; a `not_in_text` value is keyed `va:`, never `v:`."""
     label: str
     printed: str
     canonical: str
@@ -124,6 +144,25 @@ class DriveProfile:
     label_words: Tuple[str, ...] = ()
     domain_words: Tuple[str, ...] = ()
     validity_words: Tuple[str, ...] = ()
+    graded: Tuple["GradedValue", ...] = ()     # one entry per graded value (§26.4); () in a profile stored before it
+
+
+@dataclass(frozen=True)
+class GradedValue:
+    """The grade of one value of a profile (or of a brief): `field` a `GradedField` value, `value` its identity (a
+    date's ISO form, a key value's or entity's printed form, a number term, a topic), `grade` a `Grade` value,
+    `seen_as` the text's own form of it for `in_text_as` ("" otherwise). Plain strings: stored as they are."""
+    field: str
+    value: str
+    grade: str
+    seen_as: str = ""
+
+
+def is_unconfirmed(profile: DriveProfile, field: GradedField, value: str) -> bool:
+    """True when the profile graded this value and the file's text does not hold it (every entry of the value says
+    `not_in_text`). A profile stored before grading has no grades: nothing is unconfirmed (it was verified then)."""
+    grades = [g.grade for g in profile.graded if g.field == field.value and g.value == value]
+    return bool(grades) and all(g == Grade.NOT_IN_TEXT.value for g in grades)
 
 
 @dataclass(frozen=True)
@@ -140,6 +179,7 @@ class PhotoDescription:
     objects: Tuple[PhotoObject, ...] = ()
     scene: str = ""
     visible_text: str = ""
+    scene_labels: Tuple[str, ...] = ()   # D40: SCENE_LABELS values the model gave, deduped, at most PHOTO_SCENE_LABELS_MAX
 
 
 @dataclass(frozen=True)

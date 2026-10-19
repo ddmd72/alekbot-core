@@ -1565,6 +1565,7 @@
           "drive.index_metadata_only": "Name and details only",
           "drive.index_unresolved": "Being located",
           "drive.index_unread": "Not read yet",
+          "drive.index_inaccessible": "Bot cannot open (sharing settings)",
           "drive.index_deleting": "Being removed",
           "drive.index_building": "Indexing in progress…",
           "drive.index_awaiting_rebuild": "Waiting to be rebuilt for the new search: until then search finds nothing in the drive.",
@@ -1680,6 +1681,7 @@
           "drive.index_metadata_only": "Лише назва й відомості",
           "drive.index_unresolved": "Визначається розташування",
           "drive.index_unread": "Ще не прочитано",
+          "drive.index_inaccessible": "Бот не може відкрити (налаштування доступу)",
           "drive.index_deleting": "Видаляються",
           "drive.index_building": "Триває індексація…",
           "drive.index_awaiting_rebuild": "Очікує перебудови для нового пошуку: доти пошук нічого не знаходить на диску.",
@@ -1795,6 +1797,7 @@
           "drive.index_metadata_only": "Nom et détails seulement",
           "drive.index_unresolved": "Localisation en cours",
           "drive.index_unread": "Pas encore lus",
+          "drive.index_inaccessible": "Inaccessibles au bot (partage)",
           "drive.index_deleting": "Suppression en cours",
           "drive.index_building": "Indexation en cours…",
           "drive.index_awaiting_rebuild": "En attente de reconstruction pour la nouvelle recherche : d’ici là, la recherche ne trouve rien dans le drive.",
@@ -1910,6 +1913,7 @@
           "drive.index_metadata_only": "Solo nombre y detalles",
           "drive.index_unresolved": "Ubicándose",
           "drive.index_unread": "Aún sin leer",
+          "drive.index_inaccessible": "El bot no puede abrir (uso compartido)",
           "drive.index_deleting": "Eliminándose",
           "drive.index_building": "Indexación en curso…",
           "drive.index_awaiting_rebuild": "Pendiente de reconstrucción para la nueva búsqueda: hasta entonces la búsqueda no encuentra nada en el disco.",
@@ -3175,6 +3179,7 @@
         pending: "drive.index_pending",
         unresolved: "drive.index_unresolved",
         unread: "drive.index_unread",
+        inaccessible: "drive.index_inaccessible",   // files the bot cannot open (USER_DRIVE_INDEXING_RFC §26.2)
         failed: "drive.index_failed",
         deleting: "drive.index_deleting",
       };
@@ -3209,8 +3214,9 @@
           const known = Object.keys(DRIVE_COUNTER_LABELS);
           const keys = known.concat(Object.keys(c).filter((k) => !known.includes(k)));
           for (const key of keys) {
-            // not_read_yet is the waiting part of `unread`, for search's envelope (F5-2): not a counter of its own
-            if (key === "carded" || key === "not_read_yet" || !num(c[key])) continue;
+            // not_read_yet is the waiting part of `unread`, for search's envelope (F5-2): not a counter of its own;
+            // inaccessible_unnotified is the drive notice's gate (§26.2), not the user's
+            if (key === "carded" || key === "not_read_yet" || key === "inaccessible_unnotified" || !num(c[key])) continue;
             counts.push(`${DRIVE_COUNTER_LABELS[key] ? t(DRIVE_COUNTER_LABELS[key]) : escapeHtml(key)}: ${num(c[key])}`);
           }
           const last = ix.last_success_at

@@ -47,7 +47,8 @@ async def test_a_v1_index_does_no_tick_work_until_its_rebuild(w):
     doc = w.add_doc("a.md", doc_text())
     await w.settle()
     state = w.repo.states["u"]
-    v1 = {k: v for k, v in state.applied_versions.items() if k not in di.SEARCH_V2_VERSIONS}
+    # a v1 index has neither the Search v2 keys nor `accuracy` (newer still; the gate key since Δ65)
+    v1 = {k: v for k, v in state.applied_versions.items() if k not in {*di.SEARCH_V2_VERSIONS, "accuracy"}}
     w.repo.states["u"] = replace(state, applied_versions=v1)
     records = dict(w.repo.records)
     w.add_doc("b.md", doc_text("Brio"))

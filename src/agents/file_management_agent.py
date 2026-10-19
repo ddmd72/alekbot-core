@@ -15,6 +15,9 @@ Intents:
   move_file_in_drive, create_folder_in_drive
   update_file_in_drive (append / replace-by-file), delete_file_from_drive
   search_files_in_drive           — the drive index (USER_DRIVE_INDEXING_RFC §10)
+list_files_in_drive takes a folder path or a `drive:` folder ref. When list or open meets "not found" for an item the
+index knows the bot cannot open (its sharing settings keep it out), the answer is the index's sentence, not "deleted or
+moved out" (USER_DRIVE_INDEXING_RFC §26.2, Δ55).
 Mutating intents refuse a ref from the other store and run shielded from cancellation;
 delete and replace post a receipt via notify_raw (USER_DRIVE_RFC §4.4, §4.10, §4.13).
 File text and search results reach the model only inside the escaped, nonce-tagged wrapper
@@ -463,7 +466,11 @@ class FileManagementAgent(BaseAgent):
         except DriveNotConnectedError:
             return self._fail(message, self._NOT_CONNECTED)
         except DriveItemNotFoundError:
-            return self._fail(message, self._GONE)
+            # an item the index knows the bot cannot open gets the index's sentence (§26.2, Δ55): a move, a delete or
+            # an update of such a file as well as an open
+            item_id = parse_drive_ref(payload.get("file_ref") or "")
+            note = await self._access_note(user_id, item_id=item_id) if item_id is not None else None
+            return self._fail(message, note or self._GONE)
         except FileNotFoundError:
             # The conversion service has no drive wired.
             return self._fail(message, "The drive is not configured.")
@@ -559,10 +566,34 @@ class FileManagementAgent(BaseAgent):
             return self._fail(message, f"File '{ref}' not found in storage. It may have been deleted or "
                                        f"expired. Ask the user to re-upload the file.")
 
+    async def _access_note(self, user_id: str, *, item_id: Optional[str] = None,
+                           path: Optional[str] = None) -> Optional[str]:
+        """The index's sentence for an item the bot cannot open (§26.2, Δ55), or None: no search service, an item the
+        index does not know or can read, or a lookup that failed (the caller keeps its own answer)."""
+        if self._drive_search is None:
+            return None
+        try:
+            if item_id is not None:
+                return await self._drive_search.access_note(user_id, item_id=item_id)
+            return await self._drive_search.access_note(user_id, path=path)
+        except Exception:
+            logger.warning("FileManagementAgent: access note lookup failed", exc_info=True)
+            return None
+
     async def _open_drive(self, message: AgentMessage, payload: dict, user_id: str) -> AgentResponse:
         ref = payload.get("file_ref") or ""
         if not is_drive_ref(ref):
             return await self._fetch(message, payload, user_id)  # lenient read
+        try:
+            return await self._open_drive_item(message, ref, user_id)
+        except DriveItemNotFoundError:
+            item_id = parse_drive_ref(ref)
+            note = await self._access_note(user_id, item_id=item_id) if item_id is not None else None
+            if note is None:
+                raise
+            return self._fail(message, note)
+
+    async def _open_drive_item(self, message: AgentMessage, ref: str, user_id: str) -> AgentResponse:
         item = await self._conversion_service.get_drive_item(ref, user_id)
         if item.is_folder:
             return self._fail(message, f"'{item.path or '/'}' is a folder; use list_files_in_drive.")
@@ -656,7 +687,23 @@ class FileManagementAgent(BaseAgent):
         return self._ok(message, head + created, [out.item])
 
     async def _list_drive(self, message: AgentMessage, payload: dict, user_id: str) -> AgentResponse:
-        out = await self._svc().list_folder(user_id, payload.get("folder") or None)
+        folder = payload.get("folder") or None
+        folder_id = parse_drive_ref(folder) if folder else None
+        try:
+            if folder_id is not None:   # a `drive:` folder ref, as search returns them (§26.2, Δ55)
+                out = await self._svc().list_folder_by_id(user_id, folder_id)
+            else:
+                out = await self._svc().list_folder(user_id, folder)
+        except DriveItemNotFoundError:
+            note = await self._access_note(user_id, item_id=folder_id) if folder_id is not None else None
+            if note is None:
+                raise
+            return self._fail(message, note)
+        except DrivePathError:
+            note = await self._access_note(user_id, path=folder) if folder and folder_id is None else None
+            if note is None:
+                raise
+            return self._fail(message, note)
         lines = [drive_label(out.folder)] + [f"  {drive_label(i)}" for i in out.items]
         if not out.items:
             lines.append("  (empty)")

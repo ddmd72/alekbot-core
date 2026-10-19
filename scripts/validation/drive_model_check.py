@@ -370,8 +370,8 @@ async def check_profile(folder: Path, providers: Sequence[str], *, registry: Pro
             row: Dict[str, Any] = {"file": path.name, "status": reply.status.value, "model": reply.model,
                                    "cost": round(reply.usd, 6), "seconds": seconds, "calls": timer.calls}
             if reply.profile is not None:
-                verified, drops = drive_profile.verify(reply.profile, chunks, path.name)
-                row["drops"] = asdict(drops)
+                verified, counts = drive_profile.grade(reply.profile, chunks, path.name)
+                row["graded"] = asdict(counts)
                 (target / f"{path.stem}.profile.json").write_text(json.dumps(
                     {"model": asdict(reply.profile), "verified": asdict(verified)}, ensure_ascii=False, indent=1,
                     default=str), encoding="utf-8")

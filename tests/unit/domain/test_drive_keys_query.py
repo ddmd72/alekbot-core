@@ -49,13 +49,14 @@ def test_numbers_come_first_then_words_in_query_order():
 
 def test_a_year_emits_number_value_and_year_keys():
     year = query_concepts("2023").concepts[0]
-    assert set(year.about_keys) == {"n:2023", "v:2023", "y:2023", "pn:2023"}   # pn: a photo's visible text (M3)
+    # pn: a photo's visible text (M3); Δ60: `va:`/`ya:` beside `v:`/`y:` (a value or date the text does not hold)
+    assert set(year.about_keys) == {"n:2023", "v:2023", "va:2023", "y:2023", "ya:2023", "pn:2023"}
     assert year.word_keys == ("n:2023",) and year.hint_keys == ()
 
 
 def test_a_number_outside_the_year_range_emits_no_year_key():
     num = query_concepts("4455").concepts[0]
-    assert set(num.about_keys) == {"n:4455", "v:4455", "pn:4455"}
+    assert set(num.about_keys) == {"n:4455", "v:4455", "va:4455", "pn:4455"}   # Δ60: `va:` beside `v:`
 
 
 def test_an_id_is_one_concept_of_its_maximal_form():
@@ -67,7 +68,8 @@ def test_an_id_is_one_concept_of_its_maximal_form():
 def test_a_month_with_a_year_is_one_month_concept_emitting_only_m():
     for text in ("March 2023", "березень 2023", "марта 2023", "marzo de 2023"):
         (c,) = query_concepts(text).concepts
-        assert c.is_number and c.about_keys == ("m:2023-03",) and c.word_keys == ("m:2023-03",), text
+        # Δ60: `ma:` beside `m:` (a date the text does not hold); still no `y:`/`v:` for a month
+        assert c.is_number and c.about_keys == ("m:2023-03", "ma:2023-03") and c.word_keys == ("m:2023-03",), text
         assert c.hint_keys == ()
 
 
@@ -105,9 +107,11 @@ def test_every_list_is_unique_and_fetched_in_batches_of_at_most_thirty():
 def test_lists_hold_only_their_streams_families():
     for c in query_concepts("Barcelona trip").concepts:
         assert all(k[:2] in ("w:", "x:") for k in c.word_keys) and all(k.startswith("w:") for k in c.hint_keys)
-        # xc F1 adds `ef:`; xc F3: a Latin query word never reads `xl:`/`exl:` skeletons (so none appear here)
-        assert all(k.split(":", 1)[0] + ":" in ("e:", "ef:", "ex:", "k:", "lw:", "tw:", "dw:", "lv:", "pw:", "pe:",
-                                                "v:") for k in c.about_keys)
+        # xc F1 adds `ef:`; xc F3: a Latin query word never reads `xl:`/`exl:` skeletons (so none appear here);
+        # §26.3 (Δ58): a query word emits both capture families, `cp:` and `cpa:`, as it emits `k:`; D40 `sl:` for a
+        # scene name ("trip"); Δ60 `va:` beside `v:`
+        assert all(k.split(":", 1)[0] + ":" in ("e:", "ef:", "ex:", "k:", "cp:", "cpa:", "sl:", "lw:", "tw:", "dw:",
+                                                "lv:", "pw:", "pe:", "v:", "va:") for k in c.about_keys)
         assert not any(k.startswith(("xl:", "exl:")) for k in (*c.word_keys, *c.about_keys, *c.hint_keys))
 
 

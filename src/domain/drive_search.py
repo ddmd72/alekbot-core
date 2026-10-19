@@ -30,13 +30,19 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timezone
 from typing import Callable, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Tuple
 
+from .drive_accuracy import scorable
 from .drive_card import taken_at
-from .drive_index import DriveIndexRecord, DriveSyncState, Reason, RecordState, Scope, TriageVerdict
+from .drive_index import DriveIndexRecord, DriveSyncState, Reason, RecordState, Scope, TriageVerdict, inaccessible
 from .drive_index_params import ACCESS_LOSS_TTL, WRAPPER_TAG_GAP_MAX
 from .drive_index_policy import Admission, admission, kind_of
 from .drive_keys import name_word_concepts, query_concepts
 from .drive_profile import issued_of
-from .drive_search_texts import REBUILDING_LINE, VALID_UNTIL_LINE
+from .drive_capture import CAPTURE_LABELS
+from .drive_labels import scene_label_text
+from .drive_search_texts import (
+    ACCESS_LINE_FILE, ACCESS_LINE_FOLDER, CAPTURE_LINE, CARD_ACCURACY_LINE, ENVELOPE_INACCESSIBLE, REBUILDING_LINE,
+    SCENE_LINE, STALE_INACCESSIBLE, VALID_UNTIL_LINE,
+)
 from .drive_tier_result import TieredResult
 from .user_drive import DriveConnection, DriveItem, make_drive_ref
 
@@ -54,7 +60,10 @@ DATE_FILE = "file date"
 
 UNREAD_COUNTER = "unread"   # DriveSyncState.counters key: documents not searchable, both kinds below (Slice 2)
 NOT_READ_YET_COUNTER = "not_read_yet"   # of them, those still waiting to be read (is_not_read_yet, F5-2); the rest
-                                        # could not be read
+                                        # could not be read. Never a file the bot cannot open (§26.2, Δ56)
+INACCESSIBLE_COUNTER = "inaccessible"   # files (never folders) the bot cannot open (§26.2, Δ56): the coverage line
+INACCESSIBLE_UNNOTIFIED_COUNTER = "inaccessible_unnotified"   # of them, those the user was not told of for their
+                                        # current marking: the fan-out reads the records only while it is non-zero
 
 # A chain longer than this is a cycle or corrupt data: the record is hidden, never looped on.
 MAX_CHAIN_DEPTH = 64
@@ -188,6 +197,11 @@ class DriveSearchCard:
     similar_name: bool = False           # Related: a name over the name_match floor that does not cover the query
     valid_until: Optional[datetime] = None   # the file's validity or due date (xc F5): shown on its card
     expiry_match: bool = False           # it matched through validity words: its date line is the expiry date
+    inaccessible: bool = False           # the bot cannot open it (§26.2): its `index:` line says so and how to fix it
+    capture: str = ""                    # how the file was captured, and by whom (§26.3): its `capture:` line
+    capture_source: str = ""
+    scene_labels: Tuple[str, ...] = ()   # a photograph's scene labels (D40): its `scene:` line
+    card_accuracy: Optional[int] = None  # 0-100 (§26.4): its `card accuracy: N%` line; None for a photo or an undescribed file
 
     def drive_item(self) -> DriveItem:
         """The Step 1 item, built only now that a path is derived (§3.1)."""
@@ -209,6 +223,7 @@ class DriveSearchEnvelope:
     reading: bool = False                # the index's applied policy is not POLICY_VERSION: the upgrade pass is
                                          # still re-planning records, documents are still being read (F4-1)
     index_full: bool = False
+    inaccessible: int = 0                # files the bot cannot open (§26.2, Δ56)
 
 
 @dataclass(frozen=True)
@@ -458,7 +473,7 @@ def date_source(rec: DriveIndexRecord) -> Optional[str]:
     issued = issued_of(rec.profile) if rec.profile is not None else None
     if issued is not None and (when.year, when.month, when.day) == (issued.year, issued.month, issued.day):
         return DATE_WRITTEN
-    if rec.brief is not None and rec.brief.doc_date is not None and rec.brief.doc_date == when:
+    if rec.brief is not None and rec.brief.held_date is not None and rec.brief.held_date == when:
         return DATE_WRITTEN
     if taken_at(rec.facets) == when:
         return DATE_TAKEN
@@ -474,13 +489,50 @@ def is_not_read_yet(rec: DriveIndexRecord, admitted: Optional[FrozenSet[str]] = 
 
 
 def make_card(rec: DriveIndexRecord, path: str, summary: str, nonce: str) -> DriveSearchCard:
+    """A record the bot cannot open (§26.2) keeps a readable generation it had, shown stale (Δ52)."""
+    closed = inaccessible(rec)
     return DriveSearchCard(
         ref=make_drive_ref(rec.item_id), item_id=rec.item_id, name=rec.name, path=path, kind=rec.kind,
         is_folder=rec.is_folder, summary=summary, size_bytes=rec.size_bytes, modified_at=rec.modified_at,
         effective_date=rec.effective_date, web_url=rec.web_url, state=rec.state.value,
-        reason=rec.reason.value if rec.reason else None, stale=rec.stale, truncated=rec.truncated,
+        reason=rec.reason.value if rec.reason else None,
+        stale=rec.stale or (closed and rec.indexed_generation is not None), truncated=rec.truncated,
         content_hash=rec.content_hash, nonce=nonce, date_source=date_source(rec), valid_until=rec.valid_until,
+        inaccessible=closed, capture=rec.capture, capture_source=rec.capture_source, card_accuracy=rec.card_accuracy if scorable(rec) else None,
+        scene_labels=rec.photo_scene_labels,
     )
+
+
+def index_line(card: DriveSearchCard) -> str:
+    """The card's `index:` line: the record's state, or, for an item the bot cannot open, that it exists, why it
+    cannot be opened and the fix (§26.2, D33)."""
+    if card.inaccessible:
+        return ACCESS_LINE_FOLDER if card.is_folder else ACCESS_LINE_FILE
+    return f"index: {card.state}" + (f" ({card.reason})" if card.reason else "")
+
+
+def capture_line(card: DriveSearchCard) -> Optional[str]:
+    """`capture: scan (detected)` (§26.3), or None for a card without a capture (a photograph, a file not read)."""
+    if not card.capture:
+        return None
+    return CAPTURE_LINE.format(capture=CAPTURE_LABELS.get(card.capture, card.capture),
+                               source=card.capture_source or "automatic")
+
+
+def scene_line(card: DriveSearchCard) -> Optional[str]:
+    """`scene: sunset, beach` (D40), or None for a card without scene labels (not a photograph, or none given)."""
+    if not card.scene_labels:
+        return None
+    return SCENE_LINE.format(labels=", ".join(scene_label_text(label) for label in card.scene_labels))
+
+
+def accuracy_line(card: DriveSearchCard) -> Optional[str]:
+    """`card accuracy: 88%` (§26.4), or None for a card without a score (a photograph, a file not described)."""
+    return None if card.card_accuracy is None else CARD_ACCURACY_LINE.format(percent=card.card_accuracy)
+
+
+def stale_line(card: DriveSearchCard) -> str:
+    return STALE_INACCESSIBLE if card.inaccessible else "stale: the file changed after it was indexed"
 
 
 # ---------------------------------------------------------------------------------------------
@@ -522,9 +574,18 @@ def _card_body(card: DriveSearchCard) -> str:
     lines = [card.summary, f"path: {card.path or '/'}", f"date: {dated}"]
     if card.valid_until is not None:
         lines.append(VALID_UNTIL_LINE.format(iso=card.valid_until.date().isoformat()))
-    lines.append(f"index: {card.state}" + (f" ({card.reason})" if card.reason else ""))
+    captured = capture_line(card)
+    if captured:
+        lines.append(captured)
+    scene = scene_line(card)
+    if scene:
+        lines.append(scene)
+    accuracy = accuracy_line(card)
+    if accuracy:
+        lines.append(accuracy)
+    lines.append(index_line(card))
     if card.stale:
-        lines.append("stale: the file changed after it was indexed")
+        lines.append(stale_line(card))
     if card.truncated:
         lines.append("truncated: only the beginning of the file was indexed")
     if card.also_at:
@@ -567,6 +628,9 @@ def _envelope_lines(result: DriveSearchResult) -> List[str]:
         lines.append(f"{env.not_read_yet} documents are not read yet, so their content was not searched.")
     if env.unread:
         lines.append(f"{env.unread} documents could not be read, so their content was not searched.")
+    if env.inaccessible:
+        files = "1 file" if env.inaccessible == 1 else f"{env.inaccessible} files"
+        lines.append(ENVELOPE_INACCESSIBLE.format(count=files))
     if env.index_full:
         lines.append("The index is full: some files have no searchable card.")
     if env.reconnect_needed:

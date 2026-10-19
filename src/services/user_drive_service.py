@@ -130,6 +130,16 @@ class UserDriveService:
         ordered = sorted(children, key=lambda i: (not i.is_folder, i.name.casefold()))
         return ListOutcome(folder=resolution.folder, items=ordered[:LIST_LIMIT], truncated=len(ordered) > LIST_LIMIT)
 
+    async def list_folder_by_id(self, user_id: str, folder_id: str) -> ListOutcome:
+        """A folder given by its `drive:` ref (USER_DRIVE_INDEXING_RFC §26.2, Δ55: search returns folder refs). A file
+        ref is refused; a folder the provider does not find raises DriveItemNotFoundError."""
+        folder = await self._drive.get_item(user_id, folder_id)
+        if not folder.is_folder:
+            raise DrivePathError(f"'{folder.path}' is a file, not a folder; open it with open_file_from_drive")
+        children = await self._drive.list_children(user_id, folder.item_id)
+        ordered = sorted(children, key=lambda i: (not i.is_folder, i.name.casefold()))
+        return ListOutcome(folder=folder, items=ordered[:LIST_LIMIT], truncated=len(ordered) > LIST_LIMIT)
+
     async def search(self, user_id: str, query: str) -> List[DriveItem]:
         return await self._drive.search(user_id, query, SEARCH_LIMIT)
 

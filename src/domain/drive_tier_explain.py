@@ -48,15 +48,18 @@ _MATCH_VALUE = '{label} "{word}"'
 _MATCH_DATE = 'date "{word}" ({label})'
 _MATCH_FILE_DATE = 'date "{word}"'
 _MATCH_KIND = 'kind "{word}"'
+_MATCH_CAPTURE = 'capture "{word}"'          # §26.3: detected by code (`cp:`); a model's (`cpa:`) is "(automatic)"
 _MATCH_AUTOMATIC = '{field} "{word}" (automatic)'
 _NOT_MATCHED = "not matched"
 _AUTOMATIC_FIELD = {
     AboutField.TOPIC_WORD: "topic", AboutField.DOMAIN_WORD: "life area", AboutField.VALIDITY_WORD: "validity",
     AboutField.PHOTO_OBJECT: "photo object", AboutField.VISIBLE_TEXT_NUMBER: "text in the photo",
+    AboutField.SCENE_LABEL: "scene",
 }
 _FAMILY_OF_FIELD = {
     AboutField.LABEL_WORD: "lw:", AboutField.TOPIC_WORD: "tw:", AboutField.DOMAIN_WORD: "dw:",
     AboutField.VALIDITY_WORD: "lv:", AboutField.PHOTO_WORD: "pw:",
+    AboutField.SCENE_LABEL: "sl:",
 }
 
 
@@ -98,6 +101,9 @@ def _about_text(source: AboutSource, keys: Sequence[str]) -> str:
                 else _MATCH_ENTITY.format(type=kind, word=printed))
     if field is AboutField.PLACE:
         return _MATCH_PHOTO_PLACE.format(word=printed)
+    if field in (AboutField.VALUE, AboutField.DATE) and source.source_class is SourceClass.AUTOMATIC_RECORD:
+        # a value or date the file's text does not hold (`va:`/`ya:`/`ma:`, Δ60): the model's, never shown as the file's
+        return _MATCH_AUTOMATIC.format(field=source.detail.replace("_", " ") or field.value, word=printed)
     if field is AboutField.VALUE:
         return _MATCH_VALUE.format(label=source.detail.replace("_", " ") or "value", word=printed)
     if field is AboutField.DATE:
@@ -106,6 +112,10 @@ def _about_text(source: AboutSource, keys: Sequence[str]) -> str:
         return _MATCH_FILE_DATE.format(word=printed)
     if field is AboutField.KIND:
         return _MATCH_KIND.format(word=printed)
+    if field is AboutField.CAPTURE:
+        if source.source_class is SourceClass.AUTOMATIC_RECORD:
+            return _MATCH_AUTOMATIC.format(field="capture", word=printed)
+        return _MATCH_CAPTURE.format(word=printed)
     if field is AboutField.LABEL_WORD:
         return MATCH_TYPE_LABEL.format(word=_word_in(printed, "lw:", keys) if " " in printed else printed)
     if field is AboutField.PHOTO_WORD:

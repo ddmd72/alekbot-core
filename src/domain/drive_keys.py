@@ -28,9 +28,13 @@ A transliteration crosses scripts and spellings through ONE skeleton per word on
 never exact. A Latin query word never reads a Latin word's skeleton (`xl:`, `exl:`): two Latin words meeting through a
 Cyrillic stem ("Mario" and "Maria") are not a translation, and Latin-to-Latin spelling is the `w:` forms' job (xc F3).
 A photo object's phrases are `pe:` and a photo's visible-text numbers `pn:`: automatic, so a key's class follows from
-its prefix alone. The D31 tables name the profile's own doc type (`lw:`) and life areas (`dw:`) in four languages.
+its prefix alone. The D31 tables name the profile's own doc type (`lw:`) and life areas (`dw:`) in four languages. A
+file's capture (§26.3, Δ58) is keyed by the CAPTURE_NAMES table as phrases, like the `k:` table: `cp:` when code
+detected it (verified), `cpa:` when a model said it (automatic); a query word emits both, as it emits `k:`.
 """
 from __future__ import annotations
+
+from functools import lru_cache
 
 import hashlib
 import os
@@ -38,15 +42,15 @@ import re
 from typing import Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
 from .drive_content_terms import (
-    _AMOUNT, _DAY_MONTH_YEAR, _DMY, _GROUP_MIN_DIGITS, _GROUPS, _ID, _MIN_DIGITS, _MONTH, _MONTH_DAY_YEAR,
-    _MONTH_FORMS, _MONTH_OF, _YMD, CONTENT_TERMS_PER_CHUNK, capped_terms, clip_query, content_terms, query_term_spans,
+    _AMOUNT, _DAY_MONTH_YEAR, _DMY, _DMY_SPACED, _GROUP_MIN_DIGITS, _GROUPS, _ID, _MIN_DIGITS, _MONTH, _MONTH_DAY_YEAR,
+    _MONTH_FORMS, _MONTH_OF, _YMD, CONTENT_TERMS_PER_CHUNK, amount_or_date, capped_terms, clip_query, content_terms, query_term_spans,
     term_spans,
 )
-from .drive_enrichment import DriveProfile, KeyValue, PhotoObject, ProfileEntity
+from .drive_enrichment import DriveProfile, Grade, GradedField, KeyValue, PhotoObject, ProfileEntity, is_unconfirmed
 from .drive_index import TriageVerdict
 from .drive_index_params import (
     ABOUT_KEYS_PER_RECORD, CONCEPT_KEYS_MAX, ENTITY_FORMS_MAX, MAX_CONCEPTS, NAME_MIN_TRIGRAMS, NAME_QUERY_KEYS_MAX,
-    PHOTO_OBJECT_FORMS_MAX, PHOTO_OBJECTS_MAX, PHRASE_RUN_MAX, PROFILE_DATES_MAX, PROFILE_ENTITIES_MAX,
+    PHOTO_OBJECT_FORMS_MAX, PHOTO_OBJECTS_MAX, PHOTO_SCENE_LABELS_MAX, PHRASE_RUN_MAX, PROFILE_DATES_MAX, PROFILE_ENTITIES_MAX,
     PROFILE_KEY_VALUES_MAX, PROFILE_WORD_LIST_MAX, QUERY_TERM_CHARS, WORD_KEYS_PER_CHUNK,
 )
 from .drive_key_forms import (
@@ -54,7 +58,10 @@ from .drive_key_forms import (
     token_forms, token_spans,
 )
 from .drive_key_sources import AboutField, AboutSource, KeyedRecord, RecordKeyInputs
-from .drive_labels import DOC_TYPE_NAMES, KIND_WORDS, LIFE_DOMAIN_NAMES, PHOTO_KIND_WORDS, label_names_digest
+from .drive_labels import (
+    CAPTURE_NAMES, DOC_TYPE_NAMES, KIND_WORDS, LIFE_DOMAIN_NAMES, PHOTO_KIND_WORDS, SCENE_NAMES,
+    capture_names_digest, label_names_digest, scene_names_digest,
+)
 from .drive_match import FAMILY_SOURCE_CLASS, Concept, KeyFamily, QueryConcepts, SourceClass
 from .drive_name_keys import _is_cyrillic, _strip_accents, _trigrams
 
@@ -72,6 +79,10 @@ _W, _X, _N, _M, _Y = (KeyFamily.WORD.value, KeyFamily.TRANSLIT.value, KeyFamily.
 _E, _EX, _PE, _V, _K = (KeyFamily.ENTITY.value, KeyFamily.ENTITY_TRANSLIT.value, KeyFamily.PHOTO_ENTITY.value,
                         KeyFamily.VALUE.value, KeyFamily.KIND.value)
 _PN = KeyFamily.PHOTO_NUMBER.value
+_CP, _CPA = KeyFamily.CAPTURE.value, KeyFamily.CAPTURE_AUTO.value
+_SL = KeyFamily.SCENE_LABEL.value
+_VA, _YA, _MA = KeyFamily.VALUE_AUTO.value, KeyFamily.YEAR_AUTO.value, KeyFamily.MONTH_AUTO.value
+_DETECTED = "detected"   # drive_capture.CaptureSource.DETECTED (the value the record stores)
 _XL, _EXL, _EF = (KeyFamily.TRANSLIT_LATIN.value, KeyFamily.ENTITY_TRANSLIT_LATIN.value,
                   KeyFamily.ENTITY_FORM.value)
 _LATIN_SKELETONS = frozenset({_XL, _EXL})
@@ -79,6 +90,7 @@ _LATIN_SKELETONS = frozenset({_XL, _EXL})
 _WORD_FAMILIES: Tuple[str, ...] = (KeyFamily.LABEL_WORD.value, KeyFamily.TOPIC_WORD.value,
                                    KeyFamily.DOMAIN_WORD.value, KeyFamily.VALIDITY_WORD.value,
                                    KeyFamily.PHOTO_WORD.value)
+_GRADE_ORDER: Mapping[str, int] = {Grade.IN_TEXT.value: 0, Grade.IN_TEXT_AS.value: 1, Grade.NOT_IN_TEXT.value: 2}
 _YEAR_MIN, _YEAR_MAX = 1900, 2099
 _SHORT_ID_CHARS = 5   # a query id with letters this short ("ред3", "a4") is words, not one number (review m1)
 # Person and place entities also key their last token alone (review m8: "Сергей Иванов" is about "Иванов").
@@ -328,9 +340,29 @@ def _value_forms(text: str) -> List[str]:
     return [plain] if plain else []
 
 
-def _date_items(year: int, month: int, field: AboutField, detail: str, printed: str) -> List[_Item]:
-    source = AboutSource(field, detail, printed, SourceClass.VERIFIED_RECORD)
-    return [(f"{_Y}{year:04d}", source), (f"{_M}{year:04d}-{month:02d}", source)]
+def _unspaced_id_forms(printed: str) -> List[str]:
+    """An ID or digit group printed with separators (Δ91): its separator-free casefolded alphanumeric form, so
+    `QX4471902` finds "QX 4471902"; and its alphabetic tokens ("qx"), which the digits' number term leaves out, so the
+    spaced query's word `QX` is covered too. At least three characters and one digit; never an amount or a date
+    (their separators carry meaning)."""
+    plain = "".join(ch for ch in _strip_accents(printed.casefold()) if ch.isalnum())
+    if len(plain) < 3 or not any(ch.isdigit() for ch in plain) or amount_or_date(printed):
+        return []
+    words = ["".join(ch for ch in _strip_accents(t.casefold()) if ch.isalnum()) for t in printed.split()]
+    return [plain, *(w for w in words if len(w) >= 2 and w.isalpha())]
+
+
+def _date_items(year: int, month: int, field: AboutField, detail: str, printed: str, *,
+                held: bool = True) -> List[_Item]:
+    """`y:` and `m:` keys of a date; `ya:` and `ma:` (automatic) of one the file's text does not hold (Δ60)."""
+    source = AboutSource(field, detail, printed, SourceClass.VERIFIED_RECORD if held else SourceClass.AUTOMATIC_RECORD)
+    return [(f"{_Y if held else _YA}{year:04d}", source), (f"{_M if held else _MA}{year:04d}-{month:02d}", source)]
+
+
+def _grade_of(profile: DriveProfile, gfield: GradedField, value: str) -> Optional[str]:
+    """The best grade the profile gave this value; None when it gave none (a profile stored before grading)."""
+    grades = [g.grade for g in profile.graded if g.field == gfield.value and g.value == value]
+    return min(grades, key=lambda g: _GRADE_ORDER.get(g, 0)) if grades else None
 
 
 def _about_items(rec: KeyedRecord) -> List[_Item]:
@@ -361,11 +393,20 @@ def _about_items(rec: KeyedRecord) -> List[_Item]:
         kind_words += PHOTO_KIND_WORDS
     for word in kind_words:
         add_phrase(_K, word, AboutField.KIND, rec.kind)
+    if rec.capture and rec.triage_verdict is not TriageVerdict.PHOTO:
+        # §26.3 (Δ57, Δ58): a photograph has no capture; `digital` has no words
+        prefix = _CP if rec.capture_source == _DETECTED else _CPA
+        for word in CAPTURE_NAMES.get(rec.capture, ()):
+            add_phrase(prefix, word, AboutField.CAPTURE, rec.capture)
 
     if profile is not None:
         for entity in profile.entities[:PROFILE_ENTITIES_MAX]:
             last = entity.type in _LAST_TOKEN_ENTITY_TYPES
-            printed = dict.fromkeys(s for s in (entity.printed, *entity.found) if s)
+            # what the file prints: `printed` (graded `in_text`) and the spellings found; an entity the text holds only
+            # written differently has no printed spelling of its own, and one it does not hold has none at all (Δ60)
+            grade = _grade_of(profile, GradedField.ENTITY, entity.printed.strip() or entity.name)
+            printed = dict.fromkeys(s for s in (entity.printed if grade in (None, Grade.IN_TEXT.value) else "",
+                                                *(entity.found if grade != Grade.NOT_IN_TEXT.value else ())) if s)
             for spelling in dict.fromkeys((entity.name, entity.printed, *entity.forms[:ENTITY_FORMS_MAX])):
                 if not spelling:
                     continue
@@ -381,11 +422,15 @@ def _about_items(rec: KeyedRecord) -> List[_Item]:
     if profile is not None:
         for kv in profile.key_values[:PROFILE_KEY_VALUES_MAX]:
             forms = dict.fromkeys(_value_forms(kv.canonical) + _value_forms(kv.printed))
-            add([_V + f for f in forms], AboutField.VALUE, kv.label, kv.printed)
+            held = not is_unconfirmed(profile, GradedField.VALUE, kv.printed.strip() or kv.canonical)
+            if held:     # Δ91: "QX 4471902" is also found as the unspaced "QX4471902" (never for an unconfirmed value)
+                forms.update(dict.fromkeys(_unspaced_id_forms(kv.printed)))
+            add([(_V if held else _VA) + f for f in forms], AboutField.VALUE, kv.label, kv.printed)
         for d in profile.dates[:PROFILE_DATES_MAX]:
             iso = d.iso.isoformat()
-            add([_V + iso], AboutField.DATE, d.label, iso)
-            items.extend(_date_items(d.iso.year, d.iso.month, AboutField.DATE, d.label, iso))
+            held = not is_unconfirmed(profile, GradedField.DATE, iso)
+            add([(_V if held else _VA) + iso], AboutField.DATE, d.label, iso)
+            items.extend(_date_items(d.iso.year, d.iso.month, AboutField.DATE, d.label, iso, held=held))
     if rec.effective_date is not None:
         eff = rec.effective_date
         items.extend(_date_items(eff.year, eff.month, AboutField.EFFECTIVE_DATE, "", eff.isoformat()[:10]))
@@ -406,6 +451,12 @@ def _about_items(rec: KeyedRecord) -> List[_Item]:
         for prefix, words, field in lists:
             for word in words:
                 add(family_keys(prefix, [word]), field, "", word)
+
+    if rec.kind == "image" and rec.triage_verdict is TriageVerdict.PHOTO:
+        # D40: a photograph's scene labels, by their fixed names as phrases, like the `k:` table; a model said it
+        for label in rec.photo_scene_labels[:PHOTO_SCENE_LABELS_MAX]:
+            for word in SCENE_NAMES.get(label, ()):
+                add_phrase(_SL, word, AboutField.SCENE_LABEL, label)
 
     objects = rec.photo_objects[:PHOTO_OBJECTS_MAX]
     for obj in objects:
@@ -429,8 +480,8 @@ def about_keys_capped(rec: KeyedRecord) -> Tuple[Tuple[str, ...], bool]:
 
 
 def about_keys_of(rec: KeyedRecord) -> Tuple[str, ...]:
-    """`about_keys` (§25.2.4): `e:`, `ef:`, `ex:`, `exl:`, `v:`, `y:`, `m:`, `k:`, `lw:`, `tw:`, `dw:`, `lv:`, `pw:`,
-    `pe:`, `pn:`, `l:`."""
+    """`about_keys` (§25.2.4): `e:`, `ef:`, `ex:`, `exl:`, `v:`, `y:`, `m:`, `k:`, `cp:`, `cpa:`, `sl:`, `lw:`, `tw:`, `dw:`,
+    `lv:`, `pw:`, `pe:`, `pn:`, `l:`."""
     return about_keys_capped(rec)[0]
 
 
@@ -472,8 +523,8 @@ def _overlaps(a: Span, b: Span) -> bool:
 def _number_concept(word: str, forms: Sequence[str]) -> Concept:
     about: List[str] = []
     for f in forms:
-        about += [_N + f, _V + f]
-    about += [_Y + f for f in forms if len(f) == 4 and f.isdigit() and _year_ok(int(f))]
+        about += [_N + f, _V + f, _VA + f]
+    about += [fam + f for f in forms if len(f) == 4 and f.isdigit() and _year_ok(int(f)) for fam in (_Y, _YA)]
     about += [_PN + f for f in forms]
     return Concept(word=word, about_keys=tuple(dict.fromkeys(about)), word_keys=tuple(_N + f for f in forms),
                    hint_keys=(), is_number=True)
@@ -495,8 +546,8 @@ def _numbers(text: str) -> Tuple[List[Concept], List[Span]]:
         found.append((s, e, _number_concept(text[s:e].strip().casefold(), forms)))
     for s, e, ym in months:
         key = (_M + ym,)
-        found.append((s, e, Concept(word=text[s:e].strip().casefold(), about_keys=key, word_keys=key, hint_keys=(),
-                                    is_number=True)))
+        found.append((s, e, Concept(word=text[s:e].strip().casefold(), about_keys=(*key, _MA + ym), word_keys=key,
+                                    hint_keys=(), is_number=True)))
     found.sort(key=lambda f: f[0])
     seen: Set[Tuple[str, ...]] = set()
     concepts: List[Concept] = []
@@ -530,10 +581,30 @@ def _query_skel_keys(skels: Sequence[str], latin: bool, cyr_prefix: str, lat_pre
     return [p + s for s in skels for p in prefixes]
 
 
+@lru_cache(maxsize=1)
+def _capture_suffixes() -> FrozenSet[str]:
+    """The keys CAPTURE_NAMES are stored under, without their `cp:` prefix: the index side run over every name."""
+    suffixes: Set[str] = set()
+    for capture in CAPTURE_NAMES:
+        rec = RecordKeyInputs(kind="pdf", capture=capture, capture_source="detected")
+        suffixes.update(k[len(_CP):] for k in about_keys_of(rec) if k.startswith(_CP))
+    return frozenset(suffixes)
+
+
+@lru_cache(maxsize=1)
+def _scene_suffixes() -> FrozenSet[str]:
+    """The keys SCENE_NAMES are stored under, without their `sl:` prefix: the index side run over every label."""
+    suffixes: Set[str] = set()
+    for label in SCENE_NAMES:
+        rec = RecordKeyInputs(kind="image", triage_verdict=TriageVerdict.PHOTO, photo_scene_labels=(label,))
+        suffixes.update(k[len(_SL):] for k in about_keys_of(rec) if k.startswith(_SL))
+    return frozenset(suffixes)
+
+
 def _word_concept(word: str, run_native: Sequence[str], run_skel: Sequence[Skel]) -> Concept:
     """§25.5.1 step 5, uncut: `w:` native forms and `x:` (and, for a Cyrillic word, `xl:`) skeletons for chunks; `w:`
     native forms for hints; for records `e:` and `ef:` forms and runs, `ex:` (`exl:`) skeletons and runs, `k:` forms
-    and runs, the word families, `pe:` forms and runs, and `v:` of the word as typed (a value without digits, review
+    and runs, `cp:` and `cpa:` forms and runs (§26.3), `sl:` forms and runs (D40), the word families, `pe:` forms and runs, and `v:` of the word as typed (a value without digits, review
     M3)."""
     own = token_forms(word)
     latin = _latin_word(word)
@@ -544,11 +615,15 @@ def _word_concept(word: str, run_native: Sequence[str], run_skel: Sequence[Skel]
     for run, run_latin in run_skel:
         about += _query_skel_keys([run], run_latin, _EX, _EXL)
     about += [_K + f for f in own] + [_K + r for r in run_native]
+    stored = _capture_suffixes()   # only forms a capture name can be stored under: no cp/cpa key for other words
+    about += [fam + k for fam in (_CP, _CPA) for k in [*own, *run_native] if k in stored]
+    scenes = _scene_suffixes()   # likewise: no `sl:` key for a word no scene name is stored under (D40)
+    about += [_SL + k for k in [*own, *run_native] if k in scenes]
     about += [fam + f for fam in _WORD_FAMILIES for f in own]
     about += [_PE + f for f in own] + [_PE + r for r in run_native]
     plain = "".join(ch for ch in _strip_accents(word) if ch.isalnum())
     if plain:
-        about.append(_V + plain)
+        about += [_V + plain, _VA + plain]
     chunk = tuple(dict.fromkeys([_W + f for f in own] + _query_skel_keys(skels, latin, _X, _XL)))
     return Concept(word=word, about_keys=tuple(dict.fromkeys(about)), word_keys=chunk,
                    hint_keys=tuple(_W + f for f in own), is_number=False)
@@ -676,12 +751,12 @@ def index_tables_digest() -> str:
     tables = (
         FORM_TABLES, (_YEAR_MIN, _YEAR_MAX, _SHORT_ID_CHARS), sorted(_LAST_TOKEN_ENTITY_TYPES),
         (PROFILE_ENTITIES_MAX, ENTITY_FORMS_MAX, PROFILE_KEY_VALUES_MAX, PROFILE_DATES_MAX, PROFILE_WORD_LIST_MAX,
-         PHOTO_OBJECTS_MAX, PHOTO_OBJECT_FORMS_MAX, WORD_KEYS_PER_CHUNK, ABOUT_KEYS_PER_RECORD),
+         PHOTO_OBJECTS_MAX, PHOTO_OBJECT_FORMS_MAX, PHOTO_SCENE_LABELS_MAX, WORD_KEYS_PER_CHUNK, ABOUT_KEYS_PER_RECORD),
         sorted((k, v) for k, v in KIND_WORDS.items()), PHOTO_KIND_WORDS, [f.value for f in KeyFamily],
-        label_names_digest(),
+        label_names_digest(), capture_names_digest(), scene_names_digest(),
         sorted(_MONTH_FORMS.items()), _MONTH_YEAR.pattern, CONTENT_TERMS_PER_CHUNK, _MIN_DIGITS, _GROUP_MIN_DIGITS,
         _AMOUNT.pattern, _DMY.pattern, _YMD.pattern, _ID.pattern, _GROUPS.pattern, _DAY_MONTH_YEAR.pattern,
-        _MONTH_DAY_YEAR.pattern,
+        _MONTH_DAY_YEAR.pattern, _DMY_SPACED.pattern,
     )
     return hashlib.sha256(repr(tables).encode("utf-8")).hexdigest()
 

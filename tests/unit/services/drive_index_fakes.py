@@ -114,7 +114,11 @@ class FakeDrive:
         return DriveChanges(tuple(page), f"delta:{pos + len(page)}", end, False, "d1", ROOT)
 
     async def get_change(self, user_id: str, item_id: str) -> DriveChange:
-        return self.items.get(item_id) or DriveChange(item_id=item_id, deleted=True)
+        # the UserDrivePort contract of USER_DRIVE_INDEXING_RFC §26.2 (Δ48): "not found" by id raises, never a deletion
+        found = self.items.get(item_id)
+        if found is None:
+            raise DriveItemNotFoundError(item_id)
+        return found
 
     async def list_children_changes(self, user_id: str, folder_id: str, limit: int,
                                     cursor: Optional[str] = None) -> DriveChildrenPage:

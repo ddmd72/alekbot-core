@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Union
 
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
-from src.domain.drive_index import Priority
+from src.domain.drive_index import Priority, inaccessible
 from src.domain.drive_index_params import K
 from src.domain.drive_index_planner import PlaceOf
 from src.domain.drive_search import DriveSearchRequest, request_from_fields, require_search_terms
@@ -239,7 +239,7 @@ async def index_fixture(drive: FixtureDrive, repo: DriveIndexRepository, embeddi
             raise EvalError(f"tick {tick} left no sync state (status {result.status})")
         if state.continuation_enqueued_at is None and state.round_complete:
             due_at = await _earliest_due_at(repo, user_id)
-            if due_at is None:
+            if due_at is None or await _only_closed_files_wait(repo, user_id):
                 records = await repo.count_by_state(user_id)
                 return IndexOutcome(repo, tick, dict(statuses), dict(summary), records)
             # A record waits for a later attempt (a retry, an image with no rendition yet): production's fan-out
@@ -248,6 +248,13 @@ async def index_fixture(drive: FixtureDrive, repo: DriveIndexRepository, embeddi
             continue
         clock.advance(60)
     raise EvalError(f"the index did not settle in {max_ticks} ticks")
+
+
+async def _only_closed_files_wait(repo: DriveIndexRepository, user_id: str) -> bool:
+    """Every record that waits is a file the bot cannot open (§26.2): it is re-read only when something changes (an
+    observation, or the slow retry), so there is nothing for the runner to wait for, and ticking on would never settle."""
+    waiting = await repo.due_records(user_id, datetime(9999, 1, 1, tzinfo=timezone.utc), 200)
+    return bool(waiting) and all(inaccessible(rec) for rec in waiting)
 
 
 async def _earliest_due_at(repo: DriveIndexRepository, user_id: str) -> Optional[datetime]:

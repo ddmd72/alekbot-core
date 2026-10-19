@@ -44,7 +44,8 @@ class TestRecordCodec:
         doc = record_to_doc(content_record())
         assert doc["brief"] == {"doc_type": "invoice", "description": "Рахунок № 5",
                                 "doc_date": datetime(2024, 3, 15, tzinfo=timezone.utc),
-                                "parties": ["ТОВ Ромашка", "Acme S.L."], "amount": "1 250.00 EUR"}
+                                "parties": ["ТОВ Ромашка", "Acme S.L."], "amount": "1 250.00 EUR",
+                                "date_grade": ""}   # §26.4 (Δ60): the date's grade, "" while ungraded
         assert doc["triage_verdict"] == "text" and doc["lead_text"] == "Договір оренди"
         assert (doc["triage_version"], doc["triaged_content_version"], doc["caption"]) == (1, "c1",
                                                                                           "a receipt on a table")

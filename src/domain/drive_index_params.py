@@ -138,6 +138,7 @@ PROFILE_ENTITIES_MAX = 12
 ENTITY_FORMS_MAX = 8
 PROFILE_KEY_VALUES_MAX = 12
 PROFILE_DATES_MAX = 5
+PROSE_NUMBERS_MAX = 12                      # graded number terms of title + what_it_is (§26.4; a limit on cost, not a weight)
 PROFILE_TOPICS_MAX = 8                      # and as many topics_native
 PROFILE_WORD_LIST_MAX = 24                  # each of topic_words, label_words, domain_words, validity_words
 HINT_KEYWORDS_MAX = 12                      # per chunk
@@ -147,6 +148,7 @@ PHOTO_DESCRIPTION_CHARS = 240
 PHOTO_OBJECTS_MAX = 8
 PHOTO_OBJECT_FORMS_MAX = 6
 PHOTO_SCENE_WORDS = 6
+PHOTO_SCENE_LABELS_MAX = 6                  # D40: scene labels a photograph keeps
 PHOTO_VISIBLE_TEXT_CHARS = 200
 # profile input slices (§25.3): cut at a paragraph or sentence boundary
 PROFILE_HEAD_CHARS = 6_000                  # also JSON's head and the sheets' rows cap
@@ -175,3 +177,22 @@ MODEL_EXTRACT_PAGES_PER_MONTH = int(READER_USD_PER_MONTH / READER_PAGE_USD_ESTIM
 ENRICH_QUEUE_PAGE = 30                      # enrichment queue records read at once (§25.4.5)
 ENRICH_WAKEUPS_PAGE = 100                   # deferred or parked jobs re-planned per tick
 DESCRIBED_STALL_AFTER = timedelta(hours=24) # a rebuild whose described count does not grow this long alerts (§25.8)
+
+# -- files the bot cannot open (§26.2, §26.12; D33) ----------------------------------------------------------------
+INACCESSIBLE_RETRY_MIN = timedelta(hours=1)      # Δ51: an observation of the item or its parent makes it due, at most
+                                                 # this often (delta re-emits unchanged items often)
+INACCESSIBLE_RETRY_SLOW = timedelta(days=7)      # OQ-C1 (§26.11): whether a permission change alone re-emits an item
+                                                 # in the App Folder's delta is not verified, so a marked item is also
+                                                 # re-read on a timer, one item call each
+INACCESSIBLE_NOTICE_BATCH = 2_000                # files in one notice; the rest on the next pass
+INACCESSIBLE_SCAN_MAX = 2_000                    # marked records one read returns (the tick's counters, the fan-out)
+SUBFOLDER_SCAN_MAX = 400                         # stored records read to mark a closed folder's sub-folders with it
+
+# -- capture (§26.3, §26.12; D34) -----------------------------------------------------------------------------------
+FULL_PAGE_COVER = 0.95                           # rule 2: a page's one raster covers at least this share of the page
+SCAN_DPI_MIN = 150                               # rule 2: a scanner's effective resolution (200 dpi observed, §26.1)
+SCAN_DPI_MAX = 600
+SCAN_GLASS_MAX_MM = (220, 360)                   # rule 2: (short, long) side of a scanner glass: A4, Letter and Legal
+CAPTURE_PAGES_MAX = 50                           # the parser child inspects at most the first this many pages for the
+                                                 # capture signals: "every page" rules hold on the pages inspected
+CAPTURE_BUDGET_S = 5.0                           # the signals walk's own time budget in the child; out of it: no signals

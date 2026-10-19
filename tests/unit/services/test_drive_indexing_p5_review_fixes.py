@@ -281,13 +281,14 @@ async def test_a_keys_bump_rekeys_a_month_held_record_now(w):
                                          content_version=rec.content_version + "-edited", defer_until=month,
                                          due_at=month, priority=int(Priority.MAINTENANCE))
     state = w.repo.states["u"]
-    w.repo.states["u"] = replace(state, applied_versions={**state.applied_versions,
-                                                          MIGRATION_GATE_KEY: KEYS_VERSION - 1})
+    # the `keys` version is behind (no longer the gate key since Δ65, which is `accuracy`: it stays stamped)
+    w.repo.states["u"] = replace(state, applied_versions={**state.applied_versions, "keys": KEYS_VERSION - 1})
     await w.settle()
     rec = w.rec(doc)
     assert rec.keys_version == KEYS_VERSION and not rec.keys_pending
     assert rec.defer_until == month and rec.due_at == month   # still waiting for its month's re-read
-    assert w.repo.states["u"].applied_versions[MIGRATION_GATE_KEY] == KEYS_VERSION
+    assert w.repo.states["u"].applied_versions["keys"] == KEYS_VERSION
+    assert MIGRATION_GATE_KEY in w.repo.states["u"].applied_versions
 
 
 # -- MINOR 10: a v1 index warns once, not every tick --------------------------------------------------------
@@ -301,5 +302,5 @@ async def test_a_v1_index_warns_once_then_logs_at_info(w, caplog):
     with caplog.at_level(logging.INFO):
         for _ in range(3):
             assert (await w.tick()).status == "awaiting_migration"
-    lines = [r for r in caplog.records if "awaits its v2 rebuild" in r.getMessage()]
+    lines = [r for r in caplog.records if "awaiting its rebuild" in r.getMessage()]   # §26.7 wording
     assert [r.levelno for r in lines] == [logging.WARNING, logging.INFO, logging.INFO]

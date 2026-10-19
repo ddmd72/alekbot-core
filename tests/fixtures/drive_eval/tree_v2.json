@@ -1,5 +1,5 @@
 {
- "note": "Search v2 overlay on tree.json (USER_DRIVE_INDEXING_RFC §25.7): the families the v1 fixture lacks. The v2 eval's drive is tree.json plus these items (search_v2_eval.v2_drive); G1/G2 keep their pinned tree and bytes. Files in files_v2/, made by make_fixtures_v2.py; words in fixture_texts_v2.py.",
+ "note": "Search v2 overlay on tree.json (USER_DRIVE_INDEXING_RFC §25.7): the families the v1 fixture lacks. The v2 eval's drive is tree.json plus these items (search_v2_eval.v2_drive); G1/G2 keep their pinned tree and bytes. Files in files_v2/, made by make_fixtures_v2.py; words in fixture_texts_v2.py. §26.8 Eval, D39 and D40 add a scan, a phone photo of a document, a screenshot, an inaccessible file (`inaccessible: true`: listed by delta, 404 on every id call) and three photographs (fixture_texts_s26.py).",
  "items": [
   {
    "path": "Health/Informe laboratorio 2025-03.pdf",
@@ -213,6 +213,119 @@
     }
    },
    "thumbnail": "files/photo_porto.jpg"
+  },
+  {
+   "path": "Documents/DOC_20260610_0042.pdf",
+   "folder": false,
+   "mime": "application/pdf",
+   "size": 0,
+   "fs_modified": "2026-06-10T08:30:00Z",
+   "facets": {},
+   "content": "files_v2/id_card_scan.pdf"
+  },
+  {
+   "path": "Documents/Phone photos/IMG_20260702_091503.jpg",
+   "folder": false,
+   "mime": "image/jpeg",
+   "size": 0,
+   "fs_modified": "2026-07-02T07:15:03Z",
+   "facets": {
+    "photo": {
+     "takenDateTime": "2026-07-02T07:15:03Z",
+     "cameraMake": "SyntheticPhone",
+     "cameraModel": "Model S2"
+    },
+    "image": {
+     "width": 960,
+     "height": 720
+    }
+   },
+   "content": "files_v2/meter_card_photo.jpg"
+  },
+  {
+   "path": "Screenshots/IMG_0412.png",
+   "folder": false,
+   "mime": "image/png",
+   "size": 0,
+   "fs_modified": "2026-09-03T10:05:00Z",
+   "facets": {
+    "image": {
+     "width": 430,
+     "height": 720
+    }
+   },
+   "content": "files_v2/loan_screenshot.png"
+  },
+  {
+   "path": "Shared/Chimney inspection certificate.pdf",
+   "folder": false,
+   "mime": "application/pdf",
+   "size": 0,
+   "fs_modified": "2026-08-18T12:00:00Z",
+   "facets": {},
+   "content": "files_v2/chimney_certificate.pdf",
+   "inaccessible": true
+  },
+  {
+   "path": "Photos/Camera/IMG_20260814_204712.jpg",
+   "folder": false,
+   "mime": "image/jpeg",
+   "size": 0,
+   "fs_modified": "2026-08-14T18:50:00Z",
+   "facets": {
+    "photo": {
+     "takenDateTime": "2026-08-14T18:47:12Z",
+     "cameraMake": "SyntheticPhone",
+     "cameraModel": "Model S2"
+    },
+    "image": {
+     "width": 640,
+     "height": 480
+    }
+   },
+   "content": "files_v2/photo_sunset.jpg"
+  },
+  {
+   "path": "Photos/Camera/IMG_20260720_131644.jpg",
+   "folder": false,
+   "mime": "image/jpeg",
+   "size": 0,
+   "fs_modified": "2026-07-20T11:20:00Z",
+   "facets": {
+    "photo": {
+     "takenDateTime": "2026-07-20T11:16:44Z",
+     "cameraMake": "SyntheticPhone",
+     "cameraModel": "Model S2"
+    },
+    "image": {
+     "width": 640,
+     "height": 480
+    }
+   },
+   "content": "files_v2/photo_beach.jpg"
+  },
+  {
+   "path": "Photos/Camera/IMG_20260905_172209.jpg",
+   "folder": false,
+   "mime": "image/jpeg",
+   "size": 0,
+   "fs_modified": "2026-09-05T15:25:00Z",
+   "facets": {
+    "photo": {
+     "takenDateTime": "2026-09-05T15:22:09Z",
+     "cameraMake": "SyntheticPhone",
+     "cameraModel": "Model S2"
+    },
+    "image": {
+     "width": 640,
+     "height": 480
+    },
+    "location": {
+     "latitude": 48.8584,
+     "longitude": 2.2945
+    }
+   },
+   "content": "files_v2/photo_landmark.jpg"
   }
  ]
 }

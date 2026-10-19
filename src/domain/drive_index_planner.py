@@ -35,6 +35,13 @@ Public interface:
     chunks_refused(rec, embedding_space, now) -> DriveIndexRecord                            (§8.2, §12.3)
     extractor_stale(rec, versions) -> bool / reextraction_due(rec) -> DriveIndexRecord      (§9, §12.3)
     readme_read(rec, item_id, version, text, now, child_names=()) -> DriveIndexRecord      (§5.2, §25.3)
+    structure_stale(rec, *, embedding_space) -> bool                                         (§12.3)
+
+Files the bot cannot open (§26.2, D33): `inaccessible(rec)` (drive_index) is the state; the planner holds no content or
+triage work for such a record, makes it due for one id read on an observation of it or its parent (at most once per
+INACCESSIBLE_RETRY_MIN, Δ51) and otherwise every INACCESSIBLE_RETRY_SLOW (OQ-C1), in class 3:
+    marked_inaccessible(rec, now) / access_rechecked(rec, now) / access_observed(rec, now) / access_regained(rec, now)
+    access_recheck_at(rec) -> Optional[datetime] / access_recheck_due(rec, now) -> bool
 
 Search v2 (§25.4.9): the job plans, `about_keys` and the derived queue fields are NOT decided here but by
 `drive_enrich_plan.planned`, which the tick runs on every record write (`_commit`). The planner writes the facts they
@@ -48,6 +55,7 @@ from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, Callable, List, Mapping, Optional, Tuple, Union
 
+from .drive_capture import camera_capture, model_capture, settle
 from .drive_card import (
     card_eligible, card_hash, collapsed_folder, content_hash_of, effective_date, photo_location,
     structurally_card_eligible,
@@ -55,21 +63,22 @@ from .drive_card import (
 from .drive_enrichment import DriveProfile, PhotoDescription
 from .drive_extraction import ExtractionOutcome, TriageResult, chain_for
 from .drive_index import (
-    CARD_VERSION, EXTRACTION_VERSION, GEO_TABLE_VERSION, KEYS_VERSION, NAME_KEYS_VERSION, POLICY_VERSION,
+    CARD_VERSION, EXTRACTION_VERSION, GEO_TABLE_VERSION, KEYS_VERSION, MIGRATION_GATE_KEY, NAME_KEYS_VERSION, POLICY_VERSION,
     TRIAGE_VERSION, ContentClass, DocumentBrief, DriveChange, DriveIndexRecord, DriveSyncState, EpochPhase, FolderProbe,
-    Priority, Reason, RecordState, Scope, TriageVerdict,
+    Priority, Reason, RecordState, Scope, TriageVerdict, inaccessible,
 )
 from .drive_index_params import (
     ACCESS_LOSS_TTL, CARD_LEAD_CHARS, DENSE_FOLDER_CHILDREN, DOWNLOAD_TIMEOUT_S, EMBED_FILE_BUDGET_S,
-    EXTRACT_WALL_TIMEOUT_S, FILE_START_MARGIN_S, MAX_ATTEMPTS, MAX_DEFER, MODEL_BACKOFF_BASE_S, MODEL_BACKOFF_CAP_S,
-    MODEL_FILE_BUDGET_S, QUIET, RETRY_BASE, RETRY_CAP, STALE_ALERT_AFTER, TICK_DEADLINE_S,
+    EXTRACT_WALL_TIMEOUT_S, FILE_START_MARGIN_S, INACCESSIBLE_RETRY_MIN, INACCESSIBLE_RETRY_SLOW, MAX_ATTEMPTS,
+    MAX_DEFER, MODEL_BACKOFF_BASE_S, MODEL_BACKOFF_CAP_S, MODEL_FILE_BUDGET_S, QUIET, RETRY_BASE, RETRY_CAP,
+    STALE_ALERT_AFTER, TICK_DEADLINE_S,
 )
 from .drive_index_policy import (
     Admission, admission, card_rank_of, content_class_of, density_still_valid, is_dense, is_dot_name,
     is_generated_dir, is_marker_child, is_readme_name, item_rule, kind_of, readme_readable, searchable, size_cap,
 )
 from .drive_keys import name_keys_v2
-from .drive_profile import issued_of, readme_excerpt
+from .drive_profile import brief_date_grade, issued_of, readme_excerpt
 from .place_lookup import Place
 from .user_drive import DriveConnection
 
@@ -287,7 +296,7 @@ def _observable(rec: DriveIndexRecord) -> Tuple[Any, ...]:
             rec.card_refused, rec.name_keys_version, rec.indexed_generation, rec.lead_text, rec.brief, rec.caption,
             rec.dirty_since, rec.readme_pending, rec.readme_item_id, rec.readme_version, rec.chunk_reembed_pending,
             rec.place_forms, rec.readme_excerpt, rec.readme_excerpt_version, rec.photo_description,
-            rec.photo_objects, rec.photo_scene, rec.visible_text)
+            rec.photo_objects, rec.photo_scene, rec.photo_scene_labels, rec.visible_text)
 
 
 def _build(change: DriveChange, cls: Classification, existing: Optional[DriveIndexRecord],
@@ -302,7 +311,7 @@ def _build(change: DriveChange, cls: Classification, existing: Optional[DriveInd
         # that stays one keeps its README excerpt (§5.2, §25.3). Decided from metadata, it carries no extraction stamp:
         # nothing was read, so a later observation that admits the file again reads it (a rename away and back)
         base = replace(base, indexed_generation=None, brief=None, extraction_version=0, extracted_by=None,
-                       chunk_space="", chunk_reembed_pending=False)
+                       chunk_space="", chunk_reembed_pending=False, capture="", capture_source="")
         if not (existing is not None and collapsed_folder(existing) and _collapsed(change, cls)):
             base = replace(base, lead_text="", readme_pending=False, readme_item_id=None, readme_version="",
                            readme_excerpt="", readme_excerpt_version="")
@@ -339,7 +348,8 @@ def _build(change: DriveChange, cls: Classification, existing: Optional[DriveInd
 
 def _without_photo(rec: DriveIndexRecord) -> DriveIndexRecord:
     """The photo fields cleared (§25.4.9: a text verdict, or the kind leaving triage)."""
-    return replace(rec, photo_description="", photo_objects=(), photo_scene="", visible_text="")
+    return replace(rec, photo_description="", photo_objects=(), photo_scene="", photo_scene_labels=(),
+                   visible_text="")
 
 
 def _collapsed(change: DriveChange, cls: Classification) -> bool:
@@ -373,8 +383,8 @@ def _effective(change: DriveChange, brief: Optional[DocumentBrief], now: datetim
     issued = issued_of(profile) if profile is not None else None
     if issued is not None:
         return datetime(issued.year, issued.month, issued.day, tzinfo=timezone.utc)
-    if brief is not None and brief.doc_date is not None:
-        return brief.doc_date
+    if brief is not None and brief.held_date is not None:
+        return brief.held_date
     return effective_date(change, now)
 
 
@@ -428,8 +438,18 @@ def plan_observation(change: DriveChange, existing: Optional[DriveIndexRecord], 
     deletion, a move or a rename of a marker child). The root is neither. `observed=False`: a re-plan of a
     stored record (rescope, resolution, probe, upgrade, release), which keeps the record's seen_epoch so a
     sweep still removes it when the drive no longer has it (§7.5). `nudged=True`: the bot's own atomic write
-    (§7.1 step 1), read with QUIET = 0, so its content is due at once (§7.3)."""
-    return _collecting(_plan(change, existing, parent, probe, ctx, previous_parent, observed, nudged), existing)
+    (§7.1 step 1), read with QUIET = 0, so its content is due at once (§7.3).
+
+    A record the bot cannot open (§26.2) that this observation sees again is flagged observed: its next read is due
+    INACCESSIBLE_RETRY_MIN after the last one (Δ51); a re-plan (`observed=False`) is no observation."""
+    plan = _collecting(_plan(change, existing, parent, probe, ctx, previous_parent, observed, nudged), existing)
+    if not (observed and existing is not None and inaccessible(existing) and not change.deleted
+            and plan.delete_item_id != existing.item_id):
+        return plan
+    base = plan.upsert if plan.upsert is not None and plan.upsert.item_id == existing.item_id else existing
+    if not inaccessible(base) or base.inaccessible_reobserved:
+        return plan
+    return replace(plan, upsert=access_observed(base, ctx.now))
 
 
 def drops_readable(before: Optional[DriveIndexRecord], after: DriveIndexRecord) -> bool:
@@ -557,8 +577,9 @@ def content_due(rec: DriveIndexRecord, now: Optional[datetime] = None) -> bool:
     verdict), and not yet indexed at this content version under the current extraction rules. A crashed or
     retried run is still due; an indexed record is not. With `now`: and not deferred past `now`. A card-capped record
     holds its content work until released: search never shows content without a card (§5.4; R3 F1-2)."""
-    if rec.state is not RecordState.PENDING or rec.card_capped or _indexed_now(rec) or _held(rec, now):
-        return False
+    if (rec.state is not RecordState.PENDING or rec.card_capped or inaccessible(rec) or _indexed_now(rec)
+            or _held(rec, now)):
+        return False   # an inaccessible record holds its content work until the bot can read it again (§26.2)
     adm = admission(rec.kind)
     return adm is Admission.CONTENT or (adm is Admission.TRIAGE
                                         and valid_verdict(rec, rec.content_version) is TriageVerdict.TEXT)
@@ -567,8 +588,9 @@ def content_due(rec: DriveIndexRecord, now: Optional[datetime] = None) -> bool:
 def triage_due(rec: DriveIndexRecord, now: Optional[datetime] = None) -> bool:
     """An image waits for a verdict at the current TRIAGE_VERSION on its content version (§24.5). With `now`: and
     not deferred past `now`. A card-capped image is not triaged until released (§5.4; R3 F1-2)."""
-    return (rec.state is RecordState.PENDING and not rec.card_capped and admission(rec.kind) is Admission.TRIAGE
-            and valid_verdict(rec, rec.content_version) is None and not _held(rec, now))
+    return (rec.state is RecordState.PENDING and not rec.card_capped and not inaccessible(rec)
+            and admission(rec.kind) is Admission.TRIAGE and valid_verdict(rec, rec.content_version) is None
+            and not _held(rec, now))
 
 
 def quiet_over(rec: DriveIndexRecord, now: datetime) -> bool:
@@ -609,10 +631,14 @@ def _works(rec: DriveIndexRecord, first_seen: bool, now: datetime) -> List[Tuple
     if (rec.probe_pending or rec.rescope_pending or rec.state is RecordState.DELETING
             or rec.state is RecordState.UNRESOLVED or _card_drop_due(rec)):
         works.append((Priority.CASCADE, now))
-    if rec.reobserve_pending:
+    closed = inaccessible(rec)
+    if rec.reobserve_pending and not closed:     # a folder the bot cannot list waits for access (§26.2)
         works.append((Priority.FIRST_SEEN, now))   # §7.8 class 2: "re-observed subtrees"
-    if rec.readme_pending:
+    if rec.readme_pending and not closed:
         works.append((Priority.MAINTENANCE, now))  # an enrichment of the repository card (§5.2)
+    recheck = access_recheck_at(rec)
+    if recheck is not None:
+        works.append((Priority.MAINTENANCE, recheck))   # one id read: is it readable again? (§26.2, Δ51)
     if rec.chunk_reembed_pending and rec.indexed_generation is not None:
         works.append((Priority.MAINTENANCE, now))  # readable chunks in another embedding space (§12.3)
     if rec.keys_pending and rec.indexed_generation is not None:
@@ -701,6 +727,12 @@ def month_parked(rec: DriveIndexRecord, now: datetime, *, embedding_space: str) 
     record under an unresolved parent, until the month turns (R3 F1-5). Anything else stale is planned as usual."""
     return (rec.defer_until is not None and rec.defer_until >= next_month_start(now)
             and not _structure_stale(rec, embedding_space))
+
+
+def structure_stale(rec: DriveIndexRecord, *, embedding_space: Optional[str]) -> bool:
+    """Stale for a version an upgrade re-plan applies without reading the file (§12.3): what a record the bot cannot
+    open (§26.2) can still be brought up to date, so only this keeps an upgrade pass from applying."""
+    return _structure_stale(rec, embedding_space)
 
 
 def _structure_stale(rec: DriveIndexRecord, embedding_space: Optional[str]) -> bool:
@@ -808,8 +840,11 @@ def access_action(enabled: bool, state: Optional[DriveSyncState], connection: Dr
 
 
 def is_stale(state: DriveSyncState, oldest_edit_due_at: Optional[datetime], now: datetime) -> bool:
-    """Staleness criterion (§12.1): no clean tick, or a class-0 record overdue, for STALE_ALERT_AFTER."""
+    """Staleness criterion (§12.1): no clean tick, or a class-0 record overdue, for STALE_ALERT_AFTER. A gated state
+    (written by an older build, awaiting the owner's rebuild) does no tick work by design and has its own alert (A5)."""
     if state.access_lost_at is not None:
+        return False
+    if state.applied_versions and MIGRATION_GATE_KEY not in state.applied_versions:
         return False
     since = state.last_success_at or state.created_at
     if since is None:
@@ -885,7 +920,9 @@ def indexed(rec: DriveIndexRecord, *, outcome: ExtractionOutcome, generation: in
                    indexed_version=rec.content_version, extraction_version=EXTRACTION_VERSION,
                    extracted_by=outcome.extracted_by, text_chars=len(outcome.text), pages_total=outcome.pages_total,
                    chunk_count=chunk_count, truncated=outcome.truncated, lead_text="", brief=outcome.brief,
-                   script_rendered=outcome.script_rendered, keys_version=KEYS_VERSION, keys_pending=False,
+                   script_rendered=outcome.script_rendered, capture=outcome.capture,
+                   capture_source=outcome.capture_source, pages_refused=outcome.pages_refused,
+                   read_by_fallback=outcome.read_by_fallback, keys_version=KEYS_VERSION, keys_pending=False,
                    keys_capped=keys_capped, profile_input_fingerprint=profile_fingerprint,
                    effective_date=_effective(change_from_record(rec), outcome.brief, rec.effective_date or now,
                                              rec.profile))
@@ -903,6 +940,8 @@ def demoted(rec: DriveIndexRecord, reason: Reason, now: datetime, *, outcome: Op
         raise ValueError(f"{reason.value} is not a content outcome")
     text = outcome.text if outcome is not None else ""
     brief = outcome.brief if outcome is not None else None
+    if outcome is not None and brief is not None and brief.doc_date is not None:   # graded before it dates the file (Δ60)
+        brief = replace(brief, date_grade=brief_date_grade(brief, [outcome], rec.name))
     done = replace(rec, state=RecordState.METADATA_ONLY, reason=reason, indexed_generation=None,
                    chunk_space="", chunk_reembed_pending=False, extraction_version=EXTRACTION_VERSION,
                    extracted_by=outcome.extracted_by if outcome is not None else rec.extracted_by,
@@ -910,6 +949,11 @@ def demoted(rec: DriveIndexRecord, reason: Reason, now: datetime, *, outcome: Op
                    truncated=outcome.truncated if outcome is not None else False,
                    chunk_count=chunk_count if reason is Reason.USER_CHUNK_CAP else 0,
                    lead_text=text.strip()[:CARD_LEAD_CHARS] if reason is Reason.MACHINE_TEXT else "", brief=brief,
+                   capture=outcome.capture if outcome is not None else "",   # a text that was read keeps its capture
+                   capture_source=outcome.capture_source if outcome is not None else "",
+                   pages_refused=outcome.pages_refused if outcome is not None else 0,
+                   read_by_fallback=outcome.read_by_fallback if outcome is not None else False,
+                   card_accuracy=None,   # no readable text to confirm a card against (§26.4)
                    effective_date=_effective(change_from_record(rec), brief, rec.effective_date or now))
     return _settled(done, now)
 
@@ -959,14 +1003,25 @@ def triaged(rec: DriveIndexRecord, result: TriageResult, now: datetime,
     if result.verdict is TriageVerdict.PHOTO:
         done = replace(rec, state=RecordState.METADATA_ONLY, reason=Reason.PHOTOGRAPH, caption="",
                        indexed_generation=None, chunk_space="", chunk_reembed_pending=False, lead_text="", brief=None,
-                       dirty_since=None, effective_date=_effective(change_from_record(rec), None,
-                                                                   rec.effective_date or now))
+                       dirty_since=None, capture="", capture_source="",   # a photograph has none (Δ57)
+                       card_accuracy=None, accuracy_version=0,            # nor a score (§26.4)
+                       effective_date=_effective(change_from_record(rec), None, rec.effective_date or now))
         done = _without_photo(done) if photo is None else replace(
             done, photo_description=photo.description, photo_objects=tuple(photo.objects), photo_scene=photo.scene,
-            visible_text=photo.visible_text)
+            photo_scene_labels=photo.scene_labels, visible_text=photo.visible_text)
         return schedule(done, now, first_seen=first_seen)
     state = RecordState.INDEXED if _indexed_now(rec) else RecordState.PENDING
-    return schedule(_without_photo(replace(rec, state=state, reason=None, caption="")), now, first_seen=first_seen)
+    # §26.3 rule 1: the provider's camera facet decides; else what triage said (kept until the reader's own answer)
+    # the reader's stored word (an already indexed image) outranks triage's, as in file_capture
+    model = (model_capture(rec.capture) if state is RecordState.INDEXED else None) or model_capture(result.capture)
+    capture, source = settle(camera_capture(rec.facets), model)
+    # a capture that changed on an indexed image changes its source share: the score is stale, and `accuracy_version` 0
+    # sends it to the upgrade pass, which re-scores it from the stored profile and chunks (`scored`, B-minor 4)
+    stale = state is RecordState.INDEXED and (capture, source) != (rec.capture, rec.capture_source)
+    return schedule(_without_photo(replace(rec, state=state, reason=None, caption="", capture=capture,
+                                           capture_source=source,
+                                           accuracy_version=0 if stale else rec.accuracy_version)),
+                    now, first_seen=first_seen)
 
 
 def can_start_file(elapsed_s: float, *, routed: bool) -> bool:
@@ -1010,3 +1065,49 @@ def model_outage(state: DriveSyncState, now: datetime) -> DriveSyncState:
 
 def model_recovered(state: DriveSyncState) -> DriveSyncState:
     return replace(state, model_failures=0, model_backoff_until=None)
+
+
+# -- files the bot cannot open (§26.2, D33, Δ47-Δ52) ----------------------------------------------------------------
+
+def access_recheck_at(rec: DriveIndexRecord) -> Optional[datetime]:
+    """When a marked record is read again by id (Δ51, OQ-C1): INACCESSIBLE_RETRY_MIN after the last read once delta or a
+    listing saw the item or its parent since, else INACCESSIBLE_RETRY_SLOW after it; None for a readable record."""
+    checked = rec.inaccessible_checked_at or rec.inaccessible_since
+    if not inaccessible(rec) or checked is None:
+        return None
+    return checked + (INACCESSIBLE_RETRY_MIN if rec.inaccessible_reobserved else INACCESSIBLE_RETRY_SLOW)
+
+
+def access_recheck_due(rec: DriveIndexRecord, now: datetime) -> bool:
+    at = access_recheck_at(rec)
+    return at is not None and at <= now
+
+
+def marked_inaccessible(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
+    """An id-addressed read of an item delta lists answered "not found" (§26.2, Δ48): the bot has no access. A started
+    run ends without an attempt (no content_retry, no `failed`); the content outcome, the card and a readable generation
+    stay (Δ47, Δ52). A record already marked keeps its `inaccessible_since`, so the user is told once. A pending
+    re-listing restarts from its first page once the folder can be read again."""
+    return schedule(replace(rec, inaccessible_since=rec.inaccessible_since or now, inaccessible_checked_at=now,
+                            inaccessible_reobserved=False, attempt_started_at=None, defer_until=None,
+                            defer_priority=None, reobserve_cursor=None), now, first_seen=not rec.has_card)
+
+
+def access_rechecked(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
+    """The re-read answered "not found" again: the retry clock restarts, the observation is spent."""
+    return schedule(replace(rec, inaccessible_checked_at=now, inaccessible_reobserved=False), now,
+                    first_seen=not rec.has_card)
+
+
+def access_observed(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
+    """Delta or a listing saw the marked item or its parent folder: one read is due INACCESSIBLE_RETRY_MIN after the
+    last (Δ51)."""
+    return schedule(replace(rec, inaccessible_reobserved=True), now, first_seen=not rec.has_card)
+
+
+def access_regained(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
+    """The item is readable again: the tick's fields clear silently and the ordinary content path resumes. The fan-out's
+    `inaccessible_notified_since` stays (only the fan-out writes it, Δ54): a later loss of access is a new
+    `inaccessible_since`, so it is notified again."""
+    return schedule(replace(rec, inaccessible_since=None, inaccessible_checked_at=None, inaccessible_reobserved=False),
+                    now, first_seen=not rec.has_card)

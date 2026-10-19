@@ -81,7 +81,7 @@ class TestRecordFields:
 
     def test_profile_dates_are_iso_strings_in_the_document(self):
         doc = record_to_doc(v2_record())
-        assert doc["profile"]["dates"][0] == {"label": "event", "iso": "2026-05-12"}
+        assert doc["profile"]["dates"][0] == {"label": "event", "iso": "2026-05-12", "printed": ""}
         assert doc["photo_objects"] == [{"name": "fountain", "forms": ["fuente", "фонтан"]}]
 
     @pytest.mark.parametrize("name", ["valid_until", "profile_defer_until", "passages_defer_until",

@@ -84,9 +84,11 @@ _RESPONSE_SCHEMA = {
         "life_domains": {"type": "array", "items": {"type": "string", "enum": list(LIFE_DOMAINS)},
                          "description": "One to three life areas."},
         "dates": {"type": "array", "description": "Dates printed in the file.",
-                  "items": {"type": "object", "required": ["label", "date"],
+                  "items": {"type": "object", "required": ["label", "date", "printed"],
                             "properties": {"label": {"type": "string", "enum": list(DATE_LABELS)},
-                                           "date": {"type": "string", "description": "YYYY-MM-DD."}}}},
+                                           "date": {"type": "string", "description": "YYYY-MM-DD."},
+                                           "printed": {"type": "string",
+                                                       "description": "The date exactly as printed in the file."}}}},
         "entities": {"type": "array", "description": "Named places, organisations, people, events, products, works.",
                      "items": {"type": "object", "required": ["name", "type", "printed", "forms"],
                                "properties": {
@@ -244,7 +246,7 @@ def _parse(raw: str, key_values: bool, caps: ListCaps) -> DriveProfile:
     for entry in _objects(data, "dates"):
         iso = _iso(entry.get("date"))
         if iso is not None:
-            dates.append(ProfileDate(label=_text(entry, "label"), iso=iso))
+            dates.append(ProfileDate(label=_text(entry, "label"), iso=iso, printed=_text(entry, "printed")))
     entities = [ProfileEntity(name=_text(e, "name"), type=_text(e, "type"), printed=_text(e, "printed"),
                               forms=_strings(e, "forms")[:ENTITY_FORMS_MAX])
                 for e in _objects(data, "entities")]

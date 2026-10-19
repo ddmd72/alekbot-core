@@ -12,6 +12,7 @@ Terms (the index side keeps every form; the query only the maximal form of each 
 an amount with zero cents, the same value, arbiter R2 S-m2):
     amounts   "1 250,00" "1.250,00" "1,250.00" "1250.5"  -> "1250.00" / "1250.50"; index also the integer part "1250"
     dates     "15.03.2024" "03/15/2024" "2024-03-15"     -> "2024-03-15" (both readings when day and month are <= 12)
+              "15 03 2024" (spaces, year 1900-2099, not inside a phone/IBAN run)  -> the same (Δ62)
               "15 March 2024" "March 15, 2024" "15 березня 2024" "15 марта 2024" "15 de marzo de 2024" "15 mars 2024"
                                                           -> "2024-03-15" (a day, a month name in en/es/fr/uk/ru with its
                                                           case forms, a year; a month and year alone give no date term)
@@ -35,6 +36,8 @@ _SEP = f"[{_SPACE}'.,]"
 # grouped amounts (1 250,00 / 1.250,00 / 1,250.00) and plain decimals (1250,5 / 1250.50)
 _AMOUNT = re.compile(rf"(?<![\w.,])(\d{{1,3}}(?:{_SEP}\d{{3}})+(?:[.,]\d{{1,2}})?|\d+[.,]\d{{1,2}})(?![\w]|[.,]\d)")
 _DMY = re.compile(r"(?<!\d)(\d{1,2})[./-](\d{1,2})[./-](\d{4})(?!\d)")
+# "07 05 2031": one or more spaces between the parts, a year 1900-2099 (Δ62); a phone or an IBAN is rejected in `_date_spans`
+_DMY_SPACED = re.compile(rf"(?<![\w.,/+-])(\d{{1,2}})[{_SPACE}]+(\d{{1,2}})[{_SPACE}]+((?:19|20)\d{{2}})(?!\w)(?![.,/-]\d)")
 _YMD = re.compile(r"(?<!\d)(\d{4})[./-](\d{1,2})[./-](\d{1,2})(?!\d)")
 _ID = re.compile(r"[0-9A-Za-zА-Яа-яЁёІіЇїЄєҐґ]+(?:[-/_.][0-9A-Za-zА-Яа-яЁёІіЇїЄєҐґ]+)*")
 _DIGITS = re.compile(r"\d+")
@@ -109,6 +112,16 @@ def _date_spans(text: str) -> Iterable[Span]:
         readings = tuple(sorted(iso for iso in {_iso(y, b, a), _iso(y, a, b)} if iso))   # day- and month-first
         if readings:
             yield m.start(), m.end(), readings
+    spaced = list(_DMY_SPACED.finditer(text))
+    if spaced:
+        runs = [(g.start(), g.end()) for g in _GROUPS.finditer(text)]
+        for m in spaced:
+            if any(a <= m.start() and m.end() <= b and (a, b) != (m.start(), m.end()) for a, b in runs):
+                continue   # part of a longer run of digit groups: a phone or an IBAN, not a date
+            a, b, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            readings = tuple(sorted(iso for iso in {_iso(y, b, a), _iso(y, a, b)} if iso))
+            if readings:
+                yield m.start(), m.end(), readings
     for m in _DAY_MONTH_YEAR.finditer(text):
         iso = _iso(int(m.group(3)), _MONTH_OF[m.group(2).casefold()], int(m.group(1)))
         if iso:
@@ -210,6 +223,12 @@ def query_term_spans(query: str) -> Tuple[TermSpan, ...]:
     for start, end, maximal, _ in _id_spans(query):
         claim(start, end, (maximal,), "id")
     return tuple(claimed)
+
+
+def amount_or_date(text: str) -> bool:
+    """The text reads as an amount or a date (the number-term normaliser's categories): with its separators removed it
+    would be another number ("1.250,00" is not "125000"), so it is never matched or keyed separator-free (§26.4, Δ91)."""
+    return any(cat in ("amount", "date") for _, _, _, cat in query_term_spans(text))
 
 
 def _maximal(text: str) -> Set[str]:

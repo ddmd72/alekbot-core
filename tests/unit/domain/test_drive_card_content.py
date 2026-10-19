@@ -46,8 +46,9 @@ class TestSliceOneCardsUnchanged:
 
     @pytest.mark.parametrize("record,text", SLICE1)
     def test_hash(self, record, text):
-        assert CARD_VERSION == 3   # the v2 flip re-embeds every card once (§24.1, §12.3, §25.2.7)
-        assert card_hash(record) == hashlib.sha256(f"3\n{text}".encode("utf-8")).hexdigest()[:32]
+        # the v2 flip re-embeds every card once (§24.1, §12.3, §25.2.7); 4: the capture segment (§26.3, §26.7)
+        assert CARD_VERSION == 4
+        assert card_hash(record) == hashlib.sha256(f"4\n{text}".encode("utf-8")).hexdigest()[:32]
 
 
 BRIEF = DocumentBrief(doc_type="invoice", description="Рахунок за оренду офісу",
@@ -58,12 +59,13 @@ BRIEF = DocumentBrief(doc_type="invoice", description="Рахунок за ор�
 class TestContentSegments:
     def test_brief_segments_in_order(self):
         text = card_text(rec("scan.pdf", brief=BRIEF))
-        assert text == ("scan.pdf | PDF document | invoice | Рахунок за оренду офісу | 2024-03-15 | "
+        # CARD_VERSION 4 (Δ64): a stored v1 brief's doc type is never on the card (the profile's is the only one)
+        assert text == ("scan.pdf | PDF document | Рахунок за оренду офісу | 2024-03-15 | "
                         "parties: ТОВ Ромашка, ФОП Іваненко | 1 250.00 EUR")
 
     def test_empty_brief_fields_are_left_out(self):
         assert card_text(rec("scan.pdf", brief=DocumentBrief(doc_type="receipt"))) == \
-            "scan.pdf | PDF document | receipt"
+            "scan.pdf | PDF document"   # Δ64: the doc type is not a brief segment
 
     def test_an_empty_brief_adds_nothing(self):
         assert card_text(rec("scan.pdf", brief=DocumentBrief())) == "scan.pdf | PDF document"
@@ -79,12 +81,12 @@ class TestContentSegments:
         # v2 (§25.2.7): a read image keeps brief-then-facets; lead text left the card (machine text only)
         r = rec("IMG_3.jpg", "image", facets=PHOTO_FACETS, brief=DocumentBrief(doc_type="receipt"),
                 lead_text="TOTAL 12,50")
-        assert card_text(r) == ("IMG_3.jpg | image | receipt | taken 2025-08-01 | camera Apple iPhone 15 | "
-                                "4032x3024")
+        assert card_text(r) == ("IMG_3.jpg | image | taken 2025-08-01 | camera Apple iPhone 15 | "
+                                "4032x3024")   # Δ64: no brief doc type
 
     def test_lead_text_only_for_machine_text_and_last(self):
         r = rec("scan.pdf", brief=DocumentBrief(doc_type="contract"), lead_text="Договір оренди № 5")
-        assert card_text(r) == "scan.pdf | PDF document | contract"
+        assert card_text(r) == "scan.pdf | PDF document"   # Δ64: no brief doc type either
         log = rec("a.log", "text", reason=Reason.MACHINE_TEXT, lead_text="2026-10-01 INFO start")
         assert card_text(log) == "a.log | text file | machine-generated text | 2026-10-01 INFO start"
 

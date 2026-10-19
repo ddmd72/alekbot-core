@@ -15,7 +15,7 @@ Callers:
   - AgentWorkerHandler (async document delivery via notify_document_link / notify_file_bytes)
 """
 from datetime import datetime, timezone
-from typing import Mapping, Optional, Protocol, TYPE_CHECKING
+from typing import Dict, Mapping, Optional, Protocol, TYPE_CHECKING
 
 from ..domain.agent import AgentMessage, AgentIntent, AgentResponse, AgentStatus
 from ..domain.llm import Message, MessagePart
@@ -54,6 +54,9 @@ class _SLA(Protocol):
     tier_overrides: Mapping[PerformanceTier, int]
 
 
+_SLACK = "slack"
+
+
 class UserNotificationService:
 
     def __init__(
@@ -69,8 +72,17 @@ class UserNotificationService:
         self._channel_factory = channel_factory
         self._coordinator = coordinator
         self._notification_sla = notification_sla
-        self._platform_media: Optional[PlatformMediaPort] = platform_media
+        # One media port per platform (USER_DRIVE_INDEXING_RFC §26.2 review): a file goes through the port of the
+        # channel's own platform. The constructor's port is Slack's (the only one wired before); others are added with
+        # register_platform_media.
+        self._platform_media: Dict[str, PlatformMediaPort] = {}
+        if platform_media is not None:
+            self._platform_media[_SLACK] = platform_media
         self._session_store: Optional[SessionStore] = session_store
+
+    def register_platform_media(self, platform: str, port: PlatformMediaPort) -> None:
+        """The media port `notify_file_bytes` uses for channels of `platform` ("slack", "telegram")."""
+        self._platform_media[platform] = port
 
     async def save_channel(self, user_id: str, platform: str, channel_id: str) -> None:
         """
@@ -134,18 +146,20 @@ class UserNotificationService:
         text: str,
         channel_id_override: Optional[str] = None,
         platform_override: Optional[str] = None,
-    ) -> None:
+    ) -> bool:
         """
         Deliver text directly to user's channel. No agent reformatting.
 
-        Uses fallback chain: override → primary → last active.
+        Uses fallback chain: override → primary → last active. Returns whether the text was sent; delivery
+        errors are logged and swallowed (USER_DRIVE_INDEXING_RFC §26.2: the drive notice posts its text only
+        after its list was sent). Callers that do not need it ignore the result.
         """
         channel_info = await self.resolve_channel(
             user_id, channel_id_override, platform_override,
         )
         if not channel_info:
             logger.info(f"[Notification] No channel stored for user {user_id[:8]}, skipping")
-            return
+            return False
 
         response_channel = self._channel_factory.create(
             platform=channel_info.platform,
@@ -155,7 +169,7 @@ class UserNotificationService:
             logger.warning(
                 f"[Notification] Cannot create channel: platform={channel_info.platform}"
             )
-            return
+            return False
 
         try:
             # send_long_text so a long raw body threads instead of being truncated;
@@ -165,12 +179,14 @@ class UserNotificationService:
                 f"📬 [Notification] Raw delivery to {channel_info.platform} "
                 f"channel={channel_info.channel_id} user={user_id[:8]}"
             )
+            return True
         except Exception as exc:
             logger.error(
                 f"[Notification] Raw delivery failed for {user_id[:8]} "
                 f"(platform={channel_info.platform} channel={channel_info.channel_id}): {exc}",
                 exc_info=True,
             )
+            return False
 
     async def notify_call_summary(
         self,
@@ -539,49 +555,66 @@ class UserNotificationService:
         title: str,
         channel_id_override: Optional[str] = None,
         platform_override: Optional[str] = None,
-    ) -> None:
+    ) -> bool:
         """
         Upload a file to the user's channel via PlatformMediaPort.
-        Uses fallback chain: override → primary → last active.
+        Uses fallback chain: override → primary → last active. Returns whether the file was uploaded; errors
+        are logged and swallowed (callers that do not need the result ignore it).
 
-        Channel ID resolution:
+        The port is the one registered for the channel's platform; a platform with none returns False before
+        anything is posted, so no placeholder is left in a chat whose file never follows.
+
+        Channel ID resolution (Slack only):
         The stored channel_id may be a Slack user ID (U...) — see ConversationHandler.
         chat.postMessage accepts user IDs and returns the real DM channel ID (D...) in
         the response. We send a placeholder emoji via response_channel.send_message(),
         which normalises channel_id to D... (SlackResponseChannel.send_message updates
         self.channel_id from the API response). The resolved ID is then passed to
-        platform_media.upload_file(), which requires a proper channel ID.
+        platform_media.upload_file(), which requires a proper channel ID. Telegram's
+        stored chat id is used as it is.
         """
         if not self._platform_media:
             logger.warning(
                 f"[Notification] notify_file_bytes: platform_media not configured for {user_id[:8]}"
             )
-            return
+            return False
 
         channel_info = await self.resolve_channel(
             user_id, channel_id_override, platform_override,
         )
         if not channel_info:
             logger.info(f"[Notification] No channel stored for user {user_id[:8]}, skipping file delivery")
-            return
+            return False
 
-        response_channel = self._channel_factory.create(
-            platform=channel_info.platform,
-            channel_id=channel_info.channel_id,
-        )
-        if not response_channel:
+        media = self._platform_media.get(channel_info.platform)
+        if media is None:
             logger.warning(
-                f"[Notification] Cannot create channel for file delivery: platform={channel_info.platform}"
+                f"[Notification] notify_file_bytes: no media port for platform={channel_info.platform} "
+                f"(user {user_id[:8]}); nothing posted"
             )
-            return
+            return False
+
+        response_channel = None
+        if channel_info.platform == _SLACK:
+            response_channel = self._channel_factory.create(
+                platform=channel_info.platform,
+                channel_id=channel_info.channel_id,
+            )
+            if not response_channel:
+                logger.warning(
+                    f"[Notification] Cannot create channel for file delivery: platform={channel_info.platform}"
+                )
+                return False
 
         try:
-            # Sending a message resolves a Slack user ID (U...) to the real DM channel ID (D...).
-            # SlackResponseChannel.send_message() updates self.channel_id from the API response.
-            await response_channel.send_message("📎")
-            resolved_channel_id = response_channel.channel_id
+            resolved_channel_id = channel_info.channel_id
+            if response_channel is not None:
+                # Sending a message resolves a Slack user ID (U...) to the real DM channel ID (D...).
+                # SlackResponseChannel.send_message() updates self.channel_id from the API response.
+                await response_channel.send_message("📎")
+                resolved_channel_id = response_channel.channel_id
 
-            await self._platform_media.upload_file(
+            await media.upload_file(
                 file_bytes=file_bytes,
                 filename=filename,
                 title=title,
@@ -591,9 +624,11 @@ class UserNotificationService:
                 f"📎 [Notification] File delivered to {channel_info.platform} "
                 f"channel={resolved_channel_id} user={user_id[:8]} filename={filename}"
             )
+            return True
         except Exception as exc:
             logger.error(
                 f"[Notification] File delivery failed for {user_id[:8]} "
                 f"(platform={channel_info.platform} channel={channel_info.channel_id}): {exc}",
                 exc_info=True,
             )
+            return False

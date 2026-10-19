@@ -15,6 +15,14 @@ Pass rules per family (§25.7's table):
 - `misspelling`: the misspelled word named absent (the D29 line), or the expected file shown at all (under "similar
   name" or better);
 - `negative`: About, Mentioned, By translation and Labelled all empty.
+A case may carry `known_hard` (a reason): it is run and reported (`known_hard` in the table: id, reason, whether it
+passed) but guards nothing — no pass rate, recall, junk, book or size line counts it — for a gap the eval found and the
+owner has not decided yet, kept visible instead of dropped (G1 has the same key, runner.py).
+A case may add `expect_inaccessible: true` (§26.2): every expected file must also be a card whose `index:` line says the bot
+cannot open it (the row's `inaccessible` paths), on top of the family's tier rule.
+A case may add `expect_accuracy: {path: true|false}` (§26.4): the card shown for that path does (true) or does not
+(false: a photograph) carry the `card accuracy: N%` line (the row's `accuracy` map, None = no line), on top of the
+family's tier rule. A path the search did not show as a card fails a `true`.
 Junk: in an exact family case, the About/Mentioned files that are neither expected nor `acceptable_paths`; on every
 positive case, the same for By translation and Labelled. The book distractor counts on cases of two or more concepts
 whose expected and acceptable files do not include it.
@@ -65,6 +73,17 @@ def validate_gold_v2(gold: Sequence[Mapping[str, Any]], paths: Iterable[str]) ->
         expected = case.get("expected_paths") or []
         if family in POSITIVE_FAMILIES and not expected:
             problems.append(f"{cid}: needs expected_paths (family {family})")
+        if "expect_inaccessible" in case and (case["expect_inaccessible"] is not True or family not in POSITIVE_FAMILIES):
+            problems.append(f"{cid}: expect_inaccessible must be true, on a positive case")
+        if "expect_accuracy" in case:
+            wanted = case["expect_accuracy"]
+            if not (isinstance(wanted, dict) and wanted and all(isinstance(v, bool) for v in wanted.values())
+                    and family in POSITIVE_FAMILIES):
+                problems.append(f"{cid}: expect_accuracy must be a non-empty {{path: bool}} map, on a positive case")
+            problems += [f"{cid}: expect_accuracy names unknown path {p}" for p in wanted if p not in known] \
+                if isinstance(wanted, dict) else []
+        if "known_hard" in case and not (isinstance(case["known_hard"], str) and case["known_hard"].strip()):
+            problems.append(f"{cid}: known_hard must be a non-empty reason")
         if family == "negative" and expected:
             problems.append(f"{cid}: a negative case expects no file")
         if family == "misspelling" and not (expected or case.get("expect_absent")):
@@ -117,6 +136,15 @@ def case_pass(case: Mapping[str, Any], row: Mapping[str, Any], *, family: Option
         if not expected:
             return not any(t in (MATCH_TIERS | {V1_TIER}) for t in tiers.values())
         return any(_in(tiers, p, _allowed(fam, v1)) for p in expected)
+    if case.get("expect_inaccessible") and not v1:
+        shown = set(row.get("inaccessible") or ())
+        if not all(p in shown for p in expected):
+            return False
+    if case.get("expect_accuracy") and not v1:
+        shown = row.get("accuracy") or {}
+        for path, has_line in case["expect_accuracy"].items():
+            if has_line != (shown.get(path) is not None):
+                return False
     return all(_in(tiers, p, _allowed(fam, v1)) for p in expected)
 
 
@@ -156,6 +184,9 @@ def family_table(gold: Sequence[Mapping[str, Any]], rows: Mapping[str, Mapping[s
     """Per family: cases, passes, the pass rate and (class) the pooled file recall; then the junk, book, related,
     and size lines of §25.7."""
     out: Dict[str, Any] = {"families": {}}
+    out["known_hard"] = {c["id"]: {"reason": c["known_hard"], "passed": case_pass(c, rows[c["id"]], v1=v1)}
+                         for c in gold if c.get("known_hard") and c["id"] in rows}
+    gold = [c for c in gold if not c.get("known_hard")]   # reported above, never counted below
     exact_junk: List[int] = []
     auto_junk: List[int] = []
     book_hits: List[str] = []

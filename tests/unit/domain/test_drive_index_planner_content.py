@@ -340,7 +340,7 @@ class TestRuns:
 
     def test_a_carded_record_refreshes_its_card_in_class_0(self):
         # v2: the read text no longer reaches the card by itself (no lead text); a brief does, so the card changes
-        brief = DocumentBrief(doc_type="invoice")
+        brief = DocumentBrief(description="an invoice")   # Δ64: a brief's doc type is no longer a card segment
         rec = indexed(generation_started(stored(ch()), NOW), outcome=text(brief=brief), generation=1, chunk_count=1,
                       now=NOW)
         assert (rec.due_at, rec.priority) == (NOW, Priority.EDIT)
@@ -383,8 +383,10 @@ class TestRuns:
 
     def test_demotion_keeps_a_brief(self):
         brief = DocumentBrief(doc_type="receipt", doc_date=datetime(2024, 1, 2, tzinfo=timezone.utc))
-        rec = demoted(observe(ch()), Reason.USER_CHUNK_CAP, NOW, outcome=text(brief=brief), chunk_count=9)
-        assert rec.brief == brief and rec.effective_date == brief.doc_date
+        # the read text prints the brief's date (Δ60: a demotion grades it before it dates the file)
+        rec = demoted(observe(ch()), Reason.USER_CHUNK_CAP, NOW,
+                      outcome=text(body="Receipt of 02.01.2024. " + "Clause one. " * 300, brief=brief), chunk_count=9)
+        assert rec.brief == replace(brief, date_grade="in_text") and rec.effective_date == brief.doc_date
 
     def test_demoted_refuses_a_structural_reason(self):
         with pytest.raises(ValueError):

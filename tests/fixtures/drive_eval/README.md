@@ -98,3 +98,44 @@ the v1 column of the report and the "every v1-passing case" guard.
 tree_v2): the incident-shaped "everything about Rome" (at most 2 searches, 2 opens, 1 listing, and the answer names
 the photos and the booking), time spans that belong in the date fields, D29 cases (at most one search after a "No file
 holds" line), and set queries; `answer_must_include` lists the words a right answer holds (one of each group).
+
+## §26, D39 and D40 additions (RFC §26.8 Eval)
+
+The Search v2 overlay (`tree_v2.json`, `files_v2/`) gains, from `fixture_texts_s26.py` and `fixture_images_s26.py`
+(Pillow-drawn, so these files pin its encoders; `make_fixtures_v2.py` writes them): an ID-card-like **scan**
+(`Documents/DOC_20260610_0042.pdf`: one full-page raster at 200 dpi, no EXIF, no text layer; it prints its dates the way
+a card does, `07 05 2031`, and a number `QX 4471902`), a phone **photo of a document** (EXIF Make and Model), a
+**screenshot** (`Screenshots/IMG_0412.png`, named like an iOS one, so only its capture can find it), an
+**inaccessible** file (`"inaccessible": true` on the item: `FixtureDrive` lists it by delta and answers 404 to every
+id call, as Graph does; the runner treats a record that waits only on access as settled), and three photographs
+(a sunset, a beach, one taken near a public landmark, with GPS).
+
+`gold_v2.json` gains the cases for them (the G1/G2 gold and their tree keep their pinned bytes, so these live in the v2
+gold, whose live run is `search_v2_eval --embeddings gemini`): "scans" in en/uk/es (`cp:`, detected), "screenshots" /
+"скриншот" (`cpa:`, the model said it), the expiry date as `07.05.2031`, `07 05 2031` and "valid until 07.05.2031", the
+document number with and without its space, the inaccessible file by name with `expect_inaccessible` (the card's access
+line), "sunsets" / "закаты" / "puesta de sol" / "sunset" + photo and "beach" / "пляж" (`sl:`), and the landmark photo
+by place and by landmark name. `gold_g3_v2.json` gains `must_open` (a value question on the scan's card, which is under
+90 % accuracy) and `must_not_open` (a find question on it): hard checks, see `smart_dry_run.py`.
+
+**What the landmark cases test.** The landmark photo cases (by place and by landmark name) test the description and
+object keys (`sl:`, `e:`/`ef:` from the synthetic triage's description), **not** the D39 location prior: the synthetic
+triage never sees the location line the live indexer passes it, so the prior's effect is only measurable after a live
+re-record (`dump_enrichment.py --fixture`).
+
+`expect_accuracy: {path: true|false}` (v2 gold, positive cases) checks the rendered card: `true` = the card shown for
+that path carries the `card accuracy: N%` line (the scan, `cls-scans-en`), `false` = it carries none (a photograph,
+`cls-sunsets-en`). The row's `accuracy` map holds each shown card's percent (None = no line). The parse cache key
+includes a digest of `src/adapters/drive_parser/capture.py`, so a capture edit misses a warm cache.
+
+**The enrichment of these files is synthetic** (`enrichment.json`, entries marked `"synthetic": true`, written by
+`python -m scripts.validation.drive_eval.synthetic_s26` through the same recording ports a live record uses, so the keys
+come from the real indexer). The scan's profile misreads the birth date on purpose (the card prints `03 11 1990`, the
+profile says `08 11 1990`): verification grades it `not_in_text`, which puts the card's accuracy under 90 % and makes
+the G3 value case deterministic. A live `dump_enrichment.py --fixture` re-record replaces every entry with real model
+answers (the reader then reads the drawn text itself); after it, check the two G3 cases' premise, that the scan's card
+is below 90 %.
+
+The snapshot format now also carries `printed` on a profile date and `capture` on a text image's triage entry; the
+parse cache keeps the parser's capture signals (an entry without its `cap` marker is a miss; before, every PDF came
+back from the cache with no capture and the offline eval could never see a scan).

@@ -10,7 +10,7 @@ from datetime import timedelta
 import pytest
 
 from src.domain.drive_index import (
-    CURRENT_VERSIONS, SEARCH_V2_VERSIONS, ContentClass, DriveIndexRecord, DriveSyncState, EpochPhase, Priority, Reason, RecordState,
+    ACCURACY_VERSION, CURRENT_VERSIONS, SEARCH_V2_VERSIONS, ContentClass, DriveIndexRecord, DriveSyncState, EpochPhase, Priority, Reason, RecordState,
     Scope, TriageVerdict,
 )
 from src.domain.drive_index_planner import content_due, triage_due
@@ -20,8 +20,9 @@ from .drive_content_world import ContentWorld, prose
 from .drive_index_fakes import ROOT, T0
 
 SLICE1_VERSIONS = {"policy": 1, "card": 1, "geo_table": 1, "name_keys": 1}
-# the state's stamps: the older versions above, with the Search v2 keys (the migration gate's among them) current
-APPLIED_VERSIONS = {**SLICE1_VERSIONS, **SEARCH_V2_VERSIONS}
+# the state's stamps: the older versions above, with the Search v2 keys and `accuracy` (the migration gate key since
+# Δ65) current
+APPLIED_VERSIONS = {**SLICE1_VERSIONS, **SEARCH_V2_VERSIONS, "accuracy": ACCURACY_VERSION}
 SPACE = "test-space/8"
 
 

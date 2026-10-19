@@ -18,10 +18,12 @@ from typing import Dict, List, Optional, Sequence, Tuple
 from .drive_index_params import CARD_RENDER_MAX, GROUP_LINES, RESULT_CHARS_MAX
 from .drive_match import MatchTier
 from .drive_search import (
-    REFERENCE_REMINDER, DriveSearchCard, DriveSearchResult, escape_text, wrap_untrusted,
+    REFERENCE_REMINDER, DriveSearchCard, DriveSearchResult, accuracy_line, capture_line, escape_text, index_line,
+    scene_line, stale_line, wrap_untrusted,
 )
 from .drive_search_texts import (
-    ABOUT_HEADING, ABSENT_IN_SCOPE_LINE, ABSENT_LINE, CONJUNCTION_TERM, COVERAGE_COMPLETE, COVERAGE_INCOMPLETE,
+    ABOUT_HEADING, ABSENT_IN_SCOPE_LINE, ABSENT_LINE, CONJUNCTION_TERM, COVERAGE_COMPLETE, COVERAGE_INACCESSIBLE,
+    COVERAGE_INCOMPLETE,
     COVERAGE_NOT_DESCRIBABLE, COVERAGE_NOT_DESCRIBED, DATE_EXPIRES, DATE_LINE, FOOTER_EXACT, FOOTER_EXACT_SEARCHED,
     FOOTER_NO_CONJUNCTION, FOOTER_NO_CONJUNCTION_SEARCHED, GROUP_LINE, KEYS_CUT, LABELLED_HEADING, MATCHED_LINE,
     MENTIONED_HEADING, NO_PASSAGES_NOTE, PASSAGE_LINE, RELATED_HEADING, RELATED_SMALL_NOTE, SEARCHED_ABSENT_IN_SCOPE_LINE,
@@ -135,7 +137,10 @@ def coverage_parts(cov: CoverageFacts, *, passages_tiers_empty: bool) -> List[st
 def _coverage_line(tiered: TieredResult) -> str:
     empty = not tiered.block(MatchTier.MENTIONED) and not tiered.block(MatchTier.TRANSLATED)
     parts = coverage_parts(tiered.coverage, passages_tiers_empty=empty)
-    return COVERAGE_INCOMPLETE.format(parts="; ".join(parts)) if parts else COVERAGE_COMPLETE
+    line = COVERAGE_INCOMPLETE.format(parts="; ".join(parts)) if parts else COVERAGE_COMPLETE
+    if tiered.coverage.inaccessible:   # B-minor 2: closed files are a fact of the scope, not a gap in the search
+        line += f" {_plural(tiered.coverage.inaccessible, 'file', 'files').capitalize()} {COVERAGE_INACCESSIBLE}."
+    return line
 
 
 def _no_passages_note(tiered: TieredResult) -> Optional[str]:
@@ -150,10 +155,6 @@ def _no_passages_note(tiered: TieredResult) -> Optional[str]:
 
 
 # -- cards and groups ------------------------------------------------------------------------------------------------
-
-def _index_line(card: DriveSearchCard) -> str:
-    return f"index: {card.state}" + (f" ({card.reason})" if card.reason else "")
-
 
 def card_body(card: DriveSearchCard) -> str:
     lines = [_cut(card.summary, CARD_RENDER_MAX)]
@@ -172,9 +173,18 @@ def card_body(card: DriveSearchCard) -> str:
             lines.append(DATE_LINE.format(iso=day, source=card.date_source) if card.date_source else f"date: {day}")
         if until:
             lines.append(VALID_UNTIL_LINE.format(iso=until))
-    lines.append(_index_line(card))
+    captured = capture_line(card)
+    if captured:
+        lines.append(captured)                 # §26.3
+    scene = scene_line(card)
+    if scene:
+        lines.append(scene)                    # D40
+    accuracy = accuracy_line(card)
+    if accuracy:
+        lines.append(accuracy)                 # §26.4
+    lines.append(index_line(card))
     if card.stale:
-        lines.append("stale: the file changed after it was indexed")
+        lines.append(stale_line(card))
     if card.truncated:
         lines.append("truncated: only the beginning of the file was indexed")
     if card.keys_cut:
@@ -188,7 +198,10 @@ def _related_body(card: DriveSearchCard) -> str:
     day = _day(card)
     tail = f" | {day}" if day else ""
     body = _cut(card.summary, _RELATED_CARD_CHARS - len(tail)) + tail
-    return body + (f"\n{SIMILAR_NAME}" if card.similar_name else "")
+    body += f"\n{SIMILAR_NAME}" if card.similar_name else ""
+    accuracy = accuracy_line(card)         # §26.4: a Related card is opened, and answers a value question, like any
+    body += f"\n{accuracy}" if accuracy else ""
+    return body + (f"\n{index_line(card)}" if card.inaccessible else "")   # the access line (§26.2)
 
 
 def member_of(card: DriveSearchCard) -> GroupMember:

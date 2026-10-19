@@ -325,14 +325,17 @@ class TestResync:
 
 
 class TestItemReads:
-    async def test_get_change_404_is_a_deletion(self):
+    async def test_get_change_404_raises_not_found_and_is_never_a_deletion(self):
+        # USER_DRIVE_INDEXING_RFC §26.2, Δ48: Graph answers 404 both for an item moved out (this recorded S0a
+        # response) and for one the app has no access to, which delta still lists; the adapter cannot tell them
+        # apart, so it raises and the caller decides. Existence is decided by delta's tombstone alone.
         fixture = _load("move_out_in.json")
         moved_out = fixture["_meta"]["moved_out_id"]
         adapter, _ = _adapter()
         session = _session([_resp(fixture["get_moved_out"]["body"], status=404)])
-        with patch("aiohttp.ClientSession", return_value=session):
-            c = await adapter.get_change("u1", moved_out)
-        assert c.item_id == moved_out and c.deleted is True
+        with patch("aiohttp.ClientSession", return_value=session), pytest.raises(DriveItemNotFoundError):
+            await adapter.get_change("u1", moved_out)
+        assert session.get.call_count == 1
         assert session.get.call_args.args[0].endswith("/me/drive/items/" + moved_out.replace("!", "%21"))
 
     async def test_list_children_first_page_asks_top_limit(self):

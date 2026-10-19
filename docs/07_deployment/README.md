@@ -587,11 +587,67 @@ lists every user with a sync state.
 8. **Before any later roll-forward**, reset each user's initial build, which the first v2 build spent or closed and
    no purge renews: `$PY scripts/infrastructure/drive_initial_build_reset.py --user <id>` (dry run: its state), then
    `--apply` (default allowance $40, never under $20).
+   (The Card accuracy rollout below does **not** use the reset: owner rule 2026-10-19.)
 
 **The emergency switch does not survive a deploy.** `DRIVE_UPGRADE_PASS=off` stops every upgrade pass:
 `gcloud run services update $INDEXER --update-env-vars DRIVE_UPGRADE_PASS=off --region=$REGION
 --project=$GOOGLE_CLOUD_PROJECT`. The next `make deploy` deploys the indexer with `--set-env-vars`, which replaces
 every variable, so the switch silently turns back on: set it again after each deploy while it is needed.
+
+### Card accuracy (§26) — rollout and rollback
+
+USER_DRIVE_INDEXING_RFC §26.9 (card accuracy, capture, files the bot cannot open, photo location and scene labels;
+branch `feat/drive-card-accuracy`, slices S1–S6). It reuses the shell variables and the pause/resume commands of
+§ Search v2 above. `MIGRATION_GATE_KEY` moves to `accuracy`, so every existing index is **gated** from the deploy until
+its owner-run rebuild (no tick work, search says "being rebuilt", one ops alert). **No initial-build reset** (owner
+rule, 2026-10-19): the rebuild runs under the monthly caps (reader $4, triage $3, profiler $4, passages $20).
+What that means: profiles ≈ 165 a day, reader ≈ 6 600 pages a month, passages ≈ 50 000 chunks a month; work beyond a
+cap waits for the next UTC month. Cost of a typical drive: RFC §26.7.
+
+**Gates, before anything runs:** `make check` green; `$PY -m scripts.validation.drive_eval.search_v2_eval` meets
+`bars_v2.json`; G3 (`smart_dry_run --repeats 3`, owner-run, paid) has no hard failure — it now includes the card
+accuracy cases (`must_open`, `must_not_open`).
+
+**Rollout**
+1. **Back up the prompt layer** (owner): `$PY firestore_utils/backup_prompt_layer.py`. The rollback restores the six
+   tokens below from it.
+2. **Indexes `READY`:** `make deploy-indexes PROJECT_ID=$GOOGLE_CLOUD_PROJECT` (the new composite `user_id +
+   inaccessible_since`), the same `READY` check as Search v2 step 2, then `$PY scripts/infrastructure/drive_index_smoke.py
+   $DEV_USER_ID` (it now runs `inaccessible_records`).
+3. **Pause the queue and the fan-out job, wait for the running tick** (commands as Search v2 step 3).
+4. **Upload the six changed tokens inside the paused window** (owner; `docs/how_to/NEW_AGENT_PLAYBOOK.md`, from
+   `firestore_utils/uploads/`): `OUTPUT_FORMAT_` and `COGNITIVE_PROCESS_` for the profiler, the reader and triage
+   (`…_DRIVE_PROFILER`, `…_DRIVE_READER`, `…_DRIVE_TRIAGE`; repo copies in `prompts_snapshot/tokens/system/`). Why in
+   the window: a tick running the new code against old tokens (or the reverse) stamps records with a schema the other
+   side cannot read.
+5. **Deploy main and the indexer:** `make deploy`. The skill, the locales and the manifest text ship with the code.
+   Check both are still paused.
+6. **Verify both services serve the new image** before resuming and rebuilding:
+   ```bash
+   gcloud run services describe $INDEXER --region=$REGION --project=$GOOGLE_CLOUD_PROJECT --format='value(status.latestReadyRevisionName,spec.template.spec.containers[0].image)'
+   ```
+   and the same for the main service (its name is in `.env`). A partial deploy followed by a rebuild means a second rebuild.
+7. **Resume the queue and the job** (the purge is a tick).
+8. **Rebuild per user, the owner first:** `$PY scripts/infrastructure/drive_index_rebuild.py --user $DEV_USER_ID`
+   (dry run), then `--apply`. The script **skips a state that already carries the gate key** (`accuracy`), so a re-run
+   never purges a rebuilt user; `--force` overrides. Then every other user from the `--all-users` dry run, one at a
+   time. Watch `make logs-indexer`: `index purged`, onboarding, `rebuild progress user=… described=n/m`.
+9. **Validate on the owner's real scans** (RFC §26.7, D38) — on scans the reader has already read (its monthly cap may
+   not have reached all of them yet) — and run the revision script, `$PY -m scripts.validation.drive_card_review --user
+   $DEV_USER_ID` (output to `scripts/memory/`; `--below 90`, `--weights <file.json>` to try candidate weights). Weights
+   and the 90 % bar change only from that report. After a few weeks of real queries, `$PY -m
+   scripts.validation.drive_query_vocabulary --user $DEV_USER_ID --since <deploy date>` measures vocabulary misses
+   before any profiler prompt change (Δ66).
+
+**Rollback** (the previous main tip). Records parse under the old code (§26 adds fields and no enum value, RFC Δ47),
+but the index must be rebuilt, not upgraded in place:
+1. Pause the queue and the job; wait for the running tick.
+2. Mark every user `purging` while the new code is still deployed: `$PY scripts/infrastructure/drive_index_rebuild.py
+   --all-users --apply --force`.
+3. **Restore the six-token backup** (owner).
+4. Deploy the previous tip (main and indexer).
+5. Resume the queue and the job. **The purge is mandatory**, and the re-index that follows is a **second one**, under
+   monthly caps the first already spent: expect it to be slower.
 
 ## Memory telemetry sink
 

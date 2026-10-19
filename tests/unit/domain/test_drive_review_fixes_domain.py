@@ -91,13 +91,17 @@ TEXT = "Factura FA-2024/0999 del 15/03/2024. Total 1.250,00 €. Springfield."
 
 class TestVerifyCaps:
     def test_life_domains_are_capped_at_three(self):
-        p, _ = dp.verify(DriveProfile(title="", what_it_is="", language="", doc_type="invoice",
-                                      life_domains=("finance", "home", "work", "family")), _chunks(TEXT), "f.pdf")
+        p, _ = dp.grade(DriveProfile(title="", what_it_is="", language="", doc_type="invoice",   # Δ59: was verify
+                                     life_domains=("finance", "home", "work", "family")), _chunks(TEXT), "f.pdf")
         assert p.life_domains == ("finance", "home", "work")
 
     def test_a_value_keeps_its_maximal_form_not_a_fragment(self):
-        p, drops = dp.verify(DriveProfile(title="", what_it_is="", language="", doc_type="invoice", key_values=(
+        p, counts = dp.grade(DriveProfile(title="", what_it_is="", language="", doc_type="invoice", key_values=(
             KeyValue("invoice_number", "FA-2024/0999", "2024"),       # the model's canonical is a fragment
             KeyValue("amount_due", "1.250,50 €", "1250.50"),
             KeyValue("amount_total", "1.250,00 €", "1250.00"))), _chunks(TEXT), "f.pdf")
-        assert [kv.canonical for kv in p.key_values] == ["fa20240999", "1250.00"] and drops.values == 1
+        # Δ59: the amount the text lacks is kept with the model's canonical, graded not_in_text (was dropped)
+        assert [kv.canonical for kv in p.key_values] == ["fa20240999", "1250.50", "1250.00"]
+        assert [(g.value, g.grade) for g in p.graded if g.field == "value"] == [
+            ("FA-2024/0999", "in_text"), ("1.250,50 €", "not_in_text"), ("1.250,00 €", "in_text")]
+        assert counts.not_in_text == {"value": 1}

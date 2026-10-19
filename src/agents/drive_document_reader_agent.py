@@ -1,16 +1,19 @@
 """
 DriveDocumentReaderAgent — reads one PDF window or one image for the drive index
-(docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §24.2, §24.4, D8, D12).
+(docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §24.2, §24.4, D8, D12; capture §26.3, D34; no brief doc type, Δ64).
 
 Public interface:
     AGENT_TYPE = "drive_reader"
-    ReaderReply(text, brief, output_limited, cost, calls, fallback_cost)
+    ReaderReply(text, brief, output_limited, cost, calls, fallback_cost, capture)
     DriveDocumentReaderAgent(config, execution_context, prompt_builder, thinking=None)
         .read(data=, mime_type=, file_name=, first_window=, account_id=) -> ReaderReply
             raises DriveModelCallFailed (this input) or DriveModelUnavailable (the model, now), each carrying the
             calls made and their cost (`model_calls`, `model_cost`, from the ledger)
 
-The file goes in as bytes; out comes the verbatim text and, for the first window only, the brief. Structured output
+The file goes in as bytes; out comes the verbatim text, how the input was captured (`capture`: scan, document_photo,
+screenshot or digital, every window; a value outside them is no capture, never a failed transcription) and, for the
+first window only, the brief — description, date, parties, amount; no doc type since reader 2 (Δ64: the profile's is
+the card's only one). Structured output
 per the standard (src/adapters/CLAUDE.md): OUTPUT_FORMAT_DRIVE_READER token + response_schema +
 response_mime_type, json.loads with one parse retry and no regex fallback. A reply stopped at the output limit is
 reported (`output_limited`) for the runner to split the window (§24.3); its truncated JSON is never parsed.
@@ -29,6 +32,7 @@ from datetime import date, datetime, time, timezone
 from typing import Any, List, Optional, Tuple
 
 from ..domain.agent import AgentConfig, AgentMessage, AgentResponse
+from ..domain.drive_capture import Capture, model_capture
 from ..domain.drive_index import DocumentBrief
 from ..domain.llm import FinishReason
 from ..infrastructure.agent_config import DRIVE_READER
@@ -42,7 +46,6 @@ from ..infrastructure.drive_model_call import (
 
 AGENT_TYPE = "drive_reader"
 
-DOC_TYPES = ("invoice", "receipt", "contract", "statement", "letter", "ticket", "certificate", "form", "other")
 _MAX_PARTIES = 5
 # Bounds on model output that lands in the card (§24.4), not repairs: longer values are cut, never rewritten.
 _MAX_DESCRIPTION_CHARS = 300
@@ -51,17 +54,18 @@ _MAX_AMOUNT_CHARS = 60
 
 _RESPONSE_SCHEMA = {
     "type": "object",
-    "required": ["text", "brief"],
+    "required": ["text", "capture", "brief"],
     "properties": {
         "text": {"type": "string",
                  "description": "Every word of the input, verbatim, in reading order; tables as Markdown tables."},
+        "capture": {"type": "string", "enum": [c.value for c in Capture],
+                    "description": "How the input was made: a scanner's image of paper, a camera photo of paper, a "
+                                   "capture of a screen, or a page made by software."},
         "brief": {
             "type": ["object", "null"],
             "description": "What the document is. Only when the task asks for it; otherwise null.",
-            "required": ["doc_type", "description", "doc_date", "parties", "amount"],
+            "required": ["description", "doc_date", "parties", "amount"],
             "properties": {
-                "doc_type": {"type": "string", "enum": list(DOC_TYPES),
-                             "description": "The kind of document."},
                 "description": {"type": "string",
                                 "description": "One line on what this document is, in the document's language."},
                 "doc_date": {"type": ["string", "null"],
@@ -98,6 +102,7 @@ class ReaderReply:
     cost: float = 0.0                 # USD, already billed to the account
     calls: int = 1                    # LLM calls made, the parse retry included
     fallback_cost: float = 0.0        # of `cost`, what the fallback served (the fallback alert, XC-5)
+    capture: str = ""                 # what the model said of the input's capture (§26.3), or "" (none / unknown)
 
 
 class DriveDocumentReaderAgent(BaseAgent):
@@ -193,23 +198,24 @@ def _parse(raw: str, first_window: bool) -> ReaderReply:
         raise ValueError("`text` must be a string inside a JSON object")
     brief_raw = data.get("brief")
     brief = _brief(brief_raw) if first_window and brief_raw is not None else None
-    return ReaderReply(text=data["text"].strip(), brief=brief)
+    capture = model_capture(data.get("capture"))
+    if capture is None and data.get("capture") is not None:
+        logger.warning(f"[{AGENT_TYPE}] capture not one of the values: {str(data.get('capture'))[:20]!r}; dropped")
+    return ReaderReply(text=data["text"].strip(), brief=brief, capture=capture.value if capture else "")
 
 
 def _brief(raw: Any) -> DocumentBrief:
     if not isinstance(raw, dict):
         raise ValueError("`brief` must be an object or null")
-    doc_type = str(raw.get("doc_type") or "").strip().lower()
-    if doc_type not in DOC_TYPES:
-        doc_type = "other"
     description = " ".join(str(raw.get("description") or "").split())[:_MAX_DESCRIPTION_CHARS]
     parties_raw = raw.get("parties") or []
     if not isinstance(parties_raw, list):
         raise ValueError("`brief.parties` must be an array")
     parties: Tuple[str, ...] = tuple(
         p for p in (" ".join(str(x).split())[:_MAX_PARTY_CHARS] for x in parties_raw) if p)[:_MAX_PARTIES]
-    return DocumentBrief(doc_type=doc_type, description=description, doc_date=_doc_date(raw.get("doc_date")),
-                         parties=parties, amount=_amount(raw.get("amount")))
+    # no doc type (Δ64): one the model still sends is not read
+    return DocumentBrief(description=description, doc_date=_doc_date(raw.get("doc_date")), parties=parties,
+                         amount=_amount(raw.get("amount")))
 
 
 def _doc_date(value: Any) -> Optional[datetime]:

@@ -38,11 +38,14 @@ import os
 import re
 import zipfile
 from contextlib import contextmanager
+from dataclasses import replace
 from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Mapping, NamedTuple, Optional, Sequence, Tuple
 from typing import Iterator, Union
 
+from src.adapters.drive_parser.capture import pdf_capture_signals
 from src.adapters.drive_parser.child import is_memory_failure
 from src.adapters.drive_parser.html_text import html_page_text, text_is_html
+from src.domain.drive_capture import CaptureSignals
 from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus, PdfSplitFailed, failure_label
 from src.domain.drive_index_params import MAX_SHEET_ROWS, MAX_TEXT_CHARS
 from src.utils.document_hardening import ArchiveTooLargeError, check_zip_container
@@ -115,8 +118,22 @@ def read_content(path: str, kind: str) -> ExtractionOutcome:
         status = ExtractionStatus.UNSUPPORTED if _deterministic(exc) else ExtractionStatus.ERROR
         return ExtractionOutcome(status=status, detail=failure_label(exc))   # never the message (R3 F3-5)
     text, pages_total, truncated = result[0], result[1], result[2]
-    return _finish(text, pages_total, truncated,
-                   script_rendered=isinstance(result, _PageRead) and result.script_rendered)
+    outcome = _finish(text, pages_total, truncated,
+                      script_rendered=isinstance(result, _PageRead) and result.script_rendered)
+    if kind == "pdf":
+        outcome = replace(outcome, capture_signals=_capture_signals(path))
+    return outcome
+
+
+def _capture_signals(path: str) -> Optional[CaptureSignals]:
+    """Parser@3's capture signals (§26.3). A failure to read them is no signals (the model decides, when one reads
+    the file), never the file's outcome: the text was read. A memory failure still ends the child."""
+    try:
+        return pdf_capture_signals(path)
+    except Exception as exc:  # hostile input: whatever pypdf raises on it is this read's, not the file's
+        if is_memory_failure(exc):
+            raise MemoryError(str(exc)) from exc
+        return None
 
 
 def pdf_page_count(path: str) -> int:

@@ -737,6 +737,8 @@ async def main():
                 notifier=notification_service,
                 alert_sink=_alert_webhook,
                 ensure_agents=agent_factory.ensure_agents_for_user,
+                localization=_localization,
+                language=_language_service,
             )
 
         # Worker handler — dispatches Cloud Tasks to appropriate handlers
@@ -857,10 +859,10 @@ async def main():
         )
 
         # Wire Slack media adapter into notification service for async file delivery (DOCX).
-        notification_service._platform_media = SlackMediaAdapter(
+        notification_service.register_platform_media("slack", SlackMediaAdapter(
             app_client=slack_adapter.app.client,
             bot_token=config.get("SLACK_BOT_TOKEN", ""),
-        )
+        ))
 
         slack_adapter.register_handlers()
 
@@ -1156,6 +1158,10 @@ async def main():
                                 telegram_adapter, channel_id
                             ),
                         )
+                        # File delivery to a Telegram chat (notify_file_bytes picks the port by platform)
+                        from src.adapters.telegram.media_adapter import TelegramMediaAdapter
+                        notification_service.register_platform_media(
+                            "telegram", TelegramMediaAdapter(bot=telegram_adapter.bot))
 
                         # Register Telegram blueprint
                         telegram_bp = telegram_adapter.get_blueprint()

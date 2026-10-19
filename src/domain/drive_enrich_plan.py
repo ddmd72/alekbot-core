@@ -16,7 +16,7 @@ Public interface:
     described(rec) / describe_gap(rec) -> str;  NO_PASSAGE_KINDS, COVERAGE_COUNTERS   the coverage line's counts
                                                          (§25.5.6, XC-3, XC-9)
     profile_settled(rec) / passages_settled(rec) / keys_settled(rec)     the upgrade pass's per-key criteria
-    profiled(rec, profile, *, source, fingerprint, now) / reverified(rec, profile, now)
+    profiled(rec, profile, *, source, fingerprint, now) / reverified(rec, profile, now) / regraded(rec, profile, now)
     profile_charged(rec, status, now) / profile_unusable(rec) / passages_unusable(rec)
     passages_started(rec) / passages_advanced(rec, next_index, *, finished, now) / passages_charged(rec)
     agent_available(backoffs, agent, now) / agent_outage(backoffs, agent, now) / agent_recovered(backoffs, agent)
@@ -30,7 +30,9 @@ The state table (§25.4.5), per job, first match wins:
     deferred  the refresh cooldown is not over (`*_defer_until`), or the record's content run is due (an edit, a
               re-extraction): its readable text is about to be replaced, so no call is made on it and no cooldown
               starts from it; the content run's commit re-plans the job (review rv_sv2_p5 MINOR 1). A model backoff
-              is not a state (§25.4.6).
+              is not a state (§25.4.6). Also while the bot cannot open the file (§26.2): no job starts, the deferral
+              has no wake time, the job counts as settled for the upgrade pass and the file is no describe gap (the
+              coverage line counts it as one the bot cannot open, Δ56); access regained re-plans it.
     parked    one call no longer fits the open initial build plus the month's rest of the class cap (§25.4.5:
               "a file starts only if its expected cost at the primary's price fits"); wakes when the month turns.
     ready     work is due.
@@ -52,7 +54,7 @@ from .drive_enrichment import (
 from .drive_enrichment_calls import ModelReplyStatus, ProfileInput
 from .drive_index import (
     KEYS_VERSION, PASSAGES_VERSION, PROFILE_VERSION, DriveChange, DriveChunk, DriveIndexRecord, Priority, Reason,
-    RecordState, Scope,
+    RecordState, Scope, inaccessible,
 )
 from .drive_index_planner import content_due
 from .drive_index_params import (
@@ -62,8 +64,8 @@ from .drive_index_params import (
 )
 from .drive_keys import about_keys_capped
 from .drive_profile import (
-    KindPolicy, ProfileOutput, TemplateReason, input_fingerprint, issued_of, profile_input, record_policy, stored_text,
-    template_profile, valid_until_of,
+    KindPolicy, ProfileOutput, TemplateReason, _HasText, brief_date_grade, input_fingerprint, issued_of,
+    profile_input, record_policy, stored_text, template_profile, valid_until_of,
 )
 
 PROFILER_AGENT = "drive_profiler"
@@ -127,8 +129,8 @@ def effective_from(rec: DriveIndexRecord, profile: Optional[DriveProfile], *,
     issued = issued_of(profile) if profile is not None else None
     if issued is not None:
         return _utc(issued)
-    if rec.brief is not None and rec.brief.doc_date is not None:
-        return rec.brief.doc_date
+    if rec.brief is not None and rec.brief.held_date is not None:
+        return rec.brief.held_date
     change = DriveChange(item_id=rec.item_id, facets=rec.facets, fs_modified_at=rec.fs_modified_at,
                          modified_at=rec.modified_at)
     fallback = rec.effective_date or now
@@ -196,7 +198,10 @@ def _profile_cleared(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
                   profile_parked_month="", profile_hold=None, profile_hold_version="", profile_attempts=0,
                   profile_input_fingerprint=None if not rec.is_folder else rec.profile_input_fingerprint)
     if had_profile:
-        out = replace(out, effective_date=effective_from(out, None, now=now) or rec.effective_date)
+        # the score read that profile's grades: it is stale with it; the write that gives the record a profile or a
+        # brief scores it again, and until then the upgrade pass sees it unscored (§26.4)
+        out = replace(out, effective_date=effective_from(out, None, now=now) or rec.effective_date,
+                      card_accuracy=None, accuracy_version=0)
     return out
 
 
@@ -226,6 +231,8 @@ def profile_plan(rec: DriveIndexRecord, ctx: EnrichContext) -> DriveIndexRecord:
         return replace(rec, profile_state=_H)
     if content_due(rec):
         return replace(rec, profile_state=_D)   # the text is about to change: profiled after its content run
+    if inaccessible(rec):
+        return replace(rec, profile_state=_D, profile_parked_month="")   # no job while closed (§26.2)
     bump = rec.profile is not None and rec.profile_version != PROFILE_VERSION
     if (not template and not bump and rec.profile_defer_until is not None and ctx.now < rec.profile_defer_until):
         return replace(rec, profile_state=_D)
@@ -259,6 +266,24 @@ def reverified(rec: DriveIndexRecord, profile: DriveProfile, now: datetime) -> D
     out = replace(rec, profile=profile, valid_until=_utc(valid) if valid is not None else None,
                   profiled_content_version=rec.content_version)
     return replace(out, effective_date=effective_from(out, profile, now=now) or rec.effective_date)
+
+
+def regraded(rec: DriveIndexRecord, profile: DriveProfile, now: datetime) -> DriveIndexRecord:
+    """The stored profile graded again by the accuracy upgrade (§26.4 "Recomputing"): its grades and the dates that
+    follow them. Nothing else about the profile job moves — its version, fingerprint, content version and cooldown
+    stay, so a profile that was already due stays due."""
+    valid = valid_until_of(profile)
+    out = replace(rec, profile=profile, valid_until=_utc(valid) if valid is not None else None)
+    return replace(out, effective_date=effective_from(out, profile, now=now) or rec.effective_date)
+
+
+def brief_graded(rec: DriveIndexRecord, chunks: Sequence[_HasText], now: datetime) -> DriveIndexRecord:
+    """The reader brief's date graded against the stored text (§26.4, Δ60), its grade kept on the brief and the effective
+    date following it: a date the text does not hold never becomes the file's date. No brief date, no change."""
+    if rec.brief is None or rec.brief.doc_date is None:
+        return rec
+    out = replace(rec, brief=replace(rec.brief, date_grade=brief_date_grade(rec.brief, chunks, rec.name)))
+    return replace(out, effective_date=effective_from(out, out.profile, now=now) or rec.effective_date)
 
 
 def profile_charged(rec: DriveIndexRecord, status: ModelReplyStatus, now: datetime) -> DriveIndexRecord:
@@ -318,8 +343,8 @@ def passages_plan(rec: DriveIndexRecord, ctx: EnrichContext) -> DriveIndexRecord
     key = passages_hold_key(rec)
     if rec.passages_hold is not None and rec.passages_hold_version == key:
         return replace(rec, passages_state=_H)
-    if content_due(rec):
-        return replace(rec, passages_state=_D, passages_defer_until=None)   # hinted after its content run
+    if content_due(rec) or inaccessible(rec):   # hinted after its content run; never while closed (§26.2)
+        return replace(rec, passages_state=_D, passages_defer_until=None, passages_parked_month="")
     if (rec.passages_version == PASSAGES_VERSION and rec.passages_done_at is not None
             and ctx.now < rec.passages_done_at + PASSAGE_REFRESH_COOLDOWN):
         return replace(rec, passages_state=_D, passages_defer_until=rec.passages_done_at + PASSAGE_REFRESH_COOLDOWN)
@@ -400,7 +425,7 @@ def describe_gap(rec: DriveIndexRecord) -> str:
     """What the coverage line counts the file as (§25.5.6): a text file with no description yet whose job waits
     (`waiting`: ready, deferred, parked) or is held (`held`), or a profiled book, sheet or data file (`no_passages`).
     A file that is already described is not "not described" while its re-description waits (XC-3). Never a folder."""
-    if rec.is_folder:
+    if rec.is_folder or inaccessible(rec):   # a closed file is counted as one the bot cannot open (§26.2, Δ56)
         return ""
     jobs = (rec.profile_state, rec.passages_state)
     if not described(rec):
@@ -444,6 +469,8 @@ def profile_settled(rec: DriveIndexRecord, ctx: EnrichContext) -> bool:
     """The profile job, as planned now, is current or none, or held/parked for the current version and fingerprint
     (§25.4.5): the upgrade pass marks `profile` applied only when every record is settled."""
     fresh = profile_plan(rec, ctx)
+    if inaccessible(fresh):
+        return True   # waits for access, like a hold: it never keeps a version from applying (§26.2)
     return fresh.profile_state in (_C, _N) or (fresh.profile_state in (_H, _P)
                                                and fresh.profile_hold_version == profile_hold_key(fresh))
 
@@ -451,6 +478,8 @@ def profile_settled(rec: DriveIndexRecord, ctx: EnrichContext) -> bool:
 def passages_settled(rec: DriveIndexRecord, ctx: EnrichContext) -> bool:
     """The same for the passage-hint job (held/parked for the current version and generation)."""
     fresh = passages_plan(rec, ctx)
+    if inaccessible(fresh):
+        return True
     return fresh.passages_state in (_C, _N) or (fresh.passages_state in (_H, _P)
                                                 and fresh.passages_hold_version == passages_hold_key(fresh))
 

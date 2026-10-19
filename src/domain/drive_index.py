@@ -14,31 +14,45 @@ from typing import Any, Mapping, Optional, Tuple
 from .drive_enrichment import DriveProfile, PhotoObject
 
 POLICY_VERSION = 2                            # 2: the Slice 2+4 kinds admitted (§24.1)
-CARD_VERSION = 3                              # 2: brief, caption and lead text in the card (§24.4); 3: profile and
-                                              # photo fields, no lead text but for machine text (§25.2.7)
+CARD_VERSION = 4                              # 2: brief, caption and lead text in the card (§24.4); 3: profile and
+                                              # photo fields, no lead text but for machine text (§25.2.7); 4: the
+                                              # capture segment, no brief doc type (§26.3, Δ64); S6 (unreleased)
+                                              # adds a photograph's scene labels segment (D40)
 # 2: alternate names, country names, large place (§25.4.3). Bumped before P5 by D30 (no v1 migration: the rollout
 # rebuilds from scratch). P5 MUST write `place_forms` (PlaceIndex.place) together with this stamp: `_place` keeps a
 # stored place while the stamp matches, so a record stamped 2 without forms would never get them.
 GEO_TABLE_VERSION = 2
 NAME_KEYS_VERSION = 2                         # the name-stream keyer; 2: drive_keys.name_keys_v2 (§25.2.4)
 EXTRACTION_VERSION = 3                        # chunker, text gate, content_terms normaliser (§12.3, §24.6); 2: maximal query forms (D-M1); 3: written-out dates (F5-5)
-TRIAGE_VERSION = 2                            # image triage prompt and verdict rules (§5.3, §24.5); 2: enriched (§25.4.3)
+TRIAGE_VERSION = 3                            # image triage prompt and verdict rules (§5.3, §24.5); 2: enriched (§25.4.3);
+                                              # 3: a text image's capture (§26.3); S6 (unreleased) adds the photo
+                                              # location prior (D39) and `scene_labels` (D40)
 
 # Search v2 (§25.4.8, frozen in §25.13.2). In CURRENT_VERSIONS since P5, behind the migration gate (§25.8 as amended
 # by D30): a sync state whose applied_versions lacks MIGRATION_GATE_KEY was built by v1 and is never upgraded — it runs
 # no tick work until the owner's from-scratch rebuild, whose onboarding stamps every key.
-KEYS_VERSION = 3                              # drive_keys and the drive_content_terms normaliser: re-keys from stored text
+KEYS_VERSION = 4                              # drive_keys and the drive_content_terms normaliser: re-keys from stored text
                                               # 3: entity spellings the file does not print are `ef:` (xc F1), a Latin
                                               # word's skeleton is `xl:`/`exl:` (F3), D31 label names (lw:/dw:)
-PROFILE_VERSION = 1                           # profiler prompt, schema, input rules, verification
+                                              # 4 (§26.7, unreleased: S3 adds to it): capture names `cp:`/`cpa:`,
+                                              # space-separated dates (Δ62), `va:`/`ya:`/`ma:` for values the text
+                                              # does not hold, and such entities as `ef:` only (Δ60); S6 adds
+                                              # the photograph's scene labels `sl:` (D40, SCENE_NAMES)
+PROFILE_VERSION = 2                           # profiler prompt, schema, input rules, verification
+                                              # 2: dates carry `printed`, value labels document_number and
+                                              # personal_id_number (§26.5 Δ63); grading replaces dropping: every
+                                              # value kept with a `graded` evidence grade (§26.4, Δ59)
+ACCURACY_VERSION = 1                          # drive_accuracy: the grader's use of the text and the weights (§26.4, Δ61)
 PASSAGES_VERSION = 1                          # doc2query prompt and grounding
 SEARCH_V2_VERSIONS: Mapping[str, int] = {"keys": KEYS_VERSION, "profile": PROFILE_VERSION,
                                          "passages": PASSAGES_VERSION}
-MIGRATION_GATE_KEY = "keys"
+# D30 by Δ65 (§26.7): the newest key a from-scratch onboarding stamps. A sync state without it was built before it
+# existed: gated (no tick work, search says "being rebuilt", one fan-out alert) until the owner's rebuild purges it.
+MIGRATION_GATE_KEY = "accuracy"
 CURRENT_VERSIONS: Mapping[str, int] = {"policy": POLICY_VERSION, "card": CARD_VERSION,
                                        "geo_table": GEO_TABLE_VERSION, "name_keys": NAME_KEYS_VERSION,
                                        "extraction": EXTRACTION_VERSION, "triage": TRIAGE_VERSION,
-                                       **SEARCH_V2_VERSIONS}
+                                       "accuracy": ACCURACY_VERSION, **SEARCH_V2_VERSIONS}
 
 
 class Scope(str, Enum):
@@ -192,6 +206,14 @@ class DocumentBrief:
     doc_date: Optional[datetime] = None
     parties: Tuple[str, ...] = ()
     amount: str = ""                          # value and currency as one display string, e.g. "1 250.00 EUR"
+    date_grade: str = ""                      # a `Grade` value of `doc_date` against the stored text (§26.4, Δ60); ""
+                                              # until graded (a record stored before it, or not yet written)
+
+    @property
+    def held_date(self) -> Optional[datetime]:
+        """`doc_date` unless grading found it absent from the text: an unconfirmed date never becomes the file's
+        effective date, a `y:`/`m:` key or "(document)" (Δ60). An ungraded brief's date counts."""
+        return None if self.date_grade == "not_in_text" else self.doc_date
 
 
 @dataclass(frozen=True)
@@ -332,15 +354,45 @@ class DriveIndexRecord:
     photo_description: str = ""               # enriched triage, photographs only (§25.4.3); replaces caption
     photo_objects: Tuple[PhotoObject, ...] = ()
     photo_scene: str = ""
+    photo_scene_labels: Tuple[str, ...] = ()  # D40: SCENE_LABELS values, plain strings (a rollback reads them back, Δ47)
     visible_text: str = ""
     readme_excerpt: str = ""                  # a collapsed folder's README profile input (§25.3)
     readme_excerpt_version: str = ""          # the README content version it came from
     script_rendered: bool = False             # parser@2 flagged the page script-rendered (§25.3): a template profile;
                                               # copied from ExtractionOutcome.script_rendered by P5
+    # -- §26.2 (D33, RFC Δ47): files the bot cannot open. Delta lists the item, every id-addressed read answers 404 (its
+    # own permission list lacks the app's entry). Read as a state by `inaccessible(rec)`, never a RecordState value: the
+    # content outcome and a readable generation stay, and the rollback tag still parses every record (§25.8)
+    inaccessible_since: Optional[datetime] = None        # the marking: unchanged while the item stays closed
+    inaccessible_checked_at: Optional[datetime] = None   # the last id read that answered 404 (the retry clock)
+    inaccessible_reobserved: bool = False                # delta or a listing saw the item or its parent since that
+                                                         # read: the next read is due INACCESSIBLE_RETRY_MIN after it
+    # the fan-out's own field (Δ54): the `inaccessible_since` it notified the user of. Never in the tick's record
+    # writes (firestore_drive_index_repo.record_to_doc leaves it out); written by set_inaccessible_notified only
+    inaccessible_notified_since: Optional[datetime] = None
+    # -- §26.3 (D34): how a text-bearing file was captured, a drive_capture.Capture value ("" for none: a photograph, a
+    # file not read, an ambiguous PDF no model read), and its source, a CaptureSource value: `detected` by code from
+    # the file's structure (keyed `cp:`) or said by a model, `automatic` (`cpa:`). Plain strings, no enum (Δ47's
+    # rollback invariant): the rollback tag ignores them.
+    capture: str = ""
+    capture_source: str = ""
+    # -- §26.4 (D35, D36, Δ61): the card's accuracy, 0-100, computed by `drive_accuracy` (None: a photograph or a card
+    # with no model-written content to check), the ACCURACY_VERSION it was computed under (0: none), and the reading
+    # problems it prices: pages the provider refused, a read served by the fallback model. Plain fields, no enum
+    # (Δ47's rollback invariant). The score is never in `card_text`, so a weight change re-scores without a re-embed.
+    card_accuracy: Optional[int] = None
+    accuracy_version: int = 0
+    pages_refused: int = 0
+    read_by_fallback: bool = False
 
     @property
     def stale(self) -> bool:
         return self.indexed_generation is not None and self.content_version != self.indexed_version
+
+
+def inaccessible(rec: DriveIndexRecord) -> bool:
+    """The bot cannot open this item (§26.2): a 404 on an id-addressed read of an item delta still lists."""
+    return rec.inaccessible_since is not None
 
 
 @dataclass(frozen=True)

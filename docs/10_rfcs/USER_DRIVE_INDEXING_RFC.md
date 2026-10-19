@@ -7,8 +7,9 @@ code in rev 3.15 and again, after the final cross-cutting review, in rev 3.16; r
 switch after the live check. **Search v2** (owner decisions D14–D28 and D30, D29 and D31 by the arbiter) is designed
 in §25 and **implemented and live since 2026-10-14** (PR #64; results on the synthetic fixture: §25.7.1);
 §25 overrides §5.5, §8.5, §10, §14, §15 and §24 where they disagree. Slice 3 not built. Phase 0 hardening merged (PR #57, §16).
-**Card accuracy, capture and files the bot cannot open** (owner decisions D33–D38, engineering deltas Δ47–Δ67) are
-designed in §26 — **proposed, not built**; the text above still describes the code.
+**Card accuracy, capture and files the bot cannot open** (owner decisions D33–D40, engineering deltas Δ47–Δ91) are
+designed in §26 and **built on `feat/drive-card-accuracy` (slices S1–S6), not deployed**; the text above describes the
+deployed code, §26 what the branch changes.
 **Builds on:** [USER_DRIVE_RFC.md](USER_DRIVE_RFC.md) (Step 1, live: CRUD over the user's OneDrive App Folder).
 Replaces that RFC's §5 "Step 2" placeholder.
 **Precedents reused:** email index ([GMAIL_EMAIL_INDEXING_RFC.md](GMAIL_EMAIL_INDEXING_RFC.md), `IndexedEmail`),
@@ -135,6 +136,11 @@ To Do mirror (`TaskSearchIndex`), `src/domain/rrf.py`, `TaskQueue.enqueue_worker
   deltas Δ47–Δ67: space-separated dates in the normaliser, two identity-number labels, one doc type per card,
   listing by `drive:` ref, a vocabulary measurement before any profiler prompt change, the version bumps and the
   D30 gate moved to `accuracy`. Not built.
+- Rev 3.23 (2026-10-19): §26 built on `feat/drive-card-accuracy` (S1–S6), not deployed. Owner decisions D39 (the
+  photo's place and coordinates as a prior for triage) and D40 (scene labels from a fixed set) and the rule that the
+  §26 rebuild runs without an initial-build reset (§21); build deltas Δ79–Δ91 (§26.10), "as built" notes in §26.3–§26.5,
+  the new §26.13, the parameters of §26.12, the corrected rollout of §26.9 (the six tokens inside the paused window,
+  both services checked before the rebuild, no reset) and the eval additions of §26.8.
 
 **Owner decisions (2026-10-11)**
 - The App Folder is meant to become a real document store. It is empty only because the feature is being built.
@@ -152,7 +158,7 @@ To Do mirror (`TaskSearchIndex`), `src/domain/rrf.py`, `TaskQueue.enqueue_worker
 - This RFC adds **no path that feeds document content to consolidation**. Where the line runs (a scanned receipt
   *is* a fact about the user; a contract on the drive is not) needs its own design: OQ-1.
 
-**Owner decisions on the open points** (D1–D5) are in §21, and so are D6–D38.
+**Owner decisions on the open points** (D1–D5) are in §21, and so are D6–D40.
 
 ---
 
@@ -1611,6 +1617,8 @@ identity-document scans (observations in §26.1, described generically). Designe
   each file in the same folder"); the paths are **always** in an attached file, whatever the count, so names never
   appear in chat text. The indexer only marks; the main service's 10-minute fan-out sends it. Access regained clears
   the state silently; an original that stays inaccessible after the user copied it is never announced again (§26.2).
+  *(Recorded as the owner said it. Δ75 (§26.10) overrides the fix's wording in every user-facing text: "copy each file
+  into a new folder you create inside the bot's folder"; the owner's own words were only "make a copy of them".)*
 - **D34 A capture facet: scan, document photo, screenshot, digital — deterministic and model.** Deterministic signals
   (no text layer and one full-page image at a scanner-like resolution and glass size → scan; EXIF camera Make/Model →
   camera photo; a text layer → digital) win where unambiguous; the model (the reader for PDF pages, triage for images)
@@ -1637,6 +1645,18 @@ identity-document scans (observations in §26.1, described generically). Designe
   weights, not single cards (§26.6).
 - **D38 Rollout by a full re-index of every user's drive**, and validation on the owner's real scans before it is
   called done (§26.7).
+- **D39 (2026-10-19) The photo's location is a prior for triage.** Each thumbnail's line carries, when the record has
+  them, the place name (which ends in the country the geo table knows) and the coordinates **rounded to 3 decimals**
+  (about 110 m; the full-precision GPS never leaves the index). Not the camera make or model, not the date: they add
+  nothing to a description and a date invites guesses. The rule: name a landmark only when it is recognised in the
+  image; the location decides between look-alikes and never invents a name; otherwise describe generically and add the
+  place. Landmark names stay where they are today (description, objects), in the automatic class, never exact (§26.13).
+- **D40 (2026-10-19) Scene labels from a fixed set.** Triage returns `scene_labels` for a photograph, from a closed
+  set of 32 (`SCENE_LABELS`), keyed `sl:` in the automatic class with a pinned names table (`SCENE_NAMES`), in the
+  card text and on a rendered `scene:` line (§26.13). They ride the unreleased `TRIAGE_VERSION` 3, `CARD_VERSION` 4 and
+  `KEYS_VERSION` 4 bumps: no extra rebuild.
+- **No initial-build reset for the §26 rebuild (owner rule, 2026-10-19).** The rebuild runs under the monthly caps
+  alone; `drive_initial_build_reset.py` is not part of this rollout (§26.7, §26.9).
 
 ---
 
@@ -2280,7 +2300,8 @@ where they labelled 38 synthetic documents correctly in both runs:
 - `DATE_LABELS`: `issued, event, valid_from, valid_until, due, period_end, other`. `ENTITY_TYPES`: `place,
   organization, person, event, product, work, other`. `VALUE_LABELS`: `order_number, ticket_number, booking_reference,
   invoice_number, receipt_number, account_number, iban, card_number_masked, policy_number, contract_number,
-  customer_number, reference, tax_id, phone, amount_total, amount_due, price, other_id`.
+  customer_number, reference, tax_id, document_number, personal_id_number, phone, amount_total, amount_due, price,
+  other_id` (`document_number` and `personal_id_number` since §26.5, Δ63).
 - Not in the set (unstable or ambiguous in the study): free tags, `personal_record`, `issuer` (an issuer is an entity).
 
 #### 25.2.4 Keys: one normaliser with form sets (`src/domain/drive_keys.py`, `drive_key_forms.py`, pure)
@@ -3143,6 +3164,7 @@ fixed by the cross-cutting operations review, XC-2)
 6. Deploy the tag (main and indexer).
 7. Resume the queue and the scheduler job. The usage documents survive (the tag does not read them).
 8. Before any later roll-forward, `drive_initial_build_reset.py` reopens each user's initial build (no purge does).
+   (The §26 rollout does not use it: owner rule 2026-10-19, §26.7.)
 
 `DRIVE_UPGRADE_PASS=off`, set on the running indexer, does not survive the next `make deploy` (the indexer is
 deployed with `--set-env-vars`): set it again after each deploy while it is needed (XC-7).
@@ -3523,12 +3545,16 @@ words, so you can tell whether the word was phrasing or the subject."
 
 ---
 
-## 26. Card accuracy, capture and inaccessible files (proposed, rev 3.22, 2026-10-14; not built)
+## 26. Card accuracy, capture and inaccessible files (rev 3.23, 2026-10-19; S1–S6 built on a branch, not deployed)
 
-Owner decisions D33–D38 (§21), recorded after a live session on the owner's drive on 2026-10-14; the engineering
-decisions taken to carry them out are the deltas Δ47–Δ67 (§26.10), each stated with its reason. **Nothing in this
-section is built.** Once built, where it and §3.4, §7.6, §8.2, §10.2, §10.4, §24.4 or §25.2–§25.5 disagree, this
-section wins; until then the text above describes the code. Every example below is synthetic: the observations were
+Owner decisions D33–D38 (§21), recorded after a live session on the owner's drive on 2026-10-14, and D39–D40
+(2026-10-19, §26.13); the engineering decisions taken to carry them out are the deltas Δ47–Δ67 (§26.10), each stated
+with its reason. **Slices S1–S6 are built on `feat/drive-card-accuracy` and not deployed:** S1 files the bot cannot open
+(§26.2; build deltas Δ68–Δ78, OQ-C1 resolved in §26.11), S2 capture (§26.3; Δ79–Δ84), S3 card accuracy (§26.4; Δ85–Δ88),
+S4 the small fixes (§26.5), S5 the two scripts (§26.6), S6 the photo location prior and scene labels (§26.13), and a
+cross-cutting round of fixes (Δ89–Δ91, A4–A6). Where this section and §3.4, §7.6, §8.2,
+§10.2, §10.4, §24.4 or §25.2–§25.5 disagree, this section wins for what is built; for the rest the text above describes
+the code. Every example below is synthetic: the observations were
 made on a live index, and none of their content, names or numbers appears here.
 
 ### 26.1 What was observed (2026-10-14)
@@ -3623,8 +3649,8 @@ access*, not *deleted*; the record is removed only when delta reports the item `
   change alone re-emits an item in the App Folder's delta is not verified (OQ-C1).
 - **Search (D33).** The card keeps its tier; its `index:` line (`src/domain/drive_tier_render.py:154-155`) reads
   `index: the file exists, but the bot cannot open it (its sharing settings keep the bot out); to fix it, copy the
-  file into a new folder inside the bot's folder: the copy can be read.` A folder card gets the folder form ("…
-  cannot open this folder or its files …; copy the files into a new folder …"). The coverage line counts them on
+  file into a new folder you create inside the bot's folder: the copy can be read.` A folder card gets the folder form
+  ("… cannot open this folder or its files …; copy the files into a new folder you create …"; Δ75). The coverage line counts them on
   their own (Δ56: "N files cannot be opened by the bot"); today they would sit in `not_read_yet` for good
   (`drive_tier_render.py:120-121`).
 - **List and open (Δ55).** `list_files_in_drive` takes a `drive:` folder ref as well as a path (listed by id); the
@@ -3643,8 +3669,8 @@ access*, not *deleted*; the record is removed only when delta reports the item `
     query every 10 minutes.
   - *What.* All of a pass's files in one message (at most `INACCESSIBLE_NOTICE_BATCH`, the rest on the next pass).
     The message carries only the count and the fix — "N files in your drive folder cannot be opened by the bot
-    because of their sharing settings. To fix it, make a copy of each file in the same folder; the copies can be
-    read. The list is attached." — as a deterministic localized UI string (en, uk, fr, es; `src/locales/`), and the
+    because of their sharing settings. To fix it, copy each file into a new folder you create inside the bot's
+    folder; the copies can be read. The list is attached." (Δ75) — as a deterministic localized UI string (en, uk, fr, es; `src/locales/`), and the
     paths are **always** in an attached text file (`notify_file_bytes`, `user_notification_service.py:533-`),
     whatever the count, so no file or folder name appears in the chat text or reaches a formatter model (Δ53).
   - *Delivery bookkeeping, the Δ6 rule.* The list goes first; only when it was sent is the text posted. The records
@@ -3660,6 +3686,14 @@ access*, not *deleted*; the record is removed only when delta reports the item `
     inaccessible and stays notified: its `inaccessible_since` does not change, so it is never announced again; the
     copy is a new, readable item. A file that is readable again and later loses access gets a new
     `inaccessible_since`: a new transition, one new notice.
+- **As built (S1, rev 3.23).** The design above, with the build deltas Δ68–Δ74: four record fields, not two (the
+  retry clock and the observation flag, Δ68); the notice gated by a tick counter instead of two sync-state timestamps
+  (Δ69); access regained clears the tick's fields only (Δ70); the coverage count from one read of the marked records,
+  the count queries unchanged (Δ71); the parent's observation through a per-tick map (Δ72); card details (Δ73); the
+  upgrade pass and a marked record (Δ74). OQ-C1 resolved by a slow timed retry (§26.11). After the S1 review: the
+  fix's wording (Δ75), the undeliverable notice's backoff (Δ76), file delivery by platform (Δ77), sub-folders marked with
+  their folder (Δ78), and mutations answering the access sentence (Δ55 as built). Code map: the building block
+  (`docs/05_building_blocks/user_drive/README.md` §4.18).
 
 ### 26.3 Capture (D34)
 Every text-bearing file records how it was captured: `scan`, `document_photo`, `screenshot` or `digital`, with its
@@ -3691,6 +3725,29 @@ has none: it is a photo already, by its `k:` words (Δ57).
 - **The card.** `capture` joins the card text as a segment (`CARD_VERSION` 4) and the rendered card shows
   `capture: scan (detected)` or `capture: screenshot (automatic)`.
 - **The score** reads it as the text's source (§26.4).
+- **As built (Δ79–Δ84).**
+  - *Every text kind has a capture (Δ79).* Every non-PDF, non-image text kind the parser reads (DOCX, XLSX, PPTX, TXT,
+    MD, HTML, EML, EPUB, …) is `digital`, source `detected`: the format is software-made, and the source share of §26.4
+    needs a source for every graded file. It adds no words and no card segment (`digital` has no names).
+  - *A PDF read by the reader (Δ80)* takes the capture most **windows** agreed on (the first seen wins a tie; the two
+    pieces of a halved window are one vote).
+  - *One function settles the chain (Δ81).* `drive_capture.file_capture`: a PDF by its signals, then the reader; an
+    image by Graph's camera facet, then the reader, then triage; a photograph none.
+  - *Rule 4 as built (Δ82).* An ambiguous PDF the parser read is **not** sent to the model for its capture alone: it
+    keeps no capture. A reader call only for the capture would bill every mixed PDF. It gets one when the reader reads
+    it for its text anyway.
+  - *The child's bounds (Δ83).* The parser child inspects at most `CAPTURE_PAGES_MAX` pages under its own time budget
+    `CAPTURE_BUDGET_S` (out of time: no signals, the text outcome kept; "every page" in the rules means every page
+    inspected). EXIF is also asked on a page whose only content is one image whatever its cover (a phone photo placed on
+    A4 with margins); a photo beside text is a figure of a digital report, not a photo of the document.
+  - *Query side (Δ84).* "Photo of a document" reduces to the concept "photo" (`k:` photographs), so the multi-word phrase
+    never reaches `cp:`; `CAPTURE_NAMES` therefore carries single-word and compound substitutes (see the comment in
+    `drive_labels.py`). A query emits `cp:`/`cpa:` only for forms present in `CAPTURE_NAMES`, so an ordinary word adds no
+    Firestore batch.
+  - *Kept and cleared.* A demotion keeps the capture when the text was read (outcome passed); a re-triage of an indexed
+    image keeps the reader's capture (the reader ranks above triage); a deterministic (`detected`) capture is kept on a
+    record held for the reader's monthly cap or `WAIT_MONTH` (A4); a record that ends `metadata_only` without a read
+    clears its capture; a capture change on a re-triage resets `accuracy_version`, so the card is re-scored.
 
 ### 26.4 Card accuracy (D35, D36)
 **Verification never drops a value.** Every value the profiler returns stays in the profile, the card and the keys,
@@ -3764,10 +3821,37 @@ detail reaches Smart: it opens the file when the answer depends on a value and t
     accuracy is 90% or more. Below that, open the file and check the value before answering.
   - For a scan or a photo of a document, the file's text is a reading of the image; when a value matters to the
     user, say where you read it.
-  - A result saying the bot cannot open the file: the file exists. Tell the user that a copy of it inside the bot's
-    folder can be read; do not try to open it.
+  - A result saying the bot cannot open the file: the file exists. Tell the user to copy each file into a new
+    folder they create inside the bot's folder (a copy in the same folder can stay closed); the copy can be read.
+    Do not try to open it.
   ```
+  (The last bullet is already in the skill since S1, in this wording since Δ75.)
   The 90 is a starting point to calibrate (D36); it lives only in the skill text.
+- **As built (Δ85–Δ89, Δ91).** Where the text above and this paragraph differ, this paragraph wins.
+  - *The source share (Δ85).* A file the reader (a model) read and called `digital` is `0.03` (`digital_model_read`: a
+    software page read by a model, not a text layer); native text is `0` only when the parser read it.
+  - *Native topics weigh 0 (Δ89).* They are still graded, stored and reported by the revision script, but do not move `V`:
+    they are an interpretation in the user's language, and with weight 1 most fully confirmed cards fell under 90 % and
+    Smart would have opened almost every file (decision record `drive_card_accuracy_score.md`).
+  - *Grading readings (Δ86).* At most `PROSE_NUMBERS_MAX` (12) number terms of the title and `what_it_is`, taken from the
+    maximal query terms only (no fragments of a longer number), and a number equal to a graded date or value is not
+    counted twice. A date is read lenient day-first (month-first only when day-first is invalid); a two-digit year is
+    accepted when it equals the ISO year's last two digits; month names are bilingual where the languages share a
+    form ("MAY"/"MAI"). The separator-free value match applies to IDs and digit groups only (never to amounts or
+    dates), needs at least 3 alphanumerics and whole runs; the entity skeleton match works only across scripts; duplicate
+    graded values collapse to the best grade; the caps apply to the first N values in the model's order. A template
+    profile without a brief carries no score.
+  - *Brief-only cards (Δ87).* The brief's date graded `not_in_text` never sets `effective_date` (Δ60 on the brief
+    path: `DocumentBrief.held_date`). Their grades are not stored: an `ACCURACY_VERSION` re-grade with incomplete
+    chunks keeps the stored score; with complete chunks it re-grades.
+  - *Telemetry and cards (Δ88).* `graded_not_in_text_<field>` and `graded_labels_normalised` replace
+    `verify_dropped_*`; the Related card carries the accuracy line (a Related card is opened as readily as any other); a
+    record that stops being scorable (text becomes a photo) loses its score.
+  - *Keys (Δ91).* An in-text ID or digit-group value (not an amount or a date) is also keyed by its separator-free
+    casefolded form, on both sides: "QX4471902" finds a card printing "QX 4471902".
+  - *The migration gate (A5).* A gated state is not "stale": the fan-out raises one alert, the migration one.
+  - *Skill.* The `drive-search` skill carries the section of §26.4 as written; the access line overrides the stale and
+    accuracy rules (a worded rule in the skill; the line says the file cannot be opened).
 
 ### 26.5 Smaller fixes (engineering decisions)
 - **Space-separated dates (Δ62).** `drive_content_terms` reads `DD MM YYYY` (one or more spaces or no-break spaces
@@ -3788,6 +3872,12 @@ detail reaches Smart: it opens the file when the answer depends on a value and t
   the brief stays until its next reason to change.
 - **`list_files_in_drive` takes a `drive:` ref (Δ55).** Search returns folder refs; a listing that refuses them sent
   Smart round a misleading error. A ref is listed by id; anything else is a path as today.
+- **As built (Δ62, Δ63).** Both as specified. The `VALUE_LABELS` list of §25.2.3 now ends `…, tax_id, document_number,
+  personal_id_number, …` (placed after `tax_id`; the frozen-core test reads that list). The grader does not depend on
+  the normaliser (Δ62 stays under `KEYS_VERSION`); Δ64's brief without `doc_type` shipped with `READER_VERSION` 2.
+- **Counted in scope (coverage).** Closed files (§26.2) are counted only inside the search's scope, as their own
+  sentence, and are never the reason a coverage line says "incomplete": they are a fact of the scope, not a gap in the
+  search.
 
 ### 26.6 Revision and measurement (D37; Δ66)
 - **Revision script (D37)**, owner-run, read-only, output only to `scripts/memory/` (it names files):
@@ -3813,12 +3903,12 @@ detail reaches Smart: it opens the file when the answer depends on a value and t
 ### 26.7 Versions, the rebuild and its cost (D38)
 | Version (map key) | Bump | Why |
 |---|---|---|
-| `KEYS_VERSION` (`keys`) | 3 → 4 | space-separated dates; `cp:`/`cpa:`, `va:`/`ya:`/`ma:`; entities not in the text as `ef:` only |
+| `KEYS_VERSION` (`keys`) | 3 → 4 | space-separated dates; `cp:`/`cpa:`, `va:`/`ya:`/`ma:`; entities not in the text as `ef:` only; separator-free ID values (Δ91); S6: `sl:` |
 | `PROFILE_VERSION` (`profile`) | 1 → 2 | dates with `printed`; `document_number`, `personal_id_number`; grading replaces dropping |
 | `READER_VERSION` (`extractor:reader`) | 1 → 2 | `capture`; no brief `doc_type` |
 | parser `VERSION` (`extractor:parser`) | 2 → 3 | `CaptureSignals` |
-| `TRIAGE_VERSION` (`triage`) | 2 → 3 | `capture` |
-| `CARD_VERSION` (`card`) | 3 → 4 | the capture segment |
+| `TRIAGE_VERSION` (`triage`) | 2 → 3 | `capture`; S6: the location prior (D39) and `scene_labels` (D40) |
+| `CARD_VERSION` (`card`) | 3 → 4 | the capture segment; S6: the scene labels segment |
 | `ACCURACY_VERSION` (`accuracy`) | new, 1 | grader and weights (§26.4) |
 | `POLICY_VERSION`, `EXTRACTION_VERSION`, `NAME_KEYS_VERSION`, `GEO_TABLE_VERSION`, `PASSAGES_VERSION` | — | unchanged |
 
@@ -3828,19 +3918,25 @@ detail reaches Smart: it opens the file when the answer depends on a value and t
   the fan-out alerts once — until the owner's rebuild purges and re-onboards it (`drive_index_rebuild.py`). No
   upgrade pass bills records that the rebuild then purges. The gate's window is the time between the deploy and each
   user's rebuild, so the rebuilds follow the deploy at once, the owner first.
-- **The initial build.** D27's allowance closed for every user after the v2 build and never reopens on a purge
-  (§25.4.5). Without `drive_initial_build_reset.py` the re-index runs under the monthly caps ($31 a month in all):
-  enough for a small drive, months for a large one. The owner runs the reset per user before the rebuild.
+- **No initial-build reset (owner rule, 2026-10-19).** D27's allowance closed for every user after the v2 build and
+  never reopens on a purge (§25.4.5). The §26 rebuild does **not** reopen it: it runs under the monthly caps alone
+  (reader $4, triage $3, profiler $4, passages $20 — $31 a month in all), and what a cap does not cover waits for the
+  next UTC month start, which is the design of those caps, not a failure. `drive_initial_build_reset.py` is not part of
+  this rollout.
 - **Cost, estimated** (no rebuild cost has been measured live; the per-unit figures are §25.6's estimates and
   §24.9's reader price, at GPT-6 Luna; assumed: no failover, today's prompts plus the few new output fields):
   `≈ T · $0.0008 + C · $0.0004 + P · $0.0006 + I · $0.000125`, for `T` text files profiled, `C` passage chunks (at
   most 100 a file), `P` model-read pages, `I` triaged images (triage input is not priced per image yet, §24.9, so `I`
   is a floor). A drive of 300 text files of five chunks, 200 scanned pages and 1 000 images: ≈ $0.24 + $0.60 + $0.12
-  + $0.13 ≈ **$1.10**. A drive at the caps: ≈ **$43** (§25.4.5's sizing), bounded by the $40 initial build plus the
-  monthly caps. The new output fields (`capture`, a date's `printed`) add a few tokens a call: under 2 %. Every
-  failover call costs 15× (§24.9). Embeddings are the owner's cost, unbilled (§25.6). Duration: §25.8's sizing,
-  ≈ 1 000–2 400 text files a day.
-- **Validation before done (D38).** On the owner's real scans, after the owner's rebuild (§26.9 step 9): every scan
+  + $0.13 ≈ **$1.10**. A drive at the caps: the monthly caps bound the spend, **$31 a month in all, no initial build**. The new output fields (`capture`, a date's `printed`) add a few tokens a call: under 2 %. Every
+  failover call costs 15× (§24.9). Embeddings are the owner's cost, unbilled (§25.6).
+  **Duration under the caps** (the per-unit figures above): profiles ≈ 165 a day at $4 a month (≈ 5 000 a month);
+  reader ≈ 6 600 pages a month; passages ≈ 50 000 chunks a month; triage ≈ 24 000 images a month. A drive of a few
+  hundred text files is described in days; a class whose work exceeds its cap takes one month per cap's worth, and
+  here the caps, not §25.8's tick sizing (≈ 1 000–2 400 text files a day), set the pace. Search stays correct throughout (the coverage line names what is not described yet).
+- **Validation before done (D38).** On the owner's real scans, after the owner's rebuild (§26.9 step 10) — **on scans that
+  were read**: the reader's monthly cap may not have reached every scan yet, and a scan not yet read has no text to check
+  (it waits; validate it when it is read): every scan
   `capture: scan (detected)`; a space-printed expiry date found by an exact date query and shown as `valid until`;
   identity numbers labelled `personal_id_number` / `document_number`; one doc type per card; the inaccessible folder
   and its files shown with the access line, listed by ref with the same sentence, one notice with the attached list,
@@ -3879,27 +3975,51 @@ the standing rule (CLAUDE.md). Slices, in build order:
   text for listing.
 - **S5 Scripts.** The revision script's shape function and grouping on a synthetic snapshot; the vocabulary script's
   classification on a recorded synthetic `tool_calls` sample.
-- **Eval.** The fixture gains a synthetic ID-card-like scan with a space-printed expiry date and a document number,
+- **S6 Location prior and scene labels (D39, D40).** The triage line with and without a location, the rounding (never
+  more than 3 decimals), no camera model and no date in the prompt; schema and parse (an unknown value dropped, the cap,
+  dedupe, a text image empty); the record codec incl. a legacy document without the field; keys (a photograph gets
+  `sl:`, a text image and a document none; "закаты", "puesta de sol" and "sunsets" meet `sl:sunset`; an ordinary query
+  emits no `sl:`); the card segment and the rendered `scene:` line; the `SCENE_NAMES` digest pinned to `KEYS_VERSION`.
+  *Expected to break (reviewer, done):* the frozen-core enum and field pins, the keys-table digest pins, the triage
+  schema test.
+- **Eval, as built.** The fixture gains a synthetic ID-card-like scan with a space-printed expiry date and a document number,
   a phone photo of a document with EXIF, a screenshot, and an inaccessible-item fixture in the fake drive; G1/G2 add
   cases for "scans", the expiry-date query and the ID number; G3 adds a value question on a card under 90 % (Smart
   opens the file) and a find question on one (Smart does not).
+  *As built:* `gold_v2.json` gains the cases `cls-scans-{en,uk,es}`, `cls-screenshot-ru`, `cls-screenshots-en`,
+  `ex-date-expiry-{dotted,spaced}`, `ex-date-valid-until`, `ex-value-id-number{,-spaced}`, `ex-inaccessible-name`
+  (`expect_inaccessible`), and S6's `cls-sunsets-{en,ru,es}`, `cls-sunset-photos`, `cls-beach-{ru,en}`, `ex-place-paris`,
+  `sem-landmark-eiffel{,-ru}`; a case may carry `known_hard` (run and reported, guarding nothing). `gold_g3_v2.json` gains
+  `v2-card-value-opens{,-ru}` (`must_open`: the file is opened at least once) and `v2-card-find-no-open{,-uk}`
+  (`must_not_open`: none is); both are hard checks of `smart_dry_run.py`, the scan's card being under 90 % by the
+  recorded profile's misread date. New fixtures: `fixture_texts_s26.py`, `fixture_images_s26.py`, `synthetic_s26.py`; the
+  parser's capture PDFs come from `scripts/validation/drive_capture_fixtures.py`. G3 stays owner-run.
 
 ### 26.9 Owner steps and the rollout
+The commands: `docs/07_deployment/README.md` § Card accuracy (§26) — rollout and rollback.
 1. Code on a feature branch; `make check` green; the eval meets its bars; G3 hard checks pass.
-2. The owner backs up the prompt layer, then uploads the changed tokens: the profiler's `OUTPUT_FORMAT_` and
-   `COGNITIVE_PROCESS_DRIVE_PROFILER` (dates with `printed`, the two value labels), the reader's (`capture`, no brief
-   `doc_type`), triage's (`capture`).
+2. The owner **backs up the six tokens** about to change (the prompt layer), and the rollout makes no initial-build
+   reset (owner rule, §21).
 3. The new composite index for the fan-out's read (`user_id + inaccessible_since`, plus whatever P2-style smoke the
-   build adds) is `READY`; `drive_index_smoke.py` runs the new reads once.
+   build adds) is `READY`; `drive_index_smoke.py` runs the new reads once (it now includes `inaccessible_records`).
 4. Pause the drive queue and the fan-out job; wait for a running tick's lease.
-5. Deploy main and indexer (the skill, the locales and the manifest text ship with the code).
-6. Resume the queue and the job (the purge is a tick, §25.8).
-7. Per user, the owner first: `drive_initial_build_reset.py`, then `drive_index_rebuild.py --user … --apply`.
-8. Then every other user, the same way.
-9. The owner's validation on the real scans (§26.7), and the revision script's first report; weights or the 90 bar
+5. **Upload the six changed tokens inside the paused window**, after step 4 and before step 6 (a tick running new code
+   against old tokens, or the reverse, stamps records with the wrong schema): `OUTPUT_FORMAT_` and `COGNITIVE_PROCESS_`
+   for the profiler (dates with `printed`, the two value labels), the reader (`capture`, no brief `doc_type`) and
+   triage (`capture`, the location prior, `scene_labels`).
+6. Deploy main and indexer (the skill, the locales and the manifest text ship with the code).
+7. **Verify both services serve the new image** (a partial deploy followed by a rebuild would need a second rebuild).
+   Resume the queue and the job (the purge is a tick, §25.8).
+8. Per user, the owner first: `drive_index_rebuild.py --user … --apply`. **No reset.** The script skips a state that
+   already carries the gate key (`accuracy`) unless `--force`, so a re-run never purges a rebuilt user.
+9. Then every other user, the same way.
+10. The owner's validation on the real scans (§26.7), and the revision script's first report; weights or the 90 bar
    change only from it.
 Rollback: the previous main tip, by §25.8's runbook (pause, mark every user `purging`, deploy, resume, rebuild); the
-records parse under the old code because §26 adds fields and no enum value (Δ47).
+records parse under the old code because §26 adds fields and no enum value (Δ47). **Restore the six-token backup**
+with the deploy. The **purge is mandatory**: a rolled-back index is rebuilt from scratch, never upgraded in place over
+records of the new versions. The re-index that follows is a **second one**, under caps already spent by the first, so it is slower than
+the first; no reset reopens them.
 
 ### 26.10 Deltas: what §26 decides beyond D33–D38
 | # | Today | §26 | Why |
@@ -3925,12 +4045,43 @@ records parse under the old code because §26 adds fields and no enum value (Δ4
 | Δ65 | Gate key `keys` | Gate key `accuracy` | D38 by the D30 mechanism; no upgrade pass billed before a purge |
 | Δ66 | — | Measure vocabulary misses before tuning the profiler prompt | Tune for repeated misses, not one query |
 | Δ67 | — | Revision and vocabulary scripts write only to `scripts/memory/` | They name the user's files |
+| Δ68 | Δ47: two record fields | Four: `inaccessible_since`, `inaccessible_notified_since`, and the retry bookkeeping `inaccessible_checked_at` (the last read that answered 404) and `inaccessible_reobserved` (the item or its parent was observed since). A marked record's re-read is due `INACCESSIBLE_RETRY_MIN` after `checked_at` once observed, else `INACCESSIBLE_RETRY_SLOW` after it, in class 3 | Δ51's cap and OQ-C1's slow retry need the time of the last read, which `inaccessible_since` cannot be (it must stay fixed for the notice); every field is a plain new field, so the rollback tag still parses every record |
+| Δ69 | The fan-out reads records after `DriveSyncState.inaccessible_marked_at` moves past `inaccessible_checked_at` | No new sync-state field: the tick counts `inaccessible_unnotified` (files whose `inaccessible_notified_since != inaccessible_since`) in `counters` every tick it counts the marked files; the fan-out reads the records only while that count is non-zero, and per record requires `observed_as_of > inaccessible_since` (Δ49) | The same "no query on a quiet drive" with one writer per field: a fan-out-written timestamp on the state would be a new flag class (a datetime) for the state codec; the count costs nothing extra (Δ71 reads the records anyway). After a notice the next pass may read once more before the next tick refreshes the count: bounded, nothing is sent twice |
+| Δ70 | "A readable answer clears both fields silently" | It clears the tick's fields (`inaccessible_since`, `checked_at`, `reobserved`); `inaccessible_notified_since` stays | Δ54: only the fan-out writes it. It is compared by equality with `inaccessible_since`, so a stale value is harmless: a new loss of access is a new `inaccessible_since`, one new notice |
+| Δ71 | Coverage counts "N files cannot be opened" (Δ56) | The tick and the fan-out read the marked records lean (`inaccessible_records(…, lean=True)`, `ACCESS_MARK_FIELDS`: the fields the counters, the parent map and the notice need, scope and state included for the path; at most `INACCESSIBLE_SCAN_MAX` = 2 000) once per tick: at its start while the last tick counted a marked file, reused for the counters unless the tick changed a marking itself (then read again). A settled tick always counts (an empty read is one billed read), and so does a tick that marked, re-checked or regained an item, so a tick interrupted after a marking (its counters unsaved) cannot hide it from the notice for good. It counts the files (`inaccessible`) and takes the ones `count_unread` counts as waiting out of `not_read_yet`; the count queries are unchanged | Adding `inaccessible_since == null` to the count queries would need a new composite index per unread class; one composite (`user_id + inaccessible_since`) serves the counts, the parent map and the notice |
+| Δ72 | Δ51: an observation of the parent folder makes a marked record due | Through a per-tick map parent → marked records, read at the tick's start only while the last tick counted a marked file; a folder marked with no marked file inside is re-read by the timer only | No query per observed folder; a folder-only marking is rare (a re-listing or a README listing that met a 404) and the 7-day retry covers it |
+| Δ73 | The card's `index:` line; Δ52 "shown stale" | The access line replaces the `index:` line on tier cards, filter listings and Related cards; a kept readable generation is flagged `stale` with its own line ("the indexed text is from before the bot lost access to the file, and may be out of date"); a filter listing's envelope says "N files cannot be opened by the bot" | "The file changed after it was indexed" would be false for a file whose permissions changed; a Related card is opened as readily as any other |
+| Δ75 | D33's fix text: "make a copy of each file in the same folder" (notice); "copy … into a new folder inside the bot's folder" (search) | Every user-facing fix text says "copy each file into a new folder you create inside the bot's folder": the notice in en/uk/fr/es, the card lines (`ACCESS_LINE_FILE`, `ACCESS_LINE_FOLDER`), the list/open note, the `drive-search` skill (arbiter, 2026-10-14) | A copy takes its folder's permissions: in the same folder it stays closed when the whole folder lacks the app's entry (§26.1). The owner's own words were only "make a copy of them"; D33's quote in §21 stays as said |
+| Δ76 | A notice not sent is retried on the next pass | A notice whose list could not be sent (no channel, no file upload for the user's platform, a failed upload) is not read again until the next UTC day, unless the tick counts more files waiting to be told about; per process (a new instance tries once more, posting nothing that cannot arrive) | A user who cannot receive files would otherwise cost a read of the marked records every 10 minutes forever; no new sync-state flag |
+| Δ77 | `notify_file_bytes` used the one wired media port (Slack's) and posted a "📎" placeholder first | Media ports per platform (`register_platform_media`); a platform without one returns "not sent" before posting anything; the placeholder only for Slack (it turns a stored user id into the DM channel); Telegram's port uploads to the chat id as is. `main.py` registers Slack's and Telegram's | With only Slack's port, a Telegram default chat got a "📎" every pass, forever, and never the list |
+| Δ78 | Δ50: a folder is marked through its file, one level per marking | A folder marked (through a file, a re-listing, a README listing or a probe) marks its stored sub-folders with it (breadth first, Firestore reads only, at most `SUBFOLDER_SCAN_MAX` = 400 records read), each due for its own re-read within `INACCESSIBLE_RETRY_MIN` (marked by inference, not by its own 404); a folder regained makes its marked sub-folders due the same way. Files inside are still marked only by their own 404. Limit: the 400-record budget counts files too (the children read has no folder filter; one would need a new composite index `user_id + parent_id + is_folder + item_id`), so a folder with 400 or more direct files ahead of its sub-folders in item-id order may leave sub-folders unmarked until their own 404 | A sub-folder inherits its folder's permissions, and listing it by path must answer the access sentence, not "No folder"; one with its own grant for the app shows the access line for at most an hour |
+| Δ79 | A PDF and an image have a capture; other kinds none | Every non-PDF, non-image text kind the parser reads is `digital`, source `detected`; no words, no card segment | "Every text-bearing file records how it was captured"; the source share of §26.4 needs a source for every graded file |
+| Δ80 | A reader call returns one capture | A PDF read by the reader takes the capture most windows agreed on (first seen wins a tie; a halved window's pieces are one vote) | A window is the unit of a read; one window must not outvote the rest |
+| Δ81 | The chain's rules sit in the services | `drive_capture.file_capture` settles the whole chain (PDF: signals, then reader; image: Graph camera facet, reader, triage; photograph: none) | One pure function, tested without a tick |
+| Δ82 | Rule 4: an ambiguous PDF goes to the model | An ambiguous PDF the parser read is not sent for its capture alone; it keeps none and gets one when the reader reads it anyway | A reader call only for a capture would bill every mixed PDF |
+| Δ83 | The child inspects the PDF | At most `CAPTURE_PAGES_MAX` pages, under `CAPTURE_BUDGET_S` (out of time: no signals); EXIF also asked on a page whose only content is one image, whatever its cover | A hostile or huge PDF cannot hold the child; a phone photo on A4 with margins is still a photo |
+| Δ84 | "Photo of a document" would be a phrase for `cp:` | `CAPTURE_NAMES` carries single-word and compound substitutes; the query side emits `cp:`/`cpa:` only for forms in the table | The phrase reduces to the concept "photo" before it reaches `cp:`; no extra Firestore batches for ordinary words |
+| Δ85 | Source share: a native layer 0 | A file the reader read and called `digital`: 0.03 (`digital_model_read`); 0 only when the parser read it | A software page read by a model is a reading, not a text layer |
+| Δ86 | The grading readings of §26.4 | `PROSE_NUMBERS_MAX` 12, maximal terms only, no double count with a graded date or value; lenient date day-first first, two-digit year, bilingual month names; separator-free match for IDs and digit groups only (≥ 3 alphanumerics, whole runs); entity skeleton across scripts only; duplicates collapse to the best grade; caps on the first N in the model's order; a template profile without a brief has no score | Each closes a false `not_in_text` or a false match found in review |
+| Δ87 | A brief-only card is graded like any | The brief's date graded `not_in_text` never sets `effective_date`; its grades are not stored; an `ACCURACY_VERSION` re-grade with incomplete chunks keeps the stored score | Δ60 on the brief path; grading needs the whole text |
+| Δ88 | `verify_dropped_*` telemetry | `graded_not_in_text_<field>`, `graded_labels_normalised`; the Related card carries the accuracy line; a record that stops being scorable loses its score | Nothing is dropped any more; a Related card is opened as readily as any |
+| Δ89 | Native topics weight 1 | Graded and reported, weight 0 in `V` | Interpretation in the user's language; with weight 1 most fully confirmed cards fell under 90 % and Smart would open almost every file |
+| Δ90 | A word's df for the strict-AND allowances counts every key | Counted without `sl:` keys | Scene labels must not make document words ("travel", "квартира") missable |
+| Δ91 | An in-text ID or digit-group value is keyed as printed | Also keyed by its separator-free casefolded form, both sides (not amounts or dates) | "QX4471902" finds a card printing "QX 4471902" |
+| A4 | A deterministic capture is lost when a record waits | Kept on a record held for the reader's monthly cap or `WAIT_MONTH`; `metadata_only` without a read clears it | The detected capture costs nothing and stays true |
+| A5 | A gated state counts as stale | Not stale: one alert, the migration one | A second alert on the same state is noise |
+| A6 | The rebuild script purges whatever it is given | Skips a state already carrying the gate key unless `--force` | A re-run must not purge a rebuilt user |
+| Δ74 | §12.3 upgrade pass | A marked record is stale only for what a re-plan applies without reading it (card version, name keys, embedding space, keys from stored text); its content versions wait for access, like a record under an unresolved parent, and never keep the versions from applying. Access regained re-reads an extractor-stale record | A content re-read is impossible while it 404s; counting it stale would keep every upgrade pass from applying for as long as the user leaves the file closed |
 
 ### 26.11 Open questions (each with a recommendation)
 - **OQ-C1 Does a permission change re-emit an item in the App Folder's delta?** Not verified; the retry of Δ51
   depends on some observation of the item or its parent. *Recommend:* check it live on a synthetic folder (share it,
   move it in, then copy and change its sharing) before S1 is built; if not, add a slow timed retry
-  (`INACCESSIBLE_RETRY_SLOW`, 7 days, one item call each).
+  (`INACCESSIBLE_RETRY_SLOW`, 7 days, one item call each). **Resolved for S1 (arbiter, 2026-10-14):** the live check
+  was not done, so the slow timed retry is built alongside the observation retry: a marked record is read again by id
+  `INACCESSIBLE_RETRY_SLOW` (7 days) after its last read when nothing observed it, one item call each (Δ68). The live
+  check stays useful: if delta does re-emit on a permission change, the slow retry only costs a call a week per closed
+  item.
 - **OQ-C2 A read path through the path-addressed listing.** §26.1 notes that a path-addressed children listing returns
   download URLs for such items. *Recommend:* not now. D33 is decided; reading files through an inconsistency between
   two Graph addressing modes, against the user's sharing settings, could close without notice and would hide the
@@ -3940,9 +4091,45 @@ records parse under the old code because §26 adds fields and no enum value (Δ4
 | Name | Initial | Basis |
 |---|---|---|
 | `INACCESSIBLE_RETRY_MIN` | 1 h | Δ51 |
+| `INACCESSIBLE_RETRY_SLOW` | 7 days | OQ-C1 resolution (Δ68): one item call per closed item a week |
 | `INACCESSIBLE_NOTICE_BATCH` | 2 000 files | one text file per pass |
+| `INACCESSIBLE_SCAN_MAX` | 2 000 records | Δ71: the marked records one read returns (the tick's counts and map, the fan-out) |
+| `SUBFOLDER_SCAN_MAX` | 400 records | Δ78: stored records read to mark a closed folder's sub-folders with it |
 | `FULL_PAGE_COVER` | 0.95 of the page | §26.3 rule 2 |
 | `SCAN_DPI_MIN` / `SCAN_DPI_MAX` | 150 / 600 dpi | §26.1 item 2 (200 dpi observed) |
 | `SCAN_GLASS_MAX_MM` | 220 × 360 mm | A4, Letter and Legal glass |
-| Accuracy weights (`drive_accuracy.py`, `ACCURACY_VERSION` 1) | `w`: dates, values, prose numbers 3, entities 2, native topics 1; `m`: 0 / 0.1 / 1; `S`: 0 / 0.03 / 0.05 / 0.08 / 0.05; `R`: refused 5, fallback 3, truncated 2 | §26.4; calibrated by D37's script |
+| `CAPTURE_PAGES_MAX` | 50 pages | Δ83: the parser child's signals walk |
+| `CAPTURE_BUDGET_S` | 5 s | Δ83: the walk's own budget in the child; out of it, no signals |
+| `PROSE_NUMBERS_MAX` | 12 | Δ86: graded number terms of the title and `what_it_is` (a cost limit, not a weight) |
+| `PHOTO_SCENE_LABELS_MAX` | 6 | D40: scene labels a photograph keeps |
+| Accuracy weights (`drive_accuracy.py`, `ACCURACY_VERSION` 1) | `w`: dates, values, prose numbers 3, entities 2, native topics **0** (Δ89); `m`: 0 / 0.1 / 1; `S`: native 0, digital 0, screenshot 0.03, scan 0.05, document photo 0.08, model-read unknown 0.05, **`digital_model_read` 0.03** (Δ85); `R`: refused 5, fallback 3, truncated 2 | §26.4; calibrated by D37's script; pinned by `weights_digest()` |
 | Smart's value bar | 90 % (skill text only) | D36 |
+
+### 26.13 Photo location and scene labels (D39, D40)
+Added after the rest of §26 was built (owner decisions 2026-10-19), numbered last so the § numbers code cites stay
+put. Both ride the unreleased `TRIAGE_VERSION` 3, `CARD_VERSION` 4 and `KEYS_VERSION` 4: no extra rebuild.
+
+- **The location prior (D39).** Triage's per-image line was `Image <n>: camera metadata present|absent`. When the record
+  has the photo's location it continues: `Image 3: camera metadata present; taken near Barcelona, Spain (41.403, 2.174)`,
+  or `…; taken at (41.403, 2.174)` when no place name is known (the geo table's place name already ends in the country;
+  with no country it is omitted). The coordinates come from `coarse_location(rec.facets)`, rounded to 3 decimals (about
+  110 m), and `image_label` rounds again whatever the caller sent: **the full-precision GPS never reaches a model.**
+  No camera make or model, no date (they add nothing to a description; a date invites guesses). The token
+  `COGNITIVE_PROCESS_DRIVE_TRIAGE` carries one rule: the location says where the phone was, not what the photo shows;
+  name a specific landmark, building, venue or place only when it is recognised in the image; the location may decide
+  between look-alikes and never invents a name; otherwise describe generically and add the place. Landmark names stay in
+  the description and the objects, so they are automatic, never exact; no new field.
+- **Scene labels (D40).** Triage returns `scene_labels` for a photograph: zero to `PHOTO_SCENE_LABELS_MAX` values of the
+  closed set `SCENE_LABELS` (32: sunrise, sunset, night, golden_hour, rain, snow, fog, sunny, storm, beach, sea,
+  mountains, forest, lake_river, city_street, countryside, indoors, restaurant_cafe, home, party, wedding, birthday,
+  concert, sport, travel, selfie, group, child, pet, food, landscape, architecture); a text image returns none; the
+  free-text `scene` stays. Parsing drops an unknown value (a warning, never an error), dedupes and caps. The record
+  holds `photo_scene_labels` as plain strings (Δ47's rollback invariant).
+- **Keys.** `SCENE_NAMES` (en/es/uk/ru, singular and plural where natural, like D31's tables; pinned by a digest tied to
+  `KEYS_VERSION`) names each label; the keyer writes them as phrases under `sl:`, an **automatic** source class
+  (Labelled: a model said it), for a photograph only. A query word emits `sl:` only for a form present in `SCENE_NAMES`
+  (a precomputed set, as `_capture_suffixes` does for `cp:`), so an ordinary query adds no Firestore batches. A
+  match through `sl:` is explained "(automatic)". Δ90 keeps `sl:` out of the df of the strict-AND allowances.
+- **Card.** A photograph's card text gains the labels' English names as a segment after `scene`
+  (`name | image | description | scene | scene labels | objects | visible text | facets`); the rendered card shows
+  `scene: sunset, beach`.
