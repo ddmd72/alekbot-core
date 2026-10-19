@@ -87,7 +87,7 @@ from ..domain.drive_index_lean import (
     RECORD_LEAN_FIELDS, ChunkId, DriveChunkLean, DriveHintLean, DriveRecordLean, lean_of,
 )
 from ..domain.drive_index_params import (
-    CONCEPT_KEYS_MAX, NAME_QUERY_KEYS_MAX, RECORD_WRITE_BATCH, WRITE_BATCH_BYTES,
+    CONCEPT_KEYS_MAX, KEYED_DELETE_BATCH, NAME_QUERY_KEYS_MAX, RECORD_WRITE_BATCH, WRITE_BATCH_BYTES,
 )
 from ..domain.drive_usage import (
     closed_initial, initial_doc_id, new_initial_build, spent_initial, usage_doc_id, usage_expires_at,
@@ -833,7 +833,7 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
         query = self._user_chunks(user_id).where(filter=FieldFilter("item_id", "==", item_id)).select(["generation"])
         doomed = [snap.reference for snap in await query.get()
                   if (snap.to_dict() or {}).get("generation") != keep_generation]
-        await self._delete_refs(doomed)
+        await self._delete_refs(doomed, KEYED_DELETE_BATCH)
         return len(doomed)
 
     def nearest_chunks_query(self, user_id: str, vector: Sequence[float], limit: int,
@@ -928,7 +928,7 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
 
     async def delete_user_chunks(self, user_id: str, limit: int) -> int:
         snaps = await self._user_chunks(user_id).select([FieldPath.document_id()]).limit(limit).get()
-        await self._delete_refs([snap.reference for snap in snaps])
+        await self._delete_refs([snap.reference for snap in snaps], KEYED_DELETE_BATCH)
         return len(snaps)
 
     async def _set_in_batches(self, writes: Sequence[Tuple[Any, Dict[str, Any]]], *,
@@ -943,8 +943,8 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
                     batch.set(ref, data)
             await batch.commit()
 
-    async def _delete_refs(self, refs: Sequence[Any]) -> None:
-        for part in _chunks(refs):
+    async def _delete_refs(self, refs: Sequence[Any], size: int = RECORD_WRITE_BATCH) -> None:
+        for part in _chunks(refs, size):
             batch = self._db.batch()
             for ref in part:
                 batch.delete(ref)
@@ -1187,12 +1187,12 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
         query = self._user_hints(user_id).where(filter=FieldFilter("item_id", "==", item_id)).select(["generation"])
         doomed = [snap.reference for snap in await query.get()
                   if (snap.to_dict() or {}).get("generation") != keep_generation]
-        await self._delete_refs(doomed)
+        await self._delete_refs(doomed, KEYED_DELETE_BATCH)
         return len(doomed)
 
     async def delete_user_hints(self, user_id: str, limit: int) -> int:
         snaps = await self._user_hints(user_id).select([FieldPath.document_id()]).limit(limit).get()
-        await self._delete_refs([snap.reference for snap in snaps])
+        await self._delete_refs([snap.reference for snap in snaps], KEYED_DELETE_BATCH)
         return len(snaps)
 
     async def hints_page(self, user_id: str, after: Optional[ChunkId], limit: int) -> List[DriveHintLean]:
