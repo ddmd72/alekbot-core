@@ -176,6 +176,10 @@ def validate_gold(gold: Sequence[Dict[str, Any]], paths: Sequence[str], k: int =
                 problems.append(f"{cid}: min_hits must be an integer in 1..{most - 1} (fewer than its K hits)")
         if "known_hard" in case and not (isinstance(case["known_hard"], str) and case["known_hard"].strip()):
             problems.append(f"{cid}: known_hard must say why the case is hard")
+        if "accepted_loss" in case and not (isinstance(case["accepted_loss"], str) and case["accepted_loss"].strip()):
+            problems.append(f"{cid}: accepted_loss must say why the loss is accepted")
+        if "requires_enrichment" in case and case["requires_enrichment"] is not True:
+            problems.append(f"{cid}: requires_enrichment must be true")
         if "ocr" in case and not isinstance(case["ocr"], bool):
             problems.append(f"{cid}: ocr must be true or false")
         problems += _substring_problems(case)
@@ -278,10 +282,11 @@ def _card_paths(card: Any, drive: FixtureDrive) -> List[str]:
 
 
 def _windows(cards: Sequence[Any], drive: FixtureDrive) -> Dict[str, str]:
-    """{path: the content window its card showed}: a collapsed duplicate shows its window for every copy."""
+    """{path: the matched passage its card showed}: a collapsed duplicate shows its passage for every copy.
+    v2 cards carry `passage`; an About card has none."""
     out: Dict[str, str] = {}
     for card in cards:
-        window = str(getattr(card, "window", "") or "")
+        window = str(getattr(card, "passage", "") or "")
         for path in _card_paths(card, drive):
             out.setdefault(path, window)
     return out
@@ -318,7 +323,7 @@ async def run_cases(search: DriveSearchService, drive: FixtureDrive, gold: Seque
                 found = substring_hit(wanted, windows)
                 row.update(path_hit=hit, substring_hit=found, hit=hit and found,
                            windows={p: windows.get(p, "")[:WINDOW_REPORT_CHARS] for p in wanted})
-        for key in ("min_hits", "known_hard", "ocr", "goal"):
+        for key in ("min_hits", "known_hard", "accepted_loss", "ocr", "goal"):
             if key in case:
                 row[key] = case[key]
         run.cases.append(row)

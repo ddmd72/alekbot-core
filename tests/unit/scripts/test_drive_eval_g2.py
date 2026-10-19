@@ -71,7 +71,7 @@ def test_a_well_formed_g2_case_passes():
 
 
 def _card(path, window, also_at=()):
-    return SimpleNamespace(ref=f"drive:{item_id_for(path)}", path=path, also_at=also_at, window=window)
+    return SimpleNamespace(ref=f"drive:{item_id_for(path)}", path=path, also_at=also_at, passage=window)
 
 
 class _Search:
