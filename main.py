@@ -847,6 +847,7 @@ async def main():
             fallback_service=_fallback_service,
             short_link_service=short_link_service,
             skill_service=container.skill_service,
+            memory_fact_service=container.memory_fact_service,
             long_turn_service=long_turn_service,
         )
         notification_channel_factory.register_factory(
@@ -1136,6 +1137,7 @@ async def main():
                             fallback_service=_fallback_service,
                             short_link_service=short_link_service,
                             skill_service=container.skill_service,
+                            memory_fact_service=container.memory_fact_service,
                             task_queue=agent_task_queue,
                             long_turn_service=long_turn_service,
                         )

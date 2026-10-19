@@ -77,8 +77,8 @@ def test_only_file_management_opts_out_of_prefetch():
 def test_descriptions_disambiguate_the_routing_cases():
     """RFC §3/§4.4/§4.9 routing cases, pinned to the wording the model reads."""
     d = FILE_MANAGEMENT.capability_descriptions
-    # "remember this FILE" vs "remember THAT ...": the file intent points text and facts elsewhere.
-    assert "save_to_memory" in d[Intent.SAVE_FILE_TO_DRIVE]
+    # "remember this FILE" vs "remember THAT ...": the file intent points facts elsewhere.
+    assert "propose_memory_facts" in d[Intent.SAVE_FILE_TO_DRIVE]
     # A chat file opened earlier, then "move it to <folder>": not on the drive yet, so save, not move.
     assert "save_file_to_drive" in d[Intent.MOVE_FILE_IN_DRIVE]
     # The store is in the name, both directions, for the destructive pair.

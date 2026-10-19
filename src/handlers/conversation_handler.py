@@ -23,7 +23,19 @@ from ..domain.turn_clock import (
 from ..domain.memory_telemetry import SCOPE_CHAT_TURN
 from ..domain.notification_kind import NotificationKind
 from ..domain.llm import Message, MessagePart
-from ..domain.exceptions import SkillCapExceeded, SkillDraftNotFound, SkillNameReserved, SkillRejected
+from ..domain.exceptions import (
+    MemoryDraftNotFound,
+    SkillCapExceeded,
+    SkillDraftNotFound,
+    SkillNameReserved,
+    SkillRejected,
+)
+from ..domain.memory_fact import (
+    MEMORY_PREVIEW_DELIVERY,
+    MemoryFactDraft,
+    ProposedFact,
+    render_preview_file,
+)
 from ..domain.skill import (
     SKILL_CONTEXT_KEY,
     SKILL_PREVIEW_DELIVERY,
@@ -43,6 +55,7 @@ if TYPE_CHECKING:
     from ..services.short_link_service import ShortLinkService
     from ..services.skill_service import SkillService
     from ..services.long_turn_service import LongTurnService
+    from ..services.memory_fact_service import MemoryFactService
 from ..utils.memory_scope import memory_scope
 from ..utils.file_conversion import (
     convert_file_to_text, download_alert, is_native_binary, make_history_stub,
@@ -142,6 +155,7 @@ class ConversationHandler(ConversationHandlerPort):
         fallback_service: Optional[Any] = None,
         skill_service: Optional["SkillService"] = None,
         long_turn_service: Optional["LongTurnService"] = None,
+        memory_fact_service: Optional["MemoryFactService"] = None,
     ):
         self.coordinator = coordinator
         self.agent_factory = agent_factory
@@ -164,6 +178,7 @@ class ConversationHandler(ConversationHandlerPort):
         self._short_link_service = short_link_service
         self._skill_service = skill_service
         self._long_turns = long_turn_service
+        self._memory_facts = memory_fact_service
         # turn_ids whose long-turn flow runs in this process (final review C1). With one
         # instance, a RUNNING record not in here belongs to an attempt that died. Plain
         # set ops with no await between test and change, so no lock is needed.
@@ -289,6 +304,8 @@ class ConversationHandler(ConversationHandlerPort):
                 logger.error("⚠️ [ConversationHandler] document delivery failed: %s", e, exc_info=True)
         elif item.type == SKILL_PREVIEW_DELIVERY:
             await self._deliver_skill_preview(item, response_channel, thread_id)
+        elif item.type == MEMORY_PREVIEW_DELIVERY:
+            await self._deliver_memory_preview(item, response_channel, thread_id)
         else:
             logger.warning("⚠️ [ConversationHandler] Unknown DeliveryItem type: %s — skipping", item.type)
 
@@ -368,6 +385,45 @@ class ConversationHandler(ConversationHandlerPort):
             await response_channel.send_message(f"`{item.data['command']}`", thread_id)
         except Exception as e:
             logger.error("⚠️ [ConversationHandler] skill_preview command send failed: %s", e, exc_info=True)
+
+    async def _deliver_memory_preview(
+        self,
+        item: DeliveryItem,
+        response_channel: ResponseChannel,
+        thread_id: Optional[str],
+    ) -> None:
+        """Deliver a `MEMORY_PREVIEW_DELIVERY` item: the facts as a file (chat adapters truncate
+        long text), a header, then the save command alone. If the file or the header fails, the
+        command is not sent: the owner must never confirm facts they were not shown."""
+        language = getattr(response_channel, "language", None)
+        facts = [ProposedFact(**f) for f in item.data["facts"]]
+        count = len(facts)
+        try:
+            await response_channel.send_file(
+                content=render_preview_file(MemoryFactDraft(facts=facts)).encode("utf-8"),
+                filename="memory-facts.txt",
+                title=self._ui_string_for_language(language, UIMessage.MEMORY_PREVIEW_FILE_TITLE, count=count),
+                thread_id=thread_id,
+            )
+            await response_channel.send_message(
+                self._ui_string_for_language(language, UIMessage.MEMORY_PREVIEW_HEADER, count=count),
+                thread_id,
+            )
+        except Exception as e:
+            logger.error("⚠️ [ConversationHandler] memory_preview delivery failed: %s", e, exc_info=True)
+            try:
+                await response_channel.send_message(
+                    self._ui_string_for_language(language, UIMessage.MEMORY_PREVIEW_DELIVERY_FAILED),
+                    thread_id,
+                )
+            except Exception as notice_err:
+                logger.error("⚠️ [ConversationHandler] memory_preview failure notice also failed: %s",
+                             notice_err, exc_info=True)
+            return
+        try:
+            await response_channel.send_message(f"`{item.data['command']}`", thread_id)
+        except Exception as e:
+            logger.error("⚠️ [ConversationHandler] memory_preview command send failed: %s", e, exc_info=True)
 
     def _render_skill_change_line(self, language: Optional[str], line: dict) -> str:
         """Localize one `FileChangeLine` dict (Task 6's `change_summary`) for the channel's
@@ -999,22 +1055,12 @@ class ConversationHandler(ConversationHandlerPort):
                         structured_data, response_channel, thread_id_for_reply
                     )
 
-            history_text, response_text, consolidation_texts = await self._prepare_history_texts(
+            history_text, response_text = await self._prepare_history_texts(
                 response, response_text, history_text, structured_data, context,
             )
 
             # Clean up temporary file paths before saving to history
             clean_message_parts = self._clean_user_parts(message_parts, file_part_stubs)
-
-            # Attach consolidation_text from save_to_memory delegations to the user message.
-            # consolidation_text is invisible to agents/adapters; only the consolidation
-            # serializer reads it (p.consolidation_text or p.text for user parts).
-            if consolidation_texts:
-                combined = "\n".join(consolidation_texts)
-                clean_message_parts.append(MessagePart(consolidation_text="\n\n" + combined))
-                logger.info(
-                    "💾 [History] consolidation_text attached to user message (%d chars)", len(combined)
-                )
 
             # Dispatch typed delivery items (e.g. grounding attribution widget from WebSearchAgent).
             for item in response.delivery_items:
@@ -1238,11 +1284,11 @@ class ConversationHandler(ConversationHandlerPort):
 
             # full_text starts from the sanitised text, as on the normal path — the raw text
             # must not reach history, where it is re-injected into later prompts.
-            history_text, full_text, consolidation_texts = await self._prepare_history_texts(
+            history_text, full_text = await self._prepare_history_texts(
                 response, shown, history_text, structured, context)
             await self._close_long_turn_in_session(
                 context, long_turns, link, history_text,
-                full_text=full_text, consolidation_texts=consolidation_texts,
+                full_text=full_text,
             )
             try:
                 await response_channel.send_late_answer(
@@ -1280,8 +1326,7 @@ class ConversationHandler(ConversationHandlerPort):
             return None
 
     async def _close_long_turn_in_session(self, context, long_turns, link: Optional[str],
-                                          model_text: str, *, full_text: Optional[str] = None,
-                                          consolidation_texts: Optional[List[str]] = None) -> None:
+                                          model_text: str, *, full_text: Optional[str] = None) -> None:
         """Append the late-answer pair that closes a long turn's question in the session.
 
         Used for every outcome — answer, failure, cancel, lost — so history never ends on an
@@ -1293,7 +1338,6 @@ class ConversationHandler(ConversationHandlerPort):
             await long_turns.save_late_answer(
                 session_id=context.session_id, owner_id=context.user_id,
                 note_text=render_late_answer_note(context.text or "", asked_at, link),
-                consolidation_texts=consolidation_texts or [],
                 history_text=model_text,
                 full_text=full_text if full_text is not None else model_text,
             )
@@ -1303,8 +1347,8 @@ class ConversationHandler(ConversationHandlerPort):
 
     async def _prepare_history_texts(
         self, response, response_text: str, history_text: str, structured_data, context,
-    ) -> tuple[str, str, List[str]]:
-        """(history_text, full_text, consolidation_texts) for the session pair.
+    ) -> tuple[str, str]:
+        """(history_text, full_text) for the session pair.
 
         Shared by the normal and the late-answer path, so both persist the same shape.
         `response_text` is the delivered text; the returned full_text extends it with the
@@ -1371,15 +1415,7 @@ class ConversationHandler(ConversationHandlerPort):
                 structured_data.content_type, len(rich_block)
             )
 
-        # consolidation_text from save_to_memory delegations, normalised to a list.
-        raw_consolidation = (response.metadata or {}).get("consolidation_text", [])
-        if not raw_consolidation:
-            consolidation_texts: List[str] = []
-        elif isinstance(raw_consolidation, list):
-            consolidation_texts = raw_consolidation
-        else:
-            consolidation_texts = [str(raw_consolidation)]
-        return history_text, response_text, consolidation_texts
+        return history_text, response_text
 
     def _clean_user_parts(
         self, message_parts: List[MessagePart], file_part_stubs: dict,
@@ -1564,6 +1600,9 @@ class ConversationHandler(ConversationHandlerPort):
 
             elif command.startswith("skill"):
                 await self._handle_skill_command(command, context, response_channel)
+
+            elif command.startswith("memory"):
+                await self._handle_memory_command(command, context, response_channel)
 
             elif command == "primary":
                 await self._handle_primary_command(context, response_channel)
@@ -1771,6 +1810,58 @@ class ConversationHandler(ConversationHandlerPort):
             await response_channel.send_message(
                 self._ui_string(context, UIMessage.SKILL_UNAVAILABLE), thread_id=context.thread_id,
             )
+
+    # ------------------------------------------------------------------
+    # Memory commands (MEMORY_FACT_CONFIRMATION_RFC)
+    # ------------------------------------------------------------------
+
+    async def _handle_memory_command(
+        self, command: str, context: MessageContext, response_channel: ResponseChannel,
+    ) -> None:
+        """Handle `$memory save CODE`; anything else prints usage.
+
+        `MemoryFactService.confirm` appends the confirmed facts to history as one user/model pair
+        (so the consolidator reads them as the owner's own statement) and deletes the draft only
+        after that; a failed append keeps it for a retry.
+        """
+        if not self._memory_facts:
+            await response_channel.send_message(
+                self._ui_string(context, UIMessage.MEMORY_UNAVAILABLE), thread_id=context.thread_id,
+            )
+            return
+
+        parts = command.split()
+        if len(parts) != 3 or parts[1] != "save":
+            await response_channel.send_message(
+                self._ui_string(context, UIMessage.MEMORY_USAGE), thread_id=context.thread_id,
+            )
+            return
+        code = parts[2]
+
+        try:
+            count = await self._memory_facts.confirm(
+                context.user_id, code, fallback_session_id=context.session_id,
+            )
+        except MemoryDraftNotFound as e:
+            logger.info("ℹ️ [ConversationHandler] Memory save: no draft %r for user %s: %s",
+                        code, context.user_id[:8], e)
+            await response_channel.send_message(
+                self._ui_string(context, UIMessage.MEMORY_DRAFT_NOT_FOUND, code=code),
+                thread_id=context.thread_id,
+            )
+            return
+        except Exception as e:
+            # The service deletes the draft only after the append, so it is still there to retry.
+            logger.error("❌ [ConversationHandler] Memory save %r failed for user %s: %s",
+                         code, context.user_id[:8], e, exc_info=True)
+            await response_channel.send_message(
+                self._ui_string(context, UIMessage.MEMORY_UNAVAILABLE), thread_id=context.thread_id,
+            )
+            return
+
+        await response_channel.send_message(
+            self._ui_string(context, UIMessage.MEMORY_SAVED, count=count), thread_id=context.thread_id,
+        )
 
     async def _handle_skill_save(
         self, code: str, context: MessageContext, response_channel: ResponseChannel,
