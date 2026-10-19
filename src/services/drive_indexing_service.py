@@ -57,7 +57,9 @@ from ..domain import drive_enrich_plan as enrich
 from ..domain.drive_accuracy import accuracy_settled, scored
 from ..domain import drive_index_policy as policy
 from ..domain.drive_capture import CaptureSignals, file_capture
-from ..domain.drive_card import card_eligible, card_hash, card_text, collapsed_folder, structurally_card_eligible
+from ..domain.drive_card import (
+    card_eligible, card_hash, card_text, coarse_location, collapsed_folder, structurally_card_eligible,
+)
 from ..domain.drive_chunker import chunk_text
 from ..domain.drive_enrich_plan import COVERAGE_COUNTERS, PASSAGES_AGENT, PROFILER_AGENT
 from ..domain.drive_enrichment import (
@@ -2059,7 +2061,8 @@ class DriveIndexingService:
                 writes.append(_maintenance_kept(after, rec.priority) if after.triage_verdict is not None else after)
                 continue
             images.append(TriageImage(item_id=rec.item_id, thumbnail=thumbnail, mime_type=image_mime(thumbnail[:8]),
-                                      camera_prior=camera_prior(rec.facets)))
+                                      camera_prior=camera_prior(rec.facets),
+                                      place_name=rec.place_name or "", location=coarse_location(rec.facets)))
             waiting[rec.item_id] = rec
         if images:
             try:

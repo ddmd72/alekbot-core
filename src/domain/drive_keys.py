@@ -50,7 +50,7 @@ from .drive_enrichment import DriveProfile, Grade, GradedField, KeyValue, PhotoO
 from .drive_index import TriageVerdict
 from .drive_index_params import (
     ABOUT_KEYS_PER_RECORD, CONCEPT_KEYS_MAX, ENTITY_FORMS_MAX, MAX_CONCEPTS, NAME_MIN_TRIGRAMS, NAME_QUERY_KEYS_MAX,
-    PHOTO_OBJECT_FORMS_MAX, PHOTO_OBJECTS_MAX, PHRASE_RUN_MAX, PROFILE_DATES_MAX, PROFILE_ENTITIES_MAX,
+    PHOTO_OBJECT_FORMS_MAX, PHOTO_OBJECTS_MAX, PHOTO_SCENE_LABELS_MAX, PHRASE_RUN_MAX, PROFILE_DATES_MAX, PROFILE_ENTITIES_MAX,
     PROFILE_KEY_VALUES_MAX, PROFILE_WORD_LIST_MAX, QUERY_TERM_CHARS, WORD_KEYS_PER_CHUNK,
 )
 from .drive_key_forms import (
@@ -59,8 +59,8 @@ from .drive_key_forms import (
 )
 from .drive_key_sources import AboutField, AboutSource, KeyedRecord, RecordKeyInputs
 from .drive_labels import (
-    CAPTURE_NAMES, DOC_TYPE_NAMES, KIND_WORDS, LIFE_DOMAIN_NAMES, PHOTO_KIND_WORDS, capture_names_digest,
-    label_names_digest,
+    CAPTURE_NAMES, DOC_TYPE_NAMES, KIND_WORDS, LIFE_DOMAIN_NAMES, PHOTO_KIND_WORDS, SCENE_NAMES,
+    capture_names_digest, label_names_digest, scene_names_digest,
 )
 from .drive_match import FAMILY_SOURCE_CLASS, Concept, KeyFamily, QueryConcepts, SourceClass
 from .drive_name_keys import _is_cyrillic, _strip_accents, _trigrams
@@ -80,6 +80,7 @@ _E, _EX, _PE, _V, _K = (KeyFamily.ENTITY.value, KeyFamily.ENTITY_TRANSLIT.value,
                         KeyFamily.VALUE.value, KeyFamily.KIND.value)
 _PN = KeyFamily.PHOTO_NUMBER.value
 _CP, _CPA = KeyFamily.CAPTURE.value, KeyFamily.CAPTURE_AUTO.value
+_SL = KeyFamily.SCENE_LABEL.value
 _VA, _YA, _MA = KeyFamily.VALUE_AUTO.value, KeyFamily.YEAR_AUTO.value, KeyFamily.MONTH_AUTO.value
 _DETECTED = "detected"   # drive_capture.CaptureSource.DETECTED (the value the record stores)
 _XL, _EXL, _EF = (KeyFamily.TRANSLIT_LATIN.value, KeyFamily.ENTITY_TRANSLIT_LATIN.value,
@@ -437,6 +438,12 @@ def _about_items(rec: KeyedRecord) -> List[_Item]:
             for word in words:
                 add(family_keys(prefix, [word]), field, "", word)
 
+    if rec.kind == "image" and rec.triage_verdict is TriageVerdict.PHOTO:
+        # D40: a photograph's scene labels, by their fixed names as phrases, like the `k:` table; a model said it
+        for label in rec.photo_scene_labels[:PHOTO_SCENE_LABELS_MAX]:
+            for word in SCENE_NAMES.get(label, ()):
+                add_phrase(_SL, word, AboutField.SCENE_LABEL, label)
+
     objects = rec.photo_objects[:PHOTO_OBJECTS_MAX]
     for obj in objects:
         for spelling in dict.fromkeys((obj.name, *obj.forms[:PHOTO_OBJECT_FORMS_MAX])):
@@ -459,7 +466,7 @@ def about_keys_capped(rec: KeyedRecord) -> Tuple[Tuple[str, ...], bool]:
 
 
 def about_keys_of(rec: KeyedRecord) -> Tuple[str, ...]:
-    """`about_keys` (§25.2.4): `e:`, `ef:`, `ex:`, `exl:`, `v:`, `y:`, `m:`, `k:`, `cp:`, `cpa:`, `lw:`, `tw:`, `dw:`,
+    """`about_keys` (§25.2.4): `e:`, `ef:`, `ex:`, `exl:`, `v:`, `y:`, `m:`, `k:`, `cp:`, `cpa:`, `sl:`, `lw:`, `tw:`, `dw:`,
     `lv:`, `pw:`, `pe:`, `pn:`, `l:`."""
     return about_keys_capped(rec)[0]
 
@@ -570,10 +577,20 @@ def _capture_suffixes() -> FrozenSet[str]:
     return frozenset(suffixes)
 
 
+@lru_cache(maxsize=1)
+def _scene_suffixes() -> FrozenSet[str]:
+    """The keys SCENE_NAMES are stored under, without their `sl:` prefix: the index side run over every label."""
+    suffixes: Set[str] = set()
+    for label in SCENE_NAMES:
+        rec = RecordKeyInputs(kind="image", triage_verdict=TriageVerdict.PHOTO, photo_scene_labels=(label,))
+        suffixes.update(k[len(_SL):] for k in about_keys_of(rec) if k.startswith(_SL))
+    return frozenset(suffixes)
+
+
 def _word_concept(word: str, run_native: Sequence[str], run_skel: Sequence[Skel]) -> Concept:
     """§25.5.1 step 5, uncut: `w:` native forms and `x:` (and, for a Cyrillic word, `xl:`) skeletons for chunks; `w:`
     native forms for hints; for records `e:` and `ef:` forms and runs, `ex:` (`exl:`) skeletons and runs, `k:` forms
-    and runs, `cp:` and `cpa:` forms and runs (§26.3), the word families, `pe:` forms and runs, and `v:` of the word as typed (a value without digits, review
+    and runs, `cp:` and `cpa:` forms and runs (§26.3), `sl:` forms and runs (D40), the word families, `pe:` forms and runs, and `v:` of the word as typed (a value without digits, review
     M3)."""
     own = token_forms(word)
     latin = _latin_word(word)
@@ -586,6 +603,8 @@ def _word_concept(word: str, run_native: Sequence[str], run_skel: Sequence[Skel]
     about += [_K + f for f in own] + [_K + r for r in run_native]
     stored = _capture_suffixes()   # only forms a capture name can be stored under: no cp/cpa key for other words
     about += [fam + k for fam in (_CP, _CPA) for k in [*own, *run_native] if k in stored]
+    scenes = _scene_suffixes()   # likewise: no `sl:` key for a word no scene name is stored under (D40)
+    about += [_SL + k for k in [*own, *run_native] if k in scenes]
     about += [fam + f for fam in _WORD_FAMILIES for f in own]
     about += [_PE + f for f in own] + [_PE + r for r in run_native]
     plain = "".join(ch for ch in _strip_accents(word) if ch.isalnum())
@@ -718,9 +737,9 @@ def index_tables_digest() -> str:
     tables = (
         FORM_TABLES, (_YEAR_MIN, _YEAR_MAX, _SHORT_ID_CHARS), sorted(_LAST_TOKEN_ENTITY_TYPES),
         (PROFILE_ENTITIES_MAX, ENTITY_FORMS_MAX, PROFILE_KEY_VALUES_MAX, PROFILE_DATES_MAX, PROFILE_WORD_LIST_MAX,
-         PHOTO_OBJECTS_MAX, PHOTO_OBJECT_FORMS_MAX, WORD_KEYS_PER_CHUNK, ABOUT_KEYS_PER_RECORD),
+         PHOTO_OBJECTS_MAX, PHOTO_OBJECT_FORMS_MAX, PHOTO_SCENE_LABELS_MAX, WORD_KEYS_PER_CHUNK, ABOUT_KEYS_PER_RECORD),
         sorted((k, v) for k, v in KIND_WORDS.items()), PHOTO_KIND_WORDS, [f.value for f in KeyFamily],
-        label_names_digest(), capture_names_digest(),
+        label_names_digest(), capture_names_digest(), scene_names_digest(),
         sorted(_MONTH_FORMS.items()), _MONTH_YEAR.pattern, CONTENT_TERMS_PER_CHUNK, _MIN_DIGITS, _GROUP_MIN_DIGITS,
         _AMOUNT.pattern, _DMY.pattern, _YMD.pattern, _ID.pattern, _GROUPS.pattern, _DAY_MONTH_YEAR.pattern,
         _MONTH_DAY_YEAR.pattern,

@@ -19,7 +19,7 @@ from .drive_index_params import CARD_RENDER_MAX, GROUP_LINES, RESULT_CHARS_MAX
 from .drive_match import MatchTier
 from .drive_search import (
     REFERENCE_REMINDER, DriveSearchCard, DriveSearchResult, accuracy_line, capture_line, escape_text, index_line,
-    stale_line, wrap_untrusted,
+    scene_line, stale_line, wrap_untrusted,
 )
 from .drive_search_texts import (
     ABOUT_HEADING, ABSENT_IN_SCOPE_LINE, ABSENT_LINE, CONJUNCTION_TERM, COVERAGE_COMPLETE, COVERAGE_INACCESSIBLE,
@@ -175,6 +175,9 @@ def card_body(card: DriveSearchCard) -> str:
     captured = capture_line(card)
     if captured:
         lines.append(captured)                 # §26.3
+    scene = scene_line(card)
+    if scene:
+        lines.append(scene)                    # D40
     accuracy = accuracy_line(card)
     if accuracy:
         lines.append(accuracy)                 # §26.4

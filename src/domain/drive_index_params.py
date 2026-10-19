@@ -148,6 +148,7 @@ PHOTO_DESCRIPTION_CHARS = 240
 PHOTO_OBJECTS_MAX = 8
 PHOTO_OBJECT_FORMS_MAX = 6
 PHOTO_SCENE_WORDS = 6
+PHOTO_SCENE_LABELS_MAX = 6                  # D40: scene labels a photograph keeps
 PHOTO_VISIBLE_TEXT_CHARS = 200
 # profile input slices (§25.3): cut at a paragraph or sentence boundary
 PROFILE_HEAD_CHARS = 6_000                  # also JSON's head and the sheets' rows cap

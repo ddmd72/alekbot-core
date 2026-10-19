@@ -179,6 +179,7 @@ class PhotoDescription:
     objects: Tuple[PhotoObject, ...] = ()
     scene: str = ""
     visible_text: str = ""
+    scene_labels: Tuple[str, ...] = ()   # D40: SCENE_LABELS values the model gave, deduped, at most PHOTO_SCENE_LABELS_MAX
 
 
 @dataclass(frozen=True)

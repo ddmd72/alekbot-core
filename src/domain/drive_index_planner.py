@@ -296,7 +296,7 @@ def _observable(rec: DriveIndexRecord) -> Tuple[Any, ...]:
             rec.card_refused, rec.name_keys_version, rec.indexed_generation, rec.lead_text, rec.brief, rec.caption,
             rec.dirty_since, rec.readme_pending, rec.readme_item_id, rec.readme_version, rec.chunk_reembed_pending,
             rec.place_forms, rec.readme_excerpt, rec.readme_excerpt_version, rec.photo_description,
-            rec.photo_objects, rec.photo_scene, rec.visible_text)
+            rec.photo_objects, rec.photo_scene, rec.photo_scene_labels, rec.visible_text)
 
 
 def _build(change: DriveChange, cls: Classification, existing: Optional[DriveIndexRecord],
@@ -348,7 +348,8 @@ def _build(change: DriveChange, cls: Classification, existing: Optional[DriveInd
 
 def _without_photo(rec: DriveIndexRecord) -> DriveIndexRecord:
     """The photo fields cleared (§25.4.9: a text verdict, or the kind leaving triage)."""
-    return replace(rec, photo_description="", photo_objects=(), photo_scene="", visible_text="")
+    return replace(rec, photo_description="", photo_objects=(), photo_scene="", photo_scene_labels=(),
+                   visible_text="")
 
 
 def _collapsed(change: DriveChange, cls: Classification) -> bool:
@@ -1001,7 +1002,7 @@ def triaged(rec: DriveIndexRecord, result: TriageResult, now: datetime,
                        effective_date=_effective(change_from_record(rec), None, rec.effective_date or now))
         done = _without_photo(done) if photo is None else replace(
             done, photo_description=photo.description, photo_objects=tuple(photo.objects), photo_scene=photo.scene,
-            visible_text=photo.visible_text)
+            photo_scene_labels=photo.scene_labels, visible_text=photo.visible_text)
         return schedule(done, now, first_seen=first_seen)
     state = RecordState.INDEXED if _indexed_now(rec) else RecordState.PENDING
     # §26.3 rule 1: the provider's camera facet decides; else what triage said (kept until the reader's own answer)
