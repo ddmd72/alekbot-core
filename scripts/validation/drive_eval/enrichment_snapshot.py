@@ -12,10 +12,13 @@ whatever item, generation or batch position asks:
   profile}`; `profile` is the model's output **before** `drive_profile.verify` (the indexer verifies at replay).
 - `hints`: `hint_key(chunk text)` → `{path, index, status, items}`; `items` are the model's items, ungrounded (the
   indexer grounds them at replay).
-- `photos`: `photo_key(thumbnail, camera prior)` → `{paths, verdict, photo}`; triage v2's answer for one picture.
+- `photos`: `photo_key(thumbnail, camera prior)` → `{paths, verdict, photo}`; triage v2's answer for one picture;
+  `capture` (§26.3) when the model named how a text image was made (absent in a snapshot recorded before it).
 - `reader`: `blob_key(file bytes)` → `{path, outcome}`; the document reader's transcription (scans, screenshots).
 - `meta`: the model and provider, versions, the recording's date and its cost.
 Paths are informational (the fixture's own, synthetic).
+- `"synthetic": true` on an entry: written by `synthetic_s26.py` (§26.8 Eval), not recorded from a model. A live
+  `dump_enrichment.py --fixture` re-record replaces every entry, synthetic ones included.
 """
 from __future__ import annotations
 
@@ -26,6 +29,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Sequence
 
+from src.domain.drive_capture import signals_from_json, signals_to_json
 from src.domain.drive_enrichment import (
     DriveProfile, HintItem, KeyValue, PhotoDescription, PhotoObject, ProfileDate, ProfileEntity,
 )
@@ -79,9 +83,11 @@ def profile_from_json(data: Mapping[str, Any]) -> DriveProfile:
     return DriveProfile(
         title=data.get("title", ""), what_it_is=data.get("what_it_is", ""), language=data.get("language", ""),
         doc_type=data.get("doc_type", ""), life_domains=tuple(data.get("life_domains", ())),
-        dates=tuple(ProfileDate(label=d["label"], iso=date.fromisoformat(d["iso"])) for d in data.get("dates", ())),
+        dates=tuple(ProfileDate(label=d["label"], iso=date.fromisoformat(d["iso"]), printed=d.get("printed", ""))
+                    for d in data.get("dates", ())),   # `printed` (§26.4): "" in a snapshot recorded before it
         entities=tuple(ProfileEntity(name=e["name"], type=e["type"], printed=e["printed"],
-                                     forms=tuple(e.get("forms", ()))) for e in data.get("entities", ())),
+                                     forms=tuple(e.get("forms", ())), found=tuple(e.get("found", ())))
+                       for e in data.get("entities", ())),
         key_values=tuple(KeyValue(label=k["label"], printed=k["printed"], canonical=k["canonical"])
                          for k in data.get("key_values", ())),
         topics=tuple(data.get("topics", ())), topics_native=tuple(data.get("topics_native", ())),
@@ -119,11 +125,18 @@ def outcome_to_json(outcome: ExtractionOutcome) -> Dict[str, Any]:
         brief = {"doc_type": outcome.brief.doc_type, "description": outcome.brief.description,
                  "doc_date": outcome.brief.doc_date.isoformat() if outcome.brief.doc_date else None,
                  "parties": list(outcome.brief.parties), "amount": outcome.brief.amount}
-    return {"status": outcome.status.value, "text": outcome.text, "pages_total": outcome.pages_total,
+    data = {"status": outcome.status.value, "text": outcome.text, "pages_total": outcome.pages_total,
             "pages_sent": outcome.pages_sent, "truncated": outcome.truncated, "brief": brief,
             "extracted_by": outcome.extracted_by, "pages_refused": outcome.pages_refused,
             "model_calls": outcome.model_calls, "model_cost": outcome.model_cost,
             "script_rendered": outcome.script_rendered}
+    # §26.3: the parser child's capture signals and the capture the extractor settled; written only when set, so a
+    # recorded reader outcome (which has none) keeps its bytes
+    if outcome.capture_signals is not None:
+        data["capture_signals"] = signals_to_json(outcome.capture_signals)
+    if outcome.capture:
+        data["capture"], data["capture_source"] = outcome.capture, outcome.capture_source
+    return data
 
 
 def outcome_from_json(data: Mapping[str, Any]) -> ExtractionOutcome:
@@ -138,7 +151,9 @@ def outcome_from_json(data: Mapping[str, Any]) -> ExtractionOutcome:
                              pages_total=int(data.get("pages_total", 0)), pages_sent=int(data.get("pages_sent", 0)),
                              truncated=bool(data.get("truncated", False)), brief=brief,
                              extracted_by=data.get("extracted_by", ""), pages_refused=int(data.get("pages_refused", 0)),
-                             model_calls=0, model_cost=0.0, script_rendered=bool(data.get("script_rendered", False)))
+                             model_calls=0, model_cost=0.0, script_rendered=bool(data.get("script_rendered", False)),
+                             capture_signals=signals_from_json(data.get("capture_signals")),
+                             capture=data.get("capture", ""), capture_source=data.get("capture_source", ""))
 
 
 @dataclass
