@@ -83,14 +83,19 @@ def _make_enriched_context(facts: list) -> EnrichedContext:
     )
 
 
-def _make_message(payload: dict) -> AgentMessage:
+def _make_message(payload: dict, *, interactive: bool = False) -> AgentMessage:
+    # interactive=True mirrors a chat turn: ConversationHandler sets interactive_delivery and
+    # the delegation chain carries it to the specialist. save_to_memory saves only there.
+    context = {"user_id": _USER_ID}
+    if interactive:
+        context["interactive_delivery"] = True
     return AgentMessage(
         intent=AgentIntent.QUERY,
         payload=payload,
         sender="smart_response_agent",
         recipient=f"memory_search_agent_{_USER_ID}",
         task_id="task-1",
-        context={"user_id": _USER_ID},
+        context=context,
     )
 
 
@@ -300,7 +305,7 @@ class TestSaveToMemory:
         """execute() routes to _handle_save() when intent='save_to_memory' + text."""
         agent, *_ = _make_agent()
         passage = "User weighs 80 kg. Mentioned in diet discussion."
-        msg = _make_message({"intent": "save_to_memory", "text": passage})
+        msg = _make_message({"intent": "save_to_memory", "text": passage}, interactive=True)
         response = await agent.execute(msg)
         assert response.status == AgentStatus.SUCCESS
         assert response.result == {"saved": True}
@@ -309,7 +314,7 @@ class TestSaveToMemory:
         """history_context contains the full passage from payload['text'] (save_to_memory)."""
         agent, *_ = _make_agent()
         passage = "User weighs 80 kg. Mentioned in diet discussion."
-        msg = _make_message({"intent": "save_to_memory", "text": passage})
+        msg = _make_message({"intent": "save_to_memory", "text": passage}, interactive=True)
         response = await agent.execute(msg)
         assert response.history_context == {"consolidation_text": passage}
 
@@ -317,7 +322,7 @@ class TestSaveToMemory:
         """When text absent but intent flag set, query is used as consolidation_text."""
         agent, *_ = _make_agent()
         task_desc = "Save user weight fact"
-        msg = _make_message({"intent": "save_to_memory", "query": task_desc})
+        msg = _make_message({"intent": "save_to_memory", "query": task_desc}, interactive=True)
         response = await agent.execute(msg)
         assert response.status == AgentStatus.SUCCESS
         assert response.history_context == {"consolidation_text": task_desc}

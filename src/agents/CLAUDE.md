@@ -45,6 +45,10 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
 - Memory — MemorySearchAgent (ECO): LLM extracts search keys → multi-vector RRF. Intents:
   `search_memory`; `save_to_memory` (zero LLM — orchestrator fills `context.text` via `context_schemas`;
   agent attaches `consolidation_text` on `MessagePart` → picked up in the normal consolidation batch).
+  **Interactive turns only** (2026-10-19): only `ConversationHandler` stores `consolidation_text`, so
+  without `context["interactive_delivery"]` (reminders, daily review, `ask_alek`/`tell_alek`, `/worker`)
+  the save returns `{"saved": False, "reason": …}` instead of a false `saved: True`. Interim until the
+  owner-confirmed `$memory save` flow replaces this intent.
 - EmailSearch — EmailSearchAgent (ECO, `internal=False`). Intents: `search_emails`,
   `get_email_details`, `get_email_attachment` (markitdown).
 - EmailClassification — shared ServiceContainer singleton, called by EmailIndexingService (not agents);

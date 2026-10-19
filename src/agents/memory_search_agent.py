@@ -25,6 +25,10 @@ from ..domain.entities import FactType
 from ..utils.logger import logger
 from ..infrastructure.agent_config import MEMORY_SEARCH
 
+_NOT_INTERACTIVE_REASON = (
+    "Nothing was saved: memory saves work only in a chat turn with the user, and this run "
+    "is not one. If it should be remembered, tell the user so they can confirm it in chat."
+)
 
 class FactsMemoryAgent(BaseAgent):
     """
@@ -174,6 +178,15 @@ class FactsMemoryAgent(BaseAgent):
                 task_id=message.task_id,
                 agent_id=self.agent_id,
                 error="save_to_memory: empty text",
+            )
+        # Only ConversationHandler stores consolidation_text; notify(), the voice gateway and
+        # /worker runs drop it, so a save there would be lost behind a false "saved".
+        if not message.context.get("interactive_delivery"):
+            logger.info("💾 [FactsMemoryAgent] save_to_memory refused: not an interactive turn")
+            return AgentResponse.success(
+                task_id=message.task_id,
+                agent_id=self.agent_id,
+                result={"saved": False, "reason": _NOT_INTERACTIVE_REASON},
             )
         self._on_agent_start(text)
         logger.info(f"💾 [FactsMemoryAgent] save_to_memory: {text[:80]}")
