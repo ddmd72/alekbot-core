@@ -59,9 +59,10 @@ steps:
   # every handled outcome is a 200 and the tick enqueues its own continuation, and the fan-out
   # re-ticks every user each 10 min — so a few backed-off attempts, then the fan-out takes over.
   # Log sampling 1.0: one line per task operation, a few per user per hour.
-  # Prerequisite: the Cloud Build service account needs roles/cloudtasks.queueAdmin (one-time grant,
-  # docs/07_deployment/SCHEDULERS.md § Start Drive Sync). Without it this step fails the build after
-  # the main service is deployed; the indexer, research job, relay and scheduler steps then do not run.
+  # Prerequisite: the identity this build runs as needs queue admin rights on this queue
+  # (roles/cloudtasks.queueAdmin, granted on the queue; docs/07_deployment/SCHEDULERS.md § Start Drive Sync).
+  # Without it this step fails the build after the main service is deployed; the indexer, research job,
+  # relay and scheduler steps then do not run.
   - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
     entrypoint: "bash"
     args:
@@ -101,12 +102,14 @@ steps:
   # --timeout=1800: TICK_DEADLINE_S, the Cloud Tasks HTTP maximum; every drive_sync enqueue passes it
   #   as dispatch_deadline, and the tick starts no new work after 8 min (§7.1).
   # --min-instances=0: idle between ticks; a cold start costs nothing a background tick notices.
-  # No --service-account override: Cloud Tasks mints each task's OIDC token for SERVICE_ACCOUNT_EMAIL
-  #   (GcpTaskQueue), and /worker checks that same email — one identity, as for alek-bot-dev.
+  # No --service-account override (yet). The tasks' OIDC identity is DRIVE_INVOKER_SA_EMAIL when that secret
+  #   exists, else SERVICE_ACCOUNT_EMAIL (GcpTaskQueue, drive_indexing_setup); /worker accepts the same
+  #   identity plus the optional OIDC_TRANSITION_SA_EMAILS list (src/web/indexer_worker_app.py).
   # Seven secrets, exactly what indexer_main.py reads: GEMINI_API_KEY (embeddings, and the drive agents' Gemini
   #   Flash fallback, §24.2 D7 rev 3.17),
   #   MICROSOFT_TODO_CLIENT_ID/SECRET (drive token refresh; same app registration as Step 1),
-  #   SERVICE_ACCOUNT_EMAIL (the /worker gate + the identity of the tasks it enqueues),
+  #   SERVICE_ACCOUNT_EMAIL (the /worker gate + the identity of the tasks it enqueues; superseded per role by
+  #   DRIVE_INVOKER_SA_EMAIL once that secret is mounted),
   #   ANTHROPIC_API_KEY / OPENAI_API_KEY (the drive reader and triage agents, Slice 2+4 §24.2: secrets, never
   #   substitutions) and BILLING_SLACK_WEBHOOK_URL (the advisory daily budget alert of their billing).
   # DRIVE_UPGRADE_PASS is the upgrade pass's emergency switch (RFC §25.8): it rides as the substitution
@@ -195,17 +198,14 @@ steps:
   # min-instances=0: RFC §9 item 9 leaves this genuinely open (unlike the main
   # service, the relay has no scheduler keep-alive yet) — start cold, revisit
   # after real call volume.
-  # No --service-account override: relay_main.py mints an OIDC token from its
+  # No --service-account override (yet): relay_main.py mints an OIDC token from its
   # own Cloud Run runtime identity to call back into the main service's
-  # /voice/session-config and /voice/submit-transcript (src/web/
-  # voice_control_plane_app.py), and main.py wires the SAME check used for
-  # /worker — verify_worker_oidc(token, expected_sa_email=config.get(
-  # "SERVICE_ACCOUNT_EMAIL")) (main.py:866-869) — against one shared expected
-  # email. Deploying the relay under a different service account would make
-  # every one of those calls 401 unless SERVICE_ACCOUNT_EMAIL were also
-  # changed, which no task authorizes. So the relay deliberately runs as the
-  # same (default compute) service account as alek-bot-dev and
-  # alek-research-job-dev above — neither overrides --service-account either.
+  # /voice/* control plane (src/web/voice_control_plane_app.py). Main accepts
+  # SERVICE_ACCOUNT_EMAIL, VOICE_RELAY_SA_EMAIL (the relay's own runtime SA, once that
+  # secret exists) and the optional OIDC_TRANSITION_SA_EMAILS list. A relay under a
+  # different service account therefore needs VOICE_RELAY_SA_EMAIL (or the
+  # transition list) set first, or every one of those calls 401s. Until then the
+  # relay runs as the same default service account as the other runtimes.
   # Three secrets: relay_main.py reads OPENAI_API_KEY, XAI_API_KEY and
   # BILLING_SLACK_WEBHOOK_URL via os.environ (see its module docstring). The provider
   # of each call comes from the user's session config, not from env
@@ -269,11 +269,14 @@ steps:
     args:
       - "-c"
       - |
-        # OIDC identity for /worker scheduler jobs. The /worker route verifies a
-        # Google-signed token whose email == this SA (audience is not pinned —
-        # see src/web/worker_oidc_verifier.py). Derive the default compute SA
-        # from the project number so no infra id is hardcoded (secrets rule).
-        SA="$$(gcloud projects describe $PROJECT_ID --format='value(projectNumber)')-compute@developer.gserviceaccount.com"
+        set -euo pipefail
+        # OIDC identity for /worker scheduler jobs: read from the SERVICE_ACCOUNT_EMAIL secret (the same
+        # value the service verifies against), so no infra id is hardcoded (secrets rule) and the
+        # identity is not derived from the project number. Needs secretAccessor for the build's SA.
+        # The audience is stated explicitly: main's /worker does not pin it, but the default
+        # (the job URI) should not be relied on. Under `set -e` a failed create now fails the build
+        # instead of leaving a job missing.
+        SA="$$(gcloud secrets versions access latest --secret=SERVICE_ACCOUNT_EMAIL --project=$PROJECT_ID)"
         gcloud scheduler jobs update http alek-bot-dev-keep-alive \
           --schedule="*/10 * * * *" \
           --uri="$_SERVICE_URL/health" \
@@ -289,12 +292,24 @@ steps:
           --attempt-deadline=30s \
           --project=$PROJECT_ID
 
-        gcloud scheduler jobs delete alek-bot-dev-renew-task-subscriptions \
-          --location=us-central1 --project=$PROJECT_ID --quiet 2>/dev/null || true
-        gcloud scheduler jobs create http alek-bot-dev-renew-task-subscriptions \
+        gcloud scheduler jobs describe alek-bot-dev-renew-task-subscriptions \
+          --location=us-central1 --project=$PROJECT_ID 2>/dev/null \
+        && gcloud scheduler jobs update http alek-bot-dev-renew-task-subscriptions \
           --schedule="0 2 * * *" \
           --uri="$_SERVICE_URL/worker" \
           --oidc-service-account-email="$$SA" \
+          --oidc-token-audience="$_SERVICE_URL/worker" \
+          --http-method=POST \
+          --message-body='{"task_type":"renew_all_task_subscriptions"}' \
+          --update-headers="Content-Type=application/json" \
+          --location=us-central1 \
+          --attempt-deadline=60s \
+          --project=$PROJECT_ID \
+        || gcloud scheduler jobs create http alek-bot-dev-renew-task-subscriptions \
+          --schedule="0 2 * * *" \
+          --uri="$_SERVICE_URL/worker" \
+          --oidc-service-account-email="$$SA" \
+          --oidc-token-audience="$_SERVICE_URL/worker" \
           --http-method=POST \
           --message-body='{"task_type":"renew_all_task_subscriptions"}' \
           --headers="Content-Type=application/json" \
@@ -308,6 +323,7 @@ steps:
           --schedule="7 * * * *" \
           --uri="$_SERVICE_URL/worker" \
           --oidc-service-account-email="$$SA" \
+          --oidc-token-audience="$_SERVICE_URL/worker" \
           --http-method=POST \
           --message-body='{"task_type":"start_email_indexing"}' \
           --update-headers="Content-Type=application/json" \
@@ -318,6 +334,7 @@ steps:
           --schedule="7 * * * *" \
           --uri="$_SERVICE_URL/worker" \
           --oidc-service-account-email="$$SA" \
+          --oidc-token-audience="$_SERVICE_URL/worker" \
           --http-method=POST \
           --message-body='{"task_type":"start_email_indexing"}' \
           --headers="Content-Type=application/json" \
@@ -331,6 +348,7 @@ steps:
           --schedule="*/5 * * * *" \
           --uri="$_SERVICE_URL/worker" \
           --oidc-service-account-email="$$SA" \
+          --oidc-token-audience="$_SERVICE_URL/worker" \
           --http-method=POST \
           --message-body='{"task_type":"fire_due_reminders"}' \
           --update-headers="Content-Type=application/json" \
@@ -341,6 +359,7 @@ steps:
           --schedule="*/5 * * * *" \
           --uri="$_SERVICE_URL/worker" \
           --oidc-service-account-email="$$SA" \
+          --oidc-token-audience="$_SERVICE_URL/worker" \
           --http-method=POST \
           --message-body='{"task_type":"fire_due_reminders"}' \
           --headers="Content-Type=application/json" \
@@ -355,6 +374,7 @@ steps:
           --time-zone="Europe/Madrid" \
           --uri="$_SERVICE_URL/worker" \
           --oidc-service-account-email="$$SA" \
+          --oidc-token-audience="$_SERVICE_URL/worker" \
           --http-method=POST \
           --message-body='{"task_type":"billing_daily_summary"}' \
           --update-headers="Content-Type=application/json" \
@@ -366,6 +386,7 @@ steps:
           --time-zone="Europe/Madrid" \
           --uri="$_SERVICE_URL/worker" \
           --oidc-service-account-email="$$SA" \
+          --oidc-token-audience="$_SERVICE_URL/worker" \
           --http-method=POST \
           --message-body='{"task_type":"billing_daily_summary"}' \
           --headers="Content-Type=application/json" \
@@ -379,6 +400,7 @@ steps:
           --schedule="2 * * * *" \
           --uri="$_SERVICE_URL/worker" \
           --oidc-service-account-email="$$SA" \
+          --oidc-token-audience="$_SERVICE_URL/worker" \
           --http-method=POST \
           --message-body='{"task_type":"repair_email_embeddings"}' \
           --update-headers="Content-Type=application/json" \
@@ -389,6 +411,7 @@ steps:
           --schedule="2 * * * *" \
           --uri="$_SERVICE_URL/worker" \
           --oidc-service-account-email="$$SA" \
+          --oidc-token-audience="$_SERVICE_URL/worker" \
           --http-method=POST \
           --message-body='{"task_type":"repair_email_embeddings"}' \
           --headers="Content-Type=application/json" \
@@ -402,6 +425,7 @@ steps:
           --schedule="17 * * * *" \
           --uri="$_SERVICE_URL/worker" \
           --oidc-service-account-email="$$SA" \
+          --oidc-token-audience="$_SERVICE_URL/worker" \
           --http-method=POST \
           --message-body='{"task_type":"sweep_consolidation"}' \
           --update-headers="Content-Type=application/json" \
@@ -412,6 +436,7 @@ steps:
           --schedule="17 * * * *" \
           --uri="$_SERVICE_URL/worker" \
           --oidc-service-account-email="$$SA" \
+          --oidc-token-audience="$_SERVICE_URL/worker" \
           --http-method=POST \
           --message-body='{"task_type":"sweep_consolidation"}' \
           --headers="Content-Type=application/json" \
@@ -425,6 +450,7 @@ steps:
           --schedule="12 * * * *" \
           --uri="$_SERVICE_URL/worker" \
           --oidc-service-account-email="$$SA" \
+          --oidc-token-audience="$_SERVICE_URL/worker" \
           --http-method=POST \
           --message-body='{"task_type":"start_daily_email_review"}' \
           --update-headers="Content-Type=application/json" \
@@ -435,6 +461,7 @@ steps:
           --schedule="12 * * * *" \
           --uri="$_SERVICE_URL/worker" \
           --oidc-service-account-email="$$SA" \
+          --oidc-token-audience="$_SERVICE_URL/worker" \
           --http-method=POST \
           --message-body='{"task_type":"start_daily_email_review"}' \
           --headers="Content-Type=application/json" \
@@ -454,6 +481,7 @@ steps:
           --schedule="3-59/10 * * * *" \
           --uri="$_SERVICE_URL/worker" \
           --oidc-service-account-email="$$SA" \
+          --oidc-token-audience="$_SERVICE_URL/worker" \
           --http-method=POST \
           --message-body='{"task_type":"start_drive_sync"}' \
           --update-headers="Content-Type=application/json" \
@@ -464,12 +492,46 @@ steps:
           --schedule="3-59/10 * * * *" \
           --uri="$_SERVICE_URL/worker" \
           --oidc-service-account-email="$$SA" \
+          --oidc-token-audience="$_SERVICE_URL/worker" \
           --http-method=POST \
           --message-body='{"task_type":"start_drive_sync"}' \
           --headers="Content-Type=application/json" \
           --location=us-central1 \
           --attempt-deadline=180s \
           --project=$PROJECT_ID
+
+        # Voice relay keep-alive: main's /voice/relay-warmup (POST, empty body) warms the relay, whose
+        # cold start outlasts Cloudflare's WebSocket handshake. The audience is the route URL, which is
+        # what the control plane accepts for the invoker identity. Previously created by hand
+        # (docs/07_deployment/SCHEDULERS.md); now build-managed with the other jobs. 180 s, as the live job:
+        # main's warmup handler waits up to 120 s for the relay, so the attempt must outlast it.
+        gcloud scheduler jobs describe alek-voice-relay-dev-keep-alive \
+          --location=us-central1 --project=$PROJECT_ID 2>/dev/null \
+        && gcloud scheduler jobs update http alek-voice-relay-dev-keep-alive \
+          --schedule="*/10 * * * *" \
+          --uri="$_SERVICE_URL/voice/relay-warmup" \
+          --oidc-service-account-email="$$SA" \
+          --oidc-token-audience="$_SERVICE_URL/voice/relay-warmup" \
+          --http-method=POST \
+          --location=us-central1 \
+          --attempt-deadline=180s \
+          --description="Keeps the voice relay warm via the main service /voice/relay-warmup (relay cold start outlasts the WebSocket handshake)" \
+          --project=$PROJECT_ID \
+        || gcloud scheduler jobs create http alek-voice-relay-dev-keep-alive \
+          --schedule="*/10 * * * *" \
+          --uri="$_SERVICE_URL/voice/relay-warmup" \
+          --oidc-service-account-email="$$SA" \
+          --oidc-token-audience="$_SERVICE_URL/voice/relay-warmup" \
+          --http-method=POST \
+          --location=us-central1 \
+          --attempt-deadline=180s \
+          --description="Keeps the voice relay warm via the main service /voice/relay-warmup (relay cold start outlasts the WebSocket handshake)" \
+          --project=$PROJECT_ID
+
+# Build logs go to Cloud Logging only: required once a build runs as a user-specified service account
+# (a later step sets `serviceAccount`); harmless for the default build identity.
+options:
+  logging: CLOUD_LOGGING_ONLY
 
 # Defaults for substitutions a manual `gcloud builds submit` may leave out (the Makefile always passes them).
 substitutions:

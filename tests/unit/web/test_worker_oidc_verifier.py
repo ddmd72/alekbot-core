@@ -13,6 +13,8 @@ from src.web.worker_oidc_verifier import verify_worker_oidc
 
 
 _SA = "alek-bot@my-project.iam.gserviceaccount.com"
+# The verifier takes the accepted set (IAM least-privilege, Step 0 C1); a single identity is a one-item set.
+_ACCEPTED = frozenset({_SA})
 
 
 def _good_claims(**overrides):
@@ -27,7 +29,7 @@ class TestVerifyWorkerOidc:
             "src.web.worker_oidc_verifier.google_id_token.verify_oauth2_token",
             return_value=_good_claims(),
         ) as mock_verify:
-            assert verify_worker_oidc("Bearer good.jwt.token", _SA) is True
+            assert verify_worker_oidc("Bearer good.jwt.token", _ACCEPTED) is True
         # audience must NOT be pinned — callers use inconsistent audiences.
         assert mock_verify.call_args.kwargs.get("audience") is None
 
@@ -36,21 +38,21 @@ class TestVerifyWorkerOidc:
             "src.web.worker_oidc_verifier.google_id_token.verify_oauth2_token",
             return_value=_good_claims(email="attacker@evil.iam.gserviceaccount.com"),
         ):
-            assert verify_worker_oidc("Bearer good.jwt.token", _SA) is False
+            assert verify_worker_oidc("Bearer good.jwt.token", _ACCEPTED) is False
 
     def test_email_not_verified_rejected(self):
         with patch(
             "src.web.worker_oidc_verifier.google_id_token.verify_oauth2_token",
             return_value=_good_claims(email_verified=False),
         ):
-            assert verify_worker_oidc("Bearer good.jwt.token", _SA) is False
+            assert verify_worker_oidc("Bearer good.jwt.token", _ACCEPTED) is False
 
     def test_email_verified_absent_rejected(self):
         with patch(
             "src.web.worker_oidc_verifier.google_id_token.verify_oauth2_token",
             return_value={"email": _SA},
         ):
-            assert verify_worker_oidc("Bearer good.jwt.token", _SA) is False
+            assert verify_worker_oidc("Bearer good.jwt.token", _ACCEPTED) is False
 
     def test_token_for_any_audience_accepted_when_sa_matches(self):
         # A Cloud Scheduler token (audience = bare run.app URL) and a Cloud Tasks
@@ -59,16 +61,16 @@ class TestVerifyWorkerOidc:
             "src.web.worker_oidc_verifier.google_id_token.verify_oauth2_token",
             return_value=_good_claims(aud="https://alek-bot-dev.run.app"),
         ):
-            assert verify_worker_oidc("Bearer scheduler.jwt.token", _SA) is True
+            assert verify_worker_oidc("Bearer scheduler.jwt.token", _ACCEPTED) is True
 
     def test_missing_header_rejected(self):
-        assert verify_worker_oidc(None, _SA) is False
+        assert verify_worker_oidc(None, _ACCEPTED) is False
 
     def test_malformed_header_without_bearer_rejected(self):
-        assert verify_worker_oidc("good.jwt.token", _SA) is False
+        assert verify_worker_oidc("good.jwt.token", _ACCEPTED) is False
 
     def test_empty_bearer_token_rejected(self):
-        assert verify_worker_oidc("Bearer    ", _SA) is False
+        assert verify_worker_oidc("Bearer    ", _ACCEPTED) is False
 
     def test_verifier_exception_is_caught_and_rejected(self):
         # Bad signature / expired → verify_oauth2_token raises.
@@ -76,4 +78,4 @@ class TestVerifyWorkerOidc:
             "src.web.worker_oidc_verifier.google_id_token.verify_oauth2_token",
             side_effect=ValueError("Token has expired"),
         ):
-            assert verify_worker_oidc("Bearer bad.jwt.token", _SA) is False
+            assert verify_worker_oidc("Bearer bad.jwt.token", _ACCEPTED) is False
