@@ -16,7 +16,8 @@ CAPABILITIES_TEXT = """
 I build a personal knowledge base about you over time — automatically from our conversations and from your emails (if connected). I use this context in every response.
 
 How to use:
-- Ask me to save something explicitly: "remember that my library card expires in June"
+- What you tell me in your own messages is remembered automatically by background consolidation
+- To remember facts from a document, file, email or search result, ask me: I show you the list, and you save it by pasting the `$memory save` code I send. Saved facts appear in memory after background consolidation
 - Search what I know: "what do you know about my car?", "find everything about my apartment renovation"
 - I automatically pick up important facts from conversations — you don't need to instruct me to remember everything
 

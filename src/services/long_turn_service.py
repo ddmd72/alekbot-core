@@ -96,13 +96,9 @@ class LongTurnService:
             logger.error("❌ [LongTurnService] finish(%s, %s) failed: %s", turn_id, status.value, e)
 
     async def save_late_answer(self, *, session_id: str, owner_id: str, note_text: str,
-                               consolidation_texts: List[str], history_text: str,
-                               full_text: str) -> None:
-        user_parts = [MessagePart(text=note_text)]
-        if consolidation_texts:
-            user_parts.append(MessagePart(consolidation_text="\n\n" + "\n".join(consolidation_texts)))
+                               history_text: str, full_text: str) -> None:
         messages = [
-            Message(role="user", parts=user_parts),
+            Message(role="user", parts=[MessagePart(text=note_text)]),
             Message(role="model", parts=[MessagePart(text=history_text, full_text=full_text)]),
         ]
         await retry_store_write(

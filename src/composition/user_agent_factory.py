@@ -112,6 +112,7 @@ if TYPE_CHECKING:
     from ..infrastructure.agent_coordinator import AgentCoordinator
     from ..domain.user import UserBotConfig
     from ..services.skill_service import SkillService
+    from ..services.memory_fact_service import MemoryFactService
     from ..services.user_drive_service import UserDriveService
     from ..services.drive_search_service import DriveSearchService
     from ..services.localization_service import LocalizationService
@@ -184,6 +185,7 @@ class UserAgentFactory(AgentFactoryPort):
         prompt_content_store: Optional[object] = None,
         quota_service: Optional[object] = None,
         skill_service: Optional["SkillService"] = None,
+        memory_fact_service: Optional["MemoryFactService"] = None,
         long_turn_registry: Optional[LongTurnRegistry] = None,
         user_drive_service: Optional["UserDriveService"] = None,
         localization: Optional["LocalizationService"] = None,
@@ -228,6 +230,7 @@ class UserAgentFactory(AgentFactoryPort):
         self.prompt_content_store = prompt_content_store
         self.quota_service = quota_service
         self.skill_service = skill_service
+        self.memory_fact_service = memory_fact_service
         self.long_turn_registry = long_turn_registry
         self.user_drive_service = user_drive_service
         self.drive_search_service = drive_search_service
@@ -414,6 +417,7 @@ class UserAgentFactory(AgentFactoryPort):
             user_timezone=user_timezone,
             thinking_effort=user_profile.config.get_thinking_for_agent("smart"),
             skill_service=self.skill_service,
+            memory_fact_service=self.memory_fact_service,
             long_turn_registry=self.long_turn_registry,
         )
 

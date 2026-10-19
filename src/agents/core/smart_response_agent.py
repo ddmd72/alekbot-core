@@ -28,6 +28,7 @@ from ...domain.agent import (
 from ...domain.messaging import SmartResponse
 from ...domain.exceptions import TranscriptLockedError
 from ...domain.turn_clock import CURRENT_TURN_CLOCK
+from ...domain.memory_fact import PROPOSE_MEMORY_FACTS_TOOL
 from ...domain.skill import DRAFT_SKILL_TOOL, USE_SKILL_TOOL, Skill, render_catalog, visible_skill_names
 from ...ports.long_turn_registry import LongTurnRegistry
 from ...infrastructure.long_turn_tools import (
@@ -54,9 +55,14 @@ from ...infrastructure.skill_tools import (
     make_draft_skill_handler,
     make_use_skill_handler,
 )
+from ...infrastructure.memory_fact_tools import (
+    build_propose_memory_facts_tool_declaration,
+    make_propose_memory_facts_handler,
+)
 
 if TYPE_CHECKING:
     from ...services.history_summary_service import HistorySummaryService
+    from ...services.memory_fact_service import MemoryFactService
     from ...services.skill_service import SkillService
     from ...infrastructure.task_execution_resolver import TaskExecutionResolver
     from ...domain.user import UserBotConfig
@@ -221,6 +227,7 @@ class SmartResponseAgent(BaseAgent):
         thinking_effort: Optional[str] = None,
         skill_service: Optional["SkillService"] = None,
         long_turn_registry: Optional[LongTurnRegistry] = None,
+        memory_fact_service: Optional["MemoryFactService"] = None,
     ):
         super().__init__(config)
         self.execution_context = execution_context
@@ -240,6 +247,7 @@ class SmartResponseAgent(BaseAgent):
         self._default_thinking_effort = thinking_effort
         self.skill_service = skill_service
         self.long_turn_registry = long_turn_registry
+        self.memory_fact_service = memory_fact_service
 
         # NOTE: ``self.llm``, ``self.model_name``, ``self.execution_context``,
         # and ``self._agent_execution_context`` (set by _set_execution_context
@@ -491,6 +499,17 @@ class SmartResponseAgent(BaseAgent):
                     local_tools[DRAFT_SKILL_TOOL] = make_draft_skill_handler(
                         lambda s, ch: self.skill_service.draft(prompt_user_id, s, ch)
                     )
+
+            # Interactive turns only: the owner confirms with `$memory save`, so a run with no
+            # owner in the chat (reminder, daily review, voice errand, /worker) gets no tool.
+            if self.memory_fact_service and prompt_user_id and message.context.get("interactive_delivery"):
+                tools.append(build_propose_memory_facts_tool_declaration())
+                local_tools = dict(local_tools or {})
+                local_tools[PROPOSE_MEMORY_FACTS_TOOL] = make_propose_memory_facts_handler(
+                    lambda d: self.memory_fact_service.propose(
+                        prompt_user_id, message.context.get("session_id"), d,
+                    )
+                )
 
             running = await self._load_running_jobs(prompt_user_id, message)
             if running:
@@ -786,6 +805,7 @@ def create_smart_response_agent(
     thinking_effort: Optional[str] = None,
     skill_service: Optional["SkillService"] = None,
     long_turn_registry: Optional[LongTurnRegistry] = None,
+    memory_fact_service: Optional["MemoryFactService"] = None,
 ) -> SmartResponseAgent:
     """Factory function to create SmartResponseAgent."""
     agent_id = f"smart_response_agent_{user_id}" if user_id else "smart_response_agent"
@@ -819,5 +839,6 @@ def create_smart_response_agent(
         thinking_effort=thinking_effort,
         skill_service=skill_service,
         long_turn_registry=long_turn_registry,
+        memory_fact_service=memory_fact_service,
     )
 

@@ -62,7 +62,8 @@ _LISTED = [[{"path": "Договоры/lease_2026.pdf", "ref": "drive:AAA"},
 
 SCENARIOS: List[Dict[str, Any]] = [
     {"text": f"Запомни этот файл {LEASE}", "expect": "save_file_to_drive", "folder": None},
-    {"text": "Запомни, что аренда заканчивается в декабре 2027", "expect": "save_to_memory"},
+    # the user's own words reach memory through consolidation: no memory tool, and no file saved to the drive
+    {"text": "Запомни, что аренда заканчивается в декабре 2027", "expect": None, "forbid": "save_file_to_drive"},
     {"text": f"Запомни этот файл в папку Встречи {LEASE}", "expect": "save_file_to_drive", "folder": "Встречи"},
     {"seed": _pair(f"Открой {LEASE}", "Lease agreement for the flat, 12 months, ends Dec 2027."),
      "text": "Положи его в папку Договоры", "expect": "save_file_to_drive", "forbid": "move_file_in_drive"},
@@ -119,7 +120,7 @@ async def main(runs: int) -> int:
                 await smart.execute(msg)
             intents = [c["intent"] for c in CALLS]
             unknown = [i for i in intents if "drive" in i and i not in DRIVE_INTENTS]
-            ok = sc["expect"] in intents and sc.get("forbid") not in intents and not unknown
+            ok = (sc["expect"] is None or sc["expect"] in intents) and sc.get("forbid") not in intents and not unknown
             hit = next((c for c in CALLS if c["intent"] == sc["expect"]), None)
             if ok and "folder" in sc:
                 got = hit["context"].get("folder") or None
