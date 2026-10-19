@@ -307,7 +307,7 @@ def verify(profile: DriveProfile, chunks: Sequence[_HasText], name: str, *,
             continue
         label = d.label if d.label in DATE_LABELS else "other"
         labels += label != d.label
-        dates.append(ProfileDate(label=label, iso=d.iso))
+        dates.append(ProfileDate(label=label, iso=d.iso, printed=d.printed))
     dates = dates[:PROFILE_DATES_MAX]
 
     verified = DriveProfile(

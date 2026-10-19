@@ -195,7 +195,8 @@ def _profile(value: Any) -> Optional[DriveProfile]:
     return DriveProfile(
         title=value.get("title", ""), what_it_is=value.get("what_it_is", ""), language=value.get("language", ""),
         doc_type=value.get("doc_type", ""), life_domains=_strs(value.get("life_domains")),
-        dates=tuple(ProfileDate(label=d.get("label", ""), iso=date.fromisoformat(d["iso"]))
+        dates=tuple(ProfileDate(label=d.get("label", ""), iso=date.fromisoformat(d["iso"]),
+                                  printed=d.get("printed", ""))
                     for d in value.get("dates") or ()),
         entities=tuple(ProfileEntity(name=e.get("name", ""), type=e.get("type", ""), printed=e.get("printed", ""),
                                      forms=_strs(e.get("forms")), found=_strs(e.get("found")))
