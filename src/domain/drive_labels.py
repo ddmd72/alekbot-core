@@ -33,7 +33,7 @@ ENTITY_TYPES: Tuple[str, ...] = ("place", "organization", "person", "event", "pr
 
 VALUE_LABELS: Tuple[str, ...] = (
     "order_number", "ticket_number", "booking_reference", "invoice_number", "receipt_number", "account_number", "iban",
-    "card_number_masked", "policy_number", "contract_number", "customer_number", "reference", "tax_id", "phone",
+    "card_number_masked", "policy_number", "contract_number", "customer_number", "reference", "tax_id", "document_number", "personal_id_number", "phone",
     "amount_total", "amount_due", "price", "other_id",
 )
 

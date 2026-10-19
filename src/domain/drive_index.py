@@ -30,7 +30,10 @@ TRIAGE_VERSION = 2                            # image triage prompt and verdict 
 KEYS_VERSION = 3                              # drive_keys and the drive_content_terms normaliser: re-keys from stored text
                                               # 3: entity spellings the file does not print are `ef:` (xc F1), a Latin
                                               # word's skeleton is `xl:`/`exl:` (F3), D31 label names (lw:/dw:)
-PROFILE_VERSION = 1                           # profiler prompt, schema, input rules, verification
+                                              # 4 (with S2's bump): space-separated dates (Δ62)
+PROFILE_VERSION = 2                           # profiler prompt, schema, input rules, verification
+                                              # 2: dates carry `printed`, value labels document_number and
+                                              # personal_id_number (§26.5 Δ63); S3b's grading joins this same bump
 PASSAGES_VERSION = 1                          # doc2query prompt and grounding
 SEARCH_V2_VERSIONS: Mapping[str, int] = {"keys": KEYS_VERSION, "profile": PROFILE_VERSION,
                                          "passages": PASSAGES_VERSION}
