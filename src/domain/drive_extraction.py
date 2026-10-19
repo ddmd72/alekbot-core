@@ -83,6 +83,12 @@ class ExtractionOutcome:
     capture: str = ""
     capture_source: str = ""
 
+    @property
+    def read_by_fallback(self) -> bool:
+        """A reader window was served by the fallback model (§26.4's reading problem R): the fallback cost is only
+        ever charged for such a window, so it is the one fact the runner already reports."""
+        return self.model_fallback_cost > 0
+
 
 class PdfSplitFailed(Exception):
     """The sandboxed parser could not count or cut the PDF's pages: `status` is `encrypted`, `unsupported`,

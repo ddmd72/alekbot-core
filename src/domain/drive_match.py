@@ -46,6 +46,9 @@ class KeyFamily(str, Enum):
     LABEL = "l:"           # l:type:<doc_type>, l:domain:<domain>, l:valid — stored for grouping, never queried
     CAPTURE = "cp:"        # the capture's names (drive_labels.CAPTURE_NAMES) when code detected it: verified (§26.3)
     CAPTURE_AUTO = "cpa:"  # ... when a model said it: automatic (Δ58)
+    VALUE_AUTO = "va:"     # a key value, or a date's ISO form, the file's text does not hold: automatic (Δ60)
+    YEAR_AUTO = "ya:"      # ya:YYYY of a date the text does not hold: automatic (Δ60)
+    MONTH_AUTO = "ma:"     # ma:YYYY-MM of a date the text does not hold: automatic (Δ60)
 
 
 class SourceClass(str, Enum):
@@ -54,7 +57,7 @@ class SourceClass(str, Enum):
     `n:`, `m:`. Translation: `hint_keys`, every transliteration skeleton (`x:`/`xl:` in chunks and names, `ex:`/`exl:`
     in records: a match across scripts is never exact, review M8), and an entity spelling the file does not print
     (`ef:`, xc F1). Automatic record: `lw:`, `tw:`, `dw:`, `lv:`, `pw:`,
-    `pe:`, `pn:`, `cpa:`. An about key's class follows from its prefix alone, so
+    `pe:`, `pn:`, `cpa:`, and `va:`, `ya:`, `ma:` (values and dates the file's text does not hold, Δ60). An about key's class follows from its prefix alone, so
     tiers are decided on lean records."""
     VERIFIED_RECORD = "verified_record"
     PASSAGE_WORDS = "passage_words"
@@ -71,6 +74,8 @@ FAMILY_SOURCE_CLASS: Mapping[KeyFamily, SourceClass] = {
     KeyFamily.DOMAIN_WORD: SourceClass.AUTOMATIC_RECORD, KeyFamily.VALIDITY_WORD: SourceClass.AUTOMATIC_RECORD,
     KeyFamily.PHOTO_WORD: SourceClass.AUTOMATIC_RECORD, KeyFamily.PHOTO_ENTITY: SourceClass.AUTOMATIC_RECORD,
     KeyFamily.PHOTO_NUMBER: SourceClass.AUTOMATIC_RECORD, KeyFamily.CAPTURE_AUTO: SourceClass.AUTOMATIC_RECORD,
+    KeyFamily.VALUE_AUTO: SourceClass.AUTOMATIC_RECORD, KeyFamily.YEAR_AUTO: SourceClass.AUTOMATIC_RECORD,
+    KeyFamily.MONTH_AUTO: SourceClass.AUTOMATIC_RECORD,
     KeyFamily.ENTITY_TRANSLIT: SourceClass.TRANSLATION,
     KeyFamily.ENTITY_TRANSLIT_LATIN: SourceClass.TRANSLATION, KeyFamily.ENTITY_FORM: SourceClass.TRANSLATION,
 }

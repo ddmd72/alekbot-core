@@ -191,8 +191,8 @@ class DriveSyncSchedulerService:
         if state.applied_versions and MIGRATION_GATE_KEY not in state.applied_versions and not state.purging:
             if not state.migration_alerted:
                 await self._alert_sink.post(
-                    f"⚠️ Drive index of user {user_id[:8]} was built by Search v1 and awaits its v2 rebuild (D30): its "
-                    f"ticks do no work until `drive_index_rebuild.py --user … --apply`")
+                    f"⚠️ Drive index of user {user_id[:8]} was built under an older index version and awaits its "
+                    f"rebuild (D30, §26.7): its ticks do no work until `drive_index_rebuild.py --user … --apply`")
                 await self._repo.update_sync_flags(user_id, migration_alerted=True)
                 logger.warning(f"[DriveSync] index of {user_id[:8]} awaits its v2 rebuild; alerted")
                 posted += 1

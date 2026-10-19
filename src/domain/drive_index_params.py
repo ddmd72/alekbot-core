@@ -138,6 +138,7 @@ PROFILE_ENTITIES_MAX = 12
 ENTITY_FORMS_MAX = 8
 PROFILE_KEY_VALUES_MAX = 12
 PROFILE_DATES_MAX = 5
+PROSE_NUMBERS_MAX = 12                      # graded number terms of title + what_it_is (§26.4; a limit on cost, not a weight)
 PROFILE_TOPICS_MAX = 8                      # and as many topics_native
 PROFILE_WORD_LIST_MAX = 24                  # each of topic_words, label_words, domain_words, validity_words
 HINT_KEYWORDS_MAX = 12                      # per chunk

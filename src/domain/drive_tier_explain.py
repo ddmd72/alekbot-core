@@ -99,6 +99,9 @@ def _about_text(source: AboutSource, keys: Sequence[str]) -> str:
                 else _MATCH_ENTITY.format(type=kind, word=printed))
     if field is AboutField.PLACE:
         return _MATCH_PHOTO_PLACE.format(word=printed)
+    if field in (AboutField.VALUE, AboutField.DATE) and source.source_class is SourceClass.AUTOMATIC_RECORD:
+        # a value or date the file's text does not hold (`va:`/`ya:`/`ma:`, Δ60): the model's, never shown as the file's
+        return _MATCH_AUTOMATIC.format(field=source.detail.replace("_", " ") or field.value, word=printed)
     if field is AboutField.VALUE:
         return _MATCH_VALUE.format(label=source.detail.replace("_", " ") or "value", word=printed)
     if field is AboutField.DATE:

@@ -46,7 +46,7 @@ from .drive_content_terms import (
     _MONTH_FORMS, _MONTH_OF, _YMD, CONTENT_TERMS_PER_CHUNK, capped_terms, clip_query, content_terms, query_term_spans,
     term_spans,
 )
-from .drive_enrichment import DriveProfile, KeyValue, PhotoObject, ProfileEntity
+from .drive_enrichment import DriveProfile, Grade, GradedField, KeyValue, PhotoObject, ProfileEntity, is_unconfirmed
 from .drive_index import TriageVerdict
 from .drive_index_params import (
     ABOUT_KEYS_PER_RECORD, CONCEPT_KEYS_MAX, ENTITY_FORMS_MAX, MAX_CONCEPTS, NAME_MIN_TRIGRAMS, NAME_QUERY_KEYS_MAX,
@@ -80,6 +80,7 @@ _E, _EX, _PE, _V, _K = (KeyFamily.ENTITY.value, KeyFamily.ENTITY_TRANSLIT.value,
                         KeyFamily.VALUE.value, KeyFamily.KIND.value)
 _PN = KeyFamily.PHOTO_NUMBER.value
 _CP, _CPA = KeyFamily.CAPTURE.value, KeyFamily.CAPTURE_AUTO.value
+_VA, _YA, _MA = KeyFamily.VALUE_AUTO.value, KeyFamily.YEAR_AUTO.value, KeyFamily.MONTH_AUTO.value
 _DETECTED = "detected"   # drive_capture.CaptureSource.DETECTED (the value the record stores)
 _XL, _EXL, _EF = (KeyFamily.TRANSLIT_LATIN.value, KeyFamily.ENTITY_TRANSLIT_LATIN.value,
                   KeyFamily.ENTITY_FORM.value)
@@ -88,6 +89,7 @@ _LATIN_SKELETONS = frozenset({_XL, _EXL})
 _WORD_FAMILIES: Tuple[str, ...] = (KeyFamily.LABEL_WORD.value, KeyFamily.TOPIC_WORD.value,
                                    KeyFamily.DOMAIN_WORD.value, KeyFamily.VALIDITY_WORD.value,
                                    KeyFamily.PHOTO_WORD.value)
+_GRADE_ORDER: Mapping[str, int] = {Grade.IN_TEXT.value: 0, Grade.IN_TEXT_AS.value: 1, Grade.NOT_IN_TEXT.value: 2}
 _YEAR_MIN, _YEAR_MAX = 1900, 2099
 _SHORT_ID_CHARS = 5   # a query id with letters this short ("ред3", "a4") is words, not one number (review m1)
 # Person and place entities also key their last token alone (review m8: "Сергей Иванов" is about "Иванов").
@@ -337,9 +339,17 @@ def _value_forms(text: str) -> List[str]:
     return [plain] if plain else []
 
 
-def _date_items(year: int, month: int, field: AboutField, detail: str, printed: str) -> List[_Item]:
-    source = AboutSource(field, detail, printed, SourceClass.VERIFIED_RECORD)
-    return [(f"{_Y}{year:04d}", source), (f"{_M}{year:04d}-{month:02d}", source)]
+def _date_items(year: int, month: int, field: AboutField, detail: str, printed: str, *,
+                held: bool = True) -> List[_Item]:
+    """`y:` and `m:` keys of a date; `ya:` and `ma:` (automatic) of one the file's text does not hold (Δ60)."""
+    source = AboutSource(field, detail, printed, SourceClass.VERIFIED_RECORD if held else SourceClass.AUTOMATIC_RECORD)
+    return [(f"{_Y if held else _YA}{year:04d}", source), (f"{_M if held else _MA}{year:04d}-{month:02d}", source)]
+
+
+def _grade_of(profile: DriveProfile, gfield: GradedField, value: str) -> Optional[str]:
+    """The best grade the profile gave this value; None when it gave none (a profile stored before grading)."""
+    grades = [g.grade for g in profile.graded if g.field == gfield.value and g.value == value]
+    return min(grades, key=lambda g: _GRADE_ORDER.get(g, 0)) if grades else None
 
 
 def _about_items(rec: KeyedRecord) -> List[_Item]:
@@ -379,7 +389,11 @@ def _about_items(rec: KeyedRecord) -> List[_Item]:
     if profile is not None:
         for entity in profile.entities[:PROFILE_ENTITIES_MAX]:
             last = entity.type in _LAST_TOKEN_ENTITY_TYPES
-            printed = dict.fromkeys(s for s in (entity.printed, *entity.found) if s)
+            # what the file prints: `printed` (graded `in_text`) and the spellings found; an entity the text holds only
+            # written differently has no printed spelling of its own, and one it does not hold has none at all (Δ60)
+            grade = _grade_of(profile, GradedField.ENTITY, entity.printed.strip() or entity.name)
+            printed = dict.fromkeys(s for s in (entity.printed if grade in (None, Grade.IN_TEXT.value) else "",
+                                                *(entity.found if grade != Grade.NOT_IN_TEXT.value else ())) if s)
             for spelling in dict.fromkeys((entity.name, entity.printed, *entity.forms[:ENTITY_FORMS_MAX])):
                 if not spelling:
                     continue
@@ -395,11 +409,13 @@ def _about_items(rec: KeyedRecord) -> List[_Item]:
     if profile is not None:
         for kv in profile.key_values[:PROFILE_KEY_VALUES_MAX]:
             forms = dict.fromkeys(_value_forms(kv.canonical) + _value_forms(kv.printed))
-            add([_V + f for f in forms], AboutField.VALUE, kv.label, kv.printed)
+            held = not is_unconfirmed(profile, GradedField.VALUE, kv.printed.strip() or kv.canonical)
+            add([(_V if held else _VA) + f for f in forms], AboutField.VALUE, kv.label, kv.printed)
         for d in profile.dates[:PROFILE_DATES_MAX]:
             iso = d.iso.isoformat()
-            add([_V + iso], AboutField.DATE, d.label, iso)
-            items.extend(_date_items(d.iso.year, d.iso.month, AboutField.DATE, d.label, iso))
+            held = not is_unconfirmed(profile, GradedField.DATE, iso)
+            add([(_V if held else _VA) + iso], AboutField.DATE, d.label, iso)
+            items.extend(_date_items(d.iso.year, d.iso.month, AboutField.DATE, d.label, iso, held=held))
     if rec.effective_date is not None:
         eff = rec.effective_date
         items.extend(_date_items(eff.year, eff.month, AboutField.EFFECTIVE_DATE, "", eff.isoformat()[:10]))
@@ -486,8 +502,8 @@ def _overlaps(a: Span, b: Span) -> bool:
 def _number_concept(word: str, forms: Sequence[str]) -> Concept:
     about: List[str] = []
     for f in forms:
-        about += [_N + f, _V + f]
-    about += [_Y + f for f in forms if len(f) == 4 and f.isdigit() and _year_ok(int(f))]
+        about += [_N + f, _V + f, _VA + f]
+    about += [fam + f for f in forms if len(f) == 4 and f.isdigit() and _year_ok(int(f)) for fam in (_Y, _YA)]
     about += [_PN + f for f in forms]
     return Concept(word=word, about_keys=tuple(dict.fromkeys(about)), word_keys=tuple(_N + f for f in forms),
                    hint_keys=(), is_number=True)
@@ -509,8 +525,8 @@ def _numbers(text: str) -> Tuple[List[Concept], List[Span]]:
         found.append((s, e, _number_concept(text[s:e].strip().casefold(), forms)))
     for s, e, ym in months:
         key = (_M + ym,)
-        found.append((s, e, Concept(word=text[s:e].strip().casefold(), about_keys=key, word_keys=key, hint_keys=(),
-                                    is_number=True)))
+        found.append((s, e, Concept(word=text[s:e].strip().casefold(), about_keys=(*key, _MA + ym), word_keys=key,
+                                    hint_keys=(), is_number=True)))
     found.sort(key=lambda f: f[0])
     seen: Set[Tuple[str, ...]] = set()
     concepts: List[Concept] = []
@@ -574,7 +590,7 @@ def _word_concept(word: str, run_native: Sequence[str], run_skel: Sequence[Skel]
     about += [_PE + f for f in own] + [_PE + r for r in run_native]
     plain = "".join(ch for ch in _strip_accents(word) if ch.isalnum())
     if plain:
-        about.append(_V + plain)
+        about += [_V + plain, _VA + plain]
     chunk = tuple(dict.fromkeys([_W + f for f in own] + _query_skel_keys(skels, latin, _X, _XL)))
     return Concept(word=word, about_keys=tuple(dict.fromkeys(about)), word_keys=chunk,
                    hint_keys=tuple(_W + f for f in own), is_number=False)

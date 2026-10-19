@@ -38,7 +38,7 @@ from .drive_keys import name_word_concepts, query_concepts
 from .drive_profile import issued_of
 from .drive_capture import CAPTURE_LABELS
 from .drive_search_texts import (
-    ACCESS_LINE_FILE, ACCESS_LINE_FOLDER, CAPTURE_LINE, ENVELOPE_INACCESSIBLE, REBUILDING_LINE, STALE_INACCESSIBLE,
+    ACCESS_LINE_FILE, ACCESS_LINE_FOLDER, CAPTURE_LINE, CARD_ACCURACY_LINE, ENVELOPE_INACCESSIBLE, REBUILDING_LINE, STALE_INACCESSIBLE,
     VALID_UNTIL_LINE,
 )
 from .drive_tier_result import TieredResult
@@ -198,6 +198,7 @@ class DriveSearchCard:
     inaccessible: bool = False           # the bot cannot open it (§26.2): its `index:` line says so and how to fix it
     capture: str = ""                    # how the file was captured, and by whom (§26.3): its `capture:` line
     capture_source: str = ""
+    card_accuracy: Optional[int] = None  # 0-100 (§26.4): its `card accuracy: N%` line; None for a photo or an undescribed file
 
     def drive_item(self) -> DriveItem:
         """The Step 1 item, built only now that a path is derived (§3.1)."""
@@ -494,7 +495,7 @@ def make_card(rec: DriveIndexRecord, path: str, summary: str, nonce: str) -> Dri
         reason=rec.reason.value if rec.reason else None,
         stale=rec.stale or (closed and rec.indexed_generation is not None), truncated=rec.truncated,
         content_hash=rec.content_hash, nonce=nonce, date_source=date_source(rec), valid_until=rec.valid_until,
-        inaccessible=closed, capture=rec.capture, capture_source=rec.capture_source,
+        inaccessible=closed, capture=rec.capture, capture_source=rec.capture_source, card_accuracy=rec.card_accuracy,
     )
 
 
@@ -512,6 +513,11 @@ def capture_line(card: DriveSearchCard) -> Optional[str]:
         return None
     return CAPTURE_LINE.format(capture=CAPTURE_LABELS.get(card.capture, card.capture),
                                source=card.capture_source or "automatic")
+
+
+def accuracy_line(card: DriveSearchCard) -> Optional[str]:
+    """`card accuracy: 88%` (§26.4), or None for a card without a score (a photograph, a file not described)."""
+    return None if card.card_accuracy is None else CARD_ACCURACY_LINE.format(percent=card.card_accuracy)
 
 
 def stale_line(card: DriveSearchCard) -> str:
@@ -560,6 +566,9 @@ def _card_body(card: DriveSearchCard) -> str:
     captured = capture_line(card)
     if captured:
         lines.append(captured)
+    accuracy = accuracy_line(card)
+    if accuracy:
+        lines.append(accuracy)
     lines.append(index_line(card))
     if card.stale:
         lines.append(stale_line(card))

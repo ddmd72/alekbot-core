@@ -54,6 +54,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 from ..domain import drive_enrich_plan as enrich
+from ..domain.drive_accuracy import accuracy_settled, scored
 from ..domain import drive_index_policy as policy
 from ..domain.drive_capture import CaptureSignals, file_capture
 from ..domain.drive_card import card_eligible, card_hash, card_text, collapsed_folder, structurally_card_eligible
@@ -100,7 +101,7 @@ from ..domain.drive_index_planner import (
 from ..domain.drive_keys import word_form_keys, word_keys_capped
 from ..domain.drive_profile import (
     PROFILE_POLICY, ProfileOutput, TemplateReason, input_fingerprint, profile_input, record_policy, stored_text,
-    template_profile, verify,
+    template_profile, grade, GradeCounts,
 )
 from ..domain.drive_index_policy import (
     Admission, admission, is_marker_child, kind_of, probe_from_children, size_cap,
@@ -375,6 +376,14 @@ def _count_triage(models: _Models, summary: Dict[str, int], now: datetime, *, ca
     models.used(now, calls=calls, cost=cost, recovered=not outage)
     summary["triage_calls"] = summary.get("triage_calls", 0) + calls
     summary["triage_images"] = summary.get("triage_images", 0) + images
+
+
+def _count_grades(summary: Dict[str, int], counts: GradeCounts) -> None:
+    """The grader's tally onto the tick summary: values the text does not hold, per field (§26.4; was
+    `verify_dropped_*`), and the enum labels it relabelled or dropped."""
+    for gfield, missing in counts.not_in_text.items():
+        _inc(summary, f"graded_not_in_text_{gfield}", missing)
+    _inc(summary, "graded_labels_normalised", counts.labels)
 
 
 def _inc(summary: Dict[str, int], key: str, by: int = 1) -> None:
@@ -1709,14 +1718,16 @@ class DriveIndexingService:
         done = replace(done, profile_input_fingerprint=fingerprint)
         if done.profile is not None and done.profile_source == ProfileSource.MODEL.value:
             policy_ = record_policy(done, text_chars=done.text_chars, script_rendered=done.script_rendered)
-            verified, drops = await asyncio.to_thread(verify, done.profile, chunks, done.name,
-                                                      key_values=policy_.output is ProfileOutput.FULL)
+            verified, counts = await asyncio.to_thread(grade, done.profile, chunks, done.name,
+                                                       key_values=policy_.output is ProfileOutput.FULL)
+            _count_grades(summary, counts)
             done = enrich.reverified(done, verified, now)
             _inc(summary, "reverified")
         if enrich.template_reason(done) is TemplateReason.SHORT:
             text = stored_text(chunks)
             done = enrich.profiled(done, template_profile(TemplateReason.SHORT, done.kind, text),
                                    source=ProfileSource.TEMPLATE, fingerprint=fingerprint, now=now)
+        done = scored(done, chunks)   # the new brief, capture and reading facts, and the re-graded profile (§26.4)
         return await self._reuse_hints(user_id, before, done, chunks, summary)
 
     async def _reuse_hints(self, user_id: str, before: DriveIndexRecord, done: DriveIndexRecord,
@@ -2541,8 +2552,8 @@ class DriveIndexingService:
             fingerprint = enrich.input_fingerprint_of(rec, chunks)
             profile = template_profile(reason, rec.kind, text)
             _inc(summary, "profile_templates")
-            return await self._commit_enriched(user_id, rec, lambda f: enrich.profiled(
-                f, profile, source=ProfileSource.TEMPLATE, fingerprint=fingerprint, now=now))
+            return await self._commit_enriched(user_id, rec, lambda f: scored(enrich.profiled(
+                f, profile, source=ProfileSource.TEMPLATE, fingerprint=fingerprint, now=now), chunks))
         if self._profiler is None:
             raise _NotWired("the profiler is not wired into the indexing service")
         inp = profile_input(rec, chunks, rec.kind)
@@ -2572,16 +2583,14 @@ class DriveIndexingService:
         if status is ModelReplyStatus.OK and reply.profile is not None:
             policy_ = record_policy(rec, text_chars=rec.text_chars, script_rendered=rec.script_rendered)
             texts: Sequence[object] = chunks if chunks else [_Text(rec.readme_excerpt)]
-            verified, drops = verify(reply.profile, texts, rec.name,   # type: ignore[arg-type]
+            verified, counts = grade(reply.profile, texts, rec.name,   # type: ignore[arg-type]
                                      key_values=policy_.output is ProfileOutput.FULL)
-            for key, value in (("entities", drops.entities), ("values", drops.values), ("dates", drops.dates),
-                               ("labels", drops.labels)):
-                _inc(summary, f"verify_dropped_{key}", value)
+            _count_grades(summary, counts)
             _inc(summary, "profiles")
             if models.agent_recovered(PROFILER_AGENT):
                 await self._persist_usage(models)
-            return await self._commit_enriched(user_id, rec, lambda f: enrich.profiled(
-                f, verified, source=ProfileSource.MODEL, fingerprint=fingerprint, now=now))
+            return await self._commit_enriched(user_id, rec, lambda f: scored(enrich.profiled(
+                f, verified, source=ProfileSource.MODEL, fingerprint=fingerprint, now=now), chunks))
         if status is ModelReplyStatus.FAILED:
             models.agent_outage(PROFILER_AGENT, now)   # charged AND a backoff (§25.4.6); a fallback refusal too
             await self._persist_usage(models)
@@ -2794,6 +2803,33 @@ class DriveIndexingService:
         _inc(summary, "keys_capped", int(cut))
         return True
 
+    async def _rescore(self, user_id: str, rec: DriveIndexRecord, now: datetime,
+                       summary: Dict[str, int]) -> DriveIndexRecord:
+        """The accuracy upgrade of one record (§26.4 "Recomputing"): the stored model profile graded again against the
+        stored chunk text, the score computed again, both written. Firestore only; the keys follow on the commit
+        (`planned` runs `about_keys_of`), and the card text does not carry the score, so nothing is re-embedded. Chunks
+        that cannot be read whole leave the stored grades as they are (grading against a partial text would call real
+        values missing); the record is still scored under this version, from them."""
+        chunks: List[DriveChunk] = []
+        if rec.indexed_generation is not None and rec.chunk_count > 0:
+            chunks = sorted(await self._repo.get_chunks(user_id, rec.item_id, rec.indexed_generation,
+                                                        range(rec.chunk_count)), key=lambda c: c.index)
+            if [c.index for c in chunks] != list(range(rec.chunk_count)):
+                logger.warning(f"[DriveIndex] chunks of item {rec.item_id} for {user_id[:8]} are incomplete; "
+                               f"its score is computed from the stored grades")
+                _inc(summary, "rescore_incomplete")
+                chunks = []
+        done = rec
+        if chunks and rec.profile is not None and rec.profile_source == ProfileSource.MODEL.value:
+            policy_ = record_policy(rec, text_chars=rec.text_chars, script_rendered=rec.script_rendered)
+            regraded, _counts = await asyncio.to_thread(grade, rec.profile, chunks, rec.name,
+                                                        key_values=policy_.output is ProfileOutput.FULL)
+            done = enrich.regraded(done, regraded, now)
+        done = scored(done, chunks)
+        await self._commit(user_id, [done], set())
+        _inc(summary, "rescored")
+        return done
+
     # -- Search v2: rebuild progress and the initial build (§25.4.5, §25.8) ---------------------------------
 
     async def _rebuild_progress(self, user_id: str, state: DriveSyncState, now: datetime, spend: _Spend, *,
@@ -2876,6 +2912,12 @@ class DriveIndexingService:
         for rec in page:
             if rec.state is RecordState.DELETING or not self._stale(rec, pending):
                 continue
+            if "accuracy" in pending and not accuracy_settled(rec):
+                # §26.4 "Recomputing": Firestore reads and one write, no download, no model call, no budget; done
+                # before the parent and month checks below because none of them can hold it back
+                rec = await self._rescore(user_id, rec, now, summary)
+                if not self._stale(rec, pending):
+                    continue
             if rec.state is RecordState.UNRESOLVED and rec.due_at is None:
                 # parked under an unresolved parent, whose rescope re-plans it under the current versions; scheduling
                 # it only re-parks it, and it holds no card, so it does not keep the versions from applying
@@ -2985,18 +3027,21 @@ class DriveIndexingService:
         never keeps the versions from applying (access regained re-plans it)."""
         if inaccessible(rec):
             return (structure_stale(rec, embedding_space=self._space)
-                    or (pending is not None and "keys" in pending and not enrich.keys_settled(rec)))
+                    or (pending is not None and "keys" in pending and not enrich.keys_settled(rec))
+                    or (pending is not None and "accuracy" in pending and not accuracy_settled(rec)))
         return (stale_versions(rec, embedding_space=self._space)
                 or extractor_stale(rec, self._extractor_versions)
                 or (pending is not None and self._enrich_stale(rec, pending)))
 
     def _enrich_stale(self, rec: DriveIndexRecord, pending: Set[str]) -> bool:
         """Settled per version key (§25.4.5): a pending `profile` or `passages` key waits for every record's job to be
-        current or none, or held/parked for the current version; a pending `keys` key for every record's keys."""
+        current or none, or held/parked for the current version; a pending `keys` key for every record's keys; a
+        pending `accuracy` key for every record's score (§26.4)."""
         ctx = self._enrich_ctx()
         return (("profile" in pending and not enrich.profile_settled(rec, ctx))
                 or ("passages" in pending and not enrich.passages_settled(rec, ctx))
-                or ("keys" in pending and not enrich.keys_settled(rec)))
+                or ("keys" in pending and not enrich.keys_settled(rec))
+                or ("accuracy" in pending and not accuracy_settled(rec)))
 
     @staticmethod
     def _pending_keys(state: DriveSyncState, target: Mapping[str, int]) -> Set[str]:

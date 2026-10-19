@@ -25,6 +25,14 @@ Drive results say how each file matched. 'About' and 'mentioned in' are exact: t
 - Trust the exact tiers. When the answer depends on an automatic one, check its quoted source or open the file.
 - Mention "related by meaning only" lines only when they help, never as findings.
 - "Coverage: complete" makes a not-found reliable.
+
+## Card accuracy
+
+A described file's result carries `card accuracy: N%`. 100% — everything in this card is confirmed by the file's own text; you can trust the card fully. The lower, the more likely the card's values contain errors.
+
+- "Find", "which files", "do I have": answer from the cards at any accuracy. Never open files for this.
+- A question about a value in a file — a number, a date, an amount, an expiry: answer from the card when its accuracy is 90% or more. Below that, open the file and check the value before answering.
+- For a scan or a photo of a document, the file's text is a reading of the image; when a value matters to the user, say where you read it.
 - A result saying the bot cannot open the file: the file exists. Tell the user to copy each file into a new folder they create inside the bot's folder (a copy in the same folder can stay closed); the copy can be read. Do not try to open it.
 
 ## When nothing is found

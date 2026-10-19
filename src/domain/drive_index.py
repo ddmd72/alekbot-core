@@ -33,18 +33,23 @@ KEYS_VERSION = 4                              # drive_keys and the drive_content
                                               # 3: entity spellings the file does not print are `ef:` (xc F1), a Latin
                                               # word's skeleton is `xl:`/`exl:` (F3), D31 label names (lw:/dw:)
                                               # 4 (§26.7, unreleased: S3 adds to it): capture names `cp:`/`cpa:`,
-                                              # space-separated dates (Δ62)
+                                              # space-separated dates (Δ62), `va:`/`ya:`/`ma:` for values the text
+                                              # does not hold, and such entities as `ef:` only (Δ60)
 PROFILE_VERSION = 2                           # profiler prompt, schema, input rules, verification
                                               # 2: dates carry `printed`, value labels document_number and
-                                              # personal_id_number (§26.5 Δ63); S3b's grading joins this same bump
+                                              # personal_id_number (§26.5 Δ63); grading replaces dropping: every
+                                              # value kept with a `graded` evidence grade (§26.4, Δ59)
+ACCURACY_VERSION = 1                          # drive_accuracy: the grader's use of the text and the weights (§26.4, Δ61)
 PASSAGES_VERSION = 1                          # doc2query prompt and grounding
 SEARCH_V2_VERSIONS: Mapping[str, int] = {"keys": KEYS_VERSION, "profile": PROFILE_VERSION,
                                          "passages": PASSAGES_VERSION}
-MIGRATION_GATE_KEY = "keys"
+# D30 by Δ65 (§26.7): the newest key a from-scratch onboarding stamps. A sync state without it was built before it
+# existed: gated (no tick work, search says "being rebuilt", one fan-out alert) until the owner's rebuild purges it.
+MIGRATION_GATE_KEY = "accuracy"
 CURRENT_VERSIONS: Mapping[str, int] = {"policy": POLICY_VERSION, "card": CARD_VERSION,
                                        "geo_table": GEO_TABLE_VERSION, "name_keys": NAME_KEYS_VERSION,
                                        "extraction": EXTRACTION_VERSION, "triage": TRIAGE_VERSION,
-                                       **SEARCH_V2_VERSIONS}
+                                       "accuracy": ACCURACY_VERSION, **SEARCH_V2_VERSIONS}
 
 
 class Scope(str, Enum):
@@ -359,6 +364,14 @@ class DriveIndexRecord:
     # rollback invariant): the rollback tag ignores them.
     capture: str = ""
     capture_source: str = ""
+    # -- §26.4 (D35, D36, Δ61): the card's accuracy, 0-100, computed by `drive_accuracy` (None: a photograph or a card
+    # with no model-written content to check), the ACCURACY_VERSION it was computed under (0: none), and the reading
+    # problems it prices: pages the provider refused, a read served by the fallback model. Plain fields, no enum
+    # (Δ47's rollback invariant). The score is never in `card_text`, so a weight change re-scores without a re-embed.
+    card_accuracy: Optional[int] = None
+    accuracy_version: int = 0
+    pages_refused: int = 0
+    read_by_fallback: bool = False
 
     @property
     def stale(self) -> bool:
