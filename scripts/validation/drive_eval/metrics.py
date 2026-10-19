@@ -17,6 +17,7 @@ outcome. A change to any of them gives no verdict until the bars are recorded ag
 """
 from __future__ import annotations
 
+import math
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -88,7 +89,8 @@ def make_bars(table: Mapping[str, Mapping[str, float]], outcomes: Sequence[CaseO
         "recorded_at": recorded_at,
         "tree_sha256": tree_sha256,
         "gold_sha256": gold_sha256,
-        "recall": {scope: row["recall"] for scope, row in table.items()},
+        # floored to 6 places: a bar never exceeds the run that set it, and no 16-digit run trips the card-number hook
+        "recall": {scope: math.floor(row["recall"] * 1_000_000) / 1_000_000 for scope, row in table.items()},
         "cases": {o.case_id: o.hit for o in sorted(outcomes, key=lambda o: o.case_id)},
     }
     if files_sha256 is not None:
