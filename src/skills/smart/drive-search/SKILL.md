@@ -16,11 +16,17 @@ The drive holds the user's own files: documents, scans, photos, notes. The index
 
 ## Writing the search
 
-Search in the user's own words; the index already matches other spellings and word forms. Put a time span in the date fields and a file format in `drive_kind`, not in the words. One search per subject is usually enough: search again only to follow a lead the results give (another spelling the results show, a folder, a word to drop), not to re-check what was found.
+Put a time span in the date fields and a file format in `drive_kind`, not in the words.
+
+- Every word in `drive_query` must match a file (all words, strict). Write the user's own few key words, in ONE language, as the user wrote them. No synonym lists, no translations, no extra words, not the user's own name.
+- After a result line saying no file holds a word ("Without X: N files", "No file holds …"), run at most ONE more search (dropping that word); then answer from what you have.
+- Search again only to follow a lead the results give (a spelling they show, a folder), not to re-check what was found.
+- "All", "every", "everything about" is still a find: answer from the cards; do not open files or compute totals unless the user asked for a total or a value.
+- A value question opens the file (when the card is under 90%) even if the card looks unrelated to the user; a find question never opens it.
 
 ## Reading the results
 
-Drive results say how each file matched. 'About' and 'mentioned in' are exact: the file's own name, details, place or text holds the words, in their spellings and word forms. 'By translation' and 'labelled' are the index's automatic words — passage keywords with their source quote, type, topic and life-area words — and may be wrong or incomplete. 'Related by meaning only' lines are guesses. Other spellings and word forms were searched; other languages only where the index wrote them, so a search in another language can still find more. The coverage line says what the search could not see. When a word is held by no file, the result counts the files that match the other words, so you can tell whether the word was phrasing or the subject.
+Drive results say how each file matched. 'About' and 'mentioned in' are exact: the file's own name, details, place or text holds the words, in their spellings and word forms. 'By translation' and 'labelled' are the index's automatic words — passage keywords with their source quote, type, topic and life-area words — and may be wrong or incomplete. 'Related by meaning only' lines are guesses. Other spellings and word forms were searched; other languages only where the index wrote them. The coverage line says what the search could not see. When a word is held by no file, the result counts the files that match the other words, so you can tell whether the word was phrasing or the subject.
 
 - Trust the exact tiers. When the answer depends on an automatic one, check its quoted source or open the file.
 - Mention "related by meaning only" lines only when they help, never as findings.
