@@ -85,7 +85,8 @@ class TestLabels:
         assert VALUE_LABELS == (
             "order_number", "ticket_number", "booking_reference", "invoice_number", "receipt_number",
             "account_number", "iban", "card_number_masked", "policy_number", "contract_number", "customer_number",
-            "reference", "tax_id", "phone", "amount_total", "amount_due", "price", "other_id")
+            "reference", "tax_id", "document_number", "personal_id_number", "phone", "amount_total", "amount_due",
+            "price", "other_id")
 
     @pytest.mark.parametrize("name, value", [("DOC_TYPES", DOC_TYPES), ("LIFE_DOMAINS", LIFE_DOMAINS),
                                              ("DATE_LABELS", DATE_LABELS), ("ENTITY_TYPES", ENTITY_TYPES),
@@ -218,7 +219,7 @@ class TestTypes:
         (DriveProfile, ["title", "what_it_is", "language", "doc_type", "life_domains", "dates", "entities",
                         "key_values", "topics", "topics_native", "topic_words", "label_words", "domain_words",
                         "validity_words"]),
-        (ProfileDate, ["label", "iso"]),
+        (ProfileDate, ["label", "iso", "printed"]),   # §26.4: the date as printed
         (ProfileEntity, ["name", "type", "printed", "forms", "found"]),   # xc F1: printed spellings tracked
         (KeyValue, ["label", "printed", "canonical"]),
         (PhotoDescription, ["description", "objects", "scene", "visible_text"]),

@@ -78,9 +78,11 @@ class EnrichJob(str, Enum):
 @dataclass(frozen=True)
 class ProfileDate:
     """A date printed in the document; `label` from `drive_labels.DATE_LABELS`. Kept only when its ISO form is among
-    the document's number terms (§25.4.1 verification)."""
+    the document's number terms (§25.4.1 verification). `printed`: the date as the document prints it (§26.4); "" in a
+    profile stored before it."""
     label: str
     iso: date
+    printed: str = ""
 
 
 @dataclass(frozen=True)
