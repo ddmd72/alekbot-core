@@ -6,7 +6,8 @@ no clock.
 
 `V = sum(w * m) / sum(w)` over the graded values (0 when there are none): weight `w` by field, miss `m` by grade.
 `S` is the text's source, a fixed small share: a native text layer 0, a screenshot 0.03, a scan (read by a model, or
-its OCR layer) 0.05, a document photo 0.08, a model-read file of unknown capture 0.05. `R` is fixed points for reading
+its OCR layer) 0.05, a document photo 0.08, a model-read file of unknown capture 0.05, a model-read file called digital 0.03
+(Δ85: the text is a reading, not a text layer). `R` is fixed points for reading
 problems: pages refused 5, read by the fallback model 3, truncated 2.
 
 Every weight is in the tables below, hashed by `weights_digest` and pinned in a test to `ACCURACY_VERSION`: a change to
@@ -49,6 +50,7 @@ GRADE_MISS: Mapping[str, float] = {Grade.IN_TEXT.value: 0.0, Grade.IN_TEXT_AS.va
 SOURCE_SHARE: Mapping[str, float] = {
     "native": 0.0, Capture.DIGITAL.value: 0.0, Capture.SCREENSHOT.value: 0.03, Capture.SCAN.value: 0.05,
     Capture.DOCUMENT_PHOTO.value: 0.08, "model_unknown": 0.05,
+    "digital_model_read": 0.03,   # Δ85: a model read a file it called digital: priced like a screenshot, not native text
 }
 READING_POINTS: Mapping[str, int] = {"pages_refused": 5, "read_by_fallback": 3, "truncated": 2}
 
@@ -76,6 +78,8 @@ def model_read(rec: DriveIndexRecord) -> bool:
 
 def source_share(rec: DriveIndexRecord) -> float:
     """S: the capture decides; without one, a model-read file is priced as unknown, a parser-read one as native text."""
+    if rec.capture == Capture.DIGITAL.value and model_read(rec):
+        return SOURCE_SHARE["digital_model_read"]
     if rec.capture:
         return SOURCE_SHARE.get(rec.capture, SOURCE_SHARE["model_unknown"] if model_read(rec) else 0.0)
     return SOURCE_SHARE["model_unknown"] if model_read(rec) else SOURCE_SHARE["native"]

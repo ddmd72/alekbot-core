@@ -16,7 +16,7 @@ from src.adapters.firestore_drive_index_repo import (
     RECORD_FANOUT_FIELDS, RECORD_FIELDS, STATE_FIELDS, FirestoreDriveIndexRepository, record_from_doc, record_to_doc, state_from_doc,
     state_to_doc,
 )
-from src.domain.drive_enrichment import DriveProfile, KeyValue, PhotoObject, ProfileDate, ProfileEntity
+from src.domain.drive_enrichment import DriveProfile, GradedValue, KeyValue, PhotoObject, ProfileDate, ProfileEntity
 from src.domain.drive_index import (
     ContentClass, DocumentBrief, DriveIndexRecord, DriveSyncState, EpochPhase, ErrorCategory, Reason, RecordState,
     Scope, TriageVerdict,
@@ -53,11 +53,12 @@ def full_record() -> DriveIndexRecord:
         # Search v2 (§25.2.1): every field, the nested profile with every one of its own fields set
         profile=DriveProfile(
             title="Boarding pass Valencia–Rome", what_it_is="An airline boarding pass", language="es",
-            doc_type="ticket", life_domains=("travel",), dates=(ProfileDate("valid_until", date(2026, 5, 12)),),
+            doc_type="ticket", life_domains=("travel",), dates=(ProfileDate("valid_until", date(2026, 5, 12), "12 05 2026"),),
             entities=(ProfileEntity("Roma", "place", "ROMA FCO", ("rome", "рим")),),
             key_values=(KeyValue("reference", "AB 12-34", "ab1234"),), topics=("flight",), topics_native=("vuelo",),
             topic_words=("flight", "flights"), label_words=("ticket",), domain_words=("travel",),
-            validity_words=("valid",)),
+            validity_words=("valid",),
+            graded=(GradedValue("value", "AB 12-34", "in_text_as", "AB1234"),)),   # §26.4 (Δ59)
         valid_until=datetime(2026, 5, 12, tzinfo=timezone.utc), profile_source="model",
         profile_input_fingerprint="pif", profile_fingerprint="pf", profile_version=2, profiled_content_version="c1",
         profile_state="current", profile_defer_until=T + timedelta(hours=4), profile_parked_month="2026-09",
@@ -72,6 +73,8 @@ def full_record() -> DriveIndexRecord:
         visible_text="TREVI", readme_excerpt="# Project", readme_excerpt_version="c7",
         script_rendered=True,
         capture="scan", capture_source="detected",   # §26.3 (D34)
+        photo_scene_labels=("sunset", "beach"),   # D40
+        card_accuracy=88, accuracy_version=1, pages_refused=2, read_by_fallback=True,   # §26.4 (Δ61)
         # §26.2 (D33, Δ47, Δ68): files the bot cannot open; the last is the fan-out's own field (Δ54)
         inaccessible_since=T - timedelta(days=4), inaccessible_checked_at=T - timedelta(hours=8),
         inaccessible_reobserved=True, inaccessible_notified_since=T - timedelta(days=5))

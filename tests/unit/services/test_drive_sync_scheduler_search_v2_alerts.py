@@ -48,7 +48,8 @@ def v2_state(clock, **kw) -> DriveSyncState:
 
 async def test_an_index_awaiting_its_rebuild_alerts_once(env):
     svc, repo, alerts, clock = env
-    v1 = {k: v for k, v in di.CURRENT_VERSIONS.items() if k not in di.SEARCH_V2_VERSIONS}
+    # a v1 index has neither the Search v2 keys nor `accuracy` (newer still; the gate key since Δ65)
+    v1 = {k: v for k, v in di.CURRENT_VERSIONS.items() if k not in {*di.SEARCH_V2_VERSIONS, "accuracy"}}
     repo.states["u"] = v2_state(clock, applied_versions=v1)
     await svc.fan_out()
     await svc.fan_out()

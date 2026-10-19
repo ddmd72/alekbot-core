@@ -42,7 +42,7 @@ import re
 from typing import Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
 from .drive_content_terms import (
-    _AMOUNT, _DAY_MONTH_YEAR, _DMY, _GROUP_MIN_DIGITS, _GROUPS, _ID, _MIN_DIGITS, _MONTH, _MONTH_DAY_YEAR,
+    _AMOUNT, _DAY_MONTH_YEAR, _DMY, _DMY_SPACED, _GROUP_MIN_DIGITS, _GROUPS, _ID, _MIN_DIGITS, _MONTH, _MONTH_DAY_YEAR,
     _MONTH_FORMS, _MONTH_OF, _YMD, CONTENT_TERMS_PER_CHUNK, capped_terms, clip_query, content_terms, query_term_spans,
     term_spans,
 )
@@ -742,7 +742,7 @@ def index_tables_digest() -> str:
         label_names_digest(), capture_names_digest(), scene_names_digest(),
         sorted(_MONTH_FORMS.items()), _MONTH_YEAR.pattern, CONTENT_TERMS_PER_CHUNK, _MIN_DIGITS, _GROUP_MIN_DIGITS,
         _AMOUNT.pattern, _DMY.pattern, _YMD.pattern, _ID.pattern, _GROUPS.pattern, _DAY_MONTH_YEAR.pattern,
-        _MONTH_DAY_YEAR.pattern,
+        _MONTH_DAY_YEAR.pattern, _DMY_SPACED.pattern,
     )
     return hashlib.sha256(repr(tables).encode("utf-8")).hexdigest()
 

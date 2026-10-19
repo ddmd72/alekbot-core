@@ -206,6 +206,14 @@ class DocumentBrief:
     doc_date: Optional[datetime] = None
     parties: Tuple[str, ...] = ()
     amount: str = ""                          # value and currency as one display string, e.g. "1 250.00 EUR"
+    date_grade: str = ""                      # a `Grade` value of `doc_date` against the stored text (§26.4, Δ60); ""
+                                              # until graded (a record stored before it, or not yet written)
+
+    @property
+    def held_date(self) -> Optional[datetime]:
+        """`doc_date` unless grading found it absent from the text: an unconfirmed date never becomes the file's
+        effective date, a `y:`/`m:` key or "(document)" (Δ60). An ungraded brief's date counts."""
+        return None if self.date_grade == "not_in_text" else self.doc_date
 
 
 @dataclass(frozen=True)

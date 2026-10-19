@@ -38,9 +38,10 @@ def test_sync_state_starts_idle_without_cursor():
 
 
 def test_versions_are_ints_keyed_by_name():
-    # Search v2 (P5, §25.4.8): keys, profile and passages joined the map behind the migration gate (D30)
+    # Search v2 (P5, §25.4.8): keys, profile and passages joined the map behind the migration gate (D30);
+    # §26.4 (Δ61): accuracy, the gate key since Δ65
     assert set(CURRENT_VERSIONS) == {"policy", "card", "geo_table", "name_keys", "extraction", "triage",
-                                     "keys", "profile", "passages"}
+                                     "keys", "profile", "passages", "accuracy"}
     assert all(isinstance(v, int) and v >= 1 for v in CURRENT_VERSIONS.values())
 
 

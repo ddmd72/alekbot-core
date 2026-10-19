@@ -56,7 +56,7 @@ class TestVersions:
     def test_v2_keys_are_defined(self):
         assert SEARCH_V2_VERSIONS == {"keys": KEYS_VERSION, "profile": PROFILE_VERSION, "passages": PASSAGES_VERSION}
         assert all(isinstance(v, int) and v >= 1 for v in SEARCH_V2_VERSIONS.values())
-        assert MIGRATION_GATE_KEY == "keys"
+        assert MIGRATION_GATE_KEY == "accuracy"   # Δ65 (§26.7): the newest key a from-scratch onboarding stamps
 
     def test_v2_keys_are_current_behind_the_gate(self):
         """P5 added them to CURRENT_VERSIONS behind the migration gate (§25.8 as amended by D30): the gate key is one
@@ -164,10 +164,11 @@ class TestEnums:
 
     def test_key_families(self):
         # xc F1 adds `ef:` (an unprinted entity spelling), xc F3 adds `xl:`/`exl:` (Latin skeletons); §26.3 (Δ58)
-        # adds the capture names `cp:` (detected) / `cpa:` (a model's)
+        # adds the capture names `cp:` (detected) / `cpa:` (a model's); D40 the scene labels `sl:`; Δ60 values and
+        # dates the file's text does not hold `va:` / `ya:` / `ma:`
         assert [f.value for f in KeyFamily] == ["w:", "x:", "xl:", "n:", "m:", "y:", "e:", "ef:", "ex:", "exl:", "pe:",
                                                 "v:", "k:", "lw:", "tw:", "dw:", "lv:", "pw:", "pn:", "l:", "cp:",
-                                                "cpa:"]
+                                                "cpa:", "sl:", "va:", "ya:", "ma:"]
 
     def test_family_source_classes(self):
         """A key's class follows from its prefix alone: photo objects are `pe:` and photo numbers `pn:`, automatic
@@ -175,8 +176,11 @@ class TestEnums:
         # §26.3 (Δ58): a capture code detected is verified (`cp:`), one a model said is automatic (`cpa:`)
         verified = {KeyFamily.ENTITY, KeyFamily.VALUE, KeyFamily.YEAR, KeyFamily.MONTH, KeyFamily.KIND,
                     KeyFamily.CAPTURE}
+        # D40: a photograph's scene labels are a model's (`sl:`); Δ60: a value or date the text does not hold is
+        # searchable, never exact (`va:`, `ya:`, `ma:`)
         automatic = {KeyFamily.LABEL_WORD, KeyFamily.TOPIC_WORD, KeyFamily.DOMAIN_WORD, KeyFamily.VALIDITY_WORD,
-                     KeyFamily.PHOTO_WORD, KeyFamily.PHOTO_ENTITY, KeyFamily.PHOTO_NUMBER, KeyFamily.CAPTURE_AUTO}
+                     KeyFamily.PHOTO_WORD, KeyFamily.PHOTO_ENTITY, KeyFamily.PHOTO_NUMBER, KeyFamily.CAPTURE_AUTO,
+                     KeyFamily.SCENE_LABEL, KeyFamily.VALUE_AUTO, KeyFamily.YEAR_AUTO, KeyFamily.MONTH_AUTO}
         # xc F3: Latin skeletons `exl:` too; xc F1: an unprinted entity spelling `ef:` is index-made, never exact
         translation = {KeyFamily.ENTITY_TRANSLIT, KeyFamily.ENTITY_TRANSLIT_LATIN, KeyFamily.ENTITY_FORM}
         assert {f for f, c in FAMILY_SOURCE_CLASS.items() if c is SourceClass.VERIFIED_RECORD} == verified
@@ -218,11 +222,11 @@ class TestTypes:
     @pytest.mark.parametrize("cls, expected", [
         (DriveProfile, ["title", "what_it_is", "language", "doc_type", "life_domains", "dates", "entities",
                         "key_values", "topics", "topics_native", "topic_words", "label_words", "domain_words",
-                        "validity_words"]),
+                        "validity_words", "graded"]),   # §26.4 (Δ59): every value's evidence grade, appended
         (ProfileDate, ["label", "iso", "printed"]),   # §26.4: the date as printed
         (ProfileEntity, ["name", "type", "printed", "forms", "found"]),   # xc F1: printed spellings tracked
         (KeyValue, ["label", "printed", "canonical"]),
-        (PhotoDescription, ["description", "objects", "scene", "visible_text"]),
+        (PhotoDescription, ["description", "objects", "scene", "visible_text", "scene_labels"]),   # D40, appended
         (PhotoObject, ["name", "forms"]),
         (HintItem, ["text", "type", "evidence", "evidence_start", "evidence_end"]),
         (DriveHintDoc, ["user_id", "item_id", "generation", "index", "kind", "chunk_text_hash", "items", "hint_keys",
