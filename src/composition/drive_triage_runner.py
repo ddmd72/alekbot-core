@@ -79,7 +79,8 @@ class DriveTriageRunner(ImageTriagePort):
             mime = image_mime(image.thumbnail[:16]) or image.mime_type
             if mime in VISION_MIME_TYPES and len(image.thumbnail) <= MAX_VISION_IMAGE_BYTES:
                 inputs.append(TriageInput(index=index, data=image.thumbnail, mime_type=mime,
-                                          camera_prior=image.camera_prior))
+                                          camera_prior=image.camera_prior, place_name=image.place_name,
+                                          location=image.location))
             else:
                 run.refused.add(index)   # no provider takes it: the same bytes always get the same answer
         if inputs:

@@ -54,10 +54,12 @@ _NOT_MATCHED = "not matched"
 _AUTOMATIC_FIELD = {
     AboutField.TOPIC_WORD: "topic", AboutField.DOMAIN_WORD: "life area", AboutField.VALIDITY_WORD: "validity",
     AboutField.PHOTO_OBJECT: "photo object", AboutField.VISIBLE_TEXT_NUMBER: "text in the photo",
+    AboutField.SCENE_LABEL: "scene",
 }
 _FAMILY_OF_FIELD = {
     AboutField.LABEL_WORD: "lw:", AboutField.TOPIC_WORD: "tw:", AboutField.DOMAIN_WORD: "dw:",
     AboutField.VALIDITY_WORD: "lv:", AboutField.PHOTO_WORD: "pw:",
+    AboutField.SCENE_LABEL: "sl:",
 }
 
 

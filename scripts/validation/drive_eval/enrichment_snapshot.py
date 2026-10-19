@@ -109,7 +109,8 @@ def photo_from_json(data: Optional[Mapping[str, Any]]) -> Optional[PhotoDescript
     return PhotoDescription(description=data.get("description", ""),
                             objects=tuple(PhotoObject(name=o["name"], forms=tuple(o.get("forms", ())))
                                           for o in data.get("objects", ())),
-                            scene=data.get("scene", ""), visible_text=data.get("visible_text", ""))
+                            scene=data.get("scene", ""), visible_text=data.get("visible_text", ""),
+                            scene_labels=tuple(data.get("scene_labels", ())))
 
 
 def outcome_to_json(outcome: ExtractionOutcome) -> Dict[str, Any]:

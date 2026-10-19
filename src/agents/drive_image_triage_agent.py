@@ -4,7 +4,7 @@ DriveImageTriageAgent — sorts a batch of thumbnails into text to read and phot
 
 Public interface:
     AGENT_TYPE = "drive_triage"
-    TriageInput(index, data, mime_type, camera_prior)
+    TriageInput(index, data, mime_type, camera_prior, place_name="", location=None)
     TriageAnswer(results: Mapping[int, (TriageVerdict, PhotoDescription | None)], missing, output_limited, model,
                  usd, fallback_usd, calls, captures: Mapping[int, str])
     DriveImageTriageAgent(config, execution_context, prompt_builder, thinking=None)
@@ -13,11 +13,14 @@ Public interface:
             DriveModelUnavailable, each carrying the calls made, their cost, the fallback's share and the model
 
 Each thumbnail goes after its own text label "Image <n>: camera metadata present|absent" (an opaque index, never the
-item id), and the answer is mapped back by index: an unknown index is ignored, a repeated one keeps its first answer.
+item id), which, only when the record has them, goes on "; taken near <place> (<lat>, <lon>)" (D39): the place the
+phone was at and its coordinates rounded to 3 decimals (~110 m), a prior for the description, never camera model or
+date, and the answer is mapped back by index: an unknown index is ignored, a repeated one keeps its first answer.
 Every image is asked how it was captured (§26.3, D34; TRIAGE_VERSION 3): a text image's answer is in `captures`
 (index -> a `Capture` value), a photograph has none whatever the model says (Δ57), and an answer outside the four
 values is no capture — it never costs the verdict. A photograph gets a description (at most PHOTO_DESCRIPTION_CHARS), objects with up to PHOTO_OBJECT_FORMS_MAX spellings
-each, a scene of a few words and the visible text, all automatic; a text image gets none. The caption-shift check
+each, a scene of a few words, scene labels from the fixed SCENE_LABELS set (D40: unknown values dropped, deduped, at
+most PHOTO_SCENE_LABELS_MAX, never an error) and the visible text, all automatic; a text image gets none. The caption-shift check
 (OQ-V1): byte-identical images in one batch must get the same verdict — when they do not, the answer is shifted, so
 their answers are dropped and asked again with the correction turn, which also asks for any index left out; images
 still disagreeing after it are settled as `text` (the reader then looks at them at full size), images still missing
@@ -41,8 +44,10 @@ from ..domain.drive_capture import Capture, model_capture
 from ..domain.drive_enrichment import PhotoDescription, PhotoObject
 from ..domain.drive_index import TriageVerdict
 from ..domain.drive_index_params import (
-    PHOTO_DESCRIPTION_CHARS, PHOTO_OBJECT_FORMS_MAX, PHOTO_OBJECTS_MAX, PHOTO_SCENE_WORDS, PHOTO_VISIBLE_TEXT_CHARS,
+    PHOTO_DESCRIPTION_CHARS, PHOTO_OBJECT_FORMS_MAX, PHOTO_OBJECTS_MAX, PHOTO_SCENE_LABELS_MAX, PHOTO_SCENE_WORDS,
+    PHOTO_VISIBLE_TEXT_CHARS,
 )
+from ..domain.drive_labels import SCENE_LABELS
 from ..domain.llm import FinishReason
 from ..infrastructure.agent_config import DRIVE_TRIAGE
 from ..infrastructure.drive_model_call import (
@@ -65,7 +70,8 @@ _RESPONSE_SCHEMA = {
             "description": "One entry per image, by its index.",
             "items": {
                 "type": "object",
-                "required": ["index", "verdict", "capture", "description", "objects", "scene", "visible_text"],
+                "required": ["index", "verdict", "capture", "description", "objects", "scene", "scene_labels",
+                             "visible_text"],
                 "properties": {
                     "index": {"type": "integer", "description": "The image's index as given."},
                     "verdict": {"type": "string", "enum": [TriageVerdict.TEXT.value, TriageVerdict.PHOTO.value],
@@ -85,6 +91,9 @@ _RESPONSE_SCHEMA = {
                                                         "description": "The name in Spanish, Ukrainian, Russian "
                                                                        "and French."}}}},
                     "scene": {"type": "string", "description": "photo: a few English words for the setting."},
+                    "scene_labels": {"type": "array",
+                                     "description": "photo: up to six labels that fit the picture; text: empty.",
+                                     "items": {"type": "string", "enum": list(SCENE_LABELS)}},
                     "visible_text": {"type": "string",
                                      "description": "photo: words legible in it, as written; else empty."},
                 },
@@ -106,6 +115,8 @@ class TriageInput:
     data: bytes
     mime_type: str
     camera_prior: bool
+    place_name: str = ""                              # D39: "Rome (Roma), Italy" (the geo table's name incl. country)
+    location: Optional[Tuple[float, float]] = None    # D39: latitude, longitude, rounded to 3 decimals
 
 
 @dataclass(frozen=True)
@@ -172,8 +183,7 @@ class DriveImageTriageAgent(BaseAgent):
                 self._system = await build_drive_prompt(self._prompt_builder, AGENT_TYPE)
         parts: List[MessagePart] = []
         for image in images:
-            parts.append(MessagePart(text=f"Image {image.index}: camera metadata "
-                                          f"{'present' if image.camera_prior else 'absent'}"))
+            parts.append(MessagePart(text=image_label(image)))
             parts.append(MessagePart(file_data={"base64": base64.b64encode(image.data).decode("ascii"),
                                                 "mime_type": image.mime_type}))
         parts.append(MessagePart(text=_TASK.format(n=len(images))))
@@ -239,6 +249,18 @@ class DriveImageTriageAgent(BaseAgent):
             history.append(Message(role="user", parts=[MessagePart(text=_CORRECTION.format(
                 problem="; ".join(problems), indexes=", ".join(str(i) for i in missing)))]))
         raise AssertionError("unreachable")  # pragma: no cover
+
+
+def image_label(image: TriageInput) -> str:
+    """`Image 3: camera metadata present; taken near Barcelona (Barcelona), Spain (41.403, 2.174)` (D39). The place
+    and the coordinates only when the record has them; the coordinates are rounded here too, whatever the caller sent."""
+    label = f"Image {image.index}: camera metadata {'present' if image.camera_prior else 'absent'}"
+    if image.location is None:
+        return label
+    lat, lon = (round(c, 3) for c in image.location)
+    coordinates = f"({lat}, {lon})"
+    return f"{label}; taken near {image.place_name} {coordinates}" if image.place_name else (
+        f"{label}; taken at {coordinates}")
 
 
 def _identical_groups(images: Sequence[TriageInput]) -> List[List[int]]:
@@ -314,8 +336,23 @@ def _entry(entry: Any) -> Tuple[int, _Result]:
         description=" ".join(_string(entry, "description").split())[:PHOTO_DESCRIPTION_CHARS],
         objects=tuple(objects),
         scene=" ".join(_string(entry, "scene").split()[:PHOTO_SCENE_WORDS]),
+        scene_labels=_scene_labels(entry.get("scene_labels")),
         visible_text=" ".join(_string(entry, "visible_text").split())[:PHOTO_VISIBLE_TEXT_CHARS])
     return entry["index"], (verdict, photo)
+
+
+def _scene_labels(value: Any) -> Tuple[str, ...]:
+    """The known labels of the model's list, deduped, in its order, at most PHOTO_SCENE_LABELS_MAX; a value outside
+    SCENE_LABELS is dropped with a warning and a missing or malformed list is no labels — never an error (D40)."""
+    if not isinstance(value, list):
+        return ()
+    kept: List[str] = []
+    for label in value:
+        if not isinstance(label, str) or label not in SCENE_LABELS:
+            logger.warning(f"[{AGENT_TYPE}] unknown scene label {str(label)[:30]!r}; dropped")
+        elif label not in kept:
+            kept.append(label)
+    return tuple(kept[:PHOTO_SCENE_LABELS_MAX])
 
 
 def _string(entry: Mapping[str, Any], key: str) -> str:

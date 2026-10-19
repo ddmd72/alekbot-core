@@ -37,9 +37,10 @@ from .drive_index_policy import Admission, admission, kind_of
 from .drive_keys import name_word_concepts, query_concepts
 from .drive_profile import issued_of
 from .drive_capture import CAPTURE_LABELS
+from .drive_labels import scene_label_text
 from .drive_search_texts import (
-    ACCESS_LINE_FILE, ACCESS_LINE_FOLDER, CAPTURE_LINE, CARD_ACCURACY_LINE, ENVELOPE_INACCESSIBLE, REBUILDING_LINE, STALE_INACCESSIBLE,
-    VALID_UNTIL_LINE,
+    ACCESS_LINE_FILE, ACCESS_LINE_FOLDER, CAPTURE_LINE, CARD_ACCURACY_LINE, ENVELOPE_INACCESSIBLE, REBUILDING_LINE,
+    SCENE_LINE, STALE_INACCESSIBLE, VALID_UNTIL_LINE,
 )
 from .drive_tier_result import TieredResult
 from .user_drive import DriveConnection, DriveItem, make_drive_ref
@@ -198,6 +199,7 @@ class DriveSearchCard:
     inaccessible: bool = False           # the bot cannot open it (§26.2): its `index:` line says so and how to fix it
     capture: str = ""                    # how the file was captured, and by whom (§26.3): its `capture:` line
     capture_source: str = ""
+    scene_labels: Tuple[str, ...] = ()   # a photograph's scene labels (D40): its `scene:` line
     card_accuracy: Optional[int] = None  # 0-100 (§26.4): its `card accuracy: N%` line; None for a photo or an undescribed file
 
     def drive_item(self) -> DriveItem:
@@ -496,6 +498,7 @@ def make_card(rec: DriveIndexRecord, path: str, summary: str, nonce: str) -> Dri
         stale=rec.stale or (closed and rec.indexed_generation is not None), truncated=rec.truncated,
         content_hash=rec.content_hash, nonce=nonce, date_source=date_source(rec), valid_until=rec.valid_until,
         inaccessible=closed, capture=rec.capture, capture_source=rec.capture_source, card_accuracy=rec.card_accuracy,
+        scene_labels=rec.photo_scene_labels,
     )
 
 
@@ -513,6 +516,13 @@ def capture_line(card: DriveSearchCard) -> Optional[str]:
         return None
     return CAPTURE_LINE.format(capture=CAPTURE_LABELS.get(card.capture, card.capture),
                                source=card.capture_source or "automatic")
+
+
+def scene_line(card: DriveSearchCard) -> Optional[str]:
+    """`scene: sunset, beach` (D40), or None for a card without scene labels (not a photograph, or none given)."""
+    if not card.scene_labels:
+        return None
+    return SCENE_LINE.format(labels=", ".join(scene_label_text(label) for label in card.scene_labels))
 
 
 def accuracy_line(card: DriveSearchCard) -> Optional[str]:
@@ -566,6 +576,9 @@ def _card_body(card: DriveSearchCard) -> str:
     captured = capture_line(card)
     if captured:
         lines.append(captured)
+    scene = scene_line(card)
+    if scene:
+        lines.append(scene)
     accuracy = accuracy_line(card)
     if accuracy:
         lines.append(accuracy)

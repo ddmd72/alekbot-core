@@ -16,7 +16,8 @@ from .drive_enrichment import DriveProfile, PhotoObject
 POLICY_VERSION = 2                            # 2: the Slice 2+4 kinds admitted (§24.1)
 CARD_VERSION = 4                              # 2: brief, caption and lead text in the card (§24.4); 3: profile and
                                               # photo fields, no lead text but for machine text (§25.2.7); 4: the
-                                              # capture segment, no brief doc type (§26.3, Δ64)
+                                              # capture segment, no brief doc type (§26.3, Δ64); S6 (unreleased)
+                                              # adds a photograph's scene labels segment (D40)
 # 2: alternate names, country names, large place (§25.4.3). Bumped before P5 by D30 (no v1 migration: the rollout
 # rebuilds from scratch). P5 MUST write `place_forms` (PlaceIndex.place) together with this stamp: `_place` keeps a
 # stored place while the stamp matches, so a record stamped 2 without forms would never get them.
@@ -24,7 +25,8 @@ GEO_TABLE_VERSION = 2
 NAME_KEYS_VERSION = 2                         # the name-stream keyer; 2: drive_keys.name_keys_v2 (§25.2.4)
 EXTRACTION_VERSION = 3                        # chunker, text gate, content_terms normaliser (§12.3, §24.6); 2: maximal query forms (D-M1); 3: written-out dates (F5-5)
 TRIAGE_VERSION = 3                            # image triage prompt and verdict rules (§5.3, §24.5); 2: enriched (§25.4.3);
-                                              # 3: a text image's capture (§26.3)
+                                              # 3: a text image's capture (§26.3); S6 (unreleased) adds the photo
+                                              # location prior (D39) and `scene_labels` (D40)
 
 # Search v2 (§25.4.8, frozen in §25.13.2). In CURRENT_VERSIONS since P5, behind the migration gate (§25.8 as amended
 # by D30): a sync state whose applied_versions lacks MIGRATION_GATE_KEY was built by v1 and is never upgraded — it runs
@@ -34,7 +36,8 @@ KEYS_VERSION = 4                              # drive_keys and the drive_content
                                               # word's skeleton is `xl:`/`exl:` (F3), D31 label names (lw:/dw:)
                                               # 4 (§26.7, unreleased: S3 adds to it): capture names `cp:`/`cpa:`,
                                               # space-separated dates (Δ62), `va:`/`ya:`/`ma:` for values the text
-                                              # does not hold, and such entities as `ef:` only (Δ60)
+                                              # does not hold, and such entities as `ef:` only (Δ60); S6 adds
+                                              # the photograph's scene labels `sl:` (D40, SCENE_NAMES)
 PROFILE_VERSION = 2                           # profiler prompt, schema, input rules, verification
                                               # 2: dates carry `printed`, value labels document_number and
                                               # personal_id_number (§26.5 Δ63); grading replaces dropping: every
@@ -343,6 +346,7 @@ class DriveIndexRecord:
     photo_description: str = ""               # enriched triage, photographs only (§25.4.3); replaces caption
     photo_objects: Tuple[PhotoObject, ...] = ()
     photo_scene: str = ""
+    photo_scene_labels: Tuple[str, ...] = ()  # D40: SCENE_LABELS values, plain strings (a rollback reads them back, Δ47)
     visible_text: str = ""
     readme_excerpt: str = ""                  # a collapsed folder's README profile input (§25.3)
     readme_excerpt_version: str = ""          # the README content version it came from

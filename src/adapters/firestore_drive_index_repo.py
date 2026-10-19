@@ -230,7 +230,7 @@ _RECORD_READERS: Dict[str, Callable[[Any], Any]] = {
     "profile": _profile, "photo_objects": _photo_objects,
     "valid_until": _dt, "profile_defer_until": _dt, "passages_defer_until": _dt, "passages_done_at": _dt,
     "enrich_wake_at": _dt,
-    "about_keys": _strs, "place_forms": _strs,
+    "about_keys": _strs, "place_forms": _strs, "photo_scene_labels": _strs,
     "passages_generation": _optional(int),
     # §26.2 (D33)
     "inaccessible_since": _dt, "inaccessible_checked_at": _dt, "inaccessible_notified_since": _dt,

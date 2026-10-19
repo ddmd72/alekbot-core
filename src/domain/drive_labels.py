@@ -13,6 +13,8 @@ Public interface:
     label_names_digest() -> str                  pinned by a test (a change is a KEYS_VERSION bump)
     CAPTURE_NAMES: capture -> its names (§26.3, Δ58; keyed `cp:` detected / `cpa:` automatic)
     capture_names_digest() -> str                pinned by a test per KEYS_VERSION
+    SCENE_LABELS (D40): the fixed scene labels triage gives a photograph;  SCENE_NAMES: label -> its names (keyed `sl:`)
+    scene_names_digest() -> str                  pinned by a test per KEYS_VERSION
 """
 import hashlib
 from typing import Mapping, Tuple
@@ -205,3 +207,87 @@ CAPTURE_NAMES: Mapping[str, Tuple[str, ...]] = {
 def capture_names_digest() -> str:
     """SHA-256 of CAPTURE_NAMES: a test pins it, so a change fails until KEYS_VERSION moves with it."""
     return hashlib.sha256(repr(sorted(CAPTURE_NAMES.items())).encode("utf-8")).hexdigest()
+
+
+# D40 (owner decision 2026-10-19): the fixed scene labels triage gives a photograph, zero to PHOTO_SCENE_LABELS_MAX of
+# them; a text image gets none. The free-text `scene` stays beside them. Closed set: a value outside it is dropped.
+SCENE_LABELS: Tuple[str, ...] = (
+    "sunrise", "sunset", "night", "golden_hour", "rain", "snow", "fog", "sunny", "storm", "beach", "sea", "mountains",
+    "forest", "lake_river", "city_street", "countryside", "indoors", "restaurant_cafe", "home", "party", "wedding",
+    "birthday", "concert", "sport", "travel", "selfie", "group", "child", "pet", "food", "landscape", "architecture",
+)
+
+# D40: the words a user may type for a scene label, in en, es, uk and ru, singular and plural where natural, written
+# by the keyer at index time as a phrase (the `k:` / `cp:` mechanism) under `sl:`; a query word emits `sl:` only for a
+# form a name is stored under. Like D31's tables it names our own value; it is not a query-side synonym table (D28).
+SCENE_NAMES: Mapping[str, Tuple[str, ...]] = {
+    "sunrise": ("sunrise", "sunrises", "dawn", "amanecer", "amaneceres", "salida del sol", "alba", "схід сонця",
+                "світанок", "світанки", "рассвет", "рассветы", "восход", "восход солнца"),
+    "sunset": ("sunset", "sunsets", "puesta de sol", "puestas de sol", "atardecer", "atardeceres", "захід сонця",
+               "заходи сонця", "закат", "закаты"),
+    "night": ("night", "nights", "noche", "noches", "ніч", "ночі", "ночь", "ночи"),
+    "golden_hour": ("golden hour", "golden hours", "hora dorada", "horas doradas", "золота година", "золоті години",
+                    "золотий час", "золотой час", "золотые часы"),
+    "rain": ("rain", "rains", "rainy", "lluvia", "lluvias", "lluvioso", "дощ", "дощі", "дощовий", "дождь", "дожди",
+             "дождливый"),
+    "snow": ("snow", "snowy", "nieve", "nevado", "сніг", "снігопад", "снег", "снегопад", "снежный"),
+    "fog": ("fog", "foggy", "mist", "niebla", "nieblas", "neblina", "туман", "тумани", "туманы"),
+    "sunny": ("sunny", "sunshine", "soleado", "día soleado", "сонячно", "сонячний день", "солнечно",
+              "солнечный день"),
+    "storm": ("storm", "storms", "thunderstorm", "thunderstorms", "tormenta", "tormentas", "гроза", "грози", "шторм",
+              "шторми", "буря", "бурі", "грозы", "штормы", "бури"),
+    "beach": ("beach", "beaches", "playa", "playas", "пляж", "пляжі", "пляжи"),
+    "sea": ("sea", "seas", "ocean", "oceans", "seaside", "coast", "mar", "mares", "océano", "océanos", "costa",
+            "море", "моря", "океан", "океани", "узбережжя", "побережье", "океаны"),
+    "mountains": ("mountain", "mountains", "montaña", "montañas", "гора", "гори", "горы"),
+    "forest": ("forest", "forests", "woods", "bosque", "bosques", "ліс", "ліси", "лес", "леса"),
+    "lake_river": ("lake", "lakes", "river", "rivers", "lago", "lagos", "río", "ríos", "озеро", "озера", "річка",
+                   "річки", "ріка", "озёра", "река", "реки"),
+    "city_street": ("street", "streets", "city street", "city streets", "cityscape", "calle", "calles",
+                    "paisaje urbano", "вулиця", "вулиці", "міський пейзаж", "улица", "улицы", "городской пейзаж"),
+    "countryside": ("countryside", "village", "villages", "field", "fields", "campo", "campos", "pueblo", "pueblos",
+                    "село", "села", "поле", "поля", "сільська місцевість", "деревня", "деревни",
+                    "сельская местность"),
+    "indoors": ("indoors", "indoor", "interior", "interiors", "interiores", "в приміщенні", "приміщення",
+                "інтерʼєр", "інтерʼєри", "в помещении", "помещение", "интерьер", "интерьеры"),
+    "restaurant_cafe": ("restaurant", "restaurants", "cafe", "cafes", "coffee shop", "restaurante", "restaurantes",
+                        "cafetería", "cafeterías", "ресторан", "ресторани", "кафе", "кавʼярня", "кавʼярні",
+                        "рестораны", "кофейня", "кофейни"),
+    "home": ("home", "at home", "house", "apartment", "flat", "en casa", "casa", "piso", "apartamento", "вдома",
+             "дім", "будинок", "квартира", "дома", "дом"),
+    "party": ("party", "parties", "celebration", "celebrations", "fiesta", "fiestas", "celebración", "вечірка",
+              "вечірки", "святкування", "свято", "свята", "вечеринка", "вечеринки", "праздник", "праздники"),
+    "wedding": ("wedding", "weddings", "boda", "bodas", "весілля", "свадьба", "свадьбы"),
+    "birthday": ("birthday", "birthdays", "cumpleaños", "день народження", "дні народження", "день рождения",
+                 "дни рождения"),
+    "concert": ("concert", "concerts", "gig", "concierto", "conciertos", "концерт", "концерти", "концерты"),
+    "sport": ("sport", "sports", "sporting", "deporte", "deportes", "спорт", "спортивний", "спортивный"),
+    "travel": ("travel", "trip", "trips", "vacation", "holiday", "holidays", "viaje", "viajes", "vacaciones",
+               "подорож", "подорожі", "поїздка", "поїздки", "відпустка", "путешествие", "путешествия", "поездка",
+               "поездки", "отпуск"),
+    "selfie": ("selfie", "selfies", "селфі", "селфи"),
+    "group": ("group", "group photo", "group photos", "foto de grupo", "fotos de grupo", "grupo", "група",
+              "групове фото", "групові фото", "группа", "групповое фото", "групповые фото"),
+    "child": ("child", "children", "kid", "kids", "baby", "babies", "niño", "niños", "niña", "niñas", "bebé", "bebés",
+              "дитина", "діти", "малюк", "немовля", "ребёнок", "ребенок", "дети", "малыш"),
+    "pet": ("pet", "pets", "dog", "dogs", "cat", "cats", "mascota", "mascotas", "perro", "perros", "gato", "gatos",
+            "домашній улюбленець", "домашні улюбленці", "улюбленець", "собака", "собаки", "кіт", "коти", "кішка",
+            "кішки", "домашнее животное", "домашние животные", "питомец", "питомцы", "кошка", "кошки", "кот", "коты"),
+    "food": ("food", "meal", "meals", "dish", "dishes", "dinner", "lunch", "breakfast", "comida", "comidas", "plato",
+             "platos", "cena", "almuerzo", "desayuno", "їжа", "страва", "страви", "обід", "вечеря", "сніданок",
+             "еда", "блюдо", "блюда", "обед", "ужин", "завтрак"),
+    "landscape": ("landscape", "landscapes", "scenery", "paisaje", "paisajes", "пейзаж", "пейзажі", "краєвид",
+                  "краєвиди", "ландшафт", "пейзажи"),
+    "architecture": ("architecture", "building", "buildings", "arquitectura", "edificio", "edificios", "архітектура",
+                     "будівля", "будівлі", "споруда", "архитектура", "здание", "здания"),
+}
+
+
+def scene_names_digest() -> str:
+    """SHA-256 of SCENE_LABELS and SCENE_NAMES: a test pins it, so a change fails until KEYS_VERSION moves with it."""
+    return hashlib.sha256(repr((SCENE_LABELS, sorted(SCENE_NAMES.items()))).encode("utf-8")).hexdigest()
+
+
+def scene_label_text(label: str) -> str:
+    """A label as the card prints it: `lake_river` -> `lake river`."""
+    return label.replace("_", " ")

@@ -129,6 +129,8 @@ class TriageImage:
     thumbnail: bytes
     mime_type: str
     camera_prior: bool           # photo.takenDateTime or cameraMake present (§5.3): a hint, never a verdict
+    place_name: str = ""         # D39: where the phone was ("Rome (Roma), Italy"), from the record; "" when none
+    location: Optional[Tuple[float, float]] = None   # D39: latitude, longitude ALREADY rounded to 3 decimals
 
 
 @dataclass(frozen=True)

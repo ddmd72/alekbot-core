@@ -21,7 +21,7 @@ Public interface:
             SEARCHED_ABSENT_LINE, SEARCHED_ABSENT_IN_SCOPE_LINE (xc F4)
     footers: FOOTER_EXACT, FOOTER_NO_CONJUNCTION, CONJUNCTION_TERM; FOOTER_EXACT_SEARCHED,
              FOOTER_NO_CONJUNCTION_SEARCHED (xc F4)
-    card:   VALID_UNTIL_LINE, DATE_EXPIRES (xc F5), CAPTURE_LINE (§26.3), CARD_ACCURACY_LINE (§26.4)
+    card:   VALID_UNTIL_LINE, DATE_EXPIRES (xc F5), CAPTURE_LINE (§26.3), SCENE_LINE (D40), CARD_ACCURACY_LINE (§26.4)
     MIGRATION_LINE (superseded), REBUILDING_LINE (D30, xc XC-1)
     access (§26.2, D33): ACCESS_LINE_FILE, ACCESS_LINE_FOLDER (the card's `index:` line of an item the bot cannot
             open), ACCESS_NOTE_FILE, ACCESS_NOTE_FOLDER (list and open, Δ55), COVERAGE_INACCESSIBLE (Δ56),
@@ -63,6 +63,7 @@ SIMILAR_NAME = "similar name"
 DATE_LINE = "date: {iso} ({source})"                                           # source: drive_search.DATE_*
 DATE_EXPIRES = "expires"                     # the date line's source when the match came through validity words (F5)
 VALID_UNTIL_LINE = "valid until: {iso}"      # every card of a file with a validity or due date (xc F5)
+SCENE_LINE = "scene: {labels}"   # a photograph's scene labels (D40), in their English names
 CAPTURE_LINE = "capture: {capture} ({source})"   # every card of a file with a capture (§26.3): source detected/automatic
 CARD_ACCURACY_LINE = "card accuracy: {percent}%"   # a card with a score (§26.4): never in the card text, so no re-embed
 PASSAGE_LINE = "passage: … {text} …"
