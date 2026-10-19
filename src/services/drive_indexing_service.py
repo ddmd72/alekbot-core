@@ -56,7 +56,7 @@ from typing import Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 from ..domain import drive_enrich_plan as enrich
 from ..domain.drive_accuracy import accuracy_settled, scored
 from ..domain import drive_index_policy as policy
-from ..domain.drive_capture import CaptureSignals, file_capture
+from ..domain.drive_capture import CaptureSignals, CaptureSource, file_capture
 from ..domain.drive_card import (
     card_eligible, card_hash, card_text, coarse_location, collapsed_folder, structurally_card_eligible,
 )
@@ -1574,7 +1574,7 @@ class DriveIndexingService:
             max_pages = 0
             if extractor_id == READER:
                 pages = reader_pages(kind, outcome if position > 0 else None)
-                held = self._model_hold(run, now, models, cls=cls, pages=pages)
+                held = self._model_hold(_with_detected_capture(run, kind, signals), now, models, cls=cls, pages=pages)
                 if held is not None:
                     return None, held
                 # The store before the model (final review F4-2): a store that cannot count the user's chunks ends
@@ -1636,7 +1636,8 @@ class DriveIndexingService:
         outcome = replace(outcome, capture_signals=signals, capture=capture, capture_source=source)
         step, reason = outcome_step(outcome.status)
         if step is RunStep.WAIT_MONTH:
-            return outcome, deferred(_cleared(run), next_month_start(now), now, maintenance=True)
+            return outcome, deferred(_cleared(_with_detected_capture(run, kind, signals)), next_month_start(now), now,
+                                     maintenance=True)
         if step is RunStep.DEMOTE and reason is not None:
             return outcome, demoted(run, reason, now, outcome=outcome)
         if step is RunStep.RETRY and reason is not None:
@@ -3170,6 +3171,17 @@ def _verdict(rec: DriveIndexRecord, result: TriageResultV2, now: datetime) -> Dr
     (§7.8)."""
     verdict = TriageResult(item_id=result.item_id, verdict=result.verdict, capture=result.capture)
     return _maintenance_kept(triaged(rec, verdict, now, photo=result.photo), rec.priority)
+
+
+def _with_detected_capture(rec: DriveIndexRecord, kind: str,
+                           signals: Optional[CaptureSignals]) -> DriveIndexRecord:
+    """A record held for the reader keeps a capture the parser's signals or the camera facet decided (A4, §26.3): a
+    scan waiting for the monthly cap is still `scan (detected)` and found by "scans". A model's word never rides a
+    hold (it is not known yet), and a held record keeps the capture it had when nothing was detected."""
+    capture, source = file_capture(kind, signals=signals, facets=rec.facets)
+    if source != CaptureSource.DETECTED.value:
+        return rec
+    return replace(rec, capture=capture, capture_source=source)
 
 
 def _cleared(rec: DriveIndexRecord) -> DriveIndexRecord:

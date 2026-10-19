@@ -10,7 +10,7 @@ from src.domain.drive_search import (
     STATUS_OK, DriveSearchCard, DriveSearchEnvelope, DriveSearchRequest, DriveSearchResult, make_card, render_results,
 )
 from src.domain.drive_search_texts import ACCESS_LINE_FILE, ACCESS_LINE_FOLDER, ACCESS_NOTE_FILE, ACCESS_NOTE_FOLDER
-from src.domain.drive_tier_render import coverage_parts
+from src.domain.drive_tier_render import _coverage_line, coverage_parts
 from src.domain.drive_tier_result import CoverageFacts, TierBlock, TieredResult
 
 AS_OF = datetime(2026, 10, 20, 8, 0, tzinfo=timezone.utc)
@@ -81,10 +81,15 @@ def test_a_related_card_carries_the_line_too():
 
 
 def test_the_coverage_line_counts_them_on_their_own():
-    parts = coverage_parts(CoverageFacts(inaccessible=3, not_read_yet=2), passages_tiers_empty=True)
-    assert "3 files cannot be opened by the bot" in parts and "2 documents are not read yet" in parts
-    assert coverage_parts(CoverageFacts(inaccessible=1), passages_tiers_empty=True) == [
-        "1 file cannot be opened by the bot"]
+    # closed files are a fact of the scope, not a gap: never a coverage part, their own sentence after the line
+    assert coverage_parts(CoverageFacts(inaccessible=3, not_read_yet=2), passages_tiers_empty=True) == [
+        "2 documents are not read yet"]
+    assert coverage_parts(CoverageFacts(inaccessible=1), passages_tiers_empty=True) == []
+    one = _coverage_line(TieredResult(concepts=("card",), coverage=CoverageFacts(inaccessible=1)))
+    assert one == "Coverage: complete. 1 file cannot be opened by the bot."
+    many = _coverage_line(TieredResult(concepts=("card",), coverage=CoverageFacts(inaccessible=3, not_read_yet=2)))
+    assert many == "Coverage: incomplete — 2 documents are not read yet. 3 files cannot be opened by the bot."
+    assert "incomplete" not in one
 
 
 def test_a_filter_listing_card_and_envelope():

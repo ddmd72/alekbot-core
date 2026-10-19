@@ -33,7 +33,7 @@ import unicodedata
 from datetime import date
 from typing import Dict, FrozenSet, List, Optional, Sequence, Set, Tuple
 
-from .drive_content_terms import _MONTH_OF, content_terms, query_term_spans, query_terms
+from .drive_content_terms import _MONTH_OF, amount_or_date as _amount_or_date, content_terms, query_terms
 from .drive_enrichment import Grade
 from .drive_key_forms import skeleton_key, token_forms, token_spans
 from .drive_keys import word_form_keys
@@ -252,12 +252,6 @@ class TextEvidence:
         if tokens and all(any(f"w:{form}" in words for form in token_forms(t)) for t in tokens):
             return Grade.IN_TEXT_AS
         return Grade.NOT_IN_TEXT
-
-
-def _amount_or_date(text: str) -> bool:
-    """The text reads as an amount or a date (the number-term normaliser's categories): with its separators removed it
-    would be another number ("1.250,00" is not "125000"), so it is never matched separator-free (§26.4)."""
-    return any(cat in ("amount", "date") for _, _, _, cat in query_term_spans(text))
 
 
 def _iso_of(term: str) -> Optional[date]:

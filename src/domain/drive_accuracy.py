@@ -4,7 +4,7 @@ no clock.
 
     accuracy = clamp(round(100 * (1 - S) * (1 - V)) - R, 0, 100)
 
-`V = sum(w * m) / sum(w)` over the graded values (0 when there are none): weight `w` by field, miss `m` by grade.
+`V = sum(w * m) / sum(w)` over the graded values (0 when there are none, or when every weight is 0: native topics weigh 0): weight `w` by field, miss `m` by grade.
 `S` is the text's source, a fixed small share: a native text layer 0, a screenshot 0.03, a scan (read by a model, or
 its OCR layer) 0.05, a document photo 0.08, a model-read file of unknown capture 0.05, a model-read file called digital 0.03
 (Δ85: the text is a reading, not a text layer). `R` is fixed points for reading
@@ -43,7 +43,8 @@ from .drive_profile import _HasText, grade_brief
 
 FIELD_WEIGHTS: Mapping[str, int] = {
     GradedField.DATE.value: 3, GradedField.VALUE.value: 3, GradedField.NUMBER.value: 3,
-    GradedField.ENTITY.value: 2, GradedField.TOPIC_NATIVE.value: 1,
+    GradedField.ENTITY.value: 2,
+    GradedField.TOPIC_NATIVE.value: 0,   # Δ89: graded and stored (the review reports it) but never moves V
 }
 GRADE_MISS: Mapping[str, float] = {Grade.IN_TEXT.value: 0.0, Grade.IN_TEXT_AS.value: 0.1, Grade.NOT_IN_TEXT.value: 1.0}
 # The text's source, by capture; "model_unknown" is a model-read file whose capture no one named.

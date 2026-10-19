@@ -225,6 +225,12 @@ def query_term_spans(query: str) -> Tuple[TermSpan, ...]:
     return tuple(claimed)
 
 
+def amount_or_date(text: str) -> bool:
+    """The text reads as an amount or a date (the number-term normaliser's categories): with its separators removed it
+    would be another number ("1.250,00" is not "125000"), so it is never matched or keyed separator-free (§26.4, Δ91)."""
+    return any(cat in ("amount", "date") for _, _, _, cat in query_term_spans(text))
+
+
 def _maximal(text: str) -> Set[str]:
     """The query side: each claimed span's maximal forms (`query_term_spans`)."""
     return {form for span in query_term_spans(text) for form in span[2]}

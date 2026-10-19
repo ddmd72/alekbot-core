@@ -123,8 +123,6 @@ def coverage_parts(cov: CoverageFacts, *, passages_tiers_empty: bool) -> List[st
         parts.append(f"{_plural(cov.not_read_yet, 'document is', 'documents are')} not read yet")
     if cov.unread:
         parts.append(f"{_plural(cov.unread, 'document', 'documents')} could not be read")
-    if cov.inaccessible:
-        parts.append(f"{_plural(cov.inaccessible, 'file', 'files')} {COVERAGE_INACCESSIBLE}")
     if cov.full_page:
         parts.append("a candidate page was full, so more files may match")
     if cov.unchecked:
@@ -139,7 +137,10 @@ def coverage_parts(cov: CoverageFacts, *, passages_tiers_empty: bool) -> List[st
 def _coverage_line(tiered: TieredResult) -> str:
     empty = not tiered.block(MatchTier.MENTIONED) and not tiered.block(MatchTier.TRANSLATED)
     parts = coverage_parts(tiered.coverage, passages_tiers_empty=empty)
-    return COVERAGE_INCOMPLETE.format(parts="; ".join(parts)) if parts else COVERAGE_COMPLETE
+    line = COVERAGE_INCOMPLETE.format(parts="; ".join(parts)) if parts else COVERAGE_COMPLETE
+    if tiered.coverage.inaccessible:   # B-minor 2: closed files are a fact of the scope, not a gap in the search
+        line += f" {_plural(tiered.coverage.inaccessible, 'file', 'files').capitalize()} {COVERAGE_INACCESSIBLE}."
+    return line
 
 
 def _no_passages_note(tiered: TieredResult) -> Optional[str]:

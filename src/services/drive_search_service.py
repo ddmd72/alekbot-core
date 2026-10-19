@@ -47,7 +47,7 @@ from ..domain.drive_index import (
 from ..domain.drive_index_lean import ChunkId
 from ..domain.drive_index_params import (
     ABOUT_FETCH, ABOUT_SHOWN, CARD_FETCH, CHUNK_FETCH, FETCH_MAX, FOLDER_INMEM_CARDS, FOLDER_INMEM_CHUNKS,
-    GROUP_READ_MAX, HINT_FETCH, K, LABELLED_SHOWN, MAX_CARD_RECORDS_PER_USER, MENTIONED_SHOWN, NAME_FETCH,
+    GROUP_READ_MAX, HINT_FETCH, INACCESSIBLE_SCAN_MAX, K, LABELLED_SHOWN, MAX_CARD_RECORDS_PER_USER, MENTIONED_SHOWN, NAME_FETCH,
     NAME_KEY_QUERIES, PASSAGE_MAX_CHUNKS_PER_FILE, PROFILE_MIN_CHARS, RELATED_MAX, RELATED_SMALL, TRANSLATED_SHOWN, WINDOW_CHARS_TOTAL_V2,
     WINDOW_MAX, WORD_FETCH, WORD_FILES_MAX,
 )
@@ -64,7 +64,8 @@ from ..domain.drive_search import (
 )
 from ..domain.drive_tier_explain import explain, not_matched, passage_window
 from ..domain.drive_tier_pool import (
-    ConceptHits, candidate_ids, concept_trigrams, document_frequency, name_word_concepts, tier_order_key,
+    ConceptHits, candidate_ids, concept_trigrams, document_frequency, document_frequency_common, name_word_concepts,
+    tier_order_key,
 )
 from ..domain.drive_tier_result import CoverageFacts, GroupMember, TierBlock, TieredResult
 from ..domain.drive_tiers import (
@@ -338,9 +339,9 @@ class DriveSearchService:
         if result.tiered is not None:
             coverage = replace(result.tiered.coverage, building=envelope.building, reading=envelope.reading,
                                refreshing=envelope.refreshing, not_read_yet=envelope.not_read_yet,
-                               unread=envelope.unread, inaccessible=envelope.inaccessible,
+                               unread=envelope.unread,
                                names_only=result.tiered.coverage.names_only or not envelope.content_search)
-            stats.coverage = "complete" if coverage == CoverageFacts() else "incomplete"
+            stats.coverage = "complete" if replace(coverage, inaccessible=0) == CoverageFacts() else "incomplete"
             result = replace(result, tiered=replace(result.tiered, coverage=coverage))
         return result
 
@@ -425,7 +426,7 @@ class DriveSearchService:
         blocked = set(absent) | set(absent_in_scope)
         stats.absent = len(blocked)
         others = [c for c in concepts if c.word not in blocked]
-        df_of = {c.word: n for c, n in zip(concepts, df)}
+        df_of = {c.word: n for c, n in zip(concepts, document_frequency_common(pool.hits))}   # Δ90: no `sl:` hits
         allowance = allowances(others, df_of, carded)
         stats.common = len(allowance.common)
         tested = [i for i, c in enumerate(concepts) if c.word not in blocked]
@@ -465,7 +466,7 @@ class DriveSearchService:
             rekeying=keys_v is not None and int(keys_v) != KEYS_VERSION, full_page=page_full,
             keys_cut=sum(1 for c in built if c.keys_cut), cut=q.cut, not_described=not_described,
             not_describable=not_describable, no_passages=no_passages + long_docs, unchecked=tuple(unchecked),
-            names_only=names_only)
+            names_only=names_only, inaccessible=await self._closed_in_scope(user_id, state, folder, subtree, ancestry))
         position = request.query.casefold()
         ordered = sorted(concepts, key=lambda c: (position.find(c.word) % (len(position) + 1), concepts.index(c)))
         tiered = TieredResult(
@@ -501,7 +502,7 @@ class DriveSearchService:
         for i, (recs, full, scoped) in enumerate(about_pages):
             for rec in recs:
                 if pool.add(rec):
-                    pool.hits[i].about.add(rec.item_id)
+                    pool.hits[i].add_about(rec.item_id, set(rec.about_keys) & set(concepts[i].about_keys))
             pool.hits[i].full |= full
             pool.hits[i].unchecked |= full and not (scoped and not post.family and not post.folder)
         for i, (chunks, full) in enumerate(word_pages):
@@ -693,7 +694,7 @@ class DriveSearchService:
                 held = set(rec.about_keys)
                 for i, concept in enumerate(concepts):
                     if held & set(concept.about_keys):
-                        pool.hits[i].about.add(rec.item_id)
+                        pool.hits[i].add_about(rec.item_id, held & set(concept.about_keys))
         vector: Optional[List[float]] = None
         if use_cards:
             vector = await self._embeddings.get_embedding(query, task_type="RETRIEVAL_QUERY")
@@ -1281,6 +1282,32 @@ class DriveSearchService:
             index_full=int(state.counters.get("carded", 0)) >= MAX_CARD_RECORDS_PER_USER,
             inaccessible=int(state.counters.get(INACCESSIBLE_COUNTER, 0)),
         )
+
+    async def _closed_in_scope(self, user_id: str, state: DriveSyncState, folder: Optional[_Folder],
+                               subtree: Optional[List[DriveIndexRecord]], ancestry: _Ancestry) -> int:
+        """Files the bot cannot open that this search's scope holds (B-minor 2): all of them for an unscoped search
+        (the tick's counter), inside the folder for a folder-scoped one."""
+        total = int(state.counters.get(INACCESSIBLE_COUNTER, 0))
+        if folder is None or total == 0:
+            return total
+        if subtree is not None:
+            return sum(1 for r in subtree if inaccessible(r))
+        marked = await self._repo.inaccessible_records(user_id, INACCESSIBLE_SCAN_MAX, lean=True)
+        await ancestry.load(marked)
+        top = folder.record.item_id
+        count = 0
+        for rec in marked:
+            parent_id, seen = rec.parent_id, {rec.item_id}
+            while parent_id and parent_id not in seen and len(seen) <= MAX_CHAIN_DEPTH:
+                if parent_id == top:
+                    count += 1
+                    break
+                parent = ancestry.cache.get(parent_id)
+                if parent is None:
+                    break
+                seen.add(parent_id)
+                parent_id = parent.parent_id
+        return count
 
     async def access_note(self, user_id: str, *, item_id: Optional[str] = None,
                           path: Optional[str] = None) -> Optional[str]:
