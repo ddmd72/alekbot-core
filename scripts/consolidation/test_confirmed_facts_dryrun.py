@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 """
+WARNING: this calls the real consolidator model (paid) and writes to the live database (biographical cache
+refresh, billing counters). Run it only with the owner's explicit approval.
+
 Stage-1 dry run: do owner-confirmed facts survive consolidation?
 (docs/10_rfcs/MEMORY_FACT_CONFIRMATION_RFC.md)
 
