@@ -74,3 +74,22 @@ async def test_a_known_hard_case_is_reported_outside_the_bars(tmp_path):
     assert set(report["known_hard"]) == {"hard1"}
     row = next(c for c in report["cases"] if c["id"] == "hard1")
     assert row["known_hard"] == "a type word in drive_query"
+
+
+def test_folder_path_hits_a_place_case_on_its_own():
+    photos = [f"Photos/Porto/{i}.HEIC" for i in range(6)]
+    assert not case_hit(photos, {"Photos/Porto"}, 8, 5)
+    assert case_hit(photos, {"Photos/Porto"}, 8, 5, folder_path="Photos/Porto")
+    assert case_hit(photos, set(photos[:5]), 8, 5, folder_path="Photos/Porto")
+    assert not case_hit(photos, {"Photos"}, 8, 5, folder_path="Photos/Porto")
+
+
+def test_folder_path_is_validated():
+    from scripts.validation.drive_eval.runner import validate_gold
+    place = {"id": "p", "case": "place", "query": "x", "filters": {"kind": "photo"},
+             "expected_paths": ["F/a.jpg"]}
+    validate_gold([{**place, "folder_path": "F"}], ["F/a.jpg", "F"])
+    with pytest.raises(EvalError, match="folder_path"):
+        validate_gold([{**place, "folder_path": "Nope"}], ["F/a.jpg", "F"])
+    with pytest.raises(EvalError, match="folder_path"):
+        validate_gold([{**place, "case": "exact", "folder_path": "F"}], ["F/a.jpg", "F"])
