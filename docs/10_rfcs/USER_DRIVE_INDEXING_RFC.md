@@ -2282,7 +2282,8 @@ where they labelled 38 synthetic documents correctly in both runs:
 - `DATE_LABELS`: `issued, event, valid_from, valid_until, due, period_end, other`. `ENTITY_TYPES`: `place,
   organization, person, event, product, work, other`. `VALUE_LABELS`: `order_number, ticket_number, booking_reference,
   invoice_number, receipt_number, account_number, iban, card_number_masked, policy_number, contract_number,
-  customer_number, reference, tax_id, phone, amount_total, amount_due, price, other_id`.
+  customer_number, reference, tax_id, document_number, personal_id_number, phone, amount_total, amount_due, price,
+  other_id` (`document_number` and `personal_id_number` since §26.5, Δ63).
 - Not in the set (unstable or ambiguous in the study): free tags, `personal_record`, `issuer` (an issuer is an entity).
 
 #### 25.2.4 Keys: one normaliser with form sets (`src/domain/drive_keys.py`, `drive_key_forms.py`, pure)
