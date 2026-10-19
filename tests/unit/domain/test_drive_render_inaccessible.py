@@ -99,7 +99,10 @@ def test_a_filter_listing_card_and_envelope():
                                request=DriveSearchRequest(query="", kind="pdf"), matched_total=1)
     text = render_results(result)
     assert ACCESS_LINE_FILE in text
-    assert "2 files cannot be opened by the bot (their sharing settings keep it out)" in text
+    assert "cannot be opened by the bot" not in text.replace(ACCESS_LINE_FILE, "")     # Δ93: omitted with results
+    empty = DriveSearchResult(status=STATUS_OK, cards=(), envelope=DriveSearchEnvelope(index_as_of=AS_OF, inaccessible=2),
+                              request=DriveSearchRequest(query="", kind="pdf"), matched_total=0)
+    assert "2 files cannot be opened by the bot (their sharing settings keep it out)" in render_results(empty)
 
 
 def test_an_accessible_card_is_unchanged():
