@@ -628,7 +628,7 @@ def _envelope_lines(result: DriveSearchResult) -> List[str]:
         lines.append(f"{env.not_read_yet} documents are not read yet, so their content was not searched.")
     if env.unread:
         lines.append(f"{env.unread} documents could not be read, so their content was not searched.")
-    if env.inaccessible:
+    if env.inaccessible and not result.cards:   # Δ93: only where nothing was found
         files = "1 file" if env.inaccessible == 1 else f"{env.inaccessible} files"
         lines.append(ENVELOPE_INACCESSIBLE.format(count=files))
     if env.index_full:
