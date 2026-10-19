@@ -18,8 +18,8 @@ from typing import Dict, List, Optional, Sequence, Tuple
 from .drive_index_params import CARD_RENDER_MAX, GROUP_LINES, RESULT_CHARS_MAX
 from .drive_match import MatchTier
 from .drive_search import (
-    REFERENCE_REMINDER, DriveSearchCard, DriveSearchResult, capture_line, escape_text, index_line, stale_line,
-    wrap_untrusted,
+    REFERENCE_REMINDER, DriveSearchCard, DriveSearchResult, accuracy_line, capture_line, escape_text, index_line,
+    stale_line, wrap_untrusted,
 )
 from .drive_search_texts import (
     ABOUT_HEADING, ABSENT_IN_SCOPE_LINE, ABSENT_LINE, CONJUNCTION_TERM, COVERAGE_COMPLETE, COVERAGE_INACCESSIBLE,
@@ -175,6 +175,9 @@ def card_body(card: DriveSearchCard) -> str:
     captured = capture_line(card)
     if captured:
         lines.append(captured)                 # §26.3
+    accuracy = accuracy_line(card)
+    if accuracy:
+        lines.append(accuracy)                 # §26.4
     lines.append(index_line(card))
     if card.stale:
         lines.append(stale_line(card))
@@ -192,6 +195,8 @@ def _related_body(card: DriveSearchCard) -> str:
     tail = f" | {day}" if day else ""
     body = _cut(card.summary, _RELATED_CARD_CHARS - len(tail)) + tail
     body += f"\n{SIMILAR_NAME}" if card.similar_name else ""
+    accuracy = accuracy_line(card)         # §26.4: a Related card is opened, and answers a value question, like any
+    body += f"\n{accuracy}" if accuracy else ""
     return body + (f"\n{index_line(card)}" if card.inaccessible else "")   # the access line (§26.2)
 
 

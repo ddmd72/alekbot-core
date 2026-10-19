@@ -16,7 +16,7 @@ Public interface:
     described(rec) / describe_gap(rec) -> str;  NO_PASSAGE_KINDS, COVERAGE_COUNTERS   the coverage line's counts
                                                          (§25.5.6, XC-3, XC-9)
     profile_settled(rec) / passages_settled(rec) / keys_settled(rec)     the upgrade pass's per-key criteria
-    profiled(rec, profile, *, source, fingerprint, now) / reverified(rec, profile, now)
+    profiled(rec, profile, *, source, fingerprint, now) / reverified(rec, profile, now) / regraded(rec, profile, now)
     profile_charged(rec, status, now) / profile_unusable(rec) / passages_unusable(rec)
     passages_started(rec) / passages_advanced(rec, next_index, *, finished, now) / passages_charged(rec)
     agent_available(backoffs, agent, now) / agent_outage(backoffs, agent, now) / agent_recovered(backoffs, agent)
@@ -262,6 +262,15 @@ def reverified(rec: DriveIndexRecord, profile: DriveProfile, now: datetime) -> D
     valid = valid_until_of(profile)
     out = replace(rec, profile=profile, valid_until=_utc(valid) if valid is not None else None,
                   profiled_content_version=rec.content_version)
+    return replace(out, effective_date=effective_from(out, profile, now=now) or rec.effective_date)
+
+
+def regraded(rec: DriveIndexRecord, profile: DriveProfile, now: datetime) -> DriveIndexRecord:
+    """The stored profile graded again by the accuracy upgrade (§26.4 "Recomputing"): its grades and the dates that
+    follow them. Nothing else about the profile job moves — its version, fingerprint, content version and cooldown
+    stay, so a profile that was already due stays due."""
+    valid = valid_until_of(profile)
+    out = replace(rec, profile=profile, valid_until=_utc(valid) if valid is not None else None)
     return replace(out, effective_date=effective_from(out, profile, now=now) or rec.effective_date)
 
 

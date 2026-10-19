@@ -76,8 +76,8 @@ from google.cloud.firestore_v1.vector import Vector
 
 from ..config.environment import EnvironmentConfig
 from ..domain.drive_enrichment import (
-    DriveHintDoc, DriveProfile, EnrichJob, HintItem, InitialBuild, JobState, KeyValue, ModelUsageMonth, PhotoObject,
-    ProfileDate, ProfileEntity, UsageClass,
+    DriveHintDoc, DriveProfile, EnrichJob, GradedValue, HintItem, InitialBuild, JobState, KeyValue, ModelUsageMonth,
+    PhotoObject, ProfileDate, ProfileEntity, UsageClass,
 )
 from ..domain.drive_index import (
     ContentClass, DocumentBrief, DriveChunk, DriveIndexRecord, DriveIndexStoreUnavailable, DriveSyncState, EpochPhase,
@@ -205,7 +205,9 @@ def _profile(value: Any) -> Optional[DriveProfile]:
                                   canonical=k.get("canonical", "")) for k in value.get("key_values") or ()),
         topics=_strs(value.get("topics")), topics_native=_strs(value.get("topics_native")),
         topic_words=_strs(value.get("topic_words")), label_words=_strs(value.get("label_words")),
-        domain_words=_strs(value.get("domain_words")), validity_words=_strs(value.get("validity_words")))
+        domain_words=_strs(value.get("domain_words")), validity_words=_strs(value.get("validity_words")),
+        graded=tuple(GradedValue(field=g.get("field", ""), value=g.get("value", ""), grade=g.get("grade", ""),
+                                 seen_as=g.get("seen_as", "")) for g in value.get("graded") or ()))
 
 
 def _dt_map(value: Any) -> Dict[str, datetime]:

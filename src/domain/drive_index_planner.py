@@ -917,7 +917,8 @@ def indexed(rec: DriveIndexRecord, *, outcome: ExtractionOutcome, generation: in
                    extracted_by=outcome.extracted_by, text_chars=len(outcome.text), pages_total=outcome.pages_total,
                    chunk_count=chunk_count, truncated=outcome.truncated, lead_text="", brief=outcome.brief,
                    script_rendered=outcome.script_rendered, capture=outcome.capture,
-                   capture_source=outcome.capture_source, keys_version=KEYS_VERSION, keys_pending=False,
+                   capture_source=outcome.capture_source, pages_refused=outcome.pages_refused,
+                   read_by_fallback=outcome.read_by_fallback, keys_version=KEYS_VERSION, keys_pending=False,
                    keys_capped=keys_capped, profile_input_fingerprint=profile_fingerprint,
                    effective_date=_effective(change_from_record(rec), outcome.brief, rec.effective_date or now,
                                              rec.profile))
@@ -944,6 +945,9 @@ def demoted(rec: DriveIndexRecord, reason: Reason, now: datetime, *, outcome: Op
                    lead_text=text.strip()[:CARD_LEAD_CHARS] if reason is Reason.MACHINE_TEXT else "", brief=brief,
                    capture=outcome.capture if outcome is not None else "",   # a text that was read keeps its capture
                    capture_source=outcome.capture_source if outcome is not None else "",
+                   pages_refused=outcome.pages_refused if outcome is not None else 0,
+                   read_by_fallback=outcome.read_by_fallback if outcome is not None else False,
+                   card_accuracy=None,   # no readable text to confirm a card against (§26.4)
                    effective_date=_effective(change_from_record(rec), brief, rec.effective_date or now))
     return _settled(done, now)
 

@@ -457,7 +457,7 @@ class DriveSearchService:
         conjunction: Tuple[Tuple[str, int], ...] = ()
         if not names_only and not blocked and not unchecked and not matches and len(concepts) >= 2:
             conjunction = tuple((c.word, len(s)) for c, s in zip(concepts, in_scope))
-        keys_v = state.applied_versions.get(MIGRATION_GATE_KEY)
+        keys_v = state.applied_versions.get("keys")   # not the gate key (Δ65: that is `accuracy`)
         not_described, not_describable, no_passages = self._job_counts(state)
         long_docs = sum(1 for i, r in pool.fulls.items()
                         if i in scope.passing and r.chunk_count > PASSAGE_MAX_CHUNKS_PER_FILE)
