@@ -114,7 +114,8 @@ def build_workspace_tool_declaration() -> Dict[str, Any]:
                     "type": "string",
                     "description": (
                         "copy: a chat file name from a [File: …] label, a delivered-document key, or a workspace "
-                        "path. Chat files and delivered documents are copied under files/."
+                        "path. A text file may be copied into any folder (into projects/ to edit it later); a "
+                        "binary file only under files/."
                     ),
                 },
             },
@@ -131,7 +132,8 @@ _TRUNCATED = (
 
 def _log_refusal(command: str, user_id: str, origin: str, fire_key: Optional[str], reason: str) -> None:
     """The handler's own refusals, in the WorkspaceService line format (§16); `fire=` is `<note_id>@<due_at>`."""
-    logger.info(
+    loud = reason == "truncated" or command in MUTATING_COMMANDS
+    (logger.warning if loud else logger.info)(
         "[Workspace] op=%s user=%s path=- origin=%s fire=%s had_history=- bytes=0 gen=- result=refused:%s ms=0",
         "_".join(command.split())[:40] or "-", user_id[:8], origin,
         (fire_key or "-").removeprefix("reminder:"), reason,
