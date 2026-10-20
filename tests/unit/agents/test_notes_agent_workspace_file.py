@@ -228,3 +228,23 @@ class TestClearAndRender:
         await agent.execute(_message("list my reminders"))
         system = agent._call_llm.await_args_list[0].args[0].system_instruction
         assert f"    instruction: Morning briefing\n    workspace file: workspace:{FILE}" in system
+
+
+class TestBindingRefusalExhaustsTurns:
+    async def test_refusals_until_max_turns_return_the_one_reminder_error(self):
+        agent, port, _ = _agent()
+        agent._call_llm = AsyncMock(side_effect=lambda *a, **k: _tools(UPDATE, CREATE))
+        r = await agent.execute(_message(workspace_file=FILE))
+        assert r.status == AgentStatus.FAILED
+        assert BINDING_ONE_REMINDER in str(r.error)
+        port.create_note.assert_not_called()
+        port.update_note.assert_not_called()
+
+    async def test_a_co_emitted_delete_with_two_create_update_runs_nothing(self):
+        agent, port, _ = _agent()
+        delete = ("delete_self_reminder", {"note_id": NOTE_ID})
+        agent._call_llm = AsyncMock(side_effect=[_tools(delete, UPDATE, CREATE), _text("stop")])
+        await agent.execute(_message(workspace_file=FILE))
+        port.delete_note.assert_not_called()
+        port.create_note.assert_not_called()
+        port.update_note.assert_not_called()
