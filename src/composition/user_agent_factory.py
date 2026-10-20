@@ -17,7 +17,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
-from .sandbox_client_setup import build_docx_runner
+from .sandbox_client_setup import docx_runner_factory
 from ..adapters.mcp.mcp_client import MCPClient
 from ..adapters.mcp.mcp_maps_adapter import MCPMapsAdapter
 
@@ -197,6 +197,8 @@ class UserAgentFactory(AgentFactoryPort):
         drive_search_service: Optional["DriveSearchService"] = None,
         alert_sink: Optional[AlertSinkPort] = None,
     ) -> None:
+        # Resolved once: a bad SANDBOX_RENDER stops the start, and the sandbox runner is shared by all users.
+        self._docx_runner_factory = docx_runner_factory()
         self.config = config
         self.env_config = env_config
         self.coordinator = coordinator
@@ -744,7 +746,7 @@ class UserAgentFactory(AgentFactoryPort):
                 capabilities=["docx_code_generation"],
             ),
             execution_context=execution_context,
-            docx_runner=build_docx_runner(),
+            docx_runner=self._docx_runner_factory(),
             prompt_builder=ctx.prompt_builder,
             user_id=user_id,
         )
