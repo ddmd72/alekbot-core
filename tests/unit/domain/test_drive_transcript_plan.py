@@ -15,9 +15,11 @@ from src.domain.drive_index_params import (
 from src.domain.drive_transcript import JobWindow, MediaProbe, TranscriptJob, TranscriptStub, WindowSpec
 from src.domain.drive_transcript_plan import (
     StartOutcome, TranscriptContext, WindowAction, WindowCheck, charge_attempt, effective_monthly_cap, estimate_usd,
-    fits, mark_current, queue_blocked, release, reserve_if_fits, reset_on_new_version, start_file, state_for_job,
-    stub_from_probe, transcript_plan, window_failed,
+    file_estimate_usd, fits, mark_current, park, queue_blocked, release, reserve_if_fits, reset_on_new_version,
+    start_file, state_for_job, stub_from_probe, transcript_plan, window_failed,
 )
+from src.domain.drive_transcript_windows import plan_windows
+from src.domain.drive_index_planner import classify, change_from_record
 from src.domain.drive_transcript_render import TRANSCRIPT_BODY_VERSION
 from src.domain.drive_transcript_windows import content_key
 
@@ -27,7 +29,7 @@ OLD = NOW - timedelta(days=3)
 
 def _rec(**kw):
     base = dict(user_id="u", item_id="i1", kind="audio", scope=Scope.NORMAL, state=RecordState.PENDING,
-                content_version="c1", content_hash="h1", size_bytes=1_000_000, modified_at=OLD)
+                content_version="c1", content_hash="h1", name="a.mp3", mime_type="audio/mpeg", size_bytes=1_000_000, modified_at=OLD)
     base.update(kw)
     return DriveIndexRecord(**base)
 
@@ -48,7 +50,7 @@ def _current(rec, **kw):
 
 
 def _hk(rec):
-    return f"{TRANSCRIBE_VERSION}:{_key(rec)}"
+    return _key(rec)
 
 
 # -- the cap knob (ruling T-R3) -----------------------------------------------------------------------------------
@@ -95,11 +97,11 @@ def test_kill_switch_off_is_none_work():
     assert out.ctx.reserved_usd == 0.0
 
 
-def test_per_user_flag_off_same():
-    # the plan has ONE `enabled` (kill switch AND per-user flag, computed by the caller): a False from either source
-    rec = transcript_plan(_rec(), _ctx(enabled=False))
-    out = start_file(rec, _ctx(enabled=False), MediaProbe(duration_s=600, has_audio=True))
-    assert out.rec.transcript_state == "ready" and out.outcome is StartOutcome.DISABLED
+def test_switching_off_mid_flight_keeps_in_flight_jobs():
+    working = replace(_current(_rec()), transcript_state="working")
+    waiting = replace(working, transcript_state="waiting")
+    for rec in (working, waiting):
+        assert transcript_plan(rec, _ctx(enabled=False)).transcript_state == rec.transcript_state
 
 
 def test_disabled_writes_no_metadata_stub():
@@ -247,15 +249,15 @@ def test_plan_reads_no_store():
 
 def test_reserved_at_fit_not_at_submit():
     ctx = _ctx(cap_usd=1.0, month_usd=0.0)
-    probe = MediaProbe(duration_s=3600 * 3, has_audio=True)       # 3 h = 0.60 USD
+    probe = MediaProbe(duration_s=3600 * 3, has_audio=True)       # 3 h = about 0.62 USD with the overlaps
     first = start_file(transcript_plan(_rec(item_id="a", content_hash="ha"), ctx), ctx, probe)
     assert first.outcome is StartOutcome.STARTED
-    assert first.reservation is not None and first.reservation.usd == pytest.approx(0.6)
+    assert first.reservation is not None and first.reservation.usd == pytest.approx(file_estimate_usd(3 * 3600))
     assert first.reservation.month == "2026-10"
-    assert first.ctx.reserved_usd == pytest.approx(0.6)           # held before any window is extracted or submitted
+    assert first.ctx.reserved_usd == pytest.approx(file_estimate_usd(3 * 3600))           # held before any window is extracted or submitted
     second = start_file(transcript_plan(_rec(item_id="b", content_hash="hb"), first.ctx), first.ctx, probe)
-    assert second.outcome is StartOutcome.PARKED                  # fits alone (0.6 <= 1.0), not after the first's hold
-    assert fits(0.6, ctx)
+    assert second.outcome is StartOutcome.PARKED                  # fits alone (0.62 <= 1.0), not after the first's hold
+    assert fits(file_estimate_usd(3 * 3600), ctx)
 
 
 def test_release_returns_the_reservation():
@@ -333,36 +335,147 @@ def test_state_for_job():
 
 def test_invalid_and_coverage_get_max_attempts_then_a_gap():
     for check in (WindowCheck.INVALID, WindowCheck.COVERAGE):
-        w = _win("submitted")
+        w, ctx = _win("submitted"), _ctx()
         for n in range(1, MAX_ATTEMPTS):
-            w, action = window_failed(w, check)
-            assert action is WindowAction.RESUBMIT and w.attempts == n and w.state == "uploaded"
-        w, action = window_failed(w, check)
-        assert action is WindowAction.GAP and w.gap and w.state == "done"
+            r = window_failed(w, check, ctx)
+            w, ctx = r.window, r.ctx
+            assert r.action is WindowAction.RESUBMIT and w.attempts == n and w.state == "uploaded"
+        r = window_failed(w, check, ctx)
+        assert r.action is WindowAction.GAP and r.window.gap and r.window.state == "done" and r.reservation is None
 
 
 def test_unparseable_stamp_is_an_invalid_attempt_not_a_crash():
-    w, action = window_failed(_win("submitted"), WindowCheck.INVALID)
-    assert action is WindowAction.RESUBMIT and w.attempts == 1
+    r = window_failed(_win("submitted"), WindowCheck.INVALID, _ctx())
+    assert r.action is WindowAction.RESUBMIT and r.window.attempts == 1
 
 
 def test_time_validator_gets_one_resubmit_then_a_gap():
-    w, action = window_failed(_win("submitted"), WindowCheck.TIME)
-    assert action is WindowAction.RESUBMIT and w.time_resubmits == 1 and w.state == "uploaded"
-    w, action = window_failed(w, WindowCheck.TIME)
-    assert action is WindowAction.GAP and w.gap and w.state == "done"
+    r = window_failed(_win("submitted"), WindowCheck.TIME, _ctx())
+    assert r.action is WindowAction.RESUBMIT and r.window.time_resubmits == 1 and r.window.state == "uploaded"
+    r = window_failed(r.window, WindowCheck.TIME, r.ctx)
+    assert r.action is WindowAction.GAP and r.window.gap and r.window.state == "done"
 
 
 def test_interpolation_share_is_resubmitted_once_then_accepted():
-    w, action = window_failed(_win("submitted"), WindowCheck.INTERPOLATION)
-    assert action is WindowAction.RESUBMIT and w.interp_resubmits == 1
-    w, action = window_failed(w, WindowCheck.INTERPOLATION)
-    assert action is WindowAction.ACCEPT and not w.gap and w.state == "done"
+    r = window_failed(_win("submitted"), WindowCheck.INTERPOLATION, _ctx())
+    assert r.action is WindowAction.RESUBMIT and r.window.interp_resubmits == 1
+    r = window_failed(r.window, WindowCheck.INTERPOLATION, r.ctx)
+    assert r.action is WindowAction.ACCEPT and not r.window.gap and r.window.state == "done"
 
 
 def test_a_refused_window_is_a_gap_at_once():
-    w, action = window_failed(_win("submitted"), WindowCheck.REFUSED)
-    assert action is WindowAction.GAP and w.gap and w.attempts == 0
+    r = window_failed(_win("submitted"), WindowCheck.REFUSED, _ctx())
+    assert r.action is WindowAction.GAP and r.window.gap and r.window.attempts == 0
+
+
+def test_a_resubmit_is_reserved():
+    r = window_failed(_win("submitted"), WindowCheck.TIME, _ctx())
+    assert r.reservation is not None and r.reservation.usd == pytest.approx(estimate_usd(1800.0))
+    assert r.ctx.reserved_usd == pytest.approx(r.reservation.usd)
+
+
+def test_a_resubmit_that_does_not_fit_parks():
+    ctx = _ctx(cap_usd=20.0, month_usd=20.0 - 0.01)               # a 30-minute window costs 0.10
+    r = window_failed(_win("submitted"), WindowCheck.COVERAGE, ctx)
+    assert r.action is WindowAction.PARK and r.reservation is None and r.ctx == ctx
+    assert r.window.attempts == 1 and r.window.state == "uploaded"   # the attempt stays counted
+    parked = park(_rec(), ctx)
+    assert parked.transcript_state == "parked" and parked.transcript_wake_at == datetime(2026, 11, 1, tzinfo=timezone.utc)
+
+
+def test_a_gap_or_accept_needs_no_money():
+    full = _ctx(cap_usd=1.0, month_usd=1.0)
+    assert window_failed(_win("submitted"), WindowCheck.REFUSED, full).action is WindowAction.GAP
+    w = replace(_win("submitted"), interp_resubmits=1)
+    assert window_failed(w, WindowCheck.INTERPOLATION, full).action is WindowAction.ACCEPT
+
+
+def test_file_estimate_counts_the_overlaps():
+    d = 5000.0
+    windows = plan_windows(d)
+    assert sum(w.duration_s for w in windows) > d
+    assert file_estimate_usd(d) == pytest.approx(estimate_usd(sum(w.duration_s for w in windows)))
+    assert file_estimate_usd(d) > estimate_usd(d)
+    # a file whose bare duration fits the cap but whose overlaps do not parks
+    bare = estimate_usd(d)
+    ctx = _ctx(cap_usd=20.0, month_usd=20.0 - bare - 1e-4)
+    assert fits(bare, ctx)
+    assert start_file(transcript_plan(_rec(), ctx), ctx, MediaProbe(duration_s=d, has_audio=True)).outcome \
+        is StartOutcome.PARKED
+
+
+# -- review fixes (fix round 1) -----------------------------------------------------------------------------------
+
+def test_a_transcribe_version_bump_changes_nothing():
+    cur = _current(_rec())
+    bumped = replace(cur, transcript_version=TRANSCRIBE_VERSION - 1)
+    assert transcript_plan(bumped, _ctx()) == bumped
+    rec = _rec()
+    failed = replace(rec, transcript_state="failed", transcript_attempts=MAX_ATTEMPTS, transcript_hold_version=_hk(rec),
+                     transcript_version=TRANSCRIBE_VERSION - 1)
+    assert transcript_plan(failed, _ctx()).transcript_state == "failed"
+    assert transcript_plan(transcript_plan(failed, _ctx()), _ctx()) == transcript_plan(failed, _ctx())
+
+
+def test_release_in_a_later_month_leaves_that_months_reservations():
+    res, held = reserve_if_fits(0.6, _ctx(cap_usd=1.0))            # made in October
+    assert res is not None and res.month == "2026-10"
+    november = replace(held, now=datetime(2026, 11, 2, tzinfo=timezone.utc), reserved_usd=0.3)   # November's own hold
+    assert release(november, res) == november
+    assert release(held, res).reserved_usd == pytest.approx(0.0)    # same month: released
+
+
+def test_a_same_key_edit_keeps_an_in_flight_job():
+    fresh = NOW - timedelta(minutes=1)
+    for state in ("working", "waiting"):
+        job = replace(_current(_rec()), transcript_state=state, dirty_since=fresh, modified_at=fresh,
+                      content_version="c2")                          # new cTag, same bytes: same key
+        assert content_key(job)[0] == _key(_rec())
+        assert transcript_plan(job, _ctx()).transcript_state == state
+
+
+def test_stub_survives_a_reobservation():
+    rec = transcript_plan(_rec(size_bytes=TRANSCRIBE_MAX_BYTES + 1), _ctx())
+    assert (rec.state, rec.reason, rec.extraction_version) == (RecordState.METADATA_ONLY, Reason.TOO_LARGE,
+                                                               _rec().extraction_version or rec.extraction_version)
+    assert rec.extraction_version != 0 and rec.dirty_since is None
+    again = classify(change_from_record(rec), Scope.NORMAL, None, rec)
+    assert (again.state, again.reason) == (RecordState.METADATA_ONLY, Reason.TOO_LARGE)
+    for stub in ("no_speech",):
+        done = mark_current(_rec(dirty_since=NOW, modified_at=NOW), NOW, seconds=60, speakers=0, languages=(), stub=stub)
+        assert done.extraction_version != 0 and done.dirty_since is None
+        again = classify(change_from_record(done), Scope.NORMAL, None, done)
+        assert (again.state, again.reason) == (RecordState.METADATA_ONLY, Reason.NO_TEXT)
+    probed = start_file(_rec(), _ctx(), MediaProbe(duration_s=TRANSCRIBE_MAX_SECONDS + 1, has_audio=True)).rec
+    again = classify(change_from_record(probed), Scope.NORMAL, None, probed)
+    assert again.state is RecordState.METADATA_ONLY
+
+
+@pytest.mark.parametrize("duration", [0.0, -5.0, float("nan"), float("inf"), float("-inf")])
+def test_unusable_probe_duration_is_a_charged_attempt(duration):
+    ctx = _ctx()
+    out = start_file(transcript_plan(_rec(), ctx), ctx, MediaProbe(duration_s=duration, has_audio=True))
+    assert out.outcome is StartOutcome.UNREADABLE and out.reservation is None and out.ctx == ctx
+    assert out.rec.transcript_attempts == 1 and out.rec.transcript_state == "ready" and out.rec.transcript_stub == ""
+    rec = out.rec
+    for _ in range(MAX_ATTEMPTS - 1):
+        rec = start_file(transcript_plan(rec, ctx), ctx, MediaProbe(duration_s=duration, has_audio=True)).rec
+    assert rec.transcript_state == "failed" and rec.transcript_stub == ""
+
+
+def test_no_audio_wins_over_a_garbage_duration():
+    out = start_file(_rec(), _ctx(), MediaProbe(duration_s=float("nan"), has_audio=False))
+    assert out.outcome is StartOutcome.STUBBED and out.rec.transcript_stub == "no_audio"
+
+
+def test_cooldown_runs_from_the_purchase_not_only_the_completion():
+    started = start_file(transcript_plan(_rec(), _ctx()), _ctx(), MediaProbe(duration_s=3600, has_audio=True))
+    assert started.rec.model_read_at == NOW
+    later = NOW + timedelta(hours=2)                                 # quiet period long over
+    edited = replace(started.rec, content_version="c2", content_hash="h2", dirty_since=None)
+    out = transcript_plan(edited, _ctx(now=later))
+    assert out.transcript_state == "held" and out.transcript_hold == "cooldown"
+    assert out.transcript_wake_at == NOW + TRANSCRIBE_REREAD_COOLDOWN
 
 
 # -- properties ---------------------------------------------------------------------------------------------------
@@ -372,14 +485,14 @@ def test_plan_idempotent_property():
     hk = _hk(base)
     variants = []
     states = ["none", "ready", "working", "waiting", "current", "held", "parked", "failed"]
-    for state, attempts, tag, keyed, wake, dirty, size, done in itertools.product(
+    for state, attempts, tag, keyed, wake, dirty, size, done, version in itertools.product(
             states, (0, 1, MAX_ATTEMPTS), ("", hk, "9:other"), (True, False),
             (None, NOW - timedelta(days=1), NOW + timedelta(days=1)),
             (None, NOW - timedelta(minutes=1)), (1000, TRANSCRIBE_MAX_BYTES + 1),
-            (None, NOW - timedelta(hours=1))):
+            (None, NOW - timedelta(hours=1)), (TRANSCRIBE_VERSION, TRANSCRIBE_VERSION - 1)):
         variants.append(replace(
             base, transcript_state=state, transcript_attempts=attempts, transcript_hold_version=tag,
-            transcript_key=_key(base) if keyed else "x", transcript_version=TRANSCRIBE_VERSION,
+            transcript_key=_key(base) if keyed else "x", transcript_version=version,
             transcript_body_version=TRANSCRIPT_BODY_VERSION, transcript_wake_at=wake, dirty_since=dirty,
             modified_at=dirty or OLD, size_bytes=size, model_read_at=done))
     assert len(variants) > 1000

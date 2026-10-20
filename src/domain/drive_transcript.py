@@ -84,13 +84,15 @@ class StoredTranscript:
 
 @dataclass(frozen=True)
 class JobWindow:
-    """One window inside a job document. `state`: extracted, uploaded, submitted, done or failed (§27.5)."""
+    """One window inside a job document. `state`: extracted, uploaded, submitted, done or failed (§27.5). `failed` is the
+    stage's: the window cannot be redone as it stands (e.g. its provider file expired and re-extraction failed);
+    `state_for_job` counts it as work still to do. The money is reserved per FILE (and per resubmission, held by the
+    caller), never on the window."""
     spec: WindowSpec
     state: str = "extracted"
     file_ref: str = ""                # the provider's file handle; never a URL
     request_key: str = ""             # `{item_id}:{index}` in a batch
     attempts: int = 0                 # failed answers (invalid JSON, short coverage), toward MAX_ATTEMPTS (§27.5)
-    reserved_usd: float = 0.0
     time_resubmits: int = 0           # the time validator's one resubmit (§27.6, G37)
     interp_resubmits: int = 0         # the interpolation-share check's one resubmit (§27.6, G37)
     gap: bool = False                 # done as a gap marker: the provider refused it or the retries ran out
