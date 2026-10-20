@@ -32,13 +32,23 @@ from __future__ import annotations
 
 import time
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..agents.base_agent import BaseAgent
 from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse
 from ..domain.agent_note import NoteCreate, NoteUpdate
+from ..domain.exceptions import WorkspaceRefused
 from ..domain.task_complexity import TaskComplexity
+from ..domain.workspace import (
+    BINDING_INSTRUCTION_NOTE,
+    BINDING_NOT_APPLIED,
+    BINDING_ONE_REMINDER,
+    ReminderField,
+    binding_system_line,
+    parse_reminder_field,
+    validate_workspace_file,
+)
 from ..infrastructure.agent_config import NOTES as NOTES_CFG
 from ..infrastructure.agent_manifest import Intent, NOTES as NOTES_DESCRIPTOR
 from ..ports.agent_note_port import AgentNotePort
@@ -94,7 +104,8 @@ _TOOL_DECLARATIONS = [
                         "write it as a complete, self-contained instruction with all necessary "
                         "context: what to do, why, any relevant details from the conversation. "
                         "No length limit. Never write a reminder ID into it: the ID does not "
-                        "exist until this call returns, and the fired alert carries the real one."
+                        "exist until this call returns, and the fired alert carries the real one. "
+                        + BINDING_INSTRUCTION_NOTE
                     ),
                 },
                 "due": {
@@ -139,7 +150,7 @@ _TOOL_DECLARATIONS = [
                 },
                 "instruction": {
                     "type": "string",
-                    "description": "New execution context. Omit to keep unchanged.",
+                    "description": "New execution context. Omit to keep unchanged. " + BINDING_INSTRUCTION_NOTE,
                 },
                 "due": {
                     "type": "string",
@@ -226,6 +237,17 @@ def _parse_complexity(value: Optional[str]) -> Optional[TaskComplexity]:
         return None
 
 
+_BINDABLE = ("create_self_reminder", "update_self_reminder")
+
+
+class _BindGuard:
+    """A local of one `_run`, never instance state: NotesAgent is a per-user singleton and two channels can run it
+    at the same time (AGENT_WORKSPACE_RFC §8.3, B3)."""
+
+    def __init__(self) -> None:
+        self.applied = False
+
+
 class NotesAgent(BaseAgent):
     """
     Specialist for self-reminders — deferred instructions that fire proactively.
@@ -246,6 +268,7 @@ class NotesAgent(BaseAgent):
         prompt_builder: Optional[PromptBuilderPort] = None,
         user_timezone: str = "UTC",
         notification_service: Optional["UserNotificationService"] = None,
+        workspace_enabled: bool = False,
     ) -> None:
         super().__init__(config)
         self._set_execution_context(execution_context)
@@ -257,6 +280,8 @@ class NotesAgent(BaseAgent):
         self._user_tz_name = user_timezone or "UTC"
         self._user_tz = _resolve_tz(user_timezone)
         self._notification_service = notification_service
+        # False when no workspace is configured: a workspace_file is then refused (AGENT_WORKSPACE_RFC §5.5).
+        self._workspace_enabled = workspace_enabled
 
     async def can_handle(self, message: AgentMessage) -> bool:
         if message.intent != AgentIntent.QUERY:
@@ -268,10 +293,20 @@ class NotesAgent(BaseAgent):
         user_id = message.context.get("user_id") or ""
         account_id = message.context.get("account_id") or ""
 
+        # The coordinator spreads the delegate context into the payload (agent_coordinator._execute_sync).
+        binding = parse_reminder_field(message.payload.get("workspace_file"))
+        if binding.value is not None:
+            refusal, binding = self._check_workspace_file(binding)
+            if refusal:
+                logger.info("📌 [NotesAgent] workspace_file refused: %s", refusal)
+                return AgentResponse.failure(task_id=message.task_id, agent_id=self.agent_id, error=refusal)
+
         self._on_agent_start(query[:60])
         start_time = time.time()
 
-        result = await self._run(query, user_id, account_id, message.context)
+        result = await self._run(
+            query, user_id, account_id, message.context, binding=binding if binding.provided else None
+        )
 
         duration_ms = int((time.time() - start_time) * 1000)
 
@@ -292,6 +327,16 @@ class NotesAgent(BaseAgent):
             metadata={"duration_ms": duration_ms},
         )
 
+    def _check_workspace_file(self, field: ReminderField) -> Tuple[Optional[str], ReminderField]:
+        """Before any LLM call (§8.3): a workspace is configured and the path parses. Any folder (D17); the file
+        need not exist — a first run may create it. Returns (refusal, field with the normalised path)."""
+        if not self._workspace_enabled:
+            return "workspace_file needs the workspace, which is not configured on this deployment", field
+        try:
+            return None, ReminderField(value=validate_workspace_file(field.value or ""))
+        except WorkspaceRefused as e:
+            return str(e), field
+
     # ------------------------------------------------------------------
     # LLM call
     # ------------------------------------------------------------------
@@ -302,6 +347,8 @@ class NotesAgent(BaseAgent):
         user_id: str,
         account_id: str,
         context: Optional[Dict[str, Any]] = None,
+        *,
+        binding: Optional[ReminderField] = None,
     ) -> Dict[str, Any]:
         if not self._prompt_builder:
             raise ValueError("NotesAgent requires prompt_builder")
@@ -331,6 +378,8 @@ class NotesAgent(BaseAgent):
                     f"{rec_str}{cx_str}{fired_str}"
                 )
                 lines.append(f"    instruction: {n.instruction}")
+                if n.workspace_file:
+                    lines.append(f"    workspace file: workspace:{n.workspace_file}")
             system_prompt += "\n\nactive_reminders {\n" + "\n".join(lines) + "\n}"
 
         # Build tool declarations: CRUD tools + delegation tool (if coordinator available)
@@ -340,7 +389,12 @@ class NotesAgent(BaseAgent):
             if available:
                 tools.append(self._build_delegate_tool_declaration(available))
 
-        messages = [Message(role="user", parts=[MessagePart(text=query or "(no instruction)")])]
+        user_text = query or "(no instruction)"
+        if binding is not None:
+            # Code tells the LLM what will happen (B3); a matching sentence is in the instruction descriptions.
+            user_text += "\n\n" + binding_system_line(binding)
+        messages = [Message(role="user", parts=[MessagePart(text=user_text)])]
+        guard = _BindGuard()
 
         for turn in range(self.MAX_TURNS):
             request = LLMRequest(
@@ -356,8 +410,15 @@ class NotesAgent(BaseAgent):
             if not response.tool_calls:
                 text = response.text or ""
                 if text:
-                    return {"summary": text}
+                    return {"summary": self._binding_note(text, binding, guard)}
                 return {"error": "LLM did not select a tool or provide a response."}
+
+            bindable = [tc for tc in response.tool_calls if tc.name in _BINDABLE]
+            if binding is not None and not guard.applied and len(bindable) > 1:
+                # B3: the field belongs to one reminder. Refuse every call of this response before any runs.
+                refused = [(tc, str({"error": BINDING_ONE_REMINDER})) for tc in response.tool_calls]
+                messages.extend(self._build_tool_turn(response, refused))
+                continue
 
             # Process ALL tool calls in this response
             has_delegation = False
@@ -389,7 +450,10 @@ class NotesAgent(BaseAgent):
                     result_text = str(delegate_response.result) if delegate_response.result else "No result"
                     tool_results.append((tc, result_text))
                 else:
-                    result = await self._execute_tool(tc.name, tc.args or {}, user_id, account_id)
+                    bind_now = binding if (binding is not None and tc.name in _BINDABLE and not guard.applied) else None
+                    if bind_now is not None:
+                        guard.applied = True
+                    result = await self._execute_tool(tc.name, tc.args or {}, user_id, account_id, binding=bind_now)
                     crud_results.append(result)
                     tool_results.append((tc, str(result)))
 
@@ -410,7 +474,7 @@ class NotesAgent(BaseAgent):
                 errors = [r.get("error") for r in crud_results if isinstance(r, dict) and r.get("error")]
                 if errors:
                     return {"error": "; ".join(errors)}
-                return {"summary": summary}
+                return {"summary": self._binding_note(summary, binding, guard)}
 
             if has_delegation:
                 continue  # next turn — LLM will use delegation results
@@ -422,7 +486,13 @@ class NotesAgent(BaseAgent):
     # ------------------------------------------------------------------
 
     async def _execute_tool(
-        self, name: str, args: Dict[str, Any], user_id: str, account_id: str
+        self,
+        name: str,
+        args: Dict[str, Any],
+        user_id: str,
+        account_id: str,
+        *,
+        binding: Optional[ReminderField] = None,
     ) -> Any:
         if args.get("_parse_error") == "truncated_json":
             return {"error": (
@@ -456,6 +526,7 @@ class NotesAgent(BaseAgent):
                 due=due,
                 recurrence=rule,
                 complexity=_parse_complexity(args.get("complexity")),
+                workspace_file=binding.value if binding else None,
             ))
             result: Dict[str, Any] = {"note_id": note.note_id, "status": "created"}
             active = await self._notes.list_active_notes(user_id, as_of=datetime.now(timezone.utc))
@@ -468,7 +539,8 @@ class NotesAgent(BaseAgent):
             await self._notify(
                 user_id, account_id,
                 f"📌 Reminder set: \"{note.text}\" — {self._fmt_due(note.due)}"
-                + self._fmt_recurrence(note.recurrence),
+                + self._fmt_recurrence(note.recurrence)
+                + self._fmt_binding(binding, creating=True),
             )
             return result
 
@@ -507,11 +579,14 @@ class NotesAgent(BaseAgent):
                 recurrence=rule,
                 complexity=_parse_complexity(args.get("complexity")),
                 clear_recurrence=clear_recurrence,
+                workspace_file=binding.value if binding else None,
+                clear_workspace_file=bool(binding and binding.clear),
             ))
             await self._notify(
                 user_id, account_id,
                 f"📝 Reminder updated: \"{note.text}\" — {self._fmt_due(note.due)}"
-                + self._fmt_recurrence(note.recurrence),
+                + self._fmt_recurrence(note.recurrence)
+                + self._fmt_binding(binding, creating=False),
             )
             return {"note_id": note.note_id, "status": "updated"}
 
@@ -556,6 +631,23 @@ class NotesAgent(BaseAgent):
     def _fmt_recurrence(self, rule: Optional[str]) -> str:
         """User-facing schedule suffix — phrased, never the raw rule."""
         return f" (repeats {self._recurrence.describe(rule)})" if rule else ""
+
+    @staticmethod
+    def _fmt_binding(binding: Optional[ReminderField], *, creating: bool) -> str:
+        """Receipt suffix (§8.3): ' · workspace file <path>'; on clear ' · workspace file removed'."""
+        if binding is None:
+            return ""
+        if binding.value:
+            return f" · workspace file {binding.value}"
+        if binding.clear and not creating:
+            return " · workspace file removed"
+        return ""
+
+    @staticmethod
+    def _binding_note(summary: str, binding: Optional[ReminderField], guard: _BindGuard) -> str:
+        if binding is None or guard.applied:
+            return summary
+        return f"{summary}\n({BINDING_NOT_APPLIED}: no reminder was created or updated in this request.)"
 
     async def _notify(self, user_id: str, account_id: str, text: str) -> None:
         """Best-effort transparency notification — failure is logged and swallowed."""
