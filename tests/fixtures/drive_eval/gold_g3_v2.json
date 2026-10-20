@@ -2,6 +2,7 @@
  {
   "id": "v2-incident-rome",
   "set": "positive",
+  "isolate": true,
   "category": "find",
   "lang": "en",
   "text": "Find everything I have about Rome.",
@@ -26,6 +27,7 @@
  {
   "id": "v2-incident-rome-ru",
   "set": "positive",
+  "isolate": true,
   "category": "find",
   "lang": "ru",
   "text": "Найди всё, что у меня есть про Рим.",
@@ -49,6 +51,7 @@
  {
   "id": "v2-time-span-receipts",
   "set": "positive",
+  "isolate": true,
   "category": "find",
   "lang": "en",
   "text": "Find my receipts from February to May 2026.",
@@ -69,6 +72,7 @@
  {
   "id": "v2-time-span-photos-ru",
   "set": "positive",
+  "isolate": true,
   "category": "find",
   "lang": "ru",
   "text": "Покажи фото из Барселоны за 2024 год.",
@@ -85,6 +89,7 @@
  {
   "id": "v2-d29-vaccination",
   "set": "positive",
+  "isolate": true,
   "category": "find",
   "lang": "en",
   "text": "Do I have my dog's vaccination certificate somewhere in my files?",
@@ -104,6 +109,7 @@
  {
   "id": "v2-d29-mortgage-ru",
   "set": "positive",
+  "isolate": true,
   "category": "find",
   "lang": "ru",
   "text": "Найди выписку по ипотеке.",
@@ -121,6 +127,7 @@
  {
   "id": "v2-cholesterol-ru",
   "set": "positive",
+  "isolate": true,
   "category": "content",
   "lang": "ru",
   "text": "Какой у меня был холестерин в последнем анализе?",
@@ -135,6 +142,7 @@
  {
   "id": "v2-receipts-all",
   "set": "positive",
+  "isolate": true,
   "category": "find",
   "lang": "en",
   "text": "Show me all my receipts.",
@@ -153,6 +161,7 @@
  {
   "id": "v2-what-expires",
   "set": "positive",
+  "isolate": true,
   "category": "find",
   "lang": "en",
   "text": "Which of my documents expire soon?",
@@ -174,6 +183,7 @@
  {
   "id": "v2-car-docs-es",
   "set": "positive",
+  "isolate": true,
   "category": "find",
   "lang": "es",
   "text": "¿Qué documentos del coche tengo?",
@@ -194,9 +204,10 @@
  {
   "id": "v2-card-value-opens",
   "set": "positive",
+  "isolate": true,
   "category": "content",
   "lang": "en",
-  "text": "When does my identity card expire? It is somewhere in my files.",
+  "text": "When does the identity card expire? It is somewhere in my files.",
   "expect": "none",
   "must_open": true,
   "answer_must_include": [
@@ -211,9 +222,10 @@
  {
   "id": "v2-card-value-opens-ru",
   "set": "positive",
+  "isolate": true,
   "category": "content",
   "lang": "ru",
-  "text": "Когда выдано мое удостоверение личности? Оно лежит где-то в моих файлах.",
+  "text": "Когда выдано удостоверение личности? Оно лежит где-то в моих файлах.",
   "expect": "none",
   "must_open": true,
   "answer_must_include": [
@@ -229,9 +241,10 @@
  {
   "id": "v2-card-find-no-open",
   "set": "positive",
+  "isolate": true,
   "category": "find",
   "lang": "en",
-  "text": "Do I have a scan of my identity card? Which file is it?",
+  "text": "Is there a scan of an identity card? Which file is it?",
   "expect": "none",
   "must_not_open": true,
   "answer_must_include": [
@@ -246,6 +259,7 @@
  {
   "id": "v2-card-find-no-open-uk",
   "set": "positive",
+  "isolate": true,
   "category": "find",
   "lang": "uk",
   "text": "Чи є в мене скан посвідчення особи? Який це файл?",

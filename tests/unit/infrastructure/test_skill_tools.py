@@ -23,7 +23,7 @@ async def test_returns_body_with_marker_and_history_context():
 
 
 async def test_visible_skill_is_not_sent_again():
-    r = await make_use_skill_handler([S], visible={"flight-status"})(_call("flight-status"))
+    r = await make_use_skill_handler([S], visible={"flight-status": S.version})(_call("flight-status"))
     assert "already in your context" in r.result_str
     assert r.history_context is None
 

@@ -527,6 +527,9 @@ class PromptAssemblyService:
                         detail += f", last fired: {fired_dt.strftime('%b %d %H:%M UTC')}"
                     except (ValueError, TypeError):
                         detail += f", last fired: {last_fired}"
+                # AGENT_WORKSPACE_RFC §8.3: the workspace file the reminder's run uses.
+                if workspace_file := note.get("workspace_file"):
+                    detail += f", workspace file: workspace:{workspace_file}"
                 line = f"    - {text}{timing_str}{detail} [id: {note_id}]"
                 note_lines.append(line)
             header = "    // Reminders you set for yourself. Not visible to the user.\n    // STALE BY DESIGN: this is a snapshot taken when the request started and it is NOT\n    // refreshed between delegation turns. If a specialist reports that it created,\n    // updated or deleted a reminder, its result supersedes this block — trust the\n    // result and do not re-delegate the same change because the list still looks old.\n    // Full execution context is stored internally. To update or delete — delegate with the id shown in brackets.\n    // 'repeats' is an RFC 5545 RRULE anchored on the fire time; delegate the new rule verbatim to change it.\n    // IDs are Unix timestamps (ms) — use to gauge reminder age relative to current_date_time."

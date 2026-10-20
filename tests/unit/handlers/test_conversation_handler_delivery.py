@@ -736,8 +736,9 @@ class TestHandleMessageEdgeCases:
 
     # --- Lines 622-624: consolidation_text metadata ---
 
-    async def test_consolidation_text_from_metadata_attached_to_user_message(self):
-        """response.metadata['consolidation_text'] → MessagePart(consolidation_text=...) appended. (Lines 622-624)"""
+    async def test_consolidation_text_from_metadata_is_not_attached_to_user_message(self):
+        """A stale response.metadata['consolidation_text'] is ignored: the writer is removed
+        (MEMORY_FACT_CONFIRMATION_RFC §6), so no user part carries consolidation_text."""
         response = _make_success(SmartResponse(text="Saved to memory."))
         response.metadata["consolidation_text"] = ["Fact one.", "Fact two."]
 
@@ -753,10 +754,7 @@ class TestHandleMessageEdgeCases:
         call_args = session_store.append_messages_batch.call_args
         messages = call_args[0][1]
         user_msg = next(m for m in messages if m.role == "user")
-        consol_parts = [p for p in user_msg.parts if p.consolidation_text]
-        assert consol_parts, "Expected a part with consolidation_text"
-        assert "Fact one." in consol_parts[0].consolidation_text
-        assert "Fact two." in consol_parts[0].consolidation_text
+        assert not [p for p in user_msg.parts if p.consolidation_text]
 
     # --- Lines 576-577, 581: History cleanup (file stubs) ---
 

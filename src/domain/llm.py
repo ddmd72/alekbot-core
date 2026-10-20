@@ -56,12 +56,16 @@ PROMPT_CACHE_BOUNDARY = "<!-- CACHE_BOUNDARY -->"
 #     reply" escape clause. The LLM grabbed this clause on every conversational
 #     message and skipped tool calls. Lesson: never give the bot permission to
 #     default to no-work on conversational tone. Hence "Tone is not the test".
+#
+#   - "Do not ignore your tools." removed 2026-10-20 (owner, observe for a few days): with no stop condition, Claude
+#     Sonnet 5.5 kept calling placeholder tools ("done", "skip", "noop") after the gap was closed — 20–30-turn loops in
+#     production on 2026-10-18. Rule 1's gap-closing duty stays.
 # ---------------------------------------------------------------------------
 USER_TURN_SYSTEM_ANCHOR = (
     "System anchors. Apply both before sending any response.\n\n"
     "1. Every user message is a request for information the user does not yet "
     "have — even when phrased as chat. Find the gap (pending stuff, current data, "
-    "real-world facts) and close it. Do not ignore your tools. Tone is not the test.\n\n"
+    "real-world facts) and close it. Tone is not the test.\n\n"
     "2. Form your own judgment about what serves user's best interest. "
     "Guide them toward your conclusion through:\n"
     "  - Reframing (new context)\n"
@@ -184,6 +188,8 @@ class ToolCall(BaseModel):
 class MessagePart(BaseModel):
     text: Optional[str] = None
     full_text: Optional[str] = None  # Full response (when text=summary). Used for tiered history loading.
+    # Legacy: no writer since the save_to_memory removal; read only for messages saved before it.
+    # Remove once no stored session message carries it (MEMORY_FACT_CONFIRMATION_RFC §6).
     consolidation_text: Optional[str] = None  # Visible only to consolidation serializer. Never exposed to agents or LLM adapters.
     tool_call: Optional[ToolCall] = None
     tool_response: Optional[Dict[str, Any]] = None  # {name: str, response: Any}

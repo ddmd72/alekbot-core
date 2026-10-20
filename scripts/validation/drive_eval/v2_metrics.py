@@ -145,7 +145,7 @@ def case_pass(case: Mapping[str, Any], row: Mapping[str, Any], *, family: Option
         k = int(case.get("k", LISTING_K))
         cards = list(row.get("cards") or [[p] for p in tiers])[:k]
         covered = {p for card in cards for p in card}
-        return case_hit(expected, covered, k, case.get("min_hits"))
+        return case_hit(expected, covered, k, case.get("min_hits"), case.get("folder_path"))
     if fam == "negative":
         return not any(t in (MATCH_TIERS | {V1_TIER}) for t in tiers.values())
     if fam == "misspelling":

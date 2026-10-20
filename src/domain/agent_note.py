@@ -39,6 +39,10 @@ class AgentNote:
     # delivering the same fire twice.
     # See docs/10_rfcs/NOTIFICATION_DELIVERY_REFACTOR_RFC.md § 7 D.3.
     last_delivered_due: Optional[datetime] = None
+    # A workspace path the reminder's run uses as its instruction says. Bound by code in NotesAgent so the path
+    # survives NotesAgent's LLM rewriting the text (AGENT_WORKSPACE_RFC §8.3, D15); rendered wherever a reminder is
+    # shown, in the alert as one line.
+    workspace_file: Optional[str] = None
 
 
 @dataclass
@@ -50,6 +54,7 @@ class NoteCreate:
     due: datetime                           # UTC
     recurrence: Optional[str] = None        # RRULE, see AgentNote.recurrence
     complexity: Optional[TaskComplexity] = None
+    workspace_file: Optional[str] = None    # see AgentNote.workspace_file
 
 
 @dataclass
@@ -66,3 +71,6 @@ class NoteUpdate:
     # unchanged" — so turning a recurring reminder back into a one-time one needs
     # its own flag. Without it the only way back was delete + recreate.
     clear_recurrence: bool = False
+    workspace_file: Optional[str] = None    # None = leave unchanged
+    # "remove" in the delegation context (AGENT_WORKSPACE_RFC §8.3) — the clear_recurrence pattern.
+    clear_workspace_file: bool = False
