@@ -22,6 +22,7 @@ from typing import AbstractSet, Dict, List, Mapping, Optional, Sequence, Tuple
 from src.domain.drive_enrichment import DriveHintDoc, InitialBuild, ModelUsageMonth
 from src.domain.drive_index import DriveChunk, DriveIndexRecord, DriveSyncState, RecordState
 from src.domain.drive_index_lean import ChunkId, DriveChunkLean, DriveHintLean, DriveRecordLean
+from src.domain.drive_transcript import StoredTranscript, TranscriptBatch, TranscriptJob, WindowTranscript
 
 
 class DriveIndexRepository(ABC):
@@ -401,3 +402,62 @@ class DriveIndexRepository(ABC):
     @abstractmethod
     async def close_initial_build(self, user_id: str, now: datetime) -> None:
         """Close the initial build at `now`; an already closed build keeps its `closed_at`. It never reopens (D27)."""
+
+    # -- transcripts (§27.3-§27.5, §27.8 b): jobs, window results, batches, the store ---------------------------------
+    # No document holds a download URL or a provider file URI: the job keeps the file NAME (`files/<id>`).
+
+    @abstractmethod
+    async def get_transcript_job(self, user_id: str, item_id: str) -> Optional[TranscriptJob]:
+        """The job document of a media file; None when there is none."""
+
+    @abstractmethod
+    async def save_transcript_job(self, job: TranscriptJob) -> None:
+        """Replace the job document (windows included) with `job`. Window RESULTS are not part of it
+        (`save_window_result`), and a save never touches them."""
+
+    @abstractmethod
+    async def delete_transcript_job(self, user_id: str, item_id: str) -> None:
+        """Delete the job document and its window results; missing is a no-op."""
+
+    @abstractmethod
+    async def save_window_result(self, user_id: str, item_id: str, index: int, result: WindowTranscript) -> None:
+        """Store window `index`'s parsed answer in the job's `windows/{index}` subcollection (G11); replaces."""
+
+    @abstractmethod
+    async def get_window_results(self, user_id: str, item_id: str) -> Dict[int, WindowTranscript]:
+        """Every stored window result of the job, by window index."""
+
+    @abstractmethod
+    async def create_batch(self, batch: TranscriptBatch) -> bool:
+        """Write a new batch document keyed by (user, provider batch name); False, writing nothing, when one exists."""
+
+    @abstractmethod
+    async def save_batch(self, batch: TranscriptBatch) -> None:
+        """Replace the batch document. A closed batch (done, failed) is saved with `next_poll_at=None`."""
+
+    @abstractmethod
+    async def delete_batch(self, user_id: str, name: str) -> None:
+        """Delete the batch document; missing is a no-op."""
+
+    @abstractmethod
+    async def get_open_batches(self, user_id: str, now: datetime, limit: int) -> List[TranscriptBatch]:
+        """Batches due for a poll: `next_poll_at <= now` (an open batch has one, a closed batch does not), earliest
+        `next_poll_at` first (§27.5)."""
+
+    @abstractmethod
+    async def get_transcript(self, user_id: str, content_key: str) -> Optional[StoredTranscript]:
+        """The stored transcript under the content key, shards reassembled; None when absent (or when a shard the
+        head names is missing, which is logged)."""
+
+    @abstractmethod
+    async def put_transcript(self, user_id: str, stored: StoredTranscript) -> None:
+        """Store the transcript under its content key. Above TRANSCRIPT_DOC_BYTES the segments go into `parts/{n}`
+        documents, written first; the head document is written last, so a head always names parts that exist."""
+
+    @abstractmethod
+    async def touch_transcript(self, user_id: str, content_key: str, last_used_at: datetime) -> None:
+        """Set `last_used_at` on the head document only; a missing transcript is a no-op (nothing is created)."""
+
+    @abstractmethod
+    async def delete_transcript(self, user_id: str, content_key: str) -> None:
+        """Delete the transcript's head and its parts; missing is a no-op."""
