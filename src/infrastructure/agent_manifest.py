@@ -400,7 +400,18 @@ NOTES = AgentDescriptor(
             "into duplicate reminders; state it in full and let the specialist encode it. "
             "Everything is editable after the fact, including the schedule and stopping "
             "repetition entirely; the rule shown in active_reminders is what you edit."
+            " When the reminder's run should use a workspace file, pass context={\"workspace_file\": \"<workspace "
+            "path>\"} and keep the reminder text short, referring to the file."
         ),
+    },
+    # AGENT_WORKSPACE_RFC §8.3, D15: bound by code in NotesAgent (read from the payload), never through its LLM.
+    context_schemas={
+        Intent.MANAGE_SELF_REMINDERS: {
+            "workspace_file": (
+                "Optional: a workspace path (e.g. projects/morning-briefing.md) for the reminder's run to use as its "
+                "instruction says. Passed here, the path is kept exactly. \"remove\" takes it off the reminder."
+            ),
+        },
     },
     internal=False,
 )
@@ -539,6 +550,7 @@ FILE_MANAGEMENT = AgentDescriptor(
             'Requires: context={"file_ref": "<filename from file label>"} '
             "Also opens skill files listed under 'Files' in a loaded skill: pass the ref as "
             "shown, e.g. skill:<name>/<path>."
+            " Also opens copies kept in the workspace: pass workspace:files/<name>."
         ),
         Intent.DELETE_FILE: (
             "Delete a chat file ([File: ...] label) from storage. A drive file ([Drive: ...] label) "
@@ -602,8 +614,9 @@ FILE_MANAGEMENT = AgentDescriptor(
     context_schemas={
         Intent.OPEN_FILE: {
             "file_ref": (
-                "Filename from the file label in conversation (e.g. 'report.docx'), or a skill "
-                "file ref (e.g. 'skill:flight-status/references/airlines.md')"
+                "Filename from the file label in conversation (e.g. 'report.docx'), a skill file ref "
+                "(e.g. 'skill:flight-status/references/airlines.md'), or a workspace copy "
+                "(e.g. 'workspace:files/lease.pdf')"
             ),
         },
         Intent.DELETE_FILE: {

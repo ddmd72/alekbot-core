@@ -18,6 +18,7 @@ These are silently ignored — _dict_to_note does not map them.
 Existing documents without 'instruction' fall back to 'text'.
 'recurrence' was a map {type, interval} before 2026-07-30 and is a bare RRULE string
 now; _read_recurrence translates the old shape on read (no backfill).
+'workspace_file' (AGENT_WORKSPACE_RFC §8.3) is optional: absent on older documents, read as None.
 """
 
 from datetime import datetime, timezone
@@ -76,6 +77,8 @@ class FirestoreAgentNoteAdapter(AgentNotePort):
         doc["recurrence"] = data.recurrence or None
         if data.complexity:
             doc["complexity"] = data.complexity.value
+        if data.workspace_file:
+            doc["workspace_file"] = data.workspace_file
 
         await self._col.document(note_id).set(doc)
         return AgentNote(
@@ -86,6 +89,7 @@ class FirestoreAgentNoteAdapter(AgentNotePort):
             created_at=now,
             due=data.due,
             recurrence=data.recurrence,
+            workspace_file=data.workspace_file,
         )
 
     async def delete_note(self, note_id: str, user_id: str) -> bool:
@@ -137,6 +141,10 @@ class FirestoreAgentNoteAdapter(AgentNotePort):
             updates["recurrence"] = data.recurrence
         if data.complexity is not None:
             updates["complexity"] = data.complexity.value
+        if data.clear_workspace_file:
+            updates["workspace_file"] = None
+        elif data.workspace_file is not None:
+            updates["workspace_file"] = data.workspace_file
 
         if updates:
             await doc_ref.update(updates)
@@ -368,4 +376,5 @@ class FirestoreAgentNoteAdapter(AgentNotePort):
             last_fired=cls._ensure_utc(data.get("last_fired")),
             complexity=complexity,
             last_delivered_due=cls._ensure_utc(data.get("last_delivered_due")),
+            workspace_file=data.get("workspace_file") or None,
         )

@@ -294,6 +294,8 @@ class UserNotificationService:
         platform_override: Optional[str] = None,
         suppress_transient_retry: bool = False,
         storage_class: Optional[str] = None,
+        origin_detail: Optional[str] = None,
+        fire_key: Optional[str] = None,
     ) -> NotifyResult:
         """
         Send a background notification to the user's channel.
@@ -320,6 +322,9 @@ class UserNotificationService:
             channel_id_override: if provided, delivers to this channel
                 instead of primary/last-active. Used for async results
                 that go back to the originating channel.
+            origin_detail / fire_key: who started this run, stamped on the workspace writes it makes
+                (AGENT_WORKSPACE_RFC §9): context `run_origin` = "background:<origin_detail>" (falls back to
+                the kind), `run_fire_key` = fire_key for a reminder fire.
             suppress_transient_retry: set by callers whose /worker handler
                 returns 5xx on failure (reminder, daily email review), so
                 Cloud Tasks retries the whole task. Suppresses the agent's
@@ -382,6 +387,10 @@ class UserNotificationService:
                 # Cloud-Task-backed delivery: outer queue retry covers transients,
                 # so the agent must not also retry in-process (avoids layer1 × layer2).
                 **({"suppress_transient_retry": True} if suppress_transient_retry else {}),
+                # Who started this run, for the workspace's origin labels (AGENT_WORKSPACE_RFC §9). The context
+                # is built fresh per call, so an origin never leaks from the caller.
+                "run_origin": f"background:{origin_detail or kind.value}",
+                **({"run_fire_key": fire_key} if fire_key else {}),
             },
             timeout_ms=effective_timeout_ms,
         )

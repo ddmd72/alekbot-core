@@ -56,6 +56,7 @@ load_dotenv()
 
 from google.cloud import firestore
 
+from src.services.dry_run_workspace import DryRunWorkspace
 from src.adapters.claude_adapter import ClaudeAdapter
 from src.adapters.firestore_account_repo import FirestoreAccountRepository
 from src.adapters.firestore_user_repo import FirestoreUserRepository
@@ -279,6 +280,8 @@ async def main(args) -> None:
     agent = (await factory.ensure_agents_for_user(user_id))[_LEG_AGENT[args.leg]]
     if args.leg == "smart":
         _install_dry_run_dispatch()
+        if getattr(agent, "workspace_service", None) is not None:
+            agent.workspace_service = DryRunWorkspace(agent.workspace_service)   # no workspace write reaches the bucket
     claude = ClaudeAdapter(api_key=os.environ["ANTHROPIC_API_KEY"].strip())
 
     rows: List[Dict[str, Any]] = []
