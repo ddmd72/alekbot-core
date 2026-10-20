@@ -5,10 +5,10 @@ plain strings on records and job documents (Δ47's rollback invariant); the enum
 Several public classes in one module, by decision: one contract (the transcript pipeline) with several value types, as
 `drive_enrichment` and `drive_extraction` group theirs (CLAUDE.md's one-class rule is waived here on purpose).
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from enum import Enum
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 WINDOW_STATES: Tuple[str, ...] = ("extracted", "uploaded", "submitted", "done", "failed")   # JobWindow.state (§27.5)
 BATCH_KIND_TRANSCRIBE = "transcribe"      # TranscriptBatch.kind; "summary" joins it with T3
@@ -136,14 +136,55 @@ class TranscriptBatch:
     kind: str = BATCH_KIND_TRANSCRIBE
 
 
+def safe_doc_id(raw: str) -> str:
+    """A Firestore document id from any string: `%` -> `%25` and `/` -> `%2F` (injective: a `%` in the output always
+    starts one of the two escapes or the guard below), and an id Firestore reserves (`.`, `..`, `__x__`) has its first
+    character percent-escaped (`%2E`, `%5F`), which no unguarded output can start with."""
+    out = raw.replace("%", "%25").replace("/", "%2F")
+    if out in (".", "..") or (len(out) >= 4 and out.startswith("__") and out.endswith("__")):
+        out = f"%{ord(out[0]):02X}{out[1:]}"
+    return out
+
+
 def job_doc_id(user_id: str, item_id: str) -> str:
-    return f"{user_id}:{item_id}"
+    return safe_doc_id(f"{user_id}:{item_id}")
 
 
 def batch_doc_id(user_id: str, name: str) -> str:
-    """A provider batch name is a path (`batches/<id>`); a document id cannot hold a slash."""
-    return f"{user_id}:{name.replace('/', '_')}"
+    """A provider batch name is a path (`batches/<id>`); the id carries it escaped."""
+    return safe_doc_id(f"{user_id}:{name}")
 
 
 def transcript_doc_id(user_id: str, content_key: str) -> str:
-    return f"{user_id}:{content_key}"
+    """The content key is `quickXorHash:size` (base64, which has `/`) or the fallback `item:{id}:{cTag}`; the raw key
+    stays a field of the document."""
+    return safe_doc_id(f"{user_id}:{content_key}")
+
+
+BATCH_CLOSED_STATES: Tuple[str, ...] = ("done", "failed")
+
+
+def normalized_batch(batch: TranscriptBatch) -> TranscriptBatch:
+    """A closed batch (done, failed) has no `next_poll_at`, so it is never polled again (§27.5)."""
+    if batch.state in BATCH_CLOSED_STATES and batch.next_poll_at is not None:
+        return replace(batch, next_poll_at=None)
+    return batch
+
+
+def url_fields(**fields: str) -> List[str]:
+    """Names of the given string fields that hold a URL (start with `http`): §27.4 keeps every URL, a Graph download
+    URL or a Gemini file URI, out of any persisted document."""
+    return [name for name, value in fields.items() if value.lstrip().lower().startswith("http")]
+
+
+def job_url_fields(job: TranscriptJob) -> List[str]:
+    found = url_fields(content_key=job.content_key, batch_name=job.batch_name, reserved_month=job.reserved_month)
+    for w in job.windows:
+        found += [f"windows[{w.spec.index}].{n}" for n in
+                  url_fields(file_ref=w.file_ref, request_key=w.request_key, batch_name=w.batch_name, state=w.state)]
+    return found
+
+
+def batch_url_fields(batch: TranscriptBatch) -> List[str]:
+    found = url_fields(name=batch.name, reserved_month=batch.reserved_month, state=batch.state, kind=batch.kind)
+    return found + [f"request_keys[{i}]" for i, k in enumerate(batch.request_keys) if url_fields(k=k)]
