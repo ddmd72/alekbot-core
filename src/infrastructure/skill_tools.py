@@ -142,10 +142,11 @@ def build_draft_skill_tool_declaration() -> Dict[str, Any]:
                             "from_file": {
                                 "type": "string",
                                 "description": (
-                                    "Copy content from elsewhere instead of writing it here: either a "
-                                    "bare uploaded filename (from the file's label in this conversation), "
-                                    "or a 'skill:<name>/<path>' reference to one of the owner's own "
-                                    "custom skills' files. Exactly one of content, from_file, remove "
+                                    "Copy content from elsewhere instead of writing it here: a bare "
+                                    "uploaded filename (from the file's label in this conversation), a "
+                                    "'skill:<name>/<path>' reference to one of the owner's own custom "
+                                    "skills' files, or a 'workspace:<path>' text file from your workspace "
+                                    "(e.g. a draft in scratch/). Exactly one of content, from_file, remove "
                                     "must be set per entry."
                                 ),
                             },
