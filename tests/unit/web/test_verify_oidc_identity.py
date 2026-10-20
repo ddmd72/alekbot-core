@@ -1,5 +1,8 @@
 """T6: verify_oidc_identity (sandbox RFC §4.4). Mocked at google.oauth2.id_token.verify_oauth2_token."""
+import logging
 from unittest.mock import patch
+
+from google.auth.exceptions import MalformedError
 
 from src.web.worker_oidc_verifier import verify_oidc_identity
 
@@ -58,3 +61,38 @@ def test_never_raises():
         assert verify_oidc_identity(HDR, AUD) is None
     with patch(TARGET, return_value=None):  # claims.get on None -> AttributeError
         assert verify_oidc_identity(HDR, AUD) is None
+
+
+def test_exception_text_with_token_is_never_logged(caplog):
+    caplog.set_level(logging.DEBUG)
+    sentinel = "SENTINEL-TOKEN-abc.def.ghi"
+    with patch(TARGET, side_effect=MalformedError(f"Wrong number of segments in token: {sentinel}")):
+        assert verify_oidc_identity(HDR, AUD) is None
+    assert "verification failed" in caplog.text
+    assert sentinel not in caplog.text
+
+
+def test_bare_string_audience_is_not_a_substring_test():
+    with patch(TARGET, return_value=claims(aud="https://sandbox")):
+        assert verify_oidc_identity(HDR, AUD[0]) is None
+    with patch(TARGET, return_value=claims()):
+        assert verify_oidc_identity(HDR, AUD[0]) == "a@example.com"
+
+
+def test_non_string_audience_claim_none():
+    with patch(TARGET, return_value=claims(aud=["https://sandbox.example.com"])):
+        assert verify_oidc_identity(HDR, AUD) is None
+
+
+def test_key_fetch_uses_a_short_timeout():
+    from src.web import worker_oidc_verifier as v
+
+    seen = {}
+
+    class Base:
+        def __call__(self, url, method="GET", body=None, headers=None, timeout=None, **kw):
+            seen["timeout"] = timeout
+
+    with patch.object(v.google_requests, "Request", Base):
+        v._short_timeout_request()("https://x.example.com")
+    assert seen["timeout"] == v._CERT_FETCH_TIMEOUT_S <= 10

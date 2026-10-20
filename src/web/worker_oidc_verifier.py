@@ -93,6 +93,19 @@ def verify_worker_oidc(
     return True
 
 
+_CERT_FETCH_TIMEOUT_S = 10
+
+
+def _short_timeout_request() -> google_requests.Request:
+    """A google-auth transport whose key fetch times out after ``_CERT_FETCH_TIMEOUT_S`` seconds."""
+    base = google_requests.Request()
+
+    def request(url, method="GET", body=None, headers=None, timeout=_CERT_FETCH_TIMEOUT_S, **kwargs):  # type: ignore[no-untyped-def]
+        return base(url, method=method, body=body, headers=headers, timeout=timeout, **kwargs)
+
+    return request  # type: ignore[return-value]
+
+
 def verify_oidc_identity(
     authorization_header: Optional[str],
     audiences: Collection[str],
@@ -105,9 +118,15 @@ def verify_oidc_identity(
 
     Deliberately separate from ``verify_worker_oidc``: that function guards every
     Scheduler/Tasks job and stays untouched (sandbox RFC S-Δ9). Never raises; every
-    failure is logged (without the token or the email) and returned as ``None``.
+    failure is logged (exception type only: google-auth messages can embed the token) and
+    returned as ``None``. A bare ``str`` for ``audiences`` is treated as one audience.
+
+    Blocking: fetching Google's signing keys is synchronous network I/O, bounded here by
+    ``_CERT_FETCH_TIMEOUT_S`` instead of google-auth's 120 s default; async callers should
+    run it in a thread.
     """
     try:
+        accepted = {audiences} if isinstance(audiences, str) else set(audiences)
         if not authorization_header or not authorization_header.startswith("Bearer "):
             logger.warning("OIDC identity: missing or malformed Authorization header")
             return None
@@ -116,14 +135,15 @@ def verify_oidc_identity(
             logger.warning("OIDC identity: empty bearer token")
             return None
         try:
-            claims = google_id_token.verify_oauth2_token(token, google_requests.Request())
+            claims = google_id_token.verify_oauth2_token(token, _short_timeout_request())
         except Exception as e:
-            logger.warning(f"OIDC identity: token verification failed: {e}")
+            logger.warning(f"OIDC identity: token verification failed: {type(e).__name__}")
             return None
         if not claims.get("email_verified"):
             logger.warning("OIDC identity: email_verified is not set on the token")
             return None
-        if claims.get("aud") not in audiences:
+        aud = claims.get("aud")
+        if not isinstance(aud, str) or aud not in accepted:
             logger.warning("OIDC identity: audience claim is not one this route accepts")
             return None
         email = claims.get("email")
@@ -132,5 +152,5 @@ def verify_oidc_identity(
             return None
         return email
     except Exception as e:  # defensive: the contract is "never raises"
-        logger.warning(f"OIDC identity: unexpected failure: {e}")
+        logger.warning(f"OIDC identity: unexpected failure: {type(e).__name__}")
         return None

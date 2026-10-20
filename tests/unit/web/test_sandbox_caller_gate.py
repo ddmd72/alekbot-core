@@ -1,5 +1,6 @@
 """T6: sandbox caller gate (RFC §4.4). Mocked at google.oauth2.id_token.verify_oauth2_token."""
 import dataclasses
+from typing import runtime_checkable
 import logging
 from unittest.mock import patch
 
@@ -95,9 +96,6 @@ def test_cloud_run_with_empty_map_refuses_every_call(cloud_run):
 
 def test_local_without_k_service_is_open(monkeypatch, caplog):
     monkeypatch.delenv("K_SERVICE", raising=False)
-    from src.utils.logger import logger
-
-    logger.propagate = True
     caplog.set_level(logging.INFO)
     gate = make_gate(sets={}, url="")
     assert "open" in caplog.text.lower()
@@ -106,24 +104,47 @@ def test_local_without_k_service_is_open(monkeypatch, caplog):
 
 
 def test_no_email_in_log_lines(cloud_run, caplog):
-    from src.utils.logger import logger
-
-    logger.propagate = True
     caplog.set_level(logging.DEBUG)
     with patch(TARGET, return_value=claims("stranger@example.com")):
         make_gate().authorize("Bearer t", "render.docx")
-    assert "example.com" not in caplog.text.replace("sandbox.example.com", "")
+    assert "Sandbox gate" in caplog.text
+    assert "stranger" not in caplog.text
 
 
 def test_gate_decision_satisfies_the_app_protocol():
+    proto = runtime_checkable(sandbox_app.GateDecision)
     d = GateDecision(allowed=False, reason="forbidden_op")
-    assert dataclasses.is_dataclass(d)
+    assert isinstance(d, proto)
+    assert (d.allowed, d.reason) == (False, "forbidden_op")
     with pytest.raises(dataclasses.FrozenInstanceError):
         d.allowed = True  # type: ignore[misc]
-    proto = sandbox_app.GateDecision
-    assert all(hasattr(d, n) for n in ("allowed", "reason"))
-    assert hasattr(SandboxCallerGate, "authorize")
-    assert proto is not None
+
+
+def test_audience_with_trailing_slash_or_prefix_refused(cloud_run):
+    for aud in (URL + "/", URL + "/x", "x" + URL):
+        with patch(TARGET, return_value=claims(RENDER_MAIL, aud=aud)):
+            assert make_gate().authorize("Bearer t", "render.docx").reason == "unauthenticated"
+
+
+def test_local_partial_config_refuses(monkeypatch):
+    monkeypatch.delenv("K_SERVICE", raising=False)
+    with patch(TARGET, return_value=claims(RENDER_MAIL)):
+        assert make_gate(url="").authorize("Bearer t", "render.docx").allowed is False
+        assert make_gate(sets={}).authorize("Bearer t", "render.docx").allowed is False
+
+
+def test_local_full_config_enforces(monkeypatch):
+    monkeypatch.delenv("K_SERVICE", raising=False)
+    with patch(TARGET, return_value=claims(RENDER_MAIL)):
+        assert make_gate().authorize("Bearer t", "render.docx").allowed is True
+        assert make_gate().authorize("Bearer t", "drive.x").allowed is False
+    assert make_gate().authorize(None, "render.docx").allowed is False
+
+
+def test_group_without_prefixes_fails_loudly():
+    with pytest.raises(ValueError) as exc:
+        SandboxCallerGate({"RENDR": frozenset({RENDER_MAIL})}, PREFIXES, URL)
+    assert "RENDR" in str(exc.value) and "example.com" not in str(exc.value)
 
 
 async def test_blueprint_accepts_the_gate(tmp_path, cloud_run):

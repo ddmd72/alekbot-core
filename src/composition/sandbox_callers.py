@@ -35,7 +35,12 @@ def load_caller_sets(env: Mapping[str, str]) -> Dict[str, FrozenSet[str]]:
         if "," in raw:
             logger.error(f"Sandbox callers: group {group} uses a comma; lists are ':'-separated")
             raise SandboxCallersError(f"group {group}: caller list must be ':'-separated, a comma is not allowed")
-        emails = frozenset(p.strip().lower() for p in raw.split(":") if p.strip())
+        entries = [p.strip() for p in raw.split(":") if p.strip()]
+        for entry in entries:
+            if any(c.isspace() for c in entry) or ";" in entry or entry.count("@") != 1:
+                logger.error(f"Sandbox callers: group {group} holds a malformed entry")
+                raise SandboxCallersError(f"group {group}: malformed caller entry (one '@', no spaces or ';')")
+        emails = frozenset(e.lower() for e in entries)
         if not emails:
             if on_cloud_run:
                 logger.error(f"Sandbox callers: group {group} is empty on Cloud Run")
