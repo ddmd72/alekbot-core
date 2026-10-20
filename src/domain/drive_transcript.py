@@ -89,8 +89,11 @@ class JobWindow:
     state: str = "extracted"
     file_ref: str = ""                # the provider's file handle; never a URL
     request_key: str = ""             # `{item_id}:{index}` in a batch
-    attempts: int = 0
+    attempts: int = 0                 # failed answers (invalid JSON, short coverage), toward MAX_ATTEMPTS (§27.5)
     reserved_usd: float = 0.0
+    time_resubmits: int = 0           # the time validator's one resubmit (§27.6, G37)
+    interp_resubmits: int = 0         # the interpolation-share check's one resubmit (§27.6, G37)
+    gap: bool = False                 # done as a gap marker: the provider refused it or the retries ran out
 
 
 @dataclass(frozen=True)
@@ -103,6 +106,8 @@ class TranscriptJob:
     windows: Tuple[JobWindow, ...] = ()
     batch_name: str = ""
     files_expire_at: Optional[datetime] = None
+    reserved_usd: float = 0.0         # the file's estimate, reserved the moment it fit (G39)
+    reserved_month: str = ""          # "YYYY-MM" the reservation was made in; its cost is booked there (G9)
 
 
 @dataclass(frozen=True)
