@@ -15,9 +15,13 @@ import json
 import time
 from typing import Callable, Optional
 
+from ...domain.sandbox_errors import SandboxMisconfigured, SandboxUnavailable
 from ...utils.logger import logger
 
 REFRESH_MARGIN_S = 300.0
+# `fetch_id_token` takes no timeout; its transport defaults to 120 s per attempt with retries, so the request is
+# wrapped to a short one. (The thread itself cannot be cancelled; this bounds it.)
+METADATA_REQUEST_TIMEOUT_S = 5
 
 
 def normalise_audience(url: str) -> str:
@@ -28,7 +32,21 @@ def _fetch_from_metadata(audience: str) -> str:
     import google.auth.transport.requests
     import google.oauth2.id_token
 
-    return google.oauth2.id_token.fetch_id_token(google.auth.transport.requests.Request(), audience)
+    inner = google.auth.transport.requests.Request()
+
+    def request(*args, **kwargs):  # type: ignore[no-untyped-def]
+        kwargs["timeout"] = METADATA_REQUEST_TIMEOUT_S
+        return inner(*args, **kwargs)
+
+    return google.oauth2.id_token.fetch_id_token(request, audience)
+
+
+def _is_transport_error(exc: Exception) -> bool:
+    try:
+        from google.auth.exceptions import TransportError
+    except ImportError:  # pragma: no cover - google-auth is a declared dependency
+        return False
+    return isinstance(exc, TransportError)
 
 
 def _expiry(token: str) -> Optional[float]:
@@ -63,8 +81,12 @@ class MetadataIdTokenProvider:
             try:
                 token = await asyncio.to_thread(self._fetch, self._audience)
             except Exception as exc:
+                # The one ERROR line for a failed fetch (the client does not log it again). A metadata-server
+                # blip is systemic and transient; anything else (no credentials, wrong audience) is a deployment fault.
                 logger.error("[SandboxClient] id token fetch failed: %s", type(exc).__name__)
-                raise
+                if _is_transport_error(exc):
+                    raise SandboxUnavailable("metadata server unreachable") from None
+                raise SandboxMisconfigured("could not obtain an ID token") from None
             exp = _expiry(token)
             self._token = token
             self._refresh_at = (exp - REFRESH_MARGIN_S) if exp is not None else 0.0

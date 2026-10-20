@@ -66,6 +66,15 @@ class _Lost(Exception):
     """A transport loss or a 5xx without an outcome header: the instance died under the request."""
 
 
+@dataclass(frozen=True)
+class _Raw:
+    status: int
+    outcome_header: Optional[str]
+    payload: bytes
+    encoded: bool    # a Content-Encoding other than identity: never decoded (decompression bomb)
+    overflow: bool   # the body ran past its cap
+
+
 class SandboxHttpClient:
     def __init__(self, base_url: str, token_provider: TokenProvider, *, http2: bool = True,
                  transport: Optional[httpx.AsyncBaseTransport] = None,
@@ -82,7 +91,7 @@ class SandboxHttpClient:
     async def call(self, op: SandboxOp, body: bytes, limits: SandboxLimits, *,
                    kind: Optional[str] = None, ext: Optional[str] = None) -> SandboxReply:
         started = time.monotonic()
-        state = {"request_id": "-", "status": "unavailable"}
+        state: dict = {"ids": [], "status": "unavailable"}
         try:
             reply = await self._call(op, body, limits, kind, ext, state)
             state["status"] = reply.outcome.status.value
@@ -91,42 +100,52 @@ class SandboxHttpClient:
             state["status"] = "misconfigured"
             raise
         finally:
+            # One line per call, bounded: at most MAX_RECYCLING_ATTEMPTS + MAX_LOST_ATTEMPTS ids.
             logger.info("[SandboxClient] request_id=%s op=%s status=%s wall_s=%.3f",
-                        state["request_id"], op.value, state["status"], time.monotonic() - started)
+                        ",".join(state["ids"]) or "-", op.value, state["status"], time.monotonic() - started)
 
     async def _call(self, op: SandboxOp, body: bytes, limits: SandboxLimits, kind: Optional[str],
                     ext: Optional[str], state: dict) -> SandboxReply:
         try:
             token = await self._token_provider()
+        except (SandboxUnavailable, SandboxMisconfigured):
+            raise   # the provider classified and logged it
         except Exception as exc:
             logger.error("[SandboxClient] no ID token: %s", type(exc).__name__)
             raise SandboxMisconfigured("could not obtain an ID token") from exc
-        timeout = httpx.Timeout(limits.wall_s + TIMEOUT_MARGIN_S,
-                                connect=min(limits.wall_s + TIMEOUT_MARGIN_S, _CONNECT_TIMEOUT_S))
+        total_s = limits.wall_s + TIMEOUT_MARGIN_S
+        timeout = httpx.Timeout(total_s, connect=min(total_s, _CONNECT_TIMEOUT_S))
         recycling = 0
         lost = 0
         while True:
             request_id = new_request_id()
-            state["request_id"] = request_id
+            state["ids"].append(request_id)
             headers = {
                 "Authorization": f"Bearer {token}",
                 META_HEADER: encode_meta(SandboxMeta(request_id=request_id, limits=limits, kind=kind, ext=ext)),
                 "Content-Type": "application/octet-stream",
+                "Accept-Encoding": "identity",
             }
             try:
-                status, outcome_header, payload = await self._send(op, body, headers, timeout)
-            except _Lost:
+                # httpx timeouts are per read; the deadline for the whole attempt is ours.
+                raw = await asyncio.wait_for(self._send(op, body, headers, timeout), timeout=total_s)
+            except (_Lost, asyncio.TimeoutError):
                 lost += 1
                 if lost >= MAX_LOST_ATTEMPTS:
                     logger.warning("[SandboxClient] request_id=%s op=%s lost twice", request_id, op.value)
                     return SandboxReply(SandboxOutcome(SandboxStatus.ERROR, "sandbox_lost"), b"")
                 continue
 
-            outcome = _read_outcome(outcome_header)
+            status = raw.status
+            outcome = None if raw.encoded else _read_outcome(raw.outcome_header)
             if status in (401, 403):
                 logger.error("[SandboxClient] request_id=%s op=%s rejected with HTTP %d: deployment mistake",
                              request_id, op.value, status)
                 raise SandboxMisconfigured(f"sandbox answered HTTP {status}")
+            if status in (404, 405) and outcome is None:
+                logger.error("[SandboxClient] request_id=%s op=%s HTTP %d without an outcome: wrong URL",
+                             request_id, op.value, status)
+                raise SandboxMisconfigured(f"sandbox URL answered HTTP {status}")
             if status == 429:
                 raise SandboxUnavailable("sandbox is busy (429)")
             if status == 503:
@@ -137,8 +156,12 @@ class SandboxHttpClient:
                     await self._sleep(random.uniform(*_JITTER_S))
                     continue
                 raise SandboxUnavailable("sandbox answered 503")
+            if raw.encoded:
+                return SandboxReply(SandboxOutcome(SandboxStatus.ERROR, "malformed_envelope"), b"")
             if status == 413:
-                return SandboxReply(SandboxOutcome(SandboxStatus.TOO_LARGE, "request_too_large"), payload)
+                # With an outcome the body is the service's capped text; without one it is a front end's HTML.
+                return SandboxReply(SandboxOutcome(SandboxStatus.TOO_LARGE, "request_too_large"),
+                                    raw.payload if outcome is not None else b"")
             if outcome is None:
                 if status >= 500:
                     lost += 1
@@ -151,27 +174,45 @@ class SandboxHttpClient:
                 raise SandboxUnavailable("sandbox is recycling")
             if outcome.status == SandboxStatus.UNCONFIGURED:
                 raise SandboxUnavailable("sandbox is not configured")
-            return SandboxReply(outcome, payload)
+            if status == 200 and raw.overflow:
+                return SandboxReply(SandboxOutcome(SandboxStatus.TOO_LARGE, "response_too_large"), b"")
+            return SandboxReply(outcome, raw.payload)
 
-    async def _send(self, op: SandboxOp, body: bytes, headers: dict, timeout: httpx.Timeout):
-        """(status, outcome header or None, body bytes). Raises _Lost for a transport loss."""
+    async def _send(self, op: SandboxOp, body: bytes, headers: dict, timeout: httpx.Timeout) -> _Raw:
+        """Raises _Lost for a transport loss, SandboxUnavailable / SandboxMisconfigured for the rest."""
         url = f"{self._base_url}/v1/{op.value}"
         try:
             async with self._client.stream("POST", url, content=body, headers=headers, timeout=timeout) as resp:
+                # aiter_raw: never let httpx decode the body (gzip chains have no output bound).
+                encoding = resp.headers.get("Content-Encoding", "").strip().lower()
+                if encoding not in ("", "identity"):
+                    return _Raw(resp.status_code, None, b"", encoded=True, overflow=False)
                 cap = RESPONSE_CAP_BYTES if resp.status_code == 200 else ERROR_TEXT_CAP_BYTES
                 chunks = []
                 size = 0
-                async for chunk in resp.aiter_bytes():
+                overflow = False
+                async for chunk in resp.aiter_raw():
                     size += len(chunk)
                     if size > cap:
+                        overflow = True
                         break
                     chunks.append(chunk)
-                return resp.status_code, resp.headers.get(OUTCOME_HEADER), b"".join(chunks)
+                return _Raw(resp.status_code, resp.headers.get(OUTCOME_HEADER), b"".join(chunks),
+                            encoded=False, overflow=overflow)
         except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
             raise SandboxUnavailable("sandbox is unreachable") from exc
         except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as exc:
             logger.warning("[SandboxClient] op=%s transport loss: %s", op.value, type(exc).__name__)
             raise _Lost() from exc
+        except (httpx.UnsupportedProtocol, httpx.InvalidURL) as exc:
+            # The configured URL itself is unusable: a deployment mistake.
+            logger.error("[SandboxClient] op=%s sandbox URL unusable: %s", op.value, type(exc).__name__)
+            raise SandboxMisconfigured("sandbox URL is unusable") from exc
+        except httpx.HTTPError as exc:
+            # Anything else httpx raises (our own request could not be encoded, a response could not be decoded):
+            # we cannot say the input caused it, so it is systemic and nothing is charged to the input.
+            logger.error("[SandboxClient] op=%s unclassified transport error: %s", op.value, type(exc).__name__)
+            raise SandboxUnavailable("sandbox call failed") from exc
 
 
 def _read_outcome(header: Optional[str]) -> Optional[SandboxOutcome]:

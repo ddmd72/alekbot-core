@@ -5,8 +5,10 @@ import logging
 import threading
 
 import pytest
+from google.auth.exceptions import TransportError
 
 from src.adapters.sandbox_client.metadata_id_token_provider import MetadataIdTokenProvider
+from src.domain.sandbox_errors import SandboxMisconfigured, SandboxUnavailable
 
 
 def jwt(exp: float) -> str:
@@ -71,6 +73,38 @@ async def test_token_never_logged(caplog):
         def boom(a):
             raise RuntimeError(f"bad token {token}")
         failing = MetadataIdTokenProvider("https://sbx.example", fetch=boom, clock=Clock(0))
-        with pytest.raises(RuntimeError):
+        with pytest.raises(SandboxMisconfigured):
             await failing()
     assert token not in caplog.text
+
+
+async def test_transport_error_is_unavailable_other_errors_misconfigured(caplog):
+    def blip(a):
+        raise TransportError("metadata server down")
+
+    def broken(a):
+        raise ValueError("no credentials")
+
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(SandboxUnavailable):
+            await MetadataIdTokenProvider("https://sbx.example", fetch=blip, clock=Clock(0))()
+        with pytest.raises(SandboxMisconfigured):
+            await MetadataIdTokenProvider("https://sbx.example", fetch=broken, clock=Clock(0))()
+    assert len([r for r in caplog.records if r.levelno == logging.ERROR]) == 2
+
+
+def test_default_fetch_bounds_the_metadata_request_timeout(monkeypatch):
+    import google.auth.transport.requests as gat
+    import google.oauth2.id_token as gid
+    from src.adapters.sandbox_client import metadata_id_token_provider as module
+
+    seen = {}
+
+    class FakeRequest:
+        def __call__(self, *args, **kwargs):
+            seen["timeout"] = kwargs.get("timeout")
+
+    monkeypatch.setattr(gat, "Request", FakeRequest)
+    monkeypatch.setattr(gid, "fetch_id_token", lambda request, audience: request("http://metadata", method="GET"))
+    module._fetch_from_metadata("https://sbx.example")
+    assert seen["timeout"] == module.METADATA_REQUEST_TIMEOUT_S

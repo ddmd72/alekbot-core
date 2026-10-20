@@ -1,12 +1,16 @@
 """SandboxHttpClient (RFC §4.7, §4.9, §4.14): wire tests against the real sandbox app and a scripted transport."""
+import asyncio
+import gzip
 import logging
+import re
 
 import httpx
 import pytest
 
+from src.adapters.sandbox_client import sandbox_http_client as http_client_module
 from src.adapters.sandbox_client.sandbox_http_client import SandboxHttpClient
 from src.domain import sandbox_contract as sc
-from src.domain.sandbox_contract import SandboxOp, SandboxStatus
+from src.domain.sandbox_contract import SandboxLimits, SandboxOp, SandboxStatus
 from src.domain.sandbox_errors import SandboxMisconfigured, SandboxUnavailable
 from tests.unit.adapters.sandbox_client.sandbox_client_helpers import (
     BASE, LIMITS, Scripted, good_token, outcome_header, real_app_transport, reply,
@@ -17,6 +21,21 @@ OP = SandboxOp.RENDER_DOCX
 
 async def no_sleep(_s: float) -> None:
     return None
+
+
+class _RawStream(httpx.AsyncByteStream):
+    def __init__(self, data: bytes) -> None:
+        self._data = data
+
+    async def __aiter__(self):
+        yield self._data
+
+
+class _Trickle(httpx.AsyncByteStream):
+    async def __aiter__(self):
+        for _ in range(200):
+            await asyncio.sleep(0.05)
+            yield b"x"
 
 
 def client_for(transport, **kw) -> SandboxHttpClient:
@@ -40,7 +59,9 @@ async def test_request_carries_bearer_and_meta_and_no_identity(tmp_path):
     request = seen[0]
     assert request.headers["Authorization"] == "Bearer good"
     assert request.url.path == "/v1/render.docx"
-    assert set(request.headers) & {"x-user-id", "x-account-id", "cookie"} == set()
+    allowed = {"host", "authorization", "content-type", "content-length", "accept-encoding", "accept",
+               "user-agent", "connection", sc.META_HEADER.lower()}
+    assert set(request.headers) <= allowed, set(request.headers) - allowed
     assert transport.engine.calls[0][3] == b"payload"
 
 
@@ -114,14 +135,25 @@ async def test_recycling_three_times_then_unavailable():
 
 
 async def test_429_is_unavailable():
+    transport = Scripted(reply(429))
     with pytest.raises(SandboxUnavailable):
-        await client_for(Scripted(reply(429))).call(OP, b"b", LIMITS)
+        await client_for(transport).call(OP, b"b", LIMITS)
+    assert len(transport.requests) == 1
 
 
-@pytest.mark.parametrize("status", [None, SandboxStatus.UNCONFIGURED, SandboxStatus.ERROR])
+@pytest.mark.parametrize("status", [None, SandboxStatus.ERROR])
 async def test_503_other_is_unavailable(status):
+    transport = Scripted(reply(503, status))
     with pytest.raises(SandboxUnavailable):
-        await client_for(Scripted(reply(503, status))).call(OP, b"b", LIMITS)
+        await client_for(transport).call(OP, b"b", LIMITS)
+    assert len(transport.requests) == 1
+
+
+async def test_503_unconfigured_is_unavailable_without_retry():
+    transport = Scripted(reply(503, SandboxStatus.UNCONFIGURED))
+    with pytest.raises(SandboxUnavailable):
+        await client_for(transport).call(OP, b"b", LIMITS)
+    assert len(transport.requests) == 1
 
 
 async def test_connection_refused_is_unavailable():
@@ -206,5 +238,98 @@ async def test_client_logs_request_id_op_status_wall_only(caplog):
     lines = [r.getMessage() for r in caplog.records if "[SandboxClient]" in r.getMessage()]
     assert len(lines) == 1
     request_id = sc.decode_meta(transport.requests[0].headers[sc.META_HEADER]).request_id
-    assert lines[0].startswith(f"[SandboxClient] request_id={request_id} op=render.docx status=ok wall_s=")
-    assert "SECRET" not in lines[0] and "good" not in lines[0] and BASE not in lines[0]
+    assert re.fullmatch(rf"\[SandboxClient\] request_id={request_id} op=render\.docx status=ok wall_s=\d+\.\d{{3}}",
+                        lines[0]), lines[0]
+
+
+async def test_log_lists_every_attempt_request_id(caplog):
+    transport = Scripted(reply(503, SandboxStatus.RECYCLING), reply(200, SandboxStatus.OK, b"x"))
+    with caplog.at_level(logging.INFO):
+        await client_for(transport).call(OP, b"b", LIMITS)
+    ids = [sc.decode_meta(r.headers[sc.META_HEADER]).request_id for r in transport.requests]
+    line = [r.getMessage() for r in caplog.records if "[SandboxClient]" in r.getMessage()][0]
+    assert f"request_id={','.join(ids)} " in line
+
+
+# --- response hardening ------------------------------------------------------------------------------------
+
+def _gzip(data: bytes) -> bytes:
+    return gzip.compress(data)
+
+
+@pytest.mark.parametrize("encoding,layers", [("gzip", 1), ("gzip, gzip", 2)])
+async def test_content_encoded_reply_is_malformed_and_never_decoded(encoding, layers):
+    body = b"x" * 100_000
+    for _ in range(layers):
+        body = _gzip(body)
+    # Raw bytes behind a Content-Encoding: httpx would decode them on aiter_bytes; the client must not.
+    transport = Scripted(httpx.Response(200, headers={sc.OUTCOME_HEADER: outcome_header(SandboxStatus.OK),
+                                                      "Content-Encoding": encoding},
+                                        stream=_RawStream(body)))
+    out = await client_for(transport).call(OP, b"b", LIMITS)
+    assert (out.outcome.status, out.outcome.detail, out.body) == (SandboxStatus.ERROR, "malformed_envelope", b"")
+
+
+async def test_request_asks_for_identity_encoding():
+    transport = Scripted(reply(200, SandboxStatus.OK, b"x"))
+    await client_for(transport).call(OP, b"b", LIMITS)
+    assert transport.requests[0].headers["Accept-Encoding"] == "identity"
+
+
+async def test_ok_body_over_the_response_cap_is_too_large_not_truncated(monkeypatch):
+    monkeypatch.setattr(http_client_module, "RESPONSE_CAP_BYTES", 10)
+    out = await client_for(Scripted(reply(200, SandboxStatus.OK, b"x" * 11))).call(OP, b"b", LIMITS)
+    assert (out.outcome.status, out.outcome.detail, out.body) == (SandboxStatus.TOO_LARGE, "response_too_large", b"")
+    ok = await client_for(Scripted(reply(200, SandboxStatus.OK, b"x" * 10))).call(OP, b"b", LIMITS)
+    assert ok.outcome.status == SandboxStatus.OK and len(ok.body) == 10
+
+
+async def test_trickling_server_hits_the_total_deadline_and_is_lost(monkeypatch):
+    monkeypatch.setattr(http_client_module, "TIMEOUT_MARGIN_S", 0.1)
+    limits = SandboxLimits(wall_s=0.1, memory_bytes=1 << 30, cpu_s=1.0, file_bytes=1 << 20)
+    transport = Scripted(httpx.Response(200, headers={sc.OUTCOME_HEADER: outcome_header(SandboxStatus.OK)},
+                                        stream=_Trickle()))
+    out = (await client_for(transport).call(OP, b"b", limits)).outcome
+    assert (out.status, out.detail) == (SandboxStatus.ERROR, "sandbox_lost")
+    assert len(transport.requests) == 2
+
+
+@pytest.mark.parametrize("code", [404, 405])
+async def test_wrong_url_without_an_outcome_is_misconfigured(code, caplog):
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(SandboxMisconfigured):
+            await client_for(Scripted(httpx.Response(code, content=b"<html>not found</html>"))).call(OP, b"b", LIMITS)
+    assert any(r.levelno == logging.ERROR for r in caplog.records)
+
+
+async def test_unknown_op_with_an_outcome_stays_an_outcome():
+    out = await client_for(Scripted(reply(404, SandboxStatus.BAD_REQUEST, b"unknown op"))).call(OP, b"b", LIMITS)
+    assert out.outcome.status == SandboxStatus.BAD_REQUEST
+
+
+async def test_headerless_413_is_too_large_without_the_front_end_html():
+    out = await client_for(Scripted(httpx.Response(413, content=b"<html>Request Entity Too Large</html>"))).call(
+        OP, b"b", LIMITS)
+    assert out.outcome.status == SandboxStatus.TOO_LARGE and out.body == b""
+
+
+@pytest.mark.parametrize("error,expected", [
+    (httpx.DecodingError("bad"), SandboxUnavailable),
+    (httpx.LocalProtocolError("bad header"), SandboxUnavailable),
+    (httpx.UnsupportedProtocol("no scheme"), SandboxMisconfigured),
+])
+async def test_unclassified_httpx_errors_never_escape_raw(error, expected, caplog):
+    with caplog.at_level(logging.INFO):
+        with pytest.raises(expected):
+            await client_for(Scripted(error)).call(OP, b"b", LIMITS)
+    line = [r.getMessage() for r in caplog.records if r.getMessage().startswith("[SandboxClient] request_id=")][0]
+    assert "status=unavailable" in line or "status=misconfigured" in line
+
+
+async def test_provider_classified_errors_pass_through_unchanged():
+    async def unavailable() -> str:
+        raise SandboxUnavailable("metadata blip")
+
+    client = SandboxHttpClient(BASE, unavailable, transport=Scripted(reply(200, SandboxStatus.OK)))
+    with pytest.raises(SandboxUnavailable):
+        await client.call(OP, b"b", LIMITS)

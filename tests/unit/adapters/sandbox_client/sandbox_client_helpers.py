@@ -41,7 +41,8 @@ class Scripted(httpx.AsyncBaseTransport):
             item = item(request)
         if isinstance(item, BaseException):
             raise item
-        return item
+        # A fresh response per use: a template response's stream can be consumed only once.
+        return httpx.Response(item.status_code, headers=item.headers, stream=item.stream)
 
 
 def real_app_transport(tmp_path, engine=None, recycle="never", gate=None, ceiling=CEILING) -> httpx.ASGITransport:

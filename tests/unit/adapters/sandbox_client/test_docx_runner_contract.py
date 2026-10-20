@@ -7,7 +7,6 @@ import os
 import shutil
 import sys
 
-import httpx
 import pytest
 
 from src.adapters.node_docx_runner import NodeDocxRunner
@@ -15,7 +14,6 @@ from src.adapters.sandbox_client.sandbox_docx_runner import SandboxDocxRunner
 from src.adapters.sandbox_client.sandbox_http_client import SandboxHttpClient
 from src.adapters.sandbox_engine.child_launcher import ChildLauncher
 from src.adapters.sandbox_engine.docx_render_engine import DocxRenderEngine
-from src.domain import sandbox_contract as sc
 from src.domain.sandbox_contract import SandboxLimits, SandboxStatus
 from src.ports.docx_runner_port import DocxRunnerError
 from tests.unit.adapters.sandbox_client.sandbox_client_helpers import BASE, good_token, real_app_transport
@@ -41,7 +39,6 @@ process.stdin.on('end', async () => {
 """
 _THROW = "throw new Error('contract-boom-42');"
 _HANG = "setInterval(() => {}, 1000);"
-_SILENT = "process.stdin.resume(); process.stdin.on('end', () => {});"
 _SPEC = '{"title": "Hello"}'
 
 
