@@ -30,7 +30,7 @@ import re
 import secrets
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, Mapping, Optional, Protocol, Union
+from typing import Any, Dict, Mapping, Optional, Protocol, Union, runtime_checkable
 
 META_HEADER = "X-Sandbox-Meta"
 OUTCOME_HEADER = "X-Sandbox-Outcome"
@@ -128,6 +128,7 @@ class SandboxEngineResult:
     wall_s: float
 
 
+@runtime_checkable
 class SandboxEngine(Protocol):
     async def run(self, body_path: str, workdir: str, limits: SandboxLimits) -> SandboxEngineResult: ...
 

@@ -1,7 +1,7 @@
 """
 render.docx engine child (RFC §4.6, §4.9; plan G1, G5): runs under `limits_exec`, as the engine uid.
 
-    python -B -E -s <path>/render_docx_child.py <body-file> <workdir>
+    python -B -I <path>/render_docx_child.py <body-file> <workdir>
 
 Body framing (G1): `u32-be script_length | script | spec`. The server writes the body to a file and never splits it; this
 child does. It writes `script.js` (the shared security prelude, then the model's script) and `spec.json` into the workdir,
@@ -11,7 +11,8 @@ pipe the server interprets, and err.txt is the one place a child's stderr comes 
 Module resolution relies on NODE_PATH (G5), because the script lives in the workdir, not in `docx_generator/`.
 
 Started by file path, not `-m`: `limits_exec` has already changed into the workdir, where `src` cannot be found, so the
-module puts the repository root on sys.path itself before importing the shared prelude.
+module appends the repository root to sys.path itself (last, under `-I`, which also keeps the script's own directory
+and the cwd off the path) before importing the shared prelude.
 
 Exit codes: EXIT_BAD_REQUEST = unreadable body or arguments; EXIT_EXEC_FAILED = `node` could not be started. Anything else
 is node's own exit status.
@@ -19,15 +20,15 @@ is node's own exit status.
 from __future__ import annotations
 
 import os
-import struct
 import sys
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Sequence
 
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 if _REPO_ROOT not in sys.path:
-    sys.path.insert(0, _REPO_ROOT)
+    sys.path.append(_REPO_ROOT)   # last: nothing in the repo root can shadow a stdlib module imported after this
 
 from src.domain.docx_script_prelude import SAFE_ENV_KEYS, SECURITY_PRELUDE  # noqa: E402
+from src.domain.sandbox_docx_frame import BadBody, split_body  # noqa: E402
 
 EXIT_BAD_REQUEST = 4    # same meaning as limits_exec / drive_parser.child
 EXIT_EXEC_FAILED = 5
@@ -37,26 +38,7 @@ SPEC_FILE = "spec.json"
 OUTPUT_FILE = "out.bin"
 ERROR_FILE = "err.txt"
 
-_LENGTH = struct.Struct(">I")
 _NODE_MODULES = os.path.join(_REPO_ROOT, "docx_generator", "node_modules")
-
-
-class BadBody(ValueError):
-    """The framed body is shorter than its header says (or has no header)."""
-
-
-def frame_body(script: bytes, spec: bytes) -> bytes:
-    return _LENGTH.pack(len(script)) + script + spec
-
-
-def split_body(body: bytes) -> Tuple[bytes, bytes]:
-    if len(body) < _LENGTH.size:
-        raise BadBody("body has no length header")
-    (length,) = _LENGTH.unpack_from(body)
-    end = _LENGTH.size + length
-    if end > len(body):
-        raise BadBody("script length runs past the body")
-    return body[_LENGTH.size:end], body[end:]
 
 
 def build_script(user_script: bytes) -> bytes:

@@ -1,5 +1,6 @@
 """DocxRenderEngine (RFC §4.6, §4.9; plan G1, G2, G5, G20): mapping, caps, real-node behaviour."""
 import asyncio
+import json
 import os
 import shutil
 import sys
@@ -8,7 +9,8 @@ import pytest
 
 from src.adapters.sandbox_engine.child_launcher import ChildLauncher, ChildResult
 from src.adapters.sandbox_engine.docx_render_engine import DocxRenderEngine
-from src.adapters.sandbox_engine.render_docx_child import frame_body
+from src.domain.docx_script_prelude import SAFE_ENV_KEYS
+from src.domain.sandbox_docx_frame import frame_body
 from src.domain.sandbox_contract import ERROR_TEXT_CAP_BYTES, SandboxEngine, SandboxLimits, SandboxStatus
 
 _ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
@@ -53,7 +55,7 @@ async def _run(tmp_path, script, spec=b'{"title": "Hello"}', **limit_kw):
 
 
 def test_satisfies_the_engine_protocol():
-    engine: SandboxEngine = DocxRenderEngine(ChildLauncher(user=None))   # noqa: F841 - static check target
+    assert isinstance(DocxRenderEngine(ChildLauncher(user=None)), SandboxEngine)
 
 
 @needs_node
@@ -110,6 +112,8 @@ async def test_env_has_no_secret_names(tmp_path, monkeypatch):
     assert result.status is SandboxStatus.OK, result.detail
     text = open(result.output_path).read()
     assert "SANDBOX_TEST_SECRET_TOKEN" not in text and "s3cret-value" not in text
+    # macOS's runtime adds __CF_USER_TEXT_ENCODING to every process on its own; it is not ours to withhold.
+    assert set(json.loads(text)) - {"__CF_USER_TEXT_ENCODING"} <= set(SAFE_ENV_KEYS)
     assert "NODE_PATH" in text
 
 
@@ -162,8 +166,10 @@ async def test_launch_arguments(tmp_path):
     result, launcher = await _fake_run(tmp_path, write)
     argv, kw = launcher.calls[0]
     assert result.status is SandboxStatus.OK and result.peak_rss_bytes == 123
+    assert os.path.dirname(result.output_path) != str(tmp_path / "work")   # outside the engine-writable workdir
+    assert open(result.output_path, "rb").read() == b"PK"
     assert argv[-2:] == [str(tmp_path / "body"), str(tmp_path / "work")]
-    assert argv[1:4] == ["-B", "-E", "-s"] and argv[4].endswith("render_docx_child.py") and "limits_exec" not in " ".join(argv)
+    assert argv[1:3] == ["-B", "-I"] and argv[3].endswith("render_docx_child.py") and "limits_exec" not in " ".join(argv)
     assert kw["op"] == "render_docx" and kw["env"] == {}
     assert kw["stdin_path"] == os.devnull and kw["stdout_path"] == os.devnull
 
@@ -181,3 +187,60 @@ async def test_file_size_signal_maps_to_too_large(tmp_path):
     import signal
     result, _ = await _fake_run(tmp_path, lambda w: None, returncode=-signal.SIGXFSZ)
     assert result.status is SandboxStatus.TOO_LARGE
+
+
+# -- hostile workdir: the script controls err.txt / out.bin ---------------------------------------------------------
+
+_SECRET = b"SERVER-ONLY-SECRET-BYTES"
+
+
+def _target(tmp_path):
+    target = tmp_path / "server_secret"
+    target.write_bytes(_SECRET)
+    return str(target)
+
+
+def _in(workdir, name):
+    return os.path.join(workdir, name)
+
+
+async def test_err_txt_symlink_does_not_leak(tmp_path):
+    target = _target(tmp_path)
+    result, _ = await _fake_run(tmp_path, lambda w: os.symlink(target, _in(w, "err.txt")), returncode=1)
+    assert result.status is SandboxStatus.ERROR
+    assert _SECRET.decode() not in result.detail
+
+
+async def test_out_bin_symlink_is_refused(tmp_path):
+    target = _target(tmp_path)
+    result, _ = await _fake_run(tmp_path, lambda w: os.symlink(target, _in(w, "out.bin")))
+    assert result.status is not SandboxStatus.OK and result.output_path is None
+    assert _SECRET.decode() not in result.detail
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="needs mkfifo")
+async def test_out_bin_fifo_returns_promptly(tmp_path):
+    result, _ = await asyncio.wait_for(
+        _fake_run(tmp_path, lambda w: os.mkfifo(_in(w, "out.bin"))), timeout=5)
+    assert result.status is not SandboxStatus.OK and result.output_path is None
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="needs mkfifo")
+async def test_err_txt_fifo_returns_promptly(tmp_path):
+    result, _ = await asyncio.wait_for(
+        _fake_run(tmp_path, lambda w: os.mkfifo(_in(w, "err.txt")), returncode=1), timeout=5)
+    assert result.status is SandboxStatus.ERROR
+
+
+async def test_out_bin_directory_is_refused(tmp_path):
+    result, _ = await _fake_run(tmp_path, lambda w: os.mkdir(_in(w, "out.bin")))
+    assert result.status is not SandboxStatus.OK and result.output_path is None
+
+
+async def test_output_dir_is_private_and_outside_workdir(tmp_path):
+    def write(w):
+        open(_in(w, "out.bin"), "wb").write(b"PK")
+    result, _ = await _fake_run(tmp_path, write)
+    out_dir = os.path.dirname(result.output_path)
+    assert not out_dir.startswith(str(tmp_path / "work"))
+    assert (os.stat(out_dir).st_mode & 0o777) == 0o700
