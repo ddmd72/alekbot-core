@@ -164,6 +164,59 @@ def test_main_refuses_start_on_cloud_run_with_empty_caller_set(env, monkeypatch)
     assert sandbox_main.main([], env, install_signals=False) != 0
 
 
+def test_main_starts_locally_without_callers(env, monkeypatch):
+    del env["SANDBOX_CALLERS_RENDER"]
+    env["SANDBOX_URL"] = ""
+    built = {}
+
+    class Fake:
+        def __init__(self, policy, spawn, **kwargs):
+            built["policy"] = policy
+
+        def run(self):
+            return 0
+
+        def terminate(self):
+            pass
+
+    monkeypatch.setattr(sandbox_main, "SandboxSupervisor", Fake)
+    assert sandbox_main.main([], env, install_signals=False) == 0
+    assert built["policy"] == "always"
+
+
+def test_open_plan_builds_an_open_gate_that_allows_render(env, monkeypatch):
+    del env["SANDBOX_CALLERS_RENDER"]
+    env["SANDBOX_URL"] = ""
+    seen = {}
+    monkeypatch.setattr(sandbox_main, "build_engine_registry", lambda plan: {})
+    real = sandbox_main.create_sandbox_blueprint
+
+    def spy(engines, gate, *rest):
+        seen["gate"] = gate
+        return real(engines, gate, *rest)
+
+    monkeypatch.setattr(sandbox_main, "create_sandbox_blueprint", spy)
+    sandbox_main.build_app(env, FakeRecycler())
+    assert seen["gate"].authorize(None, "render.docx").allowed is True
+
+
+def test_open_mode_binds_loopback_only(env):
+    from src.composition.sandbox_setup import validate_startup
+    open_env = {k: v for k, v in env.items() if k not in ("SANDBOX_CALLERS_RENDER", "SANDBOX_URL")}
+    assert sandbox_main.bind_host(validate_startup(open_env, on_cloud_run=False)) == "127.0.0.1"
+    assert sandbox_main.bind_host(validate_startup(env, on_cloud_run=False)) == "0.0.0.0"
+    cloud = {**env, "K_SERVICE": "svc"}
+    assert sandbox_main.bind_host(validate_startup(cloud, on_cloud_run=True)) == "0.0.0.0"
+
+
+@pytest.mark.parametrize("raw", ["abc", "99999"])
+def test_malformed_recycle_fd_is_a_logged_refusal_not_a_traceback(env, monkeypatch, raw):
+    env["SANDBOX_RECYCLE_FD"] = raw
+    monkeypatch.setattr(sandbox_main, "build_engine_registry", lambda plan: {})
+    monkeypatch.setattr(sandbox_main, "run_server", lambda *a, **k: pytest.fail("must not serve"))
+    assert sandbox_main.main(["--serve"], env) == 2
+
+
 def test_main_starts_locally_without_service_url(env, monkeypatch):
     """Locally (K_SERVICE unset) no URL is needed to start: the service comes up unconfigured. The brief's
     `without_callers` variant is impossible: T7's validate_startup requires the RENDER group even locally

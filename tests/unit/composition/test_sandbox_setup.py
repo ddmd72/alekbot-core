@@ -185,3 +185,17 @@ def test_output_root_overlap_check_resolves_symlinked_work_root(tmp_path):
     plan = _plan({"SANDBOX_WORK_ROOT": str(link), "SANDBOX_OUTPUT_ROOT": str(real / "out")})
     with pytest.raises(SandboxStartupError):
         build_engine_registry(plan)
+
+
+def test_validate_startup_local_without_callers_or_url_is_open():
+    plan = validate_startup({}, on_cloud_run=False)
+    assert plan.caller_sets == {} and plan.service_url == "" and plan.unconfigured is False
+
+
+def test_validate_startup_local_with_callers_but_no_url_stays_unconfigured():
+    assert _plan().unconfigured is True
+
+
+def test_validate_startup_on_cloud_run_without_callers_is_still_refused():
+    with pytest.raises(SandboxCallersError):
+        validate_startup({"K_SERVICE": "svc"}, on_cloud_run=True)

@@ -7,8 +7,8 @@ policy is unit-testable without processes.
 
 Policy (`always` | `never`; anything else, including the RFC's historical `abnormal`, refuses to start, G4):
     always  the server writes one byte to the pipe after its one response is out. The supervisor then sends SIGTERM
-            to the server (Hypercorn finishes the in-flight response and stops), waits, kills the server's whole
-            process group, and returns 0 so the platform replaces the instance.
+            to the server (Hypercorn finishes the in-flight response and stops), waits, kills what is left of the
+            server's process group, and returns 0 so the platform replaces the instance.
     never   local development only: the server stays up until the supervisor itself is told to stop.
 A server that exits on its own is a failure (non-zero), never a quiet end. `terminate()` (SIGTERM/SIGINT to the
 supervisor) is forwarded to the server. If the server ignores SIGTERM for `kill_grace_s` it gets SIGKILL.
@@ -130,7 +130,8 @@ class SandboxSupervisor:
             logger.debug("[Sandbox] server already gone when signalled")
 
     def _clear_group(self) -> None:
-        """Leftovers of the server (an engine child that outlived it) share its group: end them all."""
+        """End what is left of the server's own group. Engine children run in their own session (start_new_session), so this
+        does not reach them: on Cloud Run the container exit bounds them and, as PID 1, the supervisor reaps orphans."""
         try:
             self._killpg(self._pid, signal.SIGKILL)
         except (ProcessLookupError, PermissionError):

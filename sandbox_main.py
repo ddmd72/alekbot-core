@@ -6,8 +6,10 @@ One file, two processes (like `indexer_main.py` it is the only place the layers 
     python sandbox_main.py            SUPERVISOR (the container's PID 1). Validates the environment, creates the work
                                       root, starts `python sandbox_main.py --serve` as a child in its own process
                                       group with the write end of a pipe, and waits. After the one request of the
-                                      instance (policy `always`) it SIGTERMs the child, clears the group and exits 0
-                                      so the platform replaces the instance. Imports no payload code.
+                                      instance (policy `always`) it SIGTERMs the child, kills what is left of the
+                                      child's group and exits 0 so the platform replaces the instance. The supervisor
+                                      and recycler modules import no payload code; this file itself loads Quart,
+                                      Hypercorn and the app modules (engines are imported only by the server).
     python sandbox_main.py --serve    SERVER. Quart on Hypercorn (HTTP/2 prior knowledge, which is what Cloud Run
                                       speaks to a `--use-http2` service, and HTTP/1.1). Assembles the blueprint, the
                                       caller gate and the pipe recycler. SIGTERM: Hypercorn finishes the in-flight
@@ -101,11 +103,11 @@ def build_app(env: Mapping[str, str], recycler: Optional[Any]) -> Quart:
     return app
 
 
-async def run_server(app: Any, env: Mapping[str, str] = os.environ, *,
+async def run_server(app: Any, env: Mapping[str, str] = os.environ, *, host: str = "0.0.0.0",
                      graceful_timeout_s: float = GRACEFUL_TIMEOUT_S) -> None:
     """Serve until SIGTERM/SIGINT, then let in-flight work finish for at most `graceful_timeout_s` and cancel the rest."""
     config = HypercornConfig()
-    config.bind = [f"0.0.0.0:{int(env.get('PORT', '8080'))}"]
+    config.bind = [f"{host}:{int(env.get('PORT', '8080'))}"]
     config.accesslog = None
     config.errorlog = "-"
     config.graceful_timeout = graceful_timeout_s
@@ -140,16 +142,27 @@ def _recycler_from_env(env: Mapping[str, str]) -> Optional[PipeRecycler]:
     raw = env.get(RECYCLE_FD_ENV)
     if not raw:
         return None
-    return PipeRecycler(int(raw))
+    try:
+        return PipeRecycler(int(raw))
+    except (ValueError, OSError) as exc:
+        logger.error("[Sandbox] unusable %s (%s)", RECYCLE_FD_ENV, type(exc).__name__)
+        raise SandboxStartupError(f"{RECYCLE_FD_ENV} is not a usable pipe descriptor") from exc
+
+
+def bind_host(plan: StartupPlan) -> str:
+    """Loopback when the gate is open (local, no callers, no URL): engines run as the developer's uid, so an open
+    endpoint must not be reachable from the LAN."""
+    return "127.0.0.1" if not plan.on_cloud_run and not plan.caller_sets and not plan.service_url else "0.0.0.0"
 
 
 def serve_main(env: Mapping[str, str]) -> int:
     try:
+        plan = validate_startup(env, on_cloud_run=bool(env.get("K_SERVICE")))
         app = build_app(env, _recycler_from_env(env))
     except (SandboxStartupError, SandboxCallersError) as exc:
         logger.error("[Sandbox] server refused to start: %s", exc)
         return _EXIT_REFUSED
-    asyncio.run(run_server(app, env))
+    asyncio.run(run_server(app, env, host=bind_host(plan)))
     return 0
 
 
@@ -157,7 +170,7 @@ def serve_main(env: Mapping[str, str]) -> int:
 
 def make_spawn(argv: Sequence[str], env: Mapping[str, str]) -> Callable[[int], int]:
     """A spawn function for `SandboxSupervisor`: the child inherits `env` unchanged plus the pipe's fd number, and gets
-    its own session so the supervisor can end the whole group."""
+    its own session so the supervisor can end what is left of its group."""
     def spawn(write_fd: int) -> int:
         child_env = dict(env)
         child_env[RECYCLE_FD_ENV] = str(write_fd)

@@ -79,14 +79,18 @@ def validate_startup(
 
     caller_sets: Dict[str, FrozenSet[str]] = load_caller_sets(env)   # raises on overlap / empty on Cloud Run
     unknown = sorted(set(caller_sets) - set(GROUP_PREFIXES))
-    if unknown or "RENDER" not in caller_sets:
+    url = (env.get("SANDBOX_URL") or "").strip().rstrip("/")
+    local_open = not on_cloud_run and not caller_sets and not url
+    if local_open:
+        # RFC §4.4: local development with nothing configured runs with the gate open (T6 builds it open).
+        logger.warning("[Sandbox] no callers and no URL, not on Cloud Run: local, gate open")
+    elif unknown or "RENDER" not in caller_sets:
         logger.error(f"[Sandbox] refusing to start: caller groups {sorted(caller_sets)} do not match this service")
         raise SandboxStartupError(
             f"caller groups must be exactly {sorted(GROUP_PREFIXES)}; got unknown: {unknown or 'none, RENDER missing'}"
         )
 
-    url = (env.get("SANDBOX_URL") or "").strip().rstrip("/")
-    if not url:
+    if not url and not local_open:
         logger.warning("[Sandbox] SANDBOX_URL empty: starting unconfigured (only /health; ops answer 503)")
 
     tmp = tempfile.gettempdir()
@@ -95,7 +99,7 @@ def validate_startup(
     engine_user = env.get("SANDBOX_ENGINE_USER") or (DEFAULT_ENGINE_USER if on_cloud_run else None)
 
     return StartupPlan(
-        recycle=recycle, service_url=url, unconfigured=not url, caller_sets=caller_sets,
+        recycle=recycle, service_url=url, unconfigured=not url and not local_open, caller_sets=caller_sets,
         group_prefixes=dict(GROUP_PREFIXES), work_root=work_root, output_root=output_root,
         engine_user=engine_user, on_cloud_run=on_cloud_run,
     )
