@@ -193,7 +193,7 @@ def decode_meta(header: str) -> SandboxMeta:
     if not set(obj) <= _META_KEYS or not {"request_id", "limits"} <= set(obj):
         raise SandboxContractError("meta keys outside the closed schema")
     request_id = obj["request_id"]
-    if not isinstance(request_id, str) or not _REQUEST_ID_RE.match(request_id):
+    if not isinstance(request_id, str) or not _REQUEST_ID_RE.fullmatch(request_id):
         raise SandboxContractError("bad request_id")
     raw_limits = obj["limits"]
     if not isinstance(raw_limits, dict) or set(raw_limits) != _LIMIT_KEYS:
@@ -202,9 +202,9 @@ def decode_meta(header: str) -> SandboxMeta:
         raise SandboxContractError("limits must be finite numbers")
     kind = obj.get("kind")
     ext = obj.get("ext")
-    if kind is not None and (not isinstance(kind, str) or not _KIND_RE.match(kind)):
+    if kind is not None and (not isinstance(kind, str) or not _KIND_RE.fullmatch(kind)):
         raise SandboxContractError("bad kind")
-    if ext is not None and (not isinstance(ext, str) or not _EXT_RE.match(ext)):
+    if ext is not None and (not isinstance(ext, str) or not _EXT_RE.fullmatch(ext)):
         raise SandboxContractError("bad ext")
     limits = SandboxLimits(
         wall_s=float(raw_limits["wall_s"]),

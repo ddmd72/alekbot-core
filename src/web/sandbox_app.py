@@ -27,17 +27,18 @@ Three tiny Protocols live here by design (R2: gate decision, gate, recycler), ne
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import pwd
 import shutil
 import stat
 import time
 from types import TracebackType
-from typing import Any, AsyncIterator, Mapping, Optional, Protocol
+from typing import Any, AsyncIterator, Mapping, Optional, Protocol, Tuple
 
 from quart import Blueprint, Response, request
 from quart.wrappers.response import ResponseBody
-from werkzeug.exceptions import RequestEntityTooLarge
+from werkzeug.exceptions import HTTPException, RequestEntityTooLarge
 
 from ..domain.sandbox_contract import (
     CEILING_WALL_S,
@@ -103,24 +104,45 @@ def create_sandbox_blueprint(
     limits_ceiling: SandboxLimits,
     config: Mapping[str, Any],
 ) -> Blueprint:
-    """`config`: `work_root` (str), `engine_user` (name or None), `recycle` ("always" | "never").
+    """`config`: `work_root` (str), `engine_user` (name or None), `recycle` ("always" | "never"), and optionally
+    `output_root` (the engines' server-only output root; without it only `render_out_*` directories are removable).
 
     Raises ValueError for an unknown policy, or when the effective uid is 0 and the engine user is missing."""
     work_root = str(config["work_root"])
+    output_root = os.path.normpath(str(config["output_root"])) if config.get("output_root") else None
     policy = str(config.get("recycle", RECYCLE_ALWAYS))
     if policy not in (RECYCLE_ALWAYS, RECYCLE_NEVER):
         raise ValueError(f"unknown recycle policy {policy!r}")
     engine_ids = _resolve_engine_ids(config.get("engine_user"))
+    body_deadline_s = max(CEILING_WALL_S, limits_ceiling.wall_s) + TIMEOUT_MARGIN_S
 
     bp = Blueprint("sandbox", __name__)
     state = {"busy": False, "draining": False}
 
     @bp.record_once
-    def _apply_limits(setup_state: Any) -> None:
-        cfg = setup_state.app.config
-        cfg["MAX_CONTENT_LENGTH"] = REQUEST_CAP_BYTES
-        cfg["BODY_TIMEOUT"] = max(CEILING_WALL_S, limits_ceiling.wall_s) + TIMEOUT_MARGIN_S
-        cfg["RESPONSE_TIMEOUT"] = max(CEILING_WALL_S, limits_ceiling.wall_s) + TIMEOUT_MARGIN_S
+    def _register(setup_state: Any) -> None:
+        app = setup_state.app
+        app.config["MAX_CONTENT_LENGTH"] = REQUEST_CAP_BYTES
+        app.config["BODY_TIMEOUT"] = body_deadline_s
+        app.config["RESPONSE_TIMEOUT"] = body_deadline_s
+        app.register_error_handler(Exception, _unhandled)
+        app.after_request(_ensure_outcome)
+
+    async def _unhandled(error: Exception) -> Response:
+        """Anything that escapes the route (routing errors, bugs) still answers with an outcome header."""
+        if isinstance(error, HTTPException):
+            code = error.code or 500
+            text = error.name
+        else:
+            logger.error("[Sandbox] unhandled %s", type(error).__name__)
+            code, text = 500, "internal error"
+        return Response(text, status=code, content_type="text/plain; charset=utf-8")
+
+    async def _ensure_outcome(resp: Response) -> Response:
+        if OUTCOME_HEADER not in resp.headers and request.path != "/health":
+            resp.headers[OUTCOME_HEADER] = encode_outcome(SandboxOutcome(status=SandboxStatus.ERROR,
+                                                                         detail=f"http_{resp.status_code}"))
+        return resp
 
     @bp.get("/health")
     async def health() -> Response:
@@ -128,8 +150,7 @@ def create_sandbox_blueprint(
 
     @bp.post("/v1/<op>")
     async def call(op: str) -> Response:
-        started = time.monotonic()
-        ctx = _RequestState(op=_UNKNOWN_OP, started=started)
+        ctx = _RequestState(op=_UNKNOWN_OP, started=time.monotonic())
 
         decision = gate.authorize(request.headers.get("Authorization"), op)
         if not decision.allowed:
@@ -152,7 +173,7 @@ def create_sandbox_blueprint(
 
             try:
                 meta = decode_meta(request.headers.get(META_HEADER, ""))
-                limits = clamp_limits(meta.limits, limits_ceiling)
+                limits = clamp_limits(meta.limits, limits_ceiling)  # Gate-4 delta: step 5, not 7 (see T4 report)
             except SandboxContractError:
                 return _refuse(ctx, 400, SandboxStatus.BAD_REQUEST, "bad_meta")
             ctx.request_id = meta.request_id
@@ -173,31 +194,51 @@ def create_sandbox_blueprint(
                 state["draining"] = True
             try:
                 _chown(body_path, engine_ids)
-                too_large = await _copy_body(fd, ctx)
+                outcome_of_copy = await _copy_body(fd, ctx)
             finally:
                 os.close(fd)
-            if too_large:
+            if outcome_of_copy == "too_large":
+                resp = _answer_text(ctx, SandboxStatus.TOO_LARGE, "request_too_large", "request too large")
                 handed_off = True
-                return _answer_text(ctx, SandboxStatus.TOO_LARGE, "request_too_large", "request too large")
+                return resp
+            if outcome_of_copy == "timeout":
+                resp = _answer_text(ctx, SandboxStatus.BAD_REQUEST, "body_timeout", "request body too slow",
+                                    code=408)
+                handed_off = True
+                return resp
 
             try:
                 result = await engine.run(body_path, workdir, limits)
-            except Exception:
-                logger.exception("[Sandbox] engine raised for op=%s", ctx.op)
+            except Exception as exc:
+                logger.error("[Sandbox] engine raised %s (op=%s)", type(exc).__name__, ctx.op)
+                resp = _answer_text(ctx, SandboxStatus.ERROR, "", "engine failure")
                 handed_off = True
-                return _answer_text(ctx, SandboxStatus.ERROR, "", "engine failure")
-            ctx.output_dir = os.path.dirname(result.output_path) if result.output_path else None
+                return resp
             ctx.peak_rss = int(result.peak_rss_bytes)
+            if result.output_path:
+                if _removable_output_dir(result.output_path, output_root, work_root):
+                    ctx.output_dir = os.path.dirname(result.output_path)
+                else:
+                    logger.error("[Sandbox] engine output outside its root, ignored (op=%s)", ctx.op)
+                    resp = _answer_text(ctx, SandboxStatus.ERROR, "", "engine failure")
+                    handed_off = True
+                    return resp
 
+            resp = _answer_result(ctx, result)
             handed_off = True
-            return _answer_result(ctx, result)
+            return resp
+        except Exception as exc:
+            logger.error("[Sandbox] request failed: %s", type(exc).__name__)
+            if not ctx.wrote:
+                return _refuse(ctx, 500, SandboxStatus.ERROR, "internal_error")
+            resp = _answer_text(ctx, SandboxStatus.ERROR, "", "internal error")
+            handed_off = True
+            return resp
         finally:
             _cleanup(ctx)
             if not handed_off:
-                # Refused before any payload byte, or cancelled/failed before an answer existed.
-                if not ctx.recycles:
-                    state["busy"] = False
-                _fire_recycler(ctx)
+                # Refused before any payload byte, or cancelled before an answer existed.
+                _finish(ctx)
                 _log(ctx, SandboxStatus.ERROR)
 
     def _refuse(ctx: "_RequestState", code: int, status: SandboxStatus, detail: str, *, close: bool = False
@@ -209,66 +250,83 @@ def create_sandbox_blueprint(
         _log(ctx, status)
         return resp
 
-    def _answer_text(ctx: "_RequestState", status: SandboxStatus, header_detail: str, text: str) -> Response:
-        resp = _text_response(_HTTP_STATUS[status], status, header_detail, text, ctx)
+    def _answer_text(ctx: "_RequestState", status: SandboxStatus, header_detail: str, text: str, *,
+                     code: Optional[int] = None) -> Response:
+        resp = _text_response(code or _HTTP_STATUS[status], status, header_detail, text, ctx)
         if ctx.recycles:
             resp.headers["Connection"] = "close"
-        resp.response = _EndBody(resp.response, lambda: _finish(ctx))
         _log(ctx, status)
+        _register_finish(ctx)
         return resp
 
     def _answer_result(ctx: "_RequestState", result: SandboxEngineResult) -> Response:
         status = result.status
-        if status == SandboxStatus.OK:
-            opened = _open_output(result.output_path)
-            if opened is None:
-                logger.error("[Sandbox] engine reported ok without a usable output file (op=%s)", ctx.op)
-                return _answer_text(ctx, SandboxStatus.ERROR, "", "engine failure")
-            handle, size = opened
-            if size > RESPONSE_CAP_BYTES:
-                handle.close()
-                return _answer_text(ctx, SandboxStatus.TOO_LARGE, "", "response too large")
-            body = _EndBody(_FileChunks(handle), lambda: _finish(ctx))
-            resp = Response(body, status=200, content_type="application/octet-stream")
-            resp.headers["Content-Length"] = str(size)
-            _attach_outcome(resp, ctx, SandboxStatus.OK, "")
-            if ctx.recycles:
-                resp.headers["Connection"] = "close"
-            # Open file stays valid after the workdir and output directory are removed by the handler.
-            _log(ctx, SandboxStatus.OK)
-            return resp
-        text = _bounded_text(result.detail)
-        return _answer_text(ctx, status, "", text)
+        if status != SandboxStatus.OK:
+            return _answer_text(ctx, status, "", _bounded_text(result.detail))
+        opened = _open_output(result.output_path)
+        if opened is None:
+            logger.error("[Sandbox] engine reported ok without a usable output file (op=%s)", ctx.op)
+            return _answer_text(ctx, SandboxStatus.ERROR, "", "engine failure")
+        handle, size = opened
+        if size > RESPONSE_CAP_BYTES:
+            handle.close()
+            return _answer_text(ctx, SandboxStatus.TOO_LARGE, "", "response too large")
+        ctx.handle = handle
+        resp = Response(_EndBody(_FileChunks(handle), ctx.close_handle), status=200,
+                        content_type="application/octet-stream")
+        resp.headers["Content-Length"] = str(size)
+        _attach_outcome(resp, ctx, SandboxStatus.OK, "")
+        if ctx.recycles:
+            resp.headers["Connection"] = "close"
+        # The open file stays valid after the workdir and output directory are removed by the handler.
+        _log(ctx, SandboxStatus.OK)
+        _register_finish(ctx)
+        return resp
+
+    def _register_finish(ctx: "_RequestState") -> None:
+        """Finish the request when the ASGI handler task ends: after the final frame, and also on a cancel
+        (client disconnect) that lands anywhere after the view returned. The view and `_send_response` share
+        one task in Quart, so this cannot fire early."""
+        task = asyncio.current_task()
+        if task is None:
+            _finish(ctx)
+            return
+        task.add_done_callback(lambda _t: _finish(ctx))
 
     def _finish(ctx: "_RequestState") -> None:
-        """After the answer: free the instance for `never`, tell the recycler once for `always`."""
+        """Free the instance for `never`, tell the recycler once for `always`, close the output file."""
+        if ctx.finished:
+            return
+        ctx.finished = True
+        ctx.close_handle()
         if not ctx.recycles:
             state["busy"] = False
-        _fire_recycler(ctx)
+        elif not ctx.recycled:
+            ctx.recycled = True
+            try:
+                recycler.request_served()
+            except Exception as exc:
+                logger.error("[Sandbox] recycler failed: %s", type(exc).__name__)
 
-    def _fire_recycler(ctx: "_RequestState") -> None:
-        if not ctx.recycles or ctx.recycled:
-            return
-        ctx.recycled = True
-        try:
-            recycler.request_served()
-        except Exception:
-            logger.exception("[Sandbox] recycler failed")
-
-    async def _copy_body(fd: int, ctx: "_RequestState") -> bool:
-        """Copy the request body to `fd`, counting bytes. True when the cap was crossed."""
-        try:
+    async def _copy_body(fd: int, ctx: "_RequestState") -> str:
+        """Copy the request body to `fd`, counting bytes. Returns "ok", "too_large" or "timeout"."""
+        async def pump() -> str:
             async for chunk in request.body:
                 ctx.input_bytes += len(chunk)
                 if ctx.input_bytes > REQUEST_CAP_BYTES:
-                    return True
+                    return "too_large"
                 view = memoryview(chunk)
                 while view:
                     written = os.write(fd, view)
                     view = view[written:]
+            return "ok"
+
+        try:
+            return await asyncio.wait_for(pump(), timeout=body_deadline_s)
         except RequestEntityTooLarge:
-            return True
-        return False
+            return "too_large"
+        except asyncio.TimeoutError:
+            return "timeout"
 
     return bp
 
@@ -287,7 +345,16 @@ class _RequestState:
         self.wrote = False
         self.recycles = False
         self.recycled = False
+        self.finished = False
         self.logged = False
+        self.handle: Any = None
+
+    def close_handle(self) -> None:
+        if self.handle is not None:
+            try:
+                self.handle.close()
+            except OSError as exc:
+                logger.error("[Sandbox] closing the output file failed: %s", type(exc).__name__)
 
 
 class _FileChunks:
@@ -309,28 +376,18 @@ class _FileChunks:
 
 
 class _EndBody(ResponseBody):
-    """Wraps a body and runs `on_end` when the server is done with it, even if it never iterated (client gone)."""
+    """Streams `inner` and runs `on_end` (closing the file, idempotent) when the server is done with it.
+    The request itself is finished by the handler task's done callback, not here."""
 
     def __init__(self, inner: Any, on_end: Any) -> None:
         self._inner = inner
         self._on_end = on_end
-        self._done = False
 
     async def __aenter__(self) -> Any:
-        if hasattr(self._inner, "__aenter__"):
-            return await self._inner.__aenter__()
         return self._inner
 
     async def __aexit__(self, exc_type: Any, exc_value: Optional[BaseException], tb: Optional[TracebackType]) -> None:
-        try:
-            if hasattr(self._inner, "close"):
-                self._inner.close()
-            elif hasattr(self._inner, "__aexit__"):
-                await self._inner.__aexit__(exc_type, exc_value, tb)
-        finally:
-            if not self._done:
-                self._done = True
-                self._on_end()
+        self._on_end()
 
     def __aiter__(self) -> AsyncIterator[Any]:
         return self._inner.__aiter__()
@@ -343,7 +400,7 @@ def _engine_for(engines: Mapping[SandboxOp, SandboxEngine], op: str) -> Optional
         return None
 
 
-def _resolve_engine_ids(engine_user: Optional[str]) -> Optional[tuple]:
+def _resolve_engine_ids(engine_user: Optional[str]) -> Optional[Tuple[int, int]]:
     if os.geteuid() != 0:
         return None
     if not engine_user:
@@ -355,7 +412,7 @@ def _resolve_engine_ids(engine_user: Optional[str]) -> Optional[tuple]:
     return entry.pw_uid, entry.pw_gid
 
 
-def _chown(path: str, ids: Optional[tuple]) -> None:
+def _chown(path: str, ids: Optional[Tuple[int, int]]) -> None:
     if ids is None:
         return
     os.chown(path, ids[0], ids[1])
@@ -385,14 +442,14 @@ def _text_response(code: int, status: SandboxStatus, header_detail: str, text: s
     return resp
 
 
-def _open_output(path: Optional[str]) -> Optional[tuple]:
+def _open_output(path: Optional[str]) -> Optional[Tuple[int, int]]:
     """Open the engine's server-owned output file; a regular file only, symlinks refused."""
     if not path:
         return None
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
-    except OSError:
-        logger.exception("[Sandbox] cannot open engine output")
+    except OSError as exc:
+        logger.error("[Sandbox] cannot open engine output: %s", type(exc).__name__)
         return None
     try:
         info = os.fstat(fd)
@@ -400,9 +457,9 @@ def _open_output(path: Optional[str]) -> Optional[tuple]:
             os.close(fd)
             return None
         return os.fdopen(fd, "rb"), info.st_size
-    except OSError:
+    except OSError as exc:
         os.close(fd)
-        logger.exception("[Sandbox] cannot stat engine output")
+        logger.error("[Sandbox] cannot stat engine output: %s", type(exc).__name__)
         return None
 
 
@@ -424,3 +481,16 @@ def _log(ctx: "_RequestState", status: Optional[SandboxStatus]) -> None:
         ctx.request_id, ctx.op, ctx.input_bytes, status.value, time.monotonic() - ctx.started,
         ctx.peak_rss, str(ctx.recycles).lower(),
     )
+
+
+def _removable_output_dir(output_path: str, output_root: Optional[str], work_root: str) -> bool:
+    """The engine's output directory is removed by us, so it must be one of the engine's own: a direct child of
+    the configured output root, or (no root configured) a `render_out_*` directory outside the workdir root.
+    Anything else is refused and never touched."""
+    out_dir = os.path.normpath(os.path.dirname(output_path))
+    if not os.path.isabs(out_dir) or os.path.islink(out_dir):
+        return False
+    if output_root is not None:
+        return os.path.dirname(out_dir) == output_root
+    work = os.path.normpath(work_root)
+    return os.path.basename(out_dir).startswith("render_out_") and not (out_dir == work or out_dir.startswith(work + os.sep))

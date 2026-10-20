@@ -176,3 +176,19 @@ def test_clamp_rejects_non_finite(field: str, bad: float) -> None:
     kwargs[field] = bad
     with pytest.raises(SandboxContractError):
         clamp_limits(SandboxLimits(**kwargs), CEILING)
+
+
+@pytest.mark.parametrize("patch", [
+    {"request_id": "a" * 16 + "\n"},
+    {"kind": "pdf\n"},
+    {"ext": "docx\n"},
+])
+def test_meta_regexes_reject_a_trailing_newline(patch: Dict[str, Any]) -> None:
+    obj: Dict[str, Any] = {
+        "request_id": "a" * 16,
+        "limits": {"wall_s": 1, "memory_bytes": 1, "cpu_s": 1, "file_bytes": 1},
+    }
+    obj.update(patch)
+    header = base64.urlsafe_b64encode(json.dumps(obj).encode()).rstrip(b"=").decode()
+    with pytest.raises(SandboxContractError):
+        decode_meta(header)
