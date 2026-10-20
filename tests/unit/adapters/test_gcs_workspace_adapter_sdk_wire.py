@@ -57,7 +57,8 @@ async def test_the_delete_is_never_generation_addressed():
     await adapter.delete("u1", "projects/a.md", 101, WorkspaceDeleteMeta(deleted_by="chat"))
     patch, delete = calls
     assert patch["method"] == "PATCH" and patch["query_params"]["ifGenerationMatch"] == 101
-    assert patch["data"] == {"metadata": {"deleted_by": "chat", "delete_id": "d1"}}
+    assert patch["data"] == {"metadata": {"deleted_by": "chat", "delete_id": "d1", "deleted_fire": None,
+                                           "renamed_to": None}}
     assert delete["method"] == "DELETE"
     assert delete["query_params"] == {"ifGenerationMatch": 101}  # no "generation": that would erase version 101
 

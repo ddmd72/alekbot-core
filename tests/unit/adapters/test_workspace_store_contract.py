@@ -2,6 +2,8 @@
 service and handler tests use, and GcsWorkspaceAdapter over the SDK-surface emulator. A drift between them fails here."""
 import pytest
 
+from google.api_core.exceptions import NotFound, PreconditionFailed
+
 from src.adapters.gcs_workspace_adapter import GcsWorkspaceAdapter
 from src.domain.exceptions import WorkspaceConflict
 from src.domain.workspace import WorkspaceDeleteMeta, WorkspaceWriteMeta
@@ -113,14 +115,28 @@ async def test_retried_write_that_landed_is_success():
     assert (await adapter.read("u1", P)).entry.generation == e.generation
 
 
-async def test_retried_delete_that_landed_is_success():
+@pytest.mark.parametrize("lost_as", [PreconditionFailed, NotFound])
+async def test_retried_delete_that_landed_is_success(lost_as):
     client = FakeGcsClient()
     adapter = GcsWorkspaceAdapter("ws-bucket", client=client)
     e = await adapter.put("u1", P, b"v1", CHAT, 0)
-    client.lose_next_delete_response = True
+    client.lose_next_delete_response_as = lost_as
     await adapter.delete("u1", P, e.generation, WorkspaceDeleteMeta(deleted_by="chat"))
     with pytest.raises(FileNotFoundError):
         await adapter.read("u1", P)
+    [v] = await adapter.list("u1", P, include_versions=True)
+    assert not v.live and v.delete_id
+
+
+async def test_failed_delete_leaves_no_stale_metadata_on_the_next_one():
+    client = FakeGcsClient()
+    adapter = GcsWorkspaceAdapter("ws-bucket", client=client)
+    e = await adapter.put("u1", P, b"v1", CHAT, 0)
+    with pytest.raises(WorkspaceConflict):  # patches the live version, then the delete never lands
+        await adapter.delete("u1", P, e.generation + 1, WorkspaceDeleteMeta(deleted_by="chat", renamed_to="x.md"))
+    await adapter.delete("u1", P, e.generation, WorkspaceDeleteMeta(deleted_by="chat"))
+    [v] = await adapter.list("u1", P, include_versions=True)
+    assert v.renamed_to is None
 
 
 def test_the_emulator_erases_on_a_generation_addressed_delete():

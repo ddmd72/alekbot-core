@@ -42,7 +42,7 @@ _TEXT_TYPES = (
 
 def _content_type(path: str) -> str:
     for extension, content_type in _TEXT_TYPES:
-        if path.endswith(extension):
+        if path.lower().endswith(extension):
             return content_type
     return mimetypes.guess_type(path)[0] or "application/octet-stream"
 
@@ -139,11 +139,14 @@ class GcsWorkspaceAdapter(WorkspaceStorePort):
         key = self._key(user_id, path)
         bucket = self._bucket()
         delete_id = self._new_id()
-        metadata: Dict[str, str] = {"deleted_by": meta.deleted_by, "delete_id": delete_id}
-        if meta.deleted_fire:
-            metadata["deleted_fire"] = meta.deleted_fire
-        if meta.renamed_to:
-            metadata["renamed_to"] = meta.renamed_to
+        # All four keys, always: patch() merges, and a None removes the key, so a failed earlier delete cannot leave
+        # a stale deleted_fire / renamed_to on the live version.
+        metadata: Dict[str, Optional[str]] = {
+            "deleted_by": meta.deleted_by,
+            "delete_id": delete_id,
+            "deleted_fire": meta.deleted_fire or None,
+            "renamed_to": meta.renamed_to or None,
+        }
         # The LIVE object. A delete must never carry a generation: in a versioned bucket that erases the version.
         blob = bucket.blob(key)
         blob.metadata = metadata
