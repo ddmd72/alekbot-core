@@ -111,9 +111,11 @@ def make_propose_memory_facts_handler(
         return ToolResult(
             name=tool_call.name,
             result_str=(
-                f"SYSTEM: The owner sees {len(draft.facts)} proposed facts and a save command. Nothing is "
-                "stored yet. Say in one sentence that pasting the command saves them; do not list the "
-                "facts again."
+                f"SYSTEM: Done. The proposal was created and the owner sees {len(draft.facts)} proposed "
+                "facts with a save command. Your part is complete: do not call propose_memory_facts "
+                "again for these facts. Call it again only if the owner asks for changes. The facts go "
+                "to memory when the owner pastes the save command; that step is the owner's. Say in "
+                "one sentence that pasting the command saves them; do not list the facts again."
             ),
             delivery_items=[
                 DeliveryItem(
