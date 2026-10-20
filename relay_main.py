@@ -61,7 +61,9 @@ from src.handlers.media_stream_handler import MediaStreamHandler
 from src.handlers.sfu_stream_handler import SfuStreamHandler
 from src.ports.realtime_session_port import RealtimeSessionPort
 from src.services.voice_session_service import VoiceSessionService
-from src.utils.logger import logger
+from src.utils.logger import logger, quiet_third_party_loggers
+
+quiet_third_party_loggers()
 
 # The `websockets` library logs any TCP connection that never completes a WS handshake
 # (port scanners, bare health pings) as an ERROR on "websockets.server" — this is documented
