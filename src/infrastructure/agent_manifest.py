@@ -40,7 +40,6 @@ from .agent_registry import AgentDescriptor, ExecutionMode, FanoutSpec
 class Intent:
     """Typed constants for all agent intent names."""
     SEARCH_MEMORY        = "search_memory"
-    SAVE_TO_MEMORY       = "save_to_memory"
     SEARCH_WEB           = "search_web"
     # One fast grounded lookup — internal, named only by LELIK's allowlist (VOICE_COMPANION_RFC §4.15.1)
     SEARCH_WEB_LIGHT     = "search_web_light"
@@ -114,34 +113,13 @@ MEMORY_SEARCH = AgentDescriptor(
     agent_type="facts_memory",
     capabilities={
         Intent.SEARCH_MEMORY: ExecutionMode.SYNC,
-        Intent.SAVE_TO_MEMORY: ExecutionMode.SYNC,
     },
-    description="Personal knowledge base: search and save facts",
+    description="Personal knowledge base: search facts",
     capability_descriptions={
         Intent.SEARCH_MEMORY: (
             "Semantic search across the personal knowledge base — "
             "biographical facts, projects, health, family, possessions, preferences"
         ),
-        Intent.SAVE_TO_MEMORY: (
-            "Save a specific fact or piece of information to long-term memory. "
-            "Call only when the user explicitly asks to save or remember something. "
-            "query: brief task description (what to save). "
-            "context.text: detailed, self-contained fact passage — all circumstances, dates, "
-            "names, conditions. Must be understandable without any prior conversation context."
-        ),
-    },
-    context_schemas={
-        Intent.SAVE_TO_MEMORY: {
-            # Shared field name: delegate_to_specialist.context keeps the FIRST description seen per
-            # field, and this descriptor precedes FILE_MANAGEMENT — so this text must cover both uses.
-            "text": (
-                "save_to_memory: detailed, self-contained description of the fact to save. "
-                "Include every relevant detail: what, when, conditions, numbers, names, "
-                "surrounding circumstances. Write in third person ('User...'). "
-                "Must be fully understandable without the surrounding conversation. "
-                "save_file_to_drive: the full content of the new text file, verbatim (with \"name\")."
-            ),
-        },
     },
 )
 
@@ -570,7 +548,7 @@ FILE_MANAGEMENT = AgentDescriptor(
         Intent.SAVE_FILE_TO_DRIVE: (
             "Keep a file on the user's drive, their long-term file area. Chat attachments ([File: ...]) and "
             "documents you produced are temporary; to remember, save, keep or put a FILE anywhere, always use "
-            "this intent (facts go to save_to_memory). Also writes a new text file you composed (note, list, "
+            "this intent (facts from a document go to memory only through the propose_memory_facts tool, when the user asks). Also writes a new text file you composed (note, list, "
             "CSV, JSON, SVG...). Saves to Inbox unless the user named a folder. "
             "Never overwrites: the reply states the name actually used. "
             'Requires exactly one source: context={"file_ref": "<ref from [File: ...] or a delivered document>"} '
@@ -633,7 +611,7 @@ FILE_MANAGEMENT = AgentDescriptor(
         },
         Intent.SAVE_FILE_TO_DRIVE: {
             "file_ref": "Ref of the file to keep: name from a [File: ...] label, or a delivered document key. Not with text",
-            "text": "Full content of a new text file you wrote. Not with file_ref",
+            "text": "save_file_to_drive only: full content of a new text file you wrote. Not with file_ref",
             "folder": "Optional. Folder path on the drive, only if the user named one (e.g. 'Meetings/2026')",
             "name": ("Optional with file_ref (extension kept from the source if omitted). Required with text: "
                      "must end in .md .txt .csv .json .yaml .yml .html .svg or .xml"),

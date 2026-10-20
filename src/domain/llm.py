@@ -188,6 +188,8 @@ class ToolCall(BaseModel):
 class MessagePart(BaseModel):
     text: Optional[str] = None
     full_text: Optional[str] = None  # Full response (when text=summary). Used for tiered history loading.
+    # Legacy: no writer since the save_to_memory removal; read only for messages saved before it.
+    # Remove once no stored session message carries it (MEMORY_FACT_CONFIRMATION_RFC §6).
     consolidation_text: Optional[str] = None  # Visible only to consolidation serializer. Never exposed to agents or LLM adapters.
     tool_call: Optional[ToolCall] = None
     tool_response: Optional[Dict[str, Any]] = None  # {name: str, response: Any}

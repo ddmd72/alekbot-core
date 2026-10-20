@@ -12,7 +12,7 @@ Legs:
   maps       — MapsSearchAgent, Maps tool loop (BALANCED)
   smart      — SmartResponseAgent, its full delegation loop, in DRY-RUN: read-only delegations
                (memory/web/mail/maps/compute/open_file) run for real on their own unchanged
-               models; anything that writes (save_to_memory, reminders, tasks, documents, media,
+               models; anything that writes (reminders, tasks, documents, media,
                deep research, ...) is answered "accepted, not executed". Isolated session.
                Only Smart's own model differs between the legs.
 

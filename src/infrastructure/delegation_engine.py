@@ -331,7 +331,7 @@ class DelegationEngine:
                     # already written its answer, so no result is fed back to it.
                     # We still dispatch them, because the model COMMITTED to them —
                     # an async generation hop must reach its queue, and a
-                    # save_to_memory / delete_file must actually happen. Filtering
+                    # delete_file or a document save must actually happen. Filtering
                     # by name (not identity) also drops a duplicate terminal call
                     # instead of dispatching it as an empty-intent delegation.
                     siblings = [

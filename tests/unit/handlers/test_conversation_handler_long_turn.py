@@ -261,7 +261,8 @@ async def test_no_turn_id_means_no_long_turn_machinery(lt):
     lt.channel.send_chunked_message.assert_awaited()
 
 
-async def test_late_answer_consolidation_texts_are_passed(lt):
+async def test_late_answer_passes_no_consolidation_texts(lt):
+    # A stale metadata key no longer reaches the late-answer pair (MEMORY_FACT_CONFIRMATION_RFC §6).
     async def _route(message):
         await asyncio.sleep(0.2)
         return AgentResponse(task_id="t", agent_id="smart", status=AgentStatus.SUCCESS,
@@ -269,7 +270,8 @@ async def test_late_answer_consolidation_texts_are_passed(lt):
                              metadata={"consolidation_text": ["fact A", "fact B"]})
     lt.coordinator.route_message.side_effect = _route
     await lt.handle()
-    assert lt.service.save_late_answer.call_args.kwargs["consolidation_texts"] == ["fact A", "fact B"]
+    lt.service.save_late_answer.assert_awaited_once()
+    assert "consolidation_texts" not in lt.service.save_late_answer.call_args.kwargs
 
 
 # --- Fix round 1 ---------------------------------------------------------------------

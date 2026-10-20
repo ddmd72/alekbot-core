@@ -127,9 +127,9 @@ Agents marked with `eager=False` in their `AgentDescriptor` are not created duri
 
 ### 5.2 Specialist Agents (Tools)
 
-- **FactsMemoryAgent** (`memory_search_agent.py`): Unified memory specialist — two intents:
+- **FactsMemoryAgent** (`memory_search_agent.py`): Memory specialist — one intent:
   - `search_memory`: Two-phase: (1) LLM key formulation via `COGNITIVE_PROCESS_MEMORY_SEARCH` Firestore token — Gemini Flash extracts `keywords`, `primary_query`, `alternative_query`, `domains` from the delegation query; (2) multi-vector RRF search via `SearchEnrichmentService`. Schema-enforced: 3–5 keywords, 2 domains max, 50-char query limit. Reachable from both Quick and Smart.
-  - `save_to_memory`: Explicit-save path. Called only on direct user request ("remember this", "save this", etc.). The LLM writes a rich, detailed, third-person passage and delegates it via `delegate_to_specialist(intent="save_to_memory", text="<passage>")`. `FactsMemoryAgent._handle_save()` returns `AgentResponse(history_context={"consolidation_text": text})` — no direct Firestore write. `ConversationHandler` reads this from `response.metadata["consolidation_text"]` and appends `MessagePart(consolidation_text=combined)` to the user message before persisting. The consolidation serializer reads `p.full_text or p.consolidation_text or p.text`, so the passage flows naturally into the next `ConsolidationBatch` → SEARCH+DECIDE pipeline. The `consolidation_text` field is invisible to all LLM adapters, which only read `text`/`full_text`/`file_data`.
+  - There is no save intent. Facts read from a document reach memory through Smart's local tool `propose_memory_facts` and the owner's `$memory save` (`MEMORY_FACT_CONFIRMATION_RFC.md`); `FactsMemoryAgent` serves `search_memory` only.
 - **Web Search Light Agent:** Lightweight single-pass grounding agent called exclusively by `QuickResponseAgent` via the `search_web_light` intent. ECO tier (Gemini Flash Lite), single LLM call with Google Search grounding tool, returns plain Slack mrkdwn. No multi-turn refinement. Prompt via PromptBuilder v3 (`agent_type="websearch_light"`) with inline Groovy fallback.
 - **Web Search Agent:** Full-depth real-time information retrieval via Google Search grounding. Called exclusively by `SmartResponseAgent` via `search_web` intent. BALANCED tier.
 - **Email Search Agent:** Email archive specialist (BALANCED tier). Called by both Quick and Smart via 3 intents registered in `AgentRegistry` (registered with `internal=False`, so both orchestrators discover it via `get_available_intents_for`):
@@ -333,7 +333,7 @@ send the full blocks; older turns use the compressed `text` field.
 | `web_search_context` | `WebSearchAgent`, `WebSearchLightAgent` | LLM sees search results in follow-up turns — avoids re-searching | Yes (`full_text`) |
 | `email_search_context` | `EmailSearchAgent` | LLM references email IDs for `get_email_details`/`get_email_attachment` without re-searching | Yes (`full_text`) |
 | `rich_content` | `ConversationHandler` (from `structured_data`) | LLM sees the table/card delivered to the user — enables follow-up questions about the data | Yes (`full_text`) |
-| `consolidation_text` | `FactsMemoryAgent` (`save_to_memory` intent) | Rich passage attaches to user message for consolidation serializer only — **never LLM-visible** | No (adapters never read `MessagePart.consolidation_text`) |
+| `consolidation_text` | none (legacy: the `save_to_memory` writer was removed) | Old rows still carry it; consolidation serializer only — **never LLM-visible** | No (adapters never read `MessagePart.consolidation_text`) |
 
 **`consolidation_text` is a special case.** Unlike `*_context` keys (which are serialized as JSON into the model message's `full_text`), `consolidation_text` is written into `MessagePart.consolidation_text` on the *user* message and read only by the consolidation serializer (`p.full_text or p.consolidation_text or p.text`). It does not appear in any LLM call. See [§ 9.8](#98-consolidation_text-special-handling) for details.
 
@@ -348,9 +348,8 @@ send the full blocks; older turns use the compressed `text` field.
 Set `history_context` in the specialist agent's `AgentResponse.success()` — no other changes
 needed. The key must end in `_context` to be picked up by ConversationHandler automatically.
 
-**Exception:** `consolidation_text` does NOT end in `_context` and has dedicated handling in
-`ConversationHandler`. It is not serialized into LLM history — it is attached as
-`MessagePart(consolidation_text=combined)` to the user message for the consolidation pipeline only.
+**Exception:** `consolidation_text` (legacy, no writer since the `save_to_memory` removal) does NOT end in `_context`.
+It is never serialized into LLM history; the consolidation serializer still reads it from old rows.
 See [§ 9.8](#98-consolidation_text-special-handling).
 
 ### 9.6 Prompt Side
@@ -369,61 +368,25 @@ When you see rich_content in history — you know what structured data was shown
 - `src/domain/agent.py` — `AgentResponse.history_context: Optional[Dict[str, Any]]`
 - `src/agents/web_search_agent.py`, `web_search_light_agent.py` — set `web_search_context`
 - `src/agents/email_search_agent.py` — set `email_search_context` via `_build_email_history_context()`
-- `src/agents/memory_search_agent.py` — `FactsMemoryAgent._handle_save()` sets `consolidation_text`
 - `src/agents/core/quick_response_agent.py` — generic `accumulated_history` in `_execute_quick_delegation_loop`
 - `src/agents/core/smart_response_agent.py` — same pattern in `_execute_smart_delegation_loop`
-- `src/handlers/conversation_handler.py` — generic `*_context` loop + `rich_content` append + dedicated `consolidation_text` block
+- `src/handlers/conversation_handler.py` — generic `*_context` loop + `rich_content` append
 
-### 9.8 `consolidation_text` Special Handling
+### 9.8 `consolidation_text` Special Handling (legacy)
 
-**Problem context:** When the user sends a file (image/PDF), the LLM processes it natively. After
-the turn, the binary `file_data` part is dropped from history — the user message has no `text`
-parts. The consolidation serializer iterates `p.full_text or p.text`, producing an empty user turn.
-`ConsolidationAgent`'s `Domain_Scope` policy ("NEVER process ASSISTANT statements as facts unless
-USER confirms with NEW information") then discards the model's description of the file. Facts
-extracted from files are lost from long-term memory unless the user re-states them in text.
+**Problem it solved:** native binary parts (`file_data`) are dropped from history after the turn, so facts read from
+a file never reached the consolidator, and its `Domain_Scope` policy ("NEVER process ASSISTANT statements as facts
+unless USER confirms with NEW information") discards the model's description of the file.
 
-**`save_to_memory` intent solves this** — and the general case of any fact the user wants
-explicitly preserved regardless of whether it came from a file, a live search result, or any
-source that wouldn't normally survive consolidation.
+**Status:** the writers are gone. The `save_to_memory` intent attached bot-written text as
+`MessagePart(consolidation_text=...)` on the user message, and the consolidator read it as the owner's own words:
+procedures became `AGENT_DIRECTIVE` facts. It is replaced by owner-confirmed facts: Smart's local tool
+`propose_memory_facts`, then `$memory save <code>`, which appends a user/model pair to the origin session
+(`MemoryFactService.confirm`). See `docs/10_rfcs/MEMORY_FACT_CONFIRMATION_RFC.md` and `decisions/memory_facts_owner_confirmed.md`.
 
-**Flow:**
-
-```
-User: "remember that my weight is 80 kg"
-  ↓
-Quick/Smart LLM: delegate_to_specialist(
-  intent="save_to_memory",
-  query="Save user weight fact",
-  context={"text": "User mentioned their current weight is 80 kg. Came up in diet
-    discussion. January 2026 tracking start date."})
-  ↓
-AgentCoordinator._execute_sync():
-  → context_schemas enforces typed context object for save_to_memory
-  → extra_payload = context["params"]  →  AgentMessage.payload["text"] = "<passage>"
-  ↓
-FactsMemoryAgent._handle_save()
-  → text = payload.get("text") or payload.get("query")
-  → AgentResponse.success(history_context={"consolidation_text": "<passage>"})
-  ↓
-Quick._execute_quick_delegation_loop() / Smart._execute_smart_delegation_loop()
-  → accumulated_history["consolidation_text"] = ["<passage>"]
-  → response.metadata["consolidation_text"] = ["<passage>"]
-  ↓
-ConversationHandler (before _save_history_with_retry):
-  → consolidation_texts = response.metadata.get("consolidation_text", [])
-  → clean_message_parts.append(MessagePart(consolidation_text=combined))
-  ↓
-FirestoreSessionStore._serialize_part():
-  → {"consolidation_text": combined}   ← persisted to Firestore session history
-  ↓
-Consolidation serializer (overflow_callback / $consolidate):
-  → "parts": [{"text": p.full_text or p.consolidation_text or p.text} ...]
-  → passage lands in ConsolidationBatch as user-side content
-  ↓
-ConsolidationAgent SEARCH+DECIDE:
-  → Domain_Scope satisfied (it IS a user message) → fact extracted → Firestore
-```
+The field stays on `MessagePart` with its readers (the consolidation serializer, the `$consolidate` inline copy,
+`scripts/consolidation/test_stage1_classification_dryrun.py`) and pass-through sites (`base_agent`, the OpenAI and Grok
+adapters, `firestore_session_store`) until no stored session carries it (6 messages in 3 sessions on 2026-10-19).
 
 **Key invariant:** `MessagePart.consolidation_text` is never read by any LLM adapter
 (`GeminiAdapter`, `ClaudeAdapter`, `GrokAdapter`) — they only access `text`, `full_text`,

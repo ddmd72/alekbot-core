@@ -31,7 +31,7 @@ SmartAgent (LLM)
   ▼
 AgentCoordinator.handle_delegation()
   │  registry.get_agent_for_intent("search_memory")
-  │  → AgentManifest(agent_id="facts_memory_agent", intents={"search_memory": SYNC, "save_to_memory": SYNC}, ...)
+  │  → AgentManifest(agent_id="facts_memory_agent", intents={"search_memory": SYNC}, ...)
   │
   ├─ SYNC path ──────────────────────────────────────────────────────────
   │    _execute_sync()
@@ -122,7 +122,7 @@ Agents marked `eager=False` are **not** instantiated per user until first delega
 
 | Agent ID | Intent(s) | Mode | `internal` | `eager` | Caller |
 |----------|-----------|------|-----------|---------|--------|
-| `facts_memory_agent` | `search_memory`, `save_to_memory` | SYNC | False | True | Quick, Smart |
+| `facts_memory_agent` | `search_memory` | SYNC | False | True | Quick, Smart |
 | `web_search_agent` | `search_web` | SYNC | False | True | Smart |
 | `web_search_light_agent` | `search_web_light` | SYNC | **True** | True | Quick (via `intent_remap`) |
 | `email_search_agent` | `search_emails`, `get_email_details`, `get_email_attachment` | SYNC | False | True | Quick, Smart |
@@ -213,15 +213,14 @@ The canonical rules for when and how SmartAgent uses `delegate_to_specialist` li
 token `PROTOCOL_SMART_AGENT_SELECTION`. This token is the *behavior specification* for the
 delegation protocol — the code tool definition is generic; the Firestore token makes it intelligent.
 
-### 5.1 facts_memory_specialist (`search_memory`, `save_to_memory`)
+### 5.1 facts_memory_specialist (`search_memory`)
 
 - **`search_memory` — When:** User asks about personal data requiring KB retrieval beyond the biographical baseline.
 - **`search_memory` — How:** Formulate a **self-contained query** — resolve conversational references ("this", "tell
   me more", "the project I mentioned") using conversation history before delegating. The query must
   be understandable without prior context.
-- **`save_to_memory` — When:** User explicitly asks to save, remember, or store a specific fact or piece of information ("remember this", "save this", "keep this in mind"). Never called automatically.
-- **`save_to_memory` — How:** Call `delegate_to_specialist(intent="save_to_memory", text="<rich passage>")`. Write a detailed, third-person passage including all context, conditions, and circumstances — do not pre-digest. The passage is attached to the user message via `MessagePart.consolidation_text` and flows through the normal consolidation pipeline.
-- **Anti-patterns:** Passing the raw user message verbatim for `search_memory` when it contains unresolved anaphora; using for external/real-time information; calling `save_to_memory` without explicit user request.
+- **Saving:** there is no save intent. When the user asks to remember facts from a document, Smart calls its local tool `propose_memory_facts`; the owner confirms with `$memory save <code>` (`MEMORY_FACT_CONFIRMATION_RFC.md`).
+- **Anti-patterns:** Passing the raw user message verbatim for `search_memory` when it contains unresolved anaphora; using for external/real-time information.
 
 ### 5.2 web_search_agent (`search_web`)
 
@@ -252,38 +251,16 @@ QuickAgent uses a **separate Firestore token** (`PROTOCOL_QUICK_AGENT_SELECTION`
 
 ## 6. FactsMemoryAgent: Two Intents
 
-`FactsMemoryAgent` (`src/agents/memory_search_agent.py`) is the unified memory specialist exposed
-to both Quick and Smart via the registry. It handles two intents:
+`FactsMemoryAgent` (`src/agents/memory_search_agent.py`) is the memory specialist exposed
+to both Quick and Smart via the registry. It handles one intent:
 
 | Intent | Trigger | Payload key | Side effect |
 |--------|---------|-------------|-------------|
 | `search_memory` | KB retrieval request | `query` | None — read only |
-| `save_to_memory` | Explicit user save request | `text` (via params spread) or `query` | Attaches `consolidation_text` to user message |
 
-### `save_to_memory` mechanics
-
-**How `context.text` reaches `payload["text"]`:**
-
-The LLM issues a 3-field tool call:
-```
-delegate_to_specialist(intent="save_to_memory",
-  query="<brief task description>",
-  context={"text": "<detailed self-contained passage>"})
-```
-`context_schemas` on the `AgentDescriptor` tells `AgentCoordinator` to expect a typed `context`
-object for this intent. The coordinator's `_execute_sync` spreads `context["params"]` into
-`extra_payload`, so `AgentMessage.payload["text"]` contains the rich passage. `_handle_save()`
-reads `payload.get("text")` first, falling back to `payload.get("query")` if absent.
-
-**What `_handle_save()` does:** It does not write to Firestore directly. It returns
-`AgentResponse(history_context={"consolidation_text": text})`. `ConversationHandler` picks this
-up from `response.metadata["consolidation_text"]` and appends
-`MessagePart(consolidation_text=combined)` to the user message before persisting to session
-history. The consolidation serializer reads `p.full_text or p.consolidation_text or p.text` — so
-the passage is included in the next `ConsolidationBatch` without bypassing the SEARCH+DECIDE pipeline.
-
-`MessagePart.consolidation_text` is invisible to all LLM adapters (they only read `text`,
-`full_text`, `file_data`) — zero risk of the save payload leaking into future LLM context.
+The `save_to_memory` intent was removed: it let the bot write text that the consolidator read as the owner's words.
+Facts from a document are proposed with Smart's local tool `propose_memory_facts` and saved when the owner pastes
+`$memory save <code>` (see `docs/10_rfcs/MEMORY_FACT_CONFIRMATION_RFC.md`).
 
 ### 6.2 `search_memory`: LLM Key Formulation
 

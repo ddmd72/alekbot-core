@@ -235,6 +235,14 @@ class SkillFileMissing(Exception):
     """A file a skill or draft refers to is no longer stored (e.g. a draft file removed by TTL)."""
 
 
+class MemoryFactsRejected(Exception):
+    """Proposed memory facts were flagged by the security check."""
+
+
+class MemoryDraftNotFound(Exception):
+    """No pending memory-facts draft with that save code for this user."""
+
+
 class OAuthGrantRevokedError(ValueError):
     """The provider rejected a refresh token (``invalid_grant``): the user revoked access,
     changed their password, or the grant expired. Retrying cannot help; only a new

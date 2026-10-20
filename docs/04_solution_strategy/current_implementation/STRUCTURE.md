@@ -96,10 +96,9 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   ├── base_agent.py   # BaseAgent + CircuitBreaker + lifecycle hooks (_on_agent_start,
 │   │                   #   _on_agent_success, _on_agent_error, _on_delegation) + LLM content
 │   │                   #   capture in _call_llm (record_turn) + _debug_raw_turn (raw-SDK agents)
-│   ├── memory_search_agent.py    # FactsMemoryAgent — unified memory specialist (Quick+Smart).
-│   │                             #   Two intents: search_memory (RAG/vector search via SearchEnrichmentService)
-│   │                             #   + save_to_memory (explicit user save → attaches consolidation_text
-│   │                             #   to user message via history_context → flows through normal pipeline).
+│   ├── memory_search_agent.py    # FactsMemoryAgent — memory specialist (Quick+Smart), one intent:
+│   │                             #   search_memory (RAG/vector search via SearchEnrichmentService).
+│   │                             #   Saving is not an intent: see services/memory_fact_service.py.
 │   ├── web_search_agent.py       # Full web search specialist (Smart path, Gemini Grounding)
 │   ├── web_search_light_agent.py # Lightweight grounding specialist (Quick path, ECO tier)
 │   ├── email_search_agent.py     # 🆕 Email archive specialist (Quick+Smart, 3 intents)
@@ -439,6 +438,8 @@ The core application follows **Hexagonal Architecture (Ports & Adapters)** with 
 -   **`prompt_v3/agent_profile_repository.py`**: Port for agent profile storage with 4-level priority resolution. Adapter: `FirestoreAgentProfileRepository`.
 
 ### `services/` - Application Services
+
+-   **`memory_fact_service.py`**: `MemoryFactService` — facts Smart proposes and the owner confirms (`MEMORY_FACT_CONFIRMATION_RFC.md`). `propose` runs the `SecurityPort` check and stores a 7-day draft tagged with its origin session; `confirm` appends the user/model pair to that session with `raise_on_error=True`, then deletes the draft.
 -   **`agent_context_builder.py`**: Resolves Provider/Tier/Model for agents. Defines `AgentProviderStrategy` (allowed providers per agent type — including `"postprocessing"` locked to Gemini) and `AgentContextBuilder` (builds `AgentExecutionContext` from user config + strategy).
 -   **`agent_fallback_service.py`**: `AgentFallbackService` — three-level graceful degradation chain used by `ConversationHandler`. Level 1: route failed response to `quick_response_agent_{user_id}` with a `[System: ...]` apology note. Level 2: catches any Quick failure or exception. Level 3: returns a synthetic `AgentResponse.SUCCESS(result=apology_text)` — the caller always receives a displayable response and never triggers the `send_status(ERROR)` path. Uses `MessageRouter` Protocol (not concrete `AgentCoordinator`) to avoid services/ → infrastructure/ import violation.
 -   **`history_summary_service.py`**: 🆕 Compresses model responses into ≤300-char session memory entries via a fast LLM call. Always uses Gemini structured output (`response_schema`). Provider locked to Gemini at composition time — immune to user `provider_preference`. Fail-fast: one attempt, `WARNING` on failure, returns `None` (caller stores full text). Injected into `SmartResponseAgent`; designed to be reused by other agents.

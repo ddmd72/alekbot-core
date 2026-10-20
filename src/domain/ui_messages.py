@@ -53,6 +53,14 @@ class UIMessage(Enum):
     SKILL_CHANGE_CHANGED_UPLOAD = "skill_change_changed_upload"
     SKILL_CHANGE_REMOVED = "skill_change_removed"
     SKILL_CHANGE_UNCHANGED = "skill_change_unchanged"
+    # Memory facts the owner confirms (MEMORY_FACT_CONFIRMATION_RFC): preview + $memory command.
+    MEMORY_PREVIEW_FILE_TITLE = "memory_preview_file_title"
+    MEMORY_PREVIEW_HEADER = "memory_preview_header"
+    MEMORY_PREVIEW_DELIVERY_FAILED = "memory_preview_delivery_failed"
+    MEMORY_USAGE = "memory_usage"
+    MEMORY_SAVED = "memory_saved"
+    MEMORY_DRAFT_NOT_FOUND = "memory_draft_not_found"
+    MEMORY_UNAVAILABLE = "memory_unavailable"
     # Long-running turns (LONG_RUNNING_TURNS_RFC §3, §5.3–5.7).
     LONG_TURN_NOTICE = "long_turn_notice"
     LATE_ANSWER_PREFIX = "late_answer_prefix"
