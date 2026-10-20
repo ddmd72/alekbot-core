@@ -91,3 +91,46 @@ def verify_worker_oidc(
         return False
 
     return True
+
+
+def verify_oidc_identity(
+    authorization_header: Optional[str],
+    audiences: Collection[str],
+) -> Optional[str]:
+    """Return the verified ``email`` of a valid Google OIDC bearer token, else ``None``.
+
+    Requires signature, issuer and expiry (via Google's public keys), a truthy
+    ``email_verified``, a non-empty ``email`` and ``aud`` in ``audiences``. The caller
+    decides what the identity may do (the sandbox gate maps it to op groups).
+
+    Deliberately separate from ``verify_worker_oidc``: that function guards every
+    Scheduler/Tasks job and stays untouched (sandbox RFC S-Δ9). Never raises; every
+    failure is logged (without the token or the email) and returned as ``None``.
+    """
+    try:
+        if not authorization_header or not authorization_header.startswith("Bearer "):
+            logger.warning("OIDC identity: missing or malformed Authorization header")
+            return None
+        token = authorization_header[len("Bearer "):].strip()
+        if not token:
+            logger.warning("OIDC identity: empty bearer token")
+            return None
+        try:
+            claims = google_id_token.verify_oauth2_token(token, google_requests.Request())
+        except Exception as e:
+            logger.warning(f"OIDC identity: token verification failed: {e}")
+            return None
+        if not claims.get("email_verified"):
+            logger.warning("OIDC identity: email_verified is not set on the token")
+            return None
+        if claims.get("aud") not in audiences:
+            logger.warning("OIDC identity: audience claim is not one this route accepts")
+            return None
+        email = claims.get("email")
+        if not isinstance(email, str) or not email:
+            logger.warning("OIDC identity: token carries no email claim")
+            return None
+        return email
+    except Exception as e:  # defensive: the contract is "never raises"
+        logger.warning(f"OIDC identity: unexpected failure: {e}")
+        return None
