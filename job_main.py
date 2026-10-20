@@ -39,7 +39,9 @@ from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus
 from src.domain.billing import calculate_cost
 from src.infrastructure.agent_manifest import Intent
 from src.services.deep_research_delivery import deliver_deep_research
-from src.utils.logger import logger
+from src.utils.logger import logger, quiet_third_party_loggers
+
+quiet_third_party_loggers()
 from src.composition.memory_telemetry_setup import build_memory_telemetry
 from src.domain.memory_telemetry import SCOPE_WORKER_TASK
 from src.utils.memory_scope import memory_scope

@@ -71,7 +71,9 @@ from src.composition.memory_telemetry_setup import build_memory_telemetry
 from src.composition.prompt_assembly_setup import build_prompt_assembly_service
 from src.config.environment import EnvironmentConfig
 from src.services.drive_indexing_service import DriveIndexingService
-from src.utils.logger import logger
+from src.utils.logger import logger, quiet_third_party_loggers
+
+quiet_third_party_loggers()
 from src.web.worker_oidc_verifier import parse_sa_emails
 from src.web.indexer_worker_app import create_indexer_worker_blueprint, indexer_audiences, worker_oidc_gate
 
