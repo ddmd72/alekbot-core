@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from pydantic import BaseModel, field_validator, model_validator
 
@@ -36,7 +36,7 @@ DELIVERED_REF_PREFIXES = ("docs/", "email_review/", "deep_research/", "video_gen
 
 _NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 # Strict and whole-line: the stub `[Skill "x" was applied here…]` must never match.
-_BODY_MARKER_RE = re.compile(r'^\[Skill "([a-z0-9-]+)" v\d+\]$', re.MULTILINE)
+_BODY_MARKER_RE = re.compile(r'^\[Skill "([a-z0-9-]+)" v(\d+)\]$', re.MULTILINE)
 _SEGMENT_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 _SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -321,19 +321,21 @@ def skill_saved_note(name: str, version: int) -> str:
     return f'[System: skill "{name}" v{version} saved by the owner]'
 
 
-def visible_skill_names(messages: Iterable[Message]) -> Set[str]:
-    """Names whose body the model can see: markers in MODEL text after history tiering.
+def visible_skill_names(messages: Iterable[Message]) -> Dict[str, int]:
+    """Names whose body the model can see, each with the version of its newest visible body: markers in MODEL text
+    after history tiering. A stale body must not stand in for a newer saved version (AGENT_WORKSPACE_RFC §11.2).
 
     Reads part.text only — a tiered-out turn still carries full_text, which the model never sees.
     """
-    names: Set[str] = set()
+    visible: Dict[str, int] = {}
     for msg in messages:
         if msg.role != "model":
             continue
         for part in msg.parts:
             if part.text:
-                names.update(_BODY_MARKER_RE.findall(part.text))
-    return names
+                for name, version in _BODY_MARKER_RE.findall(part.text):
+                    visible[name] = int(version)
+    return visible
 
 
 def render_catalog(skills: Sequence[Skill]) -> Optional[str]:
