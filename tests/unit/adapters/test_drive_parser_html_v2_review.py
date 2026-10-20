@@ -225,6 +225,7 @@ def test_a_hidden_main_is_skipped():
 # Minor findings
 # =============================================================================
 
+@pytest.mark.timing  # wall-clock assertion: off the main gate, `make test-timing`
 def test_unclosed_comments_are_linear():
     text = "<!--x" * 200_000
     started = time.process_time()
