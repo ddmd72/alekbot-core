@@ -11,7 +11,8 @@ Public interface:
 It does not build the app: the blueprint, gate and recycler are `web/` objects and composition may not import `web/`
 (REQ-ARCH-11); `sandbox_main.build_app` assembles them from the plan. Plain data only. Imports nothing from
 `src.web`, `src.infrastructure`, `src.agents`, `src.handlers` or `src.services` (the sandbox image closure, §4.11).
-Config is read from the mapping passed in (`os.getenv` knobs, never `load_settings()`).
+The G9 first pass still needs `SANDBOX_CALLERS_RENDER` set: an empty caller set on Cloud Run refuses start by design;
+only the empty SANDBOX_URL is tolerated. Config is read from the mapping passed in (`os.getenv` knobs, never `load_settings()`).
 
 Roots (one place, T5 reads them from the plan and passes the SAME `output_root` to the engine and the blueprint):
     work_root    SANDBOX_WORK_ROOT    default `/work` on Cloud Run (the size-limited in-memory volume the engine child
@@ -24,7 +25,7 @@ import os
 import stat
 import tempfile
 from dataclasses import dataclass
-from typing import Any, Dict, FrozenSet, Mapping
+from typing import Any, Dict, FrozenSet, Mapping, Optional
 
 from ..domain.sandbox_contract import SandboxOp
 from ..domain.sandbox_startup_check import check_sandbox_environment
@@ -37,7 +38,8 @@ GROUP_PREFIXES: Mapping[str, FrozenSet[str]] = {"RENDER": frozenset({"render"})}
 
 RECYCLE_ALWAYS = "always"
 RECYCLE_NEVER = "never"
-DEFAULT_ENGINE_USER = "sandbox"
+# The unprivileged uid the engine child runs as on Cloud Run; the image (T9) creates this user.
+DEFAULT_ENGINE_USER = "sandboxengine"
 _CLOUD_RUN_WORK_ROOT = "/work"
 
 
@@ -54,13 +56,17 @@ class StartupPlan:
     group_prefixes: Mapping[str, FrozenSet[str]]   # {group: op prefixes}
     work_root: str
     output_root: str
-    engine_user: Any                               # Optional[str]: child uid name (None only off root, locally)
+    engine_user: Optional[str]                     # child uid name (None only off root, locally)
     on_cloud_run: bool
 
 
 def validate_startup(
     env: Mapping[str, str], *, on_cloud_run: bool, allowed_env: FrozenSet[str] = frozenset(),
 ) -> StartupPlan:
+    if on_cloud_run != bool(env.get("K_SERVICE")):
+        # load_caller_sets derives Cloud Run from K_SERVICE; the flag must agree or the rules would diverge.
+        logger.error("[Sandbox] refusing to start: on_cloud_run disagrees with K_SERVICE")
+        raise SandboxStartupError("on_cloud_run must equal bool(K_SERVICE)")
     violations = check_sandbox_environment(env, allowed_env)
     if violations:
         logger.error(f"[Sandbox] refusing to start: secret-like environment names: {', '.join(violations)}")
@@ -71,9 +77,7 @@ def validate_startup(
         logger.error("[Sandbox] refusing to start: unusable SANDBOX_RECYCLE policy")
         raise SandboxStartupError("SANDBOX_RECYCLE must be 'always' ('never' is local only)")
 
-    caller_sets: Dict[str, FrozenSet[str]] = load_caller_sets(
-        {**env, "K_SERVICE": env.get("K_SERVICE") or "sandbox"} if on_cloud_run else env
-    )   # raises on overlap / empty on Cloud Run
+    caller_sets: Dict[str, FrozenSet[str]] = load_caller_sets(env)   # raises on overlap / empty on Cloud Run
     unknown = sorted(set(caller_sets) - set(GROUP_PREFIXES))
     if unknown or "RENDER" not in caller_sets:
         logger.error(f"[Sandbox] refusing to start: caller groups {sorted(caller_sets)} do not match this service")
@@ -108,17 +112,20 @@ def build_engine_registry(plan: StartupPlan) -> Mapping[SandboxOp, Any]:
 
 
 def _prepare_output_root(output_root: str, work_root: str) -> str:
-    out = os.path.abspath(output_root)
-    work = os.path.abspath(work_root)
+    out = os.path.realpath(output_root)
+    work = os.path.realpath(work_root)
     if out == work or out.startswith(work + os.sep):
         logger.error("[Sandbox] output root lies on the engine work volume")
         raise SandboxStartupError("output root must not be inside the work root")
     try:
-        info = os.lstat(out)
+        info = os.lstat(output_root)
     except FileNotFoundError:
-        os.makedirs(out, mode=0o700)
-        info = os.lstat(out)
+        os.makedirs(output_root, mode=0o700)
+        info = os.lstat(output_root)
     if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
         logger.error("[Sandbox] output root is a symlink or not a directory")
         raise SandboxStartupError("output root must be a real directory, not a symlink")
+    if info.st_uid != os.geteuid() or info.st_mode & 0o022:
+        logger.error("[Sandbox] output root is foreign-owned or writable by group/other")
+        raise SandboxStartupError("output root must be owned by this process and closed to group/other")
     return out

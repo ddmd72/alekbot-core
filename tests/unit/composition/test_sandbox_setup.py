@@ -17,6 +17,8 @@ _OK = {"SANDBOX_CALLERS_RENDER": "main@example.com", "SANDBOX_RECYCLE": "always"
 
 def _plan(extra=None, on_cloud_run=False, **kw):
     env = {**_OK, **(extra or {})}
+    if on_cloud_run:
+        env.setdefault("K_SERVICE", "svc")
     return validate_startup(env, on_cloud_run=on_cloud_run, **kw)
 
 
@@ -58,7 +60,7 @@ def test_validate_startup_overlap_refused():
 
 def test_validate_startup_empty_set_on_cloud_run_refused():
     with pytest.raises(SandboxCallersError):
-        validate_startup({"SANDBOX_CALLERS_RENDER": ""}, on_cloud_run=True)
+        validate_startup({"SANDBOX_CALLERS_RENDER": "", "K_SERVICE": "svc"}, on_cloud_run=True)
 
 
 def test_validate_startup_unknown_group_refused():
@@ -92,7 +94,7 @@ def test_validate_startup_allowlisted_env_name_passes():
 
 
 def test_validate_startup_engine_user_default_cloud_run_and_local():
-    assert _plan({"SANDBOX_URL": "https://x"}, on_cloud_run=True).engine_user == "sandbox"
+    assert _plan({"SANDBOX_URL": "https://x"}, on_cloud_run=True).engine_user == "sandboxengine"
     assert _plan().engine_user is None
     assert _plan({"SANDBOX_ENGINE_USER": "eng"}).engine_user == "eng"
 
@@ -135,3 +137,51 @@ def test_setup_module_imports_no_web_module():
     for m in mods:
         for banned in ("web", "infrastructure", "agents", "handlers", "services"):
             assert banned not in m.split("."), m
+
+
+def test_validate_startup_refuses_flag_disagreeing_with_k_service():
+    with pytest.raises(SandboxStartupError):
+        validate_startup(dict(_OK), on_cloud_run=True)
+    with pytest.raises(SandboxStartupError):
+        validate_startup({**_OK, "K_SERVICE": "svc"}, on_cloud_run=False)
+
+
+def test_validate_startup_does_not_mutate_env():
+    env = {**_OK, "K_SERVICE": "svc"}
+    before = dict(env)
+    validate_startup(env, on_cloud_run=True)
+    assert env == before
+
+
+def test_empty_url_on_cloud_run_with_callers_set_is_unconfigured_plan():
+    plan = validate_startup({**_OK, "K_SERVICE": "svc", "SANDBOX_URL": ""}, on_cloud_run=True)
+    assert plan.unconfigured is True
+
+
+def test_existing_group_writable_output_root_refused(tmp_path):
+    out = tmp_path / "out"
+    out.mkdir()
+    out.chmod(0o770)
+    plan = _plan({"SANDBOX_OUTPUT_ROOT": str(out), "SANDBOX_WORK_ROOT": str(tmp_path / "w")})
+    with pytest.raises(SandboxStartupError):
+        build_engine_registry(plan)
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="needs root to create a foreign-owned directory")
+def test_foreign_owned_output_root_refused(tmp_path):
+    out = tmp_path / "out"
+    out.mkdir(mode=0o700)
+    os.chown(out, 12345, 12345)
+    plan = _plan({"SANDBOX_OUTPUT_ROOT": str(out), "SANDBOX_WORK_ROOT": str(tmp_path / "w")})
+    with pytest.raises(SandboxStartupError):
+        build_engine_registry(plan)
+
+
+def test_output_root_overlap_check_resolves_symlinked_work_root(tmp_path):
+    real = tmp_path / "real"
+    real.mkdir()
+    link = tmp_path / "wlink"
+    os.symlink(real, link)
+    plan = _plan({"SANDBOX_WORK_ROOT": str(link), "SANDBOX_OUTPUT_ROOT": str(real / "out")})
+    with pytest.raises(SandboxStartupError):
+        build_engine_registry(plan)
