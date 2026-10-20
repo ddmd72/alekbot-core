@@ -211,16 +211,21 @@ class DocGeneratorAgent(BaseAgent):
                     }))
                 except (SandboxUnavailable, SandboxMisconfigured) as exc:
                     # Systemic outage, not the script's fault: never hand it to the model's repair loop (G10).
-                    logger.error(
-                        "DocGeneratorAgent: turn %d — sandbox failure (%s), stopping without a repair turn",
-                        turn + 1, type(exc).__name__,
+                    if captured_bytes is None:
+                        self._on_agent_error(exc, "docx_generation")  # the one ERROR line
+                        return AgentResponse.failure(
+                            task_id=message.task_id,
+                            agent_id=self.agent_id,
+                            error=f"DOCX rendering is unavailable ({type(exc).__name__}); try again later",
+                        )
+                    logger.warning(
+                        "DocGeneratorAgent: turn %d — sandbox failure (%s) after a DOCX was already produced; "
+                        "keeping it", turn + 1, type(exc).__name__,
                     )
-                    self._on_agent_error(exc, "docx_generation")
-                    return AgentResponse.failure(
-                        task_id=message.task_id,
-                        agent_id=self.agent_id,
-                        error=f"DOCX rendering is unavailable ({type(exc).__name__}); try again later",
-                    )
+                    tool_result_parts.append(MessagePart(tool_response={
+                        "name": tc.name,
+                        "response": {"status": "error", "stderr": "renderer unavailable"},
+                    }))
                 except DocxRunnerError as exc:
                     logger.warning(
                         "DocGeneratorAgent: turn %d — generate_docx error: %s",

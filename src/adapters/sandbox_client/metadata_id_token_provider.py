@@ -12,7 +12,7 @@ Failure classification (the call raises only google-auth types, and wraps the ca
   endpoint arrives as `RefreshError` caused by `TransportError`; an HTTP error status from that endpoint is wrapped the
   same way) -> `SandboxUnavailable`: systemic and transient, nothing is charged to anything;
 - `DefaultCredentialsError`: google-auth swallows the ping's `TransportError` and reports "no credentials". On Cloud
-  Run (`K_SERVICE` / `K_JOB` set) the metadata server is always there, so a failed ping is almost certainly a
+  Run (`K_SERVICE` / `CLOUD_RUN_JOB` set) the metadata server is always there, so a failed ping is almost certainly a
   transient blip -> `SandboxUnavailable`. Anywhere else it means no credentials exist -> `SandboxMisconfigured`;
 - anything else (a malformed token, a bug) -> `SandboxMisconfigured`.
 Worst-case duration of one fetch with google-auth's own retries (3 pings, then up to 5 identity attempts, each
@@ -23,11 +23,11 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
-import os
 import time
 from typing import Callable, Optional
 
 from ...domain.sandbox_errors import SandboxMisconfigured, SandboxUnavailable
+from ...utils.cloud_run import on_cloud_run as is_on_cloud_run
 from ...utils.logger import logger
 
 REFRESH_MARGIN_S = 300.0
@@ -68,7 +68,7 @@ def _is_transient(exc: Exception) -> bool:
     chain = list(_cause_chain(exc))
     if any(isinstance(link, TransportError) for link in chain):
         return True
-    on_cloud_run = bool(os.environ.get("K_SERVICE") or os.environ.get("K_JOB"))
+    on_cloud_run = is_on_cloud_run()
     # MalformedError subclasses DefaultCredentialsError: a bad token, not a failed ping.
     failed_ping = any(isinstance(link, DefaultCredentialsError) and not isinstance(link, MalformedError)
                       for link in chain)

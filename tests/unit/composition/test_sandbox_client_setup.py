@@ -47,3 +47,12 @@ def test_knob_read_with_getenv_not_load_settings():
     from src.config import settings
     src = inspect.getsource(settings)
     assert "SANDBOX_RENDER" not in src
+
+
+def test_on_cloud_run_none_is_derived_from_the_environment():
+    url_less = {"SANDBOX_RENDER": "sandbox"}
+    with pytest.raises(ValueError):
+        build_docx_runner(getenv=_env(**url_less))
+    degraded = build_docx_runner(getenv=_env(K_SERVICE="svc", **url_less))
+    assert degraded.__class__.__name__ == "_UnavailableDocxRunner"
+    assert build_docx_runner(getenv=_env(CLOUD_RUN_JOB="j", **url_less)).__class__.__name__ == "_UnavailableDocxRunner"
