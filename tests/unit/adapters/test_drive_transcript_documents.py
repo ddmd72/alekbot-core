@@ -385,7 +385,7 @@ async def test_resharding_reads_complete_even_when_the_stale_delete_is_lost(fs, 
     repo, db = fs
     monkeypatch.setattr(fs_module, "TRANSCRIPT_DOC_BYTES", 6_000)
     await repo.put_transcript("u", _big(before))
-    first_parts = len(_parts(db))
+    first_parts, first_tokens = len(_parts(db)), {d["token"] for d in _parts(db).values()}
     keep = repo._delete_refs
 
     async def lost(refs, size=0):   # the cleanup after the head never runs
@@ -393,7 +393,9 @@ async def test_resharding_reads_complete_even_when_the_stale_delete_is_lost(fs, 
 
     monkeypatch.setattr(repo, "_delete_refs", lost)
     await repo.put_transcript("u", _big(after))
-    assert len(_parts(db)) > first_parts - 1   # stale parts are still there
+    new_parts = db.collection(STORE).docs["u:k1"]["parts"]
+    assert len(_parts(db)) == first_parts + new_parts   # the old put's parts are all still there
+    assert first_tokens < {d["token"] for d in _parts(db).values()}
     assert await repo.get_transcript("u", "k1") == _big(after)
     monkeypatch.setattr(repo, "_delete_refs", keep)
     await repo.put_transcript("u", _big(after))
@@ -451,3 +453,54 @@ async def test_four_hour_cyrillic_transcript_fits_at_the_real_bound(fs):
     written = [doc for name, col in db.cols.items() if name.startswith(STORE) for doc in col.docs.values()]
     assert written and all(stored_bytes(doc) < 1_048_576 for doc in written)
     assert await repo.get_transcript("u", "kcy") == stored
+
+
+@pytest.mark.parametrize("key", ["httpAbC+/=:123", "HTTPS+x/y=:9"])
+async def test_a_base64_key_starting_with_http_is_not_a_url(adapter, key):
+    repo, _ = adapter
+    await repo.save_transcript_job(_job(content_key=key))
+    assert (await repo.get_transcript_job("u", "i1")).content_key == key
+
+
+@pytest.mark.parametrize("value", ["https://x", "http://x", "HTTP://x", "ftp://x", "files/a https://x"])
+async def test_a_scheme_is_refused(adapter, value):
+    repo, _ = adapter
+    with pytest.raises(ValueError):
+        await repo.save_transcript_job(_job(content_key=value))
+
+
+async def test_a_put_landing_between_head_and_parts_reads_the_new_transcript(fs, monkeypatch):
+    repo, db = fs
+    monkeypatch.setattr(fs_module, "TRANSCRIPT_DOC_BYTES", 6_000)
+    await repo.put_transcript("u", _big(300))
+    old_head = dict(db.collection(STORE).docs["u:k1"])
+    old_parts = {k: dict(v) for k, v in _parts(db).items()}
+    await repo.put_transcript("u", _big(400))
+    new_head = dict(db.collection(STORE).docs["u:k1"])
+    new_parts = {k: dict(v) for k, v in _parts(db).items()}
+    # state before the second put, with the head reads staged: first the OLD head, whose parts are already gone
+    db.collection(STORE).docs["u:k1"] = new_head
+    db.collection(f"{STORE}/u:k1/parts").docs = new_parts
+    reads = iter([old_head, new_head, new_head])
+    plain_get = EvalDocRef.get
+
+    async def staged(self, transaction=None, field_paths=None):
+        if self.col.name == STORE:
+            snap = await plain_get(self, transaction, field_paths)
+            snap._data = next(reads)
+            snap.exists = True
+            return snap
+        return await plain_get(self, transaction, field_paths)
+
+    monkeypatch.setattr(EvalDocRef, "get", staged)
+    assert old_parts and await repo.get_transcript("u", "k1") == _big(400)
+
+
+async def test_a_head_that_never_moves_with_missing_parts_reads_absent_and_logs(fs, monkeypatch, caplog):
+    repo, db = fs
+    monkeypatch.setattr(fs_module, "TRANSCRIPT_DOC_BYTES", 6_000)
+    await repo.put_transcript("u", _big(300))
+    db.collection(f"{STORE}/u:k1/parts").docs.clear()
+    with caplog.at_level("ERROR"):
+        assert await repo.get_transcript("u", "k1") is None
+    assert "found 0" in caplog.text

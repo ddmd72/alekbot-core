@@ -1500,23 +1500,33 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
         return [batch_from_doc(snap.to_dict()) for snap in await query.get()]
 
     async def get_transcript(self, user_id: str, content_key: str) -> Optional[StoredTranscript]:
-        snap = await self._transcript_ref(user_id, content_key).get()
-        if not snap.exists:
-            return None
-        head = snap.to_dict()
-        parts = int(head.get("parts", 0))
-        if parts == 0:
-            return transcript_from_doc(head, head.get("segments") or ())
-        token = head.get("token", "")
-        by_index: Dict[int, Any] = {}
-        for part in await self._parts_col(user_id, content_key).order_by("index").get():
-            data = part.to_dict()
-            if data.get("token", "") == token and int(data["index"]) < parts:   # extras of other puts are ignored
-                by_index[int(data["index"])] = data.get("segments") or []
-        if set(by_index) != set(range(parts)):
-            logger.error(f"[DriveIndex] transcript store: head names {parts} parts, found {len(by_index)}")
-            return None
-        return transcript_from_doc(head, [seg for i in range(parts) for seg in by_index[i]])
+        """Head and parts are separate reads, so a put landing between them shows as a token mismatch: the head is read
+        once more and, if its token changed, the parts again. Absent (and an ERROR) only when an unchanged head still
+        lacks parts."""
+        ref = self._transcript_ref(user_id, content_key)
+        snap = await ref.get()
+        for attempt in (1, 2):
+            if not snap.exists:
+                return None
+            head = snap.to_dict()
+            parts = int(head.get("parts", 0))
+            if parts == 0:
+                return transcript_from_doc(head, head.get("segments") or ())
+            token = head.get("token", "")
+            by_index: Dict[int, Any] = {}
+            for part in await self._parts_col(user_id, content_key).order_by("index").get():
+                data = part.to_dict()
+                if data.get("token", "") == token and int(data["index"]) < parts:   # extras of other puts are ignored
+                    by_index[int(data["index"])] = data.get("segments") or []
+            if set(by_index) == set(range(parts)):
+                return transcript_from_doc(head, [seg for i in range(parts) for seg in by_index[i]])
+            if attempt == 2:
+                break
+            snap = await ref.get()
+            if snap.exists and (snap.to_dict() or {}).get("token", "") == token:
+                break   # the head did not move: the parts really are missing
+        logger.error(f"[DriveIndex] transcript store: head names {parts} parts, found {len(by_index)}")
+        return None
 
     async def put_transcript(self, user_id: str, stored: StoredTranscript) -> None:
         """One head document; the segments inline while the whole fits TRANSCRIPT_DOC_BYTES, otherwise in part

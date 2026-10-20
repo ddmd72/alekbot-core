@@ -172,9 +172,15 @@ def normalized_batch(batch: TranscriptBatch) -> TranscriptBatch:
 
 
 def url_fields(**fields: str) -> List[str]:
-    """Names of the given string fields that hold a URL (start with `http`): §27.4 keeps every URL, a Graph download
-    URL or a Gemini file URI, out of any persisted document."""
-    return [name for name, value in fields.items() if value.lstrip().lower().startswith("http")]
+    """Names of the given string fields that hold a URL (a `http:` / `https:` scheme or a `://`):
+    §27.4 keeps every URL, a Graph download URL or a Gemini file URI, out of any persisted document. A scheme, not the
+    letters `http`: a content key is base64 and may begin with them (`:` is not in that alphabet)."""
+    return [name for name, value in fields.items() if _is_url(value)]
+
+
+def _is_url(value: str) -> bool:
+    lowered = value.lstrip().lower()
+    return lowered.startswith(("http:", "https:")) or "://" in lowered
 
 
 def job_url_fields(job: TranscriptJob) -> List[str]:
