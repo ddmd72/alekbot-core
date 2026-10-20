@@ -321,6 +321,7 @@ suite** runs the same cases against `inprocess` and `sandbox` adapters (S1-S5) a
 | **O8** | **Slice order and prerequisite:** `render.docx`, then the other renderers, then drive parsers, then chat uploads, then media; each part is enabled only after its caller's own service account exists (§7, §4.4) | owner (2026-10-20) |
 | **O9** | **Per-part switch; two weeks of observation each; then the in-process path is removed.** The assistant flips each switch after deploy and reports; the owner can roll back with one command (§4.12, §8) | owner (2026-10-20) |
 | **O10** | **Two services:** light (parsers, chat conversion, media audio, `ffprobe` of chat videos) and render (Chromium and Node: DOCX, PDF, PNG). `video_probe` moves to the light service; Gmail HTML cleaning stays in the main service by decision, a pure-Python parser (§4.2) | owner (2026-10-20) |
+| **O11** | **The drive indexer is in the intended public-invoker set** (§8) as an accepted exception: internal ingress only, every caller's token verified in-app with a pinned audience; the per-runtime identity design relies on the same in-app check | owner (2026-10-20) |
 | P0 | Per-runtime identities are a prerequisite for each op family; caller sets must not overlap (§4.4) | author, folded into O8 |
 | P1 | A service, not a job (§4.1) | author |
 | P4 | Platform IAM, in-app signature verification with pinned audience, per-op caller sets; not `--ingress=internal` (§4.4) | author |
@@ -402,7 +403,7 @@ c. Doc updates: drive RFC §9/§24.14/§27, `drive_parser_sandbox_resource_isola
 
 0. **Prerequisite:** the per-runtime identities for the callers of the family being enabled (P0, O8).
 1. **Create two identities** (`<sandbox-sa>`, `<sandbox-render-sa>`) and grant **nothing**. Verify: `gcloud projects get-iam-policy <PROJECT_ID> --flatten=bindings[].members --filter="bindings.members:<sandbox-sa>"` is empty.
-2. **Audit once, then each deploy:** `gcloud projects get-iam-policy <PROJECT_ID>` contains no `allAuthenticatedUsers`; list service-level policies for the same. The **intended public-invoker set** is the main service's webhook, OAuth, Cabinet and MCP surface and the voice relay, and nothing else; the sandbox services are never in it.
+2. **Audit once, then each deploy:** `gcloud projects get-iam-policy <PROJECT_ID>` contains no `allAuthenticatedUsers`; list service-level policies for the same. The **intended public-invoker set** is the main service's webhook, OAuth, Cabinet and MCP surface, the voice relay, and the drive indexer, and nothing else; the sandbox services are never in it. The indexer is in the set as an accepted exception (O11): it takes internal traffic only and verifies every caller's token in-app with a pinned audience, because Cloud Tasks' token audience (`{url}/worker`) is one platform IAM would not accept.
 3. **Deploy the services** (a Cloud Build step each, no secrets, `--no-allow-unauthenticated`, `--service-account=<sandbox-sa>`, concurrency 1, `--use-http2`).
 4. **Grant invoker:** `roles/run.invoker` on each sandbox service to the caller runtimes' identities only (indexer for the light service, main for both).
 5. **Set the allowlist and URL values** in `.env` (the caller emails per op, the service URLs) as substitutions; never in the repository.
