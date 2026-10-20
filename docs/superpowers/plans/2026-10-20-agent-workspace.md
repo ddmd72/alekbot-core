@@ -892,6 +892,10 @@ class TestMissing:
             "rename it back. Versions kept:"
         ) in text
 
+    def test_renamed_with_unknown_deleted_at(self):
+        text = render_missing(P, [_e(live=False, renamed_to="projects/briefing.md")])
+        assert "It was renamed to projects/briefing.md at an unknown time; update the reminder's workspace_file" in text
+
     def test_never_existed(self):
         assert render_missing(P, []) == f"workspace:{P} does not exist and never did."
 
@@ -1240,7 +1244,7 @@ def render_missing(path: str, versions: Sequence[WorkspaceEntry]) -> str:
     by = f" by {newest.deleted_by}" if newest.deleted_by else ""
     if newest.renamed_to:
         second = (
-            f"It was renamed to {newest.renamed_to} on {when}{by}; update the reminder's workspace_file "
+            f"It was renamed to {newest.renamed_to} {('on ' + _when(newest.deleted_at)) if newest.deleted_at else 'at an unknown time'}{by}; update the reminder's workspace_file "
             f"(manage_self_reminders, context={{\"workspace_file\": \"{newest.renamed_to}\"}}) or rename it back."
         )
     else:
@@ -2518,6 +2522,17 @@ class TestSameFire:
         r = await svc.run(_call(origin="background:execute_reminder", fire=F), "view", {"path": P})
         assert render_same_fire_line(None) in r.text
 
+    async def test_no_same_fire_line_for_a_version_this_execution_wrote_or_viewed(self):
+        svc, store = _svc()
+        store.seed(USER, P, "covered: x", origin="background:execute_reminder", fire=F)
+        first = await svc.run(_call(origin="background:execute_reminder", fire=F), "view", {"path": P})
+        assert "same fire" in first.text
+        # the execution writes a new version in the same fire; the handler records its generation as known
+        mine = store.seed(USER, P, "covered: x, y", origin="background:execute_reminder", fire=F)
+        second = await svc.run(
+            _call(known={P: mine.generation}, origin="background:execute_reminder", fire=F), "view", {"path": P})
+        assert "same fire" not in second.text
+
     async def test_another_fire_gets_no_same_fire_line(self):
         svc, store = _svc()
         store.seed(USER, P, "covered: x", origin="background:execute_reminder", fire=EARLIER)
@@ -2787,7 +2802,7 @@ class WorkspaceService:
             return self._binary(path, entry.generation, log)
         window = number_lines(text, args.get("offset"), args.get("limit"))
         parts = [render_view_header(entry, window.total)]
-        if call.fire_key and entry.fire == call.fire_key:
+        if call.fire_key and entry.fire == call.fire_key and call.known.get(path) != entry.generation:
             # B1: an earlier attempt of this same fire wrote it; name the version from before the fire.
             versions = await self._store.list(call.user_id, path, include_versions=True)
             parts.append(render_same_fire_line(prior_generation_before_fire(versions, call.fire_key)))
@@ -7645,19 +7660,19 @@ detail the RFC leaves open or states twice; each is listed for the reviewer unde
 9. **NotesAgent's multi-call refusal** returns the error for every call of that response, including a delete or a
    delegation in it ("every call in that response gets the tool error", §8.3, read literally), and only create/update
    calls bind.
-10. **The "remove" system line.** §8.3 gives the appended line for an attached path only; for `"remove"` code appends
+10. **The "remove" system line (now in the RFC, §8.3).** §8.3 gives the appended line for an attached path only; for `"remove"` code appends
     "System: the workspace file will be removed by code from the reminder you update in this request. Call
     update_self_reminder with its note_id even if nothing else changes." (the attach sentence's "refer to the file"
     does not apply to a removal). `"remove"` is accepted even when no workspace is configured, so a stale field can be
     cleared.
 11. **`ConversationHandler` is not modified**: `chat` is derived in Smart from `interactive_delivery` (§9 table).
-12. **Review measures are computed per reminder run (trace)**, not per distinct fire key: the alert no longer carries
+12. **Review measures are computed per reminder run (trace)** (now in the RFC, §16), not per distinct fire key: the alert no longer carries
     the fire key (§8.3), so `prompt_content` cannot group attempts of one fire. "Runs that view their file" counts a
     re-run of a fire as its own run; "same-fire re-runs that ignored the earlier version" are the runs whose later turn
     shows the same-fire header and whose first write is not preceded by a view of the named generation. "Junk memory
     facts" (§16 last row) is printed as a manual check (its source is stored facts, not logs or `prompt_content`).
 13. **`BIGQUERY_PROMPT_DATASET` is required** by the review script (no default dataset name in a tracked file).
-14. **Known limitation, RFC §6 read literally:** the 256 KB text cap applies to every text-kind file, `files/`
+14. **Known limitation, RFC §6 read literally (now in the RFC, §6):** the 256 KB text cap applies to every text-kind file, `files/`
     included, so a text-extension upload over 256 KB that decodes as UTF-8 (e.g. a 1 MB CSV) cannot be copied into
     `files/` (`SYSTEM: files/<name>: text file over 256 KB.`), nor into any other folder. Binary files keep the 10 MB
     cap.

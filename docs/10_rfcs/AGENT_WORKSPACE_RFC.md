@@ -320,7 +320,7 @@ path (the whole workspace).
 | Live files per user | 100 | D4. A command that would add a file beyond it is refused: "workspace full (100 files); delete or merge first". Soft: two concurrent creates can land at 101. |
 | Live bytes per user | 100 MB | D4. Checked the same way, counting the new size. |
 | File | 10 MB | D4. Under Gemini's 20 MB inline cap for `open_file` vision. |
-| Text file | 256 KB | Same as skill files (`domain/skill.py:31`). |
+| Text file | 256 KB | Same as skill files (`domain/skill.py:31`). Applies in every folder, `files/` included: a UTF-8 text-extension upload over 256 KB cannot be copied. |
 | `view` window | 2,000 lines by default (`offset`, `limit`), each cut at 2,000 chars, ≤ 100 KB per call | Claude Code's read contract; a larger file is read in windows. `offset`/`limit` that are empty, zero or negative mean the defaults. |
 | Listing / history | 100 entries (newest first), then "…N more" | Equal to the file cap. |
 
@@ -415,6 +415,8 @@ differs (live or noncurrent) and adds:
 (this version was written by an earlier attempt of this same fire; its result may not have reached the user.
 The version before this fire is generation 1760900000000.)
 ```
+
+Not shown for a version this execution wrote or already viewed.
 
 If no such version exists, the line reads `… The file did not exist before this fire.` What to do with that is the
 model's call under its instruction; the tool description says to work from the earlier version. For `chat` /
@@ -542,6 +544,7 @@ need not exist: a first run may create it. An invalid value fails the delegation
   and let it refer to the file.` The `instruction` parameter description of both tool declarations
   (`notes_agent.py:90-98`, `:140`) gains, in git: `When a workspace file is attached to the reminder, keep this short
   and let it refer to the file.`
+  For "remove" the line is: `System: the workspace file will be removed by code from the reminder you update in this request. Call update_self_reminder with its note_id even if nothing else changes.` "remove" is accepted even when no workspace is configured, so a stale field can be cleared.
 
 **Storage.** `AgentNote`, `NoteCreate`, `NoteUpdate` (`domain/agent_note.py:18, 45, 56`) gain `workspace_file`
 (optional); `NoteUpdate` gains `clear_workspace_file`, the `clear_recurrence` pattern (`:65-68`).
@@ -854,9 +857,9 @@ or an instruction. `prompt_content` keeps 30 days, so the script runs by day 28.
 
 | Measure | Computed from | Bar | If missed |
 |---------|---------------|-----|-----------|
-| Reminder fires with a `workspace_file` whose run views it | distinct `fire` keys of reminder runs vs `op=view` lines with that key | ≥ 90 % | Sharpen the reminder's instruction or the field's wording. |
+| Reminder fires with a `workspace_file` whose run views it | reminder runs (traces) whose first request has a [SELF-REMINDER] with a Workspace file: line vs those with a workspace view call | ≥ 90 % | Sharpen the reminder's instruction or the field's wording. |
 | Files recreated after a deletion without a restore or a user request | `op=create had_history=1` with a non-`chat` origin and no `op=restore` for the path | 0 | Code guard: `create` on a path with a deletion in history refuses outside chat. |
-| Same-fire re-runs that ignored the earlier version | two `ok` writes with the same `fire` key, the second not preceded by a `view` with `generation` | reported | Make the overwrite automatic when the fire key matches. |
+| Same-fire re-runs that ignored the earlier version | traces whose later turn shows the same-fire header and whose first write is not preceded by a view with generation | reported | Make the overwrite automatic when the fire key matches. |
 | File growth | `bytes` of successive writes per path | reported per file | A file that only grows gets a pruning line in its instruction (D16: no mechanism). |
 | Conflicts | `result=conflict` | each one read | Explain or fix. |
 | Origin mix | `origin=` | reported | — |
@@ -900,7 +903,7 @@ stays untouched by construction (§8.3).
 - **NotesAgent:** payload `workspace_file` bound to the one create/update, overriding LLM args; two create/update
   calls in the binding response → all refused, none executed; the guard is per execution (two concurrent executions on
   one instance do not share it); appended system line present only when the field is set; invalid path → failure
-  before any LLM call; any folder accepted; `workspace_enabled=False` refuses the field; `remove` clears; receipt and
+  before any LLM call; any folder accepted; `workspace_enabled=False` refuses a path (`remove` still clears); `remove` clears; receipt and
   list rendering.
 - **Reminders:** alert line with and without `workspace_file` (and no other new line); `active_reminders` and Router
   dicts; Cabinet GET; Firestore adapter round trip incl. the clear flag and old documents without the field.
