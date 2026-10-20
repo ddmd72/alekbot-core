@@ -62,6 +62,7 @@ from ..services.drive_search_service import DriveSearchService
 from .drive_indexing_setup import build_drive_index_repository, build_drive_task_queue
 from ..services.task_indexing_service import TaskIndexingService
 from ..adapters.gcs_file_storage_adapter import GcsFileStorageAdapter
+from ..adapters.gcs_workspace_adapter import GcsWorkspaceAdapter
 from ..adapters.gcs_media_adapter import GcsMediaAdapter
 from ..adapters.bigquery_prompt_content_adapter import BigQueryPromptContentAdapter
 from ..adapters.firestore_skill_repository import FirestoreSkillRepository
@@ -70,6 +71,7 @@ from ..adapters.security.composite_adapter import CompositeAdapter
 from ..adapters.security.regex_adapter import RegexSecurityAdapter
 from ..services.skill_service import SkillService
 from ..services.memory_fact_service import MemoryFactService
+from ..services.workspace_service import WorkspaceService
 from ..adapters.firestore_memory_fact_draft_repository import FirestoreMemoryFactDraftRepository
 from ..services.skill_file_resolver import SkillFileResolver
 from ..services.file_conversion_service import FileConversionService
@@ -343,6 +345,10 @@ class ServiceContainer:
         # is a packaging bug that must fail the deploy, not silently vanish from
         # is_system() checks.
         skill_repository = FirestoreSkillRepository(db_client, env_config)
+        # Agent workspace (AGENT_WORKSPACE_RFC §5): Smart's own working files in a dedicated versioned bucket.
+        # Empty key → no adapter: no tool, workspace: refs refused, NotesAgent refuses workspace_file (§5.5).
+        workspace_bucket = config.get("GCS_WORKSPACE_BUCKET", "")
+        self.workspace_store = GcsWorkspaceAdapter(workspace_bucket) if workspace_bucket else None
         system_skills, system_skill_contents = load_system_skill_bundle(SYSTEM_SKILLS_ROOT)
         skill_file_resolver = SkillFileResolver(
             skill_repository, system_skills, system_skill_contents
@@ -353,6 +359,7 @@ class ServiceContainer:
                 media_storage=self.media_storage,
                 skill_files=skill_file_resolver,
                 drive=self.user_drive,
+                workspace=self.workspace_store,
             )
             if self.file_storage else None
         )
@@ -372,6 +379,12 @@ class ServiceContainer:
             repository=FirestoreMemoryFactDraftRepository(db_client, env_config),
             security_port=CompositeAdapter(adapters=[RegexSecurityAdapter()], strategy="worst_case"),
             session_store=self.session_store,
+        )
+
+        # Built after FileConversionService: copy sources (uploads, delivered documents) go through it (§12).
+        self.workspace_service = (
+            WorkspaceService(store=self.workspace_store, file_conversion=self.file_conversion_service)
+            if self.workspace_store else None
         )
 
         # ------------------------------------------------------------------
@@ -428,6 +441,7 @@ class ServiceContainer:
             "prompt_content_store": self.prompt_content_store,
             "skill_service": self.skill_service,
             "memory_fact_service": self.memory_fact_service,
+            "workspace_service": self.workspace_service,
         }
 
     def create_fact_management_adapter(
