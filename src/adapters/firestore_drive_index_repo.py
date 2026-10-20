@@ -1628,11 +1628,12 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
         await self._delete_refs([snap.reference for snap in snaps], KEYED_DELETE_BATCH)
         return len(snaps)
 
-    async def delete_user_transcript_orphans(self, user_id: str, limit: int) -> int:
-        """Window and part documents of the user whose parent is gone, up to `limit` in all (two collection-group
-        sweeps). Called when the helpers return 0, so every user document found here is an orphan."""
+    async def delete_user_transcript_orphans(self, user_id: str, limit: int, *, keep_transcripts: bool) -> int:
+        """All of the user's window documents and, unless `keep_transcripts`, part documents, up to `limit` in all (collection-group
+        sweeps), live ones included. Only after the three helpers returned 0 in the same purge; `keep_transcripts`
+        never touches the parts group."""
         deleted = 0
-        for group in (self._windows_name, self._parts_name):
+        for group in ((self._windows_name,) if keep_transcripts else (self._windows_name, self._parts_name)):
             refs = await self.user_subdoc_refs(group, user_id, limit - deleted)
             await self._delete_refs(refs, KEYED_DELETE_BATCH)
             deleted += len(refs)

@@ -498,9 +498,11 @@ class DriveIndexRepository(ABC):
         number of transcripts deleted; call until 0."""
 
     @abstractmethod
-    async def delete_user_transcript_orphans(self, user_id: str, limit: int) -> int:
-        """Purge: delete up to `limit` window and part documents of the user whose parent is gone (a crash between the
-        subdocument writes and the parent), through two collection-group sweeps that need their composite indexes.
-        The purge caller calls it after the three helpers return 0. A DriveIndexStoreUnavailable from it (a missing
-        index) is logged as ERROR naming the index and never fails or holds the purge: it is retried on the next purge
-        or daily pass. Returns the number deleted."""
+    async def delete_user_transcript_orphans(self, user_id: str, limit: int, *, keep_transcripts: bool) -> int:
+        """Purge: delete up to `limit` of the user's window documents and, unless `keep_transcripts`, part documents,
+        through collection-group sweeps that need their composite indexes. It deletes ALL of the user's documents in
+        those groups, live ones included: it cannot tell an orphan from a live document. It may run only after all three
+        `delete_user_*` helpers returned 0 in the same purge. `keep_transcripts=True` (a rebuild that keeps the store,
+        `purge_keep_transcripts`) sweeps the windows group only and never touches parts; False sweeps both. A
+        DriveIndexStoreUnavailable from it (a missing index) is logged as ERROR naming the index and never fails or
+        holds the purge: it is retried on the next purge or daily pass. Returns the number deleted."""
