@@ -193,8 +193,7 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   to exactly one create/update (a `_run`-local guard; several create/update calls in one response are all refused),
   announced by a code-appended system line, cleared by `"remove"` (`""`/`none`/`null`/`n/a` mean not provided). The alert
   renders it as one line, `Workspace file: workspace:<path>`; what to do with the file is the instruction's business.
-  Tools: create/update/delete
-  + `delegate_to_specialist` (multi-turn, max 3). **Schedule = RFC 5545 RRULE string** (no
+  Tools: create/update/delete + `delegate_to_specialist` (multi-turn, max 3). **Schedule = RFC 5545 RRULE string** (no
   `DTSTART` — `due` is the anchor and first fire), validated/expanded via `RecurrencePort` →
   `DateutilRecurrenceAdapter`: one reminder covers several weekdays, several times a day or "last
   Sunday of the month" — never duplicate reminders. `COUNT`/`UNTIL` rejected (a reminder ends by

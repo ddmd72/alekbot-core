@@ -217,11 +217,11 @@ class FileManagementAgent(BaseAgent):
         self._on_agent_start(f"open_file: {ref}")
 
         try:
+            if ref.startswith(WORKSPACE_REF_PREFIX):
+                return await self._fetch_workspace(message, ref, user_id)
             # skill: refs are always text and never go through mime guessing (RFC §15.4) —
             # the ref's "path" segment has its own extension, but the ref itself isn't a
             # bare filename mimetypes can classify.
-            if ref.startswith(WORKSPACE_REF_PREFIX):
-                return await self._fetch_workspace(message, ref, user_id)
             if ref.startswith(SKILL_REF_PREFIX):
                 return await self._fetch_text(message, ref, user_id)
 
@@ -273,7 +273,7 @@ class FileManagementAgent(BaseAgent):
 
     async def _fetch_workspace(self, message: AgentMessage, ref: str, user_id: str) -> AgentResponse:
         """`workspace:` refs open only under files/ (AGENT_WORKSPACE_RFC §12): a note in another folder is read with
-        the workspace tool, which frames it as data with its origin. One reader per kind of file."""
+        the workspace tool, which shows it with its view header (writer, generation). One reader per kind of file."""
         try:
             path = parse_workspace_path(ref)
         except WorkspaceRefused as e:
