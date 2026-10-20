@@ -26,7 +26,7 @@ Enforcement: a non-empty accepted set is verified; an empty set fails closed on 
 Run and opens only locally (`build_oidc_gate`; see `main.py`). This module only performs the cryptographic check.
 """
 
-from typing import Awaitable, Callable, Collection, Optional
+from typing import Any, Awaitable, Callable, Collection, Optional
 
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
@@ -152,3 +152,73 @@ def verify_worker_oidc(
         return False
 
     return True
+
+
+_CERT_FETCH_TIMEOUT_S = 10
+
+
+def _short_timeout_request() -> Callable[..., Any]:
+    """A google-auth transport whose key fetch times out after ``_CERT_FETCH_TIMEOUT_S`` seconds."""
+    base = google_requests.Request()
+
+    def request(
+        url: str,
+        method: str = "GET",
+        body: Any = None,
+        headers: Any = None,
+        timeout: float = _CERT_FETCH_TIMEOUT_S,
+        **kwargs: Any,
+    ) -> Any:
+        return base(url, method=method, body=body, headers=headers, timeout=timeout, **kwargs)
+
+    return request
+
+
+def verify_oidc_identity(
+    authorization_header: Optional[str],
+    audiences: Collection[str],
+) -> Optional[str]:
+    """Return the verified ``email`` of a valid Google OIDC bearer token, else ``None``.
+
+    Requires signature, issuer and expiry (via Google's public keys), a truthy
+    ``email_verified``, a non-empty ``email`` and ``aud`` in ``audiences``. The caller
+    decides what the identity may do (the sandbox gate maps it to op groups).
+
+    Deliberately separate from ``verify_worker_oidc``: that function guards every
+    Scheduler/Tasks job and stays untouched (sandbox RFC S-Δ9). Never raises; every
+    failure is logged (exception type only: google-auth messages can embed the token) and
+    returned as ``None``. A bare ``str`` for ``audiences`` is treated as one audience.
+
+    Blocking: fetching Google's signing keys is synchronous network I/O, bounded here by
+    ``_CERT_FETCH_TIMEOUT_S`` instead of google-auth's 120 s default; async callers should
+    run it in a thread.
+    """
+    try:
+        accepted = {audiences} if isinstance(audiences, str) else set(audiences)
+        if not authorization_header or not authorization_header.startswith("Bearer "):
+            logger.warning("OIDC identity: missing or malformed Authorization header")
+            return None
+        token = authorization_header[len("Bearer "):].strip()
+        if not token:
+            logger.warning("OIDC identity: empty bearer token")
+            return None
+        try:
+            claims = google_id_token.verify_oauth2_token(token, _short_timeout_request())
+        except Exception as e:
+            logger.warning(f"OIDC identity: token verification failed: {type(e).__name__}")
+            return None
+        if not claims.get("email_verified"):
+            logger.warning("OIDC identity: email_verified is not set on the token")
+            return None
+        aud = claims.get("aud")
+        if not isinstance(aud, str) or aud not in accepted:
+            logger.warning("OIDC identity: audience claim is not one this route accepts")
+            return None
+        email = claims.get("email")
+        if not isinstance(email, str) or not email:
+            logger.warning("OIDC identity: token carries no email claim")
+            return None
+        return email
+    except Exception as e:  # defensive: the contract is "never raises"
+        logger.warning(f"OIDC identity: unexpected failure: {type(e).__name__}")
+        return None

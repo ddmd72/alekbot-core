@@ -1,0 +1,15 @@
+# Python dependencies of the untrusted-content sandbox render image (Dockerfile.sandbox; UNTRUSTED_CONTENT_SANDBOX_RFC §4.3).
+# Every line equals its line in requirements.txt (tests/unit/test_sandbox_import_closure.py compares them), so the two
+# images cannot drift. requests and pydantic are only transitive there; they are pinned exactly here.
+# What src.utils.logger imports at module load is here (plan G13); logfire, Firestore, Secret Manager, Storage, BigQuery
+# and every model SDK are deliberately absent.
+quart>=0.18.0
+hypercorn>=0.14.0
+h2==4.3.0  # serves hypercorn's HTTP/2 (h2c prior knowledge from Cloud Run); no httpx in this image
+google-auth>=2.0.0  # in-app Google OIDC verification on the /worker endpoint
+requests==2.32.5  # google.auth.transport.requests (the verifier's public-key fetch, G21)
+pydantic==2.12.5  # mandated by the T9 brief; the import closure does not import it today
+google-cloud-logging
+opentelemetry-api==1.43.0
+opentelemetry-sdk==1.43.0
+opentelemetry-exporter-gcp-trace==1.14.0
