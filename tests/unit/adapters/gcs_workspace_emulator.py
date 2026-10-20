@@ -67,7 +67,7 @@ class FakeGcsClient:
     def __init__(self) -> None:
         self.versions: Dict[str, List[_Version]] = {}
         self.lose_next_write_response = False   # the write lands, then the (retried) request answers 412
-        self.lose_next_delete_response = False
+        self.lose_next_delete_response_as: Optional[type] = None  # PreconditionFailed | NotFound
         self._generation = 1000
         self._now = datetime(2026, 10, 20, 6, 0, tzinfo=timezone.utc)
 
@@ -124,7 +124,11 @@ class FakeGcsClient:
         if live is None:
             raise NotFound(name)
         self._check(name, if_generation_match)
-        live.metadata.update(metadata)
+        for k, v in metadata.items():  # patch merges; None removes the key
+            if v is None:
+                live.metadata.pop(k, None)
+            else:
+                live.metadata[k] = v
         return live
 
     def _delete(self, name, generation, if_generation_match):
@@ -136,6 +140,6 @@ class FakeGcsClient:
             raise NotFound(name)
         self._check(name, if_generation_match)
         live.time_deleted = self._tick()
-        if self.lose_next_delete_response:
-            self.lose_next_delete_response = False
-            raise PreconditionFailed("412 on the retry of a delete that landed")
+        if self.lose_next_delete_response_as is not None:
+            error, self.lose_next_delete_response_as = self.lose_next_delete_response_as, None
+            raise error(f"{error.__name__} on the retry of a delete that landed")  # 404 is the likely one

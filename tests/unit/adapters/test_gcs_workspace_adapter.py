@@ -66,6 +66,12 @@ class TestPut:
         blob.upload_from_string.assert_called_once_with(b"%PDF", content_type="application/pdf",
                                                         if_generation_match=105)
 
+    async def test_content_type_is_case_insensitive(self, client):
+        blob = client.bucket.return_value.blob.return_value = _Blob(name="u1/NOTES.MD")
+        await _adapter(client).put("u1", "NOTES.MD", b"x", WorkspaceWriteMeta(origin="chat"), 0)
+        blob.upload_from_string.assert_called_once_with(
+            b"x", content_type="text/markdown; charset=utf-8", if_generation_match=0)
+
     async def test_custom_time_only_under_scratch(self, client):
         blob = client.bucket.return_value.blob.return_value = _Blob(name="u1/scratch/d.md")
         await _adapter(client).put("u1", "scratch/d.md", b"x", WorkspaceWriteMeta(origin="chat"), 0)
@@ -108,7 +114,7 @@ class TestDelete:
     async def test_minimal_delete_metadata(self, client):
         blob = client.bucket.return_value.blob.return_value = _Blob()
         await _adapter(client).delete("u1", "projects/a.md", 101, WorkspaceDeleteMeta(deleted_by="chat"))
-        assert blob.metadata == {"deleted_by": "chat", "delete_id": "w1"}
+        assert blob.metadata == {"deleted_by": "chat", "delete_id": "w1", "deleted_fire": None, "renamed_to": None}
 
     async def test_412_on_our_own_landed_delete_is_success(self, client):
         bucket = client.bucket.return_value
@@ -122,6 +128,23 @@ class TestDelete:
         ]
         await _adapter(client).delete("u1", "projects/a.md", 101, WorkspaceDeleteMeta(deleted_by="chat"))
         client.list_blobs.assert_called_once_with("ws-bucket", prefix=KEY, versions=True)
+
+    async def test_404_on_our_own_landed_delete_is_success(self, client):
+        bucket = client.bucket.return_value
+        bucket.blob.return_value = _Blob()
+        bucket.blob.return_value.delete.side_effect = NotFound("404")
+        bucket.get_blob.return_value = None
+        client.list_blobs.return_value = [_Blob(generation=101, metadata={"delete_id": "w1"}, time_deleted=T)]
+        await _adapter(client).delete("u1", "projects/a.md", 101, WorkspaceDeleteMeta(deleted_by="chat"))
+
+    async def test_404_without_our_delete_id_is_file_not_found(self, client):
+        bucket = client.bucket.return_value
+        bucket.blob.return_value = _Blob()
+        bucket.blob.return_value.delete.side_effect = NotFound("404")
+        bucket.get_blob.return_value = None
+        client.list_blobs.return_value = [_Blob(generation=101, metadata={"delete_id": "other"}, time_deleted=T)]
+        with pytest.raises(FileNotFoundError):
+            await _adapter(client).delete("u1", "projects/a.md", 101, WorkspaceDeleteMeta(deleted_by="chat"))
 
     async def test_412_with_a_live_object_is_a_conflict(self, client):
         bucket = client.bucket.return_value
