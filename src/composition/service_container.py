@@ -69,6 +69,8 @@ from ..adapters.filesystem_skill_loader import load_system_skill_bundle, SYSTEM_
 from ..adapters.security.composite_adapter import CompositeAdapter
 from ..adapters.security.regex_adapter import RegexSecurityAdapter
 from ..services.skill_service import SkillService
+from ..services.memory_fact_service import MemoryFactService
+from ..adapters.firestore_memory_fact_draft_repository import FirestoreMemoryFactDraftRepository
 from ..services.skill_file_resolver import SkillFileResolver
 from ..services.file_conversion_service import FileConversionService
 from ..agents.email_classification_agent import EmailClassificationAgent
@@ -364,6 +366,13 @@ class ServiceContainer:
             system_skills=system_skills,
             file_conversion=self.file_conversion_service,
         )
+        # Owner-confirmed memory facts (MEMORY_FACT_CONFIRMATION_RFC): drafts are
+        # stored here, saved only by the owner's `$memory save <code>`.
+        self.memory_fact_service = MemoryFactService(
+            repository=FirestoreMemoryFactDraftRepository(db_client, env_config),
+            security_port=CompositeAdapter(adapters=[RegexSecurityAdapter()], strategy="worst_case"),
+            session_store=self.session_store,
+        )
 
         # ------------------------------------------------------------------
         # LLM prompt/response content store (BigQuery, 30-day TTL).
@@ -418,6 +427,7 @@ class ServiceContainer:
             "drive_search_service": self.drive_search_service,
             "prompt_content_store": self.prompt_content_store,
             "skill_service": self.skill_service,
+            "memory_fact_service": self.memory_fact_service,
         }
 
     def create_fact_management_adapter(

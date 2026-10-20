@@ -68,6 +68,7 @@ class SlackAdapterFactory:
         fallback_service=None,
         short_link_service=None,
         skill_service=None,
+        memory_fact_service=None,
         long_turn_service=None,
     ) -> SlackAdapter:
         """
@@ -130,6 +131,7 @@ class SlackAdapterFactory:
             fallback_service=fallback_service,
             short_link_service=short_link_service,
             skill_service=skill_service,
+            memory_fact_service=memory_fact_service,
             long_turn_service=long_turn_service,
         )
 

@@ -71,13 +71,13 @@ async def test_fetch_since_returns_messages_after_the_time():
     assert await clock.fetch_since(5.0) == [new]
 
 
-async def test_save_late_answer_carries_consolidation_text_on_the_note():
+async def test_save_late_answer_writes_the_note_pair_with_no_consolidation_text():
     svc, _, store = _svc()
     await svc.save_late_answer(session_id="u1:D1", owner_id="u1", note_text="[System: late answer …]",
-                               consolidation_texts=["fact A"], history_text="sum", full_text="full")
+                               history_text="sum", full_text="full")
     user, model = store.append_messages_batch.call_args.kwargs["messages"]
     assert user.parts[0].text.startswith("[System: late answer")
-    assert any((p.consolidation_text or "").endswith("fact A") for p in user.parts)
+    assert all(p.consolidation_text is None for p in user.parts)   # writer removed (MEMORY_FACT_CONFIRMATION_RFC §6)
     assert model.parts[0].text == "sum" and model.parts[0].full_text == "full"
 
 

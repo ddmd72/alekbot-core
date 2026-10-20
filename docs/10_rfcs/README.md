@@ -27,6 +27,7 @@ This directory contains Request for Comments (RFC) documents that describe propo
 | [GMAIL_EMAIL_INDEXING](./GMAIL_EMAIL_INDEXING_RFC.md) | Phase 1–2 ✅ Phase 3 🔄 | LLM-based email indexing, biographical_signal classification, ConsolidationAgent integration UAT validated. |
 | [HEXAGONAL_PROMPT_CACHING](./HEXAGONAL_PROMPT_CACHING_RFC.md) | Implemented | Transparent prompt caching via CachingLLMProxy + CACHE_BOUNDARY prefix — in production. |
 | [WIDGET_PLAYWRIGHT](./WIDGET_PLAYWRIGHT_RFC.md) | Implemented | HTML widget rendering via Playwright screenshots — in production. |
+| [MEMORY_FACT_CONFIRMATION](./MEMORY_FACT_CONFIRMATION_RFC.md) | Accepted, implemented on `feat/memory-propose-facts` | Replaces the `save_to_memory` intent. Smart proposes facts read from a document with the local tool `propose_memory_facts`; the owner reads them in a file and pastes `$memory save <code>`, and the service appends them to the origin session as a user/model pair, so the consolidator reads them as the owner's words. Removes every writer of `consolidation_text`. |
 | [NATIVE_TOOLS_INTEGRATION](./NATIVE_TOOLS_INTEGRATION_RFC.md) | Partial | SearchEnrichmentService implemented. Quick delegation loop + WebSearchLightAgent added (session 7). |
 | [PROMPT_BUILDER_V4](./PROMPT_BUILDER_V4_RFC.md) | Implemented | Blueprint + ProfileToken override system (4 levels). Code done; Firestore upload pending. |
 | [RICH_CONTENT](./RICH_CONTENT_RFC.md) | Implemented V1 | File delivery (md/html/xlsx/docx) via SlackMediaAdapter — in production. |

@@ -134,7 +134,7 @@ Module-level pass-through wrapper active only during Stage 1. Records `(fact_id,
 for every CREATE / UPDATE / MERGE. `tracker.changed` seeds Stage 2 cluster selection.
 Does not affect production writes.
 
-### 3.5 `MessagePart.consolidation_text` — Explicit-Save Injection
+### 3.5 `MessagePart.consolidation_text` — Legacy Explicit-Save Injection
 
 **Problem:** Native binary parts (`file_data`) are dropped from history after the turn. When the
 consolidation serializer runs `[{"text": p.full_text or p.text} for p in msg.parts ...]`, file-only
@@ -142,9 +142,11 @@ user messages produce an empty list. `ConsolidationAgent`'s `Domain_Scope` polic
 ASSISTANT statements as facts unless USER confirms with NEW information") then discards any model
 commentary about the file. Facts extracted from uploaded files do not survive consolidation.
 
-**Solution:** `MessagePart.consolidation_text` is an optional field on every `MessagePart`. It is:
-- Set by `ConversationHandler` when `FactsMemoryAgent` returns `history_context={"consolidation_text": text}` (see `save_to_memory` intent).
-- Appended as a new `MessagePart(consolidation_text=combined)` to the user message before it is persisted.
+**Status (legacy):** the `save_to_memory` intent and every writer of the field are removed (bot-written text was read as the owner's words). Facts from a document now go through `propose_memory_facts` + the owner's `$memory save`, which appends a user/model pair to the origin session (`MEMORY_FACT_CONFIRMATION_RFC.md`). The field and its readers stay until no stored session carries it (6 messages in 3 sessions on 2026-10-19).
+
+**What the field is:** `MessagePart.consolidation_text` is an optional field on every `MessagePart`. It is:
+- Present only on rows written before the removal.
+- Kept on the user message part it was attached to.
 - Serialized and deserialized by `FirestoreSessionStore` alongside other part fields.
 - Read by both consolidation serialization paths:
 

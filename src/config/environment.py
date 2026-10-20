@@ -347,6 +347,13 @@ class EnvironmentConfig:
         return f"{self.firestore_collection_prefix}skill_drafts"
 
     @property
+    def memory_fact_drafts_collection(self) -> str:
+        """
+        Proposed memory facts awaiting the owner's `$memory save`. Dev: development_memory_fact_drafts
+        """
+        return f"{self.firestore_collection_prefix}memory_fact_drafts"
+
+    @property
     def drive_index_records_collection(self) -> str:
         """
         User-drive index records, one per drive item (USER_DRIVE_INDEXING_RFC §3.2).
