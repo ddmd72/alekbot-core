@@ -85,9 +85,23 @@ def test_open_text_cut_with_note():
     cut = open_text(_stored(transcript), max_chars=1000)
     body, _, note = cut.partition("\n\n[Transcript cut")
     assert body == render_body(_st(segs[:len(body.split("\n\n"))]))                # whole paragraphs only
-    assert len(body) <= 1000
-    assert note and "Transcripts folder" in note and "search" in note
-    assert f"{len(full)}" in note
+    assert len(cut) <= 1000
+    assert note.endswith("Search for a passage to read a specific part.]")
+    assert f"of {len(full)} characters" in note
+    assert "folder" not in note and "mirror" not in note
+
+
+def test_open_text_note_points_at_mirror_path_when_given():
+    segs = [_seg(i * 10, f"line number {i} with some padding words", 1) for i in range(200)]
+    cut = open_text(_stored(_st(segs)), max_chars=1000, mirror_path="Transcripts/a.mp3.md")
+    assert "The full text is in Transcripts/a.mp3.md." in cut
+    assert len(cut) <= 1000
+
+
+def test_open_text_cap_includes_seam_line():
+    segs = [_seg(i * 10, f"line number {i} with some padding words", 1) for i in range(200)]
+    cut = open_text(_stored(_st(segs, uncertain_seam=True)), max_chars=1000)
+    assert cut.startswith("[speaker labels may differ") and len(cut) <= 1000
 
 
 def test_open_text_uncertain_seam_line_and_stub():

@@ -14,6 +14,7 @@ and summary belong to the mirror file, not here. Every stub has this determinist
 from typing import List, Optional
 
 from src.domain.drive_index import DriveIndexRecord
+from src.domain.drive_enrichment import JobState
 from src.domain.drive_transcript import StitchedTranscript, StoredTranscript, TranscriptStub
 from src.domain.drive_transcript_time import format_stamp
 
@@ -58,7 +59,7 @@ def _stub_line(stub: str, seconds: int = 0) -> Optional[str]:
 
 def card_segment(rec: DriveIndexRecord) -> Optional[str]:
     """The transcript line of a media card; None while there is nothing to say (no transcript, a failed one)."""
-    if rec.transcript_state != "current":
+    if rec.transcript_state != JobState.CURRENT.value:
         return None
     if rec.transcript_stub:
         return _stub_line(rec.transcript_stub, rec.transcript_seconds)
@@ -72,26 +73,31 @@ def card_segment(rec: DriveIndexRecord) -> Optional[str]:
     return "transcript: " + ", ".join(parts)
 
 
-def open_text(stored: StoredTranscript, *, max_chars: int) -> str:
-    """The transcript as Smart reads it: the indexed body, cut at a paragraph boundary to `max_chars` with a note naming
-    the mirror file (G19). A stub is its card line; nothing stored is the empty string."""
+def open_text(stored: StoredTranscript, *, max_chars: int, mirror_path: str = "") -> str:
+    """The transcript as Smart reads it: the indexed body, cut at a paragraph boundary so the whole result (seam line
+    and cut note included) stays within `max_chars` (G19). The note points at `mirror_path` when the caller has one.
+    A stub is its card line; nothing stored is the empty string."""
     transcript = stored.transcript
     if transcript is None:
         return _stub_line(stored.stub) or ""
     full = render_body(transcript)
-    body = full
-    note = ""
-    if len(full) > max_chars:
-        kept: List[str] = []
-        size = 0
-        for paragraph in full.split("\n\n"):
-            added = len(paragraph) + (2 if kept else 0)
-            if size + added > max_chars:
-                break
-            kept.append(paragraph)
-            size += added
-        body = "\n\n".join(kept) if kept else full[:max_chars]
-        note = (f"[Transcript cut at {len(body)} of {len(full)} characters. The full text is in the Transcripts folder "
-                f"of the drive; search for a passage to read a specific part.]")
     head = UNCERTAIN_SEAM_LINE + "\n\n" if transcript.uncertain_seam else ""
-    return head + body + ("\n\n" + note if note else "")
+    if len(head) + len(full) <= max_chars:
+        return head + full
+    pointer = f" The full text is in {mirror_path}." if mirror_path else ""
+
+    def note(shown: int) -> str:
+        return (f"[Transcript cut at {shown} of {len(full)} characters.{pointer} "
+                f"Search for a passage to read a specific part.]")
+
+    room = max(0, max_chars - len(head) - len(note(len(full))) - 2)
+    kept: List[str] = []
+    size = 0
+    for paragraph in full.split("\n\n"):
+        added = len(paragraph) + (2 if kept else 0)
+        if size + added > room:
+            break
+        kept.append(paragraph)
+        size += added
+    body = "\n\n".join(kept) if kept else full[:room]
+    return head + body + "\n\n" + note(len(body))
