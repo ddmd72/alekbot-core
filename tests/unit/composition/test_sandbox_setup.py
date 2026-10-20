@@ -70,7 +70,7 @@ def test_validate_startup_unknown_group_refused():
 
 def test_validate_startup_missing_render_group_refused():
     with pytest.raises(SandboxStartupError):
-        validate_startup({"SANDBOX_RECYCLE": "always"}, on_cloud_run=False)
+        validate_startup({"SANDBOX_RECYCLE": "always", "SANDBOX_URL": "https://svc.example.com"}, on_cloud_run=False)
 
 
 def test_validate_startup_empty_url_on_cloud_run_is_unconfigured_not_refusal():
