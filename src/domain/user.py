@@ -3,6 +3,7 @@ from typing import Dict, List, Optional, Any, TYPE_CHECKING
 from datetime import datetime, timezone
 from uuid import uuid4
 from pydantic import BaseModel, Field
+from .entities import FactDomain
 from .language import LanguageCode
 from .task_complexity import TaskComplexity
 
@@ -58,6 +59,11 @@ class PromptPreferences(BaseModel):
     custom_instructions: Optional[str] = None
     language: str = "uk"
     vibe: str = "friendly"  # friendly, professional, witty
+
+# Fact domains Lelik's call-start prompt carries by default (owner decision 2026-10-21):
+# who the owner is and how he wants to be spoken to. Preference stays because it holds the
+# conversational rules ("no jokes about death while mourning", "address informally").
+DEFAULT_VOICE_FACT_DOMAINS = (FactDomain.BIOGRAPHICAL.value, FactDomain.PREFERENCE.value)
 
 # Default per-agent tiers used as a fallback in get_tier_for_agent.
 # Kept outside the class so it can be referenced by both default_factory and the method
@@ -289,11 +295,13 @@ class UserBotConfig(BaseModel):
     # None = let the provider auto-detect. Set via Cabinet UI.
     voice_languages: Optional[List[str]] = None
 
-    # Fact domains (FactDomain values) withheld from Lelik's call-start context. Empty = the
-    # whole biographical cache (decisions/lelik_warm_context.md: give everything, trim what
-    # proves out of place). Plain strings, not FactDomain: a typo in a hand-edited Firestore
-    # doc must not fail the whole config load — LelikPersonaService warns and ignores it.
-    voice_excluded_fact_domains: List[str] = Field(default_factory=list)
+    # Fact domains (FactDomain values) that reach Lelik's call-start context: an ALLOWLIST, so a
+    # domain added later stays out of the call until chosen (decisions/lelik_warm_context.md,
+    # revised 2026-10-21). Everything else is still reachable through his search_memory tool.
+    # Plain strings, not FactDomain: a typo in a hand-edited Firestore doc must not fail the
+    # whole config load — LelikPersonaService warns and ignores it. A stored doc carrying the
+    # retired `voice_excluded_fact_domains` key still loads (pydantic ignores extra keys).
+    voice_fact_domains: List[str] = Field(default_factory=lambda: list(DEFAULT_VOICE_FACT_DOMAINS))
 
     # Realtime provider for voice calls, a key of domain.voice_provider_profile.VOICE_PROVIDER_PROFILES
     # ("xai" | "openai"). None = DEFAULT_VOICE_PROVIDER (VOICE_MULTI_PROVIDER_RFC §4.2).

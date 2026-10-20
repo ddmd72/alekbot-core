@@ -15,10 +15,10 @@ if TYPE_CHECKING:
     from .user_notification_service import UserNotificationService
 
 # The primary channel's last K messages, as stored: a model turn's `text` is already its
-# ≤300-char response_summary, so the slice costs no LLM call and no latency at pickup.
+# response_summary (≤600 chars, written in Alek's character), so the slice costs no LLM call and no latency at pickup.
 HISTORY_MESSAGES = 30
 # A user turn is stored in full (pastes, forwarded mail) — bound each entry.
-MAX_ENTRY_CHARS = 500
+MAX_ENTRY_CHARS = 700
 
 _KNOWN_DOMAINS = frozenset(d.value for d in FactDomain)
 
@@ -26,9 +26,9 @@ _KNOWN_DOMAINS = frozenset(d.value for d in FactDomain)
 class LelikPersonaService:
     """Assembles the context Lelik's prompt is built from (§4.8); `LelikAgent` builds the prompt.
 
-    Lelik starts warm: the whole biographical cache minus the user's
-    `voice_excluded_fact_domains`, standing directives, the primary channel's
-    recent history, and the local date/time. See decisions/lelik_warm_context.md.
+    Lelik starts warm: the biographical cache restricted to the user's
+    `voice_fact_domains` (default biographical + preference; no standing directives),
+    the primary channel's recent history, and the local date/time. See decisions/lelik_warm_context.md.
     """
 
     def __init__(
@@ -47,7 +47,7 @@ class LelikPersonaService:
         """Raises on a fact-store failure — the caller fails the call closed."""
         facts = await self._facts.get_biographical_context_cached(account_id)
         return LelikContext(
-            biographical_facts=self._without_excluded(facts or []),
+            biographical_facts=self._only_voice_domains(facts or []),
             conversation_history=await self._recent_history(user_id),
         )
 
@@ -56,12 +56,12 @@ class LelikPersonaService:
         # into, the session his own call summaries land in.
         return await self._notifications.resolve_channel(user_id)
 
-    def _without_excluded(self, facts: List[Dict]) -> List[Dict]:
-        excluded = set(self._config.voice_excluded_fact_domains)
-        unknown = excluded - _KNOWN_DOMAINS
+    def _only_voice_domains(self, facts: List[Dict]) -> List[Dict]:
+        allowed = set(self._config.voice_fact_domains)
+        unknown = allowed - _KNOWN_DOMAINS
         if unknown:
-            logger.warning(f"[LelikPersona] Ignoring unknown voice_excluded_fact_domains: {sorted(unknown)}")
-        return [f for f in facts if isinstance(f, dict) and f.get("domain") not in excluded]
+            logger.warning(f"[LelikPersona] Ignoring unknown voice_fact_domains: {sorted(unknown)}")
+        return [f for f in facts if isinstance(f, dict) and f.get("domain") in allowed]
 
     async def _recent_history(self, user_id: str) -> List[Dict]:
         channel = await self.primary_channel(user_id)
