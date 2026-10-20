@@ -60,6 +60,10 @@ from src.web.sandbox_supervisor import SandboxSupervisor
 from src.web.sandbox_unconfigured_app import create_unconfigured_blueprint
 
 RECYCLE_FD_ENV = "SANDBOX_RECYCLE_FD"
+# The one name the official python base image defines that the startup self-check's pattern reads as secret-shaped
+# (`GPG_KEY`: the public id of the key that signed the Python release, set by the image). An allowlist entry, never a
+# looser pattern (RFC §4.3; tests/unit/test_dockerfile_sandbox.py).
+IMAGE_ENV_ALLOWLIST = frozenset({"GPG_KEY"})
 # Hypercorn's wait for the in-flight response after SIGTERM, then leftovers are cancelled. Cloud Run allows ~10 s
 # between its own SIGTERM and SIGKILL; the supervisor's SIGKILL grace (self-triggered recycles) is longer.
 GRACEFUL_TIMEOUT_S = 8.0
@@ -76,7 +80,7 @@ _CEILING = SandboxLimits(
 
 def build_app(env: Mapping[str, str], recycler: Optional[Any]) -> Quart:
     """Assemble the `--serve` app from the environment. Raises SandboxStartupError on any refusal."""
-    plan = validate_startup(env, on_cloud_run=bool(env.get("K_SERVICE")))
+    plan = validate_startup(env, on_cloud_run=bool(env.get("K_SERVICE")), allowed_env=IMAGE_ENV_ALLOWLIST)
     app = Quart(__name__)
     if plan.unconfigured:
         # G9 first pass. The engine registry is deliberately not built: nothing can run, and an engine-user problem
@@ -157,7 +161,7 @@ def bind_host(plan: StartupPlan) -> str:
 
 def serve_main(env: Mapping[str, str]) -> int:
     try:
-        plan = validate_startup(env, on_cloud_run=bool(env.get("K_SERVICE")))
+        plan = validate_startup(env, on_cloud_run=bool(env.get("K_SERVICE")), allowed_env=IMAGE_ENV_ALLOWLIST)
         app = build_app(env, _recycler_from_env(env))
     except (SandboxStartupError, SandboxCallersError) as exc:
         logger.error("[Sandbox] server refused to start: %s", exc)
@@ -200,7 +204,7 @@ def prepare_work_root(plan: StartupPlan) -> None:
 
 def supervise(env: Mapping[str, str], *, install_signals: bool = True) -> int:
     try:
-        plan = validate_startup(env, on_cloud_run=bool(env.get("K_SERVICE")))
+        plan = validate_startup(env, on_cloud_run=bool(env.get("K_SERVICE")), allowed_env=IMAGE_ENV_ALLOWLIST)
         prepare_work_root(plan)
     except (SandboxStartupError, SandboxCallersError) as exc:
         logger.error("[Sandbox] refusing to start: %s", exc)

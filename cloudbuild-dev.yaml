@@ -19,7 +19,7 @@ steps:
       - "alek-bot-dev"
       - "--image=gcr.io/$PROJECT_ID/alek-bot-dev:latest"
       - "--region=us-central1"
-      - "--set-env-vars=APP_ENV=development,SLACK_MODE=http,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,CLOUD_RUN_SERVICE_URL=$_SERVICE_URL,FIRESTORE_DATABASE=us-production,OAUTH_REDIRECT_URI=$_OAUTH_REDIRECT_URI,ENABLE_HTML_RENDERER=true,ENABLE_GROUNDING_ATTRIBUTION=false,DEBUG_PROMPTS=true,GCS_MEDIA_BUCKET=alek-media-dev,SYSTEM_DEFAULT_LANGUAGE=uk,MCP_RESOURCE_URI=$_SERVICE_URL/mcp,TRACING_BACKEND=both,LOGFIRE_CAPTURE_CONTENT=true,BIGQUERY_PROMPT_DATASET=alek_observability_dev,VOICE_RELAY_STREAM_URL=$_VOICE_RELAY_URL,DRIVE_INDEXER_URL=$_INDEXER_URL"
+      - "--set-env-vars=APP_ENV=development,SLACK_MODE=http,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,CLOUD_RUN_SERVICE_URL=$_SERVICE_URL,FIRESTORE_DATABASE=us-production,OAUTH_REDIRECT_URI=$_OAUTH_REDIRECT_URI,ENABLE_HTML_RENDERER=true,ENABLE_GROUNDING_ATTRIBUTION=false,DEBUG_PROMPTS=true,GCS_MEDIA_BUCKET=alek-media-dev,SYSTEM_DEFAULT_LANGUAGE=uk,MCP_RESOURCE_URI=$_SERVICE_URL/mcp,TRACING_BACKEND=both,LOGFIRE_CAPTURE_CONTENT=true,BIGQUERY_PROMPT_DATASET=alek_observability_dev,VOICE_RELAY_STREAM_URL=$_VOICE_RELAY_URL,DRIVE_INDEXER_URL=$_INDEXER_URL,SANDBOX_RENDER=$_SANDBOX_RENDER,SANDBOX_RENDER_URL=$_SANDBOX_RENDER_URL"
       - "--min-instances=0"
       - "--max-instances=1"
       - "--memory=2Gi"
@@ -277,6 +277,46 @@ steps:
       - "PROJECT_ID=$PROJECT_ID"
       - "SERVICE_URL=$_SERVICE_URL"
 
+  # Untrusted-content sandbox, render family (UNTRUSTED_CONTENT_SANDBOX_RFC §4.12). After every drive step on purpose: a
+  # failing sandbox step never blocks a hotfix of the bot. Each step is a no-op while _SANDBOX_RENDER_SA is empty (the
+  # service identity does not exist yet), so these steps cannot break the main deploy. The script holds the logic (Cloud
+  # Build caps a step arg at 10 000 characters; substitutions do not apply inside files, hence `env:`).
+  - name: "gcr.io/cloud-builders/docker"
+    entrypoint: "bash"
+    args: ["scripts/infrastructure/cloudbuild_sandbox_render.sh", "pull"]
+    env:
+      - "PROJECT_ID=$PROJECT_ID"
+      - "SANDBOX_RENDER_SA=$_SANDBOX_RENDER_SA"
+      - "SANDBOX_RENDER_URL=$_SANDBOX_RENDER_URL"
+      - "SANDBOX_RENDER_CALLERS=$_SANDBOX_RENDER_CALLERS"
+
+  - name: "gcr.io/cloud-builders/docker"
+    entrypoint: "bash"
+    args: ["scripts/infrastructure/cloudbuild_sandbox_render.sh", "build"]
+    env:
+      - "PROJECT_ID=$PROJECT_ID"
+      - "SANDBOX_RENDER_SA=$_SANDBOX_RENDER_SA"
+      - "SANDBOX_RENDER_URL=$_SANDBOX_RENDER_URL"
+      - "SANDBOX_RENDER_CALLERS=$_SANDBOX_RENDER_CALLERS"
+
+  - name: "gcr.io/cloud-builders/docker"
+    entrypoint: "bash"
+    args: ["scripts/infrastructure/cloudbuild_sandbox_render.sh", "push"]
+    env:
+      - "PROJECT_ID=$PROJECT_ID"
+      - "SANDBOX_RENDER_SA=$_SANDBOX_RENDER_SA"
+      - "SANDBOX_RENDER_URL=$_SANDBOX_RENDER_URL"
+      - "SANDBOX_RENDER_CALLERS=$_SANDBOX_RENDER_CALLERS"
+
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    entrypoint: "bash"
+    args: ["scripts/infrastructure/cloudbuild_sandbox_render.sh", "deploy"]
+    env:
+      - "PROJECT_ID=$PROJECT_ID"
+      - "SANDBOX_RENDER_SA=$_SANDBOX_RENDER_SA"
+      - "SANDBOX_RENDER_URL=$_SANDBOX_RENDER_URL"
+      - "SANDBOX_RENDER_CALLERS=$_SANDBOX_RENDER_CALLERS"
+
 # Build logs go to Cloud Logging only: required once a build runs as a user-specified service account
 # (a later step sets `serviceAccount`); harmless for the default build identity.
 # Builds run as their own least-privilege identity (IAM Step 1), never as the default compute identity.
@@ -289,3 +329,9 @@ options:
 # Defaults for substitutions a manual `gcloud builds submit` may leave out (the Makefile always passes them).
 substitutions:
   _DRIVE_UPGRADE_PASS: "on"
+  # Sandbox render service (S1). `inprocess` keeps the DOCX engine in the main process; the rest is empty until the service
+  # identity and URL exist (docs/07_deployment/README.md, two-pass note).
+  _SANDBOX_RENDER: "inprocess"
+  _SANDBOX_RENDER_URL: ""
+  _SANDBOX_RENDER_SA: ""
+  _SANDBOX_RENDER_CALLERS: ""
