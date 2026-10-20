@@ -28,6 +28,8 @@ def _limits(**overrides):
 
 
 def _launcher(**kw):
+    if _ROOT:
+        pytest.skip("these tests run children as the invoking user; under root the launcher (rightly) needs a user")
     kw.setdefault("nproc", 4000)   # per-uid count: the dev user already runs hundreds of processes
     kw.setdefault("nofile", 128)
     return ChildLauncher(**kw)
@@ -260,9 +262,12 @@ def test_uid_drop_in_container():
         "import asyncio, json, os, tempfile\n"
         "from src.adapters.sandbox_engine.child_launcher import ChildLauncher\n"
         "from src.domain.sandbox_contract import SandboxLimits\n"
-        "d = tempfile.mkdtemp(); open(d + '/in', 'wb').close()\n"
+        "import pwd\n"
+        f"e = pwd.getpwnam({user!r})\n"
+        "d = tempfile.mkdtemp(); os.chown(d, e.pw_uid, e.pw_gid); open(d + '/in', 'wb').close()\n"
         "async def main():\n"
-        "    r = await ChildLauncher().run(['python3', '-c', 'import os; print(os.getuid())'], workdir=d, env={},\n"
+        f"    r = await ChildLauncher(user={user!r}).run(['python3', '-c', 'import os; print(os.getuid())'],\n"
+        "        workdir=d, env={},\n"
         f"        limits=SandboxLimits(30.0, 1 << 30, 30.0, 1 << 20), user={user!r}, stdin_path=d + '/in', stdout_path=d + '/out')\n"
         "    print(json.dumps({'server': os.getuid(), 'child': int(open(d + '/out').read()), 'rc': r.returncode}))\n"
         "asyncio.run(main())\n"
@@ -351,3 +356,39 @@ async def test_a_failed_spawn_is_logged_before_it_propagates(tmp_path, caplog):
             ["x"], workdir=str(tmp_path), env={}, limits=_limits(), stdin_path=str(stdin),
             stdout_path=str(tmp_path / "o"))
     assert "could not be started" in caplog.text
+
+
+async def test_the_stderr_file_is_closed_when_the_run_is_cancelled(tmp_path, monkeypatch):
+    import tempfile
+    opened = []
+    real = tempfile.TemporaryFile
+
+    def recording(*a, **k):
+        f = real(*a, **k)
+        opened.append(f)
+        return f
+
+    monkeypatch.setattr(child_launcher.tempfile, "TemporaryFile", recording)
+    task = asyncio.ensure_future(_run(_launcher(), tmp_path, "import time; time.sleep(60)",
+                                      limits=_limits(wall_s=60.0)))
+    for _ in range(100):      # wait until the child is running
+        if opened:
+            break
+        await asyncio.sleep(0.05)
+    await asyncio.sleep(0.5)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert opened and all(f.closed for f in opened)
+
+
+async def test_the_stderr_file_is_closed_when_the_spawn_fails(tmp_path, monkeypatch):
+    import tempfile
+    opened = []
+    real = tempfile.TemporaryFile
+    monkeypatch.setattr(child_launcher.tempfile, "TemporaryFile", lambda *a, **k: opened.append(real()) or opened[-1])
+    with pytest.raises(OSError):
+        await _launcher(python="/nonexistent/python").run(
+            ["x"], workdir=str(tmp_path), env={}, limits=_limits(), stdin_path=str(tmp_path / "missing"),
+            stdout_path=str(tmp_path / "o"))
+    assert opened and all(f.closed for f in opened)

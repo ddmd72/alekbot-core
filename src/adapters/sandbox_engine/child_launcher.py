@@ -7,7 +7,11 @@ The server never touches the payload; this launcher starts a fresh child under a
 supplementary groups, in its own session, with a fixed environment allowlist, stdin and stdout wired to files in the
 request's directory, and the limits applied by `limits_exec` before the engine loads. The wall clock kills the whole
 process group. The child's stderr is never returned or logged: only its length and SHA-256 (the log channel is
-untrusted, §4.14).
+untrusted, §4.14). The stderr file is an unlinked temp file in the server's tmp (in-memory on Cloud Run), bounded by
+the child's RLIMIT_FSIZE; it counts against the instance memory, not against the child's RLIMIT_AS.
+
+Accepted residuals: a grandchild that calls setsid() escapes the process-group kill (recycle `always` bounds it); the
+killpg after the leader is reaped has a negligible pid-reuse window at concurrency 1.
 
 A configured user that is missing, is root, or that this process cannot switch to fails the start with
 ChildLaunchError: never a silent fallback (precedent `_resolve_sandbox` in subprocess_content_extractor).
@@ -117,28 +121,29 @@ class ChildLauncher:
         # grandchild would withhold. The file is bounded by the child's RLIMIT_FSIZE and read back as length + hash.
         stderr_file = tempfile.TemporaryFile()
         try:
-            with open(stdin_path, "rb") as stdin_file, open(stdout_path, "wb") as stdout_file:
-                proc = await asyncio.create_subprocess_exec(
-                    *wrapped, stdin=stdin_file, stdout=stdout_file, stderr=stderr_file,
-                    env=env, cwd=_REPO_ROOT, start_new_session=True, **kwargs,
-                )
-        except (OSError, ValueError) as exc:
-            stderr_file.close()
-            logger.error(f"[Sandbox] child op={op} could not be started: {type(exc).__name__}")
-            raise
-        timed_out = False
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=limits.wall_s)
-        except asyncio.TimeoutError:
-            timed_out = True
+            try:
+                with open(stdin_path, "rb") as stdin_file, open(stdout_path, "wb") as stdout_file:
+                    proc = await asyncio.create_subprocess_exec(
+                        *wrapped, stdin=stdin_file, stdout=stdout_file, stderr=stderr_file,
+                        env=env, cwd=_REPO_ROOT, start_new_session=True, **kwargs,
+                    )
+            except (OSError, ValueError) as exc:
+                logger.error(f"[Sandbox] child op={op} could not be started: {type(exc).__name__}")
+                raise
+            timed_out = False
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=limits.wall_s)
+            except asyncio.TimeoutError:
+                timed_out = True
+            finally:
+                # Always, not only while the leader lives: a grandchild that outlives a clean exit would still hold
+                # the result file's descriptor under the sandbox uid (the pgid stays reserved while any member lives).
+                _kill_group(proc.pid)
+                if proc.returncode is None:
+                    await proc.wait()
+            stderr_length, stderr_sha256 = _summarise(stderr_file)
         finally:
-            # Always, not only while the leader lives: a grandchild that outlives a clean exit would still hold the
-            # result file's descriptor under the sandbox uid (the pgid stays reserved while any member lives).
-            _kill_group(proc.pid)
-            if proc.returncode is None:
-                await proc.wait()
-        stderr_length, stderr_sha256 = _summarise(stderr_file)
-        stderr_file.close()
+            stderr_file.close()      # also on cancellation or a failed spawn
         returncode = int(proc.returncode if proc.returncode is not None else -signal.SIGKILL)
         result = ChildResult(
             returncode=returncode, timed_out=timed_out, peak_rss_bytes=_children_peak_rss_bytes(),
