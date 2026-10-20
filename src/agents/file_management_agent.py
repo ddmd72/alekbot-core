@@ -41,9 +41,17 @@ from ..domain.drive_search import (
     REFERENCE_REMINDER, REFERENCE_REMINDER_ATTACHED, render_results, request_from_fields, require_search_terms,
     wrap_untrusted,
 )
+from ..domain.exceptions import WorkspaceRefused
 from ..domain.language import LanguageCode
 from ..domain.skill import SKILL_REF_PREFIX
 from ..domain.ui_messages import UIMessage
+from ..domain.workspace import (
+    COPY_FOLDER,
+    WORKSPACE_REF_PREFIX,
+    folder_of,
+    parse_workspace_path,
+    workspace_kind,
+)
 from ..domain.user_drive import (
     MAX_DRIVE_VISION_IMAGE_BYTES,
     MAX_DRIVE_VISION_PDF_BYTES,
@@ -212,6 +220,8 @@ class FileManagementAgent(BaseAgent):
             # skill: refs are always text and never go through mime guessing (RFC §15.4) —
             # the ref's "path" segment has its own extension, but the ref itself isn't a
             # bare filename mimetypes can classify.
+            if ref.startswith(WORKSPACE_REF_PREFIX):
+                return await self._fetch_workspace(message, ref, user_id)
             if ref.startswith(SKILL_REF_PREFIX):
                 return await self._fetch_text(message, ref, user_id)
 
@@ -230,6 +240,9 @@ class FileManagementAgent(BaseAgent):
                 # Skill-specific message already names the skill/path and the fix
                 # (draft_skill / $skill save) — "re-upload" doesn't apply to a skill file.
                 error = str(e)
+            elif ref.startswith(WORKSPACE_REF_PREFIX):
+                error = (f"'{ref}' is not in your workspace — view the folder with the workspace tool to check "
+                         "the path.")
             else:
                 error = (
                     f"File '{ref}' not found in storage. "
@@ -244,6 +257,10 @@ class FileManagementAgent(BaseAgent):
         except Exception as e:
             logger.error("FileManagementAgent: fetch failed '%s': %s", ref, e, exc_info=True)
             self._on_agent_error(e, f"fetch {ref}")
+            if ref.startswith(WORKSPACE_REF_PREFIX):
+                return self._fail(
+                    message, f"The workspace could not be read right now ({type(e).__name__}); try again later.",
+                )
             return AgentResponse.failure(
                 task_id=message.task_id,
                 agent_id=self.agent_id,
@@ -253,6 +270,27 @@ class FileManagementAgent(BaseAgent):
                     f"Ask the user to re-upload or paste the content directly."
                 ),
             )
+
+    async def _fetch_workspace(self, message: AgentMessage, ref: str, user_id: str) -> AgentResponse:
+        """`workspace:` refs open only under files/ (AGENT_WORKSPACE_RFC §12): a note in another folder is read with
+        the workspace tool, which frames it as data with its origin. One reader per kind of file."""
+        try:
+            path = parse_workspace_path(ref)
+        except WorkspaceRefused as e:
+            return self._fail(message, str(e))
+        if folder_of(path) != COPY_FOLDER:
+            return self._fail(
+                message,
+                f"'{ref}' is a workspace note; view it with the workspace tool (command view, path {path}).",
+            )
+        if workspace_kind(path) == "text":
+            return await self._fetch_text(message, ref, user_id)
+        mime_type = mimetypes.guess_type(path)[0] or "application/octet-stream"
+        if is_native_binary(mime_type):
+            return await self._fetch_binary(message, ref, user_id, mime_type)
+        if mime_type.startswith("video/"):
+            return await self._fetch_video(message, ref, user_id)
+        return await self._fetch_text(message, ref, user_id)
 
     async def _fetch_text(
         self, message: AgentMessage, ref: str, user_id: str,
@@ -366,6 +404,14 @@ class FileManagementAgent(BaseAgent):
             )
 
         self._on_agent_start(f"delete_file: {ref}")
+
+        if ref.startswith(WORKSPACE_REF_PREFIX):
+            return AgentResponse.failure(
+                task_id=message.task_id,
+                agent_id=self.agent_id,
+                error=(f"'{ref}' is in the workspace; delete it with the workspace tool's delete (history keeps "
+                       "the version)."),
+            )
 
         if ref.startswith(SKILL_REF_PREFIX):
             return AgentResponse.failure(
