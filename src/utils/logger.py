@@ -126,4 +126,15 @@ def setup_logger() -> logging.Logger:
     return logger
 
 
+def quiet_third_party_loggers() -> None:
+    """Silence chatty third-party loggers on every entry point.
+
+    ``httpx``/``httpcore`` log each request at INFO with the full URL; for the Telegram
+    Bot API that URL contains the bot token (``/bot<token>/sendMessage``), which would
+    land in Cloud Logging. WARNING keeps real failures visible and drops the URLs.
+    """
+    for name in ("slack_bolt", "slack_sdk", "websocket", "httpx", "httpcore"):
+        logging.getLogger(name).setLevel(logging.WARNING)
+
+
 logger = setup_logger()

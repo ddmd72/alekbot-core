@@ -331,7 +331,7 @@ class TelegramWebhookAdapter(PlatformPort):
                     return None
                 
                 if not hasattr(file_info, 'file_path') or not file_info.file_path:
-                    logger.error(f"❌ file_info missing file_path: {file_info}")
+                    logger.error(f"❌ file_info missing file_path for {file_id}")
                     return None
 
                 # file_path is already a full URL from bot.get_file()
@@ -351,7 +351,7 @@ class TelegramWebhookAdapter(PlatformPort):
                     mime_type = "application/octet-stream"
                     logger.warning(f"⚠️ Could not determine MIME type for {file_name}, using fallback")
                 
-                logger.info(f"✅ File translated: {file_name} ({mime_type}) → {file_url}")
+                logger.info(f"✅ File translated: {file_name} ({mime_type})")  # URL embeds the bot token: never log it
 
                 return FileAttachment(
                     url=file_url,

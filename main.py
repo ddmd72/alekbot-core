@@ -21,7 +21,7 @@ from src.adapters.firestore_consolidation_queue import FirestoreConsolidationQue
 from src.services.iam_service import IAMService
 from src.composition.user_agent_factory import UserAgentFactory
 from src.composition.slack_adapter_factory import SlackAdapterFactory
-from src.utils.logger import logger
+from src.utils.logger import logger, quiet_third_party_loggers
 from src.utils.telemetry import init_telemetry
 from src.composition.memory_telemetry_setup import build_memory_telemetry
 from src.domain.memory_telemetry import SCOPE_WORKER_TASK
@@ -83,9 +83,7 @@ async def main():
         await memory_telemetry.start()
 
     # Set external libraries to WARNING to reduce noise, but keep our logs at DEBUG
-    logging.getLogger("slack_bolt").setLevel(logging.WARNING)
-    logging.getLogger("slack_sdk").setLevel(logging.WARNING)
-    logging.getLogger("websocket").setLevel(logging.WARNING)
+    quiet_third_party_loggers()
 
     logger.info("=" * 80)
     logger.info("🚀 ALEK BOT MAIN() CALLED")
