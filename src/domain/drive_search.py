@@ -435,7 +435,8 @@ def content_admitted() -> bool:
     """Whether the policy reads any kind's content (ADMITTED_KINDS or TRIAGED_KINDS, read at call time): then
     search runs the content streams and the envelope says `content_search`. Per policy, not per user: a user whose
     documents are not read yet is told so by `unread` and `building`, never by "only names were searched"."""
-    return any(admission(kind) is not Admission.NONE for kind in KIND_NAMES)
+    # a transcribed kind (§27) adds no content stream until its transcript is indexed (a later task)
+    return any(admission(kind) in (Admission.CONTENT, Admission.TRIAGE) for kind in KIND_NAMES)
 
 
 def _content_kind(rec: DriveIndexRecord, admitted: Optional[FrozenSet[str]],
