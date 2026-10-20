@@ -222,6 +222,7 @@ steps:
       - "run"
       - "deploy"
       - "alek-voice-relay-dev"
+      - "--service-account=alek-relay@$PROJECT_ID.iam.gserviceaccount.com"
       - "--image=gcr.io/$PROJECT_ID/alek-bot-dev:latest"
       - "--region=us-central1"
       - "--command=python"
