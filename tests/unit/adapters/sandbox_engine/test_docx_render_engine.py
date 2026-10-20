@@ -8,6 +8,7 @@ import sys
 import pytest
 
 from src.adapters.sandbox_engine.child_launcher import ChildLauncher, ChildResult
+from src.adapters.sandbox_engine import docx_render_engine
 from src.adapters.sandbox_engine.docx_render_engine import DocxRenderEngine
 from src.domain.docx_script_prelude import SAFE_ENV_KEYS
 from src.domain.sandbox_docx_frame import frame_body
@@ -136,7 +137,10 @@ async def _fake_run(tmp_path, behaviour, **kw):
     workdir = tmp_path / "work"
     workdir.mkdir()
     launcher = _FakeLauncher(behaviour, **{k: v for k, v in kw.items() if k in ("returncode", "timed_out")})
-    engine = DocxRenderEngine(launcher, **{k: v for k, v in kw.items() if k == "response_cap_bytes"})
+    root = tmp_path / "out_root"
+    root.mkdir(mode=0o700)
+    engine = DocxRenderEngine(
+        launcher, output_root=str(root), **{k: v for k, v in kw.items() if k == "response_cap_bytes"})
     result = await engine.run(str(tmp_path / "body"), str(workdir), _limits())
     return result, launcher
 
@@ -166,7 +170,7 @@ async def test_launch_arguments(tmp_path):
     result, launcher = await _fake_run(tmp_path, write)
     argv, kw = launcher.calls[0]
     assert result.status is SandboxStatus.OK and result.peak_rss_bytes == 123
-    assert os.path.dirname(result.output_path) != str(tmp_path / "work")   # outside the engine-writable workdir
+    assert os.path.dirname(os.path.dirname(result.output_path)) == str(tmp_path / "out_root")   # injected root
     assert open(result.output_path, "rb").read() == b"PK"
     assert argv[-2:] == [str(tmp_path / "body"), str(tmp_path / "work")]
     assert argv[1:3] == ["-B", "-I"] and argv[3].endswith("render_docx_child.py") and "limits_exec" not in " ".join(argv)
@@ -244,3 +248,77 @@ async def test_output_dir_is_private_and_outside_workdir(tmp_path):
     out_dir = os.path.dirname(result.output_path)
     assert not out_dir.startswith(str(tmp_path / "work"))
     assert (os.stat(out_dir).st_mode & 0o777) == 0o700
+
+
+def test_construction_refuses_a_world_writable_root(tmp_path):
+    root = tmp_path / "open_root"
+    root.mkdir()
+    root.chmod(0o777)
+    with pytest.raises(ValueError):
+        DocxRenderEngine(_FakeLauncher(lambda w: None), output_root=str(root))
+    root.chmod(0o770)
+    with pytest.raises(ValueError):
+        DocxRenderEngine(_FakeLauncher(lambda w: None), output_root=str(root))
+
+
+def test_construction_refuses_a_foreign_owned_root(tmp_path, monkeypatch):
+    root = tmp_path / "root"
+    root.mkdir(mode=0o700)
+    monkeypatch.setattr(docx_render_engine.os, "geteuid", lambda: os.stat(root).st_uid + 1)
+    with pytest.raises(ValueError):
+        DocxRenderEngine(_FakeLauncher(lambda w: None), output_root=str(root))
+
+
+def test_default_root_is_private_and_accepted():
+    engine = DocxRenderEngine(_FakeLauncher(lambda w: None))
+    assert (os.stat(engine._output_root).st_mode & 0o077) == 0
+    shutil.rmtree(engine._output_root)
+
+
+def test_target_creation_refuses_an_existing_entry(tmp_path):
+    existing = tmp_path / "out.bin"
+    existing.write_bytes(b"x")
+    with pytest.raises(FileExistsError):
+        docx_render_engine._create_private(str(existing))
+    link = tmp_path / "link.bin"
+    os.symlink(str(existing), str(link))
+    with pytest.raises(OSError):
+        docx_render_engine._create_private(str(link))
+
+
+async def test_hard_linked_out_bin_is_refused(tmp_path):
+    target = _target(tmp_path)
+    result, _ = await _fake_run(tmp_path, lambda w: os.link(target, _in(w, "out.bin")))
+    assert result.status is SandboxStatus.ERROR and result.output_path is None
+
+
+async def test_hard_linked_err_txt_is_refused(tmp_path):
+    target = _target(tmp_path)
+    result, _ = await _fake_run(tmp_path, lambda w: os.link(target, _in(w, "err.txt")), returncode=1)
+    assert result.status is SandboxStatus.ERROR and _SECRET.decode() not in result.detail
+
+
+async def test_workdir_that_is_a_symlink_is_refused(tmp_path):
+    real = tmp_path / "real"
+    real.mkdir()
+    (real / "out.bin").write_bytes(b"PK")
+    link = tmp_path / "work"
+    os.symlink(str(real), str(link))
+    root = tmp_path / "out_root"
+    root.mkdir(mode=0o700)
+    engine = DocxRenderEngine(_FakeLauncher(lambda w: None), output_root=str(root))
+    result = await engine.run(str(tmp_path / "body"), str(link), _limits())
+    assert result.status is SandboxStatus.ERROR and result.output_path is None
+
+
+async def test_file_that_shrinks_to_nothing_while_copying_is_empty_output(tmp_path, monkeypatch):
+    real_open = docx_render_engine._open_regular
+
+    def lying_size(name, dir_fd):
+        fd, _ = real_open(name, dir_fd)
+        return fd, 5   # fstat said 5 bytes; the file is empty when copied
+
+    monkeypatch.setattr(docx_render_engine, "_open_regular", lying_size)
+    result, _ = await _fake_run(tmp_path, lambda w: open(_in(w, "out.bin"), "wb").close())
+    assert result.status is SandboxStatus.EMPTY_OUTPUT
+    assert not any((tmp_path / "out_root").iterdir())
