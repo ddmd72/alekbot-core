@@ -29,6 +29,8 @@ from ...domain.messaging import SmartResponse
 from ...domain.exceptions import TranscriptLockedError
 from ...domain.turn_clock import CURRENT_TURN_CLOCK
 from ...domain.memory_fact import PROPOSE_MEMORY_FACTS_TOOL
+from ...domain.workspace import WORKSPACE_TOOL, WorkspaceReferences
+from ...infrastructure.workspace_tools import build_workspace_tool_declaration, make_workspace_handler
 from ...domain.skill import DRAFT_SKILL_TOOL, USE_SKILL_TOOL, Skill, render_catalog, visible_skill_names
 from ...ports.long_turn_registry import LongTurnRegistry
 from ...infrastructure.long_turn_tools import (
@@ -64,6 +66,7 @@ if TYPE_CHECKING:
     from ...services.history_summary_service import HistorySummaryService
     from ...services.memory_fact_service import MemoryFactService
     from ...services.skill_service import SkillService
+    from ...services.workspace_service import WorkspaceService
     from ...infrastructure.task_execution_resolver import TaskExecutionResolver
     from ...domain.user import UserBotConfig
     from ...infrastructure.agent_coordinator import AgentCoordinator
@@ -228,6 +231,7 @@ class SmartResponseAgent(BaseAgent):
         skill_service: Optional["SkillService"] = None,
         long_turn_registry: Optional[LongTurnRegistry] = None,
         memory_fact_service: Optional["MemoryFactService"] = None,
+        workspace_service: Optional["WorkspaceService"] = None,
     ):
         super().__init__(config)
         self.execution_context = execution_context
@@ -248,6 +252,7 @@ class SmartResponseAgent(BaseAgent):
         self.skill_service = skill_service
         self.long_turn_registry = long_turn_registry
         self.memory_fact_service = memory_fact_service
+        self.workspace_service = workspace_service
 
         # NOTE: ``self.llm``, ``self.model_name``, ``self.execution_context``,
         # and ``self._agent_execution_context`` (set by _set_execution_context
@@ -511,6 +516,22 @@ class SmartResponseAgent(BaseAgent):
                     )
                 )
 
+            # Every path, interactive or not (D2, D5): background writes are labelled with their origin, not
+            # forbidden. Outside `if skills:` — a skills-store failure must not take the workspace away (§7.1).
+            if self.workspace_service and prompt_user_id:
+                tools.append(build_workspace_tool_declaration())
+                local_tools = dict(local_tools or {})
+                local_tools[WORKSPACE_TOOL] = make_workspace_handler(
+                    self.workspace_service,
+                    prompt_user_id,
+                    self._run_origin(message),
+                    message.context.get("run_fire_key"),
+                    WorkspaceReferences(
+                        skills=tuple((s.name, s.body) for s in skills),
+                        notes=tuple(n for n in agent_notes if isinstance(n, dict)),
+                    ),
+                )
+
             running = await self._load_running_jobs(prompt_user_id, message)
             if running:
                 note = MessagePart(text=render_running_jobs(running, time.time()))
@@ -646,6 +667,17 @@ class SmartResponseAgent(BaseAgent):
             logger.warning("⏳ [SmartResponseAgent] running jobs unavailable: %s", e)
             return []
         return [r for r in running if r.turn_id != own]
+
+    @staticmethod
+    def _run_origin(message: AgentMessage) -> str:
+        """Who started this run, stamped on every workspace write (AGENT_WORKSPACE_RFC §9)."""
+        origin = message.context.get("run_origin")
+        if origin:
+            return str(origin)
+        if message.context.get("interactive_delivery"):
+            return "chat"  # set only by ConversationHandler
+        logger.warning("🗂️ [SmartResponseAgent] run_origin missing; workspace writes are labelled background:unknown")
+        return "background:unknown"
 
     async def _load_skills(self, user_id: Optional[str]) -> List[Skill]:
         """The user's skills for this request. Optional procedures: a store failure means no skills."""
@@ -806,6 +838,7 @@ def create_smart_response_agent(
     skill_service: Optional["SkillService"] = None,
     long_turn_registry: Optional[LongTurnRegistry] = None,
     memory_fact_service: Optional["MemoryFactService"] = None,
+    workspace_service: Optional["WorkspaceService"] = None,
 ) -> SmartResponseAgent:
     """Factory function to create SmartResponseAgent."""
     agent_id = f"smart_response_agent_{user_id}" if user_id else "smart_response_agent"
@@ -840,5 +873,6 @@ def create_smart_response_agent(
         skill_service=skill_service,
         long_turn_registry=long_turn_registry,
         memory_fact_service=memory_fact_service,
+        workspace_service=workspace_service,
     )
 
