@@ -29,6 +29,8 @@ from ..domain.voice_provider_profile import (
     VoiceProviderProfile,
     resolve_voice_profile,
 )
+from ..ports.alert_sink import AlertSinkPort
+from ..domain.consolidation_pass_stats import stats_alerts_enabled
 from ..ports.user_repository import UserRepository
 from ..ports.account_repository import AccountRepository
 from ..ports.embedding_service import EmbeddingService
@@ -193,6 +195,7 @@ class UserAgentFactory(AgentFactoryPort):
         localization: Optional["LocalizationService"] = None,
         language_service: Optional["LanguageServicePort"] = None,
         drive_search_service: Optional["DriveSearchService"] = None,
+        alert_sink: Optional[AlertSinkPort] = None,
     ) -> None:
         self.config = config
         self.env_config = env_config
@@ -237,6 +240,7 @@ class UserAgentFactory(AgentFactoryPort):
         self.long_turn_registry = long_turn_registry
         self.user_drive_service = user_drive_service
         self.drive_search_service = drive_search_service
+        self.alert_sink = alert_sink
         self.localization = localization
         self.language_service = language_service
 
@@ -572,6 +576,10 @@ class UserAgentFactory(AgentFactoryPort):
             facts_limit=facts_limit,
             principles_limit=principles_limit,
             indexed_email_repo=self.indexed_email_repo,
+            alert_sink=self.alert_sink,
+            # TEMPORARY knob (Sonnet 5.5 stall monitoring, 2026-10-20): optional, so os.getenv,
+            # not load_settings(); default on. Remove once consolidation's model is settled.
+            stats_alerts=stats_alerts_enabled(os.getenv("CONSOLIDATION_STATS_ALERTS", "1")),
         )
 
         help_agent = HelpAgent(

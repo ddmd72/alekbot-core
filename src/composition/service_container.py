@@ -329,10 +329,7 @@ class ServiceContainer:
         # MediaStoragePort for re-reading system-delivered documents (docs/,
         # email_review/, deep_research/) via open_file — see FileConversionService.
         self.media_storage = (
-            GcsMediaAdapter(
-                bucket_name=gcs_bucket,
-                service_account_email=config.get("SERVICE_ACCOUNT_EMAIL"),
-            )
+            GcsMediaAdapter(bucket_name=gcs_bucket)
             if gcs_bucket else None
         )
         # ------------------------------------------------------------------

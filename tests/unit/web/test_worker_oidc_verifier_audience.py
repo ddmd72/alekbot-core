@@ -11,7 +11,7 @@ _AUDIENCES = (_URL, f"{_URL}/worker")
 
 def _verify(claims, audiences):
     with patch("src.web.worker_oidc_verifier.google_id_token.verify_oauth2_token", return_value=claims):
-        return verify_worker_oidc("Bearer t", _SA, audiences)
+        return verify_worker_oidc("Bearer t", frozenset({_SA}), audiences)
 
 
 def _claims(**overrides):
