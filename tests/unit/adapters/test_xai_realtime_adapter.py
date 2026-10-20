@@ -81,7 +81,7 @@ async def test_open_sends_xai_session_shape():
         tools=[tool],
     )
 
-    assert connect.await_args.args[0] == "wss://api.x.ai/v1/realtime?model=grok-voice-think-fast-2.0"
+    assert connect.await_args.args[0] == "wss://api.x.ai/v1/realtime?model=grok-voice-3.0"
     assert connect.await_args.kwargs["additional_headers"] == {"Authorization": "Bearer xai-test"}
     sent = ws.sent[0]
     assert sent["type"] == "session.update"
@@ -135,7 +135,7 @@ async def test_requested_reply_passes_through_with_flat_usage_and_model_label():
     assert (frame.encoding, frame.sample_rate_hz, frame.payload, frame.track) == ("audio/pcmu", 8000, "QUJD", "outbound")
     assert events[1].payload["item_id"] == "i1"
     assert events[2].payload == {"text": "Hi"}
-    assert events[3].payload == {"usage": _flatten_usage(_USAGE), "model": "grok-voice-think-fast-2.0"}
+    assert events[3].payload == {"usage": _flatten_usage(_USAGE), "model": "grok-voice-3.0"}
 
 
 @pytest.mark.asyncio

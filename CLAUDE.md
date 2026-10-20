@@ -434,7 +434,7 @@ contradicted each other until 2026-09-28; see `decisions/lelik_delivery_single_s
 - **Realtime provider is per user** (`docs/10_rfcs/VOICE_MULTI_PROVIDER_RFC.md`).
   - `UserBotConfig.voice_provider` picks an entry of `domain.voice_provider_profile.VOICE_PROVIDER_PROFILES`:
     the prompt profile, turn ownership, voice and effort. When unset, `DEFAULT_VOICE_PROVIDER = "xai"`
-    applies (xAI `grok-voice-think-fast-2.0`, prompt `lelik_xai`, voice castor).
+    applies (xAI `grok-voice-3.0`, prompt `lelik_xai`, voice castor).
   - `LelikAgent.session_config` puts the spec in the ticket under `"voice"`. The relay builds the
     adapter per call from it (`relay_main._ADAPTERS`). A ticket without it runs the legacy OpenAI
     session.
