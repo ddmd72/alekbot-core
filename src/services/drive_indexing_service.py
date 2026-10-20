@@ -2337,7 +2337,9 @@ class DriveIndexingService:
         day = now.astimezone(timezone.utc).date().isoformat()
         args = (cls, max(usd, 0.0), max(fallback_usd, 0.0), max(calls, 0), covered)
         booked = month or month_key(now)
-        await self._repo.add_model_usage(user_id, booked, day, *args)
+        # A booking into another month than today's (a late-collected batch, G9) gets no daily entry: today's day key
+        # does not belong in the old month's document ("" = skip, see add_model_usage)
+        await self._repo.add_model_usage(user_id, booked, day if booked == month_key(now) else "", *args)
         if spend is not None:
             if booked == month_key(spend.now):   # the tick holds this month's document only
                 spend.usage = added_usage(spend.usage, day, *args)

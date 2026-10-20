@@ -135,7 +135,8 @@ HINT_DISTANCE = "hint_distance"
 USAGE_EXPIRES_AT = "expires_at"                     # the TTL field of a month's usage document (§25.4.5)
 USAGE_USD_FIELDS: Tuple[str, ...] = tuple(f"{c.value}_usd" for c in UsageClass)
 USAGE_INITIAL_FIELDS: Tuple[str, ...] = tuple(f"{c.value}_initial_usd" for c in UsageClass)
-USAGE_RESERVED_FIELDS: Tuple[str, ...] = ("transcribe_reserved_usd",)
+USAGE_RESERVED_FIELDS: Tuple[str, ...] = tuple(f.name for f in fields(ModelUsageMonth)
+                                               if f.name.endswith("_reserved_usd"))
 STATE_FIELDS: Tuple[str, ...] = tuple(name for name in _DOC_FIELDS if name not in _LEASE)   # save_sync_state's
 
 
@@ -1233,9 +1234,10 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
             "user_id": user_id, "month": month, USAGE_EXPIRES_AT: usage_expires_at(month),
             name: firestore.Increment(float(usd)), "fallback_usd": firestore.Increment(float(fallback_usd)),
             "calls": firestore.Increment(int(calls)),
-            "daily": {day: {"total_usd": firestore.Increment(float(usd)),
-                            "fallback_usd": firestore.Increment(float(fallback_usd))}},
         }
+        if day:   # "" = no daily entry (a booking into a month other than the day's)
+            data["daily"] = {day: {"total_usd": firestore.Increment(float(usd)),
+                                   "fallback_usd": firestore.Increment(float(fallback_usd))}}
         if covered_usd > 0:
             data[f"{UsageClass(cls).value}_initial_usd"] = firestore.Increment(float(covered_usd))
         await self._usage_col.document(usage_doc_id(user_id, month)).set(data, merge=True)

@@ -38,7 +38,7 @@ def test_unknown_model_batch_cost_is_zero_and_flagged():
 def test_a_thirty_minute_window_prices_as_the_docstring_says():
     cost = BatchUsage(MODEL, audio_input_tokens=45_000, output_tokens=6_000).cost()
     assert cost == pytest.approx(0.05625)
-    assert cost * 2 == pytest.approx(0.1125 + 0.0, rel=1e-9)   # two windows an hour, before thought tokens
+    assert cost * 2 == pytest.approx(0.1125, rel=1e-9)   # two windows an hour, before thought tokens
 
 
 def test_price_rows_hash_pin():

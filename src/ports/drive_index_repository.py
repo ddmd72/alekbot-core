@@ -368,7 +368,7 @@ class DriveIndexRepository(ABC):
                               calls: int, covered_usd: float = 0.0) -> None:
         """Atomically add `usd` to the month's `<cls>_usd` (`cls` a UsageClass value), `fallback_usd` and `calls`
         to theirs, `covered_usd` (the share of `usd` the initial build paid) to `<cls>_initial_usd`, and
-        (usd, fallback_usd) to `daily[day]` ("YYYY-MM-DD"). Not idempotent: a call that fails after
+        (usd, fallback_usd) to `daily[day]` ("YYYY-MM-DD"; `day == ""` writes no daily entry). Not idempotent: a call that fails after
         its write committed (an ambiguous timeout, DriveIndexStoreUnavailable) may have added, so a caller must not
         retry it blindly; a retry over-counts (the safe direction: a cap closes early)."""
 
@@ -378,7 +378,13 @@ class DriveIndexRepository(ABC):
         ("YYYY-MM", the RESERVATION's month, G9): the dollars a batch may still cost, counted by the hard cap beside
         what was collected (Δ106). Server-side increment, so concurrent reservations are never lost, and no
         cross-document transaction. Only classes bought ahead (`transcribe`) have the field; any other is a
-        ValueError, before any write. Not idempotent, like `add_model_usage`."""
+        ValueError, before any write.
+
+        Not idempotent, and the failure directions differ from `add_model_usage`: a retried reservation over-counts
+        (safe, the cap closes early), but a retried RELEASE (negative delta) under-counts the open reservations, can
+        take them below 0 and lift the available dollars above the cap (breaks Δ106). A release is issued exactly
+        once, behind the batch/job document's state change, and never retried blindly; readers clamp the field at
+        max(0, reserved)."""
 
     @abstractmethod
     async def get_initial_build(self, user_id: str) -> InitialBuild:
