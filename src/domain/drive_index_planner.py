@@ -599,10 +599,10 @@ def quiet_over(rec: DriveIndexRecord, now: datetime) -> bool:
     """§7.3: the record's content or triage work may start at `now` — it is not dirty, or its quiet period (QUIET
     untouched, at most MAX_DEFER dirty) has ended. A record due for other work (a card, a re-embed) is not thereby due
     for its content."""
-    return _content_due_at(rec, now) <= now
+    return content_due_at(rec, now) <= now
 
 
-def _content_due_at(rec: DriveIndexRecord, now: datetime) -> datetime:
+def content_due_at(rec: DriveIndexRecord, now: datetime) -> datetime:
     """§7.3: an edit waits until untouched for QUIET or dirty for MAX_DEFER; anything not dirty (first sight, a
     nudge, an upgrade, a release) is due at once."""
     if rec.dirty_since is None:
@@ -648,7 +648,7 @@ def _works(rec: DriveIndexRecord, first_seen: bool, now: datetime) -> List[Tuple
     if _card_due(rec):
         works.append((Priority.FIRST_SEEN if first_seen else Priority.EDIT, now))
     if content_due(rec) or triage_due(rec):
-        at = _content_due_at(rec, now)
+        at = content_due_at(rec, now)
         cls = Priority.FIRST_SEEN if first_seen else Priority.EDIT
         if rec.defer_until is not None:   # a deferral survives any re-scheduling until the work ends
             at = max(at, rec.defer_until)

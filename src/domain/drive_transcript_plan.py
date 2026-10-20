@@ -11,41 +11,46 @@ Public interface:
     TranscriptContext(now, enabled, month_usd, reserved_usd, cap_usd)       what the decisions are made with
     effective_monthly_cap(raw) -> float                                     `min(20, DRIVE_TRANSCRIBE_USD_CAP)`, T-R3
     estimate_usd(seconds) / available_usd(ctx) / fits(estimate, ctx)         the whole file's estimate against the cap
-    reserve_if_fits(estimate, ctx) -> (Reservation | None, ctx);  release(ctx, reservation) -> ctx      (G39)
+    file_estimate_usd(duration_s) -> float                                  the sum over the planned windows (overlaps paid)
+    reserve_if_fits(estimate, ctx) -> (Reservation | None, ctx);  release(ctx, reservation) -> ctx      (G39, G9)
     transcript_plan(rec, ctx) -> rec                                        the state table below
     reset_on_new_version(rec) -> rec                                        a new content version clears the job (D42)
     start_file(rec, ctx, probe) -> FileStart                                the stage's step after the probe (Task 12 step 4)
-    stub_from_probe(probe) / stub_record(rec, stub, seconds) / mark_current(rec, now, ...)
+    stub_from_probe(probe) / stub_record(rec, stub, now, seconds) / mark_current(rec, now, ...)
     charge_attempt(rec) -> rec                                              a file-level failed attempt (`failed` at MAX_ATTEMPTS)
     state_for_job(job) -> "working" | "waiting"
-    window_failed(window, check) -> (window, WindowAction)                  the per-check retry rules (G37)
+    window_failed(window, check, ctx) -> WindowResult                       the per-check retry rules (G37); a resubmit
+                                                                            is reserved like any purchase (T-R8)
     queue_blocked(now, backoff_until) -> bool                               a model backoff gates the stage's queue read
 
 The state table, first match wins (`DriveIndexRecord.transcript_state`, plain strings, G21):
     none      not a TRANSCRIBE-admitted kind, not `normal` scope, a folder, not resolved or being deleted, a never-download
               reason (dot name, secret, OS artefact, remote item, package, malware, dense tree, kind not yet admitted),
               no content version, or inaccessible (§26.2).
-    current   a transcript or stub exists at this content key, TRANSCRIBE_VERSION and TRANSCRIPT_BODY_VERSION (the stage
-              wrote `current`; the plan never looks in the store). A stale body or transcribe version is not current: the
-              record is `ready` and the stage finds the store hit.
+    current   a transcript or stub exists at this content key and TRANSCRIPT_BODY_VERSION (the stage wrote `current`; the
+              plan never looks in the store). A stale body version is not current: the record is `ready` and the stage
+              finds the store hit. A TRANSCRIBE_VERSION bump changes NOTHING by itself (Δ122: re-buying is the requeue
+              script's job): it is not part of the key, and records stay as they are.
     current   (too_large) `size_bytes > TRANSCRIBE_MAX_BYTES`: the plan writes the stub itself from metadata (record
-              `metadata_only / too_large`, no probe, no model). Only while `enabled`: a switched-off feature writes no stub.
-    failed    `transcript_attempts >= MAX_ATTEMPTS` for this content version (ffmpeg cannot read it): NO stub (Δ100).
-    held      a hold for this content version, with `transcript_wake_at` set: `cooldown` (an edit within
-              TRANSCRIBE_REREAD_COOLDOWN of `model_read_at`, the last transcription) or `quiet` (dirty and not
-              `quiet_over`, a recording still uploading).
+              `metadata_only / too_large` through `demoted`, no probe, no model). Only while `enabled`.
+    failed    `transcript_attempts >= MAX_ATTEMPTS` for this content version (ffmpeg cannot read it, or the probe's
+              duration is unusable): NO stub (Δ100).
+    waiting   windows submitted, batches open (written by the stage). Kept while the content key is unchanged, ahead of
+    working   every hold below: a same-key edit (new cTag, same bytes) must not demote an in-flight job, which would buy
+              it twice. `working`: some windows to extract or upload; the file's estimate is reserved from the moment it
+              fit, before its first window (G39).
     parked    the whole file's estimate does not fit the month's cap after pending reservations; `transcript_wake_at` is
               the next month's start, never cut (Δ106). Entered by `start_file` after the probe (an audio file has no
               duration before it); the plan only keeps it until the wake-up.
-    waiting   windows submitted, batches open (written by the stage).
-    working   some windows extracted or uploaded, not all submitted (written by the stage); the file's estimate is
-              reserved from the moment it fit, before its first window (G39).
+    held      a hold for this content version, with `transcript_wake_at` set: `cooldown` (an edit within
+              TRANSCRIBE_REREAD_COOLDOWN of `model_read_at`, set when the file was last bought: at `start_file` and again
+              at `mark_current`; it applies on a free cache hit too, by design: the plan cannot see the store) or `quiet`
+              (dirty and not `quiet_over`, a recording still uploading).
     ready     due: the queue predicate (`transcript_state == "ready"`, newest `effective_day` first).
 A model backoff is NOT a record state (§25.4.6, `JobState`'s docstring): the `drive_transcriber` backoff gates the stage's
 queue read, records stay `ready`, an outage writes no record (G21).
 
-`transcript_hold_version` tags everything that belongs to one content version of the file: `"<TRANSCRIBE_VERSION>:<content
-key>"`. A tag that is not the current one means the content changed: attempts, holds and the wake-up are cleared (D42).
+`transcript_hold_version` tags everything that belongs to one content version of the file: its content key. A tag that is not the current one means the content changed: attempts, holds and the wake-up are cleared (D42).
 
 Several public classes in one module, by decision: one contract (the job's decisions) with its value types, as
 `drive_transcript` and `drive_enrichment` group theirs.
@@ -54,7 +59,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from datetime import datetime
 from enum import Enum
 from typing import FrozenSet, Optional, Tuple
 
@@ -63,11 +68,11 @@ from src.domain.drive_index_params import (
     MAX_ATTEMPTS, TRANSCRIBE_HOUR_USD_ESTIMATE, TRANSCRIBE_MAX_BYTES, TRANSCRIBE_MAX_SECONDS,
     TRANSCRIBE_REREAD_COOLDOWN, TRANSCRIBE_USD_PER_MONTH,
 )
-from src.domain.drive_index_planner import _content_due_at, quiet_over
+from src.domain.drive_index_planner import content_due_at, demoted, month_key, next_month_start, quiet_over
 from src.domain.drive_index_policy import Admission, admission
 from src.domain.drive_transcript import JobWindow, MediaProbe, TranscriptJob, TranscriptStub
 from src.domain.drive_transcript_render import TRANSCRIPT_BODY_VERSION
-from src.domain.drive_transcript_windows import content_key
+from src.domain.drive_transcript_windows import content_key, plan_windows
 
 NONE, READY, WORKING, WAITING = "none", "ready", "working", "waiting"
 CURRENT, HELD, PARKED, FAILED = "current", "held", "parked", "failed"
@@ -87,13 +92,13 @@ _STUB_RECORD_REASON = {TranscriptStub.TOO_LARGE: Reason.TOO_LARGE, TranscriptStu
 class TranscriptContext:
     """What the decisions are made with. `month_usd` is the month's collected `transcribe` dollars, **without any
     initial-build share** (G8: the build never pays for transcription, so there is no initial field here); `reserved_usd`
-    the pending reservations (Δ106); `cap_usd` the effective monthly cap (`effective_monthly_cap`). `enabled` is the kill
+    THIS month's open reservations (Δ106; one made in an earlier month is not in it, G9); `cap_usd` the effective monthly cap (`effective_monthly_cap`). `enabled` is the kill
     switch AND the user's flag, decided by the caller."""
     now: datetime
     enabled: bool
     month_usd: float
     reserved_usd: float
-    cap_usd: float = TRANSCRIBE_USD_PER_MONTH
+    cap_usd: float
 
 
 @dataclass(frozen=True)
@@ -110,12 +115,22 @@ class StartOutcome(str, Enum):
     PARKED = "parked"        # does not fit: the whole file waits for the next month
     STUBBED = "stubbed"      # decided from the probe, no model call, nothing reserved
     DISABLED = "disabled"    # kill switch or per-user flag off: nothing changes
+    UNREADABLE = "unreadable"  # the probe's duration is unusable (0, negative, NaN, infinite): a charged attempt
 
 
 @dataclass(frozen=True)
 class FileStart:
     rec: DriveIndexRecord
     outcome: StartOutcome
+    reservation: Optional[Reservation]
+    ctx: TranscriptContext
+
+
+@dataclass(frozen=True)
+class WindowResult:
+    """`window_failed`'s answer. `reservation` is held for a RESUBMIT (release it on abandon); `ctx` carries it."""
+    window: JobWindow
+    action: "WindowAction"
     reservation: Optional[Reservation]
     ctx: TranscriptContext
 
@@ -131,6 +146,7 @@ class WindowCheck(str, Enum):
 
 class WindowAction(str, Enum):
     RESUBMIT = "resubmit"
+    PARK = "park"        # a resubmit is due but its estimate does not fit the month: the file waits for it
     GAP = "gap"          # the window is done as a gap marker; the transcript is `truncated`
     ACCEPT = "accept"    # stitched as it is, `~` stamps and all
 
@@ -165,14 +181,9 @@ def fits(estimate: float, ctx: TranscriptContext) -> bool:
     return estimate <= available_usd(ctx) + 1e-9
 
 
-def _month(now: datetime) -> str:
-    return now.astimezone(timezone.utc).strftime("%Y-%m")
-
-
-def _next_month(now: datetime) -> datetime:
-    utc = now.astimezone(timezone.utc)
-    year, month = (utc.year + 1, 1) if utc.month == 12 else (utc.year, utc.month + 1)
-    return datetime(year, month, 1, tzinfo=timezone.utc)
+def file_estimate_usd(duration_s: float) -> float:
+    """The file's estimate: the SUM over its planned windows, overlaps paid for (the cost is per audio sent)."""
+    return estimate_usd(sum(w.duration_s for w in plan_windows(duration_s)))
 
 
 def reserve_if_fits(estimate: float, ctx: TranscriptContext) -> Tuple[Optional[Reservation], TranscriptContext]:
@@ -180,11 +191,14 @@ def reserve_if_fits(estimate: float, ctx: TranscriptContext) -> Tuple[Optional[R
     file checked in the same tick sees it; a second file can never pass a check the cap only holds for one."""
     if not fits(estimate, ctx):
         return None, ctx
-    return Reservation(usd=estimate, month=_month(ctx.now)), replace(ctx, reserved_usd=ctx.reserved_usd + estimate)
+    return Reservation(usd=estimate, month=month_key(ctx.now)), replace(ctx, reserved_usd=ctx.reserved_usd + estimate)
 
 
 def release(ctx: TranscriptContext, reservation: Reservation) -> TranscriptContext:
-    """Park, failure and abandon give the reservation back."""
+    """Park, failure and abandon give the reservation back. `ctx.reserved_usd` holds THIS month's reservations only: one
+    made in an earlier month was dropped from it at the turn, so releasing it now must not lower this month's (G9)."""
+    if reservation.month != month_key(ctx.now):
+        return ctx
     return replace(ctx, reserved_usd=max(0.0, ctx.reserved_usd - reservation.usd))
 
 
@@ -196,8 +210,9 @@ def queue_blocked(now: datetime, backoff_until: Optional[datetime]) -> bool:
 # -- keys and versions --------------------------------------------------------------------------------------------
 
 def hold_key(rec: DriveIndexRecord) -> str:
-    """The tag of everything that belongs to this content version of the file."""
-    return f"{TRANSCRIBE_VERSION}:{content_key(rec)[0]}"
+    """The tag of everything that belongs to this content version of the file: its content key. Deliberately not the
+    TRANSCRIBE_VERSION: a bump re-queues nothing (Δ122)."""
+    return content_key(rec)[0]
 
 
 def reset_on_new_version(rec: DriveIndexRecord) -> DriveIndexRecord:
@@ -228,7 +243,6 @@ def _eligible(rec: DriveIndexRecord) -> bool:
 
 def _is_current(rec: DriveIndexRecord, key: str) -> bool:
     return (rec.transcript_state == CURRENT and rec.transcript_key == key
-            and rec.transcript_version == TRANSCRIBE_VERSION
             and rec.transcript_body_version == TRANSCRIPT_BODY_VERSION)
 
 
@@ -249,22 +263,24 @@ def transcript_plan(rec: DriveIndexRecord, ctx: TranscriptContext) -> DriveIndex
     if _is_current(rec, key):
         return _settle(rec, CURRENT)
     if ctx.enabled and rec.size_bytes > TRANSCRIBE_MAX_BYTES:
-        return stub_record(rec, TranscriptStub.TOO_LARGE)
+        return stub_record(rec, TranscriptStub.TOO_LARGE, ctx.now)
     if rec.transcript_attempts >= MAX_ATTEMPTS:
         return _settle(rec, FAILED)
-    # an earlier transcript of another content version exists and is younger than the cooldown: an edited recording is
-    # re-bought at most once per TRANSCRIBE_REREAD_COOLDOWN
+    # an in-flight job for this very content key stands ahead of every hold: a same-key edit (new cTag, same bytes)
+    # must not demote it to held/ready, which would start it, and pay for it, a second time
+    if rec.transcript_state in (WORKING, WAITING) and rec.transcript_key == key:
+        return _settle(rec, rec.transcript_state)
+    if (rec.transcript_state == PARKED and rec.transcript_wake_at is not None
+            and rec.transcript_wake_at > ctx.now):
+        return _settle(rec, PARKED, wake=rec.transcript_wake_at)
+    # a purchase of another content version exists (done, or in flight when the edit came) and is younger than the
+    # cooldown: an edited recording is re-bought at most once per TRANSCRIBE_REREAD_COOLDOWN (T-R9)
     if rec.transcript_key not in ("", key) and rec.model_read_at is not None:
         until = rec.model_read_at + TRANSCRIBE_REREAD_COOLDOWN
         if ctx.now < until:
             return _settle(rec, HELD, hold=HOLD_COOLDOWN, wake=until)
     if not quiet_over(rec, ctx.now):
-        return _settle(rec, HELD, hold=HOLD_QUIET, wake=_content_due_at(rec, ctx.now))
-    if (rec.transcript_state == PARKED and rec.transcript_wake_at is not None
-            and rec.transcript_wake_at > ctx.now):
-        return _settle(rec, PARKED, wake=rec.transcript_wake_at)
-    if rec.transcript_state in (WORKING, WAITING) and rec.transcript_key == key:
-        return _settle(rec, rec.transcript_state)
+        return _settle(rec, HELD, hold=HOLD_QUIET, wake=content_due_at(rec, ctx.now))
     return _settle(rec, READY)
 
 
@@ -279,30 +295,50 @@ def stub_from_probe(probe: MediaProbe) -> Optional[TranscriptStub]:
     return None
 
 
-def stub_record(rec: DriveIndexRecord, stub: TranscriptStub, seconds: int = 0) -> DriveIndexRecord:
-    """A stub is a result: `current` at this content key, the record `metadata_only` with the stub's reason."""
-    return replace(rec, state=RecordState.METADATA_ONLY, reason=_STUB_RECORD_REASON[stub], transcript_state=CURRENT,
-                   transcript_key=content_key(rec)[0], transcript_version=TRANSCRIBE_VERSION,
-                   transcript_body_version=TRANSCRIPT_BODY_VERSION, transcript_stub=stub.value,
-                   transcript_seconds=seconds, transcript_hold=None, transcript_wake_at=None,
-                   transcript_hold_version=hold_key(rec) if rec.transcript_attempts > 0 else "")
+def stub_record(rec: DriveIndexRecord, stub: TranscriptStub, now: datetime, seconds: int = 0) -> DriveIndexRecord:
+    """A stub is a result: `current` at this content key, the record `metadata_only` with the stub's reason, built through
+    `demoted` so the content outcome stands (`extraction_version`), the quiet period ends and the card is scheduled: a
+    rename, rescope or upgrade re-observes it as the same outcome, never as `pending` again."""
+    done = demoted(rec, _STUB_RECORD_REASON[stub], now)
+    return replace(done, transcript_state=CURRENT, transcript_key=content_key(rec)[0],
+                   transcript_version=TRANSCRIBE_VERSION, transcript_body_version=TRANSCRIPT_BODY_VERSION,
+                   transcript_stub=stub.value, transcript_seconds=seconds, transcript_hold=None,
+                   transcript_wake_at=None, transcript_hold_version=hold_key(rec) if rec.transcript_attempts > 0 else "")
+
+
+def _usable_duration(duration_s: float) -> bool:
+    return math.isfinite(duration_s) and duration_s > 0
 
 
 def start_file(rec: DriveIndexRecord, ctx: TranscriptContext, probe: MediaProbe) -> FileStart:
     """The stage's step after the probe (Task 12 step 4): a stub from the probe, or the whole file's estimate reserved in
     the same step as the fit check (G39) and the record `working`, or the whole file parked until the next month
-    (Δ106: never cut to the dollars left). With the feature off nothing changes."""
+    (Δ106: never cut to the dollars left). With the feature off nothing changes.
+
+    The probe is untrusted input. A file with no audio stream is a true stub whatever its duration says. Otherwise a
+    duration that is 0, negative, NaN or infinite cannot be planned (no windows, a $0 estimate that fits any cap): it is a
+    charged attempt (`charge_attempt`, `failed` at MAX_ATTEMPTS, no stub), not a stub, because a stub states a fact
+    about the recording and this is a probe that did not answer sensibly (same class as ffmpeg failing to read it)."""
     if not ctx.enabled:
         return FileStart(rec, StartOutcome.DISABLED, None, ctx)
+    if not probe.has_audio:
+        return FileStart(stub_record(rec, TranscriptStub.NO_AUDIO, ctx.now), StartOutcome.STUBBED, None, ctx)
+    if not _usable_duration(probe.duration_s):
+        return FileStart(charge_attempt(rec), StartOutcome.UNREADABLE, None, ctx)
     stub = stub_from_probe(probe)
     if stub is not None:
-        return FileStart(stub_record(rec, stub, int(probe.duration_s)), StartOutcome.STUBBED, None, ctx)
-    reservation, held = reserve_if_fits(estimate_usd(probe.duration_s), ctx)
+        return FileStart(stub_record(rec, stub, ctx.now, int(probe.duration_s)), StartOutcome.STUBBED, None, ctx)
+    reservation, held = reserve_if_fits(file_estimate_usd(probe.duration_s), ctx)
     if reservation is None:
-        return FileStart(_settle(rec, PARKED, wake=_next_month(ctx.now)), StartOutcome.PARKED, None, ctx)
+        return FileStart(park(rec, ctx), StartOutcome.PARKED, None, ctx)
     working = replace(_settle(rec, WORKING), transcript_key=content_key(rec)[0],
-                      transcript_seconds=int(probe.duration_s))
+                      transcript_seconds=int(probe.duration_s), model_read_at=ctx.now)   # the purchase time (T-R9)
     return FileStart(working, StartOutcome.STARTED, reservation, held)
+
+
+def park(rec: DriveIndexRecord, ctx: TranscriptContext) -> DriveIndexRecord:
+    """The whole file waits for the next month's cap (Δ106)."""
+    return _settle(rec, PARKED, wake=next_month_start(ctx.now))
 
 
 def mark_current(rec: DriveIndexRecord, now: datetime, *, seconds: int, speakers: int, languages: Tuple[str, ...],
@@ -315,7 +351,7 @@ def mark_current(rec: DriveIndexRecord, now: datetime, *, seconds: int, speakers
                   transcript_languages=languages, model_read_at=now, transcript_attempts=0,
                   transcript_hold=None, transcript_hold_version="", transcript_wake_at=None)
     if stub:
-        out = replace(out, state=RecordState.METADATA_ONLY, reason=_STUB_RECORD_REASON[TranscriptStub(stub)])
+        out = demoted(out, _STUB_RECORD_REASON[TranscriptStub(stub)], now)
     return out
 
 
@@ -335,22 +371,38 @@ def state_for_job(job: TranscriptJob) -> str:
     return WORKING
 
 
-def window_failed(window: JobWindow, check: WindowCheck) -> Tuple[JobWindow, WindowAction]:
+def window_failed(window: JobWindow, check: WindowCheck, ctx: TranscriptContext) -> WindowResult:
     """G37, per check as §27.5/§27.6 word them. `INVALID` and `COVERAGE`: MAX_ATTEMPTS answers, then a gap marker (the
     declared choice, so one bad window does not fail a long file). `TIME`: one resubmit, then the gap marker.
     `INTERPOLATION`: one resubmit, then accepted with `~` stamps. `REFUSED`: a gap marker at once. A model stamp that
-    `parse_stamp` rejects (ValueError) is `INVALID`, never a crash. A resubmitted window goes back to `uploaded`."""
+    `parse_stamp` rejects (ValueError) is `INVALID`, never a crash.
+
+    A resubmit is a purchase (T-R8): the window's estimate is reserved in the same step as its fit check, on the context
+    the caller threads. When it does not fit the action is `PARK`: the attempt stays counted, the window stays
+    `uploaded`, nothing is reserved, and the caller parks the file (`park`); on the wake-up the caller reserves again
+    (`window_estimate_usd`) before resubmitting. A resubmitted window goes back to `uploaded`."""
     if check is WindowCheck.REFUSED:
-        return replace(window, state="done", gap=True), WindowAction.GAP
+        return WindowResult(replace(window, state="done", gap=True), WindowAction.GAP, None, ctx)
     if check in (WindowCheck.INVALID, WindowCheck.COVERAGE):
         attempts = window.attempts + 1
         if attempts >= MAX_ATTEMPTS:
-            return replace(window, attempts=attempts, state="done", gap=True), WindowAction.GAP
-        return replace(window, attempts=attempts, state="uploaded"), WindowAction.RESUBMIT
+            return WindowResult(replace(window, attempts=attempts, state="done", gap=True), WindowAction.GAP, None, ctx)
+        return _resubmit(replace(window, attempts=attempts, state="uploaded"), ctx)
     if check is WindowCheck.TIME:
         if window.time_resubmits < 1:
-            return replace(window, time_resubmits=window.time_resubmits + 1, state="uploaded"), WindowAction.RESUBMIT
-        return replace(window, state="done", gap=True), WindowAction.GAP
+            return _resubmit(replace(window, time_resubmits=window.time_resubmits + 1, state="uploaded"), ctx)
+        return WindowResult(replace(window, state="done", gap=True), WindowAction.GAP, None, ctx)
     if window.interp_resubmits < 1:
-        return replace(window, interp_resubmits=window.interp_resubmits + 1, state="uploaded"), WindowAction.RESUBMIT
-    return replace(window, state="done"), WindowAction.ACCEPT
+        return _resubmit(replace(window, interp_resubmits=window.interp_resubmits + 1, state="uploaded"), ctx)
+    return WindowResult(replace(window, state="done"), WindowAction.ACCEPT, None, ctx)
+
+
+def window_estimate_usd(window: JobWindow) -> float:
+    return estimate_usd(window.spec.duration_s)
+
+
+def _resubmit(window: JobWindow, ctx: TranscriptContext) -> WindowResult:
+    reservation, held = reserve_if_fits(window_estimate_usd(window), ctx)
+    if reservation is None:
+        return WindowResult(window, WindowAction.PARK, None, ctx)
+    return WindowResult(window, WindowAction.RESUBMIT, reservation, held)
