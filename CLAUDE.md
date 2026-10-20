@@ -161,7 +161,7 @@ Full per-agent detail (mechanics, intents, tiers, gotchas) lives in
 | PdfGenerator | BALANCED | `create_pdf` | HTML+CSS → Puppeteer → PDF |
 | HtmlPageGenerator | PERFORMANCE (**Grok**) | `create_html_page` | full HTML+CSS+JS; Unsplash placeholders |
 | FileManagement | zero-LLM | `open_file`, `delete_file`, 7 × `*_drive`, `search_files_in_drive` | GCS uploads + the user's drive and its opt-in index |
-| Notes / Self-Reminders | PERFORMANCE (OpenAI) | `manage_self_reminders` | autonomous deferred firing |
+| Notes / Self-Reminders | PERFORMANCE (OpenAI) | `manage_self_reminders` | autonomous deferred firing; optional code-bound `workspace_file` |
 | Tasks | — | `manage_user_tasks` | MicrosoftToDo (GoogleTasks frozen) |
 | Consolidation | PERFORMANCE (Claude) | — | background memory formation (see below) |
 | DeepResearch | — | `deep_research` | async; default Claude, Cloud Run Job; opt-in HTML copy to the user's drive |
@@ -536,6 +536,36 @@ doc, read as `skill:<name>/<path>` refs through `open_file`; a draft lists only 
 (unlisted files carry over), and the preview posts each model-written file as its own file plus a
 change summary between `SKILL.md` and the save command.
 Personal skills are never system skills — the repo is public.
+
+**Agent Workspace** (`docs/10_rfcs/AGENT_WORKSPACE_RFC.md`, owner decisions D1–D17) — Smart's own files for its
+work, a knowledge base it builds and follows, in a dedicated versioned GCS bucket (`GCS_WORKSPACE_BUCKET`: declared in
+`load_settings()`, a Secret Manager secret in the main service's `--set-secrets`; local dev shares the live bucket, D9).
+Key `{user_id}/<folder>/<path>`; folders `projects/` (one file per task or recurring job), `references/`, `scratch/`
+(deleted 7 days after the last write via `customTime`), `files/` (byte-exact copies of chat uploads and delivered
+documents). A file has no required structure: how to use it is the instruction's business (D16). **Pull-only (D1):** no
+index in the prompt; Smart touches it only when the user asks, an instruction it follows (a skill, a reminder) names a
+file or asks it to keep state, or a firing reminder carries a workspace file. One local tool `workspace` (`view create
+str_replace delete rename copy history restore`, `src/infrastructure/workspace_tools.py`), declared on every Smart path
+where the service exists, outside `if skills:`. The handler is built per execution: one `asyncio.Lock` taken first by
+every command (a batch applies in emission order), mutations under `asyncio.shield` (the shielded call records the
+generation and logs even when the run is cut), a `{path: generation}` session map (`create` over an existing file needs
+a `view` in this execution; `str_replace` self-guards and re-applies once on a conflict). `WorkspaceService` holds the
+rules — path rule, kinds, caps (100 files / 100 MB / 10 MB / 256 KB text; `rename` not checked), `files/` copy-only
+(text may be copied into any folder, binary only into `files/`), a neutral view header (path, generation, size, last
+writer), the same-fire line (a re-run of a reminder fire is told the version from before the fire), delete/rename
+warnings, one `[Workspace]` log line per command. `GcsWorkspaceAdapter` puts under generation preconditions and deletes
+as a metadata patch + delete of the **live** object through a fresh blob under `if_generation_match` — never a
+generation-addressed delete, which erases the version — and reads back `write_id` / `delete_id` on a 412. Every object
+carries its `origin` (`chat`, `background:<task_type>`, `voice:ask_alek|tell_alek`) and, on reminder runs, the fire key
+`reminder:<note_id>@<due_at>` — context keys `run_origin` / `run_fire_key` set by `notify(origin_detail=, fire_key=)`,
+the Alek gateway, or derived from `interactive_delivery`; origin and history serve debugging and undo, not protection
+(D17: no "data only" framing, injection is the fingerprint's class-B work). Reminders gain one optional code-bound field
+`workspace_file` (any valid path; bound by NotesAgent's code so its LLM cannot lose the path, D15), rendered in the
+alert as one line `Workspace file: workspace:<path>`, in `active_reminders`, the Router's `agent_notes`, NotesAgent's
+list and receipts, and the Cabinet (read-only). `workspace:` refs are read by `FileConversionService` through the port;
+`open_file` accepts only `workspace:files/…`. Nothing from the workspace enters session history. Review:
+`scripts/validation/workspace_review.py` (owner-run, by day 28; includes per-file growth). Decision:
+`decisions/agent_workspace_storage.md`.
 
 **Prompt Builder (Token System)** — assembly, not hardcoded prompts: verified Tokens (humor, voice,
 cognitive process…) + static Blueprints with `{{CLASS_NAME}}` slots; 4 priority levels

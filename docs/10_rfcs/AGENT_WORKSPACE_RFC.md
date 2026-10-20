@@ -1,6 +1,6 @@
 # RFC: Agent Workspace — Smart's own persistent working files
 
-**Status:** Proposed — rev 2 (2026-10-20), owner decisions recorded. Not implemented.
+**Status:** Accepted — rev 2 (2026-10-20), owner decisions recorded. Implemented on `feat/agent-workspace`; not deployed (owner steps §14).
 **Date:** rev 1 2026-10-14; rev 2 2026-10-20 (after the 2026-10-19 review and owner discussion, the 2026-10-20
 adversarial review, §0.1, and the owner's later decisions of 2026-10-20, §0.2).
 **Related:** `MEMORY_FACT_CONFIRMATION_RFC.md` (facts about the user; the local-tool precedent outside `if skills:`),

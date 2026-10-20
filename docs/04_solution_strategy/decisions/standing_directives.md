@@ -53,6 +53,8 @@ Three distinct persistence kinds were being collapsed into two containers; this 
   the actual guarantee, the prompt merely permits dropping the weakest.
 - **Autonomous agent self-notes** — rejected permanently; agent-graded self-corrections drift (the
   historical garbage source that got the old self-notes mechanism disabled).
+- See also `agent_workspace_storage.md`: working material and task state now have their own store, the agent
+  workspace, pulled on demand and never pushed into the prompt; rules for the bot's behaviour stay standing directives.
 
 ## Revise if
 
