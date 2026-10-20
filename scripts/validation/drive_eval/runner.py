@@ -174,6 +174,8 @@ def validate_gold(gold: Sequence[Dict[str, Any]], paths: Sequence[str], k: int =
             min_hits = case["min_hits"]
             if isinstance(min_hits, bool) or not isinstance(min_hits, int) or not 1 <= min_hits < most:
                 problems.append(f"{cid}: min_hits must be an integer in 1..{most - 1} (fewer than its K hits)")
+        if "folder_path" in case and (case.get("case") != "place" or case["folder_path"] not in known):
+            problems.append(f"{cid}: folder_path must be a folder of the tree, on a place case")
         if "known_hard" in case and not (isinstance(case["known_hard"], str) and case["known_hard"].strip()):
             problems.append(f"{cid}: known_hard must say why the case is hard")
         if "accepted_loss" in case and not (isinstance(case["accepted_loss"], str) and case["accepted_loss"].strip()):
@@ -314,7 +316,8 @@ async def run_cases(search: DriveSearchService, drive: FixtureDrive, gold: Seque
             cards = list(result.cards)[:case_k]
             top = [_card_paths(card, drive) for card in cards]
             covered = {path for group in top for path in group}
-            hit = result.status == "ok" and case_hit(case["expected_paths"], covered, case_k, case.get("min_hits"))
+            hit = result.status == "ok" and case_hit(case["expected_paths"], covered, case_k, case.get("min_hits"),
+                                                   case.get("folder_path"))
             missing = [p for p in case["expected_paths"] if p not in covered]
             row.update(status=result.status, k=case_k, top=top, hit=hit, missing=missing)
             wanted = expected_substrings(case["expected_paths"], case.get("expected_substring"))
@@ -323,7 +326,7 @@ async def run_cases(search: DriveSearchService, drive: FixtureDrive, gold: Seque
                 found = substring_hit(wanted, windows)
                 row.update(path_hit=hit, substring_hit=found, hit=hit and found,
                            windows={p: windows.get(p, "")[:WINDOW_REPORT_CHARS] for p in wanted})
-        for key in ("min_hits", "known_hard", "accepted_loss", "ocr", "goal"):
+        for key in ("min_hits", "folder_path", "known_hard", "accepted_loss", "ocr", "goal"):
             if key in case:
                 row[key] = case[key]
         run.cases.append(row)

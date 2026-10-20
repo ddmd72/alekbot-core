@@ -4,7 +4,8 @@ Recall@K and the recorded bars (USER_DRIVE_INDEXING_RFC §17.8). Pure.
 A case is a hit when every expected path is among the paths of its top K cards; a case with more than
 K expected paths is a hit when K of them are (RFC §17.8). A case may ask for a smaller K (`"k": 1`:
 the file must come first), or for fewer hits (`"min_hits": 5`: five of a trip's twelve photos, when the
-rest of its top K is the trip's folder and other right answers). A collapsed duplicate card covers its own
+rest of its top K is the trip's folder and other right answers). A place case may name its `folder_path`: the
+folder's card in the top K is a hit on its own, since v2 answers a place with the folder first (2026-10-20). A collapsed duplicate card covers its own
 path and its `also_at` paths.
 
 A G2 case (Slice 2+4, §24.11) is a hit when its paths are, and when every expected substring is in the passage of
@@ -62,7 +63,11 @@ def substring_hit(wanted: Mapping[str, str], windows: Mapping[str, str]) -> bool
     return all(normalize_snippet(text) in normalize_snippet(windows.get(path, "")) for path, text in wanted.items())
 
 
-def case_hit(expected: Sequence[str], covered: Set[str], k: int, min_hits: Optional[int] = None) -> bool:
+def case_hit(expected: Sequence[str], covered: Set[str], k: int, min_hits: Optional[int] = None,
+             folder_path: Optional[str] = None) -> bool:
+    """`folder_path` (a place case): the place's folder card among the top K answers it on its own."""
+    if folder_path is not None and folder_path in covered:
+        return True
     found = sum(1 for path in expected if path in covered)
     return found >= (min_hits if min_hits is not None else min(len(expected), k))
 
