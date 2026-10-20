@@ -14,7 +14,8 @@ may over-state), and a seam mapped on fewer than STITCH_MIN_MATCHED_WORDS words 
 transcribes only what starts inside it, so a segment running past its window's end loses its tail, and when two windows
 split one utterance differently the text may be cut or doubled at the seam. Interpolation places stamps by character
 proportion, so over a long silence the text is dated late; the `~` discloses it and the per-window share triggers the
-resubmit (§27.6). Speaker numbers are renumbered by first appearance after the cut.
+resubmit (§27.6). A speaker whose overlap utterances are all under PAIR_MIN_WORDS words is treated as new (an
+over-count with no uncertain mark). Speaker numbers are renumbered by first appearance after the cut.
 """
 import re
 from bisect import bisect_right
@@ -135,7 +136,7 @@ def align_speakers(windows: Sequence[Tuple[WindowSpec, WindowTranscript]]
         used = max(used, max((s.speaker for s in cur if s.speaker is not None), default=0))
         per_window.append(cur)
         uncertain.append(matched < STITCH_MIN_MATCHED_WORDS)
-    segments = tuple(sorted(cut_seams(specs, per_window), key=lambda seg: seg.start_s))   # stable: ties keep order
+    segments = cut_seams(specs, per_window)      # the model's own order within a window is kept
     order: Dict[int, int] = {}
     for seg in segments:
         if seg.speaker is not None and seg.speaker not in order:
