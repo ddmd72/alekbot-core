@@ -15,10 +15,18 @@ from ..domain.exceptions import WorkspaceConflict, WorkspaceRefused
 from ..domain.workspace import (
     COMMANDS,
     MUTATING_COMMANDS,
+    TEXT_EXTENSIONS,
+    TEXT_FOLDERS,
     WorkspaceBlob,
     WorkspaceCall,
     WorkspaceResult,
+    WorkspaceWriteMeta,
+    apply_str_replace,
     binary_message,
+    changed_lines,
+    check_caps,
+    check_file_size,
+    folder_of,
     number_lines,
     parse_generation,
     parse_workspace_path,
@@ -58,6 +66,11 @@ def _decode(data: bytes) -> Optional[str]:
         return data.decode("utf-8")
     except UnicodeDecodeError:
         return None
+
+
+def _lines(text: str) -> str:
+    n = len(text.splitlines())
+    return f"{n} line{'' if n == 1 else 's'}"
 
 
 class WorkspaceService:
@@ -201,3 +214,85 @@ class WorkspaceService:
         log.path = path
         entries = await self._store.list(call.user_id, path, include_versions=True)
         return WorkspaceResult(text=render_history(path, entries))
+
+    # -- text writes ---------------------------------------------------------------------------------------------
+
+    @staticmethod
+    def _meta(call: WorkspaceCall, restored_from: Optional[int] = None) -> WorkspaceWriteMeta:
+        return WorkspaceWriteMeta(origin=call.origin, fire=call.fire_key, restored_from=restored_from)
+
+    @staticmethod
+    def _text_path(raw: object, command: str) -> str:
+        """create / str_replace write text, and only under projects/, references/, scratch/ (§6)."""
+        path = parse_workspace_path(raw)
+        if folder_of(path) not in TEXT_FOLDERS:
+            raise WorkspaceRefused(
+                f"invalid workspace path '{path}': files/ holds copies only; use copy", reason="folder",
+            )
+        if workspace_kind(path) != "text":
+            raise WorkspaceRefused(
+                f"invalid workspace path '{path}': {command} writes text files only ({' '.join(TEXT_EXTENSIONS)})",
+                reason="kind",
+            )
+        return path
+
+    async def _create(self, call: WorkspaceCall, args: Mapping[str, Any], log: _LogFields) -> WorkspaceResult:
+        path = self._text_path(args.get("path"), "create")
+        log.path = path
+        content = args.get("content")
+        text = "" if content is None else str(content)
+        data = text.encode("utf-8")
+        check_file_size(path, data)
+        log.nbytes = len(data)
+        known = call.known.get(path)
+        if known is not None:
+            # This execution viewed the current version: overwrite it, guarded by that generation.
+            entry = await self._store.put(call.user_id, path, data, self._meta(call), known)
+            log.gen = str(entry.generation)
+            return WorkspaceResult(
+                text=f"overwritten workspace:{path} · generation {entry.generation} · {_lines(text)}",
+                generations={path: entry.generation},
+            )
+        live = await self._store.list(call.user_id, "")
+        if any(e.path == path for e in live):
+            raise WorkspaceRefused(
+                f"{path} exists. View it first and use str_replace, or view it and create again to overwrite",
+                reason="exists",
+            )
+        check_caps(live, len(data))
+        history = await self._store.list(call.user_id, path, include_versions=True)
+        log.had_history = "1" if history else "0"
+        entry = await self._store.put(call.user_id, path, data, self._meta(call), 0)
+        log.gen = str(entry.generation)
+        return WorkspaceResult(
+            text=f"created workspace:{path} · generation {entry.generation} · {_lines(text)}",
+            generations={path: entry.generation},
+        )
+
+    async def _str_replace(self, call: WorkspaceCall, args: Mapping[str, Any], log: _LogFields) -> WorkspaceResult:
+        path = self._text_path(args.get("path"), "str_replace")
+        log.path = path
+        old = str(args.get("old_str") or "")
+        new_raw = args.get("new_str")
+        new = "" if new_raw is None else str(new_raw)
+        for attempt in (1, 2):
+            # Self-guarding (D13): read the current generation, write under it; on 412 re-read and re-apply once.
+            blob = await self._store.read(call.user_id, path)
+            text = _decode(blob.data)
+            if text is None:
+                raise WorkspaceRefused(f"{path} is not UTF-8 text; str_replace cannot edit it", reason="kind")
+            replaced = apply_str_replace(path, text, old, new)
+            data = replaced.text.encode("utf-8")
+            check_file_size(path, data)
+            try:
+                entry = await self._store.put(call.user_id, path, data, self._meta(call), blob.entry.generation)
+            except WorkspaceConflict:
+                if attempt == 2:
+                    raise
+                continue
+            log.gen, log.nbytes = str(entry.generation), len(data)
+            return WorkspaceResult(
+                text=f"replaced in workspace:{path} · generation {entry.generation}\n{changed_lines(replaced)}",
+                generations={path: entry.generation},
+            )
+        raise WorkspaceConflict(path)  # unreachable: the second attempt returns or raises
