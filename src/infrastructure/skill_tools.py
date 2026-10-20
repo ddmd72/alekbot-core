@@ -249,9 +249,12 @@ def make_draft_skill_handler(
         return ToolResult(
             name=tool_call.name,
             result_str=(
-                "SYSTEM: Preview delivered to the owner as a file with a save command. Tell the "
-                "owner in one or two sentences what the skill does and that pasting the command "
-                "saves it. It is NOT saved yet."
+                "SYSTEM: Done. The draft was created and its preview with the save command was "
+                "delivered to the owner. Your part is complete: do not call draft_skill again for "
+                "this draft. Call it again only if the owner asks for changes. The skill becomes "
+                "active when the owner pastes the save command; that step is the owner's. Now tell "
+                "the owner in one or two sentences what the skill does and that pasting the command "
+                "activates it."
             ),
             delivery_items=[
                 DeliveryItem(
