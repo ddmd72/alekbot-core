@@ -2307,11 +2307,16 @@
           const due = r.due ? new Date(r.due).toLocaleString(undefined, {dateStyle:"medium",timeStyle:"short"}) : "—";
           const rec = r.recurrence ? `🔁 ${esc(r.recurrence_label || r.recurrence)}` : "once";
           const instr = esc(r.instruction || "").replace(/\n/g, "<br>");
+          // AGENT_WORKSPACE_RFC §8.3: one read-only line; edited through chat.
+          const fileLine = r.workspace_file
+            ? `<div style="font-size:13px;color:var(--text-muted);margin-top:4px">workspace file: workspace:${esc(r.workspace_file)}</div>`
+            : "";
           return `<div style="background:var(--bg-hover);border-radius:var(--radius-sm);padding:14px;margin-bottom:10px">
             <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
               <div style="flex:1">
                 <div style="font-weight:600;color:var(--text-main);font-size:15px">${esc(r.text)}</div>
                 <div style="font-size:13px;color:var(--text-muted);margin-top:4px">${due} · ${rec}</div>
+                ${fileLine}
                 <div style="font-size:13px;color:var(--text-subtle);margin-top:6px;line-height:1.5">${instr}</div>
               </div>
               <div style="display:flex;gap:6px;flex-shrink:0">
