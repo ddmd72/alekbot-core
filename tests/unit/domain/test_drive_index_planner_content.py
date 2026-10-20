@@ -73,7 +73,8 @@ def image(cv="c1", **kw):
     return ch("IMG_1.jpg", item_id="img", cv=cv, mime_type="image/jpeg", **kw)
 
 
-# -- a kind the flip leaves out stays as Slice 1 had it (doc and video: no extractor, §5.1, §24.1) ---------------
+# -- a kind the flip leaves out stays as Slice 1 had it (doc: no extractor, §5.1, §24.1); audio and video wait for
+# the transcript stage (policy 3, §27.3) with no content or triage work of the planner's ---------------------------
 
 class TestNothingAdmitted:
     def test_a_document_stays_metadata_only(self):
@@ -82,9 +83,17 @@ class TestNothingAdmitted:
         assert not content_due(rec) and not triage_due(rec)
         assert (rec.due_at, rec.priority) == (NOW, Priority.FIRST_SEEN)   # its card, as before
 
-    def test_a_video_stays_metadata_only(self):   # media the flip does not triage
-        rec = observe(ch("clip.mp4", item_id="vid", mime_type="video/mp4"))
-        assert rec.reason is Reason.KIND_NOT_ADMITTED and not triage_due(rec)
+    @pytest.mark.parametrize("name,mime", [("clip.mp4", "video/mp4"), ("memo.m4a", "audio/mp4")])
+    def test_a_video_waits_for_its_transcript(self, name, mime):   # policy 3 (§27.3): pending, never read here
+        rec = observe(ch(name, item_id="vid", mime_type=mime))
+        assert (rec.state, rec.reason) == (RecordState.PENDING, None)
+        # no download, extraction or triage is ever planned for it: only its card is due, and once the card is
+        # embedded nothing is left (the transcript stage, off by default, is the only reader of media)
+        assert not content_due(rec) and not content_due(rec, NOW) and not triage_due(rec)
+        assert (rec.due_at, rec.priority) == (NOW, Priority.FIRST_SEEN)
+        done = carded(rec)
+        assert (done.due_at, done.priority) == (None, None)
+        assert not content_due(done) and not triage_due(done)
 
     def test_a_content_change_sets_no_quiet_period(self):
         rec = stored(ch("contract.doc"))

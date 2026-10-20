@@ -17,6 +17,7 @@ ALL_KINDS = sorted(set(policy._EXT_KIND.values()) | {"other", "folder"})
 # What every kind gets after the flip (§5.1, §24.1), spelled out independently of the sets under test.
 _CONTENT = {"pdf", "docx", "pptx", "xlsx", "xls", "odt", "ods", "odp", "epub", "html", "markdown", "text", "csv",
             "json", "rtf", "msg", "eml", "subtitles"}
+_TRANSCRIBED = {"audio", "video"}   # policy 3 (§27.3): transcribed by their own stage, never parsed
 
 
 class TestAfterTheFlip:
@@ -26,7 +27,7 @@ class TestAfterTheFlip:
     @pytest.mark.parametrize("kind", ALL_KINDS)
     def test_each_kind_gets_its_admission(self, kind):
         expected = (Admission.CONTENT if kind in _CONTENT else Admission.TRIAGE if kind == "image"
-                    else Admission.NONE)
+                    else Admission.TRANSCRIBE if kind in _TRANSCRIBED else Admission.NONE)
         assert admission(kind) is expected
 
 
