@@ -234,6 +234,8 @@ _RECORD_READERS: Dict[str, Callable[[Any], Any]] = {
     "passages_generation": _optional(int),
     # §26.2 (D33)
     "inaccessible_since": _dt, "inaccessible_checked_at": _dt, "inaccessible_notified_since": _dt,
+    # §27 (transcripts)
+    "transcript_wake_at": _dt, "transcript_languages": _strs, "transcript_hold": _optional(str),
 }
 
 _STATE_READERS: Dict[str, Callable[[Any], Any]] = {
@@ -248,6 +250,7 @@ _STATE_READERS: Dict[str, Callable[[Any], Any]] = {
     "model_backoff_by_agent": _dt_map,
     "described_count": int, "described_grew_at": _dt,
     "migration_alerted": bool, "stall_alerted": bool, "fallback_alerted_day": str,
+    "purge_keep_transcripts": bool,
 }
 
 

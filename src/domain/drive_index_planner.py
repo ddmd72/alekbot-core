@@ -61,7 +61,7 @@ from .drive_card import (
     structurally_card_eligible,
 )
 from .drive_enrichment import DriveProfile, PhotoDescription
-from .drive_extraction import ExtractionOutcome, TriageResult, chain_for
+from .drive_extraction import TRANSCRIBE_LINK, ExtractionOutcome, TriageResult, chain_for
 from .drive_index import (
     CARD_VERSION, EXTRACTION_VERSION, GEO_TABLE_VERSION, KEYS_VERSION, MIGRATION_GATE_KEY, NAME_KEYS_VERSION, POLICY_VERSION,
     TRIAGE_VERSION, ContentClass, DocumentBrief, DriveChange, DriveIndexRecord, DriveSyncState, EpochPhase, FolderProbe,
@@ -76,6 +76,7 @@ from .drive_index_params import (
 from .drive_index_policy import (
     Admission, admission, card_rank_of, content_class_of, density_still_valid, is_dense, is_dot_name,
     is_generated_dir, is_marker_child, is_readme_name, item_rule, kind_of, readme_readable, searchable, size_cap,
+    TRANSCRIBED_KINDS,
 )
 from .drive_keys import name_keys_v2
 from .drive_profile import brief_date_grade, issued_of, readme_excerpt
@@ -218,6 +219,8 @@ def classify(change: DriveChange, pscope: Optional[Scope], probe: Optional[Folde
     elif adm is Admission.CONTENT:
         if change.size_bytes > size_cap(kind):
             return c(Scope.NORMAL, RecordState.METADATA_ONLY, Reason.TOO_LARGE)
+    elif adm is Admission.TRANSCRIBE:
+        pass   # no download cap here: the media caps are the transcript plan's (§27.4); a stub outcome stands below
     else:
         return c(Scope.NORMAL, RecordState.METADATA_ONLY, Reason.KIND_NOT_ADMITTED)
     if previous is not None and _outcome_stands(previous, change.content_version):
@@ -580,7 +583,7 @@ def content_due(rec: DriveIndexRecord, now: Optional[datetime] = None) -> bool:
     if (rec.state is not RecordState.PENDING or rec.card_capped or inaccessible(rec) or _indexed_now(rec)
             or _held(rec, now)):
         return False   # an inaccessible record holds its content work until the bot can read it again (§26.2)
-    adm = admission(rec.kind)
+    adm = admission(rec.kind)   # a TRANSCRIBE kind never reaches the index step (§27.3, Δ95)
     return adm is Admission.CONTENT or (adm is Admission.TRIAGE
                                         and valid_verdict(rec, rec.content_version) is TriageVerdict.TEXT)
 
@@ -756,6 +759,8 @@ def extractor_stale(rec: DriveIndexRecord, versions: Mapping[str, int]) -> bool:
     if not rec.extracted_by:
         return False
     link, _, version = rec.extracted_by.rpartition("@")
+    if link == TRANSCRIBE_LINK and rec.kind in TRANSCRIBED_KINDS:
+        return False   # its own pipeline decides (§27, G4); chain_for("audio") would call it stale on every upgrade
     return link not in chain_for(rec.kind) or str(versions.get(link, "")) != version
 
 
