@@ -59,6 +59,11 @@ max 3 instances, timeout 300 s; in-memory work volume at `/work`, **256Mi placeh
 - **Flush barrier (G7 / S0-b):** that the response is fully flushed before the supervisor stops the instance is unproven.
 - **`RLIMIT_AS` vs Node's `DATA` mapping (G6 / S0-f):** whether 1 GiB address space suits `node` on gen2.
 - **NPROC / NOFILE 64 / 64** may be low for Node; confirm on gen2 (S0-f).
+- **`/dev/shm` writability (S0-f):** whether the engine uid can write to `/dev/shm` on gen2 (instance memory outside
+  `RLIMIT_AS`). `/tmp` is root-only (0700) in the image; `/dev/shm` is the platform's and must be measured.
+- **Post-response drain (S0-b):** the service deploys with `--no-cpu-throttling` so the recycle sequence (which runs after
+  the response) is not stalled by request-based CPU throttling. Measure the drain time with these exact flags and size the
+  client's recycling retry window to it; otherwise a call arriving during the drain can exhaust the 3 retries.
 - **Work volume size** (256Mi placeholder) against the real 64 MiB file ceilings.
 - **Real Cloud Run status for an instance killed mid-request** (OOM or crash): a bare 503 would make a poison input look
   like a systemic outage and be retried; the client's 5xx rule depends on the recorded answer.
@@ -70,7 +75,11 @@ max 3 instances, timeout 300 s; in-memory work volume at `/work`, **256Mi placeh
 - A grandchild that calls `setsid()` leaves the process group and survives the group kill; recycle (`always`) bounds it
   to the one instance.
 - `killpg` after the leader is reaped has a pid-reuse window; negligible at concurrency 1 and one request per instance.
-- The engine's stderr temp file lives in the server's temp area and counts against instance memory (capped at 16 KiB read).
+- The engine's stderr temp file lives in the server's temp area and counts against instance memory. It is read in full for
+  hashing and bounded by `RLIMIT_FSIZE`; the 16 KiB cap applies to `err.txt` (the text handed back), not to the stderr file.
+- **Python 3.13 (CI) vs 3.11 (image).** The suite runs on 3.13 in CI while the image is `python:3.11-slim`; a 3.12+ only
+  feature would pass CI and fail in the image (the image build itself is unproven until S0). The real-node tests skip in CI
+  (no `npm install` there), so the Node path is exercised only locally and in the first real deploy.
 - `GPG_KEY` (the public id of the Python release key, defined by the base image) is allowlisted in the startup
   self-check; an allowlist entry, not a looser pattern.
 - Without any caller configuration and no `SANDBOX_URL`, off Cloud Run, the gate is open for local development; the server then binds

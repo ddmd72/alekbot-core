@@ -69,3 +69,14 @@ async def test_unavailable_and_misconfigured_propagate_unchanged(code, exc):
     with pytest.raises(exc) as info:
         await runner_for(Scripted(reply(code))).run("js", "{}", 60)
     assert not isinstance(info.value, DocxRunnerError)   # the repair loop must not see a systemic failure
+
+
+@pytest.mark.parametrize("response", [
+    lambda: reply(404, SandboxStatus.ERROR, b"Not Found", "http_404"),
+    lambda: reply(400, SandboxStatus.BAD_REQUEST, b"bad meta", "bad_meta"),
+    lambda: reply(404, SandboxStatus.BAD_REQUEST, b"unknown op", "unknown_op"),
+])
+async def test_wrong_path_and_server_refusals_are_not_charged_to_the_script(response):
+    with pytest.raises(SandboxMisconfigured) as info:
+        await runner_for(Scripted(response())).run("js", "{}", 60)
+    assert not isinstance(info.value, DocxRunnerError)

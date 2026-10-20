@@ -35,8 +35,9 @@ COPY src/utils/logger.py src/utils/logging_context.py src/utils/memory_scope.py 
 COPY src/web/sandbox_app.py src/web/sandbox_caller_gate.py src/web/sandbox_recycler.py src/web/sandbox_supervisor.py src/web/sandbox_unconfigured_app.py src/web/worker_oidc_verifier.py /app/src/web/
 
 # /work: the mount point of the size-limited in-memory volume (Cloud Run gen2); the server creates per-request
-# directories there and hands each to the engine uid. /tmp stays usable by the server uid.
-RUN mkdir -p /work && chmod 711 /work && chmod 1777 /tmp
+# directories there and hands each to the engine uid. /tmp is closed to everyone but root (the server's uid): a world-writable
+# /tmp would let the engine write unbounded data to instance memory outside RLIMIT_AS (the child's TMPDIR is its workdir).
+RUN mkdir -p /work && chmod 711 /work && chown root:root /tmp && chmod 0700 /tmp
 
 # Nothing the service loads may be writable by the engine user: the app tree belongs to root and is closed to group and
 # other (no .pyc is written; an existing __pycache__ would still be read), and the build fails on any world-writable

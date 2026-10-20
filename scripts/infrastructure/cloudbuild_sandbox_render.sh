@@ -16,7 +16,8 @@
 # `alek-sandbox-`. Any other SANDBOX_RENDER_SA (e.g. the main runtime's, from a mis-set .env value) is refused with a
 # non-zero exit before any docker or gcloud call, so the "holds nothing" service can never be given real IAM by accident.
 #
-# The service holds no secret (nothing is mounted from Secret Manager), admits authenticated callers only (the platform's
+# The service holds no secret (nothing is mounted from Secret Manager; --clear-secrets makes every deploy drop any secret
+# attached by hand), admits authenticated callers only (the platform's
 # invoker check stays on) and gets no public IAM binding.
 set -euo pipefail
 
@@ -59,6 +60,8 @@ case "$mode" in
       --region=us-central1 \
       --service-account="$SANDBOX_RENDER_SA" \
       --no-allow-unauthenticated \
+      --clear-secrets \
+      --no-cpu-throttling \
       --use-http2 \
       --execution-environment=gen2 \
       --concurrency=1 \

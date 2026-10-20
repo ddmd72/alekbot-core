@@ -7,7 +7,8 @@ in-process wording, so the DocGenerator's repair loop is unchanged:
     script_error / timeout / empty_output / too_large    -> DocxRunnerError(<text the service returned>)
     error, detail sandbox_lost                           -> DocxRunnerError("sandbox_lost: ...") (the input is the
                                                             model's script, two losses are charged to it: G10)
-    bad_request                                          -> DocxRunnerError (a script can spoof exit 4; charged to it)
+    bad_request (engine path, empty detail)              -> DocxRunnerError (a script can spoof exit 4; charged to it)
+    bad_request unknown_op / bad_meta, any 404 / 405     -> SandboxMisconfigured (raised by the client: never the script)
     SandboxUnavailable / SandboxMisconfigured            -> propagate unchanged (systemic, nothing charged)
 This module imports no document, image or archive library.
 """
