@@ -17,8 +17,7 @@ chase every key this service does not have into Secret Manager on each cold star
 
 HTTP: Quart on hypercorn, the main service's stack. The relay's plain `websockets` server is
 built for WebSockets, not POST routes; `aiohttp.web` would add a second HTTP framework idiom to the
-codebase. Quart gives the same request semantics and test client as the main `/worker`, and Slice 3's
-`/extract` is one more route on the same blueprint.
+codebase. Quart gives the same request semantics and test client as the main `/worker`.
 
 Environment variables (set at deploy time in cloudbuild-dev.yaml):
   GOOGLE_CLOUD_PROJECT          GCP project id (Firestore, Cloud Tasks).

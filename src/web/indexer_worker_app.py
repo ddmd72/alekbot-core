@@ -19,7 +19,7 @@ The indexer service (`indexer_main.py`) serves exactly two routes:
   deploys after the main service (cloudbuild-dev.yaml), so on that second pass a task can meet the
   503 for a minute or two; the queue retries it.
 - `GET /health` — the Cloud Run probe.
-`/extract` joins in Slice 3.
+Untrusted-content processing is not a route here: it lives in the separate sandbox service (RFC §12.7).
 """
 from __future__ import annotations
 

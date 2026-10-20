@@ -113,7 +113,7 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
 - DocPlanner (ASYNC, PERFORMANCE, intent `create_document`) — LLM → JSON layout spec →
   fire-and-forget delegate to DocGenerator → DeliveryItem("file_upload").
 - DocGenerator (internal, BALANCED, intent `generate_docx_code`) — LLM writes Node.js script →
-  DocxRunnerPort subprocess → DOCX bytes.
+  DocxRunnerPort → DOCX bytes (the runner is `NodeDocxRunner` in-process, or `SandboxDocxRunner`, the zero-role render service, when `SANDBOX_RENDER=sandbox`).
 - PdfGenerator (ASYNC, BALANCED, intent `create_pdf`, `internal=False`) — one LLM call → HTML+CSS →
   NodePuppeteerRunner → PDF; two DeliveryItem("document"): HTML (GCS) + PDF (GCS + Slack upload).
   Filename from `<title>`; PromptBuilder required; LLM picks from a 12-style catalogue.

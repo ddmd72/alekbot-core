@@ -17,6 +17,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
+from .sandbox_client_setup import docx_runner_factory
 from ..adapters.mcp.mcp_client import MCPClient
 from ..adapters.mcp.mcp_maps_adapter import MCPMapsAdapter
 
@@ -95,7 +96,6 @@ from ..agents.video_generation_agent import VideoGenerationAgent
 from ..agents.tutor_agent import TutorAgent
 from ..agents.lelik_agent import LelikAgent
 from ..agents.alek_gateway_agent import ASK_ALEK_TIMEOUT_MS, AlekGatewayAgent
-from ..adapters.node_docx_runner import NodeDocxRunner
 from ..adapters.node_puppeteer_runner import NodePuppeteerRunner
 from ..adapters.unsplash_adapter import UnsplashAdapter
 from ..adapters.twilio_telephony_adapter import TwilioTelephonyAdapter
@@ -197,6 +197,8 @@ class UserAgentFactory(AgentFactoryPort):
         drive_search_service: Optional["DriveSearchService"] = None,
         alert_sink: Optional[AlertSinkPort] = None,
     ) -> None:
+        # Resolved once: a bad SANDBOX_RENDER stops the start, and the sandbox runner is shared by all users.
+        self._docx_runner_factory = docx_runner_factory()
         self.config = config
         self.env_config = env_config
         self.coordinator = coordinator
@@ -744,7 +746,7 @@ class UserAgentFactory(AgentFactoryPort):
                 capabilities=["docx_code_generation"],
             ),
             execution_context=execution_context,
-            docx_runner=NodeDocxRunner(),
+            docx_runner=self._docx_runner_factory(),
             prompt_builder=ctx.prompt_builder,
             user_id=user_id,
         )
