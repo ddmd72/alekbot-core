@@ -582,6 +582,7 @@ async def test_405_and_unrouted_paths_carry_the_outcome_header(tmp_path):
     app, *_ = make_app(tmp_path)
     r = await app.test_client().get("/v1/render.docx", headers=GOOD)
     assert r.status_code == 405 and sc.OUTCOME_HEADER in r.headers
+    assert "POST" in r.headers.get("Allow", "")
     r = await app.test_client().get("/nowhere")
     assert r.status_code == 404 and sc.OUTCOME_HEADER in r.headers
     assert sc.OUTCOME_HEADER not in (await app.test_client().get("/health")).headers
@@ -589,6 +590,7 @@ async def test_405_and_unrouted_paths_carry_the_outcome_header(tmp_path):
 
 async def test_stalled_upload_is_cut_at_the_deadline(tmp_path, monkeypatch):
     monkeypatch.setattr(sandbox_app, "TIMEOUT_MARGIN_S", 0.2)
+    monkeypatch.setattr(sandbox_app, "CEILING_WALL_S", 0.1)  # the deadline is max(contract ceiling, app ceiling) + margin
     work_root = tmp_path / "work"
     work_root.mkdir()
     engine = FakeEngine(tmp_path)

@@ -34,7 +34,7 @@ import shutil
 import stat
 import time
 from types import TracebackType
-from typing import Any, AsyncIterator, Mapping, Optional, Protocol, Tuple
+from typing import Any, AsyncIterator, BinaryIO, Mapping, Optional, Protocol, Tuple
 
 from quart import Blueprint, Response, request
 from quart.wrappers.response import ResponseBody
@@ -132,7 +132,11 @@ def create_sandbox_blueprint(
         """Anything that escapes the route (routing errors, bugs) still answers with an outcome header."""
         if isinstance(error, HTTPException):
             code = error.code or 500
-            text = error.name
+            known = Response(error.name, status=code, content_type="text/plain; charset=utf-8")
+            for key, value in error.get_headers():  # keep e.g. `Allow` on a 405; our body is plain text
+                if key.lower() not in ("content-type", "content-length"):
+                    known.headers[key] = value
+            return known
         else:
             logger.error("[Sandbox] unhandled %s", type(error).__name__)
             code, text = 500, "internal error"
@@ -285,8 +289,11 @@ def create_sandbox_blueprint(
 
     def _register_finish(ctx: "_RequestState") -> None:
         """Finish the request when the ASGI handler task ends: after the final frame, and also on a cancel
-        (client disconnect) that lands anywhere after the view returned. The view and `_send_response` share
-        one task in Quart, so this cannot fire early."""
+        (client disconnect) that lands anywhere after the view returned. It cannot fire early because the view and
+        `_send_response` both run inside the one handler task: on Python 3.12+ `wait_for` awaits the coroutine in
+        the same task, and on 3.11 it wraps it in a sub-task that the handler task awaits (and, on a cancel,
+        cancels and waits for). Either way the handler task is done only after the final frame was sent or the
+        cancel completed."""
         task = asyncio.current_task()
         if task is None:
             _finish(ctx)
@@ -442,7 +449,7 @@ def _text_response(code: int, status: SandboxStatus, header_detail: str, text: s
     return resp
 
 
-def _open_output(path: Optional[str]) -> Optional[Tuple[int, int]]:
+def _open_output(path: Optional[str]) -> Optional[Tuple[BinaryIO, int]]:
     """Open the engine's server-owned output file; a regular file only, symlinks refused."""
     if not path:
         return None
