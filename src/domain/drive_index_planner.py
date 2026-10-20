@@ -74,7 +74,7 @@ from .drive_index_params import (
     STALE_ALERT_AFTER, TICK_DEADLINE_S,
 )
 from .drive_index_policy import (
-    Admission, admission, card_rank_of, content_class_of, density_still_valid, is_dense, is_dot_name,
+    TRANSCRIBED_KINDS, Admission, admission, card_rank_of, content_class_of, density_still_valid, is_dense, is_dot_name,
     is_generated_dir, is_marker_child, is_readme_name, item_rule, kind_of, readme_readable, searchable, size_cap,
 )
 from .drive_keys import name_keys_v2
@@ -334,7 +334,7 @@ def _build(change: DriveChange, cls: Classification, existing: Optional[DriveInd
         content_class=cls.content_class, scope=cls.scope, state=cls.state, reason=cls.reason,
         content_version=change.content_version, modified_at=change.modified_at,
         fs_modified_at=change.fs_modified_at,
-        effective_date=_effective(change, base.brief, ctx.now, base.profile),
+        effective_date=_effective(change, base.brief, ctx.now, base.profile, cls.kind),
         place_name=place_name, place_forms=place_forms, geo_table_version=geo_version, policy_version=POLICY_VERSION,
         card_rank=card_rank_of(cls.content_class),
         name_tokens=name_keys_v2(change.name) if searchable(cls.reason) else (), name_keys_version=NAME_KEYS_VERSION,
@@ -380,8 +380,11 @@ def _readme_touched(change: DriveChange, parent: Optional[DriveIndexRecord],
 
 
 def _effective(change: DriveChange, brief: Optional[DocumentBrief], now: datetime,
-               profile: Optional[DriveProfile] = None) -> datetime:
-    """The profile's verified issue date first (§25.4.1, D13 extended), else the brief's date (D13), else §3.1."""
+               profile: Optional[DriveProfile] = None, kind: str = "") -> datetime:
+    """The profile's verified issue date first (§25.4.1, D13 extended), else the brief's date (D13), else §3.1. A
+    transcribed recording (`kind` audio/video) always takes §3.1: a date said aloud never re-dates it (§27.8 a, G38)."""
+    if kind in TRANSCRIBED_KINDS:
+        return effective_date(change, now)
     issued = issued_of(profile) if profile is not None else None
     if issued is not None:
         return datetime(issued.year, issued.month, issued.day, tzinfo=timezone.utc)
@@ -929,7 +932,7 @@ def indexed(rec: DriveIndexRecord, *, outcome: ExtractionOutcome, generation: in
                    read_by_fallback=outcome.read_by_fallback, keys_version=KEYS_VERSION, keys_pending=False,
                    keys_capped=keys_capped, profile_input_fingerprint=profile_fingerprint,
                    effective_date=_effective(change_from_record(rec), outcome.brief, rec.effective_date or now,
-                                             rec.profile))
+                                             rec.profile, rec.kind))
     if new_version:
         done = replace(done, profile_attempts=0, passages_attempts=0)
     return _settled(done, now)
@@ -958,7 +961,8 @@ def demoted(rec: DriveIndexRecord, reason: Reason, now: datetime, *, outcome: Op
                    pages_refused=outcome.pages_refused if outcome is not None else 0,
                    read_by_fallback=outcome.read_by_fallback if outcome is not None else False,
                    card_accuracy=None,   # no readable text to confirm a card against (§26.4)
-                   effective_date=_effective(change_from_record(rec), brief, rec.effective_date or now))
+                   effective_date=_effective(change_from_record(rec), brief, rec.effective_date or now,
+                                             kind=rec.kind))
     return _settled(done, now)
 
 
@@ -1009,7 +1013,8 @@ def triaged(rec: DriveIndexRecord, result: TriageResult, now: datetime,
                        indexed_generation=None, chunk_space="", chunk_reembed_pending=False, lead_text="", brief=None,
                        dirty_since=None, capture="", capture_source="",   # a photograph has none (Δ57)
                        card_accuracy=None, accuracy_version=0,            # nor a score (§26.4)
-                       effective_date=_effective(change_from_record(rec), None, rec.effective_date or now))
+                       effective_date=_effective(change_from_record(rec), None, rec.effective_date or now,
+                                             kind=rec.kind))
         done = _without_photo(done) if photo is None else replace(
             done, photo_description=photo.description, photo_objects=tuple(photo.objects), photo_scene=photo.scene,
             photo_scene_labels=photo.scene_labels, visible_text=photo.visible_text)

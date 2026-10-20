@@ -129,13 +129,16 @@ class DriveIndexRepository(ABC):
 
     @abstractmethod
     async def count_unread(self, user_id: str, kinds: AbstractSet[str],
-                           triaged: AbstractSet[str] = frozenset(), *, pending: Optional[bool] = None) -> int:
+                           triaged: AbstractSet[str] = frozenset(), *, pending: Optional[bool] = None,
+                           transcribed: AbstractSet[str] = frozenset()) -> int:
         """Documents of a kind in `kinds`, and images of a kind in `triaged` whose `triage_verdict` is `text`, whose
         content is not searchable (§10.2 `unread`, drive_search.is_unread): not folders, and `pending` without an
         `indexed_generation`, or `failed`, or `metadata_only` for too_large, no_text, machine_text or user_chunk_cap
         (count aggregation queries). A kind in both lists counts as a document. `pending=True` counts only the
         documents not read yet (drive_search.is_not_read_yet: pending, not `card_capped`), `pending=False` only those
-        that could not be read (the other classes); None counts every class (final review F5-2)."""
+        that could not be read (the other classes); None counts every class (final review F5-2). `transcribed`: recordings
+        counted like documents except that `no_text` is not an unread reason for them (a silent recording is a stub, not
+        unreadable, §27.11, G20); empty by default, so every other caller is unchanged."""
 
     @abstractmethod
     async def inaccessible_records(self, user_id: str, limit: int, *, lean: bool = False) -> List[DriveIndexRecord]:

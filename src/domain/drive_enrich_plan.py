@@ -52,6 +52,7 @@ from .drive_enrichment import (
     UsageClass,
 )
 from .drive_enrichment_calls import ModelReplyStatus, ProfileInput
+from .drive_index_policy import TRANSCRIBED_KINDS
 from .drive_index import (
     KEYS_VERSION, PASSAGES_VERSION, PROFILE_VERSION, DriveChange, DriveChunk, DriveIndexRecord, Priority, Reason,
     RecordState, Scope, inaccessible,
@@ -126,10 +127,12 @@ def effective_from(rec: DriveIndexRecord, profile: Optional[DriveProfile], *,
                    now: Optional[datetime] = None) -> Optional[datetime]:
     """§25.4.1 (D13 extended): the verified issue date of the profile, else the reader's brief date, else §3.1 (taken,
     filesystem-modified, server time)."""
-    issued = issued_of(profile) if profile is not None else None
+    # a date said in a recording never re-dates it (§27.8 a, G38): media keep §3.1
+    own_date = rec.kind not in TRANSCRIBED_KINDS
+    issued = issued_of(profile) if profile is not None and own_date else None
     if issued is not None:
         return _utc(issued)
-    if rec.brief is not None and rec.brief.held_date is not None:
+    if own_date and rec.brief is not None and rec.brief.held_date is not None:
         return rec.brief.held_date
     change = DriveChange(item_id=rec.item_id, facets=rec.facets, fs_modified_at=rec.fs_modified_at,
                          modified_at=rec.modified_at)

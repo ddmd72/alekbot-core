@@ -621,28 +621,45 @@ class DriveIndexingService:
                                            systemic_failures=state.systemic_failures + 1))
             return TickResult("error", summary, models.cost)
 
-    async def _counters(self, user_id: str, *,
-                        marked: Optional[Sequence[DriveIndexRecord]] = None) -> Dict[str, int]:
+    async def _counters(self, user_id: str, *, marked: Optional[Sequence[DriveIndexRecord]] = None,
+                        transcription_on: bool = False) -> Dict[str, int]:
         """Records per state and carded (§3.5), readable chunks and `unread` (§10.2, §12.1). A zero content counter
-        is left out: the Cabinet lists only non-zero counters and every reader defaults to 0."""
+        is left out: the Cabinet lists only non-zero counters and every reader defaults to 0. While transcription is
+        off for the user, his recordings (admitted `pending` by the global policy, G3) are taken out of `pending`:
+        no stage will run for them, so they would read "waiting" for good. Counted with the not-read-yet class
+        (same filters as `_unread_counters`, no new index)."""
         counters = dict(await self._repo.count_by_state(user_id))
+        if not transcription_on and counters.get(RecordState.PENDING.value):
+            idle_media = await self._repo.count_unread(user_id, frozenset(), frozenset(), pending=True,
+                                                       transcribed=policy.TRANSCRIBED_KINDS)
+            left = max(0, counters[RecordState.PENDING.value] - idle_media)
+            if left:
+                counters[RecordState.PENDING.value] = left
+            else:
+                del counters[RecordState.PENDING.value]
         content = {"chunks": await self._repo.readable_chunk_total(user_id)}
         counters.update({k: v for k, v in content.items() if v})
-        return await self._unread_counters(user_id, counters, marked=marked)
+        return await self._unread_counters(user_id, counters, marked=marked, transcription_on=transcription_on)
 
     async def _unread_counters(self, user_id: str, counters: Mapping[str, int], *,
-                               marked: Optional[Sequence[DriveIndexRecord]] = None) -> Dict[str, int]:
+                               marked: Optional[Sequence[DriveIndexRecord]] = None,
+                               transcription_on: bool = False) -> Dict[str, int]:
         """`counters` with `unread` and `not_read_yet` counted now (§10.2, final review F5-2): the documents still
         waiting and those that could not be read, two count passes; a zero is left out. With `marked` (the marked
         records, `_end_marks`), the files the bot cannot open are counted on their own (`inaccessible`, and
         `inaccessible_unnotified` for the fan-out's notice); they are taken out of `not_read_yet`, which they would
-        otherwise stay in for good (§26.2, Δ56). The count queries are unchanged: no new composite index."""
+        otherwise stay in for good (§26.2, Δ56). The count queries are unchanged: no new composite index.
+        `transcription_on` (§27.11 "Coverage", G2, G3): only for a user whose transcription is on do the recordings
+        count too (a third kind set, `transcribed`); otherwise the calls are exactly the ones without it, so a user
+        who never transcribes is not told his recordings are waiting for a stage that will not run."""
+        media = {"transcribed": policy.TRANSCRIBED_KINDS} if transcription_on else {}
         waiting, unreadable = await asyncio.gather(
-            self._repo.count_unread(user_id, policy.ADMITTED_KINDS, policy.TRIAGED_KINDS, pending=True),
-            self._repo.count_unread(user_id, policy.ADMITTED_KINDS, policy.TRIAGED_KINDS, pending=False))
+            self._repo.count_unread(user_id, policy.ADMITTED_KINDS, policy.TRIAGED_KINDS, pending=True, **media),
+            self._repo.count_unread(user_id, policy.ADMITTED_KINDS, policy.TRIAGED_KINDS, pending=False, **media))
         closed = access_counts(())
         if marked is not None:
-            closed = access_counts(marked, frozenset(policy.ADMITTED_KINDS), frozenset(policy.TRIAGED_KINDS))
+            closed = access_counts(marked, frozenset(policy.ADMITTED_KINDS), frozenset(policy.TRIAGED_KINDS),
+                                   frozenset(policy.TRANSCRIBED_KINDS) if transcription_on else None)
         waiting = max(0, waiting - closed.waiting)
         out = {k: v for k, v in counters.items()
                if k not in (UNREAD_COUNTER, NOT_READ_YET_COUNTER, INACCESSIBLE_COUNTER, INACCESSIBLE_UNNOTIFIED_COUNTER)}
