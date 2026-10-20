@@ -3,6 +3,7 @@
 `escape_text` runs on the main event loop over every opened file (up to 12k-char windows and whole files). Two
 adjacent unbounded gap groups around the optional slash backtracked quadratically on '<' + a long whitespace run:
 32k characters took seconds. The gaps are now unambiguous and bounded (WRAPPER_TAG_GAP_MAX)."""
+import pytest
 import time
 
 from src.domain.drive_index_params import WRAPPER_TAG_GAP_MAX
@@ -15,10 +16,12 @@ def _timed(text: str) -> float:
     return time.perf_counter() - started
 
 
+@pytest.mark.timing  # wall-clock assertion: off the main gate, `make test-timing`
 def test_a_long_whitespace_run_after_an_opener_is_fast():
     assert _timed("<" + " " * 32_000) < 0.5          # was seconds (quadratic backtracking)
 
 
+@pytest.mark.timing  # wall-clock assertion: off the main gate, `make test-timing`
 def test_many_openers_each_with_whitespace_are_fast():
     assert _timed(("<" + " ​" * 40) * 400) < 0.5   # ~32k characters, invisible characters in the gaps
 

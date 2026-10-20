@@ -105,7 +105,7 @@ def test_sql_dump_with_prices_is_machine_text():
 
 
 # -- linear in the text (B-M1) ---------------------------------------------------------------------------------------
-# Wall-clock bounds on CPU-bound work: `cpu_benchmark`, so `make test-unit` runs them alone after the parallel suite
+# Wall-clock bounds on CPU-bound work: `timing`, so `make test-unit` runs them alone after the parallel suite
 # (a saturated machine stretched them to 3-7 s there with no code change; alone each takes ~0.1 s).
 
 def _timed(fn, *args):
@@ -121,21 +121,21 @@ def _cjk(paragraph_chars, total_chars):
     return "\n".join(paragraph() for _ in range(total_chars // paragraph_chars))
 
 
-@pytest.mark.cpu_benchmark
+@pytest.mark.timing
 @pytest.mark.parametrize("paragraph_chars", [5_000, 50_000])
 def test_gate_is_linear_on_long_cjk_tokens(paragraph_chars):
     text = _cjk(paragraph_chars, 1_000_000)
     assert _timed(is_machine_text, text) < 3.0
 
 
-@pytest.mark.cpu_benchmark
+@pytest.mark.timing
 @pytest.mark.parametrize("text", ["a" * 2_000_000, "ACGT" * 500_000, "x\n" * 1_000_000, "word " * 400_000],
                          ids=["one-token", "one-dna-token", "short-lines", "one-line"])
 def test_gate_is_linear_on_degenerate_text(text):
     assert _timed(is_machine_text, text) < 3.0
 
 
-@pytest.mark.cpu_benchmark
+@pytest.mark.timing
 def test_chunker_and_terms_are_fast_on_long_cjk_tokens():
     text = _cjk(50_000, 1_000_000)
     started = time.perf_counter()
