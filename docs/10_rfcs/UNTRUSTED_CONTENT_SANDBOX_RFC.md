@@ -1,6 +1,6 @@
 # RFC: Untrusted-content sandbox service — one place where hostile bytes are processed, holding nothing
 
-**Status:** Proposed (rev 2, after review; nothing built). Items marked *P* in §5 are the author's proposals, open to the owner; *O* items are owner decisions.
+**Status:** Proposed (rev 3; the owner resolved every open question on 2026-10-20, §5 and §10; nothing built). *O* items are owner decisions, *P* items are author proposals the owner did not change.
 **Date:** 2026-10-20
 **Owner decisions (2026-10-19, "we need a proper sandbox with a limited scope"):**
 - **O1. One separate Cloud Run deploy unit** whose own service account holds **no IAM role** and which is given **no secret**.
@@ -10,7 +10,7 @@
   names this service as its trigger's answer); this RFC is that answer, widened to the other consumers.
 - **O4. Transcripts for a second user wait for this service** (USER_DRIVE_INDEXING_RFC §27.12, OQ-T3).
 
-**Prerequisite (P0):** the per-runtime service-account work (each runtime on its own identity with only the roles it needs) is a stated
+**Prerequisite (P0, O8):** the per-runtime service-account work (each runtime on its own identity with only the roles it needs) is a stated
 prerequisite: drive ops are enabled only after the indexer has its own identity; chat and render ops only after the main service has its own. See §4.4.
 
 Related: `USER_DRIVE_INDEXING_RFC.md` §9, §24.3, §24.14, §27.4; `decisions/drive_parser_sandbox_resource_isolation.md`;
@@ -42,7 +42,7 @@ process under an unprivileged uid**; the server process only moves the payload t
 
 The four converter callers above are the full list found by grep (the e-mail attachment path is one of them); the markitdown builder
 (`src/utils/document_hardening.py:38`) has no other user. HTML cleaning of e-mail bodies with BeautifulSoup in the Gmail adapter
-(`src/adapters/gmail_provider_adapter.py`) stays in the main service **by decision** (OQ-S9): it is markup text cleaning of mail the user's own provider
+(`src/adapters/gmail_provider_adapter.py`) stays in the main service **by decision** (O10): it is markup text cleaning of mail the user's own provider
 delivered, not a decoder of attachments; revisit if its input class changes.
 
 **What stays outside the sandbox, by rule.**
@@ -100,16 +100,16 @@ A Cloud Run **service** answering a synchronous request.
 - A service gives the properties we want for free: per-request billing, concurrency 1, an invoker role per caller, and an instance that can end
   itself after a request.
 
-### 4.2 Two services, one repository (P2)
+### 4.2 Two services, one repository (O10)
 
 | Service | Ops | Image content | Resources (initial) | Request timeout |
 |---------|-----|---------------|---------------------|-----------------|
-| **sandbox** (light) | C1, C2, C3 | Python, the parser libraries, `ffmpeg`/`ffprobe`. No Node, no browser | 2 GiB, 2 vCPU (ffmpeg used ~1.07 CPU-s per audio minute, §27.2) | 900 s (backstop; the in-app wall is shorter) |
+| **sandbox** (light) | C1, C2, C3 (incl. `ffprobe` of chat videos) | Python, the parser libraries, `ffmpeg`/`ffprobe`. No Node, no browser | 2 GiB, 2 vCPU (ffmpeg used ~1.07 CPU-s per audio minute, §27.2) | 900 s (backstop; the in-app wall is shorter) |
 | **sandbox-render** | C4, C5, C6 | Python shell, Node, Puppeteer, Playwright Chromium | 2 GiB, 2 vCPU | 300 s |
 
 Why two: the render image carries ~0.5 GB of browser and runs code a model wrote, the light image carries decoders and runs bytes someone sent;
 they differ in size, cold start, and in what a compromise of either would be worth to the other. Why not three: a separate media service buys a
-different network policy only (§4.5), which is its own decision (OQ-S3).
+different network policy only (§4.5), which the owner has accepted as is (O7).
 Cost of two: one more deploy unit for a solo developer. Both services are part of the plan; the slice order (§7) starts with the render service.
 
 ### 4.3 Identity and the "nothing" the service holds
@@ -131,7 +131,7 @@ Cost of two: one more deploy unit for a solo developer. Both services are part o
 
 ### 4.4 Who may call it
 
-- **Prerequisite on identities (P0).** Caller sets must not overlap and must not include a runtime that merely shares an identity with the rest of the project. Drive ops
+- **Prerequisite on identities (P0, O8).** Caller sets must not overlap and must not include a runtime that merely shares an identity with the rest of the project. Drive ops
   are enabled only after the indexer runs as its own identity; chat and render ops only after the main service does. Until then the invoker binding would admit every
   service on the shared identity. **Startup check:** each sandbox service refuses to start if the caller sets of two op families overlap, or if a caller set is empty on Cloud Run.
 - **Platform authentication.** The services are deployed `--no-allow-unauthenticated`. Each caller identity holds `roles/run.invoker` **on the sandbox service
@@ -144,7 +144,7 @@ Cost of two: one more deploy unit for a solo developer. Both services are part o
 - **Not `--ingress=internal`:** a call to a `run.app` URL counts as internal only through the caller's VPC, which would force VPC egress on the callers. Spike item S0-e.
 - **Fail closed** on Cloud Run when the email map is empty (`worker_oidc_gate` precedent, `src/web/indexer_worker_app.py:41-65`); open when `K_SERVICE` is unset.
 
-### 4.5 Network egress (P5)
+### 4.5 Network egress (O7)
 
 | Op family | Needs the network? |
 |-----------|--------------------|
@@ -155,14 +155,13 @@ Cost of two: one more deploy unit for a solo developer. Both services are part o
 - **The media op reads through a loopback range proxy inside the sandbox, not through ffmpeg's own network stack.** The URL comes from the drive provider through a trusted caller (not
   from the file), but ffmpeg is a large surface and should not open sockets. A small **Python fetcher** (a helper under its own unprivileged uid, never the engine child) takes the
   URL and serves ranges on `127.0.0.1` only: `https` only; the host must match a suffix allowlist at a **dot boundary** (`.example.com`, never `example.com.evil`); **no IP literals**;
-  **no redirects**; DNS resolved **once** and the address pinned for the whole request; a size and rate cap. ffmpeg reads only `http://127.0.0.1:<port>/…` with
+  **no redirects**; DNS resolved **per request** and **never pinned by address** (provider addresses may change; the allowlist is by name suffix only, O7); a size and rate cap. ffmpeg reads only `http://127.0.0.1:<port>/…` with
   `-protocol_whitelist http,tcp`, `-format_whitelist` (the demuxers of §27.4), `-codec_whitelist` (audio decoders only), `-max_alloc`, `-threads 1`, `-fs`, `-nostdin`, `-vn -sn -dn`, `-map 0:a:0`.
   **The URL is redacted from every log line** and never stored; the request log shows host class and byte counts only.
 - **Why that is acceptable first:** the service holds no credential and sees one request's data (I1, I2), so egress lets an attacker send out *the document it
   already sent in*. The residual that matters is reaching other services by their public addresses; those are public by design and authenticate by themselves.
 - **Hardening, not v1 (S6; earlier for non-media ops if S0-c requires it):** deploy with Direct VPC egress on all traffic, a subnet with no NAT and a deny-all egress rule, so `drive.*`/`chat.*`/`render.*`
-  have **no route** out (Google APIs reach through Private Google Access, which they do not use). `media.*` then needs either its own service with NAT and an
-  FQDN allowlist, or a caller-streamed input (OQ-S3). Effort: about half a day of network setup, no running cost without NAT. Recommended **after** S3 lands, as it changes nothing in the contract.
+  have **no route** out (Google APIs reach through Private Google Access, which they do not use). `media.*` then needs its own service with NAT and a name allowlist (not planned; the owner accepted the media op's egress through the in-sandbox proxy, O7). Effort: about half a day of network setup, no running cost without NAT. Recommended **after** S3 lands, as it changes nothing in the contract.
 
 ### 4.6 Every engine in a child under its own uid; one request, one instance
 
@@ -173,12 +172,12 @@ Cost of two: one more deploy unit for a solo developer. Both services are part o
   process group. Different ops use different uids where cheap. The result goes back through a file the child writes, which the
   server reads and **validates as an envelope only** (§4.7); the server never interprets binary output.
 - **`concurrency=1`, `max-instances=N`** (§11). One request per container at a time.
-- **Recycle (`SANDBOX_RECYCLE`, P7):** `always` (default): the instance serves **one** request and ends; `abnormal`: ends after a `timeout`/`memory`/`error`/crash; `never` (local only).
+- **Recycle (`SANDBOX_RECYCLE`, O5):** `always` (default): the instance serves **one** request and ends; `never` (local only). **`always` applies to every op, chat uploads and PNG widgets included (O5)**; a policy `abnormal` is not offered in production.
   The recycling is done by a **supervisor that never touches untrusted bytes** (a separate process from the one reading payload files): the server finishes the response, then the supervisor
   stops the instance. An instance holding a request does not accept a second one.
 - **Draining is visible to the caller.** Before the last response byte the server marks the connection as ending (HTTP/2 `GOAWAY`, or `Connection: close`). A request that reaches an
   instance already draining is answered with a distinct **503 `recycling`**, which callers retry at once **without charging the file** (§4.9). Spike S0-b measures back-to-back bursts and the
-  rate of `recycling`; if it is high the policy is `abnormal` for that op family.
+  rate of `recycling`. The added 1-3 s per request is accepted by the owner (O5); real latency is measured after deploy and reported.
 - **Workdirs** live on a **size-limited in-memory volume** (Cloud Run second generation), removed in `finally` and by the recycle; each engine uid owns only its own directory.
 - Cost: a cold start per request, ~1-3 s for the light image (S0-b).
 
@@ -197,8 +196,8 @@ One route family, versioned: `POST /v1/{op}`.
   document, image or archive library in `src/adapters/sandbox_client/`.
 - **Large bodies.** The drive admits files up to 45 MiB (`MAX_DOWNLOAD_BYTES`, `src/domain/drive_index_params.py:55`); Cloud Run's HTTP/1 request limit is 32 MiB. The
   services are deployed with end-to-end HTTP/2 (`--use-http2`; the server is Hypercorn, as elsewhere) and callers use an HTTP/2 client. **This is the main technical
-  risk of the design** (S0-a). If it fails, the fallback is the caller handing a signed URL and the service pulling it, which turns on egress for those ops (§4.5):
-  a larger change, to be decided with the owner, not assumed.
+  risk of the design** (S0-a). If bodies above 32 MiB fail, **32 MiB stays a known limitation for parsed files** (O6): there is no fallback in which the service pulls a file
+  by URL, and the drive cap is not changed silently; files above the limit get the existing `too_large` outcome and the limit is documented.
 - **Ops**
 
 | Op | In | Out | Engine behind it |
@@ -273,7 +272,7 @@ envelope, caps, outcome (de)serialization) is pure and lives in `src/domain/sand
 `src/composition/sandbox_setup.py` that maps each op to its in-process adapter. A separate `Dockerfile.sandbox` with targets `light` and `render` copies only the modules the
 ops need (domain, the engines, the parsers) and carries no credentialed-runtime code (no handlers, no agents, no stores). The service has no database import to leak (image-contents test, §4.3).
 
-### 4.12 Composition and the switch (P9)
+### 4.12 Composition and the switch (O9)
 
 Each caller family reads one knob with `os.getenv` at its composition line (optional knob, per CLAUDE.md, not `load_settings()`):
 
@@ -284,10 +283,11 @@ Each caller family reads one knob with `os.getenv` at its composition line (opti
 - **The knob rides as a Cloud Build substitution from `.env`**, not as a hand-set variable: `--set-env-vars` replaces the whole set at each deploy and a
   switch set with `gcloud run services update` would silently revert (the precedent is `_DRIVE_UPGRADE_PASS`, `cloudbuild-dev.yaml:112-114`). A test pins that each knob is
   present in the deploy step.
+- **The assistant flips each switch after deploy and reports to the owner (O9); the owner can roll back with one command** (the knob set back to `inprocess`, §8).
 - **There is no automatic fallback.** If the sandbox is down the caller fails, per §4.9. Falling back to in-process would parse hostile bytes in the credentialed
   runtime exactly when the boundary is unavailable. The only fallback is the explicit knob, a conscious deploy-time act.
 - **On Cloud Run an unset knob is `sandbox`** once the slice is accepted. A missing sandbox URL **fails the start of the indexer** (background; a failed start is visible and harmless) but **degrades the main service**: it starts, logs ERROR, raises an alert, and answers an affected request with the converter-unavailable alert (§4.9), because the main service also serves unrelated traffic. `inprocess` on Cloud Run logs an ERROR line at start.
-- **After a soak (two weeks without a sandbox-attributable defect) the in-process path is removed from deployed callers** (S6-a): the knob goes, the adapters stay for dev/tests
+- **After two weeks of observation per part (O9) with no sandbox-attributable defect the in-process path is removed from deployed callers** (S6-a): the knob goes, the adapters stay for dev/tests
   and as the sandbox's engine, and the parser libraries leave the credentialed runtimes' image (§7).
 
 ### 4.13 Tests run locally the same way
@@ -313,18 +313,20 @@ suite** runs the same cases against `inprocess` and `sandbox` adapters (S1-S5) a
 |---|----------|--------|
 | O1 | One separate deploy unit, zero-role identity, no secrets | owner (2026-10-19) |
 | O2 | All of C1-C6 move there; LLM calls and platform APIs never do | owner (scope), author (list) |
-| P0 | Per-runtime identities are a prerequisite for each op family (§4.4) | proposal |
-| P1 | A service, not a job (§4.1) | proposal |
-| P2 | Two services: light and render, both in the plan (§4.2) | proposal |
-| P3 | **Slice order: S1 skeleton + `render.docx`, S2 the other renderers, S3 drive parsers, S4 chat, S5 media**, S0 first, S6 close-out (§7). Rationale: model-written code is the least constrained consumer today, and the skeleton is proved on a one-op, bytes-out consumer | proposal |
-| P4 | Platform IAM, in-app signature verification with pinned audience, per-op caller sets; not `--ingress=internal` (§4.4) | proposal |
-| P5 | v1 egress is the default; the media op reads through a loopback range proxy; network lock-down is S6 (§4.5) | proposal |
-| P6 | Every engine in a fresh child under an unprivileged uid with the full rlimit set; the server never touches untrusted bytes (§4.6) | proposal (design rule) |
-| P7 | `SANDBOX_RECYCLE=always`, supervisor-driven, with a visible draining signal (§4.6) | proposal |
-| P8 | Existing ports get HTTP adapters; two small ports are new; no omnibus port (§4.10) | proposal |
-| P9 | Per-family knob, no automatic fallback, removal after a soak (§4.12) | proposal |
-| P10 | HTTP/2 end to end for large bodies (§4.7) | proposal, conditional on S0-a |
-| P11 | The transcript gate for any second user lifts when media is accepted (S5), not before (§9) | proposal |
+| O3 | The drive parser's residual ends when the drive parsers move (S3) | owner |
+| O4 | Transcripts for a second user wait for the media part (S5) | owner |
+| **O5** | **Every request runs on a fresh instance (`recycle=always`) for all ops, chat uploads and PNG widgets included; +1-3 s accepted; real latency measured after deploy** (§4.6) | owner (2026-10-20) |
+| **O6** | **No egress for pulling large files.** HTTP/2 end to end is tried for bodies above 32 MiB; if it fails, 32 MiB stays a known limitation for parsed files, with no signed-URL fallback (§4.7) | owner (2026-10-20) |
+| **O7** | **The media op may have egress, only through the in-sandbox loopback proxy:** host allowlist by name suffix (never address pinning; raw-IP URLs refused; DNS per request); no redirects; the allowlist is configuration built from the real download-URL hosts seen in the transcripts measurement (drive RFC §27 T0), extendable without a code change (§4.5) | owner (2026-10-20) |
+| **O8** | **Slice order and prerequisite:** `render.docx`, then the other renderers, then drive parsers, then chat uploads, then media; each part is enabled only after its caller's own service account exists (§7, §4.4) | owner (2026-10-20) |
+| **O9** | **Per-part switch; two weeks of observation each; then the in-process path is removed.** The assistant flips each switch after deploy and reports; the owner can roll back with one command (§4.12, §8) | owner (2026-10-20) |
+| **O10** | **Two services:** light (parsers, chat conversion, media audio, `ffprobe` of chat videos) and render (Chromium and Node: DOCX, PDF, PNG). `video_probe` moves to the light service; Gmail HTML cleaning stays in the main service by decision, a pure-Python parser (§4.2) | owner (2026-10-20) |
+| P0 | Per-runtime identities are a prerequisite for each op family; caller sets must not overlap (§4.4) | author, folded into O8 |
+| P1 | A service, not a job (§4.1) | author |
+| P4 | Platform IAM, in-app signature verification with pinned audience, per-op caller sets; not `--ingress=internal` (§4.4) | author |
+| P6 | Every engine in a fresh child under an unprivileged uid with the full rlimit set; the server never touches untrusted bytes (§4.6) | author (design rule) |
+| P8 | Existing ports get HTTP adapters; two small ports are new; no omnibus port (§4.10) | author |
+| P10 | The transcript gate for any second user lifts when media is accepted (S5), not before (§9) | author, follows O4 |
 
 ## 6. Deltas: what this RFC decides beyond the owner's decisions
 
@@ -338,18 +340,18 @@ Numbered locally (S-Δn); they do not continue the drive RFC's Δ series.
   (`model_calls`, `model_cost`, …) are never produced by the sandbox because they belong to the reader.
 - **S-Δ4. The PDF ops join a port.** `PdfSplitter` moves from a Protocol in `composition/` to `ports/`, so the HTTP adapter can implement it without composition importing an adapter type.
 - **S-Δ5. Rendering is per request, and Chromium runs in a child under its own uid.** `PlaywrightHtmlRenderer` keeps one warm browser (`render` takes a lock, reconnects); the sandbox launches per request. Widget latency rises by the
-  browser's start; accepted when measured (S2), with `abnormal` recycle for `render.png` as the fallback.
+  browser's start; accepted when measured (S2), with no change of policy (O5).
 - **S-Δ6. The transcript child moves.** §27.4 puts `SubprocessMediaExtractor` in the indexer image and `child.serve`. Under this RFC the media child runs in the sandbox; the indexer keeps
   window planning, the Gemini upload and the job states. §27.4's hardening (Δ99: protocol and demuxer allowlists) is unchanged and applies inside the sandbox.
-- **S-Δ7. `video_probe`** (`ffprobe` on bytes in the main service) joins C3 as `media.probe` over bytes. Low risk, low effort, kept for completeness (OQ-S5).
+- **S-Δ7. `video_probe`** (`ffprobe` on bytes in the main service) joins C3 as `media.probe` over bytes. Low risk, low effort, moved into the light service (O10).
 - **S-Δ9. The existing OIDC verifier takes one expected email.** `verify_worker_oidc(authorization, expected_sa_email, audiences)` (`src/web/worker_oidc_verifier.py:38`) is extended or wrapped to accept a set per op; `/worker` behaviour is unchanged.
 - **S-Δ8. Deployment honesty.** The decision record `drive_parser_sandbox_resource_isolation.md` gets a status line at S1 acceptance: superseded for the drive parser by this service; its
   description of what the child does and does not block remains true of the engine.
 
 ## 7. Slices
 
-Order is a proposal (P3). Each slice is accepted by its tests, its owner steps, and a stated measurement. None edits an existing test to pass (the reviewer rule applies as everywhere).
-An op family is enabled only when its prerequisite identity exists (P0).
+Order is an owner decision (O8). Each slice is accepted by its tests, its owner steps, and a stated measurement. None edits an existing test to pass (the reviewer rule applies as everywhere).
+An op family is enabled only when its prerequisite identity exists (P0, O8).
 
 ### S0. Spike (no product code; scratch deployment, results to the private spike folder)
 a. **Large bodies:** a 50 MiB request and response through Cloud Run to a Hypercorn app with `--use-http2`, from an `httpx` HTTP/2 client; memory bounded.
@@ -377,18 +379,18 @@ i. **No-NAT dry run** for S6: a deny-all egress deployment that still serves a r
 - Accept: widget render latency (cold) stated; PdfGenerator e2e.
 
 ### S3. Drive parsers (C1)
-- Build: `SandboxContentExtractor`, `PdfSplitterPort` (+ `drive.pdf_windows`), the light image, indexer wiring behind `SANDBOX_DRIVE`; indexer-side cap `SANDBOX_INDEXER_SLOTS`. Prerequisite: the indexer's own identity (P0).
+- Build: `SandboxContentExtractor`, `PdfSplitterPort` (+ `drive.pdf_windows`), the light image, indexer wiring behind `SANDBOX_DRIVE`; indexer-side cap `SANDBOX_INDEXER_SLOTS`. Prerequisite: the indexer's own identity (P0, O8).
 - Tests: contract suite on every `ExtractionStatus` path; envelope round trip incl. `brief` and `capture_signals`; failure mapping (`recycling` uncharged; reset twice -> `ERROR sandbox_lost` charged); wire tests.
 - Accept: S0-g equivalence on the drive corpus; one tick on the owner's drive in `sandbox` mode within the tick budget (drive RFC §7.1); zero `sandbox_lost`.
 
 ### S4. Chat uploads and on-demand reads (C2)
-- Build: `DocumentConverterPort`, `LocalDocumentConverter`, `SandboxDocumentConverter`; the four callers move to the port; the "converter unavailable" alert and the degraded-start behaviour of the main service. Prerequisite: the main service's own identity (P0).
+- Build: `DocumentConverterPort`, `LocalDocumentConverter`, `SandboxDocumentConverter`; the four callers move to the port; the "converter unavailable" alert and the degraded-start behaviour of the main service. Prerequisite: the main service's own identity (P0, O8).
 - Tests: all existing conversion cases through both adapters; the audio branch untouched; size alert at 5 MiB before any call; unavailable alert; a hostile-archive case gives the same alert as in-process.
 - Accept: added p95 latency for a typical 1 MiB docx stated to the owner; Slack and Telegram e2e with docx, xlsx, pdf, csv.
 
 ### S5. Media for transcripts (C3)
 - Build: `MediaAudioPort`, `SandboxMediaAdapter`; the range proxy and the ffmpeg argument set (§4.5); `video_probe` onto `media.probe`. Lands **before** §27's T1 enables transcription, so the indexer never decodes media in-process. Documentation delta to §27.4/§27.12 (S-Δ6).
-- Tests: proxy rules (scheme, host suffix at a dot boundary, IP literal, redirect, DNS pinned, size/rate cap); URL absent from logs; ffmpeg arguments pinned; window plan -> Opus bytes under the cap; `no_audio`, `too_long`, `too_large` stubs; 4-hour/8 GiB caps; `SandboxUnavailable` defers the job step.
+- Tests: proxy rules (scheme, host suffix at a dot boundary, IP literal, redirect, DNS per request and no address pinning, size/rate cap); URL absent from logs; ffmpeg arguments pinned; window plan -> Opus bytes under the cap; `no_audio`, `too_long`, `too_large` stubs; 4-hour/8 GiB caps; `SandboxUnavailable` defers the job step.
 - Accept: measurement on the 21:47 reference recording: bytes read, wall, CPU, in `sandbox` against in-process.
 
 ### S6. Close-out (after a soak)
@@ -398,7 +400,7 @@ c. Doc updates: drive RFC §9/§24.14/§27, `drive_parser_sandbox_resource_isola
 
 ## 8. Owner steps (placeholders; nothing here names a real resource)
 
-0. **Prerequisite:** the per-runtime identities for the callers of the family being enabled (P0).
+0. **Prerequisite:** the per-runtime identities for the callers of the family being enabled (P0, O8).
 1. **Create two identities** (`<sandbox-sa>`, `<sandbox-render-sa>`) and grant **nothing**. Verify: `gcloud projects get-iam-policy <PROJECT_ID> --flatten=bindings[].members --filter="bindings.members:<sandbox-sa>"` is empty.
 2. **Audit once, then each deploy:** `gcloud projects get-iam-policy <PROJECT_ID>` contains no `allAuthenticatedUsers`; list service-level policies for the same. The **intended public-invoker set** is the main service's webhook, OAuth, Cabinet and MCP surface and the voice relay, and nothing else; the sandbox services are never in it.
 3. **Deploy the services** (a Cloud Build step each, no secrets, `--no-allow-unauthenticated`, `--service-account=<sandbox-sa>`, concurrency 1, `--use-http2`).
@@ -417,18 +419,21 @@ The gate then changes from "owner only" to the existing **per-user explicit opt-
 adapter refuses to run on Cloud Run (a start-time error), so the only media path in a deployed indexer is the sandbox; (2) `DRIVE_TRANSCRIBE_ENABLED` (the global switch) cannot be on while `SANDBOX_MEDIA` is
 `inprocess` on Cloud Run. The same argument lifts the parser residual in `drive_parser_sandbox_resource_isolation.md` once S3 is accepted, which is that record's stated trigger.
 
-## 10. Open questions (each with a recommendation; ranked for the owner)
+## 10. Questions: resolved by the owner (2026-10-20) and what remains
 
-1. **OQ-S1. Is a cold start per request acceptable for chat uploads** (`always`, +1-3 s)? *Recommend:* yes for `drive.*`, `media.*`, `render.pdf`/`docx` (background or already seconds long); decide for `chat.convert` and `render.png`
-   from the S0-b number (including its burst `recycling` rate); fall back to `abnormal` for those two, stating that a hostile file could then leave a process for the next request on that instance.
-2. **OQ-S2. HTTP/2 does not carry large bodies (S0-a fails).** *Recommend:* stop and bring the numbers; the alternative (signed URL pulled by the service) turns on egress and widens I1's story. Do not lower the 45 MiB cap silently.
-3. **OQ-S3. Egress for `media.*`.** *Recommend:* v1 default egress with host/protocol controls; S6 puts `media.*` in its own small service with NAT and an FQDN allowlist, leaving the other two with no route out. The alternative, the
-   caller streaming bytes in, needs a seekable container and fails for mp4 with the index at the end.
-4. **OQ-S4. One service or two** (P2). *Recommend:* two, both in the plan; the render service comes first (P3).
-5. **OQ-S5. `video_probe`** in the main service (`ffprobe` on a model-produced or user-supplied video, one call site). *Recommend:* move it in S5; it is cheap and removes the last decoder from main.
-6. **OQ-S6. The plain-text fast path** stays in the caller (S-Δ2). *Recommend:* yes; moving a trivial UTF-8 read buys nothing and adds a hop to the commonest upload.
-7. **OQ-S7. Soak length and who decides.** *Recommend:* two weeks per slice, the author proposes, the owner flips the knob.
-8. **OQ-S8. Per-request token or per-op signed grant** instead of caller-level invoker. *Recommend:* no; the invoker binding plus the op allowlist is enough while callers are two runtimes.
+Resolved (see §5):
+- **OQ-S1 cold start per request:** accepted for all ops (O5).
+- **OQ-S2 large bodies:** try HTTP/2; otherwise 32 MiB stays a known limit; no signed-URL fallback (O6).
+- **OQ-S3 media egress:** allowed through the loopback proxy, name-suffix allowlist as configuration (O7).
+- **OQ-S4 one service or two:** two (O10).
+- **OQ-S5 `video_probe`:** moves to the light service (O10).
+- **OQ-S7 soak and who flips:** two weeks per part; the assistant flips and reports; the owner can roll back with one command (O9).
+- **OQ-S9 Gmail HTML cleaning:** stays in the main service by decision (O10).
+- **OQ-S10 slice order:** as in O8.
+
+Remaining engineering points (no owner input needed; the author's call, stated for the record):
+- **OQ-S6. The plain-text fast path** stays in the caller (S-Δ2): moving a trivial UTF-8 read buys nothing and adds a hop to the commonest upload.
+- **OQ-S8. Per-request signed grants** instead of caller-level invoker: no; the invoker binding plus the verified per-op set is enough while callers are two runtimes.
 
 ## 11. Parameters (initial)
 
@@ -443,10 +448,10 @@ adapter refuses to run on Cloud Run (a start-time error), so the only media path
 | `meta` size | 8 KiB | |
 | client timeout | child wall + 15 s | |
 | retry | one immediate retry on a lost connection or 5xx; none on 4xx | §4.9 |
-| media URL host allowlist | suffix list in the environment | §4.5 |
+| media URL host allowlist | name-suffix list in configuration, from the T0 measurement, extendable without code change | O7, §4.5 |
 | `SANDBOX_INDEXER_SLOTS` | 1 of the light service's instances at a time | keeps chat free of indexer load |
 | engine child limits added | `RLIMIT_NPROC` and `RLIMIT_NOFILE`, small fixed values (set at S0-f) | fork bomb, descriptor exhaustion |
-| soak before removing in-process | 14 days | OQ-S7 |
+| observation before removing in-process | 14 days per part | O9 |
 
 ## 12. Where the current code disagrees with the design (so the plan does not assume otherwise)
 
@@ -461,5 +466,3 @@ adapter refuses to run on Cloud Run (a start-time error), so the only media path
 8. **`video_probe` is an unlisted consumer** in the main service (S-Δ7).
 9. **`DocxRunnerPort` and `PuppeteerRunnerPort` already anticipate an HTTP adapter** (docstrings), which is consistent; their timeout arguments become the request's `limits`.
 10. **The e-mail attachment path** reaches the converter through `email_search_service.py:240`, one of four callers (§1).
-9. **OQ-S9. Gmail HTML cleaning (BeautifulSoup) stays in the main service.** *Recommend:* yes, by decision; it cleans markup text of the user's own mail, not attachments; revisit if it ever receives third-party HTML at scale.
-10. **OQ-S10. Slice order** (P3: render first). *Recommend:* as proposed; drive parsers keep working in-process behind their existing guards meanwhile.
