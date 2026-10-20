@@ -73,7 +73,7 @@ max 3 instances, timeout 300 s; in-memory work volume at `/work`, **256Mi placeh
 - The engine's stderr temp file lives in the server's temp area and counts against instance memory (capped at 16 KiB read).
 - `GPG_KEY` (the public id of the Python release key, defined by the base image) is allowlisted in the startup
   self-check; an allowlist entry, not a looser pattern.
-- Without any caller configuration and off Cloud Run, the gate is open for local development; the server then binds
+- Without any caller configuration and no `SANDBOX_URL`, off Cloud Run, the gate is open for local development; the server then binds
   `127.0.0.1`. On Cloud Run an open gate cannot happen (`K_SERVICE` is inherited by the server child).
 - Orphaned grandchildren reparent to PID 1 (the supervisor); reaping is tested with a fake kernel only.
 - `bad_request` from a child can be forged by the script (no leak); callers do not treat it as "not the script's fault".
