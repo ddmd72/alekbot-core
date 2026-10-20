@@ -158,3 +158,21 @@ async def test_engine_protocol_is_satisfiable() -> None:
     engine: SandboxEngine = Fake()
     res = await engine.run("/b", "/w", CEILING)
     assert res.status is SandboxStatus.EMPTY_OUTPUT and res.output_path is None
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+@pytest.mark.parametrize("field", ["wall_s", "memory_bytes", "cpu_s", "file_bytes"])
+def test_meta_rejects_nan_and_infinite_limits(field: str, bad: float) -> None:
+    obj = _meta_obj()
+    obj["limits"][field] = bad  # json.dumps emits NaN / Infinity / -Infinity literals
+    with pytest.raises(SandboxContractError):
+        decode_meta(_b64(obj))
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf")])
+@pytest.mark.parametrize("field", ["wall_s", "memory_bytes", "cpu_s", "file_bytes"])
+def test_clamp_rejects_non_finite(field: str, bad: float) -> None:
+    kwargs = dataclasses.asdict(CEILING)
+    kwargs[field] = bad
+    with pytest.raises(SandboxContractError):
+        clamp_limits(SandboxLimits(**kwargs), CEILING)
