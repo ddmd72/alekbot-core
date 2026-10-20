@@ -44,7 +44,7 @@ class GcpTaskQueue(TaskQueue):
         self.location = location
         self.queue_name = queue_name
         self.service_url = service_url
-        self.service_account_email = service_account_email
+        self.service_account_email = (service_account_email or "").strip() or None
 
         self.queue_path = self.client.queue_path(project_id, location, queue_name)
 
