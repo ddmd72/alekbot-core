@@ -1066,7 +1066,7 @@
     ]
   },
   {
-    "collectionGroup": "windows",
+    "collectionGroup": "development_drive_transcript_windows",
     "queryScope": "COLLECTION_GROUP",
     "fields": [
       { "fieldPath": "user_id", "order": "ASCENDING" },
@@ -1074,7 +1074,7 @@
     ]
   },
   {
-    "collectionGroup": "parts",
+    "collectionGroup": "development_drive_transcript_parts",
     "queryScope": "COLLECTION_GROUP",
     "fields": [
       { "fieldPath": "user_id", "order": "ASCENDING" },
@@ -1092,12 +1092,12 @@
     "indexes": []
   },
   {
-    "collectionGroup": "parts",
+    "collectionGroup": "development_drive_transcript_parts",
     "fieldPath": "segments",
     "indexes": []
   },
   {
-    "collectionGroup": "windows",
+    "collectionGroup": "development_drive_transcript_windows",
     "fieldPath": "segments",
     "indexes": []
   }

@@ -480,12 +480,13 @@ class DriveIndexRepository(ABC):
 
     @abstractmethod
     async def orphan_transcripts(self, user_id: str, before: datetime, limit: int) -> List[str]:
-        """Content keys of the user's stored transcripts with `last_used_at < before`, least recently used first."""
+        """Content keys of the user's stored transcripts with `last_used_at < before`, least recently used first. A head with
+        `last_used_at=None` is not returned (callers always set it)."""
 
     @abstractmethod
     async def delete_user_transcript_jobs(self, user_id: str, limit: int) -> int:
-        """Purge: delete up to `limit` of the user's job documents with their window results, then window results
-        whose job is gone. Returns the number deleted; call until 0. Filters on `user_id` only."""
+        """Purge: delete up to `limit` of the user's job documents with their window results. Returns the number
+        of jobs deleted; call until 0. Filters on `user_id` only."""
 
     @abstractmethod
     async def delete_user_batches(self, user_id: str, limit: int) -> int:
@@ -493,5 +494,13 @@ class DriveIndexRepository(ABC):
 
     @abstractmethod
     async def delete_user_transcripts(self, user_id: str, limit: int) -> int:
-        """Purge: delete up to `limit` of the user's stored transcripts with their parts (any token), then parts whose
-        head is gone. Returns the number deleted; call until 0."""
+        """Purge: delete up to `limit` of the user's stored transcripts with their parts (any token). Returns the
+        number of transcripts deleted; call until 0."""
+
+    @abstractmethod
+    async def delete_user_transcript_orphans(self, user_id: str, limit: int) -> int:
+        """Purge: delete up to `limit` window and part documents of the user whose parent is gone (a crash between the
+        subdocument writes and the parent), through two collection-group sweeps that need their composite indexes.
+        The purge caller calls it after the three helpers return 0. A DriveIndexStoreUnavailable from it (a missing
+        index) is logged as ERROR naming the index and never fails or holds the purge: it is retried on the next purge
+        or daily pass. Returns the number deleted."""

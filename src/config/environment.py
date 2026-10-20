@@ -410,6 +410,22 @@ class EnvironmentConfig:
         return f"{self.firestore_collection_prefix}drive_transcripts"
 
     @property
+    def drive_transcript_windows_subcollection(self) -> str:
+        """
+        Window results under a transcript job (`{jobs}/{id}/windows/{index}`, plan G11). Env-prefixed because
+        Firestore collection-group ids are not scoped by parent. Dev: development_drive_transcript_windows
+        """
+        return f"{self.firestore_collection_prefix}drive_transcript_windows"
+
+    @property
+    def drive_transcript_parts_subcollection(self) -> str:
+        """
+        Shards of a large stored transcript (`{store}/{id}/parts/{token}-{n}`, USER_DRIVE_INDEXING_RFC §27.4).
+        Env-prefixed for the same reason as the windows. Dev: development_drive_transcript_parts
+        """
+        return f"{self.firestore_collection_prefix}drive_transcript_parts"
+
+    @property
     def drive_sync_state_collection(self) -> str:
         """
         User-drive sync state, one per user (USER_DRIVE_INDEXING_RFC §3.5).

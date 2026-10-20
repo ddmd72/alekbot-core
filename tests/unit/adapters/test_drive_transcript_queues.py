@@ -21,7 +21,8 @@ from tests.unit.adapters.test_firestore_drive_index_v2_provisioning import _cove
 
 T = datetime(2026, 10, 21, 9, 30, tzinfo=timezone.utc)
 LIVE_RECS = "development_drive_index_records"
-LIVE = {"jobs": "development_drive_transcript_jobs", "batches": "development_drive_transcript_batches",
+LIVE = {"windows": "development_drive_transcript_windows", "parts": "development_drive_transcript_parts",
+        "jobs": "development_drive_transcript_jobs", "batches": "development_drive_transcript_batches",
         "store": "development_drive_transcripts"}
 _ROOT = Path(__file__).resolve().parents[3]
 
@@ -35,6 +36,8 @@ def adapter(request, mock_env_config):
     mock_env_config.drive_transcript_jobs_collection = LIVE["jobs"]
     mock_env_config.drive_transcript_batches_collection = LIVE["batches"]
     mock_env_config.drive_transcripts_collection = LIVE["store"]
+    mock_env_config.drive_transcript_windows_subcollection = LIVE["windows"]
+    mock_env_config.drive_transcript_parts_subcollection = LIVE["parts"]
     with eval_transactions(), transcript_doc_fakes():
         yield make_eval_repo(db, mock_env_config), db
 
@@ -151,8 +154,8 @@ async def test_purge_helpers_delete_only_the_user(adapter):
         assert (await repo.get_transcript("v", f"k{i}")) is not None
     assert [b.name for b in await repo.get_open_batches("v", T, 10)] == ["batches/1", "batches/2"]
     if db is not None:   # the other user's subdocuments are all still there, the user's are gone
-        assert len(db.collection(f"{LIVE['jobs']}/v:i1/windows").docs) == 2
-        assert db.collection(f"{LIVE['jobs']}/u:i1/windows").docs == {}
+        assert len(db.collection(f"{LIVE['jobs']}/v:i1/{LIVE['windows']}").docs) == 2
+        assert db.collection(f"{LIVE['jobs']}/u:i1/{LIVE['windows']}").docs == {}
 
 
 async def test_purge_respects_the_limit_and_resumes(adapter):
@@ -169,37 +172,96 @@ def fs(mock_env_config):
     mock_env_config.drive_transcript_jobs_collection = LIVE["jobs"]
     mock_env_config.drive_transcript_batches_collection = LIVE["batches"]
     mock_env_config.drive_transcripts_collection = LIVE["store"]
+    mock_env_config.drive_transcript_windows_subcollection = LIVE["windows"]
+    mock_env_config.drive_transcript_parts_subcollection = LIVE["parts"]
     with eval_transactions(), transcript_doc_fakes():
         yield db, make_eval_repo(db, mock_env_config)
 
 
-async def test_purge_reaches_parts_of_any_token_and_subdocs_without_a_parent(fs, monkeypatch):
-    db, repo = fs
+async def _plant_orphans(db, repo, monkeypatch):
     from src.adapters import firestore_drive_index_repo as fs_module
     monkeypatch.setattr(fs_module, "TRANSCRIPT_DOC_BYTES", 600)
     big = StoredTranscript("k1", StitchedTranscript(tuple(Segment(i * 1.0, None, "w" * 80) for i in range(30)),
                                                     ("uk",), 1, 30.0), last_used_at=T)
     await repo.put_transcript("u", big)
-    parts = db.collection(f"{LIVE['store']}/u:k1/parts")
+    parts = db.collection(f"{LIVE['store']}/u:k1/{LIVE['parts']}")
     assert len(parts.docs) > 1
     # a leftover of a put that never wrote its head, and parts/windows whose parent document is gone
     parts.docs["deadbeef-0"] = {"user_id": "u", "index": 0, "token": "deadbeef", "segments": []}
-    db.collection(f"{LIVE['store']}/u:gone/parts").docs["t-0"] = {"user_id": "u", "index": 0, "token": "t"}
-    db.collection(f"{LIVE['store']}/v:gone/parts").docs["t-0"] = {"user_id": "v", "index": 0, "token": "t"}
-    db.collection(f"{LIVE['jobs']}/u:gone/windows").docs["0"] = {"user_id": "u", "index": 0, "segments": []}
-    db.collection(f"{LIVE['jobs']}/v:gone/windows").docs["0"] = {"user_id": "v", "index": 0, "segments": []}
-    # a same-named subcollection of some other parent collection is not ours
-    db.collection("somewhere_else/u:x/parts").docs["0"] = {"user_id": "u", "index": 0}
+    db.collection(f"{LIVE['store']}/u:gone/{LIVE['parts']}").docs["t-0"] = {"user_id": "u", "index": 0, "token": "t"}
+    db.collection(f"{LIVE['store']}/v:gone/{LIVE['parts']}").docs["t-0"] = {"user_id": "v", "index": 0, "token": "t"}
+    db.collection(f"{LIVE['jobs']}/u:gone/{LIVE['windows']}").docs["0"] = {"user_id": "u", "index": 0, "segments": []}
+    db.collection(f"{LIVE['jobs']}/v:gone/{LIVE['windows']}").docs["0"] = {"user_id": "v", "index": 0, "segments": []}
+    return parts
 
-    assert await repo.delete_user_transcripts("u", 100) == 1 + 1   # the head, then the one parent-less part
-    assert parts.docs == {} and db.collection(f"{LIVE['store']}/u:gone/parts").docs == {}
-    assert len(db.collection(f"{LIVE['store']}/v:gone/parts").docs) == 1
-    assert len(db.collection("somewhere_else/u:x/parts").docs) == 1
-    assert await repo.delete_user_transcripts("u", 100) == 0
 
+async def test_helpers_reach_parts_of_any_token_and_never_use_a_collection_group(fs, monkeypatch):
+    db, repo = fs
+    parts = await _plant_orphans(db, repo, monkeypatch)
+    await repo.save_transcript_job(TranscriptJob(user_id="u", item_id="i1", content_key="k1"))
+    await repo.save_window_result("u", "i1", 0, _result())
+    assert await repo.delete_user_transcripts("u", 100) == 1
+    assert parts.docs == {}
     assert await repo.delete_user_transcript_jobs("u", 100) == 1
-    assert db.collection(f"{LIVE['jobs']}/u:gone/windows").docs == {}
-    assert len(db.collection(f"{LIVE['jobs']}/v:gone/windows").docs) == 1
+    assert db.collection(f"{LIVE['jobs']}/u:i1/{LIVE['windows']}").docs == {}
+    assert await repo.delete_user_transcripts("u", 100) == 0
+    assert getattr(db, "group_executed", {}) == {}   # no collection-group query was sent
+    # the parentless subdocuments are still there: only the orphan method reaches them
+    assert len(db.collection(f"{LIVE['store']}/u:gone/{LIVE['parts']}").docs) == 1
+    assert len(db.collection(f"{LIVE['jobs']}/u:gone/{LIVE['windows']}").docs) == 1
+
+
+async def test_orphan_sweep_deletes_only_the_users_parentless_subdocs(fs, monkeypatch):
+    db, repo = fs
+    await _plant_orphans(db, repo, monkeypatch)
+    await repo.delete_user_transcripts("u", 100)
+    # a same-named group that is not ours (bare name) is not in the prefixed group
+    db.collection("somewhere_else/u:x/parts").docs["0"] = {"user_id": "u", "index": 0}
+    assert await repo.delete_user_transcript_orphans("u", 100) == 2
+    assert db.collection(f"{LIVE['store']}/u:gone/{LIVE['parts']}").docs == {}
+    assert db.collection(f"{LIVE['jobs']}/u:gone/{LIVE['windows']}").docs == {}
+    assert len(db.collection(f"{LIVE['store']}/v:gone/{LIVE['parts']}").docs) == 1
+    assert len(db.collection(f"{LIVE['jobs']}/v:gone/{LIVE['windows']}").docs) == 1
+    assert len(db.collection("somewhere_else/u:x/parts").docs) == 1
+    assert await repo.delete_user_transcript_orphans("u", 100) == 0
+
+
+async def test_orphan_sweep_respects_the_limit(fs, monkeypatch):
+    db, repo = fs
+    await _plant_orphans(db, repo, monkeypatch)
+    await repo.delete_user_transcripts("u", 100)
+    assert await repo.delete_user_transcript_orphans("u", 1) == 1
+    assert await repo.delete_user_transcript_orphans("u", 1) == 1
+    assert await repo.delete_user_transcript_orphans("u", 1) == 0
+
+
+async def test_orphan_windows_are_swept_on_both_adapters(adapter):
+    repo, _ = adapter
+    await repo.save_window_result("u", "gone", 0, _result())   # its job is gone (the helpers already returned 0)
+    await repo.save_window_result("v", "gone", 0, _result())
+    assert await repo.delete_user_transcript_orphans("u", 10) == 1
+    assert await repo.get_window_results("u", "gone") == {}
+    assert len(await repo.get_window_results("v", "gone")) == 1
+
+
+async def test_a_failing_group_query_fails_only_the_orphan_method(fs):
+    from google.api_core import exceptions as gexc
+    from src.domain.drive_index import DriveIndexStoreUnavailable
+    db, repo = fs
+    await _fill(repo)
+    for group in (LIVE["windows"], LIVE["parts"]):
+        db.collection(f"{LIVE['jobs']}/gone/{group}")   # the group exists
+
+    async def boom(self):
+        raise gexc.FailedPrecondition("requires an index")
+    from tests.unit.adapters import firestore_drive_transcript_fakes as fakes
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(fakes._GroupQuery, "get", boom)
+        assert await repo.delete_user_transcript_jobs("u", 100) == 2
+        assert await repo.delete_user_batches("u", 100) == 2
+        assert await repo.delete_user_transcripts("u", 100) == 2
+        with pytest.raises(DriveIndexStoreUnavailable):
+            await repo.delete_user_transcript_orphans("u", 100)
 
 
 async def test_purge_deletes_in_keyed_batches(fs):
@@ -242,7 +304,7 @@ async def test_every_new_query_has_its_index(fs):
     await repo.delete_user_transcript_jobs("u", 5)
     await repo.delete_user_batches("u", 5)
     await repo.delete_user_transcripts("u", 5)
-    executed = {LIVE_RECS: db.cols[RECS].executed, **{LIVE[k]: db.cols[LIVE[k]].executed for k in LIVE}}
+    executed = {LIVE_RECS: db.cols[RECS].executed, **{LIVE[k]: db.cols[LIVE[k]].executed for k in ("jobs", "batches", "store")}}
     needing = 0
     for collection, runs in executed.items():
         for ops in runs:
@@ -255,7 +317,8 @@ async def test_every_new_query_has_its_index(fs):
     assert needing == 4
     # the equality-only copy check still has its composite (the brief's), and the sweep's group reads theirs
     assert [("user_id", "ASCENDING"), ("content_key", "ASCENDING")] in _declared(LIVE["jobs"])
-    for group in ("windows", "parts"):
+    await repo.delete_user_transcript_orphans("u", 5)
+    for group in (LIVE["windows"], LIVE["parts"]):
         (ops,) = db.group_executed[group][:1]
         required = _required(ops)
         assert required == ({("user_id", "EQ")}, [("index", "ASCENDING")])
@@ -280,7 +343,7 @@ def test_the_declared_queue_indexes_match_the_brief():
 
 def test_the_heavy_transcript_fields_are_exempt_from_single_field_indexing():
     assert {"segments", "summary"} <= _exempt(LIVE["store"])
-    assert "segments" in _exempt("parts") and "segments" in _exempt("windows")
+    assert "segments" in _exempt(LIVE["parts"]) and "segments" in _exempt(LIVE["windows"])
 
 
 def test_the_deploy_tool_sends_gcloud_its_collection_group_scope(monkeypatch):
@@ -297,14 +360,15 @@ def test_the_deploy_tool_sends_gcloud_its_collection_group_scope(monkeypatch):
     monkeypatch.setattr(module, "run_command", lambda cmd: sent.append(cmd) or Done())
     import tempfile
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
-        json.dump([i for i in _raw() if i.get("collectionGroup") == "windows" and "fields" in i], f)
+        json.dump([i for i in _raw() if i.get("collectionGroup") == LIVE["windows"] and "fields" in i], f)
         path = f.name
     module.deploy_indexes(path, "p")
     assert sent and "--query-scope=collection-group" in sent[0]
 
 
 QUEUE_METHODS = ("transcript_queue", "transcript_wakeups", "jobs_by_content_key", "orphan_transcripts",
-                 "delete_user_transcript_jobs", "delete_user_batches", "delete_user_transcripts")
+                 "delete_user_transcript_jobs", "delete_user_batches", "delete_user_transcripts",
+                 "delete_user_transcript_orphans")
 
 
 def test_every_new_method_is_wrapped_by_store_errors():
@@ -315,16 +379,19 @@ def test_every_new_method_is_wrapped_by_store_errors():
         assert inspect.iscoroutinefunction(method) and hasattr(method, "__wrapped__"), name
 
 
-@pytest.mark.parametrize("missing", ["queue", "group"])
-async def test_a_missing_index_is_the_systemic_outage(fs, missing):
+async def test_a_missing_queue_index_is_the_systemic_outage(fs):
     from google.api_core import exceptions as gexc
     from src.domain.drive_index import DriveIndexStoreUnavailable
     db, repo = fs
-    if missing == "queue":
-        db.collection(RECS).fail = gexc.FailedPrecondition("requires an index")
-        with pytest.raises(DriveIndexStoreUnavailable):
-            await repo.transcript_queue("u", 5)
-    else:
-        db.collection(LIVE["store"]).fail = gexc.FailedPrecondition("requires an index")
-        with pytest.raises(DriveIndexStoreUnavailable):
-            await repo.delete_user_transcripts("u", 5)
+    db.collection(RECS).fail = gexc.FailedPrecondition("requires an index")
+    with pytest.raises(DriveIndexStoreUnavailable):
+        await repo.transcript_queue("u", 5)
+
+
+async def test_a_missing_group_index_is_the_outage_of_the_orphan_method(fs):
+    from google.api_core import exceptions as gexc
+    from src.domain.drive_index import DriveIndexStoreUnavailable
+    db, repo = fs
+    db.collection(LIVE["store"]).fail = gexc.FailedPrecondition("requires an index")
+    with pytest.raises(DriveIndexStoreUnavailable):
+        await repo.delete_user_transcripts("u", 5)   # a plain helper read failing is still the outage

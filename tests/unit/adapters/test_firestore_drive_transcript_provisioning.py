@@ -30,6 +30,8 @@ def test_collection_names_are_env_prefixed(env, prefix, monkeypatch):
     assert cfg.drive_transcript_jobs_collection == f"{prefix}drive_transcript_jobs"
     assert cfg.drive_transcript_batches_collection == f"{prefix}drive_transcript_batches"
     assert cfg.drive_transcripts_collection == f"{prefix}drive_transcripts"
+    assert cfg.drive_transcript_windows_subcollection == f"{prefix}drive_transcript_windows"
+    assert cfg.drive_transcript_parts_subcollection == f"{prefix}drive_transcript_parts"
 
 
 @pytest.fixture
@@ -38,6 +40,8 @@ def run(mock_env_config):
     mock_env_config.drive_transcript_jobs_collection = "t_jobs"
     mock_env_config.drive_transcript_batches_collection = "t_batches"
     mock_env_config.drive_transcripts_collection = "t_store"
+    mock_env_config.drive_transcript_windows_subcollection = "t_windows"
+    mock_env_config.drive_transcript_parts_subcollection = "t_parts"
     with eval_transactions(), transcript_doc_fakes():
         yield db, make_eval_repo(db, mock_env_config)
 
@@ -50,7 +54,7 @@ async def test_documents_and_subcollections_live_under_the_prefixed_names(run):
     await repo.create_batch(TranscriptBatch(name="batches/x", user_id="u"))
     await repo.put_transcript("u", StoredTranscript("k", StitchedTranscript((Segment(0.0, None, "a"),), (), 1, 1.0)))
     assert set(db.collection("t_jobs").docs) == {"u:i"} and set(db.collection("t_batches").docs) == {"u:batches%2Fx"}
-    assert set(db.collection("t_jobs/u:i/windows").docs) == {"3"} and set(db.collection("t_store").docs) == {"u:k"}
+    assert set(db.collection("t_jobs/u:i/t_windows").docs) == {"3"} and set(db.collection("t_store").docs) == {"u:k"}
 
 
 async def test_open_batches_query_matches_its_index_shape(run):
