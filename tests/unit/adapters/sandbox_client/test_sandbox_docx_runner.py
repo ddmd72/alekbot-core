@@ -47,8 +47,9 @@ async def test_script_error_text_reaches_docx_runner_error(code, status, text):
 
 async def test_too_large_from_the_http_413_is_a_runner_error():
     import httpx
-    with pytest.raises(DocxRunnerError):
+    with pytest.raises(DocxRunnerError) as info:
         await runner_for(Scripted(httpx.Response(413, content=b"big"))).run("js", "{}", 60)
+    assert str(info.value) == "output exceeded the file size limit"
 
 
 async def test_sandbox_lost_is_a_docx_runner_error_charged_to_the_script():
@@ -57,13 +58,14 @@ async def test_sandbox_lost_is_a_docx_runner_error_charged_to_the_script():
 
 
 async def test_bad_request_is_charged_to_the_script_not_systemic():
-    with pytest.raises(DocxRunnerError):
+    with pytest.raises(DocxRunnerError) as info:
         await runner_for(Scripted(reply(400, SandboxStatus.BAD_REQUEST, b"", "x"))).run("js", "{}", 60)
+    assert str(info.value) == "exit code 4\n(no stderr)"
 
 
 @pytest.mark.parametrize("code,exc", [(503, SandboxUnavailable), (429, SandboxUnavailable),
                                       (401, SandboxMisconfigured), (403, SandboxMisconfigured)])
 async def test_unavailable_and_misconfigured_propagate_unchanged(code, exc):
-    with pytest.raises(exc):
+    with pytest.raises(exc) as info:
         await runner_for(Scripted(reply(code))).run("js", "{}", 60)
-    assert not issubclass(exc, DocxRunnerError)
+    assert not isinstance(info.value, DocxRunnerError)   # the repair loop must not see a systemic failure

@@ -54,8 +54,8 @@ google-auth>=2.0.0  # in-app Google OIDC verification on the /worker endpoint
 firebase-admin>=6.0.0  # OAuth Multi-Tenant Session 3: Firebase Auth adapter
 PyJWT>=2.8.0  # OAuth Multi-Tenant Session 4: JWT session management
 hypercorn>=0.14.0
-httpx==0.28.1  # sandbox client (HTTP/2); was a transitive dependency of the LLM SDKs, pinned to the version they resolve
-h2==4.3.0  # HTTP/2 for httpx[http2]; also pulled by hypercorn, declared so the sandbox client does not hang on it
+httpx==0.28.1  # sandbox client (HTTP/2); declared explicitly, not only as a transitive dependency of the LLM SDKs
+h2==4.3.0  # HTTP/2 for httpx; declared explicitly, not only as a transitive dependency of hypercorn
 quart>=0.18.0
 mcp==1.27.*  # MCP Python SDK for remote MCP server exposed to claude.ai Custom Connectors
 google-cloud-tasks>=2.13.0
