@@ -13,7 +13,7 @@ _FORBIDDEN_EXTERNAL = (
 )
 # Allowed by name (plan G13): `src.utils.logger` pulls them; they hold no credential. `logfire` is imported only inside
 # `telemetry._init_logfire`, which the sandbox never calls, and is not installed in the image.
-_ALLOWED_THIRD_PARTY = {"quart", "hypercorn", "werkzeug", "opentelemetry", "logfire", "google", "httpx"}
+_ALLOWED_THIRD_PARTY = {"quart", "hypercorn", "werkzeug", "opentelemetry", "logfire", "google"}
 
 
 def test_closure_reaches_no_agent_service_handler_infrastructure_or_firestore_repo():

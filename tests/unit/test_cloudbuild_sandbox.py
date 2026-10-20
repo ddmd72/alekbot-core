@@ -16,6 +16,7 @@ _BUILD = _ROOT / "cloudbuild-dev.yaml"
 _SCRIPT = _ROOT / "scripts" / "infrastructure" / "cloudbuild_sandbox_render.sh"
 _MAKEFILE = _ROOT / "Makefile"
 _SERVICE = "alek-bot-sandbox-render-dev"
+_SA = "alek-sandbox-render@placeholder.example"
 _ALLOWED_ENV_NAMES = {"APP_ENV", "SANDBOX_RECYCLE", "SANDBOX_URL", "SANDBOX_CALLERS_RENDER"}
 
 
@@ -106,19 +107,33 @@ def test_sandbox_env_has_only_allowlisted_names():
 
 def test_no_literal_email_or_url_in_the_sandbox_step():
     text = _sandbox_text()
-    assert "@" not in re.sub(r"\$PROJECT_ID", "", text), "literal email or SA address"
+    assert not re.search(r"[\w.+-]+@[\w-]+\.[\w.-]+", text), "literal email or SA address"
     assert "run.app" not in text and "https://" not in text and "http://" not in text
     assert not re.search(r"\b[a-z][a-z0-9-]{4,28}-\d{3,6}\b", text), "looks like a project id"
 
 
-def test_sandbox_steps_come_after_the_indexer_steps_and_stay_under_the_arg_limit():
+def test_sandbox_steps_come_after_every_other_step_and_stay_under_the_arg_limit():
     steps = _build()["steps"]
-    indexed = [i for i, s in enumerate(steps) if any("cloudbuild_sandbox_render.sh" in a for a in s.get("args", []))]
-    indexer = [i for i, s in enumerate(steps) if " ".join(s.get("args", [])).startswith("run deploy alek-bot-indexer-dev")
-               or "alek-bot-indexer-dev" in " ".join(s.get("args", []))]
-    scheduler = [i for i, s in enumerate(steps) if any("cloudbuild_scheduler_jobs.sh" in a for a in s.get("args", []))]
-    assert indexed and min(indexed) > max(indexer + scheduler[:0])
+    sandbox = [i for i, s in enumerate(steps) if any("cloudbuild_sandbox_render.sh" in a for a in s.get("args", []))]
+    assert sandbox == list(range(len(steps) - 4, len(steps)))      # the last four steps, in order pull/build/push/deploy
+    assert [steps[i]["args"][1] for i in sandbox] == ["pull", "build", "push", "deploy"]
+    indexer = [i for i, s in enumerate(steps) if "alek-bot-indexer-dev" in " ".join(s.get("args", []))]
+    assert indexer and max(indexer) < min(sandbox)
     assert all(len(a) < 10_000 for s in steps for a in s.get("args", []))
+
+
+def test_exactly_one_service_account_flag_across_deploy_scripts_and_it_is_the_sandbox_deploy():
+    """The identity guard of test_cloudbuild_iam_step3 only sees step args; scripts run by a step are invisible to it."""
+    scripts = {a for s in _build()["steps"] for a in s.get("args", []) if a.startswith("scripts/infrastructure/") and a.endswith(".sh")}
+    assert "scripts/infrastructure/cloudbuild_sandbox_render.sh" in scripts
+    found = []
+    for rel in sorted(scripts):
+        code = "\n".join(ln for ln in re.sub(r"\\\n", " ", (_ROOT / rel).read_text()).splitlines()
+                         if not ln.lstrip().startswith("#"))
+        found += [(rel, m) for m in re.findall(r"(?<![\w-])--service-account=(\S+)", code)]
+    assert found == [("scripts/infrastructure/cloudbuild_sandbox_render.sh", '"$SANDBOX_RENDER_SA"')], found
+    block = next(ln for ln in re.sub(r"\\\n", " ", _SCRIPT.read_text()).splitlines() if "run deploy" in ln)
+    assert f'run deploy "$SERVICE"' in block and '--service-account="$SANDBOX_RENDER_SA"' in block
 
 
 # ---- the main service passes the switch -----------------------------------------------------------------------------
@@ -178,16 +193,30 @@ def test_unset_service_account_is_also_skipped(tmp_path):
 
 
 def test_steps_run_when_the_service_account_is_set(tmp_path):
-    env = {"SANDBOX_RENDER_SA": "sa-placeholder", "SANDBOX_RENDER_URL": "u-placeholder",
+    env = {"SANDBOX_RENDER_SA": _SA, "SANDBOX_RENDER_URL": "u-placeholder",
            "SANDBOX_RENDER_CALLERS": "c-placeholder"}
     build, calls = _run("build", tmp_path, env)
     assert build.returncode == 0 and "-f Dockerfile.sandbox" in calls and "--target render" in calls
     assert "--cache-from gcr.io/proj/alek-bot-sandbox-render-dev:latest" in calls
     _, calls = _run("deploy", tmp_path, env)
-    assert "--service-account=sa-placeholder" in calls and "SANDBOX_URL=u-placeholder" in calls
+    assert f"--service-account={_SA}" in calls and "SANDBOX_URL=u-placeholder" in calls
     assert "SANDBOX_CALLERS_RENDER=c-placeholder" in calls
 
 
 def test_unknown_mode_fails(tmp_path):
-    proc, _ = _run("explode", tmp_path, {"SANDBOX_RENDER_SA": "x"})
+    proc, _ = _run("explode", tmp_path, {"SANDBOX_RENDER_SA": _SA})
     assert proc.returncode != 0
+
+
+def test_a_service_account_outside_the_alek_sandbox_prefix_is_refused_without_any_call(tmp_path):
+    for bad in ("alek-runtime@placeholder.example", "sandbox-render@placeholder.example", "alek-sandbox-@placeholder.example",
+                "x@alek-sandbox-y.example", "alek-sandbox"):
+        for mode in ("pull", "build", "push", "deploy"):
+            proc, calls = _run(mode, tmp_path, {"SANDBOX_RENDER_SA": bad})
+            assert proc.returncode != 0 and calls == "", (bad, mode, calls)
+            assert "alek-sandbox-" in proc.stderr
+
+
+def test_a_service_account_with_the_prefix_runs(tmp_path):
+    proc, calls = _run("deploy", tmp_path, {"SANDBOX_RENDER_SA": "alek-sandbox-x@placeholder.example"})
+    assert proc.returncode == 0 and "gcloud run deploy" in calls
