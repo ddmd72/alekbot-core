@@ -120,7 +120,10 @@ class SandboxOutcome:
 
 @dataclass(frozen=True)
 class SandboxEngineResult:
-    """What an engine reports to the server after one run."""
+    """What an engine reports to the server after one run.
+
+    When `output_path` is set it lives in a per-request directory owned by the server; the caller removes
+    `dirname(output_path)` once it has streamed the output."""
     status: SandboxStatus
     output_path: Optional[str]
     detail: str
