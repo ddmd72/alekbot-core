@@ -27,6 +27,10 @@ _EXPECTED = {
     # files the bot cannot open (§26.2, D33): the tick's counters and the fan-out's notice read the marked records;
     # the fan-out alone writes its notice flag (Δ54)
     "inaccessible_records", "set_inaccessible_notified",
+    # transcripts (§27.3-§27.5, §27.8 b; plan Task 7A): jobs + window results, provider batches, the sharded store
+    "get_transcript_job", "save_transcript_job", "delete_transcript_job", "save_window_result", "get_window_results",
+    "create_batch", "save_batch", "delete_batch", "get_open_batches",
+    "get_transcript", "put_transcript", "touch_transcript", "delete_transcript",
 }
 
 
