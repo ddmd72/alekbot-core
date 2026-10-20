@@ -12,12 +12,11 @@ from typing import Optional, Tuple
 
 
 class TranscriptStub(str, Enum):
-    """The five stub values of `DriveIndexRecord.transcript_stub` (§27.3); the empty string means "not a stub"."""
+    """The four stub values of `DriveIndexRecord.transcript_stub` (§27.3); the empty string means "not a stub"."""
     NO_SPEECH = "no_speech"
     TOO_LONG = "too_long"
     TOO_LARGE = "too_large"
     NO_AUDIO = "no_audio"
-    FAILED = "failed"
 
 
 @dataclass(frozen=True)

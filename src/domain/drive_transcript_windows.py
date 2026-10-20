@@ -42,14 +42,14 @@ def coverage_ok(window: WindowSpec, segments: Sequence[Segment], no_speech: bool
 
 
 def times_ok(window: WindowSpec, segments: Sequence[Segment]) -> bool:
-    """§27.6: starts not non-monotonic by more than 5 s, none past the window length by more than 10 s."""
-    previous = None
+    """§27.6: no start more than 5 s behind the running maximum (a slow drift cannot pass), none past the window length by more than 10 s."""
+    high = None
     for seg in segments:
         if seg.start_s > window.duration_s + PAST_END_SLACK_S:
             return False
-        if previous is not None and seg.start_s < previous - BACKWARD_JITTER_S:
+        if high is not None and seg.start_s < high - BACKWARD_JITTER_S:
             return False
-        previous = seg.start_s
+        high = seg.start_s if high is None else max(high, seg.start_s)
     return True
 
 

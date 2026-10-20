@@ -5,8 +5,8 @@ Pure: no clock, no I/O.
 """
 import re
 
-_MM_SS = re.compile(r"^(\d{1,2}):(\d{2})$")
-_H_MM_SS = re.compile(r"^(\d{1,2}):(\d{2}):(\d{2})$")
+_MM_SS = re.compile(r"^([0-9]{1,2}):([0-9]{2})$")
+_H_MM_SS = re.compile(r"^([0-9]{1,2}):([0-9]{2}):([0-9]{2})$")
 
 
 def parse_stamp(text: str) -> float:
