@@ -59,6 +59,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import inspect
+import uuid
 from dataclasses import fields, is_dataclass, replace
 from datetime import date, datetime, timezone
 from enum import Enum
@@ -92,7 +93,8 @@ from ..domain.drive_index_params import (
 )
 from ..domain.drive_transcript import (
     JobWindow, Segment, StitchedTranscript, StoredTranscript, TranscriptBatch, TranscriptJob, WindowSpec,
-    WindowTranscript, batch_doc_id, job_doc_id, transcript_doc_id,
+    WINDOW_STATES, WindowTranscript, batch_doc_id, batch_url_fields, job_doc_id, job_url_fields, normalized_batch,
+    transcript_doc_id,
 )
 from ..domain.drive_usage import (
     closed_initial, initial_doc_id, new_initial_build, reserved_field, spent_initial, usage_doc_id,
@@ -390,6 +392,9 @@ def _window_to_doc(window: JobWindow) -> Dict[str, Any]:
 
 
 def _window_from_doc(data: Mapping[str, Any]) -> JobWindow:
+    if data.get("state", "extracted") not in WINDOW_STATES:
+        logger.error(f"[DriveIndex] transcript job window {data.get('index')}: unknown state {data.get('state')!r}")
+        raise ValueError(f"unknown window state {data.get('state')!r}")
     return JobWindow(
         spec=WindowSpec(index=int(data["index"]), start_s=float(data.get("start_s", 0.0)),
                         duration_s=float(data.get("duration_s", 0.0))),
@@ -472,6 +477,13 @@ def transcript_from_doc(head: Mapping[str, Any], segments: Sequence[Mapping[str,
 
 
 _PART_MARGIN_BYTES = 4_096      # a part's own fields and the document name, on top of its segments' estimate
+
+
+def _refuse_urls(kind: str, fields: Sequence[str]) -> None:
+    """§27.4: no URL is persisted. Logs the field names (never the values) and refuses the write."""
+    if fields:
+        logger.error(f"[DriveIndex] transcript {kind} refused: URL-like value in {', '.join(fields)}")
+        raise ValueError(f"transcript {kind} holds a URL in {', '.join(fields)}")
 
 
 def split_segments(segments: Sequence[Mapping[str, Any]], limit: int) -> List[List[Mapping[str, Any]]]:
@@ -1445,6 +1457,7 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
         return job_from_doc(snap.to_dict()) if snap.exists else None
 
     async def save_transcript_job(self, job: TranscriptJob) -> None:
+        _refuse_urls("job", job_url_fields(job))
         await self._job_ref(job.user_id, job.item_id).set(job_to_doc(job))
 
     async def delete_transcript_job(self, user_id: str, item_id: str) -> None:
@@ -1465,6 +1478,8 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
         return results
 
     async def create_batch(self, batch: TranscriptBatch) -> bool:
+        _refuse_urls("batch", batch_url_fields(batch))
+        batch = normalized_batch(batch)
         try:
             await self._batch_ref(batch.user_id, batch.name).create(batch_to_doc(batch))
         except AlreadyExists:
@@ -1472,6 +1487,8 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
         return True
 
     async def save_batch(self, batch: TranscriptBatch) -> None:
+        _refuse_urls("batch", batch_url_fields(batch))
+        batch = normalized_batch(batch)
         await self._batch_ref(batch.user_id, batch.name).set(batch_to_doc(batch))
 
     async def delete_batch(self, user_id: str, name: str) -> None:
@@ -1490,21 +1507,27 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
         parts = int(head.get("parts", 0))
         if parts == 0:
             return transcript_from_doc(head, head.get("segments") or ())
-        by_index = {}
+        token = head.get("token", "")
+        by_index: Dict[int, Any] = {}
         for part in await self._parts_col(user_id, content_key).order_by("index").get():
             data = part.to_dict()
-            by_index[int(data["index"])] = data.get("segments") or []
+            if data.get("token", "") == token and int(data["index"]) < parts:   # extras of other puts are ignored
+                by_index[int(data["index"])] = data.get("segments") or []
         if set(by_index) != set(range(parts)):
             logger.error(f"[DriveIndex] transcript store: head names {parts} parts, found {len(by_index)}")
             return None
         return transcript_from_doc(head, [seg for i in range(parts) for seg in by_index[i]])
 
     async def put_transcript(self, user_id: str, stored: StoredTranscript) -> None:
-        """One head document; the segments inline while the whole fits TRANSCRIPT_DOC_BYTES, otherwise in `parts/{n}`,
-        written first, the head last (a head never names a part that does not exist). Parts left by a larger earlier
-        version are deleted after the head."""
+        """One head document; the segments inline while the whole fits TRANSCRIPT_DOC_BYTES, otherwise in part
+        documents, written first, the head last. Every put carries a fresh token, written into the head and each part
+        (part ids carry it too): a head only ever reads the parts of its own put, so a put cut before its head leaves
+        the old transcript whole, and a leftover of another put is ignored. The parts of other tokens are deleted
+        after the head."""
         encoded = [_segment_to_doc(s) for s in stored.transcript.segments] if stored.transcript else []
         head = transcript_head_to_doc(user_id, stored, 0)
+        token = uuid.uuid4().hex
+        head["token"] = token
         if stored_bytes(head) + stored_bytes(encoded) + _DOC_OVERHEAD_BYTES <= TRANSCRIPT_DOC_BYTES:
             if encoded:
                 head["segments"] = encoded
@@ -1514,11 +1537,11 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
             head["parts"] = len(parts)
         col = self._parts_col(user_id, stored.content_key)
         for n, segments in enumerate(parts):
-            await col.document(str(n)).set({"user_id": user_id, "content_key": stored.content_key, "index": n,
-                                            "segments": list(segments)})
+            await col.document(f"{token}-{n}").set({"user_id": user_id, "content_key": stored.content_key,
+                                                    "index": n, "token": token, "segments": list(segments)})
         await self._transcript_ref(user_id, stored.content_key).set(head)
-        stale = [snap.reference for snap in await col.select([FieldPath.document_id()]).get()
-                 if not snap.reference.id.isdigit() or int(snap.reference.id) >= len(parts)]
+        stale = [snap.reference for snap in await col.select(["token"]).get()
+                 if (snap.to_dict() or {}).get("token") != token]
         await self._delete_refs(stale, KEYED_DELETE_BATCH)
 
     async def touch_transcript(self, user_id: str, content_key: str, last_used_at: datetime) -> None:

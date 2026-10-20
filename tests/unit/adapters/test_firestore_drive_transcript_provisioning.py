@@ -49,7 +49,7 @@ async def test_documents_and_subcollections_live_under_the_prefixed_names(run):
     await repo.save_window_result("u", "i", 3, WindowTranscript((), 1, True, ()))
     await repo.create_batch(TranscriptBatch(name="batches/x", user_id="u"))
     await repo.put_transcript("u", StoredTranscript("k", StitchedTranscript((Segment(0.0, None, "a"),), (), 1, 1.0)))
-    assert set(db.collection("t_jobs").docs) == {"u:i"} and set(db.collection("t_batches").docs) == {"u:batches_x"}
+    assert set(db.collection("t_jobs").docs) == {"u:i"} and set(db.collection("t_batches").docs) == {"u:batches%2Fx"}
     assert set(db.collection("t_jobs/u:i/windows").docs) == {"3"} and set(db.collection("t_store").docs) == {"u:k"}
 
 

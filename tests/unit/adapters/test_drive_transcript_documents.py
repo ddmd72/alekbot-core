@@ -5,6 +5,8 @@ import dataclasses
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from google.auth.credentials import AnonymousCredentials
+from google.cloud import firestore
 
 from src.adapters import firestore_drive_index_repo as fs_module
 from src.adapters.firestore_drive_index_repo import stored_bytes
@@ -12,7 +14,7 @@ from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.domain.drive_index_params import TRANSCRIPT_DOC_BYTES
 from src.domain.drive_transcript import (
     JobWindow, Segment, StitchedTranscript, StoredTranscript, TranscriptBatch, TranscriptJob, WindowSpec,
-    WindowTranscript,
+    WindowTranscript, batch_doc_id, job_doc_id, safe_doc_id, transcript_doc_id,
 )
 
 from tests.unit.adapters.firestore_drive_eval_fakes import EvalDb, EvalDocRef, eval_transactions, make_eval_repo
@@ -210,9 +212,10 @@ async def test_store_shards_above_doc_bytes_and_reads_back(fs, monkeypatch):
     await repo.put_transcript("u", stored)
     head = db.collection(STORE).docs["u:k1"]
     assert head["parts"] > 1 and "segments" not in head
-    assert sorted(_parts(db), key=int) == [str(n) for n in range(head["parts"])]
+    assert sorted(d["index"] for d in _parts(db).values()) == list(range(head["parts"]))
+    assert {d["token"] for d in _parts(db).values()} == {head["token"]}
     for doc in _parts(db).values():
-        assert stored_bytes(doc) <= 6_000 + 4_096
+        assert stored_bytes(doc) <= fs_module.TRANSCRIPT_DOC_BYTES
     assert await repo.get_transcript("u", "k1") == stored
 
 
@@ -238,7 +241,7 @@ async def test_missing_part_reads_as_absent(fs, monkeypatch):
     repo, db = fs
     monkeypatch.setattr(fs_module, "TRANSCRIPT_DOC_BYTES", 6_000)
     await repo.put_transcript("u", _big(300))
-    del _parts(db)["1"]
+    del _parts(db)[next(k for k, d in _parts(db).items() if d["index"] == 1)]
     assert await repo.get_transcript("u", "k1") is None
 
 
@@ -299,3 +302,152 @@ async def test_four_hour_transcript_fits_doc_bound(fs):
     assert written and all(stored_bytes(doc) < 1_048_576 for doc in written)
     assert await repo.get_transcript("u", "k4h") == stored
     assert 0 < TRANSCRIPT_DOC_BYTES < 1_048_576
+
+
+# -- fix round 1 ------------------------------------------------------------------------------------------------------
+
+KEY = "AbC/dE+f=:123"   # a quickXorHash is base64: it can hold a slash
+
+
+async def test_content_key_with_a_slash_roundtrips(adapter, monkeypatch):
+    repo, db = adapter
+    await repo.put_transcript("u", _stored(content_key=KEY))
+    assert await repo.get_transcript("u", KEY) == _stored(content_key=KEY)
+    assert await repo.get_transcript("u", "AbC_dE+f=:123") is None   # no collision with a lookalike
+    await repo.touch_transcript("u", KEY, T + timedelta(days=1))
+    assert (await repo.get_transcript("u", KEY)).last_used_at == T + timedelta(days=1)
+    if db is not None:
+        monkeypatch.setattr(fs_module, "TRANSCRIPT_DOC_BYTES", 600)
+        await repo.put_transcript("u", _stored(20, content_key=KEY))   # the parts path holds it too
+        assert await repo.get_transcript("u", KEY) == _stored(20, content_key=KEY)
+    await repo.delete_transcript("u", KEY)
+    assert await repo.get_transcript("u", KEY) is None
+
+
+def test_doc_ids_are_slash_free_injective_and_unreserved():
+    raws = ["a/b", "a_b", "a%2Fb", "a%b", "%", "%25", ".", "..", "__x__", "__", "u:AbC/dE", "u:AbC%2FdE"]
+    ids = [safe_doc_id(r) for r in raws]
+    assert len(set(ids)) == len(raws) and not any("/" in i for i in ids)
+    assert not any(i in (".", "..") or (len(i) >= 4 and i.startswith("__") and i.endswith("__")) for i in ids)
+    assert "/" not in transcript_doc_id("u", KEY) and "/" not in batch_doc_id("u", "batches/b1")
+    assert job_doc_id("u", "i1") == "u:i1"
+
+
+def test_firestore_paths_built_from_the_ids_are_valid():
+    """The SDK refuses a path with an even number of elements for a document: build them with the real client."""
+    client = firestore.AsyncClient(project="p", credentials=AnonymousCredentials(), database="d")
+    doc = transcript_doc_id("u", KEY)
+    ref = client.collection(f"{STORE}/{doc}/parts").document("tok-0")
+    assert len(ref._document_path.split("/documents/")[1].split("/")) == 4
+    assert len(client.collection(STORE).document(doc)._document_path.split("/documents/")[1].split("/")) == 2
+    with pytest.raises(ValueError):   # the pre-fix id
+        client.collection(f"{STORE}/u:{KEY}/parts").document("0")
+
+
+async def test_put_cut_before_the_head_leaves_the_old_transcript_whole(fs, monkeypatch):
+    repo, db = fs
+    monkeypatch.setattr(fs_module, "TRANSCRIPT_DOC_BYTES", 6_000)
+    await repo.put_transcript("u", _big(300))
+    plain_set = EvalDocRef.set
+
+    async def head_fails(self, data, merge=False):
+        if self.col.name == STORE:
+            raise RuntimeError("cut")
+        await plain_set(self, data, merge)
+
+    monkeypatch.setattr(EvalDocRef, "set", head_fails)
+    with pytest.raises(RuntimeError):
+        await repo.put_transcript("u", _big(400))
+    monkeypatch.setattr(EvalDocRef, "set", plain_set)
+    assert await repo.get_transcript("u", "k1") == _big(300)   # old head, its own parts, never a mix
+    await repo.put_transcript("u", _big(310))
+    assert await repo.get_transcript("u", "k1") == _big(310)
+    assert len({d["token"] for d in _parts(db).values()}) == 1   # the leftovers of the cut put are gone
+
+
+async def test_first_put_cut_before_the_head_reads_absent(fs, monkeypatch):
+    repo, db = fs
+    monkeypatch.setattr(fs_module, "TRANSCRIPT_DOC_BYTES", 6_000)
+
+    async def head_fails(self, data, merge=False):
+        if self.col.name == STORE:
+            raise RuntimeError("cut")
+        db.collection(self.col.name).docs[self.id] = dict(data)
+
+    monkeypatch.setattr(EvalDocRef, "set", head_fails)
+    with pytest.raises(RuntimeError):
+        await repo.put_transcript("u", _big(300))
+    assert await repo.get_transcript("u", "k1") is None
+
+
+@pytest.mark.parametrize("before,after", [(400, 150), (150, 400)], ids=["shrink", "grow"])
+async def test_resharding_reads_complete_even_when_the_stale_delete_is_lost(fs, monkeypatch, before, after):
+    repo, db = fs
+    monkeypatch.setattr(fs_module, "TRANSCRIPT_DOC_BYTES", 6_000)
+    await repo.put_transcript("u", _big(before))
+    first_parts = len(_parts(db))
+    keep = repo._delete_refs
+
+    async def lost(refs, size=0):   # the cleanup after the head never runs
+        return None
+
+    monkeypatch.setattr(repo, "_delete_refs", lost)
+    await repo.put_transcript("u", _big(after))
+    assert len(_parts(db)) > first_parts - 1   # stale parts are still there
+    assert await repo.get_transcript("u", "k1") == _big(after)
+    monkeypatch.setattr(repo, "_delete_refs", keep)
+    await repo.put_transcript("u", _big(after))
+    assert len({d["token"] for d in _parts(db).values()}) == 1
+
+
+async def test_closed_batch_is_saved_without_a_poll_time(adapter):
+    repo, _ = adapter
+    for state in ("done", "failed"):
+        await repo.save_batch(_batch(f"batches/{state}", state=state, next_poll_at=T))
+    assert await repo.get_open_batches("u", T + timedelta(days=30), 10) == []
+    assert await repo.create_batch(_batch("batches/c", state="done", next_poll_at=T)) is True
+    assert await repo.get_open_batches("u", T + timedelta(days=30), 10) == []
+
+
+@pytest.mark.parametrize("url", ["https://example.test/x", "HTTP://example.test/x", " https://example.test"])
+async def test_url_in_a_job_or_batch_is_refused(adapter, url):
+    repo, db = adapter
+    with pytest.raises(ValueError):
+        await repo.save_transcript_job(_job(windows=(_window(0, file_ref=url),)))
+    with pytest.raises(ValueError):
+        await repo.save_transcript_job(_job(batch_name=url))
+    with pytest.raises(ValueError):
+        await repo.save_batch(_batch(name=url))
+    with pytest.raises(ValueError):
+        await repo.create_batch(_batch(request_keys=(url,)))
+    assert await repo.get_transcript_job("u", "i1") is None
+    if db is not None:
+        assert not db.collection(JOBS).docs and not db.collection(BATCHES).docs
+
+
+async def test_speech_that_starts_with_http_is_not_a_url_field(adapter):
+    repo, _ = adapter
+    seg = Segment(0.0, None, "http colon slash slash is how it starts")
+    stored = StoredTranscript("kh", StitchedTranscript((seg,), (), 1, 1.0))
+    await repo.put_transcript("u", stored)
+    assert await repo.get_transcript("u", "kh") == stored
+
+
+async def test_unknown_window_state_is_refused_on_read(fs):
+    repo, db = fs
+    await repo.save_transcript_job(_job())
+    db.collection(JOBS).docs["u:i1"]["windows"][0]["state"] = "mystery"
+    with pytest.raises(ValueError):
+        await repo.get_transcript_job("u", "i1")
+
+
+async def test_four_hour_cyrillic_transcript_fits_at_the_real_bound(fs):
+    """Two bytes a character: the same 48 000 words in Cyrillic still stay under 1 MiB per written document."""
+    repo, db = fs
+    words = "привіт добрий день друзі сьогодні говоримо про розклад наступного тижня докладно".split()
+    segs = tuple(Segment(i * 12.0, i % 2, " ".join(words[(i + j) % 10] for j in range(40))) for i in range(1200))
+    stored = StoredTranscript(content_key="kcy", transcript=StitchedTranscript(segs, ("uk",), 2, 14_400.0))
+    await repo.put_transcript("u", stored)
+    written = [doc for name, col in db.cols.items() if name.startswith(STORE) for doc in col.docs.values()]
+    assert written and all(stored_bytes(doc) < 1_048_576 for doc in written)
+    assert await repo.get_transcript("u", "kcy") == stored

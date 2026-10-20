@@ -18,7 +18,8 @@ from ..domain.drive_index_lean import ChunkId, DriveChunkLean, DriveHintLean, Dr
 from ..domain.drive_index_params import CONCEPT_KEYS_MAX
 from ..domain.drive_search import is_not_read_yet, is_unread
 from ..domain.drive_transcript import (
-    StoredTranscript, TranscriptBatch, TranscriptJob, WindowTranscript, batch_doc_id,
+    StoredTranscript, TranscriptBatch, TranscriptJob, WindowTranscript, batch_doc_id, batch_url_fields,
+    job_url_fields, normalized_batch,
 )
 from ..domain.drive_usage import (
     added_usage, closed_initial, new_initial_build, reserved_field, reserved_usage, spent_initial,
@@ -496,6 +497,7 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
         return self.transcript_jobs.get((user_id, item_id))
 
     async def save_transcript_job(self, job: TranscriptJob) -> None:
+        _refuse_urls("job", job_url_fields(job))
         self.transcript_jobs[(job.user_id, job.item_id)] = job
 
     async def delete_transcript_job(self, user_id: str, item_id: str) -> None:
@@ -510,6 +512,8 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
         return {k[2]: v for k, v in sorted(self.window_results.items()) if k[:2] == (user_id, item_id)}
 
     async def create_batch(self, batch: TranscriptBatch) -> bool:
+        _refuse_urls("batch", batch_url_fields(batch))
+        batch = normalized_batch(batch)
         async with self._lock:
             if (batch.user_id, batch.name) in self.batches:
                 return False
@@ -517,6 +521,8 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
             return True
 
     async def save_batch(self, batch: TranscriptBatch) -> None:
+        _refuse_urls("batch", batch_url_fields(batch))
+        batch = normalized_batch(batch)
         self.batches[(batch.user_id, batch.name)] = batch
 
     async def delete_batch(self, user_id: str, name: str) -> None:
@@ -540,6 +546,13 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
 
     async def delete_transcript(self, user_id: str, content_key: str) -> None:
         self.transcripts.pop((user_id, content_key), None)
+
+
+def _refuse_urls(kind: str, fields: Sequence[str]) -> None:
+    """§27.4: no URL is persisted (as the Firestore adapter): logs the field names and refuses the write."""
+    if fields:
+        logger.error(f"[DriveIndex] transcript {kind} refused: URL-like value in {', '.join(fields)}")
+        raise ValueError(f"transcript {kind} holds a URL in {', '.join(fields)}")
 
 
 def _query_keys(keys: Sequence[str], method: str) -> List[str]:
