@@ -215,6 +215,7 @@ async def test_a_paid_reply_is_recorded_when_the_file_budget_cuts_the_run(w, mon
     assert (await w.repo.get_initial_build("u")).spent_usd >= 0.5
 
 
+@pytest.mark.timing  # wall-clock assertion: off the main gate, `make test-timing`
 async def test_a_fatal_error_of_one_file_cancels_its_siblings(w, monkeypatch):
     w.profiler.script = [S.UNAVAILABLE, S.UNAVAILABLE]
     fast, slow = w.add_doc("a.md", doc_text("Acme")), w.add_doc("b.md", doc_text("Brio"))

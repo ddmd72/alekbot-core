@@ -233,6 +233,7 @@ class TestCachePerformance:
         
         assert len(service._assembled_cache) == 0
     
+    @pytest.mark.timing  # wall-clock assertion: off the main gate, `make test-timing`
     def test_cache_hit_is_fast(self, service):
         """Test cache hit is faster than uncached lookup."""
         key = "perf_test_key"
