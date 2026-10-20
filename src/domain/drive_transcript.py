@@ -38,10 +38,13 @@ class WindowSpec:
 @dataclass(frozen=True)
 class Segment:
     """One utterance. `start_s` is seconds from the window's start inside a `WindowTranscript`, from the file's start
-    once stitched. `speaker` is None for a single speaker."""
+    once stitched. `speaker` is None for a single speaker. `interpolated`: the stamp was computed by code (character
+    proportion, §27.6), not measured by the model; `gap`: a marker for a span the provider refused (text is unused)."""
     start_s: float
     speaker: Optional[int]
     text: str
+    interpolated: bool = False
+    gap: bool = False
 
 
 @dataclass(frozen=True)
