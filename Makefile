@@ -205,9 +205,9 @@ auth: ## Authenticate with Google Cloud
 # The flag lives here, not in pytest.ini addopts, so a targeted `pytest path::test` stays a single
 # fast process. Integration/e2e stay serial — they touch live services.
 # Without xdist installed the suite falls back to a serial run, with a warning.
-# Tests marked `cpu_benchmark` compare wall-clock/CPU time and fail on a loaded machine with no code change
-# (seen again on a clean main 2026-10-20). DISABLED by owner decision 2026-10-20: skipped everywhere unless
-# RUN_CPU_BENCHMARKS=1 (tests/conftest.py). Manual run: RUN_CPU_BENCHMARKS=1 pytest tests/unit -m cpu_benchmark
+# Tests marked `timing` assert on wall-clock/CPU time and fail on a loaded machine with no code change. By owner
+# decision (2026-10-20) they are off every everyday run (check, test-unit, plain pytest — tests/conftest.py skips
+# them) and run only via `make test-timing`: in CI after a merge to main (job `timing`), or by hand.
 PYTEST_WORKERS ?= auto
 PYTEST_XDIST = $(shell $(PYTHON) -c "import xdist" 2>/dev/null && echo yes)
 PYTEST_UNIT_FLAGS = $(if $(PYTEST_XDIST),-n $(PYTEST_WORKERS) -q,-v)
@@ -220,13 +220,17 @@ test: ## Run all tests
 test-unit: ## Run unit tests
 	@echo "🧪 Running unit tests..."
 	@$(XDIST_WARNING)
-	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/unit/ $(PYTEST_UNIT_FLAGS) --asyncio-mode=auto -m "not cpu_benchmark"
+	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/unit/ $(PYTEST_UNIT_FLAGS) --asyncio-mode=auto -m "not timing"
+
+test-timing: ## Wall-clock/CPU-time tests only, serial (CI runs it after a merge to main)
+	@echo "⏱  Running timing tests..."
+	RUN_TIMING_TESTS=1 DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/unit/ -q --asyncio-mode=auto -m timing
 
 test-coverage: ## Unit tests + global + per-file coverage gate (RFC § 8.4)
 	@echo "🧪 Running unit tests with coverage..."
 	@$(XDIST_WARNING)
 	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/unit/ $(PYTEST_UNIT_FLAGS) \
-	    --asyncio-mode=auto -m "not cpu_benchmark" \
+	    --asyncio-mode=auto -m "not timing" \
 	    --cov=src \
 	    --cov-report=term-missing:skip-covered \
 	    --cov-report=json \

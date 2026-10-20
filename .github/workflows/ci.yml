@@ -53,3 +53,44 @@ jobs:
             --data "$(jq -nc --arg t "$TEXT" '{text:$t}')" \
             "$SLACK_WEBHOOK_URL" \
             || echo "::warning::Slack notification failed (delivery only — build result unaffected)"
+
+  timing:
+    # Wall-clock/CPU-time tests (`timing` marker) — off the PR gate by owner decision (2026-10-20): they fail on a
+    # loaded machine with no code change. Run once per merge to main, on a fresh runner, alone and serial.
+    # Separate job: its result never blocks or reruns `check`.
+    name: timing tests (after merge to main)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: make test-timing
+        run: make test-timing
+
+      - name: Notify Slack (pass/fail)
+        if: always()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          STATUS: ${{ job.status }}
+          REF: ${{ github.ref_name }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "SLACK_WEBHOOK_URL secret not set — skipping Slack notification."
+            exit 0
+          fi
+          if [ "$STATUS" = "success" ]; then ICON="⏱✅"; else ICON="⏱❌"; fi
+          TEXT="$ICON timing tests *$STATUS* — \`$REF\`
+          $RUN_URL"
+          curl -s -X POST -H 'Content-type: application/json' \
+            --data "$(jq -nc --arg t "$TEXT" '{text:$t}')" \
+            "$SLACK_WEBHOOK_URL" \
+            || echo "::warning::Slack notification failed (delivery only — build result unaffected)"

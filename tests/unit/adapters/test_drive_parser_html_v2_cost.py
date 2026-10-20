@@ -5,7 +5,7 @@ stays within v1 + 10 % on both and under the child's limits.
 
 CPU is compared as the minimum of `_CONVERSIONS` conversions per mode, never one sample: noise only adds time, so the
 minimum is the cost of the code (Python's `timeit` takes the minimum for the same reason). The test is a
-`cpu_benchmark`: `make test-unit` runs it alone after the parallel suite, because a machine whose cores the suite
+`timing`: `make test-unit` runs it alone after the parallel suite, because a machine whose cores the suite
 saturates inflates CPU time unevenly and for longer than a child runs (on the CI runner the same conversion took
 0.72 s idle and up to 2.2 s under the parallel suite) — no number of samples taken there measures the code. Memory is
 measured on the first conversion of each fresh process (ru_maxrss is a high-water mark)."""
@@ -61,7 +61,7 @@ def _measure(mode: str, shape: str) -> dict:
     return json.loads(proc.stdout.strip().splitlines()[-1])
 
 
-@pytest.mark.cpu_benchmark
+@pytest.mark.timing
 @pytest.mark.parametrize("shape", ["divs", "table"])
 def test_parser_v2_costs_no_more_than_v1(shape):
     v1, v2 = _measure("v1", shape), _measure("v2", shape)
