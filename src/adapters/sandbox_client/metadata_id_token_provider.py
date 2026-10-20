@@ -6,12 +6,24 @@ runs in `asyncio.to_thread` (the `http_call_control_plane_adapter` pattern). New
 cached until five minutes before its `exp`. The audience is the sandbox URL exactly as the gate compares it (equality,
 no trailing slash): it is normalised once here and the client uses the same string for its base URL.
 The token is never logged.
+
+Failure classification (the call raises only google-auth types, and wraps the cause):
+- a `TransportError` anywhere in the `__cause__` / `__context__` chain (a metadata-server blip on the identity
+  endpoint arrives as `RefreshError` caused by `TransportError`; an HTTP error status from that endpoint is wrapped the
+  same way) -> `SandboxUnavailable`: systemic and transient, nothing is charged to anything;
+- `DefaultCredentialsError`: google-auth swallows the ping's `TransportError` and reports "no credentials". On Cloud
+  Run (`K_SERVICE` / `K_JOB` set) the metadata server is always there, so a failed ping is almost certainly a
+  transient blip -> `SandboxUnavailable`. Anywhere else it means no credentials exist -> `SandboxMisconfigured`;
+- anything else (a malformed token, a bug) -> `SandboxMisconfigured`.
+Worst-case duration of one fetch with google-auth's own retries (3 pings, then up to 5 identity attempts, each
+bounded to `METADATA_REQUEST_TIMEOUT_S`) is about 40 s; the thread itself cannot be cancelled.
 """
 from __future__ import annotations
 
 import asyncio
 import base64
 import json
+import os
 import time
 from typing import Callable, Optional
 
@@ -41,12 +53,26 @@ def _fetch_from_metadata(audience: str) -> str:
     return google.oauth2.id_token.fetch_id_token(request, audience)
 
 
-def _is_transport_error(exc: Exception) -> bool:
-    try:
-        from google.auth.exceptions import TransportError
-    except ImportError:  # pragma: no cover - google-auth is a declared dependency
-        return False
-    return isinstance(exc, TransportError)
+def _cause_chain(exc: BaseException):
+    seen = set()
+    current: Optional[BaseException] = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        yield current
+        current = current.__cause__ or current.__context__
+
+
+def _is_transient(exc: Exception) -> bool:
+    from google.auth.exceptions import DefaultCredentialsError, MalformedError, TransportError
+
+    chain = list(_cause_chain(exc))
+    if any(isinstance(link, TransportError) for link in chain):
+        return True
+    on_cloud_run = bool(os.environ.get("K_SERVICE") or os.environ.get("K_JOB"))
+    # MalformedError subclasses DefaultCredentialsError: a bad token, not a failed ping.
+    failed_ping = any(isinstance(link, DefaultCredentialsError) and not isinstance(link, MalformedError)
+                      for link in chain)
+    return on_cloud_run and failed_ping
 
 
 def _expiry(token: str) -> Optional[float]:
@@ -84,7 +110,7 @@ class MetadataIdTokenProvider:
                 # The one ERROR line for a failed fetch (the client does not log it again). A metadata-server
                 # blip is systemic and transient; anything else (no credentials, wrong audience) is a deployment fault.
                 logger.error("[SandboxClient] id token fetch failed: %s", type(exc).__name__)
-                if _is_transport_error(exc):
+                if _is_transient(exc):
                     raise SandboxUnavailable("metadata server unreachable") from None
                 raise SandboxMisconfigured("could not obtain an ID token") from None
             exp = _expiry(token)
