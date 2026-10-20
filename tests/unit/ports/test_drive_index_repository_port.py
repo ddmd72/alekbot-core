@@ -22,6 +22,7 @@ _EXPECTED = {
     "delete_hints_except", "delete_user_hints", "hints_page", "enrich_queue", "enrich_wakeups", "count_by_job_state",
     "keys_pending_page", "count_describe_gaps", "get_records_lean",   # XC-3/XC-9
     "get_model_usage", "add_model_usage", "get_initial_build",
+    "reserve_model_usd",   # §27.10 (Δ106, G9): month-scoped transcription reservations
     "spend_initial_build", "close_initial_build",
     # files the bot cannot open (§26.2, D33): the tick's counters and the fan-out's notice read the marked records;
     # the fan-out alone writes its notice flag (Δ54)
