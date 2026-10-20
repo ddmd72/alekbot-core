@@ -141,11 +141,13 @@ class TestInjectUserTurnAnchor:
           - "warm reply" escape hatch — earlier SCREENWRITER had it; the LLM
             grabbed it on every conversational message and skipped tool calls.
           - "Manipulate the user" (removed 2026-08-02, replaced with NLP techniques).
+          - "Do not ignore your tools." (removed 2026-10-20; looped on placeholder tool calls).
         """
         # Rule 1 — information-gap rule
         assert "request for information the user does not yet have" in USER_TURN_SYSTEM_ANCHOR
         assert "Tone is not the test" in USER_TURN_SYSTEM_ANCHOR
-        assert "Do not ignore your tools" in USER_TURN_SYSTEM_ANCHOR
+        # Removed 2026-10-20 (owner decision): Sonnet 5.5 looped on placeholder tool calls.
+        assert "Do not ignore your tools" not in USER_TURN_SYSTEM_ANCHOR
         # Rule 2 — posture rule (NLP techniques, 2026-08-02)
         assert "Form your own judgment" in USER_TURN_SYSTEM_ANCHOR
         assert "Guide them toward your conclusion" in USER_TURN_SYSTEM_ANCHOR

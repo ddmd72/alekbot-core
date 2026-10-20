@@ -1,7 +1,7 @@
 """Smart's use_skill / draft_skill tools — served locally by the DelegationEngine, never via the coordinator."""
 
 from dataclasses import asdict
-from typing import Any, Awaitable, Callable, Dict, List, Sequence, Set
+from typing import Any, Awaitable, Callable, Dict, List, Mapping, Sequence, Set
 
 from pydantic import ValidationError
 
@@ -48,8 +48,10 @@ def build_use_skill_tool_declaration() -> Dict[str, Any]:
     }
 
 
-def make_use_skill_handler(skills: Sequence[Skill], visible: Set[str]) -> LocalToolHandler:
-    """Build per execution: `loaded_now` must never outlive one transcript (provider rotation restarts it)."""
+def make_use_skill_handler(skills: Sequence[Skill], visible: Mapping[str, int]) -> LocalToolHandler:
+    """Build per execution: `loaded_now` must never outlive one transcript (provider rotation restarts it).
+    `visible` maps a skill whose body history shows to that body's version; only the current version short-circuits
+    (AGENT_WORKSPACE_RFC §11.2)."""
     by_name = {s.name: s for s in skills}
     loaded_now: Set[str] = set()
 
@@ -64,12 +66,15 @@ def make_use_skill_handler(skills: Sequence[Skill], visible: Set[str]) -> LocalT
                 result_str=f"SYSTEM: No skill named '{name}'. Available skills: {available}.",
                 failed=True,
             )
-        if name in visible or name in loaded_now:
+        if (name in visible and visible[name] == skill.version) or name in loaded_now:
             logger.info("🧩 [use_skill] already-visible name=%s", name)
             return ToolResult(
                 name=tool_call.name,
                 result_str=f"SYSTEM: The text of skill '{name}' is already in your context above; follow it.",
             )
+        if name in visible:
+            logger.info("🧩 [use_skill] visible body is v%s, current v%s — loading again name=%s",
+                        visible[name], skill.version, name)
         loaded_now.add(name)
         logger.info("🧩 [use_skill] loaded name=%s v%s", name, skill.version)
         text = skill.body if not skill.files else f"{skill.body}\n\n{render_files_block(skill)}"
@@ -142,10 +147,11 @@ def build_draft_skill_tool_declaration() -> Dict[str, Any]:
                             "from_file": {
                                 "type": "string",
                                 "description": (
-                                    "Copy content from elsewhere instead of writing it here: either a "
-                                    "bare uploaded filename (from the file's label in this conversation), "
-                                    "or a 'skill:<name>/<path>' reference to one of the owner's own "
-                                    "custom skills' files. Exactly one of content, from_file, remove "
+                                    "Copy content from elsewhere instead of writing it here: a bare "
+                                    "uploaded filename (from the file's label in this conversation), a "
+                                    "'skill:<name>/<path>' reference to one of the owner's own custom "
+                                    "skills' files, or a 'workspace:<path>' text file from your workspace "
+                                    "(e.g. a draft in scratch/). Exactly one of content, from_file, remove "
                                     "must be set per entry."
                                 ),
                             },
@@ -243,9 +249,12 @@ def make_draft_skill_handler(
         return ToolResult(
             name=tool_call.name,
             result_str=(
-                "SYSTEM: Preview delivered to the owner as a file with a save command. Tell the "
-                "owner in one or two sentences what the skill does and that pasting the command "
-                "saves it. It is NOT saved yet."
+                "SYSTEM: Done. The draft was created and its preview with the save command was "
+                "delivered to the owner. Your part is complete: do not call draft_skill again for "
+                "this draft. Call it again only if the owner asks for changes. The skill becomes "
+                "active when the owner pastes the save command; that step is the owner's. Now tell "
+                "the owner in one or two sentences what the skill does and that pasting the command "
+                "activates it."
             ),
             delivery_items=[
                 DeliveryItem(

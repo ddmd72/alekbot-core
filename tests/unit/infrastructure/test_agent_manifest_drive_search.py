@@ -82,7 +82,6 @@ KNOWN_COLLISIONS = frozenset({
     "file_ref",     # TODO: nine intents describe it differently
     "folder",       # TODO: four drive intents
     "resolution",   # TODO: image and video generation
-    "text",         # TODO: save_to_memory and save_file_to_drive (one shared text covers both)
 })
 
 
@@ -96,7 +95,7 @@ def _colliding_names(descriptors):
 
 
 def test_no_new_field_name_collides_anywhere():
-    """§10.4 / §17.7: a shared field name with differing descriptions fails, except the known four."""
+    """§10.4 / §17.7: a shared field name with differing descriptions fails, except the known three."""
     assert _colliding_names(ALL_DESCRIPTORS) - KNOWN_COLLISIONS == set()
 
 

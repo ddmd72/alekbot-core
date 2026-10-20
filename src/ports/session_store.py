@@ -27,8 +27,20 @@ class SessionStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def append_messages_batch(self, session_id: str, messages: list[Message], owner_id: Optional[str] = None) -> None:
-        """Append multiple messages atomically to session history."""
+    async def append_messages_batch(
+        self,
+        session_id: str,
+        messages: list[Message],
+        owner_id: Optional[str] = None,
+        *,
+        raise_on_error: bool = False,
+    ) -> None:
+        """Append multiple messages atomically to session history.
+
+        By default a failed append is logged and swallowed (it must not crash the response
+        pipeline). With `raise_on_error=True` it is logged and re-raised, for callers that
+        must know whether the messages were stored.
+        """
         raise NotImplementedError
 
     @abstractmethod

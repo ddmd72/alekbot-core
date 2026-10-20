@@ -28,11 +28,10 @@ from ..infrastructure.agent_config import MEMORY_SEARCH
 
 class FactsMemoryAgent(BaseAgent):
     """
-    Agent responsible for searching and saving user's personal memory (facts).
+    Agent responsible for searching user's personal memory (facts).
 
     Capabilities:
     - search_memory: Multi-vector RRF search (keywords + 2 semantic vectors)
-    - save_to_memory: Attach text to user message for consolidation (no LLM call)
     """
 
     MAX_TOKENS = MEMORY_SEARCH.max_tokens
@@ -85,7 +84,6 @@ class FactsMemoryAgent(BaseAgent):
 
         Accepts:
         - search_memory: intent=QUERY + (3-key format OR legacy query)
-        - save_to_memory: intent=QUERY + "text" key in payload
         """
         logger.debug(
             f"🧠 [FactsMemoryAgent] can_handle check: "
@@ -95,12 +93,6 @@ class FactsMemoryAgent(BaseAgent):
         if message.intent != AgentIntent.QUERY:
             logger.debug("🧠 [FactsMemoryAgent] can_handle=False (wrong intent)")
             return False
-
-        # save_to_memory path: explicit intent flag only (not by "text" presence — LLMs
-        # may fill context fields for any intent, causing false routing to save path)
-        if message.payload.get("intent") == "save_to_memory":
-            logger.debug("🧠 [FactsMemoryAgent] can_handle=True (save_to_memory)")
-            return True
 
         # search_memory path: 3-key format OR legacy query
         has_3key = all(k in message.payload for k in ["keywords", "primary_query", "alternative_query"])
@@ -160,43 +152,10 @@ class FactsMemoryAgent(BaseAgent):
             logger.warning(f"⚠️ [FactsMemoryAgent] Key formulation failed ({e}), falling back to raw query")
             return {}
 
-    async def _handle_save(self, message: AgentMessage) -> AgentResponse:
-        """Handle save_to_memory: attach text to user message for consolidation.
-
-        Source priority:
-        1. message.payload["text"] — LLM fills context={"text": "..."} → Quick spreads
-           context_params via delegation_context["params"] → coordinator spreads into payload.
-        2. message.payload["query"] — fallback: the brief task description only.
-        """
-        text = (message.payload.get("text") or message.payload.get("query", "")).strip()
-        if not text:
-            return AgentResponse.failure(
-                task_id=message.task_id,
-                agent_id=self.agent_id,
-                error="save_to_memory: empty text",
-            )
-        self._on_agent_start(text)
-        logger.info(f"💾 [FactsMemoryAgent] save_to_memory: {text[:80]}")
-        self._on_agent_success(char_count=len(text), token_count=0, output_text=text)
-        return AgentResponse.success(
-            task_id=message.task_id,
-            agent_id=self.agent_id,
-            result={"saved": True},
-            history_context={"consolidation_text": text},
-        )
-
     async def execute(self, message: AgentMessage) -> AgentResponse:
         """
-        Execute memory search or save.
-
-        Routes by payload content:
-        - "text" key present → save_to_memory (LLM filled context={"text":"..."} → spread into payload)
-        - "intent"=="save_to_memory" without "text" → save_to_memory (fallback: query only)
-        - otherwise → search_memory (multi-vector RRF)
+        Execute memory search (multi-vector RRF).
         """
-        if message.payload.get("intent") == "save_to_memory":
-            return await self._handle_save(message)
-
         raw_query = message.payload.get("query", "")
         self._on_agent_start(raw_query)
 

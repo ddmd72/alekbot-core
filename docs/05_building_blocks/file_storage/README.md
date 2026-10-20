@@ -347,6 +347,7 @@ verify ownership (§2.4).
 | `process_attachment(local_path, filename, mime_type, user_id)` | Upload to GCS, return reference-only MessagePart |
 | `resolve_content(ref, user_id)` | Download from GCS + convert to text |
 | `resolve_bytes(ref, user_id)` | Download raw bytes (for specialists needing original) |
+| `resolve_content` / `resolve_bytes` on `workspace:<path>` | Smart's workspace files through `WorkspaceStorePort` (AGENT_WORKSPACE_RFC §12): text kinds verbatim in `[File]` markers, binary converted; any folder, the requesting user's objects only |
 
 **Reference-only MessagePart format:**
 
@@ -394,6 +395,13 @@ from GCS to the drive (Inbox by default). The coordinator never pre-fetches a dr
 place is an eighth intent, `search_files_in_drive`, served from an opt-in index (Step 2):
 [../user_drive/README.md](../user_drive/README.md). Deployment prerequisites: `docs/07_deployment/README.md` →
 User Drive and Drive Indexer Service.
+
+**A third store: the agent workspace** (`docs/10_rfcs/AGENT_WORKSPACE_RFC.md`). Smart's own working files live in a
+dedicated versioned bucket, reached through the `workspace` tool. `copy` puts byte-exact copies of chat uploads and
+delivered documents under `files/` (read through `FileConversionService.resolve_bytes`, ownership check included);
+`open_file` opens them with `workspace:files/<name>` and refuses workspace notes in other folders ("view it with the
+workspace tool"); `delete_file` refuses every `workspace:` ref. A `workspace:` ref prefetched for another specialist
+arrives without the workspace view header (writer, generation) — accepted, like every uploaded file today (RFC §12).
 
 ---
 
@@ -461,3 +469,5 @@ URL (§2.4). Agent re-fetch of delivered documents moved to server-side `open_fi
 `user_id` (`{prefix}/{user_id}/…`). Lifecycle: email_review 5d, else 30d. Closes the old
 "generated documents not fetchable (404)" limitation. Decision:
 [private_file_storage_token_redirect.md](../../04_solution_strategy/decisions/private_file_storage_token_redirect.md).
+2026-10-20: `workspace:` refs (AGENT_WORKSPACE_RFC §12) — FileConversionService reads them through
+WorkspaceStorePort; open_file accepts only `workspace:files/…`; delete_file refuses them.

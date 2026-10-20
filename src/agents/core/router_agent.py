@@ -14,6 +14,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Optional, Set, List, TYPE_CHECKING
 from ..base_agent import BaseAgent
+from ...domain.agent_note import AgentNote
 from ...domain.retry_policy import NO_RETRY_POLICY
 from ...domain.agent import (
     AgentMessage,
@@ -344,20 +345,7 @@ class RouterAgent(BaseAgent):
                     user_id=self.user_id,
                     as_of=datetime.now(timezone.utc),
                 )
-                # The orchestrator edits reminders by delegation, so it needs every
-                # field a delegation can change — a schedule it cannot see is a
-                # schedule it can only overwrite blindly.
-                agent_notes = [
-                    {
-                        "note_id": n.note_id,
-                        "text": n.text,
-                        "due": n.due.isoformat() if n.due else None,
-                        "recurrence": n.recurrence,
-                        "complexity": n.complexity.value if n.complexity else None,
-                        "last_fired": n.last_fired.isoformat() if n.last_fired else None,
-                    }
-                    for n in raw_notes
-                ]
+                agent_notes = [self._note_context(n) for n in raw_notes]
             except Exception as exc:
                 logger.warning("⚠️ [RouterAgent] Failed to load agent notes: %s", exc)
 
@@ -409,6 +397,21 @@ class RouterAgent(BaseAgent):
         
         return response
     
+    @staticmethod
+    def _note_context(n: AgentNote) -> dict:
+        """One active reminder as the orchestrator sees it. The orchestrator edits reminders by delegation, so it
+        needs every field a delegation can change — a schedule it cannot see is a schedule it can only overwrite
+        blindly. workspace_file: AGENT_WORKSPACE_RFC §8.3."""
+        return {
+            "note_id": n.note_id,
+            "text": n.text,
+            "due": n.due.isoformat() if n.due else None,
+            "recurrence": n.recurrence,
+            "complexity": n.complexity.value if n.complexity else None,
+            "last_fired": n.last_fired.isoformat() if n.last_fired else None,
+            "workspace_file": n.workspace_file,
+        }
+
     async def _classify_request_with_fallback(self, text: str, message: AgentMessage, history: List[Message] = None) -> dict:
         """Run LLM triage when available; fallback to rule-based logic."""
         if not self.llm:

@@ -56,6 +56,7 @@ class TelegramAdapterFactory:
         fallback_service=None,
         short_link_service=None,
         skill_service=None,
+        memory_fact_service=None,
         task_queue=None,
         long_turn_service=None,
     ) -> TelegramWebhookAdapter:
@@ -110,6 +111,7 @@ class TelegramAdapterFactory:
             fallback_service=fallback_service,
             short_link_service=short_link_service,
             skill_service=skill_service,
+            memory_fact_service=memory_fact_service,
             long_turn_service=long_turn_service,
         )
 

@@ -17,6 +17,7 @@ from ..domain.exceptions import (
     SkillRejected,
 )
 from ..domain.prompt_v3.security import TrustZone
+from ..domain.workspace import WORKSPACE_REF_PREFIX
 from ..domain.skill import (
     MAX_CUSTOM_SKILLS_PER_USER,
     MAX_MODEL_FILES_PER_DRAFT,
@@ -201,6 +202,10 @@ class SkillService:
             logger.warning("⚠️ [Skills] from_file %r not readable for user %s: %s", ref, user_id[:8], e)
             if is_skill_ref:  # the resolver's message lists the skill's actual files
                 raise SkillRejected(str(e)) from e
+            if ref.startswith(WORKSPACE_REF_PREFIX):
+                raise SkillRejected(
+                    f"file {ref!r} not found in your workspace — view the folder to check the path"
+                ) from e
             raise SkillRejected(f"file {ref!r} not found — pass the bare filename from the file label") from e
         if len(data) > MAX_SKILL_FILE_BYTES:
             raise SkillRejected(f"file {ref!r} is over {MAX_SKILL_FILE_BYTES // 1024} KB")

@@ -165,7 +165,14 @@ class FirestoreSessionStore(SessionStore):
         except Exception as e:
             logger.error(f"❌ Error appending message for {session_id[:8]}...: {e}")
 
-    async def append_messages_batch(self, session_id: str, messages: List[Message], owner_id: Optional[str] = None) -> None:
+    async def append_messages_batch(
+        self,
+        session_id: str,
+        messages: List[Message],
+        owner_id: Optional[str] = None,
+        *,
+        raise_on_error: bool = False,
+    ) -> None:
         """
         Append multiple messages to session history atomically.
         Implements sliding window: hot storage + cold storage overflow.
@@ -261,8 +268,10 @@ class FirestoreSessionStore(SessionStore):
                 f"💾 Session {session_id[:8]}... batch saved ({len(messages)} messages)"
             )
         except Exception as e:
-            # Soft-fail intentional: append failure must not crash the response pipeline.
             logger.error(f"❌ Error batch appending messages for {session_id[:8]}...: {e}")
+            if raise_on_error:
+                raise
+            # Soft-fail by default: append failure must not crash the response pipeline.
 
     def _on_overflow_done(self, task: "asyncio.Task") -> None:
         """Log errors from overflow callback tasks — data loss indicator."""

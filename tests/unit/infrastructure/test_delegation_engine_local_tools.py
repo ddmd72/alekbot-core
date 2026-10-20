@@ -138,6 +138,9 @@ async def test_without_local_tools_behaviour_is_unchanged(coordinator):
     await DelegationEngine(coordinator).execute(
         call_llm=call_llm, base_request=_base_request(), context={}, max_turns=3,
     )
-    # No map → treated as a delegation, which fails cleanly for lack of `intent`.
+    # No map → use_skill is not served locally; it is an undeclared tool and the model is told so.
     second_request = call_llm.await_args_list[1].args[0]
-    assert "without 'intent'" in str(second_request.messages[-1].parts[-1].tool_response)
+    response = str(second_request.messages[-1].parts[-1].tool_response)
+    assert "unknown tool 'use_skill'" in response
+    assert "Declared tools: delegate_to_specialist" in response
+    assert "without 'intent'" not in response

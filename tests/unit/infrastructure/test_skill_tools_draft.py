@@ -91,3 +91,15 @@ async def test_other_exception_is_a_generic_failed_result():
     assert r.failed
     assert r.result_str == "SYSTEM: draft could not be stored."
     assert "firestore down" not in r.result_str
+
+
+async def test_success_text_says_done_and_forbids_a_repeat_call():
+    skill = Skill(name="flight-status", description="Use when a flight is asked about.", body="1. Open.")
+    handle = make_draft_skill_handler(AsyncMock(return_value=DraftResult(code="ab12", skill=skill)))
+
+    r = await handle(_call(name="flight-status", description="Use when a flight is asked about.", body="1. Open."))
+
+    assert not r.failed
+    assert "Done." in r.result_str
+    assert "do not call draft_skill again" in r.result_str
+    assert "NOT saved yet" not in r.result_str

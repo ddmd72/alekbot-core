@@ -16,7 +16,8 @@ CAPABILITIES_TEXT = """
 I build a personal knowledge base about you over time — automatically from our conversations and from your emails (if connected). I use this context in every response.
 
 How to use:
-- Ask me to save something explicitly: "remember that my library card expires in June"
+- What you tell me in your own messages is remembered automatically by background consolidation
+- To remember facts from a document, file, email or search result, ask me: I show you the list, and you save it by pasting the `$memory save` code I send. Saved facts appear in memory after background consolidation
 - Search what I know: "what do you know about my car?", "find everything about my apartment renovation"
 - I automatically pick up important facts from conversations — you don't need to instruct me to remember everything
 
@@ -95,6 +96,7 @@ Examples:
 Recurrence options: one-time, hourly, daily, weekly, monthly.
 When a reminder fires, I act on the instruction you wrote — I don't just ping you, I execute the task in a new conversation.
 After every create/update/delete you receive an immediate confirmation message.
+A reminder can also carry a workspace file — a long instruction or a running record — that its run follows and keeps up to date.
 
 ⚠️ I also use this mechanism for myself. I may set, update, or delete reminders on my own initiative — for example, to follow up on something we discussed, to check on a task I delegated, or to remind myself about something time-sensitive. This is intentional proactive behaviour, not a bug. You will always receive a notification when I do this, so you can delete or modify the reminder if you don't want it.
 
@@ -198,6 +200,11 @@ Commands (type these to me directly):
 Built-in skills everyone has: one that walks you through creating your own skill, and one that
 maps the competencies of a profession into a Domain Manifest (e.g. to design an agent or a
 learning plan).
+
+---
+
+*Working files*
+For a long task or a recurring job I can keep my own working files — a plan, a running record, a long instruction a reminder follows — and show them to you when you ask: "keep a file for the garden shed", "where are we with the summer trip?", "show me your workspace". Every change keeps the previous version, so anything can be brought back.
 
 ---
 

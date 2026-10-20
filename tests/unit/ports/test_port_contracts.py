@@ -193,8 +193,10 @@ class TestSessionStoreContract:
     def test_append_messages_batch_signature(self):
         sig = inspect.signature(SessionStore.append_messages_batch)
         params = list(sig.parameters.keys())
-        assert params == ["self", "session_id", "messages", "owner_id"]
+        assert params == ["self", "session_id", "messages", "owner_id", "raise_on_error"]
         assert sig.parameters["owner_id"].default is None
+        raise_on_error = sig.parameters["raise_on_error"]
+        assert raise_on_error.kind is inspect.Parameter.KEYWORD_ONLY and raise_on_error.default is False
 
 
 class TestSessionStoreMockImplementation:

@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Mapping, Optional, Set
 
 from ..domain.agent import AgentStatus, DeliveryItem
 from ..domain.messaging import SmartResponse
@@ -50,6 +50,8 @@ class ToolResult:
     # is unchanged; LelikAgent reads it to skip posting a chat copy of a link found in an error string.
     failed: bool = False
 
+
+DELEGATE_TOOL_NAME = "delegate_to_specialist"
 
 # A tool the calling agent serves itself (e.g. Smart's use_skill) — never goes to the coordinator.
 LocalToolHandler = Callable[[ToolCall], Awaitable[ToolResult]]
@@ -331,7 +333,7 @@ class DelegationEngine:
                     # already written its answer, so no result is fed back to it.
                     # We still dispatch them, because the model COMMITTED to them —
                     # an async generation hop must reach its queue, and a
-                    # save_to_memory / delete_file must actually happen. Filtering
+                    # delete_file or a document save must actually happen. Filtering
                     # by name (not identity) also drops a duplicate terminal call
                     # instead of dispatching it as an empty-intent delegation.
                     siblings = [
@@ -352,6 +354,7 @@ class DelegationEngine:
                             max_retries=max_retries,
                             retry_backoff=retry_backoff,
                             local_tools=local,
+                            terminal_tool=terminal_tool,
                         )
                         # Nobody reads a sibling's result: the answer is already written.
                         # A local tool (use_skill) must not leave a body in history that was never followed.
@@ -406,6 +409,7 @@ class DelegationEngine:
                 max_retries=max_retries,
                 retry_backoff=retry_backoff,
                 local_tools=local,
+                terminal_tool=terminal_tool,
             )
             if clock is None:
                 tool_results = await batch
@@ -572,6 +576,7 @@ class DelegationEngine:
         max_retries: int,
         retry_backoff: float,
         local_tools: Optional[Mapping[str, LocalToolHandler]] = None,
+        terminal_tool: Optional[str] = None,
     ) -> List[ToolResult]:
         """Dispatch all tool calls in one parallel batch via asyncio.gather.
 
@@ -587,8 +592,10 @@ class DelegationEngine:
             "⚡ [DelegationEngine] Parallel execution: %s call(s)",
             len(tool_calls),
         )
+        declared = {DELEGATE_TOOL_NAME, *local_tools, *([terminal_tool] if terminal_tool else [])}
         tasks = [
             self._dispatch_local(tc, local_tools[tc.name]) if tc.name in local_tools
+            else self._unknown_tool(tc, declared) if tc.name not in declared
             else self.dispatch(
                 tc, context, intent_remap, intent_fanout, calling_agent_id,
                 max_retries, retry_backoff,
@@ -609,6 +616,19 @@ class DelegationEngine:
             else:
                 results.append(result)
         return results
+
+    @staticmethod
+    async def _unknown_tool(tool_call: ToolCall, declared: Set[str]) -> ToolResult:
+        """The model called a name this engine never declared (model drift): say so, name the real tools."""
+        names = sorted(declared)
+        logger.warning(
+            "⚠️ [DelegationEngine] unknown tool '%s' (declared: %s)", tool_call.name, names,
+        )
+        return ToolResult(
+            name=tool_call.name,
+            result_str=f"SYSTEM ERROR: unknown tool '{tool_call.name}'. Declared tools: {', '.join(names)}.",
+            failed=True,
+        )
 
     async def _dispatch_local(self, tool_call: ToolCall, handler: LocalToolHandler) -> ToolResult:
         # tool_arg_name: what Logfire needs to tell use_skill("flight-status") from a near-miss.

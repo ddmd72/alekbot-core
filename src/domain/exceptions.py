@@ -235,6 +235,14 @@ class SkillFileMissing(Exception):
     """A file a skill or draft refers to is no longer stored (e.g. a draft file removed by TTL)."""
 
 
+class MemoryFactsRejected(Exception):
+    """Proposed memory facts were flagged by the security check."""
+
+
+class MemoryDraftNotFound(Exception):
+    """No pending memory-facts draft with that save code for this user."""
+
+
 class OAuthGrantRevokedError(ValueError):
     """The provider rejected a refresh token (``invalid_grant``): the user revoked access,
     changed their password, or the grant expired. Retrying cannot help; only a new
@@ -251,3 +259,16 @@ class AccessDeniedError(Exception):
     Deliberately not a ValueError: web handlers map ValueError to 400, and a
     rejected identity must be a 403 with no session issued.
     """
+
+
+class WorkspaceRefused(Exception):
+    """A workspace command broke a rule (path, folder, kind, caps, a missing source). The message is the fix the
+    model reads after `SYSTEM: `; `reason` is the short code in the `[Workspace]` log line."""
+
+    def __init__(self, message: str, reason: str = "refused") -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
+class WorkspaceConflict(Exception):
+    """A generation precondition failed (HTTP 412): another run wrote or deleted the object since it was read."""
