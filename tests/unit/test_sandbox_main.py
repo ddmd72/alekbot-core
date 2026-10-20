@@ -138,17 +138,25 @@ async def test_server_waits_for_response_flush_before_signalling(env, monkeypatc
              "path": "/v1/render.docx", "raw_path": b"/v1/render.docx", "query_string": b"", "root_path": "",
              "headers": [(b"host", b"x"), (b"x-sandbox-meta", meta.encode()), (b"content-length", b"7")],
              "client": ("127.0.0.1", 1), "server": ("127.0.0.1", 80)}
+    import asyncio
     inbox = [{"type": "http.request", "body": b"payload", "more_body": False}]
+    stream_closed = asyncio.Event()
 
     async def receive():
-        return inbox.pop(0) if inbox else {"type": "http.disconnect"}
+        if inbox:
+            return inbox.pop(0)
+        # Like hypercorn: `http.disconnect` only once the stream is closed after the final frame. An immediate
+        # disconnect models a client that left before the answer; Quart >= 0.21 then cancels the handler at once.
+        await stream_closed.wait()
+        return {"type": "http.disconnect"}
 
     async def send(message):
         if message["type"] == "http.response.body":
             events.append("body-final" if not message.get("more_body") else "body-chunk")
+            if not message.get("more_body"):
+                stream_closed.set()
 
-    import asyncio
-    await app.asgi_app(scope, receive, send)
+    await asyncio.wait_for(app.asgi_app(scope, receive, send), timeout=30)  # hang guard: fail, never stall CI
     await asyncio.sleep(0.05)
     assert events.count("recycler") == 1
     assert events.index("recycler") > events.index("body-final")
