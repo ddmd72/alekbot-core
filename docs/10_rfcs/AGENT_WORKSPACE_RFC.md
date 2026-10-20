@@ -1,6 +1,6 @@
 # RFC: Agent Workspace — Smart's own persistent working files
 
-**Status:** Proposed — rev 2 (2026-10-20), owner decisions recorded. Not implemented.
+**Status:** Accepted — rev 2 (2026-10-20), owner decisions recorded. Implemented on `feat/agent-workspace`; not deployed (owner steps §14).
 **Date:** rev 1 2026-10-14; rev 2 2026-10-20 (after the 2026-10-19 review and owner discussion, the 2026-10-20
 adversarial review, §0.1, and the owner's later decisions of 2026-10-20, §0.2).
 **Related:** `MEMORY_FACT_CONFIRMATION_RFC.md` (facts about the user; the local-tool precedent outside `if skills:`),
@@ -459,6 +459,7 @@ back.` A path with no versions at all reads `… does not exist and never did.` 
 | Unknown `generation` | `SYSTEM: <path> has no version <G>; history lists them.` |
 | Store failure | `SYSTEM: the workspace is unavailable right now; nothing was changed.` (ERROR logged) |
 | Missing file for `delete`/`rename`/`str_replace` | `SYSTEM: <path> does not exist; view it to see its history.` |
+| Arguments cut off at the output limit | SYSTEM: your arguments were cut off at the output limit; nothing was written. Create a short file, then fill sections with str_replace. |
 
 ### 7.6 The per-execution handler session
 

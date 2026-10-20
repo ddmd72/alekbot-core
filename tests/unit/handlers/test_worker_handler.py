@@ -1651,6 +1651,7 @@ class TestHandleDailyEmailReview:
             email_for_triage=emails,
             suppress_transient_retry=True,
             storage_class="email_review",
+            origin_detail="daily_email_review",
         )
 
 

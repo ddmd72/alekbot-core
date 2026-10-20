@@ -113,6 +113,7 @@ if TYPE_CHECKING:
     from ..domain.user import UserBotConfig
     from ..services.skill_service import SkillService
     from ..services.memory_fact_service import MemoryFactService
+    from ..services.workspace_service import WorkspaceService
     from ..services.user_drive_service import UserDriveService
     from ..services.drive_search_service import DriveSearchService
     from ..services.localization_service import LocalizationService
@@ -186,6 +187,7 @@ class UserAgentFactory(AgentFactoryPort):
         quota_service: Optional[object] = None,
         skill_service: Optional["SkillService"] = None,
         memory_fact_service: Optional["MemoryFactService"] = None,
+        workspace_service: Optional["WorkspaceService"] = None,
         long_turn_registry: Optional[LongTurnRegistry] = None,
         user_drive_service: Optional["UserDriveService"] = None,
         localization: Optional["LocalizationService"] = None,
@@ -231,6 +233,7 @@ class UserAgentFactory(AgentFactoryPort):
         self.quota_service = quota_service
         self.skill_service = skill_service
         self.memory_fact_service = memory_fact_service
+        self.workspace_service = workspace_service
         self.long_turn_registry = long_turn_registry
         self.user_drive_service = user_drive_service
         self.drive_search_service = drive_search_service
@@ -418,6 +421,7 @@ class UserAgentFactory(AgentFactoryPort):
             thinking_effort=user_profile.config.get_thinking_for_agent("smart"),
             skill_service=self.skill_service,
             memory_fact_service=self.memory_fact_service,
+            workspace_service=self.workspace_service,
             long_turn_registry=self.long_turn_registry,
         )
 
@@ -437,6 +441,7 @@ class UserAgentFactory(AgentFactoryPort):
                 prompt_builder=prompt_builder,
                 user_timezone=user_profile.config.timezone,
                 notification_service=self.notification_service,
+                workspace_enabled=self.workspace_service is not None,
             )
 
         router_agent = create_router_agent(

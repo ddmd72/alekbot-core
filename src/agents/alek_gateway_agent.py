@@ -94,8 +94,13 @@ class AlekGatewayAgent(BaseAgent):
             recipient=f"router_agent_{user_id}",
             intent=AgentIntent.QUERY,
             payload={"text": text, "attachments": []},
-            # Smart builds its user turn from current_message_parts only.
-            context={**message.context, "current_message_parts": [MessagePart(text=text)]},
+            # Smart builds its user turn from current_message_parts only; run_origin labels the workspace writes
+            # this run makes (AGENT_WORKSPACE_RFC §9).
+            context={
+                **message.context,
+                "current_message_parts": [MessagePart(text=text)],
+                "run_origin": "voice:tell_alek" if errand else "voice:ask_alek",
+            },
             # Explicit, so Smart's own 300 s config cap does not cut an answer the relay abandoned.
             timeout_ms=ASK_ALEK_TIMEOUT_MS,
         )

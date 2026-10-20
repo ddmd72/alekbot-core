@@ -69,6 +69,7 @@ from src.infrastructure.agent_manifest import ALL_DESCRIPTORS, FILE_MANAGEMENT, 
 from src.infrastructure.agent_registry import AgentRegistry
 from src.infrastructure.delegation_engine import DelegationEngine, ToolResult
 from src.ports.file_storage_port import FileStoragePort
+from src.services.dry_run_workspace import DryRunWorkspace
 from src.services.file_conversion_service import FileConversionService
 from src.services.user_drive_service import UserDriveService
 
@@ -593,6 +594,8 @@ async def _run(args: argparse.Namespace) -> int:
     smart = (await factory.ensure_agents_for_user(user_id))["smart_agent"]
     if smart.skill_service is not None:
         smart.skill_service = DryRunSkills(smart.skill_service)   # no draft is ever stored
+    if smart.workspace_service is not None:
+        smart.workspace_service = DryRunWorkspace(smart.workspace_service)   # no workspace write reaches the bucket
     smart.memory_fact_service = RecordingMemoryFacts()   # no Firestore write: the tool is declared, never stored
     eval_user = AsEvalUser(search)
     dispatcher = DryRunDispatch(DelegationEngine.dispatch, fixture_engine(user_id, drive, search, eval_user),

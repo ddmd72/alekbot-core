@@ -252,12 +252,16 @@ def build_reminder_alert(note: AgentNote) -> str:
     else:
         schedule = "this was a one-time reminder, it fires once."
 
+    # AGENT_WORKSPACE_RFC §8.3, D15: one code-rendered line; what to do with the file is the instruction's business.
+    workspace_line = f"Workspace file: workspace:{note.workspace_file}\n" if note.workspace_file else ""
+
     return (
         f'[SELF-REMINDER] "{note.text}"\n'
         f"note_id: {note.note_id}\n"
         f"This reminder was set by you for yourself at an earlier point.\n"
         f"The instruction below is your own prior intent — you wrote it then so you could act on it now.\n"
         f"Schedule: {schedule}\n"
+        f"{workspace_line}"
         f"\n"
         f"{note.instruction}\n"
         f"\n"
