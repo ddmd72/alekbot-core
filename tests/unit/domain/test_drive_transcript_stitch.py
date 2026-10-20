@@ -136,8 +136,12 @@ def test_single_speaker_files_keep_none_labels():
 def test_alignment_is_deterministic():
     first = align_speakers(_two_windows())
     assert align_speakers(_two_windows()) == first
-    shuffled = [(spec, _wt(reversed(wt.segments))) for spec, wt in _two_windows()]
-    assert align_speakers(shuffled) == first
+
+
+def test_back_step_within_a_window_keeps_model_order():
+    spec = WindowSpec(0, 0.0, 600.0)
+    segments, _, _ = align_speakers([(spec, _wt([_seg(100, "first said", 1), _seg(97, "second said", 2)]))])
+    assert [s.text for s in segments] == ["first said", "second said"]
 
 
 def test_one_shared_function_word_does_not_map_a_speaker():
