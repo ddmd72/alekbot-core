@@ -35,3 +35,13 @@ async def test_default_month_is_the_clocks():
     w = ContentWorld()
     await w.svc._spend_usd("u", "transcribe", 1.0, 0.0, 1)
     assert (await w.repo.get_model_usage("u", month_key(w.clock.now))).transcribe_usd == 1.0
+
+
+async def test_cross_month_booking_writes_no_daily_entry():
+    w = ContentWorld()
+    october = month_key(w.clock.now)
+    w.clock.advance(40 * 86400)
+    await w.svc._spend_usd("u", "transcribe", 2.5, 0.0, 1, month=october)
+    assert (await w.repo.get_model_usage("u", october)).daily == {}
+    await w.svc._spend_usd("u", "transcribe", 1.0, 0.0, 1)
+    assert len((await w.repo.get_model_usage("u", month_key(w.clock.now))).daily) == 1

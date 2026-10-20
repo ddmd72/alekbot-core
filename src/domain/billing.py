@@ -298,7 +298,8 @@ class BatchUsage:
     at 0.0, as `calculate_cost` does; callers flag it (`is_priced`).
 
     At the held $1.50/$7.50 a 30-minute window of 45 000 audio tokens plus ~6 000 output tokens books
-    45 000 x $0.75/M + 6 000 x $3.75/M = ~$0.056 before thought tokens, i.e. about $0.16 per audio hour."""
+    45 000 x $0.75/M + 6 000 x $3.75/M = ~$0.056 before thought tokens; about $0.16 per audio hour once thought tokens and window overlap are
+    counted (G7)."""
     model: str
     audio_input_tokens: int = 0
     text_input_tokens: int = 0

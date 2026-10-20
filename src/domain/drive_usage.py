@@ -53,8 +53,9 @@ def added_usage(usage: ModelUsageMonth, day: str, cls: str, usd: float, fallback
     name = f"{UsageClass(cls).value}_usd"
     initial = f"{UsageClass(cls).value}_initial_usd"
     daily: Dict[str, Tuple[float, float]] = dict(usage.daily)
-    total, fallback = daily.get(day, (0.0, 0.0))
-    daily[day] = (total + usd, fallback + fallback_usd)
+    if day:   # "" = no daily entry (a booking into a month other than the day's)
+        total, fallback = daily.get(day, (0.0, 0.0))
+        daily[day] = (total + usd, fallback + fallback_usd)
     return replace(usage, **{name: getattr(usage, name) + usd, initial: getattr(usage, initial) + covered_usd},
                    fallback_usd=usage.fallback_usd + fallback_usd, calls=usage.calls + calls, daily=daily)
 

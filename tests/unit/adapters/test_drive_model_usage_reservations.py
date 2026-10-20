@@ -7,7 +7,7 @@ import pytest
 from src.adapters.firestore_drive_index_repo import usage_from_doc
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 
-from tests.unit.adapters.firestore_drive_eval_fakes import USAGE, EvalDb, eval_transactions, make_eval_repo
+from tests.unit.adapters.firestore_drive_eval_fakes import USAGE, EvalDb, EvalDocRef, eval_transactions, make_eval_repo
 
 
 @pytest.fixture
@@ -44,14 +44,23 @@ async def test_concurrent_reservations_never_lost(repos):
         assert (await repo.get_model_usage("u", "2026-10")).transcribe_reserved_usd == pytest.approx(10.0)
 
 
-async def test_firestore_writes_a_merge_increment_and_reads_the_field_back(repos):
+async def test_firestore_writes_a_merge_increment_and_reads_the_field_back(repos, monkeypatch):
     from google.cloud.firestore_v1.transforms import Increment
     db, (_, fs) = repos
+    written = []
+    real_set = EvalDocRef.set
+
+    async def capture(self, data, merge=False):
+        written.append((data, merge))
+        await real_set(self, data, merge)
+
+    monkeypatch.setattr(EvalDocRef, "set", capture)
     await fs.reserve_model_usd("u", "2026-10", "transcribe", 1.25)
+    payload, merge = written[0]
+    assert merge is True and isinstance(payload["transcribe_reserved_usd"], Increment)
     doc = db.cols[USAGE].docs["u:2026-10"]
     assert doc["transcribe_reserved_usd"] == 1.25
     assert usage_from_doc(doc).transcribe_reserved_usd == 1.25
-    assert isinstance(Increment(1.0), Increment)
 
 
 async def test_a_class_without_reservations_is_refused_before_any_write(repos):
