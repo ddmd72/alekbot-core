@@ -49,13 +49,20 @@ def test_colon_separated_list_and_comma_rejected_loudly():
 
 def test_no_email_value_in_any_log_line(caplog):
     caplog.set_level(logging.DEBUG)
-    from src.utils.logger import logger
-
-    logger.propagate = True
     with pytest.raises(SandboxCallersError) as exc:
         load_caller_sets({"SANDBOX_CALLERS_RENDER": "secret1@example.com,secret2@example.com"})
     with pytest.raises(SandboxCallersError) as exc2:
         assert_disjoint({"A": frozenset({"secret3@example.com"}), "B": frozenset({"secret3@example.com"})})
+    assert "Sandbox callers" in caplog.text
+    assert "secret" not in caplog.text
     text = caplog.text + str(exc.value) + str(exc2.value)
     assert "secret" not in text
     assert "RENDER" in text
+
+
+@pytest.mark.parametrize("bad", ["no-at.example.com", "a@@example.com", "a@b@example.com", "a b@example.com",
+                                 "a@example.com;b@example.com", "a@example.com\tb"])
+def test_malformed_entries_rejected_naming_only_the_group(bad):
+    with pytest.raises(SandboxCallersError) as exc:
+        load_caller_sets({"SANDBOX_CALLERS_RENDER": bad})
+    assert "RENDER" in str(exc.value) and "example.com" not in str(exc.value)
