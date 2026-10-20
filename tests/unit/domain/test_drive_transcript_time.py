@@ -20,7 +20,7 @@ def test_parse_h_mm_ss():
 
 
 @pytest.mark.parametrize("bad", ["75", "1:75", "-1:00", "", "abc", "1:2", "1:60", "1:60:00", "1:00:60", "1:2:3:4",
-                                 "12:40.5", " ", "1.5", "75:00", "0:-5"])
+                                 "12:40.5", " ", "1.5", "75:00", "0:-5", "١٢:٤٠"])
 def test_rejects_integer_seconds_and_garbage(bad):
     with pytest.raises(ValueError):
         parse_stamp(bad)

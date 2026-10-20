@@ -55,6 +55,25 @@ def test_windows_cover_the_whole_file_property():
             assert all(0 < w.duration_s <= window_s for w in ws)
 
 
+def test_loop_boundary_pinned():
+    assert len(plan_windows(3540)) == 2
+    assert len(plan_windows(3541)) == 3
+    assert len(plan_windows(5280)) == 3
+
+
+def test_overlap_must_be_below_window():
+    import pytest
+    for w, o in ((60, 60), (60, 100), (1800, -1)):
+        with pytest.raises(ValueError):
+            plan_windows(1000, w, o)
+
+
+def test_gradual_backward_drift_fails():
+    w = WindowSpec(index=0, start_s=0, duration_s=1800)
+    assert not times_ok(w, [_seg(100), _seg(95), _seg(90)])
+    assert times_ok(w, [_seg(100), _seg(95), _seg(100), _seg(96)])
+
+
 def test_45_min_window_allowed():
     ws = plan_windows(7200, 2700, 60)
     assert [w.start_s for w in ws] == [0, 2640, 5280]
