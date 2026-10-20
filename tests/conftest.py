@@ -29,12 +29,12 @@ def mock_repository():
 
 
 def pytest_collection_modifyitems(config, items):
-    """`cpu_benchmark` tests are DISABLED by owner decision (2026-10-20): they time CPU work and fail on a
-    loaded machine with no code change, so every full run failed and was re-run. Opt back in with
-    RUN_CPU_BENCHMARKS=1."""
-    if os.getenv("RUN_CPU_BENCHMARKS") == "1":
+    """`timing` tests (wall-clock or CPU-time assertions) are off every everyday run by owner decision
+    (2026-10-20): they fail on a loaded machine with no code change, so full runs failed and were re-run.
+    They run only via `make test-timing` (RUN_TIMING_TESTS=1) — in CI after a merge to main, or by hand."""
+    if os.getenv("RUN_TIMING_TESTS") == "1":
         return
-    skip = pytest.mark.skip(reason="cpu_benchmark disabled (owner, 2026-10-20); set RUN_CPU_BENCHMARKS=1 to run")
+    skip = pytest.mark.skip(reason="timing test: run with `make test-timing` (RUN_TIMING_TESTS=1)")
     for item in items:
-        if "cpu_benchmark" in item.keywords:
+        if "timing" in item.keywords:
             item.add_marker(skip)

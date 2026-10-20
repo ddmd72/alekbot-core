@@ -5,6 +5,7 @@ from src.utils.rate_limiter import RateLimiter, RateLimitConfig
 
 
 @pytest.mark.asyncio
+@pytest.mark.timing  # wall-clock assertion: off the main gate, `make test-timing`
 async def test_rate_limiter_allows_burst():
     """Test that burst is allowed up to burst_size."""
     config = RateLimitConfig(messages_per_second=1.0, burst_size=5)
@@ -19,6 +20,7 @@ async def test_rate_limiter_allows_burst():
 
 
 @pytest.mark.asyncio
+@pytest.mark.timing  # wall-clock assertion: off the main gate, `make test-timing`
 async def test_rate_limiter_enforces_limit():
     """Test that rate limit is enforced after burst."""
     config = RateLimitConfig(messages_per_second=10.0, burst_size=5)

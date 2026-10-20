@@ -54,6 +54,7 @@ async def test_flush_with_nothing_pending_returns_at_once(client):
 
 
 @pytest.mark.asyncio
+@pytest.mark.timing  # wall-clock assertion: off the main gate, `make test-timing`
 async def test_flush_is_bounded_and_does_not_cancel_a_slow_write(client):
     release = threading.Event()
     client.insert_rows_json.side_effect = lambda *a, **k: (release.wait(2), [])[1]

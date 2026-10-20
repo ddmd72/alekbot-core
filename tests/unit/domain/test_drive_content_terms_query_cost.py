@@ -1,18 +1,21 @@
 """Query-term extraction cost (USER_DRIVE_INDEXING_RFC §24.6, arbiter R2 S-m1). `drive_query` has no length cap and the
 extraction runs on the event loop: claiming each span must not scan every span claimed before it (it took 42 s on
 `'+1 ' * 40000`), and the search feeds it at most QUERY_TERM_CHARS characters, cut at a word boundary."""
+import pytest
 import time
 
 from src.domain.drive_content_terms import clip_query, query_terms
 from src.domain.drive_index_params import QUERY_TERM_CHARS
 
 
+@pytest.mark.timing  # wall-clock assertion: off the main gate, `make test-timing`
 def test_many_spans_are_claimed_in_linear_time():
     started = time.monotonic()
     assert query_terms("+1 " * 40000) == ()
     assert time.monotonic() - started < 5.0   # generous: quadratic took ~42 s, linear well under a second
 
 
+@pytest.mark.timing  # wall-clock assertion: off the main gate, `make test-timing`
 def test_many_overlapping_kinds_still_resolve_as_before():
     text = " ".join(f"INV-{i:04d}/2024 15.03.2024 1 250,00" for i in range(3000))
     started = time.monotonic()
