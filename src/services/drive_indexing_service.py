@@ -2306,7 +2306,8 @@ class DriveIndexingService:
             return 1 << 30
         return int(spend.available(cls) / unit_usd + 1e-9)
 
-    async def _spend_usd(self, user_id: str, cls: str, usd: float, fallback_usd: float, calls: int) -> None:
+    async def _spend_usd(self, user_id: str, cls: str, usd: float, fallback_usd: float, calls: int,
+                         month: Optional[str] = None) -> None:
         """Dollars a model call cost, priced by the runner at the model that ran (failover included): the initial
         build covers what it can first (D27), and the month's document keeps every dollar per class, the fallback's
         share and the day's totals (the fallback alert), with the build's share apart, which the month's cap does not
@@ -2314,24 +2315,32 @@ class DriveIndexingService:
 
         Shielded (review rv_sv2_p5 MINOR 5): the file's ENRICH_FILE_BUDGET_S cut, or a sibling's fatal error, may
         cancel the caller right after a paid reply; the write still completes, whole (the build's share and the
-        month's document together), and the cancellation reaches the caller."""
+        month's document together), and the cancellation reaches the caller.
+
+        `month` ("YYYY-MM") books the dollars in that month's document instead of the tick's: a transcription batch's
+        real cost goes to its RESERVATION's month when collected, so a month turn never puts dollars into a month
+        that did not reserve them (G9)."""
         if usd <= 0 and calls <= 0:
             return
-        await asyncio.shield(self._spend_write(user_id, cls, usd, fallback_usd, calls, _TICK_SPEND.get()))
+        await asyncio.shield(self._spend_write(user_id, cls, usd, fallback_usd, calls, _TICK_SPEND.get(),
+                                               month=month))
 
     async def _spend_write(self, user_id: str, cls: str, usd: float, fallback_usd: float, calls: int,
-                           spend: Optional[_Spend]) -> None:
+                           spend: Optional[_Spend], month: Optional[str] = None) -> None:
         now = spend.now if spend is not None else self._clock()
         covered = 0.0
-        if usd > 0 and (spend is None or spend.build.closed_at is None):
+        # G8: the initial build never pays for transcription (§27.10: no allowance)
+        if usd > 0 and cls != UsageClass.TRANSCRIBE.value and (spend is None or spend.build.closed_at is None):
             build, covered = await self._repo.spend_initial_build(user_id, usd, now)
             if spend is not None:
                 spend.build = build
         day = now.astimezone(timezone.utc).date().isoformat()
         args = (cls, max(usd, 0.0), max(fallback_usd, 0.0), max(calls, 0), covered)
-        await self._repo.add_model_usage(user_id, month_key(now), day, *args)
+        booked = month or month_key(now)
+        await self._repo.add_model_usage(user_id, booked, day, *args)
         if spend is not None:
-            spend.usage = added_usage(spend.usage, day, *args)
+            if booked == month_key(spend.now):   # the tick holds this month's document only
+                spend.usage = added_usage(spend.usage, day, *args)
             for key, value in ((cls, usd), ("fallback", fallback_usd), ("initial_build", covered)):
                 if value > 0:
                     spend.usd[key] = spend.usd.get(key, 0.0) + value

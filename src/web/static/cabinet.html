@@ -1556,6 +1556,7 @@
           "drive.index_usd_triage": "looking at pictures",
           "drive.index_usd_profile": "describing documents",
           "drive.index_usd_passage": "passage keywords",
+          "drive.index_usd_transcribe": "transcribing recordings",
           "drive.index_initial_build": "First full description of the drive: {spent} of {allowance} spent",
           "drive.index_initial_build_done": "First full description of the drive: finished ({spent} spent)",
           "drive.index_kept_hint": "Your drive is disconnected. The index is kept for about 30 days in case it comes back; turn search off to delete it now.",
@@ -1672,6 +1673,7 @@
           "drive.index_usd_triage": "перегляд зображень",
           "drive.index_usd_profile": "опис документів",
           "drive.index_usd_passage": "ключові слова фрагментів",
+          "drive.index_usd_transcribe": "розшифровка записів",
           "drive.index_initial_build": "Перший повний опис диска: витрачено {spent} з {allowance}",
           "drive.index_initial_build_done": "Перший повний опис диска: завершено (витрачено {spent})",
           "drive.index_kept_hint": "Диск відключено. Індекс зберігається близько 30 днів на випадок, якщо диск повернеться; вимкни пошук, щоб видалити його зараз.",
@@ -1788,6 +1790,7 @@
           "drive.index_usd_triage": "examen des images",
           "drive.index_usd_profile": "description des documents",
           "drive.index_usd_passage": "mots-clés des passages",
+          "drive.index_usd_transcribe": "transcription des enregistrements",
           "drive.index_initial_build": "Première description complète du drive : {spent} dépensés sur {allowance}",
           "drive.index_initial_build_done": "Première description complète du drive : terminée ({spent} dépensés)",
           "drive.index_kept_hint": "Ton disque est déconnecté. L'index est conservé environ 30 jours au cas où il reviendrait ; désactive la recherche pour le supprimer maintenant.",
@@ -1904,6 +1907,7 @@
           "drive.index_usd_triage": "revisión de imágenes",
           "drive.index_usd_profile": "descripción de documentos",
           "drive.index_usd_passage": "palabras clave de fragmentos",
+          "drive.index_usd_transcribe": "transcripción de grabaciones",
           "drive.index_initial_build": "Primera descripción completa del disco: {spent} gastados de {allowance}",
           "drive.index_initial_build_done": "Primera descripción completa del disco: terminada ({spent} gastados)",
           "drive.index_kept_hint": "Tu disco está desconectado. El índice se conserva unos 30 días por si vuelve; desactiva la búsqueda para borrarlo ahora.",
@@ -3206,7 +3210,7 @@
           const usd = (v) => `$${num(v).toFixed(2)}`;
           const spent = ix.model_usd_month || {};
           const caps = ix.model_usd_caps || {};
-          const classes = ["reader", "triage", "profile", "passage"].filter((k) => num(spent[k]) > 0)
+          const classes = ["reader", "triage", "profile", "passage", "transcribe"].filter((k) => num(spent[k]) > 0)
             .map((k) => `${t("drive.index_usd_" + k)} ${usd(spent[k])} / ${usd(caps[k])}`);
           const build = ix.initial_build || {};
           const usage = [

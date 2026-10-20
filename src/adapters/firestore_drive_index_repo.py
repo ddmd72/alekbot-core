@@ -90,7 +90,8 @@ from ..domain.drive_index_params import (
     CONCEPT_KEYS_MAX, KEYED_DELETE_BATCH, NAME_QUERY_KEYS_MAX, RECORD_WRITE_BATCH, WRITE_BATCH_BYTES,
 )
 from ..domain.drive_usage import (
-    closed_initial, initial_doc_id, new_initial_build, spent_initial, usage_doc_id, usage_expires_at,
+    closed_initial, initial_doc_id, new_initial_build, reserved_field, spent_initial, usage_doc_id,
+    usage_expires_at,
 )
 from ..ports.drive_index_repository import DriveIndexRepository
 from ..utils.logger import logger
@@ -134,6 +135,7 @@ HINT_DISTANCE = "hint_distance"
 USAGE_EXPIRES_AT = "expires_at"                     # the TTL field of a month's usage document (§25.4.5)
 USAGE_USD_FIELDS: Tuple[str, ...] = tuple(f"{c.value}_usd" for c in UsageClass)
 USAGE_INITIAL_FIELDS: Tuple[str, ...] = tuple(f"{c.value}_initial_usd" for c in UsageClass)
+USAGE_RESERVED_FIELDS: Tuple[str, ...] = ("transcribe_reserved_usd",)
 STATE_FIELDS: Tuple[str, ...] = tuple(name for name in _DOC_FIELDS if name not in _LEASE)   # save_sync_state's
 
 
@@ -335,7 +337,8 @@ def usage_from_doc(data: Mapping[str, Any]) -> ModelUsageMonth:
     """A month's usage document; a class or a day never written reads as zero."""
     daily = {str(day): (float((v or {}).get("total_usd", 0.0)), float((v or {}).get("fallback_usd", 0.0)))
              for day, v in (data.get("daily") or {}).items()}
-    return ModelUsageMonth(**{name: float(data.get(name, 0.0)) for name in (*USAGE_USD_FIELDS, *USAGE_INITIAL_FIELDS)},
+    return ModelUsageMonth(**{name: float(data.get(name, 0.0))
+                              for name in (*USAGE_USD_FIELDS, *USAGE_INITIAL_FIELDS, *USAGE_RESERVED_FIELDS)},
                            fallback_usd=float(data.get("fallback_usd", 0.0)), calls=int(data.get("calls", 0)),
                            daily=daily)
 
@@ -1235,6 +1238,14 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
         }
         if covered_usd > 0:
             data[f"{UsageClass(cls).value}_initial_usd"] = firestore.Increment(float(covered_usd))
+        await self._usage_col.document(usage_doc_id(user_id, month)).set(data, merge=True)
+
+    async def reserve_model_usd(self, user_id: str, month: str, cls: str, delta_usd: float) -> None:
+        """One merge write with a server-side increment on `<cls>_reserved_usd`: concurrent reservations never lose
+        one, and nothing spans two documents (G9: the month is the reservation's)."""
+        name = reserved_field(cls)   # ValueError for a class with no reservations, before any write
+        data: Dict[str, Any] = {"user_id": user_id, "month": month, USAGE_EXPIRES_AT: usage_expires_at(month),
+                                name: firestore.Increment(float(delta_usd))}
         await self._usage_col.document(usage_doc_id(user_id, month)).set(data, merge=True)
 
     async def get_initial_build(self, user_id: str) -> InitialBuild:

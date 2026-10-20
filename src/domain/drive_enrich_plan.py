@@ -102,7 +102,8 @@ def default_context(now: datetime) -> EnrichContext:
 
 
 def available_usd(ctx: EnrichContext, cls: str) -> float:
-    initial = ctx.initial_balance_usd if ctx.initial_open else 0.0
+    # G8: the initial build never pays for transcription (§27.10: no initial-build allowance)
+    initial = ctx.initial_balance_usd if ctx.initial_open and cls != UsageClass.TRANSCRIBE.value else 0.0
     return max(0.0, initial) + max(0.0, ctx.caps_usd.get(cls, 0.0) - ctx.month_usd.get(cls, 0.0))
 
 

@@ -11,13 +11,14 @@ Public interface:
     usage_doc_id(user_id, month) / initial_doc_id(user_id)
     usage_expires_at(month) -> datetime          the TTL timestamp of a month's document
     added_usage(usage, day, cls, usd, fallback_usd, calls, covered_usd=0) -> ModelUsageMonth
+    reserved_field(cls) / reserved_usage(usage, cls, delta_usd)   a class's open reservations (transcription, Δ106)
     new_initial_build() -> InitialBuild          an unopened build with INITIAL_BUILD_USD
     spent_initial(build, usd, now) -> (InitialBuild, float)   the build after a spend and the dollars it covered
     closed_initial(build, now) -> InitialBuild
 """
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import fields, replace
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Tuple
 
@@ -56,6 +57,21 @@ def added_usage(usage: ModelUsageMonth, day: str, cls: str, usd: float, fallback
     daily[day] = (total + usd, fallback + fallback_usd)
     return replace(usage, **{name: getattr(usage, name) + usd, initial: getattr(usage, initial) + covered_usd},
                    fallback_usd=usage.fallback_usd + fallback_usd, calls=usage.calls + calls, daily=daily)
+
+
+def reserved_field(cls: str) -> str:
+    """The usage field holding a class's open reservations (`<cls>_reserved_usd`). Only classes bought ahead of their
+    cost (transcription batches, Δ106) have one; any other class is a ValueError."""
+    name = f"{UsageClass(cls).value}_reserved_usd"
+    if name not in {f.name for f in fields(ModelUsageMonth)}:
+        raise ValueError(f"usage class {cls!r} has no reservations")
+    return name
+
+
+def reserved_usage(usage: ModelUsageMonth, cls: str, delta_usd: float) -> ModelUsageMonth:
+    """`delta_usd` (negative releases) added to the class's open reservations in this month's document."""
+    name = reserved_field(cls)
+    return replace(usage, **{name: getattr(usage, name) + delta_usd})
 
 
 def new_initial_build() -> InitialBuild:
