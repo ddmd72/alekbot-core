@@ -112,8 +112,10 @@ outside the `if skills:` block so a failing skill store does not hide it.
 - `source`: where it comes from (file name, drive path, email subject or URL). One line, at most `MAX_SOURCE_CHARS`
   (150).
 
-**Result** (no code in it, as with `draft_skill`): `SYSTEM: The owner sees N proposed facts and a save command.
-Nothing is stored yet. Say in one sentence that pasting the command saves them; do not list the facts again.`
+**Result** (no code in it, as with `draft_skill`): `SYSTEM: Done. The proposal was created and the owner sees N proposed facts with a save command. Your part is
+complete: do not call propose_memory_facts again for these facts. Call it again only if the owner asks for changes.
+The facts go to memory when the owner pastes the save command; that step is the owner's. Say in one sentence that
+pasting the command saves them; do not list the facts again.`
 
 A validation error, a security refusal or a store failure is a failed tool result that names the problem, in the
 `draft_skill` style.
