@@ -130,7 +130,7 @@ class TestCopyDestination:
         r = await svc.run(_call(known={"files/lease.pdf": e.generation}), "copy",
                           {"source": "lease.pdf", "path": "files/lease.pdf"})
         assert not r.failed and store.live_text(USER, "files/lease.pdf") == "new"
-        assert store.calls == [("put", "files/lease.pdf")]
+        assert store.calls == [("list", ""), ("put", "files/lease.pdf")]  # list: the byte cap on an overwrite
 
     async def test_cap(self):
         svc, store = _svc(_conversion())

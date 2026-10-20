@@ -89,7 +89,8 @@ def parse_workspace_path(raw: object, *, allow_folder: bool = False) -> str:
     if "/" not in path:
         raise WorkspaceRefused(
             f"'{text}' is not a workspace path (paths start with projects/, references/, scratch/ or files/); "
-            f"to keep a chat file, use copy with source \"{text}\" and a path under files/",
+            f"to keep a chat file, use copy with source \"{text}\" and a destination path "
+            "(a text file: any folder; a binary file: under files/)",
             reason="wrong_store",
         )
     if len(path) > MAX_PATH_CHARS:
@@ -150,7 +151,7 @@ def parse_generation(raw: object) -> Optional[int]:
     text = str(raw if raw is not None else "").strip()
     if text.lower() in _NOT_PROVIDED or text == "0":
         return None
-    if not text.isdigit():
+    if not (text.isascii() and text.isdigit()):
         raise WorkspaceRefused(_GENERATION_HINT, reason="generation")
     return int(text)
 
@@ -264,6 +265,14 @@ def check_caps(live: Sequence[WorkspaceEntry], adding_bytes: int) -> None:
         )
 
 
+def check_replace_caps(live: Sequence[WorkspaceEntry], old_size: int, new_size: int) -> None:
+    """Byte cap for an overwrite of a live file (the file count does not change)."""
+    if sum(e.size for e in live) - old_size + new_size > MAX_BYTES_PER_USER:
+        raise WorkspaceRefused(
+            f"workspace full ({MAX_BYTES_PER_USER // (1024 * 1024)} MB); delete or merge first", reason="caps",
+        )
+
+
 def check_file_size(path: str, data: bytes) -> None:
     if len(data) > MAX_FILE_BYTES:
         raise WorkspaceRefused(f"{path}: file over {MAX_FILE_BYTES // (1024 * 1024)} MB", reason="caps")
@@ -282,7 +291,7 @@ def _positive_int(raw: object) -> Optional[int]:
     if isinstance(raw, int):
         return raw if raw > 0 else None
     text = str(raw).strip()
-    if text.lstrip("-").isdigit():
+    if text.isascii() and text.lstrip("-").isdigit():
         n = int(text)
         return n if n > 0 else None
     return None

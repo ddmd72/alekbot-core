@@ -29,6 +29,7 @@ from ..domain.workspace import (
     binary_message,
     changed_lines,
     check_caps,
+    check_replace_caps,
     check_file_size,
     find_references,
     folder_of,
@@ -398,6 +399,8 @@ class WorkspaceService:
         current = next((e for e in live if e.path == path), None)
         if current is None:
             check_caps(live, len(blob.data))  # restoring a deleted file adds a live file
+        else:
+            check_replace_caps(live, current.size, len(blob.data))
         entry = await self._store.put(
             call.user_id, path, blob.data, self._meta(call, restored_from=generation),
             current.generation if current else 0,
@@ -419,6 +422,10 @@ class WorkspaceService:
         log.nbytes = len(data)
         known = call.known.get(dst)
         if known is not None:
+            live = await self._store.list(call.user_id, "")
+            current = next((e for e in live if e.path == dst), None)
+            if current is not None:
+                check_replace_caps(live, current.size, len(data))
             entry = await self._store.put(call.user_id, dst, data, self._meta(call), known)
         else:
             live = await self._store.list(call.user_id, "")
@@ -439,7 +446,7 @@ class WorkspaceService:
             raise WorkspaceRefused(
                 "copy needs a source: a chat file name, a delivered-document key or a workspace path", reason="source",
             )
-        if source.startswith("drive:"):
+        if "drive:" in source:
             raise WorkspaceRefused(
                 f"'{source}' is on the user's drive; drive files are not copied into the workspace — open it with "
                 "open_file_from_drive",
