@@ -15,6 +15,7 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt
       - name: sandbox tests, serial, verbose, stack dump on hang
+        shell: bash  # -o pipefail: `| tail` must not mask pytest's exit code
         run: |
           timeout 600 python -m pytest -p no:xdist -v -o faulthandler_timeout=60 --asyncio-mode=auto \
             tests/unit/adapters/sandbox_engine tests/unit/adapters/sandbox_client \
