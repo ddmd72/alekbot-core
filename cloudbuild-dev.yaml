@@ -276,6 +276,10 @@ steps:
 
 # Build logs go to Cloud Logging only: required once a build runs as a user-specified service account
 # (a later step sets `serviceAccount`); harmless for the default build identity.
+# Builds run as their own least-privilege identity (IAM Step 1), never as the default compute identity.
+# A user-specified build identity requires `options.logging: CLOUD_LOGGING_ONLY` (below).
+serviceAccount: 'projects/$PROJECT_ID/serviceAccounts/alek-deployer@$PROJECT_ID.iam.gserviceaccount.com'
+
 options:
   logging: CLOUD_LOGGING_ONLY
 
