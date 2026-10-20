@@ -25,6 +25,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import math
 import re
 import secrets
 from dataclasses import dataclass, field
@@ -193,8 +194,8 @@ def decode_meta(header: str) -> SandboxMeta:
     raw_limits = obj["limits"]
     if not isinstance(raw_limits, dict) or set(raw_limits) != _LIMIT_KEYS:
         raise SandboxContractError("limits keys outside the closed schema")
-    if not all(_is_number(v) for v in raw_limits.values()):
-        raise SandboxContractError("limits must be numbers")
+    if not all(_is_number(v) and math.isfinite(v) for v in raw_limits.values()):
+        raise SandboxContractError("limits must be finite numbers")
     kind = obj.get("kind")
     ext = obj.get("ext")
     if kind is not None and (not isinstance(kind, str) or not _KIND_RE.match(kind)):
@@ -234,8 +235,8 @@ def decode_outcome(header: str) -> SandboxOutcome:
 def clamp_limits(requested: SandboxLimits, ceiling: SandboxLimits) -> SandboxLimits:
     """The caller's limits may only lower the service's. A non-positive request is an error, not a no-limit."""
     for value in (requested.wall_s, requested.memory_bytes, requested.cpu_s, requested.file_bytes):
-        if value <= 0:
-            raise SandboxContractError("limits must be positive")
+        if not math.isfinite(value) or not value > 0:
+            raise SandboxContractError("limits must be finite and positive")
     return SandboxLimits(
         wall_s=min(requested.wall_s, ceiling.wall_s),
         memory_bytes=min(requested.memory_bytes, ceiling.memory_bytes),
