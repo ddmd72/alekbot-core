@@ -69,10 +69,11 @@ chunker infinite loop, not a standing hazard). `make test-unit` / `make check` r
 via pytest-xdist (`-n auto`; cap with `PYTEST_WORKERS=6`): ~1:34 on a 12-core Mac vs ~5:00
 single-process. The `-n` flag lives in the Makefile, not `pytest.ini`, so a targeted
 `pytest path::test` stays one process; integration/e2e targets stay serial. A test that fails only
-under xdist is order-dependent — a real test bug, fixed under the reviewer rule, not re-serialised. The one
-exception is a test that measures CPU time: it is marked `cpu_benchmark` and runs alone after the parallel suite,
-because a saturated runner inflates CPU time (0.72 s idle vs up to 2.2 s under the suite) with no test bug behind
-it. Lint scope is `src/` only (default high-signal ruleset: pyflakes + pycodestyle
+under xdist is order-dependent — a real test bug, fixed under the reviewer rule, not re-serialised. Tests
+that measure CPU time are marked `cpu_benchmark` and are **disabled by owner decision (2026-10-20)**: they
+failed on a loaded machine with no code change (even run alone, even on a clean `main`), so full runs failed
+and were re-run. `tests/conftest.py` skips them unless `RUN_CPU_BENCHMARKS=1`; `make check` does not run
+them. Do not re-enable them in the gate without the owner. Lint scope is `src/` only (default high-signal ruleset: pyflakes + pycodestyle
 errors). `ruff format` exists as a dev convenience but is not enforced in CI — the codebase is not
 mass-reformatted.
 
@@ -262,7 +263,7 @@ stale `running` jobs.
   `notify_raw()`: direct text, no reformatting. `prompt_tokens` in `UsageMetadata` always = uncached input
   (OpenAI/Gemini subtract cached from total).
 - **Billing daily summary** — Scheduler 09:00 Europe/Madrid → `billing_daily_summary`: posts yesterday's
-  `prev_daily_tokens/cost` snapshot to Slack. Per-provider cache pricing Claude 0.1× (Opus 5.5: 0.05×)/OpenAI 0.1×/Gemini 0.1× (3.x generation; was 0.25×).
+  `prev_daily_tokens/cost` snapshot to Slack. Per-provider cache pricing Claude 0.1× (Opus 5.5 / Sonnet 5.5: 0.05×)/OpenAI 0.1×/Gemini 0.1× (3.x generation; was 0.25×).
 - **Token accounting is per-execution, NOT per-instance.** `TokenLedger` (`domain/billing.py`) lives in a
   `ContextVar` opened by `BaseAgent._execution_billing_scope()`; `_call_llm` accumulates into it,
   `_flush_billing` reads it. Agent instances are per-user singletons and `DelegationEngine` fans a tool
@@ -467,6 +468,9 @@ Thresholds (per-user): prod threshold=50/batch=30, dev threshold=70/batch=50. De
 a duplicate beats a loss). 3 vectors/fact + SCD2; biographical cache updated for next conversation.
 **Serialization:** model parts use `p.text` (summary), NOT `p.full_text` (verbose + web_search_context);
 user parts `p.consolidation_text or p.text` (prefixed `\n\n`; `consolidation_text` is legacy, see below).
+**Loop alerts:** a pass that hits the turn cap without a final report posts a 🚨 ops alert (`AlertSinkPort`);
+while `CONSOLIDATION_STATS_ALERTS` (`os.getenv`, default on, temporary since 2026-10-20) is on, every pass
+posts a 📊 stats line. See `decisions/sonnet55_adaptive_thinking_stall.md`.
 
 **Memory facts the owner confirms** — the bot never writes to memory itself. The consolidator reads
 every user message as the owner's own words, so the removed `save_to_memory` intent let bot-written
