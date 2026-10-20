@@ -17,6 +17,9 @@ from ..domain.drive_index import DriveChunk, DriveIndexRecord, DriveSyncState, L
 from ..domain.drive_index_lean import ChunkId, DriveChunkLean, DriveHintLean, DriveRecordLean, lean_of
 from ..domain.drive_index_params import CONCEPT_KEYS_MAX
 from ..domain.drive_search import is_not_read_yet, is_unread
+from ..domain.drive_transcript import (
+    StoredTranscript, TranscriptBatch, TranscriptJob, WindowTranscript, batch_doc_id,
+)
 from ..domain.drive_usage import (
     added_usage, closed_initial, new_initial_build, reserved_field, reserved_usage, spent_initial,
 )
@@ -54,6 +57,12 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
         self.hints: Dict[Tuple[str, str, int, int], Tuple[DriveHintDoc, List[float]]] = {}
         self.usage: Dict[Tuple[str, str], ModelUsageMonth] = {}
         self.initial: Dict[str, InitialBuild] = {}
+        # Transcripts (§27.3-§27.5, §27.8 b): jobs by (user_id, item_id), their window results by (user_id, item_id,
+        # index), batches by (user_id, provider name) and the store by (user_id, content_key)
+        self.transcript_jobs: Dict[Tuple[str, str], TranscriptJob] = {}
+        self.window_results: Dict[Tuple[str, str, int], WindowTranscript] = {}
+        self.batches: Dict[Tuple[str, str], TranscriptBatch] = {}
+        self.transcripts: Dict[Tuple[str, str], StoredTranscript] = {}
         self._lock = asyncio.Lock()
 
     # -- sync state --------------------------------------------------------------------------
@@ -480,6 +489,57 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
     async def close_initial_build(self, user_id: str, now: datetime) -> None:
         async with self._lock:
             self.initial[user_id] = closed_initial(self.initial.get(user_id) or new_initial_build(), now)
+
+    # -- transcripts: jobs, window results, batches, the store (§27.3-§27.5, §27.8 b) ---------------------------------
+
+    async def get_transcript_job(self, user_id: str, item_id: str) -> Optional[TranscriptJob]:
+        return self.transcript_jobs.get((user_id, item_id))
+
+    async def save_transcript_job(self, job: TranscriptJob) -> None:
+        self.transcript_jobs[(job.user_id, job.item_id)] = job
+
+    async def delete_transcript_job(self, user_id: str, item_id: str) -> None:
+        self.transcript_jobs.pop((user_id, item_id), None)
+        for key in [k for k in self.window_results if k[:2] == (user_id, item_id)]:
+            del self.window_results[key]
+
+    async def save_window_result(self, user_id: str, item_id: str, index: int, result: WindowTranscript) -> None:
+        self.window_results[(user_id, item_id, index)] = result
+
+    async def get_window_results(self, user_id: str, item_id: str) -> Dict[int, WindowTranscript]:
+        return {k[2]: v for k, v in sorted(self.window_results.items()) if k[:2] == (user_id, item_id)}
+
+    async def create_batch(self, batch: TranscriptBatch) -> bool:
+        async with self._lock:
+            if (batch.user_id, batch.name) in self.batches:
+                return False
+            self.batches[(batch.user_id, batch.name)] = batch
+            return True
+
+    async def save_batch(self, batch: TranscriptBatch) -> None:
+        self.batches[(batch.user_id, batch.name)] = batch
+
+    async def delete_batch(self, user_id: str, name: str) -> None:
+        self.batches.pop((user_id, name), None)
+
+    async def get_open_batches(self, user_id: str, now: datetime, limit: int) -> List[TranscriptBatch]:
+        due = [b for b in self.batches.values()
+               if b.user_id == user_id and b.next_poll_at is not None and b.next_poll_at <= now]
+        return sorted(due, key=lambda b: (b.next_poll_at, batch_doc_id(b.user_id, b.name)))[:limit]
+
+    async def get_transcript(self, user_id: str, content_key: str) -> Optional[StoredTranscript]:
+        return self.transcripts.get((user_id, content_key))
+
+    async def put_transcript(self, user_id: str, stored: StoredTranscript) -> None:
+        self.transcripts[(user_id, stored.content_key)] = stored
+
+    async def touch_transcript(self, user_id: str, content_key: str, last_used_at: datetime) -> None:
+        current = self.transcripts.get((user_id, content_key))
+        if current is not None:
+            self.transcripts[(user_id, content_key)] = replace(current, last_used_at=last_used_at)
+
+    async def delete_transcript(self, user_id: str, content_key: str) -> None:
+        self.transcripts.pop((user_id, content_key), None)
 
 
 def _query_keys(keys: Sequence[str], method: str) -> List[str]:

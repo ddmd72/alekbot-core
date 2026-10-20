@@ -87,7 +87,12 @@ from ..domain.drive_index_lean import (
     RECORD_LEAN_FIELDS, ChunkId, DriveChunkLean, DriveHintLean, DriveRecordLean, lean_of,
 )
 from ..domain.drive_index_params import (
-    CONCEPT_KEYS_MAX, KEYED_DELETE_BATCH, NAME_QUERY_KEYS_MAX, RECORD_WRITE_BATCH, WRITE_BATCH_BYTES,
+    CONCEPT_KEYS_MAX, KEYED_DELETE_BATCH, NAME_QUERY_KEYS_MAX, RECORD_WRITE_BATCH, TRANSCRIPT_DOC_BYTES,
+    WRITE_BATCH_BYTES,
+)
+from ..domain.drive_transcript import (
+    JobWindow, Segment, StitchedTranscript, StoredTranscript, TranscriptBatch, TranscriptJob, WindowSpec,
+    WindowTranscript, batch_doc_id, job_doc_id, transcript_doc_id,
 )
 from ..domain.drive_usage import (
     closed_initial, initial_doc_id, new_initial_build, reserved_field, spent_initial, usage_doc_id,
@@ -356,6 +361,136 @@ def initial_from_doc(data: Mapping[str, Any]) -> InitialBuild:
                         closed_at=_dt(data.get("closed_at")))
 
 
+# -- transcripts (§27.3-§27.5, §27.8 b) -------------------------------------------------------------------------------
+# Hand-written codecs: the job's windows are flat maps (the spec's fields beside the state), and no field of any of
+# these documents is a URL (§27.4): `file_ref` is the provider's file NAME (`files/<id>`).
+
+def _segment_to_doc(seg: Segment) -> Dict[str, Any]:
+    doc: Dict[str, Any] = {"start_s": seg.start_s, "speaker": seg.speaker, "text": seg.text}
+    if seg.interpolated:
+        doc["interpolated"] = True
+    if seg.gap:
+        doc["gap"] = True
+    return doc
+
+
+def _segment_from_doc(data: Mapping[str, Any]) -> Segment:
+    speaker = data.get("speaker")
+    return Segment(start_s=float(data.get("start_s", 0.0)), speaker=None if speaker is None else int(speaker),
+                   text=data.get("text", ""), interpolated=bool(data.get("interpolated", False)),
+                   gap=bool(data.get("gap", False)))
+
+
+def _window_to_doc(window: JobWindow) -> Dict[str, Any]:
+    return {"index": window.spec.index, "start_s": window.spec.start_s, "duration_s": window.spec.duration_s,
+            "state": window.state, "file_ref": window.file_ref, "request_key": window.request_key,
+            "attempts": window.attempts, "time_resubmits": window.time_resubmits,
+            "interp_resubmits": window.interp_resubmits, "gap": window.gap, "batch_name": window.batch_name,
+            "files_expire_at": window.files_expire_at, "reupload_used": window.reupload_used}
+
+
+def _window_from_doc(data: Mapping[str, Any]) -> JobWindow:
+    return JobWindow(
+        spec=WindowSpec(index=int(data["index"]), start_s=float(data.get("start_s", 0.0)),
+                        duration_s=float(data.get("duration_s", 0.0))),
+        state=data.get("state", "extracted"), file_ref=data.get("file_ref", ""),
+        request_key=data.get("request_key", ""), attempts=int(data.get("attempts", 0)),
+        time_resubmits=int(data.get("time_resubmits", 0)), interp_resubmits=int(data.get("interp_resubmits", 0)),
+        gap=bool(data.get("gap", False)), batch_name=data.get("batch_name", ""),
+        files_expire_at=_dt(data.get("files_expire_at")), reupload_used=bool(data.get("reupload_used", False)))
+
+
+def job_to_doc(job: TranscriptJob) -> Dict[str, Any]:
+    return {"user_id": job.user_id, "item_id": job.item_id, "content_key": job.content_key,
+            "content_version": job.content_version, "duration_s": job.duration_s,
+            "windows": [_window_to_doc(w) for w in job.windows], "batch_name": job.batch_name,
+            "files_expire_at": job.files_expire_at, "reserved_usd": job.reserved_usd,
+            "reserved_month": job.reserved_month, "transcribed_at": job.transcribed_at}
+
+
+def job_from_doc(data: Mapping[str, Any]) -> TranscriptJob:
+    return TranscriptJob(
+        user_id=data["user_id"], item_id=data["item_id"], content_key=data.get("content_key", ""),
+        content_version=int(data.get("content_version", 0)), duration_s=float(data.get("duration_s", 0.0)),
+        windows=tuple(_window_from_doc(w) for w in data.get("windows") or ()), batch_name=data.get("batch_name", ""),
+        files_expire_at=_dt(data.get("files_expire_at")), reserved_usd=float(data.get("reserved_usd", 0.0)),
+        reserved_month=data.get("reserved_month", ""), transcribed_at=_dt(data.get("transcribed_at")))
+
+
+def window_result_to_doc(user_id: str, item_id: str, index: int, result: WindowTranscript) -> Dict[str, Any]:
+    return {"user_id": user_id, "item_id": item_id, "index": index, "language_codes": list(result.language_codes),
+            "speakers": result.speakers, "no_speech": result.no_speech,
+            "segments": [_segment_to_doc(s) for s in result.segments]}
+
+
+def window_result_from_doc(data: Mapping[str, Any]) -> WindowTranscript:
+    return WindowTranscript(language_codes=_strs(data.get("language_codes")), speakers=int(data.get("speakers", 0)),
+                            no_speech=bool(data.get("no_speech", False)),
+                            segments=tuple(_segment_from_doc(s) for s in data.get("segments") or ()))
+
+
+def batch_to_doc(batch: TranscriptBatch) -> Dict[str, Any]:
+    return {"user_id": batch.user_id, "name": batch.name, "request_keys": list(batch.request_keys),
+            "submitted_at": batch.submitted_at, "last_polled_at": batch.last_polled_at,
+            "reserved_usd": batch.reserved_usd, "reserved_month": batch.reserved_month, "state": batch.state,
+            "created_at": batch.created_at, "next_poll_at": batch.next_poll_at, "kind": batch.kind}
+
+
+def batch_from_doc(data: Mapping[str, Any]) -> TranscriptBatch:
+    return TranscriptBatch(
+        name=data["name"], user_id=data["user_id"], request_keys=_strs(data.get("request_keys")),
+        submitted_at=_dt(data.get("submitted_at")), last_polled_at=_dt(data.get("last_polled_at")),
+        reserved_usd=float(data.get("reserved_usd", 0.0)), reserved_month=data.get("reserved_month", ""),
+        state=data.get("state", "submitted"), created_at=_dt(data.get("created_at")),
+        next_poll_at=_dt(data.get("next_poll_at")), kind=data.get("kind", "transcribe"))
+
+
+def transcript_head_to_doc(user_id: str, stored: StoredTranscript, parts: int) -> Dict[str, Any]:
+    """The store's head document WITHOUT the segments (they ride inline or in `parts/{n}`, see `put_transcript`)."""
+    t = stored.transcript
+    return {"user_id": user_id, "content_key": stored.content_key, "stub": stored.stub, "summary": stored.summary,
+            "summary_language": stored.summary_language, "transcribe_version": stored.transcribe_version,
+            "render_version": stored.render_version, "summary_version": stored.summary_version,
+            "last_used_at": stored.last_used_at, "has_transcript": t is not None, "parts": parts,
+            "language_codes": list(t.language_codes) if t else [], "speakers": t.speakers if t else 0,
+            "duration_s": t.duration_s if t else 0.0, "uncertain_seam": bool(t and t.uncertain_seam),
+            "truncated": bool(t and t.truncated)}
+
+
+def transcript_from_doc(head: Mapping[str, Any], segments: Sequence[Mapping[str, Any]]) -> StoredTranscript:
+    transcript: Optional[StitchedTranscript] = None
+    if head.get("has_transcript"):
+        transcript = StitchedTranscript(
+            segments=tuple(_segment_from_doc(s) for s in segments), language_codes=_strs(head.get("language_codes")),
+            speakers=int(head.get("speakers", 0)), duration_s=float(head.get("duration_s", 0.0)),
+            uncertain_seam=bool(head.get("uncertain_seam", False)), truncated=bool(head.get("truncated", False)))
+    return StoredTranscript(
+        content_key=head["content_key"], transcript=transcript, stub=head.get("stub", ""),
+        summary=head.get("summary", ""), summary_language=head.get("summary_language", ""),
+        transcribe_version=int(head.get("transcribe_version", 0)), render_version=int(head.get("render_version", 0)),
+        summary_version=int(head.get("summary_version", 0)), last_used_at=_dt(head.get("last_used_at")))
+
+
+_PART_MARGIN_BYTES = 4_096      # a part's own fields and the document name, on top of its segments' estimate
+
+
+def split_segments(segments: Sequence[Mapping[str, Any]], limit: int) -> List[List[Mapping[str, Any]]]:
+    """Consecutive runs of encoded segments, each estimated at most `limit` bytes (one segment over it goes alone)."""
+    parts: List[List[Mapping[str, Any]]] = []
+    current: List[Mapping[str, Any]] = []
+    used = 0
+    for seg in segments:
+        size = stored_bytes(seg)
+        if current and used + size > limit:
+            parts.append(current)
+            current, used = [], 0
+        current.append(seg)
+        used += size
+    if current:
+        parts.append(current)
+    return parts
+
+
 def _query_keys(keys: Sequence[str], method: str) -> List[str]:
     """The distinct keys of one `array_contains_any`, in order. More than CONCEPT_KEYS_MAX (Firestore's limit of 30
     values and 30 disjunctions per query) is refused, logged, never cut: a cut key is a file lost without a trace.
@@ -440,6 +575,9 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
         self._chunks_name = env_config.drive_index_chunks_collection   # resolved per call, like a reference
         self._hints_name = env_config.drive_index_hints_collection     # (Search v2, §25.2.2)
         self._usage_name = env_config.drive_model_usage_collection     # (Search v2, §25.4.5)
+        self._jobs_name = env_config.drive_transcript_jobs_collection          # (transcripts, §27.3)
+        self._batches_name = env_config.drive_transcript_batches_collection    # (§27.5, G10)
+        self._transcripts_name = env_config.drive_transcripts_collection       # (§27.8 b)
         # Serialises this process's initial-build spends (review m1): enrichment spends concurrently on one document,
         # and a transaction that loses its retries is an Aborted after the money was spent. The transaction stays for
         # other processes (the indexer runs max-instances 1, concurrency 1).
@@ -1282,6 +1420,117 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
 
         async with self._initial_lock:
             await _close(self._db.transaction())
+
+
+    # -- transcripts: jobs, window results, batches, the store (§27.3-§27.5, §27.8 b) ---------------------------------
+
+    def _job_ref(self, user_id: str, item_id: str) -> Any:
+        return self._db.collection(self._jobs_name).document(job_doc_id(user_id, item_id))
+
+    def _window_col(self, user_id: str, item_id: str) -> Any:
+        """The job's `windows` subcollection (G11)."""
+        return self._db.collection(f"{self._jobs_name}/{job_doc_id(user_id, item_id)}/windows")
+
+    def _batch_ref(self, user_id: str, name: str) -> Any:
+        return self._db.collection(self._batches_name).document(batch_doc_id(user_id, name))
+
+    def _transcript_ref(self, user_id: str, content_key: str) -> Any:
+        return self._db.collection(self._transcripts_name).document(transcript_doc_id(user_id, content_key))
+
+    def _parts_col(self, user_id: str, content_key: str) -> Any:
+        return self._db.collection(f"{self._transcripts_name}/{transcript_doc_id(user_id, content_key)}/parts")
+
+    async def get_transcript_job(self, user_id: str, item_id: str) -> Optional[TranscriptJob]:
+        snap = await self._job_ref(user_id, item_id).get()
+        return job_from_doc(snap.to_dict()) if snap.exists else None
+
+    async def save_transcript_job(self, job: TranscriptJob) -> None:
+        await self._job_ref(job.user_id, job.item_id).set(job_to_doc(job))
+
+    async def delete_transcript_job(self, user_id: str, item_id: str) -> None:
+        snaps = await self._window_col(user_id, item_id).select([FieldPath.document_id()]).get()
+        await self._delete_refs([snap.reference for snap in snaps], KEYED_DELETE_BATCH)
+        await self._job_ref(user_id, item_id).delete()
+
+    async def save_window_result(self, user_id: str, item_id: str, index: int, result: WindowTranscript) -> None:
+        await self._window_col(user_id, item_id).document(str(index)).set(
+            window_result_to_doc(user_id, item_id, index, result))
+
+    async def get_window_results(self, user_id: str, item_id: str) -> Dict[int, WindowTranscript]:
+        snaps = await self._window_col(user_id, item_id).order_by("index").get()
+        results = {}
+        for snap in snaps:
+            data = snap.to_dict()
+            results[int(data["index"])] = window_result_from_doc(data)
+        return results
+
+    async def create_batch(self, batch: TranscriptBatch) -> bool:
+        try:
+            await self._batch_ref(batch.user_id, batch.name).create(batch_to_doc(batch))
+        except AlreadyExists:
+            return False
+        return True
+
+    async def save_batch(self, batch: TranscriptBatch) -> None:
+        await self._batch_ref(batch.user_id, batch.name).set(batch_to_doc(batch))
+
+    async def delete_batch(self, user_id: str, name: str) -> None:
+        await self._batch_ref(user_id, name).delete()
+
+    async def get_open_batches(self, user_id: str, now: datetime, limit: int) -> List[TranscriptBatch]:
+        query = (self._db.collection(self._batches_name).where(filter=FieldFilter("user_id", "==", user_id))
+                 .where(filter=FieldFilter("next_poll_at", "<=", now)).order_by("next_poll_at").limit(limit))
+        return [batch_from_doc(snap.to_dict()) for snap in await query.get()]
+
+    async def get_transcript(self, user_id: str, content_key: str) -> Optional[StoredTranscript]:
+        snap = await self._transcript_ref(user_id, content_key).get()
+        if not snap.exists:
+            return None
+        head = snap.to_dict()
+        parts = int(head.get("parts", 0))
+        if parts == 0:
+            return transcript_from_doc(head, head.get("segments") or ())
+        by_index = {}
+        for part in await self._parts_col(user_id, content_key).order_by("index").get():
+            data = part.to_dict()
+            by_index[int(data["index"])] = data.get("segments") or []
+        if set(by_index) != set(range(parts)):
+            logger.error(f"[DriveIndex] transcript store: head names {parts} parts, found {len(by_index)}")
+            return None
+        return transcript_from_doc(head, [seg for i in range(parts) for seg in by_index[i]])
+
+    async def put_transcript(self, user_id: str, stored: StoredTranscript) -> None:
+        """One head document; the segments inline while the whole fits TRANSCRIPT_DOC_BYTES, otherwise in `parts/{n}`,
+        written first, the head last (a head never names a part that does not exist). Parts left by a larger earlier
+        version are deleted after the head."""
+        encoded = [_segment_to_doc(s) for s in stored.transcript.segments] if stored.transcript else []
+        head = transcript_head_to_doc(user_id, stored, 0)
+        if stored_bytes(head) + stored_bytes(encoded) + _DOC_OVERHEAD_BYTES <= TRANSCRIPT_DOC_BYTES:
+            if encoded:
+                head["segments"] = encoded
+            parts: List[List[Mapping[str, Any]]] = []
+        else:
+            parts = split_segments(encoded, TRANSCRIPT_DOC_BYTES - _PART_MARGIN_BYTES)
+            head["parts"] = len(parts)
+        col = self._parts_col(user_id, stored.content_key)
+        for n, segments in enumerate(parts):
+            await col.document(str(n)).set({"user_id": user_id, "content_key": stored.content_key, "index": n,
+                                            "segments": list(segments)})
+        await self._transcript_ref(user_id, stored.content_key).set(head)
+        stale = [snap.reference for snap in await col.select([FieldPath.document_id()]).get()
+                 if not snap.reference.id.isdigit() or int(snap.reference.id) >= len(parts)]
+        await self._delete_refs(stale, KEYED_DELETE_BATCH)
+
+    async def touch_transcript(self, user_id: str, content_key: str, last_used_at: datetime) -> None:
+        try:
+            await self._transcript_ref(user_id, content_key).update({"last_used_at": last_used_at})
+        except NotFound:
+            return   # never creates a head; the transcript was removed
+
+    async def delete_transcript(self, user_id: str, content_key: str) -> None:
+        await self._transcript_ref(user_id, content_key).delete()
+        snaps = await self._parts_col(user_id, content_key).select([FieldPath.document_id()]).get()
+        await self._delete_refs([snap.reference for snap in snaps], KEYED_DELETE_BATCH)
 
 
 # Transient on Firestore's side: the same call may succeed later, so it is never one file's failure (§8.2).

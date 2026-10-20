@@ -10,6 +10,9 @@ from datetime import datetime
 from enum import Enum
 from typing import Optional, Tuple
 
+WINDOW_STATES: Tuple[str, ...] = ("extracted", "uploaded", "submitted", "done", "failed")   # JobWindow.state (§27.5)
+BATCH_KIND_TRANSCRIBE = "transcribe"      # TranscriptBatch.kind; "summary" joins it with T3
+
 
 class TranscriptStub(str, Enum):
     """The four stub values of `DriveIndexRecord.transcript_stub` (§27.3); the empty string means "not a stub"."""
@@ -96,6 +99,9 @@ class JobWindow:
     time_resubmits: int = 0           # the time validator's one resubmit (§27.6, G37)
     interp_resubmits: int = 0         # the interpolation-share check's one resubmit (§27.6, G37)
     gap: bool = False                 # done as a gap marker: the provider refused it or the retries ran out
+    batch_name: str = ""              # the provider batch carrying it while submitted (T-R12)
+    files_expire_at: Optional[datetime] = None   # when the provider's input file expires (§27.5)
+    reupload_used: bool = False       # the one re-extract and re-upload of an expired file is spent
 
 
 @dataclass(frozen=True)
@@ -104,12 +110,14 @@ class TranscriptJob:
     user_id: str
     item_id: str
     content_key: str
+    content_version: int = 0          # the record's `transcript_version` the job was made for (T-R12)
     duration_s: float = 0.0
     windows: Tuple[JobWindow, ...] = ()
     batch_name: str = ""
     files_expire_at: Optional[datetime] = None
     reserved_usd: float = 0.0         # the file's estimate, reserved the moment it fit (G39)
     reserved_month: str = ""          # "YYYY-MM" the reservation was made in; its cost is booked there (G9)
+    transcribed_at: Optional[datetime] = None   # when the last window was collected (T-R12)
 
 
 @dataclass(frozen=True)
@@ -120,4 +128,22 @@ class TranscriptBatch:
     request_keys: Tuple[str, ...] = ()
     submitted_at: Optional[datetime] = None
     last_polled_at: Optional[datetime] = None
-    reserved_usd: float = 0.0
+    reserved_usd: float = 0.0         # the sum of this submission's reservations (T-R11), not the file's
+    reserved_month: str = ""          # "YYYY-MM" of that reservation (G9)
+    state: str = "submitted"          # submitted | done | failed; a closed batch has no `next_poll_at`
+    created_at: Optional[datetime] = None
+    next_poll_at: Optional[datetime] = None   # None = closed; set = open and due then (§27.5)
+    kind: str = BATCH_KIND_TRANSCRIBE
+
+
+def job_doc_id(user_id: str, item_id: str) -> str:
+    return f"{user_id}:{item_id}"
+
+
+def batch_doc_id(user_id: str, name: str) -> str:
+    """A provider batch name is a path (`batches/<id>`); a document id cannot hold a slash."""
+    return f"{user_id}:{name.replace('/', '_')}"
+
+
+def transcript_doc_id(user_id: str, content_key: str) -> str:
+    return f"{user_id}:{content_key}"
