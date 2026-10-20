@@ -53,7 +53,7 @@ async def test_session_config_builds_the_lelik_prompt_over_persona_context():
     assert kwargs["biographical_facts"] == [{"domain": "work", "text": "f"}]
     assert kwargs["conversation_history"] == [{"role": "user", "content": "hi"}]
     assert kwargs["include_biographical"] is True
-    assert kwargs["include_directives"] is True
+    assert kwargs["include_directives"] is False
     assert kwargs["include_datetime"] is True
 
 

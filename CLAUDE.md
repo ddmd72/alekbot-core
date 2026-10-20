@@ -326,10 +326,11 @@ lands on `/voice/status`, and it only gates memory — a `machine_*` call with u
 gets no summary (`domain.voice_amd.is_voicemail`). Sync AMD hung up on an owner who opened with a
 request (>2.4 s of speech reads as a greeting). On pickup, `/voice/answer` has `LelikPersonaService` assemble Lelik's prompt and returns TwiML
 pointing Twilio's Media Stream at the relay. **Lelik starts warm, not as a front desk** (owner
-decision 2026-09-22, `decisions/lelik_warm_context.md`). He gets the whole biographical cache minus
-`UserBotConfig.voice_excluded_fact_domains` (empty by default: give everything, trim what proves out
-of place), standing directives, and the primary channel's last 30 messages as stored summaries (no
-LLM call), read through `UserNotificationService.resolve_channel`. That is the same chain the call
+decision 2026-09-22, `decisions/lelik_warm_context.md`). He gets only the facts of the domains in
+`UserBotConfig.voice_fact_domains` (allowlist, default `biographical` + `preference`; the rest is
+reachable through `search_memory`), **no standing directives** (they are written for the text
+orchestrator; revised 2026-10-21), and the primary channel's last 30 messages as stored summaries
+(no LLM call; Smart writes them in Alek's own character with emojis, up to 60 words / 600 chars), read through `UserNotificationService.resolve_channel`. That is the same chain the call
 summary is written through, so past calls reach the next one. He talks from that and forwards to
 Alek only what he does not hold (mail, tasks, documents, web, actions). **Character is shared
 with Smart:** the `lelik` profile reuses Smart's overridable `ARCHETYPE_*`/`VIBE_*`/`VOICE_*`/

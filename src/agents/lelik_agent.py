@@ -102,7 +102,7 @@ class LelikAgent(BaseAgent):
             biographical_facts=context.biographical_facts,
             conversation_history=context.conversation_history,
             include_biographical=True,
-            include_directives=True,
+            include_directives=False,
             include_datetime=True,
         )
         available = self.coordinator.get_available_intents_for(self._descriptor) if self.coordinator else []

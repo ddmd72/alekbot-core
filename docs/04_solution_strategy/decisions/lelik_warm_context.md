@@ -14,6 +14,25 @@ summaries, and date, time and location. Character comes from Smart's own overrid
 and Lelik adds only a role token and a phone-medium token. Barge-in truncation and silence handling
 are done by the relay.
 
+## Revised 2026-10-21
+
+After a live call on grok-voice-3.0 Lelik was terse and businesslike. Two inputs were written for
+the text orchestrator or were not about the person: standing directives ("keep answers short,
+no long preambles", "use bullet lists in chat") and the non-personal fact domains. Now:
+
+- `include_directives=False` for Lelik; the directives stay Smart's.
+- `UserBotConfig.voice_excluded_fact_domains` (denylist) became `voice_fact_domains` (allowlist),
+  default `biographical` + `preference`. An allowlist, so a domain added later does not leak into
+  a call; phone numbers, finance, legal, location and medical are still reachable through
+  `search_memory`. Preference stays: it carries "no spoilers for shows in progress" and
+  "address by first name". A stored doc with the old key still loads; the key is ignored.
+- The history slice is now written in character, see `response_summary_in_character.md`.
+
+The "denylist fails audibly" argument below was outweighed: the failure that showed up was tone,
+not an out-of-place fact. Known risk, from Slice 1: a small allowlist made Lelik a switchboard.
+If he forwards to Alek, or does not know, something a removed domain used to give him, add that
+domain to `voice_fact_domains`.
+
 ## Rejected
 
 - **Small domain allowlist (the Slice 1 build).** Lelik sounded like a switchboard and forwarded
