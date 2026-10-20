@@ -199,3 +199,36 @@ SCAN_GLASS_MAX_MM = (220, 360)                   # rule 2: (short, long) side of
 CAPTURE_PAGES_MAX = 50                           # the parser child inspects at most the first this many pages for the
                                                  # capture signals: "every page" rules hold on the pages inspected
 CAPTURE_BUDGET_S = 5.0                           # the signals walk's own time budget in the child; out of it: no signals
+
+# -- transcripts (§27, §27.18; D41-D46) ------------------------------------------------------------------------------
+# Initial values; the T1 eval gate may revise them. Each comment names the RFC basis.
+TRANSCRIBE_USD_PER_MONTH = 20.0             # D46: the month's hard cap; ~125 audio hours at the post-promotion $0.16/h
+TRANSCRIBE_HOUR_USD_ESTIMATE = 0.20         # per audio hour, above the post-promotion $0.16 (T0, Δ132); reserved at submit
+TRANSCRIBE_WINDOW_S = 1_800                 # §27.4: 30-45 min allowed (Δ129); T0 measured 30- and 60-min windows
+TRANSCRIBE_OVERLAP_S = 60                   # §27.6, Δ108: both windows hold a few utterances of every speaker
+TRANSCRIBE_COVERAGE_MIN = 0.9               # Δ129: last segment start / window duration below it = failed attempt
+TRANSCRIBE_MAX_SECONDS = 14_400             # Δ100: 4 h, the cost bound and the 1 MiB document bound
+TRANSCRIBE_MAX_BYTES = 8 * 1024 ** 3        # Δ100: 8 GiB, checked from metadata before any ffprobe
+TRANSCRIBE_EXTRACT_WALL_S = 240             # §27.4: one extraction step's wall (~32 CPU-s per 30-min window plus network)
+TRANSCRIBE_CHILD_CPU_S = 150                # §27.4: the media child's RLIMIT_CPU
+TRANSCRIBE_SHARE = 0.25                     # §27.3: start window of the extraction stage
+TRANSCRIBE_REREAD_COOLDOWN = timedelta(hours=24)   # an edited recording is re-bought at most this often, as the reader
+BATCH_POLL_FIRST_S = 150                    # Δ133: T0 saw 2-5 min of queue latency
+BATCH_POLL_EVERY_S = 300                    # Δ133
+BATCH_POLLS_PER_TICK = 10                   # §27.5: one poll per distinct batch, at most this many a tick
+BATCH_SLOW_AFTER_S = 3_600                  # §27.5: a batch older than this drops to the slow cadence
+BATCH_POLL_SLOW_S = 1_800                   # §27.5: the slow poll interval (the API's contract is 24 h)
+TRANSCRIBE_MAX_GAP_S = 75                   # D43: "once a minute"; a longer gap between a speaker's stamps is interpolated
+INTERPOLATED_MAX_SHARE = 0.3                # §27.6: a window above this share of interpolated stamps is resubmitted once
+STITCH_MIN_MATCHED_WORDS = 6                # §27.6: a seam mapping with fewer matched words is marked uncertain
+SUMMARY_MAX_CHARS = 1_200                   # §27.7
+SUMMARY_INPUT_CHARS = 60_000                # §27.7
+TRANSCRIPT_DOC_BYTES = 900_000              # Firestore's 1 MiB document with margin; over it the store is sharded
+TRANSCRIPT_ORPHAN_TTL = timedelta(days=30)  # §27.8 b: a source restored from the recycle bin within the window
+MIRROR_OPS_PER_TICK = 40                    # §27.9: Graph writes per tick
+MIRROR_SCAN_PAGE = 100                      # §27.9: a rotating drift scan
+MIRROR_AUDIT_DAYS = 7                       # §27.9: worst-case time to undo a user's edit
+MIRROR_NAME_MAX = 240                       # OneDrive's 255-name limit with margin
+MIRROR_PATH_MAX = 380                       # OneDrive's 400-path limit with margin
+TRANSCRIBE_UPLOAD_S = 60                    # G16: worst case of uploading one window; added to the tick deadline sum
+TRANSCRIPT_OPEN_MAX_CHARS = 60_000          # G19: not an RFC name; the most an open returns, the summary input bound
