@@ -15,8 +15,9 @@ Failure classification (the call raises only google-auth types, and wraps the ca
   Run (`K_SERVICE` / `CLOUD_RUN_JOB` set) the metadata server is always there, so a failed ping is almost certainly a
   transient blip -> `SandboxUnavailable`. Anywhere else it means no credentials exist -> `SandboxMisconfigured`;
 - anything else (a malformed token, a bug) -> `SandboxMisconfigured`.
-Worst-case duration of one fetch with google-auth's own retries (3 pings, then up to 5 identity attempts, each
-bounded to `METADATA_REQUEST_TIMEOUT_S`) is about 40 s; the thread itself cannot be cancelled.
+Worst-case duration of one fetch with google-auth's own retries is about 98 s (the ping ~18 s, the service-account-info
+call ~40 s and the identity call ~40 s, each request bounded to `METADATA_REQUEST_TIMEOUT_S` = 5 s under google-auth's
+retries), held under the provider's lock, so concurrent callers queue behind it; the thread itself cannot be cancelled.
 """
 from __future__ import annotations
 
@@ -110,7 +111,8 @@ class MetadataIdTokenProvider:
                 token = await asyncio.to_thread(self._fetch, self._audience)
             except Exception as exc:
                 # The one ERROR line for a failed fetch (the client does not log it again). A metadata-server
-                # blip is systemic and transient; anything else (no credentials, wrong audience) is a deployment fault.
+                # blip is systemic and transient; anything else (a malformed token, a bug, no credentials off Cloud Run)
+                # is a fault we cannot call transient. The audience is never checked here: the gate on the far side does.
                 logger.error("[SandboxClient] id token fetch failed: %s", type(exc).__name__)
                 if _is_transient(exc):
                     raise SandboxUnavailable("metadata server unreachable") from None

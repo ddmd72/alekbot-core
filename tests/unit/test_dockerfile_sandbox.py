@@ -97,9 +97,13 @@ def test_app_is_not_writable_by_the_engine_uid_and_bytecode_is_not_written():
     assert "__pycache__" in text
 
 
-def test_work_root_exists_and_server_tmp_stays_usable():
+def test_work_root_exists_and_tmp_is_closed_to_the_engine_user():
+    """Final review: a 1777 /tmp let the engine write unbounded data to instance memory outside RLIMIT_AS (was
+    `..._server_tmp_stays_usable`, pinning chmod 1777; branch-added by T1). The server runs as root."""
     ins = " ".join(_instructions())
-    assert "mkdir -p /work" in ins and "chmod 711 /work" in ins and "chmod 1777 /tmp" in ins
+    assert "mkdir -p /work" in ins and "chmod 711 /work" in ins
+    assert "chown root:root /tmp" in ins and "chmod 0700 /tmp" in ins
+    assert "1777" not in ins
 
 
 def test_base_image_secret_shaped_variable_is_allowlisted_in_the_service():

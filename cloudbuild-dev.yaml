@@ -317,6 +317,9 @@ steps:
       - "SANDBOX_RENDER_URL=$_SANDBOX_RENDER_URL"
       - "SANDBOX_RENDER_CALLERS=$_SANDBOX_RENDER_CALLERS"
 
+# Two full image builds run serially once the sandbox identity is set; the 10-minute default would cut the second one off.
+timeout: 1800s
+
 # Build logs go to Cloud Logging only: required once a build runs as a user-specified service account
 # (a later step sets `serviceAccount`); harmless for the default build identity.
 # Builds run as their own least-privilege identity (IAM Step 1), never as the default compute identity.

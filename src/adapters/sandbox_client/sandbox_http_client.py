@@ -7,13 +7,15 @@ SandboxHttpClient: the one HTTP caller of the sandbox service (RFC §4.7 call co
 response bytes. It never parses the body (§4.7): `ok` is streamed to bytes, a failure's text is the capped body.
 
 Classification is by HTTP status FIRST, then the outcome header (Cloud Run's own IAM 401/403 carry no header):
-    401 / 403                       SandboxMisconfigured + ERROR log, whatever the header says
+    401 / 403, any 404 / 405        SandboxMisconfigured + ERROR log, whatever the header says (the server adds an outcome
+                                    to routing misses too); bad_request `unknown_op` / `bad_meta` likewise
+    408                             the server's body timeout: our upload stalled, a transport loss (retry once)
     429, 503 other than recycling,  SandboxUnavailable (systemic, nothing charged)
     connect error / refused
     503 `recycling`                 retried at once, up to 3 attempts, short jitter; still recycling -> Unavailable
     reset / 5xx WITHOUT a valid     one retry on a fresh instance, then outcome `error`, detail `sandbox_lost`
     outcome header, or a timeout
-    413                             outcome `too_large`
+    413                             outcome `too_large` (the server's detail kept when it sent an outcome)
     anything else                   decided by the valid outcome header (a 500 `error` or 504 `timeout` is an engine
                                     verdict, not a transport loss); no valid header -> outcome `error`
 Timeout = the child's wall + 15 s. One log line per call: request_id, op, status, wall; nothing else.
@@ -52,6 +54,8 @@ MAX_RECYCLING_ATTEMPTS = 3
 MAX_LOST_ATTEMPTS = 2
 _CONNECT_TIMEOUT_S = 30.0
 _JITTER_S = (0.05, 0.25)
+# Details only sandbox_app.py's own validation produces (never an engine's bad_request): never the script's fault.
+SERVER_ONLY_BAD_REQUEST_DETAILS = frozenset({"unknown_op", "bad_meta"})
 
 TokenProvider = Callable[[], Awaitable[str]]
 
@@ -149,10 +153,19 @@ class SandboxHttpClient:
                 logger.error("[SandboxClient] request_id=%s op=%s rejected with HTTP %d: deployment mistake",
                              request_id, op.value, status)
                 raise SandboxMisconfigured(f"sandbox answered HTTP {status}")
-            if status in (404, 405) and outcome is None:
-                logger.error("[SandboxClient] request_id=%s op=%s HTTP %d without an outcome: wrong URL",
+            if status in (404, 405):
+                # The real server's after_request adds an outcome to routing misses too, so the header proves nothing:
+                # a wrong path is a deployment mistake whatever it carries.
+                logger.error("[SandboxClient] request_id=%s op=%s HTTP %d: wrong URL or path",
                              request_id, op.value, status)
                 raise SandboxMisconfigured(f"sandbox URL answered HTTP {status}")
+            if (outcome is not None and outcome.status == SandboxStatus.BAD_REQUEST
+                    and outcome.detail in SERVER_ONLY_BAD_REQUEST_DETAILS):
+                # Only the server's own validation emits these (an engine's bad_request has an empty detail), so a
+                # script cannot forge them: our request was malformed, which is ours to fix.
+                logger.error("[SandboxClient] request_id=%s op=%s server refused the request: %s",
+                             request_id, op.value, outcome.detail)
+                raise SandboxMisconfigured(f"sandbox refused the request: {outcome.detail}")
             if status == 429:
                 raise SandboxUnavailable("sandbox is busy (429)")
             if status == 503:
@@ -163,8 +176,9 @@ class SandboxHttpClient:
                     await self._sleep(random.uniform(*_JITTER_S))
                     continue
                 raise SandboxUnavailable("sandbox answered 503")
-            if outcome is None and status >= 500:
-                # A 5xx with no outcome (an encoded front-end 502/504 included) is a transport loss.
+            if (outcome is None and status >= 500) or status == 408:
+                # A 5xx with no outcome (an encoded front-end 502/504 included) is a transport loss. So is a 408 (the
+                # server's body timeout): our own upload stalled, which is not the script's doing.
                 lost += 1
                 if lost >= MAX_LOST_ATTEMPTS:
                     logger.warning("[SandboxClient] request_id=%s op=%s lost twice", request_id, op.value)
@@ -173,8 +187,8 @@ class SandboxHttpClient:
             if status == 413:
                 # With an outcome the body is the service's capped text; without one it is a front end's HTML.
                 keep = outcome is not None and not raw.encoded
-                return SandboxReply(SandboxOutcome(SandboxStatus.TOO_LARGE, "request_too_large"),
-                                    raw.payload if keep else b"")
+                detail = outcome.detail if outcome is not None else "request_too_large"   # the server knows which side was too large
+                return SandboxReply(SandboxOutcome(SandboxStatus.TOO_LARGE, detail), raw.payload if keep else b"")
             if raw.encoded or outcome is None:
                 return SandboxReply(SandboxOutcome(SandboxStatus.ERROR, "malformed_envelope"), b"")
             if outcome.status == SandboxStatus.RECYCLING:

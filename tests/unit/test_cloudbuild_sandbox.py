@@ -95,6 +95,18 @@ def test_concurrency_1_and_http2_and_gen2():
     assert "--add-volume-mount=volume=sandbox-work,mount-path=/work" in flags
 
 
+def test_cpu_stays_allocated_after_the_response_and_secrets_are_cleared():
+    """Final review: recycling runs after the response (throttled CPU would stall it), and a secret attached by hand must
+    not survive a deploy (I1)."""
+    flags = _deploy_flags()
+    assert re.search(r"--no-cpu-throttling(\s|$)", flags)
+    assert re.search(r"--clear-secrets(\s|$)", flags)
+
+
+def test_build_has_a_timeout_for_two_full_image_builds():
+    assert _build()["timeout"] == "1800s"
+
+
 def test_recycle_always_in_env():
     assert "SANDBOX_RECYCLE=always" in _deploy_flags()
 

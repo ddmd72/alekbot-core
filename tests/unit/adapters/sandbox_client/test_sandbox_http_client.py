@@ -302,9 +302,64 @@ async def test_wrong_url_without_an_outcome_is_misconfigured(code, caplog):
     assert any(r.levelno == logging.ERROR for r in caplog.records)
 
 
-async def test_unknown_op_with_an_outcome_stays_an_outcome():
-    out = await client_for(Scripted(reply(404, SandboxStatus.BAD_REQUEST, b"unknown op"))).call(OP, b"b", LIMITS)
+@pytest.mark.parametrize("code", [404, 405])
+async def test_wrong_url_with_an_outcome_is_still_misconfigured(code):
+    """Final review: the real server adds an outcome to every 404/405, so the header must not rescue a wrong path
+    (was `test_unknown_op_with_an_outcome_stays_an_outcome`, which pinned the opposite; branch-added by T6)."""
+    with pytest.raises(SandboxMisconfigured):
+        await client_for(Scripted(reply(code, SandboxStatus.BAD_REQUEST, b"unknown op", "unknown_op"))).call(
+            OP, b"b", LIMITS)
+
+
+@pytest.mark.parametrize("detail", ["unknown_op", "bad_meta"])
+async def test_server_only_bad_request_details_are_misconfigured(detail):
+    with pytest.raises(SandboxMisconfigured):
+        await client_for(Scripted(reply(400, SandboxStatus.BAD_REQUEST, b"x", detail))).call(OP, b"b", LIMITS)
+
+
+async def test_engine_bad_request_with_empty_detail_stays_an_outcome():
+    out = await client_for(Scripted(reply(400, SandboxStatus.BAD_REQUEST, b"x"))).call(OP, b"b", LIMITS)
     assert out.outcome.status == SandboxStatus.BAD_REQUEST
+
+
+async def test_wrong_path_against_the_real_app_is_misconfigured(tmp_path):
+    client = SandboxHttpClient(BASE + "/wrong", good_token, transport=real_app_transport(tmp_path), sleep=no_sleep)
+    with pytest.raises(SandboxMisconfigured):
+        await client.call(OP, b"b", LIMITS)
+
+
+async def test_meta_the_real_app_rejects_is_misconfigured(tmp_path):
+    transport = real_app_transport(tmp_path)
+    original = transport.handle_async_request
+
+    async def corrupt(request):
+        request.headers[sc.META_HEADER] = "not-a-valid-meta"
+        return await original(request)
+
+    transport.handle_async_request = corrupt
+    with pytest.raises(SandboxMisconfigured):
+        await client_for(transport).call(OP, b"b", LIMITS)
+
+
+async def test_413_keeps_the_servers_detail_when_it_sent_an_outcome():
+    out = await client_for(Scripted(reply(413, SandboxStatus.TOO_LARGE, b"response too large"))).call(
+        OP, b"b", LIMITS)
+    assert (out.outcome.status, out.outcome.detail) == (SandboxStatus.TOO_LARGE, "")
+    assert out.body == b"response too large"
+
+
+async def test_408_body_timeout_is_a_transport_loss_retried_once():
+    transport = Scripted(reply(408, SandboxStatus.BAD_REQUEST, b"request body too slow", "body_timeout"))
+    out = await client_for(transport).call(OP, b"b", LIMITS)
+    assert (out.outcome.status, out.outcome.detail) == (SandboxStatus.ERROR, "sandbox_lost")
+    assert len(transport.requests) == 2
+
+
+async def test_408_then_success_returns_the_result():
+    transport = Scripted(reply(408, SandboxStatus.BAD_REQUEST, b"slow", "body_timeout"),
+                         reply(200, SandboxStatus.OK, b"DOCX"))
+    out = await client_for(transport).call(OP, b"b", LIMITS)
+    assert out.outcome.status == SandboxStatus.OK
 
 
 async def test_headerless_413_is_too_large_without_the_front_end_html():
