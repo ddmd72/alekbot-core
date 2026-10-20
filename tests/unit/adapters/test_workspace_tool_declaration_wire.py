@@ -1,5 +1,6 @@
 """Smart's full local-tool list, workspace included, crosses every provider adapter intact (AGENT_WORKSPACE_RFC §17;
-docs/how_to/ADAPTER_WIRE_TESTING.md): names in order, the command enum, integer window params, one required field."""
+docs/how_to/ADAPTER_WIRE_TESTING.md): names in order, the command enum, one required field; strict:false on OpenAI and Grok; the integer
+window param (offset) is checked on Gemini only."""
 from src.adapters.claude_adapter import ClaudeAdapter
 from src.adapters.gemini_adapter import GeminiAdapter
 from src.adapters.grok_adapter import GrokAdapter
@@ -34,6 +35,8 @@ def test_openai_keeps_strict_off():
 def test_grok():
     out = GrokAdapter(api_key="k")._convert_tools(_TOOLS)
     assert [t["name"] for t in out] == _NAMES
+    assert out[3]["strict"] is False
+    assert out[3]["parameters"]["properties"]["command"]["enum"] == list(COMMANDS)
     assert out[3]["parameters"]["required"] == ["command"]
 
 
