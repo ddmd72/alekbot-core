@@ -137,6 +137,8 @@ index` (full); `codegraph status` shows index health.
   required configuration go in `load_settings()`; optional knobs — model pins, rollback switches — are
   read with `os.getenv()` at their call site.** Registering an optional knob is not free either: every
   empty key in that dict is chased into Secret Manager on each boot.
+  The sandbox knobs are of this kind: `SANDBOX_RENDER`, `SANDBOX_RENDER_URL` (main service); `SANDBOX_URL`,
+  `SANDBOX_CALLERS_RENDER`, `SANDBOX_RECYCLE`, `SANDBOX_WORK_ROOT`, `SANDBOX_OUTPUT_ROOT`, `SANDBOX_ENGINE_USER` (render service).
 
 ## What and Why
 
@@ -230,6 +232,20 @@ See `docs/05_building_blocks/remote_mcp_server/` + `docs/10_rfcs/REMOTE_MCP_SERV
   the emitted schema. Zero results is a **success** (`No records matched.`), never a retry hint. See
   `decisions/mcp_tool_schema_liberal_input.md`. **claude.ai caches `tools/list` at registration —
   a schema change needs the connector removed and re-added.**
+
+**Untrusted-content sandbox** (`docs/10_rfcs/UNTRUSTED_CONTENT_SANDBOX_RFC.md`, `decisions/sandbox_render_service.md`) — one
+place where bytes the product did not write are processed, holding nothing. **Status: S1 built, not accepted, not deployed**:
+only `render.docx` (the model-written Node DOCX script) moves, behind `SANDBOX_RENDER` (`inprocess` default | `sandbox`; no
+automatic fallback). The service is a separate Cloud Run unit with a zero-role identity (`alek-sandbox-` prefix, enforced by
+`scripts/infrastructure/cloudbuild_sandbox_render.sh`), no secret, concurrency 1, `SANDBOX_RECYCLE=always` (one request per
+instance). Invariants I1-I7: holds nothing, one request's data, identifies no one, bounded, not a source of truth, stateless,
+engines never share the server's uid. **Two processes in `sandbox_main.py`**: the supervisor (PID 1) and `--serve` (Quart on
+Hypercorn, HTTP/2); the engine is a third, a child under the `sandboxengine` uid with rlimits (`src/adapters/sandbox_engine/`).
+Callers are verified in-app (OIDC signature, audience, per-op email set); no `SANDBOX_URL` = `unconfigured` (only `/health`,
+ops 503; first pass of the two-pass deploy). Code: `src/domain/sandbox_*.py`, `src/web/sandbox_*.py`,
+`src/composition/sandbox_*.py`, `src/adapters/sandbox_{engine,client}/`, `Dockerfile.sandbox`. Deploy and the hard stop (remove the
+caller's invoker binding, never empty the caller list): `docs/07_deployment/README.md`. Still waiting on the S0 spike (flush barrier,
+`RLIMIT_AS` vs Node, NPROC/NOFILE 64/64, work volume size).
 
 **Gmail Email Indexing** — passive inbox-as-memory: OAuth connect (`/auth/connect-gmail`) → paginated
 Cloud Tasks → `EmailIndexingService` → `GmailProviderAdapter` → `EmailClassificationAgent` triage →
@@ -787,6 +803,8 @@ src/
                   /cabinet*, /mcp/consent, deep_research_webhooks, /health.
 main.py         — Bootstrap: ServiceContainer + UserAgentFactory + remote MCP server (dedicated
                   SearchEnrichmentService, build_mcp_components, ASGI dispatcher via hypercorn) + graceful shutdown.
+sandbox_main.py — Untrusted-content sandbox entry point (supervisor + `--serve`), its own Cloud Run service,
+                  image `Dockerfile.sandbox`; imports nothing from infrastructure/agents/services/handlers (image closure).
 docx_generator/ — Node.js project (docx npm lib); NodeDocxRunner writes temp scripts here. Not a Python package.
 ```
 

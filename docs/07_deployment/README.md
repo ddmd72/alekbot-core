@@ -59,9 +59,10 @@ gcloud logging read 'resource.type=cloud_run_revision' --limit=50
 
 ## Cloud Run Deploy Units
 
-All four units share one image (`gcr.io/$PROJECT_ID/alek-bot-dev:latest`) and one build config
+The first four units share one image (`gcr.io/$PROJECT_ID/alek-bot-dev:latest`) and one build config
 (`cloudbuild-dev.yaml`, deployed together by a single `make deploy`); a job/service is distinguished
-only by `--command`/`--args` at deploy time.
+only by `--command`/`--args` at deploy time. The fifth, the sandbox render service, has its own image
+(`Dockerfile.sandbox`) and holds nothing; it is described under *Sandbox render service* below.
 
 | Unit | Type | Region | Timeout | Scaling | Secrets it reads | `make` targets |
 |------|------|--------|---------|---------|-------------------|-----------------|
@@ -69,6 +70,7 @@ only by `--command`/`--args` at deploy time.
 | `alek-research-job-dev` | Cloud Run Job | us-central1 | task-timeout 18000s | on-demand (no min/max-instances — Jobs run to completion) | `ANTHROPIC_API_KEY`, `SERVICE_ACCOUNT_EMAIL` | `logs-job`, `fetch-logs-job`, `list-jobs`, `logs-execution`, `cancel-job` |
 | `alek-voice-relay-dev` | Cloud Run service | us-central1 | **3600s** | min=0, max=1 | `OPENAI_API_KEY`, `XAI_API_KEY`, `BILLING_SLACK_WEBHOOK_URL` | `logs-relay`, `fetch-logs-relay` |
 | `alek-bot-indexer-dev` | Cloud Run service (gen2, 2 GiB, concurrency 1, ingress internal) | us-central1 | 1800s | min=0, max=1 | `GEMINI_API_KEY`, `MICROSOFT_TODO_CLIENT_ID`, `MICROSOFT_TODO_CLIENT_SECRET`, `SERVICE_ACCOUNT_EMAIL` (+ `DRIVE_INVOKER_SA_EMAIL`, `OIDC_TRANSITION_SA_EMAILS` when set) | `logs-indexer`, `fetch-logs-indexer` |
+| `alek-bot-sandbox-render-dev` | Cloud Run service (gen2, 2 GiB, 2 CPU, concurrency 1, HTTP/2, no public invoker) | us-central1 | 300s | min=0, max=3 | **none** (zero-role identity, no secret) | (see Sandbox render service) |
 
 **`alek-voice-relay-dev`** (added for Voice Companion Slice 1, see
 [`../10_rfcs/VOICE_COMPANION_RFC.md`](../10_rfcs/VOICE_COMPANION_RFC.md) §4.14) is `relay_main.py` on
@@ -719,6 +721,67 @@ but the index must be rebuilt, not upgraded in place:
 4. Deploy the previous tip (main and indexer).
 5. Resume the queue and the job. **The purge is mandatory**, and the re-index that follows is a **second one**, under
    monthly caps the first already spent: expect it to be slower.
+
+## Sandbox render service
+
+`alek-bot-sandbox-render-dev` runs `render.docx` (the Node script a model wrote for a DOCX) for the main service
+([`../10_rfcs/UNTRUSTED_CONTENT_SANDBOX_RFC.md`](../10_rfcs/UNTRUSTED_CONTENT_SANDBOX_RFC.md) §4, §7 S1, §8;
+[decision](../04_solution_strategy/decisions/sandbox_render_service.md)). It is `sandbox_main.py` in its own image
+(`Dockerfile.sandbox`, target `render`; an explicit COPY allowlist, no `.env`, no key file): gen2, 2 GiB, 2 CPU,
+concurrency 1, max 3, timeout 300 s, `--use-http2`, `--no-allow-unauthenticated`, an in-memory volume at `/work`
+(size `SANDBOX_WORK_VOLUME_SIZE`, default `256Mi`, a placeholder until the spike says otherwise). One request per
+instance (`SANDBOX_RECYCLE=always`). **Status: built, not accepted, not deployed.** The main service uses it only when
+`SANDBOX_RENDER=sandbox`; the default is `inprocess`.
+
+**`.env` keys** (each has its own Cloud Build substitution; never reuse a local key, see CLAUDE.md "Deploy-substitution trap"):
+
+| `.env` key | Substitution | Meaning |
+|---|---|---|
+| `SANDBOX_RENDER_DEV` | `_SANDBOX_RENDER` | the switch on the **main** service: `inprocess` (default when empty) or `sandbox` |
+| `SANDBOX_RENDER_URL_DEV` | `_SANDBOX_RENDER_URL` | the render service's own `https://` URL: the main service's target and the service's token audience (`SANDBOX_URL`) |
+| `SANDBOX_RENDER_SA_DEV` | `_SANDBOX_RENDER_SA` | the render service's runtime identity; **empty skips every sandbox build step** |
+| `SANDBOX_RENDER_CALLERS_DEV` | `_SANDBOX_RENDER_CALLERS` | emails admitted to `render.*` (`:`-separated; one email today; a comma is refused) |
+
+**Owner steps, in order** (nothing here is run by an agent):
+
+1. **Create the identity and grant it nothing.** Its name must start with `alek-sandbox-` (for example
+   `alek-sandbox-render@<PROJECT_ID>.iam.gserviceaccount.com`): the deploy script refuses any other
+   `SANDBOX_RENDER_SA_DEV` with exit 3, so a mis-set value cannot give the "holds nothing" service real IAM. Verify that
+   `gcloud projects get-iam-policy <PROJECT_ID> --flatten=bindings[].members --filter="bindings.members:<sandbox-render-sa>"`
+   prints nothing.
+2. **Let the deployer act as it.** Grant `roles/iam.serviceAccountUser` on `<sandbox-render-sa>` (that account only) to the
+   build's deployer identity (`alek-deployer`), so `gcloud run deploy --service-account=<sandbox-render-sa>` is allowed.
+3. **Put the keys in `.env`:** `SANDBOX_RENDER_SA_DEV=<sandbox-render-sa>` and
+   `SANDBOX_RENDER_CALLERS_DEV=<main-runtime-sa>` (the main service's own runtime identity, since the IAM migration).
+   Leave `SANDBOX_RENDER_URL_DEV` empty and `SANDBOX_RENDER_DEV` unset for now. The callers must be set **before the
+   first deploy** (below).
+4. **Pass one: `make deploy`.** The sandbox steps run after the indexer steps (a failing step never blocks a fix of the
+   bot). The service is created with `SANDBOX_URL` empty: it starts, serves **only `/health`**, and answers every op with
+   `503 unconfigured`. It must still be given the callers, or Cloud Run refuses the revision (an empty caller set on Cloud Run
+   is a start refusal by design).
+5. **Read the URL back** (stable once the service exists):
+   ```bash
+   gcloud run services describe alek-bot-sandbox-render-dev --region=us-central1 --format='value(status.url)'
+   ```
+   and put it in `.env` as `SANDBOX_RENDER_URL_DEV=<https:// URL>`.
+6. **Grant invoker to the main runtime only:** `roles/run.invoker` on the render service to `<main-runtime-sa>`. No other
+   binding; never `allUsers` or `allAuthenticatedUsers`. Audit once and after each deploy: the project and service policies
+   contain neither, and the render service is not in the public-invoker set (RFC §8 step 2).
+7. **Pass two: `make deploy`.** The render service now knows its audience and serves; the main service now has the URL.
+   The switch is still `inprocess`.
+8. **Flip the switch** only after S0 and the DocGenerator end-to-end check in `sandbox` mode (the owner's go):
+   `SANDBOX_RENDER_DEV=sandbox` in `.env`, then `make deploy`. With `sandbox` and an empty URL on Cloud Run the main
+   service still starts (ERROR logged) and DOCX creation reports the sandbox unavailable; locally it is a startup error.
+
+**Skip while the identity is empty.** With `SANDBOX_RENDER_SA_DEV` empty, `scripts/infrastructure/cloudbuild_sandbox_render.sh`
+exits 0 in every mode (pull, build, push, deploy), so `make deploy` keeps working before step 1.
+
+**Rollback.** Set `SANDBOX_RENDER_DEV=inprocess` (or empty) and `make deploy`: the main service builds `NodeDocxRunner`
+again. The render service can stay up unused. There is no automatic fallback in either direction.
+
+**Hard stop.** To cut a caller off at once, remove its `roles/run.invoker` binding on the render service. Do **not** empty
+`SANDBOX_RENDER_CALLERS_DEV` to stop a misbehaving service: an empty caller list on Cloud Run refuses the new revision, so
+the old revision keeps serving. To change who is admitted, redeploy the render service with the new list.
 
 ## Memory telemetry sink
 
