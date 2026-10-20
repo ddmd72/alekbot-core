@@ -180,6 +180,7 @@ steps:
       - "--region=us-central1"
       - "--command=python"
       - "--args=job_main.py"
+      - "--service-account=alek-research-job@$PROJECT_ID.iam.gserviceaccount.com"
       - "--max-retries=0"
       - "--task-timeout=18000"
       - "--memory=1024Mi"
