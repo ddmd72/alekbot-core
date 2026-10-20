@@ -132,8 +132,9 @@ def verify_worker_oidc(
         )
     except Exception as e:
         # verify_oauth2_token raises ValueError on any validation failure
-        # (signature, expiry, issuer). Treat everything as a reject.
-        logger.warning(f"Worker OIDC: token verification failed: {e}")
+        # (signature, expiry, issuer). Treat everything as a reject. Log the class only: google-auth
+        # messages can embed the token itself (jwt.py "Wrong number of segments in token: {token}").
+        logger.warning(f"Worker OIDC: token verification failed: {type(e).__name__}")
         return False
 
     email = claims.get("email")
