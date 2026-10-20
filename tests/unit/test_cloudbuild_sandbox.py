@@ -105,9 +105,32 @@ def test_sandbox_env_has_only_allowlisted_names():
     assert names == _ALLOWED_ENV_NAMES, names
 
 
+_EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
+
+
+def _has_literal_email(text: str) -> bool:
+    """`$PROJECT_ID` is a placeholder word, not a pass: `sa@$PROJECT_ID.iam...` is still a literal service-account address."""
+    return bool(_EMAIL.search(text.replace("${PROJECT_ID}", "projectword").replace("$PROJECT_ID", "projectword")))
+
+
+import pytest  # noqa: E402
+
+
+@pytest.mark.parametrize("literal", [
+    "sa@$PROJECT_ID.iam.gserviceaccount.com", "sa@${PROJECT_ID}.iam.gserviceaccount.com",
+    "someone@example.com", "--service-account=alek-x@proj.iam.gserviceaccount.com",
+])
+def test_the_email_matcher_catches_literals(literal):
+    assert _has_literal_email(literal)
+
+
+def test_the_email_matcher_allows_the_prefix_guard():
+    assert not _has_literal_email('case "${SANDBOX_RENDER_SA%%@*}" in')
+
+
 def test_no_literal_email_or_url_in_the_sandbox_step():
     text = _sandbox_text()
-    assert not re.search(r"[\w.+-]+@[\w-]+\.[\w.-]+", text), "literal email or SA address"
+    assert not _has_literal_email(text), "literal email or SA address"
     assert "run.app" not in text and "https://" not in text and "http://" not in text
     assert not re.search(r"\b[a-z][a-z0-9-]{4,28}-\d{3,6}\b", text), "looks like a project id"
 
