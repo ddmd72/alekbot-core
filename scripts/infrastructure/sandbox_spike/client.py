@@ -2,8 +2,20 @@
 
 The ID token comes from `--token` or $SPIKE_TOKEN, minted by the owner, e.g.
     gcloud auth print-identity-token --impersonate-service-account=<CALLER_A_SA> --audiences=<SPIKE_URL> --include-email
+A run longer than the token life (cold: initial wait + 10 x 5 min) needs `--token-cmd "<command that prints a fresh
+token>"`, re-run before every call. A 401/403 is never dropped: the row gets AUTH_FAILURE and the table counts it.
 The URL comes from `--url` or $SPIKE_URL. Nothing is hardcoded. Every subcommand prints one JSON object per row to
 stdout and, with `--out FILE`, also writes the full JSON document there (keep it under scripts/memory/, gitignored).
+
+Notes for reading the results:
+  - Cold start: each row carries the app's boot_id and served_count; a row is cold only when served_count == 1 or the
+    boot_id changed. Percentiles are over cold rows only. Cross-check with Cloud Logging "Starting new instance".
+  - Every request (any route) bumps served_count, so run the b burst on fresh instances (scale to zero first).
+  - /probe rows answering anything other than 401/403 are "unproven", not a pass (200 is a finding; 404/400 prove
+    nothing about permission).
+  - Under deny-all egress (item i) the signing-key fetch in /auth-check fails only after google-auth's default
+    timeout (~120 s), so give that call a long --timeout.
+  - equivalence.py: chat fixtures default to the corpus directory unless --chat-dir is given.
 
     client.py large --url <SPIKE_URL> --up-mib 50 --down-mib 50 --runs 5          (item a; HTTP/2)
     client.py large --url <SPIKE_URL> --up-mib 33 --down-mib 1 --runs 1 --http1    (the 32 MiB control, expect 413)
@@ -21,7 +33,7 @@ import math
 import os
 import sys
 import time
-from typing import Any, AsyncIterator, Dict, List
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 import h2.connection
 import h2.events
@@ -55,7 +67,21 @@ def _client(url: str, http1: bool, timeout: float) -> httpx.AsyncClient:
     return httpx.AsyncClient(timeout=timeout, http2=True, http1=not prior_knowledge, trust_env=False)
 
 
-def _headers(token: str) -> Dict[str, str]:
+class TokenError(RuntimeError):
+    """The token command failed or printed nothing: loud, never a silent empty bearer."""
+
+
+async def _auth(args: argparse.Namespace) -> Dict[str, str]:
+    """Authorization header. `--token-cmd` is re-run before every call (an ID token lives ~3600 s, shorter than a
+    planned cold-start run); otherwise `--token` / $SPIKE_TOKEN is used as given."""
+    token = args.token
+    if args.token_cmd:
+        proc = await asyncio.create_subprocess_shell(args.token_cmd, stdout=asyncio.subprocess.PIPE,
+                                                     stderr=asyncio.subprocess.DEVNULL)
+        out, _ = await proc.communicate()
+        token = out.decode().strip()
+        if proc.returncode != 0 or not token:
+            raise TokenError(f"--token-cmd failed (exit {proc.returncode})")
     return {"Authorization": f"Bearer {token}"} if token else {}
 
 
@@ -98,7 +124,7 @@ async def _large_run(args: argparse.Namespace, run: int) -> Dict[str, Any]:
     try:
         async with _client(args.url, args.http1, args.timeout) as client:
             async with client.stream("POST", f"{args.url.rstrip('/')}/echo?down={down}&seed={seed_down}",
-                                     content=_body_stream(seed_up, up), headers=_headers(args.token)) as response:
+                                     content=_body_stream(seed_up, up), headers=await _auth(args)) as response:
                 row["status"] = response.status_code
                 row["http_version"] = response.http_version
                 if response.status_code == 200:
@@ -138,7 +164,7 @@ async def _recycle_call(args: argparse.Namespace, call_id: int) -> Dict[str, Any
     try:
         async with _client(args.url, False, args.timeout) as client:
             async with client.stream("POST", f"{args.url.rstrip('/')}/recycle", content=_body_stream(f"r{call_id}", up),
-                                     headers=_headers(args.token)) as response:
+                                     headers=await _auth(args)) as response:
                 row["status"] = response.status_code
                 row["outcome_header"] = response.headers.get("x-sandbox-outcome")
                 row["connection_close_header"] = response.headers.get("connection", "").lower() == "close"
@@ -199,14 +225,31 @@ async def _first_byte(args: argparse.Namespace) -> Dict[str, Any]:
     url = f"{args.url.rstrip('/')}{args.path}"
     row: Dict[str, Any] = {}
     try:
+        headers = await _auth(args)
+        started = time.monotonic()                  # the token command is not part of the measured time
         async with _client(args.url, False, args.timeout) as client:
-            async with client.stream(args.method, url, headers=_headers(args.token)) as response:
+            async with client.stream(args.method, url, headers=headers) as response:
                 row["status"] = response.status_code
-                async for _chunk in response.aiter_raw():
-                    break
-                row["first_byte_s"] = round(time.monotonic() - started, 3)
+                first = True
+                body = b""
+                async for chunk in response.aiter_raw():
+                    if first:
+                        row["first_byte_s"] = round(time.monotonic() - started, 3)
+                        first = False
+                    body += chunk
+                    if len(body) > 4096:
+                        break
+                try:
+                    info = json.loads(body.decode(errors="replace"))
+                    row["boot_id"] = info.get("boot_id")
+                    row["served_count"] = info.get("served_count")
+                except (ValueError, AttributeError):
+                    pass                              # not the spike app (the repo image): cold is unknown
     except Exception as exc:
         row["error_class"] = type(exc).__name__
+        row["error"] = str(exc)[:120] if isinstance(exc, TokenError) else None
+    if row.get("status") in (401, 403):
+        row["AUTH_FAILURE"] = True                   # loud: an expired or wrong token, not a measurement
     return row
 
 
@@ -214,18 +257,29 @@ async def cmd_cold(args: argparse.Namespace) -> Dict[str, Any]:
     if args.initial_wait_s:
         print(json.dumps({"waiting_s": args.initial_wait_s}), flush=True)
         await asyncio.sleep(args.initial_wait_s)
-    rows = []
+    rows: List[Dict[str, Any]] = []
+    previous_boot: Optional[str] = None
     for run in range(1, args.runs + 1):
         row = {"run": run, **(await _first_byte(args))}
+        boot, served = row.get("boot_id"), row.get("served_count")
+        # cold = a fresh process answered: first request it served, or a different boot than the previous row.
+        row["cold"] = None if boot is None else (served == 1 or (previous_boot is not None and boot != previous_boot))
+        previous_boot = boot or previous_boot
         print(json.dumps(row), flush=True)
         rows.append(row)
         if run < args.runs:
             await asyncio.sleep(args.gap_s)
-    times = [r["first_byte_s"] for r in rows if "first_byte_s" in r and r.get("status") == 200]
-    table: Dict[str, Any] = {"command": "cold", "label": args.label, "path": args.path, "rows": rows,
-                             "samples": len(times)}
-    if times:
-        table.update(p50_s=_percentile(times, 50), p95_s=_percentile(times, 95), max_s=max(times))
+    ok = [r for r in rows if "first_byte_s" in r and r.get("status") == 200]
+    cold = [r["first_byte_s"] for r in ok if r["cold"]]
+    table: Dict[str, Any] = {
+        "command": "cold", "label": args.label, "path": args.path, "rows": rows, "runs": len(rows),
+        "cold_samples": len(cold), "warm_samples": sum(1 for r in ok if r["cold"] is False),
+        "unknown_samples": sum(1 for r in ok if r["cold"] is None),
+        "auth_failures": sum(1 for r in rows if r.get("AUTH_FAILURE")),
+        "other_failures": sum(1 for r in rows if "first_byte_s" not in r and not r.get("AUTH_FAILURE")),
+        "note": "percentiles are over cold rows only; cross-check with Cloud Logging 'Starting new instance'"}
+    if cold:
+        table.update(p50_s=_percentile(cold, 50), p95_s=_percentile(cold, 95), max_s=max(cold))
     return table
 
 
@@ -238,6 +292,8 @@ def _parser() -> argparse.ArgumentParser:
     def common(p: argparse.ArgumentParser) -> None:
         p.add_argument("--url", default=os.getenv("SPIKE_URL", ""), help="service URL (or $SPIKE_URL)")
         p.add_argument("--token", default=os.getenv("SPIKE_TOKEN", ""), help="ID token (or $SPIKE_TOKEN)")
+        p.add_argument("--token-cmd", default="", help="shell command printing a fresh ID token, re-run before "
+                       "every call (an ID token lives ~1 h)")
         p.add_argument("--timeout", type=float, default=330.0)
         p.add_argument("--out", default="", help="also write the full JSON document here")
 

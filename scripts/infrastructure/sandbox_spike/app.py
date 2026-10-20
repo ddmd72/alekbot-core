@@ -217,6 +217,7 @@ async def healthz() -> Response:
 
 # -- c: zero-role identity ----------------------------------------------------------------------------------------
 
+_GOOGLE_HOST = re.compile(r"^https://[A-Za-z0-9{}-]+(\.[A-Za-z0-9{}-]+)*\.googleapis\.com/")
 _ALWAYS_PROBES: List[Tuple[str, str, str, Optional[Any]]] = [  # (label, method, url template, body)
     ("firestore.listCollectionIds", "POST",
      "https://firestore.googleapis.com/v1/projects/{PROJECT}/databases/" + os.getenv("SPIKE_FIRESTORE_DB", "(default)")
@@ -238,6 +239,9 @@ def _parse_probe_lines(text: str) -> List[Tuple[str, str, str, Optional[Any]]]:
         parts = line.split(None, 2)
         if len(parts) < 2 or parts[0].upper() not in ("GET", "POST"):
             rows.append(("invalid-line", "GET", "", None))
+            continue
+        if not _GOOGLE_HOST.match(parts[1]):         # the token is only ever sent to https://*.googleapis.com/
+            rows.append(("refused-host (only https://*.googleapis.com/ allowed)", "GET", "", None))
             continue
         body: Optional[Any] = None
         if len(parts) == 3:
@@ -333,14 +337,17 @@ async def auth_check() -> Response:
     return jsonify(report)
 
 
+_RUN_APP = re.compile(r"^https://[a-z0-9.-]+\.run\.app$")
+
+
 @app.get("/call")
 async def call() -> Response:
     """role=caller: fetches an ID token for `target` from the metadata server and calls target/auth-check."""
     if os.getenv("SPIKE_ROLE") != "caller":
         return Response("not a caller\n", status=403)
     target = request.args.get("target", "").rstrip("/")
-    if not target.startswith("https://"):
-        return Response("target must be an https URL\n", status=400)
+    if not _RUN_APP.match(target):
+        return Response("target must be an https://*.run.app URL\n", status=400)
     minted = await _metadata(f"instance/service-accounts/default/identity?audience={target}&format=full")
     if minted is None:
         return jsonify({"id_token_minted": False})
@@ -435,6 +442,9 @@ def _can_list(path: str) -> bool:
 
 @app.get("/whoami")
 async def whoami() -> Response:
+    """Server and engine-uid facts. ?nproc=&nofile= set the child's limits (default 64 / 256). ?fill=1 additionally
+    writes, as the engine uid, up to the volume size + 32 MiB into the workdir to prove a write past the size limit
+    fails (counts against instance memory; off by default)."""
     nproc = int(request.args.get("nproc", "64"))
     nofile = int(request.args.get("nofile", "256"))
     fill = request.args.get("fill") == "1"
@@ -508,6 +518,10 @@ async def node_as() -> Response:
     ids = _engine_ids()
     if ids is None or os.geteuid() != 0:
         return jsonify(_engine_unavailable())
+    try:
+        node_version = subprocess.run(["node", "--version"], capture_output=True, timeout=10).stdout.decode().strip()
+    except (OSError, subprocess.SubprocessError):
+        node_version = "unavailable"
     workdir = tempfile.mkdtemp(prefix="node-", dir=WORKDIR)
     rows: List[Dict[str, Any]] = []
     try:
@@ -531,7 +545,7 @@ async def node_as() -> Response:
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
     worked = [r["limit_mib"] for r in rows if r["docx_built"]]
-    return jsonify({"mode": mode, "old_space_mib": old_mib if mode == "data" else None, "rows": rows,
+    return jsonify({"node_version": node_version, "mode": mode, "old_space_mib": old_mib if mode == "data" else None, "rows": rows,
                     "smallest_limit_mib_that_builds": min(worked) if worked else None})
 
 
