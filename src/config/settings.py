@@ -77,6 +77,11 @@ def load_settings():
         "TELEGRAM_WEBHOOK_SECRET": os.getenv("TELEGRAM_WEBHOOK_SECRET"),
         # Media storage
         "GCS_MEDIA_BUCKET": os.getenv("GCS_MEDIA_BUCKET", ""),
+        # Agent workspace (AGENT_WORKSPACE_RFC §5.5): required configuration for the feature. On Cloud Run a Secret
+        # Manager secret in the main service's --set-secrets, never a Cloud Build substitution. Empty → no
+        # workspace (no tool, workspace: refs and workspace_file refused). Locally an empty value is fetched from
+        # Secret Manager when GOOGLE_CLOUD_PROJECT is set, so local dev shares the live bucket (D9).
+        "GCS_WORKSPACE_BUCKET": os.getenv("GCS_WORKSPACE_BUCKET", ""),
         # LLM prompt/response content store (BigQuery, 30-day TTL). Empty dataset → disabled.
         # DEBUG_PROMPTS is the global capture on/off switch (write / don't write).
         "DEBUG_PROMPTS": os.getenv("DEBUG_PROMPTS", "false"),
