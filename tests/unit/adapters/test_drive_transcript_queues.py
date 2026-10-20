@@ -217,29 +217,29 @@ async def test_orphan_sweep_deletes_only_the_users_parentless_subdocs(fs, monkey
     await repo.delete_user_transcripts("u", 100)
     # a same-named group that is not ours (bare name) is not in the prefixed group
     db.collection("somewhere_else/u:x/parts").docs["0"] = {"user_id": "u", "index": 0}
-    assert await repo.delete_user_transcript_orphans("u", 100) == 2
+    assert await repo.delete_user_transcript_orphans("u", 100, keep_transcripts=False) == 2
     assert db.collection(f"{LIVE['store']}/u:gone/{LIVE['parts']}").docs == {}
     assert db.collection(f"{LIVE['jobs']}/u:gone/{LIVE['windows']}").docs == {}
     assert len(db.collection(f"{LIVE['store']}/v:gone/{LIVE['parts']}").docs) == 1
     assert len(db.collection(f"{LIVE['jobs']}/v:gone/{LIVE['windows']}").docs) == 1
     assert len(db.collection("somewhere_else/u:x/parts").docs) == 1
-    assert await repo.delete_user_transcript_orphans("u", 100) == 0
+    assert await repo.delete_user_transcript_orphans("u", 100, keep_transcripts=False) == 0
 
 
 async def test_orphan_sweep_respects_the_limit(fs, monkeypatch):
     db, repo = fs
     await _plant_orphans(db, repo, monkeypatch)
     await repo.delete_user_transcripts("u", 100)
-    assert await repo.delete_user_transcript_orphans("u", 1) == 1
-    assert await repo.delete_user_transcript_orphans("u", 1) == 1
-    assert await repo.delete_user_transcript_orphans("u", 1) == 0
+    assert await repo.delete_user_transcript_orphans("u", 1, keep_transcripts=False) == 1
+    assert await repo.delete_user_transcript_orphans("u", 1, keep_transcripts=False) == 1
+    assert await repo.delete_user_transcript_orphans("u", 1, keep_transcripts=False) == 0
 
 
 async def test_orphan_windows_are_swept_on_both_adapters(adapter):
     repo, _ = adapter
     await repo.save_window_result("u", "gone", 0, _result())   # its job is gone (the helpers already returned 0)
     await repo.save_window_result("v", "gone", 0, _result())
-    assert await repo.delete_user_transcript_orphans("u", 10) == 1
+    assert await repo.delete_user_transcript_orphans("u", 10, keep_transcripts=False) == 1
     assert await repo.get_window_results("u", "gone") == {}
     assert len(await repo.get_window_results("v", "gone")) == 1
 
@@ -261,7 +261,7 @@ async def test_a_failing_group_query_fails_only_the_orphan_method(fs):
         assert await repo.delete_user_batches("u", 100) == 2
         assert await repo.delete_user_transcripts("u", 100) == 2
         with pytest.raises(DriveIndexStoreUnavailable):
-            await repo.delete_user_transcript_orphans("u", 100)
+            await repo.delete_user_transcript_orphans("u", 100, keep_transcripts=False)
 
 
 async def test_purge_deletes_in_keyed_batches(fs):
@@ -317,7 +317,7 @@ async def test_every_new_query_has_its_index(fs):
     assert needing == 4
     # the equality-only copy check still has its composite (the brief's), and the sweep's group reads theirs
     assert [("user_id", "ASCENDING"), ("content_key", "ASCENDING")] in _declared(LIVE["jobs"])
-    await repo.delete_user_transcript_orphans("u", 5)
+    await repo.delete_user_transcript_orphans("u", 5, keep_transcripts=False)
     for group in (LIVE["windows"], LIVE["parts"]):
         (ops,) = db.group_executed[group][:1]
         required = _required(ops)
@@ -388,10 +388,48 @@ async def test_a_missing_queue_index_is_the_systemic_outage(fs):
         await repo.transcript_queue("u", 5)
 
 
-async def test_a_missing_group_index_is_the_outage_of_the_orphan_method(fs):
+async def test_a_failing_helper_read_is_the_outage(fs):
     from google.api_core import exceptions as gexc
     from src.domain.drive_index import DriveIndexStoreUnavailable
     db, repo = fs
     db.collection(LIVE["store"]).fail = gexc.FailedPrecondition("requires an index")
     with pytest.raises(DriveIndexStoreUnavailable):
         await repo.delete_user_transcripts("u", 5)   # a plain helper read failing is still the outage
+
+
+async def test_keep_transcripts_leaves_a_sharded_transcript_readable(adapter, monkeypatch):
+    repo, db = adapter
+    from src.adapters import firestore_drive_index_repo as fs_module
+    monkeypatch.setattr(fs_module, "TRANSCRIPT_DOC_BYTES", 600)
+    big = StoredTranscript("k1", StitchedTranscript(tuple(Segment(i * 1.0, None, "w" * 80) for i in range(30)),
+                                                    ("uk",), 1, 30.0), last_used_at=T)
+    await repo.put_transcript("u", big)
+    await repo.save_window_result("u", "i1", 0, _result())
+    assert db is None or len(db.collection(f"{LIVE['store']}/u:k1/{LIVE['parts']}").docs) > 1
+    assert await repo.delete_user_transcript_orphans("u", 100, keep_transcripts=True) == 1   # the window only
+    assert await repo.get_window_results("u", "i1") == {}
+    assert await repo.get_transcript("u", "k1") == big
+    if db is not None:
+        assert db.group_executed.keys() == {LIVE["windows"]}   # the parts group was never queried
+
+
+async def test_without_keep_transcripts_the_parts_go_too(adapter, monkeypatch):
+    repo, db = adapter
+    if db is None:
+        pytest.skip("parts are separate documents on Firestore only")
+    from src.adapters import firestore_drive_index_repo as fs_module
+    monkeypatch.setattr(fs_module, "TRANSCRIPT_DOC_BYTES", 600)
+    big = StoredTranscript("k1", StitchedTranscript(tuple(Segment(i * 1.0, None, "w" * 80) for i in range(30)),
+                                                    ("uk",), 1, 30.0), last_used_at=T)
+    await repo.put_transcript("u", big)
+    count = len(db.collection(f"{LIVE['store']}/u:k1/{LIVE['parts']}").docs)
+    assert await repo.delete_user_transcript_orphans("u", 100, keep_transcripts=False) == count
+    assert db.collection(f"{LIVE['store']}/u:k1/{LIVE['parts']}").docs == {}
+
+
+async def test_keep_transcripts_is_a_required_keyword(adapter):
+    repo, _ = adapter
+    with pytest.raises(TypeError):
+        await repo.delete_user_transcript_orphans("u", 5)
+    with pytest.raises(TypeError):
+        await repo.delete_user_transcript_orphans("u", 5, True)

@@ -573,9 +573,9 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
             await self.delete_transcript_job(*key)
         return len(keys)
 
-    async def delete_user_transcript_orphans(self, user_id: str, limit: int) -> int:
+    async def delete_user_transcript_orphans(self, user_id: str, limit: int, *, keep_transcripts: bool) -> int:
         """The user's window results, all of them: called after the helpers returned 0, so none has a job (parts are not
-        separate documents here), as on Firestore where the sweep cannot tell."""
+        separate documents here, so `keep_transcripts` changes nothing), as on Firestore where the sweep cannot tell."""
         keys = sorted(k for k in self.window_results if k[0] == user_id)[:limit]
         for key in keys:
             del self.window_results[key]
