@@ -4176,16 +4176,17 @@ put. Both ride the unreleased `TRIAGE_VERSION` 3, `CARD_VERSION` 4 and `KEYS_VER
 
 ---
 
-## 27. Transcripts of audio and video (rev 3.24, 2026-10-19; proposed, not built)
+## 27. Transcripts of audio and video (rev 3.25, 2026-10-20; T0 passed, GO; proposed, not built)
 
-Owner decisions D41–D47 (§21). The engineering decisions that carry them out are the deltas Δ95–Δ126 (§27.16), each
+Owner decisions D41–D47 (§21). The engineering decisions that carry them out are the deltas Δ95–Δ135 (§27.16), each
 with its reason. This section lifts the §14 row "Audio and video transcripts" and `decisions/drive_audio_video_deferred.md`
 (the seam it names is **not** the one used: Δ95). Where §27 and §5.1, §5.3, §14 or §24's opening paragraph disagree,
 §27 wins for what is built; §24's statement that audio and video "stay metadata-only" stays true until slice T1 ships.
 **Rollout shape (arbiter call):** §26 is deployed and the owner's index is rebuilt, so §27 ships as an **ordinary
 upgrade on top of it** — its own version bumps (§27.13), its own prompt-token upload window (§27.15), no rebuild and no
 migration gate. Every number about the spike comes from `scripts/memory/spike_transcribe/REPORT.md` (private; its transcripts are
-not quoted). Every example below is synthetic.
+not quoted). **Rev 3.25 (2026-10-20) folds in the T0 spike** (`scripts/memory/t0_transcribe/REPORT.md`, private; its transcripts and file
+names are not quoted): verdict **GO**, D47 not triggered, the changes it forces are the deltas Δ128–Δ135 (§27.16). Every example below is synthetic.
 
 ### 27.1 What exists today, and what changes
 - Audio and video are `kind`s with a metadata card and no content: `_EXT_KIND` maps `.mp3 .m4a .wav .flac .ogg .opus
@@ -4210,7 +4211,33 @@ not quoted). Every example below is synthetic.
   and OpenAI's models were measured and rejected in the spike (REPORT §2).
 
 ### 27.2 Evidence and what is not yet measured
-Measured (spike, one 21:47 Russian-language recording, 93.7 MB webm; REPORT §1–§2):
+**T0 (2026-10-20, spend ≈ $1.90 at published rates): verdict GO under D47.** Audio `file_data` is accepted in Batch requests (inline
+and JSONL); a response schema works in batch (with the trap of Δ131); batch access is open on the key; the batch discount is
+50 % on input and on output. Numbers (`gemini-3.8-flash`, google-genai 2.17.0):
+- **Job life.** `PENDING → RUNNING` (15–22 s) `→ SUCCEEDED`; the documented failures are `FAILED`, `CANCELLED`, `EXPIRED` (after 48 h);
+  results are kept 6 weeks. **Queue latency** create → `SUCCEEDED`: 113 s for 60 s of audio, 119 s for 3 min, 190–299 s for 87 min — all
+  under 5 minutes (24 h is a target of the API, not what was seen). Four concurrent batches: no throttling. The Files API expiry is
+  create + 48 h; the key's quota tier is not visible.
+- **Usage.** The audio/text split is present in batch usage (`prompt_tokens_details`); audio is 25 tokens per second. Thinking is on by
+  default and billed as output (up to 32.8k tokens on one 87-min run); `thinking_level=LOW` works, `MINIMAL` is rejected. Output ≈ 200
+  tokens per audio minute; no loops, monotonic times.
+- **Time format and window length** (the owner's 21:47 recording repeated to 87:08). Integer-second `start_s`: 30 and 60 min complete but the
+  timestamps are **wrong (≈ +40 % stretch)**; 90 min truncated at 21:44. `MM:SS` strings: 30, 45 and 60 min complete, drift ≈ −0.1 s (max +0.9 s);
+  90 min: one of three synchronous runs truncated at 21:44, the batch run with thinking LOW was complete (drift −0.3 s median). Three of seven
+  87-minute runs stopped silently with finish reason `STOP` (repeated input may provoke it; unique audio was tested only to 22 min). The
+  "at least every 60 s" segment rule is soft (gaps 25–106 s).
+- **Languages and speakers** (synthetic TTS clips). Ukrainian, two speakers: WER 0.4 %, 12/12 speaker lines; uk/ru/en, three speakers: WER 0.8–2.9 %,
+  12/12; English, four speakers: WER 6.6–8.3 % (numbers written as digits), 13/13. No russification. Short clips start early by up to ≈ 5 s
+  (unexplained; not seen on long real audio).
+- **`ffmpeg -ss` over HTTP.** See Δ134: ≈ 5 % of the file is read per 5-minute window at any seek point; the real Graph URL honours Range.
+- **Hashes.** Of 101 App Folder files `quickXorHash` is present on 101, `sha1Hash` and `sha256Hash` on 50 (all six audio/video files have all
+  three) — Δ135.
+
+**Not tested by T0, and therefore T1 checks (§27.14):** a batch left waiting for hours; a source file over 48 h old in the Files API (the
+re-upload path of Δ104); job expiry (`EXPIRED`) and its resubmit; **unique** (not repeated) audio longer than 22 min — the silent `STOP` at
+87 min may depend on repetition; the short-clip early-timestamp effect on real audio.
+
+Measured earlier (spike, one 21:47 recording, 93.7 MB webm; REPORT §1–§2):
 - **Extraction.** `ffmpeg` straight on the Graph pre-authenticated download URL, `-vn -ac 1 -ar 16000 -c:a libopus
   -b:a 24k`: 18.3 s wall, 23.2 CPU-s (≈ 1.07 CPU-s per audio minute), 18.8 MB RSS, 3.9 MB out, **0 seeks** — a
   webm is read sequentially and in full (all 93.7 MB) even with `-vn`, because audio and video are interleaved.
@@ -4221,17 +4248,13 @@ Measured (spike, one 21:47 Russian-language recording, 93.7 MB webm; REPORT §1�
   checks; no hallucinated loops. **It put an 80 s monologue in one segment** (REPORT blockers 2): the prompt must
   force a timestamp at least every 60 s and the renderer must not trust it (§27.6). `gpt-4o-transcribe-diarize`
   never returned the full file in 17 min and split speakers worst; `gpt-transcribe` has no speakers or timestamps.
-- **Not measured, and each is a spike item for T0 (§27.14), not an assumption of this design:** Ukrainian and
-  mixed-language audio; any file over 22 min (output length grows with audio; long windows may drift in time);
-  `ffmpeg -ss` on a *seekable* mp4/mov/mkv read from the Graph URL (range requests honoured? how many bytes are read
-  to reach minute 90?); the Graph URL's real lifetime; the Gemini Batch API on audio (`file_data` parts inside a
-  batch request, `response_json_schema`, the 50 % discount on audio input and on output, job states, expiry,
-  queue latency); the Files API retention against a batch that waits up to 24 h.
-- **Cost.** At the spike's token rates (audio $3.00 per million, output $3.75 promotional until 2026-12-31 and $7.50
-  after, `src/domain/billing.py:158-172`): non-batch ≈ **$0.35/h now, $0.43/h after the promotion**. At the Batch
-  API's 50 % — *if it applies to audio input and to output alike (T0 checks)* — ≈ **$0.18/h now, $0.22/h after**.
-  The owner's budget figure of $0.30–0.40/h is the non-batch rate; it stays the **ceiling** this design uses for
-  holds and estimates (§27.5, Δ106), and the expected actual is lower. Overlap (§27.6) adds ≈ 3 %; the summary step ≈ $0.01/h.
+- **Were not measured by that spike; T0 has since measured them** (paragraph above): Ukrainian and mixed-language audio, long windows and
+  their drift, `ffmpeg -ss` on seekable containers and the Graph URL, the URL's lifetime, the Batch API on audio, the discount, job states and
+  queue latency. What T0 left open is listed above as T1 checks.
+- **Cost (T0, Δ132).** `gemini-3.8-flash` has **one input rate for every modality** — the earlier "$3.00 per million for audio" is not supported
+  by the price page. Standard $0.75 / $3.75 per million input / output until 2026-12-31 (promotional), then $1.50 / $7.50; **batch is ×0.5 on both
+  legs**: $0.375 / $1.875, then $0.75 / $3.75. With thinking LOW, a Batch hour of audio costs **≈ $0.08 now and ≈ $0.16 after the promotion
+  ends**. The owner's figure of $0.30–0.40/h stays a ceiling with ample headroom. Overlap (§27.6) adds ≈ 3 %; the summary step ≈ $0.01/h.
 
 ### 27.3 Where it runs, and why it is not an extractor chain link (Δ95)
 The brief of the §14 row said: add `audio → [transcriber]` to `EXTRACTOR_CHAINS` behind `ContentExtractorPort`.
@@ -4279,22 +4302,20 @@ indexer is the same image.
 - **Input is the Graph download URL, not a file.** The temp-file download (`download_to_file`,
   `onedrive_adapter.py:313-346`, capped at 45 MiB by `MAX_DOWNLOAD_BYTES`, `drive_index_params.py:55`) cannot hold an
   hour of video, and the spike showed streaming costs the same bytes. `UserDrivePort` gains
-  `download_url(user_id, item_id) -> str` (Δ98: the GET-item call `download()` and `download_to_file()` already
+  `download_url(user_id, item_id) -> str` (Δ98; the URL lives ≈ 60 min, Δ134: the GET-item call `download()` and `download_to_file()` already
   make, `onedrive_adapter.py:252-258`, `:317-321`, returning `@microsoft.graph.downloadUrl`; a missing URL raises
   `DriveItemNotFoundError` as today). The URL is short-lived and is **fetched again at the start of every extraction
   step**, never stored in the job document (the task carries `item_id`, never a URL, §8.1 step 3).
-- **Windows of media time.** The parent plans windows of `TRANSCRIBE_WINDOW_S` (30 min) with `TRANSCRIBE_OVERLAP_S`
+- **Windows of media time.** The parent plans windows of `TRANSCRIBE_WINDOW_S` (initial 30 min, 30–45 min allowed, Δ129) with `TRANSCRIBE_OVERLAP_S`
   (60 s) overlap and runs the child once per step to produce as many windows as the step's wall allows. A window is
-  `-ss <start> -t <len>` with the audio-only output of the spike; windows already uploaded (recorded in the job
+  `-ss <start> -t <len>` (input-side, Δ134) with the audio-only output of the spike; windows already uploaded (recorded in the job
   document) are skipped, so a long file is **resumable across ticks** and no step blocks a tick past its deadline.
-- **What `-ss` costs is not known and the build must measure it (T0).** For a container with an index at the
-  front or reachable by range (mp4/mov with `moov`, mkv/webm with cues), an input-side `-ss` should seek by HTTP range
-  and read roughly the window. For a container without a usable index the spike showed a sequential full read; then
-  window *k* reads *k* windows' bytes and a 4-hour file is quadratic. The design does not depend on the answer: the
-  child may run ffmpeg's `segment` muxer (`-f segment -segment_time 1800`) **in one pass** and emit window files as they
-  complete, the parent uploading each; a pass cut by the wall resumes at the first missing window with `-ss`.
-  T0 records, per container family, bytes read to reach minute 5, 60 and 180; the choice between "one pass, resume"
-  and "one window per step" is made on those numbers. Either way the whole-file read is bounded by the caps below.
+- **What `-ss` costs (T0 measured it; Δ134).** An input-side `-ss` over HTTP Range reads ≈ 5 % of the file for a 5-minute window at any seek
+  point (5, 60, 180 min) in mp4/mov/mkv/webm, with 2–4 range requests and ≈ 2 s; the real Graph URL answers 206 and `-ss 15min -t 300`
+  read 22.8 of 93.7 MB in 4 requests. So "one window per step" with `-ss` is the default, and the quadratic case feared before T0 does not
+  occur. When **all** windows of a file are needed in the same step, the child runs ffmpeg's `segment` muxer (`-f segment -segment_time <window>`)
+  **in one pass** (200-min files: mp4 149 MB, webm 78 MB, ≈ 50 s for 6 × 1800 s + 1 × 1200 s) and the parent uploads each window file as it
+  completes; a pass cut by the wall resumes at the first missing window with `-ss`. Either way the whole-file read is bounded by the caps below.
 - **Hardening of an untrusted-media decoder (Δ99).** ffmpeg is a larger decoder surface than the document parsers
   and reads attacker-chosen files from any user's drive; §24.14's trigger ("a code-execution CVE in a parser the child
   loads, or users who do not trust one another") is nearer than it was. Required in the child: `-nostdin`,
@@ -4332,9 +4353,10 @@ indexer is the same image.
   regex fallback, no tools, no history. Honest difference from the other drive agents: it does **not** go through
   `BaseAgent._call_llm` (a batch is not a call), so retry/failover/`TokenLedger` scope are not inherited; the agent
   builds requests and parses results, and a runner in `composition/` (the `DriveReaderRunner` pattern) wires it.
-  Output schema per window: `{language_codes: [..], speakers: int, no_speech: bool, segments: [{start_s: int,
-  speaker: int|null, text: str}]}` (`start_s` is an integer count of seconds from the window's start, never an
-  `mm:ss` string the model can mis-format; the renderer formats it). The prompt: verbatim, spoken language(s) as
+  Output schema per window: `{language_codes: [..], speakers: int, no_speech: bool, segments: [{start: str,
+  speaker: int|null, text: str}]}` (`start` is a `MM:SS` string from the window's start, `H:MM:SS` from one hour, **never integer seconds**: T0
+  measured a ≈ +40 % stretch of integer-second times on 30- and 60-minute windows, and ≈ 0.1 s drift with strings, Δ128; the parser reads the
+  string to seconds and the renderer formats it). The prompt: verbatim, spoken language(s) as
   spoken (never translate, never correct), fillers kept, no headings, no paraphrase, a new segment at each speaker
   change **and at least every 60 s of continuous speech**, speaker numbers stable inside the window, `null` for a
   single speaker. Audio is data, never instructions: a spoken "ignore the above" is transcribed, not obeyed.
@@ -4342,11 +4364,21 @@ indexer is the same image.
   files) go in one Gemini batch job keyed `{item_id}:{window}`; one user per batch (attribution and privacy). A job
   never waits on another job's result — see §27.6 for why windows cannot be sequential here.
 - **States and polling (Δ104).** Per window: `extracted → uploaded → submitted → done | failed`. Poll cadence per
-  batch: first at `BATCH_POLL_FIRST_S` (20 min), then every `BATCH_POLL_EVERY_S` (30 min), at most `BATCH_POLLS_PER_TICK`
+  batch (Δ133; T0 saw 2–5 min of queue latency): first at `BATCH_POLL_FIRST_S` (2.5 min), then every `BATCH_POLL_EVERY_S` (5 min); a batch older than
+  `BATCH_SLOW_AFTER_S` (1 h) drops to the slow cadence of 30 min (the 24 h of the API is the contract, 5 min is what was seen); at most `BATCH_POLLS_PER_TICK`
   (10) polls a tick, one poll per distinct batch however many files it holds. The 10-minute fan-out already visits every
   indexed user, so no continuation chain is needed while only waiting (`transcript_wake_at` in the future does not
   make a tick "have more"). Gemini's input files expire (48 h in the Files API): the job document keeps
   `files_expire_at`, and a window whose file expired before its batch ran is re-extracted and re-uploaded once.
+- **Batch request rules (Δ131, T0).** (1) The schema goes as `response_schema` in an inline request or as `responseJsonSchema` in a JSONL
+  request: an inline `response_json_schema` inside an `InlinedRequest` is **silently ignored** in batch (the answer comes back unconstrained). (2)
+  `thinking_level=LOW` is set explicitly on every request (thinking is on by default and is billed as output; `MINIMAL` is rejected). (3)
+  `collect` checks **each response's own error**: a job can be `SUCCEEDED` with a code-3 error inside one response; that window is a failed
+  attempt, not a result. (4) Usage is read from `prompt_tokens_details` (audio and text tokens apart); **thought tokens are billed into the
+  output leg** (`candidates + thoughts`).
+- **Coverage check (Δ129).** A window whose last segment starts far short of the window length (`TRANSCRIBE_COVERAGE_MIN` 0.9 of the window
+  duration, and not a `no_speech` window) is a **truncated answer** — the model can stop silently with finish reason `STOP` — and counts as a
+  failed attempt: the window is resubmitted (`MAX_ATTEMPTS`), never stitched short.
 - **Failure handling.** Request-level error or invalid JSON after the one parse rule (no regex): that window is
   resubmitted, charged as a per-file attempt (`MAX_ATTEMPTS`, §8.2); a batch that expires or fails whole resubmits its
   open windows once; a content-policy block on a window yields a **gap marker** for that span (`[mm:ss] [this part
@@ -4356,9 +4388,10 @@ indexer is the same image.
   on success and on abandon (`delete_file`; no copy kept at the provider longer than needed).
 - **Cost accounting (Δ105).** `billing.py` has no audio input rate and no batch discount today (`calculate_cost`,
   `src/domain/billing.py:258-282`, prices one token class per model). Required, per CLAUDE.md "cost is priced per
-  model that RAN": an audio-input rate for `gemini-3.8-flash` ($3.00 per million, a dated `PRICE_SCHEDULE` entry and
-  `make check-pricing` coverage), a `batch` multiplier (0.5) applied to the legs the provider discounts, and a
-  `ModelUsage` leg keyed by (model, batch) with audio tokens separate from text. The adapter must read the response's
+  model that RAN": a **single** input rate for `gemini-3.8-flash` (T0: no separate audio rate; $0.75 / $3.75 per million until 2026-12-31, $1.50 / $7.50
+  after, as dated `PRICE_SCHEDULE` entries with `make check-pricing` coverage, Δ132), a `batch` multiplier (0.5) applied to **both** the input and
+  the output leg, and a `ModelUsage` leg keyed by (model, batch) with the audio and text token counts kept apart (the provider prices them
+  alike; the split is for accounting) and thought tokens added to the output leg. The adapter must read the response's
   per-modality prompt-token details (the usage object today yields one prompt count). The cost of a window is
   recorded **when its result is collected**, to the user's account through a runner-scoped ledger (no
   `_execution_billing_scope` exists across hours), and written to `drive_model_usage` as the class `transcribe`
@@ -4380,11 +4413,11 @@ indexer is the same image.
   a deviation from the brief, stated because it changes the speaker-continuity mechanism; the interactive
   alternative — sequential non-batch calls — costs the 50 % the owner asked for).
 - **Overlap and seam rule.** Windows overlap by `TRANSCRIBE_OVERLAP_S`. Segment times are re-based to the file's clock
-  (`abs = window_start + start_s`). At each seam the cut is the middle of the overlap: window *k* keeps segments that
+  (`abs = window_start + start`). At each seam the cut is the middle of the overlap: window *k* keeps segments that
   start before the midpoint, window *k+1* those from it on. A segment crossing the midpoint belongs to the window in
-  which it starts. The overlap is **60 s, not the brief's 10 s** (Δ108): speaker mapping below needs both windows to
+  which it starts. The overlap is **60 s, not the brief's 10 s** (Δ108; T0 used 10 s on a single speaker-stable recording and does not change this, Δ130): speaker mapping below needs both windows to
   contain a few utterances of every speaker, and 10 s of a two-person exchange often holds one voice. The cost is
-  ≈ 3 % more audio (30-min windows).
+  ≈ 3 % more audio (30-min windows). Speaker alignment on real multi-window audio is still unmeasured (T1 eval gate).
 - **Speaker alignment by code, not by the model (Δ109).** Labels are window-local (Speaker 1 in window 2 is not
   necessarily Speaker 1 in window 1). For each pair of adjacent windows, the segments inside the overlap are matched
   by normalised-text token overlap and time proximity; each label of window *k+1* that matches a label of window *k*
@@ -4394,7 +4427,7 @@ indexer is the same image.
   `STITCH_MIN_MATCHED_WORDS` matched words is marked uncertain. A multi-window transcript with any uncertain seam gets
   one header line, "speaker labels may differ between parts of this recording" (UI language); a single-window file
   never does. Speaker count in the header is the post-alignment number.
-- **Time sanity.** The validator rejects a window whose `start_s` values are non-monotonic by more than 5 s or exceed
+- **Time sanity.** The validator rejects a window whose `start` values (parsed from `MM:SS`) are non-monotonic by more than 5 s or exceed
   the window length by more than 10 s (counted; one resubmit, then the gap marker). Where consecutive starts of the same
   speaker are more than `TRANSCRIBE_MAX_GAP_S` (75 s) apart, the renderer **interpolates** timestamps at sentence
   boundaries by character proportion and prints them with a tilde (`[~12:40]`) — "at least once a minute" (D43) is
@@ -4428,8 +4461,8 @@ An all-silent transcript (`no_speech`) has **no chunks**: the record is `metadat
 holds the structured result — windows' stitched `segments`, languages, speaker count, duration, `no_speech`/stub,
 the summary and its language, `transcribe_version`, `render_version`, `summary_version`, `last_used_at` — never the
 rendered Markdown. `content_key` = `content_hash_of(change)` (`quickXorHash:size`, `src/domain/drive_card.py:68-70`),
-else `sha1Hash:size` when Graph gives only that (a second hash field in `_to_change`, `onedrive_adapter.py:174-175`),
-else `item:{item_id}:{cTag}` (no sharing; logged). A copy, a rename or a move has the same key, so **it never pays
+else `item:{item_id}:{cTag}` (no sharing; logged). **There is no sha1 fallback (Δ135):** T0 found `quickXorHash` on 101 of 101 files and `sha1Hash`
+/ `sha256Hash` on only 50. A copy, a rename or a move has the same key, so **it never pays
 again**: its job completes from the store with no ffmpeg and no model, then only the mirror differs. The store
 survives a rebuild purge (the script sets `purge_keep_transcripts`, a plain sync-state flag the purge path reads) so
 that the §26-style full rebuild does not re-buy audio; it is deleted by an opt-out, a different-drive purge and the
@@ -4504,8 +4537,8 @@ is mirrored folder by folder, and each transcript file is `<source name>.md`: `V
 
 ### 27.10 Budget, priority and the pace
 - `TRANSCRIBE_USD_PER_MONTH` (D46) is a fifth class (a **hard** cap: pending reservations count, Δ106) in `drive_model_usage` beside reader $4, triage $3, profile $4,
-  passages $20 (§25.4.5), counted from collected batch results at the batch price. **Initial value $20** (about 50 audio
-  hours at the $0.40/h ceiling, 90–110 hours at the expected batch rate; the owner can raise it). The Cabinet adds a line
+  passages $20 (§25.4.5), counted from collected batch results at the batch price. **Initial value $20, unchanged by T0** (its own logic holds: a cap sized by the measured batch rate, not the ceiling). At T0's rates $20 buys **≈ 250 audio
+  hours a month now ($0.08/h) and ≈ 125 after 2026-12-31 ($0.16/h)**; at the $0.40/h ceiling it would still buy 50. The owner can raise it. The Cabinet adds a line
   (`model_usd_month`, `model_usd_caps`). No initial-build allowance: D27's closed for every user and the owner's rule
   (2026-10-19) is that no reset is part of a rollout.
 - **Backlog pace.** Extraction at ≈ 1.07 CPU-s per audio minute is ≈ 32 s of CPU for a 30-minute window plus the
@@ -4576,7 +4609,8 @@ of the key. (2) A 30-, 60- and 90-minute window's timestamp drift and output len
 uk/ru/en audio, and a two- and a four-speaker clip. (3) `ffmpeg -ss` against the Graph URL for mp4/mov/mkv/webm: bytes
 read to minute 5/60/180, the URL's lifetime, the `segment` muxer. (4) Whether Graph returns `sha1Hash` where it
 omits `quickXorHash`. Results go to a decision note; §27 is amended with them (Δ numbers continue).
-**T0 stop condition (D47, owner).** If any of these is found: audio `file_data` is not accepted in batch requests, no response
+**T0 result (2026-10-20): done, GO** — every item answered (§27.2; Δ128–Δ135); item (4) found `quickXorHash` on every file, so the question
+was moot (Δ135). **T0 stop condition (D47, owner)** — not triggered: If any of these is found: audio `file_data` is not accepted in batch requests, no response
 schema in batch, no batch access for the key, or no discount on audio input — **stop**. T1 is not started, no synchronous
 full-price route is built as a fallback, and the transcription model/route is decided anew with the owner.
 **T1 — extraction, batch, store, index (no mirror, no summary).** `Admission.TRANSCRIBE`, policy 3, the job document
@@ -4586,7 +4620,7 @@ unstitched multi-window file would ship wrong files that T2 then mirrors; the al
 the store and cache, cost + `UsageClass.TRANSCRIBE` + cap, card, `open_file`, skill and capabilities lines, the kill
 switch, disclosure text. *Tests:* domain — window plan (boundaries, overlap, last short window), seam cut and de-duplication,
 time rebase, speaker alignment (matched, unmatched, silent-through-overlap, uncertain seam), interpolation
-(tilde, share bound), validator (non-monotonic times), content key (quickXor, sha1 fallback, none), state machine
+(tilde, share bound), validator (non-monotonic times), content key (quickXor, none; no sha1 fallback), coverage check (short window = failed attempt), `MM:SS`/`H:MM:SS` parse, state machine
 (`ready → working → waiting → current`, hold/park/fail transitions, month boundary, cap hold keeps whole files,
 reset on content version), the render of every stub; services — a fake `BatchTranscriptionPort` and a fake
 `MediaAudioPort`: submit/poll/collect, resume after a killed tick, expiry resubmit, cache hit with no model call,
@@ -4594,7 +4628,10 @@ outage backoff, copy shares one transcription, edit cooldown, the deadline-sum a
 SDK boundary for upload/submit/poll/collect/delete and the usage-by-modality parse; the child — argv hardening pinned
 (`-protocol_whitelist`, demuxer list, no stdin) and a hostile-input set (a playlist file, a zero-length file, a
 truncated mp4, a 1×1 video with 4 h of silence) under the rlimits; billing — the audio rate, batch multiplier, the
-ledger leg, a hash pin of the price rows. *Expected to break (reviewer, per the standing rule):* tests that pin
+ledger leg, a hash pin of the price rows. *T1 checks of what T0 did not test:* a batch waiting for hours (poll and resume across ticks); a window file older than 48 h (re-upload,
+Δ104); job expiry and the resubmit of open windows; **unique** audio longer than 22 min through the coverage check (Δ129) — if the silent
+`STOP` is repetition-specific the 45-min window may be usable, if not it stays 30; the short-clip early-timestamp effect on real recordings.
+*Expected to break (reviewer, per the standing rule):* tests that pin
 `audio`/`video` as `kind_not_admitted` (`tests/unit/domain/test_drive_index_policy*`, planner and eval gold cases for
 media), the `POLICY_VERSION`/`CARD_VERSION` pins, `CURRENT_VERSIONS` maps.
 **T2 — the mirror.** Mirror documents and service, port `conflict` mode and `download_url`, `inside_opaque` for the
@@ -4618,8 +4655,8 @@ invented here, as §24.11 does; the unit suite uses fakes. Ukrainian is reported
 unmeasured language.
 
 ### 27.15 Owner steps and rollout
-1. T0 spike and its decision note; the Gemini key's tier supports Batch (the "enablement" — a paid-tier check on the
-   existing `GEMINI_API_KEY`, not a new GCP API unless T0 says otherwise).
+1. T0 spike (done, GO; its decision note is the Δ128–Δ135 text here); the Gemini key's tier supports Batch — **confirmed by T0** on the existing
+   `GEMINI_API_KEY`, no new GCP API.
 2. Back up, then upload the prompt layer in the paused window (`--apply` is human-only): `COGNITIVE_PROCESS_` and
    `OUTPUT_FORMAT_` tokens, blueprints and profiles for `drive_transcriber` and `drive_transcript_summary`.
 3. Composite indexes `READY` before deploy: `user_id + transcript_state + effective_day desc (+ parent_id, item_id)`,
@@ -4630,7 +4667,7 @@ unmeasured language.
    substitution).
 5. **Backlog estimate before turning it on:** a read-only script (output only to `scripts/memory/`, Δ67's rule) sums
    `facets.video.duration` over the owner's index and counts audio files (no duration facet: it reports the byte total
-   and an estimate at the spike's 10.8 MB/h) and prints minutes and the cost at $0.20 and $0.40 per hour.
+   and an estimate at the spike's 10.8 MB/h) and prints minutes and the cost at $0.08, $0.16 and $0.40 per hour.
 6. Turn on; watch the tick line (`windows`, `submitted`, `collected`, `transcribe_usd`) and the first mirror files on
    the owner's phone; raise the cap if the estimate says the backlog should finish sooner.
 7. No rebuild and no `drive_initial_build_reset.py`. The orphan-doc sweep script (`drive_transcript_sweep.py`) is run
@@ -4671,13 +4708,21 @@ unmeasured language.
 | Δ122 | Version bumps re-run work | `TRANSCRIBE_VERSION` never auto-upgrades; `RENDER` and `SUMMARY` do | A prompt edit must not re-bill hours of audio |
 | Δ123 | Brief: T4 (long files) could be separate | Folded into T1; alignment has its own eval gate | See T1 |
 | Δ124 | Gate key `accuracy` | Unchanged; `policy`, `card`, `render`, `summary` join the map | No purge needed; the v2 → v2.x path |
+| Δ128 | §27.5: integer `start_s` | `MM:SS` / `H:MM:SS` strings, never integer seconds | T0: integer seconds stretch times ≈ +40 % on 30–60 min windows; strings drift ≈ 0.1 s |
+| Δ129 | One window length 30 min, no completeness check | Windows 30–45 min (initial 30; 60 passed every run, 87–90 min truncates silently); a coverage check (last segment start vs window length) makes a short window a failed attempt that is resubmitted | T0: silent `STOP` truncation at 87–90 min |
+| Δ130 | Δ108: overlap 60 s | Kept at 60 s for speaker alignment; T0 ran 10 s (single recording, no alignment test) | The spike did not exercise alignment |
+| Δ131 | §27.14 T0 item: `response_json_schema` in batch | Batch rules: `response_schema` inline or JSONL `responseJsonSchema` (inline `response_json_schema` is silently ignored); `thinking_level=LOW` explicit; per-response error check; audio/text from `prompt_tokens_details`; thought tokens in the output leg | T0 traps: unconstrained output, 32.8k thinking tokens on one run, `SUCCEEDED` jobs holding failed responses |
+| Δ132 | Δ105 / §27.2: audio rate $3.00, discount unverified | One input rate for all modalities ($0.75 / $3.75 until 2026-12-31, then $1.50 / $7.50), batch ×0.5 on both legs; ≈ $0.08 per audio hour now, ≈ $0.16 after; `TRANSCRIBE_HOUR_USD_ESTIMATE` $0.20 (was $0.40) | T0 against the price page; the $0.40 ceiling over-reserved ≈ 2.5 × |
+| Δ133 | Δ104: first poll 20 min, then 30 min | First poll 2.5 min, then 5 min; 30 min only as a fallback for a batch older than 1 h | T0 latency 2–5 min |
+| Δ134 | §27.4: `-ss` cost unknown; one-pass `segment` as a hedge | `-ss` over Range per window (≈ 5 % of the file per 5-min window; mp4/mov/mkv/webm and the Graph URL); `segment` muxer in one pass when all windows are needed; a fresh `downloadUrl` per window/tick (it lives ≈ 60 min: 206 at +60 min, 401 at +75 min) | T0 measurements |
+| Δ135 | §27.8: `quickXorHash`, else `sha1Hash` | `quickXorHash:size` only, else the `item:{item_id}:{cTag}` key; no sha1 | T0: quickXor on 101/101, sha1/sha256 on 50/101 |
 
 ### 27.17 Open questions (each with a recommendation)
-- **OQ-T1 Window length (30 min) against output drift and cost.** Longer windows mean fewer seams but more drift risk
-  and a bigger single output. *Recommend:* 30 min until T0 measures 60-minute drift; the constant is a parameter.
-- **OQ-T2 Does the Batch discount apply to audio input and to output?** The design assumes it for both (≈ $0.18–0.22/h);
-  if only to one, the expected rate is higher and the ceiling ($0.40) is what remains true. *Recommend:* T0 answers
-  before the cap is set; if the real rate exceeds $0.30/h, raise the cap or the hour estimate, not the design.
+- **OQ-T1 Window length (30 min) against output drift and cost — resolved by T0 (Δ129).** 30, 45 and 60 min were complete with `MM:SS` times
+  (drift ≈ 0.1 s); 87–90 min truncates silently. *Decision:* 30–45 min, initial 30, with the coverage check; whether 45 pays on unique audio
+  is a T1 check.
+- **OQ-T2 Does the Batch discount apply to audio input and to output? — resolved by T0 (Δ132).** Yes, ×0.5 on both legs; there is no separate
+  audio rate. ≈ $0.08/h now, ≈ $0.16/h after 2026-12-31; the $20 cap stands.
 - **OQ-T3 The decoder on untrusted media (Δ99) and consent — resolved (owner, 2026-10-19).** A second user with drive
   indexing enabled exists (an empty drive today). Transcription stays **off** for them (`drive_transcribe_enabled`
   default False, Δ125) until the zero-credential parser service (§24.14, §9's "separate service" adapter) exists; only
@@ -4696,14 +4741,16 @@ unmeasured language.
 ### 27.18 Parameters (initial)
 | Name | Initial | Basis |
 |---|---|---|
-| `TRANSCRIBE_USD_PER_MONTH` (D46) | $20 | 50 h at the $0.40/h ceiling, ≈ 100 h at the expected batch rate |
-| `TRANSCRIBE_HOUR_USD_ESTIMATE` | $0.40 per audio hour | the owner's figure; the ceiling used for holds |
-| `TRANSCRIBE_WINDOW_S` / `TRANSCRIBE_OVERLAP_S` | 1 800 / 60 | §27.4, §27.6 |
+| `TRANSCRIBE_USD_PER_MONTH` (D46) | $20 | ≈ 250 h at $0.08/h now, ≈ 125 h at $0.16/h after the promotion, 50 h at the $0.40/h ceiling (T0) |
+| `TRANSCRIBE_HOUR_USD_ESTIMATE` | $0.20 per audio hour | above the post-promotion $0.16 (T0, Δ132); the owner's $0.40 stays the outer ceiling |
+| `TRANSCRIBE_WINDOW_S` / `TRANSCRIBE_OVERLAP_S` | 1 800 (30–45 min allowed) / 60 | §27.4, §27.6, Δ129–Δ130 |
+| `TRANSCRIBE_COVERAGE_MIN` | 0.9 | last segment start / window duration below it = failed attempt (Δ129) |
 | `TRANSCRIBE_MAX_SECONDS` / `TRANSCRIBE_MAX_BYTES` | 14 400 / 8 GiB | cost bound and the 1 MiB document bound |
 | `TRANSCRIBE_EXTRACT_WALL_S` / child `RLIMIT_CPU` | 240 s / 150 s | ≈ 32 CPU-s per 30-min window plus network; T0 revises |
 | `TRANSCRIBE_SHARE` | 0.25 | start window of the extraction stage |
 | `TRANSCRIBE_REREAD_COOLDOWN` | 24 h | an edited recording, as the reader |
-| `BATCH_POLL_FIRST_S` / `BATCH_POLL_EVERY_S` / `BATCH_POLLS_PER_TICK` | 1 200 / 1 800 / 10 | batch latency up to 24 h |
+| `BATCH_POLL_FIRST_S` / `BATCH_POLL_EVERY_S` / `BATCH_POLLS_PER_TICK` | 150 / 300 / 10 | T0 latency 2–5 min (Δ133) |
+| `BATCH_SLOW_AFTER_S` / slow poll interval | 3 600 / 1 800 | fallback cadence for a batch that does not finish |
 | `TRANSCRIBE_MAX_GAP_S` / `INTERPOLATED_MAX_SHARE` | 75 s / 0.3 | D43's "once a minute" |
 | `STITCH_MIN_MATCHED_WORDS` | 6 | an uncertain seam below it |
 | `SUMMARY_MAX_CHARS` / `SUMMARY_INPUT_CHARS` | 1 200 / 60 000 | §27.7 |
