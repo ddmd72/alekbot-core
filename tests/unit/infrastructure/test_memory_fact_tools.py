@@ -98,3 +98,15 @@ async def test_store_failure_is_a_generic_failed_result():
     assert r.failed
     assert "nothing was saved" in r.result_str
     assert "firestore" not in r.result_str
+
+
+async def test_success_text_says_done_and_forbids_a_repeat_call():
+    handle = make_propose_memory_facts_handler(AsyncMock(return_value="ab12"))
+
+    r = await handle(_call(facts=[FACT]))
+
+    assert not r.failed
+    assert "Done." in r.result_str
+    assert "do not call propose_memory_facts again" in r.result_str
+    assert "owner sees 1 proposed facts" in r.result_str
+    assert "Nothing is stored yet" not in r.result_str
