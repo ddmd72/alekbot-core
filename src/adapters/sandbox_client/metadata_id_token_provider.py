@@ -90,6 +90,8 @@ class MetadataIdTokenProvider:
     def __init__(self, audience: str, *, fetch: Callable[[str], str] = _fetch_from_metadata,
                  clock: Callable[[], float] = time.time) -> None:
         self._audience = normalise_audience(audience)
+        if not self._audience:
+            raise ValueError("audience must not be empty")
         self._fetch = fetch
         self._clock = clock
         self._lock = asyncio.Lock()
