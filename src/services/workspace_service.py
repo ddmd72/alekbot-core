@@ -14,11 +14,13 @@ from typing import TYPE_CHECKING, Any, Mapping, Optional
 from ..domain.exceptions import WorkspaceConflict, WorkspaceRefused
 from ..domain.workspace import (
     COMMANDS,
+    COPY_FOLDER,
     MUTATING_COMMANDS,
     TEXT_EXTENSIONS,
     TEXT_FOLDERS,
     WorkspaceBlob,
     WorkspaceCall,
+    WorkspaceDeleteMeta,
     WorkspaceResult,
     WorkspaceWriteMeta,
     apply_str_replace,
@@ -26,6 +28,7 @@ from ..domain.workspace import (
     changed_lines,
     check_caps,
     check_file_size,
+    find_references,
     folder_of,
     number_lines,
     parse_generation,
@@ -296,3 +299,107 @@ class WorkspaceService:
                 generations={path: entry.generation},
             )
         raise WorkspaceConflict(path)  # unreachable: the second attempt returns or raises
+
+    # -- delete / rename / restore -------------------------------------------------------------------------------
+
+    @staticmethod
+    def _delete_meta(call: WorkspaceCall, renamed_to: Optional[str] = None) -> WorkspaceDeleteMeta:
+        return WorkspaceDeleteMeta(deleted_by=call.origin, deleted_fire=call.fire_key, renamed_to=renamed_to)
+
+    async def _delete(self, call: WorkspaceCall, args: Mapping[str, Any], log: _LogFields) -> WorkspaceResult:
+        path = parse_workspace_path(args.get("path"))
+        log.path = path
+        generation = call.known.get(path)
+        if generation is None:
+            live = await self._store.list(call.user_id, path)
+            if not live:
+                raise FileNotFoundError(path)
+            generation = live[0].generation
+        log.gen = str(generation)
+        await self._store.delete(call.user_id, path, generation, self._delete_meta(call))
+        lines = [f"deleted workspace:{path}; restorable from history (generation {generation})"]
+        lines += find_references(path, call.references)
+        return WorkspaceResult(text="\n".join(lines), generations={path: None})
+
+    async def _rename(self, call: WorkspaceCall, args: Mapping[str, Any], log: _LogFields) -> WorkspaceResult:
+        src = parse_workspace_path(args.get("path"))
+        dst = parse_workspace_path(args.get("new_path"))
+        log.path = src
+        if dst == src:
+            raise WorkspaceRefused(f"new_path is the same as path ({src})", reason="path")
+        src_copy, dst_copy = folder_of(src) == COPY_FOLDER, folder_of(dst) == COPY_FOLDER
+        if src_copy and not dst_copy:
+            raise WorkspaceRefused(f"invalid workspace path '{dst}': a file in files/ stays in files/", reason="folder")
+        if dst_copy and not src_copy:
+            raise WorkspaceRefused(
+                f"invalid workspace path '{dst}': a file may not move into files/ (it holds copies only)",
+                reason="folder",
+            )
+        if not dst_copy and workspace_kind(dst) != "text":
+            raise WorkspaceRefused(
+                f"invalid workspace path '{dst}': projects/, references/ and scratch/ hold text files only "
+                f"({' '.join(TEXT_EXTENSIONS)})",
+                reason="kind",
+            )
+        # R5: read + put + delete, never a server-side copy (a copy would carry the old customTime).
+        blob = await self._store.read(call.user_id, src)
+        log.nbytes = blob.entry.size
+        try:
+            created = await self._store.put(call.user_id, dst, blob.data, self._meta(call), 0)
+        except WorkspaceConflict:
+            raise WorkspaceRefused(
+                f"{dst} already exists; pick another new_path, or view and delete it first", reason="exists",
+            ) from None
+        try:
+            await self._store.delete(
+                call.user_id, src, blob.entry.generation, self._delete_meta(call, renamed_to=dst),
+            )
+        except Exception:
+            # §5.3: undo the copy so a failed rename leaves only the source.
+            try:
+                await self._store.delete(call.user_id, dst, created.generation, self._delete_meta(call))
+            except Exception as rollback_error:
+                logger.error(
+                    "❌ [Workspace] rename rollback failed user=%s src=%s dst=%s: %s",
+                    call.user_id[:8], src, dst, rollback_error, exc_info=True,
+                )
+                log.result, log.gen = "error", str(created.generation)
+                return WorkspaceResult(
+                    text=(f"SYSTEM: the rename was interrupted and both workspace:{src} and workspace:{dst} exist "
+                          "now. View both and delete the one that is not needed."),
+                    failed=True,
+                    generations={dst: created.generation},
+                )
+            raise
+        log.gen = str(created.generation)
+        lines = [f"renamed workspace:{src} to workspace:{dst} · generation {created.generation}"]
+        lines += find_references(src, call.references, new_path=dst)
+        return WorkspaceResult(text="\n".join(lines), generations={src: None, dst: created.generation})
+
+    async def _restore(self, call: WorkspaceCall, args: Mapping[str, Any], log: _LogFields) -> WorkspaceResult:
+        path = parse_workspace_path(args.get("path"))
+        log.path = path
+        generation = parse_generation(args.get("generation"))
+        if generation is None:
+            raise WorkspaceRefused("restore needs a generation; history lists them", reason="generation")
+        blob = await self._read_version(call, path, generation)
+        log.nbytes = blob.entry.size
+        if blob.entry.live:
+            log.gen = str(generation)
+            return WorkspaceResult(
+                text=f"generation {generation} is already the current version of workspace:{path}; nothing to restore",
+                generations={path: generation},
+            )
+        live = await self._store.list(call.user_id, "")
+        current = next((e for e in live if e.path == path), None)
+        if current is None:
+            check_caps(live, len(blob.data))  # restoring a deleted file adds a live file
+        entry = await self._store.put(
+            call.user_id, path, blob.data, self._meta(call, restored_from=generation),
+            current.generation if current else 0,
+        )
+        log.gen = str(entry.generation)
+        return WorkspaceResult(
+            text=f"restored generation {generation} as generation {entry.generation} of workspace:{path}",
+            generations={path: entry.generation},
+        )
