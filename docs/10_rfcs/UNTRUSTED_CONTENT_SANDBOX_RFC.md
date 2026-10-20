@@ -1,6 +1,6 @@
 # RFC: Untrusted-content sandbox service — one place where hostile bytes are processed, holding nothing
 
-**Status:** Proposed (rev 3; the owner resolved every open question on 2026-10-20, §5 and §10; nothing built). *O* items are owner decisions, *P* items are author proposals the owner did not change.
+**Status:** Proposed (rev 3; the owner resolved every open question on 2026-10-20, §5 and §10; S1 built on `feat/sandbox-s1`, behind `SANDBOX_RENDER`, not deployed and not accepted; see `decisions/sandbox_render_service.md`). *O* items are owner decisions, *P* items are author proposals the owner did not change.
 **Date:** 2026-10-20
 **Owner decisions (2026-10-19, "we need a proper sandbox with a limited scope"):**
 - **O1. One separate Cloud Run deploy unit** whose own service account holds **no IAM role** and which is given **no secret**.

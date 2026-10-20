@@ -36,6 +36,7 @@ from ..domain.delegation_timestamp import strip_delegation_timestamp
 from ..domain.retry_policy import NO_RETRY_POLICY
 from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse, DeliveryItem
 from ..domain.llm import Message, MessagePart
+from ..domain.sandbox_errors import SandboxMisconfigured, SandboxUnavailable
 from ..infrastructure.agent_config import DOC_GENERATOR
 from ..ports.docx_runner_port import DocxRunnerError, DocxRunnerPort
 from ..ports.llm_port import AgentExecutionContext, LLMRequest
@@ -207,6 +208,23 @@ class DocGeneratorAgent(BaseAgent):
                     tool_result_parts.append(MessagePart(tool_response={
                         "name": tc.name,
                         "response": {"status": "success", "bytes_size": len(docx_bytes)},
+                    }))
+                except (SandboxUnavailable, SandboxMisconfigured) as exc:
+                    # Systemic outage, not the script's fault: never hand it to the model's repair loop (G10).
+                    if captured_bytes is None:
+                        self._on_agent_error(exc, "docx_generation")  # the one ERROR line
+                        return AgentResponse.failure(
+                            task_id=message.task_id,
+                            agent_id=self.agent_id,
+                            error=f"DOCX rendering is unavailable ({type(exc).__name__}); try again later",
+                        )
+                    logger.warning(
+                        "DocGeneratorAgent: turn %d — sandbox failure (%s) after a DOCX was already produced; "
+                        "keeping it", turn + 1, type(exc).__name__,
+                    )
+                    tool_result_parts.append(MessagePart(tool_response={
+                        "name": tc.name,
+                        "response": {"status": "error", "stderr": "renderer unavailable"},
                     }))
                 except DocxRunnerError as exc:
                     logger.warning(

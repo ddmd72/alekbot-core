@@ -8,6 +8,8 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 ├── Dockerfile
 ├── main.py             # Main application entry point
 ├── relay_main.py       # Voice-relay entry point — SECOND Cloud Run service (Voice Companion)
+├── sandbox_main.py     # Untrusted-content sandbox entry point (supervisor + `--serve`), own image Dockerfile.sandbox
+├── Dockerfile.sandbox  # Render service image (target `render`): explicit COPY allowlist, no secrets
 ├── Makefile
 ├── readme.md
 ├── requirements.txt
@@ -69,6 +71,10 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   ├── grok_adapter.py     # 🆕 Grok (xAI) LLMPort implementation
 │   ├── gmail_provider_adapter.py # 🆕 Gmail API — list_emails, batch_get_full_content, token refresh
 │   ├── groovy_prompt_assembler.py # 🆕 Groovy DSL prompt assembler
+│   ├── sandbox_engine/  # 🆕 Sandbox service engine side: child_launcher.py (uid, rlimits, group kill), limits_exec.py,
+│   │                    #    docx_render_engine.py (render.docx engine), render_docx_child.py (the child that runs node)
+│   ├── sandbox_client/  # 🆕 Sandbox caller side: sandbox_http_client.py, sandbox_docx_runner.py (DocxRunnerPort),
+│   │                    #    metadata_id_token_provider.py (OIDC ID token for the service URL)
 │   ├── node_puppeteer_runner.py # 🆕 NodePuppeteerRunner — PuppeteerRunnerPort impl; pipes HTML to
 │   │                            #    pdf_generator/runner.js via stdin, captures PDF bytes from stdout
 │   ├── notification_channel_factory.py # 🆕 Wires Slack/Telegram adapters for UserNotificationService
@@ -89,6 +95,9 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   ├── __init__.py
 │   ├── service_container.py # ServiceContainer — owns all shared (singleton-per-worker) services
 │   ├── user_agent_factory.py # 🆕 Per-user agent instance factory (moved from services/ to composition/)
+│   ├── sandbox_setup.py # 🆕 Sandbox service start-up: validate_startup (StartupPlan), build_engine_registry
+│   ├── sandbox_callers.py # 🆕 SANDBOX_CALLERS_<GROUP> loader + disjointness check
+│   ├── sandbox_client_setup.py # 🆕 SANDBOX_RENDER switch: build_docx_runner / docx_runner_factory
 │   ├── slack_adapter_factory.py # Factory for Slack adapter selection (composition root — legal to import all layers)
 │   └── telegram_adapter_factory.py # 🆕 Factory for Telegram adapter (composition root — mirrors Slack)
 ├── agents/             # 🆕 Multi-Agent System (Specialized Task Handlers)
@@ -144,6 +153,7 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   ├── environment.py  # Environment detection & configuration
 │   └── settings.py     # Re-exports SearchConfig from domain/settings.py for backward compat
 ├── domain/             # Domain Entities (Business Logic)
+│   ├── sandbox_contract.py / sandbox_docx_frame.py / sandbox_errors.py / sandbox_startup_check.py # 🆕 Sandbox wire contract, DOCX body framing, caller-visible errors, secret-shaped-env check
 │   ├── agent.py        # Agent Communication Protocol (ACP) + RoutingMetadata
 │   ├── auth.py         # Auth domain models: TokenClaims, OAuthTokens, OAuthUserInfo, IAMDecision
 │   ├── billing.py      # Billing account models
@@ -289,7 +299,9 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   ├── auth_blueprint.py      # OAuth 2.0 login/callback/refresh/logout
 │   ├── cabinet_blueprint.py   # Cabinet UI (Gmail status, indexing control)
 │   ├── deep_research_webhooks.py # 🆕 OpenAI Deep Research webhook receiver (Svix HMAC verification)
-│   └── gmail_blueprint.py     # Gmail OAuth connect/disconnect + indexing API
+│   ├── gmail_blueprint.py     # Gmail OAuth connect/disconnect + indexing API
+│   ├── sandbox_app.py / sandbox_caller_gate.py / sandbox_recycler.py / sandbox_supervisor.py / sandbox_unconfigured_app.py
+│   └── (sandbox_*: the render service's op blueprint, OIDC caller gate, pipe recycler, supervisor, unconfigured stub — own deploy unit)
 └── utils/
 ├── file_conversion.py     # File-to-text conversion (convert_file_to_text, is_native_binary, make_history_stub)
 ├── logger.py              # Centralized logging configuration

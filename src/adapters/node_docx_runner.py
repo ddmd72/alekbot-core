@@ -14,6 +14,7 @@ import os
 import tempfile
 
 from ..ports.docx_runner_port import DocxRunnerError, DocxRunnerPort
+from ..domain.docx_script_prelude import SAFE_ENV_KEYS, SECURITY_PRELUDE
 from ..domain.memory_telemetry import SCOPE_SUBPROCESS
 from ..utils.logger import logger
 from ..utils.memory_scope import memory_scope
@@ -24,44 +25,9 @@ _DOCX_GENERATOR_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "docx_generator")
 )
 
-# Env vars the Node subprocess legitimately needs. Everything else (every
-# application secret — API keys, OAuth/session secrets, service-account creds)
-# is deliberately withheld: the script is LLM-generated and must be treated as
-# untrusted. A docx build needs only a PATH to locate `node`/node_modules.
-_SAFE_ENV_KEYS = ("PATH", "HOME", "NODE_PATH", "LANG", "LC_ALL", "TMPDIR", "TEMP", "TMP")
-
-# Prepended to every LLM-generated script. Blocks the core modules that enable
-# network egress (→ GCP metadata server → service-account token → full DB/GCS
-# access), process spawning (→ RCE), and local filesystem access (→ reading
-# container files into the output doc), while leaving the docx toolchain
-# (path/zlib/stream/buffer) untouched. The docx lib builds via Packer.toBuffer
-# (in-memory → stdout) and does NOT require `fs` — verified empirically before
-# adding the block. Combined with _SAFE_ENV_KEYS this collapses the blast radius
-# of a malicious generated script to "produce a bad docx", not "exfiltrate".
-_SECURITY_PRELUDE = """\
-'use strict';
-(function () {
-  const Module = require('module');
-  const BLOCKED = new Set([
-    'child_process', 'cluster', 'worker_threads', 'inspector', 'repl', 'v8',
-    'http', 'http2', 'https', 'net', 'tls', 'dns', 'dgram',
-    'fs', 'fs/promises'
-  ]);
-  const _load = Module._load;
-  Module._load = function (request) {
-    const name = String(request).replace(/^node:/, '');
-    if (BLOCKED.has(name)) {
-      throw new Error('Blocked module for security: ' + request);
-    }
-    return _load.apply(this, arguments);
-  };
-  // Node 18+ exposes a global fetch() that bypasses the require() hook above.
-  const blockedFetch = function () {
-    throw new Error('Network access (fetch) is blocked for security');
-  };
-  try { globalThis.fetch = blockedFetch; } catch (e) { /* read-only: ignore */ }
-})();
-"""
+# Shared with the sandbox render.docx engine (plan G3); the old private names stay for the existing importers.
+_SAFE_ENV_KEYS = SAFE_ENV_KEYS
+_SECURITY_PRELUDE = SECURITY_PRELUDE
 
 
 def _safe_subprocess_env() -> dict:

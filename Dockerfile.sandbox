@@ -1,0 +1,54 @@
+# ================================
+# Untrusted-content sandbox (docs/10_rfcs/UNTRUSTED_CONTENT_SANDBOX_RFC.md §4.2, §4.3, §4.11)
+# ================================
+# Target `render` (S1): Python + Node + the `docx` npm package. No Chromium, no Puppeteer (they arrive with S2).
+# The image holds nothing: COPY is an explicit allowlist (never `.`), computed from the static import closure of
+# sandbox_main.py and pinned by tests/unit/test_dockerfile_sandbox.py. No .env, key file, Firestore, Secret Manager or
+# Storage client. The server runs as root (G12): only the engine children drop to the unprivileged user below.
+FROM python:3.11-slim AS render
+
+# Streams logs at once; and no .pyc is ever written (an engine uid must not be able to plant bytecode the server loads).
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+WORKDIR /app
+
+# nodejs/npm — the DOCX engine child runs LLM-generated docx scripts under node.
+RUN apt-get update && apt-get install -y --no-install-recommends nodejs npm \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements-sandbox.txt .
+RUN pip install --no-cache-dir -r requirements-sandbox.txt
+
+COPY docx_generator/package.json docx_generator/
+RUN cd docx_generator && npm install --omit=dev
+
+# Engine children run as this user (DEFAULT_ENGINE_USER in src/composition/sandbox_setup.py): system, no home, no shell.
+RUN useradd --system --user-group --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin sandboxengine
+
+# The code: one COPY per directory, files named one by one.
+COPY sandbox_main.py /app/
+COPY src/adapters/sandbox_engine/__init__.py src/adapters/sandbox_engine/child_launcher.py src/adapters/sandbox_engine/docx_render_engine.py src/adapters/sandbox_engine/limits_exec.py src/adapters/sandbox_engine/render_docx_child.py /app/src/adapters/sandbox_engine/
+COPY src/composition/__init__.py src/composition/sandbox_callers.py src/composition/sandbox_setup.py /app/src/composition/
+COPY src/domain/docx_script_prelude.py src/domain/memory_telemetry.py src/domain/sandbox_contract.py src/domain/sandbox_docx_frame.py src/domain/sandbox_startup_check.py /app/src/domain/
+COPY src/utils/logger.py src/utils/logging_context.py src/utils/memory_scope.py src/utils/telemetry.py /app/src/utils/
+COPY src/web/sandbox_app.py src/web/sandbox_caller_gate.py src/web/sandbox_recycler.py src/web/sandbox_supervisor.py src/web/sandbox_unconfigured_app.py src/web/worker_oidc_verifier.py /app/src/web/
+
+# /work: the mount point of the size-limited in-memory volume (Cloud Run gen2); the server creates per-request
+# directories there and hands each to the engine uid. /tmp is closed to everyone but root (the server's uid): a world-writable
+# /tmp would let the engine write unbounded data to instance memory outside RLIMIT_AS (the child's TMPDIR is its workdir).
+RUN mkdir -p /work && chmod 711 /work && chown root:root /tmp && chmod 0700 /tmp
+
+# Nothing the service loads may be writable by the engine user: the app tree belongs to root and is closed to group and
+# other (no .pyc is written; an existing __pycache__ would still be read), and the build fails on any world-writable
+# file or directory under /app (node_modules aside) or in site-packages.
+RUN chown -R root:root /app && chmod -R go-w /app \
+    && find /app -name __pycache__ -type d -prune -exec rm -rf {} + \
+    && if find /app /usr/local/lib/python3.11/site-packages -path '*/node_modules' -prune -o \
+        -perm -o+w ! -type l -print | grep -q .; then \
+      echo "world-writable files under /app or site-packages: the engine user could rewrite them" >&2; \
+      exit 1; \
+    fi
+
+# Exec form: sandbox_main.py is PID 1 and reaps orphaned grandchildren.
+CMD ["python", "sandbox_main.py"]
