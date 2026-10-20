@@ -14,7 +14,7 @@ When you need user_id / account_id for manual triggers, gcloud commands, or scri
 `curl` returns **401** against the live service. Project ID / user IDs / SA: read from `.env` /
 memory (`project_infra.md`) — don't hardcode. Three ways to trigger, easiest first:
 
-**1. Scheduled task types — run the Cloud Scheduler job** (it already carries OIDC; nothing to mint):
+**1. Scheduled task types — run the Cloud Scheduler job** (it already carries OIDC; nothing to mint; `cloudbuild-dev.yaml` creates every job with the invoker identity read from the `SERVICE_ACCOUNT_EMAIL` secret):
 ```bash
 gcloud scheduler jobs list --location=us-central1 --project=<PROJECT_ID>   # see all jobs
 gcloud scheduler jobs run alek-bot-dev-fire-due-reminders --location=us-central1 --project=<PROJECT_ID>
@@ -37,7 +37,11 @@ curl -s -X POST "$SERVICE_URL_DEV/worker" \
   -d '{"task_type": "daily_email_review", "user_id": "<DEV_USER_ID>", "account_id": "<DEV_ACCOUNT_ID>"}'
 ```
 
-**3. Local instance — the gate bypasses** when `SERVICE_ACCOUNT_EMAIL` is unset (local dev), so a
+For `drive_sync` (indexer, not `/worker` of the main service) go through the queue instead:
+`gcloud tasks create-http-task --queue=drive-sync-dev … --oidc-service-account-email=<DRIVE_INVOKER_SA_EMAIL or SERVICE_ACCOUNT_EMAIL value>`
+(needs actAs on that identity, not tokenCreator; details in `docs/07_deployment/SCHEDULERS.md`).
+
+**3. Local instance — the gate bypasses** when no OIDC identity is configured and `K_SERVICE` is unset (local dev; on Cloud Run an empty set refuses every call), so a
 plain unauthenticated `curl http://localhost:8080/worker ...` works with no token.
 
 ## Commands

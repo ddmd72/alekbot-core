@@ -7,7 +7,7 @@ from slack_bolt.async_app import AsyncApp
 from twilio.rest import Client as TwilioClient
 
 from src.config.settings import load_settings
-from src.web.worker_oidc_verifier import verify_worker_oidc
+from src.web.worker_oidc_verifier import build_oidc_gate, parse_sa_emails
 from src.web.twilio_signature_verifier import verify_twilio_signature
 from src.web.voice_control_plane_app import create_voice_control_plane_blueprint
 from src.web.voice_webhook_app import create_voice_webhook_blueprint
@@ -385,14 +385,11 @@ async def main():
             logger.info("ℹ️ Video generation not configured (XAI_API_KEY not set)")
 
         # GCS media adapter for HTML report uploads (optional — requires GCS_MEDIA_BUCKET).
-        # service_account_email enables keyless V4 signed-URL minting via IAM signBlob
-        # on Cloud Run (for the /f/<token> capability route).
+        # Keyless V4 signed-URL minting via IAM signBlob as the runtime's own identity
+        # (for the /f/<token> capability route); no signer email is passed in.
         gcs_bucket = config.get("GCS_MEDIA_BUCKET", "")
         gcs_media_adapter = (
-            GcsMediaAdapter(
-                bucket_name=gcs_bucket,
-                service_account_email=config.get("SERVICE_ACCOUNT_EMAIL"),
-            )
+            GcsMediaAdapter(bucket_name=gcs_bucket)
             if gcs_bucket else None
         )
 
@@ -926,11 +923,18 @@ async def main():
                     db_client, collection=env_config.voice_tickets_collection
                 )
 
-                async def _voice_oidc_verifier(auth_header: str) -> bool:
-                    sa_email = config.get("SERVICE_ACCOUNT_EMAIL")
-                    if not sa_email:
-                        return True
-                    return verify_worker_oidc(auth_header, sa_email)
+                # Accepted: the invoker identity, the relay's runtime SA (it posts here with its own
+                # metadata-server token) and the optional transition list (IAM migration). Empty set:
+                # closed on Cloud Run, open locally.
+                _voice_oidc_verifier = build_oidc_gate(
+                    parse_sa_emails(
+                        config.get("SERVICE_ACCOUNT_EMAIL"),
+                        config.get("VOICE_RELAY_SA_EMAIL"),
+                        os.getenv("OIDC_TRANSITION_SA_EMAILS"),
+                    ),
+                    on_cloud_run=bool(os.getenv("K_SERVICE")),
+                    label="Voice control plane",
+                )
 
                 async def _voice_twilio_signature_verifier(
                     url: str, form_params: dict, signature: str
@@ -1216,24 +1220,28 @@ async def main():
                     static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "src", "web", "static")
                     return await send_file(os.path.join(static_dir, "alek-logo.png"), mimetype="image/png")
 
+                # Accepted /worker identities, computed once: SERVICE_ACCOUNT_EMAIL plus the optional
+                # transition list. Empty set: every call refused on Cloud Run (ERROR logged once, here),
+                # open locally (manual curl triggers).
+                _worker_oidc_gate = build_oidc_gate(
+                    parse_sa_emails(config.get("SERVICE_ACCOUNT_EMAIL"), os.getenv("OIDC_TRANSITION_SA_EMAILS")),
+                    on_cloud_run=bool(os.getenv("K_SERVICE")),
+                    label="Worker",
+                )
+
                 # Add /worker endpoint — delegates to WorkerHandler
                 @main_app.route("/worker", methods=["POST"])
                 async def worker():
                     from quart import request, jsonify
                     # OIDC gate. Cloud Tasks / Cloud Scheduler attach an OIDC
-                    # token signed by SERVICE_ACCOUNT_EMAIL; enforce verification
-                    # iff that value is set. Local dev (no SA email) bypasses,
+                    # token signed by an accepted identity (_worker_oidc_gate);
+                    # no identity configured: closed on Cloud Run, open locally,
                     # keeping manual curl triggers working (CLAUDE.md "Manual
                     # Triggers"). Identity-only check — audience is not pinned
                     # (callers use inconsistent audiences); see verifier docstring.
-                    sa_email = config.get("SERVICE_ACCOUNT_EMAIL")
-                    if sa_email:
-                        if not verify_worker_oidc(
-                            request.headers.get("Authorization"),
-                            sa_email,
-                        ):
-                            logger.warning("Rejected unauthenticated /worker request")
-                            return jsonify({"error": "unauthorized"}), 401
+                    if not await _worker_oidc_gate(request.headers.get("Authorization")):
+                        logger.warning("Rejected unauthenticated /worker request")
+                        return jsonify({"error": "unauthorized"}), 401
                     payload = await request.get_json(silent=True) or {}
                     delivery = CloudTaskDelivery.from_headers(request.headers)
                     if delivery is not None:

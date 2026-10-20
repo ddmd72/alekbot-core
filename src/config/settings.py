@@ -58,6 +58,10 @@ def load_settings():
         "SLACK_SIGNING_SECRET": os.getenv("SLACK_SIGNING_SECRET"),
         "CLOUD_RUN_SERVICE_URL": os.getenv("CLOUD_RUN_SERVICE_URL"),
         "SERVICE_ACCOUNT_EMAIL": os.getenv("SERVICE_ACCOUNT_EMAIL"),
+        # OIDC identities (IAM least-privilege): the drive queue's invoker and the voice relay's runtime SA.
+        # Absent today -> consumers fall back to SERVICE_ACCOUNT_EMAIL / accept nothing extra.
+        "DRIVE_INVOKER_SA_EMAIL": os.getenv("DRIVE_INVOKER_SA_EMAIL"),
+        "VOICE_RELAY_SA_EMAIL": os.getenv("VOICE_RELAY_SA_EMAIL"),
         "GOOGLE_CLOUD_PROJECT": os.getenv("GOOGLE_CLOUD_PROJECT"),
         "GEMINI_API_KEY": os.getenv("GEMINI_API_KEY"),
         "ANTHROPIC_API_KEY": os.getenv("ANTHROPIC_API_KEY"),
@@ -139,6 +143,11 @@ def load_settings():
                     print(f"✅ Successfully fetched {key}.")
                 else:
                     print(f"⚠️ Could not fetch {key} from Secret Manager.")
+
+    # Identity emails are compared for equality against token claims: a mounted secret may carry a
+    # trailing newline (only the Secret Manager fallback path strips, get_secret above).
+    for key in ("SERVICE_ACCOUNT_EMAIL", "DRIVE_INVOKER_SA_EMAIL", "VOICE_RELAY_SA_EMAIL"):
+        settings[key] = (settings[key] or "").strip() or None
 
     missing_keys = [key for key, value in settings.items()
                    if value is None and key not in ["APP_ENV", "ENVIRONMENT_CONFIG"]]
