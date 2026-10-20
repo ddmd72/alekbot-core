@@ -27,7 +27,7 @@ steps:
       - "--timeout=1800"
       - "--port=8080" # Required for HTTP mode
       - "--allow-unauthenticated" # For dev testing
-      - "--set-secrets=SLACK_BOT_TOKEN=SLACK_BOT_TOKEN_DEV:latest,SLACK_SIGNING_SECRET=SLACK_SIGNING_SECRET_DEV:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest,ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest,XAI_API_KEY=XAI_API_KEY:latest,GOOGLE_OAUTH_CLIENT_ID=GOOGLE_OAUTH_CLIENT_ID:latest,GOOGLE_OAUTH_CLIENT_SECRET=GOOGLE_OAUTH_CLIENT_SECRET:latest,FIREBASE_WEB_API_KEY=FIREBASE_WEB_API_KEY:latest,OAUTH_SESSION_SECRET=OAUTH_SESSION_SECRET:latest,TELEGRAM_BOT_TOKEN=TELEGRAM_BOT_TOKEN_DEV:latest,TELEGRAM_WEBHOOK_SECRET=TELEGRAM_WEBHOOK_SECRET_DEV:latest,DOCS_OWNER_USER_ID=docs-owner-user-id:latest,GMAIL_OAUTH_REDIRECT_URI=GMAIL_OAUTH_REDIRECT_URI_DEV:latest,GOOGLE_TASKS_OAUTH_REDIRECT_URI=GOOGLE_TASKS_OAUTH_REDIRECT_URI_DEV:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,OPENAI_DEEP_RESEARCH_WEBHOOK_URL=OPENAI_DEEP_RESEARCH_WEBHOOK_URL_DEV:latest,OPENAI_DEEP_RESEARCH_WEBHOOK_SECRET=OPENAI_DEEP_RESEARCH_WEBHOOK_SECRET_DEV:latest,GOOGLE_SEARCH_API_KEY=GOOGLE_SEARCH_API_KEY:latest,UNSPLASH_ACCESS_KEY=UNSPLASH_ACCESS_KEY:latest,MICROSOFT_TODO_CLIENT_ID=MICROSOFT_TODO_CLIENT_ID:latest,MICROSOFT_TODO_CLIENT_SECRET=MICROSOFT_TODO_CLIENT_SECRET:latest,MICROSOFT_TODO_REDIRECT_URI=MICROSOFT_TODO_REDIRECT_URI_DEV:latest,ONEDRIVE_REDIRECT_URI=ONEDRIVE_REDIRECT_URI_DEV:latest,MICROSOFT_TASKS_WEBHOOK_SECRET=MICROSOFT_TASKS_WEBHOOK_SECRET:latest,BILLING_SLACK_WEBHOOK_URL=BILLING_SLACK_WEBHOOK_URL:latest,SLACK_APP_TOKEN=SLACK_APP_TOKEN:latest,GOOGLE_SEARCH_CX=GOOGLE_SEARCH_CX:latest,SERVICE_ACCOUNT_EMAIL=SERVICE_ACCOUNT_EMAIL:latest,LOGFIRE_TOKEN=LOGFIRE_TOKEN:latest,TWILIO_ACCOUNT_SID=TWILIO_ACCOUNT_SID:latest,TWILIO_AUTH_TOKEN=TWILIO_AUTH_TOKEN:latest,TWILIO_VERIFY_SERVICE_SID=TWILIO_VERIFY_SERVICE_SID:latest,TWILIO_PHONE_NUMBER=TWILIO_PHONE_NUMBER:latest,CLOUDFLARE_SFU_APP_ID=CLOUDFLARE_SFU_APP_ID:latest,CLOUDFLARE_SFU_APP_SECRET=CLOUDFLARE_SFU_APP_SECRET:latest,GCS_WORKSPACE_BUCKET=GCS_WORKSPACE_BUCKET:latest"
+      - "--set-secrets=SLACK_BOT_TOKEN=SLACK_BOT_TOKEN_DEV:latest,SLACK_SIGNING_SECRET=SLACK_SIGNING_SECRET_DEV:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest,ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest,XAI_API_KEY=XAI_API_KEY:latest,GOOGLE_OAUTH_CLIENT_ID=GOOGLE_OAUTH_CLIENT_ID:latest,GOOGLE_OAUTH_CLIENT_SECRET=GOOGLE_OAUTH_CLIENT_SECRET:latest,FIREBASE_WEB_API_KEY=FIREBASE_WEB_API_KEY:latest,OAUTH_SESSION_SECRET=OAUTH_SESSION_SECRET:latest,TELEGRAM_BOT_TOKEN=TELEGRAM_BOT_TOKEN_DEV:latest,TELEGRAM_WEBHOOK_SECRET=TELEGRAM_WEBHOOK_SECRET_DEV:latest,DOCS_OWNER_USER_ID=docs-owner-user-id:latest,GMAIL_OAUTH_REDIRECT_URI=GMAIL_OAUTH_REDIRECT_URI_DEV:latest,GOOGLE_TASKS_OAUTH_REDIRECT_URI=GOOGLE_TASKS_OAUTH_REDIRECT_URI_DEV:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,OPENAI_DEEP_RESEARCH_WEBHOOK_URL=OPENAI_DEEP_RESEARCH_WEBHOOK_URL_DEV:latest,OPENAI_DEEP_RESEARCH_WEBHOOK_SECRET=OPENAI_DEEP_RESEARCH_WEBHOOK_SECRET_DEV:latest,GOOGLE_SEARCH_API_KEY=GOOGLE_SEARCH_API_KEY:latest,UNSPLASH_ACCESS_KEY=UNSPLASH_ACCESS_KEY:latest,MICROSOFT_TODO_CLIENT_ID=MICROSOFT_TODO_CLIENT_ID:latest,MICROSOFT_TODO_CLIENT_SECRET=MICROSOFT_TODO_CLIENT_SECRET:latest,MICROSOFT_TODO_REDIRECT_URI=MICROSOFT_TODO_REDIRECT_URI_DEV:latest,ONEDRIVE_REDIRECT_URI=ONEDRIVE_REDIRECT_URI_DEV:latest,MICROSOFT_TASKS_WEBHOOK_SECRET=MICROSOFT_TASKS_WEBHOOK_SECRET:latest,BILLING_SLACK_WEBHOOK_URL=BILLING_SLACK_WEBHOOK_URL:latest,SLACK_APP_TOKEN=SLACK_APP_TOKEN:latest,GOOGLE_SEARCH_CX=GOOGLE_SEARCH_CX:latest,SERVICE_ACCOUNT_EMAIL=SERVICE_ACCOUNT_EMAIL:latest,LOGFIRE_TOKEN=LOGFIRE_TOKEN:latest,TWILIO_ACCOUNT_SID=TWILIO_ACCOUNT_SID:latest,TWILIO_AUTH_TOKEN=TWILIO_AUTH_TOKEN:latest,TWILIO_VERIFY_SERVICE_SID=TWILIO_VERIFY_SERVICE_SID:latest,TWILIO_PHONE_NUMBER=TWILIO_PHONE_NUMBER:latest,CLOUDFLARE_SFU_APP_ID=CLOUDFLARE_SFU_APP_ID:latest,CLOUDFLARE_SFU_APP_SECRET=CLOUDFLARE_SFU_APP_SECRET:latest,GCS_WORKSPACE_BUCKET=GCS_WORKSPACE_BUCKET:latest,DRIVE_INVOKER_SA_EMAIL=DRIVE_INVOKER_SA_EMAIL:latest,VOICE_RELAY_SA_EMAIL=VOICE_RELAY_SA_EMAIL:latest,OIDC_TRANSITION_SA_EMAILS=OIDC_TRANSITION_SA_EMAILS:latest"
 
   # Explicitly grant public access — --allow-unauthenticated alone is not
   # reliable if the Cloud Build SA lacks roles/iam.securityAdmin.
@@ -59,9 +59,10 @@ steps:
   # every handled outcome is a 200 and the tick enqueues its own continuation, and the fan-out
   # re-ticks every user each 10 min — so a few backed-off attempts, then the fan-out takes over.
   # Log sampling 1.0: one line per task operation, a few per user per hour.
-  # Prerequisite: the Cloud Build service account needs roles/cloudtasks.queueAdmin (one-time grant,
-  # docs/07_deployment/SCHEDULERS.md § Start Drive Sync). Without it this step fails the build after
-  # the main service is deployed; the indexer, research job, relay and scheduler steps then do not run.
+  # Prerequisite: the identity this build runs as needs queue admin rights on this queue
+  # (roles/cloudtasks.queueAdmin, granted on the queue; docs/07_deployment/SCHEDULERS.md § Start Drive Sync).
+  # Without it this step fails the build after the main service is deployed; the indexer, research job,
+  # relay and scheduler steps then do not run.
   - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
     entrypoint: "bash"
     args:
@@ -101,12 +102,14 @@ steps:
   # --timeout=1800: TICK_DEADLINE_S, the Cloud Tasks HTTP maximum; every drive_sync enqueue passes it
   #   as dispatch_deadline, and the tick starts no new work after 8 min (§7.1).
   # --min-instances=0: idle between ticks; a cold start costs nothing a background tick notices.
-  # No --service-account override: Cloud Tasks mints each task's OIDC token for SERVICE_ACCOUNT_EMAIL
-  #   (GcpTaskQueue), and /worker checks that same email — one identity, as for alek-bot-dev.
+  # No --service-account override (yet). The tasks' OIDC identity is DRIVE_INVOKER_SA_EMAIL when that secret
+  #   exists, else SERVICE_ACCOUNT_EMAIL (GcpTaskQueue, drive_indexing_setup); /worker accepts the same
+  #   identity plus the optional OIDC_TRANSITION_SA_EMAILS list (src/web/indexer_worker_app.py).
   # Seven secrets, exactly what indexer_main.py reads: GEMINI_API_KEY (embeddings, and the drive agents' Gemini
   #   Flash fallback, §24.2 D7 rev 3.17),
   #   MICROSOFT_TODO_CLIENT_ID/SECRET (drive token refresh; same app registration as Step 1),
-  #   SERVICE_ACCOUNT_EMAIL (the /worker gate + the identity of the tasks it enqueues),
+  #   SERVICE_ACCOUNT_EMAIL (the /worker gate + the identity of the tasks it enqueues; superseded per role by
+  #   DRIVE_INVOKER_SA_EMAIL once that secret is mounted),
   #   ANTHROPIC_API_KEY / OPENAI_API_KEY (the drive reader and triage agents, Slice 2+4 §24.2: secrets, never
   #   substitutions) and BILLING_SLACK_WEBHOOK_URL (the advisory daily budget alert of their billing).
   # DRIVE_UPGRADE_PASS is the upgrade pass's emergency switch (RFC §25.8): it rides as the substitution
@@ -122,6 +125,7 @@ steps:
       - "run"
       - "deploy"
       - "alek-bot-indexer-dev"
+      - "--service-account=alek-indexer@$PROJECT_ID.iam.gserviceaccount.com"
       - "--image=gcr.io/$PROJECT_ID/alek-bot-dev:latest"
       - "--region=us-central1"
       - "--command=python"
@@ -134,7 +138,7 @@ steps:
       - "--max-instances=1"
       - "--timeout=1800"
       - "--set-env-vars=APP_ENV=development,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,DRIVE_INDEXER_URL=$_INDEXER_URL,DRIVE_UPGRADE_PASS=$_DRIVE_UPGRADE_PASS"
-      - "--set-secrets=GEMINI_API_KEY=GEMINI_API_KEY:latest,MICROSOFT_TODO_CLIENT_ID=MICROSOFT_TODO_CLIENT_ID:latest,MICROSOFT_TODO_CLIENT_SECRET=MICROSOFT_TODO_CLIENT_SECRET:latest,SERVICE_ACCOUNT_EMAIL=SERVICE_ACCOUNT_EMAIL:latest,ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,BILLING_SLACK_WEBHOOK_URL=BILLING_SLACK_WEBHOOK_URL:latest"
+      - "--set-secrets=GEMINI_API_KEY=GEMINI_API_KEY:latest,MICROSOFT_TODO_CLIENT_ID=MICROSOFT_TODO_CLIENT_ID:latest,MICROSOFT_TODO_CLIENT_SECRET=MICROSOFT_TODO_CLIENT_SECRET:latest,SERVICE_ACCOUNT_EMAIL=SERVICE_ACCOUNT_EMAIL:latest,ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,BILLING_SLACK_WEBHOOK_URL=BILLING_SLACK_WEBHOOK_URL:latest,DRIVE_INVOKER_SA_EMAIL=DRIVE_INVOKER_SA_EMAIL:latest,OIDC_TRANSITION_SA_EMAILS=OIDC_TRANSITION_SA_EMAILS:latest"
       # RFC Δ21. Ingress internal: the only caller is Cloud Tasks on drive-sync-dev, which counts as
       # internal (same project, default run.app URL). No internet request can reach the service or
       # take its single request slot (concurrency 1, max 1 instance) from a dispatch.
@@ -177,6 +181,7 @@ steps:
       - "--region=us-central1"
       - "--command=python"
       - "--args=job_main.py"
+      - "--service-account=alek-research-job@$PROJECT_ID.iam.gserviceaccount.com"
       - "--max-retries=0"
       - "--task-timeout=18000"
       - "--memory=1024Mi"
@@ -195,17 +200,14 @@ steps:
   # min-instances=0: RFC §9 item 9 leaves this genuinely open (unlike the main
   # service, the relay has no scheduler keep-alive yet) — start cold, revisit
   # after real call volume.
-  # No --service-account override: relay_main.py mints an OIDC token from its
+  # No --service-account override (yet): relay_main.py mints an OIDC token from its
   # own Cloud Run runtime identity to call back into the main service's
-  # /voice/session-config and /voice/submit-transcript (src/web/
-  # voice_control_plane_app.py), and main.py wires the SAME check used for
-  # /worker — verify_worker_oidc(token, expected_sa_email=config.get(
-  # "SERVICE_ACCOUNT_EMAIL")) (main.py:866-869) — against one shared expected
-  # email. Deploying the relay under a different service account would make
-  # every one of those calls 401 unless SERVICE_ACCOUNT_EMAIL were also
-  # changed, which no task authorizes. So the relay deliberately runs as the
-  # same (default compute) service account as alek-bot-dev and
-  # alek-research-job-dev above — neither overrides --service-account either.
+  # /voice/* control plane (src/web/voice_control_plane_app.py). Main accepts
+  # SERVICE_ACCOUNT_EMAIL, VOICE_RELAY_SA_EMAIL (the relay's own runtime SA, once that
+  # secret exists) and the optional OIDC_TRANSITION_SA_EMAILS list. A relay under a
+  # different service account therefore needs VOICE_RELAY_SA_EMAIL (or the
+  # transition list) set first, or every one of those calls 401s. Until then the
+  # relay runs as the same default service account as the other runtimes.
   # Three secrets: relay_main.py reads OPENAI_API_KEY, XAI_API_KEY and
   # BILLING_SLACK_WEBHOOK_URL via os.environ (see its module docstring). The provider
   # of each call comes from the user's session config, not from env
@@ -220,6 +222,7 @@ steps:
       - "run"
       - "deploy"
       - "alek-voice-relay-dev"
+      - "--service-account=alek-relay@$PROJECT_ID.iam.gserviceaccount.com"
       - "--image=gcr.io/$PROJECT_ID/alek-bot-dev:latest"
       - "--region=us-central1"
       - "--command=python"
@@ -267,209 +270,21 @@ steps:
   - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
     entrypoint: "bash"
     args:
-      - "-c"
-      - |
-        # OIDC identity for /worker scheduler jobs. The /worker route verifies a
-        # Google-signed token whose email == this SA (audience is not pinned —
-        # see src/web/worker_oidc_verifier.py). Derive the default compute SA
-        # from the project number so no infra id is hardcoded (secrets rule).
-        SA="$$(gcloud projects describe $PROJECT_ID --format='value(projectNumber)')-compute@developer.gserviceaccount.com"
-        gcloud scheduler jobs update http alek-bot-dev-keep-alive \
-          --schedule="*/10 * * * *" \
-          --uri="$_SERVICE_URL/health" \
-          --http-method=GET \
-          --location=us-central1 \
-          --attempt-deadline=30s \
-          --project=$PROJECT_ID 2>/dev/null \
-        || gcloud scheduler jobs create http alek-bot-dev-keep-alive \
-          --schedule="*/10 * * * *" \
-          --uri="$_SERVICE_URL/health" \
-          --http-method=GET \
-          --location=us-central1 \
-          --attempt-deadline=30s \
-          --project=$PROJECT_ID
+      - "scripts/infrastructure/cloudbuild_scheduler_jobs.sh"
+    # The script body lives in a file (Cloud Build caps each step arg at 10 000 chars). Substitutions
+    # are not applied inside files, so pass the values it reads through env.
+    env:
+      - "PROJECT_ID=$PROJECT_ID"
+      - "SERVICE_URL=$_SERVICE_URL"
 
-        gcloud scheduler jobs delete alek-bot-dev-renew-task-subscriptions \
-          --location=us-central1 --project=$PROJECT_ID --quiet 2>/dev/null || true
-        gcloud scheduler jobs create http alek-bot-dev-renew-task-subscriptions \
-          --schedule="0 2 * * *" \
-          --uri="$_SERVICE_URL/worker" \
-          --oidc-service-account-email="$$SA" \
-          --http-method=POST \
-          --message-body='{"task_type":"renew_all_task_subscriptions"}' \
-          --headers="Content-Type=application/json" \
-          --location=us-central1 \
-          --attempt-deadline=60s \
-          --project=$PROJECT_ID
+# Build logs go to Cloud Logging only: required once a build runs as a user-specified service account
+# (a later step sets `serviceAccount`); harmless for the default build identity.
+# Builds run as their own least-privilege identity (IAM Step 1), never as the default compute identity.
+# A user-specified build identity requires `options.logging: CLOUD_LOGGING_ONLY` (below).
+serviceAccount: 'projects/$PROJECT_ID/serviceAccounts/alek-deployer@$PROJECT_ID.iam.gserviceaccount.com'
 
-        gcloud scheduler jobs describe alek-bot-dev-start-email-indexing \
-          --location=us-central1 --project=$PROJECT_ID 2>/dev/null \
-        && gcloud scheduler jobs update http alek-bot-dev-start-email-indexing \
-          --schedule="7 * * * *" \
-          --uri="$_SERVICE_URL/worker" \
-          --oidc-service-account-email="$$SA" \
-          --http-method=POST \
-          --message-body='{"task_type":"start_email_indexing"}' \
-          --update-headers="Content-Type=application/json" \
-          --location=us-central1 \
-          --attempt-deadline=60s \
-          --project=$PROJECT_ID \
-        || gcloud scheduler jobs create http alek-bot-dev-start-email-indexing \
-          --schedule="7 * * * *" \
-          --uri="$_SERVICE_URL/worker" \
-          --oidc-service-account-email="$$SA" \
-          --http-method=POST \
-          --message-body='{"task_type":"start_email_indexing"}' \
-          --headers="Content-Type=application/json" \
-          --location=us-central1 \
-          --attempt-deadline=60s \
-          --project=$PROJECT_ID
-
-        gcloud scheduler jobs describe alek-bot-dev-fire-due-reminders \
-          --location=us-central1 --project=$PROJECT_ID 2>/dev/null \
-        && gcloud scheduler jobs update http alek-bot-dev-fire-due-reminders \
-          --schedule="*/5 * * * *" \
-          --uri="$_SERVICE_URL/worker" \
-          --oidc-service-account-email="$$SA" \
-          --http-method=POST \
-          --message-body='{"task_type":"fire_due_reminders"}' \
-          --update-headers="Content-Type=application/json" \
-          --location=us-central1 \
-          --attempt-deadline=60s \
-          --project=$PROJECT_ID \
-        || gcloud scheduler jobs create http alek-bot-dev-fire-due-reminders \
-          --schedule="*/5 * * * *" \
-          --uri="$_SERVICE_URL/worker" \
-          --oidc-service-account-email="$$SA" \
-          --http-method=POST \
-          --message-body='{"task_type":"fire_due_reminders"}' \
-          --headers="Content-Type=application/json" \
-          --location=us-central1 \
-          --attempt-deadline=60s \
-          --project=$PROJECT_ID
-
-        gcloud scheduler jobs describe alek-bot-dev-billing-daily-summary \
-          --location=us-central1 --project=$PROJECT_ID 2>/dev/null \
-        && gcloud scheduler jobs update http alek-bot-dev-billing-daily-summary \
-          --schedule="0 9 * * *" \
-          --time-zone="Europe/Madrid" \
-          --uri="$_SERVICE_URL/worker" \
-          --oidc-service-account-email="$$SA" \
-          --http-method=POST \
-          --message-body='{"task_type":"billing_daily_summary"}' \
-          --update-headers="Content-Type=application/json" \
-          --location=us-central1 \
-          --attempt-deadline=60s \
-          --project=$PROJECT_ID \
-        || gcloud scheduler jobs create http alek-bot-dev-billing-daily-summary \
-          --schedule="0 9 * * *" \
-          --time-zone="Europe/Madrid" \
-          --uri="$_SERVICE_URL/worker" \
-          --oidc-service-account-email="$$SA" \
-          --http-method=POST \
-          --message-body='{"task_type":"billing_daily_summary"}' \
-          --headers="Content-Type=application/json" \
-          --location=us-central1 \
-          --attempt-deadline=60s \
-          --project=$PROJECT_ID
-
-        gcloud scheduler jobs describe alek-bot-dev-repair-email-embeddings \
-          --location=us-central1 --project=$PROJECT_ID 2>/dev/null \
-        && gcloud scheduler jobs update http alek-bot-dev-repair-email-embeddings \
-          --schedule="2 * * * *" \
-          --uri="$_SERVICE_URL/worker" \
-          --oidc-service-account-email="$$SA" \
-          --http-method=POST \
-          --message-body='{"task_type":"repair_email_embeddings"}' \
-          --update-headers="Content-Type=application/json" \
-          --location=us-central1 \
-          --attempt-deadline=300s \
-          --project=$PROJECT_ID \
-        || gcloud scheduler jobs create http alek-bot-dev-repair-email-embeddings \
-          --schedule="2 * * * *" \
-          --uri="$_SERVICE_URL/worker" \
-          --oidc-service-account-email="$$SA" \
-          --http-method=POST \
-          --message-body='{"task_type":"repair_email_embeddings"}' \
-          --headers="Content-Type=application/json" \
-          --location=us-central1 \
-          --attempt-deadline=300s \
-          --project=$PROJECT_ID
-
-        gcloud scheduler jobs describe alek-bot-dev-sweep-consolidation \
-          --location=us-central1 --project=$PROJECT_ID 2>/dev/null \
-        && gcloud scheduler jobs update http alek-bot-dev-sweep-consolidation \
-          --schedule="17 * * * *" \
-          --uri="$_SERVICE_URL/worker" \
-          --oidc-service-account-email="$$SA" \
-          --http-method=POST \
-          --message-body='{"task_type":"sweep_consolidation"}' \
-          --update-headers="Content-Type=application/json" \
-          --location=us-central1 \
-          --attempt-deadline=60s \
-          --project=$PROJECT_ID \
-        || gcloud scheduler jobs create http alek-bot-dev-sweep-consolidation \
-          --schedule="17 * * * *" \
-          --uri="$_SERVICE_URL/worker" \
-          --oidc-service-account-email="$$SA" \
-          --http-method=POST \
-          --message-body='{"task_type":"sweep_consolidation"}' \
-          --headers="Content-Type=application/json" \
-          --location=us-central1 \
-          --attempt-deadline=60s \
-          --project=$PROJECT_ID
-
-        gcloud scheduler jobs describe alek-bot-dev-start-daily-email-review \
-          --location=us-central1 --project=$PROJECT_ID 2>/dev/null \
-        && gcloud scheduler jobs update http alek-bot-dev-start-daily-email-review \
-          --schedule="12 * * * *" \
-          --uri="$_SERVICE_URL/worker" \
-          --oidc-service-account-email="$$SA" \
-          --http-method=POST \
-          --message-body='{"task_type":"start_daily_email_review"}' \
-          --update-headers="Content-Type=application/json" \
-          --location=us-central1 \
-          --attempt-deadline=180s \
-          --project=$PROJECT_ID \
-        || gcloud scheduler jobs create http alek-bot-dev-start-daily-email-review \
-          --schedule="12 * * * *" \
-          --uri="$_SERVICE_URL/worker" \
-          --oidc-service-account-email="$$SA" \
-          --http-method=POST \
-          --message-body='{"task_type":"start_daily_email_review"}' \
-          --headers="Content-Type=application/json" \
-          --location=us-central1 \
-          --attempt-deadline=180s \
-          --project=$PROJECT_ID
-
-        # Drive index fan-out (USER_DRIVE_INDEXING_RFC §7.1, §12.1): every TICK_INTERVAL the MAIN
-        # service enqueues one drive_sync per user on drive-sync-dev (run by alek-bot-indexer-dev),
-        # then checks staleness and the reconnect notice. 3-59/10 (:03, :13, ...) collides with no
-        # other job (keep-alive */10, reminders */5, hourly jobs at :02/:07/:12/:17) and fires inside
-        # each 10-minute tick_key bucket, not on its boundary. 180s: one pass may post a notice
-        # through the formatter agent. Without DRIVE_INDEXER_URL it answers 200 "disabled".
-        gcloud scheduler jobs describe alek-bot-dev-start-drive-sync \
-          --location=us-central1 --project=$PROJECT_ID 2>/dev/null \
-        && gcloud scheduler jobs update http alek-bot-dev-start-drive-sync \
-          --schedule="3-59/10 * * * *" \
-          --uri="$_SERVICE_URL/worker" \
-          --oidc-service-account-email="$$SA" \
-          --http-method=POST \
-          --message-body='{"task_type":"start_drive_sync"}' \
-          --update-headers="Content-Type=application/json" \
-          --location=us-central1 \
-          --attempt-deadline=180s \
-          --project=$PROJECT_ID \
-        || gcloud scheduler jobs create http alek-bot-dev-start-drive-sync \
-          --schedule="3-59/10 * * * *" \
-          --uri="$_SERVICE_URL/worker" \
-          --oidc-service-account-email="$$SA" \
-          --http-method=POST \
-          --message-body='{"task_type":"start_drive_sync"}' \
-          --headers="Content-Type=application/json" \
-          --location=us-central1 \
-          --attempt-deadline=180s \
-          --project=$PROJECT_ID
+options:
+  logging: CLOUD_LOGGING_ONLY
 
 # Defaults for substitutions a manual `gcloud builds submit` may leave out (the Makefile always passes them).
 substitutions:

@@ -70,3 +70,19 @@ Implement **#1 and #2**; defer **#3**.
 Standing up a genuinely multi-tenant production environment → revisit **#3** (filter reads by
 `account_id`/`owner_id`). If DOCX generation ever needs legitimate file I/O → revisit the **#2**
 block (neuter only `fs.readFile*` rather than the whole module).
+
+## Update (IAM least-privilege, Step 0)
+
+The gate now accepts a **set** of identities, not one email: `verify_worker_oidc(header, accepted_emails, audiences)`
+(a bare `str` is a `TypeError`; an empty set accepts nothing). Sets are built by `parse_sa_emails` from comma lists
+(items stripped, `-` is the "empty" sentinel because Secret Manager rejects an empty payload):
+- main `/worker`: `SERVICE_ACCOUNT_EMAIL` plus the optional `OIDC_TRANSITION_SA_EMAILS` (read with `os.getenv`, an
+  optional knob);
+- main `/voice/*`: the same plus `VOICE_RELAY_SA_EMAIL` (the relay's own runtime identity);
+- indexer `/worker`: `DRIVE_INVOKER_SA_EMAIL` (else `SERVICE_ACCOUNT_EMAIL`) plus the transition list, audience pin unchanged.
+
+**Fail closed:** an empty set refuses every call when running on Cloud Run (`K_SERVICE` set), with one ERROR at
+startup; only local dev (no `K_SERVICE`) stays open for manual triggers. Before this change the main service opened
+the gate whenever `SERVICE_ACCOUNT_EMAIL` was empty, on Cloud Run too. A rejected token's email claim is logged at
+WARNING (an SA email is not a secret). The enqueue side strips the identity it sends (`GcpTaskQueue`).
+See `runtime_service_accounts.md`.

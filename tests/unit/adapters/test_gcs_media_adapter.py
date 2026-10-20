@@ -18,6 +18,13 @@ def adapter():
     return GcsMediaAdapter(bucket_name="test-bucket")
 
 
+def _local_signer():
+    """Patch google.auth.default with a credential that signs locally (a key file): the signer is the
+    runtime's own identity (IAM least-privilege, Step 0 C2), so no test may reach real ADC."""
+    from google.auth.credentials import Signing
+    return patch("google.auth.default", return_value=(MagicMock(spec=Signing), "proj"))
+
+
 def _patch_client():
     """Patch storage.Client; return (patch_ctx, blob_mock)."""
     blob = MagicMock()
@@ -92,7 +99,7 @@ class TestSignedUrl:
     async def test_generate_signed_url_v4_get(self, adapter):
         ctx, blob = _patch_client()
         blob.generate_signed_url.return_value = "https://signed.example/key?sig=x"
-        with ctx:
+        with ctx, _local_signer():
             url = await adapter.generate_signed_url("docs/x.pdf", 300)
         assert url == "https://signed.example/key?sig=x"
         kwargs = blob.generate_signed_url.call_args.kwargs
@@ -115,9 +122,10 @@ class TestSignedUrl:
 
     @pytest.mark.asyncio
     async def test_signing_without_sa_email_omits_iam_kwargs(self, adapter):
+        # No explicit signer and a credential that can sign locally: the storage SDK signs, no IAM kwargs.
         ctx, blob = _patch_client()
         blob.generate_signed_url.return_value = "https://signed"
-        with ctx:
+        with ctx, _local_signer():
             await adapter.generate_signed_url("docs/x.pdf", 300)
         kwargs = blob.generate_signed_url.call_args.kwargs
         assert "service_account_email" not in kwargs
