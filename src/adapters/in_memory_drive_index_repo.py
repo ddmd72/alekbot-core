@@ -206,14 +206,15 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
                 self.records[key] = replace(self.records[key], inaccessible_notified_since=since)
 
     async def count_unread(self, user_id: str, kinds: AbstractSet[str],
-                           triaged: AbstractSet[str] = frozenset(), *, pending: Optional[bool] = None) -> int:
-        admitted, images = frozenset(kinds), frozenset(triaged)
+                           triaged: AbstractSet[str] = frozenset(), *, pending: Optional[bool] = None,
+                           transcribed: AbstractSet[str] = frozenset()) -> int:
+        admitted, images, media = frozenset(kinds), frozenset(triaged), frozenset(transcribed) - frozenset(kinds)
         if pending:
-            return sum(1 for r in self._user(user_id) if is_not_read_yet(r, admitted, images))
+            return sum(1 for r in self._user(user_id) if is_not_read_yet(r, admitted, images, media))
         if pending is False:
             return sum(1 for r in self._user(user_id)
-                       if is_unread(r, admitted, images) and r.state is not RecordState.PENDING)
-        return sum(1 for r in self._user(user_id) if is_unread(r, admitted, images))
+                       if is_unread(r, admitted, images, media) and r.state is not RecordState.PENDING)
+        return sum(1 for r in self._user(user_id) if is_unread(r, admitted, images, media))
 
     async def count_by_state(self, user_id: str) -> Dict[str, int]:
         counts: Dict[str, int] = {}

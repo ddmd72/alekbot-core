@@ -15,7 +15,8 @@ from .drive_index import (
     CARD_VERSION, DocumentBrief, DriveChange, DriveIndexRecord, Reason, RecordState, Scope, TriageVerdict,
 )
 from .drive_labels import scene_label_text
-from .drive_index_policy import is_generated_dir, searchable
+from .drive_index_policy import TRANSCRIBED_KINDS, is_generated_dir, searchable
+from .drive_transcript_render import card_segment
 
 _KIND_LABEL = {
     "pdf": "PDF document", "docx": "Word document", "doc": "Word document", "pptx": "presentation",
@@ -158,6 +159,14 @@ def _joined(parts: List[str]) -> str:
     return " | ".join(p for p in parts if p)
 
 
+def _transcript_segment(rec: DriveIndexRecord) -> str:
+    """§27.8 (a): the transcript line of a transcribed media record; none for every other kind and for a media
+    record without a transcript, so no existing card's text (and no `card_hash`) changes (G5)."""
+    if rec.kind not in TRANSCRIBED_KINDS:
+        return ""
+    return card_segment(rec) or ""
+
+
 def card_text(rec: DriveIndexRecord) -> str:
     """§25.2.7 (CARD_VERSION 4: §26.3's capture), each segment only when present:
     - profiled file: `name | kind | capture | doc_type | what_it_is | title | entities (as printed) | topics |
@@ -165,6 +174,8 @@ def card_text(rec: DriveIndexRecord) -> str:
     - text file without a profile: `name | kind | capture | brief (no doc type, Δ64) | facets`;
     - machine text: `name | kind | machine-generated text | lead text`;
     - photograph: `name | image | description | scene | scene labels | objects | visible text | facets`;
+    - transcribed audio/video: the same branches, each with the transcript line (`drive_transcript_render.card_segment`)
+      appended (§27.8 a, no CARD_VERSION bump, G5);
     - collapsed folder with a README profile: `name | label | what_it_is | title | topics`; without, its Slice 1
       card."""
     if rec.is_folder:
@@ -175,7 +186,7 @@ def card_text(rec: DriveIndexRecord) -> str:
         return f"{rec.name} | folder"
     kind = _KIND_LABEL.get(rec.kind, "file")
     if rec.reason is Reason.MACHINE_TEXT:
-        return _joined([rec.name, kind, _MACHINE_TEXT, rec.lead_text])
+        return _joined([rec.name, kind, _MACHINE_TEXT, rec.lead_text, _transcript_segment(rec)])
     if rec.triage_verdict is TriageVerdict.PHOTO and rec.state is not RecordState.PENDING:
         return _joined([rec.name, kind, rec.photo_description, rec.photo_scene,
                         ", ".join(scene_label_text(label) for label in rec.photo_scene_labels),
@@ -186,8 +197,9 @@ def card_text(rec: DriveIndexRecord) -> str:
         return _joined([rec.name, kind, _capture_segment(rec), p.doc_type, p.what_it_is, p.title,
                         ", ".join(e.printed or e.name for e in p.entities if e.printed or e.name),
                         ", ".join(p.topics),
-                        ", ".join(p.topics_native), *_key_facets(rec)])
-    return _joined([rec.name, kind, _capture_segment(rec), *_brief_segments(rec.brief), *_key_facets(rec)])
+                        ", ".join(p.topics_native), *_key_facets(rec), _transcript_segment(rec)])
+    return _joined([rec.name, kind, _capture_segment(rec), *_brief_segments(rec.brief), *_key_facets(rec),
+                    _transcript_segment(rec)])
 
 
 def card_hash(rec: DriveIndexRecord) -> str:

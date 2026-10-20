@@ -673,12 +673,14 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
         return await self._read(query)
 
     def unread_count_queries(self, user_id: str, kinds: AbstractSet[str],
-                             triaged: AbstractSet[str] = frozenset(), pending: Optional[bool] = None) -> List[Any]:
+                             triaged: AbstractSet[str] = frozenset(), pending: Optional[bool] = None,
+                             transcribed: AbstractSet[str] = frozenset()) -> List[Any]:
         """The count queries of `count_unread`: one per unread class — failed, pending without a readable generation,
         and one per metadata_only reason — each with one `kind in [...]` filter of at most IN_VALUES_MAX kinds, so a
         query never exceeds Firestore's disjunction limit; the triaged kinds (not also in `kinds`) get the same
         classes with `triage_verdict == text` (§24.5, review D-M4). Folders are excluded by kind ("folder" is no
-        content kind). Not a port method: the smoke script runs them directly. `pending=True`: only the not-read-yet
+        content kind). The `transcribed` kinds (not also in `kinds`) get the classes without `no_text`
+        (G20). Not a port method: the smoke script runs them directly. `pending=True`: only the not-read-yet
         class (pending without a readable generation, not `card_capped`); `pending=False`: only the could-not-be-read
         classes (final review F5-2)."""
         documents = sorted(set(kinds))
@@ -694,10 +696,13 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
             classes = [(*waiting, ("card_capped", "==", False))]   # held by the card cap is not waiting
         else:
             classes = unreadable
+        # a recording's `no_text` is a silent-recording stub, not an unreadable file (G20): the same classes without it
+        media_classes = [c for c in classes if ("reason", "==", Reason.NO_TEXT.value) not in c]
         queries = []
-        for wanted, extra in ((documents, ()), (images, verdict)):
+        for wanted, extra, wanted_classes in ((documents, (), classes), (images, verdict, classes),
+                                              (sorted(set(transcribed) - set(kinds)), (), media_classes)):
             for part in _chunks(wanted, IN_VALUES_MAX):
-                for filters in classes:
+                for filters in wanted_classes:
                     query = self._user_query(user_id)
                     for field_path, op, value in (*filters, *extra):
                         query = query.where(filter=FieldFilter(field_path, op, value))
@@ -705,11 +710,12 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
         return queries
 
     async def count_unread(self, user_id: str, kinds: AbstractSet[str],
-                           triaged: AbstractSet[str] = frozenset(), *, pending: Optional[bool] = None) -> int:
+                           triaged: AbstractSet[str] = frozenset(), *, pending: Optional[bool] = None,
+                           transcribed: AbstractSet[str] = frozenset()) -> int:
         """Count aggregations over the unread classes (six per 30 kinds, for the documents and for the text images),
         summed; never a scan. The classes are disjoint (by state, then by reason; a kind in one list only), so the
         sum counts each record once."""
-        queries = self.unread_count_queries(user_id, kinds, triaged, pending)
+        queries = self.unread_count_queries(user_id, kinds, triaged, pending, transcribed)
         if not queries:
             return 0
         return sum(await asyncio.gather(*(self._count(q) for q in queries)))
