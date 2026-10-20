@@ -195,9 +195,12 @@ _PRICING_PER_MILLION_TOKENS: Dict[str, Dict[str, float]] = {
     "claude-sonnet-5":                   {"input": 2.00,  "output": 10.00, "cache_read": 0.10, "cache_write": 1.25},
     "claude-opus-4-6":                   {"input": 5.00,  "output": 25.00, "cache_read": 0.10, "cache_write": 1.25},
     "claude-opus-4-8":                   {"input": 5.00,  "output": 25.00, "cache_read": 0.10, "cache_write": 1.25},
-    # Sonnet 5.5 (2026-09-28): same rates as Sonnet 5. Opus 5.5 (2026-09-22): $4/$20 with cache
-    # reads at 5% of input ($0.20), not the usual 10%. Verified 2026-10-03 on the live model overview.
-    "claude-sonnet-5-5":                 {"input": 2.00,  "output": 10.00, "cache_read": 0.10, "cache_write": 1.25},
+    # Sonnet 5.5 (2026-09-28): input/output same as Sonnet 5, but cache reads are 5% of input
+    # ($0.10/M, half the Sonnet 5 rate) per Anthropic's "What's new in Claude Sonnet 5.5" pricing
+    # section; corrected 2026-10-20 (was 0.10). Recorded Sonnet 5.5 cost before that date
+    # over-reports cache reads 2x. Opus 5.5 (2026-09-22): $4/$20 with cache reads also at 5% of
+    # input ($0.20), not the usual 10%. Verified 2026-10-03 on the live model overview.
+    "claude-sonnet-5-5":                 {"input": 2.00,  "output": 10.00, "cache_read": 0.05, "cache_write": 1.25},
     # Fable 5.1 (ULTRA since 2026-10-03): $10/$50, cache reads at 2.5% of input ($0.25).
     "claude-fable-5-1":                  {"input": 10.00, "output": 50.00, "cache_read": 0.025, "cache_write": 1.25},
     "claude-opus-5-5":                   {"input": 4.00,  "output": 20.00, "cache_read": 0.05, "cache_write": 1.25},

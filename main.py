@@ -526,6 +526,7 @@ async def main():
             long_turn_registry=long_turn_registry,
             localization=_localization,
             language_service=_language_service,
+            alert_sink=_alert_webhook,
         )
         coordinator.set_agent_factory(agent_factory)  # Enable lazy agent instantiation
         _language_service._ensure_agents = agent_factory.ensure_agents_for_user
