@@ -15,9 +15,11 @@ from ..domain.exceptions import WorkspaceConflict, WorkspaceRefused
 from ..domain.workspace import (
     COMMANDS,
     COPY_FOLDER,
+    FOLDERS,
     MUTATING_COMMANDS,
     TEXT_EXTENSIONS,
     TEXT_FOLDERS,
+    WORKSPACE_REF_PREFIX,
     WorkspaceBlob,
     WorkspaceCall,
     WorkspaceDeleteMeta,
@@ -30,6 +32,8 @@ from ..domain.workspace import (
     check_file_size,
     find_references,
     folder_of,
+    format_size,
+    is_text,
     number_lines,
     parse_generation,
     parse_workspace_path,
@@ -403,3 +407,74 @@ class WorkspaceService:
             text=f"restored generation {generation} as generation {entry.generation} of workspace:{path}",
             generations={path: entry.generation},
         )
+
+    # -- copy ----------------------------------------------------------------------------------------------------
+
+    async def _copy(self, call: WorkspaceCall, args: Mapping[str, Any], log: _LogFields) -> WorkspaceResult:
+        dst = parse_workspace_path(args.get("path"))
+        log.path = dst
+        source = str(args.get("source") or "").strip().strip('"')
+        data = await self._copy_source(call, source, dst)
+        check_file_size(dst, data)
+        log.nbytes = len(data)
+        known = call.known.get(dst)
+        if known is not None:
+            entry = await self._store.put(call.user_id, dst, data, self._meta(call), known)
+        else:
+            live = await self._store.list(call.user_id, "")
+            if any(e.path == dst for e in live):
+                raise WorkspaceRefused(
+                    f"{dst} exists. View it first to overwrite it with copy, or pick another path", reason="exists",
+                )
+            check_caps(live, len(data))
+            entry = await self._store.put(call.user_id, dst, data, self._meta(call), 0)
+        log.gen = str(entry.generation)
+        return WorkspaceResult(
+            text=f"copied {source} to workspace:{dst} · {format_size(len(data))} · generation {entry.generation}",
+            generations={dst: entry.generation},
+        )
+
+    async def _copy_source(self, call: WorkspaceCall, source: str, dst: str) -> bytes:
+        if not source:
+            raise WorkspaceRefused(
+                "copy needs a source: a chat file name, a delivered-document key or a workspace path", reason="source",
+            )
+        if source.startswith("drive:"):
+            raise WorkspaceRefused(
+                f"'{source}' is on the user's drive; drive files are not copied into the workspace — open it with "
+                "open_file_from_drive",
+                reason="wrong_store",
+            )
+        if source.startswith("skill:"):
+            raise WorkspaceRefused(
+                f"'{source}' is a skill file; read it with open_file instead of copying it", reason="wrong_store",
+            )
+        data = await self._read_source(call, source)
+        # §6 / §0.2: text (an upload or a workspace file) may land in any folder; binary only in files/.
+        if folder_of(dst) != COPY_FOLDER and not is_text(dst, data):
+            raise WorkspaceRefused(
+                f"invalid workspace path '{dst}': only text files go outside files/; copy binary files under files/",
+                reason="kind",
+            )
+        return data
+
+    async def _read_source(self, call: WorkspaceCall, source: str) -> bytes:
+        if source.startswith(WORKSPACE_REF_PREFIX) or source.startswith(FOLDERS):
+            src = parse_workspace_path(source)
+            try:
+                return (await self._store.read(call.user_id, src)).data
+            except FileNotFoundError:
+                raise WorkspaceRefused(
+                    f"workspace:{src} does not exist; view it to see its history", reason="not_found",
+                ) from None
+        if self._file_conversion is None:
+            raise WorkspaceRefused("copying chat files and delivered documents is unavailable here", reason="source")
+        try:
+            return await self._file_conversion.resolve_bytes(source, call.user_id)
+        except FileNotFoundError:
+            raise WorkspaceRefused(
+                f"'{source}' not found — pass the file name from its [File: …] label, or the delivered-document key",
+                reason="source",
+            ) from None
+        except PermissionError:
+            raise WorkspaceRefused(f"'{source}' does not belong to this user", reason="source") from None
