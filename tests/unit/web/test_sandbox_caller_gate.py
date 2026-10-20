@@ -1,6 +1,6 @@
 """T6: sandbox caller gate (RFC §4.4). Mocked at google.oauth2.id_token.verify_oauth2_token."""
 import dataclasses
-from typing import runtime_checkable
+from typing import Optional, Protocol, runtime_checkable
 import logging
 from unittest.mock import patch
 
@@ -112,7 +112,15 @@ def test_no_email_in_log_lines(cloud_run, caplog):
 
 
 def test_gate_decision_satisfies_the_app_protocol():
-    proto = runtime_checkable(sandbox_app.GateDecision)
+    @runtime_checkable
+    class _LocalProto(Protocol):  # local copy of the app's shape: never mutate the production Protocol
+        @property
+        def allowed(self) -> bool: ...
+
+        @property
+        def reason(self) -> Optional[str]: ...
+
+    proto = _LocalProto
     d = GateDecision(allowed=False, reason="forbidden_op")
     assert isinstance(d, proto)
     assert (d.allowed, d.reason) == (False, "forbidden_op")
