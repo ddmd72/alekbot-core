@@ -1,5 +1,7 @@
 """T4: sandbox server app (UNTRUSTED_CONTENT_SANDBOX_RFC §4.6-§4.9, §4.14; plan G2, G8)."""
 import asyncio
+import functools
+import inspect
 import logging
 import os
 from types import SimpleNamespace
@@ -378,13 +380,17 @@ async def test_workdir_removed_on_success_and_failure_and_cancel(tmp_path):
     await post(app)
     assert list(work_root.iterdir()) == []
 
-    # Cancel: the handler task receives CancelledError while the engine runs (the test client does not
-    # propagate a client-side cancel to the server task, so the engine raises it, the same code path).
-    app, engine, rec, work_root = make_app(tmp_path, engine=FakeEngine(tmp_path, raises=asyncio.CancelledError()))
-    try:
-        await post(app)
-    except BaseException:  # noqa: BLE001 - the test client may surface the cancel in any form
-        pass
+    # Cancel: the client disconnects while the engine runs. The server's message reader cancels the handler task,
+    # as hypercorn's `http.disconnect` does in production. (A CancelledError raised by the engine itself is no
+    # model of this: no answer is ever sent, so on Quart >= 0.21 the test client waits for one forever.)
+    gate = asyncio.Event()
+    app, engine, rec, work_root = make_app(tmp_path, engine=FakeEngine(tmp_path, gate=gate))
+    async with app.test_client().request("/v1/render.docx", method="POST", headers=hdrs()) as conn:
+        await conn.send(b"payload")
+        await conn.send_complete()
+        await asyncio.wait_for(engine.started.wait(), 5)
+        await conn.disconnect()
+    assert not gate.is_set()  # the engine never finished: the request ended by the cancel
     assert list(work_root.iterdir()) == []
     assert rec.calls == 1
 
@@ -495,9 +501,15 @@ async def _drive_asgi(app, body=b"payload", disconnect_after_start=False, events
                 await asyncio.sleep(30)  # the cancel lands here, before the body context is entered
         elif message["type"] == "http.response.body":
             events.append("end" if not message.get("more_body") else "body")
+            if not message.get("more_body"):
+                # A real server closes the stream after the final frame (hypercorn: StreamClosed ->
+                # `http.disconnect`); Quart >= 0.21 waits for it before the app call returns.
+                await inbox.put({"type": "http.disconnect"})
 
     try:
         await app(scope, receive, send)
+    except asyncio.CancelledError:
+        raise  # never swallow a cancel of this test (the hang guard relies on it)
     except BaseException:  # noqa: BLE001
         pass
     await asyncio.sleep(0.05)
@@ -667,3 +679,32 @@ async def test_without_output_root_only_the_render_out_prefix_is_removable(tmp_p
     assert r.status_code == 500 and (out_bad / "o").exists()
     r = await post(app)
     assert r.status_code == 200 and not out_ok.exists()
+
+
+# ---- hang guard --------------------------------------------------------------------------------------------
+# Every async test in this module runs under a hard ceiling: an await that never completes (a handler that never
+# answers, an ASGI call waiting for a disconnect) fails that one test instead of stalling the whole CI run.
+TEST_GUARD_S = 30.0
+
+
+def _hang_guarded(fn):
+    @functools.wraps(fn)  # keeps the signature (fixtures) and the marks (parametrize)
+    async def guarded(*args, **kwargs):
+        ceiling = asyncio.timeout(TEST_GUARD_S)
+        try:
+            async with ceiling:
+                result = await fn(*args, **kwargs)
+        except TimeoutError:
+            if not ceiling.expired():
+                raise
+            pytest.fail(f"{fn.__name__} did not finish within {TEST_GUARD_S}s (hang guard)")
+        if ceiling.expired():  # the test swallowed the guard's cancel
+            pytest.fail(f"{fn.__name__} did not finish within {TEST_GUARD_S}s (hang guard)")
+        return result
+
+    return guarded
+
+
+for _name, _fn in list(globals().items()):
+    if _name.startswith("test_") and inspect.iscoroutinefunction(_fn):
+        globals()[_name] = _hang_guarded(_fn)
