@@ -135,6 +135,11 @@ skill and capabilities lines, the kill switch and the per-user flag, the disclos
   - `extractor_stale` (`:753-759`): a record whose `kind` is in `TRANSCRIBED_KINDS` and whose `extracted_by` link is
     `transcribe-gemini` is **never** extractor-stale, whatever its version (G4 — otherwise `chain_for("audio")` = `(PARSER,)`,
     `drive_extraction.py:32-33`, makes every transcribed file stale on every upgrade pass, an endless re-finalize loop).
+    The same holds at the access-regained path (`drive_indexing_service.py:2249-2250`), which calls the same function.
+  - Every transcript outcome that is not an index (the `too_large`/`too_long`/`no_audio`/`no_speech` stubs, `failed`) is
+    written through the existing `demoted` / `content_retry` (they stamp `extraction_version`), so `_outcome_stands`
+    (`:254-265`) keeps it on a rename or a re-plan; a classify-time `metadata_only` carries `extraction_version=0`
+    (`_build`, `:305-311`) and would not stand.
 - Modify `src/adapters/firestore_drive_index_repo.py` — `_RECORD_READERS` gains `transcript_wake_at: _dt`,
   `transcript_languages: _strs`, `transcript_hold: _optional(str)`; `_STATE_READERS` gains `purge_keep_transcripts: bool`.
   `in_memory_drive_index_repo.py` needs no codec change (dataclasses) — verify.
@@ -156,8 +161,9 @@ skill and capabilities lines, the kill switch and the per-user flag, the disclos
 - `tests/unit/domain/test_drive_index_planner_content.py::...::test_a_video_stays_metadata_only` (`:85`, pins video as
   `kind_not_admitted`; §27 intentionally changes it).
 - `tests/unit/services/test_drive_index_hostile_tree.py` (`:73`, `"Media/voice memo.m4a": (N, Reason.KIND_NOT_ADMITTED)`).
-- `tests/unit/domain/test_drive_index_policy.py`, `test_drive_index_policy_admission.py` (admission tables, if they
-  enumerate `NONE` kinds).
+- `tests/unit/domain/test_drive_index_policy_admission.py::TestAfterTheFlip::test_each_kind_gets_its_admission[audio]`
+  and `[video]` (`:24-28`, expects `Admission.NONE` for every kind outside content/image — a certain break, §27
+  intentionally changes it); `tests/unit/domain/test_drive_index_policy.py` only if it pins admission per kind.
 - `tests/unit/adapters/test_firestore_drive_index_repo_serialization.py::TestRecordSerialization::test_fixture_sets_every_field`
   and the sync-state twin (`:112-116`, `:154-158`): the shared `full_record()`/`full_state()` helper must set every field —
   new fields break it; the reviewer extends the helper.
@@ -179,8 +185,10 @@ to `pending` and nothing else (no extractor, no model, no Graph content call).
   short, a file shorter than one window is one window, no zero-length window); `coverage_ok(window, segments, no_speech)`
   (last segment start ≥ `TRANSCRIBE_COVERAGE_MIN` × window duration, a `no_speech` window always ok, Δ129);
   `times_ok(window, segments)` (non-monotonic by > 5 s or past the window length by > 10 s fails, §27.6 "Time sanity");
-  `content_key(rec) -> Tuple[str, bool]` = `content_hash_of` (`quickXorHash:size`, `drive_card.py:66-68`) or
-  `item:{item_id}:{cTag}` with `shared=False` (no sha1 fallback, Δ135).
+  `content_key(rec) -> Tuple[str, bool]` = `rec.content_hash` (`quickXorHash:size`, stamped by the planner's `_build` from
+  `content_hash_of`, `drive_card.py:68-70`; `content_hash_of` takes a `DriveChange`, not a record) or
+  `item:{item_id}:{rec.content_version}` (the record's `content_version` is the cTag, `onedrive_adapter.py:183`) with
+  `shared=False` (no sha1 fallback, Δ135).
 - Modify `src/domain/drive_index_params.py` — every §27.18 parameter under its RFC name, one comment each citing its basis
   (`TRANSCRIBE_USD_PER_MONTH` 20.0, `TRANSCRIBE_HOUR_USD_ESTIMATE` 0.20, `TRANSCRIBE_WINDOW_S` 1800, `TRANSCRIBE_OVERLAP_S` 60,
   `TRANSCRIBE_COVERAGE_MIN` 0.9, `TRANSCRIBE_MAX_SECONDS` 14 400, `TRANSCRIBE_MAX_BYTES` 8 GiB, `TRANSCRIBE_EXTRACT_WALL_S`
@@ -189,7 +197,8 @@ to `pending` and nothing else (no extractor, no model, no Graph content call).
   `TRANSCRIBE_MAX_GAP_S` 75, `INTERPOLATED_MAX_SHARE` 0.3, `STITCH_MIN_MATCHED_WORDS` 6, `SUMMARY_MAX_CHARS` 1200,
   `SUMMARY_INPUT_CHARS` 60 000, `TRANSCRIPT_DOC_BYTES` 900 000, `TRANSCRIPT_ORPHAN_TTL` 30 days, `MIRROR_OPS_PER_TICK` 40,
   `MIRROR_SCAN_PAGE` 100, `MIRROR_AUDIT_DAYS` 7, `MIRROR_NAME_MAX` 240, `MIRROR_PATH_MAX` 380, `TRANSCRIBE_UPLOAD_S` (the
-  upload worst case of one window, needed for the deadline sum; initial 60, G16)).
+  upload worst case of one window, needed for the deadline sum; initial 60, G16), `TRANSCRIPT_OPEN_MAX_CHARS` 60 000 (G19;
+  not an RFC name, stated as such in its comment)).
 - Tests: `tests/unit/domain/test_drive_transcript_time.py`, `test_drive_transcript_windows.py`.
 
 **New tests (property tests with `hypothesis` where the suite already uses it, else exhaustive small grids):**
@@ -223,7 +232,7 @@ enumerates all names would be the reviewer's.
   stamp at every chunk head (§27.11); `card_segment(rec) -> Optional[str]` (`transcript: 47 min, 2 speakers, uk/en`; a stub:
   `transcript: none (no speech detected)` / `(too long: 5:12:00)` / `(too large)` / `(no audio track)`); `open_text(store, *,
   max_chars)` (G19). Every stub has a deterministic structural rendering here; the localized one-sentence mirror file is T2
-  (Task 19).
+  (Task 19). `TRANSCRIPT_BODY_VERSION = 1` lives in this module (G18): it versions `render_body`, the indexed layout.
 - Tests: `tests/unit/domain/test_drive_transcript_stitch.py`, `test_drive_transcript_render.py`.
 
 **New tests:**
@@ -250,20 +259,27 @@ enumerates all names would be the reviewer's.
 - Create `src/domain/drive_transcript_plan.py` (pure) — the per-record job plan, run on every record write next to
   `enrich.planned` (Task 14 wires it into `_commit`):
   - `transcript_plan(rec, ctx) -> rec` with `ctx` carrying `now`, `enabled` (kill switch AND per-user flag), month dollars
-    (`cap_usd("transcribe")`, reserved, cap) and the store hit for `rec.transcript_key` (looked up by the caller, never here).
+    (`cap_usd("transcribe")`, reserved, cap). **No store lookup in `_commit`:** the plan runs on every record write, and a
+    Firestore read of `drive_transcripts` per media write would put a new read (and, with the feature OFF, a new failure
+    mode) on the default path. A store hit is found by the stage (Task 12 step 1), which then writes `current`.
   - The state table (G21 for the vocabulary), first match wins: `none` (not a `TRANSCRIBED_KINDS` record, not `normal`
     scope, no readable item, inaccessible §26.2); `current` (transcript or stub at this content key and body version);
     `failed` (`transcript_attempts ≥ MAX_ATTEMPTS` for this content version: ffmpeg could not read it, or windows failed
     repeatedly; no stub, Δ100); `held` (a recorded hold for this content version: `cooldown` — edited within
-    `TRANSCRIBE_REREAD_COOLDOWN` of its last transcription; `quiet` — dirty and not `quiet_over`; `outage` — the
-    `drive_transcriber` agent is backed off; `transcript_wake_at` set); `parked` (the whole file's estimate does not fit the
-    month's cap after pending reservations: `transcript_wake_at` = next month start; never cut, Δ106); `waiting` (windows
-    submitted, open batches); `working` (some windows extracted or uploaded, not all submitted); `ready` (due).
+    `TRANSCRIBE_REREAD_COOLDOWN` of its last transcription; `quiet` — dirty and not `quiet_over`; `transcript_wake_at` set);
+    `parked` (the whole file's estimate does not fit the month's cap after pending reservations: `transcript_wake_at` = next
+    month start; never cut, Δ106 — **entered by the stage after the probe**, Task 12 step 4, because an audio file has no
+    duration before it; the plan only keeps it until the wake-up); `waiting` (windows submitted, open batches); `working`
+    (some windows extracted or uploaded, not all submitted); `ready` (due).
+  - **A model backoff is not a record state** (§25.4.6 as `JobState`'s docstring reads it, `drive_enrichment.py:36-38`): the
+    `drive_transcriber` backoff gates the stage's queue read; records stay `ready`, so an outage writes no record (G21).
   - Stubs decided from metadata where possible: `size_bytes > TRANSCRIBE_MAX_BYTES` → `too_large` stub, `current`, record
     `metadata_only / too_large` (no probe, no model); duration over `TRANSCRIBE_MAX_SECONDS` or `no_audio` come from the probe
     (Task 12) through `stub_from_probe(probe)`.
   - `estimate_usd(seconds) = seconds × TRANSCRIBE_HOUR_USD_ESTIMATE / 3600`; `fits(estimate, ctx)` = `estimate ≤ cap −
-    cap_usd − reserved` (the initial build never counts, G8).
+    cap_usd − reserved` (the initial build never counts, G8). The file's estimate is **reserved at the moment it fits**
+    (before its first window is extracted), not at submission (G39): the fit check and the reservation are one step, so
+    two files extracted across several ticks can never both pass a check the cap only holds for one.
   - `reset_on_new_version(rec)`: a new `content_version` clears attempts and holds and re-keys (D42: a new version
     re-transcribes, or hits the cache).
   - Derived queue fields (like `enrich.derived`): `transcript_state == "ready"` is the queue predicate; `transcript_wake_at`
@@ -275,7 +291,8 @@ no transition to `working`), `test_per_user_flag_off_same`, `test_cap_hold_parks
 parked, nothing partial), `test_pending_reservations_count_against_cap`, `test_month_boundary_wakes_parked`,
 `test_new_content_version_resets_attempts_and_holds`, `test_edit_cooldown_holds_24h_after_last_transcription`,
 `test_quiet_period_holds_a_recording_still_uploading`, `test_failed_at_max_attempts_has_no_stub`,
-`test_too_large_by_metadata_is_a_stub_without_probe`, `test_store_hit_is_current_without_work`,
+`test_too_large_by_metadata_is_a_stub_without_probe`, `test_outage_writes_no_record_state`,
+`test_plan_reads_no_store`, `test_reserved_at_fit_not_at_submit`,
 `test_unshared_key_never_hits_another_item`, `test_inaccessible_is_none`, `test_initial_build_never_pays_transcribe`,
 `test_plan_idempotent_property`.
 
@@ -286,7 +303,9 @@ parked, nothing partial), `test_pending_reservations_count_against_cap`, `test_m
 ## Task 5: Domain — card segment, profile rows, unread and coverage for media
 
 **Files:**
-- Modify `src/domain/drive_card.py` — `card_text` appends `card_segment(rec)` (Task 3) for a transcribed media record. No
+- Modify `src/domain/drive_card.py` — `card_text` appends `card_segment(rec)` (Task 3) for a transcribed media record, in
+  every file branch it can take (`:161-190`: the profile branch once the transcript is profiled, the brief branch before,
+  the machine-text branch when the gate demoted it). No
   `CARD_VERSION` bump (G5): the segment exists only on records with transcript fields, so no existing card's text or hash
   changes (`card_hash` includes `CARD_VERSION`, `drive_card.py:193-194`; a bump would re-embed every card on the drive).
 - Modify `src/domain/drive_profile.py` — `PROFILE_POLICY` gains `"audio"` and `"video"` with the subtitles row
@@ -295,18 +314,31 @@ parked, nothing partial), `test_pending_reservations_count_against_cap`, `test_m
 - Modify `src/domain/drive_search.py` — `_content_kind` / `is_unread` / `is_not_read_yet` treat `Admission.TRANSCRIBE` as a
   content kind (G2); a `no_speech`/`no_audio` stub (`metadata_only / no_text` with `transcript_stub` set) is **not** unread
   (G20); `failed` and `too_large` media are, through the existing `unread` classes (§27.11 "Coverage").
+- Modify the port `count_unread` + `FirestoreDriveIndexRepository.unread_count_queries` (`:672-702`) +
+  `InMemoryDriveIndexRepository.count_unread` (`:208-216`) — a third kind set `transcribed` (default empty, every caller
+  unchanged) whose `metadata_only` classes leave out `no_text` (G20: the Firestore count cannot see `transcript_stub`; every
+  media `no_text` is a silent-recording stub, so dropping the reason is exact) and keep `failed`, pending, `too_large`,
+  `machine_text`, `user_chunk_cap`. Same filters as today's classes, so **no new composite index**. `drive_access.access_counts`
+  (`:32-44`) takes the same sets, so the inaccessible subtraction stays consistent.
+- Modify `src/domain/drive_enrich_plan.py` `effective_from` callers (`:203`, `:259-286`) and the planner's `_effective`
+  (`drive_index_planner.py:380-389`; `effective_from` itself is `drive_enrich_plan.py:125`) — a `TRANSCRIBED_KINDS` record's `effective_date` never moves to a profile `issued` or
+  brief date (§27.8 a: "stays §3.1"; G38: a date said aloud would otherwise re-date the recording).
 - Modify `src/services/drive_indexing_service.py` `_unread_counters` (`:633-645`) — the counted kinds become
-  `ADMITTED_KINDS | TRANSCRIBED_KINDS` **only when** transcription is on for the user (G3); otherwise unchanged.
+  `ADMITTED_KINDS | TRANSCRIBED_KINDS` (through the new `transcribed` set) **only when** transcription is on for the user
+  (G3); otherwise the call is byte-identical to today's.
 - Tests: `tests/unit/domain/test_drive_transcript_card.py`, `test_drive_transcript_unread.py`,
   `tests/unit/services/test_drive_transcript_counters.py`.
 
 **New tests:** `test_card_segment_appended_for_transcribed_media`, `test_untranscribed_media_card_unchanged_hash` (the
 pre-existing card hash of a media record is byte-identical), `test_document_card_unchanged_hash`, `test_profile_rows_for_media`,
 `test_pending_media_not_read_yet_when_enabled`, `test_pending_media_not_counted_when_disabled`,
-`test_no_speech_stub_not_unread`, `test_failed_media_unread`, `test_count_unread_kinds_within_in_limit` (≤ 30 values).
+`test_no_speech_stub_not_unread`, `test_failed_media_unread`, `test_count_unread_kinds_within_in_limit` (≤ 30 values),
+`test_firestore_and_memory_unread_counts_agree_for_media` (parity), `test_no_new_index_for_media_unread_classes`,
+`test_spoken_date_never_redates_a_recording` (profile with an `issued` date: effective date unchanged).
 
 **Expected-risk existing tests:** `tests/unit/domain/test_drive_card*.py` only if they enumerate card segments per kind;
-`tests/unit/domain/test_drive_profile.py` if it pins `PROFILE_POLICY` keys; `tests/unit/domain/test_drive_search.py:132`
+`tests/unit/domain/test_drive_profile.py::...::test_no_profile[audio]` and `[video]` (`:61-64`, pins `NO_POLICY` for them —
+a certain break, §27.8 a changes it); `tests/unit/domain/test_drive_search.py:132`
 (kind assignment table — should stay green). `CARD_VERSION == 4` pins (`test_drive_card_content.py:50`,
 `test_drive_capture_card.py:36`) stay green under G5; if the arbiter chooses the bump, they are expected breaks.
 
@@ -325,7 +357,9 @@ pre-existing card hash of a media record is byte-identical), `test_document_card
   `USD_CAPS[transcribe] = TRANSCRIBE_USD_PER_MONTH`.
 - Modify `src/domain/drive_enrich_plan.py` `available_usd` (`:103-105`) — the initial build never pays `transcribe` (G8).
 - Modify `src/services/drive_indexing_service.py` `_spend_write` (`:2305-2320`) — `transcribe` dollars never touch
-  `spend_initial_build` (G8).
+  `spend_initial_build` (G8), and it takes an explicit `month` for them: a batch's real cost is booked in its
+  **reservation's** month, at collection time (G9 as revised in Part C), so a month turn never books unreserved dollars
+  into the new month's cap.
 - Modify the repo port + Firestore + in-memory — `reserve_model_usd(user_id, month, cls, delta_usd)` (server-side
   `Increment` on `<cls>_reserved_usd`; negative releases; the month is the **reservation's** month, G9); `usage_from_doc` reads
   the new fields.
@@ -339,6 +373,7 @@ pre-existing card hash of a media record is byte-identical), `test_document_card
 `gemini-3.8-flash` row and `BATCH_DISCOUNT`: a price edit fails the test and forces a review), `test_transcribe_cap_in_usd_caps`,
 `test_initial_build_never_covers_transcribe` (service: open build, a transcribe spend leaves it untouched),
 `test_reserve_and_release_same_month`, `test_release_after_month_turn_hits_reservation_month`,
+`test_cost_after_month_turn_booked_in_reservation_month`,
 `test_concurrent_reservations_never_lost` (in-memory + Firestore fake), `test_cabinet_lists_transcribe`.
 
 **Expected-risk existing tests:** `tests/unit/domain/test_drive_search_v2_frozen_core.py` `:152` (`UsageClass` list),
@@ -360,7 +395,9 @@ before thought tokens; the docstring states the ≈ $0.16/h figure (G7).
     `delete_transcript_job`; window results in the subcollection `windows/{index}` (G11): `save_window_result`,
     `get_window_results`. Fields: `content_key`, `content_version`, `duration_s`, `windows[]` (index, start, length, state
     `extracted|uploaded|submitted|done|failed`, `file_name`, `files_expire_at`, `batch_id`, `attempts`, `reupload_used`),
-    `reserved_usd`, `reserved_month`, `transcribed_at`. Never a download URL (§27.4).
+    `reserved_usd`, `reserved_month`, `transcribed_at`. Never a download URL (§27.4), and never the Gemini file **URI**
+    (`https://…/files/<id>`, which `test_no_url_field_ever_written` would also catch): the job keeps the file `name`
+    (`files/<id>`) and the adapter resolves the URI when it builds a request (Task 10).
   - Batches `{prefix}drive_transcript_batches/{user_id}:{batch_id}` (G10): `create_batch`, `get_open_batches(user_id, now,
     limit)` ordered by `next_poll_at`, `save_batch`, `delete_batch`. Fields: provider batch name, `state`, `created_at`,
     `next_poll_at`, `request_keys`, `reserved_usd`, `reserved_month`, `kind` (`transcribe` now, `summary` in T3).
@@ -390,13 +427,21 @@ dict for `http` values), `test_every_new_query_has_its_index`, `test_four_hour_t
 length; `tests/unit/adapters/test_drive_index_v2_parity.py` if it enumerates port methods.
 
 **Acceptance:** both adapters pass the same suite; every Firestore method keeps the `_store_errors` mapping
-(`DriveIndexStoreUnavailable`, `:1266-1275`).
+(`DriveIndexStoreUnavailable`, `:1273-1290`). A missing or still-building composite index is `FailedPrecondition`, which
+is systemic for the whole tick (`_MISSING_INDEX`, `:1269-1270`): every new composite query must be unreachable while the
+kill switch or the user's flag is off (asserted in Task 14), and the purge helpers use `user_id ==` only.
+
+**Size:** split for dispatch — **7A** the documents (jobs + `windows/` subcollection, batches, the sharded store; both
+adapters, codecs, provisioning test); **7B** queues, wake-ups, `jobs_by_content_key`, orphans, purge helpers,
+`firestore.indexes.json`, smoke reads. 7B depends on 7A.
 
 ## Task 8: `UserDrivePort.download_url`
 
 **Files:**
-- Modify `src/ports/user_drive_port.py` — `download_url(user_id, item_id) -> str` (abstract; only `OneDriveAdapter` subclasses
-  the ABC, verified).
+- Modify `src/ports/user_drive_port.py` — `download_url(user_id, item_id) -> str` (abstract). **Two** classes subclass the
+  ABC, not one: `OneDriveAdapter` and the eval's `FixtureDrive` (`scripts/validation/drive_eval/fixture_drive.py:95`), which
+  would no longer instantiate; give `FixtureDrive` an implementation (a stub that raises
+  `DriveItemNotFoundError`: the eval never transcribes). Tests use `AsyncMock(spec=UserDrivePort)` and gain the method.
 - Modify `src/adapters/microsoft/onedrive_adapter.py` — the GET-item call `download()`/`download_to_file()` already make
   (`:252-258`, `:317-321`), returning `@microsoft.graph.downloadUrl`; missing → `DriveItemNotFoundError`; the URL is never logged.
 - Tests: `tests/unit/adapters/test_onedrive_download_url_wire.py` (aiohttp boundary, existing wire style).
@@ -404,7 +449,9 @@ length; `tests/unit/adapters/test_drive_index_v2_parity.py` if it enumerates por
 **New tests:** `test_returns_download_url`, `test_missing_url_raises_not_found`, `test_404_raises_not_found`,
 `test_url_never_logged` (caplog), `test_no_bearer_sent_to_the_url_host` (it is not fetched at all here).
 
-**Expected-risk existing tests:** none (AsyncMock specs gain a method).
+**Expected-risk existing tests:** none (AsyncMock specs gain a method); `tests/unit/scripts/test_drive_eval_*` and
+`tests/unit/fixtures/test_drive_eval_fixture.py` must stay green through the `FixtureDrive` method (a failure there is a code
+bug).
 
 ## Task 9: Media extractor — `MediaAudioPort`, child ops, hardening
 
@@ -418,10 +465,16 @@ length; `tests/unit/adapters/test_drive_index_v2_parity.py` if it enumerates por
   mov,mp4,m4a,matroska,webm,mp3,wav,flac,ogg,aac` on both tools, plus the probed format pinned with `-f` on the extraction
   run), `-map 0:a:0`, `-vn -sn -dn`, no filter graph from the file, output `-ac 1 -ar 16000 -c:a libopus -b:a 24k` to
   `window_<k>.opus` in the child's own directory. One window per `-ss <start> -t <len>` (input-side) by default; the `segment`
-  muxer in one pass when all remaining windows of the file fit the step (Δ134).
+  muxer in one pass when all remaining windows of the file fit the step (Δ134). Also pinned: `-hide_banner -loglevel error
+  -nostats` (bounds the stderr file the digest reads), and **TLS verification on** — ffmpeg does not verify a server
+  certificate by default (`tls_verify` defaults to 0), so the argv carries `-tls_verify 1 -ca_file <system CA bundle>` for the
+  Graph URL (the builder takes the CA path as a parameter; not an RFC flag, a hardening addition of the same Δ99 kind).
+  **A probe without a duration** (a browser-recorded webm/mkv has no `Duration` and no `Cues`; ffprobe says `N/A`, and `-ss`
+  cannot seek) takes the one-pass `segment` path from the start, `-t TRANSCRIBE_MAX_SECONDS` bounding the pass, the duration
+  read from the produced windows; a pass that reaches the bound is the `too_long` stub (G35).
 - Modify `src/adapters/drive_parser/child.py` `dispatch` — ops `media_probe`, `media_windows`, loaded after `serve` applied the
-  limits. The URL arrives in the stdin request (≤ 64 KiB, `:35`), never in argv of the parent's process list beyond the child,
-  never logged.
+  limits. The URL arrives in the stdin request (≤ 64 KiB, `:35`), never in the indexer's own argv and never logged; it is in
+  the ffmpeg grandchild's argv (`-i <url>`), readable only by root and the `driveparser` uid — the named Δ99 secret.
 - Create `src/adapters/drive_parser/media_launch.py` and `media_extractor.py` (`SubprocessMediaExtractor(MediaAudioPort)`):
   same launcher contract as `SubprocessContentExtractor` (fresh child per op, `apply_limits` before any import, allowlisted
   env, private workdir owned by `DRIVE_PARSER_USER`, process-group kill on the wall, `memory_scope(SCOPE_SUBPROCESS,
@@ -437,12 +490,18 @@ length; `tests/unit/adapters/test_drive_index_v2_parity.py` if it enumerates por
   `test_audio_map_only`, `test_input_side_seek`, `test_url_not_in_parent_logs`.
 - Launcher: `test_env_is_allowlist`, `test_runs_as_parser_user_when_configured` (patched `pwd`, the existing sandbox-test
   pattern), `test_wall_kills_group`, `test_collected_window_must_be_regular_file`.
-- Hostile set under the rlimits (real ffmpeg, local `http.server` over files the test generates; `skipif` no ffmpeg): an
+- `test_tls_verify_on_with_ca_file`, `test_probe_without_duration_takes_one_pass_segment` (a cue-less webm written by
+  ffmpeg to a pipe has no duration), `test_one_pass_bounded_by_max_seconds`.
+- Hostile set under the rlimits (real ffmpeg; `skipif` no ffmpeg). The server is a local **HTTPS** server with a test CA the
+  argv's `ca_file` names — a plain `http.server` would be refused by `-protocol_whitelist https,…` for every file, good and
+  hostile alike, and widening the whitelist for the test would test something else: an
   `.m3u8` playlist pointing at `file:///etc/passwd` and at another host (refused by the whitelists), a `concat` list, a
   zero-length file, a truncated mp4 (no `moov`), a 1×1 video with 4 h of silence generated by ffmpeg (probe returns 4 h, the
   extraction of one window stays under the limits and yields a valid Opus file). Each ends as a defined outcome, never a hang.
 - `test_image_ffmpeg_supports_flags` — `pytest.mark.docker`: in the built image, `ffmpeg -h full` lists `format_whitelist` and
-  `protocol_whitelist`, and the hostile set passes as the `driveparser` user.
+  `protocol_whitelist`, `tls_verify` is honoured (a self-signed server without its CA is refused), `libopus` is present, and
+  the hostile set passes as the `driveparser` user. (The base image is `python:3.11-slim`; the test checks the Debian
+  release it actually ships rather than assuming bookworm.)
 
 **Expected-risk existing tests:** `tests/unit/adapters/test_drive_parser_child_dispatch.py` if it asserts the full op set
 (`unknown op` path). `tests/unit/test_req_arch_01_hexagonal_isolation.py` must stay green (the new adapter lives in
@@ -454,26 +513,32 @@ length; `tests/unit/adapters/test_drive_index_v2_parity.py` if it enumerates por
 
 **Files:**
 - Create `src/ports/batch_transcription_port.py` — `upload_audio(path, mime) -> FileRef` (`name`, `uri`, `expires_at`),
-  `submit(requests: Sequence[BatchRequest], *, display_name) -> BatchRef`, `poll(batch) -> BatchStatus` (`pending|running|
+  `submit(requests: Sequence[BatchRequest], *, display_name) -> BatchRef` (a request's file is referenced by `name`; the
+  adapter turns it into the `file_uri` itself, Task 7), `poll(batch) -> BatchStatus` (`pending|running|
   succeeded|failed|cancelled|expired`), `collect(batch) -> Mapping[str, BatchResult]` (per key: `text` or `error`, `usage`
   as `BatchUsage`, `finish_reason`), `delete_file(ref)`. `BatchRequest`: key, system instruction, user text, optional file ref,
   response schema, thinking level, max output tokens. Generic enough for T3's text-only summary requests.
 - Create `src/adapters/gemini_batch_adapter.py` — over `google-genai` (T0: 2.17.0): `files.upload`, `batches.create` with
   **inline** requests carrying `response_schema` (typed `types.Schema`, never `response_json_schema`: silently ignored in
-  batch, Δ131), `thinking_config=ThinkingConfig(thinking_level=LOW)` on every request, the key in request metadata and checked
-  on the way back (never trust order alone), `batches.get`, per-response error check (a `SUCCEEDED` job holding a code-3 error
+  batch, Δ131) **together with `response_mime_type="application/json"`** (Gemini needs both; T0's requests carried both),
+  `thinking_config=ThinkingConfig(thinking_level=LOW)` on every request, the key in `InlinedRequest.metadata` and checked
+  on the way back in `InlinedResponse.metadata` (both fields exist in 2.17.0; never trust order alone), `batches.get`,
+  per-response error check (a `SUCCEEDED` job holding a code-3 error
   in one response is that window's failed attempt), usage from `prompt_tokens_details` (AUDIO/TEXT) + `candidates_token_count`
   + `thoughts_token_count`, `files.delete`. Model id comes from the constructor (G26). Errors: 429, 5xx, timeouts, network,
-  auth/billing 4xx → `LLMUnavailableError`/`LLMRateLimitError` family (uncharged outage, G25); a 4xx refusal of one request's
+  auth/billing 4xx → `LLMUnavailableError`/`LLMRateLimitError`/`LLMAccountError` (`domain/exceptions.py:12-66`; uncharged
+  outage, G25); a 4xx refusal of one request's
   input → that result's `error` with a `refused` flag. Display names are opaque hashes (no user id at the provider).
-- Modify `tests/contracts/adapter_contracts.py` — rules: schema sent as `response_schema` in each inline request; thinking LOW
-  present; per-response error surfaced; thoughts in output leg; key round-trip.
+- Modify `tests/contracts/adapter_contracts.py` — rules (keyed by the adapter name, the file's non-LLM convention, `:196`):
+  schema sent as `response_schema` with `response_mime_type` JSON in each inline request; thinking LOW present; per-response
+  error surfaced; thoughts in output leg; key round-trip; a file referenced by URI built from its stored name.
 - Modify `requirements.txt` — raise the floor to the version T0 measured (`google-genai>=2.17.0,<3.0.0`, G27).
 - Tests: `tests/unit/adapters/test_gemini_batch_adapter_wire.py` (mock at the SDK client boundary,
   `docs/how_to/ADAPTER_WIRE_TESTING.md`).
 
 **New tests:** `test_upload_sends_mime_and_returns_expiry`, `test_submit_inline_response_schema_not_json_schema`,
-`test_thinking_low_on_every_request`, `test_poll_maps_every_state`, `test_collect_checks_each_response_error`,
+`test_thinking_low_on_every_request`, `test_json_mime_type_with_schema`, `test_poll_maps_every_state`,
+`test_collect_checks_each_response_error`, `test_account_error_is_an_outage`,
 `test_collect_key_mismatch_is_error`, `test_usage_by_modality_parse`, `test_thoughts_billed_as_output`,
 `test_delete_file`, `test_rate_limit_and_5xx_are_outages`, `test_refused_request_is_a_result_error`,
 `test_display_name_has_no_user_id`, contract-rule tests.
@@ -494,7 +559,13 @@ registered where they enumerate providers; reviewer if a matrix test pins the ad
   `no_speech`, `segments[{start: "MM:SS"|"H:MM:SS", speaker: int|null, text}]`), `start` parsed by Task 2, **no regex
   fallback**; invalid → `DriveOutputInvalid` (the window's failed attempt). Response schema `_RESPONSE_SCHEMA` as a typed
   `types.Schema` builder kept in the adapter-agnostic form the adapter converts (the agent never imports `google.genai`).
-  Honest difference (Δ102): no `_call_llm`, so no retry/failover/`TokenLedger`/prompt-content row/Logfire span (G28).
+  Honest difference (Δ102): no `_call_llm`, so no retry/failover/`TokenLedger`/prompt-content row/Logfire span (G28), and
+  no `ModelUsage` leg keyed (model, batch) as Δ105 words it: each collected result is priced by `BatchUsage.cost()` and billed
+  directly (G36).
+  **Playbook steps that do not apply, stated so a reviewer does not add them:** no `agent_manifest` descriptor (internal,
+  like every drive agent), hence no `_DEFAULT_AGENT_TIERS` entry (`test_every_llm_agent_has_a_default_tier` reads the
+  manifest only) and no `AgentProviderStrategy` entry (§27.5: no provider switch for this class; the model comes from
+  composition, G26); no `user_agent_factory` wiring (built by the indexer's composition).
 - Modify `src/infrastructure/agent_config.py` — `DriveTranscriberAgentConfig` (`max_tokens`, `thinking="low"`) and
   `DRIVE_TRANSCRIBER`.
 - Create `firestore_utils/uploads/COGNITIVE_PROCESS_DRIVE_TRANSCRIBER.json`, `OUTPUT_FORMAT_DRIVE_TRANSCRIBER.json`,
@@ -527,16 +598,19 @@ completeness tests (the agent is not manifest-registered by design — same as t
   (Task 13).
 - `extract_step`, newest first from `transcript_queue`:
   1. Store hit by `transcript_key` → finalize from the store (no ffmpeg, no model; `touch_transcript`) — the copy/rename/move
-     path (Δ112).
+     path (Δ112). The same path re-finalizes, with embeddings only, a `current` record whose `transcript_body_version` or
+     `extraction_version` is no longer the code's (G18, G31).
   2. Copy in flight (G12): another job of the user has the same shared key and is `working`/`waiting` → this record `waiting`
      on it; finalized from the store when that one lands.
   3. Fresh `download_url` per step (never stored, Δ98/Δ134); `probe` (duration from ffprobe, never the facet); stub decisions
      (`too_long`, `no_audio` — deterministic, no model) via Task 4.
-  4. Whole-file estimate vs cap after reservations: not fitting → `parked` (Δ106).
+  4. Whole-file estimate vs cap after reservations: not fitting → `parked` (Δ106); fitting → the estimate is **reserved now**
+     (job + month doc), before any window is extracted (G39). Park, failure and abandon release it.
   5. Extract the windows the step's wall allows (resumable: windows recorded `extracted`/`uploaded` are skipped), upload each
      as it completes (`files_expire_at` recorded), record after the provider answered.
-  6. When every window of the file is uploaded: reserve the estimate (job + month doc), mark windows `submitted` in one batch per
-     user per submission (all ready windows of the user's files, keys `{item_id}:{window}`, Δ103), create the batch document.
+  6. When every window of the file is uploaded: mark windows `submitted` in one batch per user per submission (all ready
+     windows of the user's files, keys `{item_id}:{window}`, Δ103), create the batch document carrying the reservations of
+     the files it holds.
 - Outage: `drive_transcriber` backoff (`model_backoff_by_agent`, §25.4.6) stops extraction and submission; cards, enrichment
   and everything else go on. A file ffmpeg cannot read is a per-file attempt (`extract_error`), `failed` at `MAX_ATTEMPTS`,
   no stub. Edit cooldown and quiet period via Task 4.
@@ -547,8 +621,9 @@ completeness tests (the agent is not manifest-registered by design — same as t
 key, one extraction, one submission, both `current`), `test_resume_after_killed_tick_skips_uploaded_windows`,
 `test_fresh_download_url_per_step`, `test_url_never_persisted`, `test_probe_duration_beats_facet`, `test_too_long_stub_no_model`,
 `test_no_audio_stub_no_model`, `test_unreadable_file_fails_at_max_attempts_without_stub`, `test_cap_parks_whole_file`,
-`test_reservation_written_before_submit`, `test_one_batch_per_user_per_submission`, `test_outage_stops_extraction_only`,
-`test_edit_cooldown_holds`, `test_wall_bounds_one_step`.
+`test_reservation_written_before_first_extraction`, `test_two_files_never_both_pass_one_cap`,
+`test_one_batch_per_user_per_submission`, `test_outage_stops_extraction_only`, `test_edit_cooldown_holds`,
+`test_wall_bounds_one_step`, `test_body_or_extraction_version_mismatch_refinalizes_without_model`.
 
 **Expected-risk existing tests:** none (new service).
 
@@ -557,18 +632,25 @@ key, one extraction, one submission, both `current`), `test_resume_after_killed_
 **Files:**
 - Modify `src/services/drive_transcript_stage.py` — `cheap_steps(user_id, budget)`: (1) poll at most `BATCH_POLLS_PER_TICK`
   open batches whose `next_poll_at ≤ now` (first `BATCH_POLL_FIRST_S`, then `BATCH_POLL_EVERY_S`, `BATCH_POLL_SLOW_S` after
-  `BATCH_SLOW_AFTER_S`; one poll per batch, Δ104/Δ133); (2) collect a succeeded batch: per window parse, coverage check
-  (Δ129), time validator, interpolation share — a failure is that window's attempt, resubmitted in the next submission until
-  `MAX_ATTEMPTS`, then a gap marker for the span (never stitched short); a refused window → gap marker, transcript
-  `truncated`; settle: release the batch's reservation in its month, book the real cost (`spend("transcribe", …)`), bill the
+  `BATCH_SLOW_AFTER_S`; one poll per batch, Δ104/Δ133); (2) collect a succeeded batch: per window parse and checks, each
+  with the RFC's own retry rule (G37): invalid JSON, a request-level error or a short window by the coverage check (Δ129) →
+  the window's attempt, resubmitted in the next submission until `MAX_ATTEMPTS`, then a gap marker for the span (never
+  stitched short); the time validator (§27.6) → **one** resubmit, then the gap marker; an interpolation share above
+  `INTERPOLATED_MAX_SHARE` → **one** resubmit, then accepted with its `~` stamps; a refused window → gap marker, transcript
+  `truncated`. A result whose record is gone, or whose job is at another content version, is settled (cost booked,
+  reservation released, Gemini file deleted) and dropped, and the job deleted (G33). Settle: release the batch's reservation
+  in its month, book the real cost (`spend("transcribe", …)`, the reservation's month, G9), bill the
   account; delete the window's Gemini file on success and on abandon; (3) a batch `failed`/`expired`/`cancelled`: release,
   resubmit its open windows once (re-extract and re-upload a window whose file passed `files_expire_at`, once per window,
   Δ104); (4) finalize a file whose windows are all `done`: stitch (Task 3), write the store (sharded), render the body, hand it
   to `host.index_transcript` with `extracted_by = "transcribe-gemini@<TRANSCRIBE_VERSION>"`, set `transcript_state=current`,
   `transcript_seconds/speakers/languages`, `transcribed_at`; a `no_speech` result → record `metadata_only / no_text`, stub
-  `no_speech`.
+  `no_speech`. A finalize embeds up to ≈ 125 chunks (4 h ≈ 300 000 chars / `CHUNK_CHARS` 2 400) under
+  `EMBED_FILE_BUDGET_S` 180 s, so it is not "cheap": each one starts only while `budget.time_left()` and takes one of the
+  tick's `TICK_FILE_BUDGET` files, like an index run (G32). Finalize is idempotent: a job whose windows are all `done` and
+  whose record is not `current` is finalized again (a crash mid-finalize leaves only swept chunk debris, §7.5).
 - Orphan sweep: once per day per user (sync-state-free: by `orphan_transcripts(before=now − TRANSCRIPT_ORPHAN_TTL)`), delete
-  store entries no record referenced (`last_used_at`), §27.8 b.
+  store entries no record referenced (`last_used_at`), §27.8 b. Gated by both switches like every other stage query.
 - Tests: `tests/unit/services/test_drive_transcript_stage_collect.py`.
 
 **New tests:** `test_first_poll_after_150s_then_300s`, `test_slow_cadence_after_one_hour`, `test_at_most_10_polls_per_tick`,
@@ -578,7 +660,9 @@ key, one extraction, one submission, both `current`), `test_resume_after_killed_
 `test_gap_marker_after_max_attempts`, `test_refused_window_gap_marker_truncated`, `test_settle_releases_and_books_real_cost`,
 `test_failed_batch_releases_reservation`, `test_files_deleted_on_success_and_abandon`, `test_no_speech_has_no_chunks`,
 `test_finalize_through_host_fence` (a changed content version during the run drops the result, §7.4),
-`test_orphan_sweep_after_ttl`.
+`test_orphan_sweep_after_ttl`, `test_time_validator_resubmits_once_then_gap`, `test_interpolation_share_resubmits_once_then_accepts`,
+`test_result_for_deleted_record_settled_and_dropped`, `test_crash_during_finalize_refinalizes`,
+`test_finalize_takes_a_file_budget_slot`.
 
 **Expected-risk existing tests:** none.
 
@@ -593,8 +677,10 @@ key, one extraction, one submission, both `current`), `test_resume_after_killed_
     (`:1650-1713`: gate, chunker, chunk cap, embeddings, the §7.4 fence), `_end_run`; then the existing enrichment jobs profile
     and hint the transcript.
   - `_commit` runs `transcript_plan` next to `enrich.planned`.
-  - Placement (§27.3): `cheap_steps` first in `_work_off` (after the sweep, before `_due_loop`), taking no share; the extraction
-    step after the enrichment phase with a start window of at least `TRANSCRIBE_SHARE` of the start budget, only while the
+  - Placement (§27.3): `cheap_steps` first in `_work_off` (after the sweep, before `_due_loop`), taking no share (finalizes
+    take file-budget slots, G32); the extraction step in `_work_off` right after `_due_loop` returns (the enrichment phase ran
+    inside it, `:953-998`), **whatever `stopped_class` it returns** and before `_upgrade_step` (which runs only when
+    `stopped_class is None`, `:867-870`), with a start window of at least `TRANSCRIBE_SHARE` of the start budget, only while the
     worst case `TRANSCRIBE_EXTRACT_WALL_S + TRANSCRIBE_UPLOAD_S + FILE_START_MARGIN_S` ends before `TICK_DEADLINE_S`; content
     and enrichment yield `TRANSCRIBE_SHARE` only while the user has ready extraction work (G16).
   - `_has_more`: ready extraction work for an enabled user continues the chain; a `transcript_wake_at` in the future or
@@ -607,11 +693,19 @@ key, one extraction, one submission, both `current`), `test_resume_after_killed_
     `transcribe_reserved_usd`.
 - Modify `src/composition/drive_model_setup.py` — `build_drive_transcription(...)`: `GeminiBatchAdapter(api_key, model=
   GeminiAdapter.MODEL_TIERS[PerformanceTier.BALANCED])` (G26; never flash-lite, D44), the runner, the media extractor with
-  `DRIVE_PARSER_USER`. Without `GEMINI_API_KEY` the stage is not wired (logged ERROR when the kill switch is on).
+  `DRIVE_PARSER_USER`. **Built only when the kill switch is on** (with it off the indexer's object graph is today's, so a
+  deploy OFF changes no wiring); without `GEMINI_API_KEY` it is not built (logged ERROR when the kill switch is on). The purge
+  helpers need only the repository and run either way; a purge with the stage unbuilt skips the best-effort Gemini
+  `delete_file` (G30: the files expire in 48 h).
 - Modify `indexer_main.py` — read `DRIVE_TRANSCRIBE_ENABLED` with `os.getenv` (`on` only for `1/on/true/yes`, default off), pass
-  it and the stage; docstring env list gains the knob.
-- Modify `cloudbuild-dev.yaml` (indexer `--set-env-vars` `:141`, the `:116-118` comment) and `Makefile` (`:74-78`, `:283`):
-  `_DRIVE_TRANSCRIBE_ENABLED` from `DRIVE_TRANSCRIBE_ENABLED_DEV`, default `off` (G13, the `DRIVE_UPGRADE_PASS` pattern).
+  it and the stage; docstring env list gains the knob. If the arbiter accepts G34, also `DRIVE_TRANSCRIBE_USD_CAP` (optional
+  `os.getenv` knob, a positive float that **lowers** `TRANSCRIBE_USD_PER_MONTH` for the tick's cap math; never raises it;
+  unset = the parameter), its own deploy-only key `DRIVE_TRANSCRIBE_USD_CAP_DEV` and substitution, like the switch.
+- Modify `cloudbuild-dev.yaml` (indexer `--set-env-vars` `:141`, the `:116-118` comment, **and the `substitutions:` defaults
+  block `:290-292`** — `_DRIVE_TRANSCRIBE_ENABLED: "off"`, so a manual `gcloud builds submit` without the key deploys OFF, not
+  an empty value) and `Makefile` (`:74-78`, `:283`): `_DRIVE_TRANSCRIBE_ENABLED` from `DRIVE_TRANSCRIBE_ENABLED_DEV`, default
+  `off` (G13, the `DRIVE_UPGRADE_PASS` pattern). The RFC's §27.15 step 4 wording ("not a Cloud Build substitution") is
+  corrected in Task 17.
 - Tests: `tests/unit/services/test_drive_indexing_transcripts.py`, `tests/unit/test_indexer_main_transcribe.py`,
   `tests/unit/test_cloudbuild_transcribe_knob.py`.
 
@@ -621,15 +715,23 @@ key, one extraction, one submission, both `current`), `test_resume_after_killed_
 `test_no_continuation_while_only_waiting`, `test_continuation_while_extraction_ready`, `test_finalized_transcript_is_searchable`
 (chunks readable, card segment, profile/passage jobs `ready`), `test_purge_deletes_jobs_batches_and_store`,
 `test_rebuild_purge_keeps_store`, `test_tick_line_counters`, `test_knob_default_off_in_cloudbuild_and_makefile`,
-`test_indexer_wires_stage_with_balanced_model`.
+`test_substitution_default_off`, `test_indexer_wires_stage_with_balanced_model`, `test_switch_off_builds_no_stage`,
+`test_no_new_composite_query_while_off` (a repo spy: with either gate off, a full tick sequence — upgrade pass over media,
+purge, counters — calls none of `transcript_queue`, `transcript_wakeups`, `get_open_batches`, `jobs_by_content_key`,
+`orphan_transcripts`, `get_transcript`), `test_extraction_runs_when_due_loop_stopped_at_a_class`, (G34 if accepted)
+`test_cap_override_only_lowers`.
 
 **Expected-risk existing tests:** `tests/unit/test_indexer_main.py` (wiring smoke of `build_app()`), `tests/unit/test_cloudbuild_*`
-(step/env assertions on the indexer step, e.g. `test_cloudbuild_drive_upgrade_pass.py`), `tests/unit/services/test_drive_indexing_content_deadline.py`
+(step/env assertions on the indexer step, e.g. `test_cloudbuild_drive_upgrade_pass.py`; `test_cloudbuild_arg_length.py` must
+stay green — the env arg grows by one pair), `tests/unit/services/test_drive_indexing_content_deadline.py`
 and `test_drive_indexing_enrichment_tick.py` **only if** G16's yield fires without transcript work (it must not; a failure there
 is a code bug).
 
 **Acceptance:** with the knob off, the whole existing suite is green unchanged; with both gates on, a fake-backed end-to-end
 tick sequence goes `ready → working → waiting → current` and the file is found by what was said.
+
+**Size:** split for dispatch — **14A** host protocol, `_commit` plan, placement and shares, `_has_more`, tick line (service
+only, fakes); **14B** purge, composition, `indexer_main`, Cloud Build/Makefile knob(s). 14B depends on 14A.
 
 ## Task 15: Read side — open, `original`, skill, capabilities, disclosure
 
@@ -640,9 +742,14 @@ tick sequence goes `ready → working → waiting → current` and the file is f
 - Modify `src/agents/file_management_agent.py` `_open_drive_item` — a transcribed audio/video ref returns the transcript (never
   the bytes); `original: true` returns the drive link (`web_url`), never bytes into chat, audio and video alike; a recording
   with no transcript keeps today's branch (Δ121).
-- Modify `src/infrastructure/agent_manifest.py` — the open intent's payload gains the optional boolean `original` with the
-  description "set true only when the user asks for the recording itself, not its content" (prose only, no schema constraint;
-  the strict-grammar lesson of `project_whitespace_runaway`: declared keys only).
+- Modify `src/infrastructure/agent_manifest.py` — `context_schemas[OPEN_FILE_FROM_DRIVE]` (`:634`) gains `original`, a
+  JSON-schema dict `{"type": "boolean", "description": "open_file_from_drive only: set true only when the user asks for the
+  recording itself, not its content"}` (the declaration builder passes a dict through, `base_agent.py:795-801`; every intent's
+  fields merge into **one** `delegate_to_specialist.context` and the first description per name wins, `:796`, hence the
+  intent prefix the search fields already use, `:644-645`). The capability description (`:574-577`) names it in its
+  `context={…}` block, so `test_manifest_prose_matches_tool_schema.py` stays green (the strict-grammar lesson of
+  `project_whitespace_runaway`: declared keys only). Note for deploy OFF: Smart's tool schema changes for every user at
+  deploy (one prompt-cache miss); with no transcript, `original` only changes an audio/video open from bytes to a link.
 - Modify `src/skills/smart/drive-search/SKILL.md` — the one line of §27.11 (the Transcripts folder clause lands with T2,
   Task 21). Modify `src/utils/capabilities.py` — one line.
 - Modify `src/web/user_cabinet_app.py` drive status — returns `transcribe_enabled`; `cabinet.html` shows the §27.12 disclosure
@@ -656,8 +763,9 @@ tick sequence goes `ready → working → waiting → current` and the file is f
 `test_disclosure_only_when_enabled`.
 
 **Expected-risk existing tests:** `tests/unit/agents/test_file_management_agent*.py` cases opening a video (should stay green:
-no transcript fields); manifest snapshot tests that pin the open intent's payload keys (reviewer); skill snapshot tests if
-any pin `SKILL.md` text.
+no transcript fields); `tests/unit/infrastructure/test_agent_manifest_drive.py` and any snapshot that pins the open intent's
+payload keys or the delegate tool's property set (reviewer); `test_manifest_prose_matches_tool_schema.py` (must stay green);
+skill snapshot tests if any pin `SKILL.md` text.
 
 ## Task 16: Scripts — flag, backlog, requeue, sweep, rebuild keep, fixtures and eval
 
@@ -669,7 +777,8 @@ any pin `SKILL.md` text.
 - `scripts/infrastructure/drive_transcribe_requeue.py` — Δ122: lists what a `TRANSCRIBE_VERSION` bump would redo and its
   estimate; `--apply` resets those jobs.
 - `scripts/infrastructure/drive_transcript_sweep.py` — §27.13/§27.15 step 7: after a rollback to pre-§27 code, removes the
-  three collections' orphan documents (T2 adds the mirror collection).
+  three collections' orphan documents (T2 adds the mirror collection) and zeroes `transcribe_reserved_usd` in the usage
+  documents of the months its jobs and batches reserved in (otherwise those reservations outlive their documents).
 - Modify `scripts/infrastructure/drive_index_rebuild.py` — sets `purge_keep_transcripts` before the purge.
 - `scripts/validation/drive_transcript_fixtures.py` — §27.14 Eval, in the style of `drive_capture_fixtures.py`: scripted
   dialogue rendered by local TTS (`espeak-ng`/`say`, two voices; en, es, uk, ru), muxed with a black video track for the video
@@ -706,11 +815,14 @@ root `CLAUDE.md` (agent roster rows `DriveTranscriber`, User Drive indexing para
 
 **Files:**
 - `UserDrivePort.upload(..., conflict: Literal["rename","replace","fail"] = "rename")`; `OneDriveAdapter` uses it in both the
-  simple PUT and the upload session (`onedrive_adapter.py:267-277`); default keeps every caller (Δ115).
-- `DriveSyncState` gains `mirror_root_id: str = ""`, `mirror_root_name: str = ""`, `mirror_audit_at`, `mirror_scan_cursor`;
-  written through a dedicated fenced repo method `set_mirror_root(user_id, id, name, owner)` and **excluded from
-  `save_sync_state`'s field list** like the fan-out flags, so the tick's end-of-run save never clobbers a root created mid-tick
-  (G23).
+  simple PUT and the upload session (`onedrive_adapter.py:267-277`); default keeps every caller (Δ115). The eval's
+  `FixtureDrive.upload` (`scripts/validation/drive_eval/fixture_drive.py:95`) takes the parameter too.
+- `DriveSyncState` gains `mirror_root_id: str = ""`, `mirror_root_name: str = ""`, `mirror_audit_at`, `mirror_scan_cursor`.
+  `mirror_root_id`/`mirror_root_name` are written through a dedicated fenced repo method `set_mirror_root(user_id, id, name,
+  owner)` the moment Graph answers the folder creation (the §27.9 orphan window shrinks to that one call), the tick's
+  in-memory state updated with it, and they are **excluded from `save_sync_state`'s field list** like the fan-out flags, so a
+  state snapshot taken before the root existed (a lease-held script save, a tick that read the state earlier) cannot write it
+  back to empty (G23 as corrected in Part C). The audit/scan fields stay ordinary tick-owned state fields.
 - `PlanContext` gains `mirror_root_id`; `classify` returns `Scope.INSIDE_OPAQUE / metadata_only / folder` for that folder id,
   so its files get no record, no card, no content work and no duplicate hit (Δ116, existing enum value); the bot's own writes
   echoing back in delta fall under the same rule.
@@ -783,7 +895,16 @@ echoes), `test_orphan_root_after_crash_reported_not_adopted`, `test_scan_catches
 **Expected-risk existing tests:** `tests/unit/services/test_drive_indexing_*` that count Graph item calls per tick (the audit
 uses the item-call share; it must not run when there is no mirror root).
 
+**Size:** split for dispatch — **21A** audit + rotating scan + root recreate/orphan report (service + fakes); **21B** tick
+wiring, purge interplay (G22 as resolved), skill clause, sweep script, docs. 21B depends on 21A.
+
 ## Task 22: T3 — summary agent, batched summary step, versions, header polish, docs
+
+**Size:** split for dispatch — **22A** the agent (`drive_transcript_summary_agent.py`, `DriveTranscriptSummaryAgentConfig` +
+`DRIVE_TRANSCRIPT_SUMMARY` in `agent_config.py`, the four upload JSONs `COGNITIVE_PROCESS_DRIVE_TRANSCRIPT_SUMMARY.json`,
+`OUTPUT_FORMAT_DRIVE_TRANSCRIPT_SUMMARY.json`, `drive_transcript_summary.json`, `drive_transcript_summary_agent_v1.json`, parse
+with `json.loads` and no regex fallback; the same "playbook steps that do not apply" note as Task 11); **22B** the stage's
+summary step, store fields, `RENDER_VERSION` 2 header lines, docs. 22B depends on 22A.
 
 **Files:** `src/agents/drive_transcript_summary_agent.py` (`drive_transcript_summary`, text only, its tokens and schema
 `{summary: str}` ≤ `SUMMARY_MAX_CHARS`, the UI language, third person; input head/tail trimmed to `SUMMARY_INPUT_CHARS` with
@@ -819,13 +940,22 @@ deciding 30 vs 45 min windows — and the short-clip early-timestamp effect on r
    `OUTPUT_FORMAT_DRIVE_TRANSCRIBER`, the `drive_transcriber` profile and blueprint (and, for T3, the
    `drive_transcript_summary` set); then pull the snapshot.
 4.  `make deploy-indexes` (`config/firestore.indexes.json`); wait for `READY`; run
-   `scripts/infrastructure/drive_index_smoke.py` (exercises the new reads).
+   `scripts/infrastructure/drive_index_smoke.py` (exercises the new reads). **Must precede step 7, and should precede step 5:**
+   with the switch off no new composite query runs (Task 14's `test_no_new_composite_query_while_off`), but a query against a
+   missing or building index is `FailedPrecondition`, systemic for the whole tick (`firestore_drive_index_repo.py:1269-1270`)
+   — the moment the switch is on, every tick of the owner would fail until the index is `READY`.
+   The prompt layer (step 3) likewise only has to exist before step 7: with the switch off nothing builds the prompt.
 5. **Deploy OFF:** `.env` holds `DRIVE_TRANSCRIBE_ENABLED_DEV=off` (or unset). Pause the drive queue and the fan-out job;
    `make deploy` (main and indexer together; ffmpeg and `driveparser` are already in the image, `Dockerfile:11-13,34-37`);
    verify both services serve the new image; resume. The policy bump makes media records `pending` (metadata only).
 6. **Backlog estimate** (read-only): `python scripts/infrastructure/drive_transcribe_backlog.py` → `scripts/memory/`.
 7. **Morning enable for the owner only:** `DRIVE_TRANSCRIBE_ENABLED_DEV=on` in `.env`, `make deploy`; then
    `python scripts/infrastructure/drive_transcribe_flag.py --user <OWNER_USER_ID> --on --apply`. The son's flag stays False.
+   **The overnight live test is bounded only if G34 is resolved first:** turning the flag on starts the whole backlog,
+   newest first, under the $20 monthly cap — not one recording within $10. With G34's cap override, set
+   `DRIVE_TRANSCRIBE_USD_CAP_DEV` to the night's budget (≤ 10) before this deploy; the hard cap with reservations then bounds
+   the spend, and it is removed (unset → $20) only when the owner says so. Steps 3, 4 and this step are cloud writes the
+   overnight authorisation must name explicitly (they are **[OWNER]** steps everywhere else in this plan).
 8. Watch the tick line (`windows_*`, `transcripts`, `transcribe_usd`, `transcribe_reserved_usd`) and, after T2, the first mirror
    files on the phone; raise the cap only by a parameter change if the estimate says the backlog should finish sooner.
 9. **Eval gate (T1, live, cents):** `python scripts/validation/drive_transcript_fixtures.py` then
@@ -840,7 +970,9 @@ deciding 30 vs 45 min windows — and the short-clip early-timestamp effect on r
 3. Previous image: every new field is plain and no enum gained a stored value, so old code parses every record; its upgrade pass
    re-classifies media to `kind_not_admitted` (policy 3 ≠ 2) and collects their chunks. Then run
    `scripts/infrastructure/drive_transcript_sweep.py --apply` to remove the job, batch, store and mirror documents old code does
-   not know. Open Gemini batches finish unread and their files expire in 48 h; their reservations die with the sweep.
+   not know. Open Gemini batches finish unread and their files expire in 48 h; their reservations die with the sweep — but the
+   `transcribe_reserved_usd` counter in the month's usage document does not (the sweep must zero it, or the month's
+   transcribe headroom reads low after a roll-forward); their provider cost is incurred and never booked.
 4. The mirror folder and its files are the user's after rollback; deleting them is the user's act (§27.13).
 
 ---
@@ -887,6 +1019,11 @@ Each item: what the RFC says or omits versus the code, the proposal, and whether
   is recorded and released in the month it was made (`reserved_month` on job and batch docs); the real cost is booked in the
   month of collection ("recorded when collected", Δ105). The usage documents survive purges (§25.4.5), so a purge decrements the
   user's open reservations explicitly. Engineering.
+  *Review correction:* booking the cost in the month of collection breaks the hard cap at a month turn — month M's
+  reservation is released, and month M+1 receives dollars it never reserved, up to everything in flight on the 31st (Δ106's
+  "batches in flight can never overshoot it"). *Revised proposal (adopted in Task 6):* the cost is recorded **when** collected
+  (Δ105's timing) but **into the reservation's month** (`_spend_write(month=…)`). The Cabinet's "this month" line then shows a
+  late-collected batch under the month it was bought in, which is the honest attribution.
 - **G10. A batch document collection.** Δ97 names only the job document; "one poll per distinct batch" (Δ104) and "a batch that
   fails releases its reservations" need a per-batch record. *Proposed:* `{prefix}drive_transcript_batches`. Engineering.
 - **G11. Window results off the job document.** Up to eight windows of segments would bloat a document every poll rewrites.
@@ -902,7 +1039,11 @@ Each item: what the RFC says or omits versus the code, the proposal, and whether
 - **G14. The demuxer allowlist as written is not valid ffmpeg syntax.** `-f mov,mp4,m4a,matroska,webm,…` (§27.4) is a list; `-f`
   takes one demuxer (whose own names contain commas: `mov,mp4,m4a,3gp,3g2,mj2`, `matroska,webm`). *Proposed:* `-format_whitelist`
   with the list on ffprobe and ffmpeg, plus `-f` pinned to the probed demuxer on the extraction run; a docker-gated test proves the
-  image's ffmpeg (Debian bookworm) honours both whitelists. Engineering.
+  image's ffmpeg honours both whitelists. Engineering. *Review note:* `format_whitelist` matches by `av_match_list`, so a
+  short name (`mov`, `matroska`) admits the demuxer whose name lists it, and the whitelists are copied to nested inputs (a
+  playlist's or `concat`'s children), which is what refuses them. The base image is `python:3.11-slim`, whose Debian release
+  is not pinned; the docker test checks the shipped ffmpeg, not "bookworm". Two hardening additions in Task 9 of the same
+  kind: `-tls_verify 1 -ca_file …` (ffmpeg does not verify certificates by default) and `-hide_banner -loglevel error -nostats`.
 - **G15. The child launcher is duplicated, not shared.** REQ-ARCH-08 forbids the top-level `subprocess_content_extractor.py`
   from importing `drive_parser/`, and its tests patch module internals (`pwd`, `_effective_uid`, `asyncio.create_subprocess_exec`,
   `test_subprocess_extractor_sandbox.py:45-63`), so extracting a shared launcher would move code under existing tests.
@@ -925,11 +1066,17 @@ Each item: what the RFC says or omits versus the code, the proposal, and whether
   for a passage. Owner: confirm the number.
 - **G20. Silent recordings are not "unreadable".** A `no_speech`/`no_audio` stub is `metadata_only / no_text`, a reason in
   `UNREAD_REASONS` (`firestore_drive_index_repo.py:108`), so it would be counted "could not be read". *Proposed:* not unread
-  (it was read); `failed` and `too_large` are. Engineering.
+  (it was read); `failed` and `too_large` are. Engineering. *Review note:* the Firestore count (`unread_count_queries`,
+  `:672-702`) filters by state, reason and kind and cannot see `transcript_stub`; the resolution is implementable without a
+  new index only by giving the media kinds their own class list without `no_text` (every media `no_text` is a stub). Task 5
+  now says so (port + both adapters + `access_counts`).
 - **G21. The transcript state vocabulary.** §27.3 lists `none, ready, working, waiting, current, held, parked, failed` "as in
   §25.4.5", whose `held` means "a hold for this version" and which has `deferred` instead of `working/waiting`. *Proposed:* the
-  table of Task 4 (`held` = a timed hold: cooldown, quiet period, model backoff, with `transcript_hold` naming it; `parked` =
-  the month's cap; `failed` = `MAX_ATTEMPTS`). Engineering.
+  table of Task 4 (`held` = a timed hold: cooldown, quiet period, with `transcript_hold` naming it; `parked` = the month's cap;
+  `failed` = `MAX_ATTEMPTS`). Engineering. *Review correction:* the plan first listed "model backoff" as a `held` reason. §25.4.6
+  as the code reads it says the opposite (`JobState`'s docstring, `drive_enrichment.py:36-38`: "an agent-type model backoff is
+  NOT a job state … the backoff gates the queue read"); a record state would cost a write per ready file on every outage and
+  a mass wake-up after it. Task 4 now keeps records `ready` and gates the stage.
 - **G22. Opt-out and the mirror folder.** An opt-out purge deletes the sync state and with it `mirror_root_id`; the folder stays
   on the drive. On re-enable the bot creates `<name> (Alek)` and the old folder is then an ordinary user folder whose `.md` files
   are indexed as documents (duplicate hits of every transcript). *Proposed:* an opt-out purge with the drive still connected
@@ -939,6 +1086,12 @@ Each item: what the RFC says or omits versus the code, the proposal, and whether
 - **G23. The mirror root id must survive the tick's own state save.** `save_sync_state` merges every state field
   (`firestore_drive_index_repo.py:35-36,137`); a root created mid-tick would be overwritten by the end-of-tick save of the
   stale copy. *Proposed:* mirror fields excluded from `STATE_FIELDS`, written by a dedicated fenced method. Engineering.
+  *Review correction of the reason:* the tick carries its own state object and the lease keeps any other tick out, so a
+  root written into that object is saved, not clobbered; the clobber happens only if the root is written out of band. The
+  real reasons for the dedicated write are (1) persisting the id the moment Graph answers, so a crash later in the tick does
+  not leave the §27.9 orphan folder, and (2) once written out of band, no older snapshot (a lease-held script's save, the
+  tick's own copy if it forgot to update it) may write it back. Only `mirror_root_id`/`mirror_root_name` need the exclusion;
+  the audit/scan fields are tick-owned. Task 18 updated.
 - **G24. Where the disclosure sentence goes.** §27.12 adds it to "§6's opt-in text" and also says the later Cabinet toggle carries
   it. Shown on the indexing opt-in, it would tell the son his recordings are transcribed. *Proposed:* the strings land now and
   are shown in the Drive section only while the user's flag is on; the toggle (later) reuses them. Owner: confirm.
@@ -957,6 +1110,53 @@ Each item: what the RFC says or omits versus the code, the proposal, and whether
 - **G29. How the owner's flag is set.** No Cabinet toggle in scope. *Proposed:* the dry-run-by-default flag script (Task 16).
 - **G30. Gemini files on purge.** A purge cannot always reach the provider. *Proposed:* best-effort `delete_file`, logged; the
   Files API expiry (48 h) bounds the rest. Engineering.
+
+**Added by the plan review (2026-10-20; undeclared deltas and gaps found against the current code):**
+
+- **G31. An `EXTRACTION_VERSION` bump would strand every transcribed record (the G4 loop, second door).** `stale_versions`
+  marks a record read under another `EXTRACTION_VERSION` (`drive_index_planner.py:719`); the upgrade re-plan makes it `pending`
+  (`_outcome_stands` fails, `:258`), `content_due` is False for media (Task 1), so nothing ever re-reads it and the pass
+  never applies. *Proposed:* the stage's store path re-finalizes a `current` record whose `extraction_version` is not the
+  code's, from the store (embeddings only, no model), exactly as for G18's body version (Task 12 step 1). Engineering.
+- **G32. Finalize is not a cheap step.** §27.3 puts finalize among the steps that "take no share", but a finalize embeds up to
+  ≈ 125 chunks within `EMBED_FILE_BUDGET_S` (180 s). Ten files landing in one batch would take the tick. *Proposed:* each
+  finalize starts only while `time_left()` and takes one `TICK_FILE_BUDGET` slot, like an index run; poll and collect stay
+  share-free. Engineering.
+- **G33. Results for records that are gone or re-versioned.** The plan never said what a collected window does when its record
+  was deleted or edited while the batch ran; the reservation would be held forever and the job document orphaned. *Proposed:*
+  settle (book the real cost, release the reservation, delete the Gemini file), drop the result, delete the job (Task 13).
+  Engineering.
+- **G34. The overnight live test is not bounded by anything in the plan.** The owner authorised one live test on his own
+  recording within a $10 model budget. Turning the flag on starts the whole backlog newest first under the $20/month cap;
+  the plan has no lever between "off" and "$20". *Options:* (a) an optional `DRIVE_TRANSCRIBE_USD_CAP` knob (`os.getenv`,
+  deploy-only key + substitution) that can only **lower** `TRANSCRIBE_USD_PER_MONTH`; the hard cap with reservations then
+  guarantees the bound, newest recordings first (Task 14 has the wiring "if accepted"); (b) an item allowlist on the flag
+  script (`--only <item>`), which transcribes exactly the chosen recording but adds a per-user field and a planner branch.
+  *Recommended:* (a), set to the night's budget; it reuses the cap logic the plan already tests. **Owner** (it changes what
+  the authorisation buys: several recent recordings within the budget, not exactly one).
+- **G35. A recording ffprobe cannot time.** Browser- and phone-recorded webm/mkv often carry no `Duration` and no `Cues`;
+  ffprobe answers `N/A` and an input `-ss` must read from the start. The plan's step 3 ("probe, then windows") had no path for
+  it. *Proposed:* such a file takes Δ134's one-pass `segment` path from the start, bounded by `-t TRANSCRIBE_MAX_SECONDS`,
+  the duration read from the produced windows; reaching the bound is the `too_long` stub; the whole-file estimate (Δ106) uses
+  the facet duration when present, else the `TRANSCRIBE_MAX_SECONDS` worst case, re-settled after the pass. Engineering.
+- **G36. No (model, batch) `ModelUsage` leg.** Δ105 asks for "a `ModelUsage` leg keyed by (model, batch)" through "a
+  runner-scoped ledger". The plan prices each result with `BatchUsage.cost()` and bills it directly via
+  `QuotaService.record_usage(account_id, model, tokens, cost)` (`ports/quota_service.py:10`), which already takes a cost; the
+  modality split lives in `BatchUsage`. Same money, one type fewer. Engineering (declared, not silent).
+- **G37. Retry rules per check, as the RFC words them.** The plan first gave every collect-time failure `MAX_ATTEMPTS`
+  resubmits then a gap marker. §27.6 says the time validator gets **one** resubmit then the gap marker, and an interpolation
+  share above 0.3 is resubmitted **once** (then accepted with `~` stamps); §27.5 gives coverage and invalid output
+  `MAX_ATTEMPTS`. After `MAX_ATTEMPTS` the RFC does not say "gap marker" for those two; the plan's gap marker + `truncated`
+  (instead of failing a long file for one bad window) is the declared choice. Engineering.
+- **G38. A date said in a recording would re-date it.** §27.8 a: the record's `effective_date` "stays §3.1". The code moves it
+  to a profile's verified `issued` date when the profile lands (`drive_enrich_plan.py:203,259-286` → `effective_from`, `:125`)
+  and at `indexed()` (`drive_index_planner.py:927`); a transcript's profile reads dates out of speech. *Proposed:* media kinds
+  are exempt in both (Task 5). Engineering.
+- **G39. Reserve when the file fits, not when it is submitted.** §27.5 reserves "when the batch is submitted", after a fit check
+  made before extraction. A long file is extracted over several ticks; a second file checked meanwhile sees no reservation
+  for the first and passes too, and the two submissions together exceed the cap — the soft cap Δ106 exists to prevent.
+  *Proposed:* the fit check and the reservation are one step, before the first window (Task 4, Task 12 step 4); park,
+  failure and abandon release it. Engineering; it serves Δ106's purpose more strictly than its wording.
 
 
 ## §27.14 items mapped
@@ -1024,13 +1224,17 @@ Each item: what the RFC says or omits versus the code, the proposal, and whether
 
 **Not mapped as written:** the RFC's `CARD_VERSION` 4 → 5 and the `render`/`summary` map keys (G5, G6: proposed not to do);
 "`-f` with a demuxer list" (G14: replaced by `-format_whitelist`); "bars recorded from the first live run" and the two live T1
-checks are owner acts, not agent tasks; the Cabinet transcription toggle is explicitly later (§27.12).
+checks are owner acts, not agent tasks; the Cabinet transcription toggle is explicitly later (§27.12). Also not as worded:
+"reserved when the batch is submitted" (G39: reserved when the file fits), the cost month at a month turn (G9 revised), the
+(model, batch) ledger leg (G36), and the per-check retry counts after `MAX_ATTEMPTS` (G37).
 
 ## Task order and dependencies
 
-T1: 1 → 2 → 3; 2 → 4; 1 + 3 → 5; 4 → 6 (the cap math reads the usage fields; 6 may run in parallel with 5); 1 + 6 → 7;
-8 and 9 and 10 are independent of each other (9 needs 2's types; 10 needs 6's `BatchUsage`); 10 → 11; 4 + 7 + 8 + 9 + 11 →
-12 → 13 → 14; 3 + 7 + 14 → 15; 7 + 14 → 16; everything → 17.
-T2 (after 17): 18 → 19 → 20 → 21. T3: 21 → 22.
-Parallel-safe groups for dispatch: {5, 6}, {8, 9, 10} — each in its own worktree only if the arbiter integrates and runs the full
-`make check` on the assembled branch (memory `feedback_plan_authoring_via_subagents`).
+T1: 1 → 2 → 3; 2 → 4 (Task 4's `ctx` carries the month's dollars as plain floats, so it needs no `UsageClass.TRANSCRIBE`);
+1 + 3 → 5; 4 → 6; 5 → 6 (both edit `drive_enrich_plan.py`: G38 and G8); 1 + 5 + 6 → 7A → 7B (5 changes the port's
+`count_unread`); 8 and 9 and 10 are independent of each other (9 needs 2's types; 10 needs 6's `BatchUsage`); 10 → 11;
+4 + 7B + 8 + 9 + 11 → 12 → 13 → 14A → 14B; 3 + 7B + 14B → 15; 7B + 14B → 16; everything → 17.
+T2 (after 17): 18 → 19 → 20 → 21A → 21B. T3: 21B → 22A → 22B.
+Parallel-safe group for dispatch: {8, 9, 10} — each in its own worktree only if the arbiter integrates and runs the full
+`make check` on the assembled branch (memory `feedback_plan_authoring_via_subagents`). {5, 6} is no longer parallel-safe
+(shared file).
