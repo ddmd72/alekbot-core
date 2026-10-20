@@ -69,11 +69,13 @@ chunker infinite loop, not a standing hazard). `make test-unit` / `make check` r
 via pytest-xdist (`-n auto`; cap with `PYTEST_WORKERS=6`): ~1:34 on a 12-core Mac vs ~5:00
 single-process. The `-n` flag lives in the Makefile, not `pytest.ini`, so a targeted
 `pytest path::test` stays one process; integration/e2e targets stay serial. A test that fails only
-under xdist is order-dependent — a real test bug, fixed under the reviewer rule, not re-serialised. Tests
-that measure CPU time are marked `cpu_benchmark` and are **disabled by owner decision (2026-10-20)**: they
-failed on a loaded machine with no code change (even run alone, even on a clean `main`), so full runs failed
-and were re-run. `tests/conftest.py` skips them unless `RUN_CPU_BENCHMARKS=1`; `make check` does not run
-them. Do not re-enable them in the gate without the owner. Lint scope is `src/` only (default high-signal ruleset: pyflakes + pycodestyle
+under xdist is order-dependent — a real test bug, fixed under the reviewer rule, not re-serialised. **Timing
+tests are off the everyday gate (owner decision, 2026-10-20).** Any test that asserts on wall-clock or CPU time
+carries `@pytest.mark.timing`; `tests/conftest.py` skips it unless `RUN_TIMING_TESTS=1`, so `make check`,
+`make test-unit` and a plain `pytest` never run it. They failed on a loaded machine with no code change, and
+every full run then failed and was re-run. They run only via `make test-timing`: in CI as the separate `timing`
+job after a merge to `main` (never on a PR), or by hand. A new test with a time threshold gets the marker;
+never put timing tests back into `make check`, and never re-run a suite because a timing test failed. Lint scope is `src/` only (default high-signal ruleset: pyflakes + pycodestyle
 errors). `ruff format` exists as a dev convenience but is not enforced in CI — the codebase is not
 mass-reformatted.
 

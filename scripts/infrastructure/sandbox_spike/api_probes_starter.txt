@@ -1,0 +1,25 @@
+# Starter table for GET/POST /probe (runbook item c). One probe per line: METHOD URL [JSON body].
+# {PROJECT} and {REGION} are filled from the metadata server. Lines starting with # are ignored.
+# The owner extends this from `gcloud services list --enabled` (copy it over the file before the build, or POST the
+# lines to /probe as the request body). Expected answer for every line with the zero-role identity: 401/403.
+GET https://generativelanguage.googleapis.com/v1beta/models
+GET https://{REGION}-aiplatform.googleapis.com/v1/projects/{PROJECT}/locations/{REGION}/models
+POST https://places.googleapis.com/v1/places:searchText {"textQuery": "cafe"}
+POST https://vision.googleapis.com/v1/images:annotate {"requests": []}
+GET https://translation.googleapis.com/v3/projects/{PROJECT}/locations/global/supportedLanguages
+GET https://speech.googleapis.com/v1/operations
+GET https://texttospeech.googleapis.com/v1/voices
+GET https://customsearch.googleapis.com/customsearch/v1?q=test
+GET https://discoveryengine.googleapis.com/v1/projects/{PROJECT}/locations/global/collections
+GET https://bigquery.googleapis.com/bigquery/v2/projects/{PROJECT}/datasets
+GET https://pubsub.googleapis.com/v1/projects/{PROJECT}/topics
+GET https://cloudtasks.googleapis.com/v2/projects/{PROJECT}/locations/{REGION}/queues
+GET https://cloudscheduler.googleapis.com/v1/projects/{PROJECT}/locations/{REGION}/jobs
+POST https://logging.googleapis.com/v2/entries:list {"resourceNames": ["projects/{PROJECT}"], "pageSize": 1}
+GET https://monitoring.googleapis.com/v3/projects/{PROJECT}/metricDescriptors?pageSize=1
+GET https://artifactregistry.googleapis.com/v1/projects/{PROJECT}/locations/{REGION}/repositories
+GET https://cloudbuild.googleapis.com/v1/projects/{PROJECT}/builds?pageSize=1
+GET https://run.googleapis.com/v2/projects/{PROJECT}/locations/{REGION}/services
+GET https://iam.googleapis.com/v1/projects/{PROJECT}/serviceAccounts
+GET https://serviceusage.googleapis.com/v1/projects/{PROJECT}/services?filter=state:ENABLED&pageSize=1
+GET https://compute.googleapis.com/compute/v1/projects/{PROJECT}/global/networks
