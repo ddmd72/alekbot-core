@@ -644,6 +644,8 @@ def create_user_cabinet_blueprint(
                             n.last_fired.astimezone(user_tz).isoformat() if n.last_fired else None
                         ),
                         "created_at": n.created_at.isoformat() if n.created_at else None,
+                        # AGENT_WORKSPACE_RFC §8.3 — shown read-only; edited through chat.
+                        "workspace_file": n.workspace_file,
                     }
                     for n in notes
                 ],
