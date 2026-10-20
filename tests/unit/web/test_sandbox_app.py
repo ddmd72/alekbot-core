@@ -47,7 +47,7 @@ class FakeRecycler:
 
 
 class FakeEngine:
-    def __init__(self, tmp_path, status=SandboxStatus.OK, payload=b"DOCXBYTES", detail="", gate=None, raises=None):
+    def __init__(self, tmp_path, status=SandboxStatus.OK, payload=b"DOCXBYTES", detail="", gate=None, raises=None, always_output=False):
         self.out_root = tmp_path / "engine-out"
         self.out_root.mkdir(exist_ok=True)
         self.status = status
@@ -55,6 +55,7 @@ class FakeEngine:
         self.detail = detail
         self.gate = gate
         self.raises = raises
+        self.always_output = always_output
         self.calls: List[tuple] = []
         self.started = asyncio.Event()
 
@@ -71,7 +72,7 @@ class FakeEngine:
         out.write_bytes(self.payload)
         return SandboxEngineResult(
             status=self.status,
-            output_path=str(out) if self.status == SandboxStatus.OK else None,
+            output_path=str(out) if (self.status == SandboxStatus.OK or self.always_output) else None,
             detail=self.detail,
             peak_rss_bytes=1234,
             wall_s=0.5,
@@ -89,7 +90,8 @@ def make_app(tmp_path, engine=None, recycle="always", recycler=None):
         FakeGate(),
         recycler,
         CEILING,
-        {"work_root": str(work_root), "engine_user": None, "recycle": recycle},
+        {"work_root": str(work_root), "engine_user": None, "recycle": recycle,
+         "output_root": str(engine.out_root)},
     )
     app.register_blueprint(bp)
     return app, engine, recycler, work_root
@@ -317,8 +319,9 @@ async def test_no_connection_close_when_not_recycling(tmp_path):
 async def test_quart_limits_come_from_the_contract(tmp_path):
     app, *_ = make_app(tmp_path)
     assert app.config["MAX_CONTENT_LENGTH"] == sc.REQUEST_CAP_BYTES
-    assert app.config["BODY_TIMEOUT"] >= sc.CEILING_WALL_S
-    assert app.config["RESPONSE_TIMEOUT"] >= sc.CEILING_WALL_S
+    floor = sc.CEILING_WALL_S + sandbox_app.TIMEOUT_MARGIN_S
+    assert app.config["BODY_TIMEOUT"] >= floor
+    assert app.config["RESPONSE_TIMEOUT"] >= floor
     assert app.config["BODY_TIMEOUT"] != 60 and app.config["RESPONSE_TIMEOUT"] != 60
 
 
@@ -464,3 +467,201 @@ def test_module_imports_no_document_library():
     src = open(sandbox_app.__file__).read()
     for lib in ("docx", "PIL", "zipfile", "fitz", "pypdf", "openpyxl"):
         assert f"import {lib}" not in src and f"from {lib}" not in src
+
+
+# ---- fix round 1 -------------------------------------------------------------------------------------------
+
+async def _drive_asgi(app, body=b"payload", disconnect_after_start=False, events=None, headers=None):
+    """Raw ASGI call, to see frame order and to disconnect at a chosen moment."""
+    events = events if events is not None else []
+    inbox: asyncio.Queue = asyncio.Queue()
+    await inbox.put({"type": "http.request", "body": body, "more_body": False})
+    h = headers if headers is not None else hdrs()
+    scope = {
+        "type": "http", "http_version": "1.1", "method": "POST", "scheme": "http", "path": "/v1/render.docx",
+        "raw_path": b"/v1/render.docx", "query_string": b"", "root_path": "", "client": ("127.0.0.1", 1),
+        "server": ("localhost", 80), "extensions": {},
+        "headers": [(k.lower().encode(), v.encode()) for k, v in h.items()],
+    }
+
+    async def receive():
+        return await inbox.get()
+
+    async def send(message):
+        if message["type"] == "http.response.start":
+            events.append("start")
+            if disconnect_after_start:
+                await inbox.put({"type": "http.disconnect"})
+                await asyncio.sleep(30)  # the cancel lands here, before the body context is entered
+        elif message["type"] == "http.response.body":
+            events.append("end" if not message.get("more_body") else "body")
+
+    try:
+        await app(scope, receive, send)
+    except BaseException:  # noqa: BLE001
+        pass
+    await asyncio.sleep(0.05)
+    return events
+
+
+class OrderRecycler(FakeRecycler):
+    def __init__(self, events):
+        super().__init__()
+        self.events = events
+
+    def request_served(self) -> None:
+        super().request_served()
+        self.events.append("recycled")
+
+
+async def test_recycler_fires_after_the_final_frame(tmp_path):
+    events: list = []
+    app, _, rec, _ = make_app(tmp_path, recycler=OrderRecycler(events))
+    await _drive_asgi(app, events=events)
+    assert events[-1] == "recycled" and events[-2] == "end"
+    assert rec.calls == 1
+
+
+@pytest.mark.parametrize("policy", ["always", "never"])
+async def test_cancel_after_handoff_recycles_once_releases_busy_and_closes_file(tmp_path, monkeypatch, policy):
+    handles = []
+    real_open = sandbox_app._open_output
+
+    def spy(path):
+        opened = real_open(path)
+        handles.append(opened[0])
+        return opened
+
+    monkeypatch.setattr(sandbox_app, "_open_output", spy)
+    app, _, rec, work_root = make_app(tmp_path, recycle=policy)
+    await _drive_asgi(app, disconnect_after_start=True)
+    assert rec.calls == (1 if policy == "always" else 0)
+    assert handles and handles[0].closed
+    assert list(work_root.iterdir()) == []
+    if policy == "never":
+        assert (await post(app)).status_code == 200  # busy was released
+
+
+async def test_os_open_failure_has_outcome_header_and_no_recycle(tmp_path, monkeypatch):
+    real_open = os.open
+
+    def failing(path, flags, *a, **kw):
+        if str(path).endswith("/body"):
+            raise OSError(28, "no space")
+        return real_open(path, flags, *a, **kw)
+
+    monkeypatch.setattr(sandbox_app.os, "open", failing)
+    app, engine, rec, work_root = make_app(tmp_path)
+    r = await post(app)
+    assert r.status_code == 500 and outcome(r).status == SandboxStatus.ERROR
+    assert rec.calls == 0 and not engine.calls and list(work_root.iterdir()) == []
+
+
+async def test_mkdir_failure_has_outcome_header(tmp_path, monkeypatch):
+    def failing(path, mode=0o777):
+        raise PermissionError(13, "denied")
+
+    app, _, rec, _ = make_app(tmp_path)
+    monkeypatch.setattr(sandbox_app.os, "mkdir", failing)
+    r = await post(app)
+    assert r.status_code == 500 and outcome(r).status == SandboxStatus.ERROR and rec.calls == 0
+
+
+async def test_os_write_failure_has_outcome_header_and_recycles_once(tmp_path, monkeypatch):
+    def failing(fd, data):
+        raise OSError(28, "no space")
+
+    monkeypatch.setattr(sandbox_app.os, "write", failing)
+    app, engine, rec, work_root = make_app(tmp_path)
+    r = await post(app)
+    assert r.status_code == 500 and outcome(r).status == SandboxStatus.ERROR
+    assert rec.calls == 1 and not engine.calls and list(work_root.iterdir()) == []
+
+
+async def test_405_and_unrouted_paths_carry_the_outcome_header(tmp_path):
+    app, *_ = make_app(tmp_path)
+    r = await app.test_client().get("/v1/render.docx", headers=GOOD)
+    assert r.status_code == 405 and sc.OUTCOME_HEADER in r.headers
+    r = await app.test_client().get("/nowhere")
+    assert r.status_code == 404 and sc.OUTCOME_HEADER in r.headers
+    assert sc.OUTCOME_HEADER not in (await app.test_client().get("/health")).headers
+
+
+async def test_stalled_upload_is_cut_at_the_deadline(tmp_path, monkeypatch):
+    monkeypatch.setattr(sandbox_app, "TIMEOUT_MARGIN_S", 0.2)
+    work_root = tmp_path / "work"
+    work_root.mkdir()
+    engine = FakeEngine(tmp_path)
+    rec = FakeRecycler()
+    app = Quart(__name__)
+    app.register_blueprint(sandbox_app.create_sandbox_blueprint(
+        {SandboxOp.RENDER_DOCX: engine}, FakeGate(), rec,
+        SandboxLimits(wall_s=0.1, memory_bytes=1 << 30, cpu_s=1, file_bytes=1 << 20),
+        {"work_root": str(work_root), "engine_user": None, "recycle": "always"}))
+    async with app.test_client().request("/v1/render.docx", method="POST", headers=hdrs()) as conn:
+        await conn.send(b"some bytes then silence")
+    resp = await conn.as_response()
+    assert resp.status_code == 408 and outcome(resp).status == SandboxStatus.BAD_REQUEST
+    assert not engine.calls and rec.calls == 1 and list(work_root.iterdir()) == []
+
+
+async def test_quarts_own_cap_firing_is_a_413_and_recycles(tmp_path, monkeypatch):
+    monkeypatch.setattr(sandbox_app, "REQUEST_CAP_BYTES", 1000)
+    app, engine, rec, work_root = make_app(tmp_path)
+    assert app.config["MAX_CONTENT_LENGTH"] == 1000
+    async with app.test_client().request("/v1/render.docx", method="POST", headers=hdrs()) as conn:
+        for _ in range(20):
+            await conn.send(b"x" * 100)
+        await conn.send_complete()
+    resp = await conn.as_response()
+    assert resp.status_code == 413 and not engine.calls
+    assert rec.calls == 1 and list(work_root.iterdir()) == []
+
+
+async def test_non_ok_result_with_output_path_removes_its_dir(tmp_path):
+    engine = FakeEngine(tmp_path, status=SandboxStatus.SCRIPT_ERROR, detail="bad", always_output=True)
+    app, _, rec, _ = make_app(tmp_path, engine=engine)
+    r = await post(app)
+    assert r.status_code == 422
+    assert list(engine.out_root.iterdir()) == []
+
+
+async def test_bogus_output_path_is_never_removed_or_streamed(tmp_path):
+    precious = tmp_path / "precious"
+    precious.mkdir()
+    (precious / "out.bin").write_bytes(b"keep")
+
+    class Bogus(FakeEngine):
+        async def run(self, body_path, workdir, limits):
+            return SandboxEngineResult(SandboxStatus.OK, str(precious / "out.bin"), "", 1, 0.1)
+
+    app, _, rec, _ = make_app(tmp_path, engine=Bogus(tmp_path))
+    r = await post(app)
+    assert r.status_code == 500 and outcome(r).status == SandboxStatus.ERROR
+    assert (precious / "out.bin").read_bytes() == b"keep"
+    assert rec.calls == 1
+
+
+async def test_without_output_root_only_the_render_out_prefix_is_removable(tmp_path):
+    out_ok = tmp_path / "x" / "render_out_abc"
+    out_bad = tmp_path / "x" / "other"
+    out_ok.mkdir(parents=True)
+    out_bad.mkdir()
+    (out_ok / "o").write_bytes(b"1")
+    (out_bad / "o").write_bytes(b"2")
+    paths = iter([out_bad / "o", out_ok / "o"])
+
+    class Pick(FakeEngine):
+        async def run(self, body_path, workdir, limits):
+            return SandboxEngineResult(SandboxStatus.OK, str(next(paths)), "", 1, 0.1)
+
+    work_root = tmp_path / "work"
+    work_root.mkdir()
+    app = Quart(__name__)
+    app.register_blueprint(sandbox_app.create_sandbox_blueprint(
+        {SandboxOp.RENDER_DOCX: Pick(tmp_path)}, FakeGate(), FakeRecycler(), CEILING,
+        {"work_root": str(work_root), "engine_user": None, "recycle": "never"}))
+    r = await post(app)
+    assert r.status_code == 500 and (out_bad / "o").exists()
+    r = await post(app)
+    assert r.status_code == 200 and not out_ok.exists()
