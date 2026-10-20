@@ -57,6 +57,8 @@ def test_no_duplicate_and_no_loss_at_seams_property(overlap):
     assert [s.text for s in segments] == [_line(n) for _, n in script]
     assert [s.start_s for s in segments] == sorted(s.start_s for s in segments)
     assert len(uncertain) == len(specs) - 1
+    if overlap >= 30:      # speaker continuity: line n is always the same speaker, labels swapped per window
+        assert [s.speaker for s in segments] == [1 + n % 2 for _, n in script]
 
 
 # -- alignment -------------------------------------------------------------------------------------------------------
@@ -107,9 +109,11 @@ def test_uncertain_seam_below_min_matched_words():
     w1 = WindowSpec(1, 60.0, 120.0)
     few = "one two three"                      # 3 shared words < STITCH_MIN_MATCHED_WORDS
     assert 3 < STITCH_MIN_MATCHED_WORDS
-    _, uncertain, _ = align_speakers([(w0, _wt([_seg(70, few, 1)])), (w1, _wt([_seg(10, few, 1)]))])
+    _, uncertain, _ = align_speakers([(w0, _wt([_seg(5, "other voice", 2), _seg(70, few, 1)])),
+                                      (w1, _wt([_seg(10, few, 1)]))])
     assert uncertain == (True,)
-    _, ok, _ = align_speakers([(w0, _wt([_seg(70, _line(1), 1)])), (w1, _wt([_seg(10, _line(1), 1)]))])
+    _, ok, _ = align_speakers([(w0, _wt([_seg(5, "other voice", 2), _seg(70, _line(1), 1)])),
+                               (w1, _wt([_seg(10, _line(1), 1)]))])
     assert ok == (False,)
 
 
@@ -131,8 +135,35 @@ def test_single_speaker_files_keep_none_labels():
 
 def test_alignment_is_deterministic():
     first = align_speakers(_two_windows())
-    for _ in range(5):
-        assert align_speakers(_two_windows()) == first
+    assert align_speakers(_two_windows()) == first
+    shuffled = [(spec, _wt(reversed(wt.segments))) for spec, wt in _two_windows()]
+    assert align_speakers(shuffled) == first
+
+
+def test_one_shared_function_word_does_not_map_a_speaker():
+    w0 = WindowSpec(0, 0.0, 120.0)
+    w1 = WindowSpec(1, 60.0, 120.0)
+    k0 = [_seg(70, _line(1), 1), _seg(85, "the cat sat quietly", 2)]
+    k1 = [_seg(10, _line(1), 1), _seg(35, "the dog barked loudly outside", 2)]
+    segments, uncertain, count = align_speakers([(w0, _wt(k0)), (w1, _wt(k1))])
+    assert count == 3                      # the "the" match is rejected: the second label of window 1 is new
+    assert uncertain == (False,)           # the real match carries six words
+
+
+def test_numbers_have_no_holes_and_count_matches():
+    w0 = WindowSpec(0, 0.0, 120.0)
+    w1 = WindowSpec(1, 60.0, 120.0)
+    k0 = [_seg(10, "early talk", 1), _seg(70, _line(1), 1)]
+    k1 = [_seg(10, _line(1), 1), _seg(100, "somebody else speaks late", 5)]
+    segments, _, count = align_speakers([(w0, _wt(k0)), (w1, _wt(k1, speakers=5))])
+    assert sorted({s.speaker for s in segments}) == list(range(1, count + 1))
+
+
+def test_unlabelled_multi_window_seams_are_not_uncertain():
+    specs = plan_windows(400.0, window_s=200.0, overlap_s=60.0)
+    windows = [(sp, _wt([_seg(100, _line(sp.index), None)], speakers=1)) for sp in specs]
+    _, uncertain, count = align_speakers(windows)
+    assert count == 1 and uncertain == (False,) * (len(specs) - 1)
 
 
 # -- interpolation ---------------------------------------------------------------------------------------------------

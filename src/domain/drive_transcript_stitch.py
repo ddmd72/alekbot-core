@@ -10,7 +10,11 @@ Public interface:
     interpolate(segments, specs=()) -> (segments, shares)       # `~` stamps where a segment runs over TRANSCRIBE_MAX_GAP_S
 
 Residual, stated here as the RFC asks: a speaker silent through a whole overlap becomes a new "Speaker N+1" (the count
-may over-state), and a seam mapped on fewer than STITCH_MIN_MATCHED_WORDS words is marked uncertain.
+may over-state), and a seam mapped on fewer than STITCH_MIN_MATCHED_WORDS words is marked uncertain. Also: a window
+transcribes only what starts inside it, so a segment running past its window's end loses its tail, and when two windows
+split one utterance differently the text may be cut or doubled at the seam. Interpolation places stamps by character
+proportion, so over a long silence the text is dated late; the `~` discloses it and the per-window share triggers the
+resubmit (§27.6). Speaker numbers are renumbered by first appearance after the cut.
 """
 import re
 from bisect import bisect_right
@@ -22,6 +26,8 @@ from src.domain.drive_index_params import STITCH_MIN_MATCHED_WORDS, TRANSCRIBE_M
 from src.domain.drive_transcript import Segment, WindowSpec, WindowTranscript
 
 MATCH_PROXIMITY_S = 10.0       # two overlap segments are compared only when their starts are this close
+PAIR_MIN_WORDS = 3             # a segment pair maps two labels only on this many shared words ...
+PAIR_MIN_SHARE = 0.4           # ... and this share of the shorter segment's words: one shared "the" proves nothing
 INTERPOLATE_TARGET_S = 60.0    # an inserted stamp is placed so that no piece runs much past a minute
 _SENTENCE_END = re.compile(r"(?<=[.!?…。])\s+")
 
@@ -53,7 +59,7 @@ def cut_seams(specs: Sequence[WindowSpec], per_window: Sequence[Sequence[Segment
     return tuple(out)
 
 
-def _tokens(text: str) -> Counter:  # type: ignore[type-arg]
+def _tokens(text: str) -> "Counter[str]":
     words = ("".join(ch for ch in raw if ch.isalnum()) for raw in text.casefold().split())
     return Counter(w for w in words if w)
 
@@ -74,8 +80,10 @@ def _match(prev: Sequence[Segment], cur: Sequence[Segment], start: float, end: f
             delta = abs(sa.start_s - sb.start_s)
             if delta > MATCH_PROXIMITY_S:
                 continue
-            shared = sum((tokens_b & _tokens(sa.text)).values())
-            if shared <= 0:
+            tokens_a = _tokens(sa.text)
+            shared = sum((tokens_b & tokens_a).values())
+            shorter = min(sum(tokens_a.values()), sum(tokens_b.values()))
+            if shared < PAIR_MIN_WORDS or shared < PAIR_MIN_SHARE * shorter:
                 continue
             key = (-shared, delta, sa.start_s)
             if best is None or key < (-best[0], best[1], best[2]):
@@ -127,9 +135,15 @@ def align_speakers(windows: Sequence[Tuple[WindowSpec, WindowTranscript]]
         used = max(used, max((s.speaker for s in cur if s.speaker is not None), default=0))
         per_window.append(cur)
         uncertain.append(matched < STITCH_MIN_MATCHED_WORDS)
-    segments = cut_seams(specs, per_window)
-    labels = {s.speaker for s in segments if s.speaker is not None}
-    count = len(labels) if labels else (1 if segments else 0)
+    segments = tuple(sorted(cut_seams(specs, per_window), key=lambda seg: seg.start_s))   # stable: ties keep order
+    order: Dict[int, int] = {}
+    for seg in segments:
+        if seg.speaker is not None and seg.speaker not in order:
+            order[seg.speaker] = len(order) + 1
+    segments = tuple(seg if seg.speaker is None else replace(seg, speaker=order[seg.speaker]) for seg in segments)
+    count = len(order) if order else (1 if segments else 0)
+    if count <= 1:      # nothing to mix up: no labels, or one speaker
+        uncertain = [False] * len(uncertain)
     return segments, tuple(uncertain), count
 
 
