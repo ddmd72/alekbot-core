@@ -63,6 +63,7 @@ from ..domain.cloud_task_delivery import CloudTaskDelivery
 from ..domain.complexity_settings import resolve_complexity_settings
 from ..domain.exceptions import OAuthGrantRevokedError
 from ..domain.notification_kind import NotificationKind
+from ..domain.workspace import fire_key as workspace_fire_key
 from ..infrastructure.notification_sla import dispatch_deadline_s
 from ..handlers.agent_worker_handler import AgentWorkerHandler
 from ..services.deep_research_delivery import (
@@ -833,6 +834,7 @@ class WorkerHandler:
             if settings is not None:
                 sla_tier = settings.tier
 
+        fire = workspace_fire_key(note_id, due_at)
         result = await self._notification.notify(
             user_id=user_id,
             account_id=user_profile.account_id,
@@ -845,6 +847,10 @@ class WorkerHandler:
             # This handler returns 5xx on failure → Cloud Tasks retries the task.
             # Suppress the agent's in-process retry so the two layers don't multiply.
             suppress_transient_retry=True,
+            # Who started the run, for the workspace's origin labels; the same due_at gives the same key on every
+            # Cloud Tasks re-run of this fire (AGENT_WORKSPACE_RFC §9, §10 row 1).
+            origin_detail="execute_reminder",
+            fire_key=fire,
         )
 
         if not result.delivered:
@@ -983,6 +989,7 @@ class WorkerHandler:
             # 5xx on failure → Cloud Tasks retries the task; suppress in-process
             # agent retry so the two retry layers don't multiply.
             suppress_transient_retry=True,
+            origin_detail="daily_email_review",
         )
 
         if not result.delivered:
