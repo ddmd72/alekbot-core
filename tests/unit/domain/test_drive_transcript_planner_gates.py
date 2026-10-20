@@ -57,7 +57,7 @@ def test_content_due_false_for_media():
 def test_schedule_gives_media_no_content_work():
     rec = observe(media())
     # the only work is the card, in the first-seen class; no content/triage work sits behind it
-    assert rec.priority == Priority.EDIT or rec.priority == Priority.FIRST_SEEN
+    assert rec.priority == Priority.FIRST_SEEN
     carded = with_card(rec, card_hash(rec), "s", NOW)
     assert schedule(carded, NOW, first_seen=False).due_at is None
 

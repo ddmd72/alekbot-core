@@ -5,6 +5,7 @@ from datetime import timedelta
 
 import pytest
 
+from src.domain.drive_card import card_hash
 from src.domain.drive_index import (
     ACCURACY_VERSION, CURRENT_VERSIONS, SEARCH_V2_VERSIONS, ContentClass, DriveIndexRecord, DriveSyncState, EpochPhase,
     Reason, RecordState, Scope,
@@ -29,9 +30,10 @@ async def w():
         scope=Scope.NORMAL, state=RecordState.METADATA_ONLY, reason=Reason.KIND_NOT_ADMITTED,
         content_version=change.content_version, modified_at=change.modified_at, fs_modified_at=change.fs_modified_at,
         effective_date=change.fs_modified_at, policy_version=2, card_version=CURRENT_VERSIONS["card"],
-        embedding_space=SPACE, card_hash="h", has_card=True, card_rank=1, name_tokens=name_keys_v2(change.name),
+        embedding_space=SPACE, has_card=True, card_rank=1, name_tokens=name_keys_v2(change.name),
         name_keys_version=CURRENT_VERSIONS["name_keys"], geo_table_version=CURRENT_VERSIONS["geo_table"],
         seen_epoch=1)
+    rec = replace(rec, card_hash=card_hash(rec))
     await world.repo.upsert_records([rec], {rec.item_id: [0.5] * 8})
     world.repo.states["u"] = DriveSyncState(
         user_id="u", drive_id="d1", root_item_id=ROOT, cursor=f"delta:{len(world.drive.log)}", round_complete=True,
@@ -45,6 +47,7 @@ async def test_upgrade_pass_reclassifies_media_metadata_only(w):
     await w.settle()
     rec = w.rec(w.audio)
     assert (rec.state, rec.reason, rec.policy_version) == (RecordState.PENDING, None, CURRENT_VERSIONS["policy"])
-    assert rec.has_card
+    assert rec.has_card and rec.card_hash == card_hash(rec)   # the same card: no re-embed
+    assert w.emb.calls == []
     assert w.parser.requests == [] and w.reader.requests == [] and w.triage.calls == []
     assert w.drive.downloads == [] and w.drive.thumbnail_calls == []
