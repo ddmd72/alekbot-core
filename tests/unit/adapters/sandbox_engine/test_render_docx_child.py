@@ -4,9 +4,8 @@ import struct
 import pytest
 
 from src.adapters.sandbox_engine import render_docx_child as child
-from src.adapters.sandbox_engine.render_docx_child import (
-    EXIT_BAD_REQUEST, BadBody, frame_body, split_body,
-)
+from src.adapters.sandbox_engine.render_docx_child import EXIT_BAD_REQUEST
+from src.domain.sandbox_docx_frame import BadBody, frame_body, split_body
 
 
 def test_split_roundtrip():
