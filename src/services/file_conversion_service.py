@@ -12,10 +12,11 @@ instead of using file_conversion utilities directly.
 import mimetypes
 import os
 import tempfile
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, Tuple
 
 import aiofiles
 
+from ..domain.exceptions import WorkspaceRefused
 from ..domain.llm import MessagePart
 from ..domain.skill import DELIVERED_REF_PREFIXES, SKILL_REF_PREFIX
 from ..domain.user_drive import (
@@ -26,6 +27,7 @@ from ..domain.user_drive import (
     format_size,
     parse_drive_ref,
 )
+from ..domain.workspace import WORKSPACE_REF_PREFIX, parse_workspace_path, workspace_kind
 from ..ports.file_storage_port import FileStoragePort
 from ..utils.file_conversion import (
     MAX_FILE_BYTES,
@@ -38,6 +40,7 @@ if TYPE_CHECKING:
     from ..ports.audio_transcription_port import AudioTranscriptionPort
     from ..ports.media_storage_port import MediaStoragePort
     from ..ports.user_drive_port import UserDrivePort
+    from ..ports.workspace_store_port import WorkspaceStorePort
     from .skill_file_resolver import SkillFileResolver
 
 
@@ -46,14 +49,19 @@ def _is_delivered_key(ref: str) -> bool:
     return ref.startswith(DELIVERED_REF_PREFIXES)
 
 
+def _is_workspace_ref(ref: str) -> bool:
+    """`workspace:<path>` — Smart's own working files (AGENT_WORKSPACE_RFC §12)."""
+    return ref.startswith(WORKSPACE_REF_PREFIX)
+
+
 def _is_drive_ref(ref: str) -> bool:
     """True if ref addresses the user's drive (USER_DRIVE_RFC §4.3).
 
     `parse_drive_ref` searches anywhere in the string (label punctuation tolerance), so a
-    skill ref or a delivered-document key whose *filename* contains `drive:` must keep its
+    skill ref, a workspace ref or a delivered-document key whose *filename* contains `drive:` must keep its
     own store: those shapes are decided by prefix first.
     """
-    if ref.startswith(SKILL_REF_PREFIX) or _is_delivered_key(ref):
+    if ref.startswith(SKILL_REF_PREFIX) or _is_workspace_ref(ref) or _is_delivered_key(ref):
         return False
     return parse_drive_ref(ref) is not None
 
@@ -77,6 +85,7 @@ class FileConversionService:
         media_storage: Optional["MediaStoragePort"] = None,
         skill_files: Optional["SkillFileResolver"] = None,
         drive: Optional["UserDrivePort"] = None,
+        workspace: Optional["WorkspaceStorePort"] = None,
     ) -> None:
         self._storage = storage
         self._audio_service = audio_service
@@ -88,6 +97,9 @@ class FileConversionService:
         self._skill_files = skill_files
         # drive:<id> refs — the user's long-term file area (USER_DRIVE_RFC §4.6).
         self._drive = drive
+        # workspace:<path> refs (AGENT_WORKSPACE_RFC §12) — the port, not WorkspaceService, so there is no
+        # service-to-service import and no cycle (REQ-ARCH-22). None → workspace refs are unavailable.
+        self._workspace = workspace
 
     async def _read_skill(self, ref: str, user_id: str) -> str:
         if self._skill_files is None:
@@ -137,14 +149,50 @@ class FileConversionService:
             raise DriveFileTooLargeError(item, MAX_DRIVE_DOWNLOAD_BYTES)
         return await self._require_drive().download(user_id, item.item_id)
 
+    async def _read_workspace(self, ref: str, user_id: str) -> Tuple[str, bytes]:
+        """The live bytes of a `workspace:` ref, for the requesting user. Any folder: draft_skill's from_file reads
+        scratch/; open_file's files/-only rule lives in FileManagementAgent (§12)."""
+        if self._workspace is None:
+            raise FileNotFoundError("The workspace is unavailable")
+        try:
+            path = parse_workspace_path(ref)
+        except WorkspaceRefused as e:
+            raise FileNotFoundError(str(e)) from e
+        blob = await self._workspace.read(user_id, path)
+        return path, blob.data
+
+    async def _resolve_workspace_content(self, ref: str, user_id: str) -> str:
+        path, data = await self._read_workspace(ref, user_id)
+        if workspace_kind(path) == "text":
+            try:
+                # The skill: rule — text kinds are decoded, never mime-guessed (§12).
+                return f"[File: {ref}]\n{data.decode('utf-8')}\n[/File: {ref}]"
+            except UnicodeDecodeError:
+                logger.info("FileConversionService: %s is not UTF-8; converting it as a file", ref)
+        mime_type = mimetypes.guess_type(path)[0] or "application/octet-stream"
+        tmp_fd, tmp_path = tempfile.mkstemp(suffix=os.path.splitext(path)[1] or ".bin")
+        try:
+            os.close(tmp_fd)
+            async with aiofiles.open(tmp_path, "wb") as f:
+                await f.write(data)
+            return await convert_file_to_text(tmp_path, ref, mime_type, audio_service=self._audio_service)
+        finally:
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                logger.debug("Failed to remove temp file %s", tmp_path)
+
     async def _download_by_ref(self, ref: str, user_id: str) -> bytes:
         """Fetch bytes for a ref, dispatching by ref shape (no LLM decision).
 
+        - `workspace:<path>` ref → WorkspaceStorePort.read for the requesting user (AGENT_WORKSPACE_RFC §12).
         - `skill:<name>/<path>` ref → SkillFileResolver, encoded as UTF-8 (RFC §15.4).
         - Delivered-document key ("{prefix}/{user_id}/...") → MediaStoragePort.fetch,
           gated by an ownership check on the user_id path segment.
         - Bare filename → user upload via FileStoragePort.download.
         """
+        if _is_workspace_ref(ref):
+            return (await self._read_workspace(ref, user_id))[1]
         if ref.startswith(SKILL_REF_PREFIX):
             return (await self._read_skill(ref, user_id)).encode("utf-8")
         if _is_delivered_key(ref):
@@ -226,6 +274,8 @@ class FileConversionService:
         if ref.startswith(SKILL_REF_PREFIX):
             text = await self._read_skill(ref, user_id)
             return f"[File: {ref}]\n{text}\n[/File: {ref}]"
+        if _is_workspace_ref(ref):
+            return await self._resolve_workspace_content(ref, user_id)
         if _is_drive_ref(ref):
             return await self._resolve_drive_content(ref, user_id)
 
