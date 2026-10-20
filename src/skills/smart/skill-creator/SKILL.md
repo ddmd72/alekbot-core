@@ -28,6 +28,15 @@ The body holds when to use the skill and what to do. Material needed only someti
 - A revision lists only changes: unlisted files carry over unchanged; `{path, remove: true}` drops one.
 - Text only: `.md .txt .csv .tsv .json .yaml .yml`; 256 KB each; 20 per skill.
 
+## Skills that keep state between runs
+
+Some procedures carry state from one run to the next: a language tutor tracks the words learned and the mistakes that repeat; a weekly report compares with last week. Keep that state in a workspace file, not in the skill: the body is the procedure and changes only when the owner saves a new version; the file changes every run.
+
+- Name the file in the body with its full ref, describe what it holds, and say when to read and update it, e.g. "At the start, view `workspace:projects/spanish-tutor.md`. Before you finish, update its Learned and Repeating mistakes sections with str_replace."
+- Keep the file short and current: say in the body what to replace and what to drop, so it does not grow into a log.
+- If the file is missing, the view says whether it was deleted or renamed: tell the owner and offer to restore it. Create it only if it never existed.
+- Long reference files can be drafted in `scratch/` and passed as `from_file: "workspace:scratch/<name>.md"`.
+
 ## Hand it over
 
 Call `draft_skill(name, description, body, files=[...])` (`files` only when there are any). The owner then receives the full text as a file, every file you wrote as its own file, a summary of the file changes, and a separate message with a save command — the command is shown only to the owner, not to you. Tell the owner, in one or two sentences, what the skill does and that pasting the command saves it. Do not claim it is saved: a saved skill appears in this conversation as a system note.
