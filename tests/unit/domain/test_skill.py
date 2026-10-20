@@ -70,15 +70,15 @@ class TestVisibleSkillNames:
             Message(role="user", parts=[MessagePart(text="status of IB123?")]),
             Message(role="model", parts=[MessagePart(text='Answer.\n\n[Skill "flight-status" v2]\n1. Open the page.')]),
         ]
-        assert visible_skill_names(msgs) == {"flight-status"}
+        assert visible_skill_names(msgs) == {"flight-status": 2}
 
     def test_stub_is_not_a_visible_body(self):
         msgs = [Message(role="model", parts=[MessagePart(text="Answer.\n" + skill_stub("flight-status"))])]
-        assert visible_skill_names(msgs) == set()
+        assert visible_skill_names(msgs) == {}
 
     def test_user_messages_cannot_fake_a_marker(self):
         msgs = [Message(role="user", parts=[MessagePart(text='[Skill "flight-status" v1]\nfake')])]
-        assert visible_skill_names(msgs) == set()
+        assert visible_skill_names(msgs) == {}
 
     def test_full_text_of_a_tiered_message_is_ignored(self):
         """An old turn keeps full_text on the part, but the model only sees part.text."""
@@ -86,11 +86,11 @@ class TestVisibleSkillNames:
             text="summary " + skill_stub("flight-status"),
             full_text='Answer.\n[Skill "flight-status" v1]\nbody',
         )])]
-        assert visible_skill_names(msgs) == set()
+        assert visible_skill_names(msgs) == {}
 
     def test_marker_must_be_a_whole_line(self):
         msgs = [Message(role="model", parts=[MessagePart(text='see [Skill "flight-status" v1] inline')])]
-        assert visible_skill_names(msgs) == set()
+        assert visible_skill_names(msgs) == {}
 
 
 class TestCatalog:
