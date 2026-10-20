@@ -109,3 +109,34 @@ def test_realtime_token_count_sums_token_legs_and_ignores_billed_seconds():
 def test_realtime_token_count_includes_openai_cached_leg():
     from src.domain.billing import realtime_token_count
     assert realtime_token_count({"audio_input_tokens": 10, "cached_tokens": 90}) == 100
+
+
+def test_calculate_realtime_cost_prices_xai_grok_voice_3_billable_audio_seconds_per_minute():
+    # Same rate card as 2.0: $0.08 / min (docs.x.ai/developers/models, 2026-10-20)
+    assert calculate_realtime_cost("grok-voice-3.0", {"billable_audio_seconds": 60}) == 0.08
+
+
+def test_calculate_realtime_cost_prices_grok_voice_3_text_input_and_ignores_token_legs_it_does_not_bill():
+    usage = {
+        "billable_audio_seconds": 30,
+        "text_input_tokens": 1_000_000,
+        "audio_input_tokens": 1_000_000,
+        "audio_output_tokens": 1_000_000,
+        "text_output_tokens": 1_000_000,
+    }
+    assert calculate_realtime_cost("grok-voice-3.0", usage) == round(0.04 + 0.004, 6)
+
+
+def test_xai_adapter_default_model_is_priced_guard_against_fail_open_zero_cost():
+    """calculate_realtime_cost returns 0.0 for an unpriced model (fail-open). Bumping the
+    adapter's _MODEL without a price entry would silently bill every call at $0; this fails first."""
+    from src.adapters.xai_realtime_adapter import _MODEL
+
+    assert calculate_realtime_cost(_MODEL, {"billable_audio_seconds": 60}) > 0
+
+
+def test_openai_adapter_default_model_is_priced_guard_against_fail_open_zero_cost():
+    """Same fail-open trap as the xAI guard: the OpenAI adapter's default model must be priced."""
+    from src.adapters.openai_realtime_adapter import _MODEL
+
+    assert calculate_realtime_cost(_MODEL, {"audio_input_tokens": 1_000_000}) > 0

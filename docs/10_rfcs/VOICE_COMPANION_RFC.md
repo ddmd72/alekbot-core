@@ -1251,7 +1251,7 @@ open microphone is impossible. Concurrency is bounded by the provider's per-acco
 | Provider | Model | Rate |
 |---|---|---|
 | OpenAI | `gpt-realtime-2.1` | audio **$32 in / $64 out**, text **$4 in / $24 out**, cached **$0.40** (audio and text alike) / 1M |
-| xAI | `grok-voice-think-fast-2.0` | **$0.08 / min** ($4.80 / hr) audio + $0.004 / 1M text input |
+| xAI | `grok-voice-3.0` | **$0.08 / min** ($4.80 / hr) audio + $0.004 / 1M text input |
 
 Audio tokenizes at roughly 600 tokens per minute of user speech and 1,200 per minute of model
 speech — ~$0.019/min while the user talks, ~$0.077/min while the model talks. A typical agent lands
