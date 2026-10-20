@@ -38,4 +38,5 @@ def test_only_the_migrated_runtimes_name_their_identity_so_far():
     assert named == {
         "research-job": ["--service-account=alek-research-job@$PROJECT_ID.iam.gserviceaccount.com"],
         "alek-bot-indexer-dev": ["--service-account=alek-indexer@$PROJECT_ID.iam.gserviceaccount.com"],
+        "alek-voice-relay-dev": ["--service-account=alek-relay@$PROJECT_ID.iam.gserviceaccount.com"],
     }
