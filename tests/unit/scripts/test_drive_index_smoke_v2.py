@@ -13,6 +13,7 @@ from src.domain.drive_search import KIND_FAMILIES
 from tests.unit.adapters.firestore_drive_eval_fakes import (
     CHUNKS, HINTS, RECS, EvalDb, make_eval_repo,
 )
+from tests.unit.adapters.firestore_drive_transcript_fakes import transcript_doc_fakes
 
 _SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "infrastructure" / "drive_index_smoke.py"
 
@@ -35,8 +36,16 @@ def smoke():
 
 @pytest.fixture
 def run(mock_env_config):
+    """The whole smoke list runs here, so the transcript reads (§27.3-§27.5, Task 7B) need their collection names and
+    the evaluating client's `collection_group` (the two env-prefixed subcollection groups, ruling T-R13)."""
     db = EvalDb()
-    return db, make_eval_repo(db, mock_env_config)
+    mock_env_config.drive_transcript_jobs_collection = "eval_drive_transcript_jobs"
+    mock_env_config.drive_transcript_batches_collection = "eval_drive_transcript_batches"
+    mock_env_config.drive_transcripts_collection = "eval_drive_transcripts"
+    mock_env_config.drive_transcript_windows_subcollection = "eval_drive_transcript_windows"
+    mock_env_config.drive_transcript_parts_subcollection = "eval_drive_transcript_parts"
+    with transcript_doc_fakes():
+        yield db, make_eval_repo(db, mock_env_config)
 
 
 def family():

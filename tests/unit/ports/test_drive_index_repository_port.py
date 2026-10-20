@@ -31,6 +31,10 @@ _EXPECTED = {
     "get_transcript_job", "save_transcript_job", "delete_transcript_job", "save_window_result", "get_window_results",
     "create_batch", "save_batch", "delete_batch", "get_open_batches",
     "get_transcript", "put_transcript", "touch_transcript", "delete_transcript",
+    # transcripts (plan Task 7B): the record queues, the in-flight copy check (G12), the store's orphans, the purge
+    # helpers, and the collection-group orphan sweep kept apart from them (ruling T-R14)
+    "transcript_queue", "transcript_wakeups", "jobs_by_content_key", "orphan_transcripts",
+    "delete_user_transcript_jobs", "delete_user_batches", "delete_user_transcripts", "delete_user_transcript_orphans",
 }
 
 
