@@ -37,6 +37,11 @@ RFC section named in its task before writing code. Section numbers (§N) below r
   fails: stop, record the test id, the assertion and actual vs expected, and hand it to the reviewer. New behaviour
   gets **new test files** (every test file this plan creates is new). Each task lists the existing tests it is
   expected to break, so the reviewer is prepared; any other failure is a code bug to fix in the code.
+- Several new test files import private helpers or fixtures from existing test modules
+  (`tests.unit.handlers.test_worker_handler`, `tests.unit.agents.test_alek_gateway_agent`,
+  `tests.unit.services.test_prompt_assembly_service`, `tests.unit.services.test_user_agent_factory`,
+  `tests.unit.composition.test_drive_wiring`), following existing precedent; this couples them to those modules, so a
+  later rename there breaks these imports — fix the import path, never the assertion.
 - **Nothing calls a live LLM, GCS, Firestore, Secret Manager or Cloud Logging.** Every test uses fakes or stubs at the
   SDK boundary. The review script (Task 10.2) is written, not run. Owner prerequisites (below) are never performed by
   an implementer.
@@ -131,7 +136,7 @@ no TTL policy.
 | `tests/unit/domain/test_workspace_paths.py`, `tests/unit/domain/test_workspace_rendering.py` | Domain tests. |
 | `tests/unit/services/workspace_fakes.py` | `InMemoryWorkspaceStore` (GCS semantics). |
 | `tests/unit/ports/test_workspace_store_port.py` | Port shape. |
-| `tests/unit/adapters/test_gcs_workspace_adapter.py` | Wire tests at the SDK boundary. |
+| `tests/unit/adapters/test_gcs_workspace_adapter.py`, `tests/unit/adapters/test_gcs_workspace_adapter_sdk_wire.py` | Wire tests at the SDK boundary (MagicMock call shapes; real SDK objects with the HTTP layer stubbed). |
 | `tests/unit/adapters/gcs_workspace_emulator.py`, `tests/unit/adapters/test_workspace_store_contract.py` | SDK-surface emulator + contract test shared by the fake and the adapter. |
 | `tests/unit/services/test_workspace_service_view.py`, `…_write.py`, `…_lifecycle.py`, `…_copy.py` | Service tests. |
 | `tests/unit/infrastructure/test_workspace_tools.py` | Declaration + handler (FIFO, shield, session). |
@@ -1596,7 +1601,9 @@ Task 2.3), `src/adapters/gcs_media_adapter.py` (executor + lazy import precedent
 
 **Files:**
 - Create: `src/adapters/gcs_workspace_adapter.py`
-- Test: `tests/unit/adapters/test_gcs_workspace_adapter.py`
+- Test: `tests/unit/adapters/test_gcs_workspace_adapter.py` (MagicMock client: call shapes),
+  `tests/unit/adapters/test_gcs_workspace_adapter_sdk_wire.py` (real SDK objects, stubbed at the HTTP layer: what goes
+  on the wire)
 
 **Existing tests expected to break:** none.
 
@@ -1706,8 +1713,9 @@ class TestDelete:
         assert order == [("patch", {"if_generation_match": 101}), ("delete", {"if_generation_match": 101})]
         assert blob.metadata == {"deleted_by": "chat", "delete_id": "w1", "deleted_fire": F,
                                  "renamed_to": "projects/b.md"}
-        # The live object only: a generation-addressed blob would erase that version (§5.3).
-        assert bucket.blob.call_args_list == [call(KEY)]
+        # Two blobs for the live object, never a generation-addressed one (§5.3): patch on the first, delete on a
+        # fresh one, because the SDK's delete() sends the generation patch() reloaded.
+        assert bucket.blob.call_args_list == [call(KEY), call(KEY)]
 
     async def test_minimal_delete_metadata(self, client):
         blob = client.bucket.return_value.blob.return_value = _Blob()
@@ -1812,7 +1820,89 @@ def test_no_client_is_built_at_construction():
     assert adapter._client is None
 ```
 
-- [ ] **Step 2: Run** `python3 -m pytest tests/unit/adapters/test_gcs_workspace_adapter.py -q` → FAIL (`ModuleNotFoundError`).
+- [ ] **Step 1b: Failing wire tests over real SDK objects** — `tests/unit/adapters/test_gcs_workspace_adapter_sdk_wire.py`.
+A MagicMock blob cannot show what the SDK sends: `Blob.patch()` reloads the object's properties, and
+`Blob.delete()` then adds `generation=self.generation` — a generation-addressed DELETE that erases the version. Only the
+HTTP layer is stubbed here (`client._connection.api_request` for JSON calls, `client._http_internal` for the upload):
+
+```python
+"""GcsWorkspaceAdapter over REAL google-cloud-storage objects, stubbed only at the HTTP layer
+(docs/how_to/ADAPTER_WIRE_TESTING.md): what actually goes on the wire. The delete must carry ifGenerationMatch and
+never generation — a generation-addressed DELETE erases that version (AGENT_WORKSPACE_RFC §5.3); a create must carry
+ifGenerationMatch=0 and the write_id."""
+import json
+
+from google.auth.credentials import AnonymousCredentials
+from google.cloud import storage
+
+from src.adapters.gcs_workspace_adapter import GcsWorkspaceAdapter
+from src.domain.workspace import WorkspaceDeleteMeta, WorkspaceWriteMeta
+
+KEY = "u1/projects/a.md"
+
+
+def _client():
+    client = storage.Client(project="p", credentials=AnonymousCredentials())
+    calls = []
+
+    def api_request(**kw):
+        calls.append(kw)
+        if kw["method"] == "PATCH":
+            return {"name": KEY, "bucket": "ws-bucket", "generation": "101", "metageneration": "2"}
+        return {}
+
+    client._connection.api_request = api_request
+    return client, calls
+
+
+class _Response:
+    status_code = 200
+
+    def __init__(self, body):
+        self._body, self.headers = body, {}
+        self.content = json.dumps(body).encode()
+
+    def json(self):
+        return self._body
+
+
+class _Http:
+    is_mtls = False
+
+    def __init__(self):
+        self.requests = []
+
+    def request(self, method, url, data=None, headers=None, timeout=None, **_):
+        self.requests.append((method, url, data))
+        return _Response({"name": KEY, "bucket": "ws-bucket", "generation": "101", "size": "5",
+                          "timeCreated": "2026-10-20T06:01:00.000Z",
+                          "metadata": {"origin": "chat", "write_id": "w1"}})
+
+
+async def test_the_delete_is_never_generation_addressed():
+    client, calls = _client()
+    adapter = GcsWorkspaceAdapter("ws-bucket", client=client, new_id=lambda: "d1")
+    await adapter.delete("u1", "projects/a.md", 101, WorkspaceDeleteMeta(deleted_by="chat"))
+    patch, delete = calls
+    assert patch["method"] == "PATCH" and patch["query_params"]["ifGenerationMatch"] == 101
+    assert patch["data"] == {"metadata": {"deleted_by": "chat", "delete_id": "d1"}}
+    assert delete["method"] == "DELETE"
+    assert delete["query_params"] == {"ifGenerationMatch": 101}  # no "generation": that would erase version 101
+
+
+async def test_a_create_carries_precondition_zero_and_the_write_id():
+    client, _ = _client()
+    http = _Http()
+    client._http_internal = http
+    adapter = GcsWorkspaceAdapter("ws-bucket", client=client, new_id=lambda: "w1")
+    entry = await adapter.put("u1", "projects/a.md", b"hello", WorkspaceWriteMeta(origin="chat"), 0)
+    [(method, url, data)] = http.requests
+    assert method == "POST" and "ifGenerationMatch=0" in url
+    assert b'"metadata": {"origin": "chat", "write_id": "w1"}' in data
+    assert (entry.generation, entry.write_id, entry.live) == (101, "w1", True)
+```
+
+- [ ] **Step 2: Run** `python3 -m pytest tests/unit/adapters/test_gcs_workspace_adapter.py tests/unit/adapters/test_gcs_workspace_adapter_sdk_wire.py -q` → FAIL (`ModuleNotFoundError`).
 
 - [ ] **Step 3: Implement** — `src/adapters/gcs_workspace_adapter.py`:
 
@@ -1824,8 +1914,8 @@ Object name `{user_id}/{path}`; the path is validated in domain before it reache
 user's prefix. Every put stamps `origin`, `fire`, a fresh `write_id` (and `restored_from`), plus `customTime` under
 scratch/ (the 7-day lifecycle rule counts from it). Every mutation carries a generation precondition. A delete is a
 metadata patch (who deleted it, where it went, a fresh `delete_id`) and then a delete of the LIVE object, both under
-`if_generation_match`: a generation-addressed delete would erase that version permanently. A 412 on a request the
-client retried is read back (`write_id` / `delete_id`) before it is reported as a conflict. A file-level prefix list
+`if_generation_match`, the delete through a fresh blob (after patch() the SDK blob knows its generation and would
+send it): a generation-addressed delete would erase that version permanently. A 412 on a request the client retried is read back (`write_id` / `delete_id`) before it is reported as a conflict. A file-level prefix list
 keeps only the exact name. Sync SDK calls run in the default executor (gcs_media_adapter precedent).
 """
 import asyncio
@@ -1963,12 +2053,14 @@ class GcsWorkspaceAdapter(WorkspaceStorePort):
             metadata["deleted_fire"] = meta.deleted_fire
         if meta.renamed_to:
             metadata["renamed_to"] = meta.renamed_to
-        # The LIVE object. Never bucket.blob(key, generation=g).delete(): in a versioned bucket that erases version g.
+        # The LIVE object. A delete must never carry a generation: in a versioned bucket that erases the version.
         blob = bucket.blob(key)
         blob.metadata = metadata
         try:
             blob.patch(if_generation_match=if_generation_match)  # bumps the metageneration only
-            blob.delete(if_generation_match=if_generation_match)
+            # A FRESH blob: patch() reloaded blob.generation and Blob.delete() sends generation=self.generation —
+            # that would erase the version (google-cloud-storage 3.9.0, blob.py ~851-861).
+            bucket.blob(key).delete(if_generation_match=if_generation_match)
         except (PreconditionFailed, NotFound) as e:
             if self._delete_landed(key, delete_id):
                 logger.info("[Workspace] %s on a retried delete that had landed: %s", type(e).__name__, path)
@@ -2011,9 +2103,9 @@ class GcsWorkspaceAdapter(WorkspaceStorePort):
         )
 ```
 
-- [ ] **Step 4: Run** `python3 -m pytest tests/unit/adapters/test_gcs_workspace_adapter.py -q && python3 -m ruff check src/adapters/gcs_workspace_adapter.py && make check-types` → PASS; `check-types` shows no new error lines for `gcs_workspace_adapter.py` (it is informational; compare the error count before / after).
+- [ ] **Step 4: Run** `python3 -m pytest tests/unit/adapters/test_gcs_workspace_adapter.py tests/unit/adapters/test_gcs_workspace_adapter_sdk_wire.py -q && python3 -m ruff check src/adapters/gcs_workspace_adapter.py && make check-types` → PASS; `check-types` shows no new error lines for `gcs_workspace_adapter.py` (it is informational; compare the error count before / after).
 
-- [ ] **Step 5: Commit** — `git add src/adapters/gcs_workspace_adapter.py tests/unit/adapters/test_gcs_workspace_adapter.py && git commit -m "feat(workspace): GcsWorkspaceAdapter — preconditions, patch+delete of the live object, 412 read-back (RFC §5.2–§5.3)"`
+- [ ] **Step 5: Commit** — `git add src/adapters/gcs_workspace_adapter.py tests/unit/adapters/test_gcs_workspace_adapter.py tests/unit/adapters/test_gcs_workspace_adapter_sdk_wire.py && git commit -m "feat(workspace): GcsWorkspaceAdapter — preconditions, patch+delete of the live object, 412 read-back (RFC §5.2–§5.3)"`
 
 ---
 
@@ -2051,11 +2143,17 @@ class _Version:
 
 
 class FakeGcsBlob:
+    """Mirrors storage.Blob: `bucket.blob(name, generation=g)` sets `generation`; upload_from_string() and patch()
+    reload the properties (generation included); delete() and download_as_bytes() address `self.generation` when it is
+    set — so a delete on the blob that was just patched is generation-addressed and erases that version, exactly the
+    SDK behaviour the adapter must avoid."""
+
     def __init__(self, emulator, name, generation=None, version=None):
-        self._emu, self.name, self._generation = emulator, name, generation
+        self._emu, self.name = emulator, name
+        self.generation = generation
         self.metadata = None
         self.custom_time = None
-        self.generation = self.size = self.time_created = self.time_deleted = None
+        self.size = self.time_created = self.time_deleted = None
         if version is not None:
             self._load(version)
 
@@ -2067,13 +2165,13 @@ class FakeGcsBlob:
         self._load(self._emu._put(self.name, data, dict(self.metadata or {}), self.custom_time, if_generation_match))
 
     def patch(self, if_generation_match=None, **_):
-        self._emu._patch(self.name, dict(self.metadata or {}), if_generation_match)
+        self._load(self._emu._patch(self.name, dict(self.metadata or {}), if_generation_match))
 
     def delete(self, if_generation_match=None, **_):
-        self._emu._delete(self.name, self._generation, if_generation_match)
+        self._emu._delete(self.name, self.generation, if_generation_match)
 
     def download_as_bytes(self, **_):
-        return self._emu._find(self.name, self._generation).data
+        return self._emu._find(self.name, self.generation).data
 
 
 class FakeGcsBucket:
@@ -2153,6 +2251,7 @@ class FakeGcsClient:
             raise NotFound(name)
         self._check(name, if_generation_match)
         live.metadata.update(metadata)
+        return live
 
     def _delete(self, name, generation, if_generation_match):
         if generation is not None:  # generation-addressed: that version is gone for good
@@ -2306,7 +2405,7 @@ def test_the_emulator_erases_on_a_generation_addressed_delete():
     assert client.list_blobs("b", prefix="u1/", versions=True) == []
 ```
 
-- [ ] **Step 3: Run** `python3 -m pytest tests/unit/adapters/test_workspace_store_contract.py -q` → PASS (the fake and the adapter both exist; a failure is a drift to fix in the implementation it names).
+- [ ] **Step 3: Run** `python3 -m pytest tests/unit/adapters/test_workspace_store_contract.py -q` → PASS (the fake and the adapter both exist; a failure is a drift to fix in the implementation it names). The emulator is faithful to the SDK on purpose: an adapter that deleted through the blob it had just patched would fail `test_delete_keeps_a_noncurrent_version[gcs]` here (verified against such a variant), and the Task 2.2 adapter passes.
 
 - [ ] **Step 4: Commit** — `git add tests/unit/adapters/gcs_workspace_emulator.py tests/unit/adapters/test_workspace_store_contract.py && git commit -m "test(workspace): store contract shared by the fake and the GCS adapter over an SDK emulator (RFC §5.3, §17)"`
 
@@ -2499,7 +2598,8 @@ class TestLogAndFailures:
         lines = [r for r in caplog.records if "[Workspace]" in r.getMessage()]
         assert len(lines) == 1 and lines[0].levelno == logging.INFO
         assert re.fullmatch(
-            rf"\[Workspace\] op=view user=u1 path={P} origin=background:execute_reminder fire={re.escape(F)} "
+            rf"\[Workspace\] op=view user=u1 path={P} origin=background:execute_reminder "
+            rf"fire={re.escape(F.removeprefix('reminder:'))} "
             r"had_history=- bytes=1 gen=\d+ result=ok ms=\d+",
             lines[0].getMessage(),
         )
@@ -2524,6 +2624,14 @@ class TestLogAndFailures:
         [rec] = [r for r in caplog.records if "[Workspace]" in r.getMessage()]
         assert rec.levelno == logging.INFO
         assert "result=refused:wrong_store" in rec.getMessage() and "path=Bad_Path.md" in rec.getMessage()
+
+    async def test_a_raw_path_is_one_capped_token(self, caplog):
+        svc, _ = _svc()
+        with caplog.at_level(logging.INFO):
+            await svc.run(_call(), "view", {"path": "Bad\nPath " + "x" * 300})
+        [rec] = [r for r in caplog.records if "[Workspace]" in r.getMessage()]
+        token = rec.getMessage().split(" path=", 1)[1].split(" ", 1)[0]
+        assert token.startswith("Bad_Path_x") and len(token) == 120 and "\n" not in rec.getMessage()
 ```
 
 - [ ] **Step 2: Run** `python3 -m pytest tests/unit/services/test_workspace_service_view.py -q` → FAIL (`ModuleNotFoundError`).
@@ -2653,10 +2761,12 @@ class WorkspaceService:
             emit = logger.warning
         else:
             emit = logger.info
+        # §16 form: one token per field (a raw path may hold spaces or newlines; capped), fire=<note_id>@<due_at>.
         emit(
             "[Workspace] op=%s user=%s path=%s origin=%s fire=%s had_history=%s bytes=%d gen=%s result=%s ms=%d",
-            command, call.user_id[:8], "_".join(f.path.split(" ")) or '""', call.origin, call.fire_key or "-",
-            f.had_history, f.nbytes, f.gen, f.result, int((time.monotonic() - started) * 1000),
+            command, call.user_id[:8], "_".join(f.path.split())[:120] or '""', call.origin,
+            (call.fire_key or "-").removeprefix("reminder:"), f.had_history, f.nbytes, f.gen, f.result,
+            int((time.monotonic() - started) * 1000),
         )
 
     # -- view / history ----------------------------------------------------------------------------------------
@@ -3751,6 +3861,18 @@ class TestRefusalsAndLogs:
         assert "result=refused:command" in caplog.text
         assert not (await handle(_call(command="view", path=P))).failed
 
+    async def test_truncated_arguments_are_refused_and_write_nothing(self, caplog):
+        store = InMemoryWorkspaceStore()
+        handle = _handler(store)
+        with caplog.at_level(logging.INFO):
+            r = await handle(ToolCall(name="workspace",
+                                      args={"_parse_error": "truncated_json", "_raw_prefix": '{"command": "create'}))
+        assert r.failed and r.result_str == (
+            "SYSTEM: your arguments were cut off at the output limit; nothing was written. Create a short file, "
+            "then fill sections with str_replace.")
+        assert store.calls == [] and "result=refused:truncated" in caplog.text
+        assert not (await handle(_call(command="view", path=P))).failed  # lock released
+
     async def test_failed_mutation_logs_a_warning(self, caplog):
         store = InMemoryWorkspaceStore()
         store.seed(USER, P, "x")
@@ -3953,6 +4075,21 @@ def build_workspace_tool_declaration() -> Dict[str, Any]:
     }
 
 
+_TRUNCATED = (
+    "SYSTEM: your arguments were cut off at the output limit; nothing was written. Create a short file, then fill "
+    "sections with str_replace."
+)
+
+
+def _log_refusal(command: str, user_id: str, origin: str, fire_key: Optional[str], reason: str) -> None:
+    """The handler's own refusals, in the WorkspaceService line format (§16); `fire=` is `<note_id>@<due_at>`."""
+    logger.info(
+        "[Workspace] op=%s user=%s path=- origin=%s fire=%s had_history=- bytes=0 gen=- result=refused:%s ms=0",
+        "_".join(command.split())[:40] or "-", user_id[:8], origin,
+        (fire_key or "-").removeprefix("reminder:"), reason,
+    )
+
+
 class WorkspaceSession:
     """One execution attempt's state: generations seen, the command lock, shielded mutations still in flight."""
 
@@ -3994,12 +4131,12 @@ def make_workspace_handler(
         try:
             args: Dict[str, Any] = dict(tool_call.args or {})
             command = str(args.get("command") or "").strip()
+            if args.get("_parse_error") == "truncated_json":
+                # The OpenAI / Grok adapters replace arguments cut off at the output limit with this marker.
+                _log_refusal("-", user_id, origin, fire_key, "truncated")
+                return ToolResult(name=tool_call.name, result_str=_TRUNCATED, failed=True)
             if command not in COMMANDS:
-                logger.info(
-                    "[Workspace] op=%s user=%s path=- origin=%s fire=%s had_history=- bytes=0 gen=- "
-                    "result=refused:command ms=0",
-                    "_".join(command.split()) or "-", user_id[:8], origin, fire_key or "-",
-                )
+                _log_refusal(command, user_id, origin, fire_key, "command")
                 return ToolResult(
                     name=tool_call.name,
                     result_str=f"SYSTEM: unknown workspace command '{command}'; use one of: {', '.join(COMMANDS)}.",
@@ -5103,9 +5240,11 @@ async def test_get_returns_the_fields():
     assert plain["reminder_skill"] is None and plain["state_file"] is None
 
 
-def test_the_list_shows_them_escaped_and_read_only():
+def test_the_list_shows_them_escaped_on_two_read_only_lines():
     page = _HTML.read_text(encoding="utf-8")
-    assert "esc(r.reminder_skill)" in page and "esc(r.state_file)" in page
+    assert "line(`skill: ${esc(r.reminder_skill)}`)" in page
+    assert "line(`state: workspace:${esc(r.state_file)}`)" in page
+    assert "${skillLine}${stateLine}" in page
     assert "rem-reminder-skill" not in page and "rem-state-file" not in page  # no form fields: chat edits them
 ```
 
@@ -5159,17 +5298,17 @@ and replace the inline list comprehension (with its three-line comment) that bui
 `cabinet.html` — in `renderReminders()`, after `const instr = esc(r.instruction || "").replace(/\n/g, "<br>");` add:
 
 ```javascript
-          const bound = [
-            r.reminder_skill ? `skill: ${esc(r.reminder_skill)}` : "",
-            r.state_file ? `state: workspace:${esc(r.state_file)}` : "",
-          ].filter(Boolean).join(" · ");
+          // AGENT_WORKSPACE_RFC §8.3: two read-only lines; edited through chat.
+          const line = (text) => `<div style="font-size:13px;color:var(--text-muted);margin-top:4px">${text}</div>`;
+          const skillLine = r.reminder_skill ? line(`skill: ${esc(r.reminder_skill)}`) : "";
+          const stateLine = r.state_file ? line(`state: workspace:${esc(r.state_file)}`) : "";
 ```
 
 and in the returned template, directly after the line
 `<div style="font-size:13px;color:var(--text-muted);margin-top:4px">${due} · ${rec}</div>` add:
 
 ```html
-                ${bound ? `<div style="font-size:13px;color:var(--text-muted);margin-top:4px">${bound}</div>` : ""}
+                ${skillLine}${stateLine}
 ```
 
 - [ ] **Step 4: Run** `python3 -m pytest tests/unit/services/test_prompt_assembly_reminder_bindings.py tests/unit/services/test_prompt_assembly_service.py tests/unit/agents/core/test_router_agent_note_context.py tests/unit/agents/core/test_router_agent.py tests/unit/web/test_user_cabinet_reminder_bindings.py tests/unit/web/test_cabinet_xss_sinks.py tests/unit/web/test_cabinet_escape_html.py -q` → PASS.
@@ -6053,6 +6192,13 @@ class TestOpen:
         assert "re-upload" not in resp.error
 
 
+    async def test_a_store_error_has_its_own_message(self, agent, conversion):
+        conversion.resolve_bytes.side_effect = RuntimeError("gcs down")
+        resp = await agent.execute(_message(Intent.OPEN_FILE, "workspace:files/lease.pdf"))
+        assert resp.status == AgentStatus.FAILED
+        assert resp.error == "The workspace could not be read right now (RuntimeError); try again later."
+
+
 class TestDelete:
     async def test_refused(self, agent, storage):
         resp = await agent.execute(_message(Intent.DELETE_FILE, "workspace:files/lease.pdf"))
@@ -6098,6 +6244,16 @@ In `_fetch`'s `except FileNotFoundError as e:` block, add a branch before the ge
             elif ref.startswith(WORKSPACE_REF_PREFIX):
                 error = (f"'{ref}' is not in your workspace — view the folder with the workspace tool to check "
                          "the path.")
+```
+
+In `_fetch`'s generic `except Exception as e:` block, directly after `self._on_agent_error(e, f"fetch {ref}")`, add
+(a store outage is not a conversion failure, and "re-upload" does not apply to a workspace copy):
+
+```python
+            if ref.startswith(WORKSPACE_REF_PREFIX):
+                return self._fail(
+                    message, f"The workspace could not be read right now ({type(e).__name__}); try again later.",
+                )
 ```
 
 New method after `_fetch`:
@@ -6909,7 +7065,8 @@ ALERT = ('[System: [SELF-REMINDER] "Morning newspaper"\nnote_id: 1729401234567\n
 
 def _line(op, path=P, origin="background:execute_reminder", fire=F, had_history="-", result="ok",
           ts="2026-10-21T06:01:00Z", user="u1"):
-    return parse_line(ts, f"[Workspace] op={op} user={user} path={path} origin={origin} fire={fire or '-'} "
+    logged_fire = fire.removeprefix("reminder:") if fire else "-"  # the §16 log form
+    return parse_line(ts, f"[Workspace] op={op} user={user} path={path} origin={origin} fire={logged_fire} "
                           f"had_history={had_history} bytes=10 gen=101 result={result} ms=12")
 
 
@@ -7033,9 +7190,11 @@ def parse_line(timestamp: str, text: str) -> Optional[LogLine]:
     if m is None:
         return None
     had_history = m["had_history"]
+    fire = m["fire"]
     return LogLine(
         timestamp=timestamp, op=m["op"], user=m["user"], path=m["path"], origin=m["origin"],
-        fire=None if m["fire"] == "-" else m["fire"],
+        # The log writes <note_id>@<due_at> (§16); the alert's Fire: line carries reminder:<note_id>@<due_at>.
+        fire=None if fire == "-" else (fire if fire.startswith("reminder:") else f"reminder:{fire}"),
         had_history=None if had_history == "-" else had_history == "1",
         result=m["result"],
     )
@@ -7623,6 +7782,13 @@ detail the RFC leaves open or states twice; each is listed for the reviewer unde
 12. **Review measure "junk memory facts"** (§16 last row) has stored facts as its source, not logs or `prompt_content`;
     the script prints it as a manual check (Cabinet → Memory search) instead of querying Firestore.
 13. **`BIGQUERY_PROMPT_DATASET` is required** by the review script (no default dataset name in a tracked file).
+14. **Known limitation, RFC §6 read literally:** the 256 KB text cap applies to every text-kind file, `files/`
+    included, so a text-extension upload over 256 KB that decodes as UTF-8 (e.g. a 1 MB CSV) cannot be copied into
+    `files/` (`SYSTEM: files/<name>: text file over 256 KB.`). Binary files keep the 10 MB cap.
+
+Aligned with the RFC after review (no delta): the `[Workspace]` log field is `fire=<note_id>@<due_at>` as §16 writes it
+(object metadata keeps the full `reminder:…` key; the review script re-adds the prefix when it joins log lines to the
+alert's `Fire:` line), and the Cabinet shows the skill and the state file on two read-only lines (§8.3).
 
 Nothing here needs the owner.
 
