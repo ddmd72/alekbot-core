@@ -27,7 +27,7 @@ token only when `SERVICE_ACCOUNT_EMAIL` is set); the route enforces iff that sam
 value is set (see `main.py`). This module only performs the cryptographic check.
 """
 
-from typing import Collection, Optional
+from typing import Any, Callable, Collection, Optional
 
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
@@ -96,14 +96,21 @@ def verify_worker_oidc(
 _CERT_FETCH_TIMEOUT_S = 10
 
 
-def _short_timeout_request() -> google_requests.Request:
+def _short_timeout_request() -> Callable[..., Any]:
     """A google-auth transport whose key fetch times out after ``_CERT_FETCH_TIMEOUT_S`` seconds."""
     base = google_requests.Request()
 
-    def request(url, method="GET", body=None, headers=None, timeout=_CERT_FETCH_TIMEOUT_S, **kwargs):  # type: ignore[no-untyped-def]
+    def request(
+        url: str,
+        method: str = "GET",
+        body: Any = None,
+        headers: Any = None,
+        timeout: float = _CERT_FETCH_TIMEOUT_S,
+        **kwargs: Any,
+    ) -> Any:
         return base(url, method=method, body=body, headers=headers, timeout=timeout, **kwargs)
 
-    return request  # type: ignore[return-value]
+    return request
 
 
 def verify_oidc_identity(
