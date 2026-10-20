@@ -547,6 +547,48 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
     async def delete_transcript(self, user_id: str, content_key: str) -> None:
         self.transcripts.pop((user_id, content_key), None)
 
+    # -- transcripts: queues on the records, copies in flight, orphans, purge (§27.3, §27.8 b, G12) ----------------------
+
+    async def transcript_queue(self, user_id: str, limit: int) -> List[DriveIndexRecord]:
+        ready = sorted((r for r in self._user(user_id) if r.transcript_state == JobState.READY.value),
+                       key=lambda r: (r.parent_id, r.item_id))
+        ready.sort(key=lambda r: r.effective_day, reverse=True)   # stable: (parent_id, item_id) within a day
+        return ready[:limit]
+
+    async def transcript_wakeups(self, user_id: str, now: datetime, limit: int) -> List[DriveIndexRecord]:
+        due = [r for r in self._user(user_id) if r.transcript_wake_at is not None and r.transcript_wake_at <= now]
+        return sorted(due, key=lambda r: (r.transcript_wake_at, r.item_id))[:limit]
+
+    async def jobs_by_content_key(self, user_id: str, content_key: str) -> List[TranscriptJob]:
+        return sorted((j for (u, _), j in self.transcript_jobs.items() if u == user_id and j.content_key == content_key),
+                      key=lambda j: j.item_id)
+
+    async def orphan_transcripts(self, user_id: str, before: datetime, limit: int) -> List[str]:
+        old = [s for (u, _), s in self.transcripts.items() if u == user_id and s.last_used_at is not None and s.last_used_at < before]
+        return [s.content_key for s in sorted(old, key=lambda s: (s.last_used_at, s.content_key))[:limit]]
+
+    async def delete_user_transcript_jobs(self, user_id: str, limit: int) -> int:
+        keys = sorted(k for k in self.transcript_jobs if k[0] == user_id)[:limit]
+        for key in keys:
+            await self.delete_transcript_job(*key)
+        deleted = len(keys)
+        orphans = sorted(k for k in self.window_results if k[0] == user_id)[:max(limit - deleted, 0)]
+        for key in orphans:
+            del self.window_results[key]
+        return deleted + len(orphans)
+
+    async def delete_user_batches(self, user_id: str, limit: int) -> int:
+        keys = sorted(k for k in self.batches if k[0] == user_id)[:limit]
+        for key in keys:
+            del self.batches[key]
+        return len(keys)
+
+    async def delete_user_transcripts(self, user_id: str, limit: int) -> int:
+        keys = sorted(k for k in self.transcripts if k[0] == user_id)[:limit]
+        for key in keys:
+            del self.transcripts[key]
+        return len(keys)
+
 
 def _refuse_urls(kind: str, fields: Sequence[str]) -> None:
     """§27.4: no URL is persisted (as the Firestore adapter): logs the field names and refuses the write."""

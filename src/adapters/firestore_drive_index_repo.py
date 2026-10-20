@@ -1565,6 +1565,76 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
         snaps = await self._parts_col(user_id, content_key).select([FieldPath.document_id()]).get()
         await self._delete_refs([snap.reference for snap in snaps], KEYED_DELETE_BATCH)
 
+    # -- transcripts: queues on the records, copies in flight, orphans, purge (§27.3, §27.8 b, G12) ----------------------
+
+    async def transcript_queue(self, user_id: str, limit: int) -> List[DriveIndexRecord]:
+        """`transcript_state == "ready"`, the `enrich_queue` order: (effective_day DESC, parent_id, item_id)."""
+        query = (self._user_query(user_id).where(filter=FieldFilter("transcript_state", "==", JobState.READY.value))
+                 .order_by("effective_day", direction=firestore.Query.DESCENDING)
+                 .order_by("parent_id").order_by("item_id").limit(limit))
+        return await self._read(query)
+
+    async def transcript_wakeups(self, user_id: str, now: datetime, limit: int) -> List[DriveIndexRecord]:
+        query = (self._user_query(user_id).where(filter=FieldFilter("transcript_wake_at", "<=", now))
+                 .order_by("transcript_wake_at").order_by("item_id").limit(limit))
+        return await self._read(query)
+
+    async def jobs_by_content_key(self, user_id: str, content_key: str) -> List[TranscriptJob]:
+        """A QUERY on the raw `content_key` field (the document id is escaped, never matched): the jobs of one user
+        that carry the key. Few by construction (copies of one recording)."""
+        query = (self._db.collection(self._jobs_name).where(filter=FieldFilter("user_id", "==", user_id))
+                 .where(filter=FieldFilter("content_key", "==", content_key)))
+        jobs = [job_from_doc(snap.to_dict()) for snap in await query.get()]
+        return sorted(jobs, key=lambda j: j.item_id)
+
+    async def orphan_transcripts(self, user_id: str, before: datetime, limit: int) -> List[str]:
+        """Content keys of the heads last used before `before`, least recently used first (the sweep deletes the ones
+        no record references, §27.8 b)."""
+        query = (self._db.collection(self._transcripts_name).where(filter=FieldFilter("user_id", "==", user_id))
+                 .where(filter=FieldFilter("last_used_at", "<", before)).order_by("last_used_at")
+                 .select(["content_key"]).limit(limit))
+        return [(snap.to_dict() or {}).get("content_key", "") for snap in await query.get()]
+
+    async def orphaned_subdoc_refs(self, group: str, parent_collection: str, user_id: str, limit: int) -> List[Any]:
+        """References of `windows` / `parts` documents of the user, found across every parent: the ones whose parent
+        document is already gone are reached only this way (a crash between the subdocument writes and the parent).
+        The group id is the bare subcollection name, so a document is taken only when its grandparent collection is
+        `parent_collection`. Not a port method: the smoke script runs it (read-only)."""
+        query = (self._db.collection_group(group).where(filter=FieldFilter("user_id", "==", user_id))
+                 .order_by("index").select([FieldPath.document_id()]).limit(limit))
+        return [snap.reference for snap in await query.get()
+                if snap.reference.path.split("/")[-4:-3] == [parent_collection]]
+
+    async def _purge_with_subdocs(self, collection: str, group: Optional[str], user_id: str, limit: int) -> int:
+        """Delete up to `limit` documents of the user from `collection`, each one's `group` subcollection first (a
+        crash leaves the parent, so the next call finds it again), then subdocuments whose parent is gone."""
+        snaps = await (self._db.collection(collection).where(filter=FieldFilter("user_id", "==", user_id))
+                       .select([FieldPath.document_id()]).limit(limit).get())
+        subdocs: List[Any] = []
+        if group is not None:
+            for snap in snaps:
+                sub = self._db.collection(f"{collection}/{snap.reference.id}/{group}")
+                subdocs += [s.reference for s in await sub.select([FieldPath.document_id()]).get()]
+        await self._delete_refs(subdocs, KEYED_DELETE_BATCH)
+        await self._delete_refs([snap.reference for snap in snaps], KEYED_DELETE_BATCH)
+        deleted = len(snaps)
+        if group is not None and deleted < limit:
+            orphans = await self.orphaned_subdoc_refs(group, collection, user_id, limit - deleted)
+            await self._delete_refs(orphans, KEYED_DELETE_BATCH)
+            deleted += len(orphans)
+        return deleted
+
+    async def delete_user_transcript_jobs(self, user_id: str, limit: int) -> int:
+        """Jobs and their `windows/` documents, then window documents left without a job."""
+        return await self._purge_with_subdocs(self._jobs_name, "windows", user_id, limit)
+
+    async def delete_user_batches(self, user_id: str, limit: int) -> int:
+        return await self._purge_with_subdocs(self._batches_name, None, user_id, limit)
+
+    async def delete_user_transcripts(self, user_id: str, limit: int) -> int:
+        """Store heads and their `parts/` documents (any token), then parts left without a head."""
+        return await self._purge_with_subdocs(self._transcripts_name, "parts", user_id, limit)
+
 
 # Transient on Firestore's side: the same call may succeed later, so it is never one file's failure (§8.2).
 _TRANSIENT = (DeadlineExceeded, ServiceUnavailable, InternalServerError, Aborted, ResourceExhausted)

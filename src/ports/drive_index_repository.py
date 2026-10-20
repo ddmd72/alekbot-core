@@ -461,3 +461,37 @@ class DriveIndexRepository(ABC):
     @abstractmethod
     async def delete_transcript(self, user_id: str, content_key: str) -> None:
         """Delete the transcript's head and its parts; missing is a no-op."""
+
+    # -- transcripts: queues on the records, copies in flight, orphans, purge (§27.3, §27.8 b, G12) ------------------
+
+    @abstractmethod
+    async def transcript_queue(self, user_id: str, limit: int) -> List[DriveIndexRecord]:
+        """Records with `transcript_state == "ready"`, ordered by (effective_day DESC, parent_id, item_id): the
+        `enrich_queue` order (§27.3)."""
+
+    @abstractmethod
+    async def transcript_wakeups(self, user_id: str, now: datetime, limit: int) -> List[DriveIndexRecord]:
+        """Records with `transcript_wake_at <= now`, earliest first (then item_id)."""
+
+    @abstractmethod
+    async def jobs_by_content_key(self, user_id: str, content_key: str) -> List[TranscriptJob]:
+        """The user's job documents whose `content_key` is the key, by item_id: the in-flight copy check (G12). The key
+        is matched as a field value, never through a document id."""
+
+    @abstractmethod
+    async def orphan_transcripts(self, user_id: str, before: datetime, limit: int) -> List[str]:
+        """Content keys of the user's stored transcripts with `last_used_at < before`, least recently used first."""
+
+    @abstractmethod
+    async def delete_user_transcript_jobs(self, user_id: str, limit: int) -> int:
+        """Purge: delete up to `limit` of the user's job documents with their window results, then window results
+        whose job is gone. Returns the number deleted; call until 0. Filters on `user_id` only."""
+
+    @abstractmethod
+    async def delete_user_batches(self, user_id: str, limit: int) -> int:
+        """Purge: delete up to `limit` of the user's batch documents. Returns the number deleted; call until 0."""
+
+    @abstractmethod
+    async def delete_user_transcripts(self, user_id: str, limit: int) -> int:
+        """Purge: delete up to `limit` of the user's stored transcripts with their parts (any token), then parts whose
+        head is gone. Returns the number deleted; call until 0."""
