@@ -459,6 +459,7 @@ back.` A path with no versions at all reads `… does not exist and never did.` 
 | Unknown `generation` | `SYSTEM: <path> has no version <G>; history lists them.` |
 | Store failure | `SYSTEM: the workspace is unavailable right now; nothing was changed.` (ERROR logged) |
 | Missing file for `delete`/`rename`/`str_replace` | `SYSTEM: <path> does not exist; view it to see its history.` |
+| Arguments cut off at the output limit | SYSTEM: your arguments were cut off at the output limit; nothing was written. Create a short file, then fill sections with str_replace. |
 
 ### 7.6 The per-execution handler session
 

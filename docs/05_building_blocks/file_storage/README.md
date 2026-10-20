@@ -401,7 +401,7 @@ dedicated versioned bucket, reached through the `workspace` tool. `copy` puts by
 delivered documents under `files/` (read through `FileConversionService.resolve_bytes`, ownership check included);
 `open_file` opens them with `workspace:files/<name>` and refuses workspace notes in other folders ("view it with the
 workspace tool"); `delete_file` refuses every `workspace:` ref. A `workspace:` ref prefetched for another specialist
-arrives without the workspace data header — accepted, like every uploaded file today (RFC §12).
+arrives without the workspace view header (writer, generation) — accepted, like every uploaded file today (RFC §12).
 
 ---
 

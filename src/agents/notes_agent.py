@@ -19,6 +19,7 @@ Two-field model:
   instruction — full execution context (no limit); this is the ONLY input when the reminder
                 fires. Cloud Scheduler → WorkerHandler → UserNotificationService.notify(
                 system_alert=instruction) → QuickAgent executes as a new conversation.
+  workspace_file — optional, bound by code from the payload (AGENT_WORKSPACE_RFC §8.3)
 
 Context injection:
   - Orchestrator: sees active_reminders {} summary (text + fires datetime) via RouterAgent
@@ -395,6 +396,7 @@ class NotesAgent(BaseAgent):
             user_text += "\n\n" + binding_system_line(binding)
         messages = [Message(role="user", parts=[MessagePart(text=user_text)])]
         guard = _BindGuard()
+        binding_refused = False
 
         for turn in range(self.MAX_TURNS):
             request = LLMRequest(
@@ -418,6 +420,7 @@ class NotesAgent(BaseAgent):
                 # B3: the field belongs to one reminder. Refuse every call of this response before any runs.
                 refused = [(tc, str({"error": BINDING_ONE_REMINDER})) for tc in response.tool_calls]
                 messages.extend(self._build_tool_turn(response, refused))
+                binding_refused = True
                 continue
 
             # Process ALL tool calls in this response
@@ -479,6 +482,8 @@ class NotesAgent(BaseAgent):
             if has_delegation:
                 continue  # next turn — LLM will use delegation results
 
+        if binding_refused:
+            return {"error": BINDING_ONE_REMINDER}
         return {"error": "Max turns exceeded without completing the operation."}
 
     # ------------------------------------------------------------------
