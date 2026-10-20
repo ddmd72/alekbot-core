@@ -590,6 +590,8 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
         self._jobs_name = env_config.drive_transcript_jobs_collection          # (transcripts, §27.3)
         self._batches_name = env_config.drive_transcript_batches_collection    # (§27.5, G10)
         self._transcripts_name = env_config.drive_transcripts_collection       # (§27.8 b)
+        self._windows_name = env_config.drive_transcript_windows_subcollection  # (G11, T-R13)
+        self._parts_name = env_config.drive_transcript_parts_subcollection
         # Serialises this process's initial-build spends (review m1): enrichment spends concurrently on one document,
         # and a transaction that loses its retries is an Aborted after the money was spent. The transaction stays for
         # other processes (the indexer runs max-instances 1, concurrency 1).
@@ -1441,7 +1443,7 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
 
     def _window_col(self, user_id: str, item_id: str) -> Any:
         """The job's `windows` subcollection (G11)."""
-        return self._db.collection(f"{self._jobs_name}/{job_doc_id(user_id, item_id)}/windows")
+        return self._db.collection(f"{self._jobs_name}/{job_doc_id(user_id, item_id)}/{self._windows_name}")
 
     def _batch_ref(self, user_id: str, name: str) -> Any:
         return self._db.collection(self._batches_name).document(batch_doc_id(user_id, name))
@@ -1450,7 +1452,7 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
         return self._db.collection(self._transcripts_name).document(transcript_doc_id(user_id, content_key))
 
     def _parts_col(self, user_id: str, content_key: str) -> Any:
-        return self._db.collection(f"{self._transcripts_name}/{transcript_doc_id(user_id, content_key)}/parts")
+        return self._db.collection(f"{self._transcripts_name}/{transcript_doc_id(user_id, content_key)}/{self._parts_name}")
 
     async def get_transcript_job(self, user_id: str, item_id: str) -> Optional[TranscriptJob]:
         snap = await self._job_ref(user_id, item_id).get()
@@ -1595,45 +1597,59 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
                  .select(["content_key"]).limit(limit))
         return [(snap.to_dict() or {}).get("content_key", "") for snap in await query.get()]
 
-    async def orphaned_subdoc_refs(self, group: str, parent_collection: str, user_id: str, limit: int) -> List[Any]:
-        """References of `windows` / `parts` documents of the user, found across every parent: the ones whose parent
-        document is already gone are reached only this way (a crash between the subdocument writes and the parent).
-        The group id is the bare subcollection name, so a document is taken only when its grandparent collection is
-        `parent_collection`. Not a port method: the smoke script runs it (read-only)."""
+    @property
+    def windows_group(self) -> str:
+        """The collection-group id of the window results (env-prefixed, T-R13). Not a port member."""
+        return self._windows_name
+
+    @property
+    def parts_group(self) -> str:
+        return self._parts_name
+
+    async def user_subdoc_refs(self, group: str, user_id: str, limit: int) -> List[Any]:
+        """References of the user's documents in the collection group `group` (the env-prefixed windows or parts name),
+        under any parent: the sweep deletes the ones whose parent is gone. Not a port method: the smoke script runs it
+        (read-only)."""
         query = (self._db.collection_group(group).where(filter=FieldFilter("user_id", "==", user_id))
                  .order_by("index").select([FieldPath.document_id()]).limit(limit))
-        return [snap.reference for snap in await query.get()
-                if snap.reference.path.split("/")[-4:-3] == [parent_collection]]
+        return [snap.reference for snap in await query.get()]
 
-    async def _purge_with_subdocs(self, collection: str, group: Optional[str], user_id: str, limit: int) -> int:
-        """Delete up to `limit` documents of the user from `collection`, each one's `group` subcollection first (a
-        crash leaves the parent, so the next call finds it again), then subdocuments whose parent is gone."""
+    async def _purge_with_subdocs(self, collection: str, sub: Optional[str], user_id: str, limit: int) -> int:
+        """Delete up to `limit` documents of the user from `collection`, each one's `sub` subcollection first (a crash
+        leaves the parent, so the next call finds it again). `user_id ==` and direct subcollection reads only."""
         snaps = await (self._db.collection(collection).where(filter=FieldFilter("user_id", "==", user_id))
                        .select([FieldPath.document_id()]).limit(limit).get())
         subdocs: List[Any] = []
-        if group is not None:
+        if sub is not None:
             for snap in snaps:
-                sub = self._db.collection(f"{collection}/{snap.reference.id}/{group}")
-                subdocs += [s.reference for s in await sub.select([FieldPath.document_id()]).get()]
+                col = self._db.collection(f"{collection}/{snap.reference.id}/{sub}")
+                subdocs += [s.reference for s in await col.select([FieldPath.document_id()]).get()]
         await self._delete_refs(subdocs, KEYED_DELETE_BATCH)
         await self._delete_refs([snap.reference for snap in snaps], KEYED_DELETE_BATCH)
-        deleted = len(snaps)
-        if group is not None and deleted < limit:
-            orphans = await self.orphaned_subdoc_refs(group, collection, user_id, limit - deleted)
-            await self._delete_refs(orphans, KEYED_DELETE_BATCH)
-            deleted += len(orphans)
+        return len(snaps)
+
+    async def delete_user_transcript_orphans(self, user_id: str, limit: int) -> int:
+        """Window and part documents of the user whose parent is gone, up to `limit` in all (two collection-group
+        sweeps). Called when the helpers return 0, so every user document found here is an orphan."""
+        deleted = 0
+        for group in (self._windows_name, self._parts_name):
+            refs = await self.user_subdoc_refs(group, user_id, limit - deleted)
+            await self._delete_refs(refs, KEYED_DELETE_BATCH)
+            deleted += len(refs)
+            if deleted >= limit:
+                break
         return deleted
 
     async def delete_user_transcript_jobs(self, user_id: str, limit: int) -> int:
-        """Jobs and their `windows/` documents, then window documents left without a job."""
-        return await self._purge_with_subdocs(self._jobs_name, "windows", user_id, limit)
+        """Jobs and their window documents."""
+        return await self._purge_with_subdocs(self._jobs_name, self._windows_name, user_id, limit)
 
     async def delete_user_batches(self, user_id: str, limit: int) -> int:
         return await self._purge_with_subdocs(self._batches_name, None, user_id, limit)
 
     async def delete_user_transcripts(self, user_id: str, limit: int) -> int:
-        """Store heads and their `parts/` documents (any token), then parts left without a head."""
-        return await self._purge_with_subdocs(self._transcripts_name, "parts", user_id, limit)
+        """Store heads and their part documents (any token)."""
+        return await self._purge_with_subdocs(self._transcripts_name, self._parts_name, user_id, limit)
 
 
 # Transient on Firestore's side: the same call may succeed later, so it is never one file's failure (§8.2).

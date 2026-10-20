@@ -22,6 +22,7 @@ from tests.unit.adapters.firestore_drive_transcript_fakes import transcript_doc_
 
 T = datetime(2026, 10, 21, 9, 30, tzinfo=timezone.utc)
 JOBS, BATCHES, STORE = "eval_drive_transcript_jobs", "eval_drive_transcript_batches", "eval_drive_transcripts"
+WINDOWS, PARTS = "eval_drive_transcript_windows", "eval_drive_transcript_parts"
 
 
 @pytest.fixture(params=["memory", "firestore"])
@@ -33,6 +34,8 @@ def adapter(request, mock_env_config):
     mock_env_config.drive_transcript_jobs_collection = JOBS
     mock_env_config.drive_transcript_batches_collection = BATCHES
     mock_env_config.drive_transcripts_collection = STORE
+    mock_env_config.drive_transcript_windows_subcollection = WINDOWS
+    mock_env_config.drive_transcript_parts_subcollection = PARTS
     with eval_transactions(), transcript_doc_fakes():
         yield make_eval_repo(db, mock_env_config), db
 
@@ -193,6 +196,8 @@ def fs(mock_env_config):
     mock_env_config.drive_transcript_jobs_collection = JOBS
     mock_env_config.drive_transcript_batches_collection = BATCHES
     mock_env_config.drive_transcripts_collection = STORE
+    mock_env_config.drive_transcript_windows_subcollection = WINDOWS
+    mock_env_config.drive_transcript_parts_subcollection = PARTS
     with eval_transactions(), transcript_doc_fakes():
         yield make_eval_repo(db, mock_env_config), db
 
@@ -202,7 +207,7 @@ def _big(n):
 
 
 def _parts(db, key="k1"):
-    return db.collection(f"{STORE}/u:{key}/parts").docs
+    return db.collection(f"{STORE}/u:{key}/{PARTS}").docs
 
 
 async def test_store_shards_above_doc_bytes_and_reads_back(fs, monkeypatch):
@@ -258,7 +263,7 @@ async def test_shard_head_written_last(fs, monkeypatch):
     monkeypatch.setattr(EvalDocRef, "set", recording)
     await repo.put_transcript("u", _big(300))
     assert len(order) > 2 and order[-1] == (STORE, "u:k1")
-    assert all(name == f"{STORE}/u:k1/parts" for name, _ in order[:-1])
+    assert all(name == f"{STORE}/u:k1/{PARTS}" for name, _ in order[:-1])
 
 
 def _http_values(value, path=""):
@@ -286,7 +291,7 @@ async def test_no_url_field_ever_written(adapter, monkeypatch):
     monkeypatch.setattr(fs_module, "TRANSCRIPT_DOC_BYTES", 600)
     await repo.put_transcript("u", _stored(20, content_key="k9"))   # a sharded one too
     docs = {name: col.docs for name, col in db.cols.items()}
-    assert any(name.endswith("/parts") for name in docs) and docs[JOBS] and docs[BATCHES]
+    assert any(name.endswith(f"/{PARTS}") for name in docs) and docs[JOBS] and docs[BATCHES]
     assert not [(name, p) for name, col in docs.items() for doc in col.values() for p in _http_values(doc)]
 
 
@@ -337,11 +342,11 @@ def test_firestore_paths_built_from_the_ids_are_valid():
     """The SDK refuses a path with an even number of elements for a document: build them with the real client."""
     client = firestore.AsyncClient(project="p", credentials=AnonymousCredentials(), database="d")
     doc = transcript_doc_id("u", KEY)
-    ref = client.collection(f"{STORE}/{doc}/parts").document("tok-0")
+    ref = client.collection(f"{STORE}/{doc}/{PARTS}").document("tok-0")
     assert len(ref._document_path.split("/documents/")[1].split("/")) == 4
     assert len(client.collection(STORE).document(doc)._document_path.split("/documents/")[1].split("/")) == 2
     with pytest.raises(ValueError):   # the pre-fix id
-        client.collection(f"{STORE}/u:{KEY}/parts").document("0")
+        client.collection(f"{STORE}/u:{KEY}/{PARTS}").document("0")
 
 
 async def test_put_cut_before_the_head_leaves_the_old_transcript_whole(fs, monkeypatch):
@@ -480,7 +485,7 @@ async def test_a_put_landing_between_head_and_parts_reads_the_new_transcript(fs,
     new_parts = {k: dict(v) for k, v in _parts(db).items()}
     # state before the second put, with the head reads staged: first the OLD head, whose parts are already gone
     db.collection(STORE).docs["u:k1"] = new_head
-    db.collection(f"{STORE}/u:k1/parts").docs = new_parts
+    db.collection(f"{STORE}/u:k1/{PARTS}").docs = new_parts
     reads = iter([old_head, new_head, new_head])
     plain_get = EvalDocRef.get
 
@@ -500,7 +505,7 @@ async def test_a_head_that_never_moves_with_missing_parts_reads_absent_and_logs(
     repo, db = fs
     monkeypatch.setattr(fs_module, "TRANSCRIPT_DOC_BYTES", 6_000)
     await repo.put_transcript("u", _big(300))
-    db.collection(f"{STORE}/u:k1/parts").docs.clear()
+    db.collection(f"{STORE}/u:k1/{PARTS}").docs.clear()
     with caplog.at_level("ERROR"):
         assert await repo.get_transcript("u", "k1") is None
     assert "found 0" in caplog.text
