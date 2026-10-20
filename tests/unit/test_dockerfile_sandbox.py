@@ -169,7 +169,7 @@ def test_app_tree_is_not_writable_by_the_engine_uid():
 @_needs_image
 def test_engine_child_uid_differs():
     """A passwd check only. The real proof is test_child_launcher.py::test_uid_drop_in_container, run with
-    SANDBOX_TEST_USER=sandboxengine. Shares tests/unit/adapters/sandbox_engine/test_child_launcher.py::test_uid_drop_in_container (set SANDBOX_TEST_USER=sandboxengine)."""
+    SANDBOX_TEST_USER=sandboxengine."""
     proc = _run("-c", "import pwd; print(pwd.getpwnam('sandboxengine').pw_uid)")
     assert proc.returncode == 0 and int(proc.stdout.strip()) != 0
 
