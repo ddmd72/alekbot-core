@@ -4,12 +4,19 @@ from pathlib import Path
 
 import yaml
 
-_BUILD = Path(__file__).resolve().parents[2] / "cloudbuild-dev.yaml"
+_ROOT = Path(__file__).resolve().parents[2]
+_BUILD = _ROOT / "cloudbuild-dev.yaml"
+
+
+def _step_script(step):
+    """The step's script text: its last arg, or the file it runs when that arg is a script path."""
+    last = step.get("args", [""])[-1]
+    return (_ROOT / last).read_text() if last.endswith(".sh") else last
 
 
 def _relay_calls():
-    script = next(s["args"][-1] for s in yaml.safe_load(_BUILD.read_text())["steps"]
-                  if "alek-voice-relay-dev-keep-alive" in s.get("args", [""])[-1])
+    script = next(_step_script(s) for s in yaml.safe_load(_BUILD.read_text())["steps"]
+                  if "alek-voice-relay-dev-keep-alive" in _step_script(s))
     calls = script.split("gcloud scheduler jobs ")
     return [c for c in calls if c.startswith(("update http alek-voice-relay-dev-keep-alive",
                                               "create http alek-voice-relay-dev-keep-alive"))]

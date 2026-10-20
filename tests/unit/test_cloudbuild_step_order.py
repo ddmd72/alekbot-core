@@ -5,11 +5,19 @@ from pathlib import Path
 
 import yaml
 
-_BUILD = Path(__file__).resolve().parents[2] / "cloudbuild-dev.yaml"
+_ROOT = Path(__file__).resolve().parents[2]
+_BUILD = _ROOT / "cloudbuild-dev.yaml"
+
+
+def _step_text(step):
+    """The step's args, followed by the text of any script file it runs."""
+    args = step.get("args", [])
+    files = [(_ROOT / a).read_text() for a in args if a.endswith(".sh")]
+    return " ".join(args + files)
 
 
 def _steps():
-    return [" ".join(step.get("args", [])) for step in yaml.safe_load(_BUILD.read_text())["steps"]]
+    return [_step_text(step) for step in yaml.safe_load(_BUILD.read_text())["steps"]]
 
 
 def _index(predicate):

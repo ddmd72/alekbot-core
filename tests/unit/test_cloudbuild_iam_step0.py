@@ -5,15 +5,22 @@ from pathlib import Path
 
 import yaml
 
-_BUILD = Path(__file__).resolve().parents[2] / "cloudbuild-dev.yaml"
+_ROOT = Path(__file__).resolve().parents[2]
+_BUILD = _ROOT / "cloudbuild-dev.yaml"
 
 
 def _doc():
     return yaml.safe_load(_BUILD.read_text())
 
 
+def _step_script(step):
+    """The step's script text: its last arg, or the file it runs when that arg is a script path."""
+    last = step.get("args", [""])[-1]
+    return (_ROOT / last).read_text() if last.endswith(".sh") else last
+
+
 def _scheduler_script():
-    scripts = [s["args"][-1] for s in _doc()["steps"] if "scheduler jobs" in s.get("args", [""])[-1]]
+    scripts = [_step_script(s) for s in _doc()["steps"] if "scheduler jobs" in _step_script(s)]
     assert len(scripts) == 1
     return scripts[0]
 
@@ -24,7 +31,8 @@ def test_logging_is_cloud_logging_only():
 
 def test_script_fails_fast_and_reads_identity_from_secret():
     script = _scheduler_script()
-    assert script.lstrip().splitlines()[0].strip() == "set -euo pipefail"
+    code = [ln.strip() for ln in script.splitlines() if ln.strip() and not ln.lstrip().startswith("#")]
+    assert code[0] == "set -euo pipefail"
     assert "gcloud secrets versions access latest --secret=SERVICE_ACCOUNT_EMAIL" in script
     assert "projectNumber" not in script and "developer.gserviceaccount.com" not in script
 
