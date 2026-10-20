@@ -125,6 +125,7 @@ steps:
       - "run"
       - "deploy"
       - "alek-bot-indexer-dev"
+      - "--service-account=alek-indexer@$PROJECT_ID.iam.gserviceaccount.com"
       - "--image=gcr.io/$PROJECT_ID/alek-bot-dev:latest"
       - "--region=us-central1"
       - "--command=python"

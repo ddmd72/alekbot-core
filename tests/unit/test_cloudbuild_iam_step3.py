@@ -23,6 +23,19 @@ def test_the_research_job_runs_as_its_own_identity():
     assert "--service-account=alek-research-job@$PROJECT_ID.iam.gserviceaccount.com" in _job_args()
 
 
-def test_exactly_one_runtime_names_its_identity_so_far():
-    named = [a for s in _steps() for a in s.get("args", []) if a.startswith("--service-account=")]
-    assert named == ["--service-account=alek-research-job@$PROJECT_ID.iam.gserviceaccount.com"]
+def test_only_the_migrated_runtimes_name_their_identity_so_far():
+    """Steps 3 and 4 have moved: exactly the research job and the indexer name an identity, each its own.
+    Any extra or misplaced --service-account (e.g. on main or the relay before Steps 5-6) fails here."""
+    named = {}
+    for step in _steps():
+        args = step.get("args", [])
+        flags = [a for a in args if a.startswith("--service-account=")]
+        if not flags:
+            continue
+        runtime = "research-job" if "--args=job_main.py" in args else (
+            args[2] if args[:2] == ["run", "deploy"] else "unknown")
+        named.setdefault(runtime, []).extend(flags)
+    assert named == {
+        "research-job": ["--service-account=alek-research-job@$PROJECT_ID.iam.gserviceaccount.com"],
+        "alek-bot-indexer-dev": ["--service-account=alek-indexer@$PROJECT_ID.iam.gserviceaccount.com"],
+    }
