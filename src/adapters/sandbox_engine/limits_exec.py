@@ -24,9 +24,9 @@ EXIT_EXEC_FAILED = 5     # the engine binary could not be executed
 
 CPU_GRACE_S = 2          # hard RLIMIT_CPU above the soft one: SIGXCPU first, SIGKILL only if it is ignored
 
-# RFC §11 initial value; revisit after S0-f. Per-uid counts: the child's uid runs nothing else.
+# Chosen here (RFC §11 gives no figure); S0-f sets it. Per-uid counts: the child's uid runs nothing else.
 NPROC_DEFAULT = 64
-# RFC §11 initial value; revisit after S0-f.
+# Chosen here (RFC §11 gives no figure); S0-f sets it.
 NOFILE_DEFAULT = 64
 # G6: S0-f decides. "as" = RLIMIT_AS (§11); "data" = RLIMIT_DATA, for a Node child that cannot start under RLIMIT_AS.
 MEMORY_MODE_DEFAULT = "as"

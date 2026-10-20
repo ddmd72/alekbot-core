@@ -173,9 +173,11 @@ async def test_missing_configured_user_fails_start(tmp_path):
         await _run(_launcher(), tmp_path, "pass", user="no-such-user-for-sandbox-tests")
 
 
-async def test_root_as_configured_user_fails_start(tmp_path):
-    with pytest.raises(ChildLaunchError):
-        await _run(_launcher(), tmp_path, "pass", user="root")
+async def test_root_as_configured_user_fails_start(tmp_path, monkeypatch):
+    launcher = _launcher()
+    monkeypatch.setattr(child_launcher, "_effective_uid", lambda: 0)   # past the "needs root" branch
+    with pytest.raises(ChildLaunchError, match="is root"):
+        await _run(launcher, tmp_path, "pass", user="root")
 
 
 async def test_unswitchable_user_fails_start(tmp_path, monkeypatch):
@@ -188,10 +190,6 @@ class _FakeProc:
     pid = 4242
     returncode = 0
 
-    def __init__(self):
-        self.stderr = asyncio.StreamReader()
-        self.stderr.feed_eof()
-
     async def wait(self):
         return 0
 
@@ -203,9 +201,10 @@ async def test_no_supplementary_groups_requested(tmp_path, monkeypatch):
         seen.update(kwargs)
         return _FakeProc()
 
+    launcher = _launcher()
     monkeypatch.setattr(child_launcher, "_effective_uid", lambda: 0)
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
-    await _run(_launcher(), tmp_path, "pass", user="nobody")
+    await _run(launcher, tmp_path, "pass", user="nobody")
     assert seen["extra_groups"] == []
     assert seen["user"] == "nobody" or isinstance(seen["user"], int)
     assert seen["group"] is not None
@@ -270,5 +269,85 @@ def test_uid_drop_in_container():
     )
     proc = subprocess.run(["docker", "run", "--rm", "--entrypoint", "python3", os.environ["SANDBOX_TEST_IMAGE"],
                            "-c", script], capture_output=True, text=True, timeout=120)
+    assert proc.returncode == 0, proc.stderr
     seen = json.loads(proc.stdout.strip().splitlines()[-1])
     assert seen["rc"] == 0 and seen["child"] != seen["server"] and seen["child"] != 0
+
+
+async def test_a_grandchild_outliving_a_clean_exit_is_killed(tmp_path):
+    code = (
+        "import subprocess, sys\n"
+        "g = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(120)'])\n"
+        "open('grandchild.pid', 'w').write(str(g.pid))\n"
+    )
+    result, _ = await _run(_launcher(), tmp_path, code)
+    assert result.returncode == 0 and not result.timed_out
+    grandchild = int((tmp_path / "grandchild.pid").read_text())
+    for _ in range(40):
+        if not _alive(grandchild):
+            break
+        await asyncio.sleep(0.1)
+    assert not _alive(grandchild)
+
+
+async def test_no_child_user_while_running_as_root_fails_start(tmp_path, monkeypatch):
+    launcher = _launcher()
+    monkeypatch.setattr(child_launcher, "_effective_uid", lambda: 0)
+    with pytest.raises(ChildLaunchError, match="running as root"):
+        await _run(launcher, tmp_path, "pass", user=None)
+
+
+def test_a_misconfigured_user_fails_at_construction():
+    with pytest.raises(ChildLaunchError):
+        ChildLauncher(user="no-such-user-for-sandbox-tests")
+    with pytest.raises(ChildLaunchError):
+        ChildLauncher(user="root")
+
+
+def test_root_without_a_user_fails_at_construction(monkeypatch):
+    monkeypatch.setattr(child_launcher, "_effective_uid", lambda: 0)
+    with pytest.raises(ChildLaunchError):
+        ChildLauncher()
+
+
+async def test_the_constructor_user_is_used_when_run_names_none(tmp_path, monkeypatch):
+    seen = {}
+
+    async def fake_exec(*args, **kwargs):
+        seen.update(kwargs)
+        return _FakeProc()
+
+    monkeypatch.setattr(child_launcher, "_effective_uid", lambda: 0)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    launcher = _launcher(user="nobody")
+    stdin = tmp_path / "in.bin"
+    stdin.write_bytes(b"")
+    await launcher.run([_PY, "-c", "pass"], workdir=str(tmp_path), env={}, limits=_limits(),
+                       stdin_path=str(stdin), stdout_path=str(tmp_path / "o"))
+    assert seen["user"] == "nobody" and seen["extra_groups"] == []
+
+
+async def test_the_limits_reach_the_wrapper_unswapped(tmp_path, monkeypatch):
+    seen = {}
+
+    async def fake_exec(*args, **kwargs):
+        seen["argv"] = list(args)
+        return _FakeProc()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    limits = SandboxLimits(wall_s=11.0, memory_bytes=123456789, cpu_s=7.0, file_bytes=987654)
+    await _run(_launcher(nproc=77, nofile=55), tmp_path, "pass", limits=limits)
+    argv = seen["argv"]
+    spec = json.loads(argv[argv.index("--") - 1])
+    assert (spec["memory_bytes"], spec["cpu_s"], spec["file_bytes"]) == (123456789, 7.0, 987654)
+    assert (spec["nproc"], spec["nofile"], spec["cwd"]) == (77, 55, str(tmp_path))
+
+
+async def test_a_failed_spawn_is_logged_before_it_propagates(tmp_path, caplog):
+    stdin = tmp_path / "in.bin"
+    stdin.write_bytes(b"")
+    with caplog.at_level(logging.ERROR), pytest.raises(OSError):
+        await _launcher(python="/nonexistent/python").run(
+            ["x"], workdir=str(tmp_path), env={}, limits=_limits(), stdin_path=str(stdin),
+            stdout_path=str(tmp_path / "o"))
+    assert "could not be started" in caplog.text
