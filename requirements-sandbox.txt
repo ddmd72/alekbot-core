@@ -5,10 +5,10 @@
 # and every model SDK are deliberately absent.
 quart>=0.18.0
 hypercorn>=0.14.0
-h2==4.3.0  # HTTP/2 for httpx; declared explicitly, not only as a transitive dependency of hypercorn
+h2==4.3.0  # serves hypercorn's HTTP/2 (h2c prior knowledge from Cloud Run); no httpx in this image
 google-auth>=2.0.0  # in-app Google OIDC verification on the /worker endpoint
 requests==2.32.5  # google.auth.transport.requests (the verifier's public-key fetch, G21)
-pydantic==2.12.5
+pydantic==2.12.5  # mandated by the T9 brief; the import closure does not import it today
 google-cloud-logging
 opentelemetry-api==1.43.0
 opentelemetry-sdk==1.43.0

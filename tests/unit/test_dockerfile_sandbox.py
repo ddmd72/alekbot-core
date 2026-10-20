@@ -94,12 +94,12 @@ def test_app_is_not_writable_by_the_engine_uid_and_bytecode_is_not_written():
     assert re.search(r"PYTHONDONTWRITEBYTECODE=1", text)
     assert "find /app" in text and "-perm -o+w" in text      # the same world-writable check as the main Dockerfile
     assert re.search(r"chown -R root:root /app", text) and re.search(r"chmod -R go-w /app", text)
-    assert "find /app" in text and "__pycache__" in text
+    assert "__pycache__" in text
 
 
 def test_work_root_exists_and_server_tmp_stays_usable():
     ins = " ".join(_instructions())
-    assert "/work" in ins
+    assert "mkdir -p /work" in ins and "chmod 711 /work" in ins and "chmod 1777 /tmp" in ins
 
 
 def test_base_image_secret_shaped_variable_is_allowlisted_in_the_service():
@@ -128,10 +128,11 @@ def _run(*args, entrypoint="python"):
 @pytest.mark.docker
 @_needs_image
 def test_image_has_no_env_or_key_files():
+    # stdout only: find may exit non-zero on entries that vanish while it walks.
     proc = _run("-c", "find /app /work / -maxdepth 3 \\( -name '.env*' -o -name 'service-account*' -o -name '*-admin-key.json' "
                 "-o -name 'credentials.json' \\) -not -path '/proc/*' -not -path '*/node_modules/*' 2>/dev/null",
                 entrypoint="sh")
-    assert proc.returncode == 0 and proc.stdout.strip() == "", proc.stdout
+    assert proc.stdout.strip() == "", proc.stdout
 
 
 @pytest.mark.docker
@@ -167,7 +168,8 @@ def test_app_tree_is_not_writable_by_the_engine_uid():
 @pytest.mark.docker
 @_needs_image
 def test_engine_child_uid_differs():
-    """Shares tests/unit/adapters/sandbox_engine/test_child_launcher.py::test_uid_drop_in_container (set SANDBOX_TEST_USER=sandboxengine)."""
+    """A passwd check only. The real proof is test_child_launcher.py::test_uid_drop_in_container, run with
+    SANDBOX_TEST_USER=sandboxengine. Shares tests/unit/adapters/sandbox_engine/test_child_launcher.py::test_uid_drop_in_container (set SANDBOX_TEST_USER=sandboxengine)."""
     proc = _run("-c", "import pwd; print(pwd.getpwnam('sandboxengine').pw_uid)")
     assert proc.returncode == 0 and int(proc.stdout.strip()) != 0
 
@@ -181,3 +183,17 @@ def test_startup_self_check_passes_on_the_image_environment():
                 "validate_startup(env, on_cloud_run=True, allowed_env=sandbox_main.IMAGE_ENV_ALLOWLIST)\n"
                 "print('ok')\n")
     assert proc.returncode == 0 and "ok" in proc.stdout, proc.stderr
+
+
+def test_startup_check_accepts_the_image_variable_but_not_a_new_secret_shaped_one():
+    import pytest as _pytest
+
+    import sandbox_main
+    from src.composition.sandbox_setup import SandboxStartupError, validate_startup
+
+    env = {"GPG_KEY": "x", "K_SERVICE": "svc", "SANDBOX_CALLERS_RENDER": "a@example.com", "SANDBOX_URL": "https://x.example.com"}
+    validate_startup(env, on_cloud_run=True, allowed_env=sandbox_main.IMAGE_ENV_ALLOWLIST)
+    with _pytest.raises(SandboxStartupError):
+        validate_startup({**env, "FOO_KEY": "x"}, on_cloud_run=True, allowed_env=sandbox_main.IMAGE_ENV_ALLOWLIST)
+    with _pytest.raises(SandboxStartupError):
+        validate_startup(env, on_cloud_run=True)       # without the allowlist entry the base image would not start

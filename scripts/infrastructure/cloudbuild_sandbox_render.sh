@@ -12,6 +12,10 @@
 # empty --service-account= would fail every `make deploy` of the bot. The sandbox steps also run after the indexer steps,
 # so a failing sandbox step never blocks a hotfix of the bot.
 #
+# Identity fence (ruling R11): the render service runs as a dedicated zero-role service account whose local part starts with
+# `alek-sandbox-`. Any other SANDBOX_RENDER_SA (e.g. the main runtime's, from a mis-set .env value) is refused with a
+# non-zero exit before any docker or gcloud call, so the "holds nothing" service can never be given real IAM by accident.
+#
 # The service holds no secret (nothing is mounted from Secret Manager), admits authenticated callers only (the platform's
 # invoker check stays on) and gets no public IAM binding.
 set -euo pipefail
@@ -23,6 +27,14 @@ if [ -z "${SANDBOX_RENDER_SA:-}" ]; then
   echo "sandbox render ($mode): SANDBOX_RENDER_SA is empty, skipping (the service identity is not set up yet)"
   exit 0
 fi
+
+case "${SANDBOX_RENDER_SA%%@*}" in
+  alek-sandbox-?*) ;;
+  *)
+    echo "sandbox render ($mode): refusing SANDBOX_RENDER_SA: its name must start with 'alek-sandbox-' (a dedicated zero-role account)" >&2
+    exit 3
+    ;;
+esac
 
 : "${PROJECT_ID:?PROJECT_ID must be set by the Cloud Build step env}"
 SERVICE="alek-bot-sandbox-render-dev"
