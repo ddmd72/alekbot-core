@@ -66,11 +66,12 @@ EXPECTED = {
     "Keys/backup.kdbx": (N, Reason.SECRET_NAME),
     "~$Договор_ред3.docx": (N, Reason.OS_ARTIFACT),
     "Thumbs.db": (N, Reason.OS_ARTIFACT),
-    # a nested archive and ordinary files: an archive and audio stay metadata only; documents and images are read
+    # a nested archive and ordinary files: an archive stays metadata only; documents and images are read; audio
+    # waits, pending, for the transcript stage (policy 3, §27.3), which this tick does not run
     "Archive/site-backup.zip": (N, Reason.KIND_NOT_ADMITTED),
     "Contracts/Договор_ред3.docx": (N, None),          # a real DOCX: the parser reads its text, indexed (§24.1)
     "Photos/WhatsApp/IMG-20251120-WA0001.jpg": (N, Reason.PHOTOGRAPH),   # no rendition: a photograph (§24.5)
-    "Media/voice memo.m4a": (N, Reason.KIND_NOT_ADMITTED),
+    "Media/voice memo.m4a": (N, None),
 }
 
 
@@ -100,6 +101,16 @@ def test_scope_and_reason(indexed, path):
         assert rec is not None, f"{path} has no record"
         assert (rec.scope, rec.reason) == EXPECTED[path]
         assert rec.has_card is (rec.scope is not Scope.INSIDE_OPAQUE and rec.reason is not Reason.OS_ARTIFACT)
+
+
+def test_a_voice_memo_waits_unread_for_the_transcript_stage(indexed):
+    """Policy 3 (§27.3): the memo is pending with its card, and nothing was read from it — no readable generation,
+    no chunks, no extractor link (the transcript stage, not wired here, is media's only reader)."""
+    repo, _ = indexed
+    rec = repo.records[(EVAL_USER, item_id_for("Media/voice memo.m4a"))]
+    assert rec.state is RecordState.PENDING and rec.has_card
+    assert (rec.indexed_generation, rec.chunk_count, rec.extracted_by, rec.attempts) == (None, 0, None, 0)
+    assert (rec.due_at, rec.priority) == (None, None)
 
 
 def test_a_docx_is_indexed(indexed):
