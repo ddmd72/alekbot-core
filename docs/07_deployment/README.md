@@ -729,7 +729,7 @@ but the index must be rebuilt, not upgraded in place:
 [decision](../04_solution_strategy/decisions/sandbox_render_service.md)). It is `sandbox_main.py` in its own image
 (`Dockerfile.sandbox`, target `render`; an explicit COPY allowlist, no `.env`, no key file): gen2, 2 GiB, 2 CPU,
 concurrency 1, max 3, timeout 300 s, `--use-http2`, `--no-allow-unauthenticated`, an in-memory volume at `/work`
-(size `SANDBOX_WORK_VOLUME_SIZE`, default `256Mi`, a placeholder until the spike says otherwise). One request per
+(size 256Mi, the default fixed in `scripts/infrastructure/cloudbuild_sandbox_render.sh`; a placeholder until S0-f, changed by editing that script, not through `.env`). One request per
 instance (`SANDBOX_RECYCLE=always`). **Status: built, not accepted, not deployed.** The main service uses it only when
 `SANDBOX_RENDER=sandbox`; the default is `inprocess`.
 
