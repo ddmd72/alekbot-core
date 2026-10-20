@@ -373,6 +373,14 @@ class DriveIndexRepository(ABC):
         retry it blindly; a retry over-counts (the safe direction: a cap closes early)."""
 
     @abstractmethod
+    async def reserve_model_usd(self, user_id: str, month: str, cls: str, delta_usd: float) -> None:
+        """Atomically add `delta_usd` (negative releases) to the `<cls>_reserved_usd` of `month`'s usage document
+        ("YYYY-MM", the RESERVATION's month, G9): the dollars a batch may still cost, counted by the hard cap beside
+        what was collected (Δ106). Server-side increment, so concurrent reservations are never lost, and no
+        cross-document transaction. Only classes bought ahead (`transcribe`) have the field; any other is a
+        ValueError, before any write. Not idempotent, like `add_model_usage`."""
+
+    @abstractmethod
     async def get_initial_build(self, user_id: str) -> InitialBuild:
         """The user's initial-build document; when none is stored, an unopened one with INITIAL_BUILD_USD as its
         allowance (D27). Reading never writes."""

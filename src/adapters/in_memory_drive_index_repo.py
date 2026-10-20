@@ -17,7 +17,9 @@ from ..domain.drive_index import DriveChunk, DriveIndexRecord, DriveSyncState, L
 from ..domain.drive_index_lean import ChunkId, DriveChunkLean, DriveHintLean, DriveRecordLean, lean_of
 from ..domain.drive_index_params import CONCEPT_KEYS_MAX
 from ..domain.drive_search import is_not_read_yet, is_unread
-from ..domain.drive_usage import added_usage, closed_initial, new_initial_build, spent_initial
+from ..domain.drive_usage import (
+    added_usage, closed_initial, new_initial_build, reserved_field, reserved_usage, spent_initial,
+)
 from ..ports.drive_index_repository import DriveIndexRepository
 from ..utils.logger import logger
 
@@ -457,6 +459,12 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
         async with self._lock:
             current = self.usage.get((user_id, month), ModelUsageMonth())
             self.usage[(user_id, month)] = added_usage(current, day, cls, usd, fallback_usd, calls, covered_usd)
+
+    async def reserve_model_usd(self, user_id: str, month: str, cls: str, delta_usd: float) -> None:
+        reserved_field(cls)   # ValueError for a class with no reservations, before any write
+        async with self._lock:
+            current = self.usage.get((user_id, month), ModelUsageMonth())
+            self.usage[(user_id, month)] = reserved_usage(current, cls, delta_usd)
 
     async def get_initial_build(self, user_id: str) -> InitialBuild:
         return self.initial.get(user_id) or new_initial_build()

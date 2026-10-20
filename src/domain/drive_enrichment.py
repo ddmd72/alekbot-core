@@ -28,7 +28,8 @@ from enum import Enum
 from typing import Mapping, Optional, Tuple
 
 from .drive_index_params import (
-    PASSAGE_USD_PER_MONTH, PROFILE_USD_PER_MONTH, READER_USD_PER_MONTH, TRIAGE_USD_PER_MONTH,
+    PASSAGE_USD_PER_MONTH, PROFILE_USD_PER_MONTH, READER_USD_PER_MONTH, TRANSCRIBE_USD_PER_MONTH,
+    TRIAGE_USD_PER_MONTH,
 )
 
 
@@ -68,6 +69,7 @@ class UsageClass(str, Enum):
     TRIAGE = "triage"
     PROFILE = "profile"
     PASSAGE = "passage"
+    TRANSCRIBE = "transcribe"   # batch transcription of recordings (§27.10): a hard cap, no initial-build allowance (G8)
 
 
 class Grade(str, Enum):
@@ -238,6 +240,9 @@ class ModelUsageMonth:
     triage_initial_usd: float = 0.0
     profile_initial_usd: float = 0.0
     passage_initial_usd: float = 0.0
+    transcribe_usd: float = 0.0
+    transcribe_initial_usd: float = 0.0     # always 0: the build never pays transcription (G8); `cap_usd` reads it
+    transcribe_reserved_usd: float = 0.0    # open batch reservations made in this month (Δ106); not spent yet
 
     def cap_usd(self, cls: str) -> float:
         """What the month's cap of `cls` has paid: the class's dollars less the initial build's share."""
@@ -265,4 +270,5 @@ JOB_USAGE_CLASS: Mapping[str, str] = {EnrichJob.PROFILE.value: UsageClass.PROFIL
 USD_CAPS: Mapping[str, float] = {UsageClass.READER.value: READER_USD_PER_MONTH,
                                  UsageClass.TRIAGE.value: TRIAGE_USD_PER_MONTH,
                                  UsageClass.PROFILE.value: PROFILE_USD_PER_MONTH,
-                                 UsageClass.PASSAGE.value: PASSAGE_USD_PER_MONTH}
+                                 UsageClass.PASSAGE.value: PASSAGE_USD_PER_MONTH,
+                                 UsageClass.TRANSCRIBE.value: TRANSCRIBE_USD_PER_MONTH}

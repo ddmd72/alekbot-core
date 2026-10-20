@@ -285,6 +285,35 @@ def calculate_cost(
     return round(cost, 6)
 
 
+# Gemini Batch API (drive transcripts, USER_DRIVE_INDEXING_RFC §27, Δ105/Δ131/Δ132): every token of a batch job is
+# billed at half the interactive rate. The price rows are NOT touched (G7): `gemini-3.8-flash` stays at the held final
+# $1.50/$7.50 (price_consensus.HOLD_FINAL_PRICE), so a batch hour books at the held price, not the promotional one.
+BATCH_DISCOUNT = 0.5
+
+
+@dataclass(frozen=True)
+class BatchUsage:
+    """Tokens one batch request used, priced as the batch bills them: one input rate for every modality (audio is
+    not dearer than text), thought tokens in the output leg, the whole at `BATCH_DISCOUNT`. An unknown model prices
+    at 0.0, as `calculate_cost` does; callers flag it (`is_priced`).
+
+    At the held $1.50/$7.50 a 30-minute window of 45 000 audio tokens plus ~6 000 output tokens books
+    45 000 x $0.75/M + 6 000 x $3.75/M = ~$0.056 before thought tokens, i.e. about $0.16 per audio hour."""
+    model: str
+    audio_input_tokens: int = 0
+    text_input_tokens: int = 0
+    output_tokens: int = 0
+    thought_tokens: int = 0
+
+    def is_priced(self) -> bool:
+        return self.model in _PRICING_PER_MILLION_TOKENS
+
+    def cost(self) -> float:
+        interactive = calculate_cost(self.model, self.audio_input_tokens + self.text_input_tokens,
+                                     self.output_tokens + self.thought_tokens)
+        return round(interactive * BATCH_DISCOUNT, 6)
+
+
 # Non-token (flat-rate or per-second REST API) service pricing — companion to
 # _PRICING_PER_MILLION_TOKENS. Prices can change under you (see CLAUDE.md
 # Economics section) — this is the one place to update them.
