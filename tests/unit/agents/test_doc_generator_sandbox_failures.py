@@ -15,7 +15,6 @@ from tests.unit.agents.test_doc_generator_agent import (  # noqa: F401  (fixture
 
 async def test_doc_generator_stops_on_unavailable_without_retrying_the_model(agent, mock_runner, mock_llm):
     mock_runner.run.side_effect = SandboxUnavailable("down")
-    agent._on_agent_error = AsyncMock() if False else agent._on_agent_error
     with patch.object(agent, "_on_agent_error") as on_error:
         response = await agent.execute(_make_message())
     on_error.assert_called_once()
@@ -56,3 +55,6 @@ async def test_sandbox_failure_after_a_captured_docx_keeps_the_docx(agent, mock_
     mock_runner.run.side_effect = [_FAKE_DOCX_BYTES, SandboxUnavailable("down")]
     response = await agent.execute(_make_message())
     assert response.status == AgentStatus.SUCCESS
+    import base64
+    assert base64.b64decode(response.delivery_items[0].data["file_bytes_b64"]) == _FAKE_DOCX_BYTES
+    assert mock_runner.run.await_count == 2
