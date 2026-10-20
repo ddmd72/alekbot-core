@@ -15,11 +15,11 @@ from src.domain.drive_index_params import (
 from src.domain.drive_transcript import JobWindow, MediaProbe, TranscriptJob, TranscriptStub, WindowSpec
 from src.domain.drive_transcript_plan import (
     StartOutcome, TranscriptContext, WindowAction, WindowCheck, charge_attempt, effective_monthly_cap, estimate_usd,
-    file_estimate_usd, fits, mark_current, park, queue_blocked, release, reserve_if_fits, reset_on_new_version,
+    file_estimate_usd, fits, mark_current, park, queue_blocked, release, resume_window, reserve_if_fits, reset_on_new_version,
     start_file, state_for_job, stub_from_probe, transcript_plan, window_failed,
 )
 from src.domain.drive_transcript_windows import plan_windows
-from src.domain.drive_index_planner import classify, change_from_record
+from src.domain.drive_index_planner import EXTRACTION_VERSION, change_from_record, classify
 from src.domain.drive_transcript_render import TRANSCRIPT_BODY_VERSION
 from src.domain.drive_transcript_windows import content_key
 
@@ -436,9 +436,8 @@ def test_a_same_key_edit_keeps_an_in_flight_job():
 
 def test_stub_survives_a_reobservation():
     rec = transcript_plan(_rec(size_bytes=TRANSCRIBE_MAX_BYTES + 1), _ctx())
-    assert (rec.state, rec.reason, rec.extraction_version) == (RecordState.METADATA_ONLY, Reason.TOO_LARGE,
-                                                               _rec().extraction_version or rec.extraction_version)
-    assert rec.extraction_version != 0 and rec.dirty_since is None
+    assert (rec.state, rec.reason) == (RecordState.METADATA_ONLY, Reason.TOO_LARGE)
+    assert rec.extraction_version == EXTRACTION_VERSION != _rec().extraction_version and rec.dirty_since is None
     again = classify(change_from_record(rec), Scope.NORMAL, None, rec)
     assert (again.state, again.reason) == (RecordState.METADATA_ONLY, Reason.TOO_LARGE)
     for stub in ("no_speech",):
@@ -485,14 +484,14 @@ def test_plan_idempotent_property():
     hk = _hk(base)
     variants = []
     states = ["none", "ready", "working", "waiting", "current", "held", "parked", "failed"]
-    for state, attempts, tag, keyed, wake, dirty, size, done, version in itertools.product(
+    for state, attempts, tag, keyed, wake, dirty, size, done, version, hold in itertools.product(
             states, (0, 1, MAX_ATTEMPTS), ("", hk, "9:other"), (True, False),
             (None, NOW - timedelta(days=1), NOW + timedelta(days=1)),
             (None, NOW - timedelta(minutes=1)), (1000, TRANSCRIBE_MAX_BYTES + 1),
-            (None, NOW - timedelta(hours=1)), (TRANSCRIBE_VERSION, TRANSCRIBE_VERSION - 1)):
+            (None, NOW - timedelta(hours=1)), (TRANSCRIBE_VERSION, TRANSCRIBE_VERSION - 1), (None, "resubmit")):
         variants.append(replace(
             base, transcript_state=state, transcript_attempts=attempts, transcript_hold_version=tag,
-            transcript_key=_key(base) if keyed else "x", transcript_version=version,
+            transcript_key=_key(base) if keyed else "x", transcript_version=version, transcript_hold=hold,
             transcript_body_version=TRANSCRIPT_BODY_VERSION, transcript_wake_at=wake, dirty_since=dirty,
             modified_at=dirty or OLD, size_bytes=size, model_read_at=done))
     assert len(variants) > 1000
@@ -501,3 +500,40 @@ def test_plan_idempotent_property():
         for rec in variants:
             once = transcript_plan(rec, ctx)
             assert transcript_plan(once, ctx) == once, (rec.transcript_state, rec.transcript_attempts)
+
+
+def test_mid_job_park_wakes_as_working_and_reserves_only_the_window():
+    ctx = _ctx(cap_usd=1.0)
+    probe = MediaProbe(duration_s=7200, has_audio=True)
+    started = start_file(transcript_plan(_rec(), ctx), ctx, probe)
+    assert started.outcome is StartOutcome.STARTED
+    held = started.reservation.usd
+    full = replace(started.ctx, month_usd=1.0 - held - 0.01)         # one window (0.10) no longer fits
+    r = window_failed(_win("submitted"), WindowCheck.COVERAGE, full)
+    assert r.action is WindowAction.PARK and r.ctx.reserved_usd == pytest.approx(held)   # original still held
+    parked = park(started.rec, full, resubmit=True)
+    assert (parked.transcript_state, parked.transcript_hold) == ("parked", "resubmit")
+    assert parked.transcript_key == _key(_rec())
+    assert transcript_plan(parked, full) == parked                   # stays parked until the wake-up
+    nov = _ctx(now=datetime(2026, 11, 1, tzinfo=timezone.utc), cap_usd=1.0, reserved_usd=held)
+    woken = transcript_plan(parked, nov)
+    assert woken.transcript_state == "working" and woken.transcript_hold is None
+    assert transcript_plan(woken, nov) == woken
+    resumed = resume_window(r.window, nov)
+    assert resumed.action is WindowAction.RESUBMIT
+    assert resumed.reservation.usd == pytest.approx(estimate_usd(1800.0))
+    assert resumed.ctx.reserved_usd == pytest.approx(held + estimate_usd(1800.0))   # no whole-file re-reservation
+
+
+def test_resume_that_still_does_not_fit_parks_again():
+    r = resume_window(_win("uploaded", attempts=1), _ctx(cap_usd=1.0, month_usd=1.0))
+    assert r.action is WindowAction.PARK
+
+
+def test_key_change_while_parked_mid_job_resets():
+    ctx = _ctx(cap_usd=1.0)
+    started = start_file(transcript_plan(_rec(), ctx), ctx, MediaProbe(duration_s=7200, has_audio=True))
+    parked = park(started.rec, ctx, resubmit=True)
+    edited = replace(parked, content_version="c2", content_hash="h2")
+    out = transcript_plan(edited, replace(ctx, now=NOW + timedelta(days=30)))
+    assert out.transcript_state == "ready" and out.transcript_hold is None and out.transcript_attempts == 0

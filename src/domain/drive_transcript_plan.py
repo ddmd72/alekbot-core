@@ -76,7 +76,7 @@ from src.domain.drive_transcript_windows import content_key, plan_windows
 
 NONE, READY, WORKING, WAITING = "none", "ready", "working", "waiting"
 CURRENT, HELD, PARKED, FAILED = "current", "held", "parked", "failed"
-HOLD_COOLDOWN, HOLD_QUIET = "cooldown", "quiet"
+HOLD_COOLDOWN, HOLD_QUIET, HOLD_RESUBMIT = "cooldown", "quiet", "resubmit"
 
 # Reasons a media record carries when the policy never downloads it, or has not admitted it yet (policy 3 re-classifies
 # the latter to `pending`, §27.3). TOO_LARGE, NO_TEXT and the extraction errors are this feature's own outcomes.
@@ -146,7 +146,7 @@ class WindowCheck(str, Enum):
 
 class WindowAction(str, Enum):
     RESUBMIT = "resubmit"
-    PARK = "park"        # a resubmit is due but its estimate does not fit the month: the file waits for it
+    PARK = "park"        # a resubmit is due but its estimate does not fit the month: the file waits for it (see below)
     GAP = "gap"          # the window is done as a gap marker; the transcript is `truncated`
     ACCEPT = "accept"    # stitched as it is, `~` stamps and all
 
@@ -216,7 +216,7 @@ def hold_key(rec: DriveIndexRecord) -> str:
 
 
 def reset_on_new_version(rec: DriveIndexRecord) -> DriveIndexRecord:
-    """D42: a new content version (or transcribe version) clears attempts, holds, the wake-up and a stale stub, and
+    """D42: a new content version clears attempts, holds, the wake-up and a stale stub, and
     re-keys: the file re-transcribes, or hits the cache through its content key. A job in a state made for another key
     goes back to `ready` (the stage drops the job document whose key no longer matches)."""
     key = content_key(rec)[0]
@@ -272,7 +272,10 @@ def transcript_plan(rec: DriveIndexRecord, ctx: TranscriptContext) -> DriveIndex
         return _settle(rec, rec.transcript_state)
     if (rec.transcript_state == PARKED and rec.transcript_wake_at is not None
             and rec.transcript_wake_at > ctx.now):
-        return _settle(rec, PARKED, wake=rec.transcript_wake_at)
+        return _settle(rec, PARKED, hold=rec.transcript_hold if rec.transcript_hold == HOLD_RESUBMIT else None,
+                       wake=rec.transcript_wake_at)
+    if rec.transcript_state == PARKED and rec.transcript_hold == HOLD_RESUBMIT and rec.transcript_key == key:
+        return _settle(rec, WORKING)     # woken mid-job: resume the parked window, never re-reserve the whole file
     # a purchase of another content version exists (done, or in flight when the edit came) and is younger than the
     # cooldown: an edited recording is re-bought at most once per TRANSCRIBE_REREAD_COOLDOWN (T-R9)
     if rec.transcript_key not in ("", key) and rec.model_read_at is not None:
@@ -336,9 +339,16 @@ def start_file(rec: DriveIndexRecord, ctx: TranscriptContext, probe: MediaProbe)
     return FileStart(working, StartOutcome.STARTED, reservation, held)
 
 
-def park(rec: DriveIndexRecord, ctx: TranscriptContext) -> DriveIndexRecord:
-    """The whole file waits for the next month's cap (Δ106)."""
-    return _settle(rec, PARKED, wake=next_month_start(ctx.now))
+def park(rec: DriveIndexRecord, ctx: TranscriptContext, *, resubmit: bool = False) -> DriveIndexRecord:
+    """The whole file waits for the next month's cap (Δ106). `resubmit=True`: parked MID-JOB because a window's resubmit
+    did not fit (`WindowAction.PARK`); the record keeps its job key and the hold `resubmit`, and wakes as `working`."""
+    return _settle(rec, PARKED, hold=HOLD_RESUBMIT if resubmit else None, wake=next_month_start(ctx.now))
+
+
+def resume_window(window: JobWindow, ctx: TranscriptContext) -> WindowResult:
+    """The wake-up of a mid-job park: reserve ONLY the parked window's estimate (the file's original reservation is still
+    held). `RESUBMIT` with the reservation, or `PARK` again when it still does not fit."""
+    return _resubmit(window, ctx)
 
 
 def mark_current(rec: DriveIndexRecord, now: datetime, *, seconds: int, speakers: int, languages: Tuple[str, ...],
@@ -379,8 +389,11 @@ def window_failed(window: JobWindow, check: WindowCheck, ctx: TranscriptContext)
 
     A resubmit is a purchase (T-R8): the window's estimate is reserved in the same step as its fit check, on the context
     the caller threads. When it does not fit the action is `PARK`: the attempt stays counted, the window stays
-    `uploaded`, nothing is reserved, and the caller parks the file (`park`); on the wake-up the caller reserves again
-    (`window_estimate_usd`) before resubmitting. A resubmitted window goes back to `uploaded`."""
+    `uploaded`, nothing new is reserved, and the caller parks the file MID-JOB with `park(rec, ctx, resubmit=True)`. The
+    file's ORIGINAL reservation stays held for as long as any window of the file is in flight (it is released only when
+    the file settles, fails or is abandoned). On the wake-up the plan returns the record to `working` (never `ready`: that
+    would reserve the whole file again), and the caller reserves only the parked window with `resume_window`.
+    A resubmitted window goes back to `uploaded`."""
     if check is WindowCheck.REFUSED:
         return WindowResult(replace(window, state="done", gap=True), WindowAction.GAP, None, ctx)
     if check in (WindowCheck.INVALID, WindowCheck.COVERAGE):
