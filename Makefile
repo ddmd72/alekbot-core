@@ -71,6 +71,15 @@ _VOICE_RELAY_URL = $(patsubst https://%,wss://%,$(VOICE_RELAY_URL_DEV))
 # without the real .env, a key lost in an edit).
 _INDEXER_URL = $(INDEXER_URL_DEV)
 
+# Untrusted-content sandbox, render family (UNTRUSTED_CONTENT_SANDBOX_RFC §4.12). Each value has its own .env key and its
+# own Cloud Build substitution (never reuse a local key: the deploy-substitution trap). The switch defaults to `inprocess`,
+# so deploy does NOT refuse an empty URL; the sandbox build/deploy steps skip while SANDBOX_RENDER_SA_DEV is empty. First
+# deploy is two-pass (SA, then URL): docs/07_deployment/README.md.
+_SANDBOX_RENDER = $(or $(SANDBOX_RENDER_DEV),inprocess)
+_SANDBOX_RENDER_URL = $(SANDBOX_RENDER_URL_DEV)
+_SANDBOX_RENDER_SA = $(SANDBOX_RENDER_SA_DEV)
+_SANDBOX_RENDER_CALLERS = $(SANDBOX_RENDER_CALLERS_DEV)
+
 # The indexer's upgrade-pass emergency switch (USER_DRIVE_INDEXING_RFC §25.8): DRIVE_UPGRADE_PASS_DEV=off in .env
 # keeps it off across deploys (the indexer step's --set-env-vars replaces every variable, so a switch set with
 # `gcloud run services update` alone would turn back on at the next deploy). Default on. A deploy-only key, never
@@ -276,7 +285,7 @@ deploy: ## Build + deploy to Cloud Run (the single live environment)
 		exit 1; fi
 	@echo "🚀 Build + deploy to Cloud Run ($(SERVICE_NAME))..."
 	gcloud builds submit --config=cloudbuild-dev.yaml \
-		--substitutions=_SERVICE_URL=$(SERVICE_URL_DEV),_OAUTH_REDIRECT_URI=$(SERVICE_URL_DEV)/auth/callback,_VOICE_RELAY_URL=$(_VOICE_RELAY_URL),_INDEXER_URL=$(_INDEXER_URL),_DRIVE_UPGRADE_PASS=$(_DRIVE_UPGRADE_PASS) .
+		--substitutions=_SERVICE_URL=$(SERVICE_URL_DEV),_OAUTH_REDIRECT_URI=$(SERVICE_URL_DEV)/auth/callback,_VOICE_RELAY_URL=$(_VOICE_RELAY_URL),_INDEXER_URL=$(_INDEXER_URL),_DRIVE_UPGRADE_PASS=$(_DRIVE_UPGRADE_PASS),_SANDBOX_RENDER=$(_SANDBOX_RENDER),_SANDBOX_RENDER_URL=$(_SANDBOX_RENDER_URL),_SANDBOX_RENDER_SA=$(_SANDBOX_RENDER_SA),_SANDBOX_RENDER_CALLERS=$(_SANDBOX_RENDER_CALLERS) .
 	@echo "✅ Deployment complete!"
 
 deploy-indexes: ## Deploy Firestore indexes from config/firestore.indexes.json
