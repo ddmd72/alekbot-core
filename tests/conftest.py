@@ -1,3 +1,5 @@
+import os
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from src.ports.llm_port import LLMPort
@@ -24,3 +26,15 @@ def mock_llm_port():
 @pytest.fixture
 def mock_repository():
     return AsyncMock(spec=FactRepository)
+
+
+def pytest_collection_modifyitems(config, items):
+    """`cpu_benchmark` tests are DISABLED by owner decision (2026-10-20): they time CPU work and fail on a
+    loaded machine with no code change, so every full run failed and was re-run. Opt back in with
+    RUN_CPU_BENCHMARKS=1."""
+    if os.getenv("RUN_CPU_BENCHMARKS") == "1":
+        return
+    skip = pytest.mark.skip(reason="cpu_benchmark disabled (owner, 2026-10-20); set RUN_CPU_BENCHMARKS=1 to run")
+    for item in items:
+        if "cpu_benchmark" in item.keywords:
+            item.add_marker(skip)
