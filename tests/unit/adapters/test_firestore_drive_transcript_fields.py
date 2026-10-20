@@ -27,7 +27,7 @@ def test_transcript_fields_roundtrip():
                transcript_stub="too_long", transcript_seconds=3600, transcript_speakers=3,
                transcript_languages=("uk", "en"), transcript_body_version=2)
     doc = record_to_doc(rec)
-    assert doc["transcript_languages"] == ["uk", "en"] or tuple(doc["transcript_languages"]) == ("uk", "en")
+    assert doc["transcript_languages"] == ["uk", "en"]
     back = record_from_doc(_stored(doc))
     assert back == rec
     assert type(back.transcript_wake_at) is datetime and isinstance(back.transcript_languages, tuple)

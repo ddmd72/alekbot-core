@@ -14,7 +14,12 @@ from typing import Any, Mapping, Optional, Tuple
 from .drive_enrichment import DriveProfile, PhotoObject
 
 POLICY_VERSION = 3                            # 2: the Slice 2+4 kinds admitted (§24.1); 3: audio and video admitted
-                                              # for transcription (§27.3); a metadata-only re-plan, no card re-embed
+                                              # for transcription (§27.3); re-plans media records only: structure
+                                              # decisions stand from STRUCTURE_POLICY_SINCE, no card re-embed
+# The policy version since which a record's structure decisions (density probe, opaque marker, README read) are valid.
+# A bump that only changes media admission must not re-decide structure for every user, so these checks compare
+# against this, not POLICY_VERSION. Raise it only when a bump changes how folders are classified.
+STRUCTURE_POLICY_SINCE = 2
 CARD_VERSION = 4                              # 2: brief, caption and lead text in the card (§24.4); 3: profile and
                                               # photo fields, no lead text but for machine text (§25.2.7); 4: the
                                               # capture segment, no brief doc type (§26.3, Δ64); S6 (unreleased)
