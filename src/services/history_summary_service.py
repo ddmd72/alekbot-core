@@ -21,7 +21,8 @@ class HistorySummaryService:
 
     async def summarize_model_response(self, response_text: str) -> Optional[str]:
         """
-        Compress assistant response to ≤300 chars for session memory.
+        Compress assistant response for session memory: up to 60 words, hard
+        cap 600 chars, in the original reply's own tone, humour and emojis.
 
         Returns None on failure — caller falls back to storing full text.
         """
@@ -30,10 +31,10 @@ class HistorySummaryService:
             system_instruction=(
                 "You compress assistant responses into ultra-compact session memory entries.\n\n"
                 "Rules for the `summary` field:\n"
-                "- Max 300 chars. Hard limit — never exceed.\n"
-                "- Include: key entities, facts, decisions made.\n"
-                "- Preserve the vibe (irony, skepticism, precision) — don't make it robotic.\n"
-                "- Emojis: STRICTLY preserve or adapt emojis from the original. They carry emotional weight.\n"
+                "- Up to 60 words. Hard limit 600 chars — never exceed.\n"
+                "- Include: key entities, facts, numbers, names, decisions made.\n"
+                "- Keep the original reply's tone and humour (irony, skepticism, precision) — don't make it robotic.\n"
+                "- Emojis: always use them; preserve or adapt those of the original. They carry emotional weight.\n"
                 "- DO NOT interpret or expand upon the original text. Summarize only\n"
                 "- Plain text only. No Markdown (*bold*, _italic_), no blockquotes.\n\n"
                 "Examples:\n"

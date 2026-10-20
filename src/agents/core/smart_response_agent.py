@@ -122,7 +122,7 @@ class SmartResponseAgent(BaseAgent):
         "required": ["full_response", "response_summary", "rich_content", "link_list"],
         "properties": {
             "full_response":    {"type": "string", "description": "The full answer shown to the user, in the user's language."},
-            "response_summary": {"type": "string", "maxLength": 300, "description": "Short summary of the answer, for conversation history."},
+            "response_summary": {"type": "string", "maxLength": 600, "description": "The answer retold for conversation history in up to 60 words, in your own character: keep its facts, numbers and names, with your humour and emojis. Later turns see this answer only through this summary."},
             # Discriminated union (null | widget | table | file). Modelled as anyOf of CLOSED
             # variants — not one object with a flat bag of optional keys — because under Claude
             # strict tool use the flat bag compiles to a 2^N grammar ("Schema is too complex" 400,
