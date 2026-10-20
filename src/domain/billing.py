@@ -413,7 +413,11 @@ _REALTIME_PRICING_PER_MILLION_TOKENS: Dict[str, Dict[str, float]] = {
         "cached_tokens": 0.40,
     },
     # xAI prices only text input per token; its audio is per second (below). Rate card
-    # "$0.08 / min + $0.004 / text input", docs.x.ai/developers/models, checked 2026-09-29.
+    # "$0.08 / min + $0.004 / text input", same for 3.0, docs.x.ai/developers/models, checked 2026-10-20.
+    "grok-voice-3.0": {
+        "text_input_tokens": 0.004,
+    },
+    # Deprecated by xAI; kept while the relay and main service may run different revisions - remove after rollout.
     "grok-voice-think-fast-2.0": {
         "text_input_tokens": 0.004,
     },
@@ -421,6 +425,10 @@ _REALTIME_PRICING_PER_MILLION_TOKENS: Dict[str, Dict[str, float]] = {
 # Per-second realtime legs: xAI bills audio by the minute and reports the billable seconds
 # itself on every response.done (`billable_audio_seconds`, XaiRealtimeAdapter._flatten_usage).
 _REALTIME_PRICING_PER_SECOND: Dict[str, Dict[str, float]] = {
+    "grok-voice-3.0": {
+        "billable_audio_seconds": 0.08 / 60,
+    },
+    # Deprecated by xAI; kept while the relay and main service may run different revisions - remove after rollout.
     "grok-voice-think-fast-2.0": {
         "billable_audio_seconds": 0.08 / 60,
     },

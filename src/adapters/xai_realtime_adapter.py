@@ -10,7 +10,7 @@ from src.domain.voice_turn_ownership import TurnOwnership
 from src.ports.realtime_session_port import RealtimeSessionEvent, RealtimeSessionPort
 from src.utils.logger import logger
 
-_MODEL = "grok-voice-think-fast-2.0"
+_MODEL = "grok-voice-3.0"
 _CACHE_BOUNDARY = "<!-- CACHE_BOUNDARY -->"
 # Male, multilingual (GET /v1/tts/voices, 2026-09-29). The call's VoiceSessionSpec picks the voice.
 _VOICE = "rex"
