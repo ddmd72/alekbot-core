@@ -322,8 +322,10 @@ async def test_unclassified_httpx_errors_never_escape_raw(error, expected, caplo
     with caplog.at_level(logging.INFO):
         with pytest.raises(expected):
             await client_for(Scripted(error)).call(OP, b"b", LIMITS)
-    line = [r.getMessage() for r in caplog.records if r.getMessage().startswith("[SandboxClient] request_id=")][0]
-    assert "status=unavailable" in line or "status=misconfigured" in line
+    messages = [r.getMessage() for r in caplog.records if "[SandboxClient]" in r.getMessage()]
+    assert all("request_id=" in m for m in messages), messages
+    final = [m for m in messages if " status=" in m][0]
+    assert "status=unavailable" in final or "status=misconfigured" in final
 
 
 async def test_provider_classified_errors_pass_through_unchanged():
@@ -333,3 +335,40 @@ async def test_provider_classified_errors_pass_through_unchanged():
     client = SandboxHttpClient(BASE, unavailable, transport=Scripted(reply(200, SandboxStatus.OK)))
     with pytest.raises(SandboxUnavailable):
         await client.call(OP, b"b", LIMITS)
+
+
+async def test_transport_loss_log_lines_carry_the_request_id(caplog):
+    transport = Scripted(httpx.ReadError("reset"))
+    with caplog.at_level(logging.INFO):
+        await client_for(transport).call(OP, b"b", LIMITS)
+    ids = [sc.decode_meta(r.headers[sc.META_HEADER]).request_id for r in transport.requests]
+    lost = [r.getMessage() for r in caplog.records if "transport loss" in r.getMessage()]
+    assert len(lost) == 2 and all(f"request_id={i}" in m for i, m in zip(ids, lost))
+
+
+async def test_non_200_with_an_ok_outcome_is_malformed():
+    out = await client_for(Scripted(reply(202, SandboxStatus.OK, b"PKnot-a-docx"))).call(OP, b"b", LIMITS)
+    assert (out.outcome.status, out.outcome.detail, out.body) == (SandboxStatus.ERROR, "malformed_envelope", b"")
+
+
+@pytest.mark.parametrize("code", [502, 504])
+async def test_encoded_headerless_5xx_is_a_transport_loss_not_malformed(code):
+    def encoded():
+        return httpx.Response(code, headers={"Content-Encoding": "gzip"}, stream=_RawStream(_gzip(b"<html>bad gateway")))
+
+    transport = Scripted(encoded())
+    out = (await client_for(transport).call(OP, b"b", LIMITS)).outcome
+    assert (out.status, out.detail) == (SandboxStatus.ERROR, "sandbox_lost")
+    assert len(transport.requests) == 2
+
+
+async def test_unexpected_exception_is_labelled_error_in_the_log_and_reraised(caplog):
+    class Boom(Exception):
+        pass
+
+    with caplog.at_level(logging.INFO):
+        with pytest.raises(Boom):
+            await client_for(Scripted(Boom("x"))).call(OP, b"b", LIMITS)
+    final = [r.getMessage() for r in caplog.records if " status=" in r.getMessage() and "[SandboxClient]" in r.getMessage()]
+    assert len(final) == 1 and "status=error" in final[0]
+    assert any("unexpected Boom" in r.getMessage() for r in caplog.records)

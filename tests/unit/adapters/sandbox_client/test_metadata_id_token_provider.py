@@ -78,19 +78,81 @@ async def test_token_never_logged(caplog):
     assert token not in caplog.text
 
 
-async def test_transport_error_is_unavailable_other_errors_misconfigured(caplog):
-    def blip(a):
-        raise TransportError("metadata server down")
+class _Resp:
+    def __init__(self, status=200, data=b"", content_type="application/json"):
+        self.status = status
+        self.data = data
+        self.headers = {"metadata-flavor": "Google", "content-type": content_type}
 
-    def broken(a):
-        raise ValueError("no credentials")
 
+def _metadata_request(identity):
+    """A fake google-auth Request: ping and service-account info succeed, `identity()` answers the identity endpoint."""
+    def request(url=None, method="GET", **kwargs):
+        if "identity" in url:
+            return identity()
+        if "service-accounts" in url:
+            return _Resp(data=json.dumps({"email": "sa@example.test", "aliases": ["default"], "scopes": []}).encode())
+        return _Resp()
+    return request
+
+
+def _real_fetch(request):
+    import google.oauth2.id_token as id_token
+
+    def fetch(audience):
+        return id_token.fetch_id_token(request, audience)
+    return fetch
+
+
+@pytest.fixture(autouse=True)
+def _no_metadata_retry_sleep(monkeypatch):
+    import time
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+    monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
+    monkeypatch.delenv("K_SERVICE", raising=False)
+    monkeypatch.delenv("K_JOB", raising=False)
+
+
+async def _fetch_with(request, caplog):
+    provider = MetadataIdTokenProvider("https://sbx.example", fetch=_real_fetch(request), clock=Clock(0))
     with caplog.at_level(logging.ERROR):
-        with pytest.raises(SandboxUnavailable):
-            await MetadataIdTokenProvider("https://sbx.example", fetch=blip, clock=Clock(0))()
-        with pytest.raises(SandboxMisconfigured):
-            await MetadataIdTokenProvider("https://sbx.example", fetch=broken, clock=Clock(0))()
-    assert len([r for r in caplog.records if r.levelno == logging.ERROR]) == 2
+        await provider()
+
+
+def _blip():
+    raise TransportError("metadata server down")
+
+
+async def test_real_fetch_ping_blip_on_cloud_run_is_unavailable(monkeypatch, caplog):
+    monkeypatch.setenv("K_SERVICE", "svc")
+    with pytest.raises(SandboxUnavailable):
+        await _fetch_with(lambda *a, **k: _blip(), caplog)   # ping swallowed -> DefaultCredentialsError
+    assert len([r for r in caplog.records if r.levelno == logging.ERROR]) == 1
+
+
+async def test_real_fetch_ping_failure_off_cloud_run_is_misconfigured(caplog):
+    with pytest.raises(SandboxMisconfigured):
+        await _fetch_with(lambda *a, **k: _blip(), caplog)   # no credentials anywhere
+
+
+async def test_real_fetch_identity_endpoint_blip_is_unavailable(caplog):
+    with pytest.raises(SandboxUnavailable):
+        await _fetch_with(_metadata_request(_blip), caplog)  # RefreshError caused by TransportError
+
+
+async def test_real_fetch_genuine_non_transport_error_is_misconfigured(monkeypatch, caplog):
+    monkeypatch.setenv("K_SERVICE", "svc")
+    with pytest.raises(SandboxMisconfigured):
+        # the endpoint answers 200 with something that is not a JWT: google-auth raises MalformedError
+        await _fetch_with(_metadata_request(lambda: _Resp(200, b"not-a-jwt", "text/plain")), caplog)
+
+
+async def test_real_fetch_success_returns_the_token():
+    token = jwt(10_000)
+    provider = MetadataIdTokenProvider(
+        "https://sbx.example", clock=Clock(0),
+        fetch=_real_fetch(_metadata_request(lambda: _Resp(200, token.encode(), "text/plain"))))
+    assert await provider() == token
 
 
 def test_default_fetch_bounds_the_metadata_request_timeout(monkeypatch):
