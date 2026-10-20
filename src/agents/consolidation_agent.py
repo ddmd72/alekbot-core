@@ -32,6 +32,8 @@ from ..ports.prompt_builder_port import PromptBuilderPort
 from ..utils.logger import logger
 from ..ports.llm_port import AgentExecutionContext
 from ..ports.fact_write_port import FactWritePort
+from ..ports.alert_sink import AlertSinkPort
+from ..domain.consolidation_pass_stats import ConsolidationPassStats
 from ..infrastructure.agent_config import CONSOLIDATION
 
 
@@ -130,6 +132,8 @@ class ConsolidationAgent(BaseAgent):
         facts_limit: int = CONSOLIDATION.facts_limit,
         principles_limit: int = CONSOLIDATION.principles_limit,
         indexed_email_repo: Optional[IndexedEmailRepository] = None,
+        alert_sink: Optional[AlertSinkPort] = None,
+        stats_alerts: bool = False,
     ):
         """
         Initialize Consolidation Agent v3.
@@ -163,6 +167,10 @@ class ConsolidationAgent(BaseAgent):
         self.facts_limit = facts_limit
         self.principles_limit = principles_limit
         self._indexed_email_repo = indexed_email_repo
+        self._alert_sink = alert_sink
+        # TEMPORARY per-pass 📊 stats (Sonnet 5.5 stall monitoring, 2026-10-20); the factory reads
+        # CONSOLIDATION_STATS_ALERTS (REQ-ARCH-01 forbids env access in agents/).
+        self._stats_alerts = stats_alerts
 
         logger.info(
             f"👨‍🏫 ConsolidationAgent initialized "
@@ -476,6 +484,7 @@ class ConsolidationAgent(BaseAgent):
                 system_prompt=system_prompt,
                 user_id=user_id,
                 account_id=account_id,
+                pass_label="cluster",
             )
 
             facts_affected = sum(1 for op in ops if op.get("action") in ("CREATE", "UPDATE", "MERGE"))
@@ -581,6 +590,7 @@ class ConsolidationAgent(BaseAgent):
                 system_prompt=system_prompt,
                 user_id=user_id,
                 account_id=account_id,
+                pass_label="email",
             )
 
             now = datetime.now(timezone.utc)
@@ -739,6 +749,7 @@ class ConsolidationAgent(BaseAgent):
                 system_prompt=system_prompt,
                 user_id=user_id,
                 account_id=account_id,
+                pass_label="stage1",
             )
         finally:
             self._fact_management = tracker._real
@@ -770,6 +781,7 @@ class ConsolidationAgent(BaseAgent):
                     system_prompt=system_prompt_2,
                     user_id=user_id,
                     account_id=account_id,
+                    pass_label="stage2a",
                 )
                 logger.info(f"👨‍🏫 [ConsolidationAgent] Stage 2a done: {len(ops2)} ops")
 
@@ -820,6 +832,7 @@ class ConsolidationAgent(BaseAgent):
             system_prompt=system_prompt,
             user_id=user_id,
             account_id=account_id,
+            pass_label="stage2b",
         )
         ops += await self._enforce_directive_cap(account_id)
         logger.info(f"👨‍🏫 [ConsolidationAgent] Stage 2b done: {len(ops)} ops")
@@ -851,11 +864,24 @@ class ConsolidationAgent(BaseAgent):
         system_prompt: str,
         user_id: str,
         account_id: str,
+        pass_label: str = "consolidation",
     ) -> List[Dict[str, Any]]:
         """
         Single multi-turn LLM loop for one consolidation pass.
         Returns parsed operations list from the final report.
+
+        Ops alerts (best-effort, never change the result): a pass that exhausts its turns without
+        a final report always posts a 🚨; a pass that ends with a report posts a 📊 stats line
+        while CONSOLIDATION_STATS_ALERTS is on.
         """
+        stats = ConsolidationPassStats(
+            pass_label=pass_label,
+            model=self.model_name,
+            effort=self.THINKING_EFFORT,
+            max_turns=self.MAX_CONSOLIDATION_TURNS,
+            user_id=user_id,
+        )
+        started = time.monotonic()
         history: List[Message] = [
             Message(role="user", parts=[MessagePart(text=user_message_text)])
         ]
@@ -879,11 +905,20 @@ class ConsolidationAgent(BaseAgent):
 
             if not response.tool_calls:
                 logger.info(f"👨‍🏫 [ConsolidationAgent] Turn {turn + 1} — final report received")
-                return self._parse_operations_report(response.text or "")
+                ops = self._parse_operations_report(response.text or "")
+                # TEMPORARY monitoring for the Sonnet 5.5 stall (2026-10-20); remove once
+                # consolidation's model is settled.
+                if self._stats_alerts:
+                    await self._post_alert(
+                        stats.format_summary(len(ops), time.monotonic() - started)
+                    )
+                return ops
 
             logger.info(
                 f"👨‍🏫 [ConsolidationAgent] Turn {turn + 1} — executing {len(response.tool_calls)} tools"
             )
+
+            stats.record_turn([(tc.name, tc.args or {}) for tc in response.tool_calls])
 
             if response.raw_content:
                 history.append(Message(role="model", parts=[], raw_content=response.raw_content))
@@ -914,8 +949,19 @@ class ConsolidationAgent(BaseAgent):
                 ]
             ))
 
-        logger.warning("⚠️ [ConsolidationAgent] Max turns reached without final report")
+        alert_text = stats.format_limit_alert(time.monotonic() - started)
+        logger.error(f"⚠️ [ConsolidationAgent] Max turns reached without final report: {alert_text}")
+        await self._post_alert(alert_text)
         return []
+
+    async def _post_alert(self, text: str) -> None:
+        """Best-effort ops alert: a missing sink or a failing post never affects the pass."""
+        if self._alert_sink is None:
+            return
+        try:
+            await self._alert_sink.post(text)
+        except Exception as e:
+            logger.warning(f"⚠️ [ConsolidationAgent] Ops alert delivery failed: {e}")
 
     async def _build_review_cluster(
         self,

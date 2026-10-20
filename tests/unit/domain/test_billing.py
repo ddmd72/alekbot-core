@@ -9,6 +9,8 @@ total as if it were that day's.
 
 from datetime import date, datetime, timezone
 
+import pytest
+
 from src.domain.billing import AccountUsageStats, calculate_external_cost
 
 
@@ -122,3 +124,13 @@ class TestCalculateExternalCost:
     def test_unknown_service_returns_zero(self):
         # Same fail-open contract as calculate_cost() for an unpriced model.
         assert calculate_external_cost("unknown-service-xyz") == 0.0
+
+
+class TestSonnet55CacheReadPrice:
+
+    def test_cache_read_priced_at_five_percent_of_input(self):
+        # Sonnet 5.5 cache reads: $0.10 per million (half the Sonnet 5 rate).
+        from src.domain.billing import calculate_cost
+
+        cost = calculate_cost("claude-sonnet-5-5", 0, 0, cache_read_tokens=1_000_000)
+        assert cost == pytest.approx(0.10)
