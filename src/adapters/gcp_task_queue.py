@@ -217,67 +217,6 @@ class GcpTaskQueue(TaskQueue):
             logger.error(f"❌ Failed to enqueue agent task: {e}", exc_info=True)
             raise
 
-    async def enqueue_deep_research_polling(
-        self,
-        interaction_id: str,
-        user_id: str,
-        account_id: str,
-        query: str = "",
-        attempt: int = 0,
-        consecutive_errors: int = 0,
-        delay_seconds: int = 30,
-        provider: str = "gemini",
-        session_id: str = "",
-    ) -> str:
-        """Enqueue deep_research_polling Cloud Task with optional schedule delay."""
-        try:
-            payload = {
-                "task_type": "deep_research_polling",
-                "interaction_id": interaction_id,
-                "user_id": user_id,
-                "account_id": account_id,
-                "query": query,
-                "attempt": attempt,
-                "consecutive_errors": consecutive_errors,
-                "provider": provider,
-                "session_id": session_id,
-            }
-
-            task = {
-                "http_request": {
-                    "http_method": tasks_v2.HttpMethod.POST,
-                    "url": f"{self.service_url}/worker",
-                    "headers": {"Content-Type": "application/json"},
-                    "body": json.dumps(payload, cls=_DomainEncoder).encode(),
-                }
-            }
-
-            if self.service_account_email:
-                task["http_request"]["oidc_token"] = {
-                    "service_account_email": self.service_account_email
-                }
-
-            if delay_seconds > 0:
-                timestamp = timestamp_pb2.Timestamp()
-                timestamp.FromDatetime(
-                    datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=delay_seconds)
-                )
-                task["schedule_time"] = timestamp
-
-            response = await self._create_task(
-                request={"parent": self.queue_path, "task": task}
-            )
-
-            logger.info(
-                f"📬 [DeepResearch] Enqueued polling task: "
-                f"interaction={interaction_id[:16]}, attempt={attempt}, delay={delay_seconds}s"
-            )
-            return response.name
-
-        except Exception as exc:
-            logger.error(f"❌ Failed to enqueue deep_research_polling task: {exc}", exc_info=True)
-            raise
-
     async def enqueue_video_generation_polling(
         self,
         request_id: str,

@@ -186,8 +186,7 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   │                     #    deliver_deep_research() — upload round files, send named links, enqueue HtmlPageGenerator task
 │   │                     #    NotificationPort — structural Protocol for UserNotificationService
 │   ├── worker_handler.py # 🆕 /worker dispatcher — routes Cloud Tasks by task_type:
-│   │                     #    email_indexing, email_indexing_watchdog, consolidation, agent_execution,
-│   │                     #    deep_research_polling (Gemini polling path: polls interaction → deliver_deep_research())
+│   │                     #    email_indexing, email_indexing_watchdog, consolidation, agent_execution
 │   └── learning_loop.py # ⚠️ LEGACY
 ├── infrastructure/     # 🆕 System Infrastructure
 │   ├── agent_config.py      # 🆕 Central registry of tunable behavior parameters for all agents.
@@ -239,7 +238,7 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   ├── fact_management_port.py # Deliberate fact management port
 │   ├── consolidation_queue.py # Batch queue management port
 │   ├── log_sink.py     # Structured logging sink port
-│   ├── task_queue.py   # Background task queue port (enqueue_email_indexing_task, enqueue_deep_research_polling)
+│   ├── task_queue.py   # Background task queue port (enqueue_email_indexing_task, enqueue_video_generation_polling)
 │   ├── deep_research_port.py # 🆕 DeepResearchPort — create_interaction(query, user_id, account_id,
 │   │                         #    original_query) → interaction_id. Delivery is adapter-specific:
 │   │                         #    Gemini adapter enqueues Cloud Task; OpenAI adapter uses webhook metadata.

@@ -1,10 +1,6 @@
 """
 Unit tests for WorkerHandler.
 
-Key invariant under test (deep research polling):
-  ensure_agents_for_user() MUST be called before any notify() / deliver_deep_research()
-  invocation so that per-user agents are registered in the coordinator before routing.
-
 Coverage:
   _handle_email_indexing
     - completed job        → 200, has_more=False, run_indexing_job called
@@ -15,16 +11,8 @@ Coverage:
     - run_indexing raises  → 200, status=failed
     - invalid_grant raises → 200, status=failed (no retry by Cloud Tasks)
     - generic error raises → 200, status=failed
-
-  _handle_deep_research_polling
-    - missing job_port / task_dispatch → 500, ensure_agents NOT called
-    - timeout         → ensure_agents + notify called
-    - in_progress     → ensure_agents called, re-enqueued
-    - completed       → ensure_agents called, deliver_deep_research called
-    - failed status   → ensure_agents + notify called
-    - consecutive_errors >= 5 → ensure_agents + notify called
 """
-from unittest.mock import AsyncMock, MagicMock, patch, call
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -103,11 +91,6 @@ def _make_worker(
     agent_factory = MagicMock()
     agent_factory.ensure_agents_for_user = AsyncMock()
 
-    job_registry = MagicMock()
-    job_port = AsyncMock()
-    job_registry.get = MagicMock(return_value=job_port)
-    job_registry.list_available = MagicMock(return_value=["gemini"])
-
     video_registry = MagicMock()
     video_port = AsyncMock()
     video_registry.get = MagicMock(return_value=video_port)
@@ -121,8 +104,6 @@ def _make_worker(
     ns.notification = notification
     ns.task_dispatch = task_dispatch
     ns.agent_factory = agent_factory
-    ns.job_registry = job_registry
-    ns.job_port = job_port
     ns.video_registry = video_registry
     ns.video_port = video_port
     ns.link_service = link_service
@@ -138,7 +119,6 @@ def _make_worker(
         indexed_email_repo=None,
         user_repo=MagicMock(),
         task_dispatch=task_dispatch,
-        job_registry=job_registry,
         video_registry=video_registry,
         link_service=link_service,
         short_link_service=short_link_service,
@@ -180,7 +160,6 @@ def worker_handler_factory():
             indexed_email_repo=None,
             user_repo=MagicMock(),
             task_dispatch=task_dispatch,
-            job_registry=MagicMock(),
             reminders_service=reminders_service,
             notes_port=notes_port,
             email_review=email_review,
@@ -305,114 +284,6 @@ class TestHandleEmailIndexing:
 
         assert status == 200
         assert result["status"] == "failed"
-
-
-# ---------------------------------------------------------------------------
-# _handle_deep_research_polling
-# ---------------------------------------------------------------------------
-
-_BASE_PAYLOAD = {
-    "interaction_id": "interact-0001",
-    "user_id": _USER_ID,
-    "account_id": _ACCOUNT_ID,
-    "query": "What is the future of AI?",
-    "attempt": 0,
-    "consecutive_errors": 0,
-    "provider": "gemini",
-    "session_id": "sess-001",
-}
-
-
-class TestHandleDeepResearchPolling:
-
-    async def test_missing_job_port_returns_500_without_ensure_agents(self):
-        worker, ns = _make_worker()
-        ns.job_registry.get.side_effect = ValueError("provider not found")
-
-        result, status = await worker._handle_deep_research_polling(_BASE_PAYLOAD)
-
-        assert status == 500
-        ns.agent_factory.ensure_agents_for_user.assert_not_called()
-
-    async def test_timeout_calls_ensure_agents_then_notify(self):
-        worker, ns = _make_worker()
-        payload = {**_BASE_PAYLOAD, "attempt": WorkerHandler._MAX_POLL_ATTEMPTS}
-        call_order = []
-        ns.agent_factory.ensure_agents_for_user.side_effect = lambda uid: call_order.append("ensure")
-        ns.notification.notify.side_effect = lambda **kw: call_order.append("notify")
-
-        result, status = await worker._handle_deep_research_polling(payload)
-
-        assert status == 200
-        assert result["status"] == "timeout"
-        assert call_order == ["ensure", "notify"]
-        ns.agent_factory.ensure_agents_for_user.assert_called_once_with(_USER_ID)
-
-    async def test_in_progress_calls_ensure_agents_and_reenqueues(self):
-        worker, ns = _make_worker()
-        ns.job_port.get_status = AsyncMock(return_value=("in_progress", ""))
-
-        result, status = await worker._handle_deep_research_polling(_BASE_PAYLOAD)
-
-        assert status == 200
-        assert result["status"] == "polling"
-        ns.agent_factory.ensure_agents_for_user.assert_called_once_with(_USER_ID)
-        ns.notification.notify.assert_not_called()
-        ns.task_dispatch.enqueue_deep_research_polling.assert_called_once()
-
-    async def test_completed_calls_ensure_agents_and_delivers(self):
-        worker, ns = _make_worker()
-        ns.job_port.get_status = AsyncMock(return_value=("completed", "## Report content"))
-
-        with patch(
-            "src.handlers.worker_handler.deliver_deep_research", new_callable=AsyncMock
-        ) as mock_deliver:
-            result, status = await worker._handle_deep_research_polling(_BASE_PAYLOAD)
-
-        assert status == 200
-        assert result["status"] == "delivered"
-        ns.agent_factory.ensure_agents_for_user.assert_called_once_with(_USER_ID)
-        mock_deliver.assert_called_once()
-        # ensure agents was called before deliver
-        ensure_call_idx = ns.agent_factory.ensure_agents_for_user.call_args_list[0]
-        assert ensure_call_idx == call(_USER_ID)
-
-    async def test_failed_status_calls_ensure_agents_then_notify(self):
-        worker, ns = _make_worker()
-        ns.job_port.get_status = AsyncMock(return_value=("failed", "provider error"))
-        call_order = []
-        ns.agent_factory.ensure_agents_for_user.side_effect = lambda uid: call_order.append("ensure")
-        ns.notification.notify.side_effect = lambda **kw: call_order.append("notify")
-
-        result, status = await worker._handle_deep_research_polling(_BASE_PAYLOAD)
-
-        assert status == 200
-        assert result["status"] == "failed"
-        assert call_order == ["ensure", "notify"]
-
-    async def test_consecutive_errors_threshold_calls_ensure_agents_and_notify(self):
-        worker, ns = _make_worker()
-        ns.job_port.get_status = AsyncMock(side_effect=RuntimeError("API error"))
-        payload = {**_BASE_PAYLOAD, "consecutive_errors": 4}  # will hit 5 after this attempt
-        call_order = []
-        ns.agent_factory.ensure_agents_for_user.side_effect = lambda uid: call_order.append("ensure")
-        ns.notification.notify.side_effect = lambda **kw: call_order.append("notify")
-
-        result, status = await worker._handle_deep_research_polling(payload)
-
-        assert status == 200
-        assert result["status"] == "dead"
-        assert call_order == ["ensure", "notify"]
-
-    async def test_ensure_agents_called_exactly_once_per_request(self):
-        """Even with multiple notify paths, ensure_agents_for_user is called once."""
-        worker, ns = _make_worker()
-        ns.job_port.get_status = AsyncMock(return_value=("completed", "content"))
-
-        with patch("src.handlers.worker_handler.deliver_deep_research", new_callable=AsyncMock):
-            await worker._handle_deep_research_polling(_BASE_PAYLOAD)
-
-        assert ns.agent_factory.ensure_agents_for_user.call_count == 1
 
 
 # ---------------------------------------------------------------------------
