@@ -114,6 +114,7 @@ def test_a_bad_parser_user_fails_the_start(monkeypatch, setup, message):
         SubprocessMediaExtractor(sandbox_user="driveparser")
 
 
+@pytest.mark.timing   # asserts a wall-clock bound (< 15 s) (owner rule 2026-10-20, T-R33)
 async def test_wall_kills_group(tmp_path):
     out = tmp_path / "out"
     extractor = _stub(tmp_path)
@@ -185,12 +186,15 @@ async def test_probe_and_windows_over_https(tmp_path):
         probe = outcome.probe
         assert outcome.status is MediaStatus.OK and probe.has_audio and probe.duration_known
         assert probe.duration_s == pytest.approx(100.0, abs=1.0) and "mp4" in probe.container
-        windows = [WindowSpec(0, 0.0, 40.0), WindowSpec(1, 30.0, 40.0)]
+        # Plan-shaped: the request's last window is the file's last (M2: it is read at a full window's length, and a
+        # header that is right ends it where the plan does, so no eof is reported).
+        windows = [WindowSpec(0, 0.0, 40.0), WindowSpec(1, 30.0, 70.0)]
         result = await extractor.extract_windows(server.url("/a.mp4"), windows, str(tmp_path / "o"), wall_s=60,
                                                  container=probe.container)
         assert result.status is MediaStatus.OK and not result.eof
         assert [(w.index, w.start_s) for w, _ in result.windows] == [(0, 0.0), (1, 30.0)]
-        assert [w.duration_s for w, _ in result.windows] == [pytest.approx(40.0, abs=0.5)] * 2   # measured, not planned
+        assert [w.duration_s for w, _ in result.windows] == [pytest.approx(40.0, abs=0.5),
+                                                             pytest.approx(70.0, abs=0.5)]   # measured, not planned
         for _, path in result.windows:
             assert Path(path).read_bytes()[:4] == b"OggS"
         assert any(r[2] for r in server.requests)                # input-side -ss read through Range requests
@@ -283,6 +287,7 @@ def test_a_pass_that_reaches_the_bound_says_so(tmp_path, monkeypatch):
     assert [w["index"] for w in result["windows"]] == [0, 1, 2]
 
 
+@pytest.mark.timing   # the outcome is set by a 3 CPU-s RLIMIT_CPU against decode speed (owner rule 2026-10-20, T-R33)
 @needs_ffmpeg
 async def test_a_pass_cut_by_the_cpu_limit_returns_the_windows_inside_the_prefix(tmp_path):
     """SIGXCPU ends the pass-1 ffmpeg; the killed Ogg prefix is valid, so the windows fully inside it come back as a
@@ -352,6 +357,7 @@ async def test_a_known_duration_window_cut_short_by_a_drop_is_not_reported_at_it
     assert not list((tmp_path / "o").glob("window_*"))
 
 
+@pytest.mark.timing   # the outcome is set by a 3 CPU-s RLIMIT_CPU against decode speed (owner rule 2026-10-20, T-R33)
 @needs_ffmpeg
 async def test_a_limit_before_the_first_window_is_an_error_not_a_loop(tmp_path):
     """N2: a CPU cut that finishes no window would repeat forever as a TIMEOUT; it is the file's error."""
@@ -406,6 +412,7 @@ async def test_one_corrupt_packet_does_not_fail_the_file(tmp_path):
     assert result.status is MediaStatus.OK and len(result.windows) == 1 and not result.eof
 
 
+@pytest.mark.timing   # each run must stay under a 3 CPU-s RLIMIT_CPU (owner rule 2026-10-20, T-R33)
 @needs_ffmpeg
 async def test_a_corrupt_packet_late_in_a_long_file_is_re_run_after_earlier_windows_spent_cpu(tmp_path):
     """N7: the re-run decision judges the failed run's own CPU, not the CPU every earlier window of the step spent.
@@ -518,6 +525,7 @@ async def test_tls_verify_refuses_an_untrusted_server(tmp_path):
         assert (await trusted.probe(server.url("/a.mp4"))).probe is not None
 
 
+@pytest.mark.timing   # the outcome is set by a 1.5 s wall against decode speed (owner rule 2026-10-20, T-R33)
 @needs_ffmpeg
 def test_a_wall_in_a_window_returns_the_windows_finished_before_it(tmp_path):
     """The child stops its own ffmpeg before the parent's kill: finished windows come back, in order, and a window cut
