@@ -321,3 +321,76 @@ async def test_wait_timeout_falls_back_to_the_named_requeue():
     assert status == 200
     assert queue.enqueue_slack_event.call_args.kwargs["task_name"] == slack_mod._task_name("Ev1", 3)
     assert lock.locked()
+
+
+# --- U2: events the processing path ignores never wait on the lock, re-queue, or post the notice ---
+
+def _busy_adapter_locked():
+    queue = MagicMock()
+    queue.enqueue_slack_event = AsyncMock()
+    adapter = _busy_adapter(queue)
+    lock = asyncio.Lock()
+    adapter._lock = lock
+    adapter._session_locks["1.5"] = lock
+    return adapter, queue, lock
+
+
+def _event_payload(extra, n=None):
+    ev = {"type": "message", "text": "x", "channel": "D1", "user": "U1", "ts": "1.5", **extra}
+    p = {"event": {"event_id": "Ev9", "event": ev}, "session_id": "1.5"}
+    if n is not None:
+        p["busy_requeues"] = n
+    return p
+
+
+@pytest.mark.parametrize("extra", [
+    {"bot_id": "B1"},
+    {"subtype": "message_changed"},
+    {"subtype": "message_deleted"},
+    {"user": None},
+])
+async def test_ignored_events_return_at_once_while_the_session_is_busy(extra, monkeypatch):
+    monkeypatch.setattr(slack_mod, "BUSY_WAIT_S", 5)
+    adapter, queue, lock = _busy_adapter_locked()
+    await lock.acquire()
+    body, status = await asyncio.wait_for(adapter.handle_queued_event(_event_payload(extra), {}), 1)
+    assert (body, status) == ({"ok": True}, 200)
+    queue.enqueue_slack_event.assert_not_awaited()
+    adapter._process_message_event.assert_not_awaited()
+
+
+async def test_ignored_event_with_exhausted_requeues_posts_no_notice():
+    adapter, queue, lock = _busy_adapter_locked()
+    await lock.acquire()
+    channel = MagicMock()
+    channel.send_message = AsyncMock()
+    with patch.object(slack_mod, "SlackResponseChannel", return_value=channel):
+        _, status = await adapter.handle_queued_event(
+            _event_payload({"subtype": "message_changed"}, BUSY_MAX_REQUEUES), {})
+    assert status == 200
+    channel.send_message.assert_not_awaited()
+
+
+async def test_file_share_still_waits_for_the_lock(monkeypatch):
+    monkeypatch.setattr(slack_mod, "BUSY_WAIT_S", 5)
+    adapter, queue, lock = _busy_adapter_locked()
+    await lock.acquire()
+    task = asyncio.create_task(adapter.handle_queued_event(_event_payload({"subtype": "file_share"}), {}))
+    await asyncio.sleep(0.05)
+    assert not task.done()
+    adapter._process_message_event.assert_not_awaited()
+    lock.release()
+    _, status = await task
+    assert status == 200
+    adapter._process_message_event.assert_awaited_once()
+
+
+async def test_exhausted_notice_is_posted_for_a_real_user_message():
+    adapter, queue, lock = _busy_adapter_locked()
+    await lock.acquire()
+    channel = MagicMock()
+    channel._ui_string = MagicMock(return_value="resend")
+    channel.send_message = AsyncMock()
+    with patch.object(slack_mod, "SlackResponseChannel", return_value=channel):
+        await adapter.handle_queued_event(_event_payload({}, BUSY_MAX_REQUEUES), {})
+    channel.send_message.assert_awaited_once()
