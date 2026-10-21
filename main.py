@@ -748,7 +748,6 @@ async def main():
             indexed_email_repo=indexed_email_repo,
             user_repo=user_repo,
             task_dispatch=_task_dispatch_service,
-            job_registry=job_registry,
             video_registry=video_registry,
             quota_service=quota_service,
             media_storage=gcs_media_adapter,

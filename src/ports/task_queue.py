@@ -68,31 +68,6 @@ class TaskQueue(Protocol):
         """
         ...
 
-    async def enqueue_deep_research_polling(
-        self,
-        interaction_id: str,
-        user_id: str,
-        account_id: str,
-        query: str = "",
-        attempt: int = 0,
-        consecutive_errors: int = 0,
-        delay_seconds: int = 30,
-        provider: str = "gemini",
-        session_id: str = "",
-    ) -> str:
-        """
-        Enqueue a deep_research_polling Cloud Task.
-
-        Worker receives payload with task_type="deep_research_polling".
-        provider: "gemini" | "openai" — carried in the payload so WorkerHandler
-                  can route polling to the correct DeepResearchPort adapter.
-        attempt: retry counter for timeout guard (max 120 × 30s = 60 min).
-        delay_seconds: schedule this many seconds in the future (Cloud Tasks schedule_time).
-        First enqueue uses delay_seconds=30 — no point polling immediately after kick-off.
-        session_id: original conversation session for delivery back to user's thread.
-        """
-        ...
-
     async def enqueue_video_generation_polling(
         self,
         request_id: str,
@@ -115,8 +90,7 @@ class TaskQueue(Protocol):
                     channel_id_override is silently ignored unless platform_override is ALSO set.
         attempt: retry counter for timeout guard.
         delay_seconds: schedule this many seconds in the future (Cloud Tasks schedule_time).
-        First enqueue uses delay_seconds=30 (mirrors enqueue_deep_research_polling's
-        own convention — no point polling immediately after kick-off).
+        First enqueue uses delay_seconds=30 (no point polling immediately after kick-off).
         session_id: original conversation session for delivery back to user's thread.
         """
         ...
