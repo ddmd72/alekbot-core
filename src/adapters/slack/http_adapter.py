@@ -313,6 +313,8 @@ class HTTPModeAdapter(SlackAdapter):
         # Mirrors _process_message_event: only plain and file_share messages are handled.
         if event.get("bot_id") or not event.get("user"):
             return True
+        if event.get("type") not in ("message", "app_mention"):
+            return True
         return event.get("type") == "message" and event.get("subtype") not in (None, "file_share")
 
     async def _requeue_busy(
