@@ -18,7 +18,8 @@ Public interface:
     start_file(rec, ctx, probe) -> FileStart                                the stage's step after the probe (Task 12 step 4)
     wait_for_copy(rec) -> rec                                               a copy waits for another file's result (G12)
     stub_from_probe(probe) / stub_record(rec, stub, now, seconds) / mark_current(rec, now, ...)
-    charge_attempt(rec) -> rec                                              a file-level failed attempt (`failed` at MAX_ATTEMPTS)
+    charge_attempt(rec, *, now=None) -> rec                                 a file-level failed attempt (`failed` at MAX_ATTEMPTS;
+                                                                            with `now`, `held`/retry with a backoff, T-R21)
     state_for_job(job) -> "working" | "waiting"
     window_failed(window, check, ctx) -> WindowResult                       the per-check retry rules (G37); a resubmit
                                                                             is reserved like any purchase (T-R8)
@@ -46,7 +47,8 @@ The state table, first match wins (`DriveIndexRecord.transcript_state`, plain st
     held      a hold for this content version, with `transcript_wake_at` set: `cooldown` (an edit within
               TRANSCRIBE_REREAD_COOLDOWN of `model_read_at`, set when the file was last bought: at `start_file` and again
               at `mark_current`; it applies on a free cache hit too, by design: the plan cannot see the store) or `quiet`
-              (dirty and not `quiet_over`, a recording still uploading).
+              (dirty and not `quiet_over`, a recording still uploading), or `retry` (a charged attempt backing off until
+              its wake-up, T-R21; kept ahead of the cooldown and quiet holds).
     ready     due: the queue predicate (`transcript_state == "ready"`, newest `effective_day` first).
 A model backoff is NOT a record state (§25.4.6, `JobState`'s docstring): the `drive_transcriber` backoff gates the stage's
 queue read, records stay `ready`, an outage writes no record (G21).
@@ -72,7 +74,7 @@ from src.domain.drive_index_params import (
     MAX_ATTEMPTS, TRANSCRIBE_HOUR_USD_ESTIMATE, TRANSCRIBE_WINDOW_PROMPT_TOKENS, TRANSCRIBE_MAX_BYTES, TRANSCRIBE_MAX_SECONDS,
     TRANSCRIBE_REREAD_COOLDOWN, TRANSCRIBE_USD_PER_MONTH,
 )
-from src.domain.drive_index_planner import content_due_at, demoted, month_key, next_month_start, quiet_over
+from src.domain.drive_index_planner import backoff, content_due_at, demoted, month_key, next_month_start, quiet_over
 from src.domain.drive_index_policy import Admission, admission
 from src.domain.drive_transcript import JobWindow, MediaProbe, TranscriptJob, TranscriptStub
 from src.domain.drive_transcript_render import TRANSCRIPT_BODY_VERSION
@@ -80,7 +82,7 @@ from src.domain.drive_transcript_windows import content_key, plan_windows
 
 NONE, READY, WORKING, WAITING = "none", "ready", "working", "waiting"
 CURRENT, HELD, PARKED, FAILED = "current", "held", "parked", "failed"
-HOLD_COOLDOWN, HOLD_QUIET, HOLD_RESUBMIT = "cooldown", "quiet", "resubmit"
+HOLD_COOLDOWN, HOLD_QUIET, HOLD_RESUBMIT, HOLD_RETRY = "cooldown", "quiet", "resubmit", "retry"
 
 # Reasons a media record carries when the policy never downloads it, or has not admitted it yet (policy 3 re-classifies
 # the latter to `pending`, §27.3). TOO_LARGE, NO_TEXT and the extraction errors are this feature's own outcomes.
@@ -290,6 +292,9 @@ def transcript_plan(rec: DriveIndexRecord, ctx: TranscriptContext) -> DriveIndex
                        wake=rec.transcript_wake_at)
     if rec.transcript_state == PARKED and rec.transcript_hold == HOLD_RESUBMIT and rec.transcript_key == key:
         return _settle(rec, WORKING)     # woken mid-job: resume the parked window, never re-reserve the whole file
+    if (rec.transcript_state == HELD and rec.transcript_hold == HOLD_RETRY and rec.transcript_wake_at is not None
+            and rec.transcript_wake_at > ctx.now):
+        return _settle(rec, HELD, hold=HOLD_RETRY, wake=rec.transcript_wake_at)   # a charged attempt backs off (T-R21)
     # a purchase of another content version exists (done, or in flight when the edit came) and is younger than the
     # cooldown: an edited recording is re-bought at most once per TRANSCRIBE_REREAD_COOLDOWN (T-R9)
     if rec.transcript_key not in ("", key) and rec.model_read_at is not None:
@@ -396,13 +401,20 @@ def mark_current(rec: DriveIndexRecord, now: datetime, *, seconds: int, speakers
     return out
 
 
-def charge_attempt(rec: DriveIndexRecord) -> DriveIndexRecord:
+def charge_attempt(rec: DriveIndexRecord, *, now: Optional[datetime] = None) -> DriveIndexRecord:
     """A file-level failed attempt (ffmpeg cannot read it): counted for this content version; `failed` at MAX_ATTEMPTS,
-    with no stub (Δ100). Below it the file is `ready` again."""
+    with no stub (Δ100). Below it the file is `ready` again — or, given `now` (the stage always passes it, T-R21),
+    `held` with the hold `retry` until `now + backoff`, the planner's per-item backoff (`drive_index_planner.backoff`,
+    first retry after RETRY_BASE, doubling, capped at RETRY_CAP), so a transient failure cannot spend every attempt
+    within minutes. The plan keeps it held while the wake-up is in the future; a due wake-up makes it `ready`."""
     attempts = rec.transcript_attempts + 1
     out = replace(rec, transcript_attempts=attempts, transcript_hold_version=hold_key(rec), transcript_hold=None,
                   transcript_wake_at=None)
-    return replace(out, transcript_state=FAILED if attempts >= MAX_ATTEMPTS else READY)
+    if attempts >= MAX_ATTEMPTS:
+        return replace(out, transcript_state=FAILED)
+    if now is None:
+        return replace(out, transcript_state=READY)
+    return replace(out, transcript_state=HELD, transcript_hold=HOLD_RETRY, transcript_wake_at=now + backoff(attempts - 1))
 
 
 def state_for_job(job: TranscriptJob) -> str:

@@ -70,3 +70,22 @@ def test_a_copy_waits_at_its_key_and_the_plan_keeps_it():
     assert transcript_plan(waiting, _ctx()).transcript_state == "waiting"
     edited = replace(waiting, content_hash="h2", content_version="c2")
     assert transcript_plan(edited, _ctx()).transcript_state == "ready"
+
+
+# -- T-R21: a charged attempt backs off ---------------------------------------------------------------------------------
+
+def test_a_charge_with_now_is_held_for_retry_until_its_wake_up():
+    from src.domain.drive_index_params import MAX_ATTEMPTS, RETRY_BASE
+    from src.domain.drive_transcript_plan import charge_attempt
+    held = charge_attempt(_rec(), now=NOW)
+    assert (held.transcript_state, held.transcript_hold, held.transcript_attempts) == ("held", "retry", 1)
+    assert held.transcript_wake_at == NOW + RETRY_BASE and held.transcript_hold_version == "h1"
+    assert transcript_plan(held, _ctx(now=NOW + RETRY_BASE / 2)).transcript_state == "held"
+    woken = transcript_plan(held, _ctx(now=NOW + RETRY_BASE))
+    assert woken.transcript_state == "ready" and woken.transcript_attempts == 1 and woken.transcript_wake_at is None
+    second = charge_attempt(woken, now=NOW)
+    assert second.transcript_wake_at == NOW + 2 * RETRY_BASE
+    edited = replace(held, content_hash="h2", content_version="c2")
+    assert transcript_plan(edited, _ctx()).transcript_state == "ready"   # a new version clears the hold (D42)
+    assert charge_attempt(replace(_rec(), transcript_attempts=MAX_ATTEMPTS - 1), now=NOW).transcript_state == "failed"
+    assert charge_attempt(_rec()).transcript_state == "ready"   # without `now`: unchanged for older callers
