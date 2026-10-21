@@ -35,7 +35,7 @@ def test_request_has_window_length_string_and_rules_token():
     assert req.system_instruction == PROMPT
     assert "30:00" in req.user_text
     assert req.thinking_level == DRIVE_TRANSCRIBER.thinking == "low"
-    assert req.max_output_tokens == DRIVE_TRANSCRIBER.max_tokens
+    assert req.max_output_tokens == 30_000    # T-R19: ceil(1000 x duration_s / 60), below the config ceiling
     assert req.response_schema is _RESPONSE_SCHEMA
 
 
@@ -53,6 +53,9 @@ def test_response_schema_shape_and_converts_through_the_sdk():
     # the adapter's conversion (GeminiBatchAdapter._to_inlined): types.Schema forbids extras and a type list
     schema = types.Schema.model_validate(dict(_RESPONSE_SCHEMA))
     assert schema.properties["segments"].items.properties["speaker"].nullable is True
+    seg = _RESPONSE_SCHEMA["properties"]["segments"]["items"]
+    assert seg["property_ordering"] == ["start", "speaker", "text"]
+    assert schema.properties["segments"].items.property_ordering == ["start", "speaker", "text"]
 
 
 def test_agent_imports_no_google_genai():
@@ -145,3 +148,28 @@ async def test_agent_is_not_a_delegation_agent():
     msg.task_id = "t"
     assert await agent.can_handle(msg) is False
     assert (await agent.execute(msg)).status is AgentStatus.FAILED
+
+
+@pytest.mark.parametrize("duration_s,expected", [(60.0, 1_000), (1800.0, 30_000), (1860.5, 31_009),
+                                                 (2760.0, 46_000), (4000.0, 65_536)])
+def test_output_cap_is_per_window_and_bounded_by_the_ceiling(duration_s, expected):
+    req = _agent().build_request(WindowSpec(index=0, start_s=0.0, duration_s=duration_s), prompt=PROMPT, key="k",
+                                 file_name="files/x", file_mime="audio/ogg")
+    assert req.max_output_tokens == expected <= DRIVE_TRANSCRIBER.max_tokens
+
+
+def test_parse_rejects_speaker_zero():
+    with pytest.raises(DriveOutputInvalid):
+        _agent().parse(_answer(segments=[{"start": "00:00", "speaker": 0, "text": "x"}]))
+
+
+def test_parse_rejects_no_speech_with_segments():
+    with pytest.raises(DriveOutputInvalid):
+        _agent().parse(_answer(no_speech=True, speakers=0))
+
+
+def test_prompt_says_skip_what_cannot_be_made_out():
+    cog = json.load(open("firestore_utils/uploads/COGNITIVE_PROCESS_DRIVE_TRANSCRIBER.json"))["content"]
+    assert "closest words" not in cog
+    assert "skip a word that cannot be made out and continue" in cog
+    assert "Transcribe the whole window to its end" in cog

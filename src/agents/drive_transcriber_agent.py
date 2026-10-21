@@ -48,7 +48,8 @@ _RESPONSE_SCHEMA = {
         "no_speech": {"type": "boolean", "description": "True only when the window holds no intelligible speech."},
         "segments": {
             "type": "array", "description": "The speech in order of time.",
-            "items": {"type": "object", "required": ["start", "speaker", "text"], "properties": {
+            "items": {"type": "object", "required": ["start", "speaker", "text"],
+                      "property_ordering": ["start", "speaker", "text"], "properties": {
                 "start": {"type": "string",
                           "description": "Where the segment starts in this window: MM:SS, or H:MM:SS from one hour."},
                 "speaker": {"type": "integer", "nullable": True,
@@ -58,6 +59,8 @@ _RESPONSE_SCHEMA = {
         },
     },
 }
+
+_OUTPUT_TOKENS_PER_MINUTE_CAP = 1_000
 
 _TASK = ("Transcribe this audio window as the output format says. The window is {length} long; every start is counted "
          "from the beginning of the window and must stay within {length}. Transcribe it to its end.")
@@ -82,9 +85,12 @@ class DriveTranscriberAgent(BaseAgent):
         """The request of one window. The length is rounded up, so the model is never told a shorter window than the
         audio it holds. `file_name` is the provider's file name (`files/<id>`), never a URL."""
         length = format_stamp(math.ceil(window.duration_s))
+        # T-R19: the cap bounds the worst case of a runaway window to its reservation (Δ106); T0 measured ~400-450
+        # output tokens per audio minute, thoughts included, so 1000 per minute leaves room for a dense recording.
+        cap = min(DRIVE_TRANSCRIBER.max_tokens, math.ceil(_OUTPUT_TOKENS_PER_MINUTE_CAP * window.duration_s / 60))
         return BatchRequest(key=key, system_instruction=prompt, user_text=_TASK.format(length=length),
                             response_schema=_RESPONSE_SCHEMA, file_name=file_name, file_mime=file_mime,
-                            thinking_level=self._thinking, max_output_tokens=DRIVE_TRANSCRIBER.max_tokens)
+                            thinking_level=self._thinking, max_output_tokens=cap)
 
     def parse(self, text: Optional[str]) -> WindowTranscript:
         """The window's transcript. `json.loads` once and a strict check; anything else is DriveOutputInvalid (the
@@ -120,12 +126,14 @@ def _parse(raw: str) -> WindowTranscript:
         if not isinstance(start, str):
             raise ValueError("`start` must be a MM:SS string, never a number")
         speaker = _field(entry, "speaker")
-        if speaker is not None and (not _is_int(speaker) or speaker < 0):
-            raise ValueError("`speaker` must be an integer or null")
+        if speaker is not None and (not _is_int(speaker) or speaker < 1):
+            raise ValueError("`speaker` must be an integer from 1, or null")
         text = _field(entry, "text")
         if not isinstance(text, str):
             raise ValueError("`text` must be a string")
         segments.append(Segment(start_s=parse_stamp(start), speaker=speaker, text=text))
+    if no_speech and segments:
+        raise ValueError("`no_speech` is true but segments are present")
     return WindowTranscript(language_codes=tuple(codes), speakers=speakers, no_speech=no_speech,
                             segments=tuple(segments))
 
