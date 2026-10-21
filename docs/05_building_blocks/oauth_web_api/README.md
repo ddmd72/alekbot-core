@@ -626,7 +626,7 @@ curl -X POST -b cookies.txt "http://localhost:5001/auth/logout"
 ### Verification Script
 
 ```bash
-python verify_oauth_user.py
+python verify_oauth_user.py (script removed 2026-10-22, S1b)
 ```
 
 **Checks:**

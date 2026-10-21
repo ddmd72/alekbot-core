@@ -105,7 +105,7 @@ async def main():
         return
 
     config = load_settings()
-    db = firestore.AsyncClient(project=config["GOOGLE_CLOUD_PROJECT"])
+    db = firestore.AsyncClient(project=config["GOOGLE_CLOUD_PROJECT"], database=config["ENVIRONMENT_CONFIG"].firestore_database_id)
     
     cloner = FirestoreCloner(db)
     
