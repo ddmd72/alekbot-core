@@ -555,7 +555,9 @@ class FileManagementAgent(BaseAgent):
                 logger.warning("FileManagementAgent: UI language lookup failed for %s: %s", user_id[:8],
                                exc_brief(exc))
         if self._localization is None:
-            return "This folder is managed by the bot; change it in OneDrive."
+            # Mirrors src/locales/en.py DRIVE_MIRROR_WRITE_REFUSED verbatim (locales load only via the adapter).
+            return ("This folder is managed by the bot and its files are overwritten; "
+                    "to keep your own version, copy the file to another folder.")
         return self._localization.get_ui_string(lang, UIMessage.DRIVE_MIRROR_WRITE_REFUSED)
 
     _LATE_FAILURE_UI = {
