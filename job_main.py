@@ -267,7 +267,7 @@ async def _run_job() -> None:
     origin_platform = context.get("origin_platform") or None  # absent on pre-deploy jobs
 
     try:
-        await deliver_deep_research(
+        handed_off = await deliver_deep_research(
             result_text=result_text,
             user_id=user_id,
             account_id=context.get("account_id", ""),
@@ -282,6 +282,8 @@ async def _run_job() -> None:
             channel_id_override=origin_channel_id,
             platform_override=origin_platform,
         )
+        if handed_off is False:  # the report task could not be enqueued (swallowed inside)
+            raise RuntimeError("report task not enqueued")
     except Exception as exc:
         logger.error(
             "[ResearchJob] Delivery failed: user=%s error=%s",

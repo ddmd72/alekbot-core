@@ -185,7 +185,7 @@ async def deliver_deep_research(
     link_service: Optional["FileLinkService"] = None,
     short_link_service: Optional["ShortLinkService"] = None,
     failure_notification: Optional["NotificationPort"] = None,
-) -> None:
+) -> bool:
     """
     Deliver deep research result:
       1. Upload round markdown files + meta.json to GCS.
@@ -193,6 +193,8 @@ async def deliver_deep_research(
       3. Enqueue HtmlPageGenerator Cloud Task → styled HTML report delivered to user. The task's context
          carries DEEP_RESEARCH_REPORT_CONTEXT_KEY, so its delivery also offers the HTML to the opt-in
          drive copy (every entry point — Claude runner, Cloud Run Job, OpenAI webhook, polling — ends here).
+
+    Returns True when the HTML report task was handed off to the queue, False when that enqueue failed.
 
     failure_notification — told (origin channel) when the HTML report task cannot be enqueued; falls back
                   to `notification`. The enqueue failure itself is never raised.
@@ -265,7 +267,7 @@ async def deliver_deep_research(
 
     if not task_queue:
         logger.warning("[DeepResearch] No task_queue configured — HTML page delivery skipped")
-        return
+        return False
 
     html_query = _build_html_page_query(query, result_text)
 
@@ -288,6 +290,7 @@ async def deliver_deep_research(
             deadline_seconds=720,
         )
         logger.info("[DeepResearch] HtmlPageGenerator task enqueued for user=%s", user_id[:8])
+        return True
     except Exception as exc:
         logger.error(
             "[DeepResearch] Failed to enqueue HtmlPageGenerator task for user=%s: %s",
@@ -309,3 +312,4 @@ async def deliver_deep_research(
                 )
             except Exception as notify_exc:
                 logger.error("[DeepResearch] Failure notice not delivered: %s", notify_exc, exc_info=True)
+    return False

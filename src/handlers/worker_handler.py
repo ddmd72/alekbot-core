@@ -31,7 +31,6 @@ Supported task_types:
   - daily_email_review            → fetch last 24h emails, deliver structured payload to SmartAgent for analysis
   - repair_email_embeddings       → run one batch of EmailEmbeddingRepairService (re-embed indexed emails
                                      where embedding_pending=True after transient API failures)
-  - deep_research_failed          → the Cloud Run research job failed: tell the user in the origin channel
   - deep_research_failed          → the research Cloud Run Job failed: tell the user in the origin channel
   - video_generation_polling      → poll VideoGenerationPort job, deliver via deliver_video()
   - start_drive_sync              → fan-out: DriveSyncSchedulerService enqueues one drive_sync tick per
@@ -625,6 +624,8 @@ class WorkerHandler:
         session_id = payload.get("session_id") or ""
         origin_channel_id = session_id.split(":", 1)[1] if ":" in session_id else None
         query = payload.get("query") or "the request"
+        # notify() routes through the eager Quick agent, absent on a cold instance until this runs.
+        await self._agent_factory.ensure_agents_for_user(user_id)
         result = await self._notification.notify(
             kind=NotificationKind.DEEP_RESEARCH,
             user_id=user_id,
@@ -696,6 +697,10 @@ class WorkerHandler:
                 f"{self._video_registry.list_available() if self._video_registry else []})"
             )
             return {"error": "video_generation not configured"}, 500
+
+        # notify() routes through the eager Quick agent, absent on a cold instance until this runs.
+        if user_id:
+            await self._agent_factory.ensure_agents_for_user(user_id)
 
         if attempt >= self._MAX_VIDEO_POLL_ATTEMPTS:
             logger.warning(f"[VideoGeneration] Polling timeout: request={request_id[:16]}")
@@ -1016,6 +1021,8 @@ class WorkerHandler:
             creds.needs_reconnect = True
             await self._oauth_credentials.save_credentials(creds)
             logger.warning(f"[Worker] Gmail marked needs_reconnect for {user_id[:8]}")
+            # notify() routes through the eager Quick agent, absent on a cold instance until this runs.
+            await self._agent_factory.ensure_agents_for_user(user_id)
             await self._notification.notify(
                 kind=NotificationKind.DOCUMENT_DELIVERY,
                 user_id=user_id,
