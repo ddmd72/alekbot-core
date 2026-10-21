@@ -35,6 +35,8 @@ _EXPECTED = {
     # helpers, and the collection-group orphan sweep kept apart from them (ruling T-R14)
     "transcript_queue", "transcript_wakeups", "jobs_by_content_key", "orphan_transcripts",
     "delete_user_transcript_jobs", "delete_user_batches", "delete_user_transcripts", "delete_user_transcript_orphans",
+    # transcript stage A (plan Task 12): in-flight `working` jobs and copy-waiting records, which neither queue returns
+    "transcript_records",
 }
 
 
