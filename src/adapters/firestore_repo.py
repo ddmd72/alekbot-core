@@ -236,7 +236,7 @@ class FirestoreFactRepository(FactRepository):
             "owner_id",
             # Optional fields used by callers
             "state", "domain", "tags", "context_priority",
-            "valid_from", "valid_to", "created_at", "updated_at",
+            "valid_from", "valid_to", "created_at", "last_updated",
             "source", "version", "language", "visibility",
             "reported_date", "is_current", "metadata",
         ])
@@ -487,7 +487,7 @@ class FirestoreFactRepository(FactRepository):
                 "account_id", "created_by_user_id", "lineage_id", "text", "type",
                 "owner_id",
                 "state", "domain", "tags", "context_priority",
-                "valid_from", "valid_to", "created_at", "updated_at",
+                "valid_from", "valid_to", "created_at", "last_updated",
                 "source", "version", "language", "visibility",
                 "reported_date", "is_current", "metadata",
             ])
