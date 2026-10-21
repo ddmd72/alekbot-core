@@ -90,3 +90,50 @@ def test_offset_three_is_outside_the_window():
 def test_configured_hour_out_of_range_is_none(bad):
     now = datetime(2026, 1, 15, 8, 12, tzinfo=timezone.utc)
     assert review_slot_date(now, ZoneInfo("UTC"), bad) is None
+
+
+def _expected_slot(local: datetime, hour: int):
+    """Independent oracle from local wall time: the date on which the window opened."""
+    if hour <= local.hour < hour + REVIEW_WINDOW_HOURS:
+        return local.date()
+    wrapped = hour + REVIEW_WINDOW_HOURS - 24
+    if wrapped > 0 and local.hour < wrapped:
+        return local.date() - timedelta(days=1)
+    return None
+
+
+@pytest.mark.parametrize("tz_name", _ZONES)
+@pytest.mark.parametrize("hour", _HOURS)
+@pytest.mark.parametrize(
+    "start",
+    [
+        datetime(2026, 6, 10, 0, 12, tzinfo=timezone.utc),
+        datetime(2026, 10, 23, 0, 12, tzinfo=timezone.utc),
+        datetime(2027, 3, 26, 0, 12, tzinfo=timezone.utc),
+    ],
+)
+def test_every_tick_slot_is_the_local_date_the_window_opened(tz_name, hour, start):
+    tz = ZoneInfo(tz_name)
+    for t in _ticks(start, 6):
+        assert review_slot_date(t, tz, hour) == _expected_slot(t.astimezone(tz), hour), t
+
+
+@pytest.mark.parametrize(
+    "tz_name,hour,now_utc,expected",
+    [
+        # Sydney 08:12 AEDT is 21:12 UTC the previous day: slot date is the local (later) date.
+        ("Australia/Sydney", 8, datetime(2026, 1, 14, 21, 12, tzinfo=timezone.utc), date(2026, 1, 15)),
+        ("Australia/Sydney", 8, datetime(2026, 1, 14, 23, 12, tzinfo=timezone.utc), date(2026, 1, 15)),
+        ("Australia/Sydney", 8, datetime(2026, 1, 15, 0, 12, tzinfo=timezone.utc), None),
+        # Madrid hour 0 (CET, UTC+1): 00:12 local is 23:12 UTC the previous day.
+        ("Europe/Madrid", 0, datetime(2026, 1, 14, 23, 12, tzinfo=timezone.utc), date(2026, 1, 15)),
+        ("Europe/Madrid", 0, datetime(2026, 1, 15, 1, 12, tzinfo=timezone.utc), date(2026, 1, 15)),
+        # Madrid hour 23: window 23:00 local on the 15th runs into the 16th local, UTC is 22:12 on the 15th.
+        ("Europe/Madrid", 23, datetime(2026, 1, 15, 22, 12, tzinfo=timezone.utc), date(2026, 1, 15)),
+        ("Europe/Madrid", 23, datetime(2026, 1, 15, 23, 12, tzinfo=timezone.utc), date(2026, 1, 15)),
+        ("Europe/Madrid", 23, datetime(2026, 1, 16, 0, 12, tzinfo=timezone.utc), date(2026, 1, 15)),
+        ("Europe/Madrid", 23, datetime(2026, 1, 16, 1, 12, tzinfo=timezone.utc), None),
+    ],
+)
+def test_window_crossing_utc_midnight_uses_local_date(tz_name, hour, now_utc, expected):
+    assert review_slot_date(now_utc, ZoneInfo(tz_name), hour) == expected

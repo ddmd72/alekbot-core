@@ -15,7 +15,7 @@ Responsibilities:
 
 from datetime import datetime, timedelta, timezone
 from typing import Any, List, Optional
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..domain.daily_review_window import EligibleReviewUser, review_slot_date
 from ..domain.email import OAuthCredentials
@@ -54,9 +54,20 @@ class EmailReviewService:
             cfg = profile.config
             if not cfg.gmail_daily_review:
                 continue
-            slot_date = review_slot_date(
-                now_utc, ZoneInfo(cfg.timezone or "UTC"), cfg.gmail_daily_review_hour
-            )
+            if not 0 <= cfg.gmail_daily_review_hour <= 23:
+                logger.warning(
+                    f"[EmailReview] invalid review hour {cfg.gmail_daily_review_hour!r} "
+                    f"for {user_id[:8]}, skipped"
+                )
+                continue
+            try:
+                user_tz = ZoneInfo(cfg.timezone or "UTC")
+            except (ZoneInfoNotFoundError, ValueError, KeyError):
+                logger.warning(
+                    f"[EmailReview] invalid timezone {cfg.timezone!r} for {user_id[:8]}, using UTC"
+                )
+                user_tz = ZoneInfo("UTC")
+            slot_date = review_slot_date(now_utc, user_tz, cfg.gmail_daily_review_hour)
             if slot_date is None:
                 continue
             eligible.append(EligibleReviewUser(user_id, profile.account_id, slot_date))

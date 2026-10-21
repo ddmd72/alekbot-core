@@ -359,3 +359,39 @@ class TestFindEligibleUsersWindow:
         user_repo.get_user = AsyncMock(return_value=_make_profile(hour=9))
 
         assert await svc.find_eligible_users(user_repo, now_utc) == []
+
+
+class TestFindEligibleUsersBadConfig:
+
+    async def _run(self, profiles):
+        svc, _, oauth = _make_service()
+        oauth.list_users_by_provider = AsyncMock(return_value=list(profiles))
+        user_repo = MagicMock()
+        user_repo.get_user = AsyncMock(side_effect=lambda uid: profiles.get(uid))
+        now_utc = datetime(2026, 1, 15, 10, 0, tzinfo=timezone.utc)
+        return await svc.find_eligible_users(user_repo, now_utc)
+
+    async def test_invalid_timezone_falls_back_to_utc_and_does_not_abort(self, caplog):
+        bad = _make_profile(hour=10, account_id="acc-bad")
+        bad.config.timezone = "Not/AZone"
+        good = _make_profile(hour=10, account_id="acc-good")
+        import logging
+        with caplog.at_level(logging.WARNING):
+            result = await self._run({"bad": bad, "good": good})
+        assert {u.user_id for u in result} == {"bad", "good"}
+        assert any("invalid timezone" in r.getMessage() for r in caplog.records)
+
+    async def test_malformed_timezone_value_error_falls_back(self):
+        bad = _make_profile(hour=10, account_id="acc-bad")
+        bad.config.timezone = "../etc"
+        result = await self._run({"bad": bad})
+        assert [u.user_id for u in result] == ["bad"]
+
+    async def test_hour_out_of_range_skipped_with_warning(self, caplog):
+        import logging
+        bad = _make_profile(hour=24, account_id="acc-bad")
+        good = _make_profile(hour=10, account_id="acc-good")
+        with caplog.at_level(logging.WARNING):
+            result = await self._run({"bad": bad, "good": good})
+        assert [u.user_id for u in result] == ["good"]
+        assert sum("invalid review hour" in r.getMessage() for r in caplog.records) == 1
