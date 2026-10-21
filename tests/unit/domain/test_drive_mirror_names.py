@@ -147,3 +147,11 @@ def test_driver_keys_numbers_only_without_words():
     word = [x for x in mixed.concepts if not x.is_number][0]
     assert driver_keys(mixed.concepts) == tuple(word.word_keys[:30])
     assert driver_keys(()) == ()
+
+
+def test_empty_parts_are_refused():
+    import pytest
+    with pytest.raises(ValueError):
+        place((), area_path="", root_path="r")
+    with pytest.raises(ValueError):
+        archive_place("2026-10-21", (), area_path="", root_path="r")
