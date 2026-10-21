@@ -211,9 +211,20 @@ class TestOpenAIFetchResponse:
         adapter = OpenAIDeepResearchAdapter(api_key="k")
         adapter._client = AsyncMock()
         adapter._client.responses.retrieve.return_value = MagicMock(
-            metadata={"user_id": "u"}, output_text="out", model="m")
+            metadata={"user_id": "u"}, output_text="out", model="m",
+            error=None, incomplete_details=None)
         got = await adapter.fetch_response("r1")
-        assert got == {"metadata": {"user_id": "u"}, "output_text": "out", "model": "m"}
+        assert got == {"metadata": {"user_id": "u"}, "output_text": "out", "model": "m",
+                       "error": None, "incomplete_details": None}
+
+    async def test_error_is_returned_as_dict(self):
+        adapter = OpenAIDeepResearchAdapter(api_key="k")
+        adapter._client = AsyncMock()
+        err = MagicMock()
+        err.model_dump.return_value = {"code": "server_error", "message": "x"}
+        adapter._client.responses.retrieve.return_value = MagicMock(
+            metadata={}, output_text="", model="m", error=err, incomplete_details=None)
+        assert (await adapter.fetch_response("r1"))["error"] == {"code": "server_error", "message": "x"}
 
 
 # --- deliver_deep_research follow-on task context -------------------------
@@ -234,3 +245,109 @@ class TestDeliverCarriesOrigin:
     async def test_no_overrides_leaves_keys_out(self):
         ctx = await self._context()
         assert "origin_channel_id" not in ctx and "origin_platform" not in ctx
+
+
+# --- round 2: event filter, dedup, empty user, incomplete -----------------
+
+class _FakeDedup:
+    def __init__(self):
+        self.claimed, self.released = set(), []
+
+    async def try_mark_processed(self, key):
+        if key in self.claimed:
+            return False
+        self.claimed.add(key)
+        return True
+
+    async def release(self, key):
+        self.claimed.discard(key)
+        self.released.append(key)
+
+
+_MD2 = {"user_id": "u", "account_id": "a", "query": "q",
+        "session_id": "u:C1", "origin_platform": "telegram"}
+
+
+async def _post2(event_type, data, *, fetch=None, dedup=None, notification=None, deliver_side=None):
+    notification = notification or AsyncMock()
+    app = Quart("t")
+    app.register_blueprint(create_deep_research_webhooks_blueprint(
+        notification_service=notification, webhook_secret=None, media_storage=MagicMock(),
+        task_queue=AsyncMock(), fetch_response=fetch, dedup_store=dedup))
+    with patch("src.web.deep_research_webhooks.deliver_deep_research",
+               new_callable=AsyncMock, side_effect=deliver_side) as deliver:
+        async with app.test_client() as c:
+            resp = await c.post("/webhooks/openai/deep-research",
+                                data=json.dumps({"type": event_type, "data": data}),
+                                headers={"Content-Type": "application/json"})
+    return resp, notification, deliver
+
+
+class TestEventFilter:
+    @pytest.mark.parametrize("event", ["batch.completed", "fine_tuning.job.succeeded", "realtime.call.incoming"])
+    async def test_other_families_are_acked_without_retrieval(self, event):
+        fetch = AsyncMock()
+        resp, notification, deliver = await _post2(event, {"id": "x1"}, fetch=fetch)
+        assert resp.status_code == 200
+        fetch.assert_not_called()
+        notification.notify.assert_not_called()
+        deliver.assert_not_called()
+
+
+class TestDedup:
+    async def test_claims_job_before_delivery(self):
+        dedup = _FakeDedup()
+        resp, _, deliver = await _post2(
+            "response.completed", {"id": "r1", "metadata": _MD2, "output_text": "t"}, dedup=dedup)
+        assert resp.status_code == 200
+        assert "openai_deep_research:r1" in dedup.claimed
+        deliver.assert_awaited_once()
+
+    async def test_duplicate_is_skipped_with_200(self):
+        dedup = _FakeDedup()
+        dedup.claimed.add("openai_deep_research:r1")
+        resp, notification, deliver = await _post2(
+            "response.completed", {"id": "r1", "metadata": _MD2, "output_text": "t"}, dedup=dedup)
+        assert resp.status_code == 200
+        deliver.assert_not_called()
+        notification.notify.assert_not_called()
+
+    async def test_delivery_raise_releases_claim_and_returns_500(self):
+        dedup = _FakeDedup()
+        resp, _, _ = await _post2(
+            "response.completed", {"id": "r1", "metadata": _MD2, "output_text": "t"},
+            dedup=dedup, deliver_side=RuntimeError("boom"))
+        assert resp.status_code == 500
+        assert dedup.released == ["openai_deep_research:r1"]
+        assert "openai_deep_research:r1" not in dedup.claimed
+
+    async def test_notify_raise_releases_claim_and_returns_500(self):
+        dedup = _FakeDedup()
+        notification = AsyncMock()
+        notification.notify.side_effect = RuntimeError("boom")
+        resp, _, _ = await _post2(
+            "response.failed", {"id": "r2", "metadata": _MD2}, dedup=dedup, notification=notification)
+        assert resp.status_code == 500
+        assert dedup.released == ["openai_deep_research:r2"]
+
+
+class TestEmptyUserAndIncomplete:
+    async def test_empty_user_acked_without_delivery(self):
+        fetch = AsyncMock(return_value={"metadata": {}, "output_text": "t"})
+        dedup = _FakeDedup()
+        resp, notification, deliver = await _post2(
+            "response.completed", {"id": "r3"}, fetch=fetch, dedup=dedup)
+        assert resp.status_code == 200
+        deliver.assert_not_called()
+        notification.notify.assert_not_called()
+        assert not dedup.claimed
+
+    async def test_incomplete_notifies_origin_channel(self):
+        fetch = AsyncMock(return_value={"metadata": _MD2,
+                                        "incomplete_details": {"reason": "max_output_tokens"}})
+        resp, notification, deliver = await _post2("response.incomplete", {"id": "r4"}, fetch=fetch)
+        assert resp.status_code == 200
+        kw = notification.notify.await_args.kwargs
+        assert kw["channel_id_override"] == "C1" and kw["platform_override"] == "telegram"
+        assert "incomplete" in kw["system_alert"]
+        deliver.assert_not_called()
