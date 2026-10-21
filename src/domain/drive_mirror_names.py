@@ -6,8 +6,15 @@ Names are compared case-insensitively after NFC (OneDrive refuses names that dif
 OneDrive counts them: the decoded path from the drive root, App Folder path included, as `/`-joined components with no
 leading slash.
 
+Several public classes in one module, by decision: Sibling, Placement and Move are the value types of one contract (the
+mirror's naming and ordering), read together as `drive_enrichment` does; the one-class rule is waived here on purpose.
+
+Notes. A losing cut name may exceed MIRROR_NAME_MAX by its suffix (S1 accepted 304 characters). Lengths are code points;
+an astral character counts 2 in UTF-16, which the per-action path-too-long route (Δ204, Δ216) covers. The temporary name
+of a cycle is not checked against static siblings: a 409 on it is non-destructive.
+
 Public interface:
-    root_name_candidates(), mirror_file_name(source_name), reserved_names(level)
+    fold(name), root_name_candidates(), mirror_file_name(source_name), reserved_names(level)
     Sibling, assign_names(siblings, reserved, taken)
     full_path_length(area_path, root_path, parts), fits(area_path, root_path, parts)
     Placement, place(...), archive_place(...)
@@ -17,12 +24,12 @@ Public interface:
 from __future__ import annotations
 
 import hashlib
-import unicodedata
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from .drive_index_params import MIRROR_NAME_MAX, MIRROR_PATH_MARGIN, ONEDRIVE_PATH_MAX
 from .drive_match import Concept
+from .user_drive import name_key
 from .drive_mirror import ARCHIVE_NAME, LONG_PATHS_NAME, README_NAME, ROOT_NAME
 
 LEVEL_ROOT = "root"
@@ -37,9 +44,7 @@ def _hex8(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:8]
 
 
-def fold(name: str) -> str:
-    """The comparison form of a name: casefold(NFC(name))."""
-    return unicodedata.normalize("NFC", name).casefold()
+fold = name_key     # the comparison form of a name: casefold(NFC(name)), one definition (user_drive)
 
 
 def root_name_candidates() -> Tuple[str, ...]:
@@ -138,6 +143,8 @@ class Placement:
 def place(active_parts: Sequence[str], *, area_path: str, root_path: str) -> Placement:
     """The active location, or `Long paths/<name>` when the path does not fit (§27.9.7)."""
     parts = tuple(active_parts)
+    if not parts:
+        raise ValueError("place: active_parts is empty")
     if fits(area_path, root_path, parts):
         return Placement(parts)
     return Placement((LONG_PATHS_NAME, parts[-1]), True)
@@ -145,6 +152,8 @@ def place(active_parts: Sequence[str], *, area_path: str, root_path: str) -> Pla
 
 def archive_place(day: str, active_parts: Sequence[str], *, area_path: str, root_path: str) -> Placement:
     """`Archive/<day>/<mirror path>`, or `Archive/<day>/Long paths/<name>` when it does not fit (§27.9.6, Δ189)."""
+    if not active_parts:
+        raise ValueError("archive_place: active_parts is empty")
     parts = (ARCHIVE_NAME, day, *active_parts)
     if fits(area_path, root_path, parts):
         return Placement(parts)
@@ -160,6 +169,10 @@ class Move:
     from_name: Optional[str]
     to_parent: str
     to_name: str
+
+    def __post_init__(self) -> None:
+        if (self.from_parent is None) != (self.from_name is None):
+            raise ValueError("Move: from_parent and from_name are both set or both None")
 
     @property
     def is_create(self) -> bool:

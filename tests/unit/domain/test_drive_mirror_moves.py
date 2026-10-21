@@ -67,34 +67,44 @@ def test_temp_name_shape():
 
 
 def _case(seed):
+    """Documents that stay put hold slots; movers and creations draw injective targets from every other slot, so
+    swaps, cycles, vacate-first chains into free names and creations waiting for a yield all occur."""
     rng = random.Random(seed)
-    parents = ["P", "Q"]
-    names = ["a", "B", "c", "D", "e"]
-    slots = [(p, n) for p in parents for n in names]
+    slots = [(p, n) for p in ("P", "Q") for n in ("a", "B", "c", "D", "e", "f")]
     rng.shuffle(slots)
-    n = rng.randint(2, 9)
-    src, dst = slots[:n], list(slots[:n])
-    rng.shuffle(dst)                                   # permutation of occupied slots: swaps, cycles, chains
-    extra = [s for s in slots[n:] if rng.random() < 0.5]
-    start, moves = {}, []
-    for i, (s, d) in enumerate(zip(src, dst)):
+    n_stay, n_move, n_create = rng.randint(0, 3), rng.randint(2, 6), rng.randint(0, 3)
+    held = slots[:n_stay + n_move]                       # stayers first, then the movers' start slots
+    stayers, starts = held[:n_stay], held[n_stay:]
+    pool = [s for s in slots if s not in stayers]       # a target is never a slot a stayer holds
+    targets = rng.sample(pool, min(len(pool), n_move + n_create))
+    start = {f"k{i}": s for i, s in enumerate(starts)}
+    moves = []
+    for i, d in enumerate(targets[:n_move]):
         if rng.random() < 0.15:
-            d = (d[0], d[1].swapcase())                # a case-only variant of the target
-        start[f"k{i}"] = s
-        moves.append(Move(f"k{i}", s[0], s[1], d[0], d[1]))
-    for j, s in enumerate(extra[:2]):                  # creations into free or vacated names
-        moves.append(Move(f"c{j}", None, None, s[0], s[1]))
+            d = (d[0], d[1].swapcase())                  # a case-only variant of the target
+        moves.append(Move(f"k{i}", starts[i][0], starts[i][1], d[0], d[1]))
+    for j, d in enumerate(targets[n_move:]):
+        moves.append(Move(f"c{j}", None, None, d[0], d[1]))
     rng.shuffle(moves)
+    for i, s in enumerate(stayers):
+        start[f"s{i}"] = s
     return start, moves
 
 
-@pytest.mark.parametrize("seed", range(200))
+@pytest.mark.parametrize("seed", range(300))
 def test_no_move_targets_a_name_held_at_its_step(seed):
     start, moves = _case(seed)
-    targets = [(m.to_parent, fold(m.to_name)) for m in moves]
-    if len(set(targets)) != len(targets):
-        pytest.skip("generated targets collide; assign_names guarantees distinct targets")
     ordered = order_moves(moves)
     end = _simulate(start, ordered)
     for m in moves:
         assert end[m.key] == (m.to_parent, m.to_name)
+    for k, s in start.items():
+        if k.startswith("s"):
+            assert end[k] == s
+
+
+def test_move_origin_is_both_or_neither():
+    with pytest.raises(ValueError):
+        Move("k", "P", None, "P", "x")
+    with pytest.raises(ValueError):
+        Move("k", None, "n", "P", "x")
