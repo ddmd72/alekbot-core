@@ -127,15 +127,17 @@ def v2_checks(repo: FirestoreDriveIndexRepository, user_id: str,
 
 def transcript_checks(repo: FirestoreDriveIndexRepository, user_id: str,
                       now: datetime) -> List[Tuple[str, Callable[[], Awaitable[object]]]]:
-    """The transcript reads (§27.3-§27.5, §27.8 b), all read-only: the two record queues, the copy check, the open
-    batches, the orphan listing, and the two collection-group reads the orphan sweep sends (`windows`, `parts`;
+    """The transcript reads (§27.3-§27.5, §27.8 b), all read-only: the record queues (queue, wake-ups, in-flight by state), the copy check, the open
+    batches, the orphan listing, the key-in-use check, and the two collection-group reads the orphan sweep sends (`windows`, `parts`;
     the sweep itself deletes, so only its query runs here)."""
     return [
         ("transcript_queue", lambda: repo.transcript_queue(user_id, 5)),
         ("transcript_wakeups", lambda: repo.transcript_wakeups(user_id, now, 5)),
+        ("transcript_records", lambda: repo.transcript_records(user_id, "working", 5)),
         ("jobs_by_content_key", lambda: repo.jobs_by_content_key(user_id, "smoke-key")),
         ("get_open_batches", lambda: repo.get_open_batches(user_id, now, 5)),
         ("orphan_transcripts", lambda: repo.orphan_transcripts(user_id, now, 5)),
+        ("transcript_key_in_use", lambda: repo.transcript_key_in_use(user_id, "smoke-key")),
         ("orphaned windows (collection group)",
          lambda: repo.user_subdoc_refs(repo.windows_group, user_id, 5)),
         ("orphaned parts (collection group)",

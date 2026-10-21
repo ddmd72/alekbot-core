@@ -1269,6 +1269,10 @@ class DriveTranscriptStage:
     async def _commit(self, host: TranscriptHost, rec: DriveIndexRecord, before: DriveIndexRecord) -> None:
         await host.commit([rec], {before.item_id: before})
 
+    async def delete_job_files(self, windows: Sequence[JobWindow]) -> None:
+        """The purge's best-effort delete of a job's provider files (G30: whatever stays expires within 48 h)."""
+        await self._delete_files(windows)
+
     async def _delete_files(self, windows: Sequence[JobWindow]) -> None:
         """Best effort (§27.5): a file that cannot be deleted expires at the provider within 48 h."""
         now = self._clock()
