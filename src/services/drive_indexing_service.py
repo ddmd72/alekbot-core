@@ -10,7 +10,8 @@ so a crash between writes repeats the step instead of skipping work.
 Public interface:
     DriveIndexingService(drive, repo, embeddings, queue, users, place_of, embedding_space, *, extractors=None,
                          triage=None, profiler=None, passages=None, upgrade_pass=True, transcripts=None,
-                         transcribe_enabled=False, transcribe_cap_usd=TRANSCRIBE_USD_PER_MONTH, clock, monotonic)
+                         transcribe_enabled=False, transcribe_cap_usd=TRANSCRIBE_USD_PER_MONTH, mirror_repo=None,
+                         clock, monotonic)
     await tick(user_id, nudge=None) -> TickResult
 
 `extractors` maps `drive_extraction.PARSER` / `READER` to their ContentExtractorPort and `triage` is the
@@ -50,6 +51,13 @@ otherwise every INACCESSIBLE_RETRY_SLOW (Δ51, OQ-C1); a readable answer clears 
 resumes. A parent lookup's 404 still removes an orphan (RFC Δ29) and a nudge's 404 writes nothing. The tick counts the
 marked files for the coverage line and the fan-out's notice (`_unread_counters`, Δ56); it never writes the fan-out's
 `inaccessible_notified_since` (Δ54).
+
+The transcript mirror's hooks (§27.9.2-§27.9.6, §27.9.12; plan Task 20B): `mirror_repo` is the DriveMirrorRepository. With
+it, the tick reads every root document of the user once at its start (`_TICK_MIRROR`), and the planner keeps those
+folders opaque (`PlanContext.mirror_root_ids`); every record write runs `mirror_plan`; every delete site passes the why
+of the deletes the mirror must hear of (`_mirror_notices`), and `_commit` writes the durable marks before the record
+writes (Δ208). The purge keeps the store entries the ledger pins and never writes the mirror collections. Without it,
+or for a user with no root document, none of this reads or writes anything beyond the one roots query.
 """
 from __future__ import annotations
 
@@ -62,7 +70,9 @@ import uuid
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Awaitable, Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple
+from typing import (
+    TYPE_CHECKING, Awaitable, Callable, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Set, Tuple,
+)
 
 from ..domain import drive_enrich_plan as enrich
 from ..domain.drive_accuracy import accuracy_settled, scored
@@ -113,6 +123,8 @@ from ..domain.drive_index_planner import (
     stale_versions, structure_stale, triage_due, triaged, with_card, with_retry, without_card,
 )
 from ..domain.drive_keys import word_form_keys, word_keys_capped
+from ..domain.drive_mirror import GONE, UNKNOWN, UNSTORED, DeletionNotice
+from ..domain.drive_mirror_plan import mirror_plan
 from ..domain.drive_profile import (
     PROFILE_POLICY, ProfileOutput, TemplateReason, input_fingerprint, profile_input, record_policy, stored_text,
     template_profile, grade, GradeCounts,
@@ -140,12 +152,13 @@ from ..domain.drive_transcript_job import SUBMITTED
 from ..domain.drive_usage import added_usage
 from ..domain.exceptions import LLMClientError, LLMError, LLMRateLimitError, LLMUnavailableError
 from ..domain.user_drive import (
-    DriveAccessDenied, DriveFileTooLarge, DriveItemNotFoundError, DriveNotConnectedError, DriveReauthRequired,
-    DriveResyncRequired, DriveThrottled,
+    DriveAccessDenied, DriveConnection, DriveFileTooLarge, DriveItemNotFoundError, DriveNotConnectedError,
+    DriveReauthRequired, DriveResyncRequired, DriveThrottled,
 )
 from ..ports.content_extractor_port import ContentExtractorPort
 from ..ports.document_profiler_port import DocumentProfilerPort
 from ..ports.drive_index_repository import DriveIndexRepository
+from ..ports.drive_mirror_repository import DriveMirrorRepository
 from ..ports.embedding_service import EmbeddingService
 from ..ports.image_triage_port import ImageTriagePort
 from ..ports.passage_hint_port import PassageHintPort
@@ -431,6 +444,33 @@ class _Marks:
 
 # Per tick: None when the last tick counted no marked file (nothing read at the start).
 _TICK_CLOSED: ContextVar[Optional[_Marks]] = ContextVar("drive_tick_closed", default=None)
+
+
+@dataclass
+class _PurgeStore:
+    """The purge run's pass over the transcript store (Δ214): the pinned content keys read at the purge's start, the
+    scanning helper's cursor (held in the run: a purge resumed by a later tick starts again) and whether it ended."""
+    pins: FrozenSet[str] = frozenset()
+    cursor: Optional[str] = None
+    done: bool = False
+
+
+@dataclass
+class _Mirror:
+    """The user's transcript mirror roots as the tick read them at its start (§27.9.2, Δ184, Δ205): `root_ids` is the
+    union of every root document's current and previous ids (what the planner keeps opaque); `current_ids` the current
+    roots, whose record going to `deleting` or being deleted sets the root-loss mark (a previous root triggers nothing,
+    §27.9.9); `gone_ids` the current roots whose mark is set (read at the start, then kept by this tick's own writes, so
+    a root record written back calls `clear_root_gone` only when there is a mark to clear); `drive_id` the mirror's drive
+    (`connection.drive_id`, else the sync state's; "" when neither is known)."""
+    root_ids: FrozenSet[str]
+    current_ids: FrozenSet[str]
+    gone_ids: Set[str]
+    drive_id: str
+
+
+# Per tick: None outside a tick or with no mirror repository wired (no root ids, no marks).
+_TICK_MIRROR: ContextVar[Optional[_Mirror]] = ContextVar("drive_tick_mirror", default=None)
 # What makes the tick read the marked records again for its counters: it changed a marking itself (review of S1)
 _MARK_CHANGES = ("inaccessible", "inaccessible_folders", "inaccessible_rechecked", "access_regained")
 
@@ -486,6 +526,7 @@ class DriveIndexingService:
                  passages: Optional[PassageHintPort] = None, upgrade_pass: bool = True,
                  transcripts: Optional["DriveTranscriptStage"] = None, transcribe_enabled: bool = False,
                  transcribe_cap_usd: float = TRANSCRIBE_USD_PER_MONTH,
+                 mirror_repo: Optional["DriveMirrorRepository"] = None,
                  clock: Callable[[], datetime] = _utcnow, monotonic: Callable[[], float] = time.monotonic) -> None:
         self._drive = drive
         self._repo = repo
@@ -507,6 +548,9 @@ class DriveIndexingService:
         # the month's transcription cap: `effective_monthly_cap(DRIVE_TRANSCRIBE_USD_CAP)`, decided by the composition
         # (T-R3; REQ-ARCH-17: a service reads no environment), the same value the stage is built with
         self._transcribe_cap = transcribe_cap_usd
+        # the transcript mirror's roots and ledger (§27.9.2-§27.9.4): the roots keep the bot's folder opaque, the ledger
+        # takes the deletion marks and holds the pins (the purge keeps what it pins); None: no mirror (nothing of it runs)
+        self._mirror_repo = mirror_repo
         self._clock = clock
         self._monotonic = monotonic
         self._gate_checked: Dict[str, float] = {}
@@ -565,7 +609,7 @@ class DriveIndexingService:
             if action is AccessAction.RESUME_AFTER_REGAIN:
                 state = replace(state, access_lost_at=None)
                 logger.info(f"[DriveIndex] access regained for {user_id[:8]}; continuing from the cursor")
-            return await self._run(user_id, state, nudge, now, enabled, summary, cont)
+            return await self._run(user_id, state, nudge, now, enabled, summary, cont, connection)
         except LeaseLost as exc:
             # another tick holds the lease, or this one's is ending: it carries on from the last saved state
             logger.info(f"[DriveIndex] tick for {user_id[:8]} stopped, its lease is gone: {exc}")
@@ -577,7 +621,8 @@ class DriveIndexingService:
                 await self._continue(user_id, tick_id, delay_seconds=cont.delay_s)
 
     async def _run(self, user_id: str, state: DriveSyncState, nudge: Optional[Nudge], now: datetime,
-                   enabled: bool, summary: Dict[str, int], cont: _Continuation) -> TickResult:
+                   enabled: bool, summary: Dict[str, int], cont: _Continuation,
+                   connection: Optional[DriveConnection] = None) -> TickResult:
         budget = _Budget(started=self._monotonic(), monotonic=self._monotonic)
         self._gate_checked[user_id] = budget.started   # the gate just read the flag
         state = replace(state, continuation_enqueued_at=None)
@@ -587,14 +632,16 @@ class DriveIndexingService:
                        await self._repo.get_initial_build(user_id))
         spend_token = _TICK_SPEND.set(spend)
         closed_token = _TICK_CLOSED.set(None)   # read inside the tick's error handling (_run_spending)
+        mirror_token = _TICK_MIRROR.set(None)   # read at the start of _run_spending, inside its error handling
         transcription = _Transcription(on=self._transcription_on(user_id))   # as the gate read it: kept for the tick
         if transcription.on:
             transcription.host = _TickHost(self, user_id, budget, models, summary, transcription)
         transcription_token = _TICK_TRANSCRIPTION.set(transcription)
         try:
             return await self._run_spending(user_id, state, nudge, now, enabled, budget, summary, cont, saved,
-                                            models, spend)
+                                            models, spend, connection)
         finally:
+            _TICK_MIRROR.reset(mirror_token)
             _TICK_TRANSCRIPTION.reset(transcription_token)
             _TICK_CLOSED.reset(closed_token)
             _TICK_SPEND.reset(spend_token)
@@ -618,6 +665,22 @@ class DriveIndexingService:
                 by_parent.setdefault(rec.parent_id, []).append(rec.item_id)
         return _Marks(records, {parent: tuple(kids) for parent, kids in by_parent.items()})
 
+    async def _start_mirror(self, user_id: str, state: DriveSyncState,
+                            connection: Optional[DriveConnection]) -> Optional[_Mirror]:
+        """Every root document of the user, read once at the tick's start (one query, §27.9.2, Δ205): after the purge
+        branch, so the first enumeration after any purge already keeps the bot's folder opaque. Whatever the switches
+        (classification is never gated by them). A backend error is `DriveIndexStoreUnavailable` and ends the tick;
+        there is no empty fallback, which would index the whole mirror during one enumeration."""
+        if self._mirror_repo is None:
+            return None
+        roots = await self._mirror_repo.roots(user_id)
+        current = frozenset(r.root_item_id for r in roots if r.root_item_id)
+        every = current | frozenset(p for r in roots for p in r.previous_root_ids if p)
+        drive_id = (connection.drive_id if connection is not None else "") or state.drive_id or ""
+        return _Mirror(root_ids=every, current_ids=current,
+                       gone_ids={r.root_item_id for r in roots if r.root_item_id and r.root_gone_at is not None},
+                       drive_id=drive_id)
+
     async def _end_marks(self, user_id: str, state: DriveSyncState, summary: Mapping[str, int], *,
                          settled: bool) -> Optional[List[DriveIndexRecord]]:
         """The marked records the counters are made from (Δ56, Δ71), or None to leave them uncounted. A settled tick
@@ -635,8 +698,11 @@ class DriveIndexingService:
 
     async def _run_spending(self, user_id: str, state: DriveSyncState, nudge: Optional[Nudge], now: datetime,
                             enabled: bool, budget: _Budget, summary: Dict[str, int], cont: _Continuation,
-                            saved: _Saved, models: _Models, spend: _Spend) -> TickResult:
+                            saved: _Saved, models: _Models, spend: _Spend,
+                            connection: Optional[DriveConnection] = None) -> TickResult:
         try:
+            # the roots first, before any observation: a read error ends the tick (systemic), never "no roots" (Δ205)
+            _TICK_MIRROR.set(await self._start_mirror(user_id, state, connection))
             _TICK_CLOSED.set(await self._start_marks(user_id, state))
             if nudge is not None:
                 await self._observe_nudge(user_id, state, nudge, now, budget, summary)
@@ -815,8 +881,10 @@ class DriveIndexingService:
         return state
 
     def _ctx(self, user_id: str, state: DriveSyncState, now: datetime) -> PlanContext:
+        mirror = _TICK_MIRROR.get()
         return PlanContext(user_id=user_id, root_item_id=state.root_item_id, epoch=state.epoch,
-                           phase=state.epoch_phase, now=now, place_of=self._place_of)
+                           phase=state.epoch_phase, now=now, place_of=self._place_of,
+                           mirror_root_ids=mirror.root_ids if mirror is not None else frozenset())
 
     async def _apply(self, user_id: str, ctx: PlanContext, changes: Sequence[DriveChange], budget: _Budget,
                      summary: Dict[str, int], *, relisting: bool = False, nudged: bool = False) -> None:
@@ -834,6 +902,7 @@ class DriveIndexingService:
         writes: Dict[str, DriveIndexRecord] = {}
         deletes: Set[str] = set()
         collects: Set[str] = set()
+        gone: Dict[str, str] = {}   # §27.9.4: a tombstone is `gone`, any other planner delete `unstored`
         for change in changes:
             try:
                 existing = cache.get(change.item_id)
@@ -857,9 +926,12 @@ class DriveIndexingService:
             if (nudged and plan.upsert is not None and plan.upsert.due_at is not None
                     and card_eligible(plan.upsert) and plan.upsert.card_hash != card_hash(plan.upsert)):
                 plan = replace(plan, upsert=schedule(plan.upsert, ctx.now, first_seen=False))
+            if plan.delete_item_id is not None and existing is not None:
+                gone.update(self._mirror_notices([existing], GONE if change.deleted else UNSTORED))
             self._fold(plan, cache, writes, deletes, collects)
         await self._observe_closed_children(user_id, ctx, changes, cache, writes, deletes)
-        await self._commit(user_id, list(writes.values()), deletes, collects=collects)
+        # a delete re-upserted later in the page left `deletes` (`_fold`): `_commit` drops its notice with it
+        await self._commit(user_id, list(writes.values()), deletes, collects=collects, gone=gone)
         summary["observed"] = summary.get("observed", 0) + len(changes)
 
     async def _observe_closed_children(self, user_id: str, ctx: PlanContext, changes: Sequence[DriveChange],
@@ -902,7 +974,10 @@ class DriveIndexingService:
     async def _maybe_probe(self, user_id: str, change: DriveChange, parent: Optional[DriveIndexRecord],
                            existing: Optional[DriveIndexRecord], ctx: PlanContext,
                            budget: _Budget) -> Optional[FolderProbe]:
-        if not needs_probe(change, parent_scope(change.parent_id, parent, ctx.root_item_id), existing):
+        if change.item_id in ctx.mirror_root_ids:
+            return None   # a mirror root is opaque whatever its density (§27.9.8): no probe call
+        if not needs_probe(change, parent_scope(change.parent_id, parent, ctx.root_item_id, ctx.mirror_root_ids),
+                           existing):
             return None
         if not budget.item_call_allowed():
             return None   # the folder waits as probe_pending; its children are held unresolved (§3.6)
@@ -934,7 +1009,8 @@ class DriveIndexingService:
     async def _commit(self, user_id: str, writes: List[DriveIndexRecord], deletes: Set[str],
                       card_vectors: Optional[Dict[str, List[float]]] = None, *,
                       collects: Optional[Set[str]] = None,
-                      before: Optional[Mapping[str, DriveIndexRecord]] = None) -> None:
+                      before: Optional[Mapping[str, DriveIndexRecord]] = None,
+                      gone: Optional[Mapping[str, str]] = None) -> None:
         """`collects`: items whose chunks (every generation) go before the records are written (§3.4, §7.6).
         `before`: the records the writes were derived from; a write that drops its readable generation collects it
         (drops_readable, R3 F2-2), so a caller holding the record never has to remember to.
@@ -943,7 +1019,15 @@ class DriveIndexingService:
         state, it only never stubs) and then the enrichment plan. While transcription is on for the user, the job of a
         record the write takes off it (`leaves_job`) or deletes is dropped first (`drop_jobs`: its reservation released
         once, T-R20: a job with a window in a batch is left to collection), so a crash between the two writes leaves a
-        record without a job (restarted by the stage), never a job holding money for a record that left."""
+        record without a job (restarted by the stage), never a job holding money for a record that left.
+
+        The transcript mirror (§27.9.4): `mirror_plan` runs after the transcript plan and before the enrichment plan.
+        `gone` is the why of the deletes that matter to the mirror (`_mirror_notices`: a mirrored record or a root),
+        decided at the call site; every caller that deletes passes it ({} when none matters). A delete not named there
+        is no notice; with `gone` None every delete is `unknown` (one read later, never wrong). While the user has a
+        root, the marks go before the record writes (Δ208: a crash leaves a mark for a record that still exists, which
+        the mirror clears, never a deleted record with no mark), and a root's record written back clears its mark after
+        it is written."""
         if before:
             dropped = {w.item_id for w in writes if drops_readable(before.get(w.item_id), w)}
             collects = (collects or set()) | dropped if dropped else collects
@@ -956,13 +1040,64 @@ class DriveIndexingService:
         ctx = self._enrich_ctx()
         tctx = self._transcript_ctx()
         # every write's plans: the transcript job's (§27.3), then the keys, enrichment jobs and queue fields (§25.4.9)
-        planned = [enrich.planned(transcript_plan(w, tctx), ctx) for w in writes]
+        planned = [enrich.planned(mirror_plan(transcript_plan(w, tctx)), ctx) for w in writes]
         await self._drop_transcript_jobs(user_id, writes, planned, deletes)
         writes = planned
+        mirror = _TICK_MIRROR.get()
+        if mirror is not None and mirror.root_ids:
+            await self._mark_mirror(user_id, mirror, writes, deletes, gone)
         for start in range(0, len(writes), RECORD_WRITE_BATCH):
             await self._repo.upsert_records(writes[start:start + RECORD_WRITE_BATCH], card_vectors)
+        if mirror is not None and mirror.gone_ids:
+            await self._clear_root_marks(user_id, mirror, writes)
         if deletes:
             await self._repo.delete_records(user_id, sorted(deletes))
+
+    def _mirror_notices(self, records: Iterable[DriveIndexRecord], why: str) -> Dict[str, str]:
+        """The deletes the mirror must hear of (§27.9.4), with their why: a record the mirror has written a file or a
+        folder for (`mirrored_digest`), or a mirror root's own record. Pure; `_commit` keeps the ones it deletes."""
+        mirror = _TICK_MIRROR.get()
+        roots = mirror.root_ids if mirror is not None else frozenset()
+        return {r.item_id: why for r in records if r.mirrored_digest or r.item_id in roots}
+
+    async def _mark_mirror(self, user_id: str, mirror: _Mirror, writes: Sequence[DriveIndexRecord], deletes: Set[str],
+                           gone: Optional[Mapping[str, str]]) -> None:
+        """The durable marks of one commit, behind the commit's fence (Δ208): `mark_gone` for the noticed file and folder
+        records (existing ledger documents of the mirror's drive only), `mark_root_gone` for a current root whose
+        record is deleted or written as `deleting` (§27.9.9). A previous root triggers nothing."""
+        repo = self._mirror_repo
+        if repo is None:
+            return
+        whys = {item: (gone.get(item) if gone is not None else UNKNOWN) for item in deletes}
+        noticed = {item: why for item, why in whys.items() if why}
+        lost = {item for item in noticed if item in mirror.current_ids}
+        lost |= {w.item_id for w in writes if w.item_id in mirror.current_ids and w.state is RecordState.DELETING}
+        now = self._clock()
+        marks = [DeletionNotice(item, why, now) for item, why in sorted(noticed.items())
+                 if item not in mirror.root_ids]
+        if marks:
+            _fence()
+            marked = await repo.mark_gone(user_id, marks, drive_id=mirror.drive_id)
+            logger.info(f"[DriveIndex] mirror notices for {user_id[:8]}: {len(marks)} sent, {marked} marked")
+        for root_id in sorted(lost - mirror.gone_ids):
+            _fence()
+            if await repo.mark_root_gone(user_id, root_id, now):
+                logger.warning(f"[DriveIndex] the transcript mirror root of {user_id[:8]} left the index; "
+                               f"root-loss mark set")
+            mirror.gone_ids.add(root_id)
+
+    async def _clear_root_marks(self, user_id: str, mirror: _Mirror, writes: Sequence[DriveIndexRecord]) -> None:
+        """A current root whose record is written back as not `deleting` (a recycle-bin restore, a move back in: the same
+        item id) clears its root-loss mark (§27.9.9, Δ203), after the record is written."""
+        repo = self._mirror_repo
+        if repo is None:
+            return
+        for root_id in sorted({w.item_id for w in writes if w.item_id in mirror.gone_ids
+                               and w.state is not RecordState.DELETING}):
+            _fence()
+            if await repo.clear_root_gone(user_id, root_id):
+                logger.info(f"[DriveIndex] the transcript mirror root of {user_id[:8]} is back; root-loss mark cleared")
+            mirror.gone_ids.discard(root_id)
 
     # ------------------------------------------------------------------------------------------
     # Work off (only after a complete round, RFC Δ15)
@@ -1016,7 +1151,8 @@ class DriveIndexingService:
                     for update in plan.parent_updates:
                         if update.item_id not in deletes:
                             writes[update.item_id] = update   # re-opened, with its re-listing due (durable)
-            await self._commit(user_id, list(writes.values()), deletes, collects=_ever_read(stale))
+            await self._commit(user_id, list(writes.values()), deletes, collects=_ever_read(stale),
+                               gone=self._mirror_notices(stale, GONE))   # not seen by a full enumeration: gone
             budget.cascade_ops -= len(stale)
             summary["swept"] = summary.get("swept", 0) + len(stale)
         return state
@@ -1206,7 +1342,7 @@ class DriveIndexingService:
             return False
         kids = await self._repo.children(user_id, folder.item_id, None, min(budget.cascade_ops, RECORD_WRITE_BATCH))
         if not kids:
-            await self._commit(user_id, [], {folder.item_id})
+            await self._commit(user_id, [], {folder.item_id}, gone=self._mirror_notices([folder], GONE))
             budget.cascade_ops -= 1
             summary["deleted"] = summary.get("deleted", 0) + 1
             return True
@@ -1217,7 +1353,8 @@ class DriveIndexingService:
                 return False   # worked in this page; the folder comes back in the next one
             await self._commit(user_id, [replace(folder, due_at=now + _STEP_ASIDE)], set())
             return True
-        await self._commit(user_id, dying, files, collects=_ever_read([k for k in kids if not k.is_folder]))
+        await self._commit(user_id, dying, files, collects=_ever_read([k for k in kids if not k.is_folder]),
+                           gone=self._mirror_notices([k for k in kids if not k.is_folder], GONE))
         budget.cascade_ops -= len(files) + len(dying)
         summary["deleted"] = summary.get("deleted", 0) + len(files)
         return True
@@ -1240,7 +1377,7 @@ class DriveIndexingService:
         parent = await self._parent_of(user_id, rec, ctx)
         plan = plan_observation(change_from_record(rec), replace(rec, attempts=0), parent, probe, ctx, parent,
                                 observed=False)
-        await self._commit_plan(user_id, plan)
+        await self._commit_plan(user_id, plan, rec)
         return True
 
     async def _resolve_step(self, user_id: str, rec: DriveIndexRecord, state: DriveSyncState, ctx: PlanContext,
@@ -1256,7 +1393,7 @@ class DriveIndexingService:
                                    set())
                 return True
             await self._commit_plan(user_id, plan_observation(change_from_record(rec), rec, parent, None, ctx, parent,
-                                                              observed=False))
+                                                              observed=False), rec)
             return True
         if not budget.item_call_allowed():
             return False
@@ -1283,7 +1420,7 @@ class DriveIndexingService:
             await self._remove_orphan(user_id, rec, ctx)
             return True
         grandparent = (await self._repo.get_records(user_id, [parent_change.parent_id])).get(parent_change.parent_id)
-        await self._commit_plan(user_id, plan_observation(parent_change, None, grandparent, None, ctx))
+        await self._commit_plan(user_id, plan_observation(parent_change, None, grandparent, None, ctx), None)
         return True
 
     async def _remove_orphan(self, user_id: str, rec: DriveIndexRecord, ctx: PlanContext) -> None:
@@ -1291,7 +1428,8 @@ class DriveIndexingService:
         if rec.is_folder:
             await self._commit(user_id, [_dying(rec, ctx.now)], set())
         else:
-            await self._commit(user_id, [], {rec.item_id}, collects=_ever_read([rec]))
+            await self._commit(user_id, [], {rec.item_id}, collects=_ever_read([rec]),
+                               gone=self._mirror_notices([rec], GONE))   # its parent is definitely not found
 
     async def _rescope_step(self, user_id: str, folder: DriveIndexRecord, ctx: PlanContext, budget: _Budget,
                             summary: Dict[str, int]) -> bool:
@@ -1313,7 +1451,8 @@ class DriveIndexingService:
         budget.cascade_ops -= max(len(kids), 1)
         current = cache.get(folder.item_id) or folder
         writes.pop(folder.item_id, None)
-        await self._commit(user_id, list(writes.values()), deletes, collects=collects)    # the children first ...
+        await self._commit(user_id, list(writes.values()), deletes, collects=collects,
+                           gone=self._mirror_notices(kids, UNSTORED))    # the children first ...
         done = len(kids) < limit
         if current.scope is folder.scope:
             current = replace(current, rescope_pending=not done, cascade_cursor=None if done else kids[-1].item_id)
@@ -1360,12 +1499,15 @@ class DriveIndexingService:
             return None
         return (await self._repo.get_records(user_id, [rec.parent_id])).get(rec.parent_id)
 
-    async def _commit_plan(self, user_id: str, plan: ObservationPlan) -> None:
+    async def _commit_plan(self, user_id: str, plan: ObservationPlan, source: Optional[DriveIndexRecord]) -> None:
+        """A re-plan of a stored record (`source`, the record the plan was made from; None for a record not stored
+        yet): a delete it decides is `unstored` for the mirror (§27.9.4)."""
         writes: Dict[str, DriveIndexRecord] = {}
         deletes: Set[str] = set()
         collects: Set[str] = set()
         self._fold(plan, {}, writes, deletes, collects)
-        await self._commit(user_id, list(writes.values()), deletes, collects=collects)
+        await self._commit(user_id, list(writes.values()), deletes, collects=collects,
+                           gone=self._mirror_notices([source] if source is not None else [], UNSTORED))
 
     # -- cards and the card cap (§5.4, §8.5) ---------------------------------------------------
 
@@ -2059,7 +2201,8 @@ class DriveIndexingService:
                                                     observed=False)), {}, writes, deletes, collects)
         if fresh.item_id not in writes and fresh.item_id not in deletes:
             writes[fresh.item_id] = _maintenance(schedule(current, ctx.now, first_seen=False))
-        await self._commit(user_id, list(writes.values()), deletes, collects=collects)
+        await self._commit(user_id, list(writes.values()), deletes, collects=collects,
+                           gone=self._mirror_notices([fresh], UNSTORED))
 
     async def _end_run(self, user_id: str, before: DriveIndexRecord, final: DriveIndexRecord, cls: Optional[int],
                        summary: Dict[str, int], mark: Optional[_RunMark] = None, *,
@@ -3290,7 +3433,8 @@ class DriveIndexingService:
             if rec.item_id not in deletes and self._stale(enrich.planned(writes.get(rec.item_id, rec),
                                                                          self._enrich_ctx()), pending):
                 found = True
-        await self._commit(user_id, list(writes.values()), deletes, collects=collects)
+        await self._commit(user_id, list(writes.values()), deletes, collects=collects,
+                           gone=self._mirror_notices(page, UNSTORED))
         summary["upgraded"] = summary.get("upgraded", 0) + len(writes)
         month = month_key(now) if held else ""
         if len(page) == _DUE_PAGE:
@@ -3316,6 +3460,7 @@ class DriveIndexingService:
             await self._save_state(replace(state, purging=True))
         budget = _Budget(started=self._monotonic(), monotonic=self._monotonic)
         keep = state.purge_keep_transcripts   # read at the purge's start: a rebuild keeps the store (§27.8 b)
+        store = _PurgeStore(pins=await self._purge_pins(user_id, keep))
         released = swept = docs_done = False
         while budget.time_left():
             _fence()
@@ -3323,11 +3468,12 @@ class DriveIndexingService:
                 await self._release_transcript_reservations(user_id, summary)
                 released = True
             if not docs_done:
-                if await self._purge_transcript_documents(user_id, keep, summary):
+                if await self._purge_transcript_documents(user_id, keep, summary, store):
                     continue
                 docs_done = True
             if not swept:   # T-R14: only after the three helpers returned 0, never failing or holding the purge
-                swept = await self._sweep_transcript_orphans(user_id, keep, summary)
+                # while any pin exists the sweep runs in its keep mode (windows only): a pinned entry keeps its parts
+                swept = await self._sweep_transcript_orphans(user_id, keep or bool(store.pins), summary)
                 if not swept:
                     continue
             hints = await self._repo.delete_user_hints(user_id, RECORD_WRITE_BATCH)   # hints first (§25.2.2)
@@ -3350,20 +3496,48 @@ class DriveIndexingService:
         cont.request()
         return TickResult("purging", summary)
 
-    async def _purge_transcript_documents(self, user_id: str, keep: bool, summary: Dict[str, int]) -> bool:
+    async def _purge_pins(self, user_id: str, keep: bool) -> FrozenSet[str]:
+        """The store entries the mirror ledger pins (§27.9.6, §27.9.12, Δ186, Δ217), read once at the purge's start: per
+        user, on every drive, so the access-loss and drive-switch purges keep an archived transcript too. A purge that
+        keeps the whole store (a rebuild) reads none; nor does a service with no mirror repository. Reads only: the
+        purge never writes the mirror collections."""
+        if keep or self._mirror_repo is None:
+            return frozenset()
+        return await self._mirror_repo.pinned_keys(user_id)
+
+    async def _purge_transcript_documents(self, user_id: str, keep: bool, summary: Dict[str, int],
+                                          store: Optional["_PurgeStore"] = None) -> bool:
         """One round of the purge's transcript deletes: the user's jobs (with their window results), then batches, then
-        the store unless `keep` (a rebuild keeps it). Repository only, with or without the stage. True when it deleted."""
+        the store unless `keep` (a rebuild keeps it). Repository only, with or without the stage. True when it deleted
+        (or, while pins exist, when the scan of the store has not reached its end).
+
+        With pins (`store.pins`, Δ186, Δ214) the store goes through the scanning helper `delete_user_transcripts_except`,
+        whose cursor the purge run holds: a page made only of pinned heads deletes nothing but is not the end, so the
+        helper is called until its cursor is None. Without pins it is the plain delete, as before T2."""
         for key, deleter in (("purged_transcript_jobs", self._repo.delete_user_transcript_jobs),
                              ("purged_transcript_batches", self._repo.delete_user_batches)):
             deleted = await deleter(user_id, RECORD_WRITE_BATCH)
             if deleted:
                 summary[key] = summary.get(key, 0) + deleted
                 return True
-        if not keep:
-            stored = await self._repo.delete_user_transcripts(user_id, RECORD_WRITE_BATCH)
-            if stored:
-                summary["purged_transcripts"] = summary.get("purged_transcripts", 0) + stored
-                return True
+        if keep:
+            return False
+        if store is not None and store.pins:
+            if store.done:
+                return False
+            stored, store.cursor = await self._repo.delete_user_transcripts_except(user_id, RECORD_WRITE_BATCH,
+                                                                                   store.pins, store.cursor)
+            _inc(summary, "purged_transcripts", stored)
+            if store.cursor is None:
+                store.done = True
+                kept = len(store.pins)
+                logger.info(f"[DriveIndex] purge of {user_id[:8]} kept the store entries of {kept} pinned "
+                            f"transcript{'s' if kept != 1 else ''} (the mirror's archive)")
+            return stored > 0 or not store.done
+        stored = await self._repo.delete_user_transcripts(user_id, RECORD_WRITE_BATCH)
+        if stored:
+            summary["purged_transcripts"] = summary.get("purged_transcripts", 0) + stored
+            return True
         return False
 
     async def _sweep_transcript_orphans(self, user_id: str, keep: bool, summary: Dict[str, int]) -> bool:
