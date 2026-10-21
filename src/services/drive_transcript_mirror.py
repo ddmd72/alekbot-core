@@ -1753,28 +1753,36 @@ class DriveTranscriptMirror:
         """An item of the active tree moved or renamed by hand goes back where the ledger has it (one PATCH of an item
         the bot created, to a destination inside the root). A taken name or a vanished destination: the document
         follows the item and its record is made due, so step 4 places it with the name rules (yields, suffixes,
-        chains). A folder with a pending gone mark (a prune waiting) is not re-pointed: its ledger place stays and the
-        mark is held, since no record would place it again. True when the item is back."""
+        chains). A document with a pending gone mark (a prune waiting) is not re-pointed: its ledger place stays and it is
+        charged (`charged_doc`: back-off, then parked for MIRROR_FAILED_RETRY, the mark held to match), since no record
+        would place it again. True when the item is back."""
         if not doc.mirror_parent_id:
             return False
         await self._ensure_inside(ctx, doc.mirror_parent_id)
-        self._take_op(ctx)
         new_parent = doc.mirror_parent_id if change.parent_id != doc.mirror_parent_id else None
         new_name = doc.mirror_name if change.name != doc.mirror_name else None
         if new_parent is None and new_name is None:
-            # `_ensure_inside` above already moved an ancestor of ours back: this item sits where the ledger has it
+            # `_ensure_inside` above already moved an ancestor of ours back: this item sits where the ledger has it,
+            # and no PATCH is sent, so no op is spent
             if doc.kind != KIND_FILE:
                 ctx.inside[doc.mirror_item_id] = True
             return True
+        self._take_op(ctx)
         try:
             item = await self._drive.move(ctx.user_id, doc.mirror_item_id, new_parent_id=new_parent,
                                           new_name=new_name)
         except (DriveNameConflictError, DriveItemNotFoundError):
             ctx.counters["mirror_move_back_blocked"] += 1
             if doc.gone_pending:
-                # a folder waiting to be pruned has no record to place it again: the ledger keeps where it belongs
-                # and the mark is held, so a later tick tries the way back (and then the prune) once more
-                await self._save_doc(ctx, mark_held(replace(doc, audit_seen_at=ctx.now), ctx.now + ANCESTOR_HOLD))
+                # a document waiting for its mark or prune has no record to place it again: the ledger keeps where it
+                # belongs and the document is charged like `_prune`'s own failure: back-off, then parked for
+                # MIRROR_FAILED_RETRY. The mark is held to the same time, so it is not ready (and takes no reserve)
+                # while backed off or parked
+                new = charged_doc(replace(doc, audit_seen_at=ctx.now), ctx.now)
+                if new.failed_at is not None and doc.failed_at is None:
+                    ctx.counters["mirror_failed"] += 1
+                held_until = new.failed_at + plan.MIRROR_FAILED_RETRY if new.failed_at is not None else new.retry_at
+                await self._save_doc(ctx, mark_held(new, held_until) if held_until is not None else new)
                 return False
             await self._save_doc(ctx, replace(doc, mirror_parent_id=change.parent_id, mirror_name=change.name,
                                               audit_seen_at=ctx.now))
