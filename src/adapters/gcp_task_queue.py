@@ -62,6 +62,7 @@ class GcpTaskQueue(TaskQueue):
         delay_seconds: int = 0,
         trace_headers: Optional[Dict[str, str]] = None,
         busy_requeues: int = 0,
+        task_name: Optional[str] = None,
     ) -> str:
         try:
             payload = {
@@ -89,6 +90,9 @@ class GcpTaskQueue(TaskQueue):
                 }
             }
 
+            if task_name:
+                task["name"] = self.client.task_path(self.project_id, self.location, self.queue_name, task_name)
+
             if self.service_account_email:
                 task["http_request"]["oidc_token"] = {
                     "service_account_email": self.service_account_email
@@ -101,12 +105,17 @@ class GcpTaskQueue(TaskQueue):
                 )
                 task["schedule_time"] = timestamp
 
-            response = await self._create_task(
-                request={
-                    "parent": self.queue_path,
-                    "task": task
-                }
-            )
+            try:
+                response = await self._create_task(
+                    request={
+                        "parent": self.queue_path,
+                        "task": task
+                    }
+                )
+            except AlreadyExists:
+                # A timed-out earlier attempt (or the platform's retry) already queued this exact event.
+                logger.info(f"📬 Slack task {task_name} already queued, treating as enqueued")
+                return task_name or ""
 
             return response.name
 

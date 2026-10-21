@@ -37,8 +37,18 @@ from ...utils.telemetry import (
 from ...utils.logging_context import set_log_context
 
 
+BUSY_WAIT_S = 100  # in-process wait for the session lock; above the 90 s long-turn mark that releases it
 BUSY_REQUEUE_DELAY_S = 15
 BUSY_MAX_REQUEUES = 12  # 3 min: outlasts the 90 s long-turn mark that releases the lock
+# Residuals: a third+ message behind two long turns can exhaust the re-queues and gets the notice;
+# repeated failed re-queues during a Cloud Tasks outage lose the message (ERROR log).
+
+
+def _task_name(event_id: Optional[str], requeues: int = 0) -> Optional[str]:
+    if not event_id:
+        return None
+    base = f"slack-{hashlib.sha256(event_id.encode()).hexdigest()[:32]}"
+    return f"{base}-r{requeues}" if requeues else base
 
 
 class HTTPModeAdapter(SlackAdapter):
@@ -133,7 +143,6 @@ class HTTPModeAdapter(SlackAdapter):
         return self.blueprint
 
     async def _handle_slack_event(self):
-        marked_event_id: Optional[str] = None
         try:
             body = cast(bytes, await request.get_data())  # raw body: signature check needs bytes
             headers = dict(request.headers)
@@ -165,12 +174,6 @@ class HTTPModeAdapter(SlackAdapter):
             }):
                 logger.info(f"📨 Event received: type={event_type}")
 
-                # Atomic check-and-set to prevent race conditions during Slack retries
-                if not await self.dedup_store.try_mark_processed(event_id):
-                    logger.info(f"⏭️ Duplicate event {event_id[:16]}... skipped")
-                    return jsonify({"ok": True}), 200
-                marked_event_id = event_id
-
             session_id = (
                 event.get("thread_ts") or
                 event.get("ts") or
@@ -194,19 +197,16 @@ class HTTPModeAdapter(SlackAdapter):
             await self.task_service.enqueue_slack_event(
                 event_data=event_data,
                 session_id=session_id,
-                trace_headers=trace_headers
+                trace_headers=trace_headers,
+                # Named task: Slack's retry of the same event_id is ALREADY_EXISTS (success), not a duplicate turn.
+                # Slack retries land within minutes, inside Cloud Tasks' name-reuse hold (>= ~1 h after completion).
+                task_name=_task_name(event_id),
             )
 
             return jsonify({"ok": True}), 200
 
         except Exception as e:
             logger.error(f"❌ Error handling Slack event: {e}", exc_info=True)
-            if marked_event_id:
-                # Un-mark so Slack's retry is not skipped as a duplicate (the message would be lost).
-                try:
-                    await self.dedup_store.release(marked_event_id)
-                except Exception as release_error:
-                    logger.error(f"❌ Could not release Slack intake mark: {release_error}", exc_info=True)
             return jsonify({"error": str(e)}), 500
 
     async def handle_queued_event(self, payload: Dict[str, Any], headers: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
@@ -241,9 +241,13 @@ class HTTPModeAdapter(SlackAdapter):
                 self._session_locks[session_id] = lock
 
             if lock.locked():
-                return await self._requeue_busy(payload, event_data, session_id, headers)
-
-            await lock.acquire()
+                # asyncio.Lock is FIFO, so waiters on one instance keep arrival order.
+                try:
+                    await asyncio.wait_for(lock.acquire(), BUSY_WAIT_S)
+                except asyncio.TimeoutError:
+                    return await self._requeue_busy(payload, event_data, session_id, headers)
+            else:
+                await lock.acquire()
             released = False
 
             def release_lock() -> None:
@@ -305,6 +309,7 @@ class HTTPModeAdapter(SlackAdapter):
                 delay_seconds=BUSY_REQUEUE_DELAY_S,
                 trace_headers=trace_headers or None,
                 busy_requeues=requeues + 1,
+                task_name=_task_name(event_data.get("event_id"), requeues + 1),
             )
         except Exception as e:
             logger.error(f"❌ Busy re-queue failed: {e}", exc_info=True)
