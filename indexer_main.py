@@ -75,6 +75,9 @@ from src.composition.drive_indexing_setup import (
     build_drive_index_repository, build_drive_mirror_repository, build_drive_task_queue, build_place_lookup,
 )
 from src.composition.drive_model_setup import build_drive_mirror, build_drive_models, build_drive_transcription
+from src.composition.drive_note_setup import (
+    DRIVE_NOTES_ENABLED_ENV, build_drive_note_lifecycle, build_drive_note_repository, drive_notes_enabled,
+)
 from src.composition.memory_telemetry_setup import build_memory_telemetry
 from src.composition.prompt_assembly_setup import build_prompt_assembly_service
 from src.config.environment import EnvironmentConfig
@@ -155,6 +158,10 @@ def build_app() -> Quart:
         enabled=transcribe_on and transcripts is not None, repo=index_repo, mirror_repo=mirror_repo, drive=drive,
         users=users, account_repo=account_repo, profile_repo=profile_repo, assembly_service=assembly_service,
     )
+    # Owner notes (DRIVE_FILE_NOTES_RFC §7): the archive checks and the daily audit, only with the kill switch on (§3.6)
+    note_lifecycle = build_drive_note_lifecycle(
+        enabled=drive_notes_enabled(os.environ.get(DRIVE_NOTES_ENABLED_ENV)),
+        notes=build_drive_note_repository(db, env_config), index=index_repo, drive=drive)
     indexing = DriveIndexingService(
         drive=drive,
         repo=index_repo,
@@ -177,6 +184,7 @@ def build_app() -> Quart:
         mirror=mirror.mirror,
         localization=mirror.localization,
         language=mirror.language,
+        note_lifecycle=note_lifecycle,
     )
 
     app.register_blueprint(create_indexer_worker_blueprint(indexing, gate))

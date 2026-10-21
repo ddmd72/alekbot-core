@@ -785,3 +785,11 @@ def golden_digest() -> str:
     out.append(about_keys_of(rec))
     return hashlib.sha256(repr(out).encode("utf-8")).hexdigest()
 
+
+
+# -- owner notes (DRIVE_FILE_NOTES_RFC §5.4) -------------------------------------------------------------------------
+
+def note_keys(text: str, doc_type: str = "", life_areas: Sequence[str] = ()) -> Tuple[str, ...]:
+    """STUB (part C's worktree only): part B owns the note keyer of §5.4 (classifiers, numbers and dates, words, under
+    `AboutField.OWNER_NOTE`) and replaces this. Until then a note is matched by its file's name keys alone."""
+    return ()

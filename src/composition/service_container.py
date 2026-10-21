@@ -57,12 +57,14 @@ from ..adapters.microsoft import OneDriveAdapter
 from ..adapters.microsoft.todo_adapter import MicrosoftToDoAdapter
 from ..ports.drive_index_repository import DriveIndexRepository
 from ..ports.drive_mirror_repository import DriveMirrorRepository
+from ..ports.drive_note_repository import DriveNoteRepository
 from ..ports.task_queue import TaskQueue
 from ..ports.user_drive_port import UserDrivePort
 from ..services.user_drive_service import UserDriveService
 from ..adapters.firestore_user_repo import FirestoreUserRepository
 from ..services.drive_search_service import DriveSearchService
 from .drive_indexing_setup import build_drive_index_repository, build_drive_mirror_repository, build_drive_task_queue
+from .drive_note_setup import add_drive_note_deleted_source, build_drive_note_repository
 from ..services.task_indexing_service import TaskIndexingService
 from ..adapters.gcs_file_storage_adapter import GcsFileStorageAdapter
 from ..adapters.gcs_workspace_adapter import GcsWorkspaceAdapter
@@ -201,6 +203,7 @@ class ServiceContainer:
         # flag is read from Firestore on every search, never from the agent cache, so the service gets
         # its own (uncached) user repository.
         self.drive_search_service: Optional[DriveSearchService] = None
+        self.drive_note_repo: Optional[DriveNoteRepository] = None   # owner notes (DRIVE_FILE_NOTES_RFC §3.1)
         # The transcription kill switch as the indexer sees it (os.getenv: an optional knob, not a secret): the Cabinet
         # shows the transcription disclosure only while it is on (same values as indexer_main.transcribe_enabled).
         self.drive_transcribe_switch_on: bool = (
@@ -214,6 +217,11 @@ class ServiceContainer:
                 transcribe_cap_usd=effective_monthly_cap(os.getenv("DRIVE_TRANSCRIBE_USD_CAP")),
                 mirror=self.drive_mirror_repo,
             )
+            # Owner notes on deleted files join the same deleted-files section (DRIVE_FILE_NOTES_RFC §6.4, §0.3); a
+            # read, so added whatever DRIVE_NOTES_ENABLED says (§3.6). Part A's DriveNoteService uses the same store.
+            self.drive_note_repo = build_drive_note_repository(db_client, env_config)
+            add_drive_note_deleted_source(self.drive_search_service, self.drive_note_repo, self.embedding_service,
+                                          embedding_space=GeminiEmbeddingAdapter.EMBEDDING_SPACE)
 
         self.notes_adapter = FirestoreAgentNoteAdapter(db_client, env_config)
         self.recurrence_adapter = DateutilRecurrenceAdapter()

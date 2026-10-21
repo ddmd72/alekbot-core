@@ -18,7 +18,7 @@ Public interface:
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import Collection, Iterable, List, Optional, Sequence, Tuple
+from typing import Collection, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from .drive_keys import word_keys
 from .drive_match import Concept
@@ -110,7 +110,7 @@ def merge_hits(hits: Sequence[DeletedHit]) -> List[DeletedHit]:
     lines and its note line to that entry (the earlier hit's head, wrapper ref and drive file stay); hits without a key
     stay as they are. Order kept."""
     merged: List[DeletedHit] = []
-    at: dict = {}
+    at: Dict[str, int] = {}
     for hit in hits:
         index = at.get(hit.item_key) if hit.item_key else None
         if index is None:
