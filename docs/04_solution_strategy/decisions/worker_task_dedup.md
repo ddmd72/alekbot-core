@@ -40,8 +40,8 @@ whatever the trigger.
    - The next duplicate will therefore show whether it was a retry or a redelivery.
 2. **Claim by task name, in `WorkerHandler.handle`, for every Cloud Tasks delivery.**
    - `WorkerHandler` atomically creates a claim document named after the task
-     (`{prefix}worker_task_dedup`, `DedupStore.try_mark_processed`, TTL 1800 s, which is the longest
-     `dispatch_deadline` Cloud Tasks allows) before dispatching.
+     (`{prefix}worker_task_dedup`, `TaskClaimStore`, fields `holder` = process id, `attempt` = uuid per
+     delivery, `state` = `running`|`done`, `expires_at` = now + 3600 s, garbage collection only) before dispatching.
    - A delivery that finds a claim returns 200 `{"status": "duplicate"}` and runs nothing.
    - **The claim is released when the attempt raises, returns >= 500, or returns 429** (queued Slack
      event, session busy). Cloud Tasks retries those, and the retry must run. Other results keep the
@@ -66,15 +66,24 @@ whatever the trigger.
 
 ## Cost of the choice
 
-If an instance dies mid-task (OOM) without raising, the claim stays. A redelivery within 30 minutes
-is then skipped and the task is lost. Before this change it would have re-run. This is rare, and an
-OOM would likely repeat on a re-run anyway. This residual now also covers chat turns (queued Slack
-events, `telegram_update`), which were never claimed before.
+**A claim knows its holder; a dead attempt's claim is taken over.** The main service runs at most one
+instance (`--max-instances=1`), and `LongTurnService.check_retry` already reads "running but not live in
+this process" as a dead attempt. `try_claim` therefore decides:
+- same `attempt` (the SDK retried a create that landed) -> ours; `state=done` -> duplicate;
+- `running` and held by this process while the key is in its in-memory running set -> a true concurrent
+  duplicate; any other `running` claim (another process, or this one but not running here) -> dead
+  attempt, taken over with a `last_update_time` precondition (one winner); an expired claim likewise.
+- A 2xx/4xx result marks the claim `done` (a redelivery within 1 h is a duplicate); release (raise, >= 500, 429)
+  and `done` act only when the doc still carries our `attempt`.
+- An OOM mid-task no longer loses the task: the retry takes over and runs, and chat turns reach
+  `ConversationHandler`'s long-turn retry check. Assumption: one instance. A redelivery during a rolling
+  deploy overlap can run a task twice (accepted, as for `LongTurnService`).
+- An attempt cancelled by the dispatch deadline (the connection closes, Quart cancels) releases its
+  claim and is retried, which is Cloud Tasks' intent.
 
 A task still running past its dispatch deadline (`companion_consolidation` sets 600 s explicitly; `email_indexing` and agent tasks without a
 manifest deadline get the 600 s default; the Cloud Run timeout is 1800 s)
-gets Cloud Tasks' retry at the deadline acked as a duplicate. If the original then fails, nothing
-retries it (the consolidation sweeps cover consolidation).
+is cancelled at the deadline (see above); its retry runs.
 
 ## Deployment
 
