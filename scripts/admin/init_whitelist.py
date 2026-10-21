@@ -10,7 +10,13 @@ Usage:
 import os
 import asyncio
 import argparse
+import sys
+from pathlib import Path
+
 from google.cloud import firestore
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+from scripts._firestore import sync_client  # noqa: E402
 
 # Populate via environment variables before running.
 # Example: ADMIN_EMAILS="you@example.com,other@example.com" ADMIN_DOMAIN="example.com"
@@ -27,7 +33,7 @@ INITIAL_WHITELIST = {
 
 async def init_whitelist(env: str = "dev"):
     """Initialize whitelist in Firestore using ADR-006 semantic naming."""
-    db = firestore.Client()
+    db = sync_client()
     
     # ADR-006: Semantic Collection Naming
     # Dev: development_domain_whitelist_v1
