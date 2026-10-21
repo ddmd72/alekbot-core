@@ -60,6 +60,7 @@ def create_user_cabinet_blueprint(
     user_drive: Optional[UserDrivePort] = None,
     drive_search_service: Optional[DriveSearchService] = None,
     drive_task_queue: Optional[TaskQueue] = None,
+    drive_transcribe_switch_on: bool = False,
 ) -> Blueprint:
     """
     Create and configure the User Cabinet Blueprint.
@@ -1294,6 +1295,9 @@ def create_user_cabinet_blueprint(
         }
 
     async def _transcribe_enabled(user_id: str) -> bool:
+        # The disclosure says "transcription on": true only when the kill switch is on too (the indexer's DRIVE_TRANSCRIBE_ENABLED).
+        if not drive_transcribe_switch_on:
+            return False
         try:
             user = await user_repo.get_user(user_id)
             return bool(user is not None and user.config.drive_transcribe_enabled is True)

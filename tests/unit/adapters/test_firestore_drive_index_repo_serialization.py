@@ -82,7 +82,8 @@ def full_record() -> DriveIndexRecord:
         transcript_state="waiting", transcript_key="q:4096", transcript_version=1,
         transcript_wake_at=T + timedelta(hours=9), transcript_attempts=2, transcript_hold="budget",
         transcript_hold_version="1:q:4096", transcript_stub="too_long", transcript_seconds=3725,
-        transcript_speakers=3, transcript_languages=("uk", "en"), transcript_body_version=1)
+        transcript_speakers=3, transcript_languages=("uk", "en"), transcript_body_version=1,
+        transcript_truncated=True)
 
 
 def full_state() -> DriveSyncState:

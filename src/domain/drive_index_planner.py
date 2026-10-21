@@ -360,7 +360,7 @@ def _collapsed(change: DriveChange, cls: Classification) -> bool:
 
 def _readme_due(existing: Optional[DriveIndexRecord], rec: DriveIndexRecord) -> bool:
     """Every collapsed folder (any opaque_root reason, §25.3) reads its README when it becomes one, when its child
-    count moves (a README added, removed or renamed) or under a new policy; never on a PROFILE_VERSION bump, which
+    count moves (a README added, removed or renamed) or when its record predates STRUCTURE_POLICY_SINCE (a media-only POLICY_VERSION bump does not count); never on a PROFILE_VERSION bump, which
     re-profiles from the stored excerpt; only once text content is admitted (§5.2)."""
     if not collapsed_folder(rec) or not readme_readable():
         return False

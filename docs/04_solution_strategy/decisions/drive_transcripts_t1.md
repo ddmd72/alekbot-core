@@ -1,7 +1,7 @@
 # Decision: Audio and video are transcribed by a stage with its own job model (Gemini Batch), behind two switches and a hard cap
 
 **Date:** 2026-10-21
-**Status:** Accepted; T1 built on `feat/drive-transcripts`, not deployed. T2 (mirror folder) and T3 (summary) not built.
+**Status:** Accepted; T1 live since 2026-10-21 (owner only, $10 monthly cap). T2 (mirror folder) and T3 (summary) not built.
 **Supersedes:** [drive_audio_video_deferred.md](drive_audio_video_deferred.md) for audio and video (that record said transcripts would
 arrive "through the extractor seam"; they did not, see below). It stays correct for everything else it names.
 **Context:** [USER_DRIVE_INDEXING_RFC.md](../../10_rfcs/USER_DRIVE_INDEXING_RFC.md) §27 (owner decisions D41–D47 in §21; the 38 engineering
@@ -66,6 +66,8 @@ cap and the $0.30/h estimate (T-R19); a job with a submitted window is left to c
 idempotency (T-R22); all-gap files are not finalized (T-R23); card-capped records are not candidates (T-R24); the purge books in-flight reservations (T-R25).
 
 After the first live run (2026-10-21), two more rulings: the output cap has a 4 096-token floor and every window reserves its own worst case (audio input, prompt and output cap at the held batch price), because thinking tokens exhausted a 134-token cap on an 8 s window (Δ174, T-R26); a coverage failure that ended with `STOP` is resubmitted once without counting an attempt and a second one is accepted, because recordings that end in silence failed on every attempt (Δ175, T-R27; known limit: the accepted short answer skips the interpolation-share check).
+
+After the whole-branch review (2026-10-21), seven more rulings (Δ176–Δ182): a batch is recorded as `submitting` before the send and an ambiguous send error is resolved by finding the batch by display name, else released once (T-R28); a poll client error books its reservations, never releases (T-R29); a copy waits while a same-key record is working, waiting, parked or held (T-R30); coverage tolerance is `max(0.1 × window, 60 s)`, a second short STOP is accepted for any window, and above 300 s it is stored as possibly incomplete (truncated) and shown as possibly incomplete on the card and in the opened text (T-R31, narrows T-R27); avi, asf, aiff, amr and flv are allowlisted, `crypto` is removed, the process group is always killed and `RLIMIT_NPROC` is 256 (T-R32); CI installs ffmpeg (T-R33); `make deploy` refuses without an explicit switch and the main service receives it for the Cabinet disclosure (T-R34).
 
 **Trigger to revisit:** the zero-credential parser service exists (turn the flag on for a second user), the first live eval records its bars (revisit
 the window length and the cap), or the promotional price window ends and the held price stops being conservative.

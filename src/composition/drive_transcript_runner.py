@@ -15,7 +15,9 @@ Public interface:
 `submit` builds the prompt once for the whole submission and turns every window into one request that carries the
 uploaded file's NAME (never a URL). `collect` parses each result with the agent and bills the user's account at once,
 priced by `BatchUsage.cost()` (reported as `WindowResult.usd` whatever the account write does) through `QuotaService.record_usage` (no execution billing scope spans hours, Δ105; no
-(model, batch) `ModelUsage` leg, G36). A result without usage bills nothing and logs a WARNING (count only). Nothing
+(model, batch) `ModelUsage` leg, G36). A result without usage bills nothing and logs a WARNING (count only); results
+whose text input passed the reservation's per-window allowance (TRANSCRIBE_WINDOW_PROMPT_TOKENS) log one ERROR per
+collect (counts only). Nothing
 from a transcript, a file name or a URL is logged (§27.12). Which outcome costs the file an attempt is the stage's
 decision (T-R18): `invalid` and a non-refused `error` are failed attempts, `refused` is a gap marker.
 """
@@ -26,6 +28,7 @@ from typing import Dict, Mapping, Optional, Sequence, Tuple
 from ..agents.drive_transcriber_agent import AGENT_TYPE, DriveTranscriberAgent
 from ..domain.agent import AgentConfig
 from ..domain.batch_transcription import BatchRef, BatchResult
+from ..domain.drive_index_params import TRANSCRIBE_WINDOW_PROMPT_TOKENS
 from ..domain.drive_transcript import WindowInput, WindowOutcome, WindowResult
 from ..infrastructure.drive_model_call import DriveOutputInvalid, build_drive_prompt
 from ..ports.batch_transcription_port import BatchTranscriptionPort
@@ -57,6 +60,8 @@ class DriveTranscriptRunner:
         out: Dict[str, WindowResult] = {}
         unbilled = 0
         unpriced = 0
+        overrun = 0
+        widest = 0
         finishes: Dict[str, int] = {}
         for key, result in results.items():
             cost, billed = await self._bill(account_id, result, write=bill)
@@ -64,12 +69,18 @@ class DriveTranscriptRunner:
                 unbilled += 1
             elif not result.usage.is_priced():
                 unpriced += 1
+            if result.usage is not None and result.usage.text_input_tokens > TRANSCRIBE_WINDOW_PROMPT_TOKENS:
+                overrun += 1
+                widest = max(widest, result.usage.text_input_tokens)
             finishes[result.finish_reason or "none"] = finishes.get(result.finish_reason or "none", 0) + 1
             out[key] = self._classify(key, result, cost, billed)
         if unbilled:
             logger.warning(f"[DriveTranscript] {unbilled} of {len(results)} results came without usage: nothing billed")
         if unpriced:
             logger.error(f"[DriveTranscript] {unpriced} of {len(results)} results used a model with no price: cost 0")
+        if overrun:   # the reservation allows TRANSCRIBE_WINDOW_PROMPT_TOKENS of text input per window (T-R19 N2)
+            logger.error(f"[DriveTranscript] {overrun} of {len(results)} results used more text input than the "
+                         f"reserved allowance ({widest} > {TRANSCRIBE_WINDOW_PROMPT_TOKENS} tokens): raise it")
         counts: Dict[str, int] = {}
         for r in out.values():
             counts[r.outcome.value] = counts.get(r.outcome.value, 0) + 1

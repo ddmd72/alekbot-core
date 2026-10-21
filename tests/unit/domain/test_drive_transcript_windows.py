@@ -93,9 +93,14 @@ def test_no_speech_window_always_covered():
 
 
 def test_exactly_at_threshold():
+    # T-R31: tolerance = max(0.1 x d, 60 s). A short window gets the absolute minute (100 s -> threshold 40 s) ...
     w = WindowSpec(index=0, start_s=0, duration_s=100)
-    assert coverage_ok(w, [_seg(0), _seg(90)], no_speech=False)
-    assert not coverage_ok(w, [_seg(0), _seg(89.9)], no_speech=False)
+    assert coverage_ok(w, [_seg(0), _seg(40)], no_speech=False)
+    assert not coverage_ok(w, [_seg(0), _seg(39.9)], no_speech=False)
+    # ... a long window the tenth (1800 s -> threshold 1620 s).
+    long = WindowSpec(index=0, start_s=0, duration_s=1800)
+    assert coverage_ok(long, [_seg(0), _seg(1620)], no_speech=False)
+    assert not coverage_ok(long, [_seg(0), _seg(1619.9)], no_speech=False)
 
 
 def test_non_monotonic_beyond_5s_fails():
