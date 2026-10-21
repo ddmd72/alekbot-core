@@ -150,7 +150,7 @@ async def test_a_deleted_observation_is_hidden_and_the_next_candidate_takes_its_
 async def test_each_shown_hit_is_verified_once(svc, mirror, drive):
     for n in (1, 2, 3):
         await mirror.save_doc(_doc(n))
-    (await svc.search_deleted("u1", "budget"))[0]
+    await svc.search_deleted("u1", "budget")
     assert sorted(c.args[1] for c in drive.get_change.await_args_list) == ["m1", "m2", "m3"]
 
 
@@ -246,9 +246,10 @@ async def test_refill_checks_are_capped_and_the_rest_counted(svc, mirror, drive)
     for n in range(1, 21):
         await mirror.save_doc(_doc(n))
     drive.get_change.side_effect = lambda u, i: DriveChange(item_id=i, deleted=True)   # the owner deleted them all
-    out, items = await svc.search_deleted("u1", "")
+    out, items = await svc.search_deleted("u1", "budget")
     assert drive.get_change.await_count == 10 and items == []
     assert out.startswith("Deleted files (0):")
+    assert "10 more archived transcripts matched." in out
 
 
 async def test_the_recording_path_is_looked_up_only_when_the_cut_applies(svc, mirror, index, monkeypatch):
