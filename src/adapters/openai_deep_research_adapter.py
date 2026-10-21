@@ -87,6 +87,7 @@ class OpenAIDeepResearchAdapter(DeepResearchPort):
         system_prompt: Optional[str] = None,
         session_id: Optional[str] = None,
         second_pass: bool = False,
+        origin_platform: Optional[str] = None,
     ) -> str:
         """
         Submit job with webhook delivery. Adapter owns result routing via metadata.
@@ -114,6 +115,7 @@ class OpenAIDeepResearchAdapter(DeepResearchPort):
                 "account_id": account_id,
                 "query": original_query[:512],
                 "session_id": session_id or "",
+                "origin_platform": origin_platform or "",
             },
         )
         logger.info("[DeepResearch][openai] Job submitted: %s", response.id[:16])

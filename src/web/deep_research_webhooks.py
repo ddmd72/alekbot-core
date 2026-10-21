@@ -161,6 +161,7 @@ def create_deep_research_webhooks_blueprint(
         account_id = metadata.get("account_id", "")
         query      = metadata.get("query", "")
         session_id = metadata.get("session_id", "")
+        origin_platform = metadata.get("origin_platform") or None  # absent on pre-deploy jobs
         job_id     = response_obj.get("id", "unknown")
 
         logger.info(
@@ -215,6 +216,7 @@ def create_deep_research_webhooks_blueprint(
                 media_storage=media_storage,
                 link_service=link_service,
                 channel_id_override=origin_channel_id,
+                platform_override=origin_platform,
             )
 
             logger.info("[DeepResearchWebhook] Report delivered: user=%s", user_id[:8])

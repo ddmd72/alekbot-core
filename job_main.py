@@ -238,6 +238,11 @@ async def _run_job() -> None:
         result=result,
     )
 
+    # Channel comes from the per-channel session_id ("user_id:channel_id"), same rule as the webhook.
+    session_id = context.get("session_id", "")
+    origin_channel_id = session_id.split(":", 1)[1] if ":" in session_id else None
+    origin_platform = context.get("origin_platform") or None  # absent on pre-deploy jobs
+
     try:
         await deliver_deep_research(
             result_text=result_text,
@@ -251,6 +256,8 @@ async def _run_job() -> None:
             model=result.get("model", ""),
             total_tokens=result.get("total_tokens", 0),
             second_pass=result.get("second_pass", False),
+            channel_id_override=origin_channel_id,
+            platform_override=origin_platform,
         )
     except Exception as exc:
         logger.error(
