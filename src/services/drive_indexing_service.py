@@ -1236,7 +1236,8 @@ class DriveIndexingService:
         UI language, resolved here; when the language or the strings cannot be had the step waits for the next tick
         (a file is never rendered in a guessed language: the language is not in the digest, Δ120). The step raises only
         its systemic classes (Task 21A), so no catch-all here: they end the tick as anywhere else. An opt-out found by
-        a mirror write reaches here as `LeaseLost` and leaves as `_OptedOut`. Mirror work never asks for a
+        a mirror write is the host's own stop signal (`_TickHost.stop_exceptions`): `_OptedOut` passes through the
+        step unchanged and ends the tick as anywhere else. Mirror work never asks for a
         continuation (`_has_more` does not look at it): the fan-out paces it."""
         transcription = _TICK_TRANSCRIPTION.get()
         mirror = _TICK_MIRROR.get()
@@ -1266,12 +1267,7 @@ class DriveIndexingService:
                           strings=strings, round_complete=state.round_complete,
                           epoch_idle=state.epoch_phase is EpochPhase.IDLE and state.initial_enumeration_done,
                           stop_at=stop_at)
-        try:
-            out = await self._mirror.run(user_id, host)
-        except LeaseLost:
-            if host.opted_out:
-                raise _OptedOut() from None
-            raise
+        out = await self._mirror.run(user_id, host)
         for key in _MIRROR_TICK_COUNTERS:
             _inc(counts, key, out.get(key, 0))
         self._note_root_setup(user_id, mirror, out)
@@ -3957,6 +3953,7 @@ class _TickHost:
         self.round_complete = False
         self.epoch_idle = False
         self.opted_out = False   # a mirror write found indexing turned off (the tick then leaves as _OptedOut)
+        self.stop_exceptions = (_OptedOut,)   # MirrorHost: the step re-raises it unchanged, like a lost lease
         self._ops = 0
         self._reads = 0
         self._stamps = 0
@@ -3990,8 +3987,8 @@ class _TickHost:
         """The transcript stage (`before` given): `_commit`, with the card of a record the stage changed scheduled
         again: a transcript or stub line changes the card text after the run's own scheduling (§27.11), so the due loop
         embeds it once more. The mirror step (no `before`): a plain `_commit` (fenced, the plans applied, so a stamp
-        clears `mirror_due`); an opt-out it finds stops the step at once as `LeaseLost` (nothing more may be written),
-        which the tick turns back into `_OptedOut`."""
+        clears `mirror_due`); an opt-out it finds stops the step at once as `_OptedOut` itself (a declared
+        `stop_exceptions` member; nothing more may be written)."""
         if not records:
             return
         if before is None:
@@ -3999,7 +3996,7 @@ class _TickHost:
                 await self._svc._commit(self._user_id, list(records), set())
             except _OptedOut:
                 self.opted_out = True
-                raise LeaseLost("indexing was turned off mid-tick: the mirror step stops writing") from None
+                raise
             return
         now = self._svc._clock()
         writes = [_card_rescheduled(r, now) for r in records]
@@ -4104,10 +4101,7 @@ _MIRROR_TICK_COUNTERS = ("mirror_created", "mirror_replaced", "mirror_moved", "m
                          "mirror_quota_full", "mirror_no_drive_id", "mirror_ops")
 
 
-def _mirror_seed_version() -> str:
-    """The root document's `seed_version` once the seed is done (§27.9.4): the mirror step's own `seed_version()`,
-    computed from the same domain constants (the step is a service: REQ-ARCH-22 keeps it out of this module)."""
-    return f"{mirror_versions.MIRROR_PLAN_VERSION}.{mirror_versions.RENDER_VERSION}"
+_mirror_seed_version = mirror_versions.seed_version   # one formula, in the domain (the mirror step uses it too)
 
 
 def _mirror_strings(localization: "LocalizationService", lang: LanguageCode) -> MirrorStrings:

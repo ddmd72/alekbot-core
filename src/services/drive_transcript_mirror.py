@@ -78,7 +78,7 @@ import traceback
 from collections import Counter
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Protocol, Sequence, Set, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Protocol, Sequence, Set, Tuple, Type
 
 from src.domain import drive_mirror_plan as plan
 from src.domain.drive_index import (
@@ -99,7 +99,7 @@ from src.domain.drive_mirror_names import (
 from src.domain.drive_mirror_plan import (
     REDO_DIGEST, Action, Decision, RootDecision, audit_due, due_again, charged, charged_doc, cleared_item, file_action, local_day,
     lost_root_reset, mark_decision, mark_held, marked, mirror_digest, mirror_eligible, mirror_plan, placement_source,
-    reset_charges, retry_due, root_decision, stamped, unmarked, woken,
+    reset_charges, retry_due, root_decision, seed_version, stamped, unmarked, woken,
 )
 from src.domain.drive_mirror_render import MirrorStrings, archive_word_keys, readme_bytes, render_file, rendered_hash
 from src.domain.drive_transcript import StoredTranscript
@@ -144,6 +144,7 @@ class MirrorHost(Protocol):
     language: str          # the UI language the strings are in, stored as `render_language`
     round_complete: bool   # the change feed's round is complete (marks wait for it)
     epoch_idle: bool       # no enumeration or sweep is running (the scan's condition, Task 21B)
+    stop_exceptions: Tuple[Type[BaseException], ...]   # the host's own stop signals (e.g. indexing turned off mid-tick)
 
     def fence(self) -> None:
         """Raise `LeaseLost` once the tick's lease is about to end. Called before every write, store or Graph."""
@@ -167,7 +168,8 @@ class MirrorHost(Protocol):
     def spend_stamp(self) -> None: ...
 
     def time_left(self) -> float:
-        """Seconds left before the tick's deadline."""
+        """Seconds left in the step's window (the host's own bound for the mirror step, never later than the tick's
+        deadline); 0 or less ends the step."""
 
     def now(self) -> datetime: ...
 
@@ -207,7 +209,7 @@ class DriveTranscriptMirror:
             await self._steps(ctx)
         except _StopStep:
             logger.debug(f"[DriveMirror] user={user_id[:8]} step ended early (a budget, the deadline or a hold)")
-        except _SYSTEMIC:
+        except _SYSTEMIC + ctx.stops:
             raise
         except Exception as exc:              # a page read or a decode outside every action: never out of the step
             _log_unexpected(user_id, "step", exc, "the step ended")
@@ -297,7 +299,7 @@ class DriveTranscriptMirror:
             return True
         except DriveItemNotFoundError:
             return False
-        except (_SYSTEMIC + (_StopStep,)):
+        except (_SYSTEMIC + (_StopStep,) + ctx.stops):
             raise
         except _CHARGED as exc:
             logger.warning(f"[DriveMirror] user={ctx.user_id[:8]} {what} read failed ({type(exc).__name__}): "
@@ -325,7 +327,7 @@ class DriveTranscriptMirror:
         and it resumes from its cursor. True when every document of the drive is reset."""
         try:
             return await self._reset_pages(ctx)
-        except (_SYSTEMIC + (_StopStep,)):
+        except (_SYSTEMIC + (_StopStep,) + ctx.stops):
             raise
         except Exception as exc:
             _log_unexpected(ctx.user_id, "root-loss reset", exc, "the reset resumes next tick")
@@ -484,7 +486,7 @@ class DriveTranscriptMirror:
         under its key; `on_other` may hold the record only."""
         try:
             await work
-        except _SYSTEMIC:
+        except _SYSTEMIC + ctx.stops:
             raise
         except _StopStep:
             raise
@@ -548,7 +550,7 @@ class DriveTranscriptMirror:
                 logger.info(f"[DriveMirror] user={ctx.user_id[:8]} root created "
                             f"(candidate {root_name_candidates().index(name) + 1})")
                 return root
-        except (_SYSTEMIC + (_StopStep,)):
+        except (_SYSTEMIC + (_StopStep,) + ctx.stops):
             raise
         except DriveStorageFull:
             ctx.counters["mirror_quota_full"] += 1
@@ -882,7 +884,7 @@ class DriveTranscriptMirror:
         key = doc_key(ctx.user_id, KIND_FOLDER if rec.is_folder else KIND_FILE, rec.item_id)
         try:
             doc = await self._doc(ctx, key) or (_folder_doc(ctx, rec) if rec.is_folder else _file_doc(ctx, rec))
-        except (_SYSTEMIC + (_StopStep,)):
+        except (_SYSTEMIC + (_StopStep,) + ctx.stops):
             raise
         except Exception as exc:          # another drive's document, or one that cannot be decoded
             logger.warning(f"[DriveMirror] user={ctx.user_id[:8]} due {_hid(rec.item_id)}: its document cannot be "
@@ -1163,8 +1165,9 @@ class DriveTranscriptMirror:
         raise _Outside()
 
     async def _repair_outside(self, ctx: "_Run", folder_item_id: str) -> bool:
-        """One read of a folder (or file) of ours whose record places it outside the root. True when it is inside after all (a
-        stale record) or was moved back now."""
+        """One read of a folder (or file) of ours whose record places it outside the root: the highest ledger folder on
+        the chain, up to the first non-opaque record (`_inside_root`'s culprit). True when it is inside after all (a
+        stale record) or was moved back now (its own move, or an ancestor's, which `_move_back` ensures first)."""
         self._take_read(ctx)
         try:
             change = await self._drive.get_change(ctx.user_id, folder_item_id)
@@ -1750,18 +1753,29 @@ class DriveTranscriptMirror:
         """An item of the active tree moved or renamed by hand goes back where the ledger has it (one PATCH of an item
         the bot created, to a destination inside the root). A taken name or a vanished destination: the document
         follows the item and its record is made due, so step 4 places it with the name rules (yields, suffixes,
-        chains). True when the item is back."""
+        chains). A folder with a pending gone mark (a prune waiting) is not re-pointed: its ledger place stays and the
+        mark is held, since no record would place it again. True when the item is back."""
         if not doc.mirror_parent_id:
             return False
         await self._ensure_inside(ctx, doc.mirror_parent_id)
         self._take_op(ctx)
         new_parent = doc.mirror_parent_id if change.parent_id != doc.mirror_parent_id else None
         new_name = doc.mirror_name if change.name != doc.mirror_name else None
+        if new_parent is None and new_name is None:
+            # `_ensure_inside` above already moved an ancestor of ours back: this item sits where the ledger has it
+            if doc.kind != KIND_FILE:
+                ctx.inside[doc.mirror_item_id] = True
+            return True
         try:
             item = await self._drive.move(ctx.user_id, doc.mirror_item_id, new_parent_id=new_parent,
                                           new_name=new_name)
         except (DriveNameConflictError, DriveItemNotFoundError):
             ctx.counters["mirror_move_back_blocked"] += 1
+            if doc.gone_pending:
+                # a folder waiting to be pruned has no record to place it again: the ledger keeps where it belongs
+                # and the mark is held, so a later tick tries the way back (and then the prune) once more
+                await self._save_doc(ctx, mark_held(replace(doc, audit_seen_at=ctx.now), ctx.now + ANCESTOR_HOLD))
+                return False
             await self._save_doc(ctx, replace(doc, mirror_parent_id=change.parent_id, mirror_name=change.name,
                                               audit_seen_at=ctx.now))
             await self._make_due(ctx, doc)
@@ -1939,11 +1953,6 @@ class DriveTranscriptMirror:
 # helpers
 # =====================================================================================================================
 
-def seed_version() -> str:
-    """`"{MIRROR_PLAN_VERSION}.{RENDER_VERSION}"` (§27.9.4), read at call time."""
-    return f"{plan.MIRROR_PLAN_VERSION}.{plan.RENDER_VERSION}"
-
-
 class _StopStep(Exception):
     """Ends the step for this tick: a budget or the deadline is spent, the drive is full, or the root is missing."""
 
@@ -2013,6 +2022,11 @@ class _Run:
     readme_listed: Optional[DriveChange] = None                # the read-me as the root's listing showed it this run
     inside: Dict[str, bool] = field(default_factory=dict)      # folder item id -> inside the root (this run's verdicts)
     repairing: Set[str] = field(default_factory=set)           # folders of ours read and repaired this run
+
+    @property
+    def stops(self) -> Tuple[Type[BaseException], ...]:
+        '''The host's own stop signals: re-raised unchanged wherever a systemic class is.'''
+        return tuple(getattr(self.host, "stop_exceptions", ()))
 
     @property
     def drive_id(self) -> str:
