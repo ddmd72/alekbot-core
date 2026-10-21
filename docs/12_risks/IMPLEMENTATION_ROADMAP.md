@@ -1896,7 +1896,7 @@ mandatory before team/multi-user rollout.
     - Unit tests: 13 tests, 328 lines (FirestoreUserRepository OAuth methods)
     - Commit: `9dd566f`
   - **Session 8 (Data Migration Script)**: ✅ Complete (2h)
-    - Created migration script (scripts/migrate_to_oauth.py, 471 lines)
+    - Created migration script (scripts/migrate_to_oauth.py, 471 lines) (script removed 2026-10-22, S1b)
     - Data transformations: Users (OAuth fields), Accounts (defaults), Facts (ownership)
     - Safety features: Dry-run mode, backup verification, progress tracking
     - Migration guide documentation (comprehensive 385-line guide)
@@ -1963,7 +1963,7 @@ mandatory before team/multi-user rollout.
 3. **Run Migration** (manual):
 
    ```bash
-   python scripts/migrate_to_oauth.py --live
+   python scripts/migrate_to_oauth.py --live (script removed 2026-10-22, S1b)
    ```
 
 4. **Test OAuth Registration** (manual):
