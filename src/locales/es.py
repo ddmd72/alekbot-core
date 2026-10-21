@@ -139,6 +139,26 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.DRIVE_REPLACED.value: "✏️ Reemplazado: {path} ({before} → {after}; la versión anterior está en su historial de versiones)",
     UIMessage.DRIVE_DELETE_FAILED.value: "⚠️ La eliminación de {path} no se completó.",
     UIMessage.DRIVE_REPLACE_FAILED.value: "⚠️ El reemplazo de {path} no se completó.",
+    UIMessage.DRIVE_MIRROR_WRITE_REFUSED.value: "Esta carpeta la gestiona el bot y sus archivos se sobrescriben; para conservar tu propia versión, copia el archivo a otra carpeta.",
+    UIMessage.DRIVE_TRANSCRIPTS_README.value: (
+        "# Transcripciones\n\n"
+        "Gestionado por el bot: los archivos de aquí pueden reescribirse; no los edites. "
+        "El bot sobrescribe cada archivo de aquí, también en Archive/, así que tus cambios no se conservan. "
+        "Para conservar tu propia versión, copia el archivo a otra carpeta. "
+        "Las transcripciones de las grabaciones eliminadas están en Archive/; si borras un archivo de allí, "
+        "el bot lo olvida."
+    ),
+    UIMessage.DRIVE_TRANSCRIPT_OPEN_RECORDING.value: "abrir la grabación",
+    UIMessage.DRIVE_TRANSCRIPT_MANAGED_LINE.value: (
+        "Gestionado por el bot: este archivo puede reescribirse. Transcripción automática, puede contener errores."
+    ),
+    UIMessage.DRIVE_TRANSCRIPT_DURATION_MINUTES.value: "{n} min",
+    UIMessage.DRIVE_TRANSCRIPT_SPEAKERS_ONE.value: "{n} hablante",
+    UIMessage.DRIVE_TRANSCRIPT_SPEAKERS_MANY.value: "{n} hablantes",
+    UIMessage.DRIVE_TRANSCRIPT_STUB_NO_SPEECH.value: "No se detectó voz en esta grabación ({duration}).",
+    UIMessage.DRIVE_TRANSCRIPT_STUB_TOO_LONG.value: "Esta grabación es demasiado larga para transcribirla ({duration}).",
+    UIMessage.DRIVE_TRANSCRIPT_STUB_TOO_LARGE.value: "Esta grabación es demasiado grande para transcribirla.",
+    UIMessage.DRIVE_TRANSCRIPT_STUB_NO_AUDIO.value: "Esta grabación no tiene pista de audio.",
     UIMessage.DEEP_RESEARCH_DRIVE_FOLDER.value: "Investigaciones",
     UIMessage.DEEP_RESEARCH_DRIVE_COPIED.value: "📁 Copiado en tu disco: {path}",
     UIMessage.DEEP_RESEARCH_DRIVE_NOT_CONNECTED.value: "No copiado en tu disco: el disco no está conectado.",

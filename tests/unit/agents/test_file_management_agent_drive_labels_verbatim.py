@@ -36,6 +36,7 @@ async def test_the_label_keeps_the_real_path(item):
     conversion.resolve_bytes.return_value = b"%PDF" if item is PDF else b"video"
     search = AsyncMock(spec=DriveSearchService)
     search.transcript_text.return_value = None   # §27.11: an untranscribed recording keeps the file branch
+    search.archived_text.return_value = None   # §27.9.11: not a file of the bot's _Transcripts folder
     agent = FileManagementAgent(
         config=AgentConfig(agent_id="file_management_agent_u1", agent_type="file_management", capabilities={},
                            metadata={}),

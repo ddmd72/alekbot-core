@@ -120,6 +120,7 @@ Connect your drive in the Cabinet. Then:
 - "Find the lease contract", "photos from Rome last August", "all my spreadsheets" — I search your drive by name (typos and transliteration are fine), type, date, folder and where a photo was taken. Turn on "Search my drive" in the Cabinet first
 - "What's the notice period in my lease?", "how much was the March electricity bill?", "find invoice INV-2024-417" — I answer from what is written in your documents, and I read scans, screenshots and photographed receipts too; I tell you which file the answer came from
 - Recordings (audio and video) on your drive, once transcription is on for you: I find them by what was said and open their transcript; the recording itself comes as a link when you ask for it
+- Once transcription is on, transcripts of recordings that were deleted stay in the Archive of the `_Transcripts` folder on your drive: ask me to "search in deleted files" and I find them by what was said
 - Open, rename, move, create folders; add a line to a note; replace a file with a new version
 - Delete a file or a whole folder — I post a note in chat with what was deleted; it stays in your drive's recycle bin
 Chat attachments are temporary; the drive is where files are kept.

@@ -83,7 +83,9 @@ def full_record() -> DriveIndexRecord:
         transcript_wake_at=T + timedelta(hours=9), transcript_attempts=2, transcript_hold="budget",
         transcript_hold_version="1:q:4096", transcript_stub="too_long", transcript_seconds=3725,
         transcript_speakers=3, transcript_languages=("uk", "en"), transcript_body_version=1,
-        transcript_truncated=True)
+        transcript_truncated=True,
+        # §27.9.4 (the mirror queue, Δ217): the flag, the stamped digest and a held record's hold
+        mirror_due=True, mirrored_digest="md1", mirror_retry_at=T + timedelta(hours=10), mirror_held_digest="mh1")
 
 
 def full_state() -> DriveSyncState:

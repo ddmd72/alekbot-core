@@ -238,7 +238,21 @@ MIRROR_OPS_PER_TICK = 40                    # §27.9: Graph writes per tick
 MIRROR_SCAN_PAGE = 100                      # §27.9: a rotating drift scan
 MIRROR_AUDIT_DAYS = 7                       # §27.9: worst-case time to undo a user's edit
 MIRROR_NAME_MAX = 240                       # OneDrive's 255-name limit with margin
-MIRROR_PATH_MAX = 380                       # OneDrive's 400-path limit with margin
+ONEDRIVE_PATH_MAX = 400                     # Δ193: OneDrive's decoded path limit, counted from the drive root
+MIRROR_PATH_MARGIN = 10                     # Δ193: a mirror path must fit ONEDRIVE_PATH_MAX - this
+MIRROR_READS_PER_TICK = 10                  # §27.9.5: Graph reads of the mirror step, its own bucket
+MIRROR_STAMPS_PER_TICK = 200                # §27.9.5: store reads and renders that end in a stamp with no Graph write
+MIRROR_SEED_PAGE = 200                      # §27.9.4: records per seed page
+MIRROR_ARCHIVE_GRACE = timedelta(hours=1)   # §27.9.6: a deletion mark waits this long before the archive move
+MIRROR_ROOT_GRACE = timedelta(hours=24)     # §27.9.9: a lost root is graced this long before the loss is confirmed
+MIRROR_RESERVE_S = 45                       # §27.9.5: tail of the start budget kept for the mirror step
+MIRROR_MAX_ATTEMPTS = 5                     # §27.9.5: a failing mirror action is charged this many times
+MIRROR_FAILED_RETRY = timedelta(days=7)     # §27.9.5: a failed document is tried again after this
+MIRROR_QUOTA_HOLD = timedelta(hours=6)      # §27.9.5: a full drive holds the mirror step this long
+MIRROR_CLOCK_SKEW = timedelta(minutes=5)    # Δ210, Δ217: Graph's created time against the indexer's, on an intent re-run
+ARCHIVE_KEYS_MAX = 12_000                   # §27.9.11: cap of archive_keys on a ledger document
+ARCHIVE_QUERY_MAX = 100                     # §27.9.11: documents per deleted-files driver query
+DELETED_SHOW_MAX = 5                        # §27.9.11: archived transcripts shown by one search
 TRANSCRIBE_UPLOAD_S = 60                    # G16: worst case of uploading one window; added to the tick deadline sum
 TRANSCRIBE_FILE_LIFE_AT_SUBMIT = timedelta(hours=24)   # §27.5: an uploaded window is submitted only with this much of its provider file's life left (the batch API's 24 h contract); less is re-extracted first
 TRANSCRIBE_MIN_RUN_WALL_S = 90              # Task 12: a further extraction run of a file within one step starts only with this much of the step's wall left (one 30-min window needs ~32 CPU-s plus its bytes)

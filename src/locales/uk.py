@@ -168,6 +168,25 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.DRIVE_REPLACED.value: "✏️ Замінено: {path} ({before} → {after}; попередня версія — в історії версій)",
     UIMessage.DRIVE_DELETE_FAILED.value: "⚠️ Видалення {path} не завершилося.",
     UIMessage.DRIVE_REPLACE_FAILED.value: "⚠️ Заміна {path} не завершилася.",
+    UIMessage.DRIVE_MIRROR_WRITE_REFUSED.value: "Цю папку веде бот, і її файли перезаписуються; щоб зберегти власну версію, скопіюйте файл до іншої папки.",
+    UIMessage.DRIVE_TRANSCRIPTS_README.value: (
+        "# Розшифровки\n\n"
+        "Цю папку веде бот: файли тут можуть бути переписані; не редагуйте їх. "
+        "Бот перезаписує кожен файл тут, і в Archive/ теж, тож ваші зміни не збережуться. "
+        "Щоб мати власну версію, скопіюйте файл до іншої папки. "
+        "Розшифровки видалених записів лежать в Archive/; якщо видалити файл звідти, бот про нього забуде."
+    ),
+    UIMessage.DRIVE_TRANSCRIPT_OPEN_RECORDING.value: "відкрити запис",
+    UIMessage.DRIVE_TRANSCRIPT_MANAGED_LINE.value: (
+        "Цей файл веде бот: його може бути переписано. Автоматична розшифровка, можливі помилки."
+    ),
+    UIMessage.DRIVE_TRANSCRIPT_DURATION_MINUTES.value: "{n} хв",
+    UIMessage.DRIVE_TRANSCRIPT_SPEAKERS_ONE.value: "{n} мовець",
+    UIMessage.DRIVE_TRANSCRIPT_SPEAKERS_MANY.value: "мовців: {n}",
+    UIMessage.DRIVE_TRANSCRIPT_STUB_NO_SPEECH.value: "У цьому записі не виявлено мовлення ({duration}).",
+    UIMessage.DRIVE_TRANSCRIPT_STUB_TOO_LONG.value: "Цей запис задовгий для розшифровки ({duration}).",
+    UIMessage.DRIVE_TRANSCRIPT_STUB_TOO_LARGE.value: "Цей запис завеликий для розшифровки.",
+    UIMessage.DRIVE_TRANSCRIPT_STUB_NO_AUDIO.value: "У цьому записі немає звукової доріжки.",
     UIMessage.DEEP_RESEARCH_DRIVE_FOLDER.value: "Глибокі дослідження",
     UIMessage.DEEP_RESEARCH_DRIVE_COPIED.value: "📁 Скопійовано на твій диск: {path}",
     UIMessage.DEEP_RESEARCH_DRIVE_NOT_CONNECTED.value: "Не скопійовано на диск: диск не підключено.",

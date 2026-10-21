@@ -62,6 +62,7 @@ from ..domain.user_drive import (
     DriveNameConflictError,
     DriveNotConnectedError,
     DrivePathError,
+    DriveMirrorWriteRefused,
     DriveRootProtectedError,
     drive_context_entry,
     drive_filename,
@@ -74,7 +75,7 @@ from ..domain.user_drive import (
 from ..infrastructure.agent_manifest import Intent
 from ..ports.file_storage_port import FileStoragePort
 from ..utils.file_conversion import is_native_binary
-from ..utils.logger import logger
+from ..utils.logger import exc_brief, logger
 
 if TYPE_CHECKING:
     from ..ports.language_service_port import LanguageServicePort
@@ -83,6 +84,13 @@ if TYPE_CHECKING:
     from ..services.user_drive_service import UserDriveService
     from ..services.file_conversion_service import FileConversionService
     from ..services.user_notification_service import UserNotificationService
+
+
+def _flag(value: Any) -> bool:
+    """A boolean the delegate tool sent as a string (`"true"`, `"yes"`, `"1"`, any case), or as a boolean."""
+    if isinstance(value, bool):
+        return value
+    return isinstance(value, str) and value.strip().lower() in ("true", "yes", "1")
 
 
 @dataclass(frozen=True)
@@ -528,12 +536,29 @@ class FileManagementAgent(BaseAgent):
                                        f"{format_size(e.limit_bytes)} cannot be used yet.")
         except (DriveRootProtectedError, DrivePathError) as e:
             return self._fail(message, str(e))
+        except DriveMirrorWriteRefused:
+            return self._fail(message, await self._mirror_refused_line(user_id))
         except asyncio.CancelledError:
             raise
         except Exception as e:
             logger.error("FileManagementAgent: drive op failed: %s", e, exc_info=True)
             self._on_agent_error(e, str(payload.get("intent")))
             return self._fail(message, f"Drive operation failed: {type(e).__name__}.")
+
+    async def _mirror_refused_line(self, user_id: str) -> str:
+        """The Step 1 guard's one line (§27.9.8), in the user's UI language (English when it cannot be resolved)."""
+        lang = LanguageCode.EN
+        if self._language is not None:
+            try:
+                lang = await self._language.resolve_ui_language(user_id)
+            except Exception as exc:
+                logger.warning("FileManagementAgent: UI language lookup failed for %s: %s", user_id[:8],
+                               exc_brief(exc))
+        if self._localization is None:
+            # Mirrors src/locales/en.py DRIVE_MIRROR_WRITE_REFUSED verbatim (locales load only via the adapter).
+            return ("This folder is managed by the bot and its files are overwritten; "
+                    "to keep your own version, copy the file to another folder.")
+        return self._localization.get_ui_string(lang, UIMessage.DRIVE_MIRROR_WRITE_REFUSED)
 
     _LATE_FAILURE_UI = {
         Intent.DELETE_FILE_FROM_DRIVE: UIMessage.DRIVE_DELETE_FAILED,
@@ -650,11 +675,37 @@ class FileManagementAgent(BaseAgent):
             return None
         return text or None
 
+    async def _archived_transcript_of(self, user_id: str, ref: str, item: Any) -> Optional[str]:
+        """A ref whose item is a file of the bot's `_Transcripts` folder opens from the pinned store entry, capped; with
+        none, the downloaded file, capped the same way (§27.9.11). None for any other file, or when the lookup failed
+        (the plain open then runs)."""
+        if self._drive_search is None:
+            return None
+        item_id = parse_drive_ref(ref)
+        if item_id is None:
+            return None
+
+        async def downloaded() -> str:
+            return await self._conversion_service.resolve_content(ref, user_id)
+
+        try:
+            text = await self._drive_search.archived_text(user_id, item_id, label=drive_label(item), path=item.path,
+                                                          file_text=downloaded)
+        except DriveItemNotFoundError:
+            raise
+        except Exception as exc:
+            logger.warning("FileManagementAgent: archived transcript lookup failed: %s", exc_brief(exc))
+            return None
+        return text or None
+
     async def _open_drive_item(self, message: AgentMessage, ref: str, user_id: str,
                                payload: Optional[dict] = None) -> AgentResponse:
         item = await self._conversion_service.get_drive_item(ref, user_id)
         if item.is_folder:
             return self._fail(message, f"'{item.path or '/'}' is a folder; use list_files_in_drive.")
+        archived = await self._archived_transcript_of(user_id, ref, item)
+        if archived is not None:
+            return self._ok(message, archived, [item])
         mime = item.mime_type or (mimetypes.guess_type(item.name)[0] or "application/octet-stream")
         # Vision caps and unsupported formats are decided on metadata, before any download (§4.6).
         if mime.startswith("image/") and mime not in VISION_IMAGE_MIME_TYPES:
@@ -713,6 +764,12 @@ class FileManagementAgent(BaseAgent):
         "open the second one" works on the next turn (§10.4 History)."""
         if self._drive_search is None:
             return self._fail(message, "Drive search is not available on this deployment.")
+        if _flag(payload.get("drive_deleted")):
+            # The deleted-files search (§27.9.11): transcripts of deleted recordings (and, with the owner-notes source,
+            # notes on deleted files). Instead of the ordinary search; an empty query lists the newest. It runs with
+            # drive search off: it reads the ledger, not the index.
+            text, items = await self._drive_search.search_deleted(user_id, str(payload.get("drive_query") or ""))
+            return self._ok(message, f"{REFERENCE_REMINDER}\n{text}", list(items))
         try:
             request = request_from_fields(payload.get("drive_query"), payload.get("drive_folder"),
                                           payload.get("drive_kind"), payload.get("drive_date_from"),

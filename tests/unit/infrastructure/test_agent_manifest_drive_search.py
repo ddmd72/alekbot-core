@@ -9,7 +9,8 @@ from src.agents.base_agent import BaseAgent
 from src.infrastructure.agent_manifest import ALL_DESCRIPTORS, FILE_MANAGEMENT, Intent
 from src.infrastructure.agent_registry import AgentRegistry, ExecutionMode
 
-SEARCH_FIELDS = ("drive_query", "drive_folder", "drive_kind", "drive_date_from", "drive_date_to")
+# drive_deleted: the deleted-files flag (USER_DRIVE_INDEXING_RFC §27.9.11, D48, Δ195; DRIVE_FILE_NOTES_RFC §6.4)
+SEARCH_FIELDS = ("drive_query", "drive_folder", "drive_kind", "drive_date_from", "drive_date_to", "drive_deleted")
 
 
 def test_intent_value_and_mode():

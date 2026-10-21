@@ -700,7 +700,7 @@ to the file (`failed` at 3); an edited reader-read file is re-read at most once 
 before any content work. Text passes a machine-text gate, is chunked (generation-fenced) and embedded. Audio and video
 are metadata-only unless the user's transcription is on (next paragraph). No rollback to the Slice 1 revision.
 
-**Transcripts of recordings (RFC §27; T1 live since 2026-10-21 for the owner only, $10 cap; the mirror folder T2 and the summary T3 are not built).**
+**Transcripts of recordings (RFC §27; T1 live since 2026-10-21 for the owner only, $10 cap; the mirror folder T2 is built, not deployed yet; the summary T3 is not built).**
 Audio and video are `Admission.TRANSCRIBE` (`POLICY_VERSION` 3; structure decisions compare `STRUCTURE_POLICY_SINCE` = 2, so the bump redoes no folder work).
 Not an extractor chain link: a **job with its own states on the record** (`transcript_state`: `none ready working waiting current held parked failed`), advanced by
 `DriveTranscriptStage` on the indexer across ticks — probe the Graph download URL, cut audio-only Opus windows (≈ 30 min, 60 s overlap) with ffmpeg in the
@@ -713,6 +713,16 @@ collection in the reservation's month; a file that does not fit is parked whole 
 cap. Billing keeps the held `gemini-3.8-flash` price (≈ $0.16/audio hour, ≈ 125 h/month until 2027). No `prompt_content`/Logfire row per window (a batch is not a
 call). `open_file_from_drive` on a transcribed recording returns the transcript (`original: true` → a link). Rollout and levers: `docs/07_deployment/README.md` →
 "Transcripts of recordings (§27)"; the owner's map `docs/05_building_blocks/user_drive/README.md` §4.23; decision `decisions/drive_transcripts_t1.md`.
+**Mirror folder T2 (RFC §27.9, Δ183–Δ244; built on `feat/drive-transcripts-t2`, not deployed).** The indexer writes each transcript as `<name>.md` into a bot-owned
+**`_Transcripts`** folder at the App Folder root (D49: the same name in every language; fixed `_README.md`, `Archive`, `Long paths`), reconciled by `DriveTranscriptMirror`
+(ports only) as the **last step of `_work_off`**, with its own op/read/stamp budgets and a 45 s reserved tail. State lives in two collections **no purge deletes**:
+`{prefix}drive_mirror_roots` (which folder is the bot's, cursors, holds, loss marks) and the ledger `{prefix}drive_transcript_mirror` (key has no drive id; reads filter `drive_id`). **D48:** a deleted
+recording's file moves, after a complete round and 1 h, to `_Transcripts/Archive/<day>/`; the bot never deletes it, its store entry stays pinned
+(`delete_user_transcripts_except` keeps pinned keys in every purge), and only `search_files_in_drive` with `drive_deleted` reaches it (ledger-backed, works with drive search off). **Owner ruling 2026-10-21 (Δ241):** every `.md` in `_Transcripts`, active or archived, belongs to the bot and is overwritten by it (a rename or move inside is moved back; a custom version = copy elsewhere; deleting an archived file = forget, moving it out = the owner's copy; detached files keep a pinned copy and are overwritten the same way, Δ243). No mirror-only off switch: the stop lever is the user's flag or the kill switch, which also stops transcription.
+**OQ-T10:** an indexing opt-out deletes nothing on the drive. Writes use `conflictBehavior=fail` with an intent recorded first and are checked to end under the current root; chat drive
+writes into the folder are refused (`UserDriveService` guard). Unexpected errors are charged per file and park it. **Deploy gate: the Δ217 composite indexes must be `READY`** before the
+T2 revision ships (a missing one leaves the owner's mirror idle; the tick goes on, Δ236, and no purge waits on one, Δ237). Rollback needs the queue paused and `_Transcripts` moved out of the App Folder. Scripts: `drive_transcript_sweep.py`
+keeps the mirror's data unless `--mirror` (`--mirror --apply` also needs `--after-rollback` and `_Transcripts` already out of the App Folder); `drive_mirror_status.py` is read-only (output to `scripts/memory/`). Decision `decisions/drive_transcripts_mirror_archive.md`.
 **Search v2 (live since 2026-10-14, PR #64):** intelligence at
 index time, zero-LLM search. The indexer describes each text file once (`drive_profiler`: type and life areas from
 fixed enums, dates, entities, values, topics, en/es/uk/ru word lists, verified against the text), writes passage hints

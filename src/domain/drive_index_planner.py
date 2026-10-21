@@ -5,7 +5,8 @@ these functions and writes what they return.
 
 Public interface:
     PlanContext, Classification, ObservationPlan, AccessAction
-    parent_scope(parent_id, parent, root_item_id) -> Optional[Scope]
+    parent_scope(parent_id, parent, root_item_id, mirror_root_ids=frozenset()) -> Optional[Scope]
+    mirror_root_classification(change) -> Classification                                   (§27.9.8)
     needs_probe(change, pscope, previous) -> bool
     classify(change, pscope, probe, previous) -> Classification
     plan_observation(change, existing, parent, probe, ctx, previous_parent=None, *, observed=True,
@@ -53,7 +54,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import Any, Callable, List, Mapping, Optional, Tuple, Union
+from typing import Any, Callable, FrozenSet, List, Mapping, Optional, Tuple, Union
 
 from .drive_capture import camera_capture, model_capture, settle
 from .drive_card import (
@@ -89,12 +90,17 @@ PlaceOf = Callable[[float, float], Union[None, str, Place]]
 
 @dataclass(frozen=True)
 class PlanContext:
+    """`root_item_id` is the App Folder's root (the drive area the index covers). `mirror_root_ids` is something else:
+    the ids of the bot's own `_Transcripts` folders (§27.9.2, Δ205), the union of every root document of the user,
+    current and previous, on any drive (an id of another drive matches no item of this one). Such a folder is opaque:
+    it is stored without a card and nothing under it is indexed (§27.9.8)."""
     user_id: str
     root_item_id: str
     epoch: int
     phase: EpochPhase
     now: datetime
     place_of: PlaceOf
+    mirror_root_ids: FrozenSet[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -141,11 +147,24 @@ class AccessAction(str, Enum):
     PROCEED = "proceed"
 
 
-def parent_scope(parent_id: str, parent: Optional[DriveIndexRecord], root_item_id: str) -> Optional[Scope]:
-    """Scope a child inherits; None when the parent is not known yet. The root is an implicit normal parent."""
+def parent_scope(parent_id: str, parent: Optional[DriveIndexRecord], root_item_id: str,
+                 mirror_root_ids: FrozenSet[str] = frozenset()) -> Optional[Scope]:
+    """Scope a child inherits; None when the parent is not known yet. The root is an implicit normal parent; a mirror
+    root (§27.9.2) an implicit opaque one, so its direct children are never held unresolved while its own record is
+    not stored yet (the first enumeration after a purge, §27.9.8)."""
     if parent_id and parent_id == root_item_id:
         return Scope.NORMAL
+    if parent_id and parent_id in mirror_root_ids:
+        return Scope.INSIDE_OPAQUE
     return parent.scope if parent is not None else None
+
+
+def mirror_root_classification(change: DriveChange) -> Classification:
+    """A mirror root (`PlanContext.mirror_root_ids`, §27.9.8): `inside_opaque / metadata_only / folder`, existing values,
+    stored without a card (not a collapsed folder: no card, no README read). Its children inherit the opaque scope."""
+    kind = kind_of(change.name, change.mime_type, change.is_folder)
+    return Classification(True, Scope.INSIDE_OPAQUE, RecordState.METADATA_ONLY, Reason.FOLDER, kind,
+                          content_class_of(kind))
 
 
 def _density_decision_reusable(change: DriveChange, previous: Optional[DriveIndexRecord]) -> bool:
@@ -507,8 +526,11 @@ def _plan(change: DriveChange, existing: Optional[DriveIndexRecord], parent: Opt
             reopened = None   # the folder closed again in the same observation
     parent_updates = _some(reopened) + _some(closed)
 
-    pscope = parent_scope(change.parent_id, effective_parent, ctx.root_item_id)
-    cls = classify(change, pscope, probe, existing)
+    if change.item_id in ctx.mirror_root_ids:
+        cls = mirror_root_classification(change)   # the bot's own folder: opaque whatever its parent (§27.9.8)
+    else:
+        pscope = parent_scope(change.parent_id, effective_parent, ctx.root_item_id, ctx.mirror_root_ids)
+        cls = classify(change, pscope, probe, existing)
     if not cls.stored:
         parent_updates += _readme_touched(change, effective_parent, ctx.now)
         return ObservationPlan(delete_item_id=existing.item_id if existing else None, parent_updates=parent_updates)

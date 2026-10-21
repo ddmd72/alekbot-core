@@ -73,6 +73,21 @@ class UIMessage(Enum):
     DRIVE_REPLACED = "drive_replaced"
     DRIVE_DELETE_FAILED = "drive_delete_failed"
     DRIVE_REPLACE_FAILED = "drive_replace_failed"
+    DRIVE_MIRROR_WRITE_REFUSED = "drive_mirror_write_refused"   # the Step 1 guard (USER_DRIVE_INDEXING_RFC §27.9.8)
+    # The transcript mirror's files on the user's drive (USER_DRIVE_INDEXING_RFC §27.9.1, §27.9.10; D49): the read-me
+    # of `_Transcripts`, the file header's labels and managed line, and the four stub sentences. Folder names are
+    # fixed in every language (D49: `_Transcripts`, `Archive`, `Long paths`), so none is localized here. Counts use
+    # `{n}`, the stub sentences `{duration}`; all go through `str.format`.
+    DRIVE_TRANSCRIPTS_README = "drive_transcripts_readme"
+    DRIVE_TRANSCRIPT_OPEN_RECORDING = "drive_transcript_open_recording"
+    DRIVE_TRANSCRIPT_MANAGED_LINE = "drive_transcript_managed_line"
+    DRIVE_TRANSCRIPT_DURATION_MINUTES = "drive_transcript_duration_minutes"
+    DRIVE_TRANSCRIPT_SPEAKERS_ONE = "drive_transcript_speakers_one"
+    DRIVE_TRANSCRIPT_SPEAKERS_MANY = "drive_transcript_speakers_many"
+    DRIVE_TRANSCRIPT_STUB_NO_SPEECH = "drive_transcript_stub_no_speech"
+    DRIVE_TRANSCRIPT_STUB_TOO_LONG = "drive_transcript_stub_too_long"
+    DRIVE_TRANSCRIPT_STUB_TOO_LARGE = "drive_transcript_stub_too_large"
+    DRIVE_TRANSCRIPT_STUB_NO_AUDIO = "drive_transcript_stub_no_audio"
     # Deep research report copy to the user's drive (decisions/deep_research_drive_copy.md): the drive
     # folder's name per UI language, and the one line that follows the delivered report's link.
     DEEP_RESEARCH_DRIVE_FOLDER = "deep_research_drive_folder"

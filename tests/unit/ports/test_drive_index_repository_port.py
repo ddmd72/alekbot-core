@@ -39,6 +39,9 @@ _EXPECTED = {
     "transcript_records",
     # transcript stage B (plan Task 13): the orphan sweep keeps a stored transcript a record still carries (§27.8 b)
     "transcript_key_in_use",
+    # the transcript mirror (§27.9.4, Δ187, Δ217; plan T2 Task 20A): the records' mirror queue and its wake-ups, and the
+    # scanning purge that keeps the store entries the mirror ledger pins (Δ186, Δ214)
+    "mirror_queue", "mirror_wakeups", "delete_user_transcripts_except",
 }
 
 
