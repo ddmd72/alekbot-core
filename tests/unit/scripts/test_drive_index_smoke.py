@@ -26,10 +26,13 @@ _V2_CHUNK_QUERIES = 2 + _FAMILY
 # §26.2 (§26.9 step 3): the records the bot cannot open, one read (the tick's counters and the fan-out's notice)
 _ACCESS_RECORD_QUERIES = 1
 # §27.3 (Task 7B): the transcript queue and its wake-ups read the records; the copy check, the open batches, the
-# store's orphans and the two collection-group sweeps read their own collections (pinned below)
-_TRANSCRIPT_RECORD_QUERIES = 2
-TRANSCRIPT_CHECKS = ["transcript_queue", "transcript_wakeups", "jobs_by_content_key", "get_open_batches",
-                     "orphan_transcripts", "orphaned windows (collection group)", "orphaned parts (collection group)"]
+# store's orphans and the two collection-group sweeps read their own collections (pinned below). Task 14B adds the
+# two later record reads: the in-flight records by state (Task 12's `transcript_records`, the stage's and the purge's
+# job discovery) and the key-in-use check (Task 13's `transcript_key_in_use`, the orphan sweep's guard)
+_TRANSCRIPT_RECORD_QUERIES = 4
+TRANSCRIPT_CHECKS = ["transcript_queue", "transcript_wakeups", "transcript_records", "jobs_by_content_key",
+                     "get_open_batches", "orphan_transcripts", "transcript_key_in_use",
+                     "orphaned windows (collection group)", "orphaned parts (collection group)"]
 
 
 @pytest.fixture
@@ -84,16 +87,20 @@ async def test_a_missing_index_is_reported_and_the_rest_still_runs(smoke, mock_e
 
 
 async def test_every_transcript_read_is_a_named_check_and_runs_once(smoke, mock_env_config):
-    """Task 7B (§27.3-§27.5, §27.8 b): the seven transcript reads close the list, each sent once, filtered on the user,
-    the sweeps on the env-prefixed collection groups (ruling T-R13); the purge deletes themselves are not run."""
+    """Task 7B (§27.3-§27.5, §27.8 b; Task 14B adds the in-flight and key-in-use record reads): the nine transcript
+    reads close the list, each sent once, filtered on the user, the sweeps on the env-prefixed collection groups (ruling
+    T-R13); the purge deletes themselves are not run."""
     db = ChunkDb()
     repo = make_chunk_repo(db, mock_env_config)
     names = [name for name, _ in smoke.checks(repo, "smoke-user")]
     assert names[-len(TRANSCRIPT_CHECKS) - 1:] == ["inaccessible_records", *TRANSCRIPT_CHECKS]
     assert await smoke.run_smoke(repo, "smoke-user") == []
     record_reads = [ops for ops in db.cols[RECS].executed
-                    if any(op[0] == "where" and op[1] in ("transcript_state", "transcript_wake_at") for op in ops)]
+                    if any(op[0] == "where" and op[1] in ("transcript_state", "transcript_wake_at", "transcript_key")
+                           for op in ops)]
     assert len(record_reads) == _TRANSCRIPT_RECORD_QUERIES
+    for ops in record_reads:
+        assert ("where", "user_id", "==", "smoke-user") in ops
     for runs in (db.cols[JOBS].executed, db.cols[BATCHES].executed, db.cols[TRANSCRIPTS].executed,
                  db.groups[WINDOWS].executed, db.groups[PARTS].executed):
         (ops,) = runs
