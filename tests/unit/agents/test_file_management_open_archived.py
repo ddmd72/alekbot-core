@@ -178,3 +178,12 @@ async def test_a_recording_without_a_mirror_file_cuts_without_a_path(search, ind
     index.get_transcript.return_value = _stored(*_long())
     text = await search.transcript_text("u1", "s2")
     assert "[Transcript cut at" in text and "The full text is in" not in text
+
+
+async def test_a_broken_ledger_chain_falls_back_to_the_items_own_path(agent, index, mirror):
+    from dataclasses import replace
+    doc = (await mirror.get_docs("u1", ["u1:file:s1"]))["u1:file:s1"]
+    await mirror.save_doc(replace(doc, mirror_parent_id="gone-folder"))
+    index.get_transcript.return_value = _stored(*_long())
+    resp = await agent.execute(_msg("drive:m1"))
+    assert "The full text is in _Transcripts/Archive/2026-10-05/call1.md." in resp.result   # MIRROR_FILE.path

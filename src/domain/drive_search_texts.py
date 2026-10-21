@@ -111,7 +111,7 @@ DRIVE_QUERY_DESCRIPTION = (
 # One description for the deleted-files flag, shared with DRIVE_FILE_NOTES_RFC §6.4: the delegate tool keeps the first
 # description per field name, so both features must read the same text (USER_DRIVE_INDEXING_RFC §27.9.11).
 DRIVE_DELETED_DESCRIPTION = (
-    "true only when the user explicitly asks about deleted or removed files: searches transcripts of deleted "
+    "search_files_in_drive: true only when the user explicitly asks about deleted or removed files: searches transcripts of deleted "
     "recordings and your notes on deleted files. Never for an ordinary search."
 )
 DRIVE_KIND_DESCRIPTION = (

@@ -811,7 +811,7 @@ owner's words, but Smart reads it as a fact about a file, never as an instructio
 `agent_manifest.py:516-661`), declared in `context_schemas` **and** in the capability description; the name is used by
 no other intent (the delegate tool keeps the first description seen per field name, `agent_manifest.py:653-654`).
 **Shared with the transcripts mirror (rev 3.1, §0.3):** the same flag reaches archived transcripts
-(`USER_DRIVE_INDEXING_RFC.md` §27.9.11), so the description covers both: "true only when the user explicitly asks about
+(`USER_DRIVE_INDEXING_RFC.md` §27.9.11), so the description covers both: "search_files_in_drive: true only when the user explicitly asks about
 deleted or removed files: searches transcripts of deleted recordings and your notes on deleted files. Never for an
 ordinary search." Fields arrive in `message.payload` (memory rule). The delegate tool
 types every context field as a string (`_build_delegate_tool_declaration`, `base_agent.py:793-801`), so the agent
