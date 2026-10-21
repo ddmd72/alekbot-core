@@ -1,6 +1,7 @@
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Any, Optional
+from google.api_core.exceptions import AlreadyExists, FailedPrecondition, NotFound
 from google.cloud.firestore_v1.async_client import AsyncClient
 from ..ports.dedup_store import DedupStore
 from ..utils.logger import logger
@@ -38,11 +39,16 @@ class FirestoreDedupStore(DedupStore):
         doc = await doc_ref.get()
         if not doc.exists:
             return False
-        data = doc.to_dict() or {}
-        created_at = data.get("created_at", 0)
-        if time.time() - created_at > self.ttl_seconds:
-            return False
-        return True
+        return self._is_live(doc.to_dict() or {})
+
+    def _is_live(self, data: dict) -> bool:
+        """A mark is live until its own expires_at; old docs without it fall back to created_at + instance TTL."""
+        expires_at = data.get("expires_at")
+        if isinstance(expires_at, datetime):
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            return datetime.now(timezone.utc) < expires_at
+        return time.time() - data.get("created_at", 0) <= self.ttl_seconds
 
     def _make_doc(self) -> dict:
         """Build dedup document with expires_at for Firestore TTL policy."""
@@ -62,21 +68,46 @@ class FirestoreDedupStore(DedupStore):
 
     async def try_mark_processed(self, event_id: Optional[str]) -> bool:
         """
-        Atomic check-and-set using Firestore create().
-        Returns True if successfully marked (first time), False if already exists.
+        Atomic claim via create(); an expired, not-yet-purged mark is re-claimed with a
+        last_update_time-guarded rewrite. True only when this caller now holds a live mark.
+        Errors other than "already marked" propagate.
         """
         if not event_id:
             return False
+        doc_ref = self.db_client.collection(self.collection_name).document(event_id)
         try:
-            doc_ref = self.db_client.collection(self.collection_name).document(event_id)
+            claimed = await self._claim(doc_ref, event_id, retry_create=True)
+        except Exception as e:
+            logger.error(f"Dedup claim failed for event {event_id[:12]}...: {e}")
+            raise
+        if not claimed:
+            logger.info(f"⏭️ Atomic check confirmed duplicate for event {event_id[:12]}...")
+        return claimed
+
+    async def _claim(self, doc_ref: Any, event_id: str, retry_create: bool) -> bool:
+        try:
             await doc_ref.create(self._make_doc())
             logger.debug(f"✅ Atomic dedup mark stored for event {event_id[:12]}...")
             return True
-        except Exception:
-            is_dup = await self.is_duplicate(event_id)
-            if is_dup:
-                logger.info(f"⏭️ Atomic check confirmed duplicate for event {event_id[:12]}...")
-            return not is_dup
+        except AlreadyExists:
+            pass
+        snap = await doc_ref.get()
+        if not snap.exists:
+            # Released between our create and get: one more attempt, then give way.
+            return await self._claim(doc_ref, event_id, retry_create=False) if retry_create else False
+        if self._is_live(snap.to_dict() or {}):
+            return False
+        try:
+            await doc_ref.update(
+                self._make_doc(),
+                option=self.db_client.write_option(last_update_time=snap.update_time),
+            )
+        except FailedPrecondition:
+            return False  # another caller re-claimed it first
+        except NotFound:
+            return await self._claim(doc_ref, event_id, retry_create=False) if retry_create else False
+        logger.debug(f"♻️ Expired dedup mark re-claimed for event {event_id[:12]}...")
+        return True
 
     async def release(self, event_id: Optional[str]) -> None:
         """Delete the mark so a retry of a failed attempt is processed, not skipped."""
