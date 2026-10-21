@@ -249,6 +249,7 @@ MIRROR_RESERVE_S = 45                       # §27.9.5: tail of the start budget
 MIRROR_MAX_ATTEMPTS = 5                     # §27.9.5: a failing mirror action is charged this many times
 MIRROR_FAILED_RETRY = timedelta(days=7)     # §27.9.5: a failed document is tried again after this
 MIRROR_QUOTA_HOLD = timedelta(hours=6)      # §27.9.5: a full drive holds the mirror step this long
+MIRROR_CLOCK_SKEW = timedelta(minutes=5)    # Δ210, Δ217: Graph's created time against the indexer's, on an intent re-run
 ARCHIVE_KEYS_MAX = 12_000                   # §27.9.11: cap of archive_keys on a ledger document
 ARCHIVE_QUERY_MAX = 100                     # §27.9.11: documents per deleted-files driver query
 DELETED_SHOW_MAX = 5                        # §27.9.11: archived transcripts shown by one search

@@ -19,7 +19,7 @@ contract (the mirror's decisions), read together as `drive_enrichment` does; the
 Public interface:
     MIRROR_PLAN_VERSION
     mirror_eligible(rec), mirror_digest(rec), mirror_plan(rec), stamped(rec), woken(rec)
-    Action, file_action(rec, doc, rendered_hash, placement), folder_action(rec, doc, placement)
+    Action, file_action(rec, doc, rendered_hash, placement), folder_action(rec, doc, placement), placement_source(rec)
     Decision, marked(doc, notice), unmarked(doc), mark_held(doc, until), mark_decision(doc, ...)
     RootDecision, root_decision(root, ...)
     digest_changed(doc, digest), retry_due(doc, *, now, digest), charged_doc(doc, now), charged(doc, rec, now),
@@ -136,6 +136,12 @@ def _misplaced(rec: DriveIndexRecord, doc: MirrorDoc, placement: Placement) -> b
     (a temporary name left by a stopped tick counts)."""
     return (doc.source_name != rec.name or doc.source_parent_id != rec.parent_id
             or doc.mirror_name != _wanted_name(placement))
+
+
+def placement_source(rec: DriveIndexRecord) -> str:
+    """What a `Long paths` re-placement was decided for (`MirrorDoc.long_path_source`): the source's name and parent.
+    A rename or move of the source changes it, and the placement is decided again."""
+    return hashlib.sha256(_SEP.join(("place", rec.name, rec.parent_id)).encode("utf-8")).hexdigest()[:16]
 
 
 def file_action(rec: DriveIndexRecord, doc: Optional[MirrorDoc], rendered_hash: str, placement: Placement) -> Action:
