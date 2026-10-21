@@ -195,3 +195,19 @@ async def test_a_provider_rotation_re_run_sees_the_same_turn_id():
     await agent.execute(_message(interactive_delivery=True, turn_id="slack:Ev9"))
     turn_ids = [c.args[3].turn_id for c in service.undo.await_args_list]
     assert turn_ids == ["slack:Ev9", "slack:Ev9"]
+
+
+async def test_pinned_residual_a_skill_loaded_in_the_same_batch_opens_the_gate():
+    """Plan part A §6 / RFC §0.4 delta (review I4, option a): `use_skill` and `annotate_drive_file` emitted in ONE batch
+    — the note's arguments were written before the model read the skill — still write the note, because use_skill
+    records the load before the note call checks the gate. Accepted: the tool description repeats the said-or-confirmed
+    rule and the service's security check stays. A change to this behaviour must change this test on purpose."""
+    service = _service()
+    agent, llm = _agent(service)
+    llm.generate_content = AsyncMock(side_effect=[
+        _resp(tool_calls=[ToolCall(name="use_skill", args={"name": "drive-file-notes"}),
+                          ToolCall(name=TOOL, args={"file_ref": "drive:a", "note": "Petya's estimate"})]),
+        _resp("Noted."),
+    ])
+    await agent.execute(_message(interactive_delivery=True, turn_id="slack:Ev9"))
+    service.set.assert_awaited_once()

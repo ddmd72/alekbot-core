@@ -1,7 +1,10 @@
 """The drive-note store is never HANDED to the memory side (DRIVE_FILE_NOTES_RFC §1.4 anti-goal; the import side is
 tests/unit/test_arch_drive_notes_isolation.py): wherever the composition roots construct ConsolidationService,
 SearchEnrichmentService, BiographicalContextService or the remote MCP server's components, no argument names a drive
-note. And the memory-side constructors take no parameter that could carry one."""
+note, and none of their constructors has a parameter named or typed for one. Not every path is closed by structure:
+ConsolidationService takes `agent_factory` and memory-side code can reach a `coordinator`, and both can lead to the
+note service. What blocks that is that memory-side code never names it — pinned case-insensitively below (named
+residual, plan part A §6)."""
 import ast
 import inspect
 from pathlib import Path
@@ -16,6 +19,10 @@ from src.services.search_enrichment_service import SearchEnrichmentService
 _ROOT = Path(__file__).resolve().parents[2]
 _ROOTS = ["main.py", "src/composition/service_container.py", "src/composition/user_agent_factory.py",
           "src/composition/mcp_setup.py", "src/handlers/consolidation_handler.py"]
+_MEMORY_SIDE_FILES = ["src/services/consolidation_service.py", "src/handlers/consolidation_handler.py",
+                      "src/agents/consolidation_agent.py", "src/services/biographical_context_service.py",
+                      "src/services/search_enrichment_service.py",
+                      *sorted(str(p.relative_to(_ROOT)) for p in (_ROOT / "src" / "composition").glob("mcp_*.py"))]
 _MEMORY_SIDE = ("ConsolidationService", "SearchEnrichmentService", "BiographicalContextService",
                 "build_mcp_components")
 
@@ -55,3 +62,9 @@ def test_no_memory_side_constructor_takes_a_drive_note(target):
     for name, param in signature.parameters.items():
         text = f"{name} {param.annotation}".lower()
         assert "drive_note" not in text and "drivenote" not in text, f"{target.__name__}({name})"
+
+
+@pytest.mark.parametrize("rel", _MEMORY_SIDE_FILES)
+def test_no_memory_side_module_names_a_drive_note_in_any_case(rel):
+    text = (_ROOT / rel).read_text().lower()
+    assert "drive_note" not in text and "drivenote" not in text, rel

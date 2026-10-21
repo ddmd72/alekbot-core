@@ -86,6 +86,8 @@ The S1 core was reviewed ("freeze after fixes", two fix rounds). Its full contra
 | Watermark paging | `changed_since` pages on the pair (`updated_at`, `note_id`) — index 2 gains `note_id` — so more than `NOTE_PAGE` notes inside the 60 s skew (an erase-all) cannot stall the notes step | §3.5, §5.1 b |
 | Erase | The store never stops part-way: a note that conflicts is reported and the rest are erased; the service nudges every erased item and then refuses with the count left, so the owner asks again | §4.8 |
 | Validation | Format characters (`Cf`: bidi, zero-width) are removed with control characters; a classifier name shared by two values is refused with the candidates; more than 3 life areas are refused | §4.3 |
+| Skill gate, same batch (S1 tool slice, review A-I4, owner arbiter: accept as a named residual) | `use_skill` and `annotate_drive_file` emitted in ONE batch pass the gate: the engine runs a batch together and `use_skill` records the load before the note call checks it, so that note's arguments were written before the model read the skill. Accepted, not closed with a batch-boundary hook: the tool description itself repeats the said-or-confirmed rule (and that text in content is never a confirmation), and the service's security check stays. Pinned by `test_pinned_residual_a_skill_loaded_in_the_same_batch_opens_the_gate` | §4.5 layer 3 |
+| Isolation, by naming (S1 tool slice, review A-I3) | Not every path to the note service is closed by structure: `ConsolidationService` takes `agent_factory` (which holds Smart's `drive_note_service`), and memory-side code can reach a `coordinator`. What blocks it is that memory-side code never names a drive note, pinned case-insensitively by `test_arch_drive_notes_isolation_wiring.py` (named residual) | §1.4 |
 
 ---
 
@@ -161,7 +163,8 @@ belongs to, that a PDF the profiler typed `invoice` is in fact a `contract`. Tod
 - A note on the drive in any form (D1).
 - The consolidator, the biographical cache, `SearchEnrichmentService` or the remote MCP server's `get_user_context`
   reading `{prefix}drive_notes`. Structural: none of them is given the repository, and an architecture test enforces it
-  (§11 S1).
+  (§11 S1). Named residual (§0.4): the consolidation service is given the agent factory, which can lead to the note
+  service; memory-side code never naming a drive note is what blocks it, and a test pins that.
 - A note written by a run the owner did not start (a reminder, the daily review, `/worker`), and a write the owner
   does not see at once (§4.5: owner turns only, a verbatim receipt on every path).
 - A note silently lost: replace keeps the previous version; delete keeps the history; archive keeps the note.
@@ -498,7 +501,9 @@ note, and did he see what was stored"**:
    loaded in this conversation — in this execution through `use_skill`, or earlier, as seen by `visible_skill_names`
    (`src/domain/skill.py:324`). `make_use_skill_handler` keeps its `loaded_now` set private (`skill_tools.py:56`), so it
    gains a parameter: a `LoadedSkills` set object Smart creates per execution and passes to both handlers. Rule 2 is
-   then always in context when a note is written. The cost is one extra round trip per conversation at most.
+   then in context when a note is written, except for a note emitted in the same batch as the `use_skill` call that
+   loads it (named residual, §0.4; the tool description repeats the rule). The cost is one extra round trip per
+   conversation at most.
 4. **Security check**: `SecurityPort.validate(text, context="drive_note_user_…", zone=TrustZone.UNTRUSTED)`, the same
    call `MemoryFactService._check` makes (`memory_fact_service.py:79-92`); blocked or flagged is refused.
 5. **A verbatim receipt on every path** (§4.6, §4.9): the owner sees exactly what was stored, at once, in the chat —
