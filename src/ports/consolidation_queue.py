@@ -28,11 +28,6 @@ class ConsolidationQueue(ABC):
         pass
 
     @abstractmethod
-    async def cleanup_old_batches(self, user_id: str, max_messages: int = 600) -> int:
-        """Delete oldest completed/failed batches if queue > max. Returns deleted count."""
-        pass
-
-    @abstractmethod
     async def update_batch_status(
         self,
         batch_id: str,
