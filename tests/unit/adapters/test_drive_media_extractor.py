@@ -18,7 +18,8 @@ from src.domain.drive_transcript_windows import plan_windows
 from src.domain.drive_transcript import MediaStatus, MediaUnreadable, WindowSpec
 from src.ports.media_audio_port import MediaAudioPort
 from tests.unit.adapters.drive_media_fixtures import (
-    HAVE_FFMPEG, MediaServer, make_audio_mp4, make_cueless_webm, make_stepped_tone_webm, tone_hz_at,
+    HAVE_FFMPEG, MediaServer, make_audio_mp4, make_cueless_webm, make_seekable_webm, make_stepped_tone_webm,
+    tone_hz_at,
 )
 
 needs_ffmpeg = pytest.mark.skipif(not HAVE_FFMPEG, reason="needs ffmpeg and ffprobe")
@@ -207,8 +208,9 @@ async def test_audio_less_file_probes_without_audio(tmp_path):
 
 @needs_ffmpeg
 async def test_probe_without_duration_takes_one_pass_segment(tmp_path):
-    """A browser-recorded webm (written to a pipe) has no Duration and no Cues: not an error (G35); the first pass of
-    the standard plan reads the file once, hits its end, and reports the duration (T-R15)."""
+    """A browser-recorded webm (written to a pipe) has no Duration and no Cues: not an error (G35). The design is the
+    local-intermediate pass of T-R15 (not a segment muxer): the first pass of the standard plan reads the file once,
+    hits its end, and reports the duration."""
     webm = make_cueless_webm(100)
     with MediaServer(tmp_path, {"/rec.webm": webm}) as server:
         extractor = SubprocessMediaExtractor(ca_file=server.ca_pem, temp_root=str(tmp_path))
@@ -306,6 +308,57 @@ async def test_a_pass_cut_by_the_file_size_limit_returns_the_windows_inside_the_
                                                  container=WEBM, duration_known=False)
     assert result.status is MediaStatus.TIMEOUT and not result.eof
     assert 0 < len(result.windows) < 3 and result.windows[0][0].index == 0
+
+
+@needs_ffmpeg
+async def test_a_dropped_connection_is_retried_and_the_duration_is_the_whole_files(tmp_path):
+    """The first connection dies at 30 %: ffmpeg reconnects with a Range read, so the pass sees the real end (N1)."""
+    webm = make_cueless_webm(300)
+    plan = plan_windows(14_400)[:3]
+    with MediaServer(tmp_path, {"/rec.webm": webm}) as server:
+        server.drop_at, server.drop_first_only = int(len(webm) * 0.3), True
+        extractor = SubprocessMediaExtractor(ca_file=server.ca_pem, temp_root=str(tmp_path))
+        result = await extractor.extract_windows(server.url("/rec.webm"), plan, str(tmp_path / "o"), wall_s=120,
+                                                 container=WEBM, duration_known=False)
+    assert result.status is MediaStatus.OK and result.eof
+    assert result.duration_s == pytest.approx(300.0, abs=2.0)
+
+
+@needs_ffmpeg
+async def test_a_connection_that_keeps_dropping_is_an_error_never_an_eof(tmp_path):
+    webm = make_cueless_webm(300)
+    plan = plan_windows(14_400)[:3]
+    with MediaServer(tmp_path, {"/rec.webm": webm}) as server:
+        server.drop_at = int(len(webm) * 0.3)
+        extractor = SubprocessMediaExtractor(ca_file=server.ca_pem, temp_root=str(tmp_path))
+        with pytest.raises(MediaUnreadable):
+            await extractor.extract_windows(server.url("/rec.webm"), plan, str(tmp_path / "o"), wall_s=120,
+                                            container=WEBM, duration_known=False)
+    assert not list((tmp_path / "o").glob("window_*"))
+
+
+@needs_ffmpeg
+async def test_a_known_duration_window_cut_short_by_a_drop_is_not_reported_at_its_planned_length(tmp_path):
+    """Per-window runs rely on `-xerror` and also measure the produced window against the plan (N1)."""
+    webm = make_seekable_webm(tmp_path / "a.webm", 100)
+    with MediaServer(tmp_path, {"/a.webm": webm}) as server:
+        server.drop_at = int(len(webm) * 0.5)
+        extractor = SubprocessMediaExtractor(ca_file=server.ca_pem, temp_root=str(tmp_path))
+        with pytest.raises(MediaUnreadable):
+            await extractor.extract_windows(server.url("/a.webm"), [WindowSpec(0, 0.0, 90.0)], str(tmp_path / "o"),
+                                            wall_s=60, container=WEBM)
+    assert not list((tmp_path / "o").glob("window_*"))
+
+
+@needs_ffmpeg
+async def test_a_limit_before_the_first_window_is_an_error_not_a_loop(tmp_path):
+    """N2: a CPU cut that finishes no window would repeat forever as a TIMEOUT; it is the file's error."""
+    webm = make_cueless_webm(3_600)
+    with MediaServer(tmp_path, {"/rec.webm": webm}) as server:
+        extractor = SubprocessMediaExtractor(ca_file=server.ca_pem, temp_root=str(tmp_path), cpu_limit_s=3)
+        with pytest.raises(MediaUnreadable):
+            await extractor.extract_windows(server.url("/rec.webm"), plan_windows(14_400)[:3], str(tmp_path / "o"),
+                                            wall_s=170, container=WEBM, duration_known=False)
 
 
 async def test_an_empty_container_is_refused_before_any_child_runs(tmp_path):

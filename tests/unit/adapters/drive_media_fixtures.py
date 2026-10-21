@@ -4,6 +4,7 @@ import datetime
 import http.server
 import ipaddress
 import shutil
+import socket
 import ssl
 import subprocess
 import threading
@@ -55,6 +56,9 @@ class MediaServer:
         self.ca_pem, cert, key = make_ca_and_server_cert(directory)
         self.files: Dict[str, bytes] = dict(files or {})
         self.requests = []
+        self.drop_at = None            # absolute byte offset: a body is cut off there and the connection closed
+        self.drop_first_only = False   # only the first body-carrying GET is cut
+        self._bodies = 0
         owner = self
 
         class Handler(http.server.BaseHTTPRequestHandler):
@@ -76,15 +80,26 @@ class MediaServer:
                     end = min(end, len(data) - 1)
                     status = 206
                 body = data[start:end + 1]
+                cut_here = False
+                if body_too and owner.drop_at is not None and (not owner.drop_first_only or owner._bodies == 0):
+                    owner._bodies += 1
+                    cut_here = True
+                declared = len(body)
+                if cut_here:
+                    body = body[:max(0, owner.drop_at - start)]
                 self.send_response(status)
                 self.send_header("Accept-Ranges", "bytes")
-                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Content-Length", str(declared))
                 if status == 206:
                     self.send_header("Content-Range", f"bytes {start}-{end}/{len(data)}")
                 self.end_headers()
                 if body_too:
                     try:
                         self.wfile.write(body)
+                        if cut_here:
+                            self.wfile.flush()
+                            self.close_connection = True
+                            self.connection.shutdown(socket.SHUT_RDWR)
                     except (BrokenPipeError, ConnectionResetError):
                         pass
 
@@ -157,3 +172,9 @@ def tone_hz_at(opus_path: str, rel_s: float) -> float:
     samples = np.frombuffer(raw, dtype=np.int16).astype(float)
     spectrum = np.abs(np.fft.rfft(samples * np.hanning(len(samples))))
     return float(np.argmax(spectrum) * 16000 / len(samples))
+
+
+def make_seekable_webm(path, seconds: int) -> bytes:
+    """Opus in webm written to a file: has a Duration and Cues."""
+    _ffmpeg("-f", "lavfi", "-i", f"sine=frequency=440:duration={seconds}", "-c:a", "libopus", str(path))
+    return path.read_bytes()

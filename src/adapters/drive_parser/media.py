@@ -34,12 +34,18 @@ FFPROBE = "ffprobe"
 PROTOCOL_WHITELIST = "https,tls,tcp,crypto"
 # G14: a short name admits the demuxer whose name lists it ("mov" -> "mov,mp4,m4a,3gp,3g2,mj2"); copied to nested inputs.
 FORMAT_WHITELIST = "mov,mp4,m4a,matroska,webm,mp3,wav,flac,ogg,aac"
+# A dropped connection must neither end the read quietly (ffmpeg exits 0 after "Stream ends prematurely", which a pass
+# would read as the end of the file, Δ100) nor lose it: reconnect with a Range read, and `-xerror` makes a connection
+# that keeps dropping a non-zero exit.
+RECONNECT_FLAGS = ["-reconnect", "1", "-reconnect_on_network_error", "1", "-reconnect_delay_max", "5"]
+REMOTE_RUN_FLAGS = ["-xerror"]
 NETWORK_TIMEOUT_US = 30_000_000       # -rw_timeout: a stalled socket ends as an error, not a wall-clock kill
 MAX_WINDOWS_PER_RUN = 64
 _LIMIT_SIGNALS = (-signal.SIGXCPU, -signal.SIGXFSZ)   # an rlimit ended ffmpeg: its output so far is a valid prefix
 _FORMAT_NAME = re.compile(r"^[a-z0-9_]+(,[a-z0-9_]+)*$")
 _BOUND_SLACK_S = 1.0                  # a pass within this of its `-t` bound reached it
 _MIN_BUDGET_S = 1.0
+_TRUNCATED_WINDOW_S = 2.0              # a produced window this much shorter than planned was cut short
 
 
 def window_name(index: int) -> str:
@@ -50,7 +56,7 @@ def _input_guard(url: str, ca_file: str, container: str) -> List[str]:
     """Flags common to every run: allowlists, TLS verification (ffmpeg verifies nothing by default), the network
     timeout, and the probed demuxer pinned with `-f` when known (G14)."""
     argv = ["-protocol_whitelist", PROTOCOL_WHITELIST, "-format_whitelist", FORMAT_WHITELIST,
-            "-tls_verify", "1", "-ca_file", ca_file, "-rw_timeout", str(NETWORK_TIMEOUT_US)]
+            "-tls_verify", "1", "-ca_file", ca_file, "-rw_timeout", str(NETWORK_TIMEOUT_US)] + RECONNECT_FLAGS
     if not _FORMAT_NAME.match(container):
         raise ValueError("container name is missing or has an invalid shape")
     return argv + ["-f", container]
@@ -60,7 +66,7 @@ def build_probe_argv(url: str, ca_file: str) -> List[str]:
     """ffprobe has no `-nostdin`; the runner gives it a closed stdin instead."""
     return [FFPROBE, "-hide_banner", "-v", "error", "-protocol_whitelist", PROTOCOL_WHITELIST,
             "-format_whitelist", FORMAT_WHITELIST, "-tls_verify", "1", "-ca_file", ca_file,
-            "-rw_timeout", str(NETWORK_TIMEOUT_US), "-print_format", "json",
+            "-rw_timeout", str(NETWORK_TIMEOUT_US), *RECONNECT_FLAGS, "-print_format", "json",
             "-show_entries", "format=duration,format_name:stream=codec_type", "-i", url]
 
 
@@ -72,7 +78,7 @@ _OUTPUT_FLAGS = ["-map", "0:a:0", "-vn", "-sn", "-dn", "-map_metadata", "-1", "-
 def build_window_argv(url: str, ca_file: str, container: str, start_s: float, length_s: float,
                       out_path: str) -> List[str]:
     """One window: input-side `-ss` / `-t` (Range reads, Δ134), audio only, to `out_path`."""
-    return ([FFMPEG, "-nostdin", "-hide_banner", "-loglevel", "error", "-nostats", "-y"]
+    return ([FFMPEG, "-nostdin", "-hide_banner", "-loglevel", "error", "-nostats", "-y"] + REMOTE_RUN_FLAGS
             + _input_guard(url, ca_file, container)
             + ["-ss", f"{start_s:.3f}", "-t", f"{length_s:.3f}", "-i", url] + _OUTPUT_FLAGS + ["-f", "opus", out_path])
 
@@ -81,7 +87,7 @@ def build_pass_argv(url: str, ca_file: str, container: str, start_s: float, span
     """The one remote read of a pass over a file without a duration (G35, T-R15): `-ss` only when resuming past the
     start, `-t` bounding it, one Ogg Opus file out. The windows are cut from that file locally."""
     seek = ["-ss", f"{start_s:.3f}"] if start_s > 0 else []
-    return ([FFMPEG, "-nostdin", "-hide_banner", "-loglevel", "error", "-nostats", "-y"]
+    return ([FFMPEG, "-nostdin", "-hide_banner", "-loglevel", "error", "-nostats", "-y"] + REMOTE_RUN_FLAGS
             + _input_guard(url, ca_file, container)
             + seek + ["-t", f"{span_s:.3f}", "-i", url] + _OUTPUT_FLAGS + ["-f", "opus", out_path])
 
@@ -186,9 +192,10 @@ def _run_each(request: Dict[str, Any], url: str, ca_file: str, container: str, o
         if timed_out:
             _discard(part)
             return {"status": "timeout", "windows": written, "detail": "wall in window"}
-        if code != 0 or not _regular(part) or os.path.getsize(part) == 0 or _file_duration(part) <= 0:
-            _discard(part)        # a header-only Ogg is what a seek past the end leaves
-            return {"status": "error", "detail": f"ffmpeg exit {code}"}
+        real = _file_duration(part) if code == 0 and _regular(part) and os.path.getsize(part) > 0 else 0.0
+        if real <= 0 or real < length - _TRUNCATED_WINDOW_S:
+            _discard(part)        # header-only Ogg (a seek past the end), or a window cut short: never its planned length
+            return {"status": "error", "detail": f"ffmpeg exit {code}" if code != 0 else "window shorter than planned"}
         os.replace(part, final)
         written.append({"index": index, "start_s": start, "duration_s": length})
     return {"status": "ok", "windows": written}
@@ -213,6 +220,14 @@ def _hit_a_limit(request: Dict[str, Any], pass_path: str) -> bool:
         return False
 
 
+def _no_progress(limit: bool) -> Dict[str, Any]:
+    """A wall cut with nothing finished is retried next tick; a limit cut with nothing finished would end the same way
+    every time (the first window does not fit the limits), so it is the file's error, not a resumable timeout."""
+    if limit:
+        return {"status": "error", "detail": "limit before the first window"}
+    return {"status": "timeout", "windows": []}
+
+
 def _run_pass(request: Dict[str, Any], url: str, ca_file: str, container: str, out_dir: str,
               deadline: float) -> Dict[str, Any]:
     """No duration (G35, T-R15): `windows` is a short contiguous slice of the standard plan. Pass 1 reads the span once
@@ -231,14 +246,13 @@ def _run_pass(request: Dict[str, Any], url: str, ca_file: str, container: str, o
     pass_path = os.path.join(out_dir, "pass.opus")
     try:
         code, timed_out = _run_ffmpeg(build_pass_argv(url, ca_file, container, first_start, span, pass_path), deadline)
-        cut = timed_out or code in _LIMIT_SIGNALS or (code != 0 and _hit_a_limit(request, pass_path))
+        limit = code in _LIMIT_SIGNALS or (code != 0 and not timed_out and _hit_a_limit(request, pass_path))
+        cut = timed_out or limit
         if not cut and code != 0:
             return {"status": "error", "detail": f"ffmpeg exit {code}"}
-        if not _regular(pass_path):
-            return {"status": "timeout", "windows": []} if cut else {"status": "error", "detail": "no audio produced"}
-        duration = _file_duration(pass_path)
+        duration = _file_duration(pass_path) if _regular(pass_path) else 0.0
         if duration <= 0:
-            return {"status": "timeout", "windows": []} if cut else {"status": "error", "detail": "no audio produced"}
+            return _no_progress(limit) if cut else {"status": "error", "detail": "no audio produced"}
         eof = (not cut) and duration < span - _BOUND_SLACK_S
         windows: List[Dict[str, Any]] = []
         for index, start, length in plan:
@@ -264,7 +278,7 @@ def _run_pass(request: Dict[str, Any], url: str, ca_file: str, container: str, o
     finally:
         _discard(pass_path)
     if cut:
-        return {"status": "timeout", "windows": windows}
+        return {"status": "timeout", "windows": windows} if windows else _no_progress(limit)
     if not windows:
         return {"status": "error", "detail": "no audio produced"}
     result: Dict[str, Any] = {"status": "ok", "windows": windows, "eof": eof,
