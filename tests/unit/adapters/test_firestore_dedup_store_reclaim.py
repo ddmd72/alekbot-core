@@ -98,3 +98,24 @@ async def test_old_doc_without_expires_at_falls_back_to_created_at_ttl():
     db.collection(COLLECTION).docs["old"] = {"created_at": time.time() - 3600}
     assert await store.is_duplicate("old") is False
     assert await store.try_mark_processed("old") is True
+
+
+async def test_stale_snapshot_loses_to_a_concurrent_rewrite_and_does_not_overwrite():
+    store, db = _make()
+    col = db.collection(COLLECTION)
+    _expire(db, "t1")
+    ref_cls = col.document("t1").__class__
+    real_get = ref_cls.get
+    winner_expiry = datetime.now(timezone.utc) + timedelta(hours=5)
+
+    async def get_then_move_on(self, *a, **kw):
+        snap = await real_get(self, *a, **kw)   # stale expired snapshot in hand
+        await ref_cls.update(self, {"created_at": time.time(), "expires_at": winner_expiry})
+        return snap
+
+    ref_cls.get = get_then_move_on
+    try:
+        assert await store.try_mark_processed("t1") is False
+    finally:
+        ref_cls.get = real_get
+    assert col.docs["t1"]["expires_at"] == winner_expiry
