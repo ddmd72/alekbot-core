@@ -53,6 +53,7 @@ if TYPE_CHECKING:
     from ..ports.media_storage_port import MediaStoragePort
     from ..ports.account_repository import AccountRepository
     from ..ports.dedup_store import DedupStore
+    from ..ports.prompt_content_store import PromptContentStore
     from ..ports.oauth_credentials_port import OAuthCredentialsPort
     from ..ports.video_generation_port import VideoPollResult
     from ..services.file_link_service import FileLinkService
@@ -62,12 +63,13 @@ if TYPE_CHECKING:
 
 from ..domain.cloud_task_delivery import CloudTaskDelivery
 from ..domain.complexity_settings import resolve_complexity_settings
+from ..domain import deep_research_notices as dr_notices
 from ..domain.exceptions import OAuthGrantRevokedError
 from ..domain.notification_kind import NotificationKind
 from ..domain.workspace import fire_key as workspace_fire_key
 from ..infrastructure.notification_sla import dispatch_deadline_s
 from ..handlers.agent_worker_handler import AgentWorkerHandler
-from ..services.deep_research_delivery import NotificationPort
+from ..services.deep_research_delivery import NotificationPort, deliver_deep_research
 from ..services.consolidation_service import ConsolidationService
 from ..services.provider_registry import ProviderRegistry
 from ..services.email_embedding_repair_service import EmailEmbeddingRepairService
@@ -123,7 +125,11 @@ class WorkerHandler:
         drive_sync_scheduler: "Optional[DriveSyncSchedulerService]" = None,
         task_dedup: "Optional[DedupStore]" = None,
         daily_review_marks: "Optional[DedupStore]" = None,
+        deep_research_fetch: "Optional[Callable[[str], Awaitable[dict]]]" = None,
+        prompt_content_store: "Optional[PromptContentStore]" = None,
     ) -> None:
+        self._deep_research_fetch = deep_research_fetch
+        self._prompt_content_store = prompt_content_store
         self._task_dedup = task_dedup
         self._daily_review_marks = daily_review_marks
         self._slack_worker: Optional[Callable[[dict, dict], Awaitable[Tuple[dict, int]]]] = None
@@ -254,6 +260,8 @@ class WorkerHandler:
             return await self._handle_sweep_companion_consolidation()
         elif task_type == "deep_research_failed":
             return await self._handle_deep_research_failed(payload)
+        elif task_type == "deep_research_webhook_event":
+            return await self._handle_deep_research_webhook_event(payload)
         elif task_type == "video_generation_polling":
             return await self._handle_video_generation_polling(payload)
         elif task_type == "setup_microsoft_todo":
@@ -489,28 +497,121 @@ class WorkerHandler:
             return {"error": "missing user_id or account_id"}, 400
         session_id = payload.get("session_id") or ""
         origin_channel_id = session_id.split(":", 1)[1] if ":" in session_id else None
-        query = payload.get("query") or "the request"
+        query = payload.get("query") or ""
         # notify() routes through the eager Quick agent, absent on a cold instance until this runs.
         await self._agent_factory.ensure_agents_for_user(user_id)
+        alert = (
+            dr_notices.report_not_prepared_notice(query)
+            if payload.get("reason") == "delivery_failed"
+            else dr_notices.research_failed_notice(query)
+        )
+        return await self._send_deep_research_notice(
+            user_id, account_id, alert, origin_channel_id, payload.get("origin_platform") or None,
+            context=f"reason={payload.get('reason')}",
+        )
+
+    async def _send_deep_research_notice(
+        self, user_id: str, account_id: str, alert: str,
+        origin_channel_id: Optional[str], origin_platform: Optional[str], context: str,
+    ) -> Tuple[dict, int]:
+        """One deep-research notice; 5xx (Cloud Tasks retries, claim released) only when nothing was sent."""
         result = await self._notification.notify(
             kind=NotificationKind.DEEP_RESEARCH,
             user_id=user_id,
             account_id=account_id,
-            system_alert=(
-                f"Deep research on \"{query}\" did not complete. "
-                "Tell the user it failed and that they can ask for it again."
-            ),
+            system_alert=alert,
             channel_id_override=origin_channel_id,
-            platform_override=payload.get("origin_platform") or None,
+            platform_override=origin_platform,
+            # This handler's 5xx makes Cloud Tasks retry; the agent must not retry inside as well.
+            suppress_transient_retry=True,
         )
-        if not result.delivered:
-            # 5xx: Cloud Tasks retries; the claim is released.
+        if not result.delivered and not result.sent:
             logger.warning(
-                "[DeepResearch] failure notice not delivered: user=%s reason=%s error=%s",
-                user_id[:8], payload.get("reason"), result.error,
+                "[DeepResearch] notice not sent: user=%s %s error=%s", user_id[:8], context, result.error,
             )
             return {"error": result.error or "delivery_failed"}, 500
+        if not result.delivered:
+            # A resend would double a message that may already be on the channel.
+            logger.warning(
+                "[DeepResearch] notice sent but not confirmed: user=%s %s error=%s; not retried",
+                user_id[:8], context, result.error,
+            )
         return {"status": "ok"}, 200
+
+    # ------------------------------------------------------------------
+    # OpenAI deep research webhook event (the webhook only enqueues this)
+    # ------------------------------------------------------------------
+
+    async def _handle_deep_research_webhook_event(self, payload: dict) -> Tuple[dict, int]:
+        """Deliver one OpenAI deep-research outcome: report for a completed job, a notice otherwise.
+        The report text is re-read by job id here, so it never travels through Cloud Tasks."""
+        event_type = payload.get("event_type") or ""
+        job_id = payload.get("job_id") or ""
+        user_id = payload.get("user_id") or ""
+        account_id = payload.get("account_id") or ""
+        if not (event_type and job_id and user_id and account_id):
+            return {"error": "missing event_type, job_id, user_id or account_id"}, 400
+        if self._deep_research_fetch is None:
+            logger.error("[DeepResearch] webhook event delivered but OpenAI retrieval is not configured")
+            return {"error": "openai deep research not configured"}, 501
+        session_id = payload.get("session_id") or ""
+        origin_channel_id = session_id.split(":", 1)[1] if ":" in session_id else None
+        origin_platform = payload.get("origin_platform") or None
+        query = payload.get("query") or ""
+
+        try:
+            response = await self._deep_research_fetch(job_id)
+        except Exception as exc:
+            logger.error("[DeepResearch] response retrieval failed: job=%s error=%s", job_id[:16], exc, exc_info=True)
+            return {"error": "retrieval_failed"}, 500
+        await self._agent_factory.ensure_agents_for_user(user_id)
+
+        if event_type == "response.completed":
+            output_text = response.get("output_text") or ""
+            # Durable capture BEFORE delivery: research is expensive and the result must survive a failed delivery.
+            if self._prompt_content_store is not None:
+                await self._prompt_content_store.record_dr_result(
+                    output_text=output_text, query=query, user_id=user_id, account_id=account_id,
+                    model=response.get("model", ""), provider="openai", source="openai_webhook", job_id=job_id,
+                )
+            handed_off = await deliver_deep_research(
+                result_text=output_text,
+                user_id=user_id,
+                account_id=account_id,
+                query=query,
+                task_queue=self._task_dispatch,
+                session_id=session_id,
+                media_storage=self._media_storage,
+                link_service=self._link_service,
+                channel_id_override=origin_channel_id,
+                platform_override=origin_platform,
+                failure_notification=self._notification,
+                report_dedup_id=job_id,
+            )
+            if not handed_off:
+                # deliver_deep_research already told the user; a retry would upload and tell again.
+                logger.error("[DeepResearch] report task not enqueued: job=%s user=%s", job_id[:16], user_id[:8])
+                return {"status": "report_not_enqueued"}, 200
+            logger.info("[DeepResearch] report delivered: user=%s job=%s", user_id[:8], job_id[:16])
+            return {"status": "ok"}, 200
+
+        if event_type == "response.failed":
+            error = (response.get("error") or {}).get("message", "unknown error")
+            logger.error("[DeepResearch] job failed: job=%s error=%s", job_id[:16], error)
+            alert = dr_notices.provider_error_notice(query)
+        elif event_type == "response.incomplete":
+            reason = (response.get("incomplete_details") or {}).get("reason", "unknown")
+            logger.warning("[DeepResearch] job incomplete: job=%s reason=%s", job_id[:16], reason)
+            alert = dr_notices.incomplete_notice(query)
+        elif event_type == "response.cancelled":
+            logger.info("[DeepResearch] job cancelled: job=%s", job_id[:16])
+            alert = dr_notices.cancelled_notice(query)
+        else:
+            logger.error("[DeepResearch] unknown webhook event type %r: job=%s", event_type, job_id[:16])
+            return {"error": "unknown event_type"}, 400
+        return await self._send_deep_research_notice(
+            user_id, account_id, alert, origin_channel_id, origin_platform, context=f"event={event_type}",
+        )
 
     # ------------------------------------------------------------------
     # Video generation polling (Grok)

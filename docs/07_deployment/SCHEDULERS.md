@@ -208,8 +208,19 @@ Note: `update` uses `--update-headers`, `create` uses `--headers`. This is a `gc
 |-------|-------|
 | **Payload** | `{"task_type": "deep_research_failed", "user_id", "account_id", "session_id", "origin_platform", "query", "reason"}` |
 | **Enqueued by** | `job_main.py` on an agent failure, an empty result or a failed delivery (`reason`: `agent_failed` / `empty_result` / `delivery_failed`), with `dedup_key` `deep_research_failed:<job_id>` |
-| **Handler** | `WorkerHandler._handle_deep_research_failed()`: tells the user in the origin channel; 400 without user/account, 500 when the notice is not delivered (Cloud Tasks retries) |
+| **Handler** | `WorkerHandler._handle_deep_research_failed()`: tells the user in the origin channel; 400 without user/account, 500 only when the notice was not sent at all (Cloud Tasks retries); a sent notice is never resent. `reason=delivery_failed` uses the "report could not be prepared" wording |
 | **Residual** | A job killed by its task timeout runs no code and sends nothing |
+
+---
+
+## Deep Research Webhook Event (task, no schedule)
+
+| Field | Value |
+|-------|-------|
+| **Payload** | `{"task_type": "deep_research_webhook_event", "event_type", "job_id", "user_id", "account_id", "session_id", "origin_platform", "query"}` (no report text) |
+| **Enqueued by** | `POST /webhooks/openai/deep-research` after the signature check, the 72 h job claim `openai_deep_research:<job_id>` and the empty-user filter, with `dedup_key` `<job_id>`; an enqueue failure releases the claim and answers 500 |
+| **Handler** | `WorkerHandler._handle_deep_research_webhook_event()`: re-reads the response by job id, then delivers the report (`response.completed`) or sends one notice with the query (`failed` / `incomplete` / `cancelled`). 400 on a missing field or unknown event, 501 without OpenAI retrieval, 500 on a retrieval failure or a notice that was not sent at all (Cloud Tasks retries); a report task that could not be enqueued is 200 (the user was already told) |
+| **Report task** | The HTML report agent task is named `deep_research_report:<job_id>` (also from `job_main.py`), so a retried create is idempotent |
 
 ---
 

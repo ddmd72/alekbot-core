@@ -189,6 +189,7 @@ class GcpTaskQueue(TaskQueue):
         query: str,
         context: Dict[str, Any],
         deadline_seconds: Optional[int] = None,
+        dedup_key: Optional[str] = None,
     ) -> str:
         """Enqueue async agent task for background execution via Cloud Tasks."""
         try:
@@ -212,14 +213,25 @@ class GcpTaskQueue(TaskQueue):
             if deadline_seconds is not None:
                 task["dispatch_deadline"] = duration_pb2.Duration(seconds=deadline_seconds)
 
+            if dedup_key:
+                digest = hashlib.sha256(dedup_key.encode()).hexdigest()[:32]
+                task["name"] = self.client.task_path(
+                    self.project_id, self.location, self.queue_name, f"agent_execution-{digest}"
+                )
+
             if self.service_account_email:
                 task["http_request"]["oidc_token"] = {
                     "service_account_email": self.service_account_email
                 }
 
-            response = await self._create_task(
-                request={"parent": self.queue_path, "task": task}
-            )
+            try:
+                response = await self._create_task(
+                    request={"parent": self.queue_path, "task": task}
+                )
+            except AlreadyExists:
+                # The earlier create did land: the caller wants this task to exist, and it does.
+                logger.info("📬 Agent task already exists (key=%s): agent=%s intent=%s", dedup_key, agent_id, intent)
+                return str(task["name"])
 
             logger.info(f"Enqueued agent task: agent={agent_id}, intent={intent}, task={response.name}")
             return response.name

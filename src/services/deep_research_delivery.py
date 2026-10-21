@@ -15,6 +15,7 @@ import html as html_lib
 from datetime import datetime, timezone
 from typing import Any, Optional, Protocol, TYPE_CHECKING
 
+from ..domain.deep_research_notices import report_not_prepared_notice
 from ..domain.deep_research_drive_copy import DEEP_RESEARCH_REPORT_CONTEXT_KEY, marker_query
 from ..domain.file_access import DEFAULT_FILE_LINK_TTL
 from ..domain.notification_kind import NotificationKind
@@ -185,6 +186,7 @@ async def deliver_deep_research(
     link_service: Optional["FileLinkService"] = None,
     short_link_service: Optional["ShortLinkService"] = None,
     failure_notification: Optional["NotificationPort"] = None,
+    report_dedup_id: Optional[str] = None,
 ) -> bool:
     """
     Deliver deep research result:
@@ -198,6 +200,9 @@ async def deliver_deep_research(
 
     failure_notification — told (origin channel) when the HTML report task cannot be enqueued; falls back
                   to `notification`. The enqueue failure itself is never raised.
+
+    report_dedup_id — names the HTML report task (job or response id), so a retried create whose first
+                  attempt timed out after the task was made is a no-op instead of a second report.
 
     round1_text — raw first-pass result before the critic second pass.
                   If equal to result_text (second pass disabled), uploaded once as "report".
@@ -288,6 +293,7 @@ async def deliver_deep_research(
                 **({"origin_platform": platform_override} if platform_override else {}),
             },
             deadline_seconds=720,
+            **({"dedup_key": f"deep_research_report:{report_dedup_id}"} if report_dedup_id else {}),
         )
         logger.info("[DeepResearch] HtmlPageGenerator task enqueued for user=%s", user_id[:8])
         return True
@@ -303,10 +309,7 @@ async def deliver_deep_research(
                     kind=NotificationKind.DEEP_RESEARCH,
                     user_id=user_id,
                     account_id=account_id,
-                    system_alert=(
-                        "Deep research finished, but the report could not be prepared. "
-                        "Tell the user to ask for the research again."
-                    ),
+                    system_alert=report_not_prepared_notice(query),
                     channel_id_override=channel_id_override,
                     platform_override=platform_override,
                 )
