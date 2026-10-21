@@ -9,7 +9,8 @@ so a crash between writes repeats the step instead of skipping work.
 
 Public interface:
     DriveIndexingService(drive, repo, embeddings, queue, users, place_of, embedding_space, *, extractors=None,
-                         triage=None, profiler=None, passages=None, upgrade_pass=True, clock, monotonic)
+                         triage=None, profiler=None, passages=None, upgrade_pass=True, transcripts=None,
+                         transcribe_enabled=False, transcribe_cap_usd=TRANSCRIBE_USD_PER_MONTH, clock, monotonic)
     await tick(user_id, nudge=None) -> TickResult
 
 `extractors` maps `drive_extraction.PARSER` / `READER` to their ContentExtractorPort and `triage` is the
@@ -29,6 +30,16 @@ Search v2 (§25.4, P5):
   classes 3-4 (keys work included) within the maintenance share of what is left; then the upgrade pass;
 - model dollars per class are written to the usage documents a purge keeps, the initial build first (§25.4.5); the
   reader's pages and triage's images are cost estimates against them, no longer monthly counters.
+
+Transcripts of audio and video (§27.3, §27.10-§27.13; plan Task 14): `transcripts` is the DriveTranscriptStage (injected;
+REQ-ARCH-22) and `transcribe_enabled` the kill switch. Only for a user with the switch AND `drive_transcribe_enabled` on
+(read with the opt-in flag at the tick's gate, kept for the tick) does any transcript step run, any transcript query go
+out, or a recording count as waiting; otherwise the tick is today's. Every record write runs `transcript_plan` (with it
+off the job state is still planned, never acted on). The tick lends the stage a per-user `_TickHost`: its cheap steps
+(poll, collect, finalize) run first in the work-off with no share, a finalize taking a file slot (G32); the extraction
+step runs right after the due loop in its own start window (`_Budget.extraction_stop`), and while it has work the content
+classes and enrichment leave it TRANSCRIBE_SHARE (G16). Ready extraction work continues the chain; a future wake-up or
+open batches alone do not (the fan-out polls, Δ104).
 
 Files the bot cannot open (§26.2, D33): existence is decided by delta alone. A 404 on an id-addressed call while working a
 known item marks it inaccessible (`marked_inaccessible`), never deletes it: a download, a rendition or a thumbnail (after
@@ -51,7 +62,7 @@ import uuid
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
-from typing import Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple
+from typing import TYPE_CHECKING, Awaitable, Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 from ..domain import drive_enrich_plan as enrich
 from ..domain.drive_accuracy import accuracy_settled, scored
@@ -89,7 +100,8 @@ from ..domain.drive_index_params import (
     NUDGE_RETRY_DELAY_S, PASSAGE_CHUNK_USD_ESTIMATE, PASSAGE_CHUNKS_PER_CALL, PASSAGE_IN_FLIGHT, PROBE_CHILDREN,
     README_CHILD_NAMES, README_SCAN_CHILDREN, READER_PAGE_USD_ESTIMATE, READER_RENDITION_SIZE, RECORD_WRITE_BATCH,
     RELIST_PAGE, RETRY_CAP, SYSTEMIC_BACKOFF_BASE_S, SYSTEMIC_BACKOFF_CAP_S, TICK_DEADLINE_S, TICK_FILE_BUDGET,
-    TICK_START_BUDGET, TRIAGE_BATCH, TRIAGE_IMAGE_USD_ESTIMATE, TRIAGE_THUMBNAIL_SIZE,
+    TICK_START_BUDGET, TRANSCRIBE_EXTRACT_WALL_S, TRANSCRIBE_SHARE, TRANSCRIBE_UPLOAD_S, TRANSCRIBE_USD_PER_MONTH,
+    TRIAGE_BATCH, TRIAGE_IMAGE_USD_ESTIMATE, TRIAGE_THUMBNAIL_SIZE,
 )
 from ..domain.drive_index_planner import (
     AccessAction, ObservationPlan, PlaceOf, PlanContext, access_action, access_observed, access_recheck_due,
@@ -119,6 +131,10 @@ from ..domain.drive_search import (
 from ..domain.drive_sniff import SNIFF_HEAD_BYTES, sniff_kind
 from ..domain.drive_task_keys import DRIVE_SYNC_TASK, continuation_key, nudge_key, tick_payload
 from ..domain.drive_text_gate import is_machine_text
+from ..domain.drive_transcript_plan import (
+    CURRENT as TRANSCRIPT_CURRENT, FAILED as TRANSCRIPT_FAILED, NONE as TRANSCRIPT_NONE, TRANSCRIBER_AGENT,
+    WORKING as TRANSCRIPT_WORKING, TranscriptContext, available_usd, leaves_job, transcript_plan,
+)
 from ..domain.drive_usage import added_usage
 from ..domain.exceptions import LLMClientError, LLMError, LLMRateLimitError, LLMUnavailableError
 from ..domain.user_drive import (
@@ -135,6 +151,9 @@ from ..ports.task_queue import TaskQueue
 from ..ports.user_drive_port import UserDrivePort
 from ..ports.user_repository import UserRepository
 from ..utils.logger import logger
+
+if TYPE_CHECKING:   # REQ-ARCH-22: a service never imports another at run time; the stage is injected
+    from .drive_transcript_stage import DriveTranscriptStage
 
 _DUE_PAGE = 100
 # Errors about ONE item (a probe, a parent lookup, a re-listing page, a nudge read): defer that item, never
@@ -238,6 +257,9 @@ class _Budget:
     profiled_inline: Set[str] = field(default_factory=set)   # first-seen files profiled inline: passages still due
     enrich_idle: Set[str] = field(default_factory=set)   # files whose run wrote nothing: not waited for this tick
     enrich_progressed: bool = False   # an enrichment run changed a record this tick (the stall alert)
+    # G16: TRANSCRIBE_SHARE while the user has ready extraction work (decided once, before the due loop), else 0: the
+    # content classes and enrichment then leave that share of the start budget to the extraction step
+    transcribe_share: float = 0.0
 
     def elapsed(self) -> float:
         return self.monotonic() - self.started
@@ -247,10 +269,27 @@ class _Budget:
 
     def content_allowed(self) -> bool:
         """Content classes 0-2 use at most `1 - ENRICH_SHARE` of the start budget, enrichment time not counted
-        (§25.4.5): enrichment keeps at least its share."""
+        (§25.4.5): enrichment keeps at least its share. While the user has ready extraction work they also leave
+        `transcribe_share` (G16); without it the rule is unchanged."""
         elapsed = self.elapsed()
         total = TICK_START_BUDGET.total_seconds()
-        return elapsed < total and elapsed - self.enrich_s < (1 - ENRICH_SHARE) * total
+        return elapsed < total and elapsed - self.enrich_s < (1 - ENRICH_SHARE - self.transcribe_share) * total
+
+    def enrichment_limit(self) -> float:
+        """Where enrichment's start window ends at the latest (seconds into the tick): the start budget, less the
+        extraction step's share while the user has ready extraction work (G16)."""
+        total = TICK_START_BUDGET.total_seconds()
+        return total - self.transcribe_share * total
+
+    def extraction_stop(self) -> Optional[float]:
+        """The extraction step's start window (§27.3, G16), as an absolute `monotonic()` value, or None when no step
+        may start: TRANSCRIBE_SHARE of the start budget from where the step begins, whatever the due loop used, cut so a
+        file step started inside it still ends before the tick deadline — its worst case (one extraction wall, an
+        upload, the start margin) joins the §7.1 sum, as `enrichment_allowed`'s does."""
+        at = self.elapsed()
+        last_start = TICK_DEADLINE_S - (TRANSCRIBE_EXTRACT_WALL_S + TRANSCRIBE_UPLOAD_S + FILE_START_MARGIN_S)
+        stop = min(at + TRANSCRIBE_SHARE * TICK_START_BUDGET.total_seconds(), last_start)
+        return self.started + stop if stop > at else None
 
     def enrichment_allowed(self, stop_at: float) -> bool:
         """A file's enrichment starts before `stop_at` (the phase's share) and only if its whole ENRICH_FILE_BUDGET_S
@@ -338,6 +377,7 @@ class _Spend:
     usage: ModelUsageMonth
     build: InitialBuild
     usd: Dict[str, float] = field(default_factory=dict)
+    reserved_usd: float = 0.0   # this tick's net transcription reservations (reserved less released, any month)
 
     def ctx(self) -> EnrichContext:
         return enrich.enrich_context(self.now, self.usage, self.build)
@@ -348,6 +388,25 @@ class _Spend:
 
 # Per tick, like the lease: the spend every plan and budget check of the tick reads.
 _TICK_SPEND: ContextVar[Optional[_Spend]] = ContextVar("drive_tick_spend", default=None)
+
+
+@dataclass
+class _Transcription:
+    """The tick's transcript stage (§27.3): `on` is the kill switch AND the user's flag, read at the tick's gate and
+    kept for the whole tick (a flag flipped mid-tick takes effect on the next one); `host` the side the tick lends the
+    stage; whether the extraction step ran and moved anything (the continuation's loop guard, `_has_more`); `commits`
+    the record writes the stage made through the host."""
+    on: bool
+    host: Optional["_TickHost"] = None
+    extract_ran: bool = False
+    extract_progressed: bool = False
+    commits: int = 0
+
+
+# Per tick: None outside a tick (the plan then runs with transcription off and no job is dropped).
+_TICK_TRANSCRIPTION: ContextVar[Optional[_Transcription]] = ContextVar("drive_tick_transcription", default=None)
+
+
 @dataclass
 class _Marks:
     """The marked records (§26.2) as the tick read them at its start, lean (Δ51, Δ71): parent folder id -> item ids, so
@@ -412,6 +471,8 @@ class DriveIndexingService:
                  triage: Optional[ImageTriagePort] = None,
                  profiler: Optional[DocumentProfilerPort] = None,
                  passages: Optional[PassageHintPort] = None, upgrade_pass: bool = True,
+                 transcripts: Optional["DriveTranscriptStage"] = None, transcribe_enabled: bool = False,
+                 transcribe_cap_usd: float = TRANSCRIBE_USD_PER_MONTH,
                  clock: Callable[[], datetime] = _utcnow, monotonic: Callable[[], float] = time.monotonic) -> None:
         self._drive = drive
         self._repo = repo
@@ -427,6 +488,12 @@ class DriveIndexingService:
         self._profiler = profiler
         self._passages = passages
         self._upgrade_pass = upgrade_pass   # False: the §25.8 emergency switch stops every upgrade pass
+        self._transcripts = transcripts     # the transcript stage (§27.3); None: not built (the kill switch off)
+        self._transcribe_enabled = transcribe_enabled   # the kill switch (DRIVE_TRANSCRIBE_ENABLED, §27.13)
+        self._transcribe_flags: Dict[str, bool] = {}    # the per-user flag, read with the opt-in flag (Δ125)
+        # the month's transcription cap: `effective_monthly_cap(DRIVE_TRANSCRIBE_USD_CAP)`, decided by the composition
+        # (T-R3; REQ-ARCH-17: a service reads no environment), the same value the stage is built with
+        self._transcribe_cap = transcribe_cap_usd
         self._clock = clock
         self._monotonic = monotonic
         self._gate_checked: Dict[str, float] = {}
@@ -507,10 +574,15 @@ class DriveIndexingService:
                        await self._repo.get_initial_build(user_id))
         spend_token = _TICK_SPEND.set(spend)
         closed_token = _TICK_CLOSED.set(None)   # read inside the tick's error handling (_run_spending)
+        transcription = _Transcription(on=self._transcription_on(user_id))   # as the gate read it: kept for the tick
+        if transcription.on:
+            transcription.host = _TickHost(self, user_id, budget, models, summary, transcription)
+        transcription_token = _TICK_TRANSCRIPTION.set(transcription)
         try:
             return await self._run_spending(user_id, state, nudge, now, enabled, budget, summary, cont, saved,
                                             models, spend)
         finally:
+            _TICK_TRANSCRIPTION.reset(transcription_token)
             _TICK_CLOSED.reset(closed_token)
             _TICK_SPEND.reset(spend_token)
 
@@ -566,12 +638,15 @@ class DriveIndexingService:
                                                                  progressed=budget.enrich_progressed)
             # the files the bot cannot open (§26.2, Δ56): always on a settled tick, else while any may exist
             marked = await self._end_marks(user_id, state, summary, settled=not more)
+            transcribing = _transcribing()   # recordings count as waiting only for a user whose stage runs (G3)
             if more:
                 cont.request()
                 # unread is what search tells Smart: refreshed every tick, not only once the index settles (F4-1)
-                state = replace(state, counters=await self._unread_counters(user_id, state.counters, marked=marked))
-            else:
-                state = replace(state, counters=await self._counters(user_id, marked=marked))   # settled: refresh
+                state = replace(state, counters=await self._unread_counters(user_id, state.counters, marked=marked,
+                                                                            transcription_on=transcribing))
+            else:   # settled: refresh
+                state = replace(state, counters=await self._counters(user_id, marked=marked,
+                                                                     transcription_on=transcribing))
             if job_counts:
                 state = replace(state, counters={**{k: v for k, v in state.counters.items()
                                                     if not k.startswith(("profile_", "passages_", "coverage_"))},
@@ -849,7 +924,13 @@ class DriveIndexingService:
                       before: Optional[Mapping[str, DriveIndexRecord]] = None) -> None:
         """`collects`: items whose chunks (every generation) go before the records are written (§3.4, §7.6).
         `before`: the records the writes were derived from; a write that drops its readable generation collects it
-        (drops_readable, R3 F2-2), so a caller holding the record never has to remember to."""
+        (drops_readable, R3 F2-2), so a caller holding the record never has to remember to.
+
+        Every write runs the transcript plan (`transcript_plan`, §27.3; with transcription off it still plans the
+        state, it only never stubs) and then the enrichment plan. While transcription is on for the user, the job of a
+        record the write takes off it (`leaves_job`) or deletes is dropped first (`drop_jobs`: its reservation released
+        once, T-R20: a job with a window in a batch is left to collection), so a crash between the two writes leaves a
+        record without a job (restarted by the stage), never a job holding money for a record that left."""
         if before:
             dropped = {w.item_id for w in writes if drops_readable(before.get(w.item_id), w)}
             collects = (collects or set()) | dropped if dropped else collects
@@ -860,7 +941,11 @@ class DriveIndexingService:
         for item_id in sorted(collects or ()):
             await self._collect(user_id, item_id, None)
         ctx = self._enrich_ctx()
-        writes = [enrich.planned(w, ctx) for w in writes]   # every write's plan, keys and queue fields (§25.4.9)
+        tctx = self._transcript_ctx()
+        # every write's plans: the transcript job's (§27.3), then the keys, enrichment jobs and queue fields (§25.4.9)
+        planned = [enrich.planned(transcript_plan(w, tctx), ctx) for w in writes]
+        await self._drop_transcript_jobs(user_id, writes, planned, deletes)
+        writes = planned
         for start in range(0, len(writes), RECORD_WRITE_BATCH):
             await self._repo.upsert_records(writes[start:start + RECORD_WRITE_BATCH], card_vectors)
         if deletes:
@@ -874,10 +959,20 @@ class DriveIndexingService:
                         summary: Dict[str, int], models: _Models) -> DriveSyncState:
         """§7.1 step 2 as Search v2 orders it (§25.4.5): content classes 0-2 within their share, then enrichment with at
         least ENRICH_SHARE, then classes 3-4 (keys work included) within the maintenance share of what is left, then
-        the upgrade pass and the cap releases."""
+        the upgrade pass and the cap releases. With transcription on for the user (§27.3): the transcript stage's
+        cheap steps right after the sweep, and its extraction step right after the due loop."""
         if state.epoch_phase is EpochPhase.SWEEPING:
             state = await self._sweep(user_id, state, now, budget, summary)
+        if _transcribing():
+            # §27.3: poll, collect and finalize first, with no share (a finalize takes a file slot, G32); then the
+            # shares the content classes and enrichment leave to extraction while it has work (G16)
+            await self._transcript_cheap(user_id, budget, summary, models)
+            if await self._extraction_ready(user_id, models):
+                budget.transcribe_share = TRANSCRIBE_SHARE
         stopped_class, worked = await self._due_loop(user_id, state, now, budget, summary, models)
+        if _transcribing():
+            # after the enrichment phase (inside the due loop) whatever class it stopped at, before the upgrade pass
+            await self._transcript_extract(user_id, budget, summary, models)
         if worked and _upgrade_waiting(state):
             state = replace(state, upgrade_found_stale=False)   # the work may have cleared what the pass left
         if stopped_class is None:
@@ -1977,7 +2072,8 @@ class DriveIndexingService:
                                           first_seen=not run.has_card), cls)
         try:
             _fence()
-            await self._repo.upsert_records([enrich.planned(back, self._enrich_ctx())])
+            await self._repo.upsert_records([enrich.planned(transcript_plan(back, self._transcript_ctx()),
+                                                            self._enrich_ctx())])
         except Exception as exc:
             logger.warning(f"[DriveIndex] could not clear the run of item {run.item_id} for {user_id[:8]}: {exc}; "
                            f"it counts as a crashed attempt")
@@ -2412,7 +2508,8 @@ class DriveIndexingService:
         started = self._monotonic()
         total = TICK_START_BUDGET.total_seconds()
         at = budget.elapsed()
-        stop_at = min(total, at + max(ENRICH_SHARE * total - budget.enrich_s, (1 - MAINTENANCE_SHARE) * (total - at)))
+        limit = budget.enrichment_limit()   # the start budget, less the extraction share while it has work (G16)
+        stop_at = min(limit, at + max(ENRICH_SHARE * total - budget.enrich_s, (1 - MAINTENANCE_SHARE) * (limit - at)))
         worked = False
         try:
             woken = await self._repo.enrich_wakeups(user_id, now, ENRICH_WAKEUPS_PAGE)
@@ -2910,6 +3007,195 @@ class DriveIndexingService:
                         f"(${spend.build.spent_usd:.2f} of ${spend.build.allowance_usd:.2f})")
         return state, flat
 
+    # -- transcripts (§27.3, §27.10; plan Task 14) ----------------------------------------------------------------
+
+    def _transcript_ctx(self) -> TranscriptContext:
+        """The transcript plan's context for a record write: `enabled` is the tick's transcription (False outside a
+        tick); the dollars are the tick's usage document of this month (the plan itself reads only `now` and
+        `enabled`; the cap math is the stage's and `_extraction_ready`'s)."""
+        transcription = _TICK_TRANSCRIPTION.get()
+        spend = _TICK_SPEND.get()
+        now = self._clock()
+        usage = spend.usage if spend is not None and month_key(spend.now) == month_key(now) else ModelUsageMonth()
+        return TranscriptContext(now=now, enabled=bool(transcription is not None and transcription.on),
+                                 month_usd=usage.cap_usd(UsageClass.TRANSCRIBE.value),
+                                 reserved_usd=max(0.0, usage.transcribe_reserved_usd), cap_usd=self._transcribe_cap)
+
+    async def _transcribe_available(self, user_id: str) -> float:
+        """The dollars the transcription cap has left this month (`available_usd`): the effective cap (T-R3, given by the
+        composition) less what was collected and what is reserved (clamped at 0) in the usage document of
+        `month_key(now)`. The tick's copy when it is that month's (kept current by every reservation through the host),
+        else read."""
+        now = self._clock()
+        spend = _TICK_SPEND.get()
+        if spend is not None and month_key(spend.now) == month_key(now):
+            usage = spend.usage
+        else:
+            usage = await self._repo.get_model_usage(user_id, month_key(now))
+        return available_usd(TranscriptContext(now=now, enabled=True,
+                                               month_usd=usage.cap_usd(UsageClass.TRANSCRIBE.value),
+                                               reserved_usd=max(0.0, usage.transcribe_reserved_usd),
+                                               cap_usd=self._transcribe_cap))
+
+    async def _drop_transcript_jobs(self, user_id: str, written: Sequence[DriveIndexRecord],
+                                    planned: Sequence[DriveIndexRecord], deletes: Set[str]) -> None:
+        """The jobs of records a write takes out of the pipeline or resets for a new content version (`leaves_job`),
+        and of deleted recordings that were not finished, go through the stage's `drop_jobs` (Task 12 carry): each
+        reservation released once, the provider files deleted, the document removed; a job with a window still in a
+        batch is left to collection (T-R20). Only while transcription is on: with it off nothing is read."""
+        transcription = _TICK_TRANSCRIPTION.get()
+        if transcription is None or not transcription.on or transcription.host is None or self._transcripts is None:
+            return
+        leaving = [p.item_id for w, p in zip(written, planned) if leaves_job(w, p)]
+        if deletes:
+            gone = await self._repo.get_records(user_id, sorted(deletes))
+            leaving += sorted(item_id for item_id, rec in gone.items()
+                              if rec.kind in policy.TRANSCRIBED_KINDS
+                              and rec.transcript_state not in (TRANSCRIPT_NONE, TRANSCRIPT_CURRENT, TRANSCRIPT_FAILED))
+        if leaving:
+            dropped = await self._transcripts.drop_jobs(user_id, transcription.host, leaving)
+            _inc(transcription.host.summary, "transcript_jobs_dropped", dropped)
+
+    async def _reserve_transcribe(self, user_id: str, delta_usd: float, month: str) -> None:
+        """A transcription reservation (`delta_usd` > 0) or its release (< 0) in the RESERVATION's month (Δ106, G9),
+        through the usage document's server-side increment. Shielded like a spend: once issued it completes whole, and
+        a release is never retried (the port's contract). The tick's copy of this month's document follows it."""
+        await asyncio.shield(self._repo.reserve_model_usd(user_id, month, UsageClass.TRANSCRIBE.value, delta_usd))
+        spend = _TICK_SPEND.get()
+        if spend is None:
+            return
+        spend.reserved_usd += delta_usd
+        if month == month_key(spend.now):
+            spend.usage = replace(spend.usage,
+                                  transcribe_reserved_usd=spend.usage.transcribe_reserved_usd + delta_usd)
+
+    async def _index_transcript(self, user_id: str, rec: DriveIndexRecord, body: str, extracted_by: str,
+                                budget: _Budget, summary: Dict[str, int]) -> Optional[DriveIndexRecord]:
+        """`TranscriptHost.index_transcript` (§27.8 a): the transcript is the file's text, indexed by the ordinary
+        path — one of the tick's TICK_FILE_BUDGET slots under the start budget and the deadline rule (G32), a new
+        generation persisted first (§8.1 step 2), then `_read_text` (the gate, the chunker, the chunk cap, embeddings,
+        the §7.4 fence) and `_end_run`; `indexed`/`demoted` stamp EXTRACTION_VERSION (else G31 would re-finalize it on
+        every pass). The enrichment jobs then profile and hint it as any text (`enrich.planned` in `_commit`).
+
+        None, and the record untouched, when no slot is left: the stage finalizes it in a later step. None too when the
+        fence dropped the run, or when the run ended in a transient per-file failure (an embedding timeout or refusal,
+        an unexpected error: counted on the record like any run, the stage finalizes again next step); from
+        MAX_ATTEMPTS on the `failed` record is returned, so a file the embeddings keep refusing stops. A gate
+        rejection is `metadata_only / machine_text` (G20), returned."""
+        if not budget.file_allowed(routed=False):
+            return None
+        now = self._clock()
+        budget.files -= 1
+        run = generation_started(rec, now)
+        await self._commit(user_id, [run], set())   # persisted before the first chunk write (§8.1 step 2)
+        mark = _RunMark()
+        outcome = ExtractionOutcome(status=ExtractionStatus.TEXT, text=body, extracted_by=extracted_by)
+        try:
+            final = await self._read_text(user_id, run, outcome, run.kind, now, summary, mark)
+        except (LeaseLost, _OptedOut):
+            raise   # nothing more may be written; an opt-out purges anyway
+        except _RUN_SYSTEMIC as exc:
+            logger.warning(f"[DriveIndex] transcript of item {rec.item_id} for {user_id[:8]} ended by "
+                           f"{type(exc).__name__}; the attempt is not counted")
+            if not mark.committed:
+                await self._abandon_run(user_id, run, rec.priority, now)
+            raise
+        except Exception as exc:
+            if mark.committed:
+                logger.error(f"[DriveIndex] transcript of item {rec.item_id} for {user_id[:8]} failed after its "
+                             f"outcome was committed: {type(exc).__name__}: {exc}", exc_info=True)
+                return None
+            logger.error(f"[DriveIndex] transcript of item {rec.item_id} for {user_id[:8]} failed: "
+                         f"{type(exc).__name__}: {exc}; counted as a per-file failure", exc_info=True)
+            final = content_retry(run, Reason.EXTRACT_ERROR, now)
+        if final is None:
+            return None   # the record changed under the run (§7.4): the stage sees it changed and goes on
+        await self._end_run(user_id, run, final, rec.priority, summary, mark, outcome=outcome)
+        if final.state is RecordState.PENDING:
+            return None   # a transient per-file failure: finalized again in a later step
+        return (await self._repo.get_records(user_id, [rec.item_id])).get(rec.item_id)
+
+    async def _transcript_step(self, user_id: str, step: str, run: Awaitable[Dict[str, int]],
+                               summary: Dict[str, int], models: _Models) -> Dict[str, int]:
+        """One transcript stage call, isolated like an index run (§8.2): the lease, an opt-out and the systemic errors
+        end the tick as anywhere else; any other error is logged and costs this tick's transcript step only, never the
+        user's index. The tick line takes the stage's window counters; a provider answer ends the agent's backoff
+        streak (§25.4.6)."""
+        try:
+            out = await run
+        except (LeaseLost, _OptedOut):
+            raise
+        except _RUN_SYSTEMIC:
+            raise
+        except Exception as exc:
+            logger.error(f"[DriveIndex] transcript {step} step failed for {user_id[:8]}: {type(exc).__name__}: {exc}",
+                         exc_info=True)
+            _inc(summary, "transcript_step_errors")
+            return {}
+        for key in ("windows_extracted", "windows_submitted", "windows_collected"):
+            _inc(summary, key, out.get(key, 0))
+        answered = any(out.get(k) for k in ("windows_uploaded", "windows_submitted", "windows_collected", "batch_polls"))
+        if answered and not out.get("transcript_outages"):
+            models.agent_recovered(TRANSCRIBER_AGENT)
+        return out
+
+    async def _transcript_cheap(self, user_id: str, budget: _Budget, summary: Dict[str, int], models: _Models) -> None:
+        """§27.3: poll, collect, finalize and the orphan sweep, first in the work-off and with no share; a finalize
+        starts within the start budget and takes a file slot (G32, `_index_transcript`)."""
+        transcription = _TICK_TRANSCRIPTION.get()
+        if self._transcripts is None or transcription is None or transcription.host is None:
+            return
+        stop_at = budget.started + TICK_START_BUDGET.total_seconds()
+        await self._transcript_step(user_id, "collect", self._transcripts.cheap_steps(
+            user_id, transcription.host, stop_at=stop_at), summary, models)
+
+    async def _transcript_extract(self, user_id: str, budget: _Budget, summary: Dict[str, int],
+                                  models: _Models) -> None:
+        """§27.3, G16: the extraction step after the due loop, in its own start window (`extraction_stop`). The stage
+        re-plans due wake-ups at its start itself (Task 12), so the tick has no wake handling of its own."""
+        transcription = _TICK_TRANSCRIPTION.get()
+        if self._transcripts is None or transcription is None or transcription.host is None:
+            return
+        stop_at = budget.extraction_stop()
+        if stop_at is None:
+            return   # no step could end before the tick deadline: the next tick runs it
+        transcription.extract_ran = True
+        commits = transcription.commits
+        out = await self._transcript_step(user_id, "extract", self._transcripts.extract_step(
+            user_id, transcription.host, stop_at=stop_at), summary, models)
+        transcription.extract_progressed = (transcription.commits > commits or any(
+            out.get(k) for k in ("windows_extracted", "windows_uploaded", "windows_submitted")))
+
+    async def _extraction_ready(self, user_id: str, models: _Models) -> bool:
+        """The user has extraction work the stage can do now (G16): the `drive_transcriber` agent is not backed off,
+        and a job is in flight (`working`: its money is reserved already) or a recording is `ready` while the month's
+        cap has dollars left (`_transcribe_available`). Parked, held and waiting records, open batches and a
+        wake-up in the future are not."""
+        if not models.agent_available(TRANSCRIBER_AGENT, self._clock()):
+            return False
+        if await self._repo.transcript_records(user_id, TRANSCRIPT_WORKING, 1):
+            return True
+        if await self._transcribe_available(user_id) <= 0:
+            return False
+        return bool(await self._repo.transcript_queue(user_id, 1))
+
+    async def _transcripts_waiting(self, user_id: str, models: _Models) -> bool:
+        """The chain continues for transcription only while there is extraction work (`_extraction_ready`) or a due
+        wake-up the stage re-plans into it — never for a wake-up in the future or open batches alone (the 10-minute
+        fan-out polls them, Δ104) — and only if this tick's extraction step did not run, or moved something: a step
+        that found work it could not touch (a file whose old batch must settle first, T-R20) is tried again by the
+        fan-out, never by a zero-delay chain."""
+        transcription = _TICK_TRANSCRIPTION.get()
+        if transcription is None or not transcription.on:
+            return False
+        if transcription.extract_ran and not transcription.extract_progressed:
+            return False
+        if await self._extraction_ready(user_id, models):
+            return True
+        now = self._clock()
+        return (models.agent_available(TRANSCRIBER_AGENT, now)
+                and bool(await self._repo.transcript_wakeups(user_id, now, 1)))
+
     # -- version upgrades (§12.3) --------------------------------------------------------------
 
     async def _upgrade_step(self, user_id: str, state: DriveSyncState, now: datetime, budget: _Budget,
@@ -3045,6 +3331,8 @@ class DriveIndexingService:
             # a pass is mid-way, or this tick's pass wrote (re-stamped or scheduled) and the verification pass
             # runs in-chain; a restarted pass that wrote nothing waits for due work or the fan-out (RFC Δ30)
             return True
+        if models is not None and await self._transcripts_waiting(user_id, models):
+            return True
         # backed-off work waits for its due_at; a folder that stepped aside is due right after this tick
         return bool(await self._repo.due_records(user_id, now + _STEP_ASIDE, 1))
 
@@ -3124,25 +3412,109 @@ class DriveIndexingService:
         self._gate_checked[user_id] = self._monotonic()
 
     async def _enabled(self, user_id: str) -> bool:
-        """The opt-in flag, read uncached (§7.1). The account id comes with it: model calls bill to it (§24.9)."""
+        """The opt-in flag, read uncached (§7.1). The account id comes with it: model calls bill to it (§24.9); and
+        the user's transcription flag (`drive_transcribe_enabled`, Δ125), which the tick keeps as read at its gate."""
         profile = await self._users.get_user(user_id)
         if profile is not None:
             self._account_ids[user_id] = str(getattr(profile, "account_id", "") or "")
+        self._transcribe_flags[user_id] = bool(
+            profile is not None and getattr(profile.config, "drive_transcribe_enabled", False))
         return bool(profile is not None and profile.config.drive_indexing_enabled)
+
+    def _transcription_on(self, user_id: str) -> bool:
+        """The kill switch AND the user's flag (§27.12-§27.13), with the stage built: only then does any transcript
+        step run, any transcript query go out, or a recording count as waiting."""
+        return (self._transcribe_enabled and self._transcripts is not None
+                and self._transcribe_flags.get(user_id, False))
 
     @staticmethod
     def _log(user_id: str, end: str, summary: Dict[str, int], budget: _Budget, models: _Models,
              spend: Optional[_Spend] = None) -> None:
         """The tick line (§12.1, §25.7 telemetry): the summary counts, and the dollars per class spent this tick (the
-        fallback's share and what the initial build covered), the enrichment time and the rebuild progress."""
+        fallback's share and what the initial build covered), the enrichment time and the rebuild progress. The
+        transcript stage adds `windows_extracted`, `windows_submitted`, `windows_collected` and `transcripts` (files made
+        `current`) to the counts, `transcribe_usd` (collected dollars booked) to the classes and
+        `transcribe_reserved_usd` (this tick's net reservations) after them (§27.10)."""
         elapsed = budget.monotonic() - budget.started
         cost = f" model_cost=${models.cost:.4f}" if models.calls or models.cost else ""
         usd = ""
         if spend is not None and spend.usd:
             usd = " " + " ".join(f"{k}_usd=${v:.4f}" for k, v in sorted(spend.usd.items()) if v)
+        if spend is not None and spend.reserved_usd:   # this tick's net transcription reservations (§27.10)
+            usd += f" transcribe_reserved_usd=${spend.reserved_usd:+.4f}"
         enriched = f" enrich_s={budget.enrich_s:.1f}" if budget.enrich_s else ""
         logger.info(f"[DriveIndex] tick user={user_id[:8]} end={end} {summary}{cost}{usd}{enriched} "
                     f"duration={elapsed:.1f}s")
+
+
+class _TickHost:
+    """The `TranscriptHost` (drive_transcript_stage) one tick lends the transcript stage for one user (§27.3; plan
+    Task 14). Every method is the tick's own rule, so the stage writes nothing the tick would not: the lease fence, a
+    record write through `_commit` (the plans, drops_readable), an index run through the ordinary text path under the
+    tick's file budget (G32), the usage documents (G8, G9, Δ106) and the per-agent backoff (§25.4.6)."""
+
+    def __init__(self, svc: "DriveIndexingService", user_id: str, budget: _Budget, models: _Models,
+                 summary: Dict[str, int], transcription: _Transcription) -> None:
+        self._svc = svc
+        self._user_id = user_id
+        self._budget = budget
+        self._models = models
+        self.summary = summary
+        self._transcription = transcription
+
+    @property
+    def account_id(self) -> str:
+        return self._svc._account_ids.get(self._user_id, "")
+
+    def fence(self) -> None:
+        _fence()
+
+    async def commit(self, records: Sequence[DriveIndexRecord], before: Mapping[str, DriveIndexRecord]) -> None:
+        """`_commit`, with the card of a record the stage changed scheduled again: a transcript or stub line changes
+        the card text after the run's own scheduling (§27.11), so the due loop embeds it once more."""
+        if not records:
+            return
+        now = self._svc._clock()
+        writes = [_card_rescheduled(r, now) for r in records]
+        made_current = sum(1 for r in writes if r.transcript_state == TRANSCRIPT_CURRENT
+                           and (r.item_id not in before or before[r.item_id].transcript_state != TRANSCRIPT_CURRENT))
+        await self._svc._commit(self._user_id, writes, set(), before=before)
+        self._transcription.commits += 1
+        _inc(self.summary, "transcripts", made_current)
+
+    async def index_transcript(self, rec: DriveIndexRecord, body: str,
+                               extracted_by: str) -> Optional[DriveIndexRecord]:
+        return await self._svc._index_transcript(self._user_id, rec, body, extracted_by, self._budget, self.summary)
+
+    async def spend(self, cls: str, usd: float, calls: int, month: str) -> None:
+        await self._svc._spend_usd(self._user_id, cls, usd, 0.0, calls, month=month)
+
+    async def reserve(self, usd: float, month: str) -> None:
+        await self._svc._reserve_transcribe(self._user_id, usd, month)
+
+    async def release(self, usd: float, month: str) -> None:
+        await self._svc._reserve_transcribe(self._user_id, -usd, month)
+
+    def agent_available(self, agent: str) -> bool:
+        return self._models.agent_available(agent, self._svc._clock())
+
+    async def agent_outage(self, agent: str) -> None:
+        """The agent's backoff, written with the tick's state at once (a killed tick keeps it, as the reader's)."""
+        self._models.agent_outage(agent, self._svc._clock())
+        await self._svc._persist_usage(self._models)
+
+
+def _transcribing() -> bool:
+    """Transcription is on for the user of the running tick (the kill switch and the user's flag, read at its gate)."""
+    transcription = _TICK_TRANSCRIPTION.get()
+    return transcription is not None and transcription.on
+
+
+def _card_rescheduled(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
+    """A record whose card text no longer matches its stored card is due for it now, if nothing has it due sooner."""
+    if card_eligible(rec) and rec.card_hash != card_hash(rec) and (rec.due_at is None or rec.due_at > now):
+        return schedule(rec, now, first_seen=not rec.has_card)
+    return rec
 
 
 def _fence() -> None:

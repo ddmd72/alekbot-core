@@ -323,6 +323,11 @@ class UserBotConfig(BaseModel):
     # turning it off purges the index. Read uncached by the tick's gate and by search.
     drive_indexing_enabled: bool = False
 
+    # Transcripts of the drive's recordings (USER_DRIVE_INDEXING_RFC §27.12, Δ125): its own consent, separate from
+    # indexing; off by default and set per user by the owner's flag script (no Cabinet toggle yet). Read by the tick's
+    # gate with the opt-in flag, once per tick; the indexer's kill switch must be on as well.
+    drive_transcribe_enabled: bool = False
+
     # Copy each finished deep research report (its HTML) to the user's drive
     # (decisions/deep_research_drive_copy.md). The Cabinet toggle is the explicit consent; off by default.
     # Read uncached at delivery.
