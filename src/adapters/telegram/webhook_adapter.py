@@ -118,8 +118,6 @@ class TelegramWebhookAdapter(PlatformPort):
 
     async def _handle_telegram_update(self):
         """Handle incoming Telegram update with verification and dedup."""
-        dedup_key: Optional[str] = None
-        marked = False
         try:
             # 1. Verify HMAC signature
             if not await self._verify_webhook_signature(request):
@@ -135,34 +133,26 @@ class TelegramWebhookAdapter(PlatformPort):
             message = update.message
             update_id = update.update_id
 
-            # 3. Dedup check with namespace
             dedup_key = f"telegram::{update_id}"
-            if not await self.dedup_store.try_mark_processed(dedup_key):
-                logger.info(f"⏭️ Duplicate update {update_id} skipped")
-                return jsonify({"ok": True}), 200
-            marked = True
 
             # 4. Hand off to a Cloud Task: a chat turn may run ~25 min, and an inline
             # webhook loses its CPU once Telegram drops the connection (LONG_RUNNING_TURNS_RFC §5.8).
             if self._task_queue is not None:
-                task_name = await self._task_queue.enqueue_worker_task(
+                # Named task: Telegram's retry of this update_id is ALREADY_EXISTS (None = already queued = success).
+                await self._task_queue.enqueue_worker_task(
                     task_type="telegram_update", payload={"update": body}, deadline_seconds=1800,
+                    dedup_key=dedup_key,
                 )
-                if task_name is None:
-                    raise RuntimeError("telegram_update was not enqueued")
                 return jsonify({"ok": True}), 200
-            marked = False  # inline processing: a release would re-run a turn already written
+            # Inline path (no queue): the intake mark is the only duplicate guard.
+            if not await self.dedup_store.try_mark_processed(dedup_key):
+                logger.info(f"⏭️ Duplicate update {update_id} skipped")
+                return jsonify({"ok": True}), 200
             await self._process_message(message, update_id=update_id)
             return jsonify({"ok": True}), 200
 
         except Exception as e:
             logger.error(f"❌ Error handling Telegram update: {e}", exc_info=True)
-            if marked and dedup_key:
-                # Un-mark so Telegram's retry is not skipped as a duplicate (the message would be lost).
-                try:
-                    await self.dedup_store.release(dedup_key)
-                except Exception as release_error:
-                    logger.error(f"❌ Could not release Telegram intake mark: {release_error}", exc_info=True)
             return jsonify({"error": str(e)}), 500
 
     async def handle_queued_update(self, payload: dict) -> tuple:
