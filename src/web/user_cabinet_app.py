@@ -25,7 +25,7 @@ from ..ports.language_service_port import LanguageServicePort
 from ..ports.agent_note_port import AgentNotePort
 from ..ports.recurrence_port import RecurrencePort
 from ..ports.user_drive_port import UserDrivePort
-from ..utils.logger import logger
+from ..utils.logger import exc_brief, logger
 from .cabinet_auth import make_auth_required
 
 # Documentation owner (loaded from environment variable - Secret Manager)
@@ -1308,8 +1308,8 @@ def create_user_cabinet_blueprint(
     async def _mirror_root(user_id: str) -> bool:
         try:
             return (await drive_search_service.has_mirror_root(user_id)) is True
-        except Exception:
-            logger.warning("Drive status: reading the transcript folder failed", exc_info=True)
+        except Exception as exc:
+            logger.warning(f"Drive status: reading the transcript folder failed: {exc_brief(exc)}")
             return False
 
     @bp.route("/api/drive/status", methods=["GET"])

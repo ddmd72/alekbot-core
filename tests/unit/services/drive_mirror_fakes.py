@@ -13,7 +13,7 @@ from __future__ import annotations
 import itertools
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Type
 
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.adapters.in_memory_drive_mirror_repo import InMemoryDriveMirrorRepository
@@ -390,6 +390,7 @@ class FakeMirrorHost:
     fences: int = 0
     events: Optional[List[Tuple[str, Any]]] = None
     root_marks: List[Tuple[str, bool]] = field(default_factory=list)   # `root_mark_changed` calls, in order
+    stop_exceptions: Tuple[Type[BaseException], ...] = ()   # MirrorHost: no host stop signal of its own
 
     def fence(self) -> None:
         self.fences += 1

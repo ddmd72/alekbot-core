@@ -110,7 +110,11 @@ async def test_a_refused_write_without_localization_falls_back_to_english(search
     drive_service.delete.side_effect = DriveMirrorWriteRefused("mirror folder")
     resp = await _agent(search, drive_service).execute(_msg(Intent.DELETE_FILE_FROM_DRIVE, file_ref="drive:f1"))
     assert resp.status == AgentStatus.FAILED
-    assert resp.error == "This folder is managed by the bot; change it in OneDrive."
+    assert resp.error == ("This folder is managed by the bot and its files are overwritten; "
+                          "to keep your own version, copy the file to another folder.")
+    from src.domain.ui_messages import UIMessage
+    from src.locales import en
+    assert resp.error == en.UI_STRINGS[UIMessage.DRIVE_MIRROR_WRITE_REFUSED.value]
 
 
 def test_the_line_exists_in_every_language():

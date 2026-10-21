@@ -21,6 +21,7 @@ Public interface:
     RENDER_VERSION
     MirrorStrings                                          # the localized strings, supplied by the caller
     render_file(stored, rec, strings, *, source_path, recorded_on) -> bytes
+    render_archived(stored, doc, strings) -> bytes         # an edited archived file, from the document's snapshot
     rendered_hash(data) -> str
     readme_bytes(strings) -> bytes
     archive_word_keys(stored) -> Tuple[str, ...]
@@ -36,6 +37,7 @@ from typing import Dict, List, Tuple
 from .drive_index import DriveIndexRecord
 from .drive_index_params import ARCHIVE_KEYS_MAX
 from .drive_keys import word_keys
+from .drive_mirror import MirrorDoc
 from .drive_transcript import StoredTranscript, TranscriptStub
 from .drive_transcript_render import open_text
 from .drive_transcript_time import format_stamp
@@ -130,6 +132,18 @@ def render_file(stored: StoredTranscript, rec: DriveIndexRecord, strings: Mirror
         body = open_text(stored, max_chars=sys.maxsize)
     text = "\n".join(lines) + "\n\n---\n\n" + body + "\n"
     return text.encode("utf-8")
+
+
+def render_archived(stored: StoredTranscript, doc: MirrorDoc, strings: MirrorStrings) -> bytes:
+    """An ARCHIVED or DETACHED file as the audit rewrites it after an edit (owner ruling 2026-10-21, Δ241, Δ243):
+    `render_file` over the document's snapshot (name, folder path, recorded on, duration, speakers, languages, stub) and
+    the pinned store entry, so its body is exactly what open and the deleted-files search serve (`open_text`). The
+    header carries no link: the snapshot keeps none (the ledger stores no URL), whether the recording is deleted or,
+    for a detached file, still on the drive."""
+    rec = DriveIndexRecord(doc.user_id, doc.source_item_id, name=doc.source_name,
+                           transcript_seconds=int(doc.seconds), transcript_speakers=doc.speakers,
+                           transcript_languages=tuple(doc.languages), transcript_stub=doc.transcript_stub)
+    return render_file(stored, rec, strings, source_path=doc.source_path, recorded_on=doc.recorded_on)
 
 
 def rendered_hash(data: bytes) -> str:

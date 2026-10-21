@@ -1,7 +1,8 @@
-"""Provisioning of the transcript mirror's queries (USER_DRIVE_INDEXING_RFC §27.15 step 8c, Δ206, Δ217): every query a
-mirror repository method sends has its composite index declared in config/firestore.indexes.json under the live
-`development_` collections, the drive-scoped ones carry `drive_id`, the pins and the deleted-files search span drives, and
-`archive_keys` is exempt from single-field indexing."""
+"""Provisioning of the transcript mirror's queries (USER_DRIVE_INDEXING_RFC §27.15 step 8c, Δ206, Δ217, Δ237): every
+query a mirror repository method sends has its composite index declared in config/firestore.indexes.json under the live
+`development_` collections, except `pinned_keys`, which needs none (equality filters and the document id only, so the
+single-field indexes serve it and a privacy purge never waits for a mirror index, Δ237); the drive-scoped ones carry
+`drive_id`, the pins and the deleted-files search span drives, and `archive_keys` is exempt from single-field indexing."""
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -57,6 +58,17 @@ def _served(ops, declared):
     return False
 
 
+def _single_field_served(ops):
+    """Equality filters (`==`, `in`) on fields, at most a range on the document id, no ordering: Firestore merges the
+    single-field indexes for it, no composite (the `transcript_records` practice; Δ237)."""
+    for op in ops:
+        if op[0] == "order_by":
+            return False
+        if op[0] == "where" and op[2] not in (("==", "in") if op[1] != "__name__" else (">",)):
+            return False
+    return True
+
+
 @pytest.fixture
 def run():
     env = MagicMock()
@@ -91,8 +103,10 @@ async def test_every_new_query_has_its_index(run):
     # marks 1, children 1, folder walk 2, scan 2, detached 2 (never checked, then old), mirror item 1, newest 1,
     # by keys 2, pinned 2, pinned_keys 2: the pins' two queries each
     assert len(sent) == 1 + 1 + 2 + 2 + 2 + 1 + 1 + 2 + 2 + 2
-    missing = [ops for ops in sent if not _served(ops, declared)]
+    *composite, pins_a, pins_b = sent                        # `pinned_keys` is called last: its two queries
+    missing = [ops for ops in composite if not _served(ops, declared)]
     assert missing == []
+    assert _single_field_served(pins_a) and _single_field_served(pins_b)   # Δ237: no composite for the purge's pins
 
 
 async def test_the_record_queries_have_their_indexes(mock_env_config):
@@ -120,13 +134,14 @@ def test_indexes_declared_with_drive_id():
     spanning = [i for i in declared if ("drive_id", "ASCENDING") not in i]
     assert [("user_id", "ASCENDING"), ("content_key", "ASCENDING"), ("state", "ASCENDING")] in spanning
     assert [("user_id", "ASCENDING"), ("content_key", "ASCENDING"), ("gone_pending", "ASCENDING")] in spanning
-    assert [("user_id", "ASCENDING"), ("state", "ASCENDING"), ("content_key", "ASCENDING")] in spanning
-    assert [("user_id", "ASCENDING"), ("gone_pending", "ASCENDING"), ("content_key", "ASCENDING")] in spanning
+    # `pinned_keys` needs no composite since Δ237; the two it used are gone (each composite costs every ledger write)
+    assert [("user_id", "ASCENDING"), ("state", "ASCENDING"), ("content_key", "ASCENDING")] not in declared
+    assert [("user_id", "ASCENDING"), ("gone_pending", "ASCENDING"), ("content_key", "ASCENDING")] not in declared
     assert [("user_id", "ASCENDING"), ("mirror_item_id", "ASCENDING")] in spanning
     assert [("user_id", "ASCENDING"), ("state", "ASCENDING"), ("archived_at", "DESCENDING")] in spanning
     assert [("user_id", "ASCENDING"), ("state", "ASCENDING"), ("archive_keys", "CONTAINS")] in spanning
     assert [("user_id", "ASCENDING"), ("state", "ASCENDING"), ("name_keys", "CONTAINS")] in spanning
-    assert len(declared) == 12
+    assert len(declared) == 10
 
 
 def test_archive_keys_is_exempt_from_single_field_indexing():

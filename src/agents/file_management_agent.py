@@ -75,7 +75,7 @@ from ..domain.user_drive import (
 from ..infrastructure.agent_manifest import Intent
 from ..ports.file_storage_port import FileStoragePort
 from ..utils.file_conversion import is_native_binary
-from ..utils.logger import logger
+from ..utils.logger import exc_brief, logger
 
 if TYPE_CHECKING:
     from ..ports.language_service_port import LanguageServicePort
@@ -551,10 +551,13 @@ class FileManagementAgent(BaseAgent):
         if self._language is not None:
             try:
                 lang = await self._language.resolve_ui_language(user_id)
-            except Exception:
-                logger.warning("FileManagementAgent: UI language lookup failed for %s", user_id[:8], exc_info=True)
+            except Exception as exc:
+                logger.warning("FileManagementAgent: UI language lookup failed for %s: %s", user_id[:8],
+                               exc_brief(exc))
         if self._localization is None:
-            return "This folder is managed by the bot; change it in OneDrive."
+            # Mirrors src/locales/en.py DRIVE_MIRROR_WRITE_REFUSED verbatim (locales load only via the adapter).
+            return ("This folder is managed by the bot and its files are overwritten; "
+                    "to keep your own version, copy the file to another folder.")
         return self._localization.get_ui_string(lang, UIMessage.DRIVE_MIRROR_WRITE_REFUSED)
 
     _LATE_FAILURE_UI = {
@@ -690,8 +693,8 @@ class FileManagementAgent(BaseAgent):
                                                           file_text=downloaded)
         except DriveItemNotFoundError:
             raise
-        except Exception:
-            logger.warning("FileManagementAgent: archived transcript lookup failed", exc_info=True)
+        except Exception as exc:
+            logger.warning("FileManagementAgent: archived transcript lookup failed: %s", exc_brief(exc))
             return None
         return text or None
 

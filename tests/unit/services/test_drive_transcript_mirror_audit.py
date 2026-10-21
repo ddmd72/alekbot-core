@@ -9,6 +9,7 @@ from datetime import timedelta
 
 import pytest
 
+from src.domain.drive_index import DriveIndexRecord, Reason, RecordState, Scope
 from src.domain.drive_index_params import MIRROR_AUDIT_DAYS
 from src.domain.drive_mirror import (
     ARCHIVE_NAME, GONE, KIND_ARCHIVE, KIND_FILE, LONG_PATHS_NAME, MIRROR_ACTIVE, MIRROR_ARCHIVED, MIRROR_DETACHED,
@@ -16,9 +17,10 @@ from src.domain.drive_mirror import (
 )
 from src.domain.drive_mirror_names import is_root_name
 from src.domain.drive_mirror_plan import audit_due, cleared_item, lost_root_reset
-from src.domain.drive_mirror_render import readme_bytes
+from src.domain.drive_mirror_render import readme_bytes, render_archived
+from src.domain.drive_transcript import StoredTranscript
 
-from .drive_mirror_fakes import AREA, DRIVE, EN, START, USER, Crash, MirrorWorld
+from .drive_mirror_fakes import AREA, DRIVE, EN, START, USER, Crash, MirrorWorld, stored
 
 HOUR = timedelta(hours=1)
 DAY = timedelta(days=1)
@@ -206,30 +208,45 @@ async def test_owner_deleted_a_day_folder_discards_beneath():
     assert w.drive.writes() == []
 
 
-async def test_archived_edit_left_alone():
+async def test_archived_edit_rewritten_and_rename_moved_back():
+    """Owner ruling 2026-10-21 (Δ241), reversing D48's "the owner's edits inside the archive stand": an archived file
+    is the bot's; an edit is rewritten from the pinned store entry and a rename moved back, and the pin stays."""
     w = MirrorWorld()
     a = await archived(w)
     node = item_of(w, a)
+    place = (w.doc(a).mirror_parent_id, w.doc(a).mirror_name)
     node.data, node.ctag, node.name = b"my own notes", "c-owner", "kept.md"
     w.reset_calls()
     counters = await audit(w)
-    assert w.drive.writes() == [] and node.data == b"my own notes" and node.name == "kept.md"
+    assert [(c[0], c[1]["item_id"]) for c in w.drive.writes()] == [("replace_content", node.item_id),
+                                                                   ("move", node.item_id)]
     doc = w.doc(a)
-    assert doc.state == MIRROR_ARCHIVED and doc.mirror_name == "kept.md" and doc.mirror_ctag == "c-owner"
-    assert counters["mirror_followed"] == 1 and counters["mirror_edit_left"] == 1
+    stored_entry = await w.repo.get_transcript(USER, doc.content_key)
+    assert node.data == render_archived(stored_entry, doc, w.last_host.texts) and b"my own notes" not in node.data
+    assert (node.parent_id, node.name) == place == (doc.mirror_parent_id, doc.mirror_name)
+    assert doc.state == MIRROR_ARCHIVED and doc.mirror_ctag == node.ctag != "c-owner"
+    assert counters["mirror_archive_rewritten"] == 1 and counters["mirror_moved_back"] == 1
+    assert not counters.get("mirror_followed") and not counters.get("mirror_edit_left")
     assert await w.mirror.pinned(USER, doc.content_key)
 
 
-async def test_archived_moved_inside_the_mirror_followed():
+async def test_archived_moved_inside_the_mirror_moved_back():
+    """Owner ruling 2026-10-21 (Δ241): an archived file moved elsewhere inside the mirror goes back to its archive place
+    (one PATCH, nothing rewritten: its content was not edited); the document stays archived and pinned."""
     w = MirrorWorld()
     a = await archived(w)
     node = item_of(w, a)
+    place = (w.doc(a).mirror_parent_id, w.doc(a).mirror_name)
     node.parent_id = w.root.root_item_id                   # out of the archive, still in the mirror
     w.reset_calls()
-    await audit(w)
-    assert w.drive.writes() == []
+    counters = await audit(w)
+    assert [(c[0], c[1]["item_id"], c[1]["new_parent_id"]) for c in w.drive.writes()] == [
+        ("move", node.item_id, place[0])]
     doc = w.doc(a)
-    assert doc.state == MIRROR_ARCHIVED and doc.mirror_parent_id == w.root.root_item_id
+    assert doc.state == MIRROR_ARCHIVED and (node.parent_id, node.name) == place == (doc.mirror_parent_id,
+                                                                                     doc.mirror_name)
+    assert counters["mirror_moved_back"] == 1 and not counters.get("mirror_followed")
+    assert await w.mirror.pinned(USER, doc.content_key)
 
 
 async def test_archived_moved_out_of_the_mirror_doc_deleted():
@@ -531,12 +548,13 @@ async def test_mark_meeting_another_drives_document_is_held():
 # -- the property: the audit never touches what the bot did not create ------------------------------------------------
 
 class Guard:
-    """Call-time checks on every Graph write of the step (I2): no planted item is written, no write lands under (or
-    moves an item out of) a previous root, every create and every destination is under the current root or is a
-    folder of the bot's own ledger (a mirror folder the owner moved out keeps receiving step 4's writes until the
-    audit moves it back: 21A's design), no archived document's item is rewritten, the audit issues no Graph delete,
-    moves no archived item and rewrites nothing but the read-me (its repairs go through step 4). A violation raises inside the step, where `_guard` counts it as `mirror_errors`; `violations` keeps the
-    message."""
+    """Call-time checks on every Graph write of the step (I2): no planted item is written; nothing is written to, or
+    moved out of, an item under a previous root; every create, destination and rewritten file is under the current
+    root (RFC §27.12; an item absent from the drive is allowed, its call answers 404 and writes nothing); no archived
+    document's item is rewritten, except by the audit back to the render of its pinned store entry; the audit issues
+    no Graph delete, moves an archived item only back to its ledger place, and rewrites nothing but the read-me and
+    edited archived files (its other repairs go through step 4; owner ruling 2026-10-21, Δ241). A violation raises inside the step, where `_guard` counts it as
+    `mirror_errors`; `violations` keeps the message."""
 
     def __init__(self, w: MirrorWorld) -> None:
         self.w = w
@@ -572,13 +590,26 @@ class Guard:
         return set(self.w.drive.chain(item_id))
 
     def _placeable(self, folder_id, current, prev):
-        """A destination of the bot's: under the current root, or one of its own ledger folders; never a previous
-        root's."""
+        """Under the current root; or absent from the drive (the call answers 404, nothing is written). Never under a
+        previous root."""
         chain = self._chain(folder_id)
         if chain & prev:
             return False
-        ours = {d.mirror_item_id for d in self.w.mirror.docs.values() if d.kind != KIND_FILE and d.mirror_item_id}
-        return current in chain or folder_id in ours
+        return current in chain or not chain
+
+    def _archived_render(self, doc, data):
+        stored_entry = self.w.repo.transcripts.get((USER, doc.content_key))
+        if stored_entry is None and doc.transcript_stub:
+            stored_entry = StoredTranscript(doc.content_key, None, stub=doc.transcript_stub)
+        return stored_entry is not None and data == render_archived(stored_entry, doc, EN)
+
+    def _to_ledger_place(self, doc, item, args, kw):
+        node = self.w.drive.nodes.get(item)
+        new_parent = kw.get("new_parent_id") if "new_parent_id" in kw else (args[1] if len(args) > 1 else None)
+        new_name = kw.get("new_name") if "new_name" in kw else (args[2] if len(args) > 2 else None)
+        parent = new_parent or (node.parent_id if node else "")
+        name = new_name or (node.name if node else "")
+        return (parent, name) == (doc.mirror_parent_id, doc.mirror_name)
 
     def check(self, name, args, kw):
         w = self.w
@@ -591,25 +622,64 @@ class Guard:
                 assert name == "create_folder" and is_root_name(args[1]), "a create in the App Folder"
                 return
             assert parent not in w.drive.planted, "a create inside a planted folder"
-            assert self._placeable(parent, current, prev), "a create outside the bot's folders"
+            assert self._placeable(parent, current, prev), "a create outside the root"
             return
         item = args[0]
         assert item not in w.drive.planted, f"{name} of a planted item"
         assert not self._chain(item) & prev, f"{name} of an item under a previous root"
         archived = [d for d in w.mirror.docs.values() if d.mirror_item_id == item and d.state == MIRROR_ARCHIVED]
+        # Δ243: a detached file keeps its pinned store entry and is rewritten and moved back like an archived one
+        pinned_files = archived + [d for d in w.mirror.docs.values() if d.mirror_item_id == item
+                                   and d.state == MIRROR_DETACHED and d.kind == KIND_FILE]
         if name == "replace_content":
-            assert not archived, "an archived file rewritten"
-            assert current in self._chain(item)
-            assert not self.in_audit or item == root.readme_item_id, "the audit rewrote a file itself"
+            # owner ruling 2026-10-21 (Δ241, Δ243): the one rewrite of an archived or detached file allowed is the
+            # audit's, of its edit, back to the render of its pinned store entry
+            assert not pinned_files or (self.in_audit and self._archived_render(pinned_files[0], args[1])), \
+                "an archived file rewritten"
+            assert self._placeable(item, current, prev), "a file rewritten outside the root"
+            assert not self.in_audit or item == root.readme_item_id or pinned_files, "the audit rewrote a file itself"
         if name == "move":
-            assert not (self.in_audit and archived), "the audit moved an archived file"
+            # Δ241, Δ243: the audit moves an archived or detached file only back to its own ledger place
+            assert not (self.in_audit and pinned_files) or self._to_ledger_place(pinned_files[0], item, args, kw), \
+                "the audit moved an archived file"
         if name == "delete":
             assert not self.in_audit, "a Graph delete from the audit"
-            assert current in self._chain(item)
+            assert self._placeable(item, current, prev), "a delete outside the root"
         if name == "move":
             new_parent = kw.get("new_parent_id") if "new_parent_id" in kw else (args[1] if len(args) > 1 else None)
             if new_parent is not None:
-                assert self._placeable(new_parent, current, prev), "a move to outside the bot's folders"
+                assert self._placeable(new_parent, current, prev), "a move to outside the root"
+            else:
+                node = w.drive.nodes.get(item)
+                assert self._placeable(node.parent_id if node else "", current, prev), "a rename outside the root"
+
+
+async def observe_mirror_items(w: MirrorWorld) -> None:
+    """What the tick's observation leaves in the index before the mirror step (§27.9.8): every folder of the bot's
+    ledger has a record (`inside_opaque` under the root, `normal` once the owner moved it out of it); a file of the bot's
+    under the root has none, and one the owner moved out of it has an ordinary file's record."""
+    if w.root is None:
+        return
+    root_id = w.root.root_item_id
+    gone = []
+    for doc in list(w.mirror.docs.values()):
+        node = w.drive.nodes.get(doc.mirror_item_id) if doc.mirror_item_id else None
+        if node is None:
+            continue
+        inside = w.drive.under(node.parent_id, root_id)
+        if doc.kind != KIND_FILE:
+            await w.repo.upsert_records([DriveIndexRecord(
+                USER, node.item_id, parent_id=node.parent_id, name=node.name, is_folder=True,
+                state=RecordState.METADATA_ONLY, reason=Reason.FOLDER,
+                scope=Scope.INSIDE_OPAQUE if inside else Scope.NORMAL)])
+        elif not inside:
+            await w.repo.upsert_records([DriveIndexRecord(
+                USER, node.item_id, parent_id=node.parent_id, name=node.name, state=RecordState.METADATA_ONLY,
+                scope=Scope.NORMAL)])
+        else:
+            gone.append(node.item_id)
+    if gone:
+        await w.repo.delete_records(USER, gone)
 
 
 @pytest.mark.parametrize("seed", range(12))
@@ -692,6 +762,7 @@ async def test_audit_never_touches_an_item_it_did_not_create(seed):
                 if w.drive.child(root_id, README_NAME) is None:
                     w.drive.add_file(root_id, README_NAME, b"o" * readme_size)
         w.advance(rnd.choice([HOUR, HOUR, 4 * HOUR]) if root_out is not None else rnd.choice([HOUR, DAY, 4 * DAY, WEEK]))
+        await observe_mirror_items(w)
         try:
             counters = await w.run(ops=rnd.choice([5, 40]), reads=rnd.choice([3, 10]))
         except Crash:
@@ -736,10 +807,17 @@ async def test_readme_name_held_by_an_owner_file_never_written():
 async def test_readme_intent_written_before_the_upload_and_cleared():
     w = MirrorWorld()
     await w.recording("a.mp4")
-    events = w.events
+    real = w.mirror.save_root
+
+    async def save_root(root):
+        w.events.append(("root saved", root))
+        await real(root)
+
+    w.mirror.save_root = save_root
     await w.run()
-    upload = events.index(("drive.upload", README_NAME))
-    assert ("save_root", w.root.root_item_id) in events[:upload]
+    upload = w.events.index(("drive.upload", README_NAME))
+    saved_before = [e[1] for e in w.events[:upload] if e[0] == "root saved"]
+    assert saved_before and saved_before[-1].readme_pending_at == START          # the intent, right before the upload
     assert w.root.readme_item_id and w.root.readme_pending_at is None
 
 
@@ -799,3 +877,181 @@ async def test_folder_listing_404_confirmed_before_a_discard(answer):
         assert counters["mirror_folder_404_unconfirmed"] == 1
     else:
         assert counters["mirror_folder_read_failed"] == 1
+
+
+# -- fix round 2 ------------------------------------------------------------------------------------------------------
+
+def folder_record(w: MirrorWorld, item_id: str, parent: str, scope: Scope, name: str = "Box"):
+    """The index record the tick's observation leaves for a folder of the mirror (§27.9.8)."""
+    return w.repo.upsert_records([DriveIndexRecord(USER, item_id, parent_id=parent, name=name, is_folder=True,
+                                                   state=RecordState.METADATA_ONLY, reason=Reason.FOLDER, scope=scope)])
+
+
+def writes_outside(w: MirrorWorld, root_id: str):
+    """Creates into, and move destinations or rewrites of, anything whose chain (at the call) misses the root."""
+    out = []
+    for method, chains, created in w.drive.write_parents:
+        if method == "create_folder" and chains == ((AREA,),):
+            continue                                       # the root's own creation
+        if method in ("upload", "create_folder", "replace_content") and not all(root_id in c for c in chains):
+            out.append(method)
+        if method == "move" and len(chains) == 2 and root_id not in chains[1]:
+            out.append(method)
+        if method == "move" and len(chains) == 1 and root_id not in chains[0]:
+            out.append(method)                             # a rename in place: where the item is at the call
+    return out
+
+
+async def test_moved_out_mirror_folder_gets_no_write_and_is_moved_back():
+    """Answer 3 (RFC §27.12): a mirror folder the owner moved out of `_Transcripts` receives no write; one read of it
+    confirms it is outside, and it is moved back before step 4 writes into it."""
+    w = MirrorWorld()
+    box = await w.folder("Box")
+    (a,) = await mirrored(w, "a.mp4", parent=box)
+    mirror_box = w.folder_doc(box).mirror_item_id
+    w.drive.nodes[mirror_box].parent_id = AREA             # moved out by the owner ...
+    await folder_record(w, mirror_box, AREA, Scope.NORMAL)  # ... and observed so by the tick before the step
+    b = await w.recording("b.mp4", box)
+    w.reset_calls()
+    counters = await w.run()
+    assert counters["mirror_outside_found"] == 1 and counters["mirror_moved_back"] == 1
+    assert [c for c in w.drive.calls if c[0] == "get_change" and c[1]["item_id"] == mirror_box]
+    assert writes_outside(w, w.root.root_item_id) == []
+    assert w.drive.nodes[mirror_box].parent_id == w.root.root_item_id
+    assert w.mirror_path(b) == "Box/b.mp4.md" and w.mirror_path(a) == "Box/a.mp4.md"
+
+
+async def test_moved_out_folder_whose_way_back_is_blocked_waits_uncharged():
+    w = MirrorWorld()
+    box = await w.folder("Box")
+    await mirrored(w, "a.mp4", parent=box)
+    mirror_box = w.folder_doc(box).mirror_item_id
+    w.drive.nodes[mirror_box].parent_id = AREA
+    await folder_record(w, mirror_box, AREA, Scope.NORMAL)
+    w.drive.add_folder(w.root.root_item_id, "Box")         # the owner's folder now holds the name
+    b = await w.recording("b.mp4", box)
+    w.reset_calls()
+    counters = await w.run()
+    assert writes_outside(w, w.root.root_item_id) == []
+    assert not counters.get("mirror_charged") and not counters.get("mirror_errors")
+    assert w.rec(b).mirror_due or w.mirror_path(b) is not None
+
+
+async def test_file_moved_out_is_moved_back_before_it_is_rewritten():
+    w = MirrorWorld()
+    (a,) = await mirrored(w, "a.mp4")
+    item = w.doc(a).mirror_item_id
+    w.drive.nodes[item].parent_id = AREA                   # the owner takes our file out of the mirror
+    await w.repo.upsert_records([DriveIndexRecord(USER, item, parent_id=AREA, name="a.mp4.md",
+                                                  state=RecordState.METADATA_ONLY, scope=Scope.NORMAL)])
+    await w.repo.put_transcript(USER, stored(w.rec(a).transcript_key, "a new version"))
+    await w.update(a, transcript_version=2)
+    w.reset_calls()
+    await w.run()
+    assert writes_outside(w, w.root.root_item_id) == []
+    assert w.drive.nodes[item].parent_id == w.root.root_item_id and "a new version" in w.content(a)
+
+
+async def test_stale_record_with_an_inside_read_writes_normally():
+    w = MirrorWorld()
+    box = await w.folder("Box")
+    await mirrored(w, "a.mp4", parent=box)
+    mirror_box = w.folder_doc(box).mirror_item_id
+    await folder_record(w, mirror_box, AREA, Scope.NORMAL)  # a stale record: the folder is inside on the drive
+    b = await w.recording("b.mp4", box)
+    w.reset_calls()
+    counters = await w.run()
+    assert counters["mirror_outside_stale"] == 1 and not counters.get("mirror_moved_back")
+    assert len([c for c in w.drive.calls if c[0] == "get_change" and c[1]["item_id"] == mirror_box]) == 1
+    assert w.mirror_path(b) == "Box/b.mp4.md"
+    assert [c[0] for c in w.drive.writes()] == ["upload"]
+
+
+async def test_missing_link_does_not_stall():
+    w = MirrorWorld()
+    box = await w.folder("Box")
+    inner = await w.folder("Inner", box)
+    await mirrored(w, "a.mp4", parent=inner)
+    mirror_inner = w.folder_doc(inner).mirror_item_id
+    # the inner folder's record points at a parent the index has no record of; the outer one has none at all
+    await folder_record(w, mirror_inner, "not-observed-yet", Scope.INSIDE_OPAQUE, name="Inner")
+    b = await w.recording("b.mp4", inner)
+    w.reset_calls()
+    await w.run()
+    assert w.mirror_path(b) == "Box/Inner/b.mp4.md"
+    assert not [c for c in w.drive.calls if c[0] == "get_change"]
+
+
+async def test_folder_404_confirmed_with_one_read_a_tick():
+    """A 404 saves its own cursor, so a tick with one read spends it on the confirming read, never on listing the
+    folder again."""
+    w = MirrorWorld()
+    a = await archived(w)
+    day = w.doc(a).mirror_parent_id
+    key = archive_folder_key(USER, DRIVE, w.doc(a).archive_day, "")
+    from src.domain.user_drive import DriveItemNotFoundError
+    for method in ("list_children_changes", "get_change"):   # gone by its own reads; still listed by its parent
+        w.drive.fail(method, DriveItemNotFoundError("gone"), lambda args: args["item_id"] == day, times=99)
+    w.advance(WEEK + HOUR)
+    for _ in range(30):
+        await w.run(reads=1)
+        if w.doc(a) is None:
+            break
+    assert w.doc(a) is None and key not in w.mirror.docs
+    assert len([c for c in w.drive.calls if c[0] == "list_children_changes" and c[1]["item_id"] == day]) == 1
+
+
+async def test_foreign_readme_read_only_at_the_audit_cadence():
+    w = MirrorWorld()
+    await mirrored(w, "a.mp4")
+    w.drive.remove(w.root.readme_item_id)
+    owner = w.drive.add_file(w.root.root_item_id, README_NAME, b"mine")
+    await audit(w)                                         # forgets the missing read-me, finds the owner's file
+    assert w.root.readme_blocked_at == w.clock and w.root.readme_item_id == ""
+
+    def readme_reads():
+        return [c for c in w.drive.calls if c[0] == "child_by_name" and c[1]["name"] == README_NAME]
+
+    for _ in range(5):
+        w.advance(DAY)
+        w.reset_calls()
+        await w.run()
+        assert readme_reads() == []                        # a normal tick costs no read for it
+    w.drive.remove(owner)                                  # the owner gives the name back
+    w.advance(2 * DAY + HOUR)
+    w.reset_calls()
+    await w.run()
+    assert len(readme_reads()) == 1 and w.root.readme_item_id and w.root.readme_blocked_at is None
+    assert owner not in touched_ids(w)
+
+
+async def test_sibling_gone_keeps_the_deletion_notice():
+    """A sibling whose file is gone is made due with `due_again`, not an empty digest, so a later delete of its record
+    still sends the mirror its notice (the tick keys notices on `mirrored_digest`)."""
+    from src.domain.drive_mirror_plan import REDO_DIGEST
+    w = MirrorWorld()
+    (x,) = await mirrored(w, "X")
+    w.drive.remove(w.doc(x).mirror_item_id)                # our X.md is gone ...
+    folder = await w.folder("X.md")                        # ... and a folder of its name makes it yield
+    await w.recording("in.mp4", folder)
+    w.reset_calls()
+    await w.run(ops=2)
+    rec = w.rec(x)
+    assert rec.mirrored_digest == REDO_DIGEST and rec.mirror_due
+    await w.run()
+    assert w.mirror_path(x) is not None and w.rec(x).mirrored_digest not in ("", REDO_DIGEST)
+
+
+async def test_move_into_a_moved_out_folder_goes_only_after_it_is_back():
+    w = MirrorWorld()
+    box = await w.folder("Box")
+    (b,) = await mirrored(w, "b.mp4", parent=box)
+    (a,) = await mirrored(w, "a.mp4")
+    mirror_box = w.folder_doc(box).mirror_item_id
+    w.drive.nodes[mirror_box].parent_id = AREA             # the owner moves the mirror folder out
+    await folder_record(w, mirror_box, AREA, Scope.NORMAL)
+    await w.update(a, parent_id=box)                       # and the source of a.mp4 into its source folder
+    w.reset_calls()
+    await w.run()
+    assert writes_outside(w, w.root.root_item_id) == []
+    assert w.mirror_path(a) == "Box/a.mp4.md" and w.drive.nodes[mirror_box].parent_id == w.root.root_item_id
