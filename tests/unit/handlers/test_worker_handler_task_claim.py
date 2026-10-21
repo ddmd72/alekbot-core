@@ -8,7 +8,9 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from src.adapters.slack.http_adapter import HTTPModeAdapter
+from src.domain.agent import AgentResponse
 from src.domain.cloud_task_delivery import CloudTaskDelivery
+from src.handlers.agent_worker_handler import AgentWorkerHandler
 from src.handlers.worker_handler import WorkerHandler
 from src.ports.dedup_store import DedupStore
 
@@ -250,3 +252,116 @@ async def test_queued_event_unexpected_error_is_500(slack_adapter):
     slack_adapter._process_message_event = AsyncMock(side_effect=RuntimeError("bad"))
     payload = {"event": {"event": {"type": "message"}}, "session_id": "u1:C1"}
     assert await slack_adapter.handle_queued_event(payload, {}) == ({"error": "bad"}, 500)
+
+
+# --- agent_execution through the real AgentWorkerHandler ---
+# Moved from test_agent_worker_handler_task_dedup.py when the claim moved here (S1b task B).
+# Incident 2026-10-09: one create_html_page task (single enqueue) was delivered twice, 208 s
+# apart, while the first attempt was still running → two reports.
+
+_HTML_PAYLOAD = {
+    "task_type": "agent_execution",
+    "agent_id": "html_page_generator_agent",
+    "intent": "generic",
+    "query": "q",
+    "context": {"user_id": "u1", "account_id": "a1"},
+}
+_HTML_DELIVERY = CloudTaskDelivery(task_name="0038899772573220363", retry_count=0, execution_count=0)
+
+
+def _store(claimed=True):
+    store = AsyncMock(spec=DedupStore)
+    store.try_mark_processed = AsyncMock(return_value=claimed)
+    return store
+
+
+def _real_agent_worker(route_result=None, route_error=None):
+    coordinator = MagicMock()
+    if route_error is not None:
+        coordinator.route_message = AsyncMock(side_effect=route_error)
+    else:
+        coordinator.route_message = AsyncMock(return_value=route_result or AgentResponse.success(
+            task_id="t", agent_id="a", result=None))
+    return AgentWorkerHandler(coordinator=coordinator), coordinator
+
+
+async def test_agent_execution_first_delivery_claims_by_task_name_and_runs_the_agent():
+    store = _store(claimed=True)
+    aw, coordinator = _real_agent_worker()
+    body, status = await _handler(store, aw).handle(_HTML_PAYLOAD, delivery=_HTML_DELIVERY)
+
+    store.try_mark_processed.assert_awaited_once_with("0038899772573220363")
+    coordinator.route_message.assert_awaited_once()
+    assert body["status"] == "success"
+    assert status == 200
+
+
+async def test_agent_execution_redelivery_is_skipped_and_keeps_the_claim():
+    store = _store(claimed=False)
+    aw, coordinator = _real_agent_worker()
+    result = await _handler(store, aw).handle(_HTML_PAYLOAD, delivery=_HTML_DELIVERY)
+
+    coordinator.route_message.assert_not_awaited()
+    assert result == ({"status": "duplicate"}, 200)
+    store.release.assert_not_awaited()
+
+
+async def test_agent_execution_raising_attempt_releases_the_claim_by_task_name():
+    """An exception becomes a 500 and Cloud Tasks retries — that retry must not be skipped."""
+    store = _store(claimed=True)
+    aw, _ = _real_agent_worker(route_error=RuntimeError("boom"))
+
+    with pytest.raises(RuntimeError):
+        await _handler(store, aw).handle(_HTML_PAYLOAD, delivery=_HTML_DELIVERY)
+
+    store.release.assert_awaited_once_with("0038899772573220363")
+
+
+async def test_agent_execution_failed_agent_response_keeps_the_claim():
+    """A FAILED response returns 200 and the user is notified — Cloud Tasks does not retry,
+    so a later delivery is a duplicate and must stay skipped."""
+    store = _store(claimed=True)
+    aw, _ = _real_agent_worker(route_result=AgentResponse.failure(
+        task_id="t", agent_id="a", error="provider error"))
+
+    body, status = await _handler(store, aw).handle(_HTML_PAYLOAD, delivery=_HTML_DELIVERY)
+
+    assert body["status"] == "failed"
+    assert status == 200
+    store.release.assert_not_awaited()
+
+
+async def test_agent_execution_release_error_still_reraises_the_agent_error():
+    store = _store(claimed=True)
+    store.release = AsyncMock(side_effect=RuntimeError("firestore down"))
+    aw, _ = _real_agent_worker(route_error=ValueError("agent boom"))
+
+    with pytest.raises(ValueError, match="agent boom"):
+        await _handler(store, aw).handle(_HTML_PAYLOAD, delivery=_HTML_DELIVERY)
+
+
+async def test_delivery_without_a_store_runs_without_claim():
+    aw, coordinator = _real_agent_worker()
+    body, status = await _handler(None, aw).handle(_HTML_PAYLOAD, delivery=_HTML_DELIVERY)
+
+    coordinator.route_message.assert_awaited_once()
+    assert (body["status"], status) == ("success", 200)
+
+
+async def test_no_delivery_with_a_store_never_touches_the_store():
+    store = _store()
+    aw, coordinator = _real_agent_worker()
+    await _handler(store, aw).handle(_HTML_PAYLOAD, delivery=None)
+
+    coordinator.route_message.assert_awaited_once()
+    store.try_mark_processed.assert_not_awaited()
+
+
+async def test_release_failure_on_a_retryable_status_returns_the_original_result():
+    store = _store(claimed=True)
+    store.release = AsyncMock(side_effect=RuntimeError("firestore down"))
+    h = _handler(store)
+    h.attach_slack_worker(AsyncMock(return_value=({"e": 1}, 500)))
+
+    assert await h.handle(_SLACK_PAYLOAD, delivery=_delivery()) == ({"e": 1}, 500)
+    store.release.assert_awaited_once_with("task-1")
