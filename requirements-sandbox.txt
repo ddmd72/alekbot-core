@@ -7,7 +7,7 @@ quart>=0.18.0
 hypercorn>=0.14.0
 h2==4.4.1  # serves hypercorn's HTTP/2 (h2c prior knowledge from Cloud Run); no httpx in this image
 google-auth>=2.0.0  # in-app Google OIDC verification on the /worker endpoint
-requests==2.32.5  # google.auth.transport.requests (the verifier's public-key fetch, G21)
+requests==2.33.0  # google.auth.transport.requests (the verifier's public-key fetch, G21)
 pydantic==2.12.5  # mandated by the T9 brief; the import closure does not import it today
 google-cloud-logging
 opentelemetry-api==1.43.0
