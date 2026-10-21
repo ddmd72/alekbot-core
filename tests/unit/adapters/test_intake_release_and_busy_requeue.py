@@ -300,7 +300,7 @@ async def test_two_waiters_are_served_in_arrival_order(monkeypatch):
     adapter._session_locks["1.5"] = lock
 
     def payload(text):
-        return {"event": {"event_id": text, "event": {"type": "message", "text": text}}, "session_id": "1.5"}
+        return {"event": {"event_id": text, "event": {"type": "message", "text": text, "user": "U1"}}, "session_id": "1.5"}
     t1 = asyncio.create_task(adapter.handle_queued_event(payload("first"), {}))
     await asyncio.sleep(0.02)
     t2 = asyncio.create_task(adapter.handle_queued_event(payload("second"), {}))
