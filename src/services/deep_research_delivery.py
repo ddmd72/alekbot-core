@@ -302,7 +302,7 @@ async def deliver_deep_research(
                     account_id=account_id,
                     system_alert=(
                         "Deep research finished, but the report could not be prepared. "
-                        "The research may be retried."
+                        "Tell the user to ask for the research again."
                     ),
                     channel_id_override=channel_id_override,
                     platform_override=platform_override,

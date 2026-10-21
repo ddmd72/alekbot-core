@@ -31,6 +31,8 @@ Supported task_types:
   - daily_email_review            → fetch last 24h emails, deliver structured payload to SmartAgent for analysis
   - repair_email_embeddings       → run one batch of EmailEmbeddingRepairService (re-embed indexed emails
                                      where embedding_pending=True after transient API failures)
+  - deep_research_failed          → the Cloud Run research job failed: tell the user in the origin channel
+  - deep_research_failed          → the research Cloud Run Job failed: tell the user in the origin channel
   - video_generation_polling      → poll VideoGenerationPort job, deliver via deliver_video()
   - start_drive_sync              → fan-out: DriveSyncSchedulerService enqueues one drive_sync tick per
                                      user on the drive queue (the indexer service runs it), raises the
@@ -256,6 +258,8 @@ class WorkerHandler:
             return await self._handle_sweep_companion_consolidation()
         elif task_type == "deep_research_polling":
             return await self._handle_deep_research_polling(payload)
+        elif task_type == "deep_research_failed":
+            return await self._handle_deep_research_failed(payload)
         elif task_type == "video_generation_polling":
             return await self._handle_video_generation_polling(payload)
         elif task_type == "setup_microsoft_todo":
@@ -611,6 +615,35 @@ class WorkerHandler:
             channel_id_override=origin_channel_id,
         )
         return {"status": "failed"}, 200
+
+    async def _handle_deep_research_failed(self, payload: dict) -> Tuple[dict, int]:
+        """The research job (Cloud Run Job) cannot notify; it enqueues this task to tell the user."""
+        user_id = payload.get("user_id")
+        account_id = payload.get("account_id")
+        if not user_id or not account_id:
+            return {"error": "missing user_id or account_id"}, 400
+        session_id = payload.get("session_id") or ""
+        origin_channel_id = session_id.split(":", 1)[1] if ":" in session_id else None
+        query = payload.get("query") or "the request"
+        result = await self._notification.notify(
+            kind=NotificationKind.DEEP_RESEARCH,
+            user_id=user_id,
+            account_id=account_id,
+            system_alert=(
+                f"Deep research on \"{query}\" did not complete. "
+                "Tell the user it failed and that they can ask for it again."
+            ),
+            channel_id_override=origin_channel_id,
+            platform_override=payload.get("origin_platform") or None,
+        )
+        if not result.delivered:
+            # 5xx: Cloud Tasks retries; the claim is released.
+            logger.warning(
+                "[DeepResearch] failure notice not delivered: user=%s reason=%s error=%s",
+                user_id[:8], payload.get("reason"), result.error,
+            )
+            return {"error": result.error or "delivery_failed"}, 500
+        return {"status": "ok"}, 200
 
     # ------------------------------------------------------------------
     # Video generation polling (Grok)
