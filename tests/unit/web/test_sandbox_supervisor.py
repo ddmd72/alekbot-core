@@ -303,6 +303,7 @@ def _h2c_post(port: int, body: bytes):
     with socket.create_connection(("127.0.0.1", port), timeout=20) as sock:
         sock.sendall(conn.data_to_send())
         done = False
+        writable = True
         while not done:
             chunk = sock.recv(65536)
             if not chunk:
@@ -315,7 +316,14 @@ def _h2c_post(port: int, body: bytes):
                     conn.acknowledge_received_data(event.flow_controlled_length, event.stream_id)
                 elif isinstance(event, h2.events.StreamEnded):
                     done = True
-            sock.sendall(conn.data_to_send())
+            outgoing = conn.data_to_send()      # only acknowledgements once the request is out (SETTINGS ACK)
+            if outgoing and writable:
+                try:
+                    sock.sendall(outgoing)
+                except (BrokenPipeError, ConnectionResetError):
+                    # A client starved on a loaded host acknowledges after the server already closed its one-response
+                    # connection; the response is still in our receive buffer, so keep reading and let the asserts judge.
+                    writable = False
     return status, data, "HTTP/2"
 
 
@@ -375,8 +383,9 @@ def test_supervisor_ends_the_process_group_after_one_request(tmp_path, protocol)
         return recorded["pid"]
 
     responses = []
+    client_failures = []      # why the client has no response, so a missing one fails with its cause
 
-    def client():
+    def request():
         def ready():
             try:
                 socket.create_connection(("127.0.0.1", port), timeout=1).close()
@@ -384,6 +393,7 @@ def test_supervisor_ends_the_process_group_after_one_request(tmp_path, protocol)
             except OSError:
                 return False
         if not _wait_for(ready, 120):          # a saturated xdist host takes a while to import the server
+            client_failures.append("the server never accepted a connection")
             return
         if protocol == "h2c":
             responses.append(_h2c_post(port, b"payload"))
@@ -391,6 +401,12 @@ def test_supervisor_ends_the_process_group_after_one_request(tmp_path, protocol)
         with httpx.Client() as http:
             reply = http.post(f"http://127.0.0.1:{port}/v1/x", content=b"payload", timeout=20)
             responses.append((reply.status_code, reply.content, reply.http_version))
+
+    def client():
+        try:
+            request()
+        except Exception as exc:              # noqa: BLE001 - reported by the response assert below
+            client_failures.append(repr(exc))
 
     thread = threading.Thread(target=client)
     thread.start()
@@ -407,7 +423,7 @@ def test_supervisor_ends_the_process_group_after_one_request(tmp_path, protocol)
     code = outcome[0]
 
     assert code == 0
-    assert responses and responses[0][:2] == (200, b"hello")      # flushed in full before the instance went away
+    assert responses and responses[0][:2] == (200, b"hello"), client_failures      # flushed in full before the instance went away
     assert responses[0][2] == ("HTTP/2" if protocol == "h2c" else "HTTP/1.1")
     assert _wait_for(lambda: not _group_alive(recorded["pid"]), 10), "the server's process group survived"
     grandchild = int(gfile.read_text())

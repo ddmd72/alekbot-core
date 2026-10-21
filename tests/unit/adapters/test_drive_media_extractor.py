@@ -445,12 +445,16 @@ async def test_a_corrupt_cluster_in_a_pass_is_re_run_and_yields_its_windows(tmp_
         assert [w.index for w, _ in result.windows] == [w.index for w in plan]
 
         remote_runs = []
+        produced_s = []       # seconds of audio each remote run left in its output
         real = media._run_ffmpeg
 
         def spy(argv, deadline):
             outcome = real(argv, deadline)
             if "-xerror" in argv or "https" in argv[argv.index("-protocol_whitelist") + 1]:
                 remote_runs.append(("-xerror" in argv, outcome[0]))
+                out_path = argv[-1]
+                produced_s.append(media._file_duration(out_path)
+                                  if os.path.isfile(out_path) and os.path.getsize(out_path) else 0.0)
             return outcome
 
         monkeypatch.setattr(media, "_run_ffmpeg", spy)
@@ -460,10 +464,14 @@ async def test_a_corrupt_cluster_in_a_pass_is_re_run_and_yields_its_windows(tmp_
                                    "duration_known": False, "out_dir": str(out), "wall_s": 120,
                                    "windows": [{"index": w.index, "start_s": w.start_s, "duration_s": w.duration_s}
                                                for w in plan]})
-    # The corrupt cluster under -xerror ends the first run: exit 183 on ffmpeg 7.1 / 8.0, exit 0 with a short output
-    # and an error logged on 6.1. Either way it is re-run once (T-R16), and the re-run conceals it.
+    # The corrupt cluster under -xerror usually ends the first run: exit 183 on ffmpeg 7.1 / 8.0, exit 0 with a short
+    # output and an error logged on 6.1. Either way it is re-run once (T-R16), and the re-run conceals it. The noise is
+    # unseeded, so on some draws the garbage lands where ffmpeg conceals it even under -xerror (2 of 60 on 8.0.1: exit 0,
+    # the full 150 s): that run stands and is not re-run. The windows must be complete either way.
+    span = plan[-1].start_s + plan[-1].duration_s - plan[0].start_s
     assert remote_runs[0][0] is True and remote_runs[0][1] is not None
-    assert remote_runs[1:] == [(False, 0)]
+    first_failed_or_short = remote_runs[0][1] != 0 or produced_s[0] < span - 1.0
+    assert remote_runs[1:] == ([(False, 0)] if first_failed_or_short else []), (remote_runs, produced_s)
     assert child["status"] == "ok" and [w["index"] for w in child["windows"]] == [w.index for w in plan]
 
 
