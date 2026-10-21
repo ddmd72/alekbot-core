@@ -1,7 +1,7 @@
 # RFC: Owner notes on drive files
 
-**Status:** Proposed, rev 3 (2026-10-21): every open decision answered by the owner (D11–D20). Docs only;
-nothing is built.
+**Status:** Proposed, rev 3.1 (2026-10-21): every open decision answered by the owner (D11–D20); rev 3.1 aligns the
+deleted-files search and the deletion "why" with the transcripts mirror (§0.3). Docs only; nothing is built.
 **Date:** rev 1 2026-10-21; rev 2 2026-10-21, after the builder-check review (`scripts/memory/review_drive_file_notes_rfc.md`,
 private): C1 and I1–I10 fixed, the cheap minors folded in, the per-slice test gaps added; rev 3 2026-10-21, the owner's
 answers to OD1–OD12 (§0.1).
@@ -36,6 +36,18 @@ break). §13 lists where this RFC departs from them.
 | OD9 voice | Voice memos in chat **and a call with Lelik** count as chat: notes may be written from a call | D18, amends D5 | the tool's gate admits the `ask_alek` / `tell_alek` path; the receipt is posted to chat on that path (§4.9) |
 | OD10 Cabinet page | Later, maybe never | D19 | none |
 | OD11 / OD12 | Not in folder listings; refused on files the bot cannot open | D20 | none |
+
+### 0.3 Rev 3.1: one deleted-files surface with the transcripts mirror
+
+The transcripts mirror (`USER_DRIVE_INDEXING_RFC.md` §27.9, rev 3.28) now archives a deleted recording's transcript and
+reaches it only through an explicit deleted-files search (owner decision D48 there). Notes stay bot-side (D1): nothing of
+a note goes to the drive, and the mirror never writes one.
+
+| Shared piece | Rule | Where |
+|---|---|---|
+| `drive_deleted` | One flag, one result section, two sources: archived and dormant notes (here) and archived transcripts (index RFC §27.9.11). Whichever ships first adds the field, the manifest text and the section; the other adds its source. One description for both (first description per field name wins). | §6.4 |
+| The section | Heading `Deleted files (N):`; one entry per gone item; an item with both an archived transcript and a note shows both lines in one entry | §6.4 |
+| The deletion "why" | `gone` / `unstored` / `unknown` for every record delete, derived at the service's call sites; built by whichever slice ships first (transcripts T2 derives it without changing `ObservationPlan`, index RFC §27.9.4, Δ188), consumed by both | §7.1 |
 
 ### 0.2 Rev 2: the builder-check review
 
@@ -798,8 +810,10 @@ owner's words, but Smart reads it as a fact about a file, never as an instructio
 **Surface.** A new context field `drive_deleted` on `search_files_in_drive` (FILE_MANAGEMENT,
 `agent_manifest.py:516-661`), declared in `context_schemas` **and** in the capability description; the name is used by
 no other intent (the delegate tool keeps the first description seen per field name, `agent_manifest.py:653-654`).
-Description: "true only when the user explicitly asks about files that were deleted or removed: searches your notes on
-deleted files. Never for an ordinary search." Fields arrive in `message.payload` (memory rule). The delegate tool
+**Shared with the transcripts mirror (rev 3.1, §0.3):** the same flag reaches archived transcripts
+(`USER_DRIVE_INDEXING_RFC.md` §27.9.11), so the description covers both: "true only when the user explicitly asks about
+deleted or removed files: searches transcripts of deleted recordings and your notes on deleted files. Never for an
+ordinary search." Fields arrive in `message.payload` (memory rule). The delegate tool
 types every context field as a string (`_build_delegate_tool_declaration`, `base_agent.py:793-801`), so the agent
 parses it: `"true"`, `"yes"`, `"1"` (case-insensitive) → true; anything else → false.
 
@@ -818,7 +832,8 @@ It runs before the index gate: it needs neither the opt-in flag nor a connection
    fallback (the prefilter cannot express "another drive"): keys only.
 4. An empty `drive_query` lists the newest 10.
 
-**Render** (`src/domain/drive_note_render.py`): a heading "Deleted files with your notes (N):"; per note one wrapper
+**Render** (`src/domain/drive_note_render.py` for the note lines; the section and its heading are shared with the
+transcripts source, `src/domain/drive_deleted_search.py`, §0.3): the heading "Deleted files (N):"; per note one wrapper
 holding `<name> | <last known path> | gone from the drive (deleted or moved out of the bot's folder), last seen
 <date>`, the note line, `matched: your note "…"`, and the ref `drive_note:<note_id>` with "the file is gone: this ref
 works only for annotate_drive_file (to change, undo or remove the note)". A dormant note says "on a drive that is not
@@ -843,7 +858,9 @@ the record went:
 | `unstored` | `plan_observation`'s `not cls.stored` branch; a rescope cascade (a folder that became opaque, marker or dense) | **never archive**: the note stays `active`, its snapshot is refreshed from the change the planner had, and it is now in the receipt's `not_indexed` state; the audit (§7.4) watches it from then on |
 
 The planner reports the reason with the delete (`ObservationPlan` gains `delete_why`; the cascade step knows whether it
-runs for a deleted folder or a rescope). Each check is `{note_id, item_id, why, last_seen_at = state.observed_as_of}`,
+runs for a deleted folder or a rescope). **Rev 3.1:** if transcripts T2 ships first, the why already exists, derived at
+the service's call sites without changing `ObservationPlan` (a tombstone is `gone`, any other planner delete `unstored`;
+`USER_DRIVE_INDEXING_RFC.md` §27.9.4, Δ188); this RFC then reuses it and adds `owner_note_id` to the notice. Each check is `{note_id, item_id, why, last_seen_at = state.observed_as_of}`,
 collected in the tick's accumulator (§3.4). **A purge is not a planner decision** (`_purge`, `:3312`, deletes by user):
 opt-out, access loss, a different drive and the rebuild add no checks and archive nothing.
 
