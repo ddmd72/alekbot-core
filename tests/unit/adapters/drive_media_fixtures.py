@@ -138,3 +138,22 @@ def make_silent_video_mp4(path, seconds: int) -> bytes:
             "-t", str(seconds), "-c:v", "libx264", "-preset", "ultrafast", "-g", "600", "-c:a", "aac", "-b:a", "8k",
             "-movflags", "+faststart", str(path))
     return path.read_bytes()
+
+
+def make_stepped_tone_webm(seconds: int) -> bytes:
+    """Cue-less webm whose pitch is a function of the media time: 300 Hz + 100 Hz per started 10 s. A window's content
+    can then be checked against the clock it claims."""
+    expr = "0.5*sin(2*PI*t*(300+100*floor(t/10)))"
+    return _ffmpeg("-f", "lavfi", "-i", f"aevalsrc={expr}:s=16000:d={seconds}", "-c:a", "libopus", "-f", "webm",
+                   "pipe:1", capture=True)
+
+
+def tone_hz_at(opus_path: str, rel_s: float) -> float:
+    """Dominant frequency of the half second at `rel_s` of a local audio file."""
+    import numpy as np
+    raw = subprocess.run(["ffmpeg", "-nostdin", "-loglevel", "error", "-ss", f"{rel_s:.3f}", "-t", "0.5", "-i",
+                          opus_path, "-f", "s16le", "-ac", "1", "-ar", "16000", "pipe:1"],
+                         check=True, stdout=subprocess.PIPE).stdout
+    samples = np.frombuffer(raw, dtype=np.int16).astype(float)
+    spectrum = np.abs(np.fft.rfft(samples * np.hanning(len(samples))))
+    return float(np.argmax(spectrum) * 16000 / len(samples))

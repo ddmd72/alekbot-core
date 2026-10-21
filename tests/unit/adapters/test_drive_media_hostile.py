@@ -15,6 +15,7 @@ from tests.unit.adapters.drive_media_fixtures import HAVE_FFMPEG, MediaServer, m
 
 pytestmark = pytest.mark.skipif(not HAVE_FFMPEG, reason="needs ffmpeg and ffprobe")
 DEFINED_WITHIN_S = 60
+MP4 = "mov,mp4,m4a,3gp,3g2,mj2"
 
 
 @pytest.fixture
@@ -45,14 +46,15 @@ async def test_hostile_files_end_as_a_defined_outcome(served, tmp_path, path):
     with pytest.raises(MediaUnreadable):
         await extractor.probe(served.url(path))
     with pytest.raises(MediaUnreadable):
-        await extractor.extract_windows(served.url(path), [WindowSpec(0, 0.0, 10.0)], str(tmp_path / "o"), wall_s=60)
+        await extractor.extract_windows(served.url(path), [WindowSpec(0, 0.0, 10.0)], str(tmp_path / "o"), wall_s=60, container=MP4)
     assert time.monotonic() - started < DEFINED_WITHIN_S
     assert not list((tmp_path / "o").glob("window_*"))
     assert list(tmp_path.glob("drive-media-*")) == []            # the child's directory is gone
 
 
-async def test_a_playlist_opens_nothing_it_names(served, tmp_path):
-    """The whitelists refuse the playlist itself and every child of it: the only request is for the playlist."""
+async def test_a_playlist_is_refused_and_nothing_it_names_is_requested(served, tmp_path):
+    """The format whitelist refuses `hls`, so the playlist is read as no allowed demuxer and the only request is for the
+    playlist itself. (HLS also refuses `file:` segments on its own, so this is not a pure whitelist control.)"""
     with pytest.raises(MediaUnreadable):
         await _extractor(served, tmp_path).probe(served.url("/list.m3u8"))
     assert {r[1] for r in served.requests} == {"/list.m3u8"}
@@ -146,6 +148,10 @@ def test_image_honours_tls_verify_and_the_hostile_set_passes_as_the_parser_user(
     accepted = _docker(*mount, "--entrypoint", "ffprobe", _IMAGE, "-v", "error", "-tls_verify", "1", "-ca_file",
                        "/ca/ca.pem", "-i", base + "/good.mp4")
     assert accepted.returncode == 0, accepted.stderr[-200:]
+    mismatch = _docker(*mount, "--add-host", "wrong-name.invalid:127.0.0.1", "--entrypoint", "ffprobe", _IMAGE, "-v",
+                       "error", "-tls_verify", "1", "-ca_file", "/ca/ca.pem", "-i",
+                       base.replace("localhost", "wrong-name.invalid") + "/good.mp4")
+    assert mismatch.returncode != 0                     # a trusted CA, the wrong host name: Debian's ffmpeg is GnuTLS
     ran = _docker(*mount, "--entrypoint", "python", _IMAGE, "-c", _IMAGE_HOSTILE, base, "/ca/ca.pem",
                   user="driveparser")
     assert ran.returncode == 0, ran.stderr[-400:]

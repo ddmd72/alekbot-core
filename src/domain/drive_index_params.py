@@ -210,6 +210,7 @@ TRANSCRIBE_COVERAGE_MIN = 0.9               # Δ129: last segment start / window
 TRANSCRIBE_MAX_SECONDS = 14_400             # Δ100: 4 h, the cost bound and the 1 MiB document bound
 TRANSCRIBE_MAX_BYTES = 8 * 1024 ** 3        # Δ100: 8 GiB, checked from metadata before any ffprobe
 TRANSCRIBE_EXTRACT_WALL_S = 240             # §27.4: one extraction step's wall (~32 CPU-s per 30-min window plus network)
+MEDIA_PASS_MAX_WINDOWS = 3                  # T-R15: windows cut from one remote read of a file without a duration
 TRANSCRIBE_CHILD_CPU_S = 150                # §27.4: the media child's RLIMIT_CPU
 TRANSCRIBE_SHARE = 0.25                     # §27.3: start window of the extraction stage
 TRANSCRIBE_REREAD_COOLDOWN = timedelta(hours=24)   # an edited recording is re-bought at most this often, as the reader

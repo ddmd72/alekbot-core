@@ -8,7 +8,8 @@ logs it, and ffmpeg's stderr is left to the parent's digest.
 Public interface:
     build_probe_argv(url, ca_file) -> List[str]
     build_window_argv(url, ca_file, container, start_s, length_s, out_path) -> List[str]
-    build_segment_argv(url, ca_file, container, start_s, total_s, segment_s, out_pattern) -> List[str]
+    build_pass_argv(url, ca_file, container, start_s, span_s, out_path) -> List[str]
+    build_cut_argv(src, rel_start_s, length_s, out_path) -> List[str]
     run_probe(request) -> dict
     run_windows(request) -> dict
 """
@@ -19,12 +20,14 @@ import json
 import math
 import os
 import re
+import resource
+import signal
 import stat
 import subprocess
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-from src.domain.drive_index_params import TRANSCRIBE_MAX_SECONDS, TRANSCRIBE_WINDOW_S
+from src.domain.drive_index_params import MEDIA_PASS_MAX_WINDOWS, TRANSCRIBE_MAX_SECONDS
 
 FFMPEG = "ffmpeg"
 FFPROBE = "ffprobe"
@@ -33,6 +36,7 @@ PROTOCOL_WHITELIST = "https,tls,tcp,crypto"
 FORMAT_WHITELIST = "mov,mp4,m4a,matroska,webm,mp3,wav,flac,ogg,aac"
 NETWORK_TIMEOUT_US = 30_000_000       # -rw_timeout: a stalled socket ends as an error, not a wall-clock kill
 MAX_WINDOWS_PER_RUN = 64
+_LIMIT_SIGNALS = (-signal.SIGXCPU, -signal.SIGXFSZ)   # an rlimit ended ffmpeg: its output so far is a valid prefix
 _FORMAT_NAME = re.compile(r"^[a-z0-9_]+(,[a-z0-9_]+)*$")
 _BOUND_SLACK_S = 1.0                  # a pass within this of its `-t` bound reached it
 _MIN_BUDGET_S = 1.0
@@ -47,11 +51,9 @@ def _input_guard(url: str, ca_file: str, container: str) -> List[str]:
     timeout, and the probed demuxer pinned with `-f` when known (G14)."""
     argv = ["-protocol_whitelist", PROTOCOL_WHITELIST, "-format_whitelist", FORMAT_WHITELIST,
             "-tls_verify", "1", "-ca_file", ca_file, "-rw_timeout", str(NETWORK_TIMEOUT_US)]
-    if container:
-        if not _FORMAT_NAME.match(container):
-            raise ValueError("container name has an invalid shape")
-        argv += ["-f", container]
-    return argv
+    if not _FORMAT_NAME.match(container):
+        raise ValueError("container name is missing or has an invalid shape")
+    return argv + ["-f", container]
 
 
 def build_probe_argv(url: str, ca_file: str) -> List[str]:
@@ -63,7 +65,8 @@ def build_probe_argv(url: str, ca_file: str) -> List[str]:
 
 
 _OUTPUT_FLAGS = ["-map", "0:a:0", "-vn", "-sn", "-dn", "-map_metadata", "-1", "-map_chapters", "-1",
-                 "-ac", "1", "-ar", "16000", "-c:a", "libopus", "-b:a", "24k"]
+                 "-ac", "1", "-ar", "16000", "-c:a", "libopus", "-b:a", "24k",
+                 "-vbr", "constrained"]
 
 
 def build_window_argv(url: str, ca_file: str, container: str, start_s: float, length_s: float,
@@ -74,15 +77,21 @@ def build_window_argv(url: str, ca_file: str, container: str, start_s: float, le
             + ["-ss", f"{start_s:.3f}", "-t", f"{length_s:.3f}", "-i", url] + _OUTPUT_FLAGS + ["-f", "opus", out_path])
 
 
-def build_segment_argv(url: str, ca_file: str, container: str, start_s: float, total_s: float, segment_s: float,
-                       out_pattern: str) -> List[str]:
-    """All windows in one pass with the `segment` muxer (Δ134); `-t` bounds the pass. `-ss` only when resuming."""
+def build_pass_argv(url: str, ca_file: str, container: str, start_s: float, span_s: float, out_path: str) -> List[str]:
+    """The one remote read of a pass over a file without a duration (G35, T-R15): `-ss` only when resuming past the
+    start, `-t` bounding it, one Ogg Opus file out. The windows are cut from that file locally."""
     seek = ["-ss", f"{start_s:.3f}"] if start_s > 0 else []
     return ([FFMPEG, "-nostdin", "-hide_banner", "-loglevel", "error", "-nostats", "-y"]
             + _input_guard(url, ca_file, container)
-            + seek + ["-t", f"{total_s:.3f}", "-i", url] + _OUTPUT_FLAGS
-            + ["-f", "segment", "-segment_time", f"{segment_s:.3f}", "-segment_format", "opus",
-               "-reset_timestamps", "1", out_pattern])
+            + seek + ["-t", f"{span_s:.3f}", "-i", url] + _OUTPUT_FLAGS + ["-f", "opus", out_path])
+
+
+def build_cut_argv(src: str, rel_start_s: float, length_s: float, out_path: str) -> List[str]:
+    """One window cut from the local pass file by stream copy: file protocol and Ogg only."""
+    return [FFMPEG, "-nostdin", "-hide_banner", "-loglevel", "error", "-nostats", "-y",
+            "-protocol_whitelist", "file", "-format_whitelist", "ogg",
+            "-ss", f"{rel_start_s:.3f}", "-t", f"{length_s:.3f}", "-i", src,
+            "-map", "0:a:0", "-c:a", "copy", "-f", "ogg", out_path]
 
 
 # -- runners ---------------------------------------------------------------------------------------------------------
@@ -150,8 +159,10 @@ def run_windows(request: Dict[str, Any]) -> Dict[str, Any]:
     out_dir = str(request["out_dir"])
     deadline = time.monotonic() + float(request["wall_s"])
     try:
-        if not request.get("duration_known", True) or request.get("one_pass"):
-            return _run_segment(request, url, ca_file, container, out_dir, deadline)
+        if not _FORMAT_NAME.match(container):        # extraction pins the probed demuxer (G14): never empty
+            return {"status": "error", "detail": "container missing"}
+        if not request.get("duration_known", True):
+            return _run_pass(request, url, ca_file, container, out_dir, deadline)
         return _run_each(request, url, ca_file, container, out_dir, deadline)
     except ValueError as exc:                  # a bad container name or request shape: the file's, not a crash
         return {"status": "error", "detail": str(exc)[:100]}
@@ -175,8 +186,8 @@ def _run_each(request: Dict[str, Any], url: str, ca_file: str, container: str, o
         if timed_out:
             _discard(part)
             return {"status": "timeout", "windows": written, "detail": "wall in window"}
-        if code != 0 or not _regular(part) or os.path.getsize(part) == 0:
-            _discard(part)
+        if code != 0 or not _regular(part) or os.path.getsize(part) == 0 or _file_duration(part) <= 0:
+            _discard(part)        # a header-only Ogg is what a seek past the end leaves
             return {"status": "error", "detail": f"ffmpeg exit {code}"}
         os.replace(part, final)
         written.append({"index": index, "start_s": start, "duration_s": length})
@@ -188,47 +199,76 @@ def _discard(path: str) -> None:
         os.unlink(path)
 
 
-def _run_segment(request: Dict[str, Any], url: str, ca_file: str, container: str, out_dir: str,
-                 deadline: float) -> Dict[str, Any]:
-    """One pass with the `segment` muxer. Unknown duration (G35): from the start, `-t TRANSCRIBE_MAX_SECONDS`, windows
-    of TRANSCRIBE_WINDOW_S; the covered time is read from the produced files. Known: the planned windows' span."""
-    if not request.get("duration_known", True):
-        first_index, start_s, total_s, segment_s = 0, 0.0, float(TRANSCRIBE_MAX_SECONDS), float(TRANSCRIBE_WINDOW_S)
-    else:
-        specs = request.get("windows") or []
-        if not isinstance(specs, list) or not 0 < len(specs) <= MAX_WINDOWS_PER_RUN:
-            raise ValueError("window count out of range")
-        first_index, start_s = int(specs[0]["index"]), float(specs[0]["start_s"])
-        segment_s = float(specs[0]["duration_s"])
-        total_s = float(specs[-1]["start_s"]) + float(specs[-1]["duration_s"]) - start_s
-        if first_index < 0 or start_s < 0 or segment_s <= 0 or total_s <= 0:
-            raise ValueError("window spec out of range")
-    # ffmpeg numbers the segments from 0; they are renamed to the file's window indexes below
-    pattern = os.path.join(out_dir, "seg_%d.opus")
-    code, timed_out = _run_ffmpeg(build_segment_argv(url, ca_file, container, start_s, total_s, segment_s, pattern),
-                                  deadline)
-    produced = sorted(int(m.group(1)) for name in os.listdir(out_dir)
-                      if (m := re.fullmatch(r"seg_(\d+)\.opus", name)) and _regular(os.path.join(out_dir, name)))
-    if timed_out and produced:
-        _discard(os.path.join(out_dir, f"seg_{produced[-1]}.opus"))   # the one being written
-        produced = produced[:-1]
-    if not timed_out and code != 0:
-        return {"status": "error", "detail": f"ffmpeg exit {code}"}
-    windows: List[Dict[str, Any]] = []
-    covered_end = start_s
-    for k in produced:
-        src = os.path.join(out_dir, f"seg_{k}.opus")
-        length = _file_duration(src)
-        if length <= 0:
-            return {"status": "error", "detail": "segment has no duration"}
-        index = first_index + k
-        os.replace(src, os.path.join(out_dir, window_name(index)))
-        windows.append({"index": index, "start_s": start_s + k * segment_s, "duration_s": length})
-        covered_end = start_s + k * segment_s + length
-    if timed_out:
-        return {"status": "timeout", "windows": windows, "covered_s": covered_end - start_s, "detail": "wall in pass"}
+def _hit_a_limit(request: Dict[str, Any], pass_path: str) -> bool:
+    """ffmpeg handles SIGXCPU itself (finishes the file, exits 255) and Python leaves SIGXFSZ ignored (the write fails
+    with EFBIG), so neither shows up as a signal exit. Told apart by the measure: CPU time used by this child's
+    ffmpeg near RLIMIT_CPU, or the output at RLIMIT_FSIZE. Either way the file written so far is a valid prefix."""
+    cpu_s, file_bytes = float(request.get("cpu_s", 0) or 0), int(request.get("file_bytes", 0) or 0)
+    usage = resource.getrusage(resource.RUSAGE_CHILDREN)
+    if cpu_s > 0 and usage.ru_utime + usage.ru_stime >= 0.9 * cpu_s:
+        return True
+    try:
+        return file_bytes > 0 and os.path.getsize(pass_path) >= 0.98 * file_bytes
+    except OSError:
+        return False
+
+
+def _run_pass(request: Dict[str, Any], url: str, ca_file: str, container: str, out_dir: str,
+              deadline: float) -> Dict[str, Any]:
+    """No duration (G35, T-R15): `windows` is a short contiguous slice of the standard plan. Pass 1 reads the span once
+    into `pass.opus`; pass 2 cuts each planned window from it (overlap preserved) by stream copy. The duration D is read
+    from the produced file; a pass shorter than its span hit the end of the file (`eof`). A pass cut by the wall or by
+    SIGXCPU / SIGXFSZ leaves a valid Ogg prefix: only the windows fully inside it are cut (`timeout`)."""
+    specs = request.get("windows") or []
+    if not isinstance(specs, list) or not 0 < len(specs) <= MEDIA_PASS_MAX_WINDOWS:
+        raise ValueError("window count out of range")
+    plan = [(int(w["index"]), float(w["start_s"]), float(w["duration_s"])) for w in specs]
+    if any(i < 0 or st < 0 or ln <= 0 for i, st, ln in plan) or [i for i, _, _ in plan] != list(
+            range(plan[0][0], plan[0][0] + len(plan))):
+        raise ValueError("window spec out of range")
+    first_start, last_end = plan[0][1], plan[-1][1] + plan[-1][2]
+    span = last_end - first_start
+    pass_path = os.path.join(out_dir, "pass.opus")
+    try:
+        code, timed_out = _run_ffmpeg(build_pass_argv(url, ca_file, container, first_start, span, pass_path), deadline)
+        cut = timed_out or code in _LIMIT_SIGNALS or (code != 0 and _hit_a_limit(request, pass_path))
+        if not cut and code != 0:
+            return {"status": "error", "detail": f"ffmpeg exit {code}"}
+        if not _regular(pass_path):
+            return {"status": "timeout", "windows": []} if cut else {"status": "error", "detail": "no audio produced"}
+        duration = _file_duration(pass_path)
+        if duration <= 0:
+            return {"status": "timeout", "windows": []} if cut else {"status": "error", "detail": "no audio produced"}
+        eof = (not cut) and duration < span - _BOUND_SLACK_S
+        windows: List[Dict[str, Any]] = []
+        for index, start, length in plan:
+            rel = start - first_start
+            if rel >= duration - _BOUND_SLACK_S:
+                break                                   # the file ended before this window began
+            if cut and rel + length > duration + _BOUND_SLACK_S:
+                break                                   # not fully inside the killed prefix
+            real = min(length, duration - rel)
+            final = os.path.join(out_dir, window_name(index))
+            part = final + ".part"
+            code, timed_out = _run_ffmpeg(build_cut_argv(pass_path, rel, real, part), deadline)
+            if timed_out:
+                _discard(part)
+                return {"status": "timeout", "windows": windows}
+            if code != 0 or not _regular(part) or os.path.getsize(part) == 0 or _file_duration(part) <= 0:
+                _discard(part)                         # header-only Ogg from a seek past the end, or a failed cut
+                if code != 0:
+                    return {"status": "error", "detail": f"ffmpeg cut exit {code}"}
+                break
+            os.replace(part, final)
+            windows.append({"index": index, "start_s": start, "duration_s": real})
+    finally:
+        _discard(pass_path)
+    if cut:
+        return {"status": "timeout", "windows": windows}
     if not windows:
         return {"status": "error", "detail": "no audio produced"}
-    covered = covered_end - start_s
-    return {"status": "ok", "windows": windows, "covered_s": covered,
-            "reached_bound": (not request.get("duration_known", True)) and covered >= total_s - _BOUND_SLACK_S}
+    result: Dict[str, Any] = {"status": "ok", "windows": windows, "eof": eof,
+                              "reached_bound": (not eof) and last_end >= TRANSCRIBE_MAX_SECONDS}
+    if eof:
+        result["duration_s"] = first_start + duration
+    return result
