@@ -803,11 +803,11 @@ then does nothing and its reads fail loudly, so do not deploy on "it is building
 3. **Create the indexes:** `make deploy-indexes PROJECT_ID=$GOOGLE_CLOUD_PROJECT`. It creates the composites declared in `config/firestore.indexes.json`: on the records
    `user_id + mirror_due + effective_day desc + item_id` and `user_id + mirror_retry_at + item_id`; on the ledger `user_id + drive_id + gone_pending + mark_ready_at`,
    `user_id + drive_id + mirror_parent_id`, `user_id + drive_id + kind + __name__`, `user_id + drive_id + state + checked_at`, `user_id + mirror_item_id`, the deleted-files search's
-   `user_id + state + archived_at desc`, `user_id + state + archive_keys` and `user_id + state + name_keys`, and the pin composites (see the note below); plus the
-   single-field exemption for `archive_keys`.
-   - **Note on the pin composites.** `pinned_keys` stopped using composites in Δ237. The four declared for it (`user_id + content_key + state`, `user_id + content_key + gone_pending`,
-     `user_id + state + content_key`, `user_id + gone_pending + content_key`) are **not required by any query**: the last two have no reader at all. They stay declared only because
-     an existing test pins the declared list and its count; they are harmless, and they must still be `READY` in the check below because the grep prints every row.
+   `user_id + state + archived_at desc`, `user_id + state + archive_keys` and `user_id + state + name_keys`, and `pinned`'s two, `user_id + content_key + state` and
+   `user_id + content_key + gone_pending`: **10 on the ledger**; plus the single-field exemption for `archive_keys`.
+   - **Note on the pins.** `pinned_keys` (every purge) needs no composite since Δ237, and its two former composites (`user_id + state + content_key`,
+     `user_id + gone_pending + content_key`) are removed from the config. The two left are `pinned`'s (one content key: the transcript stage's orphan sweep): while they are
+     missing or building that sweep keeps everything (it fails loudly), but no purge waits on them.
 4. **Wait for the indexes, then verify** (no project id in any tracked file; use your shell variable):
    ```bash
    gcloud firestore indexes composite list --database=us-production --project=$GOOGLE_CLOUD_PROJECT \
