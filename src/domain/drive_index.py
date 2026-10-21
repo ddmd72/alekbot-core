@@ -14,7 +14,7 @@ from typing import Any, Mapping, Optional, Tuple
 from .drive_enrichment import DriveProfile, PhotoObject
 
 POLICY_VERSION = 3                            # 2: the Slice 2+4 kinds admitted (§24.1); 3: audio and video admitted
-                                              # for transcription (§27.3); re-plans media records only: structure
+                                              # for transcription (§27.3); re-plans EVERY record (113/113 for the owner), not only media: structure
                                               # decisions stand from STRUCTURE_POLICY_SINCE, no card re-embed
 # The policy version since which a record's structure decisions (density probe, opaque marker, README read) are valid.
 # A bump that only changes media admission must not re-decide structure for every user, so these checks compare

@@ -294,6 +294,10 @@ deploy: ## Build + deploy to Cloud Run (the single live environment)
 		echo "   DRIVE_FIRST_PASS=1 make deploy for the first pass of the two-pass first deploy"; \
 		echo "   (docs/07_deployment/README.md § Indexer URL)."; \
 		exit 1; fi
+	@if [ "$(DRIVE_TRANSCRIBE_ENABLED_DEV)" != "on" ] && [ "$(DRIVE_TRANSCRIBE_ENABLED_DEV)" != "off" ]; then \
+		echo "❌ DRIVE_TRANSCRIBE_ENABLED_DEV must be exactly on or off in .env (a missing key would silently freeze in-flight transcription batches): docs/07_deployment/README.md § Transcripts"; \
+		exit 1; fi
+	@echo "🎙  Transcription switch: _DRIVE_TRANSCRIBE_ENABLED=$(_DRIVE_TRANSCRIBE_ENABLED), cap: _DRIVE_TRANSCRIBE_USD_CAP=$(if $(_DRIVE_TRANSCRIBE_USD_CAP),$(_DRIVE_TRANSCRIBE_USD_CAP),(empty = the \$$20 maximum))"
 	@echo "🚀 Build + deploy to Cloud Run ($(SERVICE_NAME))..."
 	gcloud builds submit --config=cloudbuild-dev.yaml \
 		--substitutions=_SERVICE_URL=$(SERVICE_URL_DEV),_OAUTH_REDIRECT_URI=$(SERVICE_URL_DEV)/auth/callback,_VOICE_RELAY_URL=$(_VOICE_RELAY_URL),_INDEXER_URL=$(_INDEXER_URL),_DRIVE_UPGRADE_PASS=$(_DRIVE_UPGRADE_PASS),_DRIVE_TRANSCRIBE_ENABLED=$(_DRIVE_TRANSCRIBE_ENABLED),_DRIVE_TRANSCRIBE_USD_CAP=$(_DRIVE_TRANSCRIBE_USD_CAP),_SANDBOX_RENDER=$(_SANDBOX_RENDER),_SANDBOX_RENDER_URL=$(_SANDBOX_RENDER_URL),_SANDBOX_RENDER_SA=$(_SANDBOX_RENDER_SA),_SANDBOX_RENDER_CALLERS=$(_SANDBOX_RENDER_CALLERS) .
