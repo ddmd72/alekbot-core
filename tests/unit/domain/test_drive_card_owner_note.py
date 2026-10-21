@@ -111,3 +111,11 @@ def test_the_rendered_line():
         "noted by the owner: «Petya's estimate» (type contract; life areas home)"
     assert owner_note_line("Petya's estimate", "", ()) == "noted by the owner: «Petya's estimate»"
     assert owner_note_line("", "", ()) == ""
+
+
+def test_labels_read_as_words():
+    rec = _rec(owner_note_id="n1", owner_note_version=1, owner_doc_type="bank_statement",
+               owner_life_areas=("legal_admin",))
+    assert owner_segment(rec) == "noted by the owner: type bank statement; life areas legal admin"
+    assert owner_note_line("from the bank", "bank_statement", ("legal_admin",)) == \
+        "noted by the owner: «from the bank» (type bank statement; life areas legal admin)"

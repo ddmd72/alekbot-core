@@ -163,12 +163,17 @@ def _joined(parts: List[str]) -> str:
     return " | ".join(p for p in parts if p)
 
 
+def _label(value: str) -> str:
+    """A label value as words ("bank_statement" -> "bank statement"), as the deleted-files lines show it (part C)."""
+    return value.replace("_", " ")
+
+
 def _owner_parts(text: str, doc_type: str, life_areas: Tuple[str, ...]) -> List[str]:
     out = [text] if text else []
     if doc_type:
-        out.append(f"type {doc_type}")
+        out.append(f"type {_label(doc_type)}")
     if life_areas:
-        out.append("life areas " + ", ".join(life_areas))
+        out.append("life areas " + ", ".join(_label(a) for a in life_areas))
     return out
 
 

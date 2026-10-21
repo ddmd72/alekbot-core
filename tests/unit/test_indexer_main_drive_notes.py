@@ -10,7 +10,7 @@ import pytest
 import indexer_main
 from src.adapters.firestore_drive_note_repo import FirestoreDriveNoteRepository
 from src.composition import drive_indexing_setup
-from src.composition.drive_indexing_setup import drive_notes_enabled
+from src.composition.drive_note_setup import drive_notes_switch_on
 
 from .test_indexer_main import _Queue
 
@@ -51,8 +51,8 @@ def test_the_kill_switch_builds_no_store(wired, monkeypatch, value):
 
 
 @pytest.mark.parametrize("value,expected", [(None, True), ("", True), ("on", True), ("1", True), ("off", False)])
-def test_drive_notes_enabled(value, expected):
-    assert drive_notes_enabled(value) is expected
+def test_drive_notes_switch_on(value, expected):
+    assert drive_notes_switch_on(value) is expected
 
 
 def test_the_factory_hands_the_open_header_its_readers():

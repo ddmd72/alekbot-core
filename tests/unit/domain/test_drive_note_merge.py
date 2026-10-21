@@ -14,12 +14,14 @@ from src.domain.drive_index import (
 )
 from src.domain.drive_index_planner import PlanContext, plan_observation, schedule
 from src.domain.drive_keys import note_keys
+from src.domain.drive_index import KEYS_VERSION
 from src.domain.drive_note import (
-    ONEDRIVE_PROVIDER_KEY, DriveNote, NoteBinding, NoteContent, NoteSnapshot, NoteState, binding_key, erase_stub,
+    NOTE_KEYS_VERSION, ONEDRIVE_PROVIDER_KEY, DriveNote, NoteBinding, NoteContent, NoteSnapshot, NoteState, binding_key, erase_stub,
     note_match_keys,
 )
 from src.domain.drive_note_merge import (
-    NOTE_MERGE_VERSION, NOTE_WATERMARK_SKEW_S, NoteView, merged, note_store_keys, note_view, notes_query_start,
+    NOTE_MERGE_VERSION, NOTE_STORE_KEYS_VERSION, NOTE_WATERMARK_SKEW_S, NoteView, merged, note_store_keys, note_view,
+    notes_query_start,
     record_binding_key, with_owner_note,
 )
 
@@ -114,7 +116,7 @@ def test_a_carded_record_is_due_for_its_card_in_class_0():
 def test_note_store_keys():
     keys, version = note_store_keys(NoteContent("Petya's estimate", "contract", ("home",)), "Kitchen.pdf")
     assert set(note_keys("Petya's estimate", "contract", ("home",))) <= set(keys)
-    assert "w:kitchen" in keys and version.endswith(".1")
+    assert "w:kitchen" in keys and version == NOTE_STORE_KEYS_VERSION == f"{KEYS_VERSION}.{NOTE_KEYS_VERSION}"
     assert note_store_keys(NoteContent(), "Kitchen.pdf") == ([], "")
 
 

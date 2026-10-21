@@ -792,7 +792,9 @@ repositories for every lifecycle row of §8.
 **Duplicates.** `_collapse` (`drive_search_service.py:989-1005`) decides on lean records and keeps the first shown copy
 of identical files. With the lean `owner_note_id` (§3.3), a group whose copies include a noted record makes that record
 the representative, so the note is shown and the others go to `also_at`. (With a note-only match the noted copy is the
-only one in About anyway.)
+only one in About anyway.) **Named residual (plan part B, Default B16):** the filter-only listing (a
+`drive_kind` / date listing with no query words) folds identical copies by its own rule, first ranked copy first, so it
+can show an un-noted copy with the noted one's path in `also_at`, and its note line is then not shown.
 
 ### 6.2 The card and the skill
 

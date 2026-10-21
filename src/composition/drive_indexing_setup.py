@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, List, Mapping, Optio
 
 from ..adapters.firestore_drive_index_repo import FirestoreDriveIndexRepository
 from ..adapters.firestore_drive_mirror_repo import FirestoreDriveMirrorRepository
-from ..adapters.firestore_drive_note_repo import FirestoreDriveNoteRepository
 from ..adapters.gcp_task_queue import GcpTaskQueue
 from ..adapters.geo_place_table import load_place_rows
 from ..adapters.microsoft import ONEDRIVE_PROVIDER
@@ -26,7 +25,6 @@ from ..domain.place_lookup import PlaceIndex
 from ..ports.alert_sink import AlertSinkPort
 from ..ports.drive_index_repository import DriveIndexRepository
 from ..ports.drive_mirror_repository import DriveMirrorRepository
-from ..ports.drive_note_repository import DriveNoteRepository
 from ..ports.oauth_credentials_port import OAuthCredentialsPort
 from ..ports.task_queue import TaskQueue
 from ..ports.user_drive_port import UserDrivePort
@@ -55,19 +53,6 @@ def build_drive_mirror_repository(db_client: Any, env_config: EnvironmentConfig)
     """The transcript mirror's roots and ledger (USER_DRIVE_INDEXING_RFC §27.9): read by the main service for the Step 1
     guard, the deleted-files search and the open of an archived transcript."""
     return FirestoreDriveMirrorRepository(db_client, env_config)
-
-
-def drive_notes_enabled(value: Any) -> bool:
-    """DRIVE_NOTES_ENABLED (DRIVE_FILE_NOTES_RFC §3.6): an optional kill switch read with `os.getenv` by the caller, on
-    unless set to 0/off/false/no. Off: no lookup, no notes step, no lifecycle write in the indexer; merged copies stay
-    until the next merge."""
-    return str(value or "on").strip().lower() not in ("0", "off", "false", "no")
-
-
-def build_drive_note_repository(db_client: Any, env_config: EnvironmentConfig, *,
-                                enabled: bool = True) -> Optional[DriveNoteRepository]:
-    """The owner-note store `{prefix}drive_notes` (DRIVE_FILE_NOTES_RFC §3.1), or None with the kill switch off."""
-    return FirestoreDriveNoteRepository(db_client, env_config) if enabled else None
 
 
 def build_drive_task_queue(config: Mapping[str, Any], env_config: EnvironmentConfig) -> Optional[TaskQueue]:

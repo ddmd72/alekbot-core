@@ -265,6 +265,7 @@ _STATE_READERS: Dict[str, Callable[[Any], Any]] = {
     "purge_keep_transcripts": bool,
     # DRIVE_FILE_NOTES_RFC §3.4: the notes step's watermark pair, pass end and space-pass cursor
     "notes_applied_at": _dt, "notes_scanned_at": _dt, "notes_space_at": _dt, "notes_paging": bool,
+    "notes_tick_at": _dt,
     "notes_merge_version": int,
 }
 

@@ -21,6 +21,7 @@ Public interface:
     effective_doc_type(rec), effective_life_areas(rec)    the owner's classifiers over the profile's (re-exported)
     record_binding_key(drive_id, item_id) -> str  the `i:` key of an index record's item (ONEDRIVE_PROVIDER_KEY)
     note_store_keys(content, name) -> (keys, keys_version)   the note document's `keys` (§3.1) and their version
+    NOTE_STORE_KEYS_VERSION                       that version ("{KEYS_VERSION}.{NOTE_KEYS_VERSION}")
     notes_query_start(state) -> (after, after_note_id)       where the notes step's next `changed_since` starts
     NOTE_MERGE_VERSION and the tick constants (§15): NOTE_PAGE, NOTE_WATERMARK_SKEW_S, NOTE_EMBED_PER_TICK,
     NOTE_CHECKS_MAX, NOTE_AUDIT_EVERY, NOTE_AUDIT_SKIP_DAYS, NOTE_STEP_S, NOTE_LOOKUP_BATCH
@@ -53,6 +54,9 @@ NOTE_AUDIT_SKIP_DAYS = 7                    # §7.4 (S3)
 # deadline sum already holds, and nothing after it starts content work past the start budget: the sum is unchanged.
 NOTE_STEP_S = 60
 NOTE_LOOKUP_BATCH = 30                      # §5.1 a: binding keys per `array-contains-any` (the repository batches too)
+# §3.1: the layout of a note document's stored `keys` (the keyer's and the note keyer's versions): a note whose
+# `keys_version` differs has its keys recomputed with `note_store_keys` (part C's deleted-files search)
+NOTE_STORE_KEYS_VERSION = f"{KEYS_VERSION}.{NOTE_KEYS_VERSION}"
 
 
 @dataclass(frozen=True)
@@ -107,12 +111,12 @@ def merged(rec: DriveIndexRecord, view: Optional[NoteView]) -> bool:
 def note_store_keys(content: NoteContent, name: str) -> Tuple[List[str], str]:
     """The note document's `keys` (§3.1): the note's own keys and the snapshot name's name keys v2, used only by the
     deleted-files search; and `keys_version` = "{KEYS_VERSION}.{NOTE_KEYS_VERSION}" (a mismatch recomputes them in
-    memory at search time). An empty triple has none."""
+    memory at search time). An empty triple has none and no name keys (§3.1: `[]` when cleared)."""
     if content.is_empty:
         return [], ""
     keys = list(dict.fromkeys([*note_keys(content.text, content.doc_type, content.life_areas),
                                *(name_keys_v2(name) if name else ())]))
-    return keys, f"{KEYS_VERSION}.{NOTE_KEYS_VERSION}"
+    return keys, NOTE_STORE_KEYS_VERSION
 
 
 def notes_query_start(state: DriveSyncState) -> Tuple[Optional[datetime], str]:
@@ -133,7 +137,7 @@ def notes_query_start(state: DriveSyncState) -> Tuple[Optional[datetime], str]:
 
 __all__ = [
     "NOTE_AUDIT_EVERY", "NOTE_AUDIT_SKIP_DAYS", "NOTE_CHECKS_MAX", "NOTE_EMBED_PER_TICK", "NOTE_LOOKUP_BATCH",
-    "NOTE_MERGE_VERSION", "NOTE_PAGE", "NOTE_STEP_S", "NOTE_WATERMARK_SKEW_S", "NoteView", "effective_doc_type",
-    "effective_life_areas", "merged", "note_store_keys", "note_view", "notes_query_start", "record_binding_key",
-    "with_owner_note",
+    "NOTE_MERGE_VERSION", "NOTE_PAGE", "NOTE_STEP_S", "NOTE_STORE_KEYS_VERSION", "NOTE_WATERMARK_SKEW_S", "NoteView",
+    "effective_doc_type", "effective_life_areas", "merged", "note_store_keys", "note_view", "notes_query_start",
+    "record_binding_key", "with_owner_note",
 ]

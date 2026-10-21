@@ -8,14 +8,14 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import timedelta
-from typing import Any, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import pytest
 
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.adapters.in_memory_drive_note_repo import InMemoryDriveNoteRepository
 from src.domain import drive_note_merge as merge_mod
-from src.domain.drive_card import card_text
+from src.domain.drive_card import card_hash, card_text
 from src.domain.drive_extraction import PARSER, READER
 from src.domain.drive_index import MIGRATION_GATE_KEY, KEYS_VERSION, Nudge
 from src.domain.drive_index_params import (
@@ -45,6 +45,7 @@ class SpyNotes(InMemoryDriveNoteRepository):
         super().__init__(clock)
         self.calls: List[Tuple[str, Any]] = []
         self.fail: Optional[Exception] = None
+        self.hooks: Dict[str, Callable[[str], None]] = {}
 
     def _seen(self, name: str, arg: Any = None) -> None:
         self.calls.append((name, arg))
@@ -62,6 +63,13 @@ class SpyNotes(InMemoryDriveNoteRepository):
     async def changed_since(self, user_id: str, after, limit: int, *, after_note_id: str = ""):  # type: ignore[override]
         self._seen("changed_since", (after, after_note_id))
         return await super().changed_since(user_id, after, limit, after_note_id=after_note_id)
+
+    async def delete_stub(self, user_id: str, note_id: str) -> bool:
+        self._seen("delete_stub", note_id)
+        hook = self.hooks.get("delete_stub")
+        if hook is not None:
+            hook(note_id)
+        return await super().delete_stub(user_id, note_id)
 
     def names(self) -> List[str]:
         return [n for n, _ in self.calls]
@@ -454,8 +462,9 @@ async def test_the_space_pass_never_skips_a_note_whose_embedding_failed(w, monke
 
 # -- the closed access gate (core review §5) ------------------------------------------------------------------------
 
+@pytest.mark.parametrize("command", ["clear", "erase"])
 @pytest.mark.parametrize("gate", ["access_lost", "awaiting_migration"])
-async def test_a_cleared_note_leaves_the_record_and_card_behind_a_closed_gate(w, gate):
+async def test_a_removed_note_leaves_the_record_and_card_behind_a_closed_gate(w, gate, command):
     a = w.drive.add("a.pdf")
     note = await w.put_note(a, "Petya's estimate")
     await w.settle()
@@ -465,7 +474,10 @@ async def test_a_cleared_note_leaves_the_record_and_card_behind_a_closed_gate(w,
     else:
         versions = {k: v for k, v in w.state().applied_versions.items() if k != MIGRATION_GATE_KEY}
         w.repo.states["u"] = replace(w.state(), applied_versions=versions)
-    await w.clear_note(note.note_id)
+    if command == "clear":
+        await w.clear_note(note.note_id)
+    else:
+        await w.notes.erase("u", [note.note_id])
     w.clock.advance(1)
     w.emb.calls.clear()
     result = await w.tick()
@@ -473,7 +485,10 @@ async def test_a_cleared_note_leaves_the_record_and_card_behind_a_closed_gate(w,
     rec = w.rec(a)
     assert rec.owner_note_id == "" and not set(note_keys("Petya's estimate")) & set(rec.about_keys)
     assert w.emb.calls and all("Petya" not in t for t in w.emb.calls)   # the card re-embedded without the note
-    assert rec.has_card and rec.card_hash is not None
+    assert rec.has_card and rec.card_hash == card_hash(rec)
+    assert w.repo.vectors[("u", a)] == await FakeEmbeddings().get_embedding(card_text(rec))   # the new card's vector
+    if command == "erase":
+        assert await w.notes.get("u", note.note_id) is None
 
 
 async def test_behind_a_closed_gate_a_card_the_embedder_refuses_is_dropped(w, monkeypatch):
@@ -551,3 +566,200 @@ async def test_the_notes_step_does_not_start_past_the_start_budget(w):
     w.drive.get_changes = real   # type: ignore[assignment]
     await w.tick()
     assert w.rec(a).owner_note_id == f"n-{a}"
+
+
+# -- review fixes: the step's window, the kill switch, an incomplete round, the rollback detector --------------------
+
+async def test_a_slow_embedding_ends_the_window_and_no_further_call_starts(w, monkeypatch):
+    items = [w.drive.add(f"f{i}.pdf") for i in range(3)]
+    await w.settle()
+    for item in items:
+        note = await w.put_note(item, f"note {item}")
+        w.notes.notes[("u", note.note_id)] = note.model_copy(update={"embedding_pending": True})
+    real = w.emb.get_embedding
+    note_calls: List[str] = []
+
+    async def slow(text: str, task_type: str = "RETRIEVAL_DOCUMENT") -> List[float]:
+        if text.startswith("note "):
+            note_calls.append(text)
+            w.clock.advance(NOTE_STEP_S + 1)      # one embedding outlasts the step's window
+        return await real(text, task_type)
+    monkeypatch.setattr(w.emb, "get_embedding", slow)
+    await w.tick()
+    assert len(note_calls) == 1
+    pending = [n for n in w.notes.notes.values() if n.embedding_pending]
+    assert len(pending) == 2                        # the rest stays pending for the next tick
+
+
+async def test_a_stub_past_the_window_holds_the_watermark_and_the_next_tick_finishes(w):
+    items = [w.drive.add(f"f{i}.pdf") for i in range(3)]
+    for item in items:
+        await w.put_note(item, f"note {item}")
+    await w.settle()
+    await w.notes.erase("u", [f"n-{i}" for i in items])
+    w.notes.hooks["delete_stub"] = lambda note_id: w.clock.advance(NOTE_STEP_S + 1)
+    w.clock.advance(1)
+    await w.tick()
+    assert sum(1 for n, _ in w.notes.calls if n == "delete_stub") == 1
+    assert len(w.notes.notes) == 2 and w.state().notes_paging          # held right before the first stub left
+    assert all(w.rec(i).owner_note_id == "" for i in items)            # every copy cleared in the one commit
+    w.notes.hooks.clear()
+    await w.settle()
+    assert w.notes.notes == {}
+
+
+async def test_a_failed_stub_delete_is_retried(w):
+    a = w.drive.add("a.pdf")
+    await w.put_note(a)
+    await w.settle()
+    await w.notes.erase("u", [f"n-{a}"])
+
+    def boom(note_id: str) -> None:
+        raise RuntimeError("store outage")
+    w.notes.hooks["delete_stub"] = boom
+    w.clock.advance(3600)   # the stub is older than any skew window: only a held watermark brings it back
+    await w.tick()
+    assert (await w.notes.get("u", f"n-{a}")) is not None
+    w.notes.hooks.clear()
+    w.clock.advance(3600)
+    await w.tick()
+    assert (await w.notes.get("u", f"n-{a}")) is None
+
+
+def _service(w: World, notes: Any) -> DriveIndexingService:
+    return DriveIndexingService(w.drive, w.repo, w.emb, w.queue, w.users, lambda lat, lon: None, SPACE,
+                                extractors={PARSER: FakeExtractor(PARSER), READER: FakeExtractor(READER)},
+                                triage=FakeTriage(), notes=notes, clock=w.clock, monotonic=w.clock.monotonic)
+
+
+async def _settle_with(w: World, svc: DriveIndexingService) -> None:
+    for _ in range(30):
+        before = len(w.queue.tasks)
+        await svc.tick("u")
+        if not [t for t in w.queue.tasks[before:] if ":cont:" in (t["key"] or "")]:
+            return
+        w.clock.advance(1)
+
+
+async def test_the_kill_switch_off_and_on_merges_the_records_created_meanwhile(w):
+    a = w.drive.add("a.pdf")
+    await w.put_note(a, "before")
+    await w.settle()
+    off = _service(w, None)                        # DRIVE_NOTES_ENABLED off: no store
+    b = w.drive.add("b.pdf")
+    await w.put_note(b, "made while off")
+    await _settle_with(w, off)
+    assert w.rec(b) is not None and w.rec(b).owner_note_id == ""
+    assert w.state().notes_merge_version == 0      # saved by the tick with no store
+    await w.settle()                               # the switch on again
+    assert w.rec(b).owner_note_text == "made while off" and w.rec(a).owner_note_text == "before"
+
+
+async def test_the_kill_switch_behind_a_closed_gate_saves_the_zero_version(w):
+    a = w.drive.add("a.pdf")
+    await w.put_note(a)
+    await w.settle()
+    w.drive.connection_state = DriveConnection(connected=True, needs_reconnect=True, drive_id="d1")
+    assert (await _service(w, None).tick("u")).status == "access_lost"
+    assert w.state().notes_merge_version == 0
+
+
+@pytest.mark.parametrize("complete", [False, True])
+async def test_an_incomplete_round_embeds_the_changed_card_at_once(w, complete):
+    a = w.drive.add("a.pdf")
+    note = await w.put_note(a, "Petya's estimate")
+    await w.settle()
+    await w.clear_note(note.note_id)
+    w.clock.advance(1)
+    token = svc_mod._TICK_NOTES.set(svc_mod._TickNotes(drive_id="d1"))
+    try:
+        budget = svc_mod._Budget(started=w.clock.monotonic(), monotonic=w.clock.monotonic)
+        await w.svc._notes_step("u", replace(w.state(), round_complete=complete), budget, {})
+    finally:
+        svc_mod._TICK_NOTES.reset(token)
+    rec = w.rec(a)
+    assert rec.owner_note_id == ""
+    if complete:   # the due loop follows: the card is card work in class 0
+        assert rec.card_hash != card_hash(rec) and rec.due_at is not None
+    else:          # no due loop follows: the old note's vector is replaced now
+        assert rec.card_hash == card_hash(rec)
+        assert w.repo.vectors[("u", a)] == await FakeEmbeddings().get_embedding(card_text(rec))
+
+
+async def test_a_tick_by_code_without_notes_forces_a_full_re_read(w):
+    a = w.drive.add("a.pdf")
+    await w.put_note(a, "kept")
+    await w.settle()
+    w.clock.advance(60)
+    # the rolled-back revision ticks: it creates a record without a lookup, advances `last_success_at` and leaves the
+    # notes fields as they were (it does not know them; its merge-save keeps them)
+    b = w.drive.add("b.pdf")
+    await w.put_note(b, "made during the rollback")
+    before = w.state()
+    await _settle_with(w, _service(w, None))
+    w.repo.states["u"] = replace(w.state(), notes_merge_version=before.notes_merge_version,
+                                 notes_tick_at=before.notes_tick_at)
+    assert w.state().last_success_at > w.state().notes_tick_at
+    w.notes.calls.clear()
+    w.clock.advance(60)
+    await w.settle()
+    starts = [arg for name, arg in w.notes.calls if name == "changed_since"]
+    assert starts[0] == (None, "")                 # the whole store read again
+    assert w.rec(b).owner_note_text == "made during the rollback"
+
+
+async def test_a_normal_tick_sequence_never_re_reads(w):
+    a = w.drive.add("a.pdf")
+    await w.put_note(a)
+    await w.settle()
+    w.notes.calls.clear()
+    for _ in range(3):
+        w.clock.advance(600)
+        await w.tick()
+    starts = [arg for name, arg in w.notes.calls if name == "changed_since"]
+    assert starts and all(after is not None for after, _ in starts)
+    assert w.state().notes_tick_at >= w.state().last_success_at
+
+
+async def test_the_pass_end_is_read_before_the_notes_query(w, monkeypatch):
+    a = w.drive.add("a.pdf")
+    await w.settle()
+    await w.put_note(a)
+    real = w.notes.changed_since
+    asked: List[Any] = []
+
+    async def slow(user_id: str, after: Any, limit: int, *, after_note_id: str = "") -> Any:
+        asked.append(w.clock())
+        w.clock.advance(30)
+        return await real(user_id, after, limit, after_note_id=after_note_id)
+    monkeypatch.setattr(w.notes, "changed_since", slow)
+    await w.tick()
+    assert w.state().notes_scanned_at == asked[0]
+
+
+async def test_an_archived_note_is_cleared_and_never_in_a_default_search(w):
+    from src.services.drive_search_service import DriveSearchService
+    from src.domain.drive_search import DriveSearchRequest
+    a = w.drive.add("a.pdf")
+    note = await w.put_note(a, "zanzibar renovation")
+    await w.settle()
+    await w.notes.archive("u", note.note_id, archived_at=w.clock(), last_seen_at=w.clock())
+    w.clock.advance(1)
+    await w.tick()
+    assert w.rec(a) is not None and w.rec(a).owner_note_id == ""
+    search = DriveSearchService(w.repo, w.emb, w.users, w.drive, embedding_space=SPACE, clock=w.clock)
+    result = await search.search("u", DriveSearchRequest(query="zanzibar"))
+    assert not [c for c in result.cards if c.tier in ("about", "mentioned", "translated", "labelled")]
+    assert all(not c.owner_note for c in result.cards)
+
+
+async def test_a_page_note_written_in_the_old_space_is_moved(w):
+    a = w.drive.add("a.pdf")
+    await w.put_note(a)
+    await w.settle()
+    assert w.state().notes_space == SPACE
+    note = await w.put_note(a, "written by an old main service")
+    w.notes.notes[("u", note.note_id)] = note.model_copy(update={"embedding_space": "old-space/8"})
+    w.clock.advance(1)
+    await w.tick()
+    assert (await w.notes.get("u", note.note_id)).embedding_space == SPACE

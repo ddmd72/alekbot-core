@@ -20,7 +20,9 @@ from src.domain.drive_keys import (
 )
 from src.domain.drive_labels import DOC_TYPES, LIFE_DOMAINS
 from src.domain.drive_match import SourceClass
-from src.domain.drive_note import NOTE_CHARS_MAX, NOTE_WORDS_MAX, check_note_text, note_word_count
+from src.domain.drive_note import (
+    NOTE_CHARS_MAX, NOTE_KEYS_VERSION, NOTE_WORDS_MAX, check_note_text, note_word_count,
+)
 from src.domain.drive_note_merge import NOTE_MERGE_VERSION
 
 # 80 noun-dense Cyrillic words within 600 characters: with the worst doc type and three areas, one word past the cap
@@ -187,9 +189,10 @@ def test_a_record_without_a_note_emits_no_note_keys():
     assert not any(s.field is AboutField.OWNER_NOTE for ss in about_sources(rec).values() for s in ss)
 
 
-# The note keyer's pin (§5.4): a change to its rules or fixture fails here until NOTE_MERGE_VERSION moves with it.
-NOTE_KEYS_DIGESTS = {1: "4739cc0b5138"}
+# The note keyer's pin (§5.4): a change to its rules or fixture fails here until NOTE_MERGE_VERSION (the record copies)
+# and NOTE_KEYS_VERSION (the note store's `keys`) move with it (review Minor 5).
+NOTE_KEYS_DIGESTS = {(1, 1): "4739cc0b5138"}
 
 
-def test_note_keys_digest_is_pinned_per_note_merge_version():
-    assert note_keys_digest()[:12] == NOTE_KEYS_DIGESTS[NOTE_MERGE_VERSION]
+def test_note_keys_digest_is_pinned_per_merge_and_keys_version():
+    assert note_keys_digest()[:12] == NOTE_KEYS_DIGESTS[(NOTE_MERGE_VERSION, NOTE_KEYS_VERSION)]

@@ -510,6 +510,9 @@ class DriveSyncState:
     notes_space: str = ""
     notes_space_at: Optional[datetime] = None
     notes_space_id: str = ""
+    # when code with notes support last ran the notes step: a `last_success_at` after it means a tick without that
+    # support ran (a rolled-back revision), and the next notes step re-reads every note (plan Default B12)
+    notes_tick_at: Optional[datetime] = None
 
     def cards_in_space(self, embedding_space: str) -> bool:
         """The card stream answers queries embedded in `embedding_space`: no card is left in another space."""
