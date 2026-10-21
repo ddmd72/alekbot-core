@@ -450,7 +450,7 @@ ConsolidationAgent:
     
     ↓
 
-Updates old fact: "User lived in Warsaw" → is_current=False
+
     ↓
 
 ```

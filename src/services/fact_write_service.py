@@ -20,10 +20,10 @@ Responsibilities:
 """
 
 import asyncio
-import json
 import uuid
 from datetime import datetime, timezone
 from typing import List, Dict, Tuple
+from ..domain.fact_embedding import fact_embedding_texts
 from ..domain.entities import (
     FactEntity,
     FactType,
@@ -247,8 +247,7 @@ class FactWriteService(FactWritePort):
         metadata = fact_data.get("metadata", {})
         
         # Prepare embedding texts
-        tags_text = " ".join(tags) if tags else text  # Fallback to text if no tags
-        metadata_text = json.dumps(metadata, ensure_ascii=False) if metadata else text
+        texts = fact_embedding_texts(text, tags, metadata)
         
         # Single batch call: 3 texts → 3 vectors in one HTTP request (~5s vs ~15s).
         # genai.Client serializes concurrent to_thread calls at the HTTP layer,
@@ -258,7 +257,7 @@ class FactWriteService(FactWritePort):
         # tags/metadata used "SEMANTIC_SIMILARITY" which was already mismatched
         # with the "RETRIEVAL_QUERY" search vectors.
         vector, tags_vector, metadata_vector = await self._embedding.get_embeddings_batch(
-            [text, tags_text, metadata_text], "RETRIEVAL_DOCUMENT"
+            texts, "RETRIEVAL_DOCUMENT"
         )
         
         logger.debug(
