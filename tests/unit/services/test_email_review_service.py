@@ -27,11 +27,12 @@ Coverage:
     - token expiry is None → no refresh attempted
     - refresh raises exception → returns None
 """
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.domain.daily_review_window import EligibleReviewUser
 from src.domain.email import EmailFullContent, EmailMetadata, OAuthCredentials
 from src.services.email_review_service import EmailReviewService
 
@@ -121,7 +122,7 @@ class TestFindEligibleUsers:
 
         result = await svc.find_eligible_users(user_repo, now_utc)
 
-        assert ("user-1", "acc-1") in result
+        assert result == [EligibleReviewUser("user-1", "acc-1", date(2026, 1, 15))]
 
     async def test_gmail_daily_review_false_excluded(self):
         svc, _, oauth = _make_service()
@@ -147,13 +148,19 @@ class TestFindEligibleUsers:
 
         assert result == []
 
-    async def test_hour_mismatch_excluded(self):
+    @pytest.mark.parametrize(
+        "now_utc",
+        [
+            datetime(2026, 1, 15, 12, 0, tzinfo=timezone.utc),  # 3 h after 09:00: window closed
+            datetime(2026, 1, 15, 8, 0, tzinfo=timezone.utc),  # 1 h before 09:00: not open yet
+        ],
+    )
+    async def test_hour_mismatch_excluded(self, now_utc):
         svc, _, oauth = _make_service()
-        now_utc = datetime(2026, 1, 15, 10, 0, tzinfo=timezone.utc)  # 10:00 UTC
         oauth.list_users_by_provider = AsyncMock(return_value=["user-1"])
         user_repo = MagicMock()
         user_repo.get_user = AsyncMock(
-            return_value=_make_profile(hour=9)  # user wants 09:00, now is 10:00
+            return_value=_make_profile(hour=9)  # user wants 09:00, now is outside its 3 h window
         )
 
         result = await svc.find_eligible_users(user_repo, now_utc)
@@ -175,9 +182,10 @@ class TestFindEligibleUsers:
 
         result = await svc.find_eligible_users(user_repo, now_utc)
 
-        assert ("u1", "acc-1") in result
-        assert ("u3", "acc-3") in result
-        assert len(result) == 2
+        assert result == [
+            EligibleReviewUser("u1", "acc-1", date(2026, 1, 15)),
+            EligibleReviewUser("u3", "acc-3", date(2026, 1, 15)),
+        ]
 
 
 # ---------------------------------------------------------------------------

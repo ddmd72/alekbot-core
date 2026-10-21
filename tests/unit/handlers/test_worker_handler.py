@@ -28,10 +28,11 @@ from unittest.mock import AsyncMock, MagicMock, patch, call
 
 import pytest
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from src.domain.agent import AgentStatus
 from src.domain.billing import BillingAccount, AccountUsageStats
+from src.domain.daily_review_window import EligibleReviewUser
 from src.domain.email import IndexingJob
 from src.domain.notification_kind import NotificationKind
 from src.domain.notify_result import NotifyResult
@@ -1533,8 +1534,8 @@ class TestHandleStartDailyEmailReview:
     async def test_enqueues_daily_review_per_eligible_user(self):
         worker, ns = _make_full_worker()
         ns.email_review.find_eligible_users.return_value = [
-            (_USER_A, _ACC_A),
-            (_USER_B, _ACC_B),
+            EligibleReviewUser(_USER_A, _ACC_A, date(2026, 10, 22)),
+            EligibleReviewUser(_USER_B, _ACC_B, date(2026, 10, 22)),
         ]
 
         result, status = await worker._handle_start_daily_email_review()
@@ -1547,10 +1548,12 @@ class TestHandleStartDailyEmailReview:
         ns.task_dispatch.enqueue_worker_task.assert_any_call(
             "daily_email_review", {"user_id": _USER_A, "account_id": _ACC_A},
             deadline_seconds=1620,
+            dedup_key=f"daily_review:{_USER_A}:2026-10-22",
         )
         ns.task_dispatch.enqueue_worker_task.assert_any_call(
             "daily_email_review", {"user_id": _USER_B, "account_id": _ACC_B},
             deadline_seconds=1620,
+            dedup_key=f"daily_review:{_USER_B}:2026-10-22",
         )
 
     async def test_no_eligible_users_returns_200_started_zero(self):
