@@ -7,6 +7,7 @@ import pytest
 from quart import Quart
 
 import job_main
+from src.domain.exceptions import OAuthGrantRevokedError
 from src.domain.agent import AgentResponse, AgentStatus
 from src.domain.notification_kind import NotificationKind
 from src.handlers.worker_handler import WorkerHandler
@@ -175,3 +176,97 @@ class TestDeliveryFailureNotifier:
                 await c.post("/webhooks/openai/deep-research", data=json.dumps(payload),
                              headers={"Content-Type": "application/json"})
         assert d.call_args.kwargs["failure_notification"] is service
+
+
+# --- ensure_agents_for_user runs before notify (cold instance) -------------
+
+def _ordered_worker(**kw):
+    log = []
+    notification = AsyncMock()
+
+    async def _notify(**_k):
+        log.append("notify")
+        return MagicMock(delivered=True, error=None)
+
+    notification.notify.side_effect = _notify
+    factory = AsyncMock()
+
+    async def _ensure(_uid):
+        log.append("ensure")
+
+    factory.ensure_agents_for_user.side_effect = _ensure
+    worker = WorkerHandler(
+        agent_worker_handler=AsyncMock(), email_indexing_service=MagicMock(),
+        notification_service=notification, consolidation_service=None,
+        coordinator=MagicMock(), agent_factory=factory,
+        indexed_email_repo=None, user_repo=MagicMock(), **kw,
+    )
+    return worker, log
+
+
+class TestEnsureBeforeNotify:
+    async def test_deep_research_failed(self):
+        worker, log = _ordered_worker()
+        _, status = await worker.handle(dict(_PAYLOAD))
+        assert status == 200
+        assert log[:2] == ["ensure", "notify"]
+
+    async def test_video_generation_failed_branch(self):
+        port = AsyncMock()
+        port.get_status.return_value = MagicMock(status="failed", error="bad", data=None, duration_s=None)
+        registry = MagicMock()
+        registry.get.return_value = port
+        worker, log = _ordered_worker(video_registry=registry, task_dispatch=AsyncMock())
+        _, status = await worker.handle({
+            "task_type": "video_generation_polling", "request_id": "r1", "user_id": "u1",
+            "account_id": "a1", "session_id": "u1:C9", "attempt": 0})
+        assert status == 200
+        assert log[:2] == ["ensure", "notify"]
+
+    async def test_gmail_reconnect_flag_notice(self):
+        creds = MagicMock(needs_reconnect=False)
+        oauth = AsyncMock()
+        oauth.get_credentials.return_value = creds
+        email_review = AsyncMock()
+        email_review.fetch_review_payload.side_effect = OAuthGrantRevokedError("revoked")
+        worker, log = _ordered_worker(oauth_credentials=oauth, email_review=email_review)
+        await worker.handle({"task_type": "daily_email_review", "user_id": "u1", "account_id": "a1"})
+        assert log[:2] == ["ensure", "notify"]
+
+
+# --- job_main with the real deliver_deep_research --------------------------
+
+class TestJobMainRealDelivery:
+    async def _run_real(self, monkeypatch, enqueue_exc):
+        monkeypatch.setenv("JOB_QUERY", "q")
+        monkeypatch.setenv("JOB_CONTEXT_JSON", json.dumps(_CTX))
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+        monkeypatch.delenv("GCS_MEDIA_BUCKET", raising=False)
+        agent = MagicMock()
+        agent.agent_id = "x"
+        agent.execute = AsyncMock(return_value=_resp(result={"text": "report"}))
+        queue = MagicMock()
+        queue.enqueue_agent_task = AsyncMock(side_effect=enqueue_exc)
+        queue.enqueue_worker_task = AsyncMock()
+        with patch.object(job_main, "ClaudeDeepResearchRunnerAgent", return_value=agent), \
+             patch.object(job_main, "_build_task_queue", return_value=queue), \
+             patch.object(job_main.anthropic, "AsyncAnthropic"), \
+             patch.object(job_main, "_capture_research_result", AsyncMock()), \
+             patch.object(job_main, "_record_billing", AsyncMock()):
+            try:
+                await job_main._run_job()
+                code = None
+            except SystemExit as e:
+                code = e.code
+        return queue, code
+
+    async def test_swallowed_report_enqueue_failure_reports_and_exits_1(self, monkeypatch):
+        queue, code = await self._run_real(monkeypatch, RuntimeError("down"))
+        assert code == 1
+        queue.enqueue_worker_task.assert_awaited_once()
+        assert queue.enqueue_worker_task.await_args.args[1]["reason"] == "delivery_failed"
+
+    async def test_success_enqueues_no_failure_notice(self, monkeypatch):
+        queue, code = await self._run_real(monkeypatch, None)
+        assert code is None
+        queue.enqueue_worker_task.assert_not_awaited()
