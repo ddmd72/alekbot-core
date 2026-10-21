@@ -186,7 +186,7 @@ Full per-agent detail (mechanics, intents, tiers, gotchas) lives in
 | DriveImageTriage | ECO (same switch and fallback) | none (indexer only) | 800 px thumbnail batch of 8 → text or photo + description, objects, scene, visible text (triage v2); `ImageTriagePort` via `DriveTriageRunner` |
 | DriveProfiler | ECO (same switch and fallback) | none (indexer only) | one text file's stored text → profile (type, life areas, dates, entities, values, topics, en/es/uk/ru word lists), verified against the text; `DocumentProfilerPort` via `DriveProfilerRunner` |
 | DrivePassages | ECO (same switch and fallback) | none (indexer only) | 2 chunks → keywords and questions with evidence quotes (doc2query), grounded in the chunk; `PassageHintPort` via `DrivePassageRunner` |
-| DriveTranscriber | Gemini `gemini-3.8-flash` on the **Batch API** (BALANCED, no provider switch, never flash-lite) | none (indexer only; not a `_call_llm` agent) | one ≈ 30-min audio window → `{language_codes, speakers, no_speech, segments[{start MM:SS, speaker, text}]}`; `BatchTranscriptionPort` via `DriveTranscriptRunner`; built only with the kill switch on; **T1 built, not deployed** |
+| DriveTranscriber | Gemini `gemini-3.8-flash` on the **Batch API** (BALANCED, no provider switch, never flash-lite) | none (indexer only; not a `_call_llm` agent) | one ≈ 30-min audio window → `{language_codes, speakers, no_speech, segments[{start MM:SS, speaker, text}]}`; `BatchTranscriptionPort` via `DriveTranscriptRunner`; built only with the kill switch on; **T1 live (owner, 2026-10-21)** |
 
 **Long-running turns** — one absolute 25-min clock per chat turn (`domain/turn_clock.py`,
 `TurnClock` in a `ContextVar`; `use_turn_clock=True` only on Smart's top-level engine). At 90 s
@@ -700,7 +700,7 @@ to the file (`failed` at 3); an edited reader-read file is re-read at most once 
 before any content work. Text passes a machine-text gate, is chunked (generation-fenced) and embedded. Audio and video
 are metadata-only unless the user's transcription is on (next paragraph). No rollback to the Slice 1 revision.
 
-**Transcripts of recordings (RFC §27; T1 live since 2026-10-21 for the owner only, $10 cap; the mirror folder T2 is built, not deployed yet; the summary T3 is not built).**
+**Transcripts of recordings (RFC §27; T1 live since 2026-10-21 for the owner only, $10 cap; the mirror folder T2 live since 2026-10-21 (owner); the summary T3 is not built).**
 Audio and video are `Admission.TRANSCRIBE` (`POLICY_VERSION` 3; structure decisions compare `STRUCTURE_POLICY_SINCE` = 2, so the bump redoes no folder work).
 Not an extractor chain link: a **job with its own states on the record** (`transcript_state`: `none ready working waiting current held parked failed`), advanced by
 `DriveTranscriptStage` on the indexer across ticks — probe the Graph download URL, cut audio-only Opus windows (≈ 30 min, 60 s overlap) with ffmpeg in the

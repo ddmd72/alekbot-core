@@ -4217,7 +4217,7 @@ put. Both ride the unreleased `TRIAGE_VERSION` 3, `CARD_VERSION` 4 and `KEYS_VER
 
 ---
 
-## 27. Transcripts of audio and video (rev 3.29, 2026-10-21; T0 passed, GO; **T1 live since 2026-10-21 (owner only); T2 mirror (§27.9, D48, D49) built on `feat/drive-transcripts-t2`, not deployed; T3 summary not built**)
+## 27. Transcripts of audio and video (rev 3.29, 2026-10-21; T0 passed, GO; **T1 live since 2026-10-21 (owner only); T2 mirror (§27.9, D48, D49) live since 2026-10-21 (owner only, PR #127); T3 summary not built**)
 
 Owner decisions D41–D47 (§21). The engineering decisions that carry them out are the deltas Δ95–Δ135 (§27.16), each
 with its reason. This section lifts the §14 row "Audio and video transcripts" and `decisions/drive_audio_video_deferred.md`
@@ -4599,7 +4599,7 @@ helper that a page of pinned heads cannot end early, and while a user has a pin 
 mode (window documents only), so a pinned transcript's parts survive. A rollback to a T1 image does not know the pins
 (§27.9.12).
 
-### 27.9 The mirror folder (D42, D48, D49; rev 3.28 design, Δ183–Δ217; T2 built, not deployed: §27.19, Δ218–Δ244)
+### 27.9 The mirror folder (D42, D48, D49; rev 3.28 design, Δ183–Δ217; T2 live since 2026-10-21: §27.19, Δ218–Δ244)
 **Rev 3.27 (2026-10-21, before any T2 code)** rewrote this section after a critique of the rev 3.26 design (private:
 `scripts/memory/research_drive_notes_mirror_critique.md`) and the owner decision D48 (§21: a deleted recording's
 transcript is archived, never deleted). **Rev 3.28 (the same day)** folds in a builder-check review of rev 3.27 (private:
@@ -5543,7 +5543,7 @@ numbers (§27.14: bars are recorded from the first live run).
 unmeasured until the live eval; a speaker silent through a whole overlap becomes a new label (Δ109). Prompts for `drive_transcriber` are
 uploaded by the owner, by default never from an agent session (§27.15). For the first run (2026-10-21) the owner explicitly delegated these steps to the assistant: the four prompt uploads (after a prompt-layer backup and a mirror check), the composite index deploy, the deploy with the switch off then on with a $10 cap, and setting the owner's per-user flag.
 
-#### T2 as built (rev 3.29, 2026-10-21; branch `feat/drive-transcripts-t2`, not deployed)
+#### T2 as built (rev 3.29, 2026-10-21; merged as PR #127, deployed 2026-10-21 for the owner)
 The mirror folder of §27.9 (designed in rev 3.27–3.28 before any code: D48, D49, Δ183–Δ217) is built; the rows Δ218–Δ244 record where the build differs from or adds to
 that text, and where they disagree with an older paragraph the row wins. No model is called by the mirror and no prompt is uploaded.
 
