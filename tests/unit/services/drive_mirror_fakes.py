@@ -389,6 +389,7 @@ class FakeMirrorHost:
     commits: List[List[DriveIndexRecord]] = field(default_factory=list)
     fences: int = 0
     events: Optional[List[Tuple[str, Any]]] = None
+    root_marks: List[Tuple[str, bool]] = field(default_factory=list)   # `root_mark_changed` calls, in order
 
     def fence(self) -> None:
         self.fences += 1
@@ -428,6 +429,9 @@ class FakeMirrorHost:
 
     def strings(self) -> MirrorStrings:
         return self.texts
+
+    def root_mark_changed(self, root_item_id: str, gone: bool) -> None:
+        self.root_marks.append((root_item_id, gone))
 
 
 class EventMirror(InMemoryDriveMirrorRepository):

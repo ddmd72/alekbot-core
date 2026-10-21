@@ -14,7 +14,7 @@ an astral character counts 2 in UTF-16, which the per-action path-too-long route
 of a cycle is not checked against static siblings: a 409 on it is non-destructive.
 
 Public interface:
-    fold(name), root_name_candidates(), mirror_file_name(source_name), reserved_names(level)
+    fold(name), root_name_candidates(), is_root_name(name), mirror_file_name(source_name), reserved_names(level)
     Sibling, assign_names(siblings, reserved, taken)
     full_path_length(area_path, root_path, parts), fits(area_path, root_path, parts)
     Placement, place(...), archive_place(...)
@@ -24,6 +24,7 @@ Public interface:
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
@@ -46,10 +47,19 @@ def _hex8(text: str) -> str:
 
 fold = name_key     # the comparison form of a name: casefold(NFC(name)), one definition (user_drive)
 
+_ROOT_NAME_RE = re.compile("^" + re.escape(fold(ROOT_NAME)) + r"( \(alek( [0-9]+)?\))?$")
+
 
 def root_name_candidates() -> Tuple[str, ...]:
     """The root's names in order of preference (§27.9.2): `_Transcripts`, `_Transcripts (Alek)`, `(Alek 2)` .. `(Alek 5)`."""
     return (ROOT_NAME, f"{ROOT_NAME} (Alek)", *(f"{ROOT_NAME} (Alek {n})" for n in range(2, 6)))
+
+
+def is_root_name(name: str) -> bool:
+    """A name the root takes or would take (§27.9.2, §27.9.9): `_Transcripts`, `_Transcripts (Alek)` or
+    `_Transcripts (Alek <n>)`, compared after `fold`. The audit reports a folder of such a name that is no known root
+    (the crash orphan of §27.9.2); it never adopts one."""
+    return bool(_ROOT_NAME_RE.match(fold(name)))
 
 
 def mirror_file_name(source_name: str) -> str:

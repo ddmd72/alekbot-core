@@ -4,14 +4,34 @@ DriveTranscriptMirror — the reconciliation step that writes the bot-managed `_
 through a `MirrorHost` the tick lends it (Task 21C): the budgets, the fence, the clock, the strings and the record writes.
 
 Order of a run (§27.9.5):
-    0. the root-loss check (`_root_step`, Task 21B); while the root-loss mark is set nothing else runs (Δ217);
+    0. the root-loss check (`_root_step`, §27.9.9, Δ203): while the root-loss mark is set nothing else runs (Δ217); after
+       a complete round and MIRROR_ROOT_GRACE one `get_change(root)` decides: found → the mark is cleared and the run
+       goes on; not found → the loss is confirmed: the old id joins `previous_root_ids` (which also marks the ledger
+       reset as under way), archived documents and archive folders are deleted, every other document loses its drive
+       item (`lost_root_reset`, paged across ticks), then step 1 creates a new root;
     -  while `quota_hold_until` is in the future nothing else runs either (a full drive, Δ204);
     1. root setup: `_Transcripts` (then `(Alek)`, `(Alek 2)` .. `(Alek 5)`) created under the App Folder root's item id,
        the root document saved the moment Graph answers, then `_README.md` (`fail`; a re-run reads the name first);
     2. one seed page while `seed_version` differs (records written before T2 or before a version bump become due);
     3. marks older than the grace (`ready_marks`), files before folders: clear, archive, detach, or one `get_change`;
     4. wake-ups, then due records newest first: create, replace, move, restore, reattach, stamp;
-    5. prune: a gone source folder's empty mirror folder, after one `list_children_changes(limit=1)`.
+    5. prune: a gone source folder's empty mirror folder, after one `list_children_changes(limit=1)`;
+    6. the rotating scan (§27.9.9), only while the epoch is idle after a complete round: MIRROR_SCAN_PAGE file
+       documents from `scan_cursor`; an active one whose record is missing and which has no mark gets `unknown` (never
+       filtered on the record's digest); a detached one not checked for MIRROR_AUDIT_DAYS gets one `get_change` of its
+       source (not found → a `gone` mark, so the mark step archives it);
+    7. the audit (§27.9.9, Δ201), at most every MIRROR_AUDIT_DAYS: the root, then every folder and archive-folder
+       document in key order, then the App Folder root, one listing page per read from the mirror's own read budget
+       (`audit_folder_key`, `audit_page_cursor` = Graph's next link). Listed items are compared with the folder's
+       documents; at a folder's last page the documents not seen this cycle (`audit_seen_at`) are read once each.
+       Active tree: a missing file is created again from the store (its record made due), a changed `cTag` rewritten
+       (made due with no rendered hash), a moved or renamed item moved back. Archive (and a detached file): an edit or
+       a move inside the mirror is followed, never written; a missing file or one moved out of the mirror ends the
+       document (archived: deleted, its pin released; detached: no item, its pin kept). A folder answering 404
+       treats every document beneath it the same way. `_README.md` is rewritten when changed and written again when
+       missing; `Long paths` is created on demand only. Foreign items are counted and left alone. At the App Folder
+       root a folder named like the root that is no known root, or a previous root present again, is reported once
+       (`orphans_reported`), never adopted or written.
 
 Rules every write keeps:
 - **A create never overwrites** (Δ191, Δ210): it writes its intent (`pending_*`) first and uses `fail`; a re-run with an
@@ -30,8 +50,12 @@ Rules every write keeps:
   ends the step without charging a document; DrivePathTooLong re-places a file in `Long paths` once (persisted as
   `long_path_source`), then is charged; ValueError, OSError, TimeoutError, DriveAccessDenied (and a name conflict that
   outlives the retries) charge the document; anything else is logged at ERROR, counted and skipped.
-- **Budgets** (§27.9.5): every Graph write takes one of `ops_left`, every Graph read one of `reads_left`, every due
-  record that ends in a stamp with no write one of `stamps_left`; a spent budget or deadline ends the step.
+- **Budgets** (§27.9.5): every Graph write takes one of `ops_left`, every Graph read one of `reads_left` (the audit's
+  and the scan's too: never the index's item calls), every due record that ends in a stamp with no write one of
+  `stamps_left`; a spent budget or deadline ends the step. A walk that stops keeps its cursor and resumes.
+- **Never another's item** (D42, Δ116, Δ117): the bot moves, rewrites or deletes only items its ledger holds (created
+  by it, or adopted by its own recorded intent); a foreign item is counted and left alone, an orphan root reported, a
+  previous root never written.
 - **Logs** carry counts, short ids, document keys' kinds and error types only: never a name or path of the owner's
   files, a URL or transcript text.
 
@@ -43,7 +67,7 @@ the file's name is the heading.
 Public interface:
     MirrorHost                                  the tick's side (a Protocol; Task 21C's `_TickHost` implements it)
     DriveTranscriptMirror(repo, mirror, drive)
-        run(user_id, host) -> Dict[str, int]    steps 0-5 for one user; the counters of the run
+        run(user_id, host) -> Dict[str, int]    steps 0-7 for one user; the counters of the run
 """
 from __future__ import annotations
 
@@ -54,23 +78,26 @@ import traceback
 from collections import Counter
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
-from typing import Awaitable, Callable, Dict, List, Optional, Protocol, Sequence, Set, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Protocol, Sequence, Set, Tuple
 
 from src.domain import drive_mirror_plan as plan
-from src.domain.drive_index import DriveIndexRecord, DriveIndexStoreUnavailable, LeaseLost, RecordState
-from src.domain.drive_index_params import MIRROR_AUDIT_DAYS, MIRROR_CLOCK_SKEW, MIRROR_QUOTA_HOLD, MIRROR_SEED_PAGE
+from src.domain.drive_index import DriveChange, DriveIndexRecord, DriveIndexStoreUnavailable, LeaseLost, RecordState
+from src.domain.drive_index_params import (
+    MIRROR_AUDIT_DAYS, MIRROR_CLOCK_SKEW, MIRROR_QUOTA_HOLD, MIRROR_SCAN_PAGE, MIRROR_SEED_PAGE,
+)
 from src.domain.drive_keys import name_keys_v2
 from src.domain.drive_mirror import (
-    ARCHIVE_NAME, KIND_ARCHIVE, KIND_FILE, KIND_FOLDER, LONG_PATHS_NAME, MIRROR_ACTIVE, MIRROR_ARCHIVED,
-    MIRROR_DETACHED, README_NAME, MirrorDoc, MirrorRoot, archive_folder_key, doc_key,
+    ARCHIVE_NAME, GONE, KIND_ARCHIVE, KIND_FILE, KIND_FOLDER, LONG_PATHS_NAME, MIRROR_ACTIVE, MIRROR_ARCHIVED,
+    MIRROR_DETACHED, README_NAME, UNKNOWN, DeletionNotice, MirrorDoc, MirrorRoot, archive_folder_key, doc_key,
 )
 from src.domain.drive_mirror_names import (
     LEVEL_DAY, LEVEL_OTHER, LEVEL_ROOT, Move, Placement, Sibling, archive_place, assign_names, fits, fold,
-    mirror_file_name, order_moves, reserved_names, root_name_candidates,
+    is_root_name, mirror_file_name, order_moves, reserved_names, root_name_candidates,
 )
 from src.domain.drive_mirror_plan import (
-    Action, Decision, charged, charged_doc, file_action, local_day, mark_decision, mark_held, mirror_digest,
-    mirror_eligible, mirror_plan, placement_source, reset_charges, stamped, unmarked, woken,
+    Action, Decision, RootDecision, audit_due, charged, charged_doc, cleared_item, file_action, local_day,
+    lost_root_reset, mark_decision, mark_held, marked, mirror_digest, mirror_eligible, mirror_plan, placement_source,
+    reset_charges, retry_due, root_decision, stamped, unmarked, woken,
 )
 from src.domain.drive_mirror_render import MirrorStrings, archive_word_keys, readme_bytes, render_file, rendered_hash
 from src.domain.drive_transcript import StoredTranscript
@@ -93,6 +120,12 @@ FOREIGN_FOLDER_HOLD = timedelta(days=MIRROR_AUDIT_DAYS)   # a gone folder kept f
 MAX_CHAIN_DEPTH = 64             # folders above a source item
 MAX_ACTIONS = 8                  # actions on one due record in one run (create, then replace, ...): a guard, not a rule
 NAME_RETRIES = 4                 # name assignments of one placement after 409s
+AUDIT_PAGE = 200                 # children of one folder per audit listing (one Graph read)
+RESET_PAGE = 200                 # ledger documents per page of the reset after a confirmed root loss
+AUDIT_AREA = "@app-folder"       # `audit_folder_key` of the walk's last stage, the App Folder root (no doc key: no ":")
+AUDIT_CONFIRM = "@confirm"       # `audit_page_cursor` once a folder's listing is done: its unseen documents are next
+_RESET_FILES = "f"               # `scan_cursor` while a confirmed loss resets the ledger: "f|<after key>" (files) ...
+_RESET_FOLDERS = "d"             # ... then "d|<after key>" (folder and archive documents)
 
 _SYSTEMIC = (DriveThrottled, DriveNotConnectedError, DriveIndexStoreUnavailable, LeaseLost)
 _CHARGED = (ValueError, OSError, TimeoutError, DriveAccessDenied, DriveNameConflictError, DrivePathTooLong)
@@ -141,6 +174,10 @@ class MirrorHost(Protocol):
     def strings(self) -> MirrorStrings:
         """The localized strings of the file header, the stubs and the read-me, in `language`."""
 
+    def root_mark_changed(self, root_item_id: str, gone: bool) -> None:
+        """The step set (`gone`) or cleared the root-loss mark of that root during the tick (a root read, a confirmed
+        loss): the tick keeps its own list of marked roots (`_Mirror.gone_ids`) in step with it (Task 21C)."""
+
 
 class DriveTranscriptMirror:
     """The mirror step (§27.9.5). Ports only (REQ-ARCH-22): never `UserDriveService`, whose guard refuses the mirror."""
@@ -184,6 +221,7 @@ class DriveTranscriptMirror:
             return
         if not await self._root_step(ctx, root):
             return
+        root = ctx.root
         if root is not None and root.quota_hold_until is not None and ctx.now < root.quota_hold_until:
             return
         if root is None:
@@ -197,10 +235,130 @@ class DriveTranscriptMirror:
             await self._marks(ctx)
         await self._due(ctx)
         await self._prune(ctx)
+        await self._scan_page(ctx)
+        await self._audit_page(ctx)
+
+    # -- step 0: the root's loss (§27.9.9, Δ203) -----------------------------------------------------------------------
 
     async def _root_step(self, ctx: "_Run", root: Optional[MirrorRoot]) -> bool:
-        """Step 0 (Task 21B decides the root's loss here): False while the root-loss mark is set (Δ217)."""
-        return root is None or root.root_gone_at is None
+        """Step 0: True when the run goes on (with `ctx.root`, None when step 1 is to create the first root). While the
+        root-loss mark is set the run stops (Δ217); after a complete round and MIRROR_ROOT_GRACE one read of the root
+        decides (`root_decision`). The root's record back, or the root found, clears the mark. Not found confirms the
+        loss: the old id joins `previous_root_ids` first (a previous root is opaque, never written, and its later
+        deletion triggers nothing), then the ledger is reset and a new root created (`_finish_loss`). A root whose id is
+        already in `previous_root_ids` is a confirmed loss whose reset is still under way."""
+        if root is None:
+            return True
+        ctx.root = root
+        if root.root_item_id in root.previous_root_ids:
+            return await self._finish_loss(ctx)
+        if root.root_gone_at is None:
+            return True
+        rec = await self._record(ctx, root.root_item_id)
+        present = rec is not None and rec.state is not RecordState.DELETING
+        decision = root_decision(root, record_present=present, round_complete=ctx.host.round_complete, now=ctx.now)
+        if decision is RootDecision.CHECK:
+            found = await self._root_found(ctx, root)
+            if found is None:
+                return False
+            decision = root_decision(root, record_present=present, round_complete=ctx.host.round_complete,
+                                     now=ctx.now, change_found=found)
+        if decision is RootDecision.WAIT:
+            return False
+        if decision is RootDecision.CLEAR:
+            ctx.host.fence()
+            await self._mirror.clear_root_gone(ctx.user_id, root.root_item_id)
+            ctx.root = replace(root, root_gone_at=None)
+            ctx.host.root_mark_changed(root.root_item_id, False)
+            ctx.counters["mirror_root_mark_cleared"] += 1
+            logger.info(f"[DriveMirror] user={ctx.user_id[:8]} the root is there: root-loss mark cleared")
+            return True
+        ctx.counters["mirror_root_lost"] += 1
+        logger.warning(f"[DriveMirror] user={ctx.user_id[:8]} the root is gone after the grace and a not-found read: "
+                       f"archived documents dropped, active ones reset, a new root follows")
+        await self._save_root(ctx, replace(root, previous_root_ids=(*root.previous_root_ids, root.root_item_id)))
+        ctx.host.root_mark_changed(root.root_item_id, False)
+        return await self._finish_loss(ctx)
+
+    async def _root_found(self, ctx: "_Run", root: MirrorRoot) -> Optional[bool]:
+        """One `get_change(root)` (a read): True found, False not found, None when the read failed (the run waits; only
+        a not-found answer can confirm a loss)."""
+        self._take_read(ctx)
+        try:
+            await self._drive.get_change(ctx.user_id, root.root_item_id)
+            return True
+        except DriveItemNotFoundError:
+            return False
+        except (_SYSTEMIC + (_StopStep,)):
+            raise
+        except _CHARGED as exc:
+            logger.warning(f"[DriveMirror] user={ctx.user_id[:8]} root read failed ({type(exc).__name__}): the "
+                           f"root-loss mark waits")
+            ctx.counters["mirror_root_read_failed"] += 1
+            return None
+        except Exception as exc:
+            _log_unexpected(ctx.user_id, "root read", exc, "the root-loss mark waits")
+            ctx.counters["mirror_errors"] += 1
+            return None
+
+    async def _finish_loss(self, ctx: "_Run") -> bool:
+        """A confirmed loss: the ledger reset (resumed across ticks), then a new root under the name rule, carrying
+        `previous_root_ids`. False until both are done; nothing else of the step runs before."""
+        if not await self._reset_ledger(ctx):
+            return False
+        return await self._create_root(ctx, base=ctx.need_root) is not None
+
+    async def _reset_ledger(self, ctx: "_Run") -> bool:
+        """The reset after a confirmed loss (Δ200), one unit: it never skips a document, since a document left pointing
+        at an item of the previous root could be written by the due step. An unexpected error ends it for this tick,
+        and it resumes from its cursor. True when every document of the drive is reset."""
+        try:
+            return await self._reset_pages(ctx)
+        except (_SYSTEMIC + (_StopStep,)):
+            raise
+        except Exception as exc:
+            _log_unexpected(ctx.user_id, "root-loss reset", exc, "the reset resumes next tick")
+            ctx.counters["mirror_errors"] += 1
+            return False
+
+    async def _reset_pages(self, ctx: "_Run") -> bool:
+        """Pages of the drive's file documents, then of its folder and archive documents, each reset by
+        `lost_root_reset`; the position is kept in `scan_cursor` ("f|<key>", "d|<key>"; the scan does not run while the
+        reset is under way, and the new root starts it again)."""
+        phase, _, after = ctx.need_root.scan_cursor.partition("|")
+        if phase not in (_RESET_FILES, _RESET_FOLDERS):
+            phase, after = _RESET_FILES, ""
+        while True:
+            self._check_time(ctx)
+            if phase == _RESET_FILES:
+                page = await self._mirror.scan_page(ctx.user_id, ctx.drive_id, after or None, RESET_PAGE)
+            else:
+                page = await self._mirror.folder_docs(ctx.user_id, ctx.drive_id, after or None, RESET_PAGE)
+            await self._reset_docs(ctx, [d for d in page if d.drive_id == ctx.drive_id])
+            if len(page) >= RESET_PAGE:
+                after = page[-1].key
+            elif phase == _RESET_FILES:
+                phase, after = _RESET_FOLDERS, ""
+            else:
+                return True
+            await self._save_root(ctx, replace(ctx.need_root, scan_cursor=f"{phase}|{after}"))
+
+    async def _reset_docs(self, ctx: "_Run", docs: Sequence[MirrorDoc]) -> None:
+        """One page: the records of the files to create again are made due FIRST (a crash after that re-runs the reset of
+        these documents, which still hold their old items), then the documents are written or deleted."""
+        plans = [(doc, lost_root_reset(doc)) for doc in docs]
+        files = [doc.source_item_id for doc, new in plans if new is not None and new != doc and doc.kind == KIND_FILE]
+        recs = await self._records(ctx, files)
+        await self._commit(ctx, [replace(r, mirrored_digest="") for r in recs.values() if r.mirrored_digest],
+                           done=False)
+        for doc, new in plans:
+            if new is None:
+                ctx.host.fence()
+                await self._mirror.delete_doc(ctx.user_id, doc.key)
+                ctx.counters["mirror_reset_dropped"] += 1
+            elif new != doc:
+                await self._save_doc(ctx, new)
+                ctx.counters["mirror_reset"] += 1
 
     # -- budgets, fence, small reads -------------------------------------------------------------------------------
 
@@ -343,12 +501,13 @@ class DriveTranscriptMirror:
 
     # -- step 1: the root and its read-me --------------------------------------------------------------------------
 
-    async def _create_root(self, ctx: "_Run") -> Optional[MirrorRoot]:
+    async def _create_root(self, ctx: "_Run", base: Optional[MirrorRoot] = None) -> Optional[MirrorRoot]:
         """`_Transcripts`, else the next candidate name, under the App Folder root's item id (never
         `special/approot/children`, S1). Each candidate is read first (`child_by_name`, a read): a taken name costs no
         write. The root document is written the moment Graph answers, before any other mirror write. A name held by
-        anything else is never written into (never adopted, Δ116). With all six taken, one WARNING per tick and no
-        write: nothing can hold a back-off, since no root document exists yet."""
+        anything else is never written into (never adopted, Δ116), a previous root restored at that name included.
+        With all six taken, one WARNING per tick and no write: nothing can hold a back-off, since no root document
+        exists yet. `base`: the document of a confirmed loss, whose `previous_root_ids` and seed state carry over."""
         try:
             area_root = await self._area_root_id(ctx)
             for name in root_name_candidates():
@@ -360,8 +519,14 @@ class DriveTranscriptMirror:
                     item = await self._drive.create_folder(ctx.user_id, area_root, name)
                 except DriveNameConflictError:
                     continue
-                root = MirrorRoot(user_id=ctx.user_id, drive_id=ctx.drive_id, root_item_id=item.item_id,
-                                  root_name=name, created_at=ctx.now)
+                if base is None:
+                    root = MirrorRoot(user_id=ctx.user_id, drive_id=ctx.drive_id, root_item_id=item.item_id,
+                                      root_name=name, created_at=ctx.now)
+                else:
+                    root = replace(base, root_item_id=item.item_id, root_name=name, created_at=ctx.now,
+                                   readme_item_id="", readme_ctag="", root_gone_at=None, scan_cursor="",
+                                   audited_at=None, audit_folder_key="", audit_page_cursor="", orphans_reported=False,
+                                   quota_hold_until=None)
                 await self._save_root(ctx, root)
                 ctx.root_created = True
                 ctx.counters["mirror_root_created"] += 1
@@ -451,14 +616,20 @@ class DriveTranscriptMirror:
             self._check_time(ctx)
 
             async def charge(doc: MirrorDoc = doc) -> None:
-                fresh = await self._doc(ctx, doc.key) or doc
+                """A failed mark is held (`mark_ready_at` later), so it is not ready again every tick. Also the
+                `on_other` path: a mark whose action met another drive's document under a key it needs is held the
+                same way, on its own document (of this drive: `ready_marks` is drive-scoped)."""
+                try:
+                    fresh = await self._doc(ctx, doc.key) or doc
+                except _OtherDrive:
+                    return                          # the key is another drive's now: never written, never ready here
                 new = charged_doc(fresh, ctx.now)
                 if new.failed_at is not None and fresh.failed_at is None:
                     ctx.counters["mirror_failed"] += 1
                 held_until = new.failed_at + plan.MIRROR_FAILED_RETRY if new.failed_at is not None else new.retry_at
                 await self._save_doc(ctx, mark_held(new, held_until) if held_until is not None else new)
 
-            await self._guard(ctx, f"mark {_kind(doc.key)}", self._mark(ctx, doc), charge)
+            await self._guard(ctx, f"mark {_kind(doc.key)}", self._mark(ctx, doc), charge, charge)
 
     async def _mark(self, ctx: "_Run", doc: MirrorDoc) -> None:
         rec = await self._record(ctx, doc.source_item_id)
@@ -681,7 +852,12 @@ class DriveTranscriptMirror:
         key = doc_key(ctx.user_id, KIND_FOLDER if rec.is_folder else KIND_FILE, rec.item_id)
         try:
             doc = await self._doc(ctx, key) or (_folder_doc(ctx, rec) if rec.is_folder else _file_doc(ctx, rec))
-        except _OtherDrive:
+        except (_SYSTEMIC + (_StopStep,)):
+            raise
+        except Exception as exc:          # another drive's document, or one that cannot be decoded
+            logger.warning(f"[DriveMirror] user={ctx.user_id[:8]} due {_hid(rec.item_id)}: its document cannot be "
+                           f"read ({type(exc).__name__}); only the record is held")
+            await self._hold_record(ctx, rec)     # never left due: one bad document must not hold the queue's head
             return
         new_doc, new_rec = charged(doc, ctx.recs.get(rec.item_id) or rec, ctx.now)
         if new_doc.failed_at is not None and doc.failed_at is None:
@@ -1035,6 +1211,7 @@ class DriveTranscriptMirror:
         ctx.host.fence()
         await self._mirror.mark_root_gone(ctx.user_id, root.root_item_id, ctx.now)
         ctx.root = replace(root, root_gone_at=root.root_gone_at or ctx.now)
+        ctx.host.root_mark_changed(root.root_item_id, True)
         ctx.counters["mirror_root_missing"] += 1
         logger.warning(f"[DriveMirror] user={ctx.user_id[:8]} the root answered not found: root-loss mark set")
         raise _StopStep()
@@ -1189,6 +1366,427 @@ class DriveTranscriptMirror:
         ctx.counters["mirror_pruned"] += 1
         await self._settle_after(ctx, doc.mirror_parent_id)
 
+    # -- step 6: the rotating scan (§27.9.9) -----------------------------------------------------------------------------
+
+    async def _scan_page(self, ctx: "_Run") -> None:
+        """MIRROR_SCAN_PAGE file documents of the drive from `scan_cursor`, only while the epoch is idle after a complete
+        round (during an enumeration or a sweep records are missing by design). An active document whose record is
+        missing and which has no mark gets `unknown` — whatever the record's digest was, so a file whose record was
+        deleted before its digest was stamped (no deletion notice) is still found. A detached document not checked for
+        MIRROR_AUDIT_DAYS (and not backing off) gets one `get_change` of its source. The marks of the page come first
+        (store only), the reads after; the cursor moves only once the page is done, so a stopped page is read again."""
+        if not (ctx.host.round_complete and ctx.host.epoch_idle):
+            return
+        page = await self._mirror.scan_page(ctx.user_id, ctx.drive_id, ctx.need_root.scan_cursor or None,
+                                            MIRROR_SCAN_PAGE)
+        docs = [d for d in page if d.drive_id == ctx.drive_id and d.kind == KIND_FILE]
+        recs = await self._records(ctx, [d.source_item_id for d in docs])
+        lost = [d for d in docs if d.state == MIRROR_ACTIVE and not d.gone_pending and d.source_item_id not in recs]
+        if lost:
+            await self._guard(ctx, "scan marks", self._scan_marks(ctx, lost), None)
+        stale = ctx.now - timedelta(days=MIRROR_AUDIT_DAYS)
+        for doc in docs:
+            if doc.state != MIRROR_DETACHED or doc.source_item_id in recs or doc.gone_pending:
+                continue
+            if doc.checked_at is not None and doc.checked_at > stale:
+                continue
+            if not retry_due(doc, now=ctx.now):
+                continue
+            self._check_time(ctx)
+            await self._guard(ctx, f"recheck {_hid(doc.source_item_id)}", self._recheck(ctx, doc),
+                              functools.partial(self._doc_charge, ctx, doc))
+        cursor = page[-1].key if len(page) >= MIRROR_SCAN_PAGE else ""
+        if cursor != ctx.need_root.scan_cursor:
+            await self._save_root(ctx, replace(ctx.need_root, scan_cursor=cursor))
+
+    async def _scan_marks(self, ctx: "_Run", docs: Sequence[MirrorDoc]) -> None:
+        ctx.host.fence()
+        marked_n = await self._mirror.mark_gone(
+            ctx.user_id, [DeletionNotice(d.source_item_id, UNKNOWN, ctx.now) for d in docs], drive_id=ctx.drive_id)
+        ctx.counters["mirror_scan_marked"] += marked_n
+
+    async def _recheck(self, ctx: "_Run", doc: MirrorDoc) -> None:
+        """A detached document's weekly check (§27.9.6): one read of its source. Found → checked again in a week (a
+        record that comes back reattaches it through step 4). Not found → a `gone` mark, which the mark step archives
+        after the grace (Δ211: a 404 is read as gone for a source the index no longer holds)."""
+        self._take_read(ctx)
+        try:
+            await self._drive.get_change(ctx.user_id, doc.source_item_id)
+            found = True
+        except DriveItemNotFoundError:
+            found = False
+        fresh = await self._doc(ctx, doc.key)
+        if fresh is None:
+            return
+        checked = replace(reset_charges(fresh), checked_at=ctx.now)
+        if not found:
+            checked = marked(checked, DeletionNotice(doc.source_item_id, GONE, ctx.now))
+            ctx.counters["mirror_detached_gone"] += 1
+        await self._save_doc(ctx, checked)
+        ctx.counters["mirror_rechecked"] += 1
+
+    async def _doc_charge(self, ctx: "_Run", doc: MirrorDoc, seen: bool = False) -> None:
+        """A failed scan or audit action on a document with no due record: `attempts` + 1 and a backoff on the
+        document (parked at MIRROR_MAX_ATTEMPTS). `seen` (the audit): the document also counts as seen this cycle, so
+        a failing one never holds the walk; the next cycle tries it again. Another drive's document under the key is
+        never written."""
+        try:
+            fresh = await self._doc(ctx, doc.key)
+        except _OtherDrive:
+            return
+        if fresh is None:
+            return
+        new = charged_doc(fresh, ctx.now)
+        if new.failed_at is not None and fresh.failed_at is None:
+            ctx.counters["mirror_failed"] += 1
+        await self._save_doc(ctx, replace(new, audit_seen_at=ctx.now) if seen else new)
+
+    # -- step 7: the audit (§27.9.9, Δ201) -------------------------------------------------------------------------------
+
+    async def _audit_page(self, ctx: "_Run") -> None:
+        """At most every MIRROR_AUDIT_DAYS (`audit_due`): the walk goes on from `audit_folder_key` (""= the root, a
+        folder or archive-folder document's key, AUDIT_AREA = the App Folder root) and `audit_page_cursor`, one listing
+        page per read, until the budgets or the deadline stop it. The cycle ends after the last stage: `audited_at` and
+        both cursors reset."""
+        if not ctx.host.round_complete or not audit_due(ctx.need_root, ctx.now):
+            return
+        while True:
+            self._check_time(ctx)
+            stage = ctx.need_root.audit_folder_key
+            if stage == AUDIT_AREA:
+                finished = await self._audit_area(ctx)
+            elif not stage:
+                finished = await self._audit_folder(ctx, None)
+            else:
+                folder = await self._audit_stage_doc(ctx, stage)
+                finished = True if folder is None else await self._audit_folder(ctx, folder)
+            if not finished:
+                continue
+            nxt = await self._next_stage(ctx, stage)
+            if nxt is None:
+                await self._save_root(ctx, replace(ctx.need_root, audited_at=ctx.now, audit_folder_key="",
+                                                   audit_page_cursor=""))
+                ctx.counters["mirror_audited"] += 1
+                logger.info(f"[DriveMirror] user={ctx.user_id[:8]} audit cycle done")
+                return
+            await self._save_root(ctx, replace(ctx.need_root, audit_folder_key=nxt, audit_page_cursor=""))
+
+    async def _audit_stage_doc(self, ctx: "_Run", key: str) -> Optional[MirrorDoc]:
+        """The folder document the walk is at; None (skipped) when it is gone, holds no item, or is another drive's."""
+        try:
+            doc = await self._doc(ctx, key)
+        except _OtherDrive:
+            ctx.counters["mirror_other_drive"] += 1
+            return None
+        if doc is None or not doc.mirror_item_id or doc.kind not in (KIND_FOLDER, KIND_ARCHIVE):
+            return None
+        return doc
+
+    async def _next_stage(self, ctx: "_Run", stage: str) -> Optional[str]:
+        """After the root: the first folder document by key; after a folder: the next one; after the last: the App
+        Folder root, unless an orphan was reported already; after that: the end (None)."""
+        if stage == AUDIT_AREA:
+            return None
+        nxt = await self._mirror.folder_docs(ctx.user_id, ctx.drive_id, stage or None, 1)
+        if nxt:
+            return nxt[0].key
+        return None if ctx.need_root.orphans_reported else AUDIT_AREA
+
+    async def _audit_folder(self, ctx: "_Run", folder: Optional[MirrorDoc]) -> bool:
+        """One listing page of the root (`folder` None) or of a folder document's item; True once its last page is
+        done. A listing that fails is charged (a folder document) and the walk moves on. A 404: the root's sets the
+        root-loss mark; a folder's treats every document beneath it as missing."""
+        root = ctx.need_root
+        folder_id = folder.mirror_item_id if folder is not None else root.root_item_id
+        if root.audit_page_cursor != AUDIT_CONFIRM:
+            listed = await self._audit_listing(ctx, folder, folder_id)
+            if listed is None:
+                return True                                  # the listing failed: the folder waits for next cycle
+            if not listed:
+                return False
+        threshold = root.audited_at or root.created_at
+        for doc in await self._mirror.children(ctx.user_id, ctx.drive_id, folder_id, CHILDREN_MAX):
+            if doc.drive_id != ctx.drive_id or not doc.mirror_item_id or doc.key in ctx.audit_seen:
+                continue
+            if threshold is not None and doc.audit_seen_at is not None and doc.audit_seen_at >= threshold:
+                continue                                     # seen on an earlier page of this cycle
+            self._check_time(ctx)
+            ctx.audit_seen.add(doc.key)
+            await self._guard(ctx, f"audit unseen {_kind(doc.key)} {_hid(doc.source_item_id)}",
+                              self._audit_unseen(ctx, doc, folder_id),
+                              functools.partial(self._doc_charge, ctx, doc, True))
+        if folder is None:
+            await self._guard(ctx, "audit readme", self._audit_readme(ctx), None)
+        return True
+
+    async def _audit_listing(self, ctx: "_Run", folder: Optional[MirrorDoc], folder_id: str) -> Optional[bool]:
+        """One listing page of the folder, compared with its documents. False when more pages follow (the next link is
+        saved); True once the last page is done, or the folder answered 404 (the cursor becomes AUDIT_CONFIRM, so a
+        walk stopped while confirming resumes without listing again: one read a tick still makes progress); None when
+        the listing failed (charged), so its documents are not read one by one on a guess."""
+        root = ctx.need_root
+        label = f"audit {'root' if folder is None else _kind(folder.key)} listing"
+        box: List[Optional[Any]] = []
+
+        async def listing() -> None:
+            self._take_read(ctx)
+            try:
+                box.append(await self._drive.list_children_changes(ctx.user_id, folder_id, AUDIT_PAGE,
+                                                                   root.audit_page_cursor or None))
+            except DriveItemNotFoundError:
+                box.append(None)
+
+        await self._guard(ctx, label, listing(),
+                          functools.partial(self._doc_charge, ctx, folder, True) if folder is not None else None)
+        if not box:
+            return None
+        page = box[0]
+        if page is None:
+            if folder is None:
+                await self._root_missing(ctx)          # the root answered not found: the mark, and the step ends
+                return True
+            ctx.counters["mirror_audit_folder_gone"] += 1
+            await self._guard(ctx, f"audit {_kind(folder.key)} gone", self._discard_beneath(ctx, folder),
+                              functools.partial(self._doc_charge, ctx, folder, True))
+            await self._save_root(ctx, replace(ctx.need_root, audit_page_cursor=AUDIT_CONFIRM))
+            return True
+        kids = await self._mirror.children(ctx.user_id, ctx.drive_id, folder_id, CHILDREN_MAX)
+        by_item = {k.mirror_item_id: k for k in kids if k.drive_id == ctx.drive_id and k.mirror_item_id}
+        for change in page.changes:
+            self._check_time(ctx)
+            if folder is None and root.readme_item_id and change.item_id == root.readme_item_id:
+                ctx.readme_listed = change
+                continue
+            doc = by_item.get(change.item_id) or await self._doc_by_item(ctx, change.item_id)
+            if doc is None:
+                ctx.counters["mirror_foreign"] += 1          # not ours: left alone, never deleted, never indexed
+                continue
+            ctx.audit_seen.add(doc.key)
+            await self._guard(ctx, f"audit {_kind(doc.key)} {_hid(doc.source_item_id)}",
+                              self._audit_listed(ctx, doc, change, folder_id),
+                              functools.partial(self._doc_charge, ctx, doc, True))
+        await self._save_root(ctx, replace(ctx.need_root, audit_page_cursor=page.next_cursor or AUDIT_CONFIRM))
+        return page.next_cursor is None
+
+    def _frozen(self, ctx: "_Run", doc: MirrorDoc) -> bool:
+        """The archive's documents (archived files, the archive folders; the root's `Long paths` holds active files and
+        is not one) and detached files: never written, an owner's edit or move inside the mirror followed."""
+        if doc.state in (MIRROR_ARCHIVED, MIRROR_DETACHED):
+            return True
+        return doc.kind == KIND_ARCHIVE and doc.key != archive_folder_key(ctx.user_id, ctx.drive_id, "",
+                                                                          LONG_PATHS_NAME)
+
+    async def _audit_listed(self, ctx: "_Run", doc: MirrorDoc, change: DriveChange, folder_id: str) -> None:
+        """A document's item listed in `folder_id`. Frozen: the document follows a rename, a move or an edit, nothing
+        is written to the drive. Active tree: an item not where the ledger has it is moved back; a file whose `cTag`
+        differs is made due with no rendered hash, so step 4 rewrites it from the store. The sighting is stamped."""
+        here = (doc.mirror_parent_id, doc.mirror_name) == (folder_id, change.name)
+        if self._frozen(ctx, doc):
+            new = doc
+            if not here:
+                new = replace(new, mirror_parent_id=folder_id, mirror_name=change.name)
+                ctx.counters["mirror_followed"] += 1
+            if doc.kind == KIND_FILE and change.content_version and change.content_version != doc.mirror_ctag:
+                if doc.mirror_ctag:
+                    ctx.counters["mirror_edit_left"] += 1
+                new = replace(new, mirror_ctag=change.content_version)
+            await self._save_doc(ctx, replace(new, audit_seen_at=ctx.now))
+            return
+        if not here:
+            await self._move_back(ctx, doc, change)
+            return
+        if doc.kind == KIND_FILE and change.content_version and change.content_version != doc.mirror_ctag:
+            if doc.mirror_ctag:
+                await self._save_doc(ctx, replace(doc, rendered_hash="", audit_seen_at=ctx.now))
+                await self._make_due(ctx, doc)
+                ctx.counters["mirror_rewrite_due"] += 1
+            else:                                            # no cTag recorded: this one becomes the reference
+                await self._save_doc(ctx, replace(doc, mirror_ctag=change.content_version, audit_seen_at=ctx.now))
+            return
+        await self._save_doc(ctx, replace(doc, audit_seen_at=ctx.now))
+
+    async def _move_back(self, ctx: "_Run", doc: MirrorDoc, change: DriveChange) -> None:
+        """An item of the active tree moved or renamed by hand goes back where the ledger has it (one PATCH of an item
+        the bot created). A taken name or a vanished destination: the document follows the item and its record is made
+        due, so step 4 places it with the name rules (yields, suffixes, chains)."""
+        if not doc.mirror_parent_id:
+            return
+        self._take_op(ctx)
+        new_parent = doc.mirror_parent_id if change.parent_id != doc.mirror_parent_id else None
+        new_name = doc.mirror_name if change.name != doc.mirror_name else None
+        try:
+            item = await self._drive.move(ctx.user_id, doc.mirror_item_id, new_parent_id=new_parent,
+                                          new_name=new_name)
+        except (DriveNameConflictError, DriveItemNotFoundError):
+            ctx.counters["mirror_move_back_blocked"] += 1
+            await self._save_doc(ctx, replace(doc, mirror_parent_id=change.parent_id, mirror_name=change.name,
+                                              audit_seen_at=ctx.now))
+            await self._make_due(ctx, doc)
+            return
+        await self._save_doc(ctx, replace(doc, mirror_ctag=item.ctag or doc.mirror_ctag, audit_seen_at=ctx.now))
+        ctx.counters["mirror_moved_back"] += 1
+
+    async def _make_due(self, ctx: "_Run", doc: MirrorDoc) -> None:
+        """A file document's record made due again (no mirrored digest), when it is one the mirror writes."""
+        if doc.kind != KIND_FILE:
+            return
+        rec = await self._record(ctx, doc.source_item_id)
+        if rec is not None and mirror_eligible(rec) and rec.mirrored_digest:
+            await self._commit(ctx, [replace(rec, mirrored_digest="")], done=False)
+
+    async def _audit_unseen(self, ctx: "_Run", doc: MirrorDoc, folder_id: str) -> None:
+        """A document of the folder whose item no listing showed this cycle: one read of the item. Not found: missing.
+        Found in the folder after all: as listed. Elsewhere: an active item is moved back; a frozen one follows a move
+        inside the mirror, and a move out of it ends the document like a deletion."""
+        self._take_read(ctx)
+        try:
+            change = await self._drive.get_change(ctx.user_id, doc.mirror_item_id)
+        except DriveItemNotFoundError:
+            await self._audit_gone(ctx, doc)
+            return
+        if change.parent_id == folder_id:
+            await self._audit_listed(ctx, doc, change, folder_id)
+        elif not self._frozen(ctx, doc):
+            await self._move_back(ctx, doc, change)
+        elif await self._inside(ctx, change.parent_id):
+            await self._audit_listed(ctx, doc, change, change.parent_id)
+        else:
+            ctx.counters["mirror_moved_out"] += 1
+            await self._audit_gone(ctx, doc)
+
+    async def _inside(self, ctx: "_Run", parent_id: str) -> bool:
+        """Is `parent_id` the root or below it? Folders of the ledger are walked by their documents, any other folder by
+        a read; the App Folder root, a not-found answer or a cycle means outside (a previous root is outside too)."""
+        root_id = ctx.need_root.root_item_id
+        area = await self._area_root_id(ctx)
+        seen: Set[str] = set()
+        while parent_id and parent_id not in seen and len(seen) < MAX_CHAIN_DEPTH:
+            if parent_id == root_id:
+                return True
+            if parent_id == area:
+                return False
+            seen.add(parent_id)
+            folder = await self._doc_by_item(ctx, parent_id)
+            if folder is not None and folder.mirror_parent_id:
+                parent_id = folder.mirror_parent_id
+                continue
+            self._take_read(ctx)
+            try:
+                parent_id = (await self._drive.get_change(ctx.user_id, parent_id)).parent_id
+            except DriveItemNotFoundError:
+                return False
+        return False
+
+    async def _audit_gone(self, ctx: "_Run", doc: MirrorDoc) -> None:
+        """A document's item is missing, or out of the mirror: a folder's documents beneath first, then its own."""
+        if doc.kind in (KIND_FOLDER, KIND_ARCHIVE):
+            await self._discard_beneath(ctx, doc)
+        else:
+            await self._doc_gone(ctx, doc)
+
+    async def _discard_beneath(self, ctx: "_Run", folder: MirrorDoc, depth: int = 0) -> None:
+        """A folder that answers 404 (or a frozen one moved out of the mirror): every document beneath it, through
+        `children` and recursively, is treated as missing, then the folder's own document. Each handled document leaves
+        `children` (deleted, or no longer placed), so a stopped discard resumes; the folder goes last."""
+        if depth > MAX_CHAIN_DEPTH:
+            raise _Unplaceable("mirror folders nested too deep")
+        for _ in range(MAX_CHAIN_DEPTH * 64):
+            kids = [k for k in await self._mirror.children(ctx.user_id, ctx.drive_id, folder.mirror_item_id,
+                                                           CHILDREN_MAX) if k.drive_id == ctx.drive_id]
+            for kid in kids:
+                self._check_time(ctx)
+                if kid.kind in (KIND_FOLDER, KIND_ARCHIVE) and kid.mirror_item_id:
+                    await self._discard_beneath(ctx, kid, depth + 1)
+                else:
+                    await self._doc_gone(ctx, kid)
+            if len(kids) < CHILDREN_MAX:
+                break
+        await self._doc_gone(ctx, folder)
+
+    async def _doc_gone(self, ctx: "_Run", doc: MirrorDoc) -> None:
+        """One document whose item is not in the mirror (§27.9.9). Archived file: the owner deleted it (or took it out
+        of the mirror): the document is deleted, its pin released, never re-created. Archive folder: deleted, created
+        again on demand. Active file: no item, its record due, so it is created again from the store. Detached file
+        and folder documents: no item (a detached one keeps its pin)."""
+        if doc.state == MIRROR_ARCHIVED or doc.kind == KIND_ARCHIVE:
+            ctx.host.fence()
+            await self._mirror.delete_doc(ctx.user_id, doc.key)
+            ctx.counters["mirror_archive_owner_deleted" if doc.kind == KIND_FILE else "mirror_archive_folder_gone"] += 1
+            return
+        await self._save_doc(ctx, cleared_item(doc))
+        if doc.state == MIRROR_ACTIVE and doc.kind == KIND_FILE:
+            await self._make_due(ctx, doc)
+            ctx.counters["mirror_recreate_due"] += 1
+
+    async def _audit_readme(self, ctx: "_Run") -> None:
+        """`_README.md` (§27.9.1): its `cTag` differs from `readme_ctag` → rewritten by id (in the current UI
+        language); missing, renamed or moved away → forgotten (the moved file stays the owner's) and written again by
+        step 1's rule, which never overwrites a name."""
+        root = ctx.need_root
+        if not root.readme_item_id:
+            return
+        change: Optional[DriveChange] = ctx.readme_listed
+        if change is None:
+            self._take_read(ctx)
+            try:
+                change = await self._drive.get_change(ctx.user_id, root.readme_item_id)
+            except DriveItemNotFoundError:
+                change = None
+        if change is None or change.parent_id != root.root_item_id or change.name != README_NAME:
+            ctx.counters["mirror_readme_missing"] += 1
+            await self._save_root(ctx, replace(root, readme_item_id="", readme_ctag=""))
+            await self._readme(ctx)
+            return
+        if change.content_version == root.readme_ctag:
+            return
+        if not root.readme_ctag:
+            await self._save_root(ctx, replace(root, readme_ctag=change.content_version))
+            return
+        self._take_op(ctx)
+        item = await self._drive.replace_content(ctx.user_id, root.readme_item_id, readme_bytes(ctx.host.strings()),
+                                                 MD_TYPE)
+        await self._save_root(ctx, replace(ctx.need_root, readme_ctag=item.ctag))
+        ctx.counters["mirror_readme_written"] += 1
+
+    async def _audit_area(self, ctx: "_Run") -> bool:
+        """The App Folder root, one page per read, only until something was reported (`orphans_reported`): a folder
+        named like the root (`is_root_name`) that is no root of any of the user's drives (the crash orphan of §27.9.2),
+        and a previous root that is present again, are reported once (one WARNING, counters); never adopted, never
+        written. True when the stage is done."""
+        root = ctx.need_root
+        if root.orphans_reported:
+            return True
+        area = await self._area_root_id(ctx)
+        box: List[Any] = []
+
+        async def listing() -> None:
+            self._take_read(ctx)
+            box.append(await self._drive.list_children_changes(ctx.user_id, area, AUDIT_PAGE,
+                                                               root.audit_page_cursor or None))
+
+        await self._guard(ctx, "audit app folder listing", listing(), None)
+        if not box:
+            return True
+        page = box[0]
+        roots = await self._mirror.roots(ctx.user_id)
+        current = {r.root_item_id for r in roots if r.root_item_id} | {root.root_item_id}
+        previous = {p for r in roots for p in r.previous_root_ids if p} - current
+        orphans = sum(1 for c in page.changes if c.is_folder and c.item_id not in current
+                      and c.item_id not in previous and is_root_name(c.name))
+        restored = sum(1 for c in page.changes if c.item_id in previous)
+        if orphans or restored:
+            ctx.counters["mirror_orphan_roots"] += orphans
+            ctx.counters["mirror_previous_roots_present"] += restored
+            logger.warning(f"[DriveMirror] user={ctx.user_id[:8]} the App Folder holds {orphans} folder(s) named like "
+                           f"the transcript root that are no root, and {restored} previous root(s): reported once, "
+                           f"never adopted or written")
+            await self._save_root(ctx, replace(ctx.need_root, orphans_reported=True))
+            return True
+        if page.next_cursor:
+            await self._save_root(ctx, replace(ctx.need_root, audit_page_cursor=page.next_cursor))
+            return False
+        return True
+
 
 # =====================================================================================================================
 # helpers
@@ -1245,7 +1843,7 @@ class _PatchNotFound(Exception):
 @dataclass
 class _Run:
     """One run's state: the root, the lazily read paths, the records read, the names foreign items hold, the records
-    written, and the folders to prune."""
+    written, the folders to prune, and what the audit saw."""
     user_id: str
     host: MirrorHost
     counters: Counter
@@ -1259,6 +1857,8 @@ class _Run:
     fixed: Set[str] = field(default_factory=set)
     done: Set[str] = field(default_factory=set)
     prune: List[MirrorDoc] = field(default_factory=list)
+    audit_seen: Set[str] = field(default_factory=set)          # documents the audit saw (listed or read) this run
+    readme_listed: Optional[DriveChange] = None                # the read-me as the root's listing showed it this run
 
     @property
     def drive_id(self) -> str:
