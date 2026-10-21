@@ -26,10 +26,18 @@ The transcript mirror (T2, §27.9) has three kinds of data, and the default keep
   - the mirror folder on the user's drive stays the user's after a rollback (§27.13); this script never touches a drive.
   `--mirror` deletes all three data kinds (the pins are then ignored, the ledger documents and the root documents go after
   the store): use it only to retire the mirror for good. It is a human decision; the dry run lists what it would delete.
+  **Precondition of `--mirror --apply` (Δ184, Δ229): the owner has deleted `_Transcripts` or moved it out of the App Folder
+  BEFORE any T2 revision runs for that user again.** Opacity of the folder comes from the root documents; once they are gone,
+  a T2 revision indexes the folder's files as ordinary documents (paid profiler and passage work) and, with the flag on,
+  creates `_Transcripts (Alek)`. So `--mirror --apply` is refused (exit 1) without `--after-rollback`, which confirms it.
+  The root documents are deleted by `firestore_root_deleter` in this script, deliberately NOT by a port method: that keeps
+  Δ184's "no purge deletes a root document" structural.
   Named residual: a rollback to a T1 image runs T1's orphan sweep (30 days), which does not know the pins and deletes the
   pinned transcripts; the ledger then points at nothing and the next T2 render rebuilds from the record, if it is still there.
   Ledger documents of a drive that has no root document are not found by the per-drive walk; archived ones are caught by the
-  user-wide archived query, the rest stay (harmless: nothing reads them without a root).
+  user-wide archived query. The rest cannot occur: a ledger document is written only under an existing root document, and only
+  this script deletes a root document, last. (The pin reads span drives, so a stray detached or marked document would pin a
+  transcript that a re-buy would then keep.)
 
 Dry run by default: lists the users and the open reservations per month, writes nothing (the port cannot count documents).
 With --apply it takes each user's lease when a sync state exists (refused while a tick runs: retry in a few minutes).
@@ -68,6 +76,16 @@ _MONTHS = 6
 _PAGE = 200
 
 RootDeleter = Callable[[str, str], Awaitable[None]]   # (user_id, drive_id): the port has no root delete, the script supplies it
+
+
+def firestore_root_deleter(db: Any, env: Any) -> RootDeleter:
+    """Deletes the root document `{env.drive_mirror_roots_collection}/{root_doc_id(user_id, drive_id)}`. Deliberately not a
+    port method: that keeps Δ184's "no purge deletes a root document" structural (only this script, by hand, does)."""
+    from src.adapters.firestore_drive_mirror_repo import root_doc_id
+
+    async def delete(user_id: str, drive_id: str) -> None:
+        await db.collection(env.drive_mirror_roots_collection).document(root_doc_id(user_id, drive_id)).delete()
+    return delete
 
 
 def months_back(now: datetime, count: int) -> List[str]:
@@ -230,6 +248,17 @@ async def sweep_user(repo: DriveIndexRepository, user_id: str, *, apply: bool, n
     (the default) unless `mirror` (`--mirror`) is set, which also needs `root_deleter` to delete the mirror's data."""
     if mirror and (mirror_repo is None or root_deleter is None):
         return 1, "--mirror needs the mirror repository and a root deleter"
+    if mirror and apply and not after_rollback:
+        return 1, ("refused: --mirror --apply deletes the root documents, after which any T2 revision indexes _Transcripts "
+                   "as ordinary documents. Delete or move _Transcripts out of the App Folder first, make sure no T2 revision "
+                   "runs for this user, then pass --after-rollback")
+    pins: FrozenSet[str] = frozenset()
+    if mirror_repo is not None and not mirror:
+        try:   # before anything is settled or deleted (M2)
+            pins = await mirror_repo.pinned_keys(user_id)
+        except DriveIndexStoreUnavailable:
+            return 1, ("the pin queries need the ledger's composite indexes (user_id + content_key/state/gone_pending, "
+                       "Δ217; `make deploy-indexes`) and they are not READY: nothing was settled or deleted; re-run once they are")
     scan = months_back(now, months)
     live = [state for state in (READY, WAITING, WORKING) if await repo.transcript_records(user_id, state, 1)]
     if live and not after_rollback:
@@ -244,7 +273,7 @@ async def sweep_user(repo: DriveIndexRepository, user_id: str, *, apply: bool, n
                 mirror_note = (f"; --mirror: would delete {len(keys)} ledger documents and {len(drives)} root documents, "
                                f"and ignore the pins")
             else:
-                mirror_note = (f"; keeping {len(await mirror_repo.pinned_keys(user_id))} pinned stored transcripts, the "
+                mirror_note = (f"; keeping {len(pins)} pinned stored transcripts, the "
                                f"ledger and the root documents (--mirror deletes them)")
         return 0, (f"dry run: would book ${plan.booked:.4f} in flight, release ${plan.released:.4f}, then delete the "
                    f"transcript jobs, batches, stored transcripts and window/part documents (months scanned: "
@@ -258,9 +287,6 @@ async def sweep_user(repo: DriveIndexRepository, user_id: str, *, apply: bool, n
         settled = await settle_reservations(repo, user_id, scan, apply=True, now=now)   # before any delete
         jobs = await _drain(repo.delete_user_transcript_jobs, user_id)
         batches = await _drain(repo.delete_user_batches, user_id)
-        pins: FrozenSet[str] = frozenset()
-        if mirror_repo is not None and not mirror:
-            pins = await mirror_repo.pinned_keys(user_id)    # read once, before the store is touched
         stored = await _delete_store(repo, user_id, pins)
         try:   # T-R14: only after the three helpers returned 0
             orphans = await _drain(lambda u, n: repo.delete_user_transcript_orphans(u, n, keep_transcripts=bool(pins)), user_id)
@@ -305,13 +331,12 @@ async def _main(users: List[str], all_users: bool, months: int, apply: bool, aft
 
     env = EnvironmentConfig()
     db = firestore.AsyncClient(project=os.getenv("GOOGLE_CLOUD_PROJECT") or None, database=env.firestore_database_id)
-    from src.adapters.firestore_drive_mirror_repo import FirestoreDriveMirrorRepository, root_doc_id
+    from src.adapters.firestore_drive_mirror_repo import FirestoreDriveMirrorRepository
 
     repo = FirestoreDriveIndexRepository(db, env)
     mirror_repo = FirestoreDriveMirrorRepository(db, env)
 
-    async def root_deleter(user_id: str, drive_id: str) -> None:
-        await db.collection(env.drive_mirror_roots_collection).document(root_doc_id(user_id, drive_id)).delete()
+    root_deleter = firestore_root_deleter(db, env)
 
     names = sorted(set(users) | (set(await repo.list_sync_user_ids()) if all_users else set()))
     code, lines = await run(repo, names, apply=apply, now=datetime.now(timezone.utc), months=months,
@@ -327,9 +352,12 @@ if __name__ == "__main__":
     parser.add_argument("--all-users", action="store_true", help="every user that still has a sync state")
     parser.add_argument("--months", type=int, default=_MONTHS, help="usage months scanned for open reservations")
     parser.add_argument("--after-rollback", action="store_true",
-                        help="confirm the transcript stage is no longer deployed (required when records are in a live state)")
+                        help="confirm the transcript stage is no longer deployed (required when records are in a live state, "
+                             "and for --mirror --apply)")
     parser.add_argument("--mirror", action="store_true",
-                        help="also delete the mirror's data: ledger, root documents and the pinned store entries (default: kept)")
+                        help="also delete the mirror's data: ledger, root documents and the pinned store entries (default: kept). "
+                             "--mirror --apply needs --after-rollback: delete or move _Transcripts out of the App Folder "
+                             "BEFORE any T2 revision runs for that user again")
     parser.add_argument("--apply", action="store_true", help="write (default: dry run; --apply is for humans only)")
     args = parser.parse_args()
     if not (args.user or args.all_users):

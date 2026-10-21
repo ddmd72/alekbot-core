@@ -803,7 +803,7 @@ runs only for a user with both transcription switches on (today the owner). The 
    gcloud firestore indexes composite list --database=us-production --project=$GOOGLE_CLOUD_PROJECT \
      --format="table(name, queryScope, state)" | grep -E "drive_transcript_mirror|drive_index_records"
    ```
-   Every row for `drive_transcript_mirror` and the two new `drive_index_records` indexes must say `READY`; any `CREATING` or `NEEDS_REPAIR` is a stop. Then
+   **Every printed row must be `READY`** (the grep keeps the ledger's indexes and the records' indexes, including the two new ones); any `CREATING` or `NEEDS_REPAIR` is a stop. Then
    `$PY scripts/infrastructure/drive_index_smoke.py $DEV_USER_ID`, which runs every new read and names a missing index.
 3. Pause the drive queue and the fan-out job, wait for the running tick (commands as Search v2 step 3), then **deploy main and the indexer together**
    (`make deploy`, with the T1 switch key as already set). **Verify both serve the new image** (command as § Card accuracy step 6), then **resume**.
@@ -818,14 +818,17 @@ runs only for a user with both transcription switches on (today the owner). The 
 **Rollback / levers, fastest first**
 1. The user's flag off (`drive_transcribe_flag.py --user USER --off --apply`) or the kill switch off and a redeploy: the mirror step stops writing; the folder, the ledger
    and the root document stay, and the root stays opaque to the index.
-2. **The previous image (a revision that predates T2).** It does not know the root and would index the mirror's `.md` files as documents. So: pause the drive queue and the
-   fan-out job; **move `_Transcripts` out of the App Folder** (it keeps its item id; do it in the OneDrive app, not through the bot); deploy the old image; resume. After the
-   roll-forward: pause again, **move the folder back**, deploy, resume. A stray T2 tick in between only sets the root-loss mark, which the 24 h grace keeps from acting.
-3. A rollback to a **T1** image keeps the store but not the pins: T1's daily orphan sweep deletes the pinned transcripts within 30 days (the archived files on the drive are
-   untouched; their stored passages and the re-buy-free restore are lost). Named residual.
-4. After a rollback to code that predates §27 only: `scripts/infrastructure/drive_transcript_sweep.py --user <user_id>` (dry run, then `--apply`, a human's act). It **keeps** the
-   mirror's root documents, ledger and pinned store entries, because a roll-forward needs them; `--mirror` deletes all of them (use it only to retire the mirror for good).
-5. An indexing opt-out deletes nothing on the drive (OQ-T10); a re-enable re-buys every active transcript, newest first, under the $20 cap (about $0.16 per audio hour).
+2. **The previous image (a revision that predates T2; today that is the T1 image).** It does not know the root and would index the mirror's `.md` files as documents. So: pause the
+   drive queue and the fan-out job; **move `_Transcripts` out of the App Folder** (it keeps its item id; do it in the OneDrive app, not through the bot); deploy the old image;
+   resume. After the roll-forward: pause again, **move the folder back**, deploy, resume. A stray T2 tick in between only sets the root-loss mark, which the 24 h grace keeps from
+   acting. This image keeps the store but not the pins: T1's daily orphan sweep deletes the pinned transcripts within 30 days (the archived files on the drive are untouched;
+   their stored passages and the re-buy-free restore are lost). Named residual.
+3. After a rollback to code that predates §27 only: `scripts/infrastructure/drive_transcript_sweep.py --user <user_id>` (dry run, then `--apply`, a human's act). It **keeps** the
+   mirror's root documents, ledger and pinned store entries, because a roll-forward needs them. `--mirror` deletes all of them and is for retiring the mirror for good:
+   **before `--mirror --apply` the owner must have deleted `_Transcripts` or moved it out of the App Folder, and no T2 revision may run for that user again until then** (once the
+   root documents are gone a T2 revision indexes the folder as ordinary documents and, with the flag on, creates `_Transcripts (Alek)`). The script refuses `--mirror --apply`
+   without `--after-rollback`, which is the owner's confirmation of that.
+4. 5. An indexing opt-out deletes nothing on the drive (OQ-T10); a re-enable re-buys every active transcript, newest first, under the $20 cap (about $0.16 per audio hour).
 
 ## Sandbox render service
 

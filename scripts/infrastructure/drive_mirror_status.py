@@ -6,7 +6,7 @@ real user), and stdout gets just the path and a one-line count.
 For each user it reports:
   - the ledger documents per kind and state (file / folder / archive x active / archived / detached);
   - the pinned store keys (the transcripts the ledger keeps alive across a purge) and how many documents pin them;
-  - the deletion marks waiting (`gone_pending`), how many are ripe and how many are held past `mark_ready_at`;
+  - the deletion marks waiting (`gone_pending`), how many are ripe and how many are not ripe yet (`mark_ready_at` in the future: a grace hour, or a hold or charge back-off);
   - the parked documents (`failed_at` set: tried again only after MIRROR_FAILED_RETRY) and the ones backing off (`retry_at`);
   - the detached documents due for the weekly recheck;
   - per root document (one per drive): the root's item id, the cursors (seed, scan, audit folder and page), the clocks
@@ -17,6 +17,8 @@ For each user it reports:
 Usage (project and credentials from the environment / ADC, collections from APP_ENV, default development):
     python scripts/infrastructure/drive_mirror_status.py --user <user_id> [--user <user_id> ...]
     python scripts/infrastructure/drive_mirror_status.py --all-users
+`--all-users` lists only users that still have a sync state. An indexing opt-out deletes the sync state and keeps the mirror
+(OQ-T10), so such a user's leftover mirror is seen only when named with `--user`.
 Exit code: 0 when written, 1 when a store read failed (a missing composite index is named in the output).
 """
 import argparse
@@ -88,7 +90,7 @@ def docs_report(docs: Sequence[MirrorDoc], now: datetime) -> Dict[str, Any]:
         "per_kind_state": dict(sorted(per.items())),
         "marks_waiting": len(marks),
         "marks_ripe": sum(1 for d in marks if d.mark_ready_at is not None and d.mark_ready_at <= now),
-        "marks_held": sum(1 for d in marks if d.mark_ready_at is not None and d.mark_ready_at > now),
+        "marks_not_ripe": sum(1 for d in marks if d.mark_ready_at is not None and d.mark_ready_at > now),
         "parked": sum(1 for d in docs if d.failed_at is not None),
         "backing_off": sum(1 for d in docs if d.failed_at is None and d.retry_at is not None and d.retry_at > now),
         "detached_due": sum(1 for d in docs if d.state == MIRROR_DETACHED
