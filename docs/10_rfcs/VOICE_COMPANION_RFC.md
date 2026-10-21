@@ -576,10 +576,14 @@ OpenAI does not, which is exactly the gap `resolve_late_answer` above exists to 
 
 | Source | What | Cost |
 |---|---|---|
-| Biographical cache | **every domain**, minus `UserBotConfig.voice_excluded_fact_domains` (default empty) | one cached read, the same one Smart makes |
-| Standing directives | the same list, `include_directives=True` | none |
-| Primary-channel history | the last 30 messages of the session the call summary is written into (§4.9): the user turn's text (capped at 500 chars) and the model turn's stored `text`, which is already its ≤300-char `response_summary`. Timestamps are in the caller's timezone | one `SessionStore` read, **no LLM call** |
+| Biographical cache | only `UserBotConfig.voice_fact_domains` (default biographical + preference; revised 2026-10-21, was every domain) | one cached read, the same one Smart makes |
+| Standing directives | none (`include_directives=False`, revised 2026-10-21) | none |
+| Primary-channel history | the last 30 messages of the session the call summary is written into (§4.9): the user turn's text (capped at 700 chars) and the model turn's stored `text`, which is already its ≤600-char `response_summary`. Timestamps are in the caller's timezone | one `SessionStore` read, **no LLM call** |
 | Date/time, location | `include_datetime=True`; location and timezone from the caller's own `UserBotConfig` via a per-call `UserPromptBuilder` | none |
+
+> **Revised 2026-10-21:** the denylist below became the allowlist `voice_fact_domains`
+> (default `biographical` + `preference`), and Lelik no longer gets standing directives; see
+> `decisions/lelik_warm_context.md` § Revised 2026-10-21. The paragraph records the original reasoning.
 
 **Why a denylist, empty by default: give everything, trim what proves out of place.** Too little
 context fails silently: Lelik sounds cold or reaches for Alek, and nobody can hear a fact that was
