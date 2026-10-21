@@ -413,7 +413,7 @@ class TestFactManagementPortMockImplementation:
     def test_update_fact_signature(self):
         sig = inspect.signature(FactManagementPort.update_fact)
         params = list(sig.parameters.keys())
-        assert params == ["self", "fact_id", "updates"]
+        assert params == ["self", "fact_id", "updates", "account_id"]
 
 
 # =============================================================================

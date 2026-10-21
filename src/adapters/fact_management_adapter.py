@@ -1,11 +1,15 @@
+import asyncio
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import List, Dict, Any
+from typing import AsyncIterator, List, Dict, Any
 
 from ..domain.entities import (
     TemporalClass,
     FactState,
     normalize_fact_taxonomy,
 )
+from ..domain.fact_embedding import fact_embedding_texts
+from ..domain.fact_lifecycle import lifecycle_fields
 from ..domain.search import SearchLimits
 from ..ports.fact_management_port import FactManagementPort
 from ..ports.repository import FactRepository
@@ -41,7 +45,9 @@ class FactManagementAdapter(FactManagementPort):
         self._fact_write_service = fact_write_service
         self._search_enrichment = search_enrichment_service
         self._max_retries = max_retries
-        
+        # fact_id -> [lock, holders+waiters]; entry dropped when the count reaches 0
+        self._fact_locks: Dict[str, List[Any]] = {}
+
         logger.info(
             "🔧 [FactManagement] Initialized with multi-vector search support "
             "(SearchEnrichmentService)"
@@ -209,68 +215,38 @@ class FactManagementAdapter(FactManagementPort):
                 "message": f"Error creating fact: {str(e)}"
             }
 
-    async def update_fact(self, fact_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
+    @asynccontextmanager
+    async def _fact_lock(self, fact_id: str) -> AsyncIterator[None]:
+        # Concurrent tool calls of one model turn load-modify-write whole documents; serialize per fact
+        # (S2 replaces this with a Firestore precondition write).
+        # Single event loop and no await between lookup and insert, so setdefault is race-free.
+        entry = self._fact_locks.setdefault(fact_id, [asyncio.Lock(), 0])
+        entry[1] += 1
+        try:
+            async with entry[0]:
+                yield
+        finally:
+            entry[1] -= 1
+            if entry[1] == 0:
+                self._fact_locks.pop(fact_id, None)
+
+    async def update_fact(
+        self, fact_id: str, updates: Dict[str, Any], account_id: str
+    ) -> Dict[str, Any]:
         """
         Update existing fact with error handling.
         
         Args:
             fact_id: UUID of fact to update
-            updates: Fields to update (content, tags, state, etc.)
+            updates: Fields to update (content, tags, metadata, state, etc.)
+            account_id: Caller account; a fact of another account is reported as not found
             
         Returns:
             Result dict with status, version, message
         """
         try:
-            logger.debug(f"🔄 [FactManagement] Updating fact {fact_id[:8]}...")
-            
-            existing = await self._repo.get_fact_by_id(fact_id)
-            if not existing:
-                logger.warning(f"⚠️  [FactManagement] Fact not found: {fact_id[:8]}")
-                return {
-                    "fact_id": fact_id,
-                    "status": "not_found",
-                    "message": "Fact not found",
-                }
-
-            new_content = updates.get("content", existing.text)
-            new_tags = updates.get("tags", existing.tags)
-            new_state = updates.get("state")
-            new_temporal_class = updates.get("temporal_class")
-
-            # Normalize to lowercase (LLM returns UPPERCASE, enums expect lowercase)
-            if new_state:
-                new_state = new_state.lower()
-                existing.state = FactState(new_state)
-            
-            if new_temporal_class:
-                new_temporal_class = new_temporal_class.lower()
-                existing.temporal_class = TemporalClass(new_temporal_class)
-
-            existing.text = new_content
-            existing.tags = new_tags
-            existing.version = (existing.version or 1) + 1
-            existing.last_updated = datetime.now(timezone.utc)
-            reported_raw = updates.get("reported_date")
-            if isinstance(reported_raw, str):
-                existing.reported_date = datetime.fromisoformat(reported_raw.replace("Z", "+00:00"))
-            elif isinstance(reported_raw, datetime):
-                existing.reported_date = reported_raw
-            else:
-                existing.reported_date = datetime.now(timezone.utc)
-
-            await self._repo.update_fact(existing)
-
-            logger.info(
-                f"✅ [FactManagement] Updated fact {fact_id[:8]} to version {existing.version}"
-            )
-
-            return {
-                "fact_id": fact_id,
-                "status": "updated",
-                "version": existing.version,
-                "message": "Fact updated successfully",
-            }
-            
+            async with self._fact_lock(fact_id):
+                return await self._update_fact_locked(fact_id, updates, account_id)
         except Exception as e:
             logger.error(f"❌ [FactManagement] Update fact error: {e}", exc_info=True)
             return {
@@ -278,6 +254,104 @@ class FactManagementAdapter(FactManagementPort):
                 "status": "failed",
                 "message": f"Error updating fact: {str(e)}"
             }
+
+    async def _update_fact_locked(
+        self, fact_id: str, updates: Dict[str, Any], account_id: str
+    ) -> Dict[str, Any]:
+        logger.debug(f"🔄 [FactManagement] Updating fact {fact_id[:8]}...")
+
+        existing = await self._repo.get_fact_by_id(fact_id)
+        if not existing:
+            logger.warning(f"⚠️  [FactManagement] Fact not found: {fact_id[:8]}")
+            return {
+                "fact_id": fact_id,
+                "status": "not_found",
+                "message": "Fact not found",
+            }
+
+        if existing.account_id != account_id:
+            logger.warning(
+                f"⚠️  [FactManagement] Account mismatch updating fact {fact_id[:8]}: "
+                f"fact={existing.account_id[:8]} caller={account_id[:8]}"
+            )
+            return {
+                "fact_id": fact_id,
+                "status": "not_found",
+                "message": "Fact not found",
+            }
+
+        now = datetime.now(timezone.utc)
+        old_text, old_tags, old_metadata = existing.text, existing.tags, existing.metadata
+
+        new_content = updates.get("content", existing.text)
+        new_tags = updates.get("tags", existing.tags)
+
+        new_metadata = old_metadata
+        metadata_update = updates.get("metadata")
+        if isinstance(metadata_update, dict):
+            new_metadata = {**old_metadata, **metadata_update}
+        elif metadata_update is not None:
+            logger.warning(
+                f"⚠️  [FactManagement] Ignoring non-dict metadata for fact {fact_id[:8]}"
+            )
+
+        # Parse every enum / date first: a bad value must fail before an embedding call or any write.
+        # LLM returns UPPERCASE, enums expect lowercase.
+        new_state = FactState(updates["state"].lower()) if updates.get("state") else None
+        new_temporal_class = (
+            TemporalClass(updates["temporal_class"].lower()) if updates.get("temporal_class") else None
+        )
+        reported_raw = updates.get("reported_date")
+        new_reported: datetime | None = None
+        if isinstance(reported_raw, str):
+            new_reported = datetime.fromisoformat(reported_raw.replace("Z", "+00:00"))
+        elif isinstance(reported_raw, datetime):
+            new_reported = reported_raw
+        lifecycle = lifecycle_fields(new_state, now) if new_state else None
+
+        vectors_stale = (new_content, new_tags, new_metadata) != (old_text, old_tags, old_metadata)
+        content_changed = vectors_stale or (
+            new_temporal_class is not None and new_temporal_class != existing.temporal_class
+        )
+
+        # Embed before any write: a failure aborts via the outer except, nothing is stored
+        if vectors_stale:
+            vectors = await self._embedding.get_embeddings_batch(
+                fact_embedding_texts(new_content, new_tags, new_metadata), "RETRIEVAL_DOCUMENT"
+            )
+            existing.vector, existing.tags_vector, existing.metadata_vector = vectors
+
+        # Re-applying the stored state must not move valid_to
+        if lifecycle is not None and new_state != existing.state:
+            for key, value in lifecycle.items():
+                setattr(existing, key, value)
+        if new_temporal_class is not None:
+            existing.temporal_class = new_temporal_class
+
+        existing.text = new_content
+        existing.tags = new_tags
+        existing.metadata = new_metadata
+        existing.last_updated = now
+        if content_changed:
+            existing.version = (existing.version or 1) + 1
+        # A state-only update leaves the reported date alone unless the caller sends one
+        if new_reported is not None:
+            existing.reported_date = new_reported
+        elif content_changed:
+            existing.reported_date = datetime.now(timezone.utc)
+
+        await self._repo.update_fact(existing)
+
+        logger.info(
+            f"✅ [FactManagement] Updated fact {fact_id[:8]} to version {existing.version}"
+        )
+
+        return {
+            "fact_id": fact_id,
+            "status": "updated",
+            "version": existing.version,
+            "message": "Fact updated successfully",
+        }
 
     async def merge_facts(
         self,
@@ -300,17 +374,24 @@ class FactManagementAdapter(FactManagementPort):
             logger.info(f"🔀 [FactManagement] Merging {len(fact_ids)} facts...")
             
             superseded_ids = []
+            caller_account = metadata.get("account_id")
             for fact_id in fact_ids:
                 try:
-                    existing = await self._repo.get_fact_by_id(fact_id)
-                    if not existing:
-                        logger.warning(f"⚠️  [FactManagement] Fact not found for merge: {fact_id[:8]}")
-                        continue
-                    existing.state = FactState.SUPERSEDED
-                    existing.is_current = False
-                    existing.valid_to = datetime.now(timezone.utc)
-                    await self._repo.update_fact(existing)
-                    superseded_ids.append(fact_id)
+                    async with self._fact_lock(fact_id):
+                        existing = await self._repo.get_fact_by_id(fact_id)
+                        if not existing:
+                            logger.warning(f"⚠️  [FactManagement] Fact not found for merge: {fact_id[:8]}")
+                            continue
+                        if existing.account_id != caller_account:
+                            logger.warning(
+                                f"⚠️  [FactManagement] Account mismatch merging fact {fact_id[:8]}: "
+                                f"fact={existing.account_id[:8]} caller={str(caller_account)[:8]}"
+                            )
+                            continue
+                        for key, value in lifecycle_fields(FactState.SUPERSEDED, datetime.now(timezone.utc)).items():
+                            setattr(existing, key, value)
+                        await self._repo.update_fact(existing)
+                        superseded_ids.append(fact_id)
                 except Exception as e:
                     logger.warning(f"⚠️  [FactManagement] Failed to supersede fact {fact_id[:8]}: {e}")
 
