@@ -1136,3 +1136,4 @@ the environment's service-account credentials. A missing CLI does NOT mean the d
   Always use `database="us-production"` (or rely on `FIRESTORE_DATABASE` env var). Live data is
   in the `development_`-prefixed collections; the unprefixed prod collections were deleted
   2026-05-31 (see Branching & Environment above).
+  Scripts get clients from `scripts/_firestore.py`; `tests/unit/test_firestore_database_explicit.py` fails any client built without `database=`.

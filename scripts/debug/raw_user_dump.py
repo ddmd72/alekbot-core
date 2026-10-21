@@ -25,7 +25,7 @@ async def raw_user_dump(user_id: str):
     env_config = config["ENVIRONMENT_CONFIG"]
     
     if env_config.use_emulator:
-        db = firestore.AsyncClient(project="emulator-project")
+        db = firestore.AsyncClient(project="emulator-project", database=env_config.firestore_database_id)
     else:
         # Force correct database
         db = firestore.AsyncClient(

@@ -51,8 +51,9 @@ from src.utils.telemetry import init_telemetry
 def _build_account_repo() -> FirestoreAccountRepository:
     """Build account repo for billing recording. Uses same database as main service."""
     from google.cloud import firestore as _firestore
+    from src.config.environment import EnvironmentConfig
     project = os.environ.get("GOOGLE_CLOUD_PROJECT", "")
-    db = _firestore.AsyncClient(project=project, database="us-production")
+    db = _firestore.AsyncClient(project=project, database=EnvironmentConfig().firestore_database_id)
     env = os.environ.get("APP_ENV", "development")
     prefix = "development_" if env == "development" else ""
     return FirestoreAccountRepository(db_client=db, collection_name=f"{prefix}domain_accounts_v2")
