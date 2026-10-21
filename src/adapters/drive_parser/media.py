@@ -138,27 +138,36 @@ def _remaining(deadline: float) -> float:
     return deadline - time.monotonic()
 
 
-def _run_ffmpeg(argv: List[str], deadline: float) -> Tuple[Optional[int], bool]:
-    """(return code, timed_out). Stdin closed, stderr inherited (the parent's capped file), stdout discarded."""
+def _children_cpu_s() -> float:
+    usage = resource.getrusage(resource.RUSAGE_CHILDREN)
+    return float(usage.ru_utime + usage.ru_stime)
+
+
+def _run_ffmpeg(argv: List[str], deadline: float) -> Tuple[Optional[int], bool, float]:
+    """(return code, timed_out, this run's CPU seconds). Stdin closed, stderr inherited (the parent's capped file),
+    stdout discarded. The CPU is the RUSAGE_CHILDREN delta across this one run: RLIMIT_CPU is per process, so a limit
+    cut is judged on the run's own CPU, never on the total of every ffmpeg this child already ran (N7)."""
     budget = max(_remaining(deadline), _MIN_BUDGET_S)
+    before = _children_cpu_s()
     try:
         done = subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, timeout=budget, check=False)
     except subprocess.TimeoutExpired:
-        return None, True
-    return done.returncode, False
+        return None, True, _children_cpu_s() - before
+    return done.returncode, False, _children_cpu_s() - before
 
 
 def network_exit_codes() -> frozenset:
     return frozenset((-e) & 0xFF for e in NETWORK_ERRNOS)
 
 
-def _run_remote(build: Any, request: Dict[str, Any], deadline: float, out_path: str) -> Tuple[Optional[int], bool]:
+def _run_remote(build: Any, request: Dict[str, Any], deadline: float,
+                out_path: str) -> Tuple[Optional[int], bool, float]:
     """A remote ffmpeg run under `-xerror`; a non-zero exit that is neither a limit, the wall nor a network error is
-    re-run once without it (T-R16)."""
-    code, timed_out = _run_ffmpeg(build(True), deadline)
+    re-run once without it (T-R16). Returns the code, timeout flag and CPU of the run whose code it returns."""
+    code, timed_out, cpu = _run_ffmpeg(build(True), deadline)
     if (timed_out or code == 0 or code in _LIMIT_SIGNALS or code in network_exit_codes()
-            or _hit_a_limit(request, out_path)):
-        return code, timed_out
+            or _hit_a_limit(request, out_path, cpu)):
+        return code, timed_out, cpu
     return _run_ffmpeg(build(False), deadline)
 
 
@@ -210,7 +219,7 @@ def _run_each(request: Dict[str, Any], url: str, ca_file: str, container: str, o
             return {"status": "timeout", "windows": written, "detail": "wall before window"}
         final = os.path.join(out_dir, window_name(index))
         part = final + ".part"
-        code, timed_out = _run_remote(
+        code, timed_out, _ = _run_remote(
             lambda xerror: build_window_argv(url, ca_file, container, start, length, part, xerror),
             request, deadline, part)
         if timed_out:
@@ -238,16 +247,16 @@ def _discard(path: str) -> None:
         os.unlink(path)
 
 
-def _hit_a_limit(request: Dict[str, Any], pass_path: str) -> bool:
+def _hit_a_limit(request: Dict[str, Any], out_path: str, run_cpu_s: float) -> bool:
     """ffmpeg handles SIGXCPU itself (finishes the file, exits 255) and Python leaves SIGXFSZ ignored (the write fails
-    with EFBIG), so neither shows up as a signal exit. Told apart by the measure: CPU time used by this child's
-    ffmpeg near RLIMIT_CPU, or the output at RLIMIT_FSIZE. Either way the file written so far is a valid prefix."""
+    with EFBIG), so neither shows up as a signal exit. Told apart by the measure of the one run being judged: its own
+    CPU (`run_cpu_s`, RLIMIT_CPU is per process) near RLIMIT_CPU, or its output file at RLIMIT_FSIZE. Either way the
+    file written so far is a valid prefix."""
     cpu_s, file_bytes = float(request.get("cpu_s", 0) or 0), int(request.get("file_bytes", 0) or 0)
-    usage = resource.getrusage(resource.RUSAGE_CHILDREN)
-    if cpu_s > 0 and usage.ru_utime + usage.ru_stime >= 0.9 * cpu_s:
+    if cpu_s > 0 and run_cpu_s >= 0.9 * cpu_s:
         return True
     try:
-        return file_bytes > 0 and os.path.getsize(pass_path) >= 0.98 * file_bytes
+        return file_bytes > 0 and os.path.getsize(out_path) >= 0.98 * file_bytes
     except OSError:
         return False
 
@@ -277,10 +286,10 @@ def _run_pass(request: Dict[str, Any], url: str, ca_file: str, container: str, o
     span = last_end - first_start
     pass_path = os.path.join(out_dir, "pass.opus")
     try:
-        code, timed_out = _run_remote(
+        code, timed_out, run_cpu = _run_remote(
             lambda xerror: build_pass_argv(url, ca_file, container, first_start, span, pass_path, xerror),
             request, deadline, pass_path)
-        limit = code in _LIMIT_SIGNALS or (code != 0 and not timed_out and _hit_a_limit(request, pass_path))
+        limit = code in _LIMIT_SIGNALS or (code != 0 and not timed_out and _hit_a_limit(request, pass_path, run_cpu))
         cut = timed_out or limit
         if not cut and code != 0:
             return {"status": "error", "detail": f"ffmpeg exit {code}"}
@@ -298,7 +307,7 @@ def _run_pass(request: Dict[str, Any], url: str, ca_file: str, container: str, o
             real = min(length, duration - rel)
             final = os.path.join(out_dir, window_name(index))
             part = final + ".part"
-            code, timed_out = _run_ffmpeg(build_cut_argv(pass_path, rel, real, part), deadline)
+            code, timed_out, _ = _run_ffmpeg(build_cut_argv(pass_path, rel, real, part), deadline)
             if timed_out:
                 _discard(part)
                 return {"status": "timeout", "windows": windows}

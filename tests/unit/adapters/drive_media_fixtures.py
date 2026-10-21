@@ -197,10 +197,23 @@ def make_overstated_mp3(path, seconds: int) -> bytes:
     return path.read_bytes()
 
 
-def make_corrupt_mp4(path, seconds: int) -> bytes:
-    """An AAC mp4 with 2 KB overwritten in the middle of its media data (moov first, so the file still opens)."""
-    _ffmpeg("-f", "lavfi", "-i", f"anoisesrc=d={seconds}:a=0.3", "-c:a", "aac", "-movflags", "+faststart", str(path))
-    data = bytearray(path.read_bytes())
-    mid = len(data) // 2
-    data[mid:mid + 2048] = bytes((i * 37 + 11) % 256 for i in range(2048))
+def _garble(data: bytearray, at: float) -> bytes:
+    offset = int(len(data) * at)
+    data[offset:offset + 2048] = bytes((i * 37 + 11) % 256 for i in range(2048))
     return bytes(data)
+
+
+def make_corrupt_mp4(path, seconds: int, at: float = 0.5) -> bytes:
+    """An AAC mp4 with 2 KB overwritten at fraction `at` of the file, inside its media data (moov first, so the file
+    still opens)."""
+    _ffmpeg("-f", "lavfi", "-i", f"anoisesrc=d={seconds}:a=0.3", "-c:a", "aac", "-movflags", "+faststart", str(path))
+    return _garble(bytearray(path.read_bytes()), at)
+
+
+def make_corrupt_cueless_mkv(seconds: int, at: float = 0.5) -> bytes:
+    """A pipe-written (no Duration, no Cues) Matroska/AAC noise recording with 2 KB overwritten at fraction `at`: a
+    corrupt cluster in the middle of what a pass reads. AAC, not Opus: the Opus decoder conceals the same garbage
+    silently even under `-xerror` (rc 0, measured on ffmpeg 8.0.1), so only AAC makes the first run fail (rc 183)."""
+    data = _ffmpeg("-f", "lavfi", "-i", f"anoisesrc=d={seconds}:a=0.3", "-c:a", "aac", "-f", "matroska", "pipe:1",
+                   capture=True)
+    return _garble(bytearray(data), at)
