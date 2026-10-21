@@ -2026,7 +2026,7 @@ class _Run:
     @property
     def stops(self) -> Tuple[Type[BaseException], ...]:
         '''The host's own stop signals: re-raised unchanged wherever a systemic class is.'''
-        return tuple(getattr(self.host, "stop_exceptions", ()))
+        return tuple(self.host.stop_exceptions)
 
     @property
     def drive_id(self) -> str:
