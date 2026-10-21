@@ -63,9 +63,10 @@ from datetime import datetime
 from enum import Enum
 from typing import FrozenSet, Optional, Tuple
 
+from src.domain.billing import batch_transcription_input_usd
 from src.domain.drive_index import TRANSCRIBE_VERSION, DriveIndexRecord, Reason, RecordState, Scope, inaccessible
 from src.domain.drive_index_params import (
-    MAX_ATTEMPTS, TRANSCRIBE_HOUR_USD_ESTIMATE, TRANSCRIBE_MAX_BYTES, TRANSCRIBE_MAX_SECONDS,
+    MAX_ATTEMPTS, TRANSCRIBE_HOUR_USD_ESTIMATE, TRANSCRIBE_WINDOW_PROMPT_TOKENS, TRANSCRIBE_MAX_BYTES, TRANSCRIBE_MAX_SECONDS,
     TRANSCRIBE_REREAD_COOLDOWN, TRANSCRIBE_USD_PER_MONTH,
 )
 from src.domain.drive_index_planner import content_due_at, demoted, month_key, next_month_start, quiet_over
@@ -169,7 +170,13 @@ def effective_monthly_cap(raw: Optional[str]) -> float:
 
 
 def estimate_usd(seconds: float) -> float:
+    """The audio part of an estimate: seconds at the hour rate. A window also pays `window_prompt_usd()`."""
     return max(0.0, seconds) * TRANSCRIBE_HOUR_USD_ESTIMATE / 3600.0
+
+
+def window_prompt_usd() -> float:
+    """The fixed per-window allowance for the text input (system instruction + task) at the batch input rate."""
+    return batch_transcription_input_usd(TRANSCRIBE_WINDOW_PROMPT_TOKENS)
 
 
 def available_usd(ctx: TranscriptContext) -> float:
@@ -183,7 +190,7 @@ def fits(estimate: float, ctx: TranscriptContext) -> bool:
 
 def file_estimate_usd(duration_s: float) -> float:
     """The file's estimate: the SUM over its planned windows, overlaps paid for (the cost is per audio sent)."""
-    return estimate_usd(sum(w.duration_s for w in plan_windows(duration_s)))
+    return sum(estimate_usd(w.duration_s) + window_prompt_usd() for w in plan_windows(duration_s))
 
 
 def reserve_if_fits(estimate: float, ctx: TranscriptContext) -> Tuple[Optional[Reservation], TranscriptContext]:
@@ -411,7 +418,7 @@ def window_failed(window: JobWindow, check: WindowCheck, ctx: TranscriptContext)
 
 
 def window_estimate_usd(window: JobWindow) -> float:
-    return estimate_usd(window.spec.duration_s)
+    return estimate_usd(window.spec.duration_s) + window_prompt_usd()
 
 
 def _resubmit(window: JobWindow, ctx: TranscriptContext) -> WindowResult:

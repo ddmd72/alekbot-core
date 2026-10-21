@@ -16,7 +16,7 @@ from src.domain.drive_transcript import JobWindow, MediaProbe, TranscriptJob, Tr
 from src.domain.drive_transcript_plan import (
     StartOutcome, TranscriptContext, WindowAction, WindowCheck, charge_attempt, effective_monthly_cap, estimate_usd,
     file_estimate_usd, fits, mark_current, park, queue_blocked, release, resume_window, reserve_if_fits, reset_on_new_version,
-    start_file, state_for_job, stub_from_probe, transcript_plan, window_failed,
+    start_file, state_for_job, stub_from_probe, transcript_plan, window_failed, window_prompt_usd,
 )
 from src.domain.drive_transcript_windows import plan_windows
 from src.domain.drive_index_planner import EXTRACTION_VERSION, change_from_record, classify
@@ -370,7 +370,9 @@ def test_a_refused_window_is_a_gap_at_once():
 
 def test_a_resubmit_is_reserved():
     r = window_failed(_win("submitted"), WindowCheck.TIME, _ctx())
-    assert r.reservation is not None and r.reservation.usd == pytest.approx(estimate_usd(1800.0))
+    # T-R19: a window's reservation is its audio estimate plus the fixed per-window prompt allowance
+    assert window_prompt_usd() > 0
+    assert r.reservation is not None and r.reservation.usd == pytest.approx(estimate_usd(1800.0) + window_prompt_usd())
     assert r.ctx.reserved_usd == pytest.approx(r.reservation.usd)
 
 
@@ -394,7 +396,9 @@ def test_file_estimate_counts_the_overlaps():
     d = 5000.0
     windows = plan_windows(d)
     assert sum(w.duration_s for w in windows) > d
-    assert file_estimate_usd(d) == pytest.approx(estimate_usd(sum(w.duration_s for w in windows)))
+    # T-R19: every planned window (overlaps included) pays its audio and one prompt allowance
+    assert file_estimate_usd(d) == pytest.approx(estimate_usd(sum(w.duration_s for w in windows))
+                                                 + len(windows) * window_prompt_usd())
     assert file_estimate_usd(d) > estimate_usd(d)
     # a file whose bare duration fits the cap but whose overlaps do not parks
     bare = estimate_usd(d)
@@ -521,8 +525,9 @@ def test_mid_job_park_wakes_as_working_and_reserves_only_the_window():
     assert transcript_plan(woken, nov) == woken
     resumed = resume_window(r.window, nov)
     assert resumed.action is WindowAction.RESUBMIT
-    assert resumed.reservation.usd == pytest.approx(estimate_usd(1800.0))
-    assert resumed.ctx.reserved_usd == pytest.approx(held + estimate_usd(1800.0))   # no whole-file re-reservation
+    window = estimate_usd(1800.0) + window_prompt_usd()               # T-R19: audio + the per-window prompt allowance
+    assert resumed.reservation.usd == pytest.approx(window)
+    assert resumed.ctx.reserved_usd == pytest.approx(held + window)   # no whole-file re-reservation
 
 
 def test_resume_that_still_does_not_fit_parks_again():

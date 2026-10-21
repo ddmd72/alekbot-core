@@ -297,9 +297,9 @@ class BatchUsage:
     not dearer than text), thought tokens in the output leg, the whole at `BATCH_DISCOUNT`. An unknown model prices
     at 0.0, as `calculate_cost` does; callers flag it (`is_priced`).
 
-    At the held $1.50/$7.50 a 30-minute window of 45 000 audio tokens plus ~6 000 output tokens books
-    45 000 x $0.75/M + 6 000 x $3.75/M = ~$0.056 before thought tokens; about $0.16 per audio hour once thought tokens and window overlap are
-    counted (G7)."""
+    At the held $1.50/$7.50 a 30-minute window of 45 000 audio tokens plus ~12 000 output tokens (T0 measured about
+    400 per audio minute, thoughts included) books 45 000 x $0.75/M + 12 000 x $3.75/M = ~$0.079, about $0.16 per
+    audio hour at that density (G7); a runaway window is bounded by its per-window output cap and the reservation."""
     model: str
     audio_input_tokens: int = 0
     text_input_tokens: int = 0
@@ -313,6 +313,12 @@ class BatchUsage:
         interactive = calculate_cost(self.model, self.audio_input_tokens + self.text_input_tokens,
                                      self.output_tokens + self.thought_tokens)
         return round(interactive * BATCH_DISCOUNT, 6)
+
+
+def batch_transcription_input_usd(tokens: int) -> float:
+    """What `tokens` of input cost in a transcription batch job: the held `gemini-3.8-flash` input rate at
+    `BATCH_DISCOUNT`. Planning only (a window's fixed text-input allowance, drive transcripts T-R19)."""
+    return tokens * _PRICING_PER_MILLION_TOKENS["gemini-3.8-flash"]["input"] / 1e6 * BATCH_DISCOUNT
 
 
 # Non-token (flat-rate or per-second REST API) service pricing — companion to
