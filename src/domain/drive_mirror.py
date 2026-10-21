@@ -63,6 +63,10 @@ class MirrorRoot:
     audit_page_cursor: str = ""
     orphans_reported: bool = False
     quota_hold_until: Optional[datetime] = None
+    # the read-me's create intent (§27.9.1, the Δ191/Δ210 pattern): written just before its upload, cleared when the
+    # read-me is saved. A re-run adopts a `_README.md` only when it was created at or after this time (minus the
+    # clock skew) with the read-me's size, so an owner's `_README.md` is never taken for the bot's
+    readme_pending_at: Optional[datetime] = None
 
 
 @dataclass(frozen=True)
