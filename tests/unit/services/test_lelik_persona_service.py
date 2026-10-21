@@ -43,29 +43,32 @@ def _service(config=None, facts=None, history=None, channel=...):
 
 
 @pytest.mark.asyncio
-async def test_every_fact_domain_reaches_the_prompt_by_default():
+async def test_only_the_default_voice_domains_reach_the_prompt_by_default():
     service, fact_repo, *_ = _service()
     ctx = await service.assemble(user_id="u1", account_id="a1")
     fact_repo.get_biographical_context_cached.assert_awaited_once_with("a1")
-    assert {f["domain"] for f in ctx.biographical_facts} == {d.value for d in FactDomain}
+    assert {f["domain"] for f in ctx.biographical_facts} == {
+        FactDomain.BIOGRAPHICAL.value, FactDomain.PREFERENCE.value,
+    }
 
 
 @pytest.mark.asyncio
-async def test_excluded_domains_are_withheld():
-    config = UserBotConfig(voice_excluded_fact_domains=["medical_records", "finance"])
+async def test_domains_outside_the_allowlist_are_withheld():
+    config = UserBotConfig(voice_fact_domains=[FactDomain.WORK.value, FactDomain.PREFERENCE.value])
     service, *_ = _service(config=config)
     ctx = await service.assemble(user_id="u1", account_id="a1")
     domains = {f["domain"] for f in ctx.biographical_facts}
     assert "medical_records" not in domains and "finance" not in domains
-    assert FactDomain.WORK.value in domains
+    assert FactDomain.BIOGRAPHICAL.value not in domains
+    assert domains == {FactDomain.WORK.value, FactDomain.PREFERENCE.value}
 
 
 @pytest.mark.asyncio
-async def test_unknown_excluded_domain_is_ignored_not_fatal():
-    config = UserBotConfig(voice_excluded_fact_domains=["medcal_records"])
+async def test_unknown_allowed_domain_is_ignored_not_fatal():
+    config = UserBotConfig(voice_fact_domains=[FactDomain.WORK.value, "medcal_records"])
     service, *_ = _service(config=config)
     ctx = await service.assemble(user_id="u1", account_id="a1")
-    assert len(ctx.biographical_facts) == len(ALL_DOMAIN_FACTS)
+    assert ctx.biographical_facts == [f for f in ALL_DOMAIN_FACTS if f["domain"] == FactDomain.WORK.value]
 
 
 @pytest.mark.asyncio
@@ -153,5 +156,5 @@ async def test_primary_channel_is_the_notification_chain():
     notifications.resolve_channel.assert_awaited_once_with("u1")
 
 
-def test_user_bot_config_excludes_nothing_by_default():
-    assert UserBotConfig().voice_excluded_fact_domains == []
+def test_user_bot_config_allows_biographical_and_preference_by_default():
+    assert UserBotConfig().voice_fact_domains == [FactDomain.BIOGRAPHICAL.value, FactDomain.PREFERENCE.value]
