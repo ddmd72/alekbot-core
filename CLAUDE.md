@@ -487,7 +487,7 @@ on both voice paths as of 2026-09-27, no longer `high`).
 **Consolidation** — long-term memory formation: sliding window fills → batch to Cloud Tasks queue →
 ConsolidationAgent ("Life Chronicler") extracts facts/principles from raw messages (non-blocking).
 Thresholds (per-user): prod threshold=50/batch=30, dev threshold=70/batch=50. Dedup 0.96 (number-aware —
-a duplicate beats a loss). 3 vectors/fact + SCD2; biographical cache updated for next conversation.
+a duplicate beats a loss). 3 vectors/fact + SCD2 (`update_fact` re-embeds on content change; `is_current` = latest of lineage, false only when superseded — `decisions/fact_s1_defects.md`); biographical cache updated for next conversation.
 **Serialization:** model parts use `p.text` (summary), NOT `p.full_text` (verbose + web_search_context);
 user parts `p.consolidation_text or p.text` (prefixed `\n\n`; `consolidation_text` is legacy, see below).
 **Loop alerts:** a pass that hits the turn cap without a final report posts a 🚨 ops alert (`AlertSinkPort`);

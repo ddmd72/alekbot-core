@@ -85,7 +85,7 @@ class ClusterDryRunAdapter(FactManagementPort):
         print(f"    ✅ [DRY-RUN] CREATE [{domain}|{temporal}]: {content[:90]}")
         return {"fact_id": fake_id, "status": "created", "message": "[DRY-RUN] not written"}
 
-    async def update_fact(self, fact_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
+    async def update_fact(self, fact_id: str, updates: Dict[str, Any], account_id: str) -> Dict[str, Any]:
         self.operations.append({"action": "UPDATE", "fact_id": fact_id, "updates": updates})
         preview = {k: v for k, v in updates.items() if "vector" not in k}
         print(f"    ✏️  [DRY-RUN] UPDATE {fact_id}: {preview}")
@@ -140,7 +140,7 @@ class DryRunFactManagementAdapter(FactManagementPort):
         return {"fact_id": fake_id, "status": "created", "message": "[DRY-RUN] not written"}
 
     async def update_fact(
-        self, fact_id: str, updates: Dict[str, Any]
+        self, fact_id: str, updates: Dict[str, Any], account_id: str
     ) -> Dict[str, Any]:
         self.operations.append(
             {"action": "UPDATE", "fact_id": fact_id, "updates": updates}

@@ -77,6 +77,8 @@ Also recorded, since it shaped the design:
 - `invalidate_fact` and `_enforce_directive_cap` both write only `state`, leaving `is_current=True`.
   Retrieval filters on `state`, so behavior is correct, but the two flags disagree on 2 records today.
   Any future code that trusts `is_current` for directives will see a different set. Not fixed here.
+  **Update 2026-10-21:** fixed by fact S1 (`lifecycle_fields` sets `valid_to`/`is_current` on every state
+  change; the backfill repairs existing documents). See `fact_s1_defects.md`.
 - Directives render only into the **orchestrator** prompt. The PDF/DOCX rule is therefore binding on
   the agent that does not generate documents and absent from DocPlanner/PdfGenerator, which do.
   Demotion to a preference fact does not fix that; a channel to the specialist would. Not fixed here.

@@ -5,7 +5,8 @@ from google.cloud import firestore
 from google.cloud.firestore import FieldFilter
 from google.cloud.firestore_v1.vector import Vector
 from google.cloud.firestore_v1.base_vector_query import DistanceMeasure
-from ..domain.entities import FactEntity, FactType
+from ..domain.entities import FactEntity, FactState, FactType
+from ..domain.fact_lifecycle import lifecycle_fields
 from ..domain.vector_math import cosine_similarity
 from ..domain.deduplication_service import SmartDeduplication
 from ..ports.repository import FactRepository
@@ -311,7 +312,11 @@ class FirestoreFactRepository(FactRepository):
             raise ValueError(f"Fact not found: {fact_id}")
         if doc.to_dict().get("account_id") != account_id:
             raise PermissionError("Not authorized to modify this fact")
-        await doc_ref.update({"state": "invalidated"})
+        now = datetime.datetime.now(datetime.timezone.utc)
+        fields = lifecycle_fields(FactState.INVALIDATED, now)
+        fields["state"] = fields["state"].value  # Firestore stores the enum value
+        fields["last_updated"] = now
+        await doc_ref.update(fields)
 
     @log_execution_time
     async def search_facts(
@@ -380,7 +385,7 @@ class FirestoreFactRepository(FactRepository):
                 "account_id", "owner_id", "created_by_user_id", "lineage_id",
                 "text", "type", "state", "domain", "tags", "context_priority",
                 "valid_from", "valid_to", "created_at", "source", "version",
-                "visibility", "metadata", "temporal_class", "reported_date",
+                "visibility", "metadata", "temporal_class", "reported_date", "context",
                 "vector",  # Required by SearchEnrichmentService for RRF semantic dedup
                 # tags_vector and metadata_vector excluded (~6KB saved per result)
             ])
@@ -672,7 +677,7 @@ class FirestoreFactRepository(FactRepository):
         vector_query = self.facts_col.where(
             filter=FieldFilter("account_id", "==", fact.account_id)
         ).where(
-            filter=FieldFilter("is_current", "==", True)
+            filter=FieldFilter("state", "==", "current")  # dedupe only against visible facts
         ).find_nearest(
             vector_field="vector",
             query_vector=fact.vector,  # REMOVED Vector() wrapper
@@ -921,7 +926,7 @@ class FirestoreFactRepository(FactRepository):
         """
         Direct Firestore query by domain (uses existing index).
         
-        Index: (account_id, domain, created_at, __name__)
+        Index: (account_id, state, domain, created_at DESC, __name__ DESC)
         Query: WHERE account_id=X AND domain IN [Y,Z] AND state="current"
         
         Session 2026-02-17: Domain-based search for router enrichment.
@@ -955,7 +960,7 @@ class FirestoreFactRepository(FactRepository):
             filter=FieldFilter("domain", "in", domains)
         ).where(
             filter=FieldFilter("state", "==", "current")
-        ).order_by("created_at").limit(limit)
+        ).order_by("created_at", direction=firestore.Query.DESCENDING).limit(limit)  # freshest first
         
         docs = await query.get()
         

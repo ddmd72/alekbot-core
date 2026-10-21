@@ -128,13 +128,16 @@ class TestTrackingFactManagement:
     async def test_update_fact_with_content(self):
         tracker, real = self._make_tracking()
         real.update_fact = AsyncMock(return_value={"status": "updated"})
-        await tracker.update_fact(fact_id="fid-1", updates={"content": "updated text"})
+        await tracker.update_fact(fact_id="fid-1", updates={"content": "updated text"}, account_id="acc-1")
+        real.update_fact.assert_awaited_once_with(
+            fact_id="fid-1", updates={"content": "updated text"}, account_id="acc-1"
+        )
         assert tracker.changed == [("fid-1", "updated text")]
 
     async def test_update_fact_without_content(self):
         tracker, real = self._make_tracking()
         real.update_fact = AsyncMock(return_value={"status": "updated"})
-        await tracker.update_fact(fact_id="fid-1", updates={"state": "SUPERSEDED"})
+        await tracker.update_fact(fact_id="fid-1", updates={"state": "SUPERSEDED"}, account_id="acc-1")
         assert tracker.changed == []
 
     async def test_merge_facts_with_new_fact_id(self):
@@ -517,7 +520,9 @@ class TestExecuteFactManagementTools:
         results = await agent._execute_fact_management_tools([tc], _USER_ID, _ACCOUNT_ID)
 
         assert results[0].name == "update_fact"
-        fm.update_fact.assert_awaited_once_with(fact_id="existing-f", updates={"content": "revised"})
+        fm.update_fact.assert_awaited_once_with(
+            fact_id="existing-f", updates={"content": "revised"}, account_id=_ACCOUNT_ID
+        )
 
     async def test_merge_facts(self):
         agent, fm = self._make_agent_with_fm()

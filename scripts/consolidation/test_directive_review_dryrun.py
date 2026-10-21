@@ -257,7 +257,7 @@ class DryRunFactManagementAdapter(FactManagementPort):
         print(f"      ✅ CREATE [{domain}] {content[:80]}")
         return {"fact_id": fake_id, "status": "created", "message": "[DRY-RUN] not written"}
 
-    async def update_fact(self, fact_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
+    async def update_fact(self, fact_id: str, updates: Dict[str, Any], account_id: str) -> Dict[str, Any]:
         state = str(updates.get("state", "")).lower()
         action = "INVALIDATE" if state == "invalidated" else "UPDATE"
         self.operations.append({
