@@ -113,10 +113,10 @@ class TestGuards:
         assert status == 400
         fetch.assert_not_awaited()
 
-    async def test_no_fetch_is_501(self):
+    async def test_no_fetch_is_422(self):
         worker, _, _ = _worker(fetch=None)
         _, status = await worker._dispatch(_payload(), {})
-        assert status == 501
+        assert status == 422
 
     async def test_retrieval_failure_is_500(self):
         worker, notification, _ = _worker(fetch=AsyncMock(side_effect=RuntimeError("api")))
@@ -187,3 +187,42 @@ class TestDeliverReportTask:
                                          task_queue=queue, failure_notification=notifier)
         assert ok is False
         assert notifier.notify.await_args.kwargs["system_alert"] == notices.report_not_prepared_notice("tides")
+
+
+class TestThroughHandle:
+    async def test_500_releases_the_task_claim(self):
+        from src.domain.cloud_task_delivery import CloudTaskDelivery
+        worker, _, _ = _worker(fetch=AsyncMock(side_effect=RuntimeError("api")))
+        dedup = MagicMock()
+        dedup.try_mark_processed = AsyncMock(return_value=True)
+        dedup.release = AsyncMock()
+        worker._task_dedup = dedup
+        delivery = MagicMock(spec=CloudTaskDelivery)
+        delivery.task_name = "projects/p/tasks/deep_research_webhook_event-abc"
+        _, status = await worker.handle(dict(_PAYLOAD), delivery)
+        assert status == 500
+        dedup.release.assert_awaited_once_with(delivery.task_name)
+
+    async def test_200_keeps_the_task_claim(self):
+        from src.domain.cloud_task_delivery import CloudTaskDelivery
+        worker, _, _ = _worker(response={})
+        dedup = MagicMock()
+        dedup.try_mark_processed = AsyncMock(return_value=True)
+        dedup.release = AsyncMock()
+        worker._task_dedup = dedup
+        delivery = MagicMock(spec=CloudTaskDelivery)
+        delivery.task_name = "t"
+        _, status = await worker.handle(_payload(event_type="response.cancelled"), delivery)
+        assert status == 200
+        dedup.release.assert_not_awaited()
+
+
+def test_main_py_wires_fetch_and_store_into_worker_handler():
+    import ast
+    from pathlib import Path
+    tree = ast.parse((Path(__file__).resolve().parents[3] / "main.py").read_text())
+    kwargs = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "WorkerHandler":
+            kwargs = [kw.arg for kw in node.keywords]
+    assert "deep_research_fetch" in kwargs and "prompt_content_store" in kwargs
