@@ -3368,7 +3368,7 @@ class DriveIndexingService:
 
     async def _sweep_transcript_orphans(self, user_id: str, keep: bool, summary: Dict[str, int]) -> bool:
         """T-R14: the collection-group sweep of window and part documents, one round. True when it is finished (0 left, or
-        its index is missing: logged ERROR naming the index, retried at the next purge or daily pass)."""
+        its index is missing: logged ERROR naming the index, retried on the next purge; there is no daily pass)."""
         try:
             deleted = await self._repo.delete_user_transcript_orphans(user_id, RECORD_WRITE_BATCH, keep_transcripts=keep)
         except DriveIndexStoreUnavailable as exc:

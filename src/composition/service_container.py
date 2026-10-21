@@ -195,6 +195,10 @@ class ServiceContainer:
         # flag is read from Firestore on every search, never from the agent cache, so the service gets
         # its own (uncached) user repository.
         self.drive_search_service: Optional[DriveSearchService] = None
+        # The transcription kill switch as the indexer sees it (os.getenv: an optional knob, not a secret): the Cabinet
+        # shows the transcription disclosure only while it is on (same values as indexer_main.transcribe_enabled).
+        self.drive_transcribe_switch_on: bool = (
+            str(os.getenv("DRIVE_TRANSCRIBE_ENABLED") or "off").strip().lower() in ("1", "on", "true", "yes"))
         if self.user_drive is not None and self.drive_index_repo is not None:
             self.drive_search_service = DriveSearchService(
                 repo=self.drive_index_repo, embeddings=self.embedding_service,

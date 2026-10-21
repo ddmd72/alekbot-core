@@ -111,7 +111,7 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     refused is halved down to the chunk. Prompts are owner-uploaded tokens (`COGNITIVE_PROCESS_` / `OUTPUT_FORMAT_`
     `DRIVE_PROFILER`, `DRIVE_PASSAGES`); no fallback prompt.
 - DriveTranscriber (`drive_transcriber`) — audio-window transcription for the drive's recordings
-  (USER_DRIVE_INDEXING_RFC §27.5, Δ102; T1 built, not deployed).
+  (USER_DRIVE_INDEXING_RFC §27.5, Δ102; T1 live since 2026-10-21, owner only).
   - **Not a `_call_llm` agent** (Δ102): a Gemini **Batch** request is not a call, so no retry, failover, `TokenLedger` scope,
     `prompt_content` row or Logfire span is inherited. `DriveTranscriberAgent` only builds the request (prompt + schema + the
     uploaded provider file's name) and parses the answer; `DriveTranscriptRunner` (`composition/`) submits through
