@@ -90,7 +90,7 @@ class FirestoreDedupStore(DedupStore):
             logger.debug(f"✅ Atomic dedup mark stored for event {event_id[:12]}...")
             return True
         except AlreadyExists:
-            pass
+            logger.debug(f"Dedup mark exists for event {event_id[:12]}..., checking liveness")
         snap = await doc_ref.get()
         if not snap.exists:
             # Released between our create and get: one more attempt, then give way.
