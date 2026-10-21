@@ -660,7 +660,15 @@ segments), and a model turn `📞 <note>`, which is exactly what was delivered. 
 a bare `[System: phone call ended]` and a third-person report ("the caller asked…"). Alek read it as
 a reply of his own that he never gave. The note speaks with the shared character slots and the
 user's `LANG_*` (§4.1). Its length follows what is worth keeping: one line when the call held no new
-fact, decision or open request. Smart's `PROTOCOL_VOICE_PARTNER` tells Alek who Lelik is and how to
+fact, decision or open request.
+
+> **Revised 2026-10-21 (owner decision):** the note is written as Lelik himself retelling the call —
+> first person, to the caller, with his `VOICE_PERSONA/CARE/HUMOR/TEMPERAMENT_LELIK` tokens instead
+> of Smart's slots, matching how he sounded in `response_text`, with emojis, up to 60 words. With
+> Smart's slots and soft wording it came out as a dry third-person report ("користувач сказав…"),
+> and Lelik's next call read that register back from history. The summarizer is still a separate
+> cheap model over the transcript, not the live session (the rule above). Known slip: in character
+> it occasionally embellishes a detail; the role token's "do not invent" stays, accepted for now. Smart's `PROTOCOL_VOICE_PARTNER` tells Alek who Lelik is and how to
 read these pairs.
 
 **Which session, precisely.** A session is per channel (`session_id = f"{user_id}:{channel_id}"`)

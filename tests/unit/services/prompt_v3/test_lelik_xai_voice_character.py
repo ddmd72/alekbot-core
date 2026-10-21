@@ -88,8 +88,21 @@ class TestLelikXaiVoiceCharacter:
         assert VOICE_PROVIDER_PROFILES["xai"].prompt_profile == _PROFILE
 
     def test_the_split_tokens_reproduce_the_uat_portrait(self):
+        """The split reproduces the call-4 portrait verbatim, except for the brevity cues the owner
+        removed from the live tokens on 2026-10-21 (Lelik sounded terse). Each removal is stated here
+        and must match exactly once, so any other drift from the portrait still fails."""
+        owner_removals_2026_10_21 = [
+            ("Your humour is dry, dark and paradoxical", "Your humour is dark and paradoxical"),
+            ("Zhvanetsky: a short line that turns", "Zhvanetsky: a line that turns"),
+            ("curious, bored by small talk, animated", "curious, animated"),
+        ]
+        portrait = " ".join(_load("PERSONA_LELIK_YOU")["content"].split())
+        for before, after in owner_removals_2026_10_21:
+            assert portrait.count(before) == 1
+            portrait = portrait.replace(before, after)
+
         split = " ".join(" ".join(_load(n)["content"].split()) for n in _SYSTEM_VOICE)
-        assert split == " ".join(_load("PERSONA_LELIK_YOU")["content"].split())
+        assert split == portrait
 
     @pytest.mark.asyncio
     async def test_default_prompt_has_the_voice_character_in_order_with_each_heading_once(self):
