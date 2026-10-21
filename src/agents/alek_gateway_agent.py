@@ -12,11 +12,16 @@ answers (§4.10 rule 2); the relay never posts to chat.
 
 tell_alek (§4.15.2): an errand the caller is not waiting for. The commission says so, and
 Alek's whole answer is posted to chat — it is the only place the caller will see the outcome.
+
+Drive notes (DRIVE_FILE_NOTES_RFC §4.9, D18): on both paths, a note receipt or an erase request in Smart's answer is
+posted to chat through UserNotificationService.notify_drive_note_receipt, independent of the answer copy. A failed
+post is logged at ERROR and never fails the answer (the note is stored).
 """
 import asyncio
-from typing import TYPE_CHECKING, Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional, Sequence
 
-from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse, AgentStatus
+from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse, AgentStatus, DeliveryItem
+from ..domain.drive_note import DRIVE_NOTE_ERASE_DELIVERY, DRIVE_NOTE_RECEIPT_DELIVERY
 from ..domain.delegation_timestamp import strip_delegation_timestamp
 from ..domain.llm import MessagePart
 from ..domain.messaging import SmartResponse
@@ -138,4 +143,23 @@ class AlekGatewayAgent(BaseAgent):
                 except Exception as exc:
                     # The spoken answer matters more than its chat copy.
                     logger.error(f"[AlekGateway] chat copy failed for {(user_id or '')[:8]}: {exc}", exc_info=True)
+        await self._post_drive_note_items(user_id, account_id, response.delivery_items,
+                                          _ERRAND_POST_TIMEOUT_S if errand else _ANSWER_COPY_TIMEOUT_S)
         return AgentResponse.success(task_id=message.task_id, agent_id=self.agent_id, result=answer)
+
+    async def _post_drive_note_items(self, user_id: Optional[str], account_id: Optional[str],
+                                     items: Sequence[DeliveryItem], timeout_s: float) -> None:
+        """Each drive-note receipt and erase request goes to chat (§4.9): the owner sees what was stored at once."""
+        for item in items or ():
+            if item.type not in (DRIVE_NOTE_RECEIPT_DELIVERY, DRIVE_NOTE_ERASE_DELIVERY):
+                continue
+            try:
+                await asyncio.wait_for(
+                    self._notifications.notify_drive_note_receipt(user_id or "", account_id or "", item),
+                    timeout=timeout_s,
+                )
+            except asyncio.TimeoutError:
+                logger.error(f"[AlekGateway] drive note {item.type} post timed out for {(user_id or '')[:8]}")
+            except Exception as exc:
+                logger.error(f"[AlekGateway] drive note {item.type} post failed for {(user_id or '')[:8]}: {exc}",
+                             exc_info=True)

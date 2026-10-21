@@ -17,15 +17,20 @@ Callers:
 from datetime import datetime, timezone
 from typing import Dict, Mapping, Optional, Protocol, TYPE_CHECKING
 
-from ..domain.agent import AgentMessage, AgentIntent, AgentResponse, AgentStatus
+from ..domain.agent import AgentMessage, AgentIntent, AgentResponse, AgentStatus, DeliveryItem
+from ..domain.drive_note import DRIVE_NOTE_ERASE_DELIVERY
+from ..domain.drive_note_receipt import drive_note_call_event, render_drive_note_erase, render_drive_note_receipt
+from ..domain.language import LanguageCode
 from ..domain.llm import Message, MessagePart
 from ..domain.messaging import SmartResponse
 from ..domain.notification_kind import NotificationKind
 from ..domain.notify_result import NotifyResult
 from ..domain.request_context import RequestContext
+from ..domain.ui_messages import UIMessage
 from ..domain.user import PerformanceTier
 from ..domain.voice_call_note import CALL_NOTE_PREFIX
 from ..ports.notification_channel_factory_port import NotificationChannelFactoryPort
+from ..ports.language_service_port import LanguageServicePort
 from ..ports.notification_state_port import NotificationStatePort
 from ..ports.platform_media_port import PlatformMediaPort
 from ..ports.session_store import SessionStore
@@ -33,6 +38,7 @@ from ..utils.logger import logger
 
 if TYPE_CHECKING:
     from ..domain.notification import NotificationChannel
+    from .localization_service import LocalizationService
 
 
 class MessageRouter(Protocol):
@@ -67,6 +73,8 @@ class UserNotificationService:
         notification_sla: Mapping[NotificationKind, _SLA],
         platform_media: Optional[PlatformMediaPort] = None,
         session_store: Optional[SessionStore] = None,
+        localization: Optional["LocalizationService"] = None,
+        language: Optional[LanguageServicePort] = None,
     ):
         self._state_repo = state_repo
         self._channel_factory = channel_factory
@@ -79,6 +87,10 @@ class UserNotificationService:
         if platform_media is not None:
             self._platform_media[_SLACK] = platform_media
         self._session_store: Optional[SessionStore] = session_store
+        # The drive-note receipt posted from a call (DRIVE_FILE_NOTES_RFC §4.9) is rendered here, in the owner's UI
+        # language; without localization it is not posted (logged).
+        self._localization = localization
+        self._language = language
 
     def register_platform_media(self, platform: str, port: PlatformMediaPort) -> None:
         """The media port `notify_file_bytes` uses for channels of `platform` ("slack", "telegram")."""
@@ -247,6 +259,74 @@ class UserNotificationService:
                 f"(platform={channel_info.platform}): {exc}",
                 exc_info=True,
             )
+
+    async def notify_drive_note_receipt(self, user_id: str, account_id: str, item: DeliveryItem) -> None:
+        """Post a drive-note receipt or erase request that Alek produced during a call with Lelik (DRIVE_FILE_NOTES_RFC
+        §4.9, D18) to the owner's chat, rendered by the same renderer ConversationHandler uses, and append a history
+        pair — `[System: drive note saved during a call with Lelik: <path> ref=… v<n>]`, then the posted text — so
+        "undo that" later in the chat resolves the ref. An erase request posts its line and then the command alone;
+        the command never enters history. Resolves the primary / last-active channel, like notify_call_summary.
+        Every failure is logged and swallowed: the note is stored whatever happens here."""
+        if self._localization is None:
+            logger.error(f"[Notification] No localization wired: drive note {item.type} not posted for {user_id[:8]}")
+            return
+        lang = await self._ui_language(user_id)
+        localization = self._localization
+
+        def strings(message: UIMessage) -> str:
+            return localization.get_ui_string(lang, message)
+
+        try:
+            if item.type == DRIVE_NOTE_ERASE_DELIVERY:
+                line, command = render_drive_note_erase(item.data, strings)
+                posts, kept = [line, command], line
+            else:
+                kept = render_drive_note_receipt(item.data, strings)
+                posts = [kept]
+        except Exception as exc:
+            logger.error(f"[Notification] drive note {item.type} could not be rendered for {user_id[:8]}: {exc}",
+                         exc_info=True)
+            return
+        channel_info = await self.resolve_channel(user_id)
+        if not channel_info:
+            logger.info(f"[Notification] No channel for {user_id[:8]}, drive note {item.type} skipped")
+            return
+        response_channel = self._channel_factory.create(platform=channel_info.platform,
+                                                        channel_id=channel_info.channel_id)
+        if not response_channel:
+            logger.warning(f"[Notification] Cannot create channel for a drive note: platform={channel_info.platform}")
+            return
+        try:
+            for post in posts:
+                await response_channel.send_long_text(post)
+        except Exception as exc:
+            logger.error(f"[Notification] drive note {item.type} delivery failed for {user_id[:8]} "
+                         f"(platform={channel_info.platform}): {exc}", exc_info=True)
+            return
+        logger.info(f"📬 [Notification] drive note {item.type} delivered to {channel_info.platform} "
+                    f"channel={channel_info.channel_id} user={user_id[:8]}")
+        if not self._session_store:
+            return
+        try:
+            await self._session_store.append_messages_batch(
+                session_id=f"{user_id}:{channel_info.channel_id}",
+                owner_id=user_id,
+                messages=[
+                    Message(role="user", parts=[MessagePart(text=drive_note_call_event(item.type, item.data))]),
+                    Message(role="model", parts=[MessagePart(text=kept, full_text=kept)]),
+                ],
+            )
+        except Exception as exc:
+            logger.error(f"[Notification] drive note history pair failed for {user_id[:8]}: {exc}", exc_info=True)
+
+    async def _ui_language(self, user_id: str) -> LanguageCode:
+        if self._language is None:
+            return LanguageCode.EN
+        try:
+            return await self._language.resolve_ui_language(user_id)
+        except Exception as exc:
+            logger.warning(f"[Notification] UI language lookup failed for {user_id[:8]}: {exc}")
+            return LanguageCode.EN
 
     async def notify_answer_copy(self, user_id: str, account_id: str, answer: SmartResponse) -> None:
         """A copy of an answer Alek gave during a phone call (VOICE_COMPANION §4.10 rule 2):
