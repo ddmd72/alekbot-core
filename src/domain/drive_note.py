@@ -44,6 +44,7 @@ from typing import Any, Dict, FrozenSet, List, Mapping, Optional, Sequence, Tupl
 from pydantic import BaseModel, ConfigDict, Field
 
 from .drive_index import DriveChange, DriveIndexRecord, RecordState
+from .drive_index_params import NOTE_KEYS_MAX   # §5.4: the note's key cap; defined beside the keyer's caps (S2 Core delta B1)
 from .drive_card import content_hash_of
 from .drive_index_policy import kind_of
 from .drive_keys import phrase_keys, token_spans
@@ -55,7 +56,6 @@ from .user_drive import DriveItem, make_drive_ref, parse_drive_ref
 
 NOTE_WORDS_MAX = 80                         # N1: words, counted with the keyer's `token_spans` (script-independent)
 NOTE_CHARS_MAX = 600                        # N1: characters (code points) of the normalized text
-NOTE_KEYS_MAX = 320                         # §5.4: the note's own key cap (classifiers first, never cut); used by S2
 LIFE_AREAS_MAX = LIFE_DOMAINS_MAX           # 3, the profile's own cap (drive_profile.py)
 ERASE_CODE_TTL = timedelta(minutes=10)      # §4.8: an erase code works once, for ten minutes
 NOTE_WRITES_PER_TURN = 10                   # §4.2: per execution, then refused (a steered burst is bounded)

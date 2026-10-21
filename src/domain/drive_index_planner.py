@@ -359,6 +359,9 @@ def _build(change: DriveChange, cls: Classification, existing: Optional[DriveInd
         name_tokens=name_keys_v2(change.name) if searchable(cls.reason) else (), name_keys_version=NAME_KEYS_VERSION,
         content_hash=content_hash_of(change), probe_pending=cls.probe_pending, probed_child_count=probed,
         seen_epoch=_stamp(existing, ctx, observed),
+        # DRIVE_FILE_NOTES_RFC §5.1 a (review I2): a record this observation creates looks its owner note up in the
+        # one write gate (`_commit`); an existing record carries its copy of the note across (`replace(existing)`)
+        note_lookup_due=True if existing is None else base.note_lookup_due,
     )
     # A capped record keeps its cap until a release decides again (§5.4); one that can hold no card drops it.
     rec = replace(rec, card_capped=rec.card_capped and structurally_card_eligible(rec))
