@@ -84,6 +84,12 @@ The user's long-term file area: their OneDrive App Folder, behind the provider-n
   Two switches must both be on: the indexer's kill switch (`DRIVE_TRANSCRIBE_ENABLED`, off by default) and the user's own flag
   (`drive_transcribe_enabled`, off by default, set by the owner's script). No transcript file is written to the drive yet (T2) and
   there is no summary yet (T3). See §4.23.
+- **T2 read side (built on the T2 branch, not deployed; RFC §27.9.8, §27.9.11).** Chat drive writes are refused under, into
+  or over the bot's `_Transcripts` folder (the Step 1 guard in `UserDriveService`; the agent answers one localized line).
+  `search_files_in_drive` with `drive_deleted` (one flag shared with the owner-notes RFC §6.4) searches the transcripts of
+  deleted recordings from the mirror ledger, even with drive search off; a default search never returns an archived
+  transcript. A ref to a file of the mirror opens from the pinned store entry, capped like any transcript. The Cabinet
+  says that `_Transcripts` and its Archive stay on the drive after an indexing opt-out (wording to be reviewed by the owner).
 
 The drive is the source of truth; the index is a disposable mirror. Everything in it can be rebuilt from the drive.
 

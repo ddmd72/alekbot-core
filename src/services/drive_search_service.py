@@ -23,6 +23,8 @@ Public interface:
     await search(user_id, request) -> DriveSearchResult
     await indexing_status(user_id) -> DriveIndexingStatus     # Cabinet (§6)
     await access_note(user_id, *, item_id=None, path=None) -> Optional[str]   # list/open on a 404 (§26.2, Δ55)
+    await search_deleted(user_id, drive_query) -> str          # `drive_deleted`: archived transcripts (§27.9.11)
+    await archived_text(user_id, mirror_item_id, ...) -> Optional[str]   # opening a file of the bot's `_Transcripts`
 
 Files the bot cannot open (§26.2, D33): their cards say so in the `index:` line (drive_search.index_line), the coverage
 line counts them from the tick's `inaccessible` counter (Δ56), and `access_note` gives list and open the same sentence
@@ -35,7 +37,7 @@ import secrets
 import time
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timezone
-from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Set, Tuple, Union
+from typing import Any, Awaitable, Callable, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Set, Tuple, Union
 
 from ..domain.drive_card import card_text
 from ..domain.drive_enrich_plan import COVERAGE_COUNTERS, GAP_HELD, GAP_NO_PASSAGES, GAP_WAITING
@@ -47,7 +49,7 @@ from ..domain.drive_index import (
 from ..domain.drive_index_lean import ChunkId
 from ..domain.drive_index_params import (
     ABOUT_FETCH, ABOUT_SHOWN, CARD_FETCH, CHUNK_FETCH, FETCH_MAX, FOLDER_INMEM_CARDS, FOLDER_INMEM_CHUNKS,
-    GROUP_READ_MAX, HINT_FETCH, INACCESSIBLE_SCAN_MAX, K, LABELLED_SHOWN, MAX_CARD_RECORDS_PER_USER, MENTIONED_SHOWN, NAME_FETCH,
+    ARCHIVE_QUERY_MAX, DELETED_SHOW_MAX, GROUP_READ_MAX, HINT_FETCH, INACCESSIBLE_SCAN_MAX, K, LABELLED_SHOWN, MAX_CARD_RECORDS_PER_USER, MENTIONED_SHOWN, NAME_FETCH,
     NAME_KEY_QUERIES, PASSAGE_MAX_CHUNKS_PER_FILE, PROFILE_MIN_CHARS, RELATED_MAX, RELATED_SMALL, TRANSLATED_SHOWN, WINDOW_CHARS_TOTAL_V2,
     TRANSCRIBE_USD_PER_MONTH, TRANSCRIPT_OPEN_MAX_CHARS, WINDOW_MAX, WORD_FETCH, WORD_FILES_MAX,
 )
@@ -62,7 +64,10 @@ from ..domain.drive_search import (
     hides_descendants, in_date_range, kinds_for, make_card, normalize_path, path_match, record_visible,
     render_results, resolve_chain, search_gate,
 )
-from ..domain.drive_transcript_render import card_segment, open_text
+from ..domain.drive_deleted_search import DeletedHit, matches as deleted_matches, passage, render_deleted, transcript_line
+from ..domain.drive_mirror import KIND_FILE, MIRROR_ACTIVE, MirrorDoc, doc_key
+from ..domain.drive_mirror_names import driver_keys
+from ..domain.drive_transcript_render import card_segment, cap_plain_text, open_text
 from ..domain.drive_tier_explain import explain, not_matched, passage_window
 from ..domain.drive_tier_pool import (
     ConceptHits, candidate_ids, concept_trigrams, document_frequency, document_frequency_common, name_word_concepts,
@@ -73,8 +78,9 @@ from ..domain.drive_tiers import (
     WHERE_HINT, Allowance, FileKeys, FileMatch, allowances, chunks_needing_text, classify,
     meaning_scores, name_query_keys, related_floor, size_band, source_scores,
 )
-from ..domain.user_drive import parse_drive_ref
+from ..domain.user_drive import DriveConnection, DriveItemNotFoundError, parse_drive_ref
 from ..ports.drive_index_repository import DriveIndexRepository
+from ..ports.drive_mirror_repository import ARCHIVE_FAMILY, NAME_FAMILY, DriveMirrorRepository
 from ..ports.embedding_service import EmbeddingService
 from ..ports.user_drive_port import UserDrivePort
 from ..ports.user_repository import UserRepository
@@ -90,6 +96,12 @@ _TIERS: Tuple[MatchTier, ...] = (MatchTier.ABOUT, MatchTier.MENTIONED, MatchTier
 # Cards that show a passage when the match came from a chunk or a grounded keyword (P6 review m3: Labelled too)
 _PASSAGE_TIERS = frozenset({MatchTier.MENTIONED, MatchTier.TRANSLATED, MatchTier.LABELLED})
 _VALIDITY = KeyFamily.VALIDITY_WORD.value
+
+# A source of the deleted-files section (§27.9.11): (user, the query's concepts, the connection) -> (hits, how many more
+# matched and were not shown). The transcript source is built in; the owner-notes source (notes RFC §6.4) is added with
+# `add_deleted_source`, without touching this one.
+DeletedSource = Callable[[str, Sequence[Concept], DriveConnection], Awaitable[Tuple[List[DeletedHit], int]]]
+_MIRROR_CHAIN_MAX = 12   # ledger parents walked to build a mirror path
 
 Chain = Optional[Tuple[str, Tuple[str, ...]]]   # (path, ancestor ids) or None when hidden
 Rec = Any   # a DriveIndexRecord or a DriveRecordLean: both carry the fields visibility, filters and coverage read
@@ -273,10 +285,13 @@ class DriveSearchService:
     def __init__(self, repo: DriveIndexRepository, embeddings: EmbeddingService, users: UserRepository,
                  drive: UserDrivePort, *, embedding_space: str, clock: Callable[[], datetime] = _utcnow,
                  nonce: Callable[[], str] = _nonce, monotonic: Callable[[], float] = time.monotonic,
-                 transcribe_cap_usd: float = TRANSCRIBE_USD_PER_MONTH) -> None:
+                 transcribe_cap_usd: float = TRANSCRIBE_USD_PER_MONTH,
+                 mirror: Optional[DriveMirrorRepository] = None) -> None:
         """`embedding_space` is the space query vectors are embedded in (the adapter's EMBEDDING_SPACE). The
         kNN streams run only while the index's cards are in it (§12.3). `transcribe_cap_usd` is the transcription cap
-        the indexer applies (`effective_monthly_cap(DRIVE_TRANSCRIBE_USD_CAP)`, T-R3), shown by the Cabinet."""
+        the indexer applies (`effective_monthly_cap(DRIVE_TRANSCRIBE_USD_CAP)`, T-R3), shown by the Cabinet. `mirror` is
+        the transcript mirror's repository (§27.9): the deleted-files search and the open of an archived transcript
+        read it; without it neither has anything to say."""
         self._repo = repo
         self._embeddings = embeddings
         self._users = users
@@ -286,6 +301,8 @@ class DriveSearchService:
         self._monotonic = monotonic
         self._space = embedding_space
         self._transcribe_cap = transcribe_cap_usd
+        self._mirror = mirror
+        self._deleted_sources: List[DeletedSource] = [self._deleted_transcripts]
 
     # ------------------------------------------------------------------------------------------
     # Search
@@ -1343,12 +1360,183 @@ class DriveSearchService:
             body = card_segment(rec)
         elif rec.transcript_key:
             stored = await self._repo.get_transcript(user_id, rec.transcript_key)
-            body = open_text(stored, max_chars=TRANSCRIPT_OPEN_MAX_CHARS) if stored is not None else None
+            body = (open_text(stored, max_chars=TRANSCRIPT_OPEN_MAX_CHARS,
+                              mirror_path=await self._active_mirror_path(user_id, item_id))
+                    if stored is not None else None)
         else:
             body = None
         if not body:
             return None
         wrapped = wrap_untrusted(f"{label}\n{body}" if label else body, nonce=self._nonce(), ref=f"drive:{item_id}", path=path)
+        return f"{REFERENCE_REMINDER}\n{wrapped}"
+
+    # ------------------------------------------------------------------------------------------
+    # The transcript mirror's read side (§27.9.11)
+    # ------------------------------------------------------------------------------------------
+
+    def add_deleted_source(self, source: DeletedSource) -> None:
+        """Add a source to the deleted-files section (the owner-notes RFC's, §6.4): one flag, one section."""
+        self._deleted_sources.append(source)
+
+    async def search_deleted(self, user_id: str, drive_query: str) -> str:
+        """`search_files_in_drive` with `drive_deleted`: the heading `Deleted files (N):` and one wrapped entry per hit,
+        for Smart. Runs before (and without) the index gate: with drive search off it still answers from the ledger.
+        An empty query lists the newest. Speech is other people's: entries go inside the nonce wrapper, never logged."""
+        concepts = query_concepts(drive_query or "").concepts
+        try:
+            connection = await self._drive.connection(user_id)
+        except Exception:
+            logger.warning("[DriveSearch] deleted-files search: connection lookup failed", exc_info=True)
+            connection = DriveConnection(connected=False)
+        hits: List[DeletedHit] = []
+        more = 0
+        for source in self._deleted_sources:
+            found, rest = await source(user_id, concepts, connection)
+            hits.extend(found)
+            more += rest
+        logger.info(f"[DriveSearch] user={user_id[:8]} deleted-files hits={len(hits)} more={more} "
+                    f"concepts={len(concepts)} connected={connection.connected}")
+        return render_deleted(hits, more=more, connected=connection.connected and not connection.needs_reconnect)
+
+    async def _deleted_transcripts(self, user_id: str, concepts: Sequence[Concept],
+                                   connection: DriveConnection) -> Tuple[List[DeletedHit], int]:
+        if self._mirror is None:
+            return [], 0
+        candidates = await self._archived_candidates(user_id, concepts)
+        checkable = connection.connected and not connection.needs_reconnect
+        shown: List[Tuple[MirrorDoc, bool, bool]] = []     # (document, on the connected drive, verified)
+        index = 0
+        while index < len(candidates) and len(shown) < DELETED_SHOW_MAX:
+            batch = candidates[index:index + (DELETED_SHOW_MAX - len(shown))]
+            index += len(batch)
+            verdicts = await asyncio.gather(*(self._verify_archived(user_id, d, connection, checkable) for d in batch))
+            shown.extend((d, on_drive, verified) for d, (keep, on_drive, verified) in zip(batch, verdicts) if keep)
+        wanted = {k for c in concepts for k in c.word_keys}
+        roots = {r.root_item_id: r.root_name for r in await self._mirror.roots(user_id)}
+        folders: Dict[str, Optional[MirrorDoc]] = {}
+        stored_all = await asyncio.gather(*(self._stored(user_id, d) for d, _, _ in shown))
+        hits: List[DeletedHit] = []
+        for (doc, on_drive, verified), stored in zip(shown, stored_all):
+            archive_path = await self._mirror_path(user_id, doc, roots, folders)
+            hits.append(DeletedHit(
+                name=doc.source_name, path=doc.source_path, day=doc.archive_day,
+                transcript_line=transcript_line(doc.seconds, doc.speakers, doc.languages),
+                passage=(passage(stored, wanted) or "") if stored is not None and wanted else "",
+                refs=(f"archived transcript: drive:{doc.mirror_item_id} ({archive_path})",),
+                on_connected_drive=on_drive, verified=verified, nonce=self._nonce(),
+                ref=f"drive:{doc.mirror_item_id}"))
+        return hits, len(candidates) - index
+
+    async def _archived_candidates(self, user_id: str, concepts: Sequence[Concept]) -> List[MirrorDoc]:
+        """Archived transcript files matching every concept (strict AND over `archive_keys` and `name_keys`), newest
+        first; with no concept at all the newest ten (§27.9.11)."""
+        if self._mirror is None:
+            return []
+        if not concepts:
+            newest = await self._mirror.archived_newest(user_id, ARCHIVE_QUERY_MAX)
+            return [d for d in newest if d.kind == KIND_FILE][:10]
+        keys = driver_keys(concepts)
+        by_archive, by_name = await asyncio.gather(
+            self._mirror.archived_by_keys(user_id, ARCHIVE_FAMILY, keys, ARCHIVE_QUERY_MAX),
+            self._mirror.archived_by_keys(user_id, NAME_FAMILY, keys, ARCHIVE_QUERY_MAX))
+        found: Dict[str, MirrorDoc] = {}
+        for doc in (*by_archive, *by_name):
+            if doc.kind == KIND_FILE and deleted_matches(concepts, set(doc.archive_keys) | set(doc.name_keys)):
+                found[doc.key] = doc
+        return sorted(found.values(), key=lambda d: (d.archived_at or _EPOCH, d.key), reverse=True)
+
+    async def _verify_archived(self, user_id: str, doc: MirrorDoc, connection: DriveConnection,
+                               checkable: bool) -> Tuple[bool, bool, bool]:
+        """(keep, on the connected drive, verified). One `get_change` of the mirror file: not found or deleted means
+        the owner removed it, so it is not shown. A document of another drive, or an unreachable drive, is shown unchecked."""
+        if connection.drive_id and doc.drive_id != connection.drive_id:
+            return True, False, False
+        if not checkable:
+            return True, True, False
+        try:
+            change = await self._drive.get_change(user_id, doc.mirror_item_id)
+        except DriveItemNotFoundError:
+            return False, True, True
+        except Exception:
+            logger.warning("[DriveSearch] deleted-files search: archive check failed", exc_info=True)
+            return True, True, False
+        return (not change.deleted), True, True
+
+    async def _stored(self, user_id: str, doc: MirrorDoc) -> Optional[Any]:
+        if not doc.content_key:
+            return None
+        try:
+            return await self._repo.get_transcript(user_id, doc.content_key)
+        except Exception:
+            logger.warning("[DriveSearch] deleted-files search: store read failed", exc_info=True)
+            return None
+
+    async def _mirror_path(self, user_id: str, doc: MirrorDoc, roots: Mapping[str, str],
+                           folders: Dict[str, Optional[MirrorDoc]]) -> str:
+        """The file's path in the bot's folder (`_Transcripts/Archive/<day>/…/<name>`), built from the ledger's
+        `mirror_parent_id` chain; a chain that breaks ends at what is known."""
+        if self._mirror is None:
+            return doc.mirror_name
+        parts = [doc.mirror_name]
+        parent = doc.mirror_parent_id
+        for _ in range(_MIRROR_CHAIN_MAX):
+            if not parent:
+                break
+            if parent in roots:
+                parts.append(roots[parent])
+                break
+            if parent not in folders:
+                folders[parent] = await self._mirror.by_mirror_item(user_id, parent)
+            folder = folders[parent]
+            if folder is None:
+                break
+            parts.append(folder.mirror_name)
+            parent = folder.mirror_parent_id
+        return "/".join(p for p in reversed(parts) if p)
+
+    async def has_mirror_root(self, user_id: str) -> bool:
+        """The user has a `_Transcripts` folder on some drive (the Cabinet's disclosure clause, Δ202)."""
+        return self._mirror is not None and bool(await self._mirror.roots(user_id))
+
+    async def _active_mirror_path(self, user_id: str, item_id: str) -> str:
+        """The path of a source recording's transcript file in `_Transcripts`, for an open's cut note; "" without one
+        (no mirror, no file yet, or a failed lookup: the note then names nothing)."""
+        if self._mirror is None:
+            return ""
+        try:
+            key = doc_key(user_id, KIND_FILE, item_id)
+            doc = (await self._mirror.get_docs(user_id, [key])).get(key)
+            if doc is None or not doc.mirror_item_id or doc.state != MIRROR_ACTIVE:
+                return ""
+            roots = {r.root_item_id: r.root_name for r in await self._mirror.roots(user_id)}
+            return await self._mirror_path(user_id, doc, roots, {})
+        except Exception:
+            logger.warning("[DriveSearch] mirror path lookup failed", exc_info=True)
+            return ""
+
+    async def archived_text(self, user_id: str, mirror_item_id: str, *, label: str = "", path: str = "",
+                            file_text: Optional[Callable[[], Awaitable[str]]] = None) -> Optional[str]:
+        """What opening a transcript file of the mirror returns (§27.9.11): `open_text` of the pinned store entry, capped
+        at `TRANSCRIPT_OPEN_MAX_CHARS`, the cut note naming the file's path, inside the nonce wrapper under the
+        reference reminder. With no store entry, `file_text` (the downloaded file) is capped the same way. None when
+        the item is no mirror file (the caller opens it as any file). Speech is other people's: never logged."""
+        if self._mirror is None:
+            return None
+        doc = await self._mirror.by_mirror_item(user_id, mirror_item_id)
+        if doc is None or doc.kind != KIND_FILE:
+            return None
+        roots = {r.root_item_id: r.root_name for r in await self._mirror.roots(user_id)}
+        mirror_path = await self._mirror_path(user_id, doc, roots, {})
+        stored = await self._stored(user_id, doc)
+        body: Optional[str] = None
+        if stored is not None:
+            body = open_text(stored, max_chars=TRANSCRIPT_OPEN_MAX_CHARS, mirror_path=mirror_path) or None
+        if body is None and file_text is not None:
+            body = cap_plain_text(await file_text(), max_chars=TRANSCRIPT_OPEN_MAX_CHARS, path=mirror_path)
+        if not body:
+            return None
+        wrapped = wrap_untrusted(f"{label}\n{body}" if label else body, nonce=self._nonce(),
+                                 ref=f"drive:{mirror_item_id}", path=path or mirror_path)
         return f"{REFERENCE_REMINDER}\n{wrapped}"
 
     async def _building(self, user_id: str, state: DriveSyncState) -> bool:

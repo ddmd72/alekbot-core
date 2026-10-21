@@ -26,7 +26,8 @@ Public interface:
     access (§26.2, D33): ACCESS_LINE_FILE, ACCESS_LINE_FOLDER (the card's `index:` line of an item the bot cannot
             open), ACCESS_NOTE_FILE, ACCESS_NOTE_FOLDER (list and open, Δ55), COVERAGE_INACCESSIBLE (Δ56),
             ENVELOPE_INACCESSIBLE (a filter listing), STALE_INACCESSIBLE (Δ52)
-    manifest: DRIVE_QUERY_DESCRIPTION, DRIVE_KIND_DESCRIPTION, DRIVE_DATE_FROM_DESCRIPTION, DRIVE_DATE_TO_DESCRIPTION
+    manifest: DRIVE_QUERY_DESCRIPTION, DRIVE_KIND_DESCRIPTION, DRIVE_DATE_FROM_DESCRIPTION, DRIVE_DATE_TO_DESCRIPTION,
+              DRIVE_DELETED_DESCRIPTION (shared with the owner-notes RFC §6.4)
     PROTOCOL_TIERS_LINE
 """
 
@@ -106,6 +107,12 @@ DRIVE_QUERY_DESCRIPTION = (
     "'PDF', 'spreadsheet'); a time span ('last year', '2023–2024') goes in drive_date_from / drive_date_to, not in "
     "the words. Leave EMPTY only for filter-only requests. All words must match: use the user's few key words in "
     "one language."
+)
+# One description for the deleted-files flag, shared with DRIVE_FILE_NOTES_RFC §6.4: the delegate tool keeps the first
+# description per field name, so both features must read the same text (USER_DRIVE_INDEXING_RFC §27.9.11).
+DRIVE_DELETED_DESCRIPTION = (
+    "true only when the user explicitly asks about deleted or removed files: searches transcripts of deleted "
+    "recordings and your notes on deleted files. Never for an ordinary search."
 )
 DRIVE_KIND_DESCRIPTION = (
     "search_files_in_drive: optional file type. A family covers every format of its kind: "
