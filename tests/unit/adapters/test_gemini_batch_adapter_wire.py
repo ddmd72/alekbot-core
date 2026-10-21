@@ -3,6 +3,7 @@ port (docs/how_to/ADAPTER_WIRE_TESTING.md). Fixtures are hand-built from google.
 import asyncio
 from datetime import datetime, timedelta, timezone
 
+import aiohttp
 import httpx
 import pytest
 from google.genai import errors as genai_errors
@@ -174,7 +175,10 @@ async def test_collect_checks_each_response_error():
     out = await _collect(job, ("w0", "w1"))
     assert out["w0"].text == '{"ok":1}' and out["w0"].error is None
     assert out["w1"].text is None and out["w1"].error and not out["w1"].refused
-    BATCH_PER_RESPONSE_ERROR_SURFACED.validate("gemini_batch", out)
+    assert out["w1"].code == 3 and not out["w1"].transient
+    BATCH_PER_RESPONSE_ERROR_SURFACED.validate("gemini_batch", {"results": out, "failed_keys": ["w1"]})
+    with pytest.raises(AssertionError):  # failing everything must not pass the rule
+        BATCH_PER_RESPONSE_ERROR_SURFACED.validate("gemini_batch", {"results": out, "failed_keys": ["w0", "w1"]})
 
 
 @pytest.mark.asyncio
@@ -312,10 +316,153 @@ async def test_plain_400_is_a_client_error_not_an_outage():
 
 
 @pytest.mark.asyncio
-async def test_per_response_resource_exhausted_is_a_rate_limit():
-    job = _job([types.InlinedResponse(metadata={"key": "w0"}, error=types.JobError(code=8, message="exhausted"))])
+async def test_per_response_transient_code_is_a_result_and_siblings_survive():
+    job = _job([types.InlinedResponse(metadata={"key": "w0"}, error=types.JobError(code=8, message="exhausted")),
+                _inlined("w1", text="B")])
+    out = await _collect(job, ("w0", "w1"))
+    assert out["w0"].text is None and out["w0"].error and out["w0"].code == 8 and out["w0"].transient
+    assert out["w1"].text == "B"
+
+
+@pytest.mark.asyncio
+async def test_per_response_account_code_is_a_result_not_a_raise():
+    out = await _collect(_job([types.InlinedResponse(metadata={"key": "w0"},
+                                                     error=types.JobError(code=7, message="denied"))]))
+    assert out["w0"].code == 7 and not out["w0"].transient and out["w0"].error
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exc", [
+    aiohttp.ServerDisconnectedError(),
+    aiohttp.ClientOSError(104, "reset"),
+    aiohttp.ClientConnectionError("down"),
+])
+async def test_aiohttp_transport_errors_are_outages(exc):
+    for name in ("poll", "collect", "delete"):
+        adapter = _adapter()
+
+        async def boom(**kwargs):
+            raise exc
+        adapter.client.aio.batches.get = boom
+        adapter.client.aio.files.delete = boom
+        with pytest.raises(LLMUnavailableError):
+            if name == "poll":
+                await adapter.poll(BatchRef(name="b"))
+            elif name == "collect":
+                await adapter.collect(BatchRef(name="b", keys=("w0",)))
+            else:
+                await adapter.delete_file(FileRef(name="files/a", uri="u", expires_at=datetime.now(timezone.utc)))
+
+
+def _info_error(code, status, reason, msg="invalid"):
+    body = {"error": {"code": code, "status": status, "message": msg,
+                      "details": [{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": reason}]}}
+    return genai_errors.ClientError(code, body, None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exc", [
+    _info_error(400, "INVALID_ARGUMENT", "API_KEY_INVALID", "request is bad"),
+    _info_error(400, "FAILED_PRECONDITION", "BILLING_DISABLED", "request is bad"),
+    _info_error(400, "FAILED_PRECONDITION", "SOMETHING_ELSE", "User location is not supported"),
+    _info_error(400, "UNAUTHENTICATED", "ACCESS_TOKEN_EXPIRED", "request is bad"),
+])
+async def test_account_errors_by_structured_fields(exc):
+    adapter = _adapter()
+
+    async def boom(**kwargs):
+        raise exc
+    adapter.client.aio.batches.get = boom
+    with pytest.raises(LLMAccountError):
+        await adapter.poll(BatchRef(name="b"))
+
+
+@pytest.mark.asyncio
+async def test_unrelated_reason_with_plain_400_is_a_client_error():
+    adapter = _adapter()
+
+    async def boom(**kwargs):
+        raise _info_error(400, "INVALID_ARGUMENT", "FIELD_VIOLATION", "bad field")
+    adapter.client.aio.batches.create = boom
+    with pytest.raises(LLMClientError) as ei:
+        await adapter.submit([_req()], display_name="x")
+    assert not isinstance(ei.value, LLMAccountError)
+
+
+@pytest.mark.asyncio
+async def test_delete_file_403_is_already_gone():
+    adapter = _adapter()
+
+    async def delete(**kwargs):
+        raise _sdk_error(genai_errors.ClientError, 403, "permission denied or not found")
+    adapter.client.aio.files.delete = delete
+    await adapter.delete_file(FileRef(name="files/abc", uri="u", expires_at=datetime.now(timezone.utc)))
+
+
+@pytest.mark.asyncio
+async def test_delete_file_outage_still_raises():
+    adapter = _adapter()
+
+    async def delete(**kwargs):
+        raise _sdk_error(genai_errors.ServerError, 503)
+    adapter.client.aio.files.delete = delete
+    with pytest.raises(LLMUnavailableError):
+        await adapter.delete_file(FileRef(name="files/abc", uri="u", expires_at=datetime.now(timezone.utc)))
+
+
+@pytest.mark.asyncio
+async def test_collect_without_keys_raises():
+    with pytest.raises(ValueError):
+        await _collect(_job([_inlined("w0")]), ())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", [types.JobState.JOB_STATE_RUNNING, types.JobState.JOB_STATE_FAILED,
+                                   types.JobState.JOB_STATE_EXPIRED])
+async def test_collect_on_unfinished_job_raises(state):
+    with pytest.raises(ValueError):
+        await _collect(_job([_inlined("w0")], state=state))
+
+
+@pytest.mark.asyncio
+async def test_collect_partially_succeeded_is_collected():
+    out = await _collect(_job([_inlined("w0", text="A")], state=types.JobState.JOB_STATE_PARTIALLY_SUCCEEDED))
+    assert out["w0"].text == "A"
+
+
+@pytest.mark.asyncio
+async def test_submit_with_empty_job_name_raises():
+    adapter = _adapter()
+
+    async def create(**kwargs):
+        return types.BatchJob(name=None)
+    adapter.client.aio.batches.create = create
+    with pytest.raises(LLMUnavailableError):
+        await adapter.submit([_req()], display_name="x")
+
+
+@pytest.mark.asyncio
+async def test_collect_whole_call_errors_are_mapped():
+    adapter = _adapter()
+
+    async def boom(**kwargs):
+        raise _sdk_error(genai_errors.ClientError, 429)
+    adapter.client.aio.batches.get = boom
     with pytest.raises(LLMRateLimitError):
-        await _collect(job)
+        await adapter.collect(BatchRef(name="b", keys=("w0",)))
+
+
+@pytest.mark.asyncio
+async def test_contract_rule_fails_for_json_schema_on_a_request():
+    from tests.contracts.adapter_contracts import BATCH_SCHEMA_WITH_JSON_MIME as rule
+    bad = types.InlinedRequest(model=MODEL, metadata={"key": "w0"}, config=types.GenerateContentConfig(
+        response_json_schema={"type": "object"}, response_mime_type="application/json"))
+    with pytest.raises(AssertionError):
+        rule.validate("gemini_batch", {"src": [bad]})
+    bad2 = types.InlinedRequest(model=MODEL, metadata={"key": "w0"}, config=types.GenerateContentConfig(
+        response_schema=types.Schema(type="OBJECT")))
+    with pytest.raises(AssertionError):  # schema without the JSON mime type
+        rule.validate("gemini_batch", {"src": [bad2]})
 
 
 def test_adapter_imports_no_other_adapter():

@@ -7,7 +7,7 @@ the precedent of `drive_enrichment.py`. Pure data: stdlib and the billing value 
 A stored job keeps the provider file *name* (`files/<id>`), never the URI: the adapter builds the URI from the name
 when it builds a request, so a URI is never persisted or logged.
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from typing import Any, Mapping, Optional, Tuple
@@ -58,11 +58,14 @@ class BatchRequest:
 @dataclass(frozen=True)
 class BatchResult:
     """The outcome of one request: `text` on success, else `error`. `refused` marks a provider refusal of this
-    request's input (content policy), which the caller reads as a gap, not as a retryable failure."""
+    request's input (content policy), which the caller reads as a gap, not as a retryable failure. For a response
+    that held its own provider error, `code` is that error's rpc code (0 when none) and `transient` says the code
+    is one a later attempt can clear (4, 8, 13, 14); the caller decides what to charge."""
     key: str
     text: Optional[str] = None
     error: Optional[str] = None
     refused: bool = False
     usage: Optional[BatchUsage] = None
     finish_reason: str = ""
-    details: Mapping[str, Any] = field(default_factory=dict)
+    code: int = 0
+    transient: bool = False

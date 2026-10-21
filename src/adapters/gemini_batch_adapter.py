@@ -25,6 +25,7 @@ import hashlib
 from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Dict, List, Mapping, Optional, Sequence, TypeVar
 
+import aiohttp
 import httpx
 from google import genai
 from google.genai import errors as genai_errors
@@ -74,10 +75,14 @@ _REFUSAL_FINISH = frozenset({"SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII"
 # A 4xx whose body is about the account, not the request. Status alone cannot tell it from a refused request.
 _ACCOUNT_MARKERS = ("billing", "quota", "credit", "api key", "permission", "unauthenticated", "spending cap")
 
-# Per-response error codes (google.rpc.Code) that are the service, not that request's input.
-_RPC_RATE_LIMIT = 8
-_RPC_UNAVAILABLE = 14
-_RPC_ACCOUNT = (7, 16)
+# google.rpc.Code values a later attempt can clear: DEADLINE_EXCEEDED, RESOURCE_EXHAUSTED, INTERNAL, UNAVAILABLE.
+_TRANSIENT_RPC_CODES = frozenset({4, 8, 13, 14})
+
+# ErrorInfo.reason values and statuses that mean the account or key, not the request.
+_ACCOUNT_REASONS = frozenset({"API_KEY_INVALID", "API_KEY_EXPIRED", "API_KEY_SERVICE_BLOCKED", "BILLING_DISABLED",
+                              "CONSUMER_SUSPENDED", "SERVICE_DISABLED", "ACCESS_TOKEN_EXPIRED",
+                              "ACCOUNT_STATE_INVALID", "CREDENTIALS_MISSING", "RATE_LIMIT_EXCEEDED_BILLING"})
+_ACCOUNT_STATUSES = frozenset({"UNAUTHENTICATED", "PERMISSION_DENIED"})
 
 
 def _hash(text: str) -> str:
@@ -108,6 +113,8 @@ class GeminiBatchAdapter(BatchTranscriptionPort):
         config = types.CreateBatchJobConfig(display_name=_hash(display_name))
         job = await self._call("submit", self._call_timeout_s,
                                lambda: self.client.aio.batches.create(model=self._model, src=inlined, config=config))
+        if not job.name:
+            raise LLMUnavailableError("submit: the provider returned a job without a name")
         logger.info("[GeminiBatch] submitted batch (requests=%d)", len(inlined))
         return BatchRef(name=job.name or "", keys=tuple(r.key for r in requests))
 
@@ -118,7 +125,12 @@ class GeminiBatchAdapter(BatchTranscriptionPort):
         return status
 
     async def collect(self, batch: BatchRef) -> Mapping[str, BatchResult]:
+        if not batch.keys:
+            raise ValueError("collect needs the request keys; a BatchRef rebuilt without them would drop paid results")
         job = await self._call("collect", self._call_timeout_s, lambda: self.client.aio.batches.get(name=batch.name))
+        state = _STATES.get(job.state, BatchStatus.RUNNING)
+        if state is not BatchStatus.SUCCEEDED:
+            raise ValueError(f"collect on a job that is {state.value}, not succeeded")
         answers = list(getattr(job.dest, "inlined_responses", None) or [])
         expected = set(batch.keys)
         results: Dict[str, BatchResult] = {}
@@ -139,8 +151,13 @@ class GeminiBatchAdapter(BatchTranscriptionPort):
     async def delete_file(self, ref: FileRef) -> None:
         try:
             await self._call("delete", self._call_timeout_s, lambda: self.client.aio.files.delete(name=ref.name))
+        except LLMAccountError as e:
+            if e.http_status == 403:
+                logger.info("[GeminiBatch] file already gone")
+                return
+            raise
         except LLMClientError as e:
-            if e.http_status == 404:
+            if e.http_status in (403, 404):  # the provider answers 403 for a file that no longer exists
                 logger.info("[GeminiBatch] file already gone")
                 return
             raise
@@ -168,15 +185,12 @@ class GeminiBatchAdapter(BatchTranscriptionPort):
 
     def _to_result(self, key: str, answer: types.InlinedResponse) -> BatchResult:
         if answer.error is not None:
-            code = answer.error.code
-            if code == _RPC_RATE_LIMIT:
-                raise LLMRateLimitError("batch response: resource exhausted", http_status=429)
-            if code == _RPC_UNAVAILABLE:
-                raise LLMUnavailableError("batch response: service unavailable", http_status=503)
-            if code in _RPC_ACCOUNT:
-                raise LLMAccountError("batch response: account rejected the request", http_status=403)
-            # The message may quote input; only the code is kept.
-            return BatchResult(key=key, error=f"response error code {code}")
+            # A finished batch's results are immutable: a response error never raises (one bad response must not make
+            # every later collect fail). The code is surfaced; the caller charges the attempt. The message may quote
+            # input, so only the code is kept.
+            code = int(answer.error.code or 0)
+            return BatchResult(key=key, error=f"response error code {code}", code=code,
+                               transient=code in _TRANSIENT_RPC_CODES)
         response = answer.response
         if response is None:
             return BatchResult(key=key, error="answer without a response")
@@ -233,18 +247,27 @@ class GeminiBatchAdapter(BatchTranscriptionPort):
             logger.warning("[GeminiBatch] %s client error status=%s", what, code)
             if code == 429:
                 raise LLMRateLimitError(f"{what}: rate limited", http_status=429) from e
-            if code in (401, 403) or self._is_account_message(e):
+            if code in (401, 403) or self._is_account_error(e):
                 raise LLMAccountError(f"{what}: account rejected the call", http_status=code) from e
             raise LLMClientError(f"{what}: client error", http_status=code if isinstance(code, int) else None) from e
         except genai_errors.ServerError as e:
             code = getattr(e, "code", None)
             logger.warning("[GeminiBatch] %s server error status=%s", what, code)
             raise LLMUnavailableError(f"{what}: provider error", http_status=code if isinstance(code, int) else None) from e
-        except (httpx.TimeoutException, httpx.NetworkError) as e:
+        except (httpx.TimeoutException, httpx.NetworkError, aiohttp.ClientError) as e:
             logger.warning("[GeminiBatch] %s transport failure (%s)", what, type(e).__name__)
             raise LLMUnavailableError(f"{what}: transport failure") from e
 
     @staticmethod
-    def _is_account_message(e: Exception) -> bool:
-        text = (getattr(e, "message", None) or str(e)).lower()
-        return any(marker in text for marker in _ACCOUNT_MARKERS)
+    def _is_account_error(e: genai_errors.APIError) -> bool:
+        """Structured fields first (ErrorInfo.reason, then the status); keywords only when neither says."""
+        error = e.details.get("error", e.details) if isinstance(e.details, dict) else {}
+        infos = error.get("details", []) if isinstance(error, dict) else []
+        reasons = {i.get("reason") for i in infos if isinstance(i, dict) and i.get("reason")}
+        if reasons & _ACCOUNT_REASONS:
+            return True
+        status = getattr(e, "status", None)
+        if status in _ACCOUNT_STATUSES:
+            return True
+        text = (e.message or str(e)).lower()
+        return status == "FAILED_PRECONDITION" or any(m in text for m in _ACCOUNT_MARKERS)
