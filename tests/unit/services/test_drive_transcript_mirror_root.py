@@ -318,3 +318,54 @@ async def test_root_listing_404_sets_the_mark_and_tells_the_tick():
     assert counters["mirror_root_missing"] == 1 and w.root.root_gone_at is not None
     assert w.last_host.root_marks == [(root_id, True)]
     assert w.root.root_item_id == root_id and w.doc(gone).state == MIRROR_ARCHIVED
+
+
+# -- fix round 1 ------------------------------------------------------------------------------------------------------
+
+async def test_detached_doc_keeps_its_pin_through_a_root_loss():
+    from src.domain.drive_mirror import MIRROR_DETACHED, UNSTORED
+    w, a, b, gone = await world_with_archive()
+    await w.delete_source(b, why=UNSTORED)                 # still on the drive, no longer stored: detached
+    w.advance(2 * HOUR)
+    await w.run()
+    assert w.doc(b).state == MIRROR_DETACHED
+    key = w.doc(b).content_key
+    await root_leaves(w)
+    w.advance(MIRROR_ROOT_GRACE + HOUR)
+    await w.run()
+    doc = w.doc(b)
+    assert doc is not None and doc.state == MIRROR_DETACHED and not doc.mirror_item_id
+    assert await w.mirror.pinned(USER, key)                # a source that comes back never re-buys its audio
+
+
+async def test_root_back_after_a_gap_longer_than_the_grace_destroys_nothing():
+    """The rollback with the queue paused: no tick runs while the root is out, for longer than the grace. When it is
+    back, its record is observed again before any mirror step, and the mark clears with no read and no destruction."""
+    w, a, b, gone = await world_with_archive()
+    root_id = w.root.root_item_id
+    snapshot = dict(w.mirror.docs)
+    nodes = await root_leaves(w)
+    w.advance(3 * MIRROR_ROOT_GRACE)                       # no tick at all meanwhile
+    paste(w, nodes)
+    await root_record(w)                                   # the tick has not cleared the mark (yet)
+    w.reset_calls()
+    counters = await w.run()
+    assert counters["mirror_root_mark_cleared"] == 1 and root_reads(w, root_id) == []
+    assert w.root.root_item_id == root_id and w.root.previous_root_ids == () and w.root.root_gone_at is None
+    assert w.drive.writes() == [] and w.mirror.docs == snapshot
+
+
+async def test_confirmed_loss_waits_for_a_quota_hold_before_the_new_root():
+    from dataclasses import replace
+    w, a, b, gone = await world_with_archive()
+    old_root = w.root.root_item_id
+    await root_leaves(w)
+    w.advance(MIRROR_ROOT_GRACE + HOUR)
+    await w.mirror.save_root(replace(w.root, quota_hold_until=w.clock + 6 * HOUR))
+    w.reset_calls()
+    await w.run()
+    assert old_root in w.root.previous_root_ids and w.root.root_item_id == old_root      # reset done, no new root
+    assert not [c for c in w.drive.calls if c[0] in ("create_folder", "child_by_name")]
+    w.advance(7 * HOUR)
+    await w.run()
+    assert w.root.root_item_id != old_root and w.mirror_path(a) == "Box/a.mp4.md"

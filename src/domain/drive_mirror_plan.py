@@ -18,7 +18,7 @@ contract (the mirror's decisions), read together as `drive_enrichment` does; the
 
 Public interface:
     MIRROR_PLAN_VERSION
-    mirror_eligible(rec), mirror_digest(rec), mirror_plan(rec), stamped(rec), woken(rec)
+    mirror_eligible(rec), mirror_digest(rec), mirror_plan(rec), stamped(rec), woken(rec), due_again(rec), REDO_DIGEST
     Action, file_action(rec, doc, rendered_hash, placement), folder_action(rec, doc, placement), placement_source(rec)
     Decision, marked(doc, notice), unmarked(doc), mark_held(doc, until), mark_decision(doc, ...)
     RootDecision, root_decision(root, ...)
@@ -53,6 +53,9 @@ from .drive_mirror_render import RENDER_VERSION
 MIRROR_PLAN_VERSION = 1
 
 _SEP = "\x1f"
+REDO_DIGEST = "redo"   # `mirrored_digest` of a record whose mirror item must be placed or written again: never a real
+                       # digest (those are 32 hex), and not "" (a folder with "" is not eligible, and a record with ""
+                       # sends no deletion notice)
 
 
 class Action(str, Enum):
@@ -121,6 +124,13 @@ def stamped(rec: DriveIndexRecord) -> DriveIndexRecord:
     """After a successful action: `mirrored_digest` = the digest now, no hold, and `mirror_plan` clears the flag. A
     source folder's record is stamped the moment its mirror folder document is created (Δ113's one move)."""
     return mirror_plan(replace(rec, mirrored_digest=mirror_digest(rec), mirror_retry_at=None, mirror_held_digest=""))
+
+
+def due_again(rec: DriveIndexRecord) -> DriveIndexRecord:
+    """The record's mirror work redone (§27.9.9: the audit's repairs, a confirmed root loss): `mirrored_digest` becomes
+    REDO_DIGEST, so `mirror_plan` makes an eligible record due (a folder that has a counterpart included) and a later
+    delete of it still sends the mirror its notice."""
+    return mirror_plan(replace(rec, mirrored_digest=REDO_DIGEST))
 
 
 def woken(rec: DriveIndexRecord) -> DriveIndexRecord:
