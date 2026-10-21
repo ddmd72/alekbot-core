@@ -1293,6 +1293,14 @@ def create_user_cabinet_blueprint(
                               "closed": status.initial_build_closed},
         }
 
+    async def _transcribe_enabled(user_id: str) -> bool:
+        try:
+            user = await user_repo.get_user(user_id)
+            return bool(user is not None and user.config.drive_transcribe_enabled is True)
+        except Exception:
+            logger.warning("Drive status: reading the transcription flag failed", exc_info=True)
+            return False
+
     @bp.route("/api/drive/status", methods=["GET"])
     @auth_required
     async def drive_status():
@@ -1313,6 +1321,10 @@ def create_user_cabinet_blueprint(
         if drive_search_service is not None:
             try:
                 body["indexing"] = _indexing_json(await drive_search_service.indexing_status(g.user_id))
+                # The transcription disclosure shows only while the user's own flag is on (§27.12, G24); no toggle.
+                # Present only when on: an off flag adds nothing to the block.
+                if await _transcribe_enabled(g.user_id):
+                    body["indexing"]["transcribe_enabled"] = True
             except Exception as exc:
                 # The connection card (Connect/Disconnect/Reconnect) must not depend on the index read.
                 logger.error(f"Error fetching drive indexing status: {exc}", exc_info=True)
