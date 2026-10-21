@@ -178,6 +178,7 @@ class JobWindow:
     files_expire_at: Optional[datetime] = None   # when the provider's input file expires (§27.5)
     reupload_used: bool = False       # the one re-extract and re-upload of an expired file is spent
     batch_resubmits: int = 0          # the one resubmit after its batch failed, expired or was cancelled whole (§27.5)
+    refused: bool = False             # its gap marker stands for a provider refusal (an all-gap file is final only then, T-R23)
 
 
 @dataclass(frozen=True)
@@ -210,6 +211,7 @@ class TranscriptBatch:
     created_at: Optional[datetime] = None
     next_poll_at: Optional[datetime] = None   # None = closed; set = open and due then (§27.5)
     kind: str = BATCH_KIND_TRANSCRIBE
+    booked_at: Optional[datetime] = None      # when its collected cost was booked: a re-collection books nothing (T-R22)
 
 
 def safe_doc_id(raw: str) -> str:

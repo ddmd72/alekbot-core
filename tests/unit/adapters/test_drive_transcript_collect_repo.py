@@ -57,3 +57,22 @@ async def test_batch_resubmits_roundtrips_on_the_job(adapter, mock_env_config):
                   files_expire_at=T),))
     await repo.save_transcript_job(job)
     assert (await repo.get_transcript_job("u", "i1")).windows[0].batch_resubmits == 1
+
+
+async def test_refused_roundtrips_on_the_job(adapter):
+    repo, _ = adapter
+    job = TranscriptJob(user_id="u", item_id="i2", content_key="k2", duration_s=600.0, windows=(
+        JobWindow(WindowSpec(0, 0.0, 600.0), state="done", gap=True, refused=True),))
+    await repo.save_transcript_job(job)
+    assert (await repo.get_transcript_job("u", "i2")).windows[0].refused
+
+
+async def test_batch_booked_at_roundtrips(adapter):
+    from src.domain.drive_transcript import TranscriptBatch
+    repo, _ = adapter
+    batch = TranscriptBatch(name="batches/b9", user_id="u", request_keys=("i:0",), submitted_at=T, created_at=T,
+                            next_poll_at=T)
+    await repo.create_batch(batch)
+    assert (await repo.get_open_batches("u", T, 5))[0].booked_at is None
+    await repo.save_batch(TranscriptBatch(**{**batch.__dict__, "booked_at": T}))
+    assert (await repo.get_open_batches("u", T, 5))[0].booked_at == T

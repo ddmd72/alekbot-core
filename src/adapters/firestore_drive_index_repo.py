@@ -389,7 +389,7 @@ def _window_to_doc(window: JobWindow) -> Dict[str, Any]:
             "attempts": window.attempts, "time_resubmits": window.time_resubmits,
             "interp_resubmits": window.interp_resubmits, "gap": window.gap, "batch_name": window.batch_name,
             "files_expire_at": window.files_expire_at, "reupload_used": window.reupload_used,
-            "batch_resubmits": window.batch_resubmits}
+            "batch_resubmits": window.batch_resubmits, "refused": window.refused}
 
 
 def _window_from_doc(data: Mapping[str, Any]) -> JobWindow:
@@ -404,7 +404,7 @@ def _window_from_doc(data: Mapping[str, Any]) -> JobWindow:
         time_resubmits=int(data.get("time_resubmits", 0)), interp_resubmits=int(data.get("interp_resubmits", 0)),
         gap=bool(data.get("gap", False)), batch_name=data.get("batch_name", ""),
         files_expire_at=_dt(data.get("files_expire_at")), reupload_used=bool(data.get("reupload_used", False)),
-        batch_resubmits=int(data.get("batch_resubmits", 0)))
+        batch_resubmits=int(data.get("batch_resubmits", 0)), refused=bool(data.get("refused", False)))
 
 
 def job_to_doc(job: TranscriptJob) -> Dict[str, Any]:
@@ -440,7 +440,8 @@ def batch_to_doc(batch: TranscriptBatch) -> Dict[str, Any]:
     return {"user_id": batch.user_id, "name": batch.name, "request_keys": list(batch.request_keys),
             "submitted_at": batch.submitted_at, "last_polled_at": batch.last_polled_at,
             "reserved_usd": batch.reserved_usd, "reserved_month": batch.reserved_month, "state": batch.state,
-            "created_at": batch.created_at, "next_poll_at": batch.next_poll_at, "kind": batch.kind}
+            "created_at": batch.created_at, "next_poll_at": batch.next_poll_at, "kind": batch.kind,
+            "booked_at": batch.booked_at}
 
 
 def batch_from_doc(data: Mapping[str, Any]) -> TranscriptBatch:
@@ -449,7 +450,8 @@ def batch_from_doc(data: Mapping[str, Any]) -> TranscriptBatch:
         submitted_at=_dt(data.get("submitted_at")), last_polled_at=_dt(data.get("last_polled_at")),
         reserved_usd=float(data.get("reserved_usd", 0.0)), reserved_month=data.get("reserved_month", ""),
         state=data.get("state", "submitted"), created_at=_dt(data.get("created_at")),
-        next_poll_at=_dt(data.get("next_poll_at")), kind=data.get("kind", "transcribe"))
+        next_poll_at=_dt(data.get("next_poll_at")), kind=data.get("kind", "transcribe"),
+        booked_at=_dt(data.get("booked_at")))
 
 
 def transcript_head_to_doc(user_id: str, stored: StoredTranscript, parts: int) -> Dict[str, Any]:

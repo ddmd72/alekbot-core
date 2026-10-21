@@ -7,8 +7,10 @@ Public interface:
         async submit(inputs, *, display_name) -> BatchRef
             raises DriveModelUnavailable (a missing or incomplete prompt: no fallback prompt) and the provider
             outages `LLMUnavailableError` / `LLMRateLimitError` / `LLMAccountError` of the port, all uncharged
-        async collect(batch, *, account_id) -> {request key: WindowResult}
-            call it only after `poll` returned SUCCEEDED (the port raises ValueError otherwise)
+        async collect(batch, *, account_id, bill=True) -> {request key: WindowResult}
+            call it only after `poll` returned SUCCEEDED (the port raises ValueError otherwise); `bill=False` (a
+            re-collection of a batch whose cost was booked already, T-R22) writes nothing to the account, `usd` is
+            still reported
 
 `submit` builds the prompt once for the whole submission and turns every window into one request that carries the
 uploaded file's NAME (never a URL). `collect` parses each result with the agent and bills the user's account at once,
@@ -50,14 +52,14 @@ class DriveTranscriptRunner:
         logger.info(f"[DriveTranscript] submitted {len(requests)} windows")
         return ref
 
-    async def collect(self, batch: BatchRef, *, account_id: str) -> Mapping[str, WindowResult]:
+    async def collect(self, batch: BatchRef, *, account_id: str, bill: bool = True) -> Mapping[str, WindowResult]:
         results = await self._port.collect(batch)
         out: Dict[str, WindowResult] = {}
         unbilled = 0
         unpriced = 0
         finishes: Dict[str, int] = {}
         for key, result in results.items():
-            cost, billed = await self._bill(account_id, result)
+            cost, billed = await self._bill(account_id, result, write=bill)
             if result.usage is None:
                 unbilled += 1
             elif not result.usage.is_priced():
@@ -87,14 +89,14 @@ class DriveTranscriptRunner:
             return WindowResult(key=key, outcome=WindowOutcome.INVALID, usd=usd, billed=billed)
         return WindowResult(key=key, outcome=WindowOutcome.OK, transcript=transcript, usd=usd, billed=billed)
 
-    async def _bill(self, account_id: str, result: BatchResult) -> Tuple[float, bool]:
+    async def _bill(self, account_id: str, result: BatchResult, *, write: bool = True) -> Tuple[float, bool]:
         """(priced cost, whether the account write succeeded). The cost is independent of the write; the write is a
-        side effect and never raises (a failed one must not lose the answer)."""
+        side effect and never raises (a failed one must not lose the answer). `write=False`: priced, never written."""
         usage = result.usage
         if usage is None or not usage.is_priced():
             return 0.0, False
         cost = usage.cost()
-        if self._quota_service is None:
+        if self._quota_service is None or not write:
             return cost, False
         tokens = usage.audio_input_tokens + usage.text_input_tokens + usage.output_tokens + usage.thought_tokens
         try:

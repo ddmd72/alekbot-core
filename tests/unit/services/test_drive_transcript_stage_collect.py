@@ -111,6 +111,16 @@ def _answer_all(env, batch, *, usd=0.01, **by_key):
     env.batch.statuses[batch.name] = BatchStatus.SUCCEEDED
 
 
+def _assert_all_gaps_charged(env, item_id):
+    """T-R23: every window a gap marker with no refusal is no transcript: the job is dropped (reservation released),
+    nothing stored or indexed, and the file charged one attempt with the T-R21 retry hold."""
+    assert _job(env, item_id) is None and (USER, f"hash-{item_id}") not in env.repo.transcripts
+    assert env.host.indexed == [] and _reserved(env) == pytest.approx(0.0)
+    rec = env.repo.records[(USER, item_id)]
+    assert (rec.transcript_state, rec.transcript_hold, rec.transcript_attempts) == ("held", "retry", 1)
+    assert rec.transcript_wake_at is not None and rec.transcript_wake_at > env.clock.now
+
+
 async def _submitted(env, *recs, **recordings):
     await _add(env, *recs, **recordings)
     await _extract(env)
@@ -150,7 +160,7 @@ async def test_at_most_10_polls_per_tick(tmp_path):
     env = _env(tmp_path)
     for i in range(BATCH_POLLS_PER_TICK + 2):
         await env.repo.create_batch(TranscriptBatch(name=f"batches/x{i:02d}", user_id=USER, submitted_at=NOW,
-                                                    created_at=NOW, next_poll_at=NOW))
+                                                    request_keys=(f"x{i}:0",), created_at=NOW, next_poll_at=NOW))
     await _cheap(env)
     assert len(env.batch.polls) == BATCH_POLLS_PER_TICK == len(set(env.batch.polls))
     await _cheap(env)   # the rest, once each; the polled ones are not due again yet
@@ -226,11 +236,7 @@ async def test_job_expiry_resubmits_open_windows_once(tmp_path, status):
     await _cheap(env)   # the second failure: a gap marker, never a third batch
     await _extract(env)
     assert len(env.runner.submits) == 2
-    rec = await _get(env, "a")
-    stored = env.repo.transcripts[(USER, "hash-a")]
-    assert rec.transcript_state == "current" and stored.transcript.truncated
-    assert GAP_TEXT in env.host.indexed[0][1]
-    assert _reserved(env) == pytest.approx(0.0) and _job(env, "a") is None
+    _assert_all_gaps_charged(env, "a")
 
 
 async def test_expired_file_reuploaded_once(tmp_path):
@@ -250,7 +256,7 @@ async def test_expired_file_reuploaded_once(tmp_path):
     env.batch.statuses[b2.name] = BatchStatus.EXPIRED
     await _cheap(env)   # its one re-upload and its one batch resubmit are spent: a gap marker
     assert len(env.batch.uploads) == 2
-    assert (await _get(env, "a")).transcript_state == "current"
+    _assert_all_gaps_charged(env, "a")
 
 
 async def test_failed_batch_releases_reservation(tmp_path):
@@ -317,8 +323,8 @@ async def test_a_gone_input_file_is_uploaded_again_once(tmp_path, code):
     _answer_all(env, b2, a_0=replace(gone, key=b2.request_keys[0]))
     _due(env, b2)
     await _cheap(env)   # gone again with its re-upload spent: the same request cannot succeed
-    assert len(env.batch.uploads) == 2 and (await _get(env, "a")).transcript_state == "current"
-    assert env.repo.transcripts[(USER, "hash-a")].transcript.truncated
+    assert len(env.batch.uploads) == 2
+    _assert_all_gaps_charged(env, "a")
 
 
 async def test_short_window_is_resubmitted_not_stitched(tmp_path):
@@ -344,10 +350,7 @@ async def test_gap_marker_after_max_attempts(tmp_path):
         _due(env, b)
         await _cheap(env)
     assert len(env.runner.submits) == MAX_ATTEMPTS
-    rec = await _get(env, "a")
-    stored = env.repo.transcripts[(USER, "hash-a")]
-    assert rec.transcript_state == "current" and stored.transcript.truncated
-    assert env.host.indexed[0][1].count(GAP_TEXT) == 1 and "alpha" not in env.host.indexed[0][1]
+    _assert_all_gaps_charged(env, "a")
 
 
 async def test_refused_window_gap_marker_truncated(tmp_path):
@@ -376,8 +379,7 @@ async def test_time_validator_resubmits_once_then_gap(tmp_path):
         _due(env, b)
         await _cheap(env)
     assert len(env.runner.submits) == 2
-    stored = env.repo.transcripts[(USER, "hash-a")]
-    assert stored.transcript.truncated and (await _get(env, "a")).transcript_state == "current"
+    _assert_all_gaps_charged(env, "a")
 
 
 async def test_interpolation_share_resubmits_once_then_accepts(tmp_path):
@@ -532,7 +534,7 @@ async def test_finalize_through_host_fence(tmp_path):
     env.host.on_index = edited_under_the_run
     _due(env, b1)
     summary = await _cheap(env)
-    assert summary["transcript_finalize_dropped"] == 1
+    assert summary["transcript_finalize_fenced"] == 1
     assert (await _get(env, "a")).transcript_state != "current" and (USER, "hash-a") not in env.repo.transcripts
     # the job belongs to another version now: dropped at once, its reservation released once
     assert _job(env, "a") is None and _reserved(env) == pytest.approx(0.0)
@@ -593,7 +595,7 @@ async def test_finalize_takes_a_file_budget_slot(tmp_path):
     _due(env, b1)
     summary = await _cheap(env)
     states = sorted([(await _get(env, i)).transcript_state for i in ("a", "b")])
-    assert states == ["current", "waiting"] and summary["transcript_finalize_dropped"] == 1
+    assert states == ["current", "waiting"] and summary["transcript_finalize_no_slot"] == 1
     env.host.file_slots = 1   # the next tick's slot
     await _cheap(env)
     assert [(await _get(env, i)).transcript_state for i in ("a", "b")] == ["current", "current"]
@@ -682,3 +684,178 @@ async def test_nothing_from_a_transcript_is_logged(tmp_path, caplog):
         await _cheap(env)
     text = " ".join(r.getMessage() for r in caplog.records)
     assert "alpha" not in text and "files/" not in text and "https://" not in text
+
+
+# -- fix round 1 (T-R22, T-R23, M1-M5) ---------------------------------------------------------------------------------
+
+async def test_a_collection_that_fails_after_booking_neither_books_nor_bills_again(tmp_path):
+    """T-R22: anything raising between the booking and the batch's close re-collects with no second booking and no
+    second account bill."""
+    env = _env(tmp_path)
+    b1 = await _submitted(env, record("a"), a=Recording(600))
+    _answer_all(env, b1, usd=0.01)
+    real = env.repo.save_window_result
+    calls = {"n": 0}
+
+    async def flaky(*args, **kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("store write failed")
+        await real(*args, **kw)
+
+    env.repo.save_window_result = flaky
+    _due(env, b1)
+    with pytest.raises(RuntimeError):
+        await _cheap(env)
+    assert env.repo.batches[(USER, b1.name)].booked_at is not None
+    assert env.repo.batches[(USER, b1.name)].state == "submitted"
+    await _cheap(env)   # polled again (still due), collected again: answers applied once
+    assert env.host.spends == [("transcribe", 0.01, 1, MONTH)]
+    assert env.runner.bills == [True, False]   # the account billed once
+    assert env.repo.batches[(USER, b1.name)].state == "done"
+    assert (await _get(env, "a")).transcript_state == "current"
+
+
+async def test_all_gaps_without_a_refusal_fail_at_max_attempts_with_no_stub(tmp_path):
+    env = _env(tmp_path)
+    await _add(env, replace(record("a"), transcript_attempts=MAX_ATTEMPTS - 1, transcript_hold_version="hash-a"),
+               a=Recording(600))
+    for _ in range(2):   # the batch fails, its one resubmit fails too: a gap marker, nothing refused
+        await _extract(env)
+        b = _last_batch(env)
+        env.batch.statuses[b.name] = BatchStatus.FAILED
+        _due(env, b)
+        summary = await _cheap(env)
+    assert summary["transcript_all_gaps_charged"] == 1 and summary["transcript_failed"] == 1
+    rec = await _get(env, "a")
+    assert rec.transcript_state == "failed" and rec.transcript_stub == ""
+    assert _job(env, "a") is None and env.host.indexed == [] and _reserved(env) == pytest.approx(0.0)
+    assert (USER, "hash-a") not in env.repo.transcripts
+
+
+async def test_all_gaps_with_a_refusal_finalize_truncated(tmp_path):
+    env = _env(tmp_path)
+    b1 = await _submitted(env, record("a"), a=Recording(600))
+    _answer_all(env, b1, a_0=WindowResult(key="a:0", outcome=WindowOutcome.REFUSED))
+    _due(env, b1)
+    await _cheap(env)
+    rec = await _get(env, "a")
+    stored = env.repo.transcripts[(USER, "hash-a")]
+    assert rec.transcript_state == "current" and stored.transcript.truncated
+    assert env.host.indexed[0][1].count(GAP_TEXT) == 1 and _reserved(env) == pytest.approx(0.0)
+
+
+async def test_partial_gaps_without_a_refusal_still_finalize(tmp_path):
+    env = _env(tmp_path)
+    await _add(env, record("a"), a=Recording(3_600))
+    for _ in range(MAX_ATTEMPTS):   # window 1 stops short every time; windows 0 and 2 answer well the first time
+        await _extract(env)
+        b = _last_batch(env)
+        _answer_all(env, b, a_1=_ok("a:1", _transcript(1_800, short=True)))
+        _due(env, b)
+        await _cheap(env)
+    rec = await _get(env, "a")
+    stored = env.repo.transcripts[(USER, "hash-a")]
+    assert rec.transcript_state == "current" and stored.transcript.truncated
+    body = env.host.indexed[0][1]
+    assert body.count(GAP_TEXT) == 1 and "alpha" in body
+
+
+async def test_a_refused_window_is_marked_on_the_job(tmp_path):
+    env = _env(tmp_path)
+    b1 = await _submitted(env, record("a"), a=Recording(3_600))
+    _answer_all(env, b1, a_1=WindowResult(key="a:1", outcome=WindowOutcome.REFUSED))
+    env.host.file_slots = 0   # keep the job: finalize has no slot
+    _due(env, b1)
+    await _cheap(env)
+    windows = {w.spec.index: w for w in _job(env, "a").windows}
+    assert windows[1].refused and windows[1].gap and not windows[0].refused
+
+
+async def test_a_poll_client_error_is_logged_as_an_error(tmp_path, caplog):
+    import logging
+    env = _env(tmp_path)
+    b = await _submitted(env, record("a"), a=Recording(600))
+    _due(env, b)
+    env.batch.poll_errors[b.name] = LLMClientError("bad request", http_status=400)
+    with caplog.at_level(logging.WARNING):
+        await _cheap(env)
+    assert any(r.levelno == logging.ERROR and "gone at the provider" in r.getMessage() for r in caplog.records)
+
+
+async def test_a_batch_without_request_keys_is_closed_and_released_once(tmp_path):
+    env = _env(tmp_path)
+    await env.host.reserve(0.05, MONTH)
+    await env.repo.create_batch(TranscriptBatch(name="batches/empty", user_id=USER, submitted_at=NOW, created_at=NOW,
+                                                next_poll_at=NOW, reserved_usd=0.05, reserved_month=MONTH))
+    await _cheap(env)
+    closed = env.repo.batches[(USER, "batches/empty")]
+    assert closed.state == "failed" and closed.next_poll_at is None and env.batch.polls == []
+    assert env.host.releases == [(0.05, MONTH)] and _reserved(env) == pytest.approx(0.0)
+    env.clock.advance(3_600)
+    await _cheap(env)
+    assert env.host.releases == [(0.05, MONTH)]
+
+
+async def test_an_answer_with_text_but_no_priced_cost_books_the_window_estimate(tmp_path):
+    env = _env(tmp_path)
+    b1 = await _submitted(env, record("a"), a=Recording(600))
+    estimate = window_estimate_usd(_job(env, "a").windows[0])
+    unpriced = replace(_ok("a:0", _transcript(600), usd=0.0), billed=False)   # usage missing: priced 0, not billed
+    _answer_all(env, b1, a_0=unpriced)
+    _due(env, b1)
+    await _cheap(env)
+    assert env.host.spends == [("transcribe", pytest.approx(estimate), 1, MONTH)]
+
+
+async def test_an_error_answer_without_cost_books_nothing(tmp_path):
+    env = _env(tmp_path)
+    b1 = await _submitted(env, record("a"), a=Recording(600))
+    _answer_all(env, b1, a_0=WindowResult(key="a:0", outcome=WindowOutcome.ERROR, code=13, transient=True))
+    _due(env, b1)
+    await _cheap(env)
+    assert env.host.spends == [("transcribe", 0.0, 1, MONTH)]
+
+
+async def test_dropped_windows_are_gap_markers_while_another_batch_carries_the_rest(tmp_path):
+    from src.domain.drive_transcript import JobWindow, TranscriptJob
+    env = _env(tmp_path)
+    specs = plan_windows(3_600)
+    job = TranscriptJob(USER, "a", "hash-a", content_version=1, duration_s=3_600.0, reserved_usd=0.1,
+                        reserved_month=MONTH, windows=(
+                            JobWindow(specs[0], state="submitted", file_ref="files/0", request_key="a:0",
+                                      batch_name="batches/b1", files_expire_at=NOW + timedelta(hours=40)),
+                            JobWindow(specs[1], state="submitted", file_ref="files/1", request_key="a:1",
+                                      batch_name="batches/b2", files_expire_at=NOW + timedelta(hours=40)),
+                            JobWindow(specs[2], state="done")))
+    await env.repo.save_transcript_job(job)
+    await env.repo.create_batch(TranscriptBatch(name="batches/b1", user_id=USER, request_keys=("a:0",),
+                                                submitted_at=NOW, created_at=NOW, next_poll_at=NOW))
+    env.runner.results["batches/b1"] = {"a:0": _ok("a:0", _transcript(1_800))}
+    env.batch.statuses["batches/b1"] = BatchStatus.SUCCEEDED
+    await _cheap(env)   # no record "a": G33, but b2 still carries window 1
+    windows = {w.spec.index: w for w in _job(env, "a").windows}
+    assert (windows[0].state, windows[0].gap, windows[0].file_ref) == ("done", True, "")
+    assert windows[1].state == "submitted" and env.batch.deleted == ["files/0"]
+
+
+async def test_a_fenced_finalize_goes_on_to_the_next_file(tmp_path):
+    env = _env(tmp_path)
+    b1 = await _submitted(env, record("a", day="2026-10-02"), record("b"), a=Recording(600), b=Recording(600))
+    _answer_all(env, b1)
+
+    async def rename_a(rec):
+        if rec.item_id != "a":
+            return None
+        await env.host.commit([replace(rec, name="renamed.webm")], {"a": rec})
+        return False   # the §7.4 fence drops a's run; its content version stands
+
+    env.host.on_index = rename_a
+    _due(env, b1)
+    summary = await _cheap(env)
+    assert summary["transcript_finalize_fenced"] == 1 and "transcript_finalize_no_slot" not in summary
+    assert (await _get(env, "b")).transcript_state == "current"
+    assert (await _get(env, "a")).transcript_state == "waiting" and _job(env, "a") is not None
+    env.host.on_index = None
+    await _cheap(env)
+    assert (await _get(env, "a")).transcript_state == "current"
