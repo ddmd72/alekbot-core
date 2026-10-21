@@ -1343,10 +1343,11 @@ class DriveIndexingService:
         if root is not None and root.root_item_id not in root.previous_root_ids:
             if root.root_item_id not in mirror.gone_ids:
                 self._root_setup_holds.pop(user_id, None)   # no mark, or the step cleared it or confirmed the loss
-            elif out.get("mirror_root_read_failed"):
-                # the root-loss mark is still set and its confirming read failed (Δ244): the same ladder, so a read that
-                # keeps failing does not take the reserve on every tick; a run that did not get to the read keeps the
-                # hold as it is
+            elif out.get("mirror_root_read_failed") or out.get("mirror_errors"):
+                # the root-loss mark is still set and its confirming read failed (Δ244), charged or unexpected: a run
+                # that keeps the root in `gone_ids` stops at step 0, so its only `mirror_errors` are that read's. The same
+                # ladder, so a read that keeps failing does not take the reserve on every tick; a run that did not get to
+                # the read keeps the hold as it is
                 hold = self._step_root_hold(user_id)
                 logger.info(f"[DriveIndex] transcript mirror of {user_id[:8]}: the root-loss read failed; no reserved "
                             f"tail for it for {hold}")

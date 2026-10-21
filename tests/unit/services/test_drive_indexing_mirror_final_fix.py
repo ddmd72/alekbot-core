@@ -175,3 +175,28 @@ async def test_failing_root_loss_read_backs_off_the_reserve(world):
     await w.tick()                                              # the read answers: the loss is confirmed
     assert old_root in w.root_doc().previous_root_ids
     assert "u" not in w.svc._root_setup_holds                   # the mark is gone: the hold with it
+
+
+async def test_unexpected_error_on_the_root_loss_read_also_backs_off_the_reserve(world):
+    """Round 3 (Δ244): a non-charged exception on the confirming read is counted as `mirror_errors`, not as a charged
+    read failure; a run that keeps the root in `gone_ids` stops at step 0, so it steps the same hold."""
+    w = world()
+    await _mirrored(w)
+    old_root = w.root_doc().root_item_id
+    w.drive.delete(old_root)
+    await w.tick()
+    real = w.writes.get_change
+
+    async def get_change(user_id: str, item_id: str) -> Any:
+        if item_id == old_root:
+            raise KeyError("unexpected")
+        return await real(user_id, item_id)
+    w.writes.get_change = get_change   # type: ignore[method-assign]
+    w.clock.advance(MIRROR_ROOT_GRACE.total_seconds() + 60)
+    await w.tick()
+    assert w.budgets[-1].mirror_reserve == MIRROR_RESERVE_S
+    assert w.outs[-1].get("mirror_errors") == 1 and not w.outs[-1].get("mirror_root_read_failed")
+    w.clock.advance(1)
+    await w.tick()
+    assert w.budgets[-1].mirror_reserve == 0.0                  # held
+    assert w.svc._root_setup_holds["u"][0] == 2
