@@ -48,6 +48,7 @@ def _make_queue(docs=None):
     query = MagicMock()
     query.where = MagicMock(return_value=query)
     query.select = MagicMock(return_value=query)
+    query.order_by = MagicMock(return_value=query)
     query.limit = MagicMock(return_value=query)
     query.get = AsyncMock(return_value=docs or [])
 
@@ -111,10 +112,13 @@ class TestGetPendingBatches:
             "companion_type": "tutor", "created_by_user_id": "user-1", "messages": [],
             "status": BatchStatus.PENDING.value,
         })]
-        queue, _collection, _query, _doc_ref = _make_queue(docs)
+        queue, _collection, query, _doc_ref = _make_queue(docs)
         result = await queue.get_pending_batches(session_id="slack:C1", limit=5)
         assert len(result) == 1
         assert result[0].batch_id == "b1"
+        # Oldest first (S1b task C): ordered by created_at ascending, then limited.
+        query.order_by.assert_called_once_with("created_at")
+        query.limit.assert_called_once_with(5)
 
 
 # =============================================================================
