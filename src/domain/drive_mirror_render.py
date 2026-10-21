@@ -135,10 +135,11 @@ def render_file(stored: StoredTranscript, rec: DriveIndexRecord, strings: Mirror
 
 
 def render_archived(stored: StoredTranscript, doc: MirrorDoc, strings: MirrorStrings) -> bytes:
-    """An ARCHIVED file as the audit rewrites it after an edit (owner ruling 2026-10-21, Δ241): `render_file` over the
-    document's snapshot (name, folder path, recorded on, duration, speakers, languages, stub) and the pinned store
-    entry, so its body is exactly what open and the deleted-files search serve (`open_text`). The header carries no
-    link: the recording is deleted."""
+    """An ARCHIVED or DETACHED file as the audit rewrites it after an edit (owner ruling 2026-10-21, Δ241, Δ243):
+    `render_file` over the document's snapshot (name, folder path, recorded on, duration, speakers, languages, stub) and
+    the pinned store entry, so its body is exactly what open and the deleted-files search serve (`open_text`). The
+    header carries no link: the snapshot keeps none (the ledger stores no URL), whether the recording is deleted or,
+    for a detached file, still on the drive."""
     rec = DriveIndexRecord(doc.user_id, doc.source_item_id, name=doc.source_name,
                            transcript_seconds=int(doc.seconds), transcript_speakers=doc.speakers,
                            transcript_languages=tuple(doc.languages), transcript_stub=doc.transcript_stub)

@@ -1418,7 +1418,7 @@ first run makes the bot create `_Transcripts (Alek)`.
 
 **Not built.** The summary (T3), the Cabinet toggle. The decisions are in [drive_transcripts_t1.md](../../04_solution_strategy/decisions/drive_transcripts_t1.md) and
 [drive_transcripts_mirror_archive.md](../../04_solution_strategy/decisions/drive_transcripts_mirror_archive.md); the reasoning and the deltas of the build are RFC §27.16
-(Δ136–Δ234) and §27.19.
+(Δ136–Δ244) and §27.19.
 
 ---
 
