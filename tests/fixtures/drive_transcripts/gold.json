@@ -1,0 +1,1832 @@
+{
+ "clips": [
+  {
+   "duration_s": 108.0,
+   "family": "dialogue_en",
+   "id": "dialogue_en_audio",
+   "kind": "audio",
+   "language": "en",
+   "lines": [
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 4.0,
+     "text": "Good morning, did you finish the quarterly summary for the committee?"
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 16.0,
+     "text": "Almost, I still need the figures from the warehouse in the north."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 28.0,
+     "text": "Send me the draft tonight and I will read it on the train tomorrow."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 40.0,
+     "text": "The numbers show a small increase in deliveries during the autumn months."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 52.0,
+     "text": "That matches what the drivers told us about the new route through the valley."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 64.0,
+     "text": "Then we should mention the route change on the first page of the report."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 76.0,
+     "text": "Agreed, and I will add a short chart showing the monthly totals."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 88.0,
+     "text": "Perfect, let us meet on Thursday at ten to go through the final version."
+    }
+   ],
+   "probes": [
+    4.0,
+    52.0
+   ],
+   "speakers": 2,
+   "synth": ""
+  },
+  {
+   "duration_s": 108.0,
+   "family": "dialogue_en",
+   "id": "dialogue_en_video",
+   "kind": "video",
+   "language": "en",
+   "lines": [
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 4.0,
+     "text": "Good morning, did you finish the quarterly summary for the committee?"
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 16.0,
+     "text": "Almost, I still need the figures from the warehouse in the north."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 28.0,
+     "text": "Send me the draft tonight and I will read it on the train tomorrow."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 40.0,
+     "text": "The numbers show a small increase in deliveries during the autumn months."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 52.0,
+     "text": "That matches what the drivers told us about the new route through the valley."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 64.0,
+     "text": "Then we should mention the route change on the first page of the report."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 76.0,
+     "text": "Agreed, and I will add a short chart showing the monthly totals."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 88.0,
+     "text": "Perfect, let us meet on Thursday at ten to go through the final version."
+    }
+   ],
+   "probes": [
+    4.0,
+    52.0
+   ],
+   "speakers": 2,
+   "synth": ""
+  },
+  {
+   "duration_s": 108.0,
+   "family": "dialogue_es",
+   "id": "dialogue_es_audio",
+   "kind": "audio",
+   "language": "es",
+   "lines": [
+    {
+     "language": "es",
+     "speaker": 0,
+     "start_s": 4.0,
+     "text": "Buenos días, ¿terminaste el resumen trimestral para el comité?"
+    },
+    {
+     "language": "es",
+     "speaker": 1,
+     "start_s": 16.0,
+     "text": "Casi, todavía me faltan las cifras del almacén del norte."
+    },
+    {
+     "language": "es",
+     "speaker": 0,
+     "start_s": 28.0,
+     "text": "Envíame el borrador esta noche y lo leeré mañana en el tren."
+    },
+    {
+     "language": "es",
+     "speaker": 1,
+     "start_s": 40.0,
+     "text": "Los números muestran un pequeño aumento de entregas durante el otoño."
+    },
+    {
+     "language": "es",
+     "speaker": 0,
+     "start_s": 52.0,
+     "text": "Eso coincide con lo que dijeron los conductores sobre la nueva ruta por el valle."
+    },
+    {
+     "language": "es",
+     "speaker": 1,
+     "start_s": 64.0,
+     "text": "Entonces deberíamos mencionar el cambio de ruta en la primera página del informe."
+    },
+    {
+     "language": "es",
+     "speaker": 0,
+     "start_s": 76.0,
+     "text": "De acuerdo, y añadiré un gráfico corto con los totales de cada mes."
+    },
+    {
+     "language": "es",
+     "speaker": 1,
+     "start_s": 88.0,
+     "text": "Perfecto, nos vemos el jueves a las diez para revisar la versión final."
+    }
+   ],
+   "probes": [
+    4.0,
+    52.0
+   ],
+   "speakers": 2,
+   "synth": ""
+  },
+  {
+   "duration_s": 108.0,
+   "family": "dialogue_es",
+   "id": "dialogue_es_video",
+   "kind": "video",
+   "language": "es",
+   "lines": [
+    {
+     "language": "es",
+     "speaker": 0,
+     "start_s": 4.0,
+     "text": "Buenos días, ¿terminaste el resumen trimestral para el comité?"
+    },
+    {
+     "language": "es",
+     "speaker": 1,
+     "start_s": 16.0,
+     "text": "Casi, todavía me faltan las cifras del almacén del norte."
+    },
+    {
+     "language": "es",
+     "speaker": 0,
+     "start_s": 28.0,
+     "text": "Envíame el borrador esta noche y lo leeré mañana en el tren."
+    },
+    {
+     "language": "es",
+     "speaker": 1,
+     "start_s": 40.0,
+     "text": "Los números muestran un pequeño aumento de entregas durante el otoño."
+    },
+    {
+     "language": "es",
+     "speaker": 0,
+     "start_s": 52.0,
+     "text": "Eso coincide con lo que dijeron los conductores sobre la nueva ruta por el valle."
+    },
+    {
+     "language": "es",
+     "speaker": 1,
+     "start_s": 64.0,
+     "text": "Entonces deberíamos mencionar el cambio de ruta en la primera página del informe."
+    },
+    {
+     "language": "es",
+     "speaker": 0,
+     "start_s": 76.0,
+     "text": "De acuerdo, y añadiré un gráfico corto con los totales de cada mes."
+    },
+    {
+     "language": "es",
+     "speaker": 1,
+     "start_s": 88.0,
+     "text": "Perfecto, nos vemos el jueves a las diez para revisar la versión final."
+    }
+   ],
+   "probes": [
+    4.0,
+    52.0
+   ],
+   "speakers": 2,
+   "synth": ""
+  },
+  {
+   "duration_s": 108.0,
+   "family": "dialogue_uk",
+   "id": "dialogue_uk_audio",
+   "kind": "audio",
+   "language": "uk",
+   "lines": [
+    {
+     "language": "uk",
+     "speaker": 0,
+     "start_s": 4.0,
+     "text": "Доброго ранку, ти закінчив квартальний звіт для комітету?"
+    },
+    {
+     "language": "uk",
+     "speaker": 1,
+     "start_s": 16.0,
+     "text": "Майже, мені ще потрібні цифри зі складу на півночі."
+    },
+    {
+     "language": "uk",
+     "speaker": 0,
+     "start_s": 28.0,
+     "text": "Надішли мені чернетку сьогодні ввечері, і я прочитаю її завтра в поїзді."
+    },
+    {
+     "language": "uk",
+     "speaker": 1,
+     "start_s": 40.0,
+     "text": "Цифри показують невелике зростання доставок протягом осінніх місяців."
+    },
+    {
+     "language": "uk",
+     "speaker": 0,
+     "start_s": 52.0,
+     "text": "Це збігається з тим, що водії розповідали про новий маршрут через долину."
+    },
+    {
+     "language": "uk",
+     "speaker": 1,
+     "start_s": 64.0,
+     "text": "Тоді варто згадати про зміну маршруту на першій сторінці звіту."
+    },
+    {
+     "language": "uk",
+     "speaker": 0,
+     "start_s": 76.0,
+     "text": "Згоден, і я додам короткий графік із підсумками за кожен місяць."
+    },
+    {
+     "language": "uk",
+     "speaker": 1,
+     "start_s": 88.0,
+     "text": "Чудово, зустрінемося в четвер о десятій, щоб переглянути остаточну версію."
+    }
+   ],
+   "probes": [
+    4.0,
+    52.0
+   ],
+   "speakers": 2,
+   "synth": ""
+  },
+  {
+   "duration_s": 108.0,
+   "family": "dialogue_uk",
+   "id": "dialogue_uk_video",
+   "kind": "video",
+   "language": "uk",
+   "lines": [
+    {
+     "language": "uk",
+     "speaker": 0,
+     "start_s": 4.0,
+     "text": "Доброго ранку, ти закінчив квартальний звіт для комітету?"
+    },
+    {
+     "language": "uk",
+     "speaker": 1,
+     "start_s": 16.0,
+     "text": "Майже, мені ще потрібні цифри зі складу на півночі."
+    },
+    {
+     "language": "uk",
+     "speaker": 0,
+     "start_s": 28.0,
+     "text": "Надішли мені чернетку сьогодні ввечері, і я прочитаю її завтра в поїзді."
+    },
+    {
+     "language": "uk",
+     "speaker": 1,
+     "start_s": 40.0,
+     "text": "Цифри показують невелике зростання доставок протягом осінніх місяців."
+    },
+    {
+     "language": "uk",
+     "speaker": 0,
+     "start_s": 52.0,
+     "text": "Це збігається з тим, що водії розповідали про новий маршрут через долину."
+    },
+    {
+     "language": "uk",
+     "speaker": 1,
+     "start_s": 64.0,
+     "text": "Тоді варто згадати про зміну маршруту на першій сторінці звіту."
+    },
+    {
+     "language": "uk",
+     "speaker": 0,
+     "start_s": 76.0,
+     "text": "Згоден, і я додам короткий графік із підсумками за кожен місяць."
+    },
+    {
+     "language": "uk",
+     "speaker": 1,
+     "start_s": 88.0,
+     "text": "Чудово, зустрінемося в четвер о десятій, щоб переглянути остаточну версію."
+    }
+   ],
+   "probes": [
+    4.0,
+    52.0
+   ],
+   "speakers": 2,
+   "synth": ""
+  },
+  {
+   "duration_s": 108.0,
+   "family": "dialogue_ru",
+   "id": "dialogue_ru_audio",
+   "kind": "audio",
+   "language": "ru",
+   "lines": [
+    {
+     "language": "ru",
+     "speaker": 0,
+     "start_s": 4.0,
+     "text": "Доброе утро, ты закончил квартальный отчёт для комитета?"
+    },
+    {
+     "language": "ru",
+     "speaker": 1,
+     "start_s": 16.0,
+     "text": "Почти, мне ещё нужны цифры со склада на севере."
+    },
+    {
+     "language": "ru",
+     "speaker": 0,
+     "start_s": 28.0,
+     "text": "Пришли мне черновик сегодня вечером, и я прочитаю его завтра в поезде."
+    },
+    {
+     "language": "ru",
+     "speaker": 1,
+     "start_s": 40.0,
+     "text": "Цифры показывают небольшой рост поставок в течение осенних месяцев."
+    },
+    {
+     "language": "ru",
+     "speaker": 0,
+     "start_s": 52.0,
+     "text": "Это совпадает с тем, что водители рассказывали о новом маршруте через долину."
+    },
+    {
+     "language": "ru",
+     "speaker": 1,
+     "start_s": 64.0,
+     "text": "Тогда стоит упомянуть об изменении маршрута на первой странице отчёта."
+    },
+    {
+     "language": "ru",
+     "speaker": 0,
+     "start_s": 76.0,
+     "text": "Согласен, и я добавлю короткий график с итогами за каждый месяц."
+    },
+    {
+     "language": "ru",
+     "speaker": 1,
+     "start_s": 88.0,
+     "text": "Отлично, встретимся в четверг в десять, чтобы просмотреть окончательную версию."
+    }
+   ],
+   "probes": [
+    4.0,
+    52.0
+   ],
+   "speakers": 2,
+   "synth": ""
+  },
+  {
+   "duration_s": 108.0,
+   "family": "dialogue_ru",
+   "id": "dialogue_ru_video",
+   "kind": "video",
+   "language": "ru",
+   "lines": [
+    {
+     "language": "ru",
+     "speaker": 0,
+     "start_s": 4.0,
+     "text": "Доброе утро, ты закончил квартальный отчёт для комитета?"
+    },
+    {
+     "language": "ru",
+     "speaker": 1,
+     "start_s": 16.0,
+     "text": "Почти, мне ещё нужны цифры со склада на севере."
+    },
+    {
+     "language": "ru",
+     "speaker": 0,
+     "start_s": 28.0,
+     "text": "Пришли мне черновик сегодня вечером, и я прочитаю его завтра в поезде."
+    },
+    {
+     "language": "ru",
+     "speaker": 1,
+     "start_s": 40.0,
+     "text": "Цифры показывают небольшой рост поставок в течение осенних месяцев."
+    },
+    {
+     "language": "ru",
+     "speaker": 0,
+     "start_s": 52.0,
+     "text": "Это совпадает с тем, что водители рассказывали о новом маршруте через долину."
+    },
+    {
+     "language": "ru",
+     "speaker": 1,
+     "start_s": 64.0,
+     "text": "Тогда стоит упомянуть об изменении маршрута на первой странице отчёта."
+    },
+    {
+     "language": "ru",
+     "speaker": 0,
+     "start_s": 76.0,
+     "text": "Согласен, и я добавлю короткий график с итогами за каждый месяц."
+    },
+    {
+     "language": "ru",
+     "speaker": 1,
+     "start_s": 88.0,
+     "text": "Отлично, встретимся в четверг в десять, чтобы просмотреть окончательную версию."
+    }
+   ],
+   "probes": [
+    4.0,
+    52.0
+   ],
+   "speakers": 2,
+   "synth": ""
+  },
+  {
+   "duration_s": 156.0,
+   "family": "mixed",
+   "id": "mixed_audio",
+   "kind": "audio",
+   "language": "mixed",
+   "lines": [
+    {
+     "language": "uk",
+     "speaker": 0,
+     "start_s": 4.0,
+     "text": "Доброго ранку, ти закінчив квартальний звіт для комітету?"
+    },
+    {
+     "language": "ru",
+     "speaker": 1,
+     "start_s": 16.0,
+     "text": "Доброе утро, ты закончил квартальный отчёт для комитета?"
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 28.0,
+     "text": "Good morning, did you finish the quarterly summary for the committee?"
+    },
+    {
+     "language": "uk",
+     "speaker": 1,
+     "start_s": 40.0,
+     "text": "Майже, мені ще потрібні цифри зі складу на півночі."
+    },
+    {
+     "language": "ru",
+     "speaker": 0,
+     "start_s": 52.0,
+     "text": "Почти, мне ещё нужны цифры со склада на севере."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 64.0,
+     "text": "Almost, I still need the figures from the warehouse in the north."
+    },
+    {
+     "language": "uk",
+     "speaker": 0,
+     "start_s": 76.0,
+     "text": "Надішли мені чернетку сьогодні ввечері, і я прочитаю її завтра в поїзді."
+    },
+    {
+     "language": "ru",
+     "speaker": 1,
+     "start_s": 88.0,
+     "text": "Пришли мне черновик сегодня вечером, и я прочитаю его завтра в поезде."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 100.0,
+     "text": "Send me the draft tonight and I will read it on the train tomorrow."
+    },
+    {
+     "language": "uk",
+     "speaker": 1,
+     "start_s": 112.0,
+     "text": "Цифри показують невелике зростання доставок протягом осінніх місяців."
+    },
+    {
+     "language": "ru",
+     "speaker": 0,
+     "start_s": 124.0,
+     "text": "Цифры показывают небольшой рост поставок в течение осенних месяцев."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 136.0,
+     "text": "The numbers show a small increase in deliveries during the autumn months."
+    }
+   ],
+   "probes": [
+    4.0,
+    52.0,
+    100.0
+   ],
+   "speakers": 2,
+   "synth": ""
+  },
+  {
+   "duration_s": 108.0,
+   "family": "four_speakers",
+   "id": "four_speakers_audio",
+   "kind": "audio",
+   "language": "en",
+   "lines": [
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 4.0,
+     "text": "Good morning, did you finish the quarterly summary for the committee?"
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 16.0,
+     "text": "Almost, I still need the figures from the warehouse in the north."
+    },
+    {
+     "language": "en",
+     "speaker": 2,
+     "start_s": 28.0,
+     "text": "Send me the draft tonight and I will read it on the train tomorrow."
+    },
+    {
+     "language": "en",
+     "speaker": 3,
+     "start_s": 40.0,
+     "text": "The numbers show a small increase in deliveries during the autumn months."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 52.0,
+     "text": "That matches what the drivers told us about the new route through the valley."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 64.0,
+     "text": "Then we should mention the route change on the first page of the report."
+    },
+    {
+     "language": "en",
+     "speaker": 2,
+     "start_s": 76.0,
+     "text": "Agreed, and I will add a short chart showing the monthly totals."
+    },
+    {
+     "language": "en",
+     "speaker": 3,
+     "start_s": 88.0,
+     "text": "Perfect, let us meet on Thursday at ten to go through the final version."
+    }
+   ],
+   "probes": [
+    4.0,
+    52.0
+   ],
+   "speakers": 4,
+   "synth": ""
+  },
+  {
+   "duration_s": 180.0,
+   "family": "no_speech_tone",
+   "id": "no_speech_tone_audio",
+   "kind": "audio",
+   "language": "",
+   "lines": [],
+   "probes": [],
+   "speakers": 0,
+   "synth": "tone"
+  },
+  {
+   "duration_s": 180.0,
+   "family": "no_speech_music",
+   "id": "no_speech_music_video",
+   "kind": "video",
+   "language": "",
+   "lines": [],
+   "probes": [],
+   "speakers": 0,
+   "synth": "music"
+  },
+  {
+   "duration_s": 4200.0,
+   "family": "seams_70min",
+   "id": "seams_70min_audio",
+   "kind": "audio",
+   "language": "en",
+   "lines": [
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 10.0,
+     "text": "Item 1. The bright engine borders the small ledger near the chapel on day 5."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 50.0,
+     "text": "Item 2. The heavy garden circles the distant garden near the depot on day 22."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 90.0,
+     "text": "Item 3. The bright window protects the distant orchard near the market on day 4."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 130.0,
+     "text": "Item 4. The quiet orchard reaches the old ledger near the station on day 10."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 170.0,
+     "text": "Item 5. The small bridge borders the bright ledger near the chapel on day 19."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 210.0,
+     "text": "Item 6. The narrow bridge crosses the distant lantern near the meadow on day 6."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 250.0,
+     "text": "Item 7. The green bridge measures the heavy bridge near the meadow on day 14."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 290.0,
+     "text": "Item 8. The bright ledger borders the distant engine near the river on day 25."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 330.0,
+     "text": "Item 9. The bright engine reaches the bright ledger near the market on day 4."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 370.0,
+     "text": "Item 10. The small lantern crosses the narrow engine near the market on day 10."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 410.0,
+     "text": "Item 11. The quiet harbour paints the bright orchard near the meadow on day 25."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 450.0,
+     "text": "Item 12. The bright garden circles the green ledger near the meadow on day 23."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 490.0,
+     "text": "Item 13. The green lantern reaches the quiet bridge near the station on day 2."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 530.0,
+     "text": "Item 14. The distant garden reaches the distant garden near the quarry on day 4."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 570.0,
+     "text": "Item 15. The bright harbour reaches the old lantern near the tower on day 21."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 610.0,
+     "text": "Item 16. The narrow ledger crosses the small orchard near the station on day 18."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 650.0,
+     "text": "Item 17. The heavy harbour borders the distant window near the tower on day 11."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 690.0,
+     "text": "Item 18. The old ledger reaches the small ledger near the quarry on day 11."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 730.0,
+     "text": "Item 19. The narrow engine borders the quiet window near the river on day 16."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 770.0,
+     "text": "Item 20. The heavy window measures the green harbour near the market on day 4."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 810.0,
+     "text": "Item 21. The old ledger borders the quiet ledger near the station on day 21."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 850.0,
+     "text": "Item 22. The quiet bridge measures the bright bridge near the market on day 18."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 890.0,
+     "text": "Item 23. The small orchard circles the old engine near the station on day 25."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 930.0,
+     "text": "Item 24. The distant orchard reaches the old bridge near the chapel on day 27."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 970.0,
+     "text": "Item 25. The quiet engine crosses the small orchard near the river on day 9."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 1010.0,
+     "text": "Item 26. The heavy bridge measures the green harbour near the river on day 20."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 1050.0,
+     "text": "Item 27. The narrow ledger protects the narrow ledger near the depot on day 17."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 1090.0,
+     "text": "Item 28. The distant orchard reaches the bright garden near the river on day 12."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 1130.0,
+     "text": "Item 29. The quiet harbour circles the quiet window near the depot on day 28."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 1170.0,
+     "text": "Item 30. The old engine circles the narrow garden near the quarry on day 3."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 1210.0,
+     "text": "Item 31. The small window circles the bright ledger near the meadow on day 13."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 1250.0,
+     "text": "Item 32. The small harbour measures the old bridge near the chapel on day 28."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 1290.0,
+     "text": "Item 33. The narrow engine protects the narrow harbour near the quarry on day 11."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 1330.0,
+     "text": "Item 34. The distant ledger circles the small lantern near the depot on day 3."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 1370.0,
+     "text": "Item 35. The narrow bridge measures the narrow garden near the station on day 3."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 1410.0,
+     "text": "Item 36. The narrow bridge crosses the bright orchard near the depot on day 6."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 1450.0,
+     "text": "Item 37. The bright orchard measures the quiet bridge near the tower on day 9."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 1490.0,
+     "text": "Item 38. The narrow ledger crosses the old garden near the station on day 22."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 1530.0,
+     "text": "Item 39. The bright garden borders the narrow ledger near the tower on day 18."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 1570.0,
+     "text": "Item 40. The old window measures the small harbour near the station on day 3."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 1610.0,
+     "text": "Item 41. The quiet garden measures the distant ledger near the station on day 14."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 1650.0,
+     "text": "Item 42. The heavy lantern measures the green ledger near the tower on day 26."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 1690.0,
+     "text": "Item 43. The old orchard crosses the small ledger near the tower on day 27."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 1730.0,
+     "text": "Item 44. The green orchard reaches the small engine near the chapel on day 16."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 1770.0,
+     "text": "Item 45. The heavy garden protects the green bridge near the depot on day 23."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 1810.0,
+     "text": "Item 46. The small lantern reaches the old engine near the station on day 13."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 1850.0,
+     "text": "Item 47. The small bridge paints the old harbour near the tower on day 7."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 1890.0,
+     "text": "Item 48. The bright window circles the small orchard near the meadow on day 20."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 1930.0,
+     "text": "Item 49. The green orchard circles the green lantern near the market on day 27."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 1970.0,
+     "text": "Item 50. The heavy garden reaches the narrow harbour near the station on day 27."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 2010.0,
+     "text": "Item 51. The narrow harbour protects the heavy harbour near the market on day 21."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 2050.0,
+     "text": "Item 52. The old engine circles the heavy window near the depot on day 8."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 2090.0,
+     "text": "Item 53. The small ledger protects the bright engine near the tower on day 4."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 2130.0,
+     "text": "Item 54. The distant garden paints the small lantern near the depot on day 22."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 2170.0,
+     "text": "Item 55. The quiet garden circles the narrow ledger near the station on day 11."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 2210.0,
+     "text": "Item 56. The heavy engine crosses the narrow harbour near the depot on day 12."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 2250.0,
+     "text": "Item 57. The quiet engine follows the green engine near the market on day 12."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 2290.0,
+     "text": "Item 58. The bright orchard paints the narrow lantern near the chapel on day 23."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 2330.0,
+     "text": "Item 59. The small ledger measures the narrow engine near the river on day 19."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 2370.0,
+     "text": "Item 60. The old window protects the narrow harbour near the depot on day 3."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 2410.0,
+     "text": "Item 61. The narrow window crosses the distant engine near the market on day 5."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 2450.0,
+     "text": "Item 62. The old engine crosses the quiet ledger near the market on day 9."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 2490.0,
+     "text": "Item 63. The quiet lantern borders the bright orchard near the depot on day 17."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 2530.0,
+     "text": "Item 64. The bright garden reaches the green lantern near the meadow on day 9."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 2570.0,
+     "text": "Item 65. The distant bridge circles the heavy orchard near the station on day 21."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 2610.0,
+     "text": "Item 66. The bright window protects the bright lantern near the quarry on day 14."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 2650.0,
+     "text": "Item 67. The heavy orchard borders the bright window near the station on day 24."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 2690.0,
+     "text": "Item 68. The green ledger reaches the green engine near the chapel on day 25."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 2730.0,
+     "text": "Item 69. The heavy ledger borders the heavy bridge near the quarry on day 10."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 2770.0,
+     "text": "Item 70. The quiet window crosses the quiet window near the river on day 4."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 2810.0,
+     "text": "Item 71. The old bridge paints the quiet window near the depot on day 14."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 2850.0,
+     "text": "Item 72. The green ledger protects the heavy bridge near the river on day 6."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 2890.0,
+     "text": "Item 73. The heavy lantern measures the distant window near the tower on day 18."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 2930.0,
+     "text": "Item 74. The green harbour measures the distant ledger near the quarry on day 27."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 2970.0,
+     "text": "Item 75. The small harbour borders the distant lantern near the market on day 7."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 3010.0,
+     "text": "Item 76. The small ledger circles the bright window near the quarry on day 11."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 3050.0,
+     "text": "Item 77. The heavy harbour circles the heavy orchard near the quarry on day 26."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 3090.0,
+     "text": "Item 78. The narrow orchard measures the green ledger near the quarry on day 13."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 3130.0,
+     "text": "Item 79. The small ledger follows the bright bridge near the meadow on day 4."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 3170.0,
+     "text": "Item 80. The old lantern borders the quiet engine near the tower on day 6."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 3210.0,
+     "text": "Item 81. The heavy harbour protects the green lantern near the tower on day 5."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 3250.0,
+     "text": "Item 82. The old ledger protects the narrow orchard near the depot on day 19."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 3290.0,
+     "text": "Item 83. The green lantern paints the distant lantern near the market on day 27."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 3330.0,
+     "text": "Item 84. The distant ledger measures the green window near the river on day 4."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 3370.0,
+     "text": "Item 85. The quiet engine crosses the bright garden near the meadow on day 20."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 3410.0,
+     "text": "Item 86. The quiet lantern measures the bright lantern near the meadow on day 24."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 3450.0,
+     "text": "Item 87. The green orchard measures the quiet lantern near the quarry on day 2."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 3490.0,
+     "text": "Item 88. The quiet engine paints the narrow lantern near the tower on day 20."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 3530.0,
+     "text": "Item 89. The bright garden crosses the old window near the chapel on day 27."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 3570.0,
+     "text": "Item 90. The small engine protects the old garden near the river on day 7."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 3610.0,
+     "text": "Item 91. The narrow window paints the quiet window near the meadow on day 16."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 3650.0,
+     "text": "Item 92. The small harbour borders the narrow bridge near the station on day 19."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 3690.0,
+     "text": "Item 93. The distant orchard reaches the green orchard near the meadow on day 2."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 3730.0,
+     "text": "Item 94. The bright window protects the quiet ledger near the quarry on day 19."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 3770.0,
+     "text": "Item 95. The narrow engine crosses the green bridge near the tower on day 14."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 3810.0,
+     "text": "Item 96. The narrow lantern crosses the quiet lantern near the river on day 27."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 3850.0,
+     "text": "Item 97. The old window circles the green window near the station on day 3."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 3890.0,
+     "text": "Item 98. The green window crosses the distant lantern near the market on day 7."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 3930.0,
+     "text": "Item 99. The narrow window borders the quiet ledger near the meadow on day 16."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 3970.0,
+     "text": "Item 100. The green window reaches the small bridge near the chapel on day 22."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 4010.0,
+     "text": "Item 101. The small engine reaches the small engine near the depot on day 7."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 4050.0,
+     "text": "Item 102. The bright harbour reaches the narrow window near the meadow on day 8."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 4090.0,
+     "text": "Item 103. The small engine crosses the heavy harbour near the station on day 18."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 4130.0,
+     "text": "Item 104. The narrow lantern measures the quiet orchard near the market on day 15."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 4170.0,
+     "text": "Item 105. The small orchard measures the bright window near the market on day 23."
+    }
+   ],
+   "probes": [
+    10.0,
+    170.0,
+    330.0,
+    490.0,
+    650.0,
+    810.0,
+    970.0,
+    1130.0,
+    1290.0,
+    1450.0,
+    1610.0,
+    1770.0,
+    1930.0,
+    2090.0,
+    2250.0,
+    2410.0,
+    2570.0,
+    2730.0,
+    2890.0,
+    3050.0,
+    3210.0,
+    3370.0,
+    3530.0,
+    3690.0,
+    3850.0,
+    4010.0,
+    4170.0
+   ],
+   "speakers": 2,
+   "synth": ""
+  },
+  {
+   "duration_s": 1710.0,
+   "family": "unique_22min",
+   "id": "unique_22min_audio",
+   "kind": "audio",
+   "language": "en",
+   "lines": [
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 10.0,
+     "text": "Item 1. The heavy garden crosses the small ledger near the market on day 25."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 40.0,
+     "text": "Item 2. The green bridge measures the old lantern near the chapel on day 21."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 70.0,
+     "text": "Item 3. The heavy harbour crosses the quiet engine near the meadow on day 15."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 100.0,
+     "text": "Item 4. The narrow ledger follows the quiet window near the chapel on day 10."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 130.0,
+     "text": "Item 5. The heavy harbour protects the heavy engine near the meadow on day 23."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 160.0,
+     "text": "Item 6. The heavy harbour crosses the green lantern near the depot on day 10."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 190.0,
+     "text": "Item 7. The old harbour circles the heavy engine near the chapel on day 14."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 220.0,
+     "text": "Item 8. The quiet engine circles the distant bridge near the market on day 16."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 250.0,
+     "text": "Item 9. The green bridge circles the distant lantern near the tower on day 18."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 280.0,
+     "text": "Item 10. The narrow harbour crosses the bright orchard near the tower on day 7."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 310.0,
+     "text": "Item 11. The quiet harbour reaches the heavy window near the chapel on day 22."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 340.0,
+     "text": "Item 12. The narrow orchard crosses the bright ledger near the tower on day 22."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 370.0,
+     "text": "Item 13. The bright lantern measures the distant bridge near the river on day 20."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 400.0,
+     "text": "Item 14. The small lantern follows the small ledger near the meadow on day 23."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 430.0,
+     "text": "Item 15. The small orchard follows the green bridge near the meadow on day 5."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 460.0,
+     "text": "Item 16. The quiet ledger reaches the bright window near the market on day 7."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 490.0,
+     "text": "Item 17. The distant engine paints the quiet bridge near the tower on day 13."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 520.0,
+     "text": "Item 18. The bright garden protects the small bridge near the river on day 2."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 550.0,
+     "text": "Item 19. The old bridge borders the narrow harbour near the chapel on day 5."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 580.0,
+     "text": "Item 20. The heavy lantern measures the distant lantern near the tower on day 8."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 610.0,
+     "text": "Item 21. The small harbour crosses the distant orchard near the meadow on day 9."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 640.0,
+     "text": "Item 22. The narrow bridge protects the bright ledger near the river on day 22."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 670.0,
+     "text": "Item 23. The green lantern crosses the small ledger near the meadow on day 3."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 700.0,
+     "text": "Item 24. The small lantern protects the quiet garden near the quarry on day 23."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 730.0,
+     "text": "Item 25. The narrow orchard circles the heavy window near the chapel on day 10."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 760.0,
+     "text": "Item 26. The quiet harbour follows the heavy window near the meadow on day 18."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 790.0,
+     "text": "Item 27. The old garden protects the old ledger near the chapel on day 28."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 820.0,
+     "text": "Item 28. The small orchard paints the narrow orchard near the depot on day 12."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 850.0,
+     "text": "Item 29. The bright harbour measures the heavy bridge near the station on day 14."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 880.0,
+     "text": "Item 30. The green garden crosses the heavy garden near the chapel on day 21."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 910.0,
+     "text": "Item 31. The quiet window crosses the bright lantern near the market on day 5."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 940.0,
+     "text": "Item 32. The bright ledger protects the old window near the depot on day 20."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 970.0,
+     "text": "Item 33. The green window crosses the narrow window near the meadow on day 2."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 1000.0,
+     "text": "Item 34. The narrow garden crosses the bright window near the meadow on day 2."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 1030.0,
+     "text": "Item 35. The green bridge follows the small window near the river on day 7."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 1060.0,
+     "text": "Item 36. The small engine circles the distant window near the river on day 28."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 1090.0,
+     "text": "Item 37. The distant engine measures the narrow window near the station on day 16."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 1120.0,
+     "text": "Item 38. The old garden follows the heavy garden near the meadow on day 19."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 1150.0,
+     "text": "Item 39. The heavy orchard crosses the old garden near the river on day 5."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 1180.0,
+     "text": "Item 40. The small window paints the distant bridge near the chapel on day 8."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 1210.0,
+     "text": "Item 41. The distant ledger borders the distant lantern near the depot on day 23."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 1240.0,
+     "text": "Item 42. The small orchard reaches the narrow engine near the station on day 4."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 1270.0,
+     "text": "Item 43. The bright ledger borders the bright garden near the quarry on day 27."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 1300.0,
+     "text": "Item 44. The old ledger crosses the heavy engine near the tower on day 20."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 1330.0,
+     "text": "Item 45. The narrow window circles the small ledger near the depot on day 23."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 1360.0,
+     "text": "Item 46. The small harbour protects the narrow garden near the tower on day 22."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 1390.0,
+     "text": "Item 47. The old engine crosses the narrow garden near the chapel on day 16."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 1420.0,
+     "text": "Item 48. The green bridge measures the green harbour near the chapel on day 6."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 1450.0,
+     "text": "Item 49. The heavy lantern protects the bright ledger near the tower on day 14."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 1480.0,
+     "text": "Item 50. The heavy bridge reaches the old lantern near the station on day 7."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 1510.0,
+     "text": "Item 51. The small window paints the small ledger near the river on day 24."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 1540.0,
+     "text": "Item 52. The bright engine reaches the bright orchard near the river on day 7."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 1570.0,
+     "text": "Item 53. The bright engine borders the small window near the chapel on day 9."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 1600.0,
+     "text": "Item 54. The heavy lantern follows the green bridge near the station on day 28."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 1630.0,
+     "text": "Item 55. The distant window circles the bright garden near the depot on day 10."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 1660.0,
+     "text": "Item 56. The quiet window protects the heavy window near the depot on day 18."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 1690.0,
+     "text": "Item 57. The bright lantern reaches the bright ledger near the quarry on day 28."
+    }
+   ],
+   "probes": [
+    10.0,
+    130.0,
+    250.0,
+    370.0,
+    490.0,
+    610.0,
+    730.0,
+    850.0,
+    970.0,
+    1090.0,
+    1210.0,
+    1330.0,
+    1450.0,
+    1570.0,
+    1690.0
+   ],
+   "speakers": 2,
+   "synth": ""
+  },
+  {
+   "duration_s": 20.0,
+   "family": "early_20s",
+   "id": "early_20s_audio",
+   "kind": "audio",
+   "language": "en",
+   "lines": [
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 3.0,
+     "text": "Item 1. The heavy engine follows the green ledger near the station on day 15."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 15.0,
+     "text": "Item 2. The distant bridge follows the heavy window near the quarry on day 20."
+    }
+   ],
+   "probes": [
+    3.0
+   ],
+   "speakers": 2,
+   "synth": ""
+  },
+  {
+   "duration_s": 45.0,
+   "family": "early_45s",
+   "id": "early_45s_audio",
+   "kind": "audio",
+   "language": "en",
+   "lines": [
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 3.0,
+     "text": "Item 1. The old harbour borders the old bridge near the meadow on day 12."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 15.0,
+     "text": "Item 2. The quiet bridge borders the quiet bridge near the meadow on day 27."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 27.0,
+     "text": "Item 3. The bright engine crosses the bright ledger near the meadow on day 27."
+    }
+   ],
+   "probes": [
+    3.0
+   ],
+   "speakers": 2,
+   "synth": ""
+  },
+  {
+   "duration_s": 90.0,
+   "family": "early_90s",
+   "id": "early_90s_audio",
+   "kind": "audio",
+   "language": "en",
+   "lines": [
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 3.0,
+     "text": "Item 1. The narrow bridge borders the old window near the quarry on day 20."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 15.0,
+     "text": "Item 2. The old engine borders the old window near the market on day 19."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 27.0,
+     "text": "Item 3. The heavy lantern circles the green orchard near the market on day 6."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 39.0,
+     "text": "Item 4. The heavy lantern follows the quiet bridge near the meadow on day 26."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 51.0,
+     "text": "Item 5. The narrow bridge follows the distant bridge near the station on day 2."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 63.0,
+     "text": "Item 6. The bright garden paints the quiet harbour near the market on day 17."
+    }
+   ],
+   "probes": [
+    3.0,
+    51.0
+   ],
+   "speakers": 2,
+   "synth": ""
+  }
+ ],
+ "sample_rate": 16000,
+ "version": 1
+}
