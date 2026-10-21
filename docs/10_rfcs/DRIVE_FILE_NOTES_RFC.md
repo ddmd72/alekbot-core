@@ -39,7 +39,7 @@ break). §13 lists where this RFC departs from them.
 
 ### 0.3 Rev 3.1: one deleted-files surface with the transcripts mirror
 
-The transcripts mirror (`USER_DRIVE_INDEXING_RFC.md` §27.9, rev 3.27) now archives a deleted recording's transcript and
+The transcripts mirror (`USER_DRIVE_INDEXING_RFC.md` §27.9, rev 3.28) now archives a deleted recording's transcript and
 reaches it only through an explicit deleted-files search (owner decision D48 there). Notes stay bot-side (D1): nothing of
 a note goes to the drive, and the mirror never writes one.
 

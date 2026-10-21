@@ -812,425 +812,573 @@ root `CLAUDE.md` (agent roster rows `DriveTranscriber`, User Drive indexing para
 
 # Part B — T2: the mirror folder, and T3: summary and header polish
 
-**Spec for T2:** RFC §27.9 **rev 3.27** (2026-10-21, redesigned before any T2 code), owner decision **D48** (§21), rows
-**Δ183–Δ202** (§27.16), §27.8 b (pins), §27.12 (privacy, disclosure), §27.15 step 8 (owner steps), and
-`docs/10_rfcs/DRIVE_FILE_NOTES_RFC.md` §0.3 / §6.4 / §7.1 (the shared deleted-files surface and deletion "why"). Where this
-part and an older line of Part A or Part C disagree about the mirror, this part wins.
+**Spec for T2:** RFC §27.9 **rev 3.28** (2026-10-21, redesigned before any T2 code, then revised after a builder-check
+review), owner decisions **D48** and **D49** (§21), **OQ-T10 answered** (§27.17), rows **Δ183–Δ216** (§27.16), §27.8 b
+(pins), §27.12 (privacy, Cabinet texts), §27.15 step 8 (owner steps), and `docs/10_rfcs/DRIVE_FILE_NOTES_RFC.md` §0.3 /
+§6.4 / §7.1 (the shared deleted-files surface and deletion "why"). Where this part and an older line of Part A or Part C
+disagree about the mirror, this part wins.
+
+**Starts after `fix/drive-transcripts-final-review` (PR #121) is merged into `main`.** T2 reads `transcript_truncated`
+(T-R31, only on that branch), and the RFC numbering continues from that branch's Δ176–Δ182 (this revision's rows are
+Δ183–Δ216; the two branches edit the same §27.16 table and §27.19, so the merge needs the rows put in number order). The
+line numbers below are `main` at the time of writing: after the merge, `drive_transcript_stage.py` moves by about 280 lines
+(`_sweep_orphans` ≈ 1476), `_log` and `_TickHost` by about 4; the implementer re-reads every cited line before editing.
 
 ## What changed against the old T2 plan (rev 3.26 Tasks 18–21B)
 
-1. **The root's identity left the sync state** (Δ184). Old Task 18 put `mirror_root_id` / `mirror_root_name` on
-   `DriveSyncState` with a fenced `set_mirror_root` and an exclusion from `STATE_FIELDS` (G23). The rebuild, the opt-out and
-   the access-loss purge all delete the sync state, and Δ116 never adopts a folder, so after any purge the bot would have
-   created `Transcripts (Alek)` and indexed the old folder's `.md` files as documents. Now: a root document per drive,
-   `{prefix}drive_mirror_roots/{user_id}:{drive_id}`, that no purge deletes, read at every tick's start into
-   `PlanContext.mirror_root_ids`. The sync-state fields, `set_mirror_root` and G23's exclusion are gone.
-2. **A deleted source is archived, not deleted** (D48, Δ189, Δ190). Old Tasks 19–20 deleted the mirror file "at once by the
-   record-delete path". Now: a per-file move into `<root>/<Archive>/<YYYY-MM-DD>/<mirror path>`, only after a complete
-   round and a grace hour; frozen; a restore moves it back; an `unstored` source detaches instead.
-3. **No purge deletes anything on the drive** (Δ185; old G22 / Δ153 superseded, pending the owner's OQ-T10). The ledger
-   and the store entries of archived transcripts survive every purge (Δ186).
-4. **Work is driven by flags and marks, not a full diff** (Δ187, Δ188). Old Task 19's `desired(records, folders)` /
-   `diff(desired, actual)` over everything each tick is replaced by `mirror_due` / `mirrored_digest` on the record (set
-   in `_commit`), a seed pass, and durable deletion marks on the ledger carrying a why.
-5. **Creates never overwrite a user's file** (Δ191; old Δ115 `replace` dropped). Creates `fail`, a recorded intent makes
-   the crash re-run safe with `replace`; moves fail on a taken name; no If-Match.
-6. **Names and paths are specified** (Δ192, Δ193): a sibling collision rule with reserved root names, rename cycles
-   through a temporary name, case-only renames in two moves, and the path counted from the drive root (`area_path`);
-   `MIRROR_PATH_MAX` 380 is retired.
-7. **New:** the Step 1 guard in `UserDriveService` (Δ194), the deleted-files search `drive_deleted` shared with the
-   owner-notes RFC (Δ195), the mirror's own Graph read bucket (Δ196), a safe prune (Δ197), the store pins in the orphan
-   sweep and the purge (Δ186), and port additions `child_by_name`, `area_path`, `DriveItem.ctag`.
-8. **The file** is the header plus the uncapped open text (Δ198); **T3's parts stay in Task 22** (the summary, the
-   localized seam and possibly-incomplete lines in the header, the `~` stamps note, `RENDER_VERSION` 2).
-9. **A free Graph spike** is an owner step before Task 18 (§27.15 step 8a).
-10. **Task split:** 18, 19A, 19B, 20A, 20B, 21A, 21B, 21C, 21D, 21E (was 18, 19, 20, 21A, 21B). Task 22 (T3) keeps its
-    number.
-
-**Open owner decision that gates T2: OQ-T10** (RFC §27.17) — what an indexing opt-out does to the mirror. Recommended
-default, which Δ185 and every task below are written for: an opt-out deletes nothing on the drive; the root document,
-the ledger and the archived transcripts' pinned store entries stay; the other store entries go with the index as today.
-Only Task 20B's purge test and Task 21C's opt-out test change if the owner picks another option.
+1. **The root's identity left the sync state** (Δ184, Δ205). Old Task 18 put `mirror_root_id` / `mirror_root_name` on
+   `DriveSyncState` (G23). The rebuild, the opt-out and the access-loss purge all delete the sync state, and Δ116 never
+   adopts a folder, so after any purge the bot would have created a second root and indexed the old folder's `.md` files
+   as documents. Now: a root document per drive that no purge deletes; every tick classifies with the union of the user's
+   root ids, read at its start; a read error is systemic, never "no roots".
+2. **The folder is `_Transcripts`** (owner, D49): a fixed name in every language, with `Archive` and `Long paths` and a
+   localized `_README.md` ("managed by the bot: files here may be rewritten; do not edit; deleted-recording transcripts live
+   in Archive/"). No UI-language folder names any more.
+3. **A deleted source is archived, not deleted** (D48, Δ189, Δ190). A per-file move into
+   `_Transcripts/Archive/<YYYY-MM-DD>/<mirror path>` after a complete round and a grace hour; frozen; a restore moves it
+   back; an `unstored` source detaches instead.
+4. **No purge deletes anything on the drive** (owner, OQ-T10; old G22 / Δ153 superseded). The ledger and the store entries
+   of archived transcripts survive every purge (Δ186); the purge uses a **scanning** helper so pins cannot make it stop
+   early (Δ214); a re-enable re-buys the active transcripts at ≈ $0.16 per audio hour under the cap (RFC §27.9.12).
+5. **Work is driven by flags and marks, not a full diff** (Δ187, Δ188, Δ207, Δ208). `mirror_due` / `mirrored_digest` on
+   the record (set in `_commit`), a seed pass, durable deletion marks with a why, written before the record deletes.
+6. **Errors are contained per document** (Δ204): systemic classes raise, a full drive pauses the mirror, everything else
+   charges the document with a backoff and parks it after five failures. **The mirror has a reserved tail** (Δ209).
+7. **The root's loss is graced and confirmed** (Δ203): 24 h after a complete round and a not-found read, never on a guess;
+   the rollback steps pause the queue first.
+8. **Creates never overwrite a user's file** (Δ191, Δ210): `fail` on create, an intent whose crash re-run reads the name
+   first; moves fail on a taken name; no If-Match.
+9. **Names and paths are specified** (Δ192, Δ193): reserved names, a sibling collision rule re-run when a name frees, a
+   file yielding to a folder renamed first, cycles through a temporary name, case-only renames in one PATCH (S1), the path
+   counted from the drive root (`area_path`); `MIRROR_PATH_MAX` 380 is retired.
+10. **Drive-scoped ledger queries** (Δ206); the guard also covers **ancestors** of the root (Δ194); the audit is
+    **driven by the ledger** (Δ201); `archive_keys` built **per segment** with a 12 000-key cap (Δ213).
+11. **New tasks:** the Step 1 guard and the deleted-files search `drive_deleted` (shared with the owner-notes RFC); the
+    Cabinet texts (Δ202). **T3's parts stay in Task 22.**
+12. **The Graph spike S1** ran (Δ216): every check answered yes; the case-only two-move rule is dropped, a path-too-long
+    error class and the folder-creation address are added in Task 18.
+13. **Task split:** 18, 19A, 19B, 20A, 20B, 21A, 21B, 21C, 21D, 21E. Task 22 (T3) keeps its number.
 
 ## T2 owner steps (placeholders only; nothing here names a real resource)
 
-- **S1 [OWNER] Graph spike** before Task 18 (RFC §27.15 step 8a; free, ≈ 20 min, a throwaway folder inside the App
-  Folder, the owner's explicit OK): (a) `PUT …/content` with `conflictBehavior=fail` onto a taken name → 409; (b) PATCH
-  rename or move onto a taken name → 409; (c) `GET /items/{parent}:/{name}:` inside the App Folder; (d) an upload's
-  response carries `cTag`; (e) the approot's `parentReference.path` is present (print its length only). The results go
-  into a Δ row. A "no" on (a) or (b): Task 18 adds the fallback named there; a "no" on (c): `child_by_name` lists the
-  parent's children (`list_children_changes`, paged) and matches the name.
-- **S2 [OWNER] OQ-T10 answered.**
-- **S3 [OWNER] Indexes `READY`** before the deploy (RFC §27.15 step 8c; declared by Task 20A in
-  `config/firestore.indexes.json`), then `scripts/infrastructure/drive_index_smoke.py`.
+- **S1 [OWNER-authorized] Graph spike — done 2026-10-21** (results in a private note under `scripts/memory/`, recorded as
+  Δ216; RFC §27.15 step 8a lists the checks): fail-on-conflict on PUT and PATCH, path-relative GET, `cTag` on upload equal
+  to later reads, the approot path, a one-PATCH case-only rename, a leading-underscore folder, the path-too-long error
+  (`400 invalidRequest` / `pathIsTooLong`) all measured; the 507 was not produced (documentation-based mapping). Task 18
+  carries the consequences.
+- **S2 [OWNER] done:** OQ-T10 answered (opt-out deletes nothing on the drive). **Still to confirm:** the deleted-files
+  search answers from the ledger after drive search is turned off (RFC §27.17).
+- **S3 [OWNER] Indexes `READY`** before the deploy (RFC §27.15 step 8c; declared by Task 20A), then
+  `scripts/infrastructure/drive_index_smoke.py`.
 - **S4 [OWNER] Deploy** main and indexer together in the paused window (no prompt upload: the mirror calls no model).
-- **S5 [OWNER] Live check** (RFC §27.15 step 8e) and **S6** the Cabinet sentence review (Δ202).
+- **S5 [OWNER] Live check** (RFC §27.15 step 8e).
+- **S6 [OWNER] Cabinet texts** (Δ202): the transcription sentence, the indexing disclosure and the opt-out confirmation, in
+  en/uk/fr/es.
 
-## Task 18: Port and adapter — conflict mode, child by name, area path, `cTag` on items
+## Task 18: Port and adapter — conflict mode, child by name, area path, `cTag`, created time, full drive
 
-**Gate:** S1 run (its results recorded); the tests below are written against the documented Graph behaviour and adjusted
-only if S1 contradicts it (a contradiction is a Δ row first, then code).
+**Gate:** S1 done (2026-10-21, results recorded as Δ216; every check answered yes, see below).
 
 **Files:**
-- Modify `src/domain/user_drive.py` — `DriveItem.ctag: str = ""` (last field, default; `:80-93`).
+- Modify `src/domain/user_drive.py` — `DriveItem.ctag: str = ""` (last field, default; `:80-93`); new exceptions
+  `DriveStorageFull(Exception)` ("the provider refused a write: the drive is full") and `DrivePathTooLong(Exception)`.
+- Modify `src/domain/drive_index.py` — `DriveChange.created_at: Optional[datetime] = None` (last field, default; Graph
+  `createdDateTime`).
 - Modify `src/ports/user_drive_port.py`:
   - `upload(self, user_id, parent_id, filename, data, content_type, conflict: Literal["rename", "replace", "fail"] =
     "rename") -> DriveItem` (`:52`); docstring: `fail` raises `DriveNameConflictError`; the default keeps every caller.
   - new abstract `child_by_name(user_id, parent_id, name) -> Optional[DriveChange]`: the child with that exact name, None
-    when there is none (404); never a search.
-  - new abstract `area_path(user_id) -> str`: the decoded absolute path of the area root from the drive root (e.g.
-    `/Apps/<name>`), for the path-length rule (Δ193); never logged in full (log its length).
+    when there is none; never a search.
+  - new abstract `area_path(user_id) -> str`: the decoded absolute path of the area root from the drive root, for the
+    path-length rule (Δ193); never logged in full (log its length).
+  - the docstrings of the write methods name `DriveStorageFull`.
 - Modify `src/adapters/microsoft/onedrive_adapter.py`:
   - `upload` (`:277-287`): the mode in the simple PUT query (`@microsoft.graph.conflictBehavior={conflict}`) and in the
-    session body; 409 already maps to `DriveNameConflictError` (`:583-584`), for PUT and PATCH alike.
-  - `child_by_name`: `GET /me/drive/items/{_q(parent_id)}:/{_q(name)}:` → `_to_change` (`:164`); `DriveItemNotFoundError` →
-    None.
+    session body.
+  - `_call` (`:536-600`): a 507 raises `DriveStorageFull` and a 400 with `pathIsTooLong` raises `DrivePathTooLong` (both
+    before the generic non-OK branch); 409 already maps to
+    `DriveNameConflictError` (`:583-584`), for PUT and PATCH alike.
+  - `child_by_name`: `GET /me/drive/items/{_q(parent_id)}:/{_q(name)}:` → `_to_change` (`:164`); `DriveItemNotFoundError`
+    → None.
   - `area_path`: `_root_abs` (`:631-636`).
-  - `_to_item` (`:665-678`) reads `cTag` into `ctag`.
+  - `_to_item` (`:665-678`) reads `cTag`; `_to_change` reads `createdDateTime`.
+- **What S1 measured (2026-10-21, Δ216) and what follows here.** `conflictBehavior=fail` is honoured on the simple PUT
+  (409 `nameAlreadyExists`) and on PATCH rename and move (query or body; a PATCH rename fails on a taken name by default),
+  so no name pre-check is needed; the path-relative GET works inside the App Folder, so `child_by_name` is one GET; the
+  upload's `cTag` (and `eTag`) equals a later GET's and a later listing's, so the ledger stores the upload's `cTag`; a
+  case-only rename works in **one** PATCH (the two-move rule is dropped, Δ216); a leading-underscore folder is created and
+  listed normally (D49 stands); a 304-character file name was accepted (`MIRROR_NAME_MAX` 240 stays, as margin). Two
+  adapter rules come from it:
+  - **path too long:** a 400 whose body's `innerError` code is `pathIsTooLong` raises a new `DrivePathTooLong`
+    (`src/domain/user_drive.py`); a folder creation near the limit answered a plain 400 `invalidRequest`, so `create_folder`
+    raises `DrivePathTooLong` for a 400 `invalidRequest` too (the mirror only creates folders whose counted path it
+    checked, so a plain `invalidRequest` there is read as "too long"); the body is read for its codes only, never logged
+    in full;
+  - **folders under the area root** are created through `/me/drive/items/{approot item id}/children` (the existing
+    `create_folder` path with the root's id from `get_root`); `POST /me/drive/special/approot/children` answers 400, so
+    no code may use it.
+  Also measured: **`permanentDelete` is not available** under the App Folder scope, so every delete the bot makes (a
+  prune) lands in the recycle bin, never beyond. A full drive (507) was not produced; its mapping follows the
+  documentation, with a wire test on a synthetic 507.
 - Modify `scripts/validation/drive_eval/fixture_drive.py` — `upload(..., conflict=…)` honoured (`rename` suffixes,
-  `replace` overwrites, `fail` raises), `child_by_name`, `area_path` (a fixed synthetic value), `ctag` on every item.
+  `replace` overwrites, `fail` raises), `child_by_name`, `area_path` (a fixed synthetic value), `ctag` and `created_at` on
+  every item.
 - Tests: `tests/unit/adapters/test_onedrive_mirror_writes_wire.py`, `tests/unit/scripts/test_fixture_drive_conflict.py`.
 
 **New tests:** `test_default_conflict_is_rename` (URL byte-identical to today's), `test_fail_and_replace_in_simple_put`,
 `test_fail_and_replace_in_upload_session`, `test_put_fail_409_raises_name_conflict`, `test_patch_rename_409_raises_name_conflict`,
-`test_child_by_name_found`, `test_child_by_name_404_is_none`, `test_child_by_name_quotes_the_name` (Cyrillic, `#`, `%`,
-spaces), `test_area_path_from_approot`, `test_item_carries_ctag`, `test_item_without_ctag_is_empty`,
-`test_fixture_drive_honours_each_mode`.
+`test_507_raises_storage_full`, `test_400_path_is_too_long_raises_path_too_long`,
+`test_folder_create_400_invalid_request_raises_path_too_long`, `test_folder_create_under_root_uses_the_item_path`,
+`test_child_by_name_found`, `test_child_by_name_404_is_none`,
+`test_child_by_name_quotes_the_name` (Cyrillic, `#`, `%`, spaces, a leading `_`), `test_area_path_from_approot`,
+`test_item_carries_ctag`, `test_change_carries_created_at`, `test_fixture_drive_honours_each_mode`.
 
 **Expected-risk existing tests (reviewer decides):** `tests/unit/adapters/test_onedrive_adapter.py` upload URL assertions
-(the default is unchanged: must stay green); tests constructing `DriveItem` positionally (the new field is last with a
-default: green); `tests/unit/scripts/test_drive_eval_*` that subclass or snapshot `FixtureDrive`. Every other
-`UserDrivePort` test double is an `AsyncMock(spec=UserDrivePort)` (checked: the only subclass outside the adapter is
-`FixtureDrive`), so the new abstract methods break no test double.
+(the default is unchanged: must stay green) and any test that asserts a 507 is a `ValueError` (none found; a reviewer
+case if one appears); tests constructing `DriveItem` or `DriveChange` positionally (the new fields are last with a default:
+green); `tests/unit/scripts/test_drive_eval_*` that subclass or snapshot `FixtureDrive`. Every other `UserDrivePort` test
+double is an `AsyncMock(spec=UserDrivePort)` (checked: the only subclass outside the adapter is `FixtureDrive`).
 
 **Acceptance:** `mypy --strict` clean on the port; no existing caller changes behaviour.
 
-## Task 19A: Mirror domain — types, names, collisions, paths, archive path, rename order (pure)
+## Task 19A: Mirror domain — types, names, collisions, paths, archive path, moves (pure)
 
 **Files:**
 - Create `src/domain/drive_mirror.py` — frozen value types (waiver stated in the docstring, the `drive_enrichment.py:10-12`
-  precedent): `MirrorRoot` (the root document's fields, §27.9.2), `MirrorDoc` (the ledger fields, §27.9.3), `DeletionNotice`
-  (`item_id`, `why`, `at`), string constants `MIRROR_ACTIVE / MIRROR_ARCHIVED / MIRROR_DETACHED`, `GONE / UNSTORED / UNKNOWN`,
-  kinds `file / folder / archive`, `doc_key(user_id, kind, source_item_id)`, `archive_folder_key(user_id, day, path)`.
+  precedent): `MirrorRoot` (the root document's fields, RFC §27.9.2), `MirrorDoc` (the ledger fields, §27.9.3, the error
+  state and the archive snapshot included), `DeletionNotice` (`item_id`, `why`, `at`), string constants `MIRROR_ACTIVE /
+  MIRROR_ARCHIVED / MIRROR_DETACHED`, `GONE / UNSTORED / UNKNOWN`, kinds `file / folder / archive`, the fixed names
+  `ROOT_NAME = "_Transcripts"`, `README_NAME = "_README.md"`, `ARCHIVE_NAME = "Archive"`, `LONG_PATHS_NAME = "Long paths"`
+  (D49), `doc_key(user_id, kind, source_item_id)`, `archive_folder_key(user_id, drive_id, day, path)`.
 - Create `src/domain/drive_mirror_names.py`:
+  - `root_name_candidates() -> Tuple[str, ...]` (`_Transcripts`, `_Transcripts (Alek)`, `(Alek 2)` … `(Alek 5)`).
   - `mirror_file_name(source_name) -> str` (`<name>.md`; over `MIRROR_NAME_MAX` cut + `~<8 hex of sha256(full name)>`).
-  - `assign_names(siblings: Sequence[Sibling], reserved: Sequence[str], taken: Sequence[str] = ()) -> Dict[str, str]` —
-    the Δ192 rule: compare `casefold(NFC(name))`; reserved names first, then folders, then files, ties by source item id;
-    a loser gets `<stem>~<8 hex of sha256(source_item_id)><ext>`; `taken` are names a foreign item holds (a 409 seen this
-    tick).
+  - `reserved_names(level) -> Tuple[str, ...]` — the root: `_README.md`, `Archive`, `Long paths`; a day folder:
+    `Long paths`; elsewhere none.
+  - `assign_names(siblings: Sequence[Sibling], reserved, taken=()) -> Dict[str, str]` — the Δ192 rule: compare
+    `casefold(NFC(name))`; reserved names first, then folders, then files, ties by source item id; a loser gets
+    `~<8 hex of sha256(source_item_id)>` before a file's extension and at the end of a folder's name; `taken` are names a
+    foreign item holds (a 409 seen this tick).
   - `full_path_length(area_path, root_path, parts) -> int` and `fits(…) -> bool` against `ONEDRIVE_PATH_MAX −
     MIRROR_PATH_MARGIN`.
-  - `place(active_parts, *, area_path, root_path, long_paths_name) -> Placement` (the active location, or the long-path
-    folder) and `archive_place(day, active_parts, *, area_path, root_path, archive_name, long_paths_name) -> Placement`.
+  - `place(active_parts, *, area_path, root_path) -> Placement` (the active location, or `Long paths`) and
+    `archive_place(day, active_parts, *, area_path, root_path) -> Placement` (`Archive/<day>/…`, or
+    `Archive/<day>/Long paths/<name>`).
   - `order_moves(moves: Sequence[Move]) -> List[Move]` — vacate-first ordering inside each target folder, cycles broken
-    through `temp_name(name, key)` (`<name>~tmp<8 hex>`), every case-only rename as two moves through the temporary name.
+    through `temp_name(name, key)` (`<name>~tmp<8 hex>`); a case-only rename is one move (S1, Δ216); a creation whose name a document of ours must yield (a folder taking a file's name) is ordered after that yield.
+  - `driver_keys(concepts) -> Tuple[str, ...]` — RFC §27.9.7: the word concept with the longest word (numbers only when the
+    query has none), its keys in order, the first 30.
 - Modify `src/domain/drive_index_params.py` (`:232-236`) — add `ONEDRIVE_PATH_MAX = 400`, `MIRROR_PATH_MARGIN = 10`,
-  `MIRROR_READS_PER_TICK = 10`, `MIRROR_ARCHIVE_GRACE = timedelta(hours=1)`, `ARCHIVE_KEYS_MAX = 6000`,
+  `MIRROR_READS_PER_TICK = 10`, `MIRROR_STAMPS_PER_TICK = 200`, `MIRROR_SEED_PAGE = 200`, `MIRROR_ARCHIVE_GRACE =
+  timedelta(hours=1)`, `MIRROR_ROOT_GRACE = timedelta(hours=24)`, `MIRROR_RESERVE_S = 45`, `MIRROR_MAX_ATTEMPTS = 5`,
+  `MIRROR_FAILED_RETRY = timedelta(days=7)`, `MIRROR_QUOTA_HOLD = timedelta(hours=6)`, `ARCHIVE_KEYS_MAX = 12_000`,
   `ARCHIVE_QUERY_MAX = 100`, `DELETED_SHOW_MAX = 5`; **remove** `MIRROR_PATH_MAX` (no reader exists: checked with grep).
 - Tests: `tests/unit/domain/test_drive_mirror_names.py`, `tests/unit/domain/test_drive_mirror_moves.py`.
 
-**New tests:** `test_name_is_source_plus_md`, `test_name_cut_at_240_with_hash`, `test_file_x_and_folder_x_md_collide_folder_wins`,
-`test_reserved_root_names_win` (README.md, the archive name, the long-path name), `test_collision_is_case_insensitive_after_nfc`,
-`test_suffix_is_stable_and_goes_when_the_sibling_goes`, `test_truncation_collision_resolves_by_source_id`,
-`test_taken_name_from_a_foreign_item_forces_the_suffix`, `test_path_counted_from_the_drive_root` (a path that fits 380 from
-the App Folder and is over 390 from the drive root goes to long paths), `test_long_path_placement`,
-`test_archive_place_is_dated_mirror_path`, `test_archive_long_path`, `test_swap_broken_by_a_temporary_name`,
-`test_three_cycle`, `test_case_only_rename_is_two_moves`, `test_vacate_first_order`, and the property
-`test_no_move_targets_a_name_held_at_its_step` (a parametrized property over generated cases, the style of
+**New tests:** `test_root_name_candidates`, `test_name_is_source_plus_md`, `test_name_cut_at_240_with_hash`,
+`test_file_x_and_folder_x_md_collide_folder_wins`, `test_reserved_names_win_at_the_root_and_in_a_day_folder`,
+`test_source_folder_named_archive_takes_the_suffix`, `test_collision_is_case_insensitive_after_nfc`,
+`test_folder_suffix_goes_at_the_end`, `test_suffix_is_stable_and_goes_when_the_sibling_goes`,
+`test_truncation_collision_resolves_by_source_id`, `test_taken_name_from_a_foreign_item_forces_the_suffix`,
+`test_path_counted_from_the_drive_root` (a path that fits 380 from the App Folder and is over 390 from the drive root goes
+to `Long paths`), `test_long_path_placement`, `test_archive_place_is_dated_mirror_path`, `test_archive_long_path`,
+`test_swap_broken_by_a_temporary_name`, `test_three_cycle`, `test_case_only_rename_is_one_move`, `test_vacate_first_order`,
+`test_yield_before_create`, `test_driver_keys_longest_word_first_30`, `test_driver_keys_numbers_only_without_words`, and
+the property `test_no_move_targets_a_name_held_at_its_step` (a parametrized property over generated cases, the style of
 `test_drive_transcript_stitch.py::test_no_duplicate_and_no_loss_at_seams_property`; no new test dependency).
 
 **Expected-risk existing tests:** a test pinning the parameter module's names (`MIRROR_PATH_MAX` removed): none found by
 grep; any that appears is a reviewer case.
 
-## Task 19B: Mirror domain — due plan, mark decisions, the file, archive keys, the deleted-files section (pure)
+## Task 19B: Mirror domain — due plan, decisions, the file, archive keys, the deleted-files section (pure)
 
 **Files:**
 - Create `src/domain/drive_mirror_plan.py`:
-  - `MIRROR_PLAN_VERSION = 1`; `mirror_eligible(rec) -> bool` (a recording with `transcript_state == current`, stubs included;
-    a folder with `mirrored_digest != ""`); `mirror_digest(rec) -> str` (the fields of §27.9.4 plus `MIRROR_PLAN_VERSION`
-    and `RENDER_VERSION`); `mirror_plan(rec) -> DriveIndexRecord` (sets `mirror_due`; never touches anything else);
-    `stamped(rec) -> DriveIndexRecord` (`mirrored_digest = mirror_digest(rec)`, then `mirror_plan`).
-  - `file_action(rec, doc: Optional[MirrorDoc], rendered_hash: str, placement) -> Action` — `create`, `replace`, `move`,
-    `restore`, `stamp_only`; `folder_action(rec, doc, placement)`.
-  - `mark_decision(doc, *, record_present: bool, now, change_found: Optional[bool] = None) -> Decision` — `wait` (inside
-    the grace), `clear`, `archive`, `detach`, `check` (an `unknown` mark without a `get_change` answer yet).
+  - `MIRROR_PLAN_VERSION = 1`; `mirror_eligible(rec) -> bool`; `mirror_digest(rec) -> str` (RFC §27.9.4, Δ207: name,
+    `parent_id`, `web_url`, `transcript_key`, `transcript_version`, `transcript_stub`, `transcript_truncated`,
+    `transcript_seconds`, `transcript_speakers`, `transcript_languages`, `transcript_body_version`, `MIRROR_PLAN_VERSION`,
+    `RENDER_VERSION`; a folder: name, `parent_id`); `mirror_plan(rec) -> DriveIndexRecord` (sets `mirror_due`; never touches
+    anything else); `stamped(rec) -> DriveIndexRecord`.
+  - `file_action(rec, doc: Optional[MirrorDoc], rendered_hash, placement) -> Action` — `create`, `replace`, `move`,
+    `restore`, `reattach`, `stamp_only`; `folder_action(rec, doc, placement)` (`create`, `move`, `stamp_only`).
+  - `mark_decision(doc, *, record_present, ancestor_reobserving, now, change_found=None) -> Decision` — `wait` (inside the
+    grace, or an ancestor still re-listing, Δ212), `clear`, `archive`, `detach`, `check`.
+  - `root_decision(root, *, record_present, round_complete, now, change_found=None) -> RootDecision` — `wait`, `clear`,
+    `check`, `lost` (Δ203).
+  - `retry_due(doc, *, now, digest_changed) -> bool` and `charged(doc, now) -> MirrorDoc` (`attempts` + 1, `retry_at` with
+    the planner's backoff, `failed_at` at `MIRROR_MAX_ATTEMPTS`) (Δ204).
   - `prune_due(folder_doc, *, source_present, has_child_docs) -> bool`.
 - Create `src/domain/drive_mirror_render.py`:
-  - `RENDER_VERSION = 1`; `MirrorStrings` (frozen dataclass of the localized strings the file needs: header labels, the
-    managed line, the four stub sentences, the README line); `render_file(stored: StoredTranscript, rec, strings, *,
-    source_path, recorded_on) -> bytes` — §27.9.10: the header, `---`, then `open_text(stored, max_chars=sys.maxsize)` (the
-    uncapped open text, `drive_transcript_render.py:77`), Markdown control characters in the name and path escaped; a stub
-    is the header and one sentence; `rendered_hash(data) -> str`; `readme_bytes(strings) -> bytes`.
-  - `archive_keys(stored) -> Tuple[str, ...]` — `drive_keys.word_keys(render_body(...))` de-duplicated in first-seen order,
-    at most `ARCHIVE_KEYS_MAX`; `()` for a stub.
-- Create `src/domain/drive_deleted_search.py` (the section shared with the notes RFC, §0.3 there):
-  - `DeletedHit` (source-agnostic: name, last known path, gone day, a transcript line, a passage, refs, a note line,
-    `on_connected_drive`, `verified`); `driver_keys(concepts) -> Tuple[str, ...]` (the longest word's keys, ≤ 30);
-    `matches(concepts, keys: Collection[str]) -> bool` (strict AND); `passage(stored, keys, max_chars=300) -> Optional[str]`
-    (the first segment holding a key, with its stamp); `render_deleted(hits, *, more: int, connected: bool) -> str`
-    (heading `Deleted files (N):`, the entry lines of §27.9.11, each entry inside `wrap_untrusted`, `drive_search.py:563`).
+  - `RENDER_VERSION = 1`; `MirrorStrings` (frozen dataclass of the localized strings: header labels, the managed line, the
+    four stub sentences, the read-me text); `render_file(stored: StoredTranscript, rec, strings, *, source_path,
+    recorded_on) -> bytes` — RFC §27.9.10: the header, `---`, then `open_text(stored, max_chars=sys.maxsize)` (the uncapped
+    open text, `drive_transcript_render.py:77`), Markdown control characters in the name and path escaped; a stub is the
+    header and one sentence; `rendered_hash(data) -> str`; `readme_bytes(strings) -> bytes`.
+  - `archive_word_keys(stored) -> Tuple[str, ...]` — Δ213: the union of `drive_keys.word_keys(segment text)` over the
+    stored segments, de-duplicated in first-seen order, at most `ARCHIVE_KEYS_MAX`; `()` for a stub.
+- Create `src/domain/drive_deleted_search.py` (the section shared with the notes RFC, §0.3 there): `DeletedHit`
+  (source-agnostic: name, last known path, gone day, a transcript line, a passage, refs, a note line,
+  `on_connected_drive`, `verified`); `matches(concepts, keys) -> bool` (strict AND); `passage(stored, keys,
+  max_chars=300) -> Optional[str]`; `render_deleted(hits, *, more, connected) -> str` (the heading `Deleted files (N):`,
+  each entry inside `wrap_untrusted`, `drive_search.py:563`).
 - Tests: `tests/unit/domain/test_drive_mirror_plan.py`, `tests/unit/domain/test_drive_mirror_render.py`,
   `tests/unit/domain/test_drive_deleted_search.py`.
 
-**New tests:** `test_digest_changes_on_rename_move_weburl_key_stub_truncated_body_version`,
+**New tests:** `test_digest_changes_on_each_listed_field` (one case per field, the requeue fields included),
 `test_digest_changes_on_render_and_plan_version`, `test_not_current_is_never_due`, `test_folder_due_only_when_mirrored`,
 `test_stamped_clears_due`, `test_plan_touches_only_mirror_fields`, `test_create_when_no_doc`,
-`test_replace_only_when_hash_differs`, `test_restore_when_archived_and_current`, `test_move_on_new_parent_or_name`,
-`test_mark_inside_grace_waits`, `test_mark_record_back_clears`, `test_gone_archives`, `test_unstored_detaches`,
-`test_unknown_needs_check`, `test_check_not_found_archives`, `test_check_found_without_record_detaches`,
-`test_prune_only_without_children_and_source`, `test_render_header_fields_en_and_uk`, `test_render_escapes_markdown_in_names`,
-`test_body_equals_uncapped_open_text` (the truncated and seam lines included when they apply), `test_stub_file_per_stub`,
-`test_render_language_not_in_digest`, `test_archive_keys_capped_first_seen`, `test_archive_keys_empty_for_a_stub`,
-`test_strict_and`, `test_driver_keys_at_most_30_from_the_longest_word`, `test_passage_has_stamp_and_cap`,
-`test_render_deleted_heading_entry_ref_and_dormant_label`, `test_render_deleted_neutralises_lookalike_tags`.
+`test_replace_only_when_hash_differs`, `test_restore_when_archived_and_current`, `test_reattach_when_detached_and_back`,
+`test_move_on_new_parent_or_name`, `test_mark_inside_grace_waits`, `test_mark_waits_while_an_ancestor_reobserves`,
+`test_mark_record_back_clears`, `test_gone_archives`, `test_unstored_detaches`, `test_unknown_needs_check`,
+`test_check_not_found_archives`, `test_check_found_without_record_detaches`, `test_root_waits_for_round_and_24h`,
+`test_root_record_back_clears`, `test_root_found_clears`, `test_root_not_found_is_lost`, `test_charge_backoff_and_park_at_5`,
+`test_parked_retried_on_new_digest_or_after_7_days`, `test_prune_only_without_children_and_source`,
+`test_render_header_fields_en_and_uk`, `test_render_escapes_markdown_in_names`, `test_body_equals_uncapped_open_text`
+(the truncated and seam lines included when they apply), `test_stub_file_per_stub`, `test_render_language_not_in_digest`,
+`test_readme_text_per_locale_mentions_archive`, `test_archive_keys_per_segment_reach_past_1500`,
+`test_archive_keys_capped_first_seen`, `test_archive_keys_empty_for_a_stub`, `test_strict_and`,
+`test_passage_has_stamp_and_cap`, `test_render_deleted_heading_entry_ref_and_dormant_label`,
+`test_render_deleted_neutralises_lookalike_tags`.
 
 **Expected-risk existing tests:** none.
 
 ## Task 20A: Mirror persistence — port, adapters, record fields, config, indexes, smoke
 
 **Files:**
-- Create `src/ports/drive_mirror_repository.py` (`DriveMirrorRepository`, ABC, domain + stdlib, `mypy --strict`): root
-  `get_root(user_id, drive_id)`, `save_root(root)`; ledger `get_docs(user_id, keys)`, `save_doc(doc)`, `delete_doc(user_id,
-  key)`, `mark_gone(user_id, marks: Sequence[Tuple[str, str, datetime]]) -> int` (updates **existing** documents only, never
-  creates; returns how many it marked), `clear_mark(user_id, key)`, `gone_marked(user_id, limit)` (oldest `gone_at`
-  first), `children(user_id, mirror_parent_id, limit)`, `scan_page(user_id, after_key, limit)`, `detached_due(user_id,
-  before, limit)`, `archived_newest(user_id, limit)`, `archived_by_keys(user_id, family: Literal["archive_keys",
-  "name_keys"], keys, limit)`, `pinned(user_id, content_key) -> bool` (an `archived` or `detached` document references it),
-  `pinned_keys(user_id) -> FrozenSet[str]` (paged inside the adapter).
+- Create `src/ports/drive_mirror_repository.py` (`DriveMirrorRepository`, ABC, domain + stdlib, `mypy --strict`). Every
+  ledger method of the mirror step takes `drive_id` and filters on it (Δ206); the deleted-search ones do not.
+  - roots: `roots(user_id) -> List[MirrorRoot]`, `get_root(user_id, drive_id)`, `save_root(root)`,
+    `mark_root_gone(user_id, root_item_id, at)`, `clear_root_gone(user_id, root_item_id)`;
+  - ledger: `get_docs(user_id, keys)`, `save_doc(doc)`, `delete_doc(user_id, key)`, `mark_gone(user_id, marks) -> int`
+    (updates **existing** documents only, never creates), `clear_mark(user_id, key)`, `gone_marked(user_id, drive_id,
+    limit)` (oldest `gone_at`, skipping `retry_at` in the future), `children(user_id, drive_id, mirror_parent_id, limit)`,
+    `folder_docs(user_id, drive_id, after_key, limit)` (the audit's walk), `scan_page(user_id, drive_id, after_key, limit)`,
+    `detached_due(user_id, drive_id, before, limit)`, `by_mirror_item(user_id, mirror_item_id)`;
+  - deleted search: `archived_newest(user_id, limit)`, `archived_by_keys(user_id, family, keys, limit)`;
+  - pins: `pinned(user_id, content_key) -> bool` (a document in `archived` or `detached`, or with `gone_pending`),
+    `pinned_keys(user_id) -> FrozenSet[str]` (paged inside the adapter).
 - Create `src/adapters/firestore_drive_mirror_repo.py` (`FirestoreDriveMirrorRepository`) and
   `src/adapters/in_memory_drive_mirror_repo.py` (`InMemoryDriveMirrorRepository`); the Firestore one maps a missing
-  composite index to `DriveIndexStoreUnavailable` as the drive repository does (`firestore_drive_index_repo.py:1269-1270`).
+  composite index and every backend error to `DriveIndexStoreUnavailable`, as the drive repository does (`_MISSING_INDEX`,
+  `firestore_drive_index_repo.py:1678-1690`).
 - Modify `src/config/environment.py` (next to `:405`): `drive_mirror_roots_collection`, `drive_transcript_mirror_collection`.
 - Modify `src/domain/drive_index.py` — `DriveIndexRecord.mirror_due: bool = False`, `mirrored_digest: str = ""` (plain
   fields, Δ47); not in the lean projection.
 - Modify `src/ports/drive_index_repository.py` + both adapters — `mirror_queue(user_id, limit)` (`mirror_due == true`,
   `effective_day` desc, `item_id`); `transcript_records(user_id, state, limit, after: Optional[str] = None)` (a start-after
-  cursor for the seed pass, default unchanged); `delete_user_transcripts_except(user_id, limit, keep: FrozenSet[str]) ->
-  int` (a new method; `delete_user_transcripts` stays for its callers); `_RECORD_READERS` gains the two fields.
-- Modify `config/firestore.indexes.json` — the indexes of RFC §27.15 step 8c.
+  cursor for the seed pass, default unchanged); **`delete_user_transcripts_except(user_id, limit, keep: FrozenSet[str],
+  after: Optional[str] = None) -> Tuple[int, Optional[str]]`** — pages the user's heads by document id from `after`,
+  deletes the unkept ones with their parts, returns `(deleted, next_cursor)`, `next_cursor` None only at the end (Δ214;
+  `delete_user_transcripts` stays for its callers); `_RECORD_READERS` gains the two fields.
+- Modify `config/firestore.indexes.json` — the indexes of RFC §27.15 step 8c (with `drive_id`) and the single-field
+  exemption for `archive_keys`.
 - Modify `scripts/infrastructure/drive_index_smoke.py` — runs every new read against both collections.
 - Tests: `tests/unit/adapters/test_drive_mirror_repo_contract.py` (one case list run against both adapters, the Firestore
   one on the fake client the drive repository tests use), `tests/unit/adapters/test_firestore_drive_mirror_record_fields.py`,
-  `tests/unit/test_firestore_indexes_mirror.py`.
+  `tests/unit/adapters/test_delete_user_transcripts_except.py`, `tests/unit/test_firestore_indexes_mirror.py`.
 
-**New tests:** `test_root_roundtrip_per_drive`, `test_two_drives_two_roots`, `test_mark_gone_updates_existing_only`,
-`test_gone_marked_oldest_first`, `test_clear_mark`, `test_children_by_parent`, `test_scan_page_cursor`,
-`test_detached_due_before`, `test_archived_by_keys_filters_state`, `test_archived_newest`, `test_pinned_archived_and_detached_not_active`,
-`test_pinned_keys_paged`, `test_missing_index_is_store_unavailable`, `test_mirror_queue_newest_first`,
-`test_transcript_records_after_cursor`, `test_delete_user_transcripts_except_keeps_the_pins`, `test_record_mirror_fields_roundtrip`,
-`test_old_record_reads_defaults`, `test_indexes_declared`, `test_smoke_runs_every_new_read`.
+**New tests:** `test_roots_lists_every_drive`, `test_root_roundtrip_per_drive`, `test_root_gone_mark_and_clear`,
+`test_mark_gone_updates_existing_only`, `test_gone_marked_oldest_first_and_skips_retry_at`, `test_clear_mark`,
+`test_every_step_query_scoped_to_the_drive` (a second drive's documents never returned), `test_children_by_parent`,
+`test_folder_docs_cursor`, `test_scan_page_cursor`, `test_detached_due_before`, `test_by_mirror_item`,
+`test_archived_by_keys_filters_state_across_drives`, `test_archived_newest`,
+`test_pinned_archived_detached_and_gone_pending_not_active`, `test_pinned_keys_paged`,
+`test_backend_error_is_store_unavailable`, `test_mirror_queue_newest_first`, `test_transcript_records_after_cursor`,
+`test_except_scans_past_a_page_of_pinned_heads` (more pinned heads than one page, placed before the deletable ones: every
+unpinned head is deleted and the cursor reaches None), `test_except_deletes_parts_of_deleted_heads_only`,
+`test_record_mirror_fields_roundtrip`, `test_old_record_reads_defaults`, `test_indexes_declared_with_drive_id`,
+`test_smoke_runs_every_new_read`.
 
 **Expected-risk existing tests:** `tests/unit/adapters/test_firestore_drive_index_repo_serialization.py::…::test_fixture_sets_every_field`
 (the `full_record()` helper must set every field; the reviewer extends it, as in Task 1); `tests/unit/scripts/test_drive_index_smoke*.py`
 (the new reads in the smoke list); `tests/unit/ports/test_drive_index_repository_port.py` if it pins the port's method set.
 
-## Task 20B: Tick hooks — root ids in classification, deletion notices and marks, the plan in `_commit`, pins
+## Task 20B: Tick hooks — root ids, deletion notices and marks, the plan in `_commit`, pins, the purge
+
+**Gate:** none left (OQ-T10 answered).
 
 **Files:**
 - Modify `src/domain/drive_index_planner.py` — `PlanContext.mirror_root_ids: FrozenSet[str] = frozenset()` (last field,
-  default; `:90-97`); in `_plan` (`:476`), before `parent_scope` (`:510`), an item id in `ctx.mirror_root_ids` that is not
-  deleted classifies `Classification(True, Scope.INSIDE_OPAQUE, RecordState.METADATA_ONLY, Reason.FOLDER, …)`.
-  `ObservationPlan` is **not** changed.
+  default; `:90-97`; the docstring names it apart from `root_item_id`, the App Folder root); in `_plan` (`:476`), before
+  `parent_scope` (`:510`), an item id in `ctx.mirror_root_ids` that is not deleted classifies
+  `Classification(True, Scope.INSIDE_OPAQUE, RecordState.METADATA_ONLY, Reason.FOLDER, …)`. `ObservationPlan` is **not**
+  changed.
 - Modify `src/services/drive_indexing_service.py`:
   - constructor `mirror_repo: Optional["DriveMirrorRepository"] = None` (`:481-517`);
-  - at the tick's start (in `_run`, `:579`), when wired: `get_root(user_id, connection.drive_id)` once, kept in a tick
-    `ContextVar` (`_TICK_MIRROR`, the `_TICK_CLOSED` precedent `:433`); `_ctx` (`:817-819`) passes the ids;
+  - at the tick's start (in `_run`, `:579`, after the purge branch), when wired: `roots(user_id)` once (a backend error
+    raises `DriveIndexStoreUnavailable`, systemic; never an empty fallback), kept in a tick `ContextVar` (`_TICK_MIRROR`,
+    the `_TICK_CLOSED` precedent `:433`) with the mirror's drive id (`connection.drive_id`, else `state.drive_id`, else
+    none); `_ctx` (`:817-819`) passes the union of the root ids;
   - `_commit(..., gone: Optional[Mapping[str, str]] = None)` (`:934`): `mirror_plan` runs after `transcript_plan` and before
-    `enrich.planned` (`:959`); after the record deletes, `mirror_repo.mark_gone` for the notices, only while the user has a
-    root (behind the same `_fence()`);
+    `enrich.planned` (`:959`); **before** the record deletes (`:964-965`), behind the same `_fence()`, the marks:
+    `mirror_repo.mark_gone` for file and folder notices and `mark_root_gone` for a root's record that is deleted or written
+    as `deleting`; a root's record written back as not `deleting` calls `clear_root_gone`; only while the user has a root;
   - the why at every delete site, filtered by `_mirror_notices(records, why)` (records with `mirrored_digest`, or a root id):
-    `_apply` / `_fold` (`:821-900`: a tombstone `gone`, any other planner delete `unstored`), `_cascade_step` (`:1198`, `gone`),
-    `_rescope_step` (`:1296`, `unstored`), `_sweep` (`:997`, `gone`), `_remove_orphan` (`:1289`, `gone`); `_item_gone`
-    (`:2235`) never deletes (it marks the record inaccessible, Δ48) and re-applies through `_apply`; a delete without a why
-    becomes `unknown`. The builder **enumerates every `_commit` caller that passes
-    deletes** before writing code (memory: enumerate all callers) and lists them in the task report.
+    `_apply` / `_fold` (`:821-900`: a tombstone `gone`, any other planner delete `unstored`; a delete re-upserted in the
+    same page drops its notice), `_cascade_step` (`:1198`, `gone`), `_rescope_step` (`:1296`, `unstored`), `_sweep`
+    (`:997`, `gone`), `_remove_orphan` (`:1289`, `gone`), `_commit_plan` (`:1363`; callers `:1243`, `:1258`, `:1286`:
+    `unstored`), `_reread` (`:2050`, `unstored`), `_upgrade_page` (`:3241`, `unstored`); `_item_gone` (`:2235`) never deletes
+    (it marks the record inaccessible, Δ48) and re-applies through `_apply`; `_abandon_run` (`:2081`) writes records outside
+    `_commit` and changes no digest field (a test pins that); a delete without a why becomes `unknown`. The builder
+    **enumerates every `_commit` caller that passes deletes** before writing code (memory: enumerate all callers) and
+    lists them in the task report.
   - the purge (`_purge_transcript_documents`, `:3353-3367`): reads `pinned_keys` once at its start; the store goes through
-    `delete_user_transcripts_except`; while any pin exists, `_sweep_transcript_orphans` (`:3369`) passes
-    `keep_transcripts=True`; the purge never calls the mirror repository's writes.
+    `delete_user_transcripts_except` with a cursor held in the purge run, called until the cursor is None; while any pin
+    exists, `_sweep_transcript_orphans` (`:3369`) passes `keep_transcripts=True`; the purge never writes the mirror
+    collections.
 - Modify `src/services/drive_transcript_stage.py` — constructor `mirror: Optional["DriveMirrorRepository"] = None`;
-  `_sweep_orphans` (`:1194-1210`) keeps a key that `mirror.pinned(…)` (counted as `transcript_orphans_kept`).
+  `_sweep_orphans` (`:1194-1210` on `main`, ≈ `:1476` after PR #121) keeps a key that `mirror.pinned(…)` **and touches its
+  `last_used_at`** (counted as `transcript_orphans_kept`), so pinned heads leave the front of the sweep's page (Δ186).
 - Tests: `tests/unit/domain/test_drive_mirror_root_scope.py`, `tests/unit/services/test_drive_indexing_mirror_hooks.py`,
   `tests/unit/services/test_drive_transcript_pins.py`.
 
-**New tests:** `test_root_id_classifies_inside_opaque`, `test_previous_root_id_too`, `test_files_under_root_get_no_record`,
-`test_folders_under_root_have_no_card`, `test_root_opaque_on_the_first_enumeration_after_a_purge` (rebuild, opt-out and
-re-enable, access-loss TTL, each with a kept root document: no record of any `.md` file afterwards),
-`test_classification_not_gated_by_the_switches`, `test_commit_runs_the_mirror_plan`, `test_tombstone_marks_gone`,
+**New tests:** `test_root_id_classifies_inside_opaque`, `test_previous_root_id_too`, `test_another_drives_root_id_harmless`,
+`test_files_under_root_get_no_record`, `test_folders_under_root_have_no_card`,
+`test_root_opaque_on_the_first_enumeration_after_a_purge` (rebuild, opt-out and re-enable, access-loss TTL, each with a
+kept root document: no record of any `.md` file afterwards), `test_roots_read_error_ends_the_tick` (never an enumeration
+with no root ids), `test_empty_drive_id_skips_the_mirror_but_classifies`, `test_classification_not_gated_by_the_switches`,
+`test_commit_runs_the_mirror_plan`, `test_marks_written_before_the_record_deletes`, `test_tombstone_marks_gone`,
 `test_not_stored_delete_marks_unstored`, `test_cascade_marks_gone`, `test_rescope_marks_unstored`, `test_sweep_marks_gone`,
-`test_orphan_removal_marks_gone`, `test_inaccessible_source_is_never_marked`, `test_every_delete_site_passes_a_why` (a spy on every `_commit` with deletes),
-`test_marks_only_for_mirrored_records_and_roots`, `test_one_root_read_per_tick_and_nothing_else_without_a_root`,
-`test_orphan_sweep_keeps_a_pinned_key`, `test_purge_keeps_pinned_store_and_their_parts`, `test_purge_never_writes_the_ledger`,
-`test_rebuild_then_onboarding_keeps_the_root`.
+`test_orphan_removal_marks_gone`, `test_replans_mark_unstored`, `test_reupsert_in_the_same_page_drops_the_notice`,
+`test_inaccessible_source_is_never_marked`, `test_abandon_run_changes_no_digest_field`,
+`test_every_delete_site_passes_a_why` (a spy on every `_commit` with deletes), `test_marks_only_for_mirrored_records_and_roots`,
+`test_root_deleting_marks_and_return_clears`, `test_one_roots_query_per_tick_and_nothing_else_without_a_root`,
+`test_orphan_sweep_keeps_and_touches_a_pinned_key`, `test_pin_holds_during_the_grace_hour`,
+`test_purge_keeps_pinned_store_and_their_parts`, `test_purge_deletes_every_unpinned_with_many_pins`,
+`test_purge_never_writes_the_ledger`, `test_rebuild_then_onboarding_keeps_the_root`.
 
 **Expected-risk existing tests:** `tests/unit/domain/test_drive_index_planner*.py` constructing `PlanContext` (a defaulted
 last field: should stay green); `tests/unit/services/test_drive_indexing_transcript_purge*.py` cases that assert the purge
-calls `delete_user_transcripts` (now `_except`) or `keep_transcripts=False` with no pins (the call with no pins must be
-unchanged in effect; a name assertion is a reviewer case); Task 14's `test_no_new_composite_query_while_off` (the root read
-is a document get, not a composite query: must stay green); spies that compare `_commit`'s exact arguments.
+calls `delete_user_transcripts` or `keep_transcripts=False` with no pins (the effect with no pins is unchanged; a name
+assertion is a reviewer case); `tests/unit/services/test_drive_transcript_stage*.py` sweep cases (no mirror passed: green);
+Task 14's `test_no_new_composite_query_while_off` (with no mirror repository wired nothing new runs; with it wired, the
+roots query is one equality query on a new collection, which the reviewer judges against that test's intent, since the
+repository is built even with the switch off: the test's spy must then allow exactly `roots`); spies that compare
+`_commit`'s exact arguments.
 
-## Task 21A: `DriveTranscriptMirror` — root setup, seed, marks, due work, restore, detach, prune
+## Task 21A: `DriveTranscriptMirror` — root setup, seed, marks, due work, restore, detach, prune, errors
 
 **Files:**
 - Create `src/services/drive_transcript_mirror.py` — `DriveTranscriptMirror(repo: DriveIndexRepository, mirror:
   DriveMirrorRepository, drive: UserDrivePort)` (ports only, never `UserDriveService`, REQ-ARCH-22); `run(user_id, host:
   MirrorHost) -> Dict[str, int]`; `MirrorHost` (a `Protocol` in the same module): `fence()`, `commit(records)`,
-  `ops_left()`/`spend_op()`, `reads_left()`/`spend_read()`, `time_left()`, `now()`, `day()` (the user's local date),
-  `strings() -> MirrorStrings`, `drive_id`. Steps 1–5 of RFC §27.9.5 in that order:
-  1. root setup: name rule (`<name>`, `(Alek)`, `(Alek 2)` … `(Alek 5)`, then ERROR and stop for the user), `create_folder`
-     (`fail`), **`save_root` right after Graph answers**, then the README (`upload`, `fail`, intent first);
-  2. the seed page (`transcript_records(…, after=seed_cursor)` → `mirror_due` written through `host.commit`);
-  3. marks (`gone_marked`): `mark_decision`, archive = ensure the day's chain (archive folder documents) and one move,
-     then `archive_keys`/`name_keys`/snapshot on the document; detach; `unknown` → one `get_change`;
-  4. due records (`mirror_queue`): render from the store (`get_transcript`), `file_action`, ensure the folder chain
-     top-down, write, record, `host.commit(stamped(rec))`; folder records likewise; moves through `order_moves`;
+  `ops_left()`/`spend_op()`, `reads_left()`/`spend_read()`, `stamps_left()`/`spend_stamp()`, `time_left()`, `now()`,
+  `day()` (the user's local date), `strings() -> MirrorStrings`, `drive_id`, `round_complete`, `epoch_idle`. Steps 1–5 of
+  RFC §27.9.5 in order:
+  1. root setup (skipped while `quota_hold_until` is in the future): `root_name_candidates()`, `create_folder` (`fail`) under the area root's
+     item id (never `special/approot/children`, S1), **`save_root` right after Graph answers**, then `_README.md` (`upload`, `fail`, intent first);
+  2. the seed page (`transcript_records(…, after=seed_cursor)`, `MIRROR_SEED_PAGE` → `mirror_due` written through
+     `host.commit`);
+  3. marks (`gone_marked`): `mark_decision`; archive = ensure the day's chain (archive folder documents), one move, then
+     `archive_word_keys`/`name_keys` and the day on the document; detach; `unknown` → one `get_change`;
+  4. due records (`mirror_queue`, skipping documents whose `retry_at` is in the future): render from the store
+     (`get_transcript`), `file_action`; ensure the chain top-down (move a misplaced folder document first; create a missing
+     one and stamp its source folder record; run `assign_names` over the target folder plus the newcomer and execute the
+     yields first through `order_moves`); write; record on the document (the archive snapshot fields refreshed);
+     `host.commit(stamped(rec))`; after any action that frees a name, re-run `assign_names` over that folder and rename the
+     suffixed documents whose collision is gone (within the budget);
   5. prune with one `list_children_changes(limit=1)`.
-  Every create writes its intent (`pending_*`) before the call; a re-run with an intent uses `replace` (file) or
-  `child_by_name` (folder). A 409 on a create or move → the name joins `taken` and `assign_names` runs again. A 404 on a
-  write → `get_change(root)`: gone → stop the step and leave it to Task 21B's root-gone path; else that chain's folder
-  documents reset to `create`. Never logs transcript text, a name of the owner's files in full, or a URL (counts and ids
-  only).
+  **Intents (Δ210):** every create writes `pending_*` before the call; a re-run with an intent calls `child_by_name`
+  first — absent → create with `fail`; present, created at or after `pending_at` (`created_at`) and, for a file, of the
+  rendered size → adopted (then `replace_content` by id); otherwise foreign → suffix rule. `replace` is never sent at a
+  name. **A 409** on a create or move → the name joins `taken` and `assign_names` runs again. **A 404** → RFC §27.9.5's
+  reads (root, item, destination parent). **Errors (Δ204):** each action is wrapped: the systemic classes
+  (`DriveThrottled`, `DriveNotConnectedError`, `DriveReauthRequired`, `DriveIndexStoreUnavailable`, `LeaseLost`) re-raise;
+  `DriveStorageFull` sets `quota_hold_until` and ends the step; `DrivePathTooLong` on a create or move re-places the item
+  in `Long paths` once (then it is charged like any failure); `ValueError`, `OSError`, `TimeoutError`, `DriveAccessDenied`
+  charge the document (`charged`); anything else is logged at ERROR, counted (`mirror_errors`) and skipped. Never logs
+  transcript text, a full name or path of the owner's files, or a URL (counts, keys and statuses only).
 - Create `tests/unit/services/drive_mirror_fakes.py` — `ScriptedDrive` (a fake `UserDrivePort` holding a tree, recording
-  every call, scriptable 409 / 404 / crash points) and `FakeMirrorHost`.
-- Tests: `tests/unit/services/test_drive_transcript_mirror.py`.
+  every call, scriptable 409 / 404 / 400 / 423 / 507 / crash points) and `FakeMirrorHost`.
+- Tests: `tests/unit/services/test_drive_transcript_mirror.py`, `tests/unit/services/test_drive_transcript_mirror_errors.py`.
 
 **New tests:** `test_root_created_and_recorded_before_any_other_write`, `test_taken_name_gets_alek_never_written_into`,
-`test_alek_suffix_numbered_then_error`, `test_readme_written_once`, `test_seed_marks_existing_current_due`,
-`test_seed_reruns_after_a_render_version_bump`, `test_create_ensures_the_chain_then_uploads_with_fail`,
-`test_crash_after_upload_before_the_doc_reruns_with_replace` (one file, no `x.md (1)`), `test_crash_after_folder_create_finds_it_by_name`,
-`test_replace_only_when_the_hash_differs`, `test_one_folder_rename_one_move`, `test_swap_through_a_temporary_name`,
-`test_copy_gets_a_second_file_no_new_transcription`, `test_foreign_occupant_never_overwritten`,
-`test_archive_after_grace_into_the_dated_folder`, `test_delete_and_restore_in_one_round_no_drive_write`,
-`test_restore_moves_the_file_back`, `test_restore_after_owner_deleted_the_archived_file_creates_from_store`,
-`test_unstored_detaches_in_place`, `test_unknown_mark_checked_not_found_archives`, `test_archived_frozen_on_a_render_bump`,
-`test_stub_file_archived_too`, `test_prune_empty_folder_after_a_listing`, `test_prune_keeps_a_folder_with_a_foreign_item`,
-`test_archive_folders_never_pruned`, `test_ops_and_reads_budgets_bound_a_tick`, `test_newest_first`,
-`test_404_on_a_write_verifies_the_root`, `test_inaccessible_source_keeps_its_file`, `test_no_graph_call_when_nothing_is_due`,
-and the property `test_every_write_ends_under_the_root` (random scripted trees and event sequences: every Graph write's
-parent chain ends at the root document's id).
+`test_alek_suffix_numbered_then_error`, `test_readme_written_once_in_the_ui_language`, `test_seed_marks_existing_current_due`,
+`test_seed_page_bounded`, `test_seed_reruns_after_a_render_version_bump`, `test_create_ensures_the_chain_then_uploads_with_fail`,
+`test_folder_record_stamped_when_its_mirror_folder_is_created`, `test_source_folder_rename_one_move`,
+`test_misplaced_folder_moved_before_a_create_under_it`, `test_file_yields_to_a_new_folder_of_its_name`,
+`test_suffix_renamed_back_when_the_collision_goes`, `test_crash_after_upload_before_the_doc_adopts_its_own_file` (one file, no
+`x.md (1)`), `test_crash_after_a_409_never_overwrites_the_foreign_file`, `test_crash_before_the_put_creates_with_fail`,
+`test_crash_after_folder_create_adopts_it_by_intent`, `test_replace_only_when_the_hash_differs`, `test_stamps_bounded_per_tick`,
+`test_requeued_transcript_rewrites_the_file`, `test_swap_through_a_temporary_name`, `test_copy_gets_a_second_file_no_new_transcription`,
+`test_foreign_occupant_never_overwritten`, `test_archive_after_grace_into_the_dated_folder`,
+`test_delete_and_restore_in_one_round_no_drive_write`, `test_restore_moves_the_file_back`,
+`test_restore_after_owner_deleted_the_archived_file_creates_from_store`, `test_unstored_detaches_in_place`,
+`test_detached_reattaches_when_the_record_returns`, `test_unknown_mark_checked_not_found_archives`,
+`test_archived_frozen_on_a_render_bump`, `test_stub_file_archived_too`, `test_archive_without_store_has_name_keys_only`,
+`test_prune_empty_folder_after_a_listing`, `test_prune_keeps_a_folder_with_a_foreign_item`, `test_archive_folders_never_pruned`,
+`test_ops_reads_and_stamps_budgets_bound_a_tick`, `test_newest_first`, `test_404_on_a_create_verifies_the_root`,
+`test_404_on_a_patch_tells_item_from_destination`, `test_inaccessible_source_keeps_its_file`,
+`test_no_graph_call_when_nothing_is_due`, the property `test_every_write_ends_under_the_root` (random scripted trees and
+event sequences: every Graph write's parent chain ends at the root document's id; the root's own creation excepted);
+errors — `test_400_charges_the_document_and_the_tick_goes_on`, `test_423_and_5xx_charged`, `test_parked_after_five`,
+`test_parked_retried_on_a_new_digest`, `test_507_holds_the_mirror_and_charges_nothing`, `test_path_too_long_replaced_in_long_paths_once`, `test_throttle_re_raises`,
+`test_unexpected_error_is_logged_and_skipped`, `test_counters_refresh_after_a_failed_action` (through the tick, with Task 21C).
 
 **Expected-risk existing tests:** none (a new service).
 
-## Task 21B: The audit, the rotating scan, the root gone, the orphan report
+## Task 21B: The audit, the rotating scan, the root's loss, the orphan report
 
-**Files:** `src/services/drive_transcript_mirror.py` — steps 6–7 of §27.9.5 and §27.9.9: `_scan_page` (only while
-`state.epoch_phase` is idle and the initial enumeration is done; the host passes both), `_audit_page` (one
-`list_children_changes` page per read, cursor `audit_cursor` on the root document, at most every `MIRROR_AUDIT_DAYS`),
-`_root_gone` (archived documents deleted, active reset to `create`, the old id into `previous_root_ids`, a new root);
-the orphan report at the App Folder root (names `<root_name>` and `(Alek n)` that are no known root: WARNING once, counter
-`mirror_orphan_roots`, `orphans_reported` on the root document). Tests: `tests/unit/services/test_drive_transcript_mirror_audit.py`.
+**Files:** `src/services/drive_transcript_mirror.py` — steps 6–7 of RFC §27.9.5 and §27.9.9:
+- `_scan_page` (only while `host.epoch_idle`, the initial enumeration done): `MIRROR_SCAN_PAGE` documents of the drive from
+  `scan_cursor`; an active file document with no record and no mark → mark `unknown`; a `detached` document past
+  `MIRROR_AUDIT_DAYS` since `checked_at` → one `get_change`.
+- `_audit_page` (at most every `MIRROR_AUDIT_DAYS`): the walk is the root, then `folder_docs` in key order
+  (`audit_folder_key`), each folder listed one page per read (`audit_page_cursor` = Graph's next link, from
+  `list_children_changes`), compared with `children(mirror_parent_id)`; the rules of RFC §27.9.9 for active and archived
+  documents, a 404 on a folder (recursively through `children`), `_README.md` (rewritten when missing or its `cTag`
+  differs), `Long paths` (created on demand only), foreign items (counted), and at the App Folder root the orphan report
+  (`_Transcripts` or `_Transcripts (Alek n)` that is no known root: WARNING once, `orphans_reported`). The cycle ends when
+  the folder cursor passes the last document: `audited_at = now`, both cursors reset.
+- `_root_step` (before step 1): `root_decision` (Δ203) — `wait` while inside `MIRROR_ROOT_GRACE` or the round is not
+  complete; `check` → one `get_change(root)`; `clear` on a found root or a returned record; `lost` → archived documents
+  deleted (pins released), active ones reset to `create`, the old id into `previous_root_ids`, then step 1 creates a new
+  root. A previous root's loss triggers nothing.
+- Tests: `tests/unit/services/test_drive_transcript_mirror_audit.py`, `tests/unit/services/test_drive_transcript_mirror_root.py`.
 
 **New tests:** `test_user_edit_of_an_active_file_rewritten`, `test_user_deletion_of_an_active_file_recreated`,
 `test_user_move_of_an_active_file_moved_back`, `test_owner_deleted_an_archived_file_doc_deleted_and_unpinned`,
-`test_owner_deleted_a_day_folder`, `test_archived_edit_left_alone`, `test_archived_moved_out_of_the_mirror_doc_deleted`,
+`test_owner_deleted_a_day_folder_discards_beneath`, `test_archived_edit_left_alone`,
+`test_archived_moved_out_of_the_mirror_doc_deleted`, `test_readme_missing_or_changed_rewritten`,
 `test_foreign_item_kept_and_counted` (active tree and archive), `test_orphan_root_reported_once_never_adopted`,
+`test_audit_walk_resumes_across_ticks_and_ends_the_cycle`, `test_audit_spends_only_the_mirror_reads`,
 `test_scan_marks_a_missing_record_unknown`, `test_scan_waits_while_enumerating`, `test_detached_rechecked_weekly`,
-`test_root_deleted_archive_discarded_active_recreated_previous_kept`, `test_restored_old_root_stays_opaque_and_unwritten`,
-`test_root_renamed_or_moved_followed`, `test_audit_spends_only_the_mirror_reads`.
+`test_root_deleted_and_restored_within_the_grace_changes_nothing`, `test_root_lost_after_grace_and_a_not_found_read`
+(archive discarded, active re-created, previous kept), `test_root_found_clears_the_mark`,
+`test_stray_tick_after_a_move_out_destroys_nothing` (the rollback case), `test_restored_old_root_stays_opaque_and_unwritten`,
+`test_previous_root_loss_triggers_nothing`, `test_root_renamed_or_moved_followed`.
 
 **Expected-risk existing tests:** none.
 
-## Task 21C: Tick wiring, composition, localization on the indexer, the tick line
+## Task 21C: Tick wiring, the reserved tail, composition, localization on the indexer, the tick line
 
 **Files:**
 - Modify `src/services/drive_indexing_service.py` — constructor `mirror: Optional["DriveTranscriptMirror"] = None`;
   `_work_off` (`:971-995`) calls it **last**, after the upgrade step and the cap releases, whatever `stopped_class` the due
-  loop returned, only while `_transcribing()`; `_TickHost` (`:3586`) implements `MirrorHost` (its own ops and reads
-  budgets, the user's day from `UserBotConfig.timezone` read with the gate, the strings); `_has_more` is **not** changed
-  (mirror work never continues the chain, §27.9.5); `_log` (`:3561`) gains `mirror_created`, `mirror_replaced`,
-  `mirror_moved`, `mirror_archived`, `mirror_restored`, `mirror_detached`, `mirror_pruned`, `mirror_foreign`, `mirror_ops`.
+  loop returned, only while `_transcribing()` and the tick has a mirror drive id; **the reserved tail (Δ209)**: while the
+  user has mirror work (one cheap check at `_work_off`'s start: `mirror_queue(user_id, 1)`, a ripe mark, or an unfinished
+  seed), the content-class and enrichment stops (`:248-253`, `:2385-2387`) and the extraction window end
+  `MIRROR_RESERVE_S` earlier, and the reserve joins the deadline-sum assertion (the `enrichment_allowed` precedent,
+  `:255-260`); `_TickHost` (`:3586`) implements `MirrorHost` (the budgets, the user's day from `UserBotConfig.timezone`
+  read with the gate, the strings, `round_complete`, `epoch_idle`); `_has_more` is **not** changed; the mirror step's
+  non-systemic errors never leave it (Task 21A), so the counter refresh always runs; `_log` (`:3561`) gains
+  `mirror_created`, `mirror_replaced`, `mirror_moved`, `mirror_archived`, `mirror_restored`, `mirror_detached`,
+  `mirror_pruned`, `mirror_foreign`, `mirror_failed`, `mirror_errors`, `mirror_quota_full`, `mirror_no_drive_id`,
+  `mirror_ops`.
 - Modify `src/composition/drive_model_setup.py` (or a new `src/composition/drive_mirror_setup.py` if the module passes
   ~600 lines) — the mirror repository is **always** built (classification, marks and pins need it); the service only with
   the kill switch on; both handed to `DriveIndexingService` and the repository to `DriveTranscriptStage`.
 - Modify `indexer_main.py` — the localization service and the UI-language resolution (the deep-research precedent,
   `deep_research_drive_copy_service.py:73-83`).
-- Modify `src/locales/{en,uk,fr,es}.py` and `UIMessage` — `DRIVE_TRANSCRIPTS_FOLDER`, `DRIVE_TRANSCRIPTS_FOLDER_SUFFIX`
-  (`(Alek)`), `DRIVE_TRANSCRIPTS_ARCHIVE`, `DRIVE_TRANSCRIPTS_LONG_PATHS`, `DRIVE_TRANSCRIPTS_README`, the header labels and
-  the managed line, the four stub sentences, `DRIVE_MIRROR_WRITE_REFUSED` (Task 21D).
+- Modify `src/locales/{en,uk,fr,es}.py` and `UIMessage` — `DRIVE_TRANSCRIPTS_README` (the D49 text: managed by the bot,
+  files may be rewritten, do not edit, deleted-recording transcripts are in `Archive/`), the header labels and the managed
+  line, the four stub sentences, `DRIVE_MIRROR_WRITE_REFUSED` (Task 21D). No folder-name strings (D49: fixed names).
 - Tests: `tests/unit/services/test_drive_indexing_mirror_tick.py`, `tests/unit/test_indexer_main_mirror.py`,
   `tests/unit/locales/test_drive_mirror_strings.py`.
 
-**New tests:** `test_mirror_runs_last_on_a_complete_round_only`, `test_mirror_not_run_when_the_switch_is_off_but_the_root_stays_opaque`,
-`test_mirror_not_run_for_a_user_without_the_flag`, `test_no_continuation_for_mirror_work`, `test_tick_line_counters`,
-`test_indexer_wires_the_mirror_and_localization`, `test_switch_off_builds_the_repository_not_the_service`,
-`test_every_locale_has_every_key`, `test_opt_out_purge_deletes_nothing_on_the_drive` (OQ-T10's default), and the end to end
+**New tests:** `test_mirror_runs_last_on_a_complete_round_only`, `test_mirror_progresses_under_a_saturated_due_loop`,
+`test_reserve_only_while_mirror_work_exists` (shares unchanged otherwise), `test_deadline_sum_includes_the_reserve`,
+`test_mirror_not_run_when_the_switch_is_off_but_the_root_stays_opaque`, `test_mirror_not_run_for_a_user_without_the_flag`,
+`test_no_continuation_for_mirror_work`, `test_tick_line_counters`, `test_indexer_wires_the_mirror_and_localization`,
+`test_switch_off_builds_the_repository_not_the_service`, `test_every_locale_has_every_key`,
+`test_readme_text_in_every_locale`, `test_opt_out_purge_deletes_nothing_on_the_drive` (OQ-T10), and the end to end
 `test_fake_drive_lifecycle` (record → current → file appears; rename → moved; delete → archived after the grace; restore →
 back; a purge and re-onboarding → the same root, no record of a `.md` file).
 
 **Expected-risk existing tests:** `tests/unit/test_indexer_main.py` (`build_app()` wiring smoke); Task 14's
-`test_no_new_composite_query_while_off` (the mirror queue runs only with the service on: must stay green);
-`tests/unit/services/test_drive_indexing_*` that count Graph item calls per tick (the mirror has its own bucket and runs only
-with a root and the switches on: must stay green); `tests/unit/locales/*` completeness tests (green once the four locales
-carry the keys).
+`test_no_new_composite_query_while_off` (see Task 20B); `tests/unit/services/test_drive_indexing_content_deadline.py` and
+`test_drive_indexing_enrichment_tick.py` **only if** the reserve fires without mirror work (it must not; a failure there is
+a code bug); `tests/unit/services/test_drive_indexing_*` that count Graph item calls per tick (the mirror has its own
+bucket: must stay green); `tests/unit/locales/*` completeness tests (green once the four locales carry the keys).
 
-## Task 21D: Read side — the Step 1 guard, the deleted-files search, the open pointer, skill, capabilities, Cabinet
+## Task 21D: Read side — the Step 1 guard, the deleted-files search, opening archived transcripts, skill, capabilities, Cabinet
 
 **Files:**
 - Modify `src/services/user_drive_service.py` (`:62`) — constructor `mirror_roots: Optional["DriveMirrorRepository"] = None`;
-  `_refuse_mirror(user_id, *, item_id=None, path=None)`: reads the root document for `connection(user_id).drive_id`, the
-  root's current path (`get_item`, one call per operation), and refuses with `DriveMirrorWriteRefused` (new, in
-  `src/domain/user_drive.py`) when the target, the source or the destination is a current or previous root or under one;
-  called from `save` (on the requested folder path, before `_resolve(create=True)` creates anything), `append_text`,
-  `replace_with`, `move` (item and destination, next to `_refuse_root`, `:155`), `delete` (`:198`), and the folder creation
-  path. No mirror repository → no extra call.
-- Modify `src/agents/file_management_agent.py` — `DriveMirrorWriteRefused` → the localized line; `_search_drive` (`:711-724`)
-  reads `drive_deleted` (`"true"`, `"yes"`, `"1"`, case-insensitive) and, when set, calls `search_deleted` **instead of**
-  `require_search_terms` + `search` (an empty query lists the newest); the open of a transcribed ref passes the active
-  mirror path to `open_text(mirror_path=…)`.
+  `_refuse_mirror(user_id, *, item_id=None, path=None)`: reads `roots(user_id)` (one query) and each root's current path
+  (`get_item`, one call per root), and refuses with `DriveMirrorWriteRefused` (new, in `src/domain/user_drive.py`) when the
+  target, the source or the destination is a current or previous root, lies under one, **or contains one**; paths compared
+  with the resolver's case-insensitive NFC `name_key`; called from `save` (on the requested folder path, before
+  `_resolve(create=True)` creates anything), `append_text`, `replace_with`, `move` (item and destination, next to
+  `_refuse_root`, `:155`), `delete` (`:198`), and the folder creation path. No mirror repository, or no root → no extra
+  call.
+- Modify `src/agents/file_management_agent.py` — `DriveMirrorWriteRefused` → the localized line; `_search_drive`
+  (`:711-724`) reads `drive_deleted` (`"true"`, `"yes"`, `"1"`, case-insensitive) and, when set, calls `search_deleted`
+  **instead of** `require_search_terms` + `search` (an empty query lists the newest); `_open_drive_item` (`:705`): a ref
+  whose item is a mirror file (`by_mirror_item`, one read) opens through `DriveSearchService.archived_text` (RFC
+  §27.9.11: `open_text` of the pinned store entry, capped at `TRANSCRIPT_OPEN_MAX_CHARS`, the cut note naming the file's
+  path; without a store entry, the downloaded file capped the same way) instead of `resolve_content`; the open of a
+  transcribed recording passes its active mirror path to `open_text(mirror_path=…)`.
 - Modify `src/services/drive_search_service.py` — constructor `mirror: Optional["DriveMirrorRepository"] = None`;
-  `search_deleted(user_id, drive_query) -> str`: the transcript source of RFC §27.9.11 (queries, strict AND, at most
-  `DELETED_SHOW_MAX` hits each verified with one `get_change` in parallel, the passage from the store, `render_deleted`);
-  a `sources` list so notes S3 adds its source without touching this one; runs before the index gate.
+  `search_deleted(user_id, drive_query) -> str`: the transcript source of RFC §27.9.11 (`driver_keys`, the two queries,
+  strict AND, at most `DELETED_SHOW_MAX` hits each verified with one `get_change` in parallel, the passage from the store,
+  `render_deleted`); a `sources` list so notes S3 adds its source without touching this one; runs before the index gate;
+  `archived_text(user_id, mirror_item_id) -> Optional[str]`.
 - Modify `src/infrastructure/agent_manifest.py` — `context_schemas[SEARCH_FILES_IN_DRIVE]` gains `drive_deleted` with the
   shared description (RFC §27.9.11; notes RFC §6.4), and the capability description names it in its `context={…}` block
   (`test_manifest_prose_matches_tool_schema.py` must stay green).
-- Modify `src/skills/smart/drive-search/SKILL.md` — the Transcripts-folder clause of §27.11 and the shared "Deleted files"
-  line; `src/utils/capabilities.py` — one line (archived transcripts, "search in deleted files").
-- Modify `src/web/static/cabinet.html` (+ `src/web/user_cabinet_app.py` if the key changes) — the Δ202 sentence in en/uk/fr/es
-  under the existing display rule (the user's flag and the switch, Δ154, Δ182).
+- Modify `src/skills/smart/drive-search/SKILL.md` — the `_Transcripts` clause of §27.11 and the shared "Deleted files" line;
+  `src/utils/capabilities.py` — one line (archived transcripts, "search in deleted files").
+- Modify `src/web/static/cabinet.html` (+ `src/web/user_cabinet_app.py` for a `mirror_root` flag in the drive status) — the
+  Δ202 texts in en/uk/fr/es: the transcription sentence (naming `_Transcripts` and its Archive) under the existing display
+  rule (the user's flag and the switch, Δ154, Δ182); the indexing disclosure and the opt-out confirmation gain the clause
+  that `_Transcripts` stays on the drive and transcripts of deleted recordings stay in its Archive and in the bot's
+  deleted-files search until the user deletes them there, shown whenever the user has a mirror root. Wording reviewed by
+  the owner (S6).
 - Modify the main service's composition — the mirror repository into `UserDriveService` and `DriveSearchService`.
 - Tests: `tests/unit/services/test_user_drive_mirror_guard.py`, `tests/unit/services/test_drive_search_deleted_transcripts.py`,
   `tests/unit/infrastructure/test_agent_manifest_drive_deleted.py` (the notes RFC names the same file: whichever slice lands
-  first creates it), `tests/unit/agents/test_file_management_drive_deleted.py`, `tests/unit/web/test_cabinet_transcribe_disclosure_t2.py`.
+  first creates it), `tests/unit/agents/test_file_management_drive_deleted.py`,
+  `tests/unit/agents/test_file_management_open_archived.py`, `tests/unit/web/test_cabinet_transcribe_disclosure_t2.py`.
 
 **New tests:** guard — `test_save_into_the_mirror_refused_before_any_folder_is_created`,
 `test_append_replace_delete_of_a_mirror_file_refused`, `test_move_into_out_of_and_within_the_mirror_refused`,
+`test_delete_or_move_of_a_folder_containing_the_root_refused`, `test_lowercase_path_still_refused`,
 `test_create_folder_under_the_mirror_refused`, `test_previous_root_refused`, `test_listing_and_open_allowed`,
 `test_no_root_no_extra_call`; search — `test_default_search_never_returns_an_archived_transcript` (an invariant over the
 lifecycle on the in-memory repositories: archive, detach, restore, purge), `test_deleted_search_strict_and`,
 `test_empty_query_lists_the_newest`, `test_hit_the_owner_deleted_is_hidden`, `test_not_connected_line`,
-`test_other_drive_labelled_and_unverified`, `test_passage_from_the_pinned_store`, `test_ref_opens_the_archived_file_as_text`,
-`test_drive_deleted_parsed_from_strings`, `test_runs_with_indexing_off`; manifest — `test_field_in_schema_and_description`,
-`test_name_unique_across_intents`, `test_description_says_explicitly`; open — `test_cut_note_points_at_the_mirror_path`;
-Cabinet — `test_t2_sentence_names_the_folder_and_the_archive_only_when_on`.
+`test_other_drive_labelled_and_unverified`, `test_passage_from_the_pinned_store`, `test_drive_deleted_parsed_from_strings`,
+`test_runs_with_indexing_off`; open — `test_archived_ref_opens_from_the_store_capped`,
+`test_archived_ref_without_store_downloads_and_caps`, `test_cut_note_points_at_the_mirror_path`; manifest —
+`test_field_in_schema_and_description`, `test_name_unique_across_intents`, `test_description_says_explicitly`; Cabinet —
+`test_t2_sentence_names_the_folder_and_the_archive_only_when_on`, `test_optout_confirm_and_disclosure_carry_the_archive_clause`.
 
 **Expected-risk existing tests:** `tests/unit/web/test_cabinet_transcribe_disclosure.py` (pins T1's wording, which "does not
-mention a folder until T2 exists"; T2 intentionally changes it: reviewer); `tests/unit/firestore_utils/test_protocol_drive_guidance*.py`
-and any snapshot of `drive-search/SKILL.md` (reviewer); `tests/unit/infrastructure/test_agent_manifest_drive*.py` and
-snapshots of the delegate tool's property set (reviewer); `test_manifest_prose_matches_tool_schema.py` (must stay green);
-`tests/unit/services/test_user_drive_service*.py` (no mirror repository passed: green); `tests/unit/agents/test_file_management_agent*.py`
-search cases (no `drive_deleted`: green).
+mention a folder until T2 exists"; T2 intentionally changes it: reviewer); Cabinet tests pinning the opt-out confirmation
+or the indexing disclosure text (`tests/unit/web/test_user_cabinet_drive_indexing.py` and siblings: reviewer, Δ202);
+`tests/unit/firestore_utils/test_protocol_drive_guidance*.py` and any snapshot of `drive-search/SKILL.md` (reviewer);
+`tests/unit/infrastructure/test_agent_manifest_drive*.py` and snapshots of the delegate tool's property set (reviewer);
+`test_manifest_prose_matches_tool_schema.py` (must stay green); `tests/unit/services/test_user_drive_service*.py` (no mirror
+repository passed: green); `tests/unit/agents/test_file_management_agent*.py` search and open cases (no `drive_deleted`, no
+mirror file: green).
 
 ## Task 21E: Scripts and the T2 docs
 
 **Files:**
-- Modify `scripts/infrastructure/drive_transcript_sweep.py` — the mirror's root document and ledger are left alone by
-  default and deleted only with `--mirror` (dry run by default, `--apply` human-only); the text says why (a roll-forward
-  needs them, §27.9.12).
+- Modify `scripts/infrastructure/drive_transcript_sweep.py` — by default it keeps the mirror's root document, the ledger
+  **and the pinned store entries** (through `delete_user_transcripts_except`, the C3 contract), and with `--mirror` it
+  deletes all three (dry run by default, `--apply` human-only); the text says why (a roll-forward needs them, RFC
+  §27.9.12) and names the T1-rollback residual (T1's orphan sweep does not know the pins).
 - Create `scripts/infrastructure/drive_mirror_status.py` — read-only: documents per state, pinned keys, marks waiting,
-  detached due, the root document's cursors and clocks; output only to `scripts/memory/` (Δ67's rule).
-- Docs: `docs/05_building_blocks/user_drive/README.md` §4.23 (the mirror, the archive, the deleted-files search, the guard;
-  memory rule: the drive doc is always current), §5 tick order, §7 operations (the spike, indexes, the rollback move-out);
-  RFC §27 status lines and a "T2 as built" block in §27.19; `docs/07_deployment/README.md` (indexes, rollback);
-  root `CLAUDE.md` (the User Drive paragraph: the mirror, D48's archive, `drive_deleted`, the guard);
-  `docs/04_solution_strategy/decisions/drive_transcripts_mirror_archive.md` (D48, Δ183–Δ202, OQ-T10 as answered).
-- Tests: `tests/unit/scripts/test_drive_transcript_sweep_mirror.py`, `tests/unit/scripts/test_drive_mirror_status.py`.
+  parked documents, detached due, the root documents' cursors, clocks, holds and loss marks; output only to
+  `scripts/memory/` (Δ67's rule).
+- Docs: `docs/05_building_blocks/user_drive/README.md` §4.23 (the mirror, `_Transcripts`, the archive, the deleted-files
+  search, the guard, the errors; memory rule: the drive doc is always current), §5 tick order (the reserved tail), §7
+  operations (the spike, indexes, the rollback with the paused queue and the move-out); RFC §27 status lines and a "T2 as
+  built" block in §27.19; `docs/07_deployment/README.md` (indexes, rollback); root `CLAUDE.md` (the User Drive paragraph:
+  the mirror, D48's archive, D49's name, `drive_deleted`, the guard); `docs/04_solution_strategy/decisions/drive_transcripts_mirror_archive.md`
+  (D48, D49, OQ-T10, Δ183–Δ216).
+- Tests: `tests/unit/scripts/test_drive_transcript_sweep_mirror.py` (pins kept by default and with many pins, all deleted
+  with `--mirror`), `tests/unit/scripts/test_drive_mirror_status.py`.
 
-**Expected-risk existing tests:** `tests/unit/scripts/test_drive_transcribe_scripts*.py` sweep cases (a new flag; the
-default leaves today's behaviour for the transcript collections: green).
+**Expected-risk existing tests:** `tests/unit/scripts/test_drive_transcribe_scripts*.py` sweep cases (the store call changes
+to the scanning helper; with no pins the effect is unchanged: a name assertion is a reviewer case).
 
 **Acceptance (T2):** `make check` green; every new test above green; the mirror tests run against `ScriptedDrive` and the
-in-memory repositories only; **[OWNER]** S3–S6 done; on the owner's phone the folder appears with the right tree, an
-archived test recording shows under `Archive/<today>/`, "search in deleted files" finds it and a plain search does not.
+in-memory repositories only; **[OWNER]** S3–S6 done; on the owner's phone `_Transcripts` appears with the right tree and
+its read-me, an archived test recording shows under `_Transcripts/Archive/<today>/`, "search in deleted files" finds it and
+a plain search does not.
 
 ## Task 22: T3 — summary agent, batched summary step, versions, header polish, docs
 
@@ -1314,8 +1462,10 @@ localized folder with the right tree; an archived test recording is found only b
    transcribe headroom reads low after a roll-forward); their provider cost is incurred and never booked.
 4. The mirror folder and its files are the user's after rollback; deleting them is the user's act (§27.13). **Rolling back past
    T2** (RFC §27.9.12): code that predates T2 does not know the root and would index the mirror's `.md` files as documents
-   (the archive included), so the owner first moves the bot's folder out of the App Folder (it keeps its item id) and moves
-   it back after the roll-forward, before its first tick. The sweep script leaves the root document and the ledger alone
+   (the archive included), so the owner first pauses the drive queue and the fan-out, moves `_Transcripts` out of the
+   App Folder (it keeps its item id), deploys and resumes; after the roll-forward he pauses again, moves it back, deploys
+   and resumes (the 24 h root grace, Δ203, keeps a stray tick from acting). A rollback to a T1 image keeps the store but
+   not the pins: T1's orphan sweep deletes the pinned transcripts within 30 days (named residual). The sweep script leaves the root document and the ledger alone
    unless `--mirror`.
 
 ---
@@ -1428,8 +1578,8 @@ Each item: what the RFC says or omits versus the code, the proposal, and whether
   decide both.
   *Rev 3.27 (T2 redesign): superseded.* The duplicate-hits problem is solved structurally — the root's identity lives in a
   document no purge deletes, and every tick classifies the root opaque from its start (Δ184) — and D48 forbids the bot to
-  delete the archive the folder holds, so no purge deletes anything on the drive (Δ185). The owner confirms the opt-out
-  rule as OQ-T10 (RFC §27.17); the flag-off rule stands.
+  delete the archive the folder holds, so no purge deletes anything on the drive (Δ185). **The owner answered OQ-T10
+  (2026-10-21): an opt-out deletes nothing on the drive** (RFC §27.17); the flag-off rule stands.
 - **G23. The mirror root id must survive the tick's own state save.** `save_sync_state` merges every state field
   (`firestore_drive_index_repo.py:35-36,137`); a root created mid-tick would be overwritten by the end-of-tick save of the
   stale copy. *Proposed:* mirror fields excluded from `STATE_FIELDS`, written by a dedicated fenced method. Engineering.
@@ -1586,7 +1736,7 @@ T1: 1 → 2 → 3; 2 → 4 (Task 4's `ctx` carries the month's dollars as plain 
 1 + 3 → 5; 4 → 6; 5 → 6 (both edit `drive_enrich_plan.py`: G38 and G8); 1 + 5 + 6 → 7A → 7B (5 changes the port's
 `count_unread`); 8 and 9 and 10 are independent of each other (9 needs 2's types; 10 needs 6's `BatchUsage`); 10 → 11;
 4 + 7B + 8 + 9 + 11 → 12 → 13 → 14A → 14B; 3 + 7B + 14B → 15; 7B + 14B → 16; everything → 17.
-T2 (after 17; S1 before 18, OQ-T10 before 20B): 18 and 19A are independent (port vs pure domain); 19A → 19B; 18 + 19B →
+T2 (after 17 and after PR #121 `fix/drive-transcripts-final-review` is merged; S1 done): 18 and 19A are independent (port vs pure domain); 19A → 19B; 18 + 19B →
 20A → 20B → 21A → 21B → 21C; 20A + 19B → 21D (it may run beside 21A–21C in its own worktree, integrated and checked on the
 assembled branch); everything → 21E. T3: 21E → 22A → 22B.
 Parallel-safe group for dispatch: {8, 9, 10} — each in its own worktree only if the arbiter integrates and runs the full
