@@ -11,7 +11,9 @@ service's own `/worker` (continuations and nudge re-queues come back here), and 
 Slice 2+4 (§24.2): the child-process parser, the document reader and image triage agents over Claude
 and OpenAI, the Firestore prompt builder and the quota service that bills their calls to the user's
 account (`src/composition/drive_model_setup.py`), and Search v2's profiler and passage-hint runners
-(§25.4.4) on the same wiring. No `ServiceContainer`: it would build every agent,
+(§25.4.4) on the same wiring; with the transcription switch on, the transcript stage and the transcript mirror's
+step, whose files are localized (the localization service and the UI-language resolution; §27.9.1), while the
+mirror's ledger is wired whatever the switch (§27.9.2). No `ServiceContainer`: it would build every agent,
 LLM adapter and chat surface for a process that uses none of them. No `load_settings()`: it would
 chase every key this service does not have into Secret Manager on each cold start.
 
@@ -70,9 +72,9 @@ from src.adapters.microsoft import OneDriveAdapter
 from src.adapters.slack.webhook_adapter import SlackWebhookAdapter
 from src.adapters.subprocess_content_extractor import PARSER_USER_ENV, SubprocessContentExtractor
 from src.composition.drive_indexing_setup import (
-    build_drive_index_repository, build_drive_task_queue, build_place_lookup,
+    build_drive_index_repository, build_drive_mirror_repository, build_drive_task_queue, build_place_lookup,
 )
-from src.composition.drive_model_setup import build_drive_models, build_drive_transcription
+from src.composition.drive_model_setup import build_drive_mirror, build_drive_models, build_drive_transcription
 from src.composition.memory_telemetry_setup import build_memory_telemetry
 from src.composition.prompt_assembly_setup import build_prompt_assembly_service
 from src.config.environment import EnvironmentConfig
@@ -117,7 +119,7 @@ def build_app() -> Quart:
     embeddings = GeminiEmbeddingAdapter(api_key=os.environ["GEMINI_API_KEY"])
     users = FirestoreUserRepository(db, env_config, account_repo)
     # The reader and triage prompts live in Firestore (§24.2); a failure here fails the start, never a fallback prompt.
-    assembly_service, _ = build_prompt_assembly_service(db, env_config)
+    assembly_service, profile_repo = build_prompt_assembly_service(db, env_config)
     billing_webhook = (os.environ.get("BILLING_SLACK_WEBHOOK_URL") or "").strip()
     models = build_drive_models(
         # the image's unprivileged user (Dockerfile); a named user missing from the container fails the start (R3 F3-1)
@@ -134,6 +136,10 @@ def build_app() -> Quart:
         client_secret=os.environ["MICROSOFT_TODO_CLIENT_SECRET"],
     )
     index_repo = build_drive_index_repository(db, env_config)
+    # The transcript mirror's roots and ledger (§27.9.2-§27.9.4): ALWAYS built, whatever the kill switch — the bot's
+    # folder stays opaque to classification, deletions leave their marks and the purge keeps the pinned transcripts
+    # even while transcription is off (§27.9.12). The mirror step itself is built only with the switch on (below).
+    mirror_repo = build_drive_mirror_repository(db, env_config)
     # Transcription (§27.13): the kill switch and the optional cap knob are read ONCE, here. The cap only lowers
     # $20 (T-R3) and the same value goes to the stage and to the tick's cap math. Switch off: no stage is built.
     transcribe_on = transcribe_enabled(os.environ.get("DRIVE_TRANSCRIBE_ENABLED"))
@@ -141,7 +147,13 @@ def build_app() -> Quart:
     transcripts = build_drive_transcription(
         enabled=transcribe_on, repo=index_repo, drive=drive, models=models,
         keys={"GEMINI_API_KEY": os.environ.get("GEMINI_API_KEY")}, parser_user=os.environ.get(PARSER_USER_ENV),
-        monthly_cap_usd=transcribe_cap,
+        monthly_cap_usd=transcribe_cap, mirror=mirror_repo,
+    )
+    # The mirror step (§27.9.5) with its localization (the read-me and the file headers in the user's UI language),
+    # only while transcription runs; switch off: none of it, and the object graph keeps only the ledger.
+    mirror = build_drive_mirror(
+        enabled=transcribe_on and transcripts is not None, repo=index_repo, mirror_repo=mirror_repo, drive=drive,
+        users=users, account_repo=account_repo, profile_repo=profile_repo, assembly_service=assembly_service,
     )
     indexing = DriveIndexingService(
         drive=drive,
@@ -161,6 +173,10 @@ def build_app() -> Quart:
         transcripts=transcripts,
         transcribe_enabled=transcribe_on and transcripts is not None,
         transcribe_cap_usd=transcribe_cap,
+        mirror_repo=mirror_repo,
+        mirror=mirror.mirror,
+        localization=mirror.localization,
+        language=mirror.language,
     )
 
     app.register_blueprint(create_indexer_worker_blueprint(indexing, gate))
