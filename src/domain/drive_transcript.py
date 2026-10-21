@@ -65,14 +65,16 @@ class MediaProbeOutcome:
 
 @dataclass(frozen=True)
 class MediaWindowsOutcome:
-    """`extract_windows` result. `windows`: (spec, local path) of every window finished before the wall, in order; on
-    TIMEOUT a prefix of the request (the caller resumes at the first missing one). For a pass without a known duration
-    (G35) the specs are read from the produced files and `duration_s` is the covered media time; `reached_bound` is
-    True when the pass stopped at `TRANSCRIBE_MAX_SECONDS` (the `too_long` stub)."""
+    """`extract_windows` result. `windows`: (spec, local path) of every window finished before the wall, in order, each
+    with the plan's index and start and its real length; on TIMEOUT a prefix of the request (the caller resumes at the
+    first missing one). For a pass without a known duration (G35, T-R15): `eof` is True when the file ended inside the
+    pass, and `duration_s` is then the file's now-known duration; `reached_bound` is True when the pass ended at
+    `TRANSCRIBE_MAX_SECONDS` with the file still going (the `too_long` stub)."""
     status: MediaStatus
     windows: Tuple[Tuple[WindowSpec, str], ...] = ()
     duration_s: float = 0.0
     reached_bound: bool = False
+    eof: bool = False
     detail: str = ""
 
 

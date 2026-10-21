@@ -23,9 +23,9 @@ class MediaAudioPort(ABC):
 
     @abstractmethod
     async def extract_windows(self, url: str, windows: Sequence[WindowSpec], out_dir: str, *, wall_s: float,
-                              container: str = "", duration_known: bool = True,
-                              one_pass: bool = False) -> MediaWindowsOutcome:
-        """Writes `window_<index>.opus` files into `out_dir` for the planned `windows` (one `-ss/-t` run each, or one
-        `segment` pass when `one_pass`), stopping at `wall_s`. `container` is the probed format, pinned on the run.
-        `duration_known=False` (G35): `windows` is ignored; one pass from the start, bounded by
-        `TRANSCRIBE_MAX_SECONDS`. Raises MediaUnreadable."""
+                              container: str, duration_known: bool = True) -> MediaWindowsOutcome:
+        """Writes `window_<index>.opus` files into `out_dir` for the planned `windows`, stopping at `wall_s`.
+        `container` is the probed format, pinned on the run; empty or invalid raises MediaUnreadable.
+        Known duration: one `-ss/-t` run per window. `duration_known=False` (G35, T-R15): `windows` is a contiguous
+        slice (at most `MEDIA_PASS_MAX_WINDOWS`) of the standard plan; one remote read of the span, the windows cut from
+        it locally, the duration read from the result (`eof`). Raises MediaUnreadable."""

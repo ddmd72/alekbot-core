@@ -5,7 +5,8 @@ SubprocessMediaExtractor — audio-only Opus windows of a drive recording, cut b
 The indexer process never decodes a byte of media: every ffprobe/ffmpeg run is a grandchild of a fresh parser child
 under RLIMIT_CPU / RLIMIT_FSIZE / RLIMIT_AS, as the unprivileged `DRIVE_PARSER_USER` where one is configured, with a
 wall-clock kill of the whole process group. The download URL goes to the child on stdin and is never logged. One child
-at a time: it shares the instance with the document parser, and the tick runs one stage at a time.
+at a time: it shares the instance with the document parser, and the tick runs one stage at a time. RLIMIT_CPU is per process: each ffmpeg of a step
+gets its own 150 s, so a step's total is bounded by the wall clock, not by that limit.
 """
 from __future__ import annotations
 
@@ -14,6 +15,7 @@ import contextlib
 import json
 import math
 import os
+import re
 import shutil
 import ssl
 import tempfile
@@ -21,7 +23,7 @@ import time
 from typing import Any, Dict, Optional, Sequence, Tuple
 
 import src.adapters.drive_parser.media_launch as launch
-from src.domain.drive_index_params import TRANSCRIBE_CHILD_CPU_S, TRANSCRIBE_MAX_SECONDS
+from src.domain.drive_index_params import MEDIA_PASS_MAX_WINDOWS, TRANSCRIBE_CHILD_CPU_S, TRANSCRIBE_MAX_SECONDS
 from src.domain.drive_transcript import (
     MediaProbe, MediaProbeOutcome, MediaStatus, MediaUnreadable, MediaWindowsOutcome, WindowSpec,
 )
@@ -34,6 +36,7 @@ PROBE_WALL_S = 60.0
 CHILD_WALL_MARGIN_S = 10.0                       # the child stops its own ffmpeg this long before the parent's kill
 _FALLBACK_CA_FILE = "/etc/ssl/certs/ca-certificates.crt"
 _MAX_WINDOW_INDEX = 1_000
+_CONTAINER = re.compile(r"^[a-z0-9_]+(,[a-z0-9_]+)*$")
 
 
 def system_ca_file() -> str:
@@ -78,32 +81,39 @@ class SubprocessMediaExtractor(MediaAudioPort):
             duration_s=duration if known else 0.0, has_audio=audio, container=container[:80], duration_known=known))
 
     async def extract_windows(self, url: str, windows: Sequence[WindowSpec], out_dir: str, *, wall_s: float,
-                              container: str = "", duration_known: bool = True,
-                              one_pass: bool = False) -> MediaWindowsOutcome:
-        if duration_known and not windows:
+                              container: str, duration_known: bool = True) -> MediaWindowsOutcome:
+        if not container or not _CONTAINER.match(container):
+            raise MediaUnreadable("container missing or invalid")
+        if not windows:
             return MediaWindowsOutcome(status=MediaStatus.OK)
+        indexes = [w.index for w in windows]
+        if not duration_known and (len(windows) > MEDIA_PASS_MAX_WINDOWS
+                                   or indexes != list(range(indexes[0], indexes[0] + len(windows)))):
+            raise ValueError("a pass takes a contiguous slice of at most MEDIA_PASS_MAX_WINDOWS windows")
         payload: Dict[str, Any] = {
             "op": "media_windows", "url": url, "ca_file": self._ca_file, "container": container,
-            "duration_known": duration_known, "one_pass": one_pass,
-            "windows": [{"index": w.index, "start_s": w.start_s, "duration_s": w.duration_s} for w in windows]
-            if duration_known else []}
-        allowed = {w.index for w in windows} if duration_known else None
+            "duration_known": duration_known,
+            "windows": [{"index": w.index, "start_s": w.start_s, "duration_s": w.duration_s} for w in windows]}
+        allowed = set(indexes)
         os.makedirs(out_dir, exist_ok=True)
         result, status, detail = await self._run(payload, wall_s, out_dir=out_dir)
         if result is None:
             return MediaWindowsOutcome(status=status, detail=detail)
-        collected = result["_collected"]
         specs = []
-        for item in collected:
-            if allowed is not None and item[0] not in allowed:
+        for item in result["_collected"]:
+            if item[0] not in allowed:
                 raise MediaUnreadable("window outside the request")
             specs.append((WindowSpec(index=item[0], start_s=item[1], duration_s=item[2]), item[3]))
-        covered = float(result.get("covered_s", 0.0)) if not duration_known else 0.0
-        reached = bool(result.get("reached_bound", False)) and not duration_known
-        if not duration_known:
-            covered = min(covered, float(TRANSCRIBE_MAX_SECONDS))
-        return MediaWindowsOutcome(status=status, windows=tuple(specs), duration_s=covered, reached_bound=reached,
-                                   detail=detail)
+        eof = result.get("eof") is True and not duration_known
+        reached = result.get("reached_bound") is True and not duration_known and not eof
+        total = 0.0
+        if eof:
+            total = result.get("duration_s")
+            if isinstance(total, bool) or not isinstance(total, (int, float)) or not 0 < total <= float(
+                    TRANSCRIBE_MAX_SECONDS) + 1:
+                raise MediaUnreadable("invalid duration")
+        return MediaWindowsOutcome(status=status, windows=tuple(specs), duration_s=float(total),
+                                   reached_bound=reached, eof=eof, detail=detail)
 
     # -- child ------------------------------------------------------------------------------------------------------
 

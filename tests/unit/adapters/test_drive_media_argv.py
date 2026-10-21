@@ -22,7 +22,7 @@ def _value(argv, flag):
 
 def test_protocol_whitelist_pinned():
     for argv in (_window(), media.build_probe_argv(URL, CA),
-                 media.build_segment_argv(URL, CA, "", 0, 600, 300, "/w/seg_%d.opus")):
+                 media.build_pass_argv(URL, CA, "matroska,webm", 0, 600, "/w/pass.opus")):
         assert _value(argv, "-protocol_whitelist") == "https,tls,tcp,crypto"
 
 
@@ -57,7 +57,7 @@ def test_audio_map_only():
 
 
 def test_input_side_seek():
-    argv = _window("")
+    argv = _window()
     i = argv.index("-i")
     assert argv.index("-ss") < i and argv.index("-t") < i        # before -i: a Range read, not a decode-and-discard
     assert argv[i + 1] == URL and _value(argv, "-ss") == "120.000" and _value(argv, "-t") == "1800.000"
@@ -65,17 +65,37 @@ def test_input_side_seek():
 
 def test_tls_verify_on_with_ca_file():
     for argv in (_window(), media.build_probe_argv(URL, CA),
-                 media.build_segment_argv(URL, CA, "", 0, 600, 300, "/w/seg_%d.opus")):
+                 media.build_pass_argv(URL, CA, "matroska,webm", 0, 600, "/w/pass.opus")):
         assert _value(argv, "-tls_verify") == "1" and _value(argv, "-ca_file") == CA
 
 
-def test_segment_pass_is_bounded_and_resumable():
-    argv = media.build_segment_argv(URL, CA, "matroska,webm", 0, 14400, 1800, "/w/seg_%d.opus")
-    assert "-ss" not in argv                                      # from the start: a cue-less file cannot seek
-    assert _value(argv, "-t") == "14400.000" and argv.index("-t") < argv.index("-i")
-    assert _value(argv, "-segment_time") == "1800.000" and _value(argv, "-segment_format") == "opus"
-    resumed = media.build_segment_argv(URL, CA, "", 3600, 7200, 1800, "/w/seg_%d.opus")
-    assert _value(resumed, "-ss") == "3600.000"
+def test_pass_argv_is_guarded_bounded_and_resumable():
+    argv = media.build_pass_argv(URL, CA, "matroska,webm", 0, 5_400, "/w/pass.opus")
+    assert "-ss" not in argv                                      # from the start: nothing to seek to
+    assert _value(argv, "-t") == "5400.000" and argv.index("-t") < argv.index("-i")
+    assert _value(argv, "-format_whitelist") == media.FORMAT_WHITELIST and _value(argv, "-f") == "matroska,webm"
+    assert "-nostdin" in argv and argv[-1] == "/w/pass.opus" and argv[-2] == "opus"
+    resumed = media.build_pass_argv(URL, CA, "matroska,webm", 3_480, 5_400, "/w/pass.opus")
+    assert _value(resumed, "-ss") == "3480.000" and resumed.index("-ss") < resumed.index("-i")
+
+
+def test_the_cut_reads_only_local_ogg():
+    argv = media.build_cut_argv("/w/pass.opus", 1_740.0, 1_800.0, "/w/window_1.opus.part")
+    assert _value(argv, "-protocol_whitelist") == "file" and _value(argv, "-format_whitelist") == "ogg"
+    assert _value(argv, "-c:a") == "copy" and _value(argv, "-f") == "ogg" and "https" not in " ".join(argv)
+
+
+def test_vbr_is_constrained_so_four_hours_fit_the_file_limit():
+    for argv in (_window(), media.build_pass_argv(URL, CA, "matroska,webm", 0, 600, "/w/pass.opus")):
+        assert _value(argv, "-vbr") == "constrained"
+
+
+def test_an_empty_or_invalid_container_is_refused():
+    for bad in ("", "-i /etc/passwd", "a b"):
+        with pytest.raises(ValueError):
+            media.build_window_argv(URL, CA, bad, 0, 10, "/w/x")
+        with pytest.raises(ValueError):
+            media.build_pass_argv(URL, CA, bad, 0, 10, "/w/x")
 
 
 @pytest.mark.skipif(not HAVE_FFMPEG, reason="needs ffmpeg")
