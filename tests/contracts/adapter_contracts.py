@@ -29,6 +29,8 @@ Adding a new rule:
 from dataclasses import dataclass, field
 from typing import Callable, Dict
 
+from google.genai import types
+
 
 # ============================================================================
 # Infrastructure
@@ -781,10 +783,10 @@ def _each_request(kw: dict):
 def _check_schema_with_mime(kw: dict) -> None:
     for r in _each_request(kw):
         cfg = r.config
-        if cfg.response_schema is None:
-            continue  # a text-only request without a schema carries neither
         _true(cfg.response_json_schema is None,
               "Gemini batch: response_json_schema is silently ignored in an inline request (Δ131)")
+        if cfg.response_schema is None:
+            continue  # a text-only request without a schema needs no mime type
         _eq(cfg.response_mime_type, "application/json",
             "Gemini batch: a schema needs response_mime_type application/json beside it")
 
@@ -792,7 +794,7 @@ def _check_schema_with_mime(kw: dict) -> None:
 def _check_thinking_low(kw: dict) -> None:
     for r in _each_request(kw):
         tc = r.config.thinking_config
-        _true(tc is not None and str(tc.thinking_level).endswith("LOW"),
+        _true(tc is not None and tc.thinking_level == types.ThinkingLevel.LOW,
               f"Gemini batch: thinking_level LOW missing on request {r.metadata!r}")
 
 
@@ -843,13 +845,16 @@ BATCH_FILE_URI_FROM_STORED_NAME = ContractRule(
 BATCH_PER_RESPONSE_ERROR_SURFACED = ContractRule(
     name="BATCH_PER_RESPONSE_ERROR_SURFACED",
     description=(
-        "A collected result whose own response held an error has an error and no text: a succeeded job with one "
-        "failed response never yields a result for it. Input: the mapping key -> BatchResult from collect()."
+        "A collected result whose own response held an error has an error, no text and the rpc code: a succeeded "
+        "job with one failed response never yields a result for it. Input: {results: key -> BatchResult from "
+        "collect(), failed_keys: the keys whose response held an error}; exactly those keys fail."
     ),
     validators={
-        "gemini_batch": lambda results: _true(
-            any(r.error and r.text is None for r in results.values()),
-            "Gemini batch: a per-response error was not surfaced as an error result",
+        "gemini_batch": lambda d: (
+            _eq({k for k, r in d["results"].items() if r.error}, set(d["failed_keys"]),
+                "Gemini batch: the failed keys are not exactly those whose response held an error"),
+            _true(all(d["results"][k].text is None and d["results"][k].code for k in d["failed_keys"]),
+                  "Gemini batch: a per-response error result must have no text and carry its rpc code"),
         ),
     },
 )
