@@ -11,7 +11,7 @@ Public interface:
         async drop_jobs(user_id, host, item_ids) -> int                   jobs of records that left the pipeline
     TranscriptHost        what the tick lends the stage (a Protocol; DriveIndexingService implements it, Task 14)
     TranscriptRunner      the runner the stage submits through (a Protocol; DriveTranscriptRunner in composition/)
-    TRANSCRIBER_AGENT     the model backoff key of this class (§25.4.6)
+    TRANSCRIBER_AGENT     the model backoff key of this class (§25.4.6; defined in drive_transcript_plan, re-exported)
 
 Several public classes in one module, by decision: the stage and the two narrow Protocols it is called and served
 through (one contract; a service cannot import composition/, REQ-ARCH-22, so the runner's shape is declared here).
@@ -104,9 +104,9 @@ from ..domain.drive_transcript_job import (
     with_uploaded,
 )
 from ..domain.drive_transcript_plan import (
-    CURRENT, FAILED, NONE, READY, WAITING, WORKING, Reservation, StartOutcome, TranscriptContext, WindowAction,
-    WindowCheck, charge_attempt, mark_current, park, release, resume_window, start_file, state_for_job, stub_record,
-    wait_for_copy, window_estimate_usd, window_failed,
+    CURRENT, FAILED, NONE, READY, TRANSCRIBER_AGENT, WAITING, WORKING, Reservation, StartOutcome, TranscriptContext,
+    WindowAction, WindowCheck, charge_attempt, mark_current, park, release, resume_window, start_file, state_for_job,
+    stub_record, wait_for_copy, window_estimate_usd, window_failed,
 )
 from ..domain.drive_transcript_plan import WindowResult as WindowDecision
 from ..domain.drive_transcript_render import TRANSCRIPT_BODY_VERSION, render_body
@@ -121,7 +121,6 @@ from ..ports.media_audio_port import MediaAudioPort
 from ..ports.user_drive_port import UserDrivePort
 from ..utils.logger import logger
 
-TRANSCRIBER_AGENT = "drive_transcriber"
 EXTRACTED_BY = f"{TRANSCRIBE_LINK}@{TRANSCRIBE_VERSION}"
 WINDOW_MIME = "audio/ogg"          # the media child writes Ogg Opus (§27.4, T-R15)
 _PAGE = 50                          # records read per list in one step

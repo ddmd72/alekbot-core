@@ -19,7 +19,7 @@ call at search time (D19, D28). Decisions that need no I/O are in `drive_tiers`,
 `drive_tier_pool`, `drive_tier_explain` and `drive_search`; this class reads and calls them.
 
 Public interface:
-    DriveSearchService(repo, embeddings, users, drive, *, embedding_space, clock, nonce, monotonic)
+    DriveSearchService(repo, embeddings, users, drive, *, embedding_space, clock, nonce, monotonic, transcribe_cap_usd)
     await search(user_id, request) -> DriveSearchResult
     await indexing_status(user_id) -> DriveIndexingStatus     # Cabinet (§6)
     await access_note(user_id, *, item_id=None, path=None) -> Optional[str]   # list/open on a 404 (§26.2, Δ55)
@@ -49,7 +49,7 @@ from ..domain.drive_index_params import (
     ABOUT_FETCH, ABOUT_SHOWN, CARD_FETCH, CHUNK_FETCH, FETCH_MAX, FOLDER_INMEM_CARDS, FOLDER_INMEM_CHUNKS,
     GROUP_READ_MAX, HINT_FETCH, INACCESSIBLE_SCAN_MAX, K, LABELLED_SHOWN, MAX_CARD_RECORDS_PER_USER, MENTIONED_SHOWN, NAME_FETCH,
     NAME_KEY_QUERIES, PASSAGE_MAX_CHUNKS_PER_FILE, PROFILE_MIN_CHARS, RELATED_MAX, RELATED_SMALL, TRANSLATED_SHOWN, WINDOW_CHARS_TOTAL_V2,
-    WINDOW_MAX, WORD_FETCH, WORD_FILES_MAX,
+    TRANSCRIBE_USD_PER_MONTH, WINDOW_MAX, WORD_FETCH, WORD_FILES_MAX,
 )
 from ..domain.drive_index_planner import month_key
 from ..domain.drive_indexing_status import DriveIndexingStatus
@@ -271,9 +271,11 @@ class _Folder:
 class DriveSearchService:
     def __init__(self, repo: DriveIndexRepository, embeddings: EmbeddingService, users: UserRepository,
                  drive: UserDrivePort, *, embedding_space: str, clock: Callable[[], datetime] = _utcnow,
-                 nonce: Callable[[], str] = _nonce, monotonic: Callable[[], float] = time.monotonic) -> None:
+                 nonce: Callable[[], str] = _nonce, monotonic: Callable[[], float] = time.monotonic,
+                 transcribe_cap_usd: float = TRANSCRIBE_USD_PER_MONTH) -> None:
         """`embedding_space` is the space query vectors are embedded in (the adapter's EMBEDDING_SPACE). The
-        kNN streams run only while the index's cards are in it (§12.3)."""
+        kNN streams run only while the index's cards are in it (§12.3). `transcribe_cap_usd` is the transcription cap
+        the indexer applies (`effective_monthly_cap(DRIVE_TRANSCRIBE_USD_CAP)`, T-R3), shown by the Cabinet."""
         self._repo = repo
         self._embeddings = embeddings
         self._users = users
@@ -282,6 +284,7 @@ class DriveSearchService:
         self._nonce = nonce
         self._monotonic = monotonic
         self._space = embedding_space
+        self._transcribe_cap = transcribe_cap_usd
 
     # ------------------------------------------------------------------------------------------
     # Search
@@ -1357,7 +1360,9 @@ class DriveSearchService:
             access_lost_at=state.access_lost_at, purging=state.purging,
             readable_chunks=await self._repo.readable_chunk_total(user_id),
             # what each month's cap has paid: the initial build's dollars are its own line, never against a cap (XC-4)
-            usd_month={c.value: usage.cap_usd(c.value) for c in UsageClass}, usd_caps=dict(USD_CAPS),
+            usd_month={c.value: usage.cap_usd(c.value) for c in UsageClass},
+            # the transcription cap as the indexer applies it: the optional knob only lowers it (T-R3)
+            usd_caps={**USD_CAPS, UsageClass.TRANSCRIBE.value: self._transcribe_cap},
             initial_build_spent_usd=build.spent_usd, initial_build_allowance_usd=build.allowance_usd,
             initial_build_closed=build.closed_at is not None,
         )

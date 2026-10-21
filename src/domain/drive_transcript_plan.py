@@ -15,6 +15,7 @@ Public interface:
     reserve_if_fits(estimate, ctx) -> (Reservation | None, ctx);  release(ctx, reservation) -> ctx      (G39, G9)
     transcript_plan(rec, ctx) -> rec                                        the state table below
     reset_on_new_version(rec) -> rec                                        a new content version clears the job (D42)
+    leaves_job(written, planned) -> bool                                    the write takes the record off its job (Task 14)
     start_file(rec, ctx, probe) -> FileStart                                the stage's step after the probe (Task 12 step 4)
     wait_for_copy(rec) -> rec                                               a copy waits for another file's result (G12)
     stub_from_probe(probe) / stub_record(rec, stub, now, seconds) / mark_current(rec, now, ...)
@@ -24,6 +25,7 @@ Public interface:
     window_failed(window, check, ctx) -> WindowResult                       the per-check retry rules (G37); a resubmit
                                                                             is reserved like any purchase (T-R8)
     queue_blocked(now, backoff_until) -> bool                               a model backoff gates the stage's queue read
+    TRANSCRIBER_AGENT                                                       the class's model backoff key (§25.4.6)
 
 The state table, first match wins (`DriveIndexRecord.transcript_state`, plain strings, G21):
     none      not a TRANSCRIBE-admitted kind, not `normal` scope, a folder, not resolved or being deleted, a never-download
@@ -81,6 +83,7 @@ from src.domain.drive_transcript_render import TRANSCRIPT_BODY_VERSION
 from src.domain.drive_transcript_windows import content_key, plan_windows
 
 NONE, READY, WORKING, WAITING = "none", "ready", "working", "waiting"
+TRANSCRIBER_AGENT = "drive_transcriber"   # the model backoff key of this class (§25.4.6): the stage's and the tick's
 CURRENT, HELD, PARKED, FAILED = "current", "held", "parked", "failed"
 HOLD_COOLDOWN, HOLD_QUIET, HOLD_RESUBMIT, HOLD_RETRY = "cooldown", "quiet", "resubmit", "retry"
 
@@ -243,6 +246,20 @@ def reset_on_new_version(rec: DriveIndexRecord) -> DriveIndexRecord:
     if key_stale:
         out = replace(out, transcript_stub="")
     return out
+
+
+def leaves_job(written: DriveIndexRecord, planned: DriveIndexRecord) -> bool:
+    """The write takes the record off the job document it may hold, so the tick drops that job at once (its reservation
+    released, Task 12 carry) instead of when the stage reaches the record: the plan took it out of the pipeline
+    (`none`: not eligible any more), or a new content version reset it (`reset_on_new_version`). `written` is the record
+    as the caller wrote it, `planned` the plan's result. A retry, park or quiet hold that ends at the same content
+    version is not a reset: its job keeps the windows uploaded for the next try. A `current` or `failed` record holds
+    no job (dropped when it finished), nor does a `none` one."""
+    if written.transcript_state in (NONE, CURRENT, FAILED):
+        return False
+    if planned.transcript_state == NONE:
+        return True
+    return reset_on_new_version(written) != written
 
 
 # -- the plan -----------------------------------------------------------------------------------------------------
