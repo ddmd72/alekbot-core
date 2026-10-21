@@ -183,7 +183,9 @@ into overridable tokens in **voice-only categories**:
 **As built (delta):** the "steady in trouble" line is a fifth token, `VOICE_CARE_LELIK`
 (`voice_care`, **not overridable**, order 25, right after the persona). It is a safety rule, so a
 user's replacement persona must not drop it by accident. The five system tokens reproduce the
-call-4 portrait verbatim; a unit test checks this against `PERSONA_LELIK_YOU`.
+call-4 portrait verbatim, except for three brevity cues the owner removed on 2026-10-21 ("dry",
+"a short line", "bored by small talk"); a unit test checks this against `PERSONA_LELIK_YOU` with
+those removals listed.
 
 - **Orders:** 20 persona, 25 care, 40 humour, 50 temperament, 60 call manners.
 - **Headings:** Role & Persona rides in the persona token, and Voice & Communication Style in the

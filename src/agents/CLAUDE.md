@@ -376,7 +376,8 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     Constructor `(config, execution_context, prompt_builder)`; single LLM call, no tool loop, no
     dedup-before-write. **Output is plain text, not JSON** — unlike `TutorExtractorAgent` there is
     nothing to parse: Lelik has no `CompanionRecord` store, so `result["records"]` is hardcoded `[]`
-    and never asked of the model.
+    and never asked of the model. Its profile carries Lelik's `VOICE_*_LELIK` tokens and its role
+    token has it write the note as Lelik in the first person (2026-10-21, RFC §4.9 revision).
     **Tier: `PerformanceTier.ECO`, explicitly pinned** in `domain/user.py::_DEFAULT_AGENT_TIERS
     ["lelik_summarizer"]` — end-of-call summarization is mechanical bulk work, not
     `tutor_extractor`'s judgment call. The pin is load-bearing precisely *because* the agent is not

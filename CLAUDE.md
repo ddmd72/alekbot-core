@@ -390,11 +390,13 @@ contradicted each other until 2026-09-28; see `decisions/lelik_delivery_single_s
   the realtime session's instructions + tool declaration (over `LELIK.allowed_intents`, the same
   `_build_delegate_tool_declaration` Smart/Tutor use), `delegate()` runs one `delegate_to_specialist`
   call from the live session through `DelegationEngine.dispatch` (made public for this second caller).
-  `LelikSummarizerAgent` (ECO) turns the end-of-call transcript into a short note, with the shared
-  character slots and the user's `LANG_*`, and one line when nothing is worth keeping. It is delivered via
+  `LelikSummarizerAgent` (ECO) turns the end-of-call transcript into a short note written as Lelik
+  himself (first person, his `VOICE_*_LELIK` tokens, humour and emojis, up to 60 words; revised
+  2026-10-21) in the user's `LANG_*`, and one line when nothing is worth keeping. It is delivered via
   `UserNotificationService.notify_call_summary` as the history pair `[System: phone call with Lelik, …]`
-  + `📞 <note>`. Smart's `PROTOCOL_VOICE_PARTNER` tells Alek who Lelik is and how to read that pair. The summarizer must never be the participant it
-  summarizes (RFC §4.9), and it has no `CompanionRecord` store — `records` is always `[]`.
+  + `📞 <note>`. Smart's `PROTOCOL_VOICE_PARTNER` tells Alek who Lelik is and how to read that pair. The summarizer is a separate cheap model
+  working from the transcript, never the live session it summarizes (RFC §4.9) — it speaks in
+  Lelik's voice, it is not Lelik's session — and it has no `CompanionRecord` store — `records` is always `[]`.
 - **`POST /voice/delegate`** — the relay forwards one `delegate_to_specialist` call raised inside the
   live session to this OIDC-protected route (`voice_control_plane_app.py`), which resolves the
   caller's `LelikAgent` via `get_lelik` and runs `agent.delegate()`, returning the specialist's text

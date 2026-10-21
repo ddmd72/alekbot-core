@@ -35,3 +35,13 @@ field guideline and examples are updated alongside.
 
 - Smart's prompt cost from history grows noticeably.
 - Summaries drift into performance (jokes replacing facts) and consolidation loses content.
+
+## Call notes too (2026-10-21)
+
+Lelik's end-of-call note follows the same principle: `LelikSummarizerAgent` writes it as Lelik
+himself retelling the call (first person, his `VOICE_*_LELIK` tokens instead of Smart's slots,
+matching his `response_text`, emojis, up to 60 words). Soft wording did not hold on the ECO model:
+one of three notes slipped back to "користувач…", so the role token states the voice rule first,
+names the voice sections, forbids the third-person words literally and gives one wrong/right pair in
+English. Token sources: `firestore_utils/uploads/COGNITIVE_PROCESS_LELIK_SUMMARIZER.*`,
+`lelik_summarizer.json`. Accepted residual: in character it occasionally embellishes a detail.
