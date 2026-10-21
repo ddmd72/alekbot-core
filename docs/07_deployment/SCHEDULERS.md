@@ -132,7 +132,7 @@ Both budgets were unreachable from the day they were written until 2026-08-15 �
 | Field | Value |
 |-------|-------|
 | **Job name** | `alek-bot-dev-email-indexing-watchdog` |
-| **Schedule** | `23 */2 * * *` (every 2 hours at :23 — staggered, see Start Email Indexing) |
+| **Schedule** | `27 */2 * * *` (every 2 hours at :27 — staggered off the `3-59/10` drive sync fan-out and the other hourly jobs) |
 | **HTTP** | `POST /worker` |
 | **Payload** | `{"task_type": "email_indexing_watchdog"}` |
 | **Purpose** | Scans all `RUNNING` indexing jobs older than 2 hours and marks them `FAILED`. Handles Cloud Tasks timeouts and crash-recovery. |

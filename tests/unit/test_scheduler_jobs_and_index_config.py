@@ -22,7 +22,7 @@ def _job_blocks(job_name):
 
 
 @pytest.mark.parametrize("job, task_type, schedule", [
-    ("alek-bot-dev-email-indexing-watchdog", "email_indexing_watchdog", "23 */2 * * *"),
+    ("alek-bot-dev-email-indexing-watchdog", "email_indexing_watchdog", "27 */2 * * *"),
     ("alek-bot-dev-sweep-companion-consolidation", "sweep_companion_consolidation", "47 * * * *"),
 ])
 def test_recovery_job_is_defined_with_its_task_type_schedule_and_oidc(job, task_type, schedule):
