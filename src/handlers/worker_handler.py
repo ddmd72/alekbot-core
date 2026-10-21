@@ -16,7 +16,6 @@ Supported task_types:
                                      remain (session-keyed analog of consolidation)
   - sweep_companion_consolidation → fan-out cron: re-trigger companion extraction for every
                                      session with stuck batches
-  - deep_research_polling    → poll Gemini job, deliver via notification service
   - fire_due_reminders       → cron tick: claim each due note (atomic precondition on `due`)
                                 and enqueue per-fire `execute_reminder` Cloud Tasks
   - execute_reminder         → run one claimed reminder fire: load note, idempotency
@@ -67,9 +66,7 @@ from ..domain.notification_kind import NotificationKind
 from ..domain.workspace import fire_key as workspace_fire_key
 from ..infrastructure.notification_sla import dispatch_deadline_s
 from ..handlers.agent_worker_handler import AgentWorkerHandler
-from ..services.deep_research_delivery import (
-    NotificationPort, deliver_deep_research,
-)
+from ..services.deep_research_delivery import NotificationPort
 from ..services.consolidation_service import ConsolidationService
 from ..services.provider_registry import ProviderRegistry
 from ..services.email_embedding_repair_service import EmailEmbeddingRepairService
@@ -107,7 +104,6 @@ class WorkerHandler:
         indexed_email_repo: Optional[IndexedEmailRepository],
         user_repo: Any,  # UserRepository
         task_dispatch: Optional[TaskDispatchService] = None,
-        job_registry: Optional[ProviderRegistry] = None,
         video_registry: Optional[ProviderRegistry] = None,
         quota_service: Optional[object] = None,
         media_storage: Optional[MediaStoragePort] = None,
@@ -138,7 +134,6 @@ class WorkerHandler:
         self._indexed_email_repo = indexed_email_repo
         self._user_repo = user_repo
         self._task_dispatch = task_dispatch
-        self._job_registry: Optional[ProviderRegistry] = job_registry
         self._video_registry: Optional[ProviderRegistry] = video_registry
         self._quota_service = quota_service
         self._media_storage = media_storage
@@ -254,8 +249,6 @@ class WorkerHandler:
             return await self._handle_companion_consolidation(payload)
         elif task_type == "sweep_companion_consolidation":
             return await self._handle_sweep_companion_consolidation()
-        elif task_type == "deep_research_polling":
-            return await self._handle_deep_research_polling(payload)
         elif task_type == "video_generation_polling":
             return await self._handle_video_generation_polling(payload)
         elif task_type == "setup_microsoft_todo":
@@ -480,139 +473,6 @@ class WorkerHandler:
         return {"swept": len(session_ids)}, 200
 
     # ------------------------------------------------------------------
-    # Deep Research polling (Gemini)
-    # ------------------------------------------------------------------
-
-    _MAX_POLL_ATTEMPTS = 30   # 30 × 120s = 60 min = Gemini Deep Research max window
-
-    async def _handle_deep_research_polling(self, payload: dict) -> Tuple[dict, int]:
-        """
-        Poll deep research interaction status. Re-enqueue if in_progress.
-        On completion: deliver via notification service.
-
-        Each invocation is its own Cloud Tasks HTTP request → full Cloud Run CPU.
-        No sleep between attempts — delay is handled by Cloud Tasks schedule_time.
-        """
-        interaction_id     = payload.get("interaction_id", "")
-        user_id            = payload.get("user_id", "")
-        account_id         = payload.get("account_id", "")
-        query              = payload.get("query", "")
-        attempt            = payload.get("attempt", 0)
-        consecutive_errors = payload.get("consecutive_errors", 0)
-        provider           = payload.get("provider", "gemini")
-        session_id         = payload.get("session_id", "")
-
-        # Derive origin channel from per-channel session_id (format: "user_id:channel_id")
-        origin_channel_id = session_id.split(":", 1)[1] if ":" in session_id else None
-
-        job_port = None
-        if self._job_registry:
-            try:
-                job_port = self._job_registry.get(provider)
-            except ValueError:
-                logger.debug("No deep research job port registered for provider %r", provider)
-        if not job_port or not self._task_dispatch:
-            logger.error(
-                f"[DeepResearch] Missing dependencies in WorkerHandler "
-                f"(provider={provider!r}, available="
-                f"{self._job_registry.list_available() if self._job_registry else []})"
-            )
-            return {"error": "deep_research not configured"}, 500
-
-        await self._agent_factory.ensure_agents_for_user(user_id)
-
-        if attempt >= self._MAX_POLL_ATTEMPTS:
-            logger.warning(f"[DeepResearch] Polling timeout: interaction={interaction_id[:16]}")
-            await self._notification.notify(
-                kind=NotificationKind.DEEP_RESEARCH,
-                user_id=user_id,
-                account_id=account_id,
-                system_alert="Deep research timed out after 60 minutes without producing a result.",
-                channel_id_override=origin_channel_id,
-            )
-            return {"status": "timeout"}, 200
-
-        try:
-            status, payload_text = await job_port.get_status(interaction_id)
-            consecutive_errors = 0  # reset on any successful API response
-        except Exception as exc:
-            consecutive_errors += 1
-            logger.warning(
-                f"[DeepResearch] Poll attempt={attempt} failed "
-                f"(consecutive_errors={consecutive_errors}): {exc}"
-            )
-            # 5 consecutive errors → interaction is dead, not a transient blip.
-            if consecutive_errors >= 5:
-                logger.error(
-                    f"[DeepResearch] Interaction presumed dead after {consecutive_errors} "
-                    f"consecutive errors: interaction={interaction_id[:16]}"
-                )
-                await self._notification.notify(
-                    kind=NotificationKind.DEEP_RESEARCH,
-                    user_id=user_id,
-                    account_id=account_id,
-                    system_alert="Deep research did not complete — the research session expired or encountered a persistent error.",
-                    channel_id_override=origin_channel_id,
-                )
-                return {"status": "dead", "attempt": attempt}, 200
-
-            await self._task_dispatch.enqueue_deep_research_polling(
-                interaction_id=interaction_id,
-                user_id=user_id,
-                account_id=account_id,
-                query=query,
-                attempt=attempt + 1,
-                consecutive_errors=consecutive_errors,
-                delay_seconds=120,
-                provider=provider,
-                session_id=session_id,
-            )
-            return {"status": "retry", "attempt": attempt + 1}, 200
-
-        if status == "in_progress":
-            await self._task_dispatch.enqueue_deep_research_polling(
-                interaction_id=interaction_id,
-                user_id=user_id,
-                account_id=account_id,
-                query=query,
-                attempt=attempt + 1,
-                consecutive_errors=0,
-                delay_seconds=120,
-                provider=provider,
-                session_id=session_id,
-            )
-            logger.info(f"[DeepResearch] In progress, attempt={attempt + 1}")
-            return {"status": "polling", "attempt": attempt + 1}, 200
-
-        if status == "completed":
-            await deliver_deep_research(
-                result_text=payload_text,
-                user_id=user_id,
-                account_id=account_id,
-                query=query,
-                task_queue=self._task_dispatch,
-                session_id=session_id,
-                media_storage=self._media_storage,
-                link_service=self._link_service,
-                channel_id_override=origin_channel_id,
-            )
-
-            logger.info(f"[DeepResearch] Delivered to user={user_id[:8]}")
-            return {"status": "delivered"}, 200
-
-        # status == "failed"
-        logger.error(
-            f"[DeepResearch] Operation failed: interaction={interaction_id[:16]}, error={payload_text}"
-        )
-        await self._notification.notify(
-            kind=NotificationKind.DEEP_RESEARCH,
-            user_id=user_id, account_id=account_id,
-            system_alert="Deep research did not complete — the AI provider returned an error.",
-            channel_id_override=origin_channel_id,
-        )
-        return {"status": "failed"}, 200
-
-    # ------------------------------------------------------------------
     # Video generation polling (Grok)
     # ------------------------------------------------------------------
 
@@ -622,9 +482,7 @@ class WorkerHandler:
         """
         Poll video generation status. Re-enqueue if pending. On done: deliver via
         deliver_video(). On failed/expired: notify the user directly, no silent
-        drop — matches _handle_deep_research_polling's shape, but this one is
-        actually reachable from a real kickoff site (GrokVideoAdapter, Task 1),
-        unlike its deep-research sibling. See VIDEO_GENERATION_RFC.md §3.4 step 4.
+        drop. Kicked off by GrokVideoAdapter. See VIDEO_GENERATION_RFC.md §3.4 step 4.
 
         duration_s is resolved ONCE here (not re-read in the pending/done branches)
         so it survives multiple poll cycles: the re-enqueue call below threads it
