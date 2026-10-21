@@ -25,23 +25,26 @@ Public interface:
     digest_changed(doc, digest), retry_due(doc, *, now, digest), charged_doc(doc, now), charged(doc, rec, now),
     reset_charges(doc, digest)
     prune_due(folder_doc, *, source_present, has_child_docs)
+    cleared_item(doc), lost_root_reset(doc), audit_due(root, now)
     local_day(at, tz_name)
 """
 from __future__ import annotations
 
 import hashlib
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Optional, Tuple
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .drive_index import DriveIndexRecord, RecordState
-from .drive_index_params import MIRROR_ARCHIVE_GRACE, MIRROR_FAILED_RETRY, MIRROR_MAX_ATTEMPTS, MIRROR_ROOT_GRACE
+from .drive_index_params import (
+    MIRROR_ARCHIVE_GRACE, MIRROR_AUDIT_DAYS, MIRROR_FAILED_RETRY, MIRROR_MAX_ATTEMPTS, MIRROR_ROOT_GRACE,
+)
 from .drive_enrichment import JobState
 from .drive_index_planner import backoff
 from .drive_mirror import (
-    GONE, KIND_FOLDER, MIRROR_ACTIVE, MIRROR_ARCHIVED, MIRROR_DETACHED, UNKNOWN, UNSTORED, DeletionNotice, MirrorDoc,
+    GONE, KIND_ARCHIVE, KIND_FOLDER, MIRROR_ACTIVE, MIRROR_ARCHIVED, MIRROR_DETACHED, UNKNOWN, UNSTORED, DeletionNotice, MirrorDoc,
     MirrorRoot,
 )
 from .drive_mirror_names import Placement
@@ -293,6 +296,35 @@ def prune_due(folder_doc: MirrorDoc, *, source_present: bool, has_child_docs: bo
     when empty, deleted (§27.9.5 step 5, Δ197). The archive folder and its day folders are never pruned."""
     return (folder_doc.kind == KIND_FOLDER and folder_doc.state == MIRROR_ACTIVE
             and not source_present and not has_child_docs)
+
+
+# -- the drive item gone, the root lost, the audit -------------------------------------------------------------------
+
+def cleared_item(doc: MirrorDoc) -> MirrorDoc:
+    """The document with no drive item and no create intent (§27.9.5, §27.9.9): its file or folder is not on the drive
+    (or no longer under the root), so it is created again when its record is due. Its state, its mark and its archive
+    snapshot stay (a detached document keeps its pin)."""
+    return replace(doc, mirror_item_id="", mirror_parent_id="", mirror_name="", mirror_ctag="", rendered_hash="",
+                   pending_op="", pending_name="", pending_parent_id="", pending_at=None, pending_size=0,
+                   audit_seen_at=None)
+
+
+def lost_root_reset(doc: MirrorDoc) -> Optional[MirrorDoc]:
+    """A document after a confirmed root loss (§27.9.9, Δ200): None for an archived file or an archive folder (the
+    owner deleted or moved away the archive with the root; the document goes and its pin with it); every other
+    document is `cleared_item` with a fresh retry budget, so it is created again under the new root and never points
+    at an item of the previous one. A detached document keeps its state, so its store entry stays pinned."""
+    if doc.kind == KIND_ARCHIVE or doc.state == MIRROR_ARCHIVED:
+        return None
+    return reset_charges(cleared_item(doc))
+
+
+def audit_due(root: MirrorRoot, now: datetime) -> bool:
+    """The audit runs at most every MIRROR_AUDIT_DAYS (§27.9.9): due once that long has passed since the last cycle
+    ended (`audited_at`), or since the root was created when no cycle has run yet. A cycle under way stays due, since
+    `audited_at` is written only at its end."""
+    base = root.audited_at or root.created_at
+    return base is None or now >= base + timedelta(days=MIRROR_AUDIT_DAYS)
 
 
 # -- the archive day ------------------------------------------------------------------------------------------------

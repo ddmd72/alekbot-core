@@ -113,6 +113,10 @@ class MirrorDoc:
     # the byte size of the file a create's intent was about to upload (Δ210): a re-run with no record to render (its
     # source gone) still tells its own file from a foreign one by it; 0 for a folder's intent or none
     pending_size: int = 0
+    # when the audit last saw the document's item where the ledger has it (§27.9.9, Δ201): a folder walk spans pages
+    # and ticks, so at a folder's last page the documents not seen since the previous cycle ended are the ones to
+    # confirm with a read; None until the first audit sees it
+    audit_seen_at: Optional[datetime] = None
 
     @property
     def key(self) -> str:
