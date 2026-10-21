@@ -332,3 +332,30 @@ class TestRefreshIfNeeded:
         result = await svc._refresh_if_needed(creds)
 
         assert result is None
+
+
+class TestFindEligibleUsersWindow:
+    """Task D: the review window is the first 3 hours from the configured hour."""
+
+    async def test_returns_slot_date_inside_window(self):
+        from datetime import date
+        svc, _, oauth = _make_service()
+        now_utc = datetime(2026, 1, 15, 10, 0, tzinfo=timezone.utc)
+        oauth.list_users_by_provider = AsyncMock(return_value=["user-1"])
+        user_repo = MagicMock()
+        user_repo.get_user = AsyncMock(return_value=_make_profile(hour=9))
+
+        result = await svc.find_eligible_users(user_repo, now_utc)
+
+        assert [(u.user_id, u.account_id, u.slot_date) for u in result] == [
+            ("user-1", "acc-1", date(2026, 1, 15))
+        ]
+
+    async def test_excluded_outside_window(self):
+        svc, _, oauth = _make_service()
+        now_utc = datetime(2026, 1, 15, 12, 0, tzinfo=timezone.utc)
+        oauth.list_users_by_provider = AsyncMock(return_value=["user-1"])
+        user_repo = MagicMock()
+        user_repo.get_user = AsyncMock(return_value=_make_profile(hour=9))
+
+        assert await svc.find_eligible_users(user_repo, now_utc) == []

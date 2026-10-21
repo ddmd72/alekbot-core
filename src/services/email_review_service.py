@@ -14,9 +14,10 @@ Responsibilities:
 """
 
 from datetime import datetime, timedelta, timezone
-from typing import Any, List, Optional, Tuple
+from typing import Any, List, Optional
 from zoneinfo import ZoneInfo
 
+from ..domain.daily_review_window import EligibleReviewUser, review_slot_date
 from ..domain.email import OAuthCredentials
 from ..domain.exceptions import OAuthGrantRevokedError
 from ..ports.email_provider_port import EmailProviderPort
@@ -39,13 +40,13 @@ class EmailReviewService:
 
     async def find_eligible_users(
         self, user_repo: Any, now_utc: datetime
-    ) -> List[Tuple[str, str]]:
+    ) -> List[EligibleReviewUser]:
         """
-        Return (user_id, account_id) pairs for Gmail users eligible for daily review
-        at the given UTC time (gmail_daily_review=True, hour matches local timezone).
+        Gmail users with gmail_daily_review=True whose local time is inside the review
+        window (first 3 hours from gmail_daily_review_hour), with the slot's local date.
         """
         user_ids = await self._oauth.list_users_by_provider("gmail")
-        eligible: List[Tuple[str, str]] = []
+        eligible: List[EligibleReviewUser] = []
         for user_id in user_ids:
             profile = await user_repo.get_user(user_id)
             if not profile:
@@ -53,10 +54,12 @@ class EmailReviewService:
             cfg = profile.config
             if not cfg.gmail_daily_review:
                 continue
-            user_tz = ZoneInfo(cfg.timezone or "UTC")
-            if now_utc.astimezone(user_tz).hour != cfg.gmail_daily_review_hour:
+            slot_date = review_slot_date(
+                now_utc, ZoneInfo(cfg.timezone or "UTC"), cfg.gmail_daily_review_hour
+            )
+            if slot_date is None:
                 continue
-            eligible.append((user_id, profile.account_id))
+            eligible.append(EligibleReviewUser(user_id, profile.account_id, slot_date))
         return eligible
 
     async def fetch_review_payload(self, user_id: str) -> Optional[List[dict]]:

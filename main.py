@@ -739,6 +739,12 @@ async def main():
                 collection_name=env_config.worker_task_dedup_collection,
                 ttl_seconds=1800,
             ),
+            # One review per user per local date; 48 h outlives the 3 h window and the date edge.
+            daily_review_marks=FirestoreDedupStore(
+                db_client=db_client,
+                collection_name=env_config.worker_task_dedup_collection,
+                ttl_seconds=172800,
+            ),
             agent_worker_handler=agent_worker_handler,
             email_indexing_service=email_indexing_service,
             notification_service=notification_service,
