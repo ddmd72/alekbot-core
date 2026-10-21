@@ -15,9 +15,13 @@ class TaskQueue(Protocol):
         event_data: Dict[str, Any],
         session_id: str,
         delay_seconds: int = 0,
-        trace_headers: Optional[Dict[str, str]] = None
+        trace_headers: Optional[Dict[str, str]] = None,
+        busy_requeues: int = 0,
+        task_name: Optional[str] = None,
     ) -> str:
-        """Enqueue a Slack event for background processing."""
+        """Enqueue a Slack event for background processing. busy_requeues counts re-queues of a busy session.
+
+        task_name: deterministic Cloud Tasks name; ALREADY_EXISTS (task already queued) counts as success."""
         ...
 
     async def create_queue_if_not_exists(self) -> None:

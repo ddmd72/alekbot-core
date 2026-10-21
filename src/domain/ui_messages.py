@@ -98,3 +98,5 @@ class UIMessage(Enum):
     # only; the paths travel in the attached list, so no file name is ever part of the chat text.
     DRIVE_INACCESSIBLE_NOTICE = "drive_inaccessible_notice"
     DRIVE_INACCESSIBLE_LIST_TITLE = "drive_inaccessible_list_title"
+    # Slack message dropped after the session stayed busy through every re-queue (s1b AB2).
+    MESSAGE_NOT_PROCESSED_BUSY = "message_not_processed_busy"

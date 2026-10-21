@@ -54,7 +54,6 @@ def test_factory_selects_http_mode_with_dependencies():
 
     with patch("src.composition.slack_adapter_factory.GcpTaskQueue") as mock_tasks, \
          patch("src.composition.slack_adapter_factory.HTTPModeAdapter") as mock_http, \
-         patch("src.composition.slack_adapter_factory.FirestoreEventDedupStore"), \
          patch("src.composition.slack_adapter_factory.ConversationHandler"):
         SlackAdapterFactory.create_adapter(
             app=app,
@@ -69,6 +68,7 @@ def test_factory_selects_http_mode_with_dependencies():
         )
         mock_tasks.assert_called_once()
         mock_http.assert_called_once()
+        assert "dedup_store" not in mock_http.call_args.kwargs
 
 
 @pytest.mark.requirement("REQ-CORE-09")
@@ -94,7 +94,6 @@ def test_factory_forwards_skill_service_to_conversation_handler():
 
     with patch("src.composition.slack_adapter_factory.GcpTaskQueue"), \
          patch("src.composition.slack_adapter_factory.HTTPModeAdapter"), \
-         patch("src.composition.slack_adapter_factory.FirestoreEventDedupStore"), \
          patch("src.composition.slack_adapter_factory.ConversationHandler") as mock_handler:
         SlackAdapterFactory.create_adapter(
             app=app,

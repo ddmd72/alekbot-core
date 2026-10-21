@@ -197,4 +197,5 @@ UI_STRINGS: Dict[str, str] = {
         "копії бот зможе прочитати. Список у вкладенні."
     ),
     UIMessage.DRIVE_INACCESSIBLE_LIST_TITLE.value: "Файли, які бот не може відкрити",
+    UIMessage.MESSAGE_NOT_PROCESSED_BUSY.value: "⚠️ Не вдалося обробити твоє останнє повідомлення, бо я надто довго був зайнятий. Надішли його, будь ласка, ще раз.",
 }

@@ -115,22 +115,3 @@ class FirestoreDedupStore(DedupStore):
             return
         await self.db_client.collection(self.collection_name).document(event_id).delete()
         logger.debug(f"🧹 Dedup mark released for event {event_id[:12]}...")
-
-
-class FirestoreEventDedupStore(FirestoreDedupStore):
-    """
-    Backward-compatible Slack event dedup store.
-    
-    Legacy class for Slack adapter. Uses collection_prefix pattern.
-    New code should use FirestoreDedupStore directly with explicit collection_name.
-    """
-
-    def __init__(self, db_client: AsyncClient, collection_prefix: str, ttl_seconds: int = 3600):
-        # ADR-006: Use semantic collection name if collection_prefix matches pattern
-        # Fallback to old behavior if simple prefix string is passed
-        if collection_prefix.endswith("event_dedup"):
-            collection_name = collection_prefix
-        else:
-            collection_name = f"{collection_prefix}event_dedup"
-            
-        super().__init__(db_client, collection_name, ttl_seconds)
