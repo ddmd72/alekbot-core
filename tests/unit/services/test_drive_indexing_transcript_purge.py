@@ -159,3 +159,97 @@ async def test_a_user_who_never_transcribed_is_purged_without_transcript_queries
     await w.settle()
     assert w.repo.states.get("u") is None
     assert w.repo.transcript_calls == []
+
+
+# -- T-R25: money that may still be spent is booked, not released -----------------------------------------------------
+
+def spent(w: TranscriptWorld, month: str) -> float:
+    usage = w.repo.usage.get(("u", month))
+    return usage.cap_usd("transcribe") if usage is not None else 0.0
+
+
+async def test_a_running_batch_is_booked_as_spend_in_its_month_not_released(world):
+    w, audio = await waiting_world(world)
+    month = w.job(audio).reserved_month
+    held = w.job(audio).reserved_usd
+    assert any(win.state == "submitted" for win in w.job(audio).windows)
+    w.users.indexing = False
+    await w.settle()
+    assert w.repo.states.get("u") is None
+    assert spent(w, month) == pytest.approx(held)   # the batch may still bill: its reservation is now spend
+    assert w.reserved() == pytest.approx(0.0)       # and no longer an open reservation
+
+
+async def test_an_open_batch_reservation_is_booked_in_its_own_month(world):
+    w, audio = await waiting_world(world)
+    batch = w.batches()[0]
+    w.repo.batches[("u", batch.name)] = replace(batch, reserved_usd=0.5, reserved_month="2020-01")
+    await w.repo.reserve_model_usd("u", "2020-01", "transcribe", 0.5)
+    w.users.indexing = False
+    await w.settle()
+    assert spent(w, "2020-01") == pytest.approx(0.5)
+    assert w.repo.usage[("u", "2020-01")].transcribe_reserved_usd == pytest.approx(0.0)
+
+
+async def test_a_job_with_nothing_in_flight_is_released_not_booked(world):
+    w, audio = await waiting_world(world)
+    job = w.job(audio)
+    month, held = job.reserved_month, job.reserved_usd
+    w.repo.transcript_jobs[("u", audio)] = replace(
+        job, windows=tuple(replace(win, state="uploaded") for win in job.windows))
+    w.users.indexing = False
+    await w.settle()
+    assert spent(w, month) == pytest.approx(0.0)
+    assert w.reserved() == pytest.approx(0.0) and held > 0
+
+
+async def test_the_rebuild_path_follows_the_same_rule(world):
+    w, audio = await waiting_world(world)
+    month, held = w.job(audio).reserved_month, w.job(audio).reserved_usd
+    w.repo.states["u"] = replace(w.repo.states["u"], purge_keep_transcripts=True)
+    w.users.indexing = False
+    await w.settle()
+    assert spent(w, month) == pytest.approx(held) and w.reserved() == pytest.approx(0.0)
+
+
+async def test_the_document_is_saved_zeroed_before_it_is_booked_or_released(world):
+    w, audio = await waiting_world(world)
+    events: List[str] = []
+    real_save, real_usage, real_reserve = (w.repo.save_transcript_job, w.repo.add_model_usage, w.repo.reserve_model_usd)
+
+    async def save(job: Any) -> None:
+        events.append(f"save:{job.reserved_usd}")
+        await real_save(job)
+
+    async def usage(*a: Any, **kw: Any) -> Any:
+        events.append("spend")
+        return await real_usage(*a, **kw)
+
+    async def reserve(*a: Any, **kw: Any) -> Any:
+        events.append("reserve")
+        return await real_reserve(*a, **kw)
+    w.repo.save_transcript_job, w.repo.add_model_usage, w.repo.reserve_model_usd = save, usage, reserve
+    w.users.indexing = False
+    await w.settle()
+    assert events[0] == "save:0.0" and "spend" in events and "reserve" in events
+    assert events.index("save:0.0") < events.index("spend") < events.index("reserve")
+
+
+async def test_a_reservation_with_no_month_is_logged_and_left_alone(world, caplog):
+    w, audio = await waiting_world(world)
+    w.repo.transcript_jobs[("u", audio)] = replace(w.job(audio), reserved_month="")
+    deltas = record_reservations(w)
+    w.users.indexing = False
+    with caplog.at_level(logging.ERROR):
+        await w.settle()
+    assert deltas == [] and w.repo.states.get("u") is None
+    assert any("no reservation month" in r.message for r in caplog.records)
+
+
+def test_the_look_back_steps_through_month_starts():
+    from datetime import datetime, timezone
+
+    from src.services.drive_indexing_service import _last_months
+    assert _last_months(datetime(2027, 5, 1, tzinfo=timezone.utc), 3) == ["2027-05", "2027-04", "2027-03"]
+    assert _last_months(datetime(2027, 1, 1, 0, 0, 1, tzinfo=timezone.utc), 3) == ["2027-01", "2026-12", "2026-11"]
+    assert _last_months(datetime(2027, 3, 31, 23, 59, tzinfo=timezone.utc), 3) == ["2027-03", "2027-02", "2027-01"]
