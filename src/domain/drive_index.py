@@ -170,6 +170,7 @@ class DriveChange:
     web_url: str = ""
     child_count: int = 0                      # folder.childCount
     facets: Mapping[str, Any] = field(default_factory=dict)  # photo, image, video, location, hashes, remoteItem, package, malware
+    created_at: Optional[datetime] = None     # Graph createdDateTime
 
 
 @dataclass(frozen=True)
