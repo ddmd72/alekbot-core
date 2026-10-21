@@ -11,7 +11,8 @@ from src.domain.drive_note import (
 from src.domain.drive_note_check import WHY_GONE, WHY_UNSTORED, NoteCheck
 from src.domain.drive_note_lifecycle import (
     NOTE_AUDIT_EVERY, NOTE_AUDIT_SKIP_DAYS, NOTE_CHECKS_MAX, NOTE_CHECKS_STORED_MAX, audit_candidates, audit_due,
-    chain_path, checks_of, fold_checks, moved_snapshot, refreshed_snapshot, without_checks,
+    chain_path, checks_of, fold_checks, moved_snapshot, record_moved, refreshed_snapshot, snapshot_from_record,
+    snapshot_stale, without_checks,
 )
 
 T = datetime(2026, 10, 22, 9, 0, tzinfo=timezone.utc)
@@ -117,3 +118,32 @@ class TestSnapshots:
         moved = moved_snapshot(old, "Archive/a.pdf")
         assert moved is not None and moved.path == "Archive/a.pdf" and moved.snapshot_at == old.snapshot_at
         assert moved_snapshot(None, "x") is None
+
+
+class TestRecordSnapshots:
+
+    def _rec(self, **kw):
+        base = dict(user_id="u", item_id="a", name="a.pdf", parent_id="p", content_hash="q:1", kind="pdf",
+                    mime_type="application/pdf", size_bytes=1)
+        base.update(kw)
+        return DriveIndexRecord(**base)
+
+    def test_record_moved(self):
+        rec = self._rec()
+        assert not record_moved(rec, self._rec(size_bytes=9))
+        assert record_moved(rec, self._rec(name="b.pdf")) and record_moved(rec, self._rec(parent_id="q"))
+        assert record_moved(rec, self._rec(content_hash="q:2"))
+
+    def test_snapshot_stale(self):
+        rec = self._rec()
+        assert snapshot_stale(None, rec)
+        assert not snapshot_stale(NoteSnapshot(name="a.pdf", parent_item_id="p", content_key="q:1"), rec)
+        assert snapshot_stale(NoteSnapshot(name="a.pdf", parent_item_id="p", content_key=""), rec)
+
+    def test_snapshot_from_record(self):
+        rec = self._rec(effective_date=T - timedelta(days=3))
+        got = snapshot_from_record(NoteSnapshot(name="old.pdf", path="x/old.pdf"), rec, path="Docs/a.pdf", now=T)
+        assert (got.name, got.path, got.parent_item_id, got.kind, got.content_key, got.snapshot_at) == (
+            "a.pdf", "Docs/a.pdf", "p", "pdf", "q:1", T)
+        assert got.content_key_family == CONTENT_KEY_FAMILY and got.effective_date == T - timedelta(days=3)
+        assert snapshot_from_record(NoteSnapshot(path="keep"), rec, path=None, now=T).path == "keep"

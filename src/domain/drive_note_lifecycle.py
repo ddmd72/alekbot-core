@@ -13,6 +13,9 @@ Public interface:
     audit_candidates(notes, *, provider_key, drive_id, now) -> List[DriveNote]
     refreshed_snapshot(old, change, *, path, now) -> NoteSnapshot      # the item was found: what the bot saw now
     moved_snapshot(old, path) -> Optional[NoteSnapshot]                # the item is gone: only its last known path
+    record_moved(before, after) -> bool                                # §7.5: a noted record's name, parent or content
+    snapshot_stale(snapshot, rec) -> bool                              # §7.5: the snapshot no longer says the record
+    snapshot_from_record(old, rec, *, path, now) -> NoteSnapshot       # §7.5: refreshed from the record, no item call
     chain_path(name, names_up) -> str
 """
 from __future__ import annotations
@@ -125,3 +128,39 @@ def moved_snapshot(old: Optional[NoteSnapshot], path: Optional[str]) -> Optional
     if old is None or path is None or path == old.path:
         return None
     return old.model_copy(update={"path": path})
+
+
+def record_moved(before: DriveIndexRecord, after: DriveIndexRecord) -> bool:
+    """§7.5: an observation changed what a note's snapshot holds of its item — the name, the parent or the content."""
+    return (before.name, before.parent_id, before.content_hash) != (after.name, after.parent_id, after.content_hash)
+
+
+def snapshot_stale(snapshot: Optional[NoteSnapshot], rec: DriveIndexRecord) -> bool:
+    """§7.5: the note's snapshot differs from its record in name, parent or content key (part B's merge entries ask
+    this when they merge a note into a record)."""
+    if snapshot is None:
+        return True
+    return (snapshot.name, snapshot.parent_item_id, snapshot.content_key) != (
+        rec.name, rec.parent_id, rec.content_hash or "")
+
+
+def snapshot_from_record(old: Optional[NoteSnapshot], rec: DriveIndexRecord, *, path: Optional[str],
+                         now: datetime) -> NoteSnapshot:
+    """The snapshot as the index holds the item now (§7.5): no item call. `path` from the parent chain, or the last
+    known one (None)."""
+    base = old or NoteSnapshot()
+    content_key = rec.content_hash or ""
+    return base.model_copy(update={
+        "name": rec.name or base.name,
+        "path": path if path is not None else base.path,
+        "parent_item_id": rec.parent_id or base.parent_item_id,
+        "is_folder": rec.is_folder,
+        "kind": rec.kind or base.kind,
+        "mime_type": rec.mime_type or base.mime_type,
+        "size_bytes": rec.size_bytes,
+        "fs_modified_at": rec.fs_modified_at or base.fs_modified_at,
+        "effective_date": rec.effective_date or base.effective_date,
+        "content_key": content_key,
+        "content_key_family": CONTENT_KEY_FAMILY if content_key else "",
+        "snapshot_at": now,
+    })

@@ -22,20 +22,22 @@ Public interface:
     DriveNoteLifecycle(notes, index, drive, *, provider_key=ONEDRIVE_PROVIDER_KEY, clock)
     await round_end(user_id, state, *, take_item_call, fence) -> (state, done note ids, counters)
     await audit(user_id, state, *, take_item_call, fence) -> (state, counters)
+    await refresh_moved(user_id, state, moved, *, fence) -> counters      # §7.5, no item call
 """
 from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
 from datetime import datetime, timezone
-from typing import Callable, Dict, FrozenSet, List, Optional, Set, Tuple
+from typing import Callable, Dict, FrozenSet, List, Mapping, Optional, Set, Tuple
 
 from ..domain.drive_index import DriveChange, DriveIndexStoreUnavailable, DriveSyncState
 from ..domain.drive_index_lean import DriveRecordLean
 from ..domain.drive_note import NOTES_PER_USER_MAX, ONEDRIVE_PROVIDER_KEY, DriveNote, NoteState, binding_parts_of
 from ..domain.drive_note_check import WHY_GONE
 from ..domain.drive_note_lifecycle import (
-    NOTE_CHECKS_MAX, audit_candidates, audit_due, chain_path, moved_snapshot, refreshed_snapshot,
+    NOTE_CHECKS_MAX, audit_candidates, audit_due, chain_path, moved_snapshot, refreshed_snapshot, snapshot_from_record,
+    snapshot_stale,
 )
 from ..domain.drive_search import MAX_CHAIN_DEPTH
 from ..domain.user_drive import DriveAccessDenied, DriveItemNotFoundError
@@ -164,6 +166,42 @@ class DriveNoteLifecycle:
         if finished:
             state = replace(state, notes_audited_at=now)
         return state, counts
+
+    # ------------------------------------------------------------------------------------------------------------------
+    # Snapshot refresh (§7.5)
+    # ------------------------------------------------------------------------------------------------------------------
+
+    async def refresh_moved(self, user_id: str, state: DriveSyncState, moved: Mapping[str, str], *,
+                            fence: Callable[[], None]) -> Dict[str, int]:
+        """The notes whose record this tick renamed, moved or saw with new content (note id -> item id), refreshed
+        from the record — no item call — when the snapshot no longer says it; path from the parent chain. A store
+        failure is logged and costs only the refresh (the snapshot is "last known": the next observation retries)."""
+        if not moved:
+            return {}
+        try:
+            notes = await self._notes.get_many(user_id, list(moved))
+        except DriveIndexStoreUnavailable as exc:
+            logger.error(f"[DriveNote] snapshot refresh for {user_id[:8]}: note store unavailable: {exc_brief(exc)}")
+            return {}
+        records = await self._index.get_records(user_id, list(dict.fromkeys(moved.values())))
+        cache: Dict[str, Optional[DriveRecordLean]] = {}
+        counts: Dict[str, int] = {}
+        for note_id, item_id in moved.items():
+            note, rec = notes.get(note_id), records.get(item_id)
+            if note is None or rec is None or not self._bound_to(note, item_id):
+                continue
+            if not snapshot_stale(note.snapshot, rec):
+                continue
+            path = await self._path(user_id, rec.name, rec.parent_id, state.root_item_id, cache)
+            fence()
+            try:
+                await self._notes.refresh_snapshot(
+                    user_id, note_id, snapshot_from_record(note.snapshot, rec, path=path, now=self._clock()))
+            except DriveIndexStoreUnavailable as exc:
+                logger.error(f"[DriveNote] refreshing note {note_id} for {user_id[:8]} failed: {exc_brief(exc)}")
+                continue
+            _inc(counts, "note_snapshots_refreshed")
+        return counts
 
     # ------------------------------------------------------------------------------------------------------------------
     # helpers

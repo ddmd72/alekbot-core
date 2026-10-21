@@ -145,7 +145,7 @@ from ..domain.drive_mirror import GONE, UNKNOWN, UNSTORED, DeletionNotice, Mirro
 from ..domain.drive_mirror_plan import local_day, mirror_plan
 from ..domain.drive_mirror_render import MirrorStrings
 from ..domain.drive_note_check import NoteCheck
-from ..domain.drive_note_lifecycle import checks_of, fold_checks
+from ..domain.drive_note_lifecycle import checks_of, fold_checks, record_moved
 from ..domain.language import LanguageCode
 from ..domain.ui_messages import UIMessage
 from ..domain.drive_profile import (
@@ -529,6 +529,9 @@ class _NoteChecks:
     last_seen_at: Optional[datetime]
     pending: Dict[str, NoteCheck] = field(default_factory=dict)
     dropped_logged: bool = False
+    # §7.5: notes whose record this tick renamed, moved or saw with new content (note id -> item id), refreshed at the
+    # round end from the record; not saved (a snapshot is "last known": a missed refresh waits for the next change)
+    moved: Dict[str, str] = field(default_factory=dict)
 
 
 # Per tick: None outside a tick or without the notes lifecycle wired (no check is collected).
@@ -1015,6 +1018,9 @@ class DriveIndexingService:
                 plan = replace(plan, upsert=schedule(plan.upsert, ctx.now, first_seen=False))
             if plan.delete_item_id is not None and existing is not None:
                 gone.update(self._mirror_notices([existing], GONE if change.deleted else UNSTORED))
+            elif (existing is not None and existing.owner_note_id and plan.upsert is not None
+                  and plan.upsert.item_id == existing.item_id and record_moved(existing, plan.upsert)):
+                note_snapshot_due(existing.owner_note_id, existing.item_id)   # notes RFC §7.5
             self._fold(plan, cache, writes, deletes, collects)
         await self._observe_closed_children(user_id, ctx, changes, cache, writes, deletes)
         # a delete re-upserted later in the page left `deletes` (`_fold`): `_commit` drops its notice with it
@@ -1257,7 +1263,9 @@ class DriveIndexingService:
         for note_id in done:
             acc.pending.pop(note_id, None)
         state, audited = await lifecycle.audit(user_id, state, take_item_call=take_item_call, fence=_fence)
-        for key, value in (*counts.items(), *audited.items()):
+        moved, acc.moved = dict(acc.moved), {}
+        refreshed = await lifecycle.refresh_moved(user_id, state, moved, fence=_fence)
+        for key, value in (*counts.items(), *audited.items(), *refreshed.items()):
             _inc(summary, key, value)
         return state
 
@@ -4267,6 +4275,16 @@ def _note_notices(records: Sequence[DriveIndexRecord], why: str) -> None:
         return
     for check in checks_of(records, why, acc.last_seen_at):
         acc.pending[check.note_id] = check
+
+
+def note_snapshot_due(note_id: str, item_id: str) -> None:
+    """Owner notes (DRIVE_FILE_NOTES_RFC §7.5): the note's snapshot should be refreshed from its record at this tick's
+    round end. `_apply` calls it for a noted record that was renamed, moved or edited; part B's merge entries call it
+    when the record they merge a note into differs from the note's snapshot (`drive_note_lifecycle.snapshot_stale`).
+    Nothing without the notes lifecycle wired."""
+    acc = _TICK_NOTES.get()
+    if acc is not None and note_id and item_id:
+        acc.moved[note_id] = item_id
 
 
 def _with_note_checks(state: DriveSyncState) -> DriveSyncState:

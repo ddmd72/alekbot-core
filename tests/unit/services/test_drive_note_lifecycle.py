@@ -353,3 +353,42 @@ async def test_the_why_follows_the_delete_site(w):
     w.lifecycle.round_end = broken
     await w.tick()
     assert {(c.note_id, c.why) for c in (await w.state()).note_checks} == {(na, WHY_GONE), (nb, WHY_UNSTORED)}
+
+
+class TestSnapshotRefresh:
+    """§7.5: a noted record renamed, moved or edited refreshes the note's snapshot from the record at the round end,
+    with no item call."""
+
+    async def test_a_rename_and_a_move(self, w):
+        folder = w.drive.add("Contracts", folder=True)
+        a, nid = await _noted(w)
+        before = w.note(nid).snapshot
+        reads = _reads(w)
+        w.clock.advance(60)
+        w.drive.rename(a, "estimate.pdf")
+        w.drive.move(a, folder)
+        await w.settle()
+        snap = w.note(nid).snapshot
+        assert (snap.name, snap.path, snap.parent_item_id) == ("estimate.pdf", "Contracts/estimate.pdf", folder)
+        assert snap.snapshot_at > before.snapshot_at and reads == []
+        assert w.note(nid).state == NoteState.ACTIVE.value
+
+    async def test_an_unchanged_observation_writes_nothing(self, w):
+        a, nid = await _noted(w)
+        revision = w.note(nid).revision
+        w.drive.reemit(a)
+        await w.settle()
+        assert w.note(nid).revision == revision
+
+    async def test_a_folder_rename_leaves_a_descendants_path_last_known(self, w):
+        """Named residual (§7.5): only the noted item's own observation refreshes its snapshot."""
+        folder = w.drive.add("Contracts", folder=True)
+        a, nid = await _noted(w, parent=folder)
+        path = w.note(nid).snapshot.path
+        w.drive.rename(folder, "Signed")
+        await w.settle()
+        assert w.note(nid).snapshot.path == path
+
+
+def test_the_hook_does_nothing_outside_a_tick():
+    svc_mod.note_snapshot_due("n1", "i1")      # no accumulator: no error, nothing kept
