@@ -243,6 +243,7 @@ def create_deep_research_webhooks_blueprint(
                     link_service=link_service,
                     channel_id_override=origin_channel_id,
                     platform_override=origin_platform,
+                    failure_notification=notification_service,
                 )
 
                 logger.info("[DeepResearchWebhook] Report delivered: user=%s", user_id[:8])
@@ -292,6 +293,8 @@ def create_deep_research_webhooks_blueprint(
 
         # OpenAI redelivers on timeout or non-2xx and delivery runs before our 200: claim the job first.
         claim_key = f"openai_deep_research:{job_id}"
+        # Accepted residual: a concurrent redelivery acked as duplicate while the first attempt later raises and
+        # releases leaves the report undelivered (OpenAI was already acked); rare: timeout + redelivery + a raise.
         if dedup_store is not None:
             if not await dedup_store.try_mark_processed(claim_key):
                 logger.info("[DeepResearchWebhook] Duplicate delivery skipped: job=%s event=%s",
