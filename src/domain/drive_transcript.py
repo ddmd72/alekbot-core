@@ -100,6 +100,36 @@ class WindowTranscript:
 
 
 @dataclass(frozen=True)
+class WindowInput:
+    """One window handed to the transcript runner: its batch request `key`, its place in the file, and the uploaded
+    provider file by NAME (`files/<id>`) and mime type. Never a URL (§27.4)."""
+    key: str
+    window: WindowSpec
+    file_name: str
+    file_mime: str
+
+
+class WindowOutcome(str, Enum):
+    """How one collected window ended, for the stage to charge (§27.5, T-R18): `ok` parsed; `invalid` the answer was not
+    the schema (a failed attempt); `refused` the provider refused the audio (a gap marker); `error` the response held
+    its own provider error (`transient` says a later attempt can clear it)."""
+    OK = "ok"
+    INVALID = "invalid"
+    REFUSED = "refused"
+    ERROR = "error"
+
+
+@dataclass(frozen=True)
+class WindowResult:
+    """One collected window: the parsed `transcript` when `outcome` is ok, and the dollars already billed for it."""
+    key: str
+    outcome: WindowOutcome
+    transcript: Optional[WindowTranscript] = None
+    transient: bool = False
+    usd: float = 0.0
+
+
+@dataclass(frozen=True)
 class StitchedTranscript:
     """The windows of one file on the file's clock with speakers aligned (§27.6)."""
     segments: Tuple[Segment, ...]
