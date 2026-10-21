@@ -430,6 +430,9 @@ async def main():
             coordinator=coordinator,
             notification_sla=NOTIFICATION_SLA,
             session_store=session_store,
+            # The drive-note receipt posted from a call is rendered in the owner's UI language (DRIVE_FILE_NOTES_RFC §4.9).
+            localization=_localization,
+            language=_language_service,
         )
         _language_service._notification_service = notification_service
 

@@ -118,6 +118,7 @@ Connect your drive in the Cabinet. Then:
 - "Write this down as a note" — I create a text file (md, txt, csv, json, html and similar) in your drive
 - "What's in Meetings?" — I browse your folders
 - "Find the lease contract", "photos from Rome last August", "all my spreadsheets" — I search your drive by name (typos and transliteration are fine), type, date, folder and where a photo was taken. Turn on "Search my drive" in the Cabinet first
+- "This one is Petya's estimate for the kitchen", "it's a contract, not an invoice" — I keep your note with that file or folder (never on the drive itself, never in memory) and search then finds the file by it; you see exactly what was stored, and "undo that", "remove the note" or "erase its history" work too. A note on a file you deleted is kept: ask me to "search in deleted files" to find it
 - "What's the notice period in my lease?", "how much was the March electricity bill?", "find invoice INV-2024-417" — I answer from what is written in your documents, and I read scans, screenshots and photographed receipts too; I tell you which file the answer came from
 - Recordings (audio and video) on your drive, once transcription is on for you: I find them by what was said and open their transcript; the recording itself comes as a link when you ask for it
 - Once transcription is on, transcripts of recordings that were deleted stay in the Archive of the `_Transcripts` folder on your drive: ask me to "search in deleted files" and I find them by what was said

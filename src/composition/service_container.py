@@ -63,6 +63,8 @@ from ..services.user_drive_service import UserDriveService
 from ..adapters.firestore_user_repo import FirestoreUserRepository
 from ..services.drive_search_service import DriveSearchService
 from .drive_indexing_setup import build_drive_index_repository, build_drive_mirror_repository, build_drive_task_queue
+from .drive_note_setup import DRIVE_NOTES_ENABLED_ENV, build_drive_note_service, drive_notes_switch_on
+from ..services.drive_note_service import DriveNoteService
 from ..services.task_indexing_service import TaskIndexingService
 from ..adapters.gcs_file_storage_adapter import GcsFileStorageAdapter
 from ..adapters.gcs_workspace_adapter import GcsWorkspaceAdapter
@@ -213,6 +215,18 @@ class ServiceContainer:
                 # the Cabinet shows the transcription cap the indexer applies: the optional knob only lowers it (T-R3)
                 transcribe_cap_usd=effective_monthly_cap(os.getenv("DRIVE_TRANSCRIBE_USD_CAP")),
                 mirror=self.drive_mirror_repo,
+            )
+
+        # Owner notes on drive files (DRIVE_FILE_NOTES_RFC §4.4): on the same drive pair, with its own uncached user
+        # repository (the indexing switch for the receipt's status). Built whatever the kill switch says: off stops
+        # writes (no tool), reads keep answering (§3.6). Never handed to the memory side (§1.4 anti-goal).
+        self.drive_note_service: Optional[DriveNoteService] = None
+        self.drive_notes_enabled: bool = drive_notes_switch_on(os.getenv(DRIVE_NOTES_ENABLED_ENV))
+        if self.user_drive is not None and self.drive_index_repo is not None:
+            self.drive_note_service = build_drive_note_service(
+                db_client, env_config, drive=self.user_drive, index=self.drive_index_repo,
+                embeddings=self.embedding_service, users=FirestoreUserRepository(db_client, env_config, account_repo),
+                nudge_queue=self.drive_task_queue,
             )
 
         self.notes_adapter = FirestoreAgentNoteAdapter(db_client, env_config)
@@ -454,6 +468,8 @@ class ServiceContainer:
             "skill_service": self.skill_service,
             "memory_fact_service": self.memory_fact_service,
             "workspace_service": self.workspace_service,
+            "drive_note_service": self.drive_note_service,
+            "drive_notes_enabled": self.drive_notes_enabled,
         }
 
     def create_fact_management_adapter(
