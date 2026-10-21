@@ -79,7 +79,8 @@ class DriveTranscriptRunner:
         if result.refused:
             return WindowResult(key=key, outcome=WindowOutcome.REFUSED, usd=usd, billed=billed)
         if result.text is None:
-            return WindowResult(key=key, outcome=WindowOutcome.ERROR, transient=result.transient, usd=usd, billed=billed)
+            return WindowResult(key=key, outcome=WindowOutcome.ERROR, transient=result.transient, usd=usd, billed=billed,
+                                code=result.code)
         try:
             transcript = self._agent.parse(result.text)
         except DriveOutputInvalid:

@@ -570,6 +570,9 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
         old = [s for (u, _), s in self.transcripts.items() if u == user_id and s.last_used_at is not None and s.last_used_at < before]
         return [s.content_key for s in sorted(old, key=lambda s: (s.last_used_at, s.content_key))[:limit]]
 
+    async def transcript_key_in_use(self, user_id: str, content_key: str) -> bool:
+        return any(r.transcript_key == content_key for r in self._user(user_id))
+
     async def delete_user_transcript_jobs(self, user_id: str, limit: int) -> int:
         keys = sorted(k for k in self.transcript_jobs if k[0] == user_id)[:limit]
         for key in keys:

@@ -16,17 +16,35 @@ Public interface:
     submitted(job, batch_name)                     the uploaded windows are in `batch_name`
     resettled(job, duration_s) -> Resettled        the real duration is known: plan, windows and reservation follow it
     request_key(item_id, index)                    the batch request key `{item_id}:{index}` (Δ103)
+    split_request_key(key) -> (item_id, index)     its inverse; ValueError for a key that is not one
+
+Collection (plan Task 13, §27.5-§27.6, G37):
+    poll_after(batch, now) -> datetime             the next poll of an open batch (Δ104, Δ133)
+    is_repurchase(window) -> bool                  collection sent it back before: a submission of it is a new purchase
+    check_window(spec, transcript) -> WindowCheck | None    the window checks, in order: time, coverage, interpolation
+    interpolated_share(spec, transcript) -> float  the share of the window's stamps interpolation would compute
+    in_batch(job, batch_name) -> windows           the job's windows carried by that batch
+    file_gone(window) -> window                    its provider file is gone: re-extracted and re-uploaded once
+    after_failed_batch(window, now) -> window      its batch failed whole: resubmitted once, re-extracted once if expired
+    all_done(job) -> bool                          every window answered (a gap marker counts): the file can be finalized
+    stitch_job(job, results) -> StitchedTranscript the windows on the file's clock, speakers aligned, stamps interpolated
 """
 from dataclasses import dataclass, replace
-from datetime import datetime
-from typing import List, Optional, Tuple
+from datetime import datetime, timedelta
+from typing import Dict, List, Mapping, Optional, Tuple
 
-from src.domain.drive_index_params import MEDIA_PASS_MAX_WINDOWS, TRANSCRIBE_FILE_LIFE_AT_SUBMIT, TRANSCRIBE_MAX_SECONDS
-from src.domain.drive_transcript import JobWindow, TranscriptJob, WindowSpec
-from src.domain.drive_transcript_plan import file_estimate_usd
-from src.domain.drive_transcript_windows import plan_windows
+from src.domain.drive_index_params import (
+    BATCH_POLL_EVERY_S, BATCH_POLL_SLOW_S, BATCH_SLOW_AFTER_S, INTERPOLATED_MAX_SHARE, MEDIA_PASS_MAX_WINDOWS,
+    TRANSCRIBE_FILE_LIFE_AT_SUBMIT, TRANSCRIBE_MAX_SECONDS,
+)
+from src.domain.drive_transcript import (
+    JobWindow, Segment, StitchedTranscript, TranscriptBatch, TranscriptJob, WindowSpec, WindowTranscript,
+)
+from src.domain.drive_transcript_plan import WindowCheck, file_estimate_usd
+from src.domain.drive_transcript_stitch import align_speakers, interpolate, rebase, seam_cuts
+from src.domain.drive_transcript_windows import coverage_ok, plan_windows, times_ok
 
-UPLOADED, SUBMITTED, DONE = "uploaded", "submitted", "done"
+UPLOADED, SUBMITTED, DONE, EXTRACTED = "uploaded", "submitted", "done", "extracted"
 
 
 @dataclass(frozen=True)
@@ -40,6 +58,14 @@ class Resettled:
 
 def request_key(item_id: str, index: int) -> str:
     return f"{item_id}:{index}"
+
+
+def split_request_key(key: str) -> Tuple[str, int]:
+    """`{item_id}:{index}` back to its parts (the index after the LAST colon); ValueError for anything else."""
+    item_id, sep, index = key.rpartition(":")
+    if not sep or not item_id or not index.isdigit():
+        raise ValueError("not a transcript request key")
+    return item_id, int(index)
 
 
 def job_plan(job: TranscriptJob) -> Tuple[WindowSpec, ...]:
@@ -124,3 +150,107 @@ def resettled(job: TranscriptJob, duration_s: float) -> Resettled:
     release = max(0.0, job.reserved_usd - estimate)
     out = replace(job, duration_s=float(duration_s), windows=kept, reserved_usd=min(job.reserved_usd, estimate))
     return Resettled(out, dropped, release)
+
+
+# -- collection (plan Task 13) --------------------------------------------------------------------------------------
+
+def poll_after(batch: TranscriptBatch, now: datetime) -> datetime:
+    """The next poll of a batch that is still running (Δ104, Δ133): every BATCH_POLL_EVERY_S, every BATCH_POLL_SLOW_S
+    once the batch is older than BATCH_SLOW_AFTER_S (the API's contract is 24 h). The first poll, BATCH_POLL_FIRST_S
+    after the submission, is set when the batch is created. Never None: an open batch without it is never polled."""
+    since = batch.submitted_at or batch.created_at or now
+    slow = now - since >= timedelta(seconds=BATCH_SLOW_AFTER_S)
+    return now + timedelta(seconds=BATCH_POLL_SLOW_S if slow else BATCH_POLL_EVERY_S)
+
+
+def is_repurchase(window: JobWindow) -> bool:
+    """Collection sent the window back at least once (a failed answer, a gone file, the time or the interpolation check,
+    each counted on the window): every later submission of it is a new purchase, reserved at submit (T-R8) and carried
+    by its batch (T-R11), so its cost is booked in the batch's month. A window resubmitted only because its batch failed
+    whole is not one: nothing was bought, and the file's reservation still covers it (G39)."""
+    return window.attempts > 0 or window.time_resubmits > 0 or window.interp_resubmits > 0
+
+
+def interpolated_share(spec: WindowSpec, transcript: WindowTranscript) -> float:
+    """The share of the window's stamps that interpolation computes rather than the model measured (§27.6). Called WITH
+    the window's spec: without one, `interpolate` returns no shares and the check never fires."""
+    _, shares = interpolate(rebase(spec, transcript.segments), (spec,))
+    return shares[0] if shares else 0.0
+
+
+def check_window(spec: WindowSpec, transcript: WindowTranscript) -> Optional[WindowCheck]:
+    """The first check a parsed window answer fails, or None (G37 gives each its own retry rule, `window_failed`):
+    the time validator (§27.6), the coverage check (Δ129), the interpolation share (§27.6). A `no_speech` answer has
+    nothing to check."""
+    if transcript.no_speech:
+        return None
+    if not times_ok(spec, transcript.segments):
+        return WindowCheck.TIME
+    if not coverage_ok(spec, transcript.segments, transcript.no_speech):
+        return WindowCheck.COVERAGE
+    if interpolated_share(spec, transcript) > INTERPOLATED_MAX_SHARE:
+        return WindowCheck.INTERPOLATION
+    return None
+
+
+def in_batch(job: TranscriptJob, batch_name: str) -> Tuple[JobWindow, ...]:
+    return tuple(w for w in job.windows if w.state == SUBMITTED and w.batch_name == batch_name)
+
+
+def file_gone(window: JobWindow) -> JobWindow:
+    """The provider no longer has the window's input file (rpc 5/7 on its request, T-R18): its audio is cut and
+    uploaded again, once (`reupload_used`). The caller has already charged the answer (`window_failed`)."""
+    return replace(window, state=EXTRACTED, file_ref="", files_expire_at=None, batch_name="", reupload_used=True)
+
+
+def after_failed_batch(window: JobWindow, now: datetime) -> JobWindow:
+    """The window's batch failed, expired or was cancelled whole (§27.5, Δ104): resubmitted once (`batch_resubmits`),
+    then a gap marker. Nothing was bought, so a window that was a first purchase loses its request key and stays covered
+    by the file's reservation (`is_repurchase`); a re-purchase keeps it and is reserved again at submit. A window whose
+    provider file will not outlive a batch (TRANSCRIBE_FILE_LIFE_AT_SUBMIT, stage A's rule) is re-extracted and
+    re-uploaded, once per window; when that is spent it is a gap marker too."""
+    if window.batch_resubmits >= 1:
+        return replace(window, state=DONE, gap=True, batch_name="")
+    out = replace(window, state=UPLOADED, batch_name="", batch_resubmits=window.batch_resubmits + 1,
+                  request_key=window.request_key if is_repurchase(window) else "")
+    if _usable_upload(window, now):
+        return out
+    if window.reupload_used:
+        return replace(out, state=DONE, gap=True)
+    return replace(out, state=EXTRACTED, file_ref="", files_expire_at=None, reupload_used=True)
+
+
+def all_done(job: TranscriptJob) -> bool:
+    """Every planned window answered, a gap marker included (the duration known, so "every" is known)."""
+    if job.duration_s <= 0 or not job.windows:
+        return False
+    done = {w.spec.index for w in job.windows if w.state == DONE}
+    return all(s.index in done for s in job_plan(job))
+
+
+def stitch_job(job: TranscriptJob, results: Mapping[int, WindowTranscript]) -> StitchedTranscript:
+    """The file's transcript from its windows' stored answers (§27.6): a gap marker for a window done as a gap (or
+    whose answer is missing), placed at its seam cut so the cut keeps it; speakers aligned by code (the count is the
+    aligned one, any uncertain seam marks the transcript); stamps interpolated WITH the specs; `truncated` when any gap
+    stands in it. Languages in order of first appearance."""
+    windows = sorted(job.windows, key=lambda w: w.spec.index)
+    specs = [w.spec for w in windows]
+    cuts = seam_cuts(specs)
+    pairs: List[Tuple[WindowSpec, WindowTranscript]] = []
+    languages: Dict[str, None] = {}
+    truncated = False
+    for k, window in enumerate(windows):
+        answer = None if window.gap else results.get(window.spec.index)
+        if answer is None:
+            truncated = True
+            start = cuts[k - 1] - window.spec.start_s if k > 0 else 0.0
+            answer = WindowTranscript(language_codes=(), speakers=0, no_speech=False,
+                                      segments=(Segment(start_s=max(0.0, start), speaker=None, text="", gap=True),))
+        for code in answer.language_codes:
+            languages.setdefault(code, None)
+        pairs.append((window.spec, answer))
+    segments, seams, speakers = align_speakers(pairs)
+    segments, _ = interpolate(segments, specs)
+    duration = job.duration_s if job.duration_s > 0 else (specs[-1].start_s + specs[-1].duration_s if specs else 0.0)
+    return StitchedTranscript(segments=segments, language_codes=tuple(languages), speakers=speakers,
+                              duration_s=duration, uncertain_seam=any(seams), truncated=truncated)

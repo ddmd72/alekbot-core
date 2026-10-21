@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
-from src.domain.batch_transcription import BatchRef, FileRef
+from src.domain.batch_transcription import BatchRef, BatchStatus, FileRef
 from src.domain.drive_index import EXTRACTION_VERSION, DriveIndexRecord, RecordState, Scope
 from src.domain.drive_index_params import TRANSCRIBE_MAX_SECONDS
 from src.domain.drive_index_planner import drops_readable, month_key
@@ -145,13 +145,18 @@ class FakeMedia:
 
 
 class FakeBatch:
-    """The batch port's file side (the runner owns submit/collect in these tests)."""
+    """The batch port's file side (the runner owns submit/collect in these tests). Polling answers only once a test turns
+    it on (`polling = True`, Task 13): stage A must never poll."""
 
     def __init__(self, clock: Clock) -> None:
         self.clock = clock
         self.uploads: List[str] = []
         self.deleted: List[str] = []
         self.fail_upload: List[Optional[BaseException]] = []   # consumed one per upload; None = succeed
+        self.polling = False
+        self.statuses: Dict[str, BatchStatus] = {}             # by batch name; RUNNING when absent
+        self.poll_errors: Dict[str, BaseException] = {}
+        self.polls: List[str] = []
 
     async def upload_audio(self, path: str, mime: str) -> FileRef:
         assert os.path.exists(path) and mime == "audio/ogg"
@@ -168,7 +173,13 @@ class FakeBatch:
         raise AssertionError("the stage submits through the runner")
 
     async def poll(self, batch: BatchRef) -> Any:
-        raise AssertionError("polling is collection's (Task 13)")
+        if not self.polling:
+            raise AssertionError("polling is collection's (Task 13)")
+        assert batch.keys is not None
+        self.polls.append(batch.name)
+        if batch.name in self.poll_errors:
+            raise self.poll_errors[batch.name]
+        return self.statuses.get(batch.name, BatchStatus.RUNNING)
 
     async def collect(self, batch: BatchRef) -> Any:
         raise AssertionError("collection is Task 13's")
@@ -181,6 +192,9 @@ class FakeRunner:
     def __init__(self) -> None:
         self.submits: List[List[WindowInput]] = []
         self.raise_next: Optional[BaseException] = None
+        self.results: Dict[str, Mapping[str, Any]] = {}       # by batch name: what `collect` returns (Task 13)
+        self.collects: List[Tuple[BatchRef, str]] = []
+        self.collect_error: Optional[BaseException] = None
 
     async def submit(self, inputs: Sequence[WindowInput], *, display_name: str) -> BatchRef:
         if self.raise_next is not None:
@@ -190,7 +204,14 @@ class FakeRunner:
         return BatchRef(name=f"batches/b{len(self.submits)}", keys=tuple(i.key for i in inputs))
 
     async def collect(self, batch: BatchRef, *, account_id: str) -> Mapping[str, Any]:
-        raise AssertionError("collection is Task 13's")
+        if batch.name not in self.results:
+            raise AssertionError("collection is Task 13's: no results set for this batch")
+        assert batch.keys, "collect needs the batch's request keys (a BatchRef rebuilt without them drops results)"
+        if self.collect_error is not None:
+            exc, self.collect_error = self.collect_error, None
+            raise exc
+        self.collects.append((batch, account_id))
+        return self.results[batch.name]
 
 
 class FakeHost:
@@ -210,6 +231,10 @@ class FakeHost:
         self.backed_off: set = set()
         self.outages: List[str] = []
         self.drop_index_result = False
+        self.account_id = "acct-test"
+        self.events: List[Tuple[str, float, str]] = []   # ("spend" | "reserve" | "release", usd, month), in order
+        self.file_slots: Optional[int] = None            # the tick's TICK_FILE_BUDGET slots left (G32); None = no limit
+        self.on_index: Optional[Callable[[DriveIndexRecord], Any]] = None   # runs inside `index_transcript`
 
     def fence(self) -> None:
         self.fences += 1
@@ -227,7 +252,14 @@ class FakeHost:
 
     async def index_transcript(self, rec: DriveIndexRecord, body: str,
                                extracted_by: str) -> Optional[DriveIndexRecord]:
+        if self.file_slots is not None:
+            if self.file_slots <= 0:
+                return None
+            self.file_slots -= 1
         self.indexed.append((rec.item_id, body, extracted_by))
+        if self.on_index is not None:
+            if await self.on_index(rec) is False:
+                return None
         if self.drop_index_result:
             return None
         done = replace(rec, state=RecordState.INDEXED, reason=None, indexed_generation=rec.index_generation + 1,
@@ -238,13 +270,16 @@ class FakeHost:
 
     async def spend(self, cls: str, usd: float, calls: int, month: str) -> None:
         self.spends.append((cls, usd, calls, month))
+        self.events.append(("spend", usd, month))
 
     async def reserve(self, usd: float, month: str) -> None:
         self.reserves.append((usd, month))
+        self.events.append(("reserve", usd, month))
         await self.repo.reserve_model_usd(USER, month, "transcribe", usd)
 
     async def release(self, usd: float, month: str) -> None:
         self.releases.append((usd, month))
+        self.events.append(("release", usd, month))
         await self.repo.reserve_model_usd(USER, month, "transcribe", -usd)
 
     def agent_available(self, agent: str) -> bool:

@@ -388,7 +388,8 @@ def _window_to_doc(window: JobWindow) -> Dict[str, Any]:
             "state": window.state, "file_ref": window.file_ref, "request_key": window.request_key,
             "attempts": window.attempts, "time_resubmits": window.time_resubmits,
             "interp_resubmits": window.interp_resubmits, "gap": window.gap, "batch_name": window.batch_name,
-            "files_expire_at": window.files_expire_at, "reupload_used": window.reupload_used}
+            "files_expire_at": window.files_expire_at, "reupload_used": window.reupload_used,
+            "batch_resubmits": window.batch_resubmits}
 
 
 def _window_from_doc(data: Mapping[str, Any]) -> JobWindow:
@@ -402,7 +403,8 @@ def _window_from_doc(data: Mapping[str, Any]) -> JobWindow:
         request_key=data.get("request_key", ""), attempts=int(data.get("attempts", 0)),
         time_resubmits=int(data.get("time_resubmits", 0)), interp_resubmits=int(data.get("interp_resubmits", 0)),
         gap=bool(data.get("gap", False)), batch_name=data.get("batch_name", ""),
-        files_expire_at=_dt(data.get("files_expire_at")), reupload_used=bool(data.get("reupload_used", False)))
+        files_expire_at=_dt(data.get("files_expire_at")), reupload_used=bool(data.get("reupload_used", False)),
+        batch_resubmits=int(data.get("batch_resubmits", 0)))
 
 
 def job_to_doc(job: TranscriptJob) -> Dict[str, Any]:
@@ -1602,6 +1604,12 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
                  .where(filter=FieldFilter("last_used_at", "<", before)).order_by("last_used_at")
                  .select(["content_key"]).limit(limit))
         return [(snap.to_dict() or {}).get("content_key", "") for snap in await query.get()]
+
+    async def transcript_key_in_use(self, user_id: str, content_key: str) -> bool:
+        """Two equality filters, one document id read (the `transcript_records` practice: single-field indexes)."""
+        query = (self._user_query(user_id).where(filter=FieldFilter("transcript_key", "==", content_key))
+                 .select([FieldPath.document_id()]).limit(1))
+        return bool(await query.get())
 
     @property
     def windows_group(self) -> str:

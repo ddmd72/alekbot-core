@@ -131,6 +131,7 @@ class WindowResult:
     transient: bool = False
     usd: float = 0.0
     billed: bool = False
+    code: int = 0                     # an `error` response's rpc code (0 when none): 5/7 is the input file gone (T-R18)
 
 
 @dataclass(frozen=True)
@@ -176,6 +177,7 @@ class JobWindow:
     batch_name: str = ""              # the provider batch carrying it while submitted (T-R12)
     files_expire_at: Optional[datetime] = None   # when the provider's input file expires (§27.5)
     reupload_used: bool = False       # the one re-extract and re-upload of an expired file is spent
+    batch_resubmits: int = 0          # the one resubmit after its batch failed, expired or was cancelled whole (§27.5)
 
 
 @dataclass(frozen=True)

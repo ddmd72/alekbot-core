@@ -491,6 +491,12 @@ class DriveIndexRepository(ABC):
         `last_used_at=None` is not returned (callers always set it)."""
 
     @abstractmethod
+    async def transcript_key_in_use(self, user_id: str, content_key: str) -> bool:
+        """True when a record of the user carries `transcript_key == content_key`, in any transcript state: the orphan
+        sweep keeps such a stored transcript (a re-finalize, G18/G31, reads it with no model call, Δ122). Equality
+        filters only: single-field indexes serve it."""
+
+    @abstractmethod
     async def delete_user_transcript_jobs(self, user_id: str, limit: int) -> int:
         """Purge: delete up to `limit` of the user's job documents with their window results. Returns the number
         of jobs deleted; call until 0. Filters on `user_id` only."""
