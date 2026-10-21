@@ -7,8 +7,9 @@ code in rev 3.15 and again, after the final cross-cutting review, in rev 3.16; r
 switch after the live check. **Search v2** (owner decisions D14–D28 and D30, D29 and D31 by the arbiter) is designed
 in §25 and **implemented and live since 2026-10-14** (PR #64; results on the synthetic fixture: §25.7.1);
 §25 overrides §5.5, §8.5, §10, §14, §15 and §24 where they disagree. Slice 3 not built. Phase 0 hardening merged (PR #57, §16). **Audio and video transcripts** (owner decisions D41–D47,
-engineering deltas Δ95–Δ173) are designed in §27; **T1 (extraction, batch, store, index, open) is built on
-`feat/drive-transcripts` and not deployed; T2 (the mirror folder) and T3 (the summary) are not built** (§27.19).
+engineering deltas Δ95–Δ202, owner decision D48) are designed in §27; **T1 (extraction, batch, store, index, open) is built on
+`feat/drive-transcripts` and not deployed; T2 (the mirror folder, redesigned in rev 3.27 with D48's archive) and T3 (the
+summary) are not built** (§27.19).
 **Card accuracy, capture and files the bot cannot open** (owner decisions D33–D40, engineering deltas Δ47–Δ91) are
 designed in §26 and **built (slices S1–S6) and deployed 2026-10-19** (PRs #81–#84; the owner's index rebuilt, gate key
 `accuracy` applied); §26 states what that release changed.
@@ -154,6 +155,12 @@ To Do mirror (`TaskSearchIndex`), `src/domain/rrf.py`, `TaskQueue.enqueue_worker
   local-intermediate pass (Δ161), the cap is hard from the moment a file fits (Δ164), per-window output caps and a
   $0.30/h reservation (Δ165), the kill switch is a Cloud Build substitution with an optional lowering cap knob (Δ145),
   `CARD_VERSION` is not bumped (Δ139), plus the rest of the gap list the build closed. T1 is built, not deployed.
+- Rev 3.27 (2026-10-21): T2 redesigned before any code (§27.9, Δ183–Δ202). Owner decision D48 (§21): a deleted
+  recording's transcript moves to a dated archive in the mirror folder, is never deleted by the bot, and is reached only
+  by an explicit deleted-files search, shared with the owner-notes RFC. The root's identity leaves the sync state for a
+  document no purge deletes, so no purge can create a second root or index the first one as documents; work is driven
+  by record flags and durable deletion marks; creates never overwrite a user's file; names, collisions, cycles and the
+  path length are specified; chat writes into the folder are refused. OQ-T10 (opt-out) is open for the owner. Not built.
 
 **Owner decisions (2026-10-11)**
 - The App Folder is meant to become a real document store. It is empty only because the feature is being built.
@@ -171,7 +178,7 @@ To Do mirror (`TaskSearchIndex`), `src/domain/rrf.py`, `TaskQueue.enqueue_worker
 - This RFC adds **no path that feeds document content to consolidation**. Where the line runs (a scanned receipt
   *is* a fact about the user; a contract on the drive is not) needs its own design: OQ-1.
 
-**Owner decisions on the open points** (D1–D5) are in §21, and so are D6–D47.
+**Owner decisions on the open points** (D1–D5) are in §21, and so are D6–D48.
 
 ---
 
@@ -1696,6 +1703,15 @@ identity-document scans (observations in §26.1, described generically). Designe
 - A transcript is keyed by the file's content hash, so copies, renames and moves never pay again; its text is also the
   media record's indexed content (search finds a recording by what is said); mirror files are never indexed as
   documents of their own (§27.8, §27.9).
+- **D48 (2026-10-21) A deleted recording's transcript is archived, never deleted.** When the source recording is
+  deleted (or leaves the App Folder), its mirror transcript is **not** deleted: it moves to an archive area of the mirror
+  folder (`Transcripts/Archive/<YYYY-MM-DD>/<path>.md`, §27.9.6). The bot **never** deletes an archived transcript on its
+  own; the owner deletes junk by hand. Archived transcripts are **excluded from the default drive search**; only an
+  explicit "search in deleted files" request reaches them (otherwise search returns irrelevant old things forever). This
+  amends D42's "a delete deletes it" and **replaces the §27.12 design principle that transcripts are purged with the
+  index**: that was a design principle, not a legal requirement (the owner's own personal use falls under the GDPR
+  household exemption, Art. 2(2)(c), and the text holds no voiceprint). Caveat: other users, or any non-personal use,
+  would need their consent and a retention rule; transcription stays limited to the owner until then (OQ-T3).
 - **No initial-build reset for the §26 rebuild (owner rule, 2026-10-19).** The rebuild runs under the monthly caps
   alone; `drive_initial_build_reset.py` is not part of this rollout (§26.7, §26.9).
 
@@ -4181,14 +4197,15 @@ put. Both ride the unreleased `TRIAGE_VERSION` 3, `CARD_VERSION` 4 and `KEYS_VER
 
 ---
 
-## 27. Transcripts of audio and video (rev 3.26, 2026-10-21; T0 passed, GO; **T1 built on `feat/drive-transcripts`, not deployed; T2 mirror and T3 summary not built**)
+## 27. Transcripts of audio and video (rev 3.27, 2026-10-21; T0 passed, GO; **T1 built on `feat/drive-transcripts`, not deployed; T2 mirror redesigned in rev 3.27 (§27.9, D48), not built; T3 summary not built**)
 
 Owner decisions D41–D47 (§21). The engineering decisions that carry them out are the deltas Δ95–Δ135 (§27.16), each
 with its reason. This section lifts the §14 row "Audio and video transcripts" and `decisions/drive_audio_video_deferred.md`
 (the seam it names is **not** the one used: Δ95). Where §27 and §5.1, §5.3, §14 or §24's opening paragraph disagree,
 §27 wins for what is built; §24's statement that audio and video "stay metadata-only" stays true until slice T1 is deployed
 (and for a user whose own transcription flag is off, always). **§27.19 is the as-built summary of T1 and lists what is not
-built; where an older paragraph of §27 disagrees with a Δ136–Δ173 row, the row wins.**
+built; where an older paragraph of §27 disagrees with a Δ136–Δ173 row, the row wins.** **Rev 3.27 redesigned T2 (§27.9) before
+it was built: owner decision D48 (a deleted recording's transcript is archived, never deleted) and the rows Δ183–Δ202.**
 **Rollout shape (arbiter call):** §26 is deployed and the owner's index is rebuilt, so §27 ships as an **ordinary
 upgrade on top of it** — its own version bumps (§27.13), its own prompt-token upload window (§27.15), no rebuild and no
 migration gate. Every number about the spike comes from `scripts/memory/spike_transcribe/REPORT.md` (private; its transcripts are
@@ -4211,7 +4228,8 @@ names are not quoted): verdict **GO**, D47 not triggered, the changes it forces 
   (D41), newest first, through Gemini Flash on the Batch API (D44, D45), under its own monthly dollar cap (D46). The
   transcript is stored once per content hash, becomes the record's readable content (so search finds a recording by
   what was said), and is projected as a Markdown file into one bot-owned mirror folder that mirrors the source tree
-  (D42, D43). Nothing is asked of the user and nothing is posted to chat.
+  (D42, D43); when a recording is deleted its transcript file moves to a dated archive in that folder and is never deleted
+  by the bot (D48). Nothing is asked of the user and nothing is posted to chat.
 - **Non-goals.** No chat-side transcription change. No speaker names. No editing of transcripts by the bot or the
   user (the mirror is read-only by contract). No audio at all leaves the indexer except the small Opus windows sent to
   Gemini (§27.12). No video understanding (frames are never read). No other provider: Anthropic has no audio input,
@@ -4544,72 +4562,314 @@ survives a rebuild purge (the script sets `purge_keep_transcripts`, a plain sync
 that the §26-style full rebuild does not re-buy audio; it is deleted by an opt-out, a different-drive purge and the
 access-loss TTL purge, and by an **orphan sweep**: a transcript no record has referenced for `TRANSCRIPT_ORPHAN_TTL`
 (30 days, `last_used_at`) is deleted, which also covers a source restored from the recycle bin within the window.
+**T2 (rev 3.27, Δ186):** a transcript that an `archived` or `detached` mirror document references is **pinned** — kept by
+the orphan sweep and by every purge (opt-out, different drive, access-loss TTL included) for as long as that document
+exists, because a deleted recording's transcript is archived, never deleted (D48, §27.9.6). While a user has a pin, the
+purge's collection-group sweep runs in its keep mode (window documents only), so a pinned transcript's parts survive.
 
-### 27.9 The mirror folder (D42; Δ113–Δ120)
-**Structure.** One bot-owned folder at the App Folder root, named in the user's UI language
-(`UIMessage.DRIVE_TRANSCRIPTS_FOLDER`: "Transcripts", "Транскрипти", "Transcriptions", "Transcripciones"; the
-precedent is the deep-research folder, `src/services/deep_research_drive_copy_service.py:81`). The indexer gets the
-localization service wired (it has none today; the strings are files, no I/O). The name is chosen when the root is
-created and **stored** (`mirror_root_id`, `mirror_root_name` on the sync state, plain fields); a later UI-language
-change renames nothing, and a user's rename of the folder is followed (the id is the identity). Inside, the source tree
-is mirrored folder by folder, and each transcript file is `<source name>.md`: `Videos/2024/Interview.mp4` →
-`Transcripts/Videos/2024/Interview.mp4.md`.
-- **Why folders are first-class (Δ113).** Mirroring by path would turn one source-folder rename over 1 000 recordings
-  into 1 000 moves. The mirror keeps one document per **source folder** and one per **transcribed file** in
-  `{prefix}drive_transcript_mirror/{user_id}:{kind}:{source_item_id}` (`mirror_item_id`, `mirror_parent_id`, `mirror_name`,
-  `mirror_ctag`, `rendered_hash`, `render_version`, `source_name`, `source_parent_id`, `state`). Ancestor folders of a
-  transcribed file are always scope `normal` (a file inside an opaque tree has no record, so it is never transcribed —
-  §5.2, stated), so their records exist. A source-folder rename or move is **one** `move` of one mirror folder.
-- **The reconciliation step** (Δ114), once per tick, bounded by `MIRROR_OPS_PER_TICK` (40 Graph writes, separate from
-  `ITEM_CALLS_PER_TICK`, `drive_index_params.py:23`, because these are mutations) and by the deadline. Desired set =
-  every record with a transcript job `current` (stubs included, D41: "no speech detected" is a file) plus the
-  folders above them; actual = the mirror documents. Actions: **create** (ensure the folder chain, then `upload`),
-  **replace** (render differs: `replace_content`), **rename/move** (source name or parent changed), **delete** (the
-  source record is gone, or no longer transcribed; empty mirror folders are pruned bottom-up, never the root).
-  Idempotent: an action is recorded on its document only after Graph answered, so a crash re-runs it; order is
-  newest transcript first; a run of 5 000 first-time files takes ≈ 125 ticks at 40 ops (≈ 21 h at the 10-min fan-out),
-  which is the pace, not a failure.
-- **Writes through the port, with a conflict mode (Δ115).** `UserDrivePort.upload` hard-codes
-  `conflictBehavior=rename` (`onedrive_adapter.py:272`, `:276`) — a second write of the same name would create
-  `x.md (1)`. The port gains `conflict: Literal["rename","replace","fail"] = "rename"` (default keeps every caller);
-  the mirror writes with `replace`, so a stray item of the user's at that exact name inside the bot's folder is
-  overwritten (the contract below). The mirror service takes `UserDrivePort` directly, not `UserDriveService`
-  (no service-to-service imports, REQ-ARCH-22; the service's nudges and root guards are for chat writes).
-- **Excluded from indexing (Δ116).** The mirror root and everything under it is scope `inside_opaque` — a value that
-  already exists (`Scope`, `drive_index.py:60-63`), so no enum changes: `classify` takes `mirror_root_id` from the plan
-  context and returns `inside_opaque` for that folder, whose files then get no record, no card, no content work, and
-  never a duplicate hit; the read-time check hides it already (§5.2). **The root is never adopted (arbiter call, Δ116):** the bot always creates its own folder and remembers it by item
-  id in the sync state; if the localized name is taken by a folder that is not the recorded mirror, it creates
-  `<name> (Alek)` (localized) and never writes into the existing one, so a user's folder is never re-scoped,
-  de-indexed or overwritten. The bot's own writes echo back in delta and are dropped by the same rule.
-- **Read-only by contract, enforced by an audit, not by events (Δ117).** Detecting every user edit inside the mirror
-  from delta would need a Firestore lookup per change inside an opaque subtree, a cost a 30 000-file repository would
-  multiply. Instead a **mirror audit** walks the mirror folders (`list_children_changes`, one page per item call from
-  the tick's item-call share) at most every `MIRROR_AUDIT_DAYS` (7), comparing each listed item with the documents:
-  a missing file is recreated, a changed `cTag` is rewritten from the store, a moved or renamed one is moved back, an
-  item that is not ours is **left alone, never deleted and never indexed** (a file the user moved into the mirror is the
-  user's: deleting user data to keep a folder tidy is the wrong failure; it is counted in the tick line). Two events
-  are cheap and handled at once: the mirror root's own deletion (`change.item_id == mirror_root_id`, in `_apply`) and a
-  Graph 404 on any mirror write (verify the root with `get_change`). A deleted root is **recreated** (a new id,
-  every mirror document reset to `create`, newest first). The worst-case time to undo a user's edit is therefore a
-  week; the header says the folder is managed.
-- **Names (Δ118).** The file is `<source name>.md`. A name longer than `MIRROR_NAME_MAX` (240 characters) is cut and
-  gets `~<8 hex of the full name's hash>` before `.md`; a mirrored path over `MIRROR_PATH_MAX` (380, below
-  OneDrive's 400) puts the file under `<root>/Long paths/<hash>.md`. In every such case the header carries the full
-  source name. Siblings cannot collide otherwise (a drive refuses two names differing by case, and the suffix
-  `.md` cannot make a media name equal a media name); a truncation collision resolves by the hash.
-- **Header link (Δ119).** The header names the source and links its `web_url` (stored on the record). `web_url`
-  changes on a rename or move, so a source rename changes `rendered_hash` and the same step rewrites the header. The
-  file's body is rendered from the store by `RENDER_VERSION`, so a layout change rewrites files without a model call.
-- **Decided edge cases.** The user deletes the mirror root: recreate. The user renames it: follow, keep the name.
-  The user moves it into a subfolder: follow the id (the "root of the drive" placement is a creation rule, not an
-  invariant). A source becomes inaccessible (§26.2) after it was transcribed: the transcript stays, the header is
-  unchanged. A source in a dot-folder, an opaque root or a dense tree: no record, no transcript (§5.2). A source
-  deleted: its mirror file is deleted at once by the record-delete path and the scan backstop below; the *store*
-  entry lives on for `TRANSCRIPT_ORPHAN_TTL`. Drift of source name/parent that no event reported is caught by a rotating
-  scan of `MIRROR_SCAN_PAGE` (100) documents per tick against their records, a full cycle in hours.
-- A one-line `README.md` at the mirror root (UI language: "Managed by the bot. Changes here are overwritten.") is part
-  of the desired set — OQ-T4.
+### 27.9 The mirror folder (D42, D48; rev 3.27 redesign, Δ183–Δ202; T2, not built)
+**Rev 3.27 (2026-10-21, before any T2 code)** rewrote this section after a critique of the rev 3.26 design (private:
+`scripts/memory/research_drive_notes_mirror_critique.md`) and the owner decision D48 (§21: a deleted recording's
+transcript is archived, never deleted). What changed, in one paragraph: the root's identity moved out of the sync state
+into a document no purge deletes, so a rebuild, an opt-out or the access-loss purge can no longer make the bot create a
+second root and index the first one as ordinary documents (Δ184); a deleted source's file moves to a dated archive
+instead of being deleted, after a complete round and a grace hour, and moves back on a restore (D48, Δ189); the work is
+driven by flags on the records and durable marks on the ledger, not by a per-tick diff of everything (Δ187, Δ188);
+creates never overwrite a file of the user's (Δ191); names, collisions, rename cycles and the path length are specified
+(Δ192, Δ193); chat writes into the folder are refused (Δ194); the deleted-files search reaches the archive (Δ195).
+Where a row Δ113–Δ120 or Δ153 disagrees with this section, the Δ183–Δ202 row wins.
+
+#### 27.9.1 Structure
+One bot-owned root folder at the App Folder root, named in the user's UI language when it is created
+(`UIMessage.DRIVE_TRANSCRIPTS_FOLDER`: "Transcripts", "Транскрипти", "Transcriptions", "Transcripciones"; the precedent
+is the deep-research folder, `src/services/deep_research_drive_copy_service.py:81`). The indexer gets the localization
+service and the UI-language resolution wired (it has none today; the strings are files, no I/O). Inside, the **active
+tree** mirrors the source tree folder by folder, and each transcript file is `<source name>.md`:
+`Videos/2024/Interview.mp4` → `Transcripts/Videos/2024/Interview.mp4.md`. Three names at the root are reserved and win
+any collision (§27.9.7): `README.md` (one localized line, "Managed by the bot. Changes here are overwritten."; OQ-T4
+resolved: yes), the **archive folder** (`UIMessage.DRIVE_TRANSCRIPTS_ARCHIVE`: "Archive", "Архів", "Archives",
+"Archivo"; §27.9.6) and the **long-path folder** (`UIMessage.DRIVE_TRANSCRIPTS_LONG_PATHS`, §27.9.7). The three names are
+chosen when the root is created and **stored**; a later UI-language change renames nothing (Δ120); a user's rename or
+move of the root is followed (the id is the identity; "at the root of the App Folder" is a creation rule, not an
+invariant).
+
+#### 27.9.2 The root's identity lives outside the sync state (Δ184)
+`{prefix}drive_mirror_roots/{user_id}:{drive_id}` holds `root_item_id`, `root_name`, `archive_name`, `long_paths_name`,
+`readme_item_id`, `previous_root_ids`, `created_at`, and the mirror's own cursors and clocks (`seed_version`,
+`seed_cursor`, `scan_cursor`, `audited_at`, `audit_cursor`, `orphans_reported`). The indexer writes it, behind the lease
+fence, **the moment Graph answers the folder creation**, before any other mirror write.
+- **No purge deletes it** — not the rebuild (`drive_index_rebuild.py`), not the opt-out, not the access-loss purge, not a
+  drive switch (§27.9.12). Its one job is to say which folder on that drive is the bot's, and that stays true after any
+  purge of the index. In rev 3.26 the id lived on the sync state, which all four purges delete; Δ116 forbids adopting a
+  folder, so the next tick would have created `Transcripts (Alek)` and indexed the old folder's `.md` files as documents:
+  a duplicate hit for every transcript, archived ones included.
+- The tick reads it **at its start** for `connection.drive_id` (one document read) and passes `mirror_root_ids` (the
+  current root and `previous_root_ids`) into `PlanContext`, so even the first enumeration after a purge classifies the root
+  `inside_opaque` (§27.9.8). Classification does not depend on the switches: with transcription off the root stays opaque.
+- **Never adopted by name** (Δ116 stands). The name taken by a folder that is not a known root → `<name> (Alek)`, then
+  `(Alek 2)` … `(Alek 5)`, then ERROR and no mirror for that user. A crash between the folder creation and the root write
+  leaves one orphan folder: the audit's name check reports it once (WARNING and a counter), never adopts it (named
+  residual: one empty folder, or one with a README).
+- A **previous root** (the owner restored a root he had deleted, after the bot had created a new one, §27.9.9) stays in
+  `previous_root_ids`: opaque, never written, reported once.
+
+#### 27.9.3 The ledger (Δ113 kept; Δ199)
+`{prefix}drive_transcript_mirror/{user_id}:{kind}:{source_item_id}`, kind `file` or `folder` (one document per source
+folder and per transcribed file, so a source-folder rename over 1 000 recordings is **one** move, Δ113), plus
+`{user_id}:archive:{sha256(day + "/" + path)[:32]}` for each archive folder the bot created. Fields: `drive_id`,
+`source_item_id`, `source_name`, `source_parent_id`, `content_key`, `mirror_item_id`, `mirror_parent_id`, `mirror_name`,
+`mirror_ctag`, `rendered_hash`, `render_version`, `render_language`, `state` (`active`, `archived`, `detached`, plain
+strings), the deletion mark (`gone_pending`, `gone_why`, `gone_at`, §27.9.4), the write intent (`pending_op`,
+`pending_name`, `pending_parent_id`, `pending_at`, §27.9.5), `checked_at`, and on an archived file `archived_at`,
+`archive_day`, `source_path` (the last known source path), `archive_keys`, `name_keys`, `seconds`, `speakers`,
+`languages` (§27.9.11). Its own port, `DriveMirrorRepository` (a Firestore and an in-memory adapter): the drive index
+repository is already the largest adapter in the repo, and the ledger has another lifecycle. **Like the root document,
+the ledger is never deleted by a purge**: it is the bot's record of the files it wrote on that drive, and without it the
+bot could neither keep its archive searchable nor tell its own files from the user's.
+
+#### 27.9.4 What makes mirror work due (Δ187, Δ188)
+The rev 3.26 text compared "every record with a transcript job `current`" with "the mirror documents" every tick: for
+5 000 transcripts that is 10 000 reads a tick, ≈ 1.4 million a day. Instead, work becomes due by three routes, all cheap:
+- **A flag on the record.** Two plain fields on `DriveIndexRecord`, `mirror_due` and `mirrored_digest`. `mirror_plan(rec)`
+  (pure) runs in `_commit` on every write, next to `transcript_plan` and `enrich.planned`. A recording whose transcript
+  is `current` (stubs included: D41, "no speech detected" is a file), or a folder that already has a mirror counterpart
+  (`mirrored_digest != ""`), is due when `mirror_digest(rec)` differs from `mirrored_digest`. The digest of a recording
+  hashes its name, `parent_id`, `web_url`, `transcript_key`, `transcript_stub`, `transcript_truncated`,
+  `transcript_body_version`, `MIRROR_PLAN_VERSION` and `RENDER_VERSION`; of a folder, its name and `parent_id`. A recording
+  whose transcript is not `current` (a new version being transcribed, a hold, a card cap, an inaccessible file) is never
+  due: its last file stays until the new transcript is current. The mirror reads `mirror_queue(user_id, limit)`
+  (`mirror_due == true`, `effective_day` newest first, then `item_id`; one composite index) and, after a successful
+  action, writes the record back through `_commit` with `mirrored_digest` set, so the same function clears `mirror_due`.
+- **A seed pass.** A record written before T2, or before a `RENDER_VERSION` or `MIRROR_PLAN_VERSION` bump, is not
+  rewritten by observation and would never become due. The root document carries `seed_version`
+  (`"{MIRROR_PLAN_VERSION}.{RENDER_VERSION}"`); while it differs, the mirror pages `transcript_records(user_id, "current",
+  limit, after=seed_cursor)` (T1's equality query, gaining a start-after cursor) and marks the page due, then stamps the
+  version. This is also how T2 picks up the owner's transcripts T1 already made.
+- **A durable mark on the ledger for every deletion.** Every `_commit` that deletes a record with `mirrored_digest`, or a
+  root, passes a **why**: `gone` (a tombstone, a folder cascade under a deleted folder, the epoch sweep, an orphan whose
+  parent is definitely not found) or `unstored` (the planner's not-stored branch: a file moved
+  into a repository, a dot-folder or a dense tree, a rename into an OS artefact; a rescope cascade). The why is derived
+  at the service's call sites (`_apply`: a tombstone is `gone`, any other planner delete `unstored`; `_cascade_step`,
+  `_rescope_step`, `_sweep`, `_remove_orphan`; a file the bot cannot open is marked, never deleted, §26.2);
+  `ObservationPlan` is unchanged, and a delete passed without
+  a why is `unknown`. `_commit` turns the notices into marks on the existing ledger documents (`gone_pending`, `gone_why`,
+  `gone_at`; an update of existing documents only, never a create), behind the same fence as the record deletes.
+  **Nothing is decided inside `_apply`** (critique Rule 1): the marks are read by the mirror step, which runs only after a
+  complete round (§27.9.5). The owner-notes RFC (`DRIVE_FILE_NOTES_RFC.md` §7.1) needs the same why for its archive
+  checks: T2 builds it once, notes S3 consumes it.
+
+#### 27.9.5 The reconciliation step (Δ114 revised, Δ191, Δ196)
+Runs **last in `_work_off`** (so only after a complete round), for a user with the kill switch and his own flag on,
+within `MIRROR_OPS_PER_TICK` (40 Graph writes) and `MIRROR_READS_PER_TICK` (10 Graph reads: its own bucket, never the
+index's `ITEM_CALLS_PER_TICK`) and the deadline. Mirror work never asks for a continuation: the 10-minute fan-out paces
+it (≈ 240 writes an hour; 5 000 first-time files ≈ 22 h, which is the pace, not a failure). Order inside a tick:
+1. **Root setup.** No root document for the connected drive → create the root (name rule of §27.9.2), write the root
+   document, then the README. Root gone (§27.9.9) → the same, after the ledger is reset.
+2. **Seed page** while `seed_version` differs (§27.9.4).
+3. **Marks** older than `MIRROR_ARCHIVE_GRACE` (1 h), oldest first: the source's record exists again (a restore, a move
+   back in) → the mark is cleared; `gone` → **archive** (§27.9.6); `unstored` → **detach**; `unknown` → one `get_change`
+   of the source (a read): not found → archive; found and a record exists → cleared; found and no record → detach.
+   Folder documents are handled after the files beneath them.
+4. **Due records**, newest first. Per file: **create** (no ledger document: ensure the mirror folder chain, creating folder
+   documents top-down, then upload), **replace** (the rendered bytes' hash differs from `rendered_hash`:
+   `replace_content` by id; equal → only the digest is stamped), **move / rename** (source name or parent changed: one
+   PATCH; for a folder document this is the one move of Δ113), **restore** (an `archived` document whose record is current
+   again: the archived file moves back to its active path; if the owner has deleted it meanwhile, the file is created from
+   the store, because the source exists again; an archive itself is never re-created).
+5. **Prune (Δ197).** An active mirror folder whose source folder is gone and which has no child ledger document is listed once
+   (`list_children_changes(limit=1)`, a read): empty → deleted; a foreign item inside → kept and counted. The archive
+   folder and its day folders are never pruned.
+6. **Scan page** and 7. **audit page** (§27.9.9).
+
+**Idempotency.** An action is recorded on its document only after Graph answered, so a crash re-runs it. A **create
+records its intent first** (`pending_op`, `pending_name`, `pending_parent_id`, `pending_at`): a re-run of a file create
+uses `conflict="replace"` (the item at that name is its own lost write), and a re-run of a folder create that meets a
+409 finds the folder with `child_by_name` instead of creating a second one. That is adoption of a **bot subfolder by
+its recorded intent**, never of a root.
+
+**Writes and conflict modes (Δ191; replaces Δ115's "the mirror writes with `replace`").** `UserDrivePort.upload` gains
+`conflict: Literal["rename", "replace", "fail"] = "rename"` (the default keeps every caller), and the port gains
+`child_by_name(user_id, parent_id, name)` and `area_path(user_id)` (Δ196); `DriveItem` carries the item's `cTag` so the
+ledger can record `mirror_ctag`. Creates use `fail`: a 409 means a foreign item holds the name, which is then never
+overwritten (Δ117's "foreign items are left alone" without exception); the mirror's file takes the collision suffix
+(§27.9.7). Only the crash re-run uses `replace`. Moves and renames are PATCH, which fails on a taken name (409, mapped
+to `DriveNameConflictError` today, `onedrive_adapter.py:583-584`). Content replaces go by item id. **No If-Match**: the
+mirror has one writer (the indexer under the lease), the folder is managed by contract and the store is the truth, so a
+conditional write would protect nothing the design wants kept; the archive, where the owner's edits do count, is never
+rewritten (§27.9.6). The service takes `UserDrivePort`, not `UserDriveService` (REQ-ARCH-22; and §27.9.8's guard refuses
+the mirror to `UserDriveService` by design). A 404 on any mirror write verifies the root with `get_change`: root gone →
+§27.9.9; a mirror parent gone → that chain's folder documents are reset to `create`. A source that becomes inaccessible
+(§26.2) after it was transcribed keeps its transcript; nothing in the mirror changes. A copy of a recording is a second
+record with the same content key: a second file, no new transcription (§27.8 b).
+
+#### 27.9.6 A deleted source: the archive (D48; Δ189, Δ190)
+- **Layout:** `<root>/<archive>/<YYYY-MM-DD>/<the file's mirror path>`, e.g.
+  `Transcripts/Archive/2026-10-21/Videos/2024/Interview.mp4.md`. The day is when the indexer saw the source go
+  (`gone_at`) in the user's time zone (`UserBotConfig.timezone`, the deep-research copy's `_local_day` precedent), else
+  UTC. **Why a dated folder and not a first line "source deleted on …":** an archive is then one move and the file stays
+  byte-identical to what the owner last saw (a first line rewrites every archived file, 1 000 writes for a folder of
+  1 000); the date is visible on a phone without opening anything; a path deleted twice on two days cannot collide; the
+  owner can delete a day's junk in one action; and the source path below the day keeps a file findable by hand.
+  **"Archive", not "Deleted":** a move out of the App Folder arrives as the same tombstone as a delete, so the bot cannot
+  tell them apart; the search line says "deleted or moved out of the bot's folder".
+- **The unit is the file**: one move per file, the day's folder chain created on demand (archive folder documents).
+  Grouping by the highest deleted folder was rejected: a folder cascade deletes children across ticks in no promised
+  order, so a folder move would need a subtree-completeness check, and one folder move can push a descendant past the
+  path limit. A deleted folder of 1 000 recordings is archived in ≈ 25 ticks; nothing is lost meanwhile (the files stay in
+  the active tree until moved, and the records are already gone from the index).
+- **Only after a complete round and `MIRROR_ARCHIVE_GRACE` (1 h).** A delete and a recycle-bin restore in one round never
+  archive, and neither does an undo within the hour: the mark is cleared when the record is back.
+- **Frozen.** An archived file is never re-rendered (a `RENDER_VERSION` bump rewrites active files only), never rewritten,
+  moved back or deleted by the audit, and **never deleted by the bot** (D48). The owner's edits inside the archive stand.
+  Chat cannot delete it either (§27.9.8): junk is the owner's to delete in OneDrive.
+- **Not in the default search** (D48): the archive is under the opaque root, so its files have no records and no chunks.
+  At archive time the ledger document gets what the explicit deleted-files search reads (§27.9.11): `archive_keys` (the
+  stored body's word keys, `drive_keys.word_keys`, de-duplicated, first `ARCHIVE_KEYS_MAX` = 6 000), `name_keys`
+  (`name_keys_v2` of the source name), the source path, the day, duration, speakers and languages. Zero LLM, zero
+  embeddings.
+- **The stored transcript stays** while a ledger document in state `archived` or `detached` references its content key
+  ("pinned"): exempt from the orphan sweep (§27.8 b) and from every purge (§27.9.12). So a restore or a move back in, at
+  any time, never re-buys audio, and the deleted-files search can show a passage. The pin goes with the document; the
+  ordinary orphan sweep then applies.
+- **The owner deletes an archived file or a day folder** in OneDrive: the audit finds it missing (§27.9.9), deletes the
+  ledger document and so releases the pin; until then the deleted-files search verifies every hit it shows and hides a
+  missing one. Never re-created: re-creating an archive the owner deleted would be data invention.
+- **Restore** (a recycle-bin restore or a move back in keeps the item id): the record comes back, becomes current through
+  the store, and step 4 moves the archived file back to its active path; the document is `active` again.
+- **Detach** (a source no longer stored but still on the drive, `unstored`): the file stays where it is, the document is
+  `detached`, its store entry pinned; it no longer follows renames. Every `MIRROR_AUDIT_DAYS` it is checked with
+  `get_change`: not found → archive; a record again → `active` and due.
+- **Stubs too.** A stub file ("no speech detected", "too long", …) of a deleted recording is archived like a transcript
+  (D48 read as written); it has no `archive_keys`, only its name keys.
+- **Names in the archive:** the file keeps its active mirror name; a same-day collision takes the sibling suffix
+  (§27.9.7); a path over the limit goes to `<archive>/<day>/<long paths>/<name>`.
+- **Not retroactive.** A recording deleted before T2 never had a mirror file, so nothing is archived for it; its stored
+  transcript follows T1's orphan sweep.
+
+#### 27.9.7 Names and paths (Δ118 revised; Δ192, Δ193)
+- **The file name** is `<source name>.md`; a name longer than `MIRROR_NAME_MAX` (240) is cut and gets
+  `~<8 hex of sha256(full name)>` before `.md`. The source name is already legal on the drive (`" * : < > ? / \ |` and the
+  reserved names are refused at the source), so the mirror name inherits legality; only length is new.
+- **Collisions among siblings** happen without any user error: a source file `X` (no extension) and a sibling source
+  folder `X.md`; a source folder at the App Folder root named like a reserved root name; two names cut to one prefix; the
+  same path archived twice on one day. One deterministic rule per mirror folder, compared case-insensitively after NFC
+  (OneDrive refuses names differing only by case): reserved names first, then folders, then files; ties by source item
+  id; every loser takes `<stem>~<8 hex of sha256(source_item_id)>` before its extension. The assignment is recomputed
+  from the current siblings, so a suffix goes away (one rename) when its collision does. A 409 from a foreign item at the
+  target adds that name to the folder's taken names for the tick and the rule runs again.
+- **Swaps and cycles.** Renames in one folder are ordered so a target name held by another document of ours is vacated
+  first; a cycle (`a ↔ b`) is broken through a temporary name `<name>~tmp<8 hex>` (one extra move). A **case-only rename**
+  is always two moves through the temporary name, so the design does not depend on Graph accepting a case-only PATCH.
+- **Path length is counted as OneDrive counts it** — the decoded path from the **drive root**, the App Folder's own path
+  (`Apps/<localized app folder name>`, `UserDrivePort.area_path`, read once per mirror step) included — plus the root's
+  current path and the mirror path. Over `ONEDRIVE_PATH_MAX` (400) − `MIRROR_PATH_MARGIN` (10), the file goes to
+  `<root>/<long paths>/<mirror name>` (and an archived one to `<archive>/<day>/<long paths>/`); the header always carries
+  the full source path. Rev 3.26's `MIRROR_PATH_MAX` 380 did not say where it was measured from: from the App Folder it
+  left no margin for `Apps/<name>/`, the archive prefix and the localized folder names, and is retired.
+
+#### 27.9.8 Excluded from indexing and from chat writes (Δ116 kept; Δ194)
+- **Classification.** For an item id in `ctx.mirror_root_ids` that is not deleted, the planner classifies the folder
+  `inside_opaque / metadata_only / folder` (existing values, no enum change), stored without a card. Files under it get
+  no record, no card and no content work; folders under it (the active tree, the archive and its days) get records with
+  no card, which the read-time check hides already (§5.2); the bot's own writes echo back in delta and fall under the same
+  rule. A default search can therefore never return a mirror file, active or archived.
+- **The Step 1 guard (critique B.6).** `UserDriveService` refuses every mutation whose target or destination is the
+  current or a previous mirror root or lies under one — `save` (checked on the requested path **before** any folder is
+  created), `append_text`, `replace_with`, `move` (out of, into or within the mirror), creating a folder, `delete` — with
+  one localized line ("This folder is managed by the bot; change it in OneDrive."). Listing and opening stay allowed:
+  opening an archived transcript is how Smart reads its full text (§27.9.11). The check reads the root document for the
+  connected drive (one read) and the root's current path (one Graph read), only for a user who has a root. Without it,
+  `save_file_to_drive` and `update_file_in_drive` (USER_DRIVE RFC §4.7.1; the only structural guard today is the App
+  Folder root, `user_drive_service.py:218-219`) would let a steered Smart write into the bot's folder or delete archived
+  transcripts; the audit would repair only the active part.
+
+#### 27.9.9 The audit and the scan (Δ117 kept and extended; Δ200, Δ201)
+- **The audit**, at most every `MIRROR_AUDIT_DAYS` (7), walks the mirror (active tree and archive) one
+  `list_children_changes` page per read from `MIRROR_READS_PER_TICK`, comparing what is listed with the ledger. Active
+  tree: a missing file is re-created from the store, a changed `cTag` is rewritten, a moved or renamed file is moved back
+  (read-only by contract; the header says the folder is managed). Archive: a missing file is the owner's deletion — the
+  document is deleted and its pin released; a changed or moved file inside the mirror is left alone and the document
+  follows it; a file moved out of the mirror is the owner's file now — the document is deleted. Everywhere: an item that is
+  not ours is **left alone, never deleted and never indexed**, and counted (OQ-T5 resolved: leave them). At the App
+  Folder root, a folder named like the root (or `(Alek n)`) that is no known root is reported once (the crash orphan of
+  §27.9.2). The worst-case time to undo a user's edit of an active file is a week.
+- **The rotating scan**, `MIRROR_SCAN_PAGE` (100) ledger documents a tick from `scan_cursor`, only while the epoch is idle
+  (during an enumeration or a sweep, records are missing by design): an active file document whose record is missing and
+  which carries no mark gets the mark `unknown` (a deletion the notices missed: a source deleted while indexing was off, a
+  record re-created after a purge and deleted before its digest was stamped); a `detached` document whose `checked_at` is
+  older than `MIRROR_AUDIT_DAYS` is checked (§27.9.6). A full cycle over 5 000 documents takes ≈ 8 h.
+- **The root deleted by the owner.** Its tombstone arrives as the deletion of its record, a notice for a root id. Then:
+  archived documents are deleted (the owner deleted the archive with the root), active ones are reset to `create`, the old
+  id joins `previous_root_ids`, and a new root is created under the name rule (decided edge case kept: the mirror is a
+  projection the indexer reconciles, D42). A rename or move of the root is followed.
+
+#### 27.9.10 The file (Δ119 kept; Δ198)
+Markdown, UTF-8, LF line ends, rendered from the store by `RENDER_VERSION`:
+```
+# <source name>
+<source path> · [<"open the recording">](<web_url>)
+<recorded on> · <duration> · <N speakers> · <languages>
+<"Managed by the bot: changes here are overwritten. Automatic transcript, may contain errors.">
+
+---
+
+<the open text, uncapped: the possibly-incomplete note and the uncertain-seam line when they apply, then the body,
+ exactly as Smart opens it (§27.11, Δ150 without the cap)>
+```
+The header is localized; Markdown control characters in the source name and path are escaped. A stub file is the header
+and one localized sentence with the duration. `rendered_hash` is the SHA-256 of the bytes; a replace happens only when
+it differs. The language is stored on the document (`render_language`) and is **not** in the record's digest: a UI-language
+change re-renders nothing until a file is rewritten for another reason (Δ120's logic, no rewrite storm). The header link is
+`web_url` (stored on the record); it changes on a rename or move of the file, so the same step rewrites the header. A
+rename of a source **folder** does not re-emit its descendants in delta, so their stored `web_url` and header links stay
+stale until each file is observed again (named residual). **The T3 boundary is unchanged:** the "Summary" section, the
+localized seam and possibly-incomplete lines in the header, and the `~` stamps note are T3 (`RENDER_VERSION` 2,
+§27.14); T2 ships the two head lines as the open text already prints them, so the drive file never claims more than the
+card and the open text do.
+
+#### 27.9.11 The deleted-files search (D48; Δ195; one surface with `DRIVE_FILE_NOTES_RFC.md` §6.4)
+- **One flag, one result section, two sources.** `drive_deleted` on `search_files_in_drive` is the owner-notes RFC's
+  flag; it reaches **archived transcripts** (this section) and **archived and dormant notes** (notes S3). Whichever ships
+  first adds the field, the manifest text and the section; the other adds its source. The field description is shared,
+  because the delegate tool keeps the first description per field name (`agent_manifest.py:653-654`): "true only when the
+  user explicitly asks about deleted or removed files: searches transcripts of deleted recordings and your notes on
+  deleted files. Never for an ordinary search." It is parsed from `"true"`, `"yes"`, `"1"` (the delegate tool types every
+  context field as a string); an empty `drive_query` is allowed with it and lists the newest.
+- **The transcript source.** `query_concepts(drive_query)` (the one normaliser). The concept with the longest word drives
+  one `array-contains-any` query over `archive_keys` and one over `name_keys` (`user_id`, `state == archived`; at most 30
+  keys and `ARCHIVE_QUERY_MAX` = 100 documents each); every concept must then match `archive_keys ∪ name_keys` in memory
+  (strict AND, no allowances: the set is small). An empty query lists the newest 10 by `archived_at`. No meaning fallback
+  (archived transcripts carry no vector; v1).
+- **Verified before shown.** At most `DELETED_SHOW_MAX` (5) archived transcripts are shown, each checked with one
+  `get_change` of its mirror file, in parallel: not found → not shown (the owner deleted it; the audit settles the
+  document). Not connected → shown, with one line that the archive could not be checked. A document on a drive that is not
+  the connected one is shown labelled "on a drive that is not connected", unchecked (the notes RFC's D16 rule).
+- **Render** (English, for Smart, inside the nonce-tagged wrapper, as every drive result): the heading
+  `Deleted files (N):`; per entry `<name> | <last known path> | gone from the drive (deleted or moved out of the bot's
+  folder), <day>`; `transcript: 47 min, 2 speakers, uk/en`; a passage — the first stored segment holding a matched key,
+  with its stamp, at most 300 characters, from the pinned store entry; and `archived transcript: drive:<mirror item id>
+  (<archive path>)`, a ref `open_file_from_drive` opens as text. When the notes source has a note bound to the same item
+  id, the entry carries the note line too (one entry, two lines). A coverage line names a cut ("N more archived
+  transcripts matched").
+- Runs **before the index gate**: with indexing off it still answers from the ledger, like the notes source.
+
+#### 27.9.12 Purges, switches and rollback (Δ185, Δ186)
+| Event | The mirror folder on the drive | Root document and ledger | Store entries pinned by the ledger | Other store entries |
+|---|---|---|---|---|
+| Rebuild (`drive_index_rebuild.py`) | untouched | kept | kept | kept (`purge_keep_transcripts`) |
+| Indexing opt-out | **untouched: nothing is deleted** (Δ153's "delete the mirror folder" is superseded; OQ-T10) | kept; on re-enable the root is re-identified and reconciliation resumes | kept | deleted (Δ159) |
+| Access lost, purge after 30 days | untouched (unreachable) | kept | kept | deleted |
+| A different drive connected | untouched on the old drive | kept, dormant (its `drive_id` is not the connected one) | kept | deleted |
+| Transcription off (own flag or kill switch) | untouched; no mirror write | kept; marks still written, root still opaque | kept | kept |
+| The owner deletes the root | gone (his act) | archived documents deleted, active ones re-created under a new root | released | — |
+
+After a re-enable, the opt-out's deleted store entries make T1 re-buy the active transcripts (its rule, unchanged); a
+source deleted while indexing was off is found by the scan and archived, with name keys only when its store entry went
+with the opt-out (named residual). **Rollback to an image that predates T2:** that code does not know the root, so it
+would index the mirror's `.md` files as documents (duplicate hits, the archive included). Before deploying such an image
+the owner moves the bot's folder out of the App Folder (it keeps its item id); after the roll-forward he moves it back
+before the first tick, and the root is re-identified. The orphan-document sweep script leaves the ledger alone unless
+asked (`--mirror`), because a roll-forward needs it.
 
 ### 27.10 Budget, priority and the pace
 - `TRANSCRIBE_USD_PER_MONTH` (D46) is a fifth class (a **hard** cap: pending reservations count, Δ106) in `drive_model_usage` beside reader $4, triage $3, profile $4,
@@ -4647,7 +4907,11 @@ is mirrored folder by folder, and each transcript file is `<source name>.md`: `V
 - **Skill.** One line in the system skill `drive-search` (`src/skills/smart/drive-search/SKILL.md`): "a recording is found
   by what was said; open its ref for the transcript; the transcript file lives in the Transcripts folder; ask for `original` only when the user wants the recording
   itself, and it comes as a link." And one
-  line in `src/utils/capabilities.py` (what the bot can do with recordings). The protocol token is not touched.
+  line in `src/utils/capabilities.py` (what the bot can do with recordings). The protocol token is not touched. **T2
+  (rev 3.27):** the skill's "Deleted files" line, shared with the owner-notes RFC: "search deleted files (`drive_deleted`)
+  only when the user asks about files that were deleted or removed; it finds transcripts of deleted recordings and your
+  notes on deleted files" (§27.9.11); an open's cut note names the transcript's file in the Transcripts folder
+  (`open_text(mirror_path=…)`, already a parameter).
 - **Coverage (Δ137, G2, G3, G20).** The earlier text said the envelope already counts pending media; it did not (the counters passed
   `ADMITTED_KINDS`/`TRIAGED_KINDS` explicitly). Now `TRANSCRIBED_KINDS` joins both counters **only for a user whose transcription is on**
   (kill switch and own flag), so a user without it never sees a recording as "not read yet" or "could not be read"; a recording that failed
@@ -4662,24 +4926,36 @@ is mirrored folder by folder, and each transcript file is `<source name>.md`: `V
   provider during indexing, the transcript is stored in the index and as files in a folder of the user's drive. **As built (Δ154, G24):** the
   strings (`drive.transcribe_disclosure`) are shown in the Drive section of the Cabinet **only while the user's own flag is on**, so it
   does not tell a user without transcription that his recordings are transcribed; the sentence says the transcripts are kept in the index
-  and does not mention a folder until T2 exists. The Cabinet toggle (later) reuses them.
+  and does not mention a folder until T2 exists. The Cabinet toggle (later) reuses them. **T2 (Δ202)** replaces the sentence,
+  under the same display rule: recordings on the drive are transcribed by a model provider during indexing; each transcript
+  is kept in the index and as a file in the bot's Transcripts folder on the drive; when a recording is deleted, its
+  transcript moves to that folder's Archive and stays there until the user deletes it.
   There is **a second user** with drive indexing enabled (an empty drive today). For them transcription stays **off**
   — `drive_transcribe_enabled` defaults to False and is not set — until the zero-credential parser service exists
   (owner, 2026-10-19; OQ-T3). Consent is **per user and explicit (arbiter call, Δ125):** `drive_transcribe_enabled` is its own flag, default False,
   separate from `drive_indexing_enabled`; indexing alone never sends a recording anywhere. The owner enables it for
   themselves; the Cabinet toggle (later) carries the sentence above. D26's no-re-consent reasoning is not relied on.
-- Transcripts are other people's speech: stored like chunks (Firestore), purged with the index (except the rebuild
-  keep, §27.8), and **served as untrusted data** — inside the nonce wrapper, never executed, the `untrusted` protocol line
+- Transcripts are other people's speech: stored like chunks (Firestore), purged with the index — except the rebuild keep
+  (§27.8 b) and, since **D48 (owner, 2026-10-21; Δ183)**, a deleted recording's transcript, which is **archived, never
+  deleted by the bot**: its archived mirror file, its ledger document with the search keys and its pinned store entry
+  survive every purge until the owner deletes the archived file (§27.9.6, §27.9.12). D48 replaces the rev 3.24 design
+  principle "purged with the index", which was a design principle, not a legal requirement (the owner's reasoning): his
+  own personal use falls under the household exemption (GDPR Art. 2(2)(c)), and the stored text holds no voiceprint (no
+  audio is kept, so no biometric data). **Caveat:** for any other user, or any non-personal use, keeping other people's speech
+  needs their consent and a retention rule; until both exist, transcription and therefore the archive stay limited to
+  the owner (OQ-T3, Δ125). Transcripts are **served as untrusted data** — inside the nonce wrapper, never executed, the `untrusted` protocol line
   unchanged; the summary is produced with no tools.
 - The mirror writes text the model produced into the user's own drive; it never writes outside the mirror folder (a
-  structural invariant tested: every Graph write's parent chain ends at `mirror_root_id`).
+  structural invariant tested: every Graph write's parent chain ends at the root in the root document, §27.9.2), and chat
+  can never write inside it (the Step 1 guard, §27.9.8, Δ194).
 
 ### 27.13 Versions, upgrade and rollback
 | Version (map key) | Covers | A bump redoes |
 |---|---|---|
 | `POLICY_VERSION` (`policy`) 2 → 3 | `TRANSCRIBED_KINDS` admitted | re-classification of media records (metadata only) |
 | `TRANSCRIBE_VERSION` | prompt, schema, model, window and stitching rules | **nothing automatically** (Δ122): re-buying audio is the owner's act, `scripts/infrastructure/drive_transcribe_requeue.py` |
-| `RENDER_VERSION` (`render`) | Markdown layout, header, labels | mirror files, from the store; no model call. **T2; not built, and not a map key (Δ140): a module constant checked per document (the mirror's `rendered_hash`)** |
+| `RENDER_VERSION` (`render`) | Markdown layout, header, labels | **active** mirror files, from the store, no model call (archived files are frozen, Δ189). **T2; not built, and not a map key (Δ140):** a module constant in the record's mirror digest and the root document's `seed_version`, so a bump re-seeds the due flags (§27.9.4) and `rendered_hash` skips unchanged bytes |
+| `MIRROR_PLAN_VERSION` | what makes mirror work due (the digest) | the seed pass marks every current recording due once (§27.9.4). **T2; not built; not a map key** |
 | `SUMMARY_VERSION` (`summary`) | summary prompt/schema | summaries, from stored transcripts (cheap, batched). **T3; not built; not a map key (Δ140)** |
 | `CARD_VERSION` (`card`) | the transcript segment | **not bumped (Δ139)**; media cards with a transcript gain a segment on their next card write |
 | `TRANSCRIPT_BODY_VERSION` (record field `transcript_body_version`) | the indexed body's layout | re-finalize from the store, embeddings only (Δ149) |
@@ -4694,8 +4970,11 @@ chain, and without that rule every upgrade pass would re-plan every transcribed 
 transcripts from the index keep working); the previous image (every new record field is a plain field and no enum
 gains a value, so the old code parses every record; old code reads media records as `kind_not_admitted` after its
 own policy re-check and collects their chunks). The mirror folder and its files are the user's after rollback: deleting
-the folder is the user's act. A purge under old code leaves `drive_transcripts`, `drive_transcript_jobs` and
-`drive_transcript_mirror` documents behind (it does not know them); the sweep script of §27.15 removes them.
+the folder is the user's act. **Rollback past T2** (§27.9.12): code that predates T2 does not know the root and would index
+its `.md` files as documents, so the owner first moves the bot's folder out of the App Folder and moves it back after the
+roll-forward, before its first tick. A purge under old code leaves `drive_transcripts`, `drive_transcript_jobs` and the
+mirror's documents behind (it does not know them); the sweep script of §27.15 removes the transcript documents, and the
+mirror's root document and ledger only with `--mirror` (a roll-forward needs them).
 
 ### 27.14 Slices, tests and the eval
 **T0 — spike, before any code (owner-visible, ≈ $2).** (1) Gemini Files + Batch on audio: `file_data` in a batch
@@ -4729,16 +5008,24 @@ ledger leg, a hash pin of the price rows. *T1 checks of what T0 did not test:* a
 *Expected to break (reviewer, per the standing rule):* tests that pin
 `audio`/`video` as `kind_not_admitted` (`tests/unit/domain/test_drive_index_policy*`, planner and eval gold cases for
 media), the `POLICY_VERSION`/`CARD_VERSION` pins, `CURRENT_VERSIONS` maps.
-**T2 — the mirror.** Mirror documents and service, port `conflict` mode and `download_url`, `inside_opaque` for the
-root, the reconciliation, the audit and the scan, localization wiring on the indexer, the README. *Tests:* create/replace/
-move/rename/delete from a scripted fake `UserDrivePort`; one folder rename = one move; copy = a second file with no
-new transcription; crash between Graph answer and document write; root deleted → recreated; user edit and user deletion →
-repaired at the audit; a foreign file kept and counted; collision and long-name rules; the "every write ends under
-the root" invariant; no records and no card for the mirror subtree, a user's folder of the same name is never written into (the mirror is created as `<name> (Alek)`), and a crash between
-creating the root and saving its id leaves one orphan folder, found by the audit's name check and reported, never adopted.
+**T2 — the mirror (rev 3.27 design, §27.9; plan Part B, Tasks 18–21E).** The port's `conflict` mode, `child_by_name`,
+`area_path` and the item's `cTag` (`download_url` moved to T1, G1); the root document and the ledger behind
+`DriveMirrorRepository`; `mirror_due` / `mirrored_digest` on the records, the deletion notices and their marks; the root's
+classification by id; the reconciliation (create, replace, move, restore, archive, detach, prune), the audit and the scan;
+the store pins; the Step 1 guard; the deleted-files search; localization on the indexer; the README. *Tests:* the names
+and collision rules, rename cycles and case-only renames, the path length from the drive root; create / replace / move /
+rename from a scripted fake `UserDrivePort`; one folder rename = one move; a copy = a second file with no new
+transcription; a crash between a Graph answer and the document write, and between creating the root and writing its
+document (one orphan, reported, never adopted); a user's same-named folder never written into (`(Alek)`); the "every
+write ends under the root" invariant as a property; no records and no card for the mirror subtree, **also on the first
+enumeration after each purge**; archive only after a complete round and the grace hour, a delete and a restore in one
+round never touching the drive, restore moving back, unstored detaching, the archive frozen across a `RENDER_VERSION`
+bump; pins kept by the orphan sweep and every purge; the audit repairing the active tree and discarding an archived file
+the owner deleted; foreign items kept and counted; the Step 1 guard on every mutation; **the default search never returns
+an archived transcript** (an invariant over the lifecycle) while `drive_deleted` does, a hit the owner deleted is hidden.
 **T3 — summary and header polish.** The summary agent and batch step, `SUMMARY_VERSION`, `RENDER_VERSION` re-render, the
 header lines (`labels may differ`, `~` stamps note). *Tests:* summary failure leaves the transcript final; re-render
-with no model call; language of the summary.
+with no model call, of active files only (archived files are frozen, Δ189); language of the summary.
 **Eval (T1 gate, owner-run live, cents).** Fixtures are **generated and PII-free**, by a committed script
 (`scripts/validation/drive_transcript_fixtures.py`) in the style of `drive_capture_fixtures.py`: scripted dialogue lines
 rendered by a local TTS (`espeak-ng` on Linux, `say` on macOS, two voices; languages en, es, uk, ru), muxed with a black
@@ -4759,7 +5046,7 @@ unmeasured language.
    `user_id + transcript_state + effective_day desc + parent_id + item_id` and `user_id + transcript_wake_at + item_id`; on the job, batch
    and store collections `user_id + content_key`, `user_id + next_poll_at` and `user_id + last_used_at`; two **collection-group** indexes
    (`user_id + index` on the windows and the parts subcollections) the orphan sweep needs (Δ159); and single-field exemptions for the
-   large `segments` / `summary` fields. The mirror's lookups are T2. `drive_index_smoke.py` runs every new read.
+   large `segments` / `summary` fields. The mirror's lookups are T2 (step 8). `drive_index_smoke.py` runs every new read.
 4. Pause the drive queue and the fan-out job; deploy main and indexer together (ffmpeg and the unprivileged user are in
    the image already); **verify both serve the new image**; resume. The policy bump makes existing media records due;
    the kill switch is off until the owner enables it, and the owner then sets `drive_transcribe_enabled` for their own user. **The kill
@@ -4777,6 +5064,26 @@ unmeasured language.
    the owner's phone; raise the cap if the estimate says the backlog should finish sooner.
 7. No rebuild and no `drive_initial_build_reset.py`. The orphan-doc sweep script (`drive_transcript_sweep.py`) is run
    only after a rollback to code that predates §27.
+8. **T2 (rev 3.27; nothing here is a prompt upload: the mirror calls no model).**
+   a. **Graph spike before the build** (free, ≈ 20 min, a throwaway folder inside the App Folder, the owner's explicit OK;
+      run by the owner or by the arbiter session he names): a `PUT …/content` with `conflictBehavior=fail` onto a taken
+      name answers 409; a PATCH rename or move onto a taken name answers 409 (no silent rename); `GET
+      /items/{parent}:/{name}:` works inside the App Folder (spike A6 saw the App Folder answer 401 to calls it does not
+      support); an upload's response carries `cTag`; the approot's `parentReference.path` is present (the path-length rule
+      reads it; print its length only, never the path). The results go into a Δ row; a "no" changes Task 18's fallback
+      (a name check by listing before each create or move).
+   b. **OQ-T10 answered** (opt-out leaves the folder; §27.17).
+   c. **Composite indexes `READY`** before the deploy: on the records `user_id + mirror_due + effective_day desc +
+      item_id`; on the ledger `user_id + gone_pending + gone_at`, `user_id + mirror_parent_id`, `user_id + state +
+      archived_at desc`, `user_id + state + checked_at`, `user_id + content_key + state`, and the two array indexes
+      `user_id + state + archive_keys` and `user_id + state + name_keys`; `drive_index_smoke.py` runs every new read.
+   d. **Deploy** main and indexer together (paused window, as step 4). With the owner's flag on, the first tick creates
+      the root and its README, the seed pass marks his existing transcripts due, and files appear at ≈ 40 writes a tick.
+   e. **Live check:** the folder on the phone with the right tree; a search never returns a mirror file; delete a test
+      recording, wait one complete round plus an hour, see it under `Archive/<today>/`, find it with "search in deleted
+      files" and not with a plain search; restore it from the recycle bin and see the file move back; ask the bot to
+      save a file into the Transcripts folder and see the refusal.
+   f. **Review the Cabinet disclosure sentence** (Δ202) in the four languages.
 
 **First-run exception.** For the first run (2026-10-21) the owner explicitly delegated these steps to the assistant: the four prompt uploads (after a prompt-layer backup and a mirror check), the composite index deploy, the deploy with the switch off then on with a $10 cap, and setting the owner's per-user flag. Every other prompt upload and every `--apply` stays the owner's act.
 
@@ -4804,11 +5111,11 @@ unmeasured language.
 | Δ111 | `DOC_TYPES` fixed list | No `recording` type | A names-table change bumps `KEYS_VERSION` (whole-drive re-key) for a type `k:video` already names |
 | Δ112 | Chunks are per record | `drive_transcripts` store by content key; survives a rebuild; 30-day orphan sweep | Copies and rebuilds never pay again |
 | Δ113 | — | Folders are first-class in the mirror (a folder rename = one move); item-call budget separate from `ITEM_CALLS_PER_TICK` | Path mirroring would make a rename O(files) |
-| Δ114 | — | Reconciliation: desired (records) vs actual (mirror documents), idempotent, 40 ops a tick | D42 "a projection the indexer reconciles" |
-| Δ115 | `upload` always `rename` (`onedrive_adapter.py:272-276`) | `conflict` parameter, default `rename`; the mirror uses `replace` | A re-write must not create `x.md (1)` |
+| Δ114 | — | Reconciliation: desired (records) vs actual (mirror documents), idempotent, 40 ops a tick (**rev 3.27:** work made due by flags and marks, Δ187, Δ188; delete → archive, Δ189) | D42 "a projection the indexer reconciles" |
+| Δ115 | `upload` always `rename` (`onedrive_adapter.py:272-276`) | `conflict` parameter, default `rename`; the mirror uses `replace` (**superseded in part by Δ191:** creates use `fail`) | A re-write must not create `x.md (1)` |
 | Δ116 | An opaque folder gets a card | The mirror root classifies as `inside_opaque` (existing value); **never adopted**: created by the bot, remembered by id, a taken name gets a distinct `(Alek)` name (arbiter call; replaces the earlier adoption rule) | No card, no records, no duplicate hits, no enum change; D42's "the bot never writes into the user's own folders" holds without exception, and Δ117's "foreign items are left alone" applies to the user's same-named folder too |
 | Δ117 | — | Audit every 7 days and a rotating scan instead of per-change lookups; foreign items left alone | A lookup per delta entry under an opaque tree is unbounded |
-| Δ118 | — | Name cut at 240 + hash; path over 380 → `Long paths/` | OneDrive's name and path limits |
+| Δ118 | — | Name cut at 240 + hash; path over 380 → `Long paths/` (**rev 3.27:** collisions Δ192, the path counted from the drive root Δ193) | OneDrive's name and path limits |
 | Δ119 | — | Header link = `web_url`; rename rewrites the header | `web_url` changes on rename |
 | Δ120 | — | Folder name chosen at creation, stored; UI-language change renames nothing | A rename storm on a language switch |
 | Δ121 | `open_file_from_drive` re-sends video (`file_management_agent.py:619-626`) | Returns the transcript inside the wrapper for a transcribed ref; optional `original: true` returns a drive link, never bytes into chat (arbiter call) | The point of a transcript; chat is no place for an hour of video |
@@ -4840,7 +5147,7 @@ unmeasured language.
 | Δ150 | §27.11: open returns "the transcript text" | Capped at `TRANSCRIPT_OPEN_MAX_CHARS` 60 000 at a paragraph boundary with a note (G19) | Four hours ≈ 300 000 characters |
 | Δ151 | §27.4: stub outcomes | `no_audio` and `no_speech` → `metadata_only / no_text`; `too_long` and `too_large` → `too_large`; `failed` has no stub (G20) | The existing reasons; no new enum value |
 | Δ152 | §27.3: state vocabulary "as in §25.4.5" | `none ready working waiting current held parked failed`; `held` is a timed hold named by `transcript_hold` (`cooldown`, `quiet`, `retry`, `resubmit`), `parked` the month's cap, `failed` `MAX_ATTEMPTS`; a model backoff is **not** a record state, it gates the queue read (G21, §25.4.6) | A record state would cost a write per ready file on every outage |
-| Δ153 | §27.9: the mirror | **T2, not built.** Recorded rulings for it: an opt-out purge with the drive still connected deletes the bot's own mirror folder (recoverable from the recycle bin); turning transcription off keeps transcripts, store and mirror; an access-loss purge cannot reach the drive and leaves it (G22, T-R2) | A stale mirror would be indexed as documents on re-enable; cost if wrong: the owner loses visible transcript files on opt-out |
+| Δ153 | §27.9: the mirror | **T2, not built. Superseded in part by Δ185 (rev 3.27): no purge deletes the mirror folder.** Recorded rulings for it: an opt-out purge with the drive still connected deletes the bot's own mirror folder (recoverable from the recycle bin); turning transcription off keeps transcripts, store and mirror; an access-loss purge cannot reach the drive and leaves it (G22, T-R2) | A stale mirror would be indexed as documents on re-enable; cost if wrong: the owner loses visible transcript files on opt-out |
 | Δ154 | §27.12: the sentence goes in §6's opt-in text | The strings ship now and show in the Cabinet's Drive section only while the user's own flag is on (G24) | Else a user without transcription is told his recordings are transcribed |
 | Δ155 | §24.14: no account-error recognition in the Gemini adapter | The batch adapter classifies: 429, 5xx, timeouts, network and account 4xx → uncharged outage (agent backoff); a per-response error → that key's result error, charged by the stage; a refused input → `refused`, a gap marker (G25, T-R18) | A provider incident must not fail files |
 | Δ156 | §27.5: the model id "read from the adapter" | The composition reads `GeminiAdapter.MODEL_TIERS[BALANCED]` and passes it to `GeminiBatchAdapter`; `google-genai` floor raised to 2.17.0 (G26, G27) | REQ-ARCH-23; the batch surface was measured on 2.17.0 |
@@ -4863,6 +5170,26 @@ unmeasured language.
 | Δ173 | — | The `transcript_plan` runs on every record write even with transcription off (it plans job state, acts on none, writes nothing visible); the stage runs only with the kill switch and the user's flag on | One code path; OFF verified off by the reviewer |
 | Δ174 | Δ165: `max_output_tokens = min(65 536, ceil(1 000 × minutes))`; reservation by the hour rate | Cap = `min(65 536, max(TRANSCRIBE_MIN_OUTPUT_TOKENS = 4 096, ceil(1 000 × audio minutes)))`; each window reserves `window_cost_usd = max(hour-rate estimate, audio input at TRANSCRIBE_AUDIO_TOKENS_PER_S = 25 + TRANSCRIBE_WINDOW_PROMPT_TOKENS + the window's output cap, at the held batch price)` (an 8 s window ≈ $0.017) (T-R26) | Live evidence: an 8 s window got a cap of 134 and hit `MAX_TOKENS` with an empty answer, because thinking tokens count toward the cap; the hour rate under-reserved short windows, so the hard cap did not hold for them |
 | Δ175 | §27.5 coverage check: a short window is a failed attempt (`MAX_ATTEMPTS`) | A coverage failure whose answer finished with `STOP` is resubmitted once without counting an attempt (`JobWindow.coverage_resubmits`; still reserved at submit and booked); a second STOP-short answer is accepted (counter `windows_accepted_short`); `MAX_TOKENS`, empty or unknown finish and invalid output keep `MAX_ATTEMPTS`. Known limit: an accepted short answer skips the interpolation-share check; a very short window can practically never pass the 0.9 rule, so it always costs two purchases (cents); an absolute tolerance is a later improvement (T-R27) | Live evidence: a 137 s recording ending in silence and an 8 s window failed coverage on every attempt, though the model had finished normally |
+| Δ183 | §27.12: transcripts "purged with the index"; D42: "a delete deletes it" | **Owner decision D48 (2026-10-21, §21):** a deleted (or moved-out) recording's mirror transcript is archived, never deleted by the bot; the owner deletes junk by hand; archived transcripts are excluded from the default search, and only an explicit "search in deleted files" request reaches them | The owner: otherwise search returns irrelevant old things forever. The replaced rule was a design principle, not a legal requirement (the household exemption for the owner's own use; the text holds no voiceprint). Caveat: other users or non-personal use need consent and a retention rule first (OQ-T3, Δ125) |
+| Δ184 | Plan Task 18 / G23: `mirror_root_id`, `mirror_root_name` on the sync state, written by a fenced method outside `STATE_FIELDS` | A root document per drive, `{prefix}drive_mirror_roots/{user_id}:{drive_id}`, written the moment Graph answers the creation; **no purge deletes it**; read at the tick's start into `PlanContext.mirror_root_ids` (current and previous roots); never adopted by name: `(Alek)`, then `(Alek 2)` … `(Alek 5)` (§27.9.2) | The rebuild, the opt-out and the access-loss purge delete the sync state; with Δ116's no-adoption rule the next tick would create a second root and index the first one's files as documents, a duplicate hit of every transcript (critique §0.2) |
+| Δ185 | Δ153: an opt-out purge with the drive connected deletes the bot's mirror folder | No purge deletes anything on the drive; an opt-out keeps the folder, the root document and the ledger, and a re-enable re-identifies the root and resumes (§27.9.12; OQ-T10 asks the owner to confirm) | The folder holds the archive, which D48 says the bot never deletes; deleting only the active part would leave the ledger describing files that are gone, and cost a full re-render on re-enable |
+| Δ186 | §27.8 b, Δ159: the purge deletes the store unless the rebuild keep; the orphan sweep deletes what no record uses | The ledger is never purged; a store entry an `archived` or `detached` ledger document references is **pinned** against the orphan sweep and every purge; while a user has a pin, the purge's collection-group sweep runs in its keep mode (windows only) | A restore or a move back in never re-buys audio, and the archive stays searchable after any purge (D48); the parts of a pinned transcript must survive a sweep that cannot tell an orphan from a live part (Δ159) |
+| Δ187 | §27.9 rev 3.26: desired = every record with a current transcript, actual = every mirror document, each tick | `mirror_due` and `mirrored_digest` on the record, set by a pure `mirror_plan` in `_commit`; `mirror_queue` newest first (one composite index); a seed pass per `seed_version` for records written before T2 or before a `RENDER_VERSION` / `MIRROR_PLAN_VERSION` bump (§27.9.4) | The full diff reads ≈ 10 000 documents a tick for 5 000 transcripts (≈ 1.4 million reads a day); records written before T2 are never rewritten by observation, so they need seeding |
+| Δ188 | §27.9: "the record-delete path deletes the mirror file at once"; the root's deletion handled in `_apply` | Every `_commit` deletion of a mirrored record or a root carries a why (`gone`, `unstored`, else `unknown`), derived at the service's call sites (`ObservationPlan` unchanged) and written as a durable mark on the ledger document; every decision is the mirror step's, after a complete round; the owner-notes RFC (§7.1 there) reuses the same why | A delete and a recycle-bin restore can arrive in one round, and the cascade deletes children without tombstones (critique Rule 1); a mark on the ledger survives a lost state save and a purge |
+| Δ189 | §27.9: a deleted source's mirror file is deleted | Archived **per file** to `<root>/<archive>/<YYYY-MM-DD>/<mirror path>` (the user's day of `gone_at`), only after a complete round and `MIRROR_ARCHIVE_GRACE` (1 h); frozen (never re-rendered, rewritten by the audit or deleted by the bot; chat refused); a restore moves it back; stubs archived too; not retroactive (§27.9.6) | D48. A dated folder, not a first line "source deleted": no content rewrite, the date visible on a phone, no collision when a path is deleted twice, a day's junk deleted in one action. Per file, not per deleted folder: the cascade order across ticks and the path limit make a folder move unsafe (critique Rule 2 rejected, Rule 1 kept) |
+| Δ190 | — | A source that leaves the index but is still on the drive (`unstored`) **detaches**: the file stays, the document is `detached` and pins its store entry, and it is checked every `MIRROR_AUDIT_DAYS` with `get_change` (not found → archive) | A move into a repository or a dense tree is not a delete (the notes RFC's review C1): archiving it would be a false label, deleting it would lose a valid transcript |
+| Δ191 | Δ115: the mirror writes with `replace`, so a stray item at that name is overwritten | Creates use `fail` (a 409 is a foreign item: never overwritten; the mirror file takes the collision suffix); a create records its intent first and only its crash re-run uses `replace`, a folder re-run finds its folder with `child_by_name`; moves fail on a taken name; content is replaced by item id; **no If-Match** (§27.9.5) | `replace` on create destroyed a user's file in the bot's folder, against Δ117; the intent keeps the crash safety `replace` was for. If-Match would protect nothing the design keeps (one writer under the lease, a managed active tree, a never-rewritten archive), so the critique's open question about If-Match on a simple PUT does not arise |
+| Δ192 | Δ118: "siblings cannot collide otherwise" | They can (a file `X` and a folder `X.md`, a source folder named like a reserved root name, a cut prefix, a same-day archive): one assignment rule per mirror folder (reserved names, then folders, then files; ties by source item id; `~<8 hex>` suffix; case-insensitive after NFC), recomputed from the current siblings; swaps and cycles through a temporary name; a case-only rename always in two moves (§27.9.7) | Critique A.5–A.6; a swap written with `replace` would have overwritten the other file; the design does not depend on Graph accepting a case-only PATCH |
+| Δ193 | Δ118: `MIRROR_PATH_MAX` 380, measured from an unstated origin | The path is counted from the drive root with the App Folder's own path included (`UserDrivePort.area_path`), against `ONEDRIVE_PATH_MAX` 400 − `MIRROR_PATH_MARGIN` 10; over it, the file goes to the long-path folder (§27.9.7) | OneDrive's 400 counts the entire decoded path (critique A.7); `Apps/<name>/`, the archive and day folders and the localized names ate the margin |
+| Δ194 | §27.12: "it never writes outside the mirror folder"; Step 1 guards only the App Folder root (`user_drive_service.py:218-219`) | `UserDriveService` refuses every mutation into, inside or out of a current or previous mirror root (a path-addressed save is checked before any folder is created); list and open stay allowed (§27.9.8) | Without it a steered Smart could write files into the bot's folder or delete archived transcripts (critique B.6) |
+| Δ195 | — | The deleted-files search: one `drive_deleted` flag, one section, two sources with the owner-notes RFC (§6.4 there); archived transcripts matched on `archive_keys` and `name_keys` stored on the ledger (strict AND; one `array-contains-any` query per family on the longest word's keys); every shown hit verified with one `get_change`; a passage from the pinned store entry (§27.9.11) | D48: reachable only on an explicit request; two features, one surface for Smart; a hit the owner deleted must never be shown |
+| Δ196 | §27.9: the audit takes "the tick's item-call share" | Port additions `child_by_name`, `area_path` and the item's `cTag` on `DriveItem`; the mirror's Graph reads come from its own `MIRROR_READS_PER_TICK` (10) | The mirror must never take the index's 20 item calls; the ledger records the `cTag` of its own writes for the audit |
+| Δ197 | §27.9: empty mirror folders are pruned bottom-up | Only an active mirror folder whose source folder is gone, with no child ledger document and empty in one listing, is deleted; the archive and its day folders never are | A foreign item inside would otherwise be deleted with the folder |
+| Δ198 | §27.9: header and body rendered by `RENDER_VERSION` | The file is the header plus the uncapped open text (the possibly-incomplete note and the seam line as T1 prints them); the render language is stored on the document, not in the digest; T3 keeps the summary, the localized head lines and the `~` note (§27.9.10) | The drive file never claims more than the card and the open text; no rewrite storm on a language change; T3's scope unchanged |
+| Δ199 | Plan Task 20: the mirror documents in the drive index repository | Their own port and adapters, `DriveMirrorRepository` (Firestore and in-memory); collections `{prefix}drive_mirror_roots` and `{prefix}drive_transcript_mirror` | Another lifecycle (never purged); the drive index adapter is already the largest in the repo |
+| Δ200 | §27.9: a deleted root is re-created and every document reset to `create` | Archived documents are deleted (the owner deleted the archive with the root), active ones reset to `create`; the old id joins `previous_root_ids`, opaque and never written (§27.9.9) | Re-creating an archive the owner deleted is data invention; a restored old root must not turn into a duplicate set of documents |
+| Δ201 | Δ117: the audit repairs every drift in the mirror | In the archive a missing file is the owner's deletion (the document is deleted and the pin released), an edit or a move inside the mirror is left alone, a move out of the mirror ends the bot's claim; until the audit runs, the deleted-files search hides a missing hit (§27.9.9, §27.9.11) | D48: the owner deletes junk by hand, and the bot must notice without a lookup per delta entry (Δ117's reason stands) |
+| Δ202 | Δ154: the disclosure sentence does not mention a folder until T2 | T2's sentence names the Transcripts folder and the archive (§27.12), shown under the same rule | The text must say what is kept and where |
 
 ### 27.17 Open questions (each with a recommendation)
 - **OQ-T1 Window length (30 min) against output drift and cost — resolved by T0 (Δ129).** 30, 45 and 60 min were complete with `MM:SS` times
@@ -4875,15 +5202,25 @@ unmeasured language.
   default False, Δ125) until the zero-credential parser service (§24.14, §9's "separate service" adapter) exists; only
   the owner has it on.
 - **OQ-T9 The Batch API unusable for audio — resolved (owner, D47).** Stop; no full-price fallback; route decided anew.
-- **OQ-T4 A `README.md` in the mirror root.** *Recommend:* yes, one fixed localized line; it makes the folder
-  self-explaining on a phone at the cost of one file in the desired set.
-- **OQ-T5 Foreign files in the mirror.** *Recommend:* leave them (Δ117); revisit only if the folder fills with them.
+- **OQ-T4 A `README.md` in the mirror root — resolved (rev 3.27): yes**, one fixed localized line, a reserved root name
+  (§27.9.1).
+- **OQ-T5 Foreign files in the mirror — resolved (rev 3.27): leave them** (Δ117), in the archive too; counted in the tick
+  line; revisit only if the folder fills with them.
 - **OQ-T6 Summary language when the UI language changes.** *Recommend:* keep the old summary until `SUMMARY_VERSION`
   moves; no rewrite storm (Δ120's logic).
 - **OQ-T7 Transcript text in the profile and passages budgets.** A 4-hour transcript is ≈ 100 chunks and uses the
   passages cap ($20 a month) like a book; *Recommend:* no special rule now, read the first month's `passage_usd`.
 - **OQ-T8 Per-file opt-out.** D41 transcribes everything. *Recommend:* none in v1; a sensitive recording is the user's
   to keep out of the App Folder; the Cabinet already has the one global switch.
+- **OQ-T10 What an indexing opt-out does to the mirror (owner; reverses the Δ153 ruling).** D48 forbids the bot to
+  delete the archive, and the archive lives in the mirror folder, so the rev 3.26 ruling "an opt-out deletes the mirror
+  folder" cannot stand as it was. *Recommend:* an opt-out deletes nothing on the drive (active files and archive stay as
+  the owner's files), and the bot keeps the root document, the ledger and the pinned store entries of archived
+  transcripts, so a re-enable re-identifies the folder (no second root, no duplicate hits) and "search in deleted files"
+  keeps working; the other stored transcripts go with the index as today (Δ159), so a re-enable re-buys the active ones.
+  *Alternatives:* (b) keep the store entries of every mirrored transcript too, so a re-enable re-buys nothing (more text
+  kept by the bot after an opt-out); (c) delete the active part of the folder and keep only the archive (a re-enable then
+  re-creates every file). Δ185 and §27.9.12 are written for the recommendation.
 
 ### 27.18 Parameters (initial)
 | Name | Initial | Basis |
@@ -4915,8 +5252,14 @@ unmeasured language.
 | `TRANSCRIPT_DOC_BYTES` | 900 000 | Firestore's 1 MiB with margin |
 | `TRANSCRIPT_ORPHAN_TTL` | 30 days | a source restored from the recycle bin |
 | `MIRROR_OPS_PER_TICK` / `MIRROR_SCAN_PAGE` | 40 / 100 | Graph writes per tick; a rotating drift scan |
-| `MIRROR_AUDIT_DAYS` | 7 | worst-case time to undo a user's edit |
-| `MIRROR_NAME_MAX` / `MIRROR_PATH_MAX` | 240 / 380 | OneDrive's 255-name and 400-path limits |
+| `MIRROR_READS_PER_TICK` | 10 | the mirror's own Graph reads (marks, prune, audit pages), never the index's `ITEM_CALLS_PER_TICK` (Δ196) |
+| `MIRROR_AUDIT_DAYS` | 7 | worst-case time to undo a user's edit; the recheck of a detached document (Δ190) |
+| `MIRROR_ARCHIVE_GRACE` | 1 h | a source gone this long after a complete round is archived; an undo within it never touches the drive (Δ189) |
+| `MIRROR_NAME_MAX` | 240 | OneDrive's 255-name limit with margin |
+| `ONEDRIVE_PATH_MAX` / `MIRROR_PATH_MARGIN` | 400 / 10 | the decoded path from the drive root, App Folder prefix included (Δ193); replaces `MIRROR_PATH_MAX` 380 |
+| `ARCHIVE_KEYS_MAX` | 6 000 | word keys an archived transcript keeps for the deleted-files search; ≈ the distinct words of a 4-hour recording (Δ195) |
+| `ARCHIVE_QUERY_MAX` / `DELETED_SHOW_MAX` | 100 / 5 | archived documents a deleted-files query reads per key family; archived transcripts shown, each verified (Δ195) |
+| `MIRROR_PLAN_VERSION` / `RENDER_VERSION` | 1 / 1 | the mirror digest and the file layout; either bump re-seeds the due flags (§27.9.4) |
 | `DRIVE_TRANSCRIBE_ENABLED` | off until the owner enables | `os.getenv`, an optional knob, deployed as a Cloud Build substitution (Δ145) |
 
 ### 27.19 T1 as built (rev 3.26, 2026-10-21; branch `feat/drive-transcripts`, not deployed)
@@ -4941,7 +5284,7 @@ per-window check rules (Δ162), stitch (seam cut, speaker alignment by code, int
 ordinary text path (gate, chunker, embeddings, §7.4 fence), the structured result goes to the store under the content key, the card gains
 `transcript: 47 min, 2 speakers, uk/en`, and the record is `current`. A copy, a rename or a move has the same key and never pays again.
 
-**Not built.** T2, the mirror folder (§27.9, `UIMessage.DRIVE_TRANSCRIPTS_FOLDER`, `conflict` mode on upload, the reconciliation, the audit):
+**Not built.** T2, the mirror folder (§27.9, redesigned in rev 3.27 before any code: D48, Δ183–Δ202; `UIMessage.DRIVE_TRANSCRIPTS_FOLDER`, `conflict` mode on upload, the reconciliation, the archive, the audit, the deleted-files search):
 no transcript file is written to the user's drive; the transcript exists in the index and as the open text only. T3, the summary
 (§27.7, `DriveTranscriptSummaryAgent`, `SUMMARY_VERSION`, `RENDER_VERSION`, the header lines): there is no summary and the uncertain-seam
 line is printed only in the open text. The Cabinet transcription toggle (§27.12), the zero-credential parser service (OQ-T3: the flag
