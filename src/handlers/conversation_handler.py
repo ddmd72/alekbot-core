@@ -33,6 +33,8 @@ from ..domain.exceptions import (
     SkillNameReserved,
     SkillRejected,
 )
+from ..domain.drive_note import DRIVE_NOTE_ERASE_DELIVERY, DRIVE_NOTE_RECEIPT_DELIVERY
+from ..domain.drive_note_receipt import render_drive_note_erase, render_drive_note_receipt
 from ..domain.memory_fact import (
     MEMORY_PREVIEW_DELIVERY,
     MemoryFactDraft,
@@ -310,6 +312,8 @@ class ConversationHandler(ConversationHandlerPort):
             await self._deliver_skill_preview(item, response_channel, thread_id)
         elif item.type == MEMORY_PREVIEW_DELIVERY:
             await self._deliver_memory_preview(item, response_channel, thread_id)
+        elif item.type in (DRIVE_NOTE_RECEIPT_DELIVERY, DRIVE_NOTE_ERASE_DELIVERY):
+            await self._deliver_drive_note_receipt(item, response_channel, thread_id)
         else:
             logger.warning("⚠️ [ConversationHandler] Unknown DeliveryItem type: %s — skipping", item.type)
 
@@ -428,6 +432,31 @@ class ConversationHandler(ConversationHandlerPort):
             await response_channel.send_message(f"`{item.data['command']}`", thread_id)
         except Exception as e:
             logger.error("⚠️ [ConversationHandler] memory_preview command send failed: %s", e, exc_info=True)
+
+    async def _deliver_drive_note_receipt(
+        self,
+        item: DeliveryItem,
+        response_channel: ResponseChannel,
+        thread_id: Optional[str],
+    ) -> None:
+        """Deliver a drive-note DeliveryItem (DRIVE_FILE_NOTES_RFC §4.6, §4.8) with the shared renderer the call path
+        uses too. A receipt is one message: the stored note verbatim. An erase request is its line, then the command
+        alone; when the line fails the command is not sent (the owner never confirms what he was not shown). A failed
+        post is logged and never fails the turn: the note is stored either way."""
+        language = getattr(response_channel, "language", None)
+
+        def strings(message: UIMessage) -> str:
+            return self._ui_string_for_language(language, message)
+
+        try:
+            if item.type == DRIVE_NOTE_ERASE_DELIVERY:
+                line, command = render_drive_note_erase(item.data, strings)
+                await response_channel.send_message(line, thread_id)
+                await response_channel.send_message(command, thread_id)
+            else:
+                await response_channel.send_message(render_drive_note_receipt(item.data, strings), thread_id)
+        except Exception as e:
+            logger.error("⚠️ [ConversationHandler] %s delivery failed: %s", item.type, e, exc_info=True)
 
     def _render_skill_change_line(self, language: Optional[str], line: dict) -> str:
         """Localize one `FileChangeLine` dict (Task 6's `change_summary`) for the channel's
