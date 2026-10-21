@@ -5,9 +5,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from dotenv import load_dotenv  # noqa: E402
 from google.cloud import firestore  # noqa: E402
 
 from src.config.environment import EnvironmentConfig  # noqa: E402
+
+# at import, so GOOGLE_CLOUD_PROJECT is set before _kwargs reads it
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 
 def _kwargs() -> dict:
