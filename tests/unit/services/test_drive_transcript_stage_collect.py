@@ -859,3 +859,21 @@ async def test_a_fenced_finalize_goes_on_to_the_next_file(tmp_path):
     env.host.on_index = None
     await _cheap(env)
     assert (await _get(env, "a")).transcript_state == "current"
+
+
+async def test_short_stop_answer_is_resubmitted_once_then_accepted_t_r27(tmp_path):
+    env = _env(tmp_path)
+    b1 = await _submitted(env, record("a"), a=Recording(600))
+    key = b1.request_keys[0]
+    _answer_all(env, b1, a_0=replace(_ok(key, _transcript(600, short=True)), finish_reason="STOP"))
+    _due(env, b1)
+    summary = await _cheap(env)
+    w = _job(env, "a").windows[0]
+    assert (w.state, w.coverage_resubmits, w.attempts) == ("uploaded", 1, 0)
+    assert summary.get("windows_accepted_short", 0) == 0 and env.repo.window_results == {}
+    await _extract(env)
+    b2 = _last_batch(env)
+    _answer_all(env, b2, a_0=replace(_ok(b2.request_keys[0], _transcript(600, short=True)), finish_reason="STOP"))
+    _due(env, b2)
+    summary = await _cheap(env)
+    assert summary["windows_accepted_short"] == 1 and summary.get("windows_gap", 0) == 0

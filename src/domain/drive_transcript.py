@@ -131,6 +131,7 @@ class WindowResult:
     transient: bool = False
     usd: float = 0.0
     billed: bool = False
+    finish_reason: str = ""           # the provider's finish reason of an `ok`/`invalid` answer ("STOP", "MAX_TOKENS"); T-R27
     code: int = 0                     # an `error` response's rpc code (0 when none): 5/7 is the input file gone (T-R18)
 
 
@@ -173,6 +174,7 @@ class JobWindow:
     attempts: int = 0                 # failed answers (invalid JSON, short coverage), toward MAX_ATTEMPTS (§27.5)
     time_resubmits: int = 0           # the time validator's one resubmit (§27.6, G37)
     interp_resubmits: int = 0         # the interpolation-share check's one resubmit (§27.6, G37)
+    coverage_resubmits: int = 0       # the coverage check's one resubmit of a clean (STOP) short answer (T-R27)
     gap: bool = False                 # done as a gap marker: the provider refused it or the retries ran out
     batch_name: str = ""              # the provider batch carrying it while submitted (T-R12)
     files_expire_at: Optional[datetime] = None   # when the provider's input file expires (§27.5)

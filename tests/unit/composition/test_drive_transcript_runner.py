@@ -193,3 +193,11 @@ async def test_a_collection_without_billing_prices_but_writes_nothing():
     out = await runner.collect(BatchRef(name="b", keys=("item:0",)), account_id="acc-1", bill=False)
     assert out["item:0"].usd > 0 and out["item:0"].billed is False
     quota.record_usage.assert_not_awaited()
+
+
+async def test_the_finish_reason_reaches_the_window_result_t_r27():
+    port = _port({"item:0": BatchResult(key="item:0", text=GOOD, usage=_usage(), finish_reason="STOP"),
+                  "item:1": BatchResult(key="item:1", text="not json", usage=_usage(), finish_reason="MAX_TOKENS")})
+    runner, _ = _runner(port)
+    out = await runner.collect(BatchRef(name="b", keys=("item:0", "item:1")), account_id="acc-1")
+    assert (out["item:0"].finish_reason, out["item:1"].finish_reason) == ("STOP", "MAX_TOKENS")
