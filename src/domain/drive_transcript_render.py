@@ -20,6 +20,7 @@ from src.domain.drive_transcript_time import format_stamp
 
 TRANSCRIPT_BODY_VERSION = 1
 
+TRUNCATED_NOTE = "Note: part of this recording may be missing from the transcript."
 GAP_TEXT = "[this part could not be transcribed]"
 UNCERTAIN_SEAM_LINE = "[speaker labels may differ between parts of this recording]"
 _STUB_TEXT = {
@@ -71,6 +72,8 @@ def card_segment(rec: DriveIndexRecord) -> Optional[str]:
         parts.append(f"{rec.transcript_speakers} speaker{'' if rec.transcript_speakers == 1 else 's'}")
     if rec.transcript_languages:
         parts.append("/".join(rec.transcript_languages))
+    if rec.transcript_truncated:
+        parts.append("may be incomplete")
     return "transcript: " + ", ".join(parts)
 
 
@@ -82,7 +85,8 @@ def open_text(stored: StoredTranscript, *, max_chars: int, mirror_path: str = ""
     if transcript is None:
         return _stub_line(stored.stub) or ""
     full = render_body(transcript)
-    head = UNCERTAIN_SEAM_LINE + "\n\n" if transcript.uncertain_seam else ""
+    head = (TRUNCATED_NOTE + "\n\n" if transcript.truncated else "") \
+        + (UNCERTAIN_SEAM_LINE + "\n\n" if transcript.uncertain_seam else "")
     if len(head) + len(full) <= max_chars:
         return head + full
     pointer = f" The full text is in {mirror_path}." if mirror_path else ""
