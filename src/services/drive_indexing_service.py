@@ -57,7 +57,9 @@ it, the tick reads every root document of the user once at its start (`_TICK_MIR
 folders opaque (`PlanContext.mirror_root_ids`); every record write runs `mirror_plan`; every delete site passes the why
 of the deletes the mirror must hear of (`_mirror_notices`), and `_commit` writes the durable marks before the record
 writes (Δ208). The purge keeps the store entries the ledger pins and never writes the mirror collections. Without it,
-or for a user with no root document, none of this reads or writes anything beyond the one roots query.
+none of this runs. With it, a user with no root document costs the one roots query per tick, plus reads only: every
+purge that does not keep the store reads `pinned_keys`, and the stage's daily orphan sweep reads `pinned` for each orphan
+key no record uses; no mark and no other mirror call.
 """
 from __future__ import annotations
 
@@ -1068,6 +1070,9 @@ class DriveIndexingService:
         repo = self._mirror_repo
         if repo is None:
             return
+        # An empty `mirror.drive_id` (neither the connection nor the sync state knows the drive) sends `mark_gone` with no
+        # drive check, so it may mark a document of any of the user's drives under that source id. That is safe only
+        # because OneDrive item ids are drive-unique (the ledger key carries no drive id; the Δ is recorded in Task 21E).
         whys = {item: (gone.get(item) if gone is not None else UNKNOWN) for item in deletes}
         noticed = {item: why for item, why in whys.items() if why}
         lost = {item for item in noticed if item in mirror.current_ids}
@@ -2223,12 +2228,14 @@ class DriveIndexingService:
 
     async def _abandon_run(self, user_id: str, run: DriveIndexRecord, cls: Optional[int], now: datetime) -> None:
         """A systemic error ends the tick mid-run (§8.2): the attempt is cleared with `attempts` untouched and the
-        content due again; the started generation is never reused. Best effort: the error itself is re-raised."""
+        content due again; the started generation is never reused. Best effort: the error itself is re-raised. It writes
+        outside `_commit` and changes no field the mirror digest reads; the mirror plan still runs, so `mirror_due` can
+        never go stale here (§27.9.4)."""
         back = _maintenance_kept(schedule(_cleared(replace(run, defer_until=None, defer_priority=None)), now,
                                           first_seen=not run.has_card), cls)
         try:
             _fence()
-            await self._repo.upsert_records([enrich.planned(transcript_plan(back, self._transcript_ctx()),
+            await self._repo.upsert_records([enrich.planned(mirror_plan(transcript_plan(back, self._transcript_ctx())),
                                                             self._enrich_ctx())])
         except Exception as exc:
             logger.warning(f"[DriveIndex] could not clear the run of item {run.item_id} for {user_id[:8]}: {exc}; "
@@ -3506,7 +3513,7 @@ class DriveIndexingService:
         return await self._mirror_repo.pinned_keys(user_id)
 
     async def _purge_transcript_documents(self, user_id: str, keep: bool, summary: Dict[str, int],
-                                          store: Optional["_PurgeStore"] = None) -> bool:
+                                          store: "_PurgeStore") -> bool:
         """One round of the purge's transcript deletes: the user's jobs (with their window results), then batches, then
         the store unless `keep` (a rebuild keeps it). Repository only, with or without the stage. True when it deleted
         (or, while pins exist, when the scan of the store has not reached its end).
@@ -3522,7 +3529,7 @@ class DriveIndexingService:
                 return True
         if keep:
             return False
-        if store is not None and store.pins:
+        if store.pins:
             if store.done:
                 return False
             stored, store.cursor = await self._repo.delete_user_transcripts_except(user_id, RECORD_WRITE_BATCH,
