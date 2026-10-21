@@ -246,6 +246,7 @@ _RECORD_READERS: Dict[str, Callable[[Any], Any]] = {
     "inaccessible_since": _dt, "inaccessible_checked_at": _dt, "inaccessible_notified_since": _dt,
     # §27 (transcripts)
     "transcript_wake_at": _dt, "transcript_languages": _strs, "transcript_hold": _optional(str),
+    "mirror_retry_at": _dt,       # §27.9.4
 }
 
 _STATE_READERS: Dict[str, Callable[[Any], Any]] = {

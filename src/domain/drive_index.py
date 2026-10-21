@@ -409,6 +409,14 @@ class DriveIndexRecord:
     transcript_languages: Tuple[str, ...] = ()   # the card's languages (§27.11): the card needs no store read
     transcript_body_version: int = 0          # G18
     transcript_truncated: bool = False        # part of the recording may be missing from the transcript (T-R31)
+    # -- §27.9.4 (the mirror queue, D48): set by `drive_mirror_plan.mirror_plan` in `_commit`. `mirror_due` is the queue
+    # flag; `mirrored_digest` the digest of what the drive file last showed ("" = never mirrored; a folder is mirrored
+    # once it has one); `mirror_retry_at` + `mirror_held_digest` park a record whose action failed (Δ217): it stays off
+    # the queue while its digest equals the held one, and a new digest or a ripe `mirror_retry_at` puts it back.
+    mirror_due: bool = False
+    mirrored_digest: str = ""
+    mirror_retry_at: Optional[datetime] = None
+    mirror_held_digest: str = ""
 
     @property
     def stale(self) -> bool:
