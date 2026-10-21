@@ -10,7 +10,10 @@ cache, SearchEnrichmentService or the remote MCP server (§1.4).
 Every method takes `user_id` and touches only that user's documents (multi-tenant rule: the document id carries the
 user, and every query filters `user_id ==`). `updated_at` is set by the repository on every parent write — a server
 timestamp in Firestore, a strictly increasing clock in memory — never by the caller: it is the indexer's watermark
-(§5.1 b). A missing composite index or a backend error leaves a method as DriveIndexStoreUnavailable.
+(§5.1 b). `revision` is bumped by the repository on EVERY parent write too (owner writes, lifecycle writes, erase): it
+is what `write_version` compares, so an owner write prepared before a lifecycle write fails instead of overwriting it.
+Lifecycle writes stamp `last_writer` with origin `indexer`. A missing composite index or a backend error leaves a method
+as DriveIndexStoreUnavailable; contention that outlasts the backend's own transaction retries is DriveNoteConflict.
 
 Public interface:
     get / get_many / find_bound / find_by_match_keys / note_ids / count     (reads by id and by key; §4.4, §5.1 a)
@@ -71,12 +74,16 @@ class DriveNoteRepository(ABC):
 
     @abstractmethod
     async def write_version(self, note: DriveNote, version: DriveNoteVersion, *, expected_version: int) -> None:
-        """One transaction (§4.4 step 5): the stored `current_version` (0 for a missing document or an erase stub) must
-        equal `expected_version`, else DriveNoteConflict and nothing is written — so a first write
-        (`expected_version` 0) needs the document not to exist (or to be a stub). It then closes v(expected_version)
-        (`valid_to = version.valid_from`, `is_current = False`; nothing to close at 0), adds `version`
-        (`version.version` must be `expected_version + 1`, else ValueError) and replaces the parent with `note`
-        (`note.current_version` must equal `version.version`), `updated_at` set by the repository."""
+        """One transaction (§4.4 step 5). Preconditions, else DriveNoteConflict and nothing is written: the stored
+        `current_version` (0 for a missing document or an erase stub) equals `expected_version`, AND the stored
+        `revision` (0 for a missing document) equals `note.revision` — the revision the caller read, so any parent
+        write since that read (another owner write, archive, re-activation, snapshot refresh, vector repair, erase)
+        fails the write. A first write (`expected_version` 0, `note.revision` 0) therefore needs the document not to
+        exist (or to be the stub the caller read). It then closes v(expected_version) when it exists
+        (`valid_to = version.valid_from`, `is_current = False`; a missing one is tolerated; nothing to close at 0), adds
+        `version` (`version.version` must be `expected_version + 1`, else ValueError) and replaces the parent with
+        `note` (`note.current_version` must equal `version.version`), `revision = note.revision + 1`, `updated_at` set
+        by the repository."""
 
     # -- the tick (§5.1) and the deleted-files search (§6.4) -----------------------------------------------------------
 
@@ -112,32 +119,43 @@ class DriveNoteRepository(ABC):
     @abstractmethod
     async def archive(self, user_id: str, note_id: str, *, archived_at: datetime, last_seen_at: Optional[datetime],
                       snapshot: Optional[NoteSnapshot] = None) -> bool:
-        """An `active` note → `archived`, `archived_at`, `last_seen_at`, and the snapshot when given; one transaction,
-        `updated_at` bumped. Any other state (or a missing note) is left as it is: False."""
+        """The item is gone (§7.1). An `active` note → `archived` with `archived_at`, `last_seen_at` and the snapshot
+        when given. A `cleared` note (not a stub) that carries no `archived_at` keeps `cleared` and is stamped
+        `archived_at` / `last_seen_at` (and the snapshot), so an undo later brings it back archived. One transaction;
+        `revision`, `updated_at` bumped, `last_writer` = indexer. Anything else (archived already, a stamped cleared
+        note, a stub, a missing note) is left as it is: False."""
 
     @abstractmethod
     async def reactivate(self, user_id: str, note_id: str, *, bound_at: datetime) -> bool:
-        """An `archived` note → `active` (§7.2): `binding.bound_by = restore`, `binding.bound_at`, `archived_at`
-        cleared (`last_seen_at` kept); one transaction, `updated_at` bumped. Any other state: False."""
+        """The item is back (§7.2). An `archived` note → `active`: `binding.bound_by = restore`, `binding.bound_at`,
+        `archived_at` cleared (`last_seen_at` kept). A `cleared` note with `archived_at` set keeps `cleared` and loses
+        `archived_at` (an undo later brings it back active). One transaction; `revision`, `updated_at` bumped,
+        `last_writer` = indexer. Anything else: False."""
 
     @abstractmethod
     async def refresh_snapshot(self, user_id: str, note_id: str, snapshot: NoteSnapshot) -> bool:
-        """Replace the snapshot of a note that is not a stub (§7.5); `updated_at` bumped. False for a stub or none."""
+        """Replace the snapshot of a note that is not a stub (§7.5); `revision`, `updated_at` bumped, `last_writer` =
+        indexer. False for a stub or none."""
 
     @abstractmethod
-    async def set_vector(self, user_id: str, note_id: str, vector: Sequence[float], embedding_space: str) -> bool:
+    async def set_vector(self, user_id: str, note_id: str, vector: Sequence[float], embedding_space: str, *,
+                         expected_version: int) -> bool:
         """Store a repaired vector (§5.1 b step 5): `note_vector`, `embedding_space`, `embedding_pending = False`, on
-        an `active` or `archived` note (a cleared note keeps none: False); `updated_at` bumped."""
+        an `active` or `archived` note whose stored `current_version` is still `expected_version` — the version whose
+        text was embedded. A newer version (its own embedding pending or done), a cleared note or a stub stores nothing:
+        False. One transaction; `revision`, `updated_at` bumped, `last_writer` = indexer."""
 
     # -- erase (§4.8) -----------------------------------------------------------------------------------------------------
 
     @abstractmethod
     async def erase(self, user_id: str, note_ids: Sequence[str]) -> int:
         """For each existing note: delete every version (they are `v1`..`v{current_version}`) and replace the parent
-        with its contentless stub (`drive_note.erase_stub`, `updated_at` bumped), in one transaction per note, so a
+        with its contentless stub (`drive_note.erase_stub`, `revision` and `updated_at` bumped), in one transaction per
+        note, so a
         concurrent write either lands before (and is erased) or after (on top of the stub). A history over one
         transaction's writes loses its oldest versions first, and the stub is written last: an interrupted erase
-        leaves the note as it was, minus old versions, never a stub with history under it. Idempotent. Returns the
+        leaves the note as it was, minus old versions, never a stub with history under it; when a write lands between
+        those batches and the stub (the version count moved), the batches are redone. Idempotent. Returns the
         number of notes erased (stubs included, missing ids not)."""
 
     @abstractmethod

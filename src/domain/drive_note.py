@@ -18,13 +18,15 @@ Public interface:
     normalize_note_text(text) -> str;  note_word_count(text) -> int;  check_note_text(text) -> str
     resolve_doc_type(value) -> str;  resolve_life_areas(values) -> tuple
     note_content(text, doc_type, life_areas) -> NoteContent
+    ONEDRIVE_PROVIDER_KEY (the one provider key of the binding key)
     binding_key(provider_key, drive_id, item_id), ref_key(item_id), note_match_keys(binding)
+    BindingKeyParts; parse_binding_key(key) -> Optional[BindingKeyParts]; binding_parts_of(note)
     deterministic_note_id(binding_key) -> str;  note_doc_id(user_id, note_id);  note_ref(note_id)
     parse_note_ref(ref), parse_note_target(ref) -> Optional[NoteTarget]
     snapshot_of(change, item, *, kind, effective_date, now) -> NoteSnapshot
     note_embedding_text(content, name) -> str
     next_version / closed_version / content_of / undo_source / state_after
-    note_after_write(...) -> DriveNote;  erase_stub(note) -> DriveNote;  item_ref(note) -> str
+    note_after_write(...) -> DriveNote;  erase_stub(note) -> DriveNote;  item_ref(note) -> str;  indexer_writer()
     searchability(indexing_enabled, record) -> str
     drive_note_context_entry(receipt) -> str;  is_owner_turn(context) -> bool
     constants: NOTE_WORDS_MAX, NOTE_CHARS_MAX, NOTE_KEYS_MAX, LIFE_AREAS_MAX, ERASE_CODE_TTL, NOTE_WRITES_PER_TURN,
@@ -63,6 +65,11 @@ NOTE_KEYS_VERSION = 1                       # §5.5: the layout of the stored `k
 
 # -- names ----------------------------------------------------------------------------------------------------------
 
+# The provider part of the binding key `i:{provider}:{drive_id}:{item_id}` (D15). ONE source for the main service and the
+# indexer, so both build the same key; equal to the OneDrive adapter's credential provider key `ONEDRIVE_PROVIDER`
+# (tests/unit/domain/test_drive_note.py pins the equality). A second provider adds its own constant here.
+ONEDRIVE_PROVIDER_KEY = "microsoft_onedrive"
+
 ANNOTATE_DRIVE_FILE_TOOL = "annotate_drive_file"   # N2: never `note_…` (NotesAgent is the reminders agent)
 DRIVE_FILE_NOTES_SKILL = "drive-file-notes"        # the system skill the handler's gate requires (N7)
 DRIVE_NOTE_RECEIPT_DELIVERY = "drive_note_receipt"   # §4.6: DeliveryItem type of a set / clear / restore receipt
@@ -85,6 +92,8 @@ STATUS_SOON = "soon"                 # a record whose card will carry the note w
 STATUS_INDEXING_OFF = "indexing_off"   # the owner's indexing switch is off: stored, not searchable
 STATUS_NOT_INDEXED = "not_indexed"   # no record (inside a folder the index keeps as one card, or not seen yet)
 STATUS_NO_CARD = "no_card"           # a record without a card it can show (card-capped, refused, unresolved)
+STATUS_ARCHIVED = "archived"         # an archived note edited by its drive_note: ref: only a deleted-files search finds it
+STATUS_OTHER_DRIVE = "other_drive"   # a note bound to a drive that is not connected: not searchable until it is
 
 
 # -- enums --------------------------------------------------------------------------------------------------------
@@ -127,7 +136,6 @@ class NoteRefusal(str, Enum):
     DRIVE_UNAVAILABLE = "drive_unavailable"      # a provider error resolving the item
     NOT_ON_DRIVE = "not_on_drive"                # the provider answered "not found"
     CANNOT_OPEN = "cannot_open"                  # the index marks the item inaccessible (§26.2, D20)
-    OTHER_DRIVE = "other_drive"                  # a `drive_note:` ref of a note bound to a drive not connected
     NO_NOTE = "no_note"                          # undo / erase with no note (a `drive_note:` ref that does not exist)
     AMBIGUOUS_NOTE = "ambiguous_note"            # detail: refs (one item id on several drives)
     HISTORY_MISSING = "history_missing"          # undo found no stored version to copy
@@ -220,6 +228,8 @@ class DriveNote(BaseModel):
     cleared_at: Optional[datetime] = None
     erase_pending: bool = False
     last_writer: Optional[NoteWriter] = None
+    revision: int = 0                         # bumped by the repository on EVERY parent write (owner or lifecycle):
+                                              # `write_version`'s precondition, so a lifecycle write in between fails it
 
     @property
     def doc_id(self) -> str:
@@ -344,9 +354,11 @@ class EraseRequestReceipt:
 # -- validation and normalization (§4.3) -------------------------------------------------------------------------------
 
 def normalize_note_text(text: str) -> str:
-    """NFC; control characters removed; every run of whitespace (newlines included) one space; trimmed (one line)."""
+    """NFC; control (Cc) and format (Cf: bidi overrides and isolates, zero-width characters, BOM, soft hyphen)
+    characters removed, so the receipt shown "byte for byte" holds nothing invisible; every run of whitespace (newlines
+    included) one space; trimmed (one line)."""
     nfc = unicodedata.normalize("NFC", text or "")
-    kept = "".join(ch for ch in nfc if ch.isspace() or unicodedata.category(ch) != "Cc")
+    kept = "".join(ch for ch in nfc if ch.isspace() or unicodedata.category(ch) not in ("Cc", "Cf"))
     return " ".join(kept.split())
 
 
@@ -446,6 +458,37 @@ def ref_key(item_id: str) -> str:
     return f"{REF_KEY_PREFIX}{item_id}"
 
 
+@dataclass(frozen=True)
+class BindingKeyParts:
+    """The three parts of a binding key `i:{provider_key}:{drive_id}:{item_id}`."""
+    provider_key: str
+    drive_id: str
+    item_id: str
+
+
+def parse_binding_key(key: str) -> Optional[BindingKeyParts]:
+    """The parts of an `i:` key, None for any other key or a malformed one. The provider key and the drive id hold no
+    `:`; the item id is the rest (an item id with a `:` survives the round trip)."""
+    if not key or not key.startswith(BINDING_KEY_PREFIX):
+        return None
+    parts = key[len(BINDING_KEY_PREFIX):].split(":", 2)
+    if len(parts) != 3 or not all(parts):
+        return None
+    return BindingKeyParts(provider_key=parts[0], drive_id=parts[1], item_id=parts[2])
+
+
+def binding_parts_of(note: DriveNote) -> Optional[BindingKeyParts]:
+    """Where a note is bound: its `binding`, or — for an erase stub, which has none — the `i:` key in `match_keys`
+    (S2 clears a stub's record copy through it)."""
+    if note.binding is not None:
+        return BindingKeyParts(note.binding.provider_key, note.binding.drive_id, note.binding.item_id)
+    for key in note.match_keys:
+        parts = parse_binding_key(key)
+        if parts is not None:
+            return parts
+    return None
+
+
 def note_match_keys(binding: NoteBinding) -> List[str]:
     """The binding key and the ref key; never a content key (D15), never a provider URL."""
     return [binding_key(binding.provider_key, binding.drive_id, binding.item_id), ref_key(binding.item_id)]
@@ -524,11 +567,14 @@ def note_embedding_text(content: NoteContent, name: str) -> str:
 # -- versions (SCD2, §3.2) and undo (§4.4) --------------------------------------------------------------------------------
 
 def next_version(current_version: int, content: NoteContent, action: NoteAction, provenance: NoteProvenance,
-                 now: datetime, *, restored_from: Optional[int] = None) -> DriveNoteVersion:
-    """v(current + 1), current, open (`valid_to` None)."""
+                 now: datetime, *, restored_from: Optional[int] = None,
+                 not_before: Optional[datetime] = None) -> DriveNoteVersion:
+    """v(current + 1), current, open (`valid_to` None). `valid_from` is the later of `now` and `not_before` (the
+    previous version's `valid_from`), so a clock behind the previous writer's never closes a version before it opened."""
+    valid_from = max(now, not_before) if not_before is not None else now
     return DriveNoteVersion(
         version=current_version + 1, text=content.text, doc_type=content.doc_type, life_areas=list(content.life_areas),
-        action=action, restored_from=restored_from, valid_from=now, valid_to=None, is_current=True,
+        action=action, restored_from=restored_from, valid_from=valid_from, valid_to=None, is_current=True,
         origin=provenance.origin, session_id=provenance.session_id, turn_id=provenance.turn_id)
 
 
@@ -603,19 +649,25 @@ def erase_stub(note: DriveNote) -> DriveNote:
     """The contentless stub an erase leaves (§4.8, I9): tenant fields, `state = cleared`, `erase_pending`,
     `match_keys`; text, classifiers, keys, vector, snapshot, binding and last writer gone; no version left."""
     return DriveNote(note_id=note.note_id, user_id=note.user_id, account_id=note.account_id,
-                     state=NoteState.CLEARED, current_version=0, match_keys=list(note.match_keys), erase_pending=True)
+                     state=NoteState.CLEARED, current_version=0, match_keys=list(note.match_keys), erase_pending=True,
+                     revision=note.revision)   # the repository bumps it with the write
+
+
+def indexer_writer() -> NoteWriter:
+    """`last_writer` of every lifecycle write (archive, re-activation, snapshot refresh, vector repair; §3.1)."""
+    return NoteWriter(origin=NoteOrigin.INDEXER.value)
 
 
 # -- receipts and gates -------------------------------------------------------------------------------------------------
 
 def searchability(indexing_enabled: bool, record: Optional[DriveIndexRecord]) -> str:
     """§4.4 step 7. `soon`: a record whose card will carry the note; `indexing_off`: the switch is off; `not_indexed`:
-    no record; `no_card`: a record that shows no card (capped, refused by the embedder, or unresolved)."""
+    no record; `no_card`: a record that shows no card (capped, refused by the embedder, unresolved, or being deleted)."""
     if not indexing_enabled:
         return STATUS_INDEXING_OFF
     if record is None:
         return STATUS_NOT_INDEXED
-    if record.card_capped or record.card_refused or record.state == RecordState.UNRESOLVED:
+    if record.card_capped or record.card_refused or record.state in (RecordState.UNRESOLVED, RecordState.DELETING):
         return STATUS_NO_CARD
     return STATUS_SOON
 
@@ -641,14 +693,15 @@ def item_ref(note: DriveNote) -> str:
 
 
 __all__ = [
-    "ANNOTATE_DRIVE_FILE_TOOL", "ARCHIVE_SCAN_MAX", "BINDING_KEY_PREFIX", "BoundBy", "CONTENT_KEY_FAMILY",
+    "ANNOTATE_DRIVE_FILE_TOOL", "ARCHIVE_SCAN_MAX", "BINDING_KEY_PREFIX", "BindingKeyParts", "BoundBy",
+    "ONEDRIVE_PROVIDER_KEY", "binding_parts_of", "indexer_writer", "parse_binding_key", "CONTENT_KEY_FAMILY",
     "DRIVE_FILE_NOTES_SKILL", "DRIVE_NOTE_ERASE_DELIVERY", "DRIVE_NOTE_RECEIPT_DELIVERY", "DriveNote",
     "DriveNoteConflict", "DriveNoteRefused", "DriveNoteVersion", "ERASE_ALL_COMMAND", "ERASE_CODE_TTL",
     "ERASE_COMMAND", "ERASE_SCOPE_ALL", "ERASE_SCOPE_ONE", "EraseRequestReceipt", "LIFE_AREAS_MAX", "NOTES_PER_USER_MAX",
     "NOTE_CHARS_MAX", "NOTE_KEYS_MAX", "NOTE_KEYS_VERSION", "NOTE_REF_PREFIX", "NOTE_WORDS_MAX",
     "NOTE_WRITES_PER_TURN", "NoteAction", "NoteBinding", "NoteContent", "NoteOrigin", "NoteProvenance", "NoteReceipt",
     "NoteRefusal", "NoteSnapshot", "NoteState", "NoteTarget", "NoteWriter", "OWNER_TURN_RUN_ORIGINS",
-    "REF_KEY_PREFIX", "STATUS_INDEXING_OFF", "STATUS_NOT_INDEXED", "STATUS_NO_CARD", "STATUS_SOON",
+    "REF_KEY_PREFIX", "STATUS_ARCHIVED", "STATUS_INDEXING_OFF", "STATUS_OTHER_DRIVE", "STATUS_NOT_INDEXED", "STATUS_NO_CARD", "STATUS_SOON",
     "VERSIONS_SUBCOLLECTION", "binding_key", "check_note_text", "closed_version", "content_of",
     "deterministic_note_id", "drive_note_context_entry", "erase_stub", "is_owner_turn", "item_ref",
     "next_version", "normalize_note_text", "note_after_write", "note_content", "note_doc_id", "note_embedding_text",

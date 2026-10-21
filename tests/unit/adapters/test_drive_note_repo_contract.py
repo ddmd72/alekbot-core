@@ -64,9 +64,10 @@ def written(note_id="n1", item="a", drive=D1, user=U, text="Petya's estimate", d
 
 
 async def first(repo, **kw):
+    """Write v1 and return the note as STORED (its `revision` is what the next write must carry)."""
     note, v = written(**kw)
     await repo.write_version(note, v, expected_version=0)
-    return note
+    return await repo.get(note.user_id, note.note_id)
 
 
 async def seed_updated(adapter, note: DriveNote, updated_at: datetime):
@@ -82,10 +83,11 @@ async def seed_updated(adapter, note: DriveNote, updated_at: datetime):
 # -- write_version: the SCD2 transaction -------------------------------------------------------------------------------
 
 async def test_a_first_write_stores_the_parent_and_v1(repo):
-    note = await first(repo)
+    note, v = written()
+    await repo.write_version(note, v, expected_version=0)
     stored = await repo.get(U, "n1")
-    assert stored.model_copy(update={"updated_at": None}) == note
-    assert stored.updated_at is not None
+    assert stored.model_copy(update={"updated_at": None, "revision": 0}) == note
+    assert stored.updated_at is not None and stored.revision == 1
     [v1] = await repo.list_versions(U, "n1")
     assert (v1.version, v1.is_current, v1.valid_to, v1.text, v1.action) == (1, True, None, "Petya's estimate", "set")
     assert (v1.origin, v1.session_id, v1.turn_id) == ("chat", "s1", "t1")
@@ -260,7 +262,7 @@ async def test_refresh_snapshot_and_set_vector(repo):
     await first(repo)
     assert await repo.refresh_snapshot(U, "n1", NoteSnapshot(name="b.pdf", path="New/b.pdf"))
     assert (await repo.get(U, "n1")).snapshot.path == "New/b.pdf"
-    assert await repo.set_vector(U, "n1", [0.5, 0.5], "space-b")
+    assert await repo.set_vector(U, "n1", [0.5, 0.5], "space-b", expected_version=1)
     note = await repo.get(U, "n1")
     assert (note.note_vector, note.embedding_space, note.embedding_pending) == ([0.5, 0.5], "space-b", False)
 
@@ -269,7 +271,7 @@ async def test_set_vector_never_gives_a_cleared_note_a_vector(repo):
     base = await first(repo)
     note, v2 = written(text="", version=2, base=base, state=NoteState.CLEARED, action=NoteAction.CLEAR)
     await repo.write_version(note, v2, expected_version=1)
-    assert not await repo.set_vector(U, "n1", [1.0], "space-a")
+    assert not await repo.set_vector(U, "n1", [1.0], "space-a", expected_version=2)
     assert (await repo.get(U, "n1")).note_vector is None
 
 
@@ -295,7 +297,11 @@ async def test_erase_deletes_every_version_and_leaves_a_contentless_stub(repo):
 async def test_a_new_note_on_a_stub_starts_at_v1_and_survives_delete_stub(repo):
     await first(repo)
     await repo.erase(U, ["n1"])
-    note, v1 = written(text="fresh")
+    stub = await repo.get(U, "n1")
+    blind, v1 = written(text="fresh")
+    with pytest.raises(DriveNoteConflict):        # a writer that did not read the stub's revision
+        await repo.write_version(blind, v1, expected_version=0)
+    note, v1 = written(text="fresh", base=stub)
     await repo.write_version(note, v1, expected_version=0)
     assert not await repo.delete_stub(U, "n1")
     assert (await repo.get(U, "n1")).text == "fresh"
@@ -350,7 +356,8 @@ async def test_firestore_stub_holds_only_its_fields(adapter):
     await first(repo, vector=[1.0, 0.0])
     await repo.erase(U, ["n1"])
     stored = db.collection(NOTES).docs["u:n1"]
-    assert set(stored) == {"note_id", "user_id", "account_id", "state", "erase_pending", "match_keys", "updated_at"}
+    assert set(stored) == {"note_id", "user_id", "account_id", "state", "erase_pending", "match_keys", "revision",
+                           "updated_at"}
     assert db.versions_of("u:n1") == {}
 
 
@@ -360,7 +367,7 @@ async def test_firestore_erase_of_a_long_history_takes_the_oldest_first(adapter)
     for n in range(2, 503):   # 502 versions: more than one transaction's writes
         nxt, v = written(text=f"t{n}", version=n, base=note)
         await repo.write_version(nxt, v, expected_version=n - 1)
-        note = nxt
+        note = await repo.get(U, "n1")
     assert await repo.erase(U, ["n1"]) == 1
     assert db.versions_of("u:n1") == {}
     assert len(db.commits) == 1 and len(db.commits[0]) == 3              # v1..v3 in a batch, the rest with the stub
@@ -391,3 +398,175 @@ async def test_firestore_every_query_filters_the_user(adapter):
     await repo.find_nearest(U, [1.0, 0.0], state="archived", embedding_space="s", limit=2)
     for ops in db.executed():
         assert ("where", "user_id", "==", U) in ops, ops
+
+
+# -- fix round 1: the revision precondition, lifecycle stamps, set_vector's version -----------------------------------
+
+async def test_a_lifecycle_write_after_the_read_fails_the_owner_write(repo):
+    read = await first(repo)                                      # the owner's write is prepared from this read
+    await repo.archive(U, "n1", archived_at=T, last_seen_at=T)    # the tick archives meanwhile
+    note, v2 = written(text="late", version=2, base=read)
+    with pytest.raises(DriveNoteConflict):
+        await repo.write_version(note, v2, expected_version=1)
+    stored = await repo.get(U, "n1")
+    assert (stored.state, stored.text, stored.current_version) == ("archived", "Petya's estimate", 1)
+    fresh, v2 = written(text="late", version=2, base=stored, state=NoteState.ARCHIVED)
+    await repo.write_version(fresh, v2, expected_version=1)        # re-read: it lands
+    assert (await repo.get(U, "n1")).text == "late"
+
+
+async def test_every_parent_write_bumps_the_revision(repo):
+    note = await first(repo, vector=[1.0, 0.0])
+    revisions = [note.revision]
+    await repo.refresh_snapshot(U, "n1", NoteSnapshot(name="b.pdf"))
+    revisions.append((await repo.get(U, "n1")).revision)
+    await repo.set_vector(U, "n1", [0.0, 1.0], "space-a", expected_version=1)
+    revisions.append((await repo.get(U, "n1")).revision)
+    await repo.archive(U, "n1", archived_at=T, last_seen_at=T)
+    revisions.append((await repo.get(U, "n1")).revision)
+    await repo.reactivate(U, "n1", bound_at=T)
+    revisions.append((await repo.get(U, "n1")).revision)
+    await repo.erase(U, ["n1"])
+    revisions.append((await repo.get(U, "n1")).revision)
+    assert revisions == [1, 2, 3, 4, 5, 6]
+    assert not await repo.reactivate(U, "n1", bound_at=T)        # a refused change bumps nothing
+    assert (await repo.get(U, "n1")).revision == 6
+
+
+async def test_lifecycle_writes_are_stamped_by_the_indexer(repo):
+    await first(repo)
+
+    async def owner_write():                                       # resets last_writer to the owner, state kept
+        stored = await repo.get(U, "n1")
+        note, v = written(text=f"owner {stored.current_version}", version=stored.current_version + 1, base=stored,
+                          state=NoteState(stored.state))
+        await repo.write_version(note, v, expected_version=stored.current_version)
+        assert (await repo.get(U, "n1")).last_writer.origin == "chat"
+
+    async def vector():
+        return await repo.set_vector(U, "n1", [1.0], "space-a",
+                                     expected_version=(await repo.get(U, "n1")).current_version)
+
+    for change in (lambda: repo.refresh_snapshot(U, "n1", NoteSnapshot(name="b.pdf")),
+                   lambda: repo.archive(U, "n1", archived_at=T, last_seen_at=T),
+                   lambda: repo.reactivate(U, "n1", bound_at=T),
+                   vector):
+        await owner_write()
+        assert await change()
+        assert (await repo.get(U, "n1")).last_writer.origin == "indexer"
+
+
+async def test_set_vector_stores_nothing_for_a_newer_version(repo):
+    pending, v = written()
+    await repo.write_version(pending.model_copy(update={"embedding_pending": True}), v, expected_version=0)
+    stored = await repo.get(U, "n1")
+    newer, v2 = written(text="B", version=2, base=stored.model_copy(update={"embedding_pending": True}))
+    await repo.write_version(newer.model_copy(update={"embedding_pending": True}), v2, expected_version=1)
+    assert not await repo.set_vector(U, "n1", [0.1, 0.2], "space-a", expected_version=1)   # A's vector, too late
+    note = await repo.get(U, "n1")
+    assert (note.note_vector, note.embedding_pending, note.text) == (None, True, "B")
+    assert await repo.set_vector(U, "n1", [0.3, 0.4], "space-a", expected_version=2)
+    assert (await repo.get(U, "n1")).note_vector == [0.3, 0.4]
+
+
+async def test_archive_of_a_cleared_note_stamps_it_and_keeps_it_cleared(repo):
+    base = await first(repo)
+    note, v2 = written(text="", version=2, base=base, state=NoteState.CLEARED, action=NoteAction.CLEAR)
+    await repo.write_version(note, v2, expected_version=1)
+    seen = T - timedelta(hours=2)
+    assert await repo.archive(U, "n1", archived_at=T, last_seen_at=seen)
+    stored = await repo.get(U, "n1")
+    assert (stored.state, stored.archived_at, stored.last_seen_at) == ("cleared", T, seen)
+    assert not await repo.archive(U, "n1", archived_at=T + timedelta(days=1), last_seen_at=T)   # stamped once
+    assert await repo.reactivate(U, "n1", bound_at=T)            # the file is back: the stamp goes, state stays
+    stored = await repo.get(U, "n1")
+    assert (stored.state, stored.archived_at, stored.last_seen_at) == ("cleared", None, seen)
+    await repo.erase(U, ["n1"])
+    assert not await repo.archive(U, "n1", archived_at=T, last_seen_at=T)   # never a stub
+
+
+async def test_closing_a_missing_previous_version_is_tolerated(adapter):
+    repo, db = adapter
+    base = await first(repo)
+    if db is None:
+        repo.versions[(U, "n1")].pop(1)
+    else:
+        db.collection(f"{NOTES}/u:n1/versions").docs.pop("v1")
+    note, v2 = written(text="two", version=2, base=base)
+    await repo.write_version(note, v2, expected_version=1)
+    assert [v.version for v in await repo.list_versions(U, "n1")] == [2]
+
+
+async def test_firestore_a_contended_first_write_reruns_and_conflicts_writing_nothing(adapter):
+    from unittest.mock import patch
+    from tests.unit.adapters.firestore_drive_note_fakes import contended
+    repo, db = _firestore(adapter)
+    other = {"note_id": "n1", "user_id": U, "current_version": 1, "revision": 1, "text": "the other writer"}
+
+    async def interloper():
+        db.collection(NOTES).docs["u:n1"] = dict(other)
+
+    note, v1 = written()
+    with patch("src.adapters.firestore_drive_note_repo.firestore.async_transactional",
+               side_effect=contended(db, interloper)):
+        with pytest.raises(DriveNoteConflict):
+            await repo.write_version(note, v1, expected_version=0)
+    assert db.collection(NOTES).docs["u:n1"] == other and db.versions_of("u:n1") == {}
+
+
+async def test_firestore_exhausted_transaction_retries_are_a_conflict(adapter):
+    from unittest.mock import patch
+    repo, db = _firestore(adapter)
+    await first(repo)
+
+    def giving_up(fn):
+        async def run(transaction):
+            raise ValueError("Failed to commit transaction in 5 attempts.")
+        return run
+
+    with patch("src.adapters.firestore_drive_note_repo.firestore.async_transactional", side_effect=giving_up):
+        note, v2 = written(text="x", version=2, base=await repo.get(U, "n1"))
+        with pytest.raises(DriveNoteConflict):
+            await repo.write_version(note, v2, expected_version=1)
+        with pytest.raises(DriveNoteConflict):
+            await repo.archive(U, "n1", archived_at=T, last_seen_at=T)
+
+
+async def test_firestore_a_corrupt_document_is_not_reported_as_contention(adapter):
+    from pydantic import ValidationError
+    repo, db = _firestore(adapter)
+    db.collection(NOTES).docs["u:n1"] = {"note_id": "n1", "user_id": U, "current_version": "not a number"}
+    with pytest.raises(ValidationError):
+        await repo.archive(U, "n1", archived_at=T, last_seen_at=T)
+
+
+async def test_firestore_a_long_erase_redoes_its_batches_when_a_write_lands_in_between(adapter):
+    from src.adapters.firestore_drive_note_repo import version_to_doc
+    repo, db = _firestore(adapter)
+    note = await first(repo)
+    for n in range(2, 503):
+        nxt, v = written(text=f"t{n}", version=n, base=note)
+        await repo.write_version(nxt, v, expected_version=n - 1)
+        note = await repo.get(U, "n1")
+    real_batch = db.batch
+    landed = []
+
+    def batch():
+        b = real_batch()
+        commit = b.commit
+
+        async def commit_then_write():
+            await commit()
+            if not landed:                       # a concurrent owner write lands after the first batch
+                landed.append(True)
+                parent = db.collection(NOTES).docs["u:n1"]
+                parent["current_version"], parent["revision"] = 503, parent["revision"] + 1
+                v503 = next_version(502, NoteContent("t503"), NoteAction.SET, CHAT, T)
+                db.collection(f"{NOTES}/u:n1/versions").docs["v503"] = version_to_doc(v503)
+        b.commit = commit_then_write
+        return b
+
+    db.batch = batch
+    assert await repo.erase(U, ["n1"]) == 1
+    assert landed and db.versions_of("u:n1") == {}
+    assert (await repo.get(U, "n1")).erase_pending

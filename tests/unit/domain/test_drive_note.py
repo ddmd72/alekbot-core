@@ -306,3 +306,68 @@ def test_the_erase_request_carries_only_the_command_and_counts():
 ])
 def test_owner_turn_is_chat_or_a_call_with_lelik(context, expected):
     assert is_owner_turn(context) is expected
+
+
+# -- fix round 1 ------------------------------------------------------------------------------------------------------------
+
+def test_format_characters_are_removed_too():
+    hidden = "Pe‮tya​'s ⁦estimate⁩﻿ soft­hyphen"
+    assert normalize_note_text(hidden) == "Petya's estimate softhyphen"
+
+
+def test_a_record_being_deleted_shows_no_card():
+    assert searchability(True, DriveIndexRecord(user_id="u", item_id="i", state=RecordState.DELETING)) == STATUS_NO_CARD
+
+
+def test_the_provider_key_is_the_onedrive_adapter_s():
+    from src.adapters.microsoft.onedrive_adapter import ONEDRIVE_PROVIDER
+    from src.domain.drive_note import ONEDRIVE_PROVIDER_KEY
+    assert ONEDRIVE_PROVIDER_KEY == ONEDRIVE_PROVIDER == "microsoft_onedrive"
+
+
+def test_the_binding_key_parses_back():
+    from src.domain.drive_note import BindingKeyParts, parse_binding_key
+    key = binding_key("microsoft_onedrive", "b!drive", "ITEM!12")
+    assert parse_binding_key(key) == BindingKeyParts("microsoft_onedrive", "b!drive", "ITEM!12")
+    assert parse_binding_key("i:p:d:item:with:colons").item_id == "item:with:colons"
+    for bad in ("r:ITEM", "i:p:d", "i::d:x", "i:p::x", "i:p:d:", "", "x:p:d:i"):
+        assert parse_binding_key(bad) is None, bad
+
+
+def test_a_stub_s_binding_comes_from_its_match_keys():
+    from src.domain.drive_note import BindingKeyParts, binding_parts_of
+    stub = erase_stub(_bound())
+    assert stub.binding is None
+    assert binding_parts_of(stub) == BindingKeyParts("onedrive", "d1", "i1")
+    assert binding_parts_of(_bound()) == BindingKeyParts("onedrive", "d1", "i1")
+    assert binding_parts_of(DriveNote(note_id="n", user_id="u", match_keys=["r:x"])) is None
+
+
+def test_valid_from_is_never_before_the_previous_version():
+    later = T + timedelta(minutes=5)
+    assert next_version(1, NoteContent("x"), NoteAction.SET, CHAT, T, not_before=later).valid_from == later
+    assert next_version(1, NoteContent("x"), NoteAction.SET, CHAT, later, not_before=T).valid_from == later
+    assert next_version(1, NoteContent("x"), NoteAction.SET, CHAT, T).valid_from == T
+
+
+def test_an_ambiguous_life_area_name_is_refused(monkeypatch):
+    # The live tables have no life-area name shared by two areas (the next test pins it); the rule still holds
+    import src.domain.drive_note as module
+    overlapping = dict(module._LIFE_DOMAIN_KEYS)
+    overlapping["work"] = overlapping["work"] | module._native_keys("money")
+    monkeypatch.setattr(module, "_LIFE_DOMAIN_KEYS", overlapping)
+    err = refused(resolve_life_areas, ["money"])
+    assert err.reason == NoteRefusal.AMBIGUOUS_LIFE_AREA and set(err.detail["candidates"]) == {"finance", "work"}
+
+
+def test_no_live_life_area_name_names_two_areas():
+    from itertools import combinations
+    import src.domain.drive_note as module
+    shared = [(a, b) for a, b in combinations(module._LIFE_DOMAIN_KEYS, 2)
+              if module._LIFE_DOMAIN_KEYS[a] & module._LIFE_DOMAIN_KEYS[b]]
+    assert shared == []
+
+
+def test_the_indexer_writer():
+    from src.domain.drive_note import indexer_writer
+    assert indexer_writer().model_dump() == {"origin": "indexer", "session_id": "", "turn_id": ""}

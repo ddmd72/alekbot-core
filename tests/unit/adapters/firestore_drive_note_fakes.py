@@ -86,3 +86,49 @@ class NoteDb(EvalDb):
 
     def executed(self) -> List[List[tuple]]:
         return self.collection(NOTES).executed
+
+
+class BufferedTransaction(NoteTransaction):
+    """A transaction whose writes apply only at `commit()`, as Firestore's do: a run that is retried writes nothing."""
+
+    def __init__(self, db: "NoteDb") -> None:
+        super().__init__(db)
+        self.pending: List[tuple] = []
+
+    def set(self, ref: EvalDocRef, data: Dict[str, Any], merge: Any = False) -> None:
+        self.pending.append(("set", ref, data, merge))
+
+    def update(self, ref: EvalDocRef, data: Dict[str, Any]) -> None:
+        self.pending.append(("update", ref, data, None))
+
+    def delete(self, ref: EvalDocRef) -> None:
+        self.pending.append(("delete", ref, None, None))
+
+    def commit(self) -> None:
+        for kind, ref, data, merge in self.pending:
+            if kind == "set":
+                NoteTransaction.set(self, ref, data, merge)
+            elif kind == "update":
+                NoteTransaction.update(self, ref, data)
+            else:
+                EvalTransaction.delete(self, ref)
+
+
+def contended(db: "NoteDb", interloper: Any) -> Any:
+    """A stand-in for `firestore.async_transactional` with one contention: the first run reads, then `interloper()`
+    commits another writer's change, so that run's commit aborts (its buffered writes are dropped) and the function runs
+    again on fresh reads, as the real client's retry does. Every later run commits."""
+    def decorator(fn: Any) -> Any:
+        async def run(_transaction: Any) -> Any:
+            runs = 0
+            while True:
+                tx = BufferedTransaction(db)
+                result = await fn(tx)
+                runs += 1
+                if runs == 1:
+                    await interloper()
+                    continue
+                tx.commit()
+                return result
+        return run
+    return decorator

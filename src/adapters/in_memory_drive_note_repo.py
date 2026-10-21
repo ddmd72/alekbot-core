@@ -3,7 +3,8 @@ InMemoryDriveNoteRepository — DriveNoteRepository in process memory: the secon
 the Firestore adapter is held against (tests/unit/adapters/test_drive_note_repo_contract.py runs one case list on both).
 
 `updated_at` comes from `clock`, made strictly increasing (a tie moves one microsecond on), so the watermark order is
-total, as Firestore's server timestamps are for commits. Results are copies: a caller mutating one changes nothing here.
+total, as Firestore's server timestamps are for commits. Every parent write bumps `revision` (the stored one + 1).
+Results are copies: a caller mutating one changes nothing here.
 """
 from __future__ import annotations
 
@@ -13,6 +14,7 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 from ..domain.drive_note import (
     BoundBy, DriveNote, DriveNoteConflict, DriveNoteVersion, NoteSnapshot, NoteState, closed_version, erase_stub,
+    indexer_writer,
 )
 from ..ports.drive_note_repository import DriveNoteRepository
 
@@ -45,7 +47,14 @@ class InMemoryDriveNoteRepository(DriveNoteRepository):
         return sorted((n for (u, _), n in self.notes.items() if u == user_id), key=lambda n: n.note_id)
 
     def _put(self, note: DriveNote) -> None:
-        self.notes[(note.user_id, note.note_id)] = note.model_copy(update={"updated_at": self._stamp()}, deep=True)
+        """Store `note` as the parent, `revision` one past the STORED one (0 when there is none), `updated_at` now."""
+        stored = self.notes.get((note.user_id, note.note_id))
+        revision = (stored.revision if stored is not None else 0) + 1
+        self.notes[(note.user_id, note.note_id)] = note.model_copy(
+            update={"updated_at": self._stamp(), "revision": revision}, deep=True)
+
+    def _lifecycle(self, note: DriveNote, update: Dict[str, object]) -> None:
+        self._put(note.model_copy(update={**update, "last_writer": indexer_writer()}))
 
     # -- reads by id and by key ----------------------------------------------------------------------------------------
 
@@ -92,8 +101,11 @@ class InMemoryDriveNoteRepository(DriveNoteRepository):
         key = (note.user_id, note.note_id)
         stored = self.notes.get(key)
         current = stored.current_version if stored is not None else 0
+        revision = stored.revision if stored is not None else 0
         if current != expected_version:
             raise DriveNoteConflict(f"note {note.note_id}: stored version {current}, expected {expected_version}")
+        if revision != note.revision:
+            raise DriveNoteConflict(f"note {note.note_id}: stored revision {revision}, read {note.revision}")
         chain = self.versions.setdefault(key, {})
         if expected_version and expected_version in chain:
             chain[expected_version] = closed_version(chain[expected_version], version.valid_from)
@@ -146,35 +158,48 @@ class InMemoryDriveNoteRepository(DriveNoteRepository):
     async def archive(self, user_id: str, note_id: str, *, archived_at: datetime, last_seen_at: Optional[datetime],
                       snapshot: Optional[NoteSnapshot] = None) -> bool:
         note = self.notes.get((user_id, note_id))
-        if note is None or note.state != NoteState.ACTIVE.value or note.erase_pending:
+        if note is None or note.erase_pending:
             return False
-        update = {"state": NoteState.ARCHIVED.value, "archived_at": archived_at, "last_seen_at": last_seen_at}
+        if note.state == NoteState.ACTIVE.value:
+            update: Dict[str, object] = {"state": NoteState.ARCHIVED.value}
+        elif note.state == NoteState.CLEARED.value and note.archived_at is None:
+            update = {}
+        else:
+            return False
+        update.update({"archived_at": archived_at, "last_seen_at": last_seen_at})
         if snapshot is not None:
             update["snapshot"] = snapshot
-        self._put(note.model_copy(update=update))
+        self._lifecycle(note, update)
         return True
 
     async def reactivate(self, user_id: str, note_id: str, *, bound_at: datetime) -> bool:
         note = self.notes.get((user_id, note_id))
-        if note is None or note.state != NoteState.ARCHIVED.value or note.binding is None:
+        if note is None or note.erase_pending:
             return False
-        binding = note.binding.model_copy(update={"bound_by": BoundBy.RESTORE.value, "bound_at": bound_at})
-        self._put(note.model_copy(update={"state": NoteState.ACTIVE.value, "archived_at": None, "binding": binding}))
-        return True
+        if note.state == NoteState.ARCHIVED.value and note.binding is not None:
+            binding = note.binding.model_copy(update={"bound_by": BoundBy.RESTORE.value, "bound_at": bound_at})
+            self._lifecycle(note, {"state": NoteState.ACTIVE.value, "archived_at": None, "binding": binding})
+            return True
+        if note.state == NoteState.CLEARED.value and note.archived_at is not None:
+            self._lifecycle(note, {"archived_at": None})
+            return True
+        return False
 
     async def refresh_snapshot(self, user_id: str, note_id: str, snapshot: NoteSnapshot) -> bool:
         note = self.notes.get((user_id, note_id))
         if note is None or note.erase_pending:
             return False
-        self._put(note.model_copy(update={"snapshot": snapshot}))
+        self._lifecycle(note, {"snapshot": snapshot})
         return True
 
-    async def set_vector(self, user_id: str, note_id: str, vector: Sequence[float], embedding_space: str) -> bool:
+    async def set_vector(self, user_id: str, note_id: str, vector: Sequence[float], embedding_space: str, *,
+                         expected_version: int) -> bool:
         note = self.notes.get((user_id, note_id))
-        if note is None or note.erase_pending or note.state == NoteState.CLEARED.value:
+        if (note is None or note.erase_pending or note.state == NoteState.CLEARED.value
+                or note.current_version != expected_version):
             return False
-        self._put(note.model_copy(update={"note_vector": [float(x) for x in vector], "embedding_space": embedding_space,
-                                          "embedding_pending": False}))
+        self._lifecycle(note, {"note_vector": [float(x) for x in vector], "embedding_space": embedding_space,
+                               "embedding_pending": False})
         return True
 
     # -- erase ------------------------------------------------------------------------------------------------------------

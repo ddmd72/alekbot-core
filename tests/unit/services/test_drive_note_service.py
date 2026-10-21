@@ -30,6 +30,7 @@ from src.services.drive_note_service import DriveNoteService
 T = datetime(2026, 10, 21, 9, 0, tzinfo=timezone.utc)
 U, ACC, D1, D2 = "user-1", "acc-1", "drive-1", "drive-2"
 CHAT = NoteProvenance(origin="chat", session_id="s1", turn_id="t1")
+NEXT_TURN = NoteProvenance(origin="chat", session_id="s1", turn_id="t2")
 VOICE = NoteProvenance(origin="voice", session_id="call", turn_id="c7")
 TEXT = "Petya's estimate for the kitchen renovation"
 
@@ -334,13 +335,12 @@ async def test_the_lineage_cap():
     assert refusal(info) == NoteRefusal.NOTE_LIMIT
 
 
-async def test_set_by_a_note_ref_on_the_connected_drive_and_refused_on_another(env):
+async def test_set_by_a_note_ref_on_the_connected_drive_needs_no_drive_call(env):
     first = await env.service.set(U, ACC, "drive:a", TEXT, provenance=CHAT)
-    assert (await env.service.set(U, ACC, first.note_ref, "changed", provenance=CHAT)).version == 2
-    env.drive.connection.return_value = DriveConnection(connected=True, drive_id=D2)
-    with pytest.raises(DriveNoteRefused) as info:
-        await env.service.set(U, ACC, first.note_ref, "again", provenance=CHAT)
-    assert refusal(info) == NoteRefusal.OTHER_DRIVE
+    calls = env.graph_calls()
+    receipt = await env.service.set(U, ACC, first.note_ref, "changed", provenance=CHAT)
+    assert (receipt.version, receipt.text, receipt.status, receipt.ref) == (2, "changed", STATUS_NOT_INDEXED, "drive:a")
+    assert env.graph_calls() == calls and env.nudged() == [["a"], ["a"]]
 
 
 async def test_set_on_an_archived_note_s_item_brings_it_back(env):
@@ -395,7 +395,7 @@ async def test_undo_semantics_end_to_end(env):
     undone = await env.service.undo(U, ACC, "drive:a", CHAT)
     assert (undone.action, undone.text, undone.version, undone.redo, undone.previous_text) == (
         "restore", "first", 3, False, "second")
-    redone = await env.service.undo(U, ACC, "drive:a", CHAT)
+    redone = await env.service.undo(U, ACC, "drive:a", NEXT_TURN)   # a later turn: the re-run guard does not apply
     assert (redone.text, redone.redo, redone.version) == ("second", True, 4)
     versions = await env.notes.list_versions(U, undone.note_id)
     assert [(v.action, v.restored_from) for v in versions] == [("set", None), ("set", None), ("restore", 1),
@@ -537,3 +537,206 @@ async def test_a_new_note_on_an_erased_item_starts_a_fresh_lineage(env):
     with pytest.raises(DriveNoteRefused):
         await env.service.undo(U, ACC, "drive:nothing", CHAT)
     assert (await env.service.undo(U, ACC, "drive:a", CHAT)).text == ""   # undo of the fresh v1 clears it
+
+
+# -- fix round 1 (core review I1-I5, P4, P5, minors) ---------------------------------------------------------------------
+
+async def test_a_second_undo_in_the_same_turn_is_a_noop(env):
+    # I3: a failover re-run repeats the turn's undo; the first one stands
+    await env.service.set(U, ACC, "drive:a", "first", provenance=CHAT)
+    await env.service.set(U, ACC, "drive:a", "second", provenance=CHAT)
+    undone = await env.service.undo(U, ACC, "drive:a", NEXT_TURN)
+    again = await env.service.undo(U, ACC, "drive:a", NEXT_TURN)
+    assert (undone.text, undone.version) == ("first", 3)
+    assert (again.noop, again.text, again.version, again.action) == (True, "first", 3, "restore")
+    assert len(await env.notes.list_versions(U, undone.note_id)) == 3
+    other_session = NoteProvenance(origin="chat", session_id="s2", turn_id="t2")
+    assert (await env.service.undo(U, ACC, "drive:a", other_session)).text == "second"   # another turn: a redo
+
+
+async def test_without_a_turn_id_the_undo_guard_is_off_and_logged(env, monkeypatch):
+    log = MagicMock()
+    monkeypatch.setattr("src.services.drive_note_service.logger", log)
+    bare = NoteProvenance(origin="chat")
+    await env.service.set(U, ACC, "drive:a", "first", provenance=CHAT)
+    await env.service.set(U, ACC, "drive:a", "second", provenance=CHAT)
+    await env.service.undo(U, ACC, "drive:a", bare)
+    assert (await env.service.undo(U, ACC, "drive:a", bare)).text == "second"
+    assert any("without a turn id" in str(c.args[0]) for c in log.warning.mock_calls)
+
+
+async def test_undo_racing_a_reactivate_keeps_the_note_active():
+    # I1: the tick re-activates the note between the undo's read and its write; the write must not re-archive it
+    class Racing(InMemoryDriveNoteRepository):
+        raced = False
+
+        async def get_version(self, user_id, note_id, version):
+            found = await super().get_version(user_id, note_id, version)
+            if not self.raced and self.notes[(user_id, note_id)].state == "archived":
+                self.raced = True
+                await self.reactivate(user_id, note_id, bound_at=T)
+            return found
+
+    env = Env(notes=Racing(clock=_Clock()))
+    await env.service.set(U, ACC, "drive:a", "first", provenance=CHAT)
+    second = await env.service.set(U, ACC, "drive:a", "second", provenance=CHAT)
+    await env.notes.archive(U, second.note_id, archived_at=T, last_seen_at=T)
+    receipt = await env.service.undo(U, ACC, second.note_ref, NEXT_TURN)
+    note = await env.notes.get(U, second.note_id)
+    assert env.notes.raced and receipt.text == "first"
+    assert (note.state, note.archived_at, note.binding.bound_by, note.last_writer.origin) == (
+        "active", None, "restore", "chat")
+
+
+@pytest.mark.parametrize("failures,ok", [(1, True), (2, False)])
+async def test_clear_and_undo_retry_a_conflict_once(failures, ok):
+    class Conflicting(InMemoryDriveNoteRepository):
+        armed = 0
+
+        async def write_version(self, note, version, *, expected_version):
+            if self.armed:
+                self.armed -= 1
+                raise DriveNoteConflict("race")
+            await super().write_version(note, version, expected_version=expected_version)
+
+    for op in ("clear", "undo"):
+        env = Env(notes=Conflicting(clock=_Clock()))
+        await env.service.set(U, ACC, "drive:a", TEXT, provenance=CHAT)
+        env.notes.armed = failures
+        call = getattr(env.service, op)
+        if ok:
+            receipt = await call(U, ACC, "drive:a", NEXT_TURN)
+            assert receipt.version == 2 and (await env.note()).state == "cleared"
+        else:
+            with pytest.raises(DriveNoteRefused) as info:
+                await call(U, ACC, "drive:a", NEXT_TURN)
+            assert refusal(info) == NoteRefusal.CONFLICT and (await env.note()).current_version == 1
+
+
+async def test_a_disconnect_reported_by_get_change_refuses_as_not_connected(env):
+    from src.domain.user_drive import DriveNotConnectedError
+    env.drive.get_change.side_effect = DriveNotConnectedError("expired")
+    with pytest.raises(DriveNoteRefused) as info:
+        await env.service.set(U, ACC, "drive:a", TEXT, provenance=CHAT)
+    assert refusal(info) == NoteRefusal.NOT_CONNECTED and await env.notes.count(U) == 0
+
+
+async def test_an_identical_set_on_an_archived_note_s_live_file_writes_a_version(env):
+    first = await env.service.set(U, ACC, "drive:a", TEXT, provenance=CHAT)
+    await env.notes.archive(U, first.note_id, archived_at=T, last_seen_at=T)
+    receipt = await env.service.set(U, ACC, "drive:a", TEXT, provenance=NEXT_TURN)
+    note = await env.note()
+    assert not receipt.noop and receipt.version == 2 and (note.state, note.archived_at) == ("active", None)
+
+
+async def test_valid_from_never_goes_back_behind_the_previous_version():
+    env = Env()
+    await env.service.set(U, ACC, "drive:a", "first", provenance=CHAT)
+    [v1] = await env.notes.list_versions(U, (await env.note()).note_id)
+    env.service._clock = lambda: v1.valid_from - timedelta(hours=1)   # this instance's clock runs behind
+    await env.service.set(U, ACC, "drive:a", "second", provenance=CHAT)
+    closed, v2 = await env.notes.list_versions(U, (await env.note()).note_id)
+    assert v2.valid_from == v1.valid_from and closed.valid_to == v1.valid_from
+
+
+async def test_note_for_item_reads_the_bound_note_without_a_provider_key(env):
+    await env.service.set(U, ACC, "drive:a", TEXT, provenance=CHAT)
+    found = await env.service.note_for_item(U, D1, "a")
+    assert found is not None and found.text == TEXT
+    assert await env.service.note_for_item(U, D2, "a") is None
+    await env.service.clear(U, ACC, "drive:a", CHAT)
+    assert await env.service.note_for_item(U, D1, "a") is None
+    assert env.graph_calls() == 2   # only the set's get_change + get_item
+
+
+async def test_the_provider_key_defaults_to_the_domain_constant(env):
+    from src.domain.drive_note import ONEDRIVE_PROVIDER_KEY
+    await env.service.set(U, ACC, "drive:a", TEXT, provenance=CHAT)
+    bare = DriveNoteService(env.notes, env.drive, env.index, env.embeddings, env.security, env.users,
+                            embedding_space="space-a")
+    assert await bare.note_for_item(U, D1, "a") is None     # Env's service passes "onedrive": another key
+    await bare.set(U, ACC, "drive:b", TEXT, provenance=CHAT)
+    assert (await env.notes.find_by_match_keys(U, ["r:b"]))[0].match_keys[0] == f"i:{ONEDRIVE_PROVIDER_KEY}:{D1}:b"
+
+
+# -- I5 (owner ruling 2026-10-21): archived and other-drive notes are edited through their drive_note: ref ----------
+
+async def _archived(env):
+    first = await env.service.set(U, ACC, "drive:a", TEXT, "contract", [], CHAT)
+    await env.notes.archive(U, first.note_id, archived_at=T, last_seen_at=T)
+    env.missing.add("a")                                  # the file is gone
+    return first
+
+
+async def _other_drive(env):
+    first = await env.service.set(U, ACC, "drive:a", TEXT, provenance=CHAT)
+    env.drive.connection.return_value = DriveConnection(connected=True, drive_id=D2)
+    return first
+
+
+async def test_set_on_an_archived_note_changes_it_without_the_drive_and_keeps_it_archived(env):
+    first = await _archived(env)
+    calls = env.graph_calls()
+    receipt = await env.service.set(U, ACC, first.note_ref, "Petya's final estimate", "", [], NEXT_TURN)
+    note = await env.notes.get(U, first.note_id)
+    assert (note.state, note.archived_at, note.text, note.doc_type, note.current_version) == (
+        "archived", T, "Petya's final estimate", "", 2)
+    assert note.binding.item_id == "a" and note.snapshot.path == "Docs/a.pdf"
+    assert (receipt.status, receipt.previous_text, receipt.ref) == ("archived", TEXT, "drive:a")
+    assert env.graph_calls() == calls and env.nudged() == [["a"]]      # no drive call, no nudge for a gone file
+
+
+async def test_undo_clear_and_erase_on_an_archived_note(env):
+    first = await _archived(env)
+    await env.service.set(U, ACC, first.note_ref, "changed", provenance=NEXT_TURN)
+    assert (await env.service.undo(U, ACC, first.note_ref, NoteProvenance(turn_id="t3"))).text == TEXT
+    assert (await env.notes.get(U, first.note_id)).state == "archived"
+    assert (await env.service.clear(U, ACC, first.note_ref, CHAT)).previous_text == TEXT
+    request = await env.service.request_erase(U, first.note_ref)
+    assert await env.service.erase(U, request.code) == 1 and (await env.notes.get(U, first.note_id)).erase_pending
+
+
+async def test_set_on_an_other_drive_note_keeps_its_binding_and_needs_no_drive(env):
+    first = await _other_drive(env)
+    calls = env.graph_calls()
+    receipt = await env.service.set(U, ACC, first.note_ref, "kept on drive one", provenance=NEXT_TURN)
+    note = await env.notes.get(U, first.note_id)
+    assert (note.state, note.binding.drive_id, note.text) == ("active", D1, "kept on drive one")
+    assert note.match_keys == ["i:onedrive:drive-1:a", "r:a"]
+    assert receipt.status == "other_drive" and env.graph_calls() == calls and env.nudged() == [["a"]]
+    env.drive.connection.return_value = DriveConnection(connected=False)      # also while disconnected
+    assert (await env.service.set(U, ACC, first.note_ref, "offline edit", provenance=CHAT)).version == 3
+
+
+async def test_undo_clear_and_erase_on_an_other_drive_note(env):
+    first = await _other_drive(env)
+    await env.service.set(U, ACC, first.note_ref, "changed", provenance=NEXT_TURN)
+    assert (await env.service.undo(U, ACC, first.note_ref, NoteProvenance(turn_id="t3"))).text == TEXT
+    assert (await env.service.clear(U, ACC, first.note_ref, CHAT)).action == "clear"
+    request = await env.service.request_erase(U, first.note_ref)
+    assert await env.service.erase(U, request.code) == 1
+
+
+async def test_a_new_note_for_a_gone_file_or_one_off_the_connected_drive_is_refused(env):
+    first = await _archived(env)
+    with pytest.raises(DriveNoteRefused) as info:                # the file is gone: no new note by its drive: ref
+        await env.service.set(U, ACC, "drive:a", "new words", provenance=NEXT_TURN)
+    assert refusal(info) == NoteRefusal.NOT_ON_DRIVE
+    env.missing.add("elsewhere")                                 # an item that is not on the connected drive
+    with pytest.raises(DriveNoteRefused) as info:
+        await env.service.set(U, ACC, "drive:elsewhere", "new", provenance=CHAT)
+    assert refusal(info) == NoteRefusal.NOT_ON_DRIVE
+    assert await env.notes.count(U) == 1 and (await env.notes.get(U, first.note_id)).text == TEXT
+
+
+async def test_set_by_a_note_ref_of_a_cleared_archived_note_brings_it_back_archived(env):
+    first = await _archived(env)
+    await env.service.clear(U, ACC, first.note_ref, CHAT)
+    await env.service.set(U, ACC, first.note_ref, "again", provenance=NEXT_TURN)
+    assert (await env.notes.get(U, first.note_id)).state == "archived"
+
+
+async def test_set_by_a_note_ref_that_does_not_exist_is_refused(env):
+    with pytest.raises(DriveNoteRefused) as info:
+        await env.service.set(U, ACC, "drive_note:nothing", TEXT, provenance=CHAT)
+    assert refusal(info) == NoteRefusal.NO_NOTE

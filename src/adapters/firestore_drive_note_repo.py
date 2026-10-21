@@ -12,9 +12,11 @@ The layout copies the skills store: a note's current state is one document read,
 only parent documents are queried (the versions need no composite). Durable (D3): no purge touches this collection.
 
 Writes: `write_version` is one transaction (§4.4 step 5) that reads the parent first and raises DriveNoteConflict unless
-its `current_version` (0 when missing or a stub) is the expected one — a first write therefore needs the document not to
-exist; the precondition and the writes see the same snapshot, and Firestore retries the function on contention, which
-re-reads. Lifecycle updates (archive, re-activation, snapshot, vector) are transactions on the parent alone; erase is one
+its `current_version` (0 when missing or a stub) is the expected one AND its `revision` is the one the caller read — a
+first write therefore needs the document not to exist, and any parent write in between (a lifecycle write included)
+fails it; the precondition and the writes see the same snapshot, and Firestore retries the function on contention,
+which re-reads. Every parent write sets `revision` to the stored one + 1. Lifecycle updates (archive, re-activation,
+snapshot, vector) are transactions on the parent alone; erase is one
 transaction per note that deletes `v1`..`v{current_version}` by name and writes the stub last.
 
 Queries (composites in config/firestore.indexes.json, §3.5): `match_keys` array-contains[-any] (1); (`updated_at`,
@@ -23,7 +25,8 @@ the kNN on `note_vector` needs the vector index of §3.5 item 6 (S3's script). R
 but `note_vector`, which only the vector repair reads.
 
 Errors: Firestore's transient errors and a missing composite index leave every public method as
-DriveIndexStoreUnavailable (`_store_errors`); DriveNoteConflict and ValueError keep their type. Datetimes come back as
+DriveIndexStoreUnavailable (`_store_errors`); DriveNoteConflict and ValueError keep their type, and the client's
+ValueError when contention outlasts its transaction retries becomes DriveNoteConflict (`_run`). Datetimes come back as
 plain tz-aware UTC datetimes, never DatetimeWithNanoseconds.
 """
 from __future__ import annotations
@@ -31,7 +34,7 @@ from __future__ import annotations
 import functools
 import inspect
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from google.api_core.exceptions import (
     Aborted, DeadlineExceeded, FailedPrecondition, InternalServerError, ResourceExhausted, ServiceUnavailable,
@@ -40,18 +43,20 @@ from google.cloud import firestore
 from google.cloud.firestore import FieldFilter
 from google.cloud.firestore_v1.base_vector_query import DistanceMeasure
 from google.cloud.firestore_v1.vector import Vector
+from pydantic import ValidationError
 
 from ..config.environment import EnvironmentConfig
 from ..domain.drive_index import DriveIndexStoreUnavailable
 from ..domain.drive_note import (
     VERSIONS_SUBCOLLECTION, BoundBy, DriveNote, DriveNoteConflict, DriveNoteVersion, NoteSnapshot, NoteState,
-    erase_stub, note_doc_id,
+    erase_stub, indexer_writer, note_doc_id,
 )
 from ..ports.drive_note_repository import DriveNoteRepository
 from ..utils.logger import logger
 
 IN_VALUES_MAX = 30                     # Firestore's limit on the values of one array-contains-any
 TRANSACTION_WRITES_MAX = 500           # Firestore's limit on the writes of one transaction or batch
+ERASE_ATTEMPTS = 5                     # passes of one note's erase while concurrent writes keep moving its history
 _GET_BATCH = 300                       # documents per get_all
 NOTE_VECTOR = "note_vector"
 NOTE_DISTANCE = "note_distance"
@@ -86,7 +91,7 @@ def note_to_doc(note: DriveNote) -> Dict[str, Any]:
     return data
 
 
-STUB_FIELDS: Tuple[str, ...] = ("note_id", "user_id", "account_id", "state", "erase_pending", "match_keys")
+STUB_FIELDS: Tuple[str, ...] = ("note_id", "user_id", "account_id", "state", "erase_pending", "match_keys", "revision")
 
 
 def stub_to_doc(stub: DriveNote) -> Dict[str, Any]:
@@ -201,24 +206,29 @@ class FirestoreDriveNoteRepository(DriveNoteRepository):
         ref = self._ref(note.user_id, note.note_id)
         new_ref = self._version_ref(note.user_id, note.note_id, version.version)
         closing = self._version_ref(note.user_id, note.note_id, expected_version) if expected_version else None
-        data = {**note_to_doc(note), "updated_at": firestore.SERVER_TIMESTAMP}
+        data = {**note_to_doc(note), "revision": note.revision + 1, "updated_at": firestore.SERVER_TIMESTAMP}
         version_data = version_to_doc(version)
 
         @firestore.async_transactional
         async def _write(transaction: Any) -> None:
+            # Reads first (Firestore's transaction rule): the parent and the version to close.
             snap = await ref.get(transaction=transaction)
             stored = snap.to_dict() if snap.exists else None
+            previous = await closing.get(transaction=transaction) if closing is not None else None
             if stored is not None and not self._own(note.user_id, stored):
                 raise DriveNoteConflict(f"note {note.note_id}: the document belongs to another user")
             current = int((stored or {}).get("current_version") or 0)
             if current != expected_version:
                 raise DriveNoteConflict(f"note {note.note_id}: stored version {current}, expected {expected_version}")
-            if closing is not None:
+            revision = int((stored or {}).get("revision") or 0)
+            if revision != note.revision:
+                raise DriveNoteConflict(f"note {note.note_id}: stored revision {revision}, read {note.revision}")
+            if previous is not None and previous.exists:     # a missing version is tolerated, as in memory
                 transaction.update(closing, {"valid_to": version.valid_from, "is_current": False})
             transaction.set(new_ref, version_data)
             transaction.set(ref, data)
 
-        await _write(self._db.transaction())
+        await _run(_write, self._db.transaction(), note.note_id)
 
     # -- the tick and the deleted-files search -----------------------------------------------------------------------
 
@@ -266,7 +276,8 @@ class FirestoreDriveNoteRepository(DriveNoteRepository):
 
     async def _update_parent(self, user_id: str, note_id: str,
                              change: Callable[[DriveNote], Optional[Dict[str, Any]]]) -> bool:
-        """One transaction on the parent: `change(note)` gives the fields to update, or None to leave it."""
+        """One transaction on the parent: `change(note)` gives the fields to update, or None to leave it. Every update
+        bumps `revision` and `updated_at` and stamps `last_writer` = indexer (lifecycle writes are the tick's)."""
         ref = self._ref(user_id, note_id)
 
         @firestore.async_transactional
@@ -278,18 +289,25 @@ class FirestoreDriveNoteRepository(DriveNoteRepository):
             fields = change(note_from_doc(stored))
             if fields is None:
                 return False
-            transaction.update(ref, {**fields, "updated_at": firestore.SERVER_TIMESTAMP})
+            transaction.update(ref, {**fields, "last_writer": indexer_writer().model_dump(),
+                                     "revision": int(stored.get("revision") or 0) + 1,
+                                     "updated_at": firestore.SERVER_TIMESTAMP})
             return True
 
-        return bool(await _update(self._db.transaction()))
+        return bool(await _run(_update, self._db.transaction(), note_id))
 
     async def archive(self, user_id: str, note_id: str, *, archived_at: datetime, last_seen_at: Optional[datetime],
                       snapshot: Optional[NoteSnapshot] = None) -> bool:
         def change(note: DriveNote) -> Optional[Dict[str, Any]]:
-            if note.state != NoteState.ACTIVE.value or note.erase_pending:
+            if note.erase_pending:
                 return None
-            fields: Dict[str, Any] = {"state": NoteState.ARCHIVED.value, "archived_at": archived_at,
-                                      "last_seen_at": last_seen_at}
+            if note.state == NoteState.ACTIVE.value:
+                fields: Dict[str, Any] = {"state": NoteState.ARCHIVED.value}
+            elif note.state == NoteState.CLEARED.value and note.archived_at is None:
+                fields = {}                                   # stamped, state kept (P4)
+            else:
+                return None
+            fields.update({"archived_at": archived_at, "last_seen_at": last_seen_at})
             if snapshot is not None:
                 fields["snapshot"] = snapshot.model_dump()
             return fields
@@ -297,10 +315,14 @@ class FirestoreDriveNoteRepository(DriveNoteRepository):
 
     async def reactivate(self, user_id: str, note_id: str, *, bound_at: datetime) -> bool:
         def change(note: DriveNote) -> Optional[Dict[str, Any]]:
-            if note.state != NoteState.ARCHIVED.value or note.binding is None:
+            if note.erase_pending:
                 return None
-            binding = note.binding.model_copy(update={"bound_by": BoundBy.RESTORE.value, "bound_at": bound_at})
-            return {"state": NoteState.ACTIVE.value, "archived_at": None, "binding": binding.model_dump()}
+            if note.state == NoteState.ARCHIVED.value and note.binding is not None:
+                binding = note.binding.model_copy(update={"bound_by": BoundBy.RESTORE.value, "bound_at": bound_at})
+                return {"state": NoteState.ACTIVE.value, "archived_at": None, "binding": binding.model_dump()}
+            if note.state == NoteState.CLEARED.value and note.archived_at is not None:
+                return {"archived_at": None}
+            return None
         return await self._update_parent(user_id, note_id, change)
 
     async def refresh_snapshot(self, user_id: str, note_id: str, snapshot: NoteSnapshot) -> bool:
@@ -308,9 +330,11 @@ class FirestoreDriveNoteRepository(DriveNoteRepository):
             return None if note.erase_pending else {"snapshot": snapshot.model_dump()}
         return await self._update_parent(user_id, note_id, change)
 
-    async def set_vector(self, user_id: str, note_id: str, vector: Sequence[float], embedding_space: str) -> bool:
+    async def set_vector(self, user_id: str, note_id: str, vector: Sequence[float], embedding_space: str, *,
+                         expected_version: int) -> bool:
         def change(note: DriveNote) -> Optional[Dict[str, Any]]:
-            if note.erase_pending or note.state == NoteState.CLEARED.value:
+            if (note.erase_pending or note.state == NoteState.CLEARED.value
+                    or note.current_version != expected_version):
                 return None
             return {NOTE_VECTOR: Vector([float(x) for x in vector]), "embedding_space": embedding_space,
                     "embedding_pending": False}
@@ -320,33 +344,40 @@ class FirestoreDriveNoteRepository(DriveNoteRepository):
 
     async def _erase_one(self, user_id: str, note_id: str) -> bool:
         ref = self._ref(user_id, note_id)
-        snap = await ref.get()
-        stored = snap.to_dict() if snap.exists else None
-        if stored is None or not self._own(user_id, stored):
-            return False
-        current = int(stored.get("current_version") or 0)
         in_transaction = TRANSACTION_WRITES_MAX - 1                   # the stub takes one write
-        oldest = list(range(1, max(current - in_transaction, 0) + 1))
-        for part in _chunks(oldest, TRANSACTION_WRITES_MAX):         # a long history: its oldest versions go first
-            batch = self._db.batch()
-            for v in part:
-                batch.delete(self._version_ref(user_id, note_id, v))
-            await batch.commit()
-
-        @firestore.async_transactional
-        async def _stub(transaction: Any) -> bool:
-            fresh = await ref.get(transaction=transaction)
-            data = fresh.to_dict() if fresh.exists else None
-            if data is None or not self._own(user_id, data):
+        for _ in range(ERASE_ATTEMPTS):
+            snap = await ref.get()
+            stored = snap.to_dict() if snap.exists else None
+            if stored is None or not self._own(user_id, stored):
                 return False
-            note = note_from_doc(data)
-            first = max(note.current_version - in_transaction, 0) + 1
-            for v in range(first, note.current_version + 1):
-                transaction.delete(self._version_ref(user_id, note_id, v))
-            transaction.set(ref, {**stub_to_doc(erase_stub(note)), "updated_at": firestore.SERVER_TIMESTAMP})
-            return True
+            current = int(stored.get("current_version") or 0)
+            oldest = list(range(1, max(current - in_transaction, 0) + 1))
+            for part in _chunks(oldest, TRANSACTION_WRITES_MAX):     # a long history: its oldest versions go first
+                batch = self._db.batch()
+                for v in part:
+                    batch.delete(self._version_ref(user_id, note_id, v))
+                await batch.commit()
 
-        return bool(await _stub(self._db.transaction()))
+            @firestore.async_transactional
+            async def _stub(transaction: Any) -> Optional[bool]:
+                fresh = await ref.get(transaction=transaction)
+                data = fresh.to_dict() if fresh.exists else None
+                if data is None or not self._own(user_id, data):
+                    return False
+                note = note_from_doc(data)
+                if note.current_version > current and note.current_version > in_transaction:
+                    return None                               # a write landed since the batches: redo them
+                for v in range(1, note.current_version + 1)[-in_transaction:]:
+                    transaction.delete(self._version_ref(user_id, note_id, v))
+                transaction.set(ref, {**stub_to_doc(erase_stub(note)), "revision": note.revision + 1,
+                                      "updated_at": firestore.SERVER_TIMESTAMP})
+                return True
+
+            done = await _run(_stub, self._db.transaction(), note_id)
+            if done is not None:
+                return bool(done)
+        logger.warning(f"[DriveNote] erase of {note_id} kept moving under concurrent writes; refused")
+        raise DriveNoteConflict(f"note {note_id}: its history kept changing during the erase")
 
     async def erase(self, user_id: str, note_ids: Sequence[str]) -> int:
         erased = 0
@@ -367,7 +398,19 @@ class FirestoreDriveNoteRepository(DriveNoteRepository):
             transaction.delete(ref)
             return True
 
-        return bool(await _delete(self._db.transaction()))
+        return bool(await _run(_delete, self._db.transaction(), note_id))
+
+
+async def _run(function: Callable[[Any], Awaitable[Any]], transaction: Any, note_id: str) -> Any:
+    """Run a transactional function. When contention outlasts Firestore's own retries the client raises a plain
+    ValueError ("Failed to commit transaction in N attempts"): that is a conflict for the caller, not a crash."""
+    try:
+        return await function(transaction)
+    except ValidationError:
+        raise                                      # a corrupt document is not contention
+    except ValueError as exc:
+        logger.warning(f"[DriveNote] transaction on {note_id} gave up under contention: {exc}")
+        raise DriveNoteConflict(f"note {note_id}: contention outlasted the transaction's retries") from exc
 
 
 # Transient on Firestore's side: the same call may succeed later. A query whose composite index is missing or still
