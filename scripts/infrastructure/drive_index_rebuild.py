@@ -14,6 +14,13 @@ A state that already carries the migration gate key (`MIGRATION_GATE_KEY`) was r
 `--apply` skips it (a repeated `--all-users --apply` does not purge a freshly rebuilt index), unless `--force`; the
 dry run says which states would be skipped. `--force` is the answer to "the index looks wrong" on a current index.
 
+A rebuild KEEPS the stored transcripts (RFC §27.8 b, §27.15): `--apply` sets `DriveSyncState.purge_keep_transcripts` in the
+same lease-held write as `purging`, so the purge deletes the transcript jobs, batches and window documents (releasing or
+booking their reservations) but not the paid-for transcript store, and a full rebuild never re-buys audio. The flag is
+read by the purge at each of its steps and dies with the sync state when the purge ends. `--drop-transcripts` clears it
+(a purge that also deletes the store). The write is verified by a read-back; a purge that is ALREADY running without the
+flag gets it set too (under the lease), but its first steps may have run already: the message says so.
+
 Dry run by default: says what it would do and writes nothing. With --apply it takes the user's lease (refused while a
 tick runs: retry in a few minutes), writes under it and releases it. After a rebuild, the next tick — the fan-out's,
 within TICK_INTERVAL, or a continuation already queued — purges and re-onboards the drive.
@@ -22,6 +29,7 @@ Usage (project and credentials from the environment / ADC, collections from APP_
     python scripts/infrastructure/drive_index_rebuild.py --user <user_id> [--apply]
     python scripts/infrastructure/drive_index_rebuild.py --all-users [--apply]
     python scripts/infrastructure/drive_index_rebuild.py --user <user_id> --force [--apply]
+    python scripts/infrastructure/drive_index_rebuild.py --user <user_id> --drop-transcripts [--apply]
     python scripts/infrastructure/drive_index_rebuild.py --user <user_id> --hints-only [--apply]
     python scripts/infrastructure/drive_index_rebuild.py --all-users --hints-only [--apply]
 Exit code: 0 when marked (or a dry run, or a purge already running), 1 when nothing is stored or the lease is busy
@@ -57,27 +65,54 @@ def _already_rebuilt(applied: object) -> bool:
 
 
 async def rebuild(repo: DriveIndexRepository, user_id: str, *, apply: bool, now: datetime,
-                  owner: str, force: bool = False) -> Tuple[int, str]:
-    """Returns (exit code, message). A state already carrying the gate key is skipped (exit 0) unless `force`."""
+                  owner: str, force: bool = False, keep_transcripts: bool = True) -> Tuple[int, str]:
+    """Returns (exit code, message). A state already carrying the gate key is skipped (exit 0) unless `force`.
+    `keep_transcripts` (default) sets `purge_keep_transcripts` with `purging`, in one write under the lease (§27.8 b)."""
     state = await repo.get_sync_state(user_id)
     if state is None:
         return 1, "no sync state: nothing is indexed for this user"
     if state.purging:
-        return 0, "a purge is already running; the next tick finishes it and starts epoch 1"
+        if not keep_transcripts and state.purge_keep_transcripts:
+            return 1, ("a purge is already running in keep-transcripts mode; its mode cannot be changed from here "
+                       "(let it finish, then rebuild again with --drop-transcripts)")
+        if not (keep_transcripts and not state.purge_keep_transcripts):
+            return 0, "a purge is already running; the next tick finishes it and starts epoch 1"
+        if not apply:
+            return 0, ("dry run: a purge is already running WITHOUT the keep-transcripts flag; --apply would set it "
+                       "(the purge's first steps may have run already)")
+        return await _set_flags(repo, user_id, now=now, owner=owner, keep=True, running=True)
     if _already_rebuilt(state.applied_versions) and not force:
         skipped = "already rebuilt under the current index versions (gate key present); pass --force to rebuild it anyway"
         return 0, (f"dry run: would skip, {skipped}" if not apply else f"skipped: {skipped}")
     if not apply:
-        return 0, (f"dry run: would mark the index purging (epoch {state.epoch}, counters {dict(state.counters)})"
+        keeps = "keeping the stored transcripts" if keep_transcripts else "deleting the stored transcripts too"
+        return 0, (f"dry run: would mark the index purging (epoch {state.epoch}, counters {dict(state.counters)}), {keeps}"
                    f"{_v1_note(state.applied_versions)}; re-run with --apply")
+    return await _set_flags(repo, user_id, now=now, owner=owner, keep=keep_transcripts, running=False)
+
+
+async def _set_flags(repo: DriveIndexRepository, user_id: str, *, now: datetime, owner: str, keep: bool,
+                     running: bool) -> Tuple[int, str]:
+    """`purging` and `purge_keep_transcripts` in ONE save, built from the state the lease just returned (never from an
+    earlier read), then read back. The race Task 1 carried (a tick saving a state read before this flag was set) cannot
+    cross the lease: a tick that holds it makes this refuse (exit 1), and every tick save is by owner and fenced, so a
+    tick whose lease ran out writes nothing. What is left is verified, not assumed: a read-back that lacks either flag
+    exits 1 and says so."""
     lease = await repo.acquire_lease(user_id, owner, now, now + _HOLD, create=False)
     if lease is None:
         return 1, "a tick holds the lease (or the state just went away); retry in a few minutes"
     try:
-        await repo.save_sync_state(replace(lease, purging=True), owner)
+        await repo.save_sync_state(replace(lease, purging=True, purge_keep_transcripts=keep), owner)
+        after = await repo.get_sync_state(user_id)   # read back while the lease is still ours (M4)
     finally:
         await repo.release_lease(user_id, owner)
-    return 0, "marked purging: the next tick purges the index and rebuilds it from epoch 1"
+    if after is None or not after.purging or after.purge_keep_transcripts != keep:
+        return 1, "the purge flags did not stick (the state changed under the write); re-run, or check the state"
+    kept = "the stored transcripts are kept" if keep else "the stored transcripts are deleted with it"
+    if running:
+        return 0, (f"keep-transcripts flag set on the running purge; its first steps may have run already, so parts of "
+                    f"transcripts it already deleted may be orphaned (a later sweep removes them); {kept}")
+    return 0, f"marked purging: the next tick purges the index and rebuilds it from epoch 1; {kept}"
 
 
 async def _count_hints(repo: DriveIndexRepository, user_id: str) -> int:
@@ -117,12 +152,12 @@ async def delete_hints(repo: DriveIndexRepository, user_id: str, *, apply: bool,
 
 
 async def run(repo: DriveIndexRepository, user_ids: List[str], *, hints_only: bool, apply: bool,
-              now: datetime, force: bool = False) -> Tuple[int, List[str]]:
+              now: datetime, force: bool = False, keep_transcripts: bool = True) -> Tuple[int, List[str]]:
     """The step for each user, in order; the worst exit code and one line per user (prefixed when several)."""
     code, lines = 0, []
     step = delete_hints if hints_only else rebuild
     for user_id in user_ids:
-        extra = {} if hints_only else {"force": force}
+        extra = {} if hints_only else {"force": force, "keep_transcripts": keep_transcripts}
         user_code, message = await step(repo, user_id, apply=apply, now=now, owner=f"rebuild-{uuid.uuid4().hex}",
                                         **extra)
         code = max(code, user_code)
@@ -130,7 +165,8 @@ async def run(repo: DriveIndexRepository, user_ids: List[str], *, hints_only: bo
     return code, lines
 
 
-async def _main(user_id: Optional[str], all_users: bool, hints_only: bool, apply: bool, force: bool = False) -> int:
+async def _main(user_id: Optional[str], all_users: bool, hints_only: bool, apply: bool, force: bool = False,
+                keep_transcripts: bool = True) -> int:
     from google.cloud import firestore
 
     from src.adapters.firestore_drive_index_repo import FirestoreDriveIndexRepository
@@ -140,7 +176,7 @@ async def _main(user_id: Optional[str], all_users: bool, hints_only: bool, apply
     db = firestore.AsyncClient(project=os.getenv("GOOGLE_CLOUD_PROJECT") or None, database=env.firestore_database_id)
     repo = FirestoreDriveIndexRepository(db, env)
     users = sorted(await repo.list_sync_user_ids()) if all_users else [str(user_id)]
-    code, lines = await run(repo, users, hints_only=hints_only, apply=apply, force=force,
+    code, lines = await run(repo, users, hints_only=hints_only, apply=apply, force=force, keep_transcripts=keep_transcripts,
                           now=datetime.now(timezone.utc))
     for line in lines:
         print(line)
@@ -156,6 +192,9 @@ if __name__ == "__main__":
                         help="delete the user's hint documents only (Search v2 rollback, step 2)")
     parser.add_argument("--force", action="store_true",
                         help="rebuild a state that already carries the current versions (default: skipped)")
+    parser.add_argument("--drop-transcripts", action="store_true",
+                        help="the purge deletes the stored transcripts too (default: a rebuild keeps them, §27.8 b)")
     parser.add_argument("--apply", action="store_true", help="write (default: dry run)")
     args = parser.parse_args()
-    sys.exit(asyncio.run(_main(args.user, args.all_users, args.hints_only, args.apply, args.force)))
+    sys.exit(asyncio.run(_main(args.user, args.all_users, args.hints_only, args.apply, args.force,
+                                  not args.drop_transcripts)))
