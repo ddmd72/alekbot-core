@@ -5,12 +5,15 @@ import importlib.util
 from pathlib import Path
 
 import pytest
+from unittest.mock import AsyncMock, MagicMock
 
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.adapters.in_memory_drive_mirror_repo import InMemoryDriveMirrorRepository
 from src.domain.drive_mirror import (
     KIND_ARCHIVE, KIND_FILE, KIND_FOLDER, MIRROR_ACTIVE, MIRROR_ARCHIVED, MIRROR_DETACHED, MirrorDoc, MirrorRoot,
 )
+from src.domain.drive_enrichment import ModelUsageMonth
+from src.domain.drive_index import DriveIndexStoreUnavailable
 from src.domain.drive_transcript import StoredTranscript
 
 from tests.unit.services.drive_index_fakes import T0
@@ -161,3 +164,57 @@ def test_the_sweep_has_no_drive_port():
 async def test_the_module_defaults_to_a_dry_run(sweep):
     src = (_DIR / "drive_transcript_sweep.py").read_text()
     assert 'parser.add_argument("--apply", action="store_true"' in src and "--mirror" in src
+
+
+async def test_mirror_apply_is_refused_without_after_rollback(sweep):
+    index, mirror = await _world()
+    code, message = await sweep.sweep_user(index, "u", apply=True, now=T0, owner="s", mirror_repo=mirror, mirror=True,
+                                           root_deleter=_deleter(mirror))
+    assert code == 1 and "--after-rollback" in message and "_Transcripts" in message
+    assert _kept(index) == ["a", "b", "c"] and len(mirror.docs) == 4 and len(mirror.root_docs) == 1
+
+
+async def test_mirror_dry_run_needs_no_after_rollback(sweep):
+    index, mirror = await _world()
+    code, message = await sweep.sweep_user(index, "u", apply=False, now=T0, owner="s", mirror_repo=mirror, mirror=True,
+                                           root_deleter=_deleter(mirror))
+    assert code == 0 and "would delete 4 ledger documents" in message
+
+
+async def test_mirror_apply_with_after_rollback_runs(sweep):
+    index, mirror = await _world()
+    code, _ = await sweep.sweep_user(index, "u", apply=True, now=T0, owner="s", after_rollback=True, mirror_repo=mirror,
+                                     mirror=True, root_deleter=_deleter(mirror))
+    assert code == 0 and not mirror.docs and not mirror.root_docs and _kept(index) == []
+
+
+def test_help_and_docstring_state_the_precondition(sweep):
+    assert "BEFORE any T2 revision" in sweep.__doc__
+    src = (_DIR / "drive_transcript_sweep.py").read_text()
+    assert "--mirror --apply needs --after-rollback" in src
+
+
+async def test_pin_indexes_missing_exits_1_before_anything_is_settled(sweep):
+    index, mirror = await _world()
+    index.usage[("u", T0.strftime("%Y-%m"))] = ModelUsageMonth(transcribe_reserved_usd=1.5, transcribe_usd=2.0)
+
+    async def broken(user_id):
+        raise DriveIndexStoreUnavailable("index not ready")
+    mirror.pinned_keys = broken
+    for apply in (False, True):
+        code, message = await sweep.sweep_user(index, "u", apply=apply, now=T0, owner="s", after_rollback=True,
+                                               mirror_repo=mirror, root_deleter=_deleter(mirror))
+        assert code == 1 and "indexes" in message and "not READY" in message
+    assert index.usage[("u", T0.strftime("%Y-%m"))].transcribe_reserved_usd == 1.5 and _kept(index) == ["a", "b", "c"]
+
+
+async def test_firestore_root_deleter_deletes_the_roots_document(sweep):
+    from src.adapters.firestore_drive_mirror_repo import root_doc_id
+    db = MagicMock()
+    ref = db.collection.return_value.document.return_value
+    ref.delete = AsyncMock()
+    env = MagicMock(drive_mirror_roots_collection="pfx_drive_mirror_roots")
+    await sweep.firestore_root_deleter(db, env)("u", "d1")
+    db.collection.assert_called_once_with("pfx_drive_mirror_roots")
+    db.collection.return_value.document.assert_called_once_with(root_doc_id("u", "d1"))
+    ref.delete.assert_awaited_once()

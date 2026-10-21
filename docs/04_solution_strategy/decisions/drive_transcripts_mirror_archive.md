@@ -51,10 +51,10 @@ recordings (§27)"; T1 record [drive_transcripts_t1.md](drive_transcripts_t1.md)
   `READY` before the revision serves, or every purge and the owner's ticks stall as a store outage (Δ230).
 - **Re-enable cost.** About $0.16 per audio hour at the held price for every active transcript, newest first, under the $20 monthly cap (§27.9.12).
 - **Rollback.** Pause the queue and the fan-out, move `_Transcripts` out of the App Folder, deploy the old image, resume; reverse after the roll-forward. A T1
-  image loses the pins within 30 days (named residual). `drive_transcript_sweep.py` keeps the mirror's data unless `--mirror` (Δ229).
+  image loses the pins within 30 days (named residual). `drive_transcript_sweep.py` keeps the mirror's data unless `--mirror`; `--mirror --apply` also needs `--after-rollback` and the owner's prior removal of `_Transcripts` from the App Folder (Δ229).
 - **Residuals.** A restart forgets the root-setup hold; a folder moved out and not yet observed gets one write; a later orphan root folder is not reported;
   a persistent root-loss reset bug stalls that user's mirror; the audit writes one document per file per week (Δ222–Δ225).
-- **Owner steps** S3–S6 (indexes, deploy, live check, Cabinet texts). Task 21C-2 (Δ228) is built: `MirrorHost.stop_exceptions`, the opt-out raised as itself, `seed_version()` in the domain, a held mark for a `gone_pending` folder outside the root.
+- **Owner steps** S3–S6 (indexes, deploy, live check, Cabinet texts). Tasks 21C-2/21C-3 (Δ228) are built: `MirrorHost.stop_exceptions`, the opt-out raised as itself, `seed_version()` in the domain, no op for an empty move-back PATCH, and a blocked move-back of a document with a pending gone mark is charged with back-off (`charged_doc`, then `failed_at` + `MIRROR_FAILED_RETRY`), so a backed-off or parked mark takes no reserve.
 
 ## Rulings that shaped the build
 

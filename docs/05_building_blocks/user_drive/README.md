@@ -1942,8 +1942,8 @@ and index-time descriptions instead of query-time ranking. The full delta table 
   - *Logs.* The tick line carries `mirror={...}` (non-zero `mirror_created`, `_replaced`, `_moved`, `_archived`, `_restored`, `_detached`, `_pruned`, `_foreign`, `_failed`,
     `_errors`, `_quota_full`, `_no_drive_id`, `_ops`); the step logs its other counters on one `[DriveMirror]` line. No line carries a recording name, a path or a URL.
     `make fetch-logs-indexer K=300 && grep -E 'DriveMirror|mirror=' alek_debug_indexer.log`.
-  - *Status.* `scripts/infrastructure/drive_mirror_status.py --user <user_id>` (or `--all-users`) is read-only and writes a JSON report only under `scripts/memory/`:
-    ledger documents per kind and state, the pinned content keys, marks waiting (ripe and held), parked and backing-off documents, detached documents due for the weekly
+  - *Status.* `scripts/infrastructure/drive_mirror_status.py --user <user_id>` (or `--all-users`, which lists only users that still have a sync state: an opt-out deletes it and keeps the mirror, so name such a user with `--user`) is read-only and writes a JSON report only under `scripts/memory/`:
+    ledger documents per kind and state, the pinned content keys, marks waiting (ripe and not ripe yet), parked and backing-off documents, detached documents due for the weekly
     check, and per root the cursors (seed, scan, audit folder and page), clocks (`audited_at`, whether the audit is due), holds (`quota_hold_until`,
     `readme_blocked_at`, `readme_pending_at`), loss marks (`root_gone_at`, a reset under way) and `orphans_reported`. A store error (a missing index) is recorded in the report and the exit code is 1.
   - *The spike.* The Graph behaviour the step rests on was measured on the owner's App Folder on 2026-10-21 (RFC Δ216): `fail` on the simple PUT and on PATCH, the path-relative
@@ -1956,7 +1956,7 @@ and index-time descriptions instead of query-time ranking. The full delta table 
     roll-forward: pause, move the folder back, deploy, resume. A stray T2 tick in between only sets the root-loss mark, which the 24 h grace keeps from acting. A rollback to a
     **T1** image loses the pins (T1's orphan sweep deletes the pinned transcripts within 30 days): named residual.
   - *Sweep.* `scripts/infrastructure/drive_transcript_sweep.py --user <user_id> [--apply]` after a rollback to code that predates §27 keeps the root documents, the ledger and the
-    pinned store entries; `--mirror` deletes them all (dry run by default, `--apply` for humans only).
+    pinned store entries; `--mirror` deletes them all (dry run by default, `--apply` for humans only; `--mirror --apply` needs `--after-rollback`, and the owner must first delete or move `_Transcripts` out of the App Folder, or any T2 revision would index it).
 
 ### 7.1 Why was file X not indexed?
 

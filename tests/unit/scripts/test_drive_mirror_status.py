@@ -60,7 +60,7 @@ async def test_report_counts_states_marks_parked_pins_and_due(status, tmp_path):
     assert ledger["documents"] == 10
     assert ledger["per_kind_state"] == {"archive/active": 1, "file/active": 5, "file/archived": 1, "file/detached": 2,
                                         "folder/active": 1}
-    assert (ledger["marks_waiting"], ledger["marks_ripe"], ledger["marks_held"]) == (2, 1, 1)
+    assert (ledger["marks_waiting"], ledger["marks_ripe"], ledger["marks_not_ripe"]) == (2, 1, 1)
     assert ledger["parked"] == 1 and ledger["backing_off"] == 1 and ledger["detached_due"] == 1
 
 
