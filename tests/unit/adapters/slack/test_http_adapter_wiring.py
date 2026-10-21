@@ -2,9 +2,10 @@
 Wiring test for HTTPModeAdapter — verifies DI contract.
 
 Checks:
-- HTTPModeAdapter accepts session_store and dedup_store via constructor
+- HTTPModeAdapter accepts session_store via constructor and takes no dedup_store (S1b: the intake
+  names its Cloud Task instead of marking the event)
 - No direct Firestore adapter imports remain in http_adapter module
-- Constructor param types are port ABCs (SessionStore, DedupStore), not concrete Firestore classes
+- Constructor param types are port ABCs (SessionStore), not concrete Firestore classes
 """
 import inspect
 import pytest
@@ -12,7 +13,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 from src.adapters.slack import http_adapter as http_adapter_module
 from src.ports.session_store import SessionStore
-from src.ports.dedup_store import DedupStore
 
 
 class TestHTTPAdapterWiring:
@@ -32,8 +32,8 @@ class TestHTTPAdapterWiring:
         hints = HTTPModeAdapter.__init__.__annotations__
         assert hints.get("session_store") is SessionStore
 
-    def test_constructor_accepts_dedup_store_port(self):
-        """Constructor type annotation for dedup_store must be DedupStore port."""
+    def test_constructor_takes_no_dedup_store(self):
+        """S1b: the intake hands off through a named task (ALREADY_EXISTS = already queued), so the
+        adapter has no dedup store to consult; the parameter is gone from the constructor."""
         from src.adapters.slack.http_adapter import HTTPModeAdapter
-        hints = HTTPModeAdapter.__init__.__annotations__
-        assert hints.get("dedup_store") is DedupStore
+        assert "dedup_store" not in inspect.signature(HTTPModeAdapter.__init__).parameters
