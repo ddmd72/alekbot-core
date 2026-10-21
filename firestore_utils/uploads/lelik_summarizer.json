@@ -6,21 +6,22 @@
       "order": 10,
       "non_overridable": true
     },
+    "VOICE_PERSONA_LELIK": {
+      "order": 20
+    },
+    "VOICE_CARE_LELIK": {
+      "order": 25,
+      "non_overridable": true
+    },
+    "VOICE_TEMPERAMENT_LELIK": {
+      "order": 50
+    },
     "LANG_MIRROR": {
       "order": 300,
       "non_overridable": false
     },
-    "ARCHETYPE_INTELLECTUAL_SNIPER": {
-      "order": 20
-    },
-    "VIBE_BATTLE_WEARY": {
-      "order": 30
-    },
-    "VOICE_APHORISTIC": {
+    "VOICE_HUMOR_LELIK": {
       "order": 40
-    },
-    "HUMOR_PRESET_RANEVSKAYA": {
-      "order": 60
     }
   }
 }
