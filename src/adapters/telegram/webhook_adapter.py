@@ -156,7 +156,7 @@ class TelegramWebhookAdapter(PlatformPort):
             return jsonify({"error": str(e)}), 500
 
     async def handle_queued_update(self, payload: dict) -> tuple:
-        """Worker side of the hand-off. Dedup already ran at intake."""
+        """Worker side of the hand-off. The task is named and the worker claims it."""
         try:
             update = Update.de_json(payload.get("update") or {}, self.bot)
             if update and update.message:
