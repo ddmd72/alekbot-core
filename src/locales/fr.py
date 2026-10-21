@@ -140,6 +140,22 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.DRIVE_DELETE_FAILED.value: "⚠️ La suppression de {path} n'a pas abouti.",
     UIMessage.DRIVE_REPLACE_FAILED.value: "⚠️ Le remplacement de {path} n'a pas abouti.",
     UIMessage.DRIVE_MIRROR_WRITE_REFUSED.value: "Ce dossier est géré par le bot ; modifiez-le dans OneDrive.",
+    UIMessage.DRIVE_TRANSCRIPTS_README.value: (
+        "# Transcriptions\n\n"
+        "Géré par le bot : les fichiers ici peuvent être réécrits ; ne les modifiez pas. "
+        "Les transcriptions des enregistrements supprimés sont dans Archive/."
+    ),
+    UIMessage.DRIVE_TRANSCRIPT_OPEN_RECORDING.value: "ouvrir l'enregistrement",
+    UIMessage.DRIVE_TRANSCRIPT_MANAGED_LINE.value: (
+        "Géré par le bot : ce fichier peut être réécrit. Transcription automatique, des erreurs sont possibles."
+    ),
+    UIMessage.DRIVE_TRANSCRIPT_DURATION_MINUTES.value: "{n} min",
+    UIMessage.DRIVE_TRANSCRIPT_SPEAKERS_ONE.value: "{n} intervenant",
+    UIMessage.DRIVE_TRANSCRIPT_SPEAKERS_MANY.value: "{n} intervenants",
+    UIMessage.DRIVE_TRANSCRIPT_STUB_NO_SPEECH.value: "Aucune parole n'a été détectée dans cet enregistrement ({duration}).",
+    UIMessage.DRIVE_TRANSCRIPT_STUB_TOO_LONG.value: "Cet enregistrement est trop long pour être transcrit ({duration}).",
+    UIMessage.DRIVE_TRANSCRIPT_STUB_TOO_LARGE.value: "Cet enregistrement est trop volumineux pour être transcrit.",
+    UIMessage.DRIVE_TRANSCRIPT_STUB_NO_AUDIO.value: "Cet enregistrement n'a pas de piste audio.",
     UIMessage.DEEP_RESEARCH_DRIVE_FOLDER.value: "Recherches approfondies",
     UIMessage.DEEP_RESEARCH_DRIVE_COPIED.value: "📁 Copié sur ton disque : {path}",
     UIMessage.DEEP_RESEARCH_DRIVE_NOT_CONNECTED.value: "Non copié sur ton disque : le disque n'est pas connecté.",
