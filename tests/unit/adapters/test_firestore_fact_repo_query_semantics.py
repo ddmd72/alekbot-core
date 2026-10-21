@@ -68,3 +68,16 @@ async def test_vector_search_returns_current_facts_with_context_populated(store)
     assert [f.text for f in got] == ["has a dog named Rex"]
     assert got[0].context == "said while walking"
     assert got[0].state == FactState.CURRENT
+
+
+async def test_active_fact_projections_return_the_stored_last_updated(store):
+    stored = datetime(2025, 3, 4, 5, 6, 7, tzinfo=timezone.utc)
+    fact = _fact("runs every morning")
+    fact.last_updated = stored
+    await store.repo.add_fact(fact)
+
+    active = await store.repo.get_active_facts(ACC)
+    ordered = await store.repo.get_active_facts_ordered(ACC)
+
+    assert [f.last_updated for f in active] == [stored]
+    assert [f.last_updated for f in ordered] == [stored]
