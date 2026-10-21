@@ -168,7 +168,8 @@ def is_repurchase(window: JobWindow) -> bool:
     each counted on the window): every later submission of it is a new purchase, reserved at submit (T-R8) and carried
     by its batch (T-R11), so its cost is booked in the batch's month. A window resubmitted only because its batch failed
     whole is not one: nothing was bought, and the file's reservation still covers it (G39)."""
-    return window.attempts > 0 or window.time_resubmits > 0 or window.interp_resubmits > 0
+    return window.attempts > 0 or window.time_resubmits > 0 or window.interp_resubmits > 0 \
+        or window.coverage_resubmits > 0
 
 
 def interpolated_share(spec: WindowSpec, transcript: WindowTranscript) -> float:

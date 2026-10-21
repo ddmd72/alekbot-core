@@ -145,6 +145,9 @@ class WindowResult:
     ctx: TranscriptContext
 
 
+FINISH_STOP = "STOP"   # the provider's clean finish (T-R27)
+
+
 class WindowCheck(str, Enum):
     """Why a collected window answer is not usable (G37)."""
     INVALID = "invalid"              # request error, invalid JSON, an unparseable stamp (`parse_stamp` ValueError)
@@ -466,8 +469,9 @@ def state_for_job(job: TranscriptJob) -> str:
     return WORKING
 
 
-def window_failed(window: JobWindow, check: WindowCheck, ctx: TranscriptContext) -> WindowResult:
-    """G37, per check as §27.5/§27.6 word them. `INVALID` and `COVERAGE`: MAX_ATTEMPTS answers, then a gap marker (the
+def window_failed(window: JobWindow, check: WindowCheck, ctx: TranscriptContext,
+                  finish_reason: str = "") -> WindowResult:
+    """G37, per check as §27.5/§27.6 word them. `INVALID`: MAX_ATTEMPTS answers, then a gap marker (the
     declared choice, so one bad window does not fail a long file). `TIME`: one resubmit, then the gap marker.
     `INTERPOLATION`: one resubmit, then accepted with `~` stamps. `REFUSED`: a gap marker at once. A model stamp that
     `parse_stamp` rejects (ValueError) is `INVALID`, never a crash.
@@ -478,9 +482,16 @@ def window_failed(window: JobWindow, check: WindowCheck, ctx: TranscriptContext)
     file's ORIGINAL reservation stays held for as long as any window of the file is in flight (it is released only when
     the file settles, fails or is abandoned). On the wake-up the plan returns the record to `working` (never `ready`: that
     would reserve the whole file again), and the caller reserves only the parked window with `resume_window`.
+    `COVERAGE` (T-R27): a short answer that finished cleanly (`finish_reason` STOP) is resubmitted ONCE, uncharged
+    (`coverage_resubmits`); if the second is short again and also STOP, the audio ends in silence: ACCEPT. A short answer
+    that did not finish cleanly (MAX_TOKENS, none) keeps the MAX_ATTEMPTS rule.
     A resubmitted window goes back to `uploaded`."""
     if check is WindowCheck.REFUSED:
         return WindowResult(replace(window, state="done", gap=True), WindowAction.GAP, None, ctx)
+    if check is WindowCheck.COVERAGE and finish_reason == FINISH_STOP:
+        if window.coverage_resubmits < 1:
+            return _resubmit(replace(window, coverage_resubmits=window.coverage_resubmits + 1, state="uploaded"), ctx)
+        return WindowResult(replace(window, state="done"), WindowAction.ACCEPT, None, ctx)
     if check in (WindowCheck.INVALID, WindowCheck.COVERAGE):
         attempts = window.attempts + 1
         if attempts >= MAX_ATTEMPTS:

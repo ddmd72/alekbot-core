@@ -86,8 +86,10 @@ class DriveTranscriptRunner:
         try:
             transcript = self._agent.parse(result.text)
         except DriveOutputInvalid:
-            return WindowResult(key=key, outcome=WindowOutcome.INVALID, usd=usd, billed=billed)
-        return WindowResult(key=key, outcome=WindowOutcome.OK, transcript=transcript, usd=usd, billed=billed)
+            return WindowResult(key=key, outcome=WindowOutcome.INVALID, usd=usd, billed=billed,
+                                finish_reason=result.finish_reason)
+        return WindowResult(key=key, outcome=WindowOutcome.OK, transcript=transcript, usd=usd, billed=billed,
+                            finish_reason=result.finish_reason)
 
     async def _bill(self, account_id: str, result: BatchResult, *, write: bool = True) -> Tuple[float, bool]:
         """(priced cost, whether the account write succeeded). The cost is independent of the write; the write is a

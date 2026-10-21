@@ -950,9 +950,10 @@ class DriveTranscriptStage:
             if check is None:
                 _inc(summary, "windows_done")
                 return replace(window, state=DONE, batch_name=""), result.transcript
-            decided = self._window_failed(window, check, now, summary)
+            decided = self._window_failed(window, check, now, summary, result.finish_reason)
             if decided.action is WindowAction.ACCEPT:
-                _inc(summary, "windows_accepted_interpolated")
+                _inc(summary, "windows_accepted_short" if check is WindowCheck.COVERAGE
+                     else "windows_accepted_interpolated")
                 return replace(decided.window, batch_name=""), result.transcript
             return replace(decided.window, batch_name=""), None
         if result.outcome is WindowOutcome.REFUSED:
@@ -972,11 +973,12 @@ class DriveTranscriptStage:
         return out, None
 
     def _window_failed(self, window: JobWindow, check: WindowCheck, now: datetime,
-                       summary: Dict[str, int]) -> WindowDecision:
+                       summary: Dict[str, int], finish_reason: str = "") -> WindowDecision:
         """`window_failed` on a context that always fits: only the window it returns is used. The re-purchase is
         reserved by stage A when it submits the window (`resume_window`, T-R8), never a second time here."""
         decided = window_failed(window, check, TranscriptContext(now=now, enabled=True, month_usd=0.0,
-                                                                 reserved_usd=0.0, cap_usd=math.inf))
+                                                                 reserved_usd=0.0, cap_usd=math.inf),
+                                finish_reason)
         _inc(summary, f"windows_{check.value}")
         if decided.action is WindowAction.GAP:
             _inc(summary, "windows_gap")

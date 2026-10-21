@@ -387,7 +387,8 @@ def _window_to_doc(window: JobWindow) -> Dict[str, Any]:
     return {"index": window.spec.index, "start_s": window.spec.start_s, "duration_s": window.spec.duration_s,
             "state": window.state, "file_ref": window.file_ref, "request_key": window.request_key,
             "attempts": window.attempts, "time_resubmits": window.time_resubmits,
-            "interp_resubmits": window.interp_resubmits, "gap": window.gap, "batch_name": window.batch_name,
+            "interp_resubmits": window.interp_resubmits,
+            "coverage_resubmits": window.coverage_resubmits, "gap": window.gap, "batch_name": window.batch_name,
             "files_expire_at": window.files_expire_at, "reupload_used": window.reupload_used,
             "batch_resubmits": window.batch_resubmits, "refused": window.refused}
 
@@ -402,6 +403,7 @@ def _window_from_doc(data: Mapping[str, Any]) -> JobWindow:
         state=data.get("state", "extracted"), file_ref=data.get("file_ref", ""),
         request_key=data.get("request_key", ""), attempts=int(data.get("attempts", 0)),
         time_resubmits=int(data.get("time_resubmits", 0)), interp_resubmits=int(data.get("interp_resubmits", 0)),
+        coverage_resubmits=int(data.get("coverage_resubmits", 0)),
         gap=bool(data.get("gap", False)), batch_name=data.get("batch_name", ""),
         files_expire_at=_dt(data.get("files_expire_at")), reupload_used=bool(data.get("reupload_used", False)),
         batch_resubmits=int(data.get("batch_resubmits", 0)), refused=bool(data.get("refused", False)))
