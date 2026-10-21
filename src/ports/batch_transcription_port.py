@@ -34,7 +34,9 @@ class BatchTranscriptionPort(ABC):
 
     @abstractmethod
     async def collect(self, batch: BatchRef) -> Mapping[str, BatchResult]:
-        """The results of a succeeded job, one per request key (a missing or mismatched answer is an error result)."""
+        """The results of a succeeded job, one per request key (a missing or mismatched answer is an error result).
+        Call it only after `poll` returned SUCCEEDED: a job in any other state, or a `batch` without `keys`, raises
+        ValueError (a caller bug, not an outage). A per-response error never raises; it is that key's result."""
 
     @abstractmethod
     async def delete_file(self, ref: FileRef) -> None:
