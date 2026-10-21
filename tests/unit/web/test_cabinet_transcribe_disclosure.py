@@ -60,7 +60,7 @@ def _app(flag):
 async def test_status_returns_the_flag(flag):
     async with _app(flag).test_client() as client:
         body = await (await client.get("/api/drive/status", headers={"Authorization": "Bearer token"})).get_json()
-    assert body["indexing"].get("transcribe_enabled", False) is flag
+    assert body["indexing"]["transcribe_enabled"] is flag
 
 
 def test_flag_defaults_off():
