@@ -121,6 +121,15 @@ class OpenAIDeepResearchAdapter(DeepResearchPort):
         logger.info("[DeepResearch][openai] Job submitted: %s", response.id[:16])
         return response.id
 
+    async def fetch_response(self, job_id: str) -> dict:
+        """Webhook events carry only the id; metadata and output come from the response."""
+        response = await self._client.responses.retrieve(job_id)
+        return {
+            "metadata": dict(response.metadata or {}),
+            "output_text": response.output_text or "",
+            "model": getattr(response, "model", "") or "",
+        }
+
     async def get_status(self, job_id: str) -> tuple[str, str]:
         """
         Poll job status — emergency fallback only. Primary delivery is webhook.

@@ -34,7 +34,7 @@ import hmac
 import json
 import os
 import time
-from typing import Optional, TYPE_CHECKING
+from typing import Any, Awaitable, Callable, Dict, Optional, TYPE_CHECKING
 
 from quart import Blueprint, request, jsonify
 
@@ -58,6 +58,7 @@ def create_deep_research_webhooks_blueprint(
     task_queue: Optional[TaskDispatchService] = None,
     prompt_content_store: Optional[PromptContentStore] = None,
     link_service: Optional["FileLinkService"] = None,
+    fetch_response: Optional[Callable[[str], Awaitable[Dict[str, Any]]]] = None,
 ) -> Blueprint:
     """
     Create Quart Blueprint for OpenAI Deep Research webhook delivery.
@@ -69,6 +70,9 @@ def create_deep_research_webhooks_blueprint(
         media_storage:        Optional GCS adapter for uploading round1/round2/meta.json
                               artifacts. None = skip artifact uploads (HTML report still
                               delivered via task_queue).
+        fetch_response:       Retrieves the full response object by id. OpenAI webhook events
+                              carry only data.id (no metadata, no output), so the handler
+                              fetches the rest. None = read the event body as-is.
     """
     blueprint = Blueprint("deep_research_webhooks", __name__)
 
@@ -156,6 +160,14 @@ def create_deep_research_webhooks_blueprint(
         event_type   = data.get("type", "")
         response_obj = data.get("data", {})
 
+        # The event itself carries only data.id — metadata and output come from the response.
+        if fetch_response is not None and response_obj.get("id") and not response_obj.get("metadata"):
+            try:
+                response_obj = {**response_obj, **(await fetch_response(response_obj["id"]))}
+            except Exception as exc:
+                logger.error("[DeepResearchWebhook] Response retrieval failed: %s", exc, exc_info=True)
+                return jsonify({"error": "retrieval failed"}), 500  # non-2xx: OpenAI redelivers
+
         metadata   = response_obj.get("metadata") or {}
         user_id    = metadata.get("user_id", "")
         account_id = metadata.get("account_id", "")
@@ -163,6 +175,9 @@ def create_deep_research_webhooks_blueprint(
         session_id = metadata.get("session_id", "")
         origin_platform = metadata.get("origin_platform") or None  # absent on pre-deploy jobs
         job_id     = response_obj.get("id", "unknown")
+        # Channel from the per-channel session_id ("user_id:channel_id"), so every outcome
+        # (report, failure, cancellation) reaches the channel that started the research.
+        origin_channel_id = session_id.split(":", 1)[1] if ":" in session_id else None
 
         logger.info(
             "[DeepResearchWebhook] Received event=%s job=%s user=%s",
@@ -201,11 +216,6 @@ def create_deep_research_webhooks_blueprint(
                     job_id=job_id,
                 )
 
-            # Derive invocation channel from per-channel session_id (format: "user_id:channel_id")
-            # so the report delivers to the channel that started the research, not the user's
-            # primary/last-active channel. Mirrors Gemini polling path.
-            origin_channel_id = session_id.split(":", 1)[1] if ":" in session_id else None
-
             await deliver_deep_research(
                 result_text=output_text,
                 user_id=user_id,
@@ -230,6 +240,8 @@ def create_deep_research_webhooks_blueprint(
                 user_id=user_id,
                 account_id=account_id,
                 system_alert="Deep research did not complete — the AI provider returned an error.",
+                channel_id_override=origin_channel_id,
+                platform_override=origin_platform,
             )
             return jsonify({"ok": True}), 200
 
@@ -240,6 +252,8 @@ def create_deep_research_webhooks_blueprint(
                 user_id=user_id,
                 account_id=account_id,
                 system_alert="Deep research was cancelled before completing.",
+                channel_id_override=origin_channel_id,
+                platform_override=origin_platform,
             )
             return jsonify({"ok": True}), 200
 

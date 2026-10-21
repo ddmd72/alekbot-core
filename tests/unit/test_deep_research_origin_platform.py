@@ -151,3 +151,86 @@ class TestWebhookPlatform:
         kw = await self._post({"user_id": "u", "account_id": "a", "query": "q",
                                "session_id": "u:C1", **md_extra})
         assert kw["platform_override"] is None
+
+
+# --- failure / cancellation events and event-carries-only-id ---------------
+
+class TestWebhookFailureAndRetrieval:
+    async def _post_event(self, event_type, data, fetch_response=None):
+        notification = AsyncMock()
+        app = Quart("t")
+        app.register_blueprint(create_deep_research_webhooks_blueprint(
+            notification_service=notification, webhook_secret=None,
+            media_storage=MagicMock(), task_queue=AsyncMock(), fetch_response=fetch_response))
+        with patch("src.web.deep_research_webhooks.deliver_deep_research",
+                   new_callable=AsyncMock) as deliver:
+            async with app.test_client() as c:
+                resp = await c.post("/webhooks/openai/deep-research",
+                                    data=json.dumps({"type": event_type, "data": data}),
+                                    headers={"Content-Type": "application/json"})
+        return resp, notification, deliver
+
+    _MD = {"user_id": "u", "account_id": "a", "query": "q",
+           "session_id": "u:C1", "origin_platform": "telegram"}
+
+    @pytest.mark.parametrize("event", ["response.failed", "response.cancelled"])
+    async def test_failure_and_cancel_notify_origin_channel(self, event):
+        resp, notification, _ = await self._post_event(event, {"id": "r1", "metadata": self._MD})
+        assert resp.status_code == 200
+        kw = notification.notify.await_args.kwargs
+        assert kw["channel_id_override"] == "C1"
+        assert kw["platform_override"] == "telegram"
+
+    async def test_event_with_only_id_retrieves_response(self):
+        fetch = AsyncMock(return_value={"metadata": self._MD, "output_text": "report", "model": "m"})
+        resp, _, deliver = await self._post_event("response.completed", {"id": "r1"}, fetch)
+        assert resp.status_code == 200
+        fetch.assert_awaited_once_with("r1")
+        kw = deliver.call_args.kwargs
+        assert kw["result_text"] == "report"
+        assert kw["user_id"] == "u"
+        assert kw["channel_id_override"] == "C1"
+        assert kw["platform_override"] == "telegram"
+
+    async def test_failed_event_with_only_id_notifies_origin_channel(self):
+        fetch = AsyncMock(return_value={"metadata": self._MD})
+        resp, notification, _ = await self._post_event("response.failed", {"id": "r1"}, fetch)
+        assert resp.status_code == 200
+        assert notification.notify.await_args.kwargs["user_id"] == "u"
+        assert notification.notify.await_args.kwargs["channel_id_override"] == "C1"
+
+    async def test_retrieval_failure_is_non_2xx_so_openai_redelivers(self):
+        fetch = AsyncMock(side_effect=RuntimeError("boom"))
+        resp, _, deliver = await self._post_event("response.completed", {"id": "r1"}, fetch)
+        assert resp.status_code == 500
+        deliver.assert_not_called()
+
+
+class TestOpenAIFetchResponse:
+    async def test_returns_metadata_and_output(self):
+        adapter = OpenAIDeepResearchAdapter(api_key="k")
+        adapter._client = AsyncMock()
+        adapter._client.responses.retrieve.return_value = MagicMock(
+            metadata={"user_id": "u"}, output_text="out", model="m")
+        got = await adapter.fetch_response("r1")
+        assert got == {"metadata": {"user_id": "u"}, "output_text": "out", "model": "m"}
+
+
+# --- deliver_deep_research follow-on task context -------------------------
+
+class TestDeliverCarriesOrigin:
+    async def _context(self, **kw):
+        from src.services.deep_research_delivery import deliver_deep_research
+        queue = AsyncMock()
+        await deliver_deep_research(result_text="r", user_id="u", account_id="a", query="q",
+                                    task_queue=queue, session_id="u:C1", **kw)
+        return queue.enqueue_agent_task.call_args.kwargs["context"]
+
+    async def test_origin_channel_and_platform_in_html_task_context(self):
+        ctx = await self._context(channel_id_override="C1", platform_override="telegram")
+        assert ctx["origin_channel_id"] == "C1"
+        assert ctx["origin_platform"] == "telegram"
+
+    async def test_no_overrides_leaves_keys_out(self):
+        ctx = await self._context()
+        assert "origin_channel_id" not in ctx and "origin_platform" not in ctx
