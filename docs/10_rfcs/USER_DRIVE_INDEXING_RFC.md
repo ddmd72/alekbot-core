@@ -4747,7 +4747,7 @@ unmeasured language.
 ### 27.15 Owner steps and rollout
 1. T0 spike (done, GO; its decision note is the Δ128–Δ135 text here); the Gemini key's tier supports Batch — **confirmed by T0** on the existing
    `GEMINI_API_KEY`, no new GCP API.
-2. Back up, then upload the prompt layer in the paused window (`--apply` is human-only): for T1 the four documents of
+2. Back up, then upload the prompt layer in the paused window (`--apply` is the owner's act by default; see the first-run exception at the end of this section): for T1 the four documents of
    `drive_transcriber` — the `COGNITIVE_PROCESS_DRIVE_TRANSCRIBER` and `OUTPUT_FORMAT_DRIVE_TRANSCRIBER` tokens, its blueprint and its profile
    (`drive_transcript_summary`'s are T3).
 3. Composite indexes `READY` before deploy (`make deploy-indexes`, declared in `config/firestore.indexes.json`): on the records
@@ -4772,6 +4772,8 @@ unmeasured language.
    the owner's phone; raise the cap if the estimate says the backlog should finish sooner.
 7. No rebuild and no `drive_initial_build_reset.py`. The orphan-doc sweep script (`drive_transcript_sweep.py`) is run
    only after a rollback to code that predates §27.
+
+**First-run exception.** For the first run (2026-10-21) the owner explicitly delegated these steps to the assistant: the four prompt uploads (after a prompt-layer backup and a mirror check), the composite index deploy, the deploy with the switch off then on with a $10 cap, and setting the owner's per-user flag. Every other prompt upload and every `--apply` stays the owner's act.
 
 ### 27.16 Deltas: what §27 decides beyond D41–D47
 | # | Today | §27 | Why |
@@ -4838,7 +4840,7 @@ unmeasured language.
 | Δ155 | §24.14: no account-error recognition in the Gemini adapter | The batch adapter classifies: 429, 5xx, timeouts, network and account 4xx → uncharged outage (agent backoff); a per-response error → that key's result error, charged by the stage; a refused input → `refused`, a gap marker (G25, T-R18) | A provider incident must not fail files |
 | Δ156 | §27.5: the model id "read from the adapter" | The composition reads `GeminiAdapter.MODEL_TIERS[BALANCED]` and passes it to `GeminiBatchAdapter`; `google-genai` floor raised to 2.17.0 (G26, G27) | REQ-ARCH-23; the batch surface was measured on 2.17.0 |
 | Δ157 | Δ105: a (model, batch) `ModelUsage` leg through a runner ledger | `BatchUsage.cost()` prices each answer and `QuotaService.record_usage` bills it; no `prompt_content` row and no Logfire span for a window (G28, G36). The ledger-free path books the same money with one type fewer | A batch is not a call; transcripts are other people's speech and should not be copied into BigQuery |
-| Δ158 | — | The owner's flag is set by a dry-run-by-default script, `scripts/infrastructure/drive_transcribe_flag.py` (Task 16); no Cabinet toggle (G29) | Consent per user, explicit |
+| Δ158 | — | The owner's flag is set by a dry-run-by-default script, `scripts/infrastructure/drive_transcribe_flag.py` (`--user USER [--off] [--apply]`, `--off` turns it off); no Cabinet toggle (G29) | Consent per user, explicit |
 | Δ159 | §27.8 b: purge deletes the store | The purge deletes a user's jobs (with window results), batches and, unless `purge_keep_transcripts`, the store; its orphan sweep is a separate port method `delete_user_transcript_orphans`, run after the helpers return 0, and a missing collection-group index is logged ERROR without failing or holding the purge; best-effort `delete_file` at the provider (G30, T-R14) | The privacy path must not depend on an index that only transcripts need |
 | Δ160 | §27.3: finalize "takes no share" | A finalize embeds up to ≈ 125 chunks, so it takes one file slot and starts only while time is left; poll and collect stay share-free (G32). A collected answer for a record that is gone, out of the pipeline or at another content version is booked, its job and provider files deleted and its reservation released once (G33); a job with a `submitted` window is left to collection (T-R20) | Ten files landing in one batch would take the tick; a held reservation must not outlive its job |
 | Δ161 | Δ134: `segment` muxer in one pass; Δ99: a remote run's failure | Replaced by the local-intermediate pass for a file with no duration (≤ `MEDIA_PASS_MAX_WINDOWS` = 3 windows per pass, remote → local Opus, then stream-copy cuts that keep the 60 s overlap; eof fixes the duration; reaching the bound is `too_long`; a limit kill resumes at the first missing window) and the exit-code rule (network errno → unreadable; other non-zero → one re-run without `-xerror`; a clean short run is the end of the audio and its measured length is kept) (G35, T-R15, T-R16) | The muxer cannot produce the overlap Δ108 needs; one corrupt packet must not fail a file forever; an over-stated header must not fail the last window forever |
@@ -4879,7 +4881,7 @@ unmeasured language.
 ### 27.18 Parameters (initial)
 | Name | Initial | Basis |
 |---|---|---|
-| `TRANSCRIBE_USD_PER_MONTH` (D46) | $20 | ≈ 250 h at $0.08/h now, ≈ 125 h at $0.16/h after the promotion, 50 h at the $0.40/h ceiling (T0) |
+| `TRANSCRIBE_USD_PER_MONTH` (D46) | $20 | (at the held price ≈ 125 h) ≈ 250 h at $0.08/h now, ≈ 125 h at $0.16/h after the promotion, 50 h at the $0.40/h ceiling (T0) |
 | `TRANSCRIBE_HOUR_USD_ESTIMATE` | **$0.30** per audio hour (was $0.20) | a window's reservation must bound its worst case: audio input plus the output cap at the held batch price ≈ $0.29/h (Δ165, T-R19); pinned by a test |
 | `TRANSCRIBE_WINDOW_PROMPT_TOKENS` | 2 000 per window | the fixed text input (system instruction and task text, ≈ 1 130 tokens measured), rounded up, added to the hour rate (Δ165) |
 | per-window `max_output_tokens` | `min(65 536, ceil(1 000 × audio minutes))` | ≈ 2.2 × the ≈ 450 tokens per audio minute T0 measured (Δ165) |
@@ -4934,10 +4936,10 @@ ordinary text path (gate, chunker, embeddings, §7.4 fence), the structured resu
 no transcript file is written to the user's drive; the transcript exists in the index and as the open text only. T3, the summary
 (§27.7, `DriveTranscriptSummaryAgent`, `SUMMARY_VERSION`, `RENDER_VERSION`, the header lines): there is no summary and the uncertain-seam
 line is printed only in the open text. The Cabinet transcription toggle (§27.12), the zero-credential parser service (OQ-T3: the flag
-stays off for every user but the owner), the requeue/sweep/backlog scripts beyond Task 16's flag script, and the live eval
+stays off for every user but the owner), the scripts beyond the flag script are built in `scripts/infrastructure/` (`drive_transcribe_backlog.py`, `drive_transcribe_requeue.py`, the only re-buy path, and `drive_transcript_sweep.py`, the rollback), but their live runs are not, and the live eval
 numbers (§27.14: bars are recorded from the first live run).
 
 **Residuals the build accepted.** A drop that ffmpeg's reconnect cannot recover, in the re-run without `-xerror`, reads as the end of the file
 (Δ161). A process crash inside one Firestore write can still double-book a batch (Δ169). Speaker alignment on real multi-window audio is
 unmeasured until the live eval; a speaker silent through a whole overlap becomes a new label (Δ109). Prompts for `drive_transcriber` are
-uploaded by the owner, never from an agent session (§27.15).
+uploaded by the owner, by default never from an agent session (§27.15). For the first run (2026-10-21) the owner explicitly delegated these steps to the assistant: the four prompt uploads (after a prompt-layer backup and a mirror check), the composite index deploy, the deploy with the switch off then on with a $10 cap, and setting the owner's per-user flag.

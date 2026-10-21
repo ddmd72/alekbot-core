@@ -749,7 +749,7 @@ off until the owner turns it on: the indexer's kill switch and the user's own fl
    `segments` and `summary` fields. Same `READY` check as Search v2 step 2, then `$PY scripts/infrastructure/drive_index_smoke.py $DEV_USER_ID`
    (it now runs every transcript read, including the two collection-group reads). Without the collection-group indexes the sweep is logged ERROR and
    skipped; it never fails or holds a purge.
-4. **Upload the four prompt documents** (owner; `docs/how_to/NEW_AGENT_PLAYBOOK.md`; never from an agent session), after the backup, from
+4. **Upload the four prompt documents** (the owner's act; `docs/how_to/NEW_AGENT_PLAYBOOK.md`; by default never from an agent session; the first run's exception is below), after the backup, from
    `firestore_utils/uploads/`: tokens `COGNITIVE_PROCESS_DRIVE_TRANSCRIBER` and `OUTPUT_FORMAT_DRIVE_TRANSCRIBER`, the blueprint
    `drive_transcriber_agent_v1` and the profile `drive_transcriber` (repo copies of the sources in `prompts_snapshot/`). Without them the stage cannot
    submit: a missing prompt is a model outage for this class (no fallback prompt), so nothing is lost, and the same four are all that T1 needs
@@ -762,14 +762,14 @@ off until the owner turns it on: the indexer's kill switch and the user's own fl
 8. **Estimate the backlog** before enabling (RFC §27.15 step 5): sum the owner's recording durations (read-only; output only under
    `scripts/memory/`). At the held price a hour books about $0.16, so $20 buys about 125 hours a month until 2027.
 9. **To try it:** set `DRIVE_TRANSCRIBE_ENABLED_DEV=on` and `DRIVE_TRANSCRIBE_USD_CAP_DEV=<low>` in `.env`, `make deploy` again (steps 5–7 around it),
-   then set the owner's own flag: `scripts/infrastructure/drive_transcribe_flag.py` (Task 16: dry run by default, `--apply` is the owner's act). Do
+   then set the owner's own flag: `scripts/infrastructure/drive_transcribe_flag.py` (usage `--user USER [--off] [--apply]`: dry run by default; `--apply` is the owner's act by default, `--off` turns the flag off). For the first run (2026-10-21) the owner explicitly delegated these steps to the assistant: the four prompt uploads (after a prompt-layer backup and a mirror check), the composite index deploy, the deploy with the switch off then on with a $10 cap, and setting the owner's per-user flag. Do
    not set it for any other user: the parser is not yet a separate zero-credential service (RFC OQ-T3).
 10. **Watch:** `make logs-indexer` for the `[DriveIndex]` tick line (`windows_extracted`, `windows_submitted`, `windows_collected`,
     `transcripts_finalized`, `transcribe_usd`, `transcribe_reserved_usd`), the Cabinet's cost line, and the first transcript through a search by a
     sentence from the recording. Raise the cap only after reading the estimate and the first days.
 
 **Rollback / levers, fastest first**
-1. The user's flag off (the same flag script, Task 16; its `--help` names the switch): his new work stops, his transcripts, store and index stay and keep answering.
+1. The user's flag off (the same flag script, `drive_transcribe_flag.py --user USER --off --apply`): his new work stops, his transcripts, store and index stay and keep answering.
 2. Kill switch off: remove the key (or set `off`), redeploy. The stage is not built; open batches stay at the provider and their reservations
    stay until the switch is on again or the user opts out of indexing (the purge then books or releases them).
 3. The previous image: every new field is plain and no enum gained a value, so the old code parses every record and treats media as
