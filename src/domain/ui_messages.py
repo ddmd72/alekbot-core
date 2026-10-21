@@ -61,6 +61,14 @@ class UIMessage(Enum):
     MEMORY_SAVED = "memory_saved"
     MEMORY_DRAFT_NOT_FOUND = "memory_draft_not_found"
     MEMORY_UNAVAILABLE = "memory_unavailable"
+    # Owner notes on drive files (DRIVE_FILE_NOTES_RFC §4.8): the `$drive-notes` erase commands.
+    DRIVE_NOTES_USAGE = "drive_notes_usage"
+    DRIVE_NOTES_UNAVAILABLE = "drive_notes_unavailable"
+    DRIVE_NOTES_NONE = "drive_notes_none"
+    DRIVE_NOTES_ERASE_ALL_ASK = "drive_notes_erase_all_ask"
+    DRIVE_NOTES_ERASED = "drive_notes_erased"
+    DRIVE_NOTES_ERASE_PARTIAL = "drive_notes_erase_partial"
+    DRIVE_NOTES_NO_SUCH_REQUEST = "drive_notes_no_such_request"
     # Long-running turns (LONG_RUNNING_TURNS_RFC §3, §5.3–5.7).
     LONG_TURN_NOTICE = "long_turn_notice"
     LATE_ANSWER_PREFIX = "late_answer_prefix"
