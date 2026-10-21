@@ -779,6 +779,12 @@ async def main():
             prompt_content_store=container.prompt_content_store,
             link_service=file_link_service,
             fetch_response=_openai_dr_fetch,
+            # 72 h = OpenAI's webhook retry window; liveness follows each doc's own expires_at.
+            dedup_store=FirestoreDedupStore(
+                db_client=db_client,
+                collection_name=env_config.worker_task_dedup_collection,
+                ttl_seconds=259200,
+            ),
         )
 
         ms_tasks_webhook_bp = create_microsoft_tasks_webhook_blueprint(

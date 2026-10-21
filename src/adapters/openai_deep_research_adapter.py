@@ -5,8 +5,9 @@ Pure API client — no Cloud Task or queue logic.
 Delivery model: WEBHOOK — OpenAI POSTs to /webhooks/openai/deep-research on completion.
 No polling Cloud Tasks needed; get_status() is an emergency fallback only.
 
-user_id / account_id / original_query embedded as OpenAI metadata and echoed back
-in the webhook payload so the webhook handler can route delivery without extra storage.
+user_id / account_id / original_query / session_id / origin_platform are stored as OpenAI metadata.
+The webhook event carries only the response id, so the handler retrieves the response
+(fetch_response) and reads the metadata from it — no extra storage.
 
 Tier → model mapping:
   ECO / BALANCED  → o4-mini-deep-research-2025-06-26  (faster, cheaper)
@@ -92,7 +93,7 @@ class OpenAIDeepResearchAdapter(DeepResearchPort):
         """
         Submit job with webhook delivery. Adapter owns result routing via metadata.
 
-        OpenAI echoes metadata back in the webhook payload — no extra storage needed.
+        The metadata is read back from the retrieved response in the webhook — no extra storage.
         system_prompt is accepted for interface parity but not used by the OpenAI
         Responses API in this mode. A future adapter (e.g. Claude) may use it.
         """
@@ -128,6 +129,10 @@ class OpenAIDeepResearchAdapter(DeepResearchPort):
             "metadata": dict(response.metadata or {}),
             "output_text": response.output_text or "",
             "model": getattr(response, "model", "") or "",
+            "error": response.error.model_dump() if response.error else None,
+            "incomplete_details": (
+                response.incomplete_details.model_dump() if response.incomplete_details else None
+            ),
         }
 
     async def get_status(self, job_id: str) -> tuple[str, str]:

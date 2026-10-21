@@ -40,7 +40,7 @@ class DeepResearchPort(ABC):
 
         Delivery mechanism is adapter-specific:
           OpenAIDeepResearchAdapter → embeds user_id/account_id in OpenAI metadata;
-                                      OpenAI echoes them back in the webhook payload.
+                                      the webhook handler reads them from the retrieved response.
           ClaudeDeepResearchAdapter → enqueues agent_execution Cloud Task for the
                                       ClaudeDeepResearchRunnerAgent (runs as Cloud Run Job).
 
