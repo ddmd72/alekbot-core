@@ -60,12 +60,14 @@ class GcpTaskQueue(TaskQueue):
         event_data: Dict[str, Any],
         session_id: str,
         delay_seconds: int = 0,
-        trace_headers: Optional[Dict[str, str]] = None
+        trace_headers: Optional[Dict[str, str]] = None,
+        busy_requeues: int = 0,
     ) -> str:
         try:
             payload = {
                 "event": event_data,
                 "session_id": session_id,
+                "busy_requeues": busy_requeues,
                 "enqueued_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
             }
 

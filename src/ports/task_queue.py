@@ -15,9 +15,10 @@ class TaskQueue(Protocol):
         event_data: Dict[str, Any],
         session_id: str,
         delay_seconds: int = 0,
-        trace_headers: Optional[Dict[str, str]] = None
+        trace_headers: Optional[Dict[str, str]] = None,
+        busy_requeues: int = 0,
     ) -> str:
-        """Enqueue a Slack event for background processing."""
+        """Enqueue a Slack event for background processing. busy_requeues counts re-queues of a busy session."""
         ...
 
     async def create_queue_if_not_exists(self) -> None:
