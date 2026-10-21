@@ -1,0 +1,11 @@
+agent_id: drive_transcriber
+blueprint_id: drive_transcriber_agent_v1
+source_file: firestore_utils/uploads/drive_transcriber.json
+tokens:
+  COGNITIVE_PROCESS_DRIVE_TRANSCRIBER:
+    non_overridable: true
+    order: 10
+  OUTPUT_FORMAT_DRIVE_TRANSCRIBER:
+    non_overridable: true
+    order: 10
+uploaded_by: local_script
