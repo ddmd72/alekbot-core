@@ -167,7 +167,9 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.DRIVE_TRANSCRIPTS_README.value: (
         "# Transcripts\n\n"
         "Managed by the bot: files here may be rewritten; do not edit them. "
-        "Transcripts of deleted recordings are in Archive/."
+        "The bot overwrites every file here, in Archive/ too, so a change you make does not last. "
+        "To keep your own version, copy the file to another folder. "
+        "Transcripts of deleted recordings are in Archive/; deleting a file there makes the bot forget it."
     ),
     UIMessage.DRIVE_TRANSCRIPT_OPEN_RECORDING.value: "open the recording",
     UIMessage.DRIVE_TRANSCRIPT_MANAGED_LINE.value: (

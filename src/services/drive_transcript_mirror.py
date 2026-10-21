@@ -25,9 +25,12 @@ Order of a run (§27.9.5):
        (`audit_folder_key`, `audit_page_cursor` = Graph's next link). Listed items are compared with the folder's
        documents; at a folder's last page the documents not seen this cycle (`audit_seen_at`) are read once each.
        Active tree: a missing file is created again from the store (its record made due), a changed `cTag` rewritten
-       (made due with no rendered hash), a moved or renamed item moved back. Archive (and a detached file): an edit or
-       a move inside the mirror is followed, never written; a missing file or one moved out of the mirror ends the
-       document (archived: deleted, its pin released; detached: no item, its pin kept). A folder answering 404
+       (made due with no rendered hash), a moved or renamed item moved back. An archived file is the bot's too (owner
+       ruling 2026-10-21, Δ241): an edit is rewritten by the audit itself from the pinned store entry
+       (`render_archived`), a rename or a move inside the mirror moved back. Archive folders and detached files: an
+       edit or a move inside the mirror is followed, never written. A missing file or one moved out of the mirror ends
+       the document (archived: deleted, its pin released — a copy elsewhere is the owner's; detached: no item, its pin
+       kept). A folder answering 404
        treats every document beneath it the same way. `_README.md` is rewritten when changed and written again when
        missing; `Long paths` is created on demand only. Foreign items are counted and left alone. At the App Folder
        root a folder named like the root that is no known root, or a previous root present again, is reported once
@@ -101,7 +104,9 @@ from src.domain.drive_mirror_plan import (
     lost_root_reset, mark_decision, mark_held, marked, mirror_digest, mirror_eligible, mirror_plan, placement_source,
     reset_charges, retry_due, root_decision, seed_version, stamped, unmarked, woken,
 )
-from src.domain.drive_mirror_render import MirrorStrings, archive_word_keys, readme_bytes, render_file, rendered_hash
+from src.domain.drive_mirror_render import (
+    MirrorStrings, archive_word_keys, readme_bytes, render_archived, render_file, rendered_hash,
+)
 from src.domain.drive_transcript import StoredTranscript
 from src.domain.user_drive import (
     DriveAccessDenied, DriveItemNotFoundError, DriveNameConflictError, DriveNotConnectedError, DrivePathTooLong,
@@ -1736,7 +1741,9 @@ class DriveTranscriptMirror:
 
     def _frozen(self, ctx: "_Run", doc: MirrorDoc) -> bool:
         """The archive's documents (archived files, the archive folders; the root's `Long paths` holds active files and
-        is not one) and detached files: never written, an owner's edit or move inside the mirror followed."""
+        is not one) and detached files: a move out of the mirror ends them (`_audit_unseen`). Inside the mirror an
+        archive folder's or a detached file's edit or move is followed; an archived FILE is rewritten and moved back
+        instead (`_audit_archived`, Δ241)."""
         if doc.state in (MIRROR_ARCHIVED, MIRROR_DETACHED):
             return True
         return doc.kind == KIND_ARCHIVE and doc.key != archive_folder_key(ctx.user_id, ctx.drive_id, "",
@@ -1747,6 +1754,9 @@ class DriveTranscriptMirror:
         is written to the drive. Active tree: an item not where the ledger has it is moved back; a file whose `cTag`
         differs is made due with no rendered hash, so step 4 rewrites it from the store. The sighting is stamped."""
         here = (doc.mirror_parent_id, doc.mirror_name) == (folder_id, change.name)
+        if doc.state == MIRROR_ARCHIVED and doc.kind == KIND_FILE:
+            await self._audit_archived(ctx, doc, change, here)
+            return
         if self._frozen(ctx, doc):
             new = doc
             if not here:
@@ -1770,6 +1780,43 @@ class DriveTranscriptMirror:
                 await self._save_doc(ctx, replace(doc, mirror_ctag=change.content_version, audit_seen_at=ctx.now))
             return
         await self._save_doc(ctx, replace(doc, audit_seen_at=ctx.now))
+
+    async def _audit_archived(self, ctx: "_Run", doc: MirrorDoc, change: DriveChange, here: bool) -> None:
+        """An archived file listed inside the mirror (owner ruling 2026-10-21, Δ241: every `.md` in `_Transcripts`,
+        active or archived, is the bot's and is overwritten; a version of one's own is a copy in another folder). An
+        edit (its `cTag` differs from the one recorded) is rewritten from the pinned store entry first
+        (`_rewrite_archived`); a rename or a move inside the mirror is then moved back to its archive place, like an
+        active file. With no `cTag` recorded the one listed becomes the reference. A deletion, or a move out of the
+        mirror, still ends the document (its pin released) — the owner's copy — and nothing is ever re-created."""
+        edited = bool(doc.mirror_ctag) and bool(change.content_version) and change.content_version != doc.mirror_ctag
+        if edited:
+            doc = await self._rewrite_archived(ctx, doc)
+        elif change.content_version and not doc.mirror_ctag:
+            doc = replace(doc, mirror_ctag=change.content_version)
+        if not here:
+            await self._move_back(ctx, doc, change)
+            return
+        await self._save_doc(ctx, replace(doc, audit_seen_at=ctx.now))
+
+    async def _rewrite_archived(self, ctx: "_Run", doc: MirrorDoc) -> MirrorDoc:
+        """One `replace_content` of the bot's own archived item, by id, with `render_archived` of its pinned store entry
+        (in the current UI language), after the item and its archive folder are checked inside the root. No store entry
+        and no stub: nothing to rewrite from, the edit is left (`mirror_edit_left`) and its `cTag` becomes the
+        reference. Returns the document as saved."""
+        stored = await self._repo.get_transcript(ctx.user_id, doc.content_key) if doc.content_key else None
+        if stored is None and doc.transcript_stub:
+            stored = StoredTranscript(doc.content_key, None, stub=doc.transcript_stub)
+        if stored is None:
+            ctx.counters["mirror_edit_left"] += 1
+            return doc
+        data = render_archived(stored, doc, ctx.host.strings())
+        await self._ensure_inside(ctx, doc.mirror_item_id)
+        await self._ensure_inside(ctx, doc.mirror_parent_id)
+        self._take_op(ctx)
+        item = await self._drive.replace_content(ctx.user_id, doc.mirror_item_id, data, MD_TYPE)
+        ctx.counters["mirror_archive_rewritten"] += 1
+        return await self._saved(ctx, replace(doc, mirror_ctag=item.ctag, rendered_hash=rendered_hash(data),
+                                              render_language=ctx.host.language, audit_seen_at=ctx.now))
 
     async def _move_back(self, ctx: "_Run", doc: MirrorDoc, change: DriveChange) -> bool:
         """An item of the active tree moved or renamed by hand goes back where the ledger has it (one PATCH of an item
@@ -2168,7 +2215,8 @@ def _snapshot(doc: MirrorDoc, work: _FileWork) -> MirrorDoc:
     rec = work.rec
     return replace(doc, content_key=rec.transcript_key, source_path=work.source_path,
                    seconds=float(rec.transcript_seconds), speakers=rec.transcript_speakers,
-                   languages=tuple(rec.transcript_languages))
+                   languages=tuple(rec.transcript_languages), recorded_on=rec.effective_day,
+                   transcript_stub=rec.transcript_stub)
 
 
 def _folder_placed(doc: MirrorDoc, folder: DriveIndexRecord, parent: str) -> bool:

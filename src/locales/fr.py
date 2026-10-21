@@ -143,7 +143,10 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.DRIVE_TRANSCRIPTS_README.value: (
         "# Transcriptions\n\n"
         "Géré par le bot : les fichiers ici peuvent être réécrits ; ne les modifiez pas. "
-        "Les transcriptions des enregistrements supprimés sont dans Archive/."
+        "Le bot écrase chaque fichier ici, y compris dans Archive/, donc vos modifications ne restent pas. "
+        "Pour garder votre propre version, copiez le fichier dans un autre dossier. "
+        "Les transcriptions des enregistrements supprimés sont dans Archive/ ; si vous y supprimez un fichier, "
+        "le bot l'oublie."
     ),
     UIMessage.DRIVE_TRANSCRIPT_OPEN_RECORDING.value: "ouvrir l'enregistrement",
     UIMessage.DRIVE_TRANSCRIPT_MANAGED_LINE.value: (

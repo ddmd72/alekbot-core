@@ -172,7 +172,9 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.DRIVE_TRANSCRIPTS_README.value: (
         "# Розшифровки\n\n"
         "Цю папку веде бот: файли тут можуть бути переписані; не редагуйте їх. "
-        "Розшифровки видалених записів лежать в Archive/."
+        "Бот перезаписує кожен файл тут, і в Archive/ теж, тож ваші зміни не збережуться. "
+        "Щоб мати власну версію, скопіюйте файл до іншої папки. "
+        "Розшифровки видалених записів лежать в Archive/; якщо видалити файл звідти, бот про нього забуде."
     ),
     UIMessage.DRIVE_TRANSCRIPT_OPEN_RECORDING.value: "відкрити запис",
     UIMessage.DRIVE_TRANSCRIPT_MANAGED_LINE.value: (

@@ -124,6 +124,11 @@ class MirrorDoc:
     # and ticks, so at a folder's last page the documents not seen since the previous cycle ended are the ones to
     # confirm with a read; None until the first audit sees it
     audit_seen_at: Optional[datetime] = None
+    # the rest of the render's snapshot (§27.9.3), refreshed with `source_path` at every render: the record's
+    # `effective_day` (the header's "recorded on") and `transcript_stub`, so the audit can rewrite an edited ARCHIVED
+    # file from the pinned store entry with no record (owner ruling 2026-10-21, Δ241). No link: the recording is gone
+    recorded_on: str = ""
+    transcript_stub: str = ""
 
     @property
     def key(self) -> str:
