@@ -194,6 +194,7 @@ class FakeRunner:
         self.raise_next: Optional[BaseException] = None
         self.results: Dict[str, Mapping[str, Any]] = {}       # by batch name: what `collect` returns (Task 13)
         self.collects: List[Tuple[BatchRef, str]] = []
+        self.bills: List[bool] = []                          # `bill` of each collect: True = the account billed
         self.collect_error: Optional[BaseException] = None
 
     async def submit(self, inputs: Sequence[WindowInput], *, display_name: str) -> BatchRef:
@@ -203,7 +204,7 @@ class FakeRunner:
         self.submits.append(list(inputs))
         return BatchRef(name=f"batches/b{len(self.submits)}", keys=tuple(i.key for i in inputs))
 
-    async def collect(self, batch: BatchRef, *, account_id: str) -> Mapping[str, Any]:
+    async def collect(self, batch: BatchRef, *, account_id: str, bill: bool = True) -> Mapping[str, Any]:
         if batch.name not in self.results:
             raise AssertionError("collection is Task 13's: no results set for this batch")
         assert batch.keys, "collect needs the batch's request keys (a BatchRef rebuilt without them drops results)"
@@ -211,6 +212,7 @@ class FakeRunner:
             exc, self.collect_error = self.collect_error, None
             raise exc
         self.collects.append((batch, account_id))
+        self.bills.append(bill)
         return self.results[batch.name]
 
 

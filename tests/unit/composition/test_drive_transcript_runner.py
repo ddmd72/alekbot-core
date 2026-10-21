@@ -184,3 +184,12 @@ async def test_an_error_result_carries_its_rpc_code():
     runner, _ = _runner(port)
     out = await runner.collect(BatchRef(name="b", keys=("a",)), account_id="acc-1")
     assert out["a"].outcome is WindowOutcome.ERROR and out["a"].code == 5
+
+
+async def test_a_collection_without_billing_prices_but_writes_nothing():
+    """T-R22: re-collecting a batch whose cost was booked already never bills the account a second time."""
+    port = _port({"item:0": BatchResult(key="item:0", text=GOOD, usage=_usage())})
+    runner, quota = _runner(port)
+    out = await runner.collect(BatchRef(name="b", keys=("item:0",)), account_id="acc-1", bill=False)
+    assert out["item:0"].usd > 0 and out["item:0"].billed is False
+    quota.record_usage.assert_not_awaited()
