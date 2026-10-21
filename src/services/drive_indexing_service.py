@@ -1230,7 +1230,10 @@ class DriveIndexingService:
         if root.root_item_id in mirror.gone_ids:
             # the step stops at its root-loss check (Δ217) and only waits — unless the grace is over: then its one
             # confirming read is due (the round is complete: the work-off runs only then), Δ239
-            return root.root_gone_at is not None and now >= root.root_gone_at + MIRROR_ROOT_GRACE
+            if root.root_gone_at is None or now < root.root_gone_at + MIRROR_ROOT_GRACE:
+                return False
+            held = self._root_setup_holds.get(user_id)
+            return held is None or now >= held[1]   # a confirming read that keeps failing is held off (Δ244)
         if root.quota_hold_until is not None and now < root.quota_hold_until:
             return False
         if root.seed_version != _mirror_seed_version():
@@ -1312,6 +1315,13 @@ class DriveIndexingService:
             _inc(counts, key, out.get(key, 0))
         self._note_root_setup(user_id, mirror, out)
 
+    def _step_root_hold(self, user_id: str) -> timedelta:
+        """One more failure in a row on `_root_setup_holds`: 10 min doubling to 6 h (Δ227). Returns the hold."""
+        failures = self._root_setup_holds.get(user_id, (0, self._clock()))[0] + 1
+        hold = min(ROOT_SETUP_HOLD_BASE * (2 ** (failures - 1)), ROOT_SETUP_HOLD_CAP)
+        self._root_setup_holds[user_id] = (failures, self._clock() + hold)
+        return hold
+
     def _note_step_unavailable(self, user_id: str) -> timedelta:
         """The step could not start (its UI language or strings could not be had): the reserve is held off for the user
         with the root-setup hold's ladder (10 min doubling to 6 h; process memory, Δ227), so a lasting failure cannot
@@ -1327,18 +1337,25 @@ class DriveIndexingService:
         under way): progress (a root created, documents reset, the loss confirmed) clears the user's hold; none puts
         the reserve on hold for ROOT_SETUP_HOLD_BASE, doubling per failure in a row up to ROOT_SETUP_HOLD_CAP (a delta to Δ209).
         Process memory, not a stored field: no root document exists to hold it, the indexer is one instance, and a
-        restart costs at most one reserved tail. A run with no root setup to do clears nothing (the hold is gone with
-        the root document's arrival anyway)."""
+        restart costs at most one reserved tail. With a root document: a root-loss mark whose confirming read failed
+        steps the same ladder (Δ244); the mark gone (cleared, or the loss confirmed) clears the hold."""
         root = _connected_root(mirror)
         if root is not None and root.root_item_id not in root.previous_root_ids:
-            self._root_setup_holds.pop(user_id, None)
+            if root.root_item_id not in mirror.gone_ids:
+                self._root_setup_holds.pop(user_id, None)   # no mark, or the step cleared it or confirmed the loss
+            elif out.get("mirror_root_read_failed"):
+                # the root-loss mark is still set and its confirming read failed (Δ244): the same ladder, so a read that
+                # keeps failing does not take the reserve on every tick; a run that did not get to the read keeps the
+                # hold as it is
+                hold = self._step_root_hold(user_id)
+                logger.info(f"[DriveIndex] transcript mirror of {user_id[:8]}: the root-loss read failed; no reserved "
+                            f"tail for it for {hold}")
             return
         if any(out.get(key) for key in _ROOT_SETUP_PROGRESS):
             self._root_setup_holds.pop(user_id, None)
             return
-        failures = self._root_setup_holds.get(user_id, (0, self._clock()))[0] + 1
-        hold = min(ROOT_SETUP_HOLD_BASE * (2 ** (failures - 1)), ROOT_SETUP_HOLD_CAP)
-        self._root_setup_holds[user_id] = (failures, self._clock() + hold)
+        hold = self._step_root_hold(user_id)
+        failures = self._root_setup_holds[user_id][0]
         logger.info(f"[DriveIndex] transcript mirror of {user_id[:8]}: root setup made no progress ({failures} in a "
                     f"row); no reserved tail for it for {hold}")
 

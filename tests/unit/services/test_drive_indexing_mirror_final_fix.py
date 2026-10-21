@@ -142,3 +142,36 @@ async def test_language_failure_holds_the_reserve_off(world, case):
     w.clock.advance(timedelta(minutes=1).total_seconds())
     await w.tick()
     assert w.repo.states["u"].systemic_failures == 0
+
+
+# -- round 2: a root-loss confirming read that keeps failing is held off the reserve (Δ244) ----------------------------
+
+async def test_failing_root_loss_read_backs_off_the_reserve(world):
+    from src.services import drive_indexing_service as svc_mod
+    w = world()
+    await _mirrored(w)
+    old_root = w.root_doc().root_item_id
+    w.drive.delete(old_root)
+    await w.tick()
+    assert w.root_doc().root_gone_at is not None
+    real = w.writes.get_change
+
+    async def get_change(user_id: str, item_id: str) -> Any:
+        if item_id == old_root:
+            raise ValueError("503")
+        return await real(user_id, item_id)
+    w.writes.get_change = get_change   # type: ignore[method-assign]
+    w.clock.advance(MIRROR_ROOT_GRACE.total_seconds() + 60)
+    await w.tick()
+    assert w.budgets[-1].mirror_reserve == MIRROR_RESERVE_S    # the first confirming read has the tail
+    assert w.outs[-1].get("mirror_root_read_failed") == 1
+    assert w.svc._root_setup_holds["u"][0] == 1
+    w.clock.advance(1)
+    await w.tick()
+    assert w.budgets[-1].mirror_reserve == 0.0                  # held: no tail for it, the step still tries
+    assert w.svc._root_setup_holds["u"][0] == 2
+    w.writes.get_change = real   # type: ignore[method-assign]
+    w.clock.advance(svc_mod.ROOT_SETUP_HOLD_BASE.total_seconds() * 2 + 1)
+    await w.tick()                                              # the read answers: the loss is confirmed
+    assert old_root in w.root_doc().previous_root_ids
+    assert "u" not in w.svc._root_setup_holds                   # the mark is gone: the hold with it
