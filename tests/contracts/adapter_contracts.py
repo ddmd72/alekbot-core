@@ -765,3 +765,112 @@ DICT_SCHEMA_IS_SENT_AS_JSON_SCHEMA = ContractRule(
         ),
     },
 )
+
+
+# ============================================================================
+# Gemini batch adapter rules (USER_DRIVE_INDEXING_RFC §27.5, Δ131). Keyed by the adapter name "gemini_batch".
+# Submit rules receive the kwargs `batches.create` was called with: {model, src: [InlinedRequest], config}.
+# ============================================================================
+
+def _each_request(kw: dict):
+    reqs = kw["src"]
+    assert reqs, "Gemini batch: no inline requests were sent"
+    return reqs
+
+
+def _check_schema_with_mime(kw: dict) -> None:
+    for r in _each_request(kw):
+        cfg = r.config
+        if cfg.response_schema is None:
+            continue  # a text-only request without a schema carries neither
+        _true(cfg.response_json_schema is None,
+              "Gemini batch: response_json_schema is silently ignored in an inline request (Δ131)")
+        _eq(cfg.response_mime_type, "application/json",
+            "Gemini batch: a schema needs response_mime_type application/json beside it")
+
+
+def _check_thinking_low(kw: dict) -> None:
+    for r in _each_request(kw):
+        tc = r.config.thinking_config
+        _true(tc is not None and str(tc.thinking_level).endswith("LOW"),
+              f"Gemini batch: thinking_level LOW missing on request {r.metadata!r}")
+
+
+def _check_key_round_trip(kw: dict) -> None:
+    keys = [(r.metadata or {}).get("key") for r in _each_request(kw)]
+    _true(all(keys), f"Gemini batch: every request must carry its key in metadata. Got: {keys!r}")
+    _eq(len(set(keys)), len(keys), "Gemini batch: request keys must be unique")
+
+
+def _check_file_uri_from_name(kw: dict) -> None:
+    for r in _each_request(kw):
+        for content in r.contents or []:
+            for part in content.parts or []:
+                if part.file_data is not None:
+                    uri = part.file_data.file_uri or ""
+                    _true("/files/" in uri and uri.rsplit("/files/", 1)[1],
+                          "Gemini batch: file_uri must be built from the stored file name")
+                    _true(part.file_data.mime_type, "Gemini batch: file part without mime type")
+
+
+BATCH_SCHEMA_WITH_JSON_MIME = ContractRule(
+    name="BATCH_SCHEMA_WITH_JSON_MIME",
+    description=(
+        "Every inline batch request that has a schema sends it as response_schema (typed) together with "
+        "response_mime_type application/json, and never as response_json_schema, which a batch ignores silently."
+    ),
+    validators={"gemini_batch": _check_schema_with_mime},
+)
+
+BATCH_THINKING_LOW = ContractRule(
+    name="BATCH_THINKING_LOW",
+    description="Every inline batch request sets thinking_level LOW (thinking is on by default and billed as output).",
+    validators={"gemini_batch": _check_thinking_low},
+)
+
+BATCH_KEY_ROUND_TRIP = ContractRule(
+    name="BATCH_KEY_ROUND_TRIP",
+    description="Every inline batch request carries a unique key in InlinedRequest.metadata; answers are matched by it.",
+    validators={"gemini_batch": _check_key_round_trip},
+)
+
+BATCH_FILE_URI_FROM_STORED_NAME = ContractRule(
+    name="BATCH_FILE_URI_FROM_STORED_NAME",
+    description="A request's file part is a file_uri built from the stored provider file name, with its mime type.",
+    validators={"gemini_batch": _check_file_uri_from_name},
+)
+
+BATCH_PER_RESPONSE_ERROR_SURFACED = ContractRule(
+    name="BATCH_PER_RESPONSE_ERROR_SURFACED",
+    description=(
+        "A collected result whose own response held an error has an error and no text: a succeeded job with one "
+        "failed response never yields a result for it. Input: the mapping key -> BatchResult from collect()."
+    ),
+    validators={
+        "gemini_batch": lambda results: _true(
+            any(r.error and r.text is None for r in results.values()),
+            "Gemini batch: a per-response error was not surfaced as an error result",
+        ),
+    },
+)
+
+BATCH_THOUGHTS_IN_OUTPUT_LEG = ContractRule(
+    name="BATCH_THOUGHTS_IN_OUTPUT_LEG",
+    description=(
+        "Thought tokens are billed as output: BatchUsage carries them and its cost equals the cost of "
+        "candidates + thoughts output tokens. Input: {usage: BatchUsage, candidates: int, thoughts: int}."
+    ),
+    validators={
+        "gemini_batch": lambda d: (
+            _eq(d["usage"].output_tokens, d["candidates"], "Gemini batch: candidate tokens not the output leg"),
+            _eq(d["usage"].thought_tokens, d["thoughts"], "Gemini batch: thought tokens missing from usage"),
+            _true(
+                abs(d["usage"].cost() - type(d["usage"])(
+                    model=d["usage"].model, audio_input_tokens=d["usage"].audio_input_tokens,
+                    text_input_tokens=d["usage"].text_input_tokens,
+                    output_tokens=d["candidates"] + d["thoughts"]).cost()) < 1e-9,
+                "Gemini batch: thought tokens not priced in the output leg",
+            ),
+        ),
+    },
+)

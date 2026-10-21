@@ -3,7 +3,7 @@ google-cloud-firestore
 google-cloud-storage==3.9.0  # pinned: the workspace adapter relies on if_generation_match / versions= / generation= (AGENT_WORKSPACE_RFC §13)
 google-cloud-logging
 google-cloud-bigquery>=3.0.0  # queryable LLM prompt/response content store (TTL'd table)
-google-genai>=2.0.0,<3.0.0  # v2 cut at 2026-05-07; we only use the Models API (generate_content / embed_content / files), which is unaffected by the Interactions API breaking change. See decisions/gemini_deep_research_adapter_removal.md.
+google-genai>=2.17.0,<3.0.0  # floor 2.17.0 = the version the batch surface (inline metadata, per-modality usage) was measured on; v2 cut at 2026-05-07; we only use the Models API (generate_content / embed_content / files), which is unaffected by the Interactions API breaking change. See decisions/gemini_deep_research_adapter_removal.md.
 # Floor was 0.97.0 (first release with output_config.effort + the model capabilities API); pinned
 # 2026-08-11 because `>=` let local sit on that floor while every image build pulled the newest —
 # prod was 24 minors ahead on 0.121.0, so the suite gated one SDK and prod answered on another.
