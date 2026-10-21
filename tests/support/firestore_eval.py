@@ -46,10 +46,10 @@ class EvalDocRef(_base.EvalDocRef):
         versions[self.id] = versions.get(self.id, 0) + 1
 
     async def get(self, transaction: Any = None, field_paths: Optional[List[str]] = None) -> EvalSnap:
-        if self.col.__dict__.get("yield_on_get"):
-            await asyncio.sleep(0)   # lets concurrent callers interleave at a read
         snap = await super().get(transaction=transaction, field_paths=field_paths)
         snap.update_time = self.col.__dict__.get("versions", {}).get(self.id, 0)
+        if self.col.__dict__.get("yield_on_get"):
+            await asyncio.sleep(0)   # concurrent callers all hold the same (soon stale) snapshot
         return snap
 
     async def create(self, data: Dict[str, Any]) -> None:
