@@ -3046,6 +3046,10 @@ class DriveIndexingService:
         transcription = _TICK_TRANSCRIPTION.get()
         if transcription is None or not transcription.on or transcription.host is None or self._transcripts is None:
             return
+        # Re-entrancy (review 14A, Minor 4): this also runs for the stage's own writes (host.commit -> _commit). Those
+        # never change a record's eligibility nor its content version within a tick — the stage writes only job states
+        # at the key it read — so `leaves_job` is false for them, and `drop_jobs` from inside a stage step never drops
+        # (nor releases a second time) a job the step is working; only observation, cascade, sweep and cap writes do.
         leaving = [p.item_id for w, p in zip(written, planned) if leaves_job(w, p)]
         if deletes:
             gone = await self._repo.get_records(user_id, sorted(deletes))
