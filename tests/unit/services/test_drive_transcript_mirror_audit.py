@@ -208,30 +208,45 @@ async def test_owner_deleted_a_day_folder_discards_beneath():
     assert w.drive.writes() == []
 
 
-async def test_archived_edit_left_alone():
+async def test_archived_edit_rewritten_and_rename_moved_back():
+    """Owner ruling 2026-10-21 (Δ241), reversing D48's "the owner's edits inside the archive stand": an archived file
+    is the bot's; an edit is rewritten from the pinned store entry and a rename moved back, and the pin stays."""
     w = MirrorWorld()
     a = await archived(w)
     node = item_of(w, a)
+    place = (w.doc(a).mirror_parent_id, w.doc(a).mirror_name)
     node.data, node.ctag, node.name = b"my own notes", "c-owner", "kept.md"
     w.reset_calls()
     counters = await audit(w)
-    assert w.drive.writes() == [] and node.data == b"my own notes" and node.name == "kept.md"
+    assert [(c[0], c[1]["item_id"]) for c in w.drive.writes()] == [("replace_content", node.item_id),
+                                                                   ("move", node.item_id)]
     doc = w.doc(a)
-    assert doc.state == MIRROR_ARCHIVED and doc.mirror_name == "kept.md" and doc.mirror_ctag == "c-owner"
-    assert counters["mirror_followed"] == 1 and counters["mirror_edit_left"] == 1
+    stored_entry = await w.repo.get_transcript(USER, doc.content_key)
+    assert node.data == render_archived(stored_entry, doc, w.last_host.texts) and b"my own notes" not in node.data
+    assert (node.parent_id, node.name) == place == (doc.mirror_parent_id, doc.mirror_name)
+    assert doc.state == MIRROR_ARCHIVED and doc.mirror_ctag == node.ctag != "c-owner"
+    assert counters["mirror_archive_rewritten"] == 1 and counters["mirror_moved_back"] == 1
+    assert not counters.get("mirror_followed") and not counters.get("mirror_edit_left")
     assert await w.mirror.pinned(USER, doc.content_key)
 
 
-async def test_archived_moved_inside_the_mirror_followed():
+async def test_archived_moved_inside_the_mirror_moved_back():
+    """Owner ruling 2026-10-21 (Δ241): an archived file moved elsewhere inside the mirror goes back to its archive place
+    (one PATCH, nothing rewritten: its content was not edited); the document stays archived and pinned."""
     w = MirrorWorld()
     a = await archived(w)
     node = item_of(w, a)
+    place = (w.doc(a).mirror_parent_id, w.doc(a).mirror_name)
     node.parent_id = w.root.root_item_id                   # out of the archive, still in the mirror
     w.reset_calls()
-    await audit(w)
-    assert w.drive.writes() == []
+    counters = await audit(w)
+    assert [(c[0], c[1]["item_id"], c[1]["new_parent_id"]) for c in w.drive.writes()] == [
+        ("move", node.item_id, place[0])]
     doc = w.doc(a)
-    assert doc.state == MIRROR_ARCHIVED and doc.mirror_parent_id == w.root.root_item_id
+    assert doc.state == MIRROR_ARCHIVED and (node.parent_id, node.name) == place == (doc.mirror_parent_id,
+                                                                                     doc.mirror_name)
+    assert counters["mirror_moved_back"] == 1 and not counters.get("mirror_followed")
+    assert await w.mirror.pinned(USER, doc.content_key)
 
 
 async def test_archived_moved_out_of_the_mirror_doc_deleted():
