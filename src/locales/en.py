@@ -211,6 +211,6 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.DRIVE_NOTE_STATUS_OTHER_DRIVE.value: "🔎 Its drive isn't connected, so search does not show this note until that drive is connected again.",
     UIMessage.DRIVE_NOTE_ERASE_REQUEST.value: "🗑️ To erase the note on {path} and its whole history (versions: {versions}) for good, paste the command below within {minutes} minutes. Nothing is erased until you do.",
     UIMessage.DRIVE_NOTE_ERASE_ALL_REQUEST.value: "🗑️ To erase all your drive notes (notes: {count}) and their history for good, paste the command below within {minutes} minutes. Nothing is erased until you do.",
-    UIMessage.DRIVE_NOTE_ERASED.value: "🗑️ Erased for good, with their history: {count} notes.",
-    UIMessage.DRIVE_NOTE_ERASE_PARTIAL.value: "🗑️ Erased for good: {erased} notes. {left} could not be erased right now: ask me to erase them again.",
+    UIMessage.DRIVE_NOTE_ERASED.value: "🗑️ Notes erased for good, with their history: {count}.",
+    UIMessage.DRIVE_NOTE_ERASE_PARTIAL.value: "🗑️ Notes erased for good: {erased}. Not erased right now: {left}; ask me to erase them again.",
 }

@@ -118,9 +118,17 @@ def test_the_erase_request_is_the_line_and_the_command_alone():
 
 
 def test_the_erase_reply_names_the_counts_left():
-    assert render_drive_note_erased(3, 0, strings()) == "🗑️ Erased for good, with their history: 3 notes."
+    assert render_drive_note_erased(3, 0, strings()) == "🗑️ Notes erased for good, with their history: 3."
     partial = render_drive_note_erased(2, 1, strings())
-    assert "2 notes" in partial and "1 could not be erased right now" in partial and "again" in partial
+    assert partial == "🗑️ Notes erased for good: 2. Not erased right now: 1; ask me to erase them again."
+
+
+@pytest.mark.parametrize("module", [uk, en, fr, es], ids=["uk", "en", "fr", "es"])
+def test_the_erase_counts_read_right_for_one_note(module):
+    one = render_drive_note_erased(1, 0, strings(module))
+    assert one.rstrip(".").endswith(": 1")                  # "<label>: {count}", never "1 notes"
+    partial = render_drive_note_erased(1, 1, strings(module))
+    assert ": 1" in partial and "{" not in partial
 
 
 def test_the_call_event_carries_the_ref_and_never_the_text_or_the_code():
