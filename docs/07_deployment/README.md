@@ -724,7 +724,7 @@ but the index must be rebuilt, not upgraded in place:
 
 ### Transcripts of recordings (§27)
 
-USER_DRIVE_INDEXING_RFC §27 (slice T1, live since 2026-10-21 for the owner; T2 mirror folder and T3 summary are not built); the owner's
+USER_DRIVE_INDEXING_RFC §27 (slice T1, live since 2026-10-21 for the owner; the T2 mirror folder is built and not deployed, see "T2 mirror folder" below; T3 summary is not built); the owner's
 map is `docs/05_building_blocks/user_drive/README.md` §4.23. An **ordinary upgrade on top of §26**: no rebuild, no migration gate, no
 initial-build reset (Δ126). It reuses the shell variables and the pause/resume commands of § Search v2 above. Two switches keep it
 off until the owner turns it on: the indexer's kill switch and the user's own flag. Nothing here is a secret; the key names only.
@@ -783,6 +783,52 @@ off until the owner turns it on: the indexer's kill switch and the user's own fl
 
 **Also in this release:** a `google-genai` floor of 2.17.0 (`requirements.txt`; the batch surface was measured on it), the Cabinet's "transcribing
 recordings" cost line, and the disclosure sentence (shown only for a user whose flag is on).
+
+#### T2 mirror folder (§27.9; built on `feat/drive-transcripts-t2`, not deployed)
+
+An **ordinary upgrade on top of T1**: the mirror calls no model, so there is no prompt upload, no rebuild, no migration gate and no new Cloud Build substitution. It
+runs only for a user with both transcription switches on (today the owner). The owner's map is `docs/05_building_blocks/user_drive/README.md` §4.23 and §7.
+
+**Pre-deploy gate (hard): the composite indexes must be `READY` before the T2 revision serves (RFC Δ230).** The indexer now wires the mirror ledger unconditionally
+(one `roots` query per tick) and the purge reads the pinned keys. A missing or still-building index raises `FailedPrecondition`, which the adapter maps to
+`DriveIndexStoreUnavailable`: a systemic store outage, so **every purge (opt-outs included) and the owner's ticks stall** until the index is ready. Do not deploy on
+"it is building".
+1. `make deploy-indexes PROJECT_ID=$GOOGLE_CLOUD_PROJECT` creates the composites declared in `config/firestore.indexes.json`: on the records `user_id + mirror_due +
+   effective_day desc + item_id` and `user_id + mirror_retry_at + item_id`; on the ledger `user_id + drive_id + gone_pending + mark_ready_at`, `user_id + drive_id +
+   mirror_parent_id`, `user_id + drive_id + kind + __name__`, `user_id + drive_id + state + checked_at`, the pins' four (`user_id + content_key + state`, `user_id +
+   content_key + gone_pending`, `user_id + state + content_key`, `user_id + gone_pending + content_key`), `user_id + mirror_item_id`, and the deleted-files search's
+   `user_id + state + archived_at desc`, `user_id + state + archive_keys` and `user_id + state + name_keys`; and the single-field exemption for `archive_keys`.
+2. **Verify** (no project id in any tracked file; use your shell variable):
+   ```bash
+   gcloud firestore indexes composite list --database=us-production --project=$GOOGLE_CLOUD_PROJECT \
+     --format="table(name, queryScope, state)" | grep -E "drive_transcript_mirror|drive_index_records"
+   ```
+   **Every printed row must be `READY`** (the grep keeps the ledger's indexes and the records' indexes, including the two new ones); any `CREATING` or `NEEDS_REPAIR` is a stop. Then
+   `$PY scripts/infrastructure/drive_index_smoke.py $DEV_USER_ID`, which runs every new read and names a missing index.
+3. Pause the drive queue and the fan-out job, wait for the running tick (commands as Search v2 step 3), then **deploy main and the indexer together**
+   (`make deploy`, with the T1 switch key as already set). **Verify both serve the new image** (command as § Card accuracy step 6), then **resume**.
+4. With the owner's flag on, the first tick creates `_Transcripts` and `_README.md`, the seed pass marks his existing transcripts due, and files appear at up to
+   about 40 writes a tick (5 000 first-time files take about a day).
+5. **Live check** (owner, on the phone): `_Transcripts` shows the right tree and its read-me; a plain search never returns a mirror file; a deleted test recording shows
+   under `_Transcripts/Archive/<today>/` after one complete round and an hour; "search in deleted files" finds it and a plain search does not; restoring it from the recycle
+   bin moves the file back; asking the bot to save a file into `_Transcripts` is refused. Then review the Cabinet texts in the four languages (Δ202).
+6. **Watch:** `make fetch-logs-indexer K=300` and the `mirror={...}` part of the `[DriveIndex]` tick line, and `scripts/infrastructure/drive_mirror_status.py --user <user_id>`
+   (read-only; the report goes to `scripts/memory/`).
+
+**Rollback / levers, fastest first**
+1. The user's flag off (`drive_transcribe_flag.py --user USER --off --apply`) or the kill switch off and a redeploy: the mirror step stops writing; the folder, the ledger
+   and the root document stay, and the root stays opaque to the index.
+2. **The previous image (a revision that predates T2; today that is the T1 image).** It does not know the root and would index the mirror's `.md` files as documents. So: pause the
+   drive queue and the fan-out job; **move `_Transcripts` out of the App Folder** (it keeps its item id; do it in the OneDrive app, not through the bot); deploy the old image;
+   resume. After the roll-forward: pause again, **move the folder back**, deploy, resume. A stray T2 tick in between only sets the root-loss mark, which the 24 h grace keeps from
+   acting. This image keeps the store but not the pins: T1's daily orphan sweep deletes the pinned transcripts within 30 days (the archived files on the drive are untouched;
+   their stored passages and the re-buy-free restore are lost). Named residual.
+3. After a rollback to code that predates §27 only: `scripts/infrastructure/drive_transcript_sweep.py --user <user_id>` (dry run, then `--apply`, a human's act). It **keeps** the
+   mirror's root documents, ledger and pinned store entries, because a roll-forward needs them. `--mirror` deletes all of them and is for retiring the mirror for good:
+   **before `--mirror --apply` the owner must have deleted `_Transcripts` or moved it out of the App Folder, and no T2 revision may run for that user again until then** (once the
+   root documents are gone a T2 revision indexes the folder as ordinary documents and, with the flag on, creates `_Transcripts (Alek)`). The script refuses `--mirror --apply`
+   without `--after-rollback`, which is the owner's confirmation of that.
+4. 5. An indexing opt-out deletes nothing on the drive (OQ-T10); a re-enable re-buys every active transcript, newest first, under the $20 cap (about $0.16 per audio hour).
 
 ## Sandbox render service
 
