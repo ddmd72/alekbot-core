@@ -740,3 +740,40 @@ async def test_set_by_a_note_ref_that_does_not_exist_is_refused(env):
     with pytest.raises(DriveNoteRefused) as info:
         await env.service.set(U, ACC, "drive_note:nothing", TEXT, provenance=CHAT)
     assert refusal(info) == NoteRefusal.NO_NOTE
+
+
+# -- fix round 2: a partial erase is finished, nudged and reported --------------------------------------------------
+
+class _FlakyErase(InMemoryDriveNoteRepository):
+    """The note store with one note whose erase keeps conflicting."""
+    stuck = ""
+
+    async def _erase_one(self, user_id, note_id):
+        if note_id == self.stuck:
+            raise DriveNoteConflict("contention")
+        return await super()._erase_one(user_id, note_id)
+
+
+@pytest.mark.parametrize("indexing", [True, False])
+async def test_an_erase_all_with_a_conflicted_note_finishes_the_rest_and_says_how_many_are_left(indexing):
+    env = Env(indexing=indexing, notes=_FlakyErase(clock=_Clock()))
+    receipts = [await env.service.set(U, ACC, f"drive:{item}", TEXT, provenance=CHAT) for item in ("a", "b", "c")]
+    env.notes.stuck = receipts[1].note_id
+    request = await env.service.request_erase_all(U)
+    before = len(env.nudged())
+    with pytest.raises(DriveNoteRefused) as info:
+        await env.service.erase(U, request.code)
+    assert refusal(info) == NoteRefusal.CONFLICT
+    assert (info.value.detail["erased"], info.value.detail["left"], info.value.detail["note_ids"]) == (
+        2, 1, [receipts[1].note_id])
+    assert "again" in str(info.value)
+    assert (await env.notes.get(U, receipts[1].note_id)).text == TEXT           # the stuck note is untouched
+    if indexing:
+        assert sorted(sum(env.nudged()[before:], [])) == ["a", "c"]               # every erased item nudged
+        assert [(await env.notes.get(U, r.note_id)).erase_pending for r in (receipts[0], receipts[2])] == [True, True]
+    else:
+        assert await env.notes.get(U, receipts[0].note_id) is None                 # stubs deleted at once
+        assert await env.notes.get(U, receipts[2].note_id) is None
+    again = await env.service.request_erase_all(U)                               # the owner asks again
+    env.notes.stuck = ""
+    assert again.note_count == 1 and await env.service.erase(U, again.code) == 1

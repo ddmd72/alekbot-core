@@ -43,13 +43,12 @@ from google.cloud import firestore
 from google.cloud.firestore import FieldFilter
 from google.cloud.firestore_v1.base_vector_query import DistanceMeasure
 from google.cloud.firestore_v1.vector import Vector
-from pydantic import ValidationError
 
 from ..config.environment import EnvironmentConfig
 from ..domain.drive_index import DriveIndexStoreUnavailable
 from ..domain.drive_note import (
     VERSIONS_SUBCOLLECTION, BoundBy, DriveNote, DriveNoteConflict, DriveNoteVersion, NoteSnapshot, NoteState,
-    erase_stub, indexer_writer, note_doc_id,
+    EraseResult, erase_stub, indexer_writer, note_doc_id,
 )
 from ..ports.drive_note_repository import DriveNoteRepository
 from ..utils.logger import logger
@@ -379,12 +378,21 @@ class FirestoreDriveNoteRepository(DriveNoteRepository):
         logger.warning(f"[DriveNote] erase of {note_id} kept moving under concurrent writes; refused")
         raise DriveNoteConflict(f"note {note_id}: its history kept changing during the erase")
 
-    async def erase(self, user_id: str, note_ids: Sequence[str]) -> int:
+    async def erase(self, user_id: str, note_ids: Sequence[str]) -> EraseResult:
         erased = 0
+        left: List[str] = []
         for note_id in dict.fromkeys(note_ids):
-            if await self._erase_one(user_id, note_id):
-                erased += 1
-        return erased
+            try:
+                done = await self._erase_one(user_id, note_id)
+            except DriveNoteConflict:
+                left.append(note_id)            # logged where it was raised; the rest are still erased
+                continue
+            except (*_TRANSIENT, *_MISSING_INDEX) as exc:
+                logger.warning(f"[DriveNote] erase of {note_id} failed: {type(exc).__name__}: {exc}")
+                left.append(note_id)
+                continue
+            erased += int(done)
+        return EraseResult(erased=erased, left=tuple(left))
 
     async def delete_stub(self, user_id: str, note_id: str) -> bool:
         ref = self._ref(user_id, note_id)
@@ -403,12 +411,14 @@ class FirestoreDriveNoteRepository(DriveNoteRepository):
 
 async def _run(function: Callable[[Any], Awaitable[Any]], transaction: Any, note_id: str) -> Any:
     """Run a transactional function. When contention outlasts Firestore's own retries the client raises a plain
-    ValueError ("Failed to commit transaction in N attempts"): that is a conflict for the caller, not a crash."""
+    ValueError ("Failed to commit transaction in N attempts") from the last Aborted: that, and only that, is a conflict
+    for the caller. Any other ValueError (a pydantic ValidationError from a corrupt document, a client misuse) keeps
+    its own type."""
     try:
         return await function(transaction)
-    except ValidationError:
-        raise                                      # a corrupt document is not contention
     except ValueError as exc:
+        if not isinstance(exc.__cause__, Aborted):
+            raise
         logger.warning(f"[DriveNote] transaction on {note_id} gave up under contention: {exc}")
         raise DriveNoteConflict(f"note {note_id}: contention outlasted the transaction's retries") from exc
 

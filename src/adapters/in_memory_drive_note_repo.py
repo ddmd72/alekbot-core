@@ -13,8 +13,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 from ..domain.drive_note import (
-    BoundBy, DriveNote, DriveNoteConflict, DriveNoteVersion, NoteSnapshot, NoteState, closed_version, erase_stub,
-    indexer_writer,
+    BoundBy, DriveNote, DriveNoteConflict, DriveNoteVersion, EraseResult, NoteSnapshot, NoteState, closed_version,
+    erase_stub, indexer_writer,
 )
 from ..ports.drive_note_repository import DriveNoteRepository
 
@@ -204,16 +204,26 @@ class InMemoryDriveNoteRepository(DriveNoteRepository):
 
     # -- erase ------------------------------------------------------------------------------------------------------------
 
-    async def erase(self, user_id: str, note_ids: Sequence[str]) -> int:
+    async def erase(self, user_id: str, note_ids: Sequence[str]) -> EraseResult:
         erased = 0
+        left: List[str] = []
         for note_id in dict.fromkeys(note_ids):
-            note = self.notes.get((user_id, note_id))
-            if note is None:
+            try:
+                done = await self._erase_one(user_id, note_id)
+            except DriveNoteConflict:
+                left.append(note_id)
                 continue
-            self.versions.pop((user_id, note_id), None)
-            self._put(erase_stub(note))
-            erased += 1
-        return erased
+            erased += int(done)
+        return EraseResult(erased=erased, left=tuple(left))
+
+    async def _erase_one(self, user_id: str, note_id: str) -> bool:
+        """One note's erase (the seam a test makes conflict, as Firestore's can)."""
+        note = self.notes.get((user_id, note_id))
+        if note is None:
+            return False
+        self.versions.pop((user_id, note_id), None)
+        self._put(erase_stub(note))
+        return True
 
     async def delete_stub(self, user_id: str, note_id: str) -> bool:
         note = self.notes.get((user_id, note_id))

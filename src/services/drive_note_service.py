@@ -345,7 +345,9 @@ class DriveNoteService:
         """Redeem an erase code (once: an atomic get-and-delete) and erase its notes: every version deleted, a
         contentless stub left for the indexer to clear the record copy — or, with indexing off (no copy exists), the
         stubs deleted at once. Returns the number erased. A wrong, expired, reused or someone else's code is refused
-        and erases nothing."""
+        and erases nothing. The code is spent on redemption, so a partial erase still finishes what it can: the notes
+        the store could not erase (`EraseResult.left`) are reported AFTER every erased note is nudged (or its stub
+        deleted), as DriveNoteRefused(CONFLICT) with `erased` and `left` counts — the owner asks again for those."""
         store = self._erase_store()
         code = (code or "").strip()
         value = await store.get_and_delete(f"{user_id}:{code}") if code else None
@@ -354,15 +356,23 @@ class DriveNoteService:
             raise DriveNoteRefused(NoteRefusal.NO_SUCH_ERASE_REQUEST, "No such erase request.")
         ids = [str(i) for i in value.get("note_ids") or []]
         notes = await self._notes.get_many(user_id, ids)
-        items = [n.binding.item_id for n in notes.values() if n.binding is not None]
-        erased = await self._notes.erase(user_id, ids)
+        result = await self._notes.erase(user_id, ids)
+        left = set(result.left)
+        done = [i for i in ids if i not in left]
         if await self._indexing_enabled(user_id) is False:
-            for note_id in ids:
+            for note_id in done:
                 await self._notes.delete_stub(user_id, note_id)
         else:
-            await self._nudge(user_id, items)
-        logger.info(f"[DriveNote] erased user={user_id[:8]} scope={value.get('scope', '')} notes={erased}")
-        return erased
+            await self._nudge(user_id, [n.binding.item_id for i, n in notes.items()
+                                        if i not in left and n.binding is not None])
+        logger.info(f"[DriveNote] erased user={user_id[:8]} scope={value.get('scope', '')} notes={result.erased} "
+                    f"left={len(left)}")
+        if left:
+            raise DriveNoteRefused(
+                NoteRefusal.CONFLICT,
+                f"{result.erased} notes were erased; {len(left)} could not be, because they changed at the same time: "
+                "ask to erase them again.", erased=result.erased, left=len(left), note_ids=list(result.left))
+        return result.erased
 
     # ------------------------------------------------------------------------------------------------------------------
     # reads (S2: the open-file header, §6.2)

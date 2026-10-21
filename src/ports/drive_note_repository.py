@@ -27,7 +27,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Dict, List, Optional, Sequence, Tuple
 
-from src.domain.drive_note import DriveNote, DriveNoteVersion, NoteSnapshot
+from src.domain.drive_note import DriveNote, DriveNoteVersion, EraseResult, NoteSnapshot
 
 
 class DriveNoteRepository(ABC):
@@ -148,15 +148,19 @@ class DriveNoteRepository(ABC):
     # -- erase (§4.8) -----------------------------------------------------------------------------------------------------
 
     @abstractmethod
-    async def erase(self, user_id: str, note_ids: Sequence[str]) -> int:
+    async def erase(self, user_id: str, note_ids: Sequence[str]) -> EraseResult:
         """For each existing note: delete every version (they are `v1`..`v{current_version}`) and replace the parent
         with its contentless stub (`drive_note.erase_stub`, `revision` and `updated_at` bumped), in one transaction per
         note, so a
         concurrent write either lands before (and is erased) or after (on top of the stub). A history over one
         transaction's writes loses its oldest versions first, and the stub is written last: an interrupted erase
         leaves the note as it was, minus old versions, never a stub with history under it; when a write lands between
-        those batches and the stub (the version count moved), the batches are redone. Idempotent. Returns the
-        number of notes erased (stubs included, missing ids not)."""
+        those batches and the stub (the version count moved), the batches are redone. Idempotent.
+
+        **Never stops part-way:** a note that cannot be erased — a conflict that outlasts the retries
+        (DriveNoteConflict), or a store error on that note (DriveIndexStoreUnavailable) — is logged and its id
+        reported in `EraseResult.left`; the remaining notes are still erased. Returns `EraseResult(erased, left)`:
+        `erased` counts the notes erased (stubs included, missing ids not)."""
 
     @abstractmethod
     async def delete_stub(self, user_id: str, note_id: str) -> bool:

@@ -4,13 +4,13 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 import pytest
-from google.api_core.exceptions import FailedPrecondition, ServiceUnavailable
+from google.api_core.exceptions import Aborted, FailedPrecondition, ServiceUnavailable
 
 from src.adapters.firestore_drive_note_repo import FirestoreDriveNoteRepository
 from src.adapters.in_memory_drive_note_repo import InMemoryDriveNoteRepository
 from src.domain.drive_index import DriveIndexStoreUnavailable
 from src.domain.drive_note import (
-    DriveNote, DriveNoteConflict, NoteAction, NoteBinding, NoteContent, NoteProvenance, NoteSnapshot, NoteState,
+    DriveNote, DriveNoteConflict, EraseResult, NoteAction, NoteBinding, NoteContent, NoteProvenance, NoteSnapshot, NoteState,
     binding_key, next_version, note_after_write, note_doc_id, ref_key,
 )
 
@@ -282,7 +282,7 @@ async def test_erase_deletes_every_version_and_leaves_a_contentless_stub(repo):
     note, v2 = written(text="second", version=2, base=base, vector=[1.0, 0.0])
     await repo.write_version(note, v2, expected_version=1)
     before = (await repo.get(U, "n1")).updated_at
-    assert await repo.erase(U, ["n1", "missing"]) == 1
+    assert await repo.erase(U, ["n1", "missing"]) == EraseResult(erased=1)
     stub = await repo.get(U, "n1")
     assert stub.erase_pending and stub.state == "cleared" and stub.current_version == 0
     assert (stub.text, stub.doc_type, stub.life_areas, stub.keys, stub.note_vector) == ("", "", [], [], None)
@@ -290,8 +290,8 @@ async def test_erase_deletes_every_version_and_leaves_a_contentless_stub(repo):
     assert stub.match_keys == [binding_key("onedrive", D1, "a"), ref_key("a")] and stub.account_id == "acc"
     assert stub.updated_at > before
     assert await repo.list_versions(U, "n1") == []
-    assert await repo.erase(U, ["n1"]) == 1                              # idempotent
-    assert await repo.erase(OTHER, ["n1"]) == 0
+    assert (await repo.erase(U, ["n1"])).erased == 1                     # idempotent
+    assert (await repo.erase(OTHER, ["n1"])).erased == 0
 
 
 async def test_a_new_note_on_a_stub_starts_at_v1_and_survives_delete_stub(repo):
@@ -368,7 +368,7 @@ async def test_firestore_erase_of_a_long_history_takes_the_oldest_first(adapter)
         nxt, v = written(text=f"t{n}", version=n, base=note)
         await repo.write_version(nxt, v, expected_version=n - 1)
         note = await repo.get(U, "n1")
-    assert await repo.erase(U, ["n1"]) == 1
+    assert (await repo.erase(U, ["n1"])).erased == 1
     assert db.versions_of("u:n1") == {}
     assert len(db.commits) == 1 and len(db.commits[0]) == 3              # v1..v3 in a batch, the rest with the stub
 
@@ -521,7 +521,8 @@ async def test_firestore_exhausted_transaction_retries_are_a_conflict(adapter):
 
     def giving_up(fn):
         async def run(transaction):
-            raise ValueError("Failed to commit transaction in 5 attempts.")
+            # what the client raises once its retries are spent: a ValueError FROM the last Aborted
+            raise ValueError("Failed to commit transaction in 5 attempts.") from Aborted("contention")
         return run
 
     with patch("src.adapters.firestore_drive_note_repo.firestore.async_transactional", side_effect=giving_up):
@@ -567,6 +568,75 @@ async def test_firestore_a_long_erase_redoes_its_batches_when_a_write_lands_in_b
         return b
 
     db.batch = batch
-    assert await repo.erase(U, ["n1"]) == 1
+    assert (await repo.erase(U, ["n1"])).erased == 1
     assert landed and db.versions_of("u:n1") == {}
     assert (await repo.get(U, "n1")).erase_pending
+
+
+# -- fix round 2: a partial erase never stops part-way; only an exhausted-retries ValueError is a conflict ----------
+
+async def test_a_conflict_partway_through_an_erase_all_erases_the_rest(adapter):
+    from unittest.mock import patch
+    repo, db = adapter
+    for note_id, item in (("n1", "a"), ("n2", "b"), ("n3", "c")):
+        await first(repo, note_id=note_id, item=item)
+    if db is None:
+        real = repo._erase_one
+
+        async def flaky(user_id, note_id):
+            if note_id == "n2":
+                raise DriveNoteConflict("contention")
+            return await real(user_id, note_id)
+
+        repo._erase_one = flaky
+        result = await repo.erase(U, ["n1", "n2", "n3", "missing"])
+    else:
+        calls = []
+
+        def second_gives_up(fn):          # the stub transaction of n2 (the 2nd note) exhausts its retries
+            async def run(transaction):
+                calls.append(1)
+                if len(calls) == 2:
+                    raise ValueError("Failed to commit transaction in 5 attempts.") from Aborted("contention")
+                return await fn(transaction)
+            return run
+
+        with patch("src.adapters.firestore_drive_note_repo.firestore.async_transactional",
+                   side_effect=second_gives_up):
+            result = await repo.erase(U, ["n1", "n2", "n3", "missing"])
+    assert result == EraseResult(erased=2, left=("n2",))
+    assert (await repo.get(U, "n1")).erase_pending and (await repo.get(U, "n3")).erase_pending
+    untouched = await repo.get(U, "n2")
+    assert not untouched.erase_pending and untouched.text == "Petya's estimate"
+    assert [v.version for v in await repo.list_versions(U, "n2")] == [1]
+
+
+async def test_firestore_a_store_error_on_one_note_is_reported_not_raised(adapter):
+    repo, db = _firestore(adapter)
+    await first(repo, note_id="n1", item="a")
+    await first(repo, note_id="n2", item="b")
+    real = repo._erase_one
+
+    async def failing(user_id, note_id):
+        if note_id == "n1":
+            raise ServiceUnavailable("down")
+        return await real(user_id, note_id)
+
+    repo._erase_one = failing
+    assert await repo.erase(U, ["n1", "n2"]) == EraseResult(erased=1, left=("n1",))
+
+
+async def test_firestore_any_other_value_error_keeps_its_type(adapter):
+    from unittest.mock import patch
+    repo, db = _firestore(adapter)
+    await first(repo)
+
+    def misuse(fn):
+        async def run(transaction):
+            raise ValueError("Transaction already in progress")          # no Aborted behind it
+        return run
+
+    with patch("src.adapters.firestore_drive_note_repo.firestore.async_transactional", side_effect=misuse):
+        with pytest.raises(ValueError) as info:
+            await repo.archive(U, "n1", archived_at=T, last_seen_at=T)
+    assert not isinstance(info.value, DriveNoteConflict)

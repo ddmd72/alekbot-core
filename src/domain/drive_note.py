@@ -14,7 +14,7 @@ Public interface:
     DriveNoteConflict                                                a version precondition failed (a concurrent write)
     NoteBinding, NoteSnapshot, NoteWriter                            the note document's maps
     DriveNote, DriveNoteVersion                                      the parent document and one SCD2 version
-    NoteContent (the triple), NoteProvenance, NoteTarget, NoteReceipt, EraseRequestReceipt   value objects
+    NoteContent (the triple), NoteProvenance, NoteTarget, NoteReceipt, EraseRequestReceipt, EraseResult   value objects
     normalize_note_text(text) -> str;  note_word_count(text) -> int;  check_note_text(text) -> str
     resolve_doc_type(value) -> str;  resolve_life_areas(values) -> tuple
     note_content(text, doc_type, life_areas) -> NoteContent
@@ -329,6 +329,14 @@ class NoteReceipt:
                 "life_areas": list(self.life_areas), "version": self.version, "previous_text": self.previous_text,
                 "status": self.status, "ref": self.ref, "note_ref": self.note_ref, "noop": self.noop,
                 "redo": self.redo}
+
+
+@dataclass(frozen=True)
+class EraseResult:
+    """What `DriveNoteRepository.erase` did: `erased` notes (stubs included), and the ids it could NOT erase (a conflict
+    that outlasted its retries, or a store error on that note), in request order; the rest went on regardless."""
+    erased: int = 0
+    left: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -697,7 +705,7 @@ __all__ = [
     "ONEDRIVE_PROVIDER_KEY", "binding_parts_of", "indexer_writer", "parse_binding_key", "CONTENT_KEY_FAMILY",
     "DRIVE_FILE_NOTES_SKILL", "DRIVE_NOTE_ERASE_DELIVERY", "DRIVE_NOTE_RECEIPT_DELIVERY", "DriveNote",
     "DriveNoteConflict", "DriveNoteRefused", "DriveNoteVersion", "ERASE_ALL_COMMAND", "ERASE_CODE_TTL",
-    "ERASE_COMMAND", "ERASE_SCOPE_ALL", "ERASE_SCOPE_ONE", "EraseRequestReceipt", "LIFE_AREAS_MAX", "NOTES_PER_USER_MAX",
+    "ERASE_COMMAND", "ERASE_SCOPE_ALL", "ERASE_SCOPE_ONE", "EraseRequestReceipt", "EraseResult", "LIFE_AREAS_MAX", "NOTES_PER_USER_MAX",
     "NOTE_CHARS_MAX", "NOTE_KEYS_MAX", "NOTE_KEYS_VERSION", "NOTE_REF_PREFIX", "NOTE_WORDS_MAX",
     "NOTE_WRITES_PER_TURN", "NoteAction", "NoteBinding", "NoteContent", "NoteOrigin", "NoteProvenance", "NoteReceipt",
     "NoteRefusal", "NoteSnapshot", "NoteState", "NoteTarget", "NoteWriter", "OWNER_TURN_RUN_ORIGINS",
