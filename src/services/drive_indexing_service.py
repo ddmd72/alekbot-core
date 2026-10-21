@@ -603,6 +603,9 @@ class DriveIndexingService:
         self._localization = localization
         self._language = language
         self._timezones: Dict[str, str] = {}   # `UserBotConfig.timezone`, read with the opt-in flag (the archive day)
+        # root setup that made no progress (no root document, or a confirmed loss's reset and new root), per user: the
+        # failures in a row and when the reserve may be taken for it again (`_note_root_setup`; process memory only)
+        self._root_setup_holds: Dict[str, Tuple[int, datetime]] = {}
         self._clock = clock
         self._monotonic = monotonic
         self._gate_checked: Dict[str, float] = {}
@@ -1199,17 +1202,21 @@ class DriveIndexingService:
 
     async def _mirror_ready(self, user_id: str) -> bool:
         """The user has mirror work the step can do now (Δ209, Δ217): one cheap check, at most three single-document
-        reads — no root document for the connected drive yet or an unfinished seed (no read), a record in
-        `mirror_queue`, a ripe wake-up, a mark whose `mark_ready_at` has passed. Never while the tick has no mirror
-        drive id, the root-loss mark is set, or the full-drive hold (`quota_hold_until`) lasts: the step does nothing
-        then, so held work never takes the reserve."""
+        reads — root setup (no root document for the connected drive yet, or a confirmed loss whose ledger reset and
+        new root are under way: the current id already in `previous_root_ids`, checked before the root-loss mark it
+        still carries) or an unfinished seed (no read), a record in `mirror_queue`, a ripe wake-up, a mark whose
+        `mark_ready_at` has passed. Never while the tick has no mirror drive id, the root-loss mark is set, or the
+        full-drive hold (`quota_hold_until`) lasts: the step does nothing then, so held work never takes the reserve.
+        Root setup that keeps failing (every name taken, a full drive, a refusal) is held off the reserve with a
+        back-off (`_note_root_setup`; Task 21C fix round 1, a delta to Δ209): the step still tries it every tick, in what the start budget left."""
         mirror = _TICK_MIRROR.get()
         if self._mirror is None or self._mirror_repo is None or mirror is None or not mirror.drive_id:
             return False
         now = self._clock()
-        root = next((r for r in mirror.roots if r.drive_id == mirror.drive_id), None)
-        if root is None:
-            return True   # root setup and the first seed are due
+        root = _connected_root(mirror)
+        if root is None or root.root_item_id in root.previous_root_ids:
+            held = self._root_setup_holds.get(user_id)
+            return held is None or now >= held[1]   # root setup (and then the seed) is due
         if root.root_item_id in mirror.gone_ids:
             return False   # the step stops at its root-loss check (Δ217)
         if root.quota_hold_until is not None and now < root.quota_hold_until:
@@ -1267,6 +1274,27 @@ class DriveIndexingService:
             raise
         for key in _MIRROR_TICK_COUNTERS:
             _inc(counts, key, out.get(key, 0))
+        self._note_root_setup(user_id, mirror, out)
+
+    def _note_root_setup(self, user_id: str, mirror: _Mirror, out: Mapping[str, int]) -> None:
+        """After a run that had root setup to do (no root document at the tick's start, or a confirmed loss's reset
+        under way): progress (a root created, documents reset, the loss confirmed) clears the user's hold; none puts
+        the reserve on hold for ROOT_SETUP_HOLD_BASE, doubling per failure in a row up to ROOT_SETUP_HOLD_CAP (a delta to Δ209).
+        Process memory, not a stored field: no root document exists to hold it, the indexer is one instance, and a
+        restart costs at most one reserved tail. A run with no root setup to do clears nothing (the hold is gone with
+        the root document's arrival anyway)."""
+        root = _connected_root(mirror)
+        if root is not None and root.root_item_id not in root.previous_root_ids:
+            self._root_setup_holds.pop(user_id, None)
+            return
+        if any(out.get(key) for key in _ROOT_SETUP_PROGRESS):
+            self._root_setup_holds.pop(user_id, None)
+            return
+        failures = self._root_setup_holds.get(user_id, (0, self._clock()))[0] + 1
+        hold = min(ROOT_SETUP_HOLD_BASE * (2 ** (failures - 1)), ROOT_SETUP_HOLD_CAP)
+        self._root_setup_holds[user_id] = (failures, self._clock() + hold)
+        logger.info(f"[DriveIndex] transcript mirror of {user_id[:8]}: root setup made no progress ({failures} in a "
+                    f"row); no reserved tail for it for {hold}")
 
     async def _sweep(self, user_id: str, state: DriveSyncState, now: datetime, budget: _Budget,
                      summary: Dict[str, int]) -> DriveSyncState:
@@ -4056,6 +4084,18 @@ def _transcribing() -> bool:
     """Transcription is on for the user of the running tick (the kill switch and the user's flag, read at its gate)."""
     transcription = _TICK_TRANSCRIPTION.get()
     return transcription is not None and transcription.on
+
+
+# Root setup that keeps failing is held off the reserve (Task 21C fix round 1, a delta to Δ209): 10 min (the fan-out's period), doubling, at most 6 h
+ROOT_SETUP_HOLD_BASE = timedelta(minutes=10)
+ROOT_SETUP_HOLD_CAP = timedelta(hours=6)
+# What counts as root setup's progress in a run: a root created, documents reset, the loss confirmed
+_ROOT_SETUP_PROGRESS = ("mirror_root_created", "mirror_reset", "mirror_reset_dropped", "mirror_root_lost")
+
+
+def _connected_root(mirror: _Mirror) -> Optional[MirrorRoot]:
+    """The root document of the connected drive, as the tick read it at its start."""
+    return next((r for r in mirror.roots if r.drive_id == mirror.drive_id), None)
 
 
 # The mirror step's counters the tick line carries (§27.9.5, plan Task 21C); the step logs the rest on its own line.
