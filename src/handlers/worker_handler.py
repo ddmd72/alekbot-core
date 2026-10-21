@@ -41,7 +41,7 @@ Supported task_types:
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional, Tuple
 
 
 if TYPE_CHECKING:
@@ -52,6 +52,7 @@ if TYPE_CHECKING:
     from ..ports.indexed_email_repository import IndexedEmailRepository
     from ..ports.media_storage_port import MediaStoragePort
     from ..ports.account_repository import AccountRepository
+    from ..ports.dedup_store import DedupStore
     from ..ports.oauth_credentials_port import OAuthCredentialsPort
     from ..ports.video_generation_port import VideoPollResult
     from ..services.file_link_service import FileLinkService
@@ -90,8 +91,9 @@ class WorkerHandler:
     """
     Dispatches /worker HTTP payloads to specialized handlers.
 
-    Owns no business logic — delegates to existing handlers/services.
-    Falls back to slack_adapter._handle_worker_task() for unknown task_types.
+    Owns no business logic — delegates to existing handlers/services. The only dispatcher of
+    /worker: it claims every Cloud Tasks delivery by task name (decisions/worker_task_dedup.md)
+    and routes telegram updates and queued Slack events to the adapters attached by main.py.
     """
 
     def __init__(
@@ -122,7 +124,11 @@ class WorkerHandler:
         companion_extraction: "Optional[CompanionExtractionService]" = None,
         oauth_credentials: "Optional[OAuthCredentialsPort]" = None,
         drive_sync_scheduler: "Optional[DriveSyncSchedulerService]" = None,
+        task_dedup: "Optional[DedupStore]" = None,
     ) -> None:
+        self._task_dedup = task_dedup
+        self._slack_worker: Optional[Callable[[dict, dict], Awaitable[Tuple[dict, int]]]] = None
+        self._telegram_worker: Optional[Callable[[dict], Awaitable[Tuple[dict, int]]]] = None
         self._agent_worker = agent_worker_handler
         self._email_indexing = email_indexing_service
         self._notification = notification_service
@@ -150,25 +156,92 @@ class WorkerHandler:
         self._oauth_credentials = oauth_credentials
         self._drive_sync_scheduler = drive_sync_scheduler
 
+    def attach_slack_worker(
+        self, fn: Callable[[dict, dict], Awaitable[Tuple[dict, int]]],
+    ) -> None:
+        """Late wiring: the Slack adapter is built after this handler."""
+        self._slack_worker = fn
+
+    def attach_telegram_worker(
+        self, fn: Callable[[dict], Awaitable[Tuple[dict, int]]],
+    ) -> None:
+        """Late wiring: the Telegram adapter is built after this handler (and may be absent)."""
+        self._telegram_worker = fn
+
     async def handle(
-        self, payload: dict, delivery: Optional[CloudTaskDelivery] = None,
-    ) -> Optional[Tuple[dict, int]]:
+        self,
+        payload: dict,
+        delivery: Optional[CloudTaskDelivery] = None,
+        headers: Optional[dict] = None,
+    ) -> Tuple[dict, int]:
         """
-        Dispatch to appropriate handler by task_type.
+        Claim the delivery, dispatch by task_type, release the claim when the attempt
+        should be retried.
 
-        ``delivery`` — the Cloud Tasks headers of this request (None outside Cloud Tasks);
-        agent_execution uses it to skip a redelivered task.
+        ``delivery`` — the Cloud Tasks headers of this request (None outside Cloud Tasks:
+        scheduler, manual curl); a second delivery of a claimed task is acked as duplicate.
+        ``headers`` — the request headers, passed to the queued Slack event worker.
 
-        Returns (body_dict, status_code) for known task_types, or None for
-        unknown types (caller should handle fallback).
+        Always returns (body_dict, status_code).
         """
+        if not await self._claim(delivery, payload):
+            return {"status": "duplicate"}, 200
+        try:
+            body, status = await self._dispatch(payload, headers or {})
+        except BaseException:
+            await self._release(delivery)
+            raise
+        # 5xx and 429 ask Cloud Tasks to retry: the retry must not be skipped as a duplicate.
+        if status >= 500 or status == 429:
+            await self._release(delivery)
+        return body, status
+
+    async def _claim(self, delivery: Optional[CloudTaskDelivery], payload: dict) -> bool:
+        """False only when another delivery of the same task holds the claim.
+        Fails open: a store error runs the task — a duplicate beats a lost task."""
+        if delivery is None or self._task_dedup is None:
+            return True
+        try:
+            claimed = await self._task_dedup.try_mark_processed(delivery.task_name)
+        except Exception as exc:
+            logger.error(
+                "[WorkerHandler] task claim failed, running anyway: task=%s error=%s",
+                delivery.task_name, exc, exc_info=True,
+            )
+            return True
+        if not claimed:
+            logger.info(
+                "[WorkerHandler] Skipping redelivered task: task=%s task_type=%s "
+                "retry_count=%s execution_count=%s",
+                delivery.task_name, payload.get("task_type"),
+                delivery.retry_count, delivery.execution_count,
+            )
+        return claimed
+
+    async def _release(self, delivery: Optional[CloudTaskDelivery]) -> None:
+        if delivery is None or self._task_dedup is None:
+            return
+        try:
+            await self._task_dedup.release(delivery.task_name)
+        except Exception as exc:
+            logger.error(
+                "[WorkerHandler] claim release failed — the retry will be skipped: "
+                "task=%s error=%s", delivery.task_name, exc, exc_info=True,
+            )
+
+    async def _dispatch(self, payload: dict, headers: dict) -> Tuple[dict, int]:
         task_type = payload.get("task_type")
         if task_type == "agent_execution":
             user_id = payload.get("context", {}).get("user_id", "")
             if user_id:
                 await self._agent_factory.ensure_agents_for_user(user_id)
-            result = await self._agent_worker.handle_task(payload, delivery=delivery)
+            result = await self._agent_worker.handle_task(payload)
             return result, 200
+        elif task_type == "telegram_update":
+            if self._telegram_worker is None:
+                logger.error("[WorkerHandler] telegram_update delivered but Telegram is not configured")
+                return {"error": "telegram not configured"}, 503
+            return await self._telegram_worker(payload)
         elif task_type == "email_indexing":
             return await self._handle_email_indexing(payload)
         elif task_type == "email_indexing_watchdog":
@@ -209,7 +282,14 @@ class WorkerHandler:
             return await self._handle_repair_email_embeddings()
         elif task_type == "start_drive_sync":
             return await self._handle_start_drive_sync()
-        return None  # unknown task_type — caller handles fallback
+        elif task_type is None and "event" in payload and "session_id" in payload:
+            # Queued Slack event (GcpTaskQueue.enqueue_slack_event): no task_type by design.
+            if self._slack_worker is None:
+                logger.error("[WorkerHandler] Slack event delivered but no Slack worker is attached")
+                return {"error": "slack not configured"}, 503
+            return await self._slack_worker(payload, headers)
+        logger.error("[WorkerHandler] unknown task_type=%r", task_type)
+        return {"error": "unknown task_type"}, 400
 
     # ------------------------------------------------------------------
     # Email indexing

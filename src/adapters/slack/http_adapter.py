@@ -9,7 +9,7 @@ import hmac
 import json
 import time
 import weakref
-from typing import Optional, Dict, Any, Callable, cast
+from typing import Optional, Dict, Any, Callable, Tuple, cast
 from slack_bolt.async_app import AsyncApp
 from quart import Blueprint, request, jsonify
 
@@ -196,14 +196,12 @@ class HTTPModeAdapter(SlackAdapter):
             logger.error(f"❌ Error handling Slack event: {e}", exc_info=True)
             return jsonify({"error": str(e)}), 500
 
-    async def _handle_worker_task(self):
+    async def handle_queued_event(self, payload: Dict[str, Any], headers: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
         try:
-            payload = await request.get_json()
             if not payload:
                 logger.warning("⚠️ Empty payload in worker task")
-                return jsonify({"ok": False, "error": "Empty payload"}), 400
+                return {"ok": False, "error": "Empty payload"}, 400
 
-            headers = dict(request.headers)
             ctx = extract_context(headers)
             header_trace_id = headers.get("x-trace-id") or headers.get("X-Trace-Id")
             if header_trace_id:
@@ -220,7 +218,7 @@ class HTTPModeAdapter(SlackAdapter):
 
             if not event_data or not session_id:
                 logger.warning("⚠️ Missing event_data or session_id in worker task")
-                return jsonify({"ok": False, "error": "Missing required fields"}), 400
+                return {"ok": False, "error": "Missing required fields"}, 400
 
             # Per-session lock: serialize concurrent workers for the same session.
             # Strong local ref keeps the lock alive in WeakValueDictionary until function returns.
@@ -231,7 +229,7 @@ class HTTPModeAdapter(SlackAdapter):
 
             if lock.locked():
                 logger.info(f"⏭️ Session {session_id[:8]} busy, returning 429 for Cloud Tasks retry")
-                return jsonify({"ok": False, "error": "session_busy"}), 429
+                return {"ok": False, "error": "session_busy"}, 429
 
             await lock.acquire()
             released = False
@@ -258,7 +256,7 @@ class HTTPModeAdapter(SlackAdapter):
                     event_type = event.get("type")
 
                     if event.get("bot_id"):
-                        return jsonify({"ok": True}), 200
+                        return {"ok": True}, 200
 
                     if event_type == "message":
                         await self._process_message_event(event, session_id, turn_id=turn_id,
@@ -269,13 +267,23 @@ class HTTPModeAdapter(SlackAdapter):
                     else:
                         logger.info(f"⏭️ Skipping unsupported event type: {event_type}")
 
-                    return jsonify({"ok": True}), 200
+                    return {"ok": True}, 200
             finally:
                 release_lock()
 
         except Exception as e:
             logger.error(f"❌ Error in worker task: {e}", exc_info=True)
+            return {"error": str(e)}, 500
+
+    async def _handle_worker_task(self):
+        # Quart wrapper kept for callers that still go through the request object.
+        try:
+            payload = await request.get_json()
+        except Exception as e:
+            logger.error(f"❌ Error in worker task: {e}", exc_info=True)
             return jsonify({"error": str(e)}), 500
+        body, status = await self.handle_queued_event(payload, dict(request.headers))
+        return jsonify(body), status
 
     def _resolve_session_id(self, user_id: str, channel_id: str) -> str:
         return f"{user_id}:{channel_id}"

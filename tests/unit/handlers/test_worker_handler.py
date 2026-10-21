@@ -1892,10 +1892,11 @@ class TestHandleCompanionConsolidation:
 
 
 # ---------------------------------------------------------------------------
-# agent_execution — Cloud Tasks delivery passed through for redelivery dedup
+# agent_execution — dispatched to AgentWorkerHandler; the redelivery claim is WorkerHandler's
+# own (test_worker_handler_task_claim.py), so the delivery is no longer passed through
 # ---------------------------------------------------------------------------
 
-async def test_agent_execution_passes_delivery_to_agent_worker():
+async def test_agent_execution_dispatches_payload_to_agent_worker():
     from src.domain.cloud_task_delivery import CloudTaskDelivery
 
     worker, _ = _make_worker()
@@ -1905,5 +1906,6 @@ async def test_agent_execution_passes_delivery_to_agent_worker():
 
     body, status = await worker.handle(payload, delivery=delivery)
 
-    worker._agent_worker.handle_task.assert_awaited_once_with(payload, delivery=delivery)
+    worker._agent_worker.handle_task.assert_awaited_once_with(payload)
+    assert body == {"status": "success"}
     assert status == 200
