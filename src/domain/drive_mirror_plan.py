@@ -22,7 +22,8 @@ Public interface:
     Action, file_action(rec, doc, rendered_hash, placement), folder_action(rec, doc, placement)
     Decision, marked(doc, notice), unmarked(doc), mark_held(doc, until), mark_decision(doc, ...)
     RootDecision, root_decision(root, ...)
-    retry_due(doc, *, now, digest_changed), charged(doc, rec, now), reset_charges(doc)
+    digest_changed(doc, digest), retry_due(doc, *, now, digest), charged_doc(doc, now), charged(doc, rec, now),
+    reset_charges(doc, digest)
     prune_due(folder_doc, *, source_present, has_child_docs)
     local_day(at, tz_name)
 """
@@ -33,9 +34,9 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional, Tuple
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from .drive_index import DriveIndexRecord
+from .drive_index import DriveIndexRecord, RecordState
 from .drive_index_params import MIRROR_ARCHIVE_GRACE, MIRROR_FAILED_RETRY, MIRROR_MAX_ATTEMPTS, MIRROR_ROOT_GRACE
 from .drive_enrichment import JobState
 from .drive_index_planner import backoff
@@ -81,7 +82,7 @@ def mirror_eligible(rec: DriveIndexRecord) -> bool:
     """A recording whose transcript is `current` (a stub included), or a folder that already has a mirror counterpart
     (§27.9.4). A transcript that is not current is never due: its last file stays until the new one is current."""
     if rec.is_folder:
-        return rec.mirrored_digest != ""
+        return rec.mirrored_digest != "" and rec.state not in (RecordState.DELETING, RecordState.UNRESOLVED)
     return rec.transcript_state == JobState.CURRENT.value
 
 
@@ -130,20 +131,27 @@ def _wanted_name(placement: Placement) -> str:
     return placement.parts[-1]
 
 
+def _misplaced(rec: DriveIndexRecord, doc: MirrorDoc, placement: Placement) -> bool:
+    """The drive item is not where the source says: source name or parent changed, or the drive name is not the final one
+    (a temporary name left by a stopped tick counts)."""
+    return (doc.source_name != rec.name or doc.source_parent_id != rec.parent_id
+            or doc.mirror_name != _wanted_name(placement))
+
+
 def file_action(rec: DriveIndexRecord, doc: Optional[MirrorDoc], rendered_hash: str, placement: Placement) -> Action:
     """The next action for a due recording (§27.9.5 step 4). `placement` is where the file belongs now, its last part
     the final (collision-assigned) name. No document: create. Archived (the record is current again): restore.
     Detached (the record is back): reattach. Active: move when the source name or parent changed or the drive name is
     not the final one (a temporary name left by a stopped tick, see the module note); replace only when the rendered
-    hash differs; otherwise only the digest is stamped."""
-    if doc is None:
+    hash differs; otherwise only the digest is stamped. A document with no `mirror_item_id` holds only a create's intent
+    (written before the Graph call, Δ210): it is a create, whatever its state."""
+    if doc is None or not doc.mirror_item_id:
         return Action.CREATE
     if doc.state == MIRROR_ARCHIVED:
         return Action.RESTORE
     if doc.state == MIRROR_DETACHED:
         return Action.REATTACH
-    if (doc.source_name != rec.name or doc.source_parent_id != rec.parent_id
-            or doc.mirror_name != _wanted_name(placement)):
+    if _misplaced(rec, doc, placement):
         return Action.MOVE
     if doc.rendered_hash != rendered_hash:
         return Action.REPLACE
@@ -152,20 +160,29 @@ def file_action(rec: DriveIndexRecord, doc: Optional[MirrorDoc], rendered_hash: 
 
 def folder_action(rec: DriveIndexRecord, doc: Optional[MirrorDoc], placement: Placement) -> Action:
     """A source folder's counterpart: create, move (renamed, re-parented, or not at its final name), or stamp only."""
-    if doc is None:
+    if doc is None or not doc.mirror_item_id:
         return Action.CREATE
-    if (doc.source_name != rec.name or doc.source_parent_id != rec.parent_id
-            or doc.mirror_name != _wanted_name(placement)):
+    if _misplaced(rec, doc, placement):
         return Action.MOVE
     return Action.STAMP_ONLY
 
 
 # -- marks ----------------------------------------------------------------------------------------------------------
 
+_WHY_RANK = {UNKNOWN: 0, UNSTORED: 1, GONE: 2}
+
+
 def marked(doc: MirrorDoc, notice: DeletionNotice) -> MirrorDoc:
-    """The durable word that the source is gone (§27.9.4): the mark is ready one grace after it was seen."""
-    return replace(doc, gone_pending=True, gone_why=notice.why, gone_at=notice.at,
-                   mark_ready_at=notice.at + MIRROR_ARCHIVE_GRACE)
+    """The durable word that the source is gone (§27.9.4): ready one grace after it was seen. On a document already
+    marked the earliest `gone_at` stays, `mark_ready_at` only moves later, and `why` only upgrades
+    (unknown < unstored < gone), so a repeated notice never postpones or weakens a mark."""
+    ready = notice.at + MIRROR_ARCHIVE_GRACE
+    if not doc.gone_pending:
+        return replace(doc, gone_pending=True, gone_why=notice.why, gone_at=notice.at, mark_ready_at=ready)
+    gone_at = min(doc.gone_at, notice.at) if doc.gone_at is not None else notice.at
+    why = notice.why if _WHY_RANK.get(notice.why, 0) > _WHY_RANK.get(doc.gone_why, 0) else doc.gone_why
+    later = max(doc.mark_ready_at, ready) if doc.mark_ready_at is not None else ready
+    return replace(doc, gone_why=why, gone_at=gone_at, mark_ready_at=later)
 
 
 def unmarked(doc: MirrorDoc) -> MirrorDoc:
@@ -219,10 +236,16 @@ def root_decision(root: MirrorRoot, *, record_present: bool, round_complete: boo
 
 # -- failures -------------------------------------------------------------------------------------------------------
 
-def retry_due(doc: MirrorDoc, *, now: datetime, digest_changed: bool) -> bool:
+def digest_changed(doc: MirrorDoc, digest: str) -> bool:
+    """The record's digest is not the one the document last failed at (`failed_digest`): new content, not a wake-up."""
+    return doc.failed_digest != "" and digest != doc.failed_digest
+
+
+def retry_due(doc: MirrorDoc, *, now: datetime, digest: str = "") -> bool:
     """May the step try this document now (Δ204)? A new digest: yes. Parked (`failed_at`): after MIRROR_FAILED_RETRY.
-    Backing off: after `retry_at`."""
-    if digest_changed:
+    Backing off: after `retry_at`. Contract: on the DUE path the queue is the gate (a record in `mirror_queue`, or just
+    woken, is always tried); this function gates MARKS, which have no record (`digest` "" then)."""
+    if digest and digest_changed(doc, digest):
         return True
     if doc.failed_at is not None:
         return now >= doc.failed_at + MIRROR_FAILED_RETRY
@@ -231,22 +254,30 @@ def retry_due(doc: MirrorDoc, *, now: datetime, digest_changed: bool) -> bool:
     return True
 
 
-def charged(doc: MirrorDoc, rec: DriveIndexRecord, now: datetime) -> Tuple[MirrorDoc, DriveIndexRecord]:
-    """One failed action (Δ204, Δ217): `attempts` + 1 and `retry_at = now + backoff(attempts)` (the planner's backoff,
-    as `with_retry` uses it); at MIRROR_MAX_ATTEMPTS `failed_at = now` (parked). The record leaves the queue:
-    `mirror_due` False, `mirror_retry_at` the same time (the park's end when parked), `mirror_held_digest` its digest."""
+def charged_doc(doc: MirrorDoc, now: datetime) -> MirrorDoc:
+    """One failed action on a document with no record (a mark): `attempts` + 1 and `retry_at = now + backoff(attempts)`;
+    at MIRROR_MAX_ATTEMPTS `failed_at = now` (parked)."""
     attempts = doc.attempts + 1
-    retry_at = now + backoff(attempts)
     parked = attempts >= MIRROR_MAX_ATTEMPTS
-    new_doc = replace(doc, attempts=attempts, retry_at=retry_at, failed_at=now if parked else doc.failed_at)
-    held_until = now + MIRROR_FAILED_RETRY if parked else retry_at
-    new_rec = replace(rec, mirror_due=False, mirror_retry_at=held_until, mirror_held_digest=mirror_digest(rec))
-    return new_doc, new_rec
+    return replace(doc, attempts=attempts, retry_at=now + backoff(attempts), failed_at=now if parked else doc.failed_at)
 
 
-def reset_charges(doc: MirrorDoc) -> MirrorDoc:
-    """A new digest or a success gives the document a fresh budget: no attempts, no backoff, not parked."""
-    return replace(doc, attempts=0, retry_at=None, failed_at=None)
+def charged(doc: MirrorDoc, rec: DriveIndexRecord, now: datetime) -> Tuple[MirrorDoc, DriveIndexRecord]:
+    """One failed action on due work (Δ204, Δ217): `charged_doc`, plus `failed_digest` on the document. The record leaves
+    the queue: `mirror_due` False, `mirror_retry_at` the same time (the park's end when parked), `mirror_held_digest` its
+    digest (the planner's backoff, as `with_retry` uses it)."""
+    digest = mirror_digest(rec)
+    new_doc = replace(charged_doc(doc, now), failed_digest=digest)
+    held_until = now + MIRROR_FAILED_RETRY if new_doc.failed_at is not None else new_doc.retry_at
+    return new_doc, replace(rec, mirror_due=False, mirror_retry_at=held_until, mirror_held_digest=digest)
+
+
+def reset_charges(doc: MirrorDoc, digest: Optional[str] = None) -> MirrorDoc:
+    """A fresh retry budget: no attempts, no backoff, not parked. With `digest`, only when it is new against the one the
+    document failed at (`digest_changed`); without, always (a success)."""
+    if digest is not None and not digest_changed(doc, digest):
+        return doc
+    return replace(doc, attempts=0, retry_at=None, failed_at=None, failed_digest="")
 
 
 # -- pruning --------------------------------------------------------------------------------------------------------
@@ -262,12 +293,12 @@ def prune_due(folder_doc: MirrorDoc, *, source_present: bool, has_child_docs: bo
 
 def local_day(at: datetime, tz_name: str) -> str:
     """`YYYY-MM-DD` of `at` in the user's time zone (`UserBotConfig.timezone`), else UTC (§27.9.6): the archive folder's
-    name. A naive `at` is UTC. Owner: the mirror step (Task 19C+) calls this with `doc.gone_at`, once, when it archives
-    and stores the result in `archive_day`."""
+    name. A naive `at` is UTC. The archive day is computed by Task 21A from `doc.gone_at`, once, when the file is archived, and stored in
+    `archive_day`."""
     aware = at if at.tzinfo is not None else at.replace(tzinfo=timezone.utc)
     try:
         zone: Optional[ZoneInfo] = ZoneInfo(tz_name) if tz_name else None
-    except Exception:  # unknown or malformed zone name: UTC
+    except (ZoneInfoNotFoundError, ValueError):   # unknown or malformed zone name: UTC
         zone = None
     local = aware.astimezone(zone) if zone is not None else aware.astimezone(timezone.utc)
     return local.date().isoformat()

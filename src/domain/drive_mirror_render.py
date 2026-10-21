@@ -28,6 +28,7 @@ Public interface:
 from __future__ import annotations
 
 import hashlib
+import re
 import sys
 from dataclasses import dataclass
 from typing import Dict, List, Tuple
@@ -48,7 +49,8 @@ _SEPARATOR = " · "
 @dataclass(frozen=True)
 class MirrorStrings:
     """The localized text of the file and the read-me. Sentences may use `{duration}` (`MM:SS` or `H:MM:SS`, or the
-    empty string when unknown); counts use `{n}`. The caller picks the language (the document's `render_language`)."""
+    empty string when unknown); counts use `{n}`. A localized string with a literal brace must double it (`{{`, `}}`),
+    since the stub sentences and counts go through `str.format`. The caller picks the language (`render_language`)."""
     open_recording: str                 # the link text: "open the recording"
     managed_line: str                   # "Managed by the bot: this file may be rewritten. Automatic transcript, may contain errors."
     duration_minutes: str               # "{n} min"
@@ -67,6 +69,16 @@ def _escape(text: str) -> str:
     return "".join("\\" + ch if ch in _ESCAPED else ch for ch in flat)
 
 
+_BLOCK_START = re.compile(r"^(\s*)([-+]|\d+[.)])")
+
+
+def _escape_line(text: str) -> str:
+    """`_escape` for a line of its own (the path line): also a leading block marker (`-`, `+`, `1.`, `---`) and `&`
+    entities, which Markdown would read as a list, a rule or a character reference."""
+    out = _escape(text).replace("&", "&amp;")
+    return _BLOCK_START.sub(lambda m: m.group(1) + "\\" + m.group(2), out, count=1) if _BLOCK_START.match(out) else out
+
+
 def _duration(seconds: int, strings: MirrorStrings) -> str:
     if seconds <= 0:
         return ""
@@ -81,7 +93,7 @@ def _speakers(count: int, strings: MirrorStrings) -> str:
 
 def _header(rec: DriveIndexRecord, strings: MirrorStrings, source_path: str, recorded_on: str) -> List[str]:
     lines = [f"# {_escape(rec.name)}"]
-    where = _escape(source_path)
+    where = _escape_line(source_path)
     if rec.web_url:
         link = f"[{_escape(strings.open_recording)}]({rec.web_url.replace(' ', '%20').replace(')', '%29')})"
         where = f"{where}{_SEPARATOR}{link}" if where else link

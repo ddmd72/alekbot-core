@@ -39,8 +39,8 @@ class DeletedHit:
     `transcript_line` is `transcript: 47 min, 2 speakers, uk/en`, `passage` the matched stored text, `refs` whole lines
     (`archived transcript: drive:<id> (<archive path>)`, `drive_note:<id> ...`), `note_line` the owner's note. `nonce`
     and `ref` are the wrapper's: the ref the model can act on, the nonce of this result. `on_connected_drive` False
-    labels the entry "on a drive that is not connected"; `verified` False (on the connected drive) says the archive
-    file was not checked."""
+    labels the entry "on a drive that is not connected"; `verified` False says the archive file was not checked:
+    the drive is not connected (or the check failed). It matters only on the connected drive's entries."""
     name: str
     path: str
     day: str = ""
@@ -56,7 +56,7 @@ class DeletedHit:
 
 def matches(concepts: Sequence[Concept], keys: Collection[str]) -> bool:
     """Strict AND, no allowances (the set is small): every concept must meet `keys` (the document's `archive_keys` and
-    `name_keys` together) through one of its `word_keys`. No concept (an empty query) matches."""
+    `name_keys` together) through one of its `word_keys`. With no concept at all (an empty query, which lists the newest) everything matches."""
     held = keys if isinstance(keys, (set, frozenset)) else set(keys)
     return all(any(k in held for k in c.word_keys) for c in concepts)
 
