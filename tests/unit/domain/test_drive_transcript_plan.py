@@ -82,7 +82,8 @@ def test_ready_to_working_to_waiting_to_current():
     assert transcript_plan(started.rec, started.ctx).transcript_state == "working"
     waiting = replace(started.rec, transcript_state="waiting")
     assert transcript_plan(waiting, started.ctx).transcript_state == "waiting"
-    done = mark_current(waiting, NOW, seconds=3600, speakers=2, languages=("uk",))
+    # the host's index run left the record indexed before the stage marks it current (T-R24: never `pending`)
+    done = mark_current(replace(waiting, state=RecordState.INDEXED), NOW, seconds=3600, speakers=2, languages=("uk",))
     assert done.transcript_state == "current" and done.model_read_at == NOW
     assert done.transcript_version == TRANSCRIBE_VERSION and done.transcript_body_version == TRANSCRIPT_BODY_VERSION
     assert (done.transcript_seconds, done.transcript_speakers, done.transcript_languages) == (3600, 2, ("uk",))
@@ -310,7 +311,7 @@ def test_current_needs_the_body_version():
 
 
 def test_current_stub_survives_the_plan():
-    stub = _current(_rec(), transcript_stub="no_speech")
+    stub = _current(_rec(state=RecordState.METADATA_ONLY), transcript_stub="no_speech")   # a stub is metadata_only
     assert transcript_plan(stub, _ctx()) == stub
 
 
@@ -411,7 +412,7 @@ def test_file_estimate_counts_the_overlaps():
 # -- review fixes (fix round 1) -----------------------------------------------------------------------------------
 
 def test_a_transcribe_version_bump_changes_nothing():
-    cur = _current(_rec())
+    cur = _current(_rec(state=RecordState.INDEXED))   # a finished transcript's record is indexed (T-R24)
     bumped = replace(cur, transcript_version=TRANSCRIBE_VERSION - 1)
     assert transcript_plan(bumped, _ctx()) == bumped
     rec = _rec()
