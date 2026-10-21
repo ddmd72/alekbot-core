@@ -699,6 +699,13 @@ level, overridable per account and per user).** The context is kept for the reco
    outcomes, timeouts in code; question delivery and claim; echo-trap exception; P1, P2, P3 if confirmed; alerts.
 5. **S5 — one-time classify (§7.3), review dry run (§7.3b), janitor on.**
 
+**Documentation (owner, 2026-10-21).** Before S2, an owner's map of memory, `docs/05_building_blocks/memory/README.md`,
+on the pattern of the drive building block: a §0 question index, a plain-English walk-through of a fact's life from
+conversation to prompt, outcome tables, timelines, costs, debugging and a code map; the four older fragments
+(sliding-window consolidation, fact write service, biographical cache, search enrichment) become pointers to it. Each
+of S2–S5 ends by updating it, and a newcomer review (answer the owner's questions from the document alone, then
+verify against the code) closes S5.
+
 S2–S5 land together on one branch (owner: one migration). The plan lists up front the S1 tests whose behaviour the
 spec changes (§10.6), so the implementer does not touch them.
 
@@ -827,8 +834,8 @@ evaluating Firestore fake and its parity check against real Firestore:
 1. Foundation (test RFC P1, P2, P3; the owner's test-infrastructure step).
 2. Test RFC P4 (fake) → P5 (parity) → P8 (Consolidation and Tasks prompt vocabularies, before any consolidation token
    change) → P21 (data-audit framework, used by §7's audit).
-3. S2 → S3 → S4 (after the owner's answers on §8 P1–P3) → S5 (after the owner's OK on the one-time cost and the dry-run
-   outputs).
+3. The owner's map of memory (§9, documentation) → S2 → S3 → S4 → S5 (after the owner has read the dry-run outputs);
+   each slice updates the map.
 
 A security-and-breadth stream from the test RFC runs in parallel. The live status of every item is kept in the
 project's working notes, not in this file.
