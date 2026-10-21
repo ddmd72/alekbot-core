@@ -25,7 +25,7 @@ _SIGNATURES = {
     "list_children": ["user_id", "folder_id"],
     "search": ["user_id", "query", "limit"],
     "download": ["user_id", "item_id"],
-    "upload": ["user_id", "parent_id", "filename", "data", "content_type"],
+    "upload": ["user_id", "parent_id", "filename", "data", "content_type", "conflict"],
     "replace_content": ["user_id", "item_id", "data", "content_type"],
     "move": ["user_id", "item_id", "new_parent_id", "new_name"],
     "create_folder": ["user_id", "parent_id", "name"],
@@ -52,6 +52,11 @@ def test_operations_are_async_with_pinned_parameters(name):
     assert inspect.iscoroutinefunction(method), f"{name} must be async"
     params = list(inspect.signature(method).parameters)[1:]
     assert params == _SIGNATURES[name]
+
+
+def test_upload_conflict_defaults_to_rename():
+    # USER_DRIVE_INDEXING_RFC §27.9 (T2 Task 18): every Step 1 caller passes no mode and keeps "never overwrites".
+    assert inspect.signature(UserDrivePort.upload).parameters["conflict"].default == "rename"
 
 
 def test_move_parent_and_name_are_optional():
