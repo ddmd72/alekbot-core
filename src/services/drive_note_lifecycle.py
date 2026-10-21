@@ -77,7 +77,9 @@ class DriveNoteLifecycle:
         """Work the first NOTE_CHECKS_MAX of `state.note_checks` (the caller folds the tick's new checks in first).
         Returns the state without the checks that are done, their note ids (the caller drops them from its
         accumulator too) and counters for the tick line. `take_item_call` spends one item call of the tick's budget
-        (False: none left, the check waits); `fence` raises LeaseLost once the lease is ending."""
+        (False: none left, the check waits; the tick gives the round end NOTE_ROUND_END_CALL_SHARE of its calls left);
+        `fence` raises LeaseLost once the lease is ending. A check whose read says nothing (unknown) moves to the back
+        of the list, so a run of checks that keep failing rotates instead of starving the rest (D-C20)."""
         checks = state.note_checks[:NOTE_CHECKS_MAX]
         if not checks:
             return state, frozenset(), {}
@@ -91,6 +93,7 @@ class DriveNoteLifecycle:
         cache: Dict[str, Optional[DriveRecordLean]] = dict(
             await self._index.get_records_lean(user_id, [c.item_id for c in checks]))
         done: Set[str] = set()
+        rotated: Set[str] = set()                # unknown this round end: to the back of the list (D-C20)
         for check in checks:
             note = notes.get(check.note_id)
             if note is None or cache.get(check.item_id) is not None or not self._bound_to(note, check.item_id,
@@ -105,6 +108,7 @@ class DriveNoteLifecycle:
                 continue                         # past the item-call budget: the next round end
             verdict, change = await self._observe(user_id, check.item_id)
             if verdict == _UNKNOWN:
+                rotated.add(check.note_id)
                 _inc(counts, "note_checks_unknown")
                 continue
             if change is not None:                # found
@@ -119,7 +123,10 @@ class DriveNoteLifecycle:
             if await self._archive(user_id, note, check.last_seen_at, state.root_item_id, cache, fence):
                 done.add(check.note_id)
                 _inc(counts, "notes_archived")
-        kept = tuple(c for c in state.note_checks if c.note_id not in done)
+        # D-C20: a check whose read said nothing goes to the back, so checks that keep failing cannot hold the front of
+        # the list (and every item call of the round end) for ever; the others keep their order
+        kept = (tuple(c for c in state.note_checks if c.note_id not in done and c.note_id not in rotated)
+                + tuple(c for c in state.note_checks if c.note_id in rotated))
         if counts:
             logger.info(f"[DriveNote] round end for {user_id[:8]}: checks={len(checks)} done={len(done)} "
                         f"kept={len(kept)} " + " ".join(f"{k}={v}" for k, v in sorted(counts.items())))

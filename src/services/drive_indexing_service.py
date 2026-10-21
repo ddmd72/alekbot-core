@@ -148,7 +148,9 @@ from ..domain.drive_mirror import GONE, UNKNOWN, UNSTORED, DeletionNotice, Mirro
 from ..domain.drive_mirror_plan import local_day, mirror_plan
 from ..domain.drive_mirror_render import MirrorStrings
 from ..domain.drive_note_check import NoteCheck
-from ..domain.drive_note_lifecycle import NOTE_AUDIT_CALL_SHARE, checks_of, fold_checks, record_moved
+from ..domain.drive_note_lifecycle import (
+    NOTE_AUDIT_CALL_SHARE, NOTE_ROUND_END_CALL_SHARE, call_share, checks_of, fold_checks, record_moved,
+)
 from ..domain.language import LanguageCode
 from ..domain.ui_messages import UIMessage
 from ..domain.drive_profile import (
@@ -184,6 +186,7 @@ from ..domain.user_drive import (
 from ..ports.content_extractor_port import ContentExtractorPort
 from ..ports.document_profiler_port import DocumentProfilerPort
 from ..ports.drive_index_repository import DriveIndexRepository
+from ..ports.drive_note_repository import DriveNoteRepository
 from ..ports.drive_mirror_repository import DriveMirrorRepository
 from ..ports.embedding_service import EmbeddingService
 from ..ports.image_triage_port import ImageTriagePort
@@ -667,6 +670,8 @@ class DriveIndexingService:
         self._mirror_step_holds: Dict[str, Tuple[int, datetime]] = {}
         # owner notes' round-end checks and daily audit (DRIVE_FILE_NOTES_RFC §7); None: the kill switch is off
         self._note_lifecycle = note_lifecycle
+        # STUB (part C's worktree only): part B's note store (its `notes=` parameter); always None here
+        self._notes: Optional[DriveNoteRepository] = None
         self._clock = clock
         self._monotonic = monotonic
         self._gate_checked: Dict[str, float] = {}
@@ -753,10 +758,12 @@ class DriveIndexingService:
         if transcription.on:
             transcription.host = _TickHost(self, user_id, budget, models, summary, transcription)
         transcription_token = _TICK_TRANSCRIPTION.set(transcription)
-        # STUB condition (part C's worktree only): the assembly keeps part B's line — `_TickNotes(drive_id=…)` when the
-        # note store is wired — and adds `lifecycle=self._note_lifecycle is not None, last_seen_at=state.observed_as_of`
-        notes_token = _TICK_NOTES.set(_TickNotes(lifecycle=True, last_seen_at=state.observed_as_of)
-                                      if self._note_lifecycle is not None else None)
+        # The tick's note context: when the note store (part B) OR the lifecycle (part C) is wired — B's own code checks
+        # `self._notes` itself. STUB (part C's worktree only): B's `drive_id=…` argument; the assembly keeps B's
+        # argument and this condition and these two C arguments
+        notes_token = _TICK_NOTES.set(
+            _TickNotes(lifecycle=self._note_lifecycle is not None, last_seen_at=state.observed_as_of)
+            if self._notes is not None or self._note_lifecycle is not None else None)
         try:
             return await self._run_spending(user_id, state, nudge, now, enabled, budget, summary, cont, saved,
                                             models, spend, connection)
@@ -1289,26 +1296,28 @@ class DriveIndexingService:
             return state
         state = replace(state, note_checks=fold_checks(state.note_checks, list(acc.pending.values()))[0])
 
-        def take_item_call() -> bool:
-            if not budget.item_call_allowed():
-                return False
-            budget.item_calls -= 1
-            return True
+        def taker(share: float) -> Callable[[], bool]:
+            """One step's item calls: at most `share` of those left now (`call_share`), each also within the budget.
+            The rest stays for the tick's own probes, parent lookups, re-listings and access re-checks."""
+            left = [call_share(budget.item_calls, share)]
 
-        state, done, counts = await lifecycle.round_end(user_id, state, take_item_call=take_item_call, fence=_fence)
+            def take() -> bool:
+                if left[0] <= 0 or not budget.item_call_allowed():
+                    return False
+                budget.item_calls -= 1
+                left[0] -= 1
+                return True
+
+            return take
+
+        # §7.1 and D-C20: the round end first, within NOTE_ROUND_END_CALL_SHARE of the calls left; then §7.4 the audit,
+        # within NOTE_AUDIT_CALL_SHARE of what the round end left
+        state, done, counts = await lifecycle.round_end(user_id, state, take_item_call=taker(NOTE_ROUND_END_CALL_SHARE),
+                                                        fence=_fence)
         for note_id in done:
             acc.pending.pop(note_id, None)
-        # §7.4: the audit takes at most NOTE_AUDIT_CALL_SHARE of the item calls left, the rest stays for the tick's own
-        # probes, parent lookups, re-listings and access re-checks
-        audit_left = [int(max(budget.item_calls, 0) * NOTE_AUDIT_CALL_SHARE)]
-
-        def take_audit_call() -> bool:
-            if audit_left[0] <= 0 or not take_item_call():
-                return False
-            audit_left[0] -= 1
-            return True
-
-        state, audited = await lifecycle.audit(user_id, state, take_item_call=take_audit_call, fence=_fence)
+        state, audited = await lifecycle.audit(user_id, state, take_item_call=taker(NOTE_AUDIT_CALL_SHARE),
+                                               fence=_fence)
         moved, acc.moved = dict(acc.moved), {}
         refreshed = await lifecycle.refresh_moved(user_id, state, moved, fence=_fence)
         for key, value in (*counts.items(), *audited.items(), *refreshed.items()):

@@ -8,7 +8,8 @@ The round end's and the audit's period constants are part B's (`drive_note_merge
 NOTE_AUDIT_SKIP_DAYS, RFC §15); the two caps below are this module's.
 
 Public interface:
-    NOTE_CHECKS_STORED_MAX, NOTE_AUDIT_CALL_SHARE
+    NOTE_CHECKS_STORED_MAX, NOTE_ROUND_END_CALL_SHARE, NOTE_AUDIT_CALL_SHARE
+    call_share(calls_left, share) -> int                               # the item calls a step may take
     checks_of(records, why, last_seen_at) -> Tuple[NoteCheck, ...]     # the deleted records that carried a note
     fold_checks(stored, new, cap=NOTE_CHECKS_STORED_MAX) -> Tuple[Tuple[NoteCheck, ...], int]
     without_checks(checks, done) -> Tuple[NoteCheck, ...]
@@ -41,6 +42,9 @@ NOTE_CHECKS_STORED_MAX = 2_000
 # probes, parent lookups, re-listings and access re-checks of the same tick always keep the rest; with the default 20
 # calls it reads 13, so a pass over 25 notes that all fail ends in two ticks
 NOTE_AUDIT_CALL_SHARE = 0.65
+# §7.1, D-C20: the round end, which runs first, takes at most this share of the item calls left, and the audit then takes
+# NOTE_AUDIT_CALL_SHARE of what remains: with the default 20 calls, 13 for the round end, then 4 for the audit, 3 kept
+NOTE_ROUND_END_CALL_SHARE = 0.65
 
 AuditKey = Tuple[datetime, str]      # (snapshot_at, note_id); a note never snapshotted sorts first
 _NEVER = datetime.min.replace(tzinfo=timezone.utc)
@@ -71,6 +75,14 @@ def fold_checks(stored: Sequence[NoteCheck], new: Sequence[NoteCheck],
 def without_checks(checks: Sequence[NoteCheck], done: Collection[str]) -> Tuple[NoteCheck, ...]:
     """The checks still to do: those whose note is not in `done`."""
     return tuple(c for c in checks if c.note_id not in done)
+
+
+def call_share(calls_left: int, share: float) -> int:
+    """The item calls a notes step may take of `calls_left` (D-C18, D-C20): `share` of them, at least one while any is
+    left (a tick with a single call still makes progress), none when none is left."""
+    if calls_left <= 0:
+        return 0
+    return max(1, int(calls_left * share))
 
 
 def audit_due(audited_at: Optional[datetime], now: datetime) -> bool:

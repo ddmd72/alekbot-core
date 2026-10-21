@@ -224,7 +224,7 @@ class ServiceContainer:
                 transcribe_cap_usd=effective_monthly_cap(os.getenv("DRIVE_TRANSCRIBE_USD_CAP")),
                 mirror=self.drive_mirror_repo,
             )
-            self.drive_note_repo = build_drive_note_repository(db_client, env_config)   # STUB: part A builds it
+            self.drive_note_repo = build_drive_note_repository(db_client, env_config)   # STUB (part C's worktree only): part A builds it
             # Owner notes on deleted files join the same deleted-files section (DRIVE_FILE_NOTES_RFC §6.4, §0.3); a
             # read, so added whatever DRIVE_NOTES_ENABLED says (§3.6), over part A's store.
             add_drive_note_deleted_source(self.drive_search_service, self.drive_note_repo, self.embedding_service,

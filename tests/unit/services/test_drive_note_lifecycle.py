@@ -424,3 +424,60 @@ class TestOnlyRecordsThatLeft:
         await w.settle()
         assert w.rec(a) is not None and (await w.state()).note_checks == ()
         assert w.note(nid).state == NoteState.ACTIVE.value
+
+
+class TestTheTickHasItsNoteContext:
+
+    async def test_a_deleted_noted_record_yields_a_check(self, w):
+        """Re-review item 9 guard: the tick's `_TickNotes` exists whenever the lifecycle is wired (this world wires no
+        note store), so a deleted noted record is collected. Fails if the context is None."""
+        a, nid = await _noted(w)
+        w.drive.delete(a)
+
+        async def broken(*args, **kwargs):
+            raise RuntimeError("round end broke")
+
+        w.lifecycle.round_end = broken
+        await w.tick()
+        checks = (await w.state()).note_checks
+        assert checks and checks[0].note_id == nid and checks[0].item_id == a
+
+
+class TestRoundEndRotation:
+    """D-C20: 25 checks whose reads keep failing, the default 20 item calls a tick. The round end takes 13 per tick
+    (NOTE_ROUND_END_CALL_SHARE), moves every unknown check to the back, so it completes a rotation over all 25 in two
+    ticks, and each tick keeps the rest of its calls."""
+
+    async def test_failing_checks_rotate_and_never_starve_the_tick(self, w, monkeypatch):
+        budgets = []
+        real_budget = svc_mod._Budget
+
+        def budget(*args, **kwargs):
+            made = real_budget(*args, **kwargs)
+            budgets.append(made)
+            return made
+
+        monkeypatch.setattr(svc_mod, "_Budget", budget)
+        items = [w.drive.add(f"f{i:02d}.pdf") for i in range(25)]
+        await w.settle()
+        for i in items:
+            w.note_on(i)
+        reads = []
+
+        async def failing(user_id, item_id):
+            reads.append(item_id)
+            raise TimeoutError("slow")
+
+        for i in items:
+            w.drive.delete(i)
+        w.drive.get_change = failing
+        await w.tick()
+        assert len(reads) == 13 and budgets[-1].item_calls == 7
+        first = list(reads)
+        order = [c.item_id for c in (await w.state()).note_checks]
+        assert order[-13:] == first                          # the unknown ones went to the back, in order
+        await w.tick()
+        assert set(reads) == set(items) and len(reads) == 26  # a full rotation (and the first one again)
+        assert budgets[-1].item_calls == 7
+        assert all(w.note(f"n-{i}").state == NoteState.ACTIVE.value for i in items)
+        assert len((await w.state()).note_checks) == 25        # nothing lost

@@ -11,7 +11,7 @@ from src.domain.drive_note import (
 from src.domain.drive_note_check import WHY_GONE, WHY_UNSTORED, NoteCheck
 from src.domain.drive_index import DriveSyncState
 from src.domain.drive_note_lifecycle import (
-    NOTE_AUDIT_CALL_SHARE, NOTE_CHECKS_STORED_MAX, audit_candidates, audit_cursor, audit_due, audit_key, chain_path,
+    NOTE_AUDIT_CALL_SHARE, NOTE_CHECKS_STORED_MAX, NOTE_ROUND_END_CALL_SHARE, audit_candidates, call_share, audit_cursor, audit_due, audit_key, chain_path,
     checks_of, fold_checks, moved_snapshot, record_moved, refreshed_snapshot, snapshot_from_record, snapshot_stale,
     without_checks,
 )
@@ -40,6 +40,13 @@ def test_the_parameters():
     """C's two caps; the period constants are part B's (drive_note_merge, RFC §15), imported."""
     assert NOTE_CHECKS_STORED_MAX == 2000 and NOTE_AUDIT_CALL_SHARE == 0.65
     assert int(20 * NOTE_AUDIT_CALL_SHARE) == 13          # of the default ITEM_CALLS_PER_TICK: 7 stay for the tick
+    assert NOTE_ROUND_END_CALL_SHARE == 0.65
+
+
+def test_call_share():
+    """D-C18, D-C20: the share of the calls left, at least one while any is left, none when none is."""
+    assert call_share(20, 0.65) == 13 and call_share(7, 0.65) == 4 and call_share(1, 0.65) == 1
+    assert call_share(0, 0.65) == 0 and call_share(-1, 0.65) == 0
     assert NOTE_CHECKS_MAX == 500 and NOTE_AUDIT_EVERY == timedelta(hours=24) and NOTE_AUDIT_SKIP_DAYS == 7
 
 
