@@ -28,6 +28,7 @@ class TaskDispatchService:
         query: str,
         context: Dict[str, Any],
         deadline_seconds: int | None = None,
+        dedup_key: str | None = None,
     ) -> str:
         return await self._queue.enqueue_agent_task(
             agent_id=agent_id,
@@ -35,6 +36,7 @@ class TaskDispatchService:
             query=query,
             context=context,
             deadline_seconds=deadline_seconds,
+            dedup_key=dedup_key,
         )
 
     async def enqueue_email_indexing_task(self, job_id: str) -> str:
