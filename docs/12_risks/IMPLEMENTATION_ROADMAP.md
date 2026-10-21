@@ -237,14 +237,14 @@ mandatory before team/multi-user rollout.
 
 ### TD-4: `update_fact` overwrites fact text in place — no SCD2 history [P2] — 🔲 OPEN
 
-- **Problem:** `update_fact` (`fact_management_adapter.py:212-272`) mutates the **same** document:
+- **Problem:** `update_fact` (`fact_management_adapter.py`, `update_fact`) mutates the **same** document:
   it sets `existing.text = new_content`, bumps `existing.version += 1` and calls
   `_repo.update_fact(existing)`. No new version document is written, so the **previous text is
   overwritten and unrecoverable**. The incrementing `version` counter actively implies a version
   history that does not exist. This is the **only** place in the fact lifecycle that destroys
   content: `merge_facts` preserves its sources (marks them `SUPERSEDED` +
-  `is_current=False` + `valid_to=now`, `fact_management_adapter.py:309-311`) and `invalidate_fact`
-  is a soft state flip (`firestore_repo.py:306-314`) — every other retirement path keeps the old
+  `is_current=False` + `valid_to=now` via `lifecycle_fields`) and `invalidate_fact`
+  is a soft state flip (`firestore_repo.py`, `invalidate_fact`) — every other retirement path keeps the old
   document intact.
 - **Why it matters:** ConsolidationAgent calls `update_fact` on every Stage-2 rewrite. If the LLM
   narrows a fact — drops a qualifier, a date, a number — the original wording is gone. Evidence
@@ -264,10 +264,15 @@ mandatory before team/multi-user rollout.
   (~1000 docs/account). Tests are load-bearing: enumerate `grep -rn "update_fact" tests/` before
   changing semantics, and expect fixtures that assert in-place mutation.
 - **Related (found in the same audit, not yet ticketed):** (a) `merge_facts` writes the merged fact
-  through `add_facts_batch` with a **new** `lineage_id` (`fact_management_adapter.py:344`), leaving
+  through `add_facts_batch` with a **new** `lineage_id` (`fact_management_adapter.py`, `merge_facts`), leaving
   no provenance link from a superseded source to the fact that absorbed it — carry-forward can only
-  be checked semantically; (b) the legacy `is_current` flag is desynced from `state` (67 superseded
-  documents still carry `is_current=True`) and is not used by any read path.
+  be checked semantically; (b) the legacy `is_current` flag was desynced from `state` (78 superseded
+  documents still carried `is_current=True`, measured 2026-10-21) - fixed by S1 (see below).
+- **Partly fixed 2026-10-21 (S1, `decisions/fact_s1_defects.md`):** `update_fact` now re-embeds all three
+  vectors on a content change (the old ones were written back), a state-only update no longer bumps
+  `version` or rewrites `reported_date`, and SCD2 flags follow state through `lifecycle_fields`. This item
+  stays OPEN: the previous text is still overwritten in place. The remaining fix is S2 of
+  `docs/10_rfcs/FACT_LIFECYCLE_RFC.md` (draft, separate branch).
 
 ---
 

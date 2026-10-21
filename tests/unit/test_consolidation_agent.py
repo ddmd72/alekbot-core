@@ -403,7 +403,8 @@ class TestConsolidationAgentV3:
         assert response.status == AgentStatus.SUCCESS
         mock_fact_management.update_fact.assert_called_once_with(
             fact_id="existing-456",
-            updates={"content": "User owns two cats"}
+            updates={"content": "User owns two cats"},
+            account_id="account-123",
         )
 
     @pytest.mark.asyncio

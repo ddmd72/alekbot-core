@@ -75,8 +75,12 @@ class _TrackingFactManagement(FactManagementPort):
             self.changed.append((fid, content))
         return result
 
-    async def update_fact(self, fact_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
-        result = await self._real.update_fact(fact_id=fact_id, updates=updates)
+    async def update_fact(
+        self, fact_id: str, updates: Dict[str, Any], account_id: str
+    ) -> Dict[str, Any]:
+        result = await self._real.update_fact(
+            fact_id=fact_id, updates=updates, account_id=account_id
+        )
         if content := updates.get("content"):
             self.changed.append((fact_id, content))
         return result
@@ -854,7 +858,9 @@ class ConsolidationAgent(BaseAgent):
         )
         ops: List[Dict[str, Any]] = []
         for fact in overflow:
-            await self._fact_management.update_fact(fact.id, {"state": "invalidated"})
+            await self._fact_management.update_fact(
+                fact.id, {"state": "invalidated"}, account_id=account_id
+            )
             ops.append({"action": "INVALIDATE", "fact_id": fact.id, "reason": "directive cap backstop"})
         return ops
 
@@ -1191,7 +1197,8 @@ class ConsolidationAgent(BaseAgent):
                 elif tool_call.name == "update_fact":
                     result = await self._fact_management.update_fact(
                         fact_id=tool_call.args.get("fact_id", ""),
-                        updates=tool_call.args.get("updates", {})
+                        updates=tool_call.args.get("updates", {}),
+                        account_id=account_id
                     )
                     return ToolResponse(
                         name=tool_call.name,
@@ -1332,10 +1339,11 @@ class ConsolidationAgent(BaseAgent):
                         },
                         "updates": {
                             "type": "object",
-                            "description": "Fields to update (content, tags, state, reported_date)",
+                            "description": "Fields to update (content, tags, metadata, state, reported_date)",
                             "properties": {
                                 "content": {"type": "string"},
                                 "tags": {"type": "array", "items": {"type": "string"}},
+                                "metadata": {"type": "object", "description": "Structured data to add or update; merged key by key into the fact's metadata"},
                                 "temporal_class": {"type": "string"},
                                 "state": {"type": "string"},
                                 "reported_date": {"type": "string"}

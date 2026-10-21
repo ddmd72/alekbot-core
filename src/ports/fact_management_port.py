@@ -53,13 +53,16 @@ class FactManagementPort(ABC):
         pass
 
     @abstractmethod
-    async def update_fact(self, fact_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
+    async def update_fact(
+        self, fact_id: str, updates: Dict[str, Any], account_id: str
+    ) -> Dict[str, Any]:
         """
         Update an existing fact.
 
         Args:
             fact_id: UUID of fact to update
             updates: Fields to update (content, tags, state, etc.)
+            account_id: Caller account; a fact of another account is reported as not found
 
         Returns:
             Result dict with status, version, message
