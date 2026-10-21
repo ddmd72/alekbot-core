@@ -49,3 +49,14 @@ async def test_already_exists_is_success_with_the_existing_name(queue_and_client
     client.create_task.side_effect = AlreadyExists("dup")
     name = await queue.enqueue_agent_task("a", "i", "q", {}, dedup_key="k")
     assert name == _task(client)["name"]
+
+
+async def test_same_name_create_after_a_deadline_that_created_the_task_succeeds(queue_and_client):
+    from google.api_core.exceptions import DeadlineExceeded
+    queue, client = queue_and_client
+    client.create_task.side_effect = [DeadlineExceeded("late"), AlreadyExists("it was created")]
+    with pytest.raises(DeadlineExceeded):
+        await queue.enqueue_agent_task("a", "i", "q", {}, dedup_key="deep_research_report:j1")
+    name = await queue.enqueue_agent_task("a", "i", "q", {}, dedup_key="deep_research_report:j1")
+    names = [c.kwargs["request"]["task"]["name"] for c in client.create_task.call_args_list]
+    assert names[0] == names[1] == name
