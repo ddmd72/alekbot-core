@@ -114,7 +114,7 @@ from ..domain.drive_index_params import (
     CASCADE_OPS_PER_TICK, EMBED_FILE_BUDGET_S, EMBED_IN_FLIGHT, ENRICH_FILE_BUDGET_S, ENRICH_IN_FLIGHT,
     ENRICH_QUEUE_PAGE, ENRICH_SHARE, ENRICH_WAKEUPS_PAGE, FILE_START_MARGIN_S, INACCESSIBLE_SCAN_MAX, SUBFOLDER_SCAN_MAX,
     ITEM_CALLS_PER_TICK, LEASE_MARGIN, MIRROR_OPS_PER_TICK, MIRROR_READS_PER_TICK, MIRROR_RESERVE_S,
-    MIRROR_STAMPS_PER_TICK,
+    MIRROR_ROOT_GRACE, MIRROR_STAMPS_PER_TICK,
     MAINTENANCE_SHARE, MAX_ATTEMPTS, MAX_CARD_RECORDS_PER_USER, MAX_CHUNKS_PER_USER, MODEL_EXTRACT_PAGES_PER_MONTH,
     MODEL_IN_FLIGHT,
     NUDGE_RETRY_DELAY_S, PASSAGE_CHUNK_USD_ESTIMATE, PASSAGE_CHUNKS_PER_CALL, PASSAGE_IN_FLIGHT, PROBE_CHILDREN,
@@ -180,7 +180,7 @@ from ..ports.passage_hint_port import PassageHintPort
 from ..ports.task_queue import TaskQueue
 from ..ports.user_drive_port import UserDrivePort
 from ..ports.user_repository import UserRepository
-from ..utils.logger import logger
+from ..utils.logger import exc_brief, logger
 
 if TYPE_CHECKING:   # REQ-ARCH-22: a service never imports another at run time; the stage is injected
     from .drive_transcript_mirror import DriveTranscriptMirror
@@ -606,6 +606,9 @@ class DriveIndexingService:
         # root setup that made no progress (no root document, or a confirmed loss's reset and new root), per user: the
         # failures in a row and when the reserve may be taken for it again (`_note_root_setup`; process memory only)
         self._root_setup_holds: Dict[str, Tuple[int, datetime]] = {}
+        # the step could not start (its UI language or strings unreadable), per user: the same ladder, held off the
+        # reserve only (`_note_step_unavailable`; process memory only)
+        self._mirror_step_holds: Dict[str, Tuple[int, datetime]] = {}
         self._clock = clock
         self._monotonic = monotonic
         self._gate_checked: Dict[str, float] = {}
@@ -1205,39 +1208,58 @@ class DriveIndexingService:
         reads — root setup (no root document for the connected drive yet, or a confirmed loss whose ledger reset and
         new root are under way: the current id already in `previous_root_ids`, checked before the root-loss mark it
         still carries) or an unfinished seed (no read), a record in `mirror_queue`, a ripe wake-up, a mark whose
-        `mark_ready_at` has passed. Never while the tick has no mirror drive id, the root-loss mark is set, or the
-        full-drive hold (`quota_hold_until`) lasts: the step does nothing then, so held work never takes the reserve.
+        `mark_ready_at` has passed. Never while the tick has no mirror drive id, the root-loss mark is set and still
+        inside its grace (past the grace its one confirming read is work, Δ239), or the full-drive hold
+        (`quota_hold_until`) lasts: the step does nothing then, so held work never takes the reserve.
         Root setup that keeps failing (every name taken, a full drive, a refusal) is held off the reserve with a
-        back-off (`_note_root_setup`; Task 21C fix round 1, a delta to Δ209): the step still tries it every tick, in what the start budget left."""
+        back-off (`_note_root_setup`; Task 21C fix round 1, a delta to Δ209): the step still tries it every tick, in what
+        the start budget left; so is a step whose UI language could not be had (`_note_step_unavailable`). A store error
+        of the three queries (a mirror index missing or building) is no reserve, logged at ERROR, never the end of the
+        work-off (Δ236)."""
         mirror = _TICK_MIRROR.get()
         if self._mirror is None or self._mirror_repo is None or mirror is None or not mirror.drive_id:
             return False
         now = self._clock()
+        held_step = self._mirror_step_holds.get(user_id)
+        if held_step is not None and now < held_step[1]:
+            return False   # the step's language or strings could not be had: no reserve until the hold ends
         root = _connected_root(mirror)
         if root is None or root.root_item_id in root.previous_root_ids:
             held = self._root_setup_holds.get(user_id)
             return held is None or now >= held[1]   # root setup (and then the seed) is due
         if root.root_item_id in mirror.gone_ids:
-            return False   # the step stops at its root-loss check (Δ217)
+            # the step stops at its root-loss check (Δ217) and only waits — unless the grace is over: then its one
+            # confirming read is due (the round is complete: the work-off runs only then), Δ239
+            return root.root_gone_at is not None and now >= root.root_gone_at + MIRROR_ROOT_GRACE
         if root.quota_hold_until is not None and now < root.quota_hold_until:
             return False
         if root.seed_version != _mirror_seed_version():
             return True
-        if await self._repo.mirror_queue(user_id, 1):
-            return True
-        if await self._repo.mirror_wakeups(user_id, now, 1):
-            return True
-        return bool(await self._mirror_repo.ready_marks(user_id, mirror.drive_id, now, 1))
+        try:
+            if await self._repo.mirror_queue(user_id, 1):
+                return True
+            if await self._repo.mirror_wakeups(user_id, now, 1):
+                return True
+            return bool(await self._mirror_repo.ready_marks(user_id, mirror.drive_id, now, 1))
+        except DriveIndexStoreUnavailable as exc:
+            # a mirror index missing or building, or a store outage, must not skip the index's work-off (the owner's
+            # invariant "the index never stalls because of the mirror", Δ236): no reserve, the work-off goes on
+            logger.error(f"[DriveIndex] transcript mirror of {user_id[:8]}: the readiness check failed "
+                         f"({exc_brief(exc)}); no reserved tail this tick")
+            return False
 
     async def _mirror_step(self, user_id: str, state: DriveSyncState, budget: _Budget) -> None:
         """The mirror step for one user, through the tick's host (`_TickHost` as `MirrorHost`), in its window
         (`_Budget.mirror_stop`). It runs only with the step wired and transcription on (the caller's check); with no
         mirror drive id it does not run and counts `mirror_no_drive_id` (§27.9.2). Its files are written in the user's
         UI language, resolved here; when the language or the strings cannot be had the step waits for the next tick
-        (a file is never rendered in a guessed language: the language is not in the digest, Δ120). The step raises only
-        its systemic classes (Task 21A), so no catch-all here: they end the tick as anywhere else. An opt-out found by
-        a mirror write is the host's own stop signal (`_TickHost.stop_exceptions`): `_OptedOut` passes through the
-        step unchanged and ends the tick as anywhere else. Mirror work never asks for a
+        (a file is never rendered in a guessed language: the language is not in the digest, Δ120), and the reserve is
+        held off for it (`_note_step_unavailable`). The step raises only its systemic classes (Task 21A); of those,
+        DriveThrottled and DriveIndexStoreUnavailable are contained here (Δ236: counted as `mirror_systemic`, logged by
+        type, the tick goes on and saves its work-off as usual — the index never stalls because of the mirror), while
+        LeaseLost and DriveNotConnectedError (DriveReauthRequired included) end the tick as anywhere else. An opt-out
+        found by a mirror write is the host's own stop signal (`_TickHost.stop_exceptions`): `_OptedOut` passes through
+        the step unchanged and ends the tick as anywhere else. Mirror work never asks for a
         continuation (`_has_more` does not look at it): the fan-out paces it."""
         transcription = _TICK_TRANSCRIPTION.get()
         mirror = _TICK_MIRROR.get()
@@ -1259,18 +1281,46 @@ class DriveIndexingService:
             strings = _mirror_strings(self._localization, lang)
         except Exception as exc:   # a user or account read, a missing string: not the step's own error classes
             _inc(counts, "mirror_errors")
+            hold = self._note_step_unavailable(user_id)
             logger.warning(f"[DriveIndex] transcript mirror of {user_id[:8]}: the UI language or its strings could "
-                           f"not be read ({type(exc).__name__}); the mirror step waits for the next tick")
+                           f"not be read ({type(exc).__name__}); the mirror step waits for the next tick, no reserved "
+                           f"tail for it for {hold}")
             return
+        self._mirror_step_holds.pop(user_id, None)
         host = transcription.host
         host.begin_mirror(drive_id=mirror.drive_id, tz_name=self._timezones.get(user_id, ""), language=lang.value,
                           strings=strings, round_complete=state.round_complete,
                           epoch_idle=state.epoch_phase is EpochPhase.IDLE and state.initial_enumeration_done,
                           stop_at=stop_at)
-        out = await self._mirror.run(user_id, host)
+        try:
+            out = await self._mirror.run(user_id, host)
+        except (DriveThrottled, DriveIndexStoreUnavailable) as exc:
+            # contained (Δ236): a throttled mirror write or a mirror index missing must not end the tick, which would
+            # drop the work-off's unsaved state, count a systemic failure and hold `last_success_at` back. The mirror
+            # never asks for a continuation, so the fan-out's next tick tries it again. LeaseLost, the host's stop
+            # (`_OptedOut`) and DriveNotConnectedError still end the tick.
+            _inc(counts, "mirror_systemic")
+            line = (f"[DriveIndex] transcript mirror of {user_id[:8]}: the step stopped ({exc_brief(exc)}); the tick "
+                    f"goes on, the mirror waits for the next tick")
+            if isinstance(exc, DriveThrottled):
+                logger.warning(line)
+            else:
+                logger.error(line)
+            self._note_root_setup(user_id, mirror, {})
+            return
         for key in _MIRROR_TICK_COUNTERS:
             _inc(counts, key, out.get(key, 0))
         self._note_root_setup(user_id, mirror, out)
+
+    def _note_step_unavailable(self, user_id: str) -> timedelta:
+        """The step could not start (its UI language or strings could not be had): the reserve is held off for the user
+        with the root-setup hold's ladder (10 min doubling to 6 h; process memory, Δ227), so a lasting failure cannot
+        take the reserved tail on every tick (final review, deploy Minor 2). The step itself is still tried every tick;
+        the first start clears the hold. Returns the hold."""
+        failures = self._mirror_step_holds.get(user_id, (0, self._clock()))[0] + 1
+        hold = min(ROOT_SETUP_HOLD_BASE * (2 ** (failures - 1)), ROOT_SETUP_HOLD_CAP)
+        self._mirror_step_holds[user_id] = (failures, self._clock() + hold)
+        return hold
 
     def _note_root_setup(self, user_id: str, mirror: _Mirror, out: Mapping[str, int]) -> None:
         """After a run that had root setup to do (no root document at the tick's start, or a confirmed loss's reset
@@ -4098,7 +4148,7 @@ def _connected_root(mirror: _Mirror) -> Optional[MirrorRoot]:
 # The mirror step's counters the tick line carries (§27.9.5, plan Task 21C); the step logs the rest on its own line.
 _MIRROR_TICK_COUNTERS = ("mirror_created", "mirror_replaced", "mirror_moved", "mirror_archived", "mirror_restored",
                          "mirror_detached", "mirror_pruned", "mirror_foreign", "mirror_failed", "mirror_errors",
-                         "mirror_quota_full", "mirror_no_drive_id", "mirror_ops")
+                         "mirror_quota_full", "mirror_no_drive_id", "mirror_ops", "mirror_systemic")
 
 
 _mirror_seed_version = mirror_versions.seed_version   # one formula, in the domain (the mirror step uses it too)

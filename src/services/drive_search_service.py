@@ -84,7 +84,7 @@ from ..ports.drive_mirror_repository import ARCHIVE_FAMILY, NAME_FAMILY, DriveMi
 from ..ports.embedding_service import EmbeddingService
 from ..ports.user_drive_port import UserDrivePort
 from ..ports.user_repository import UserRepository
-from ..utils.logger import logger
+from ..utils.logger import exc_brief, logger
 
 _CHILD_PAGE = 200
 _WALK_PARALLEL = 16   # folders listed at once, per level of a subtree walk
@@ -1389,8 +1389,8 @@ class DriveSearchService:
         concepts = query_concepts(drive_query or "").concepts
         try:
             connection = await self._drive.connection(user_id)
-        except Exception:
-            logger.warning("[DriveSearch] deleted-files search: connection lookup failed", exc_info=True)
+        except Exception as exc:
+            logger.warning(f"[DriveSearch] deleted-files search: connection lookup failed: {exc_brief(exc)}")
             connection = DriveConnection(connected=False)
         hits: List[DeletedHit] = []
         coverage: List[str] = []
@@ -1466,8 +1466,8 @@ class DriveSearchService:
             change = await self._drive.get_change(user_id, doc.mirror_item_id)
         except DriveItemNotFoundError:
             return False, True, True
-        except Exception:
-            logger.warning("[DriveSearch] deleted-files search: archive check failed", exc_info=True)
+        except Exception as exc:
+            logger.warning(f"[DriveSearch] deleted-files search: archive check failed: {exc_brief(exc)}")
             return True, True, False
         return (not change.deleted), True, True
 
@@ -1476,8 +1476,8 @@ class DriveSearchService:
             return None
         try:
             return await self._repo.get_transcript(user_id, doc.content_key)
-        except Exception:
-            logger.warning("[DriveSearch] deleted-files search: store read failed", exc_info=True)
+        except Exception as exc:
+            logger.warning(f"[DriveSearch] deleted-files search: store read failed: {exc_brief(exc)}")
             return None
 
     async def _mirror_chain(self, user_id: str, doc: MirrorDoc, roots: Mapping[str, str],
@@ -1525,8 +1525,8 @@ class DriveSearchService:
                 return ""
             roots = {r.root_item_id: r.root_name for r in await self._mirror.roots(user_id)}
             return await self._mirror_path(user_id, doc, roots, {})
-        except Exception:
-            logger.warning("[DriveSearch] mirror path lookup failed", exc_info=True)
+        except Exception as exc:
+            logger.warning(f"[DriveSearch] mirror path lookup failed: {exc_brief(exc)}")
             return ""
 
     async def archived_text(self, user_id: str, mirror_item_id: str, *, label: str = "", path: str = "",
