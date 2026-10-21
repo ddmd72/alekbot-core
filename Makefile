@@ -86,6 +86,13 @@ _SANDBOX_RENDER_CALLERS = $(SANDBOX_RENDER_CALLERS_DEV)
 # the local DRIVE_UPGRADE_PASS (CLAUDE.md, "Deploy-substitution trap").
 _DRIVE_UPGRADE_PASS = $(or $(DRIVE_UPGRADE_PASS_DEV),on)
 
+# Transcription of audio and video (USER_DRIVE_INDEXING_RFC §27.13). The kill switch is OFF unless DRIVE_TRANSCRIBE_ENABLED_DEV=on
+# is in .env; DRIVE_TRANSCRIBE_USD_CAP_DEV (a number, empty = the $20 monthly maximum) can only LOWER the cap. Both ride as
+# substitutions to the indexer (the cap to the main service too: the Cabinet shows it). Deploy-only keys, never the
+# local DRIVE_TRANSCRIBE_ENABLED / DRIVE_TRANSCRIBE_USD_CAP (CLAUDE.md, "Deploy-substitution trap").
+_DRIVE_TRANSCRIBE_ENABLED = $(or $(DRIVE_TRANSCRIBE_ENABLED_DEV),off)
+_DRIVE_TRANSCRIBE_USD_CAP = $(DRIVE_TRANSCRIBE_USD_CAP_DEV)
+
 # Default entry count for log reads
 K ?= 300
 
@@ -289,7 +296,7 @@ deploy: ## Build + deploy to Cloud Run (the single live environment)
 		exit 1; fi
 	@echo "🚀 Build + deploy to Cloud Run ($(SERVICE_NAME))..."
 	gcloud builds submit --config=cloudbuild-dev.yaml \
-		--substitutions=_SERVICE_URL=$(SERVICE_URL_DEV),_OAUTH_REDIRECT_URI=$(SERVICE_URL_DEV)/auth/callback,_VOICE_RELAY_URL=$(_VOICE_RELAY_URL),_INDEXER_URL=$(_INDEXER_URL),_DRIVE_UPGRADE_PASS=$(_DRIVE_UPGRADE_PASS),_SANDBOX_RENDER=$(_SANDBOX_RENDER),_SANDBOX_RENDER_URL=$(_SANDBOX_RENDER_URL),_SANDBOX_RENDER_SA=$(_SANDBOX_RENDER_SA),_SANDBOX_RENDER_CALLERS=$(_SANDBOX_RENDER_CALLERS) .
+		--substitutions=_SERVICE_URL=$(SERVICE_URL_DEV),_OAUTH_REDIRECT_URI=$(SERVICE_URL_DEV)/auth/callback,_VOICE_RELAY_URL=$(_VOICE_RELAY_URL),_INDEXER_URL=$(_INDEXER_URL),_DRIVE_UPGRADE_PASS=$(_DRIVE_UPGRADE_PASS),_DRIVE_TRANSCRIBE_ENABLED=$(_DRIVE_TRANSCRIBE_ENABLED),_DRIVE_TRANSCRIBE_USD_CAP=$(_DRIVE_TRANSCRIBE_USD_CAP),_SANDBOX_RENDER=$(_SANDBOX_RENDER),_SANDBOX_RENDER_URL=$(_SANDBOX_RENDER_URL),_SANDBOX_RENDER_SA=$(_SANDBOX_RENDER_SA),_SANDBOX_RENDER_CALLERS=$(_SANDBOX_RENDER_CALLERS) .
 	@echo "✅ Deployment complete!"
 
 deploy-indexes: ## Deploy Firestore indexes from config/firestore.indexes.json

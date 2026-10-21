@@ -23,24 +23,32 @@ from typing import Any, Dict, Mapping, Optional, Tuple
 
 from ..adapters.claude_adapter import ClaudeAdapter
 from ..adapters.firestore_quota_service import FirestoreQuotaService
+from ..adapters.drive_parser.media_extractor import SubprocessMediaExtractor
 from ..adapters.gemini_adapter import GeminiAdapter
+from ..adapters.gemini_batch_adapter import GeminiBatchAdapter
 from ..adapters.in_memory_provider_resilience import InMemoryProviderResilience
 from ..adapters.openai_adapter import OpenAIAdapter
 from ..domain.drive_extraction import PARSER, READER
+from ..domain.user import PerformanceTier
 from ..ports.account_repository import AccountRepository
 from ..ports.alert_sink import AlertSinkPort
 from ..ports.content_extractor_port import ContentExtractorPort
 from ..ports.document_profiler_port import DocumentProfilerPort
+from ..ports.drive_index_repository import DriveIndexRepository
 from ..ports.image_triage_port import ImageTriagePort
 from ..ports.passage_hint_port import PassageHintPort
+from ..ports.quota_service import QuotaService
+from ..ports.user_drive_port import UserDrivePort
 from ..ports.user_repository import UserRepository
 from ..services.agent_context_builder import AgentContextBuilder
 from ..services.prompt_builder import PromptBuilder
+from ..services.drive_transcript_stage import DriveTranscriptStage
 from ..services.provider_registry import ProviderRegistry
 from ..utils.logger import logger
 from .drive_passage_runner import DrivePassageRunner
 from .drive_profiler_runner import DriveProfilerRunner
 from .drive_reader_runner import DriveReaderRunner, PdfSplitter
+from .drive_transcript_runner import DriveTranscriptRunner
 from .drive_triage_runner import DriveTriageRunner
 
 
@@ -91,6 +99,8 @@ class DriveModels:
     triage: ImageTriagePort
     profiler: DocumentProfilerPort
     passages: PassageHintPort
+    prompt_builder: Optional[PromptBuilder] = None   # the transcriber's runner is built over the same ones
+    quota: Optional[QuotaService] = None
 
 
 def build_drive_models(*, parser: Any, users: UserRepository, account_repo: AccountRepository,
@@ -107,7 +117,32 @@ def build_drive_models(*, parser: Any, users: UserRepository, account_repo: Acco
         extractors={PARSER: parser, READER: reader},
         triage=DriveTriageRunner(context_builder, users, prompt_builder, quota_service=quota),
         profiler=DriveProfilerRunner(context_builder, users, prompt_builder, quota_service=quota),
-        passages=DrivePassageRunner(context_builder, users, prompt_builder, quota_service=quota))
+        passages=DrivePassageRunner(context_builder, users, prompt_builder, quota_service=quota),
+        prompt_builder=prompt_builder, quota=quota)
+
+
+def build_drive_transcription(*, enabled: bool, repo: DriveIndexRepository, drive: UserDrivePort, models: DriveModels,
+                              keys: Mapping[str, Optional[str]], parser_user: Optional[str],
+                              monthly_cap_usd: float) -> Optional[DriveTranscriptStage]:
+    """The transcript stage (USER_DRIVE_INDEXING_RFC §27; plan Task 14B). Built ONLY while the kill switch
+    (`DRIVE_TRANSCRIBE_ENABLED`) is on, so a deploy with it off leaves the indexer's object graph as it was; without
+    GEMINI_API_KEY it is not built either (logged ERROR: the switch is on and nothing can transcribe). The batch adapter
+    runs the BALANCED Gemini model (G26, never flash-lite, D44); the media extractor runs its children as the image's
+    unprivileged parser user. `monthly_cap_usd` is `effective_monthly_cap(DRIVE_TRANSCRIBE_USD_CAP)`, decided once by
+    the caller and shared with DriveIndexingService."""
+    if not enabled:
+        return None
+    gemini_key = (keys.get("GEMINI_API_KEY") or "").strip()
+    if not gemini_key:
+        logger.error("[Indexer] DRIVE_TRANSCRIBE_ENABLED is on but GEMINI_API_KEY is not set: the transcript stage is not built")
+        return None
+    if models.prompt_builder is None or models.quota is None:
+        logger.error("[Indexer] the drive models carry no prompt builder or quota service: the transcript stage is not built")
+        return None
+    batch = GeminiBatchAdapter(api_key=gemini_key, model=GeminiAdapter.MODEL_TIERS[PerformanceTier.BALANCED])
+    runner = DriveTranscriptRunner(batch, models.prompt_builder, quota_service=models.quota)
+    return DriveTranscriptStage(repo, drive, SubprocessMediaExtractor(sandbox_user=parser_user), batch, runner,
+                                monthly_cap_usd=monthly_cap_usd)
 
 
 def build_drive_model_extractors(*, parser: Any, users: UserRepository, account_repo: AccountRepository,

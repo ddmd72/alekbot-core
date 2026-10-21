@@ -132,7 +132,8 @@ from ..domain.drive_sniff import SNIFF_HEAD_BYTES, sniff_kind
 from ..domain.drive_task_keys import DRIVE_SYNC_TASK, continuation_key, nudge_key, tick_payload
 from ..domain.drive_text_gate import is_machine_text
 from ..domain.drive_transcript_plan import (
-    CURRENT as TRANSCRIPT_CURRENT, FAILED as TRANSCRIPT_FAILED, NONE as TRANSCRIPT_NONE, TRANSCRIBER_AGENT,
+    CURRENT as TRANSCRIPT_CURRENT, FAILED as TRANSCRIPT_FAILED, HELD as TRANSCRIPT_HELD, NONE as TRANSCRIPT_NONE,
+    PARKED as TRANSCRIPT_PARKED, READY as TRANSCRIPT_READY, TRANSCRIBER_AGENT, WAITING as TRANSCRIPT_WAITING,
     WORKING as TRANSCRIPT_WORKING, TranscriptContext, available_usd, leaves_job, transcript_plan,
 )
 from ..domain.drive_usage import added_usage
@@ -156,6 +157,7 @@ if TYPE_CHECKING:   # REQ-ARCH-22: a service never imports another at run time; 
     from .drive_transcript_stage import DriveTranscriptStage
 
 _DUE_PAGE = 100
+_PURGE_JOB_SCAN = 1000   # the purge's read of records and open batches that may carry a job (no cursor: a full page is logged)
 # Errors about ONE item (a probe, a parent lookup, a re-listing page, a nudge read): defer that item, never
 # the user (§8.2). ValueError is the adapter's 5xx; OSError covers connection resets.
 _PER_ITEM_ERRORS = (DriveAccessDenied, DriveItemNotFoundError, asyncio.TimeoutError, ValueError, OSError)
@@ -3302,8 +3304,20 @@ class DriveIndexingService:
         if not state.purging:
             await self._save_state(replace(state, purging=True))
         budget = _Budget(started=self._monotonic(), monotonic=self._monotonic)
+        keep = state.purge_keep_transcripts   # read at the purge's start: a rebuild keeps the store (§27.8 b)
+        released = swept = False
         while budget.time_left():
             _fence()
+            if not released:
+                await self._release_transcript_reservations(user_id, summary)
+                released = True
+            moved = await self._purge_transcript_documents(user_id, keep, summary)
+            if moved:
+                continue
+            if not swept:   # T-R14: only after the three helpers returned 0, never failing or holding the purge
+                swept = await self._sweep_transcript_orphans(user_id, keep, summary)
+                if not swept:
+                    continue
             hints = await self._repo.delete_user_hints(user_id, RECORD_WRITE_BATCH)   # hints first (§25.2.2)
             if hints:
                 summary["purged_hints"] = summary.get("purged_hints", 0) + hints
@@ -3323,6 +3337,82 @@ class DriveIndexingService:
                 return TickResult("purged", summary)
         cont.request()
         return TickResult("purging", summary)
+
+    async def _purge_transcript_documents(self, user_id: str, keep: bool, summary: Dict[str, int]) -> bool:
+        """One round of the purge's transcript deletes: the user's jobs (with their window results), then batches, then
+        the store unless `keep` (a rebuild keeps it). Repository only, with or without the stage. True when it deleted."""
+        for key, deleter in (("purged_transcript_jobs", self._repo.delete_user_transcript_jobs),
+                             ("purged_transcript_batches", self._repo.delete_user_batches)):
+            deleted = await deleter(user_id, RECORD_WRITE_BATCH)
+            if deleted:
+                summary[key] = summary.get(key, 0) + deleted
+                return True
+        if not keep:
+            stored = await self._repo.delete_user_transcripts(user_id, RECORD_WRITE_BATCH)
+            if stored:
+                summary["purged_transcripts"] = summary.get("purged_transcripts", 0) + stored
+                return True
+        return False
+
+    async def _sweep_transcript_orphans(self, user_id: str, keep: bool, summary: Dict[str, int]) -> bool:
+        """T-R14: the collection-group sweep of window and part documents, one round. True when it is finished (0 left, or
+        its index is missing: logged ERROR naming the index, retried at the next purge or daily pass)."""
+        try:
+            deleted = await self._repo.delete_user_transcript_orphans(user_id, RECORD_WRITE_BATCH, keep_transcripts=keep)
+        except DriveIndexStoreUnavailable as exc:
+            logger.error(f"[DriveIndex] transcript orphan sweep of {user_id[:8]} skipped, its collection-group index is "
+                         f"unavailable ({exc}); the purge goes on")
+            return True
+        if deleted:
+            summary["purged_transcript_orphans"] = summary.get("purged_transcript_orphans", 0) + deleted
+            return False
+        return True
+
+    async def _release_transcript_reservations(self, user_id: str, summary: Dict[str, int]) -> None:
+        """Before the jobs and batches go: the user's OPEN reservations are released, each once, in its own month (G9; the
+        usage documents survive a purge, §25.4.5). Each document is saved with its reservation zeroed BEFORE the release, so
+        a purge that stops in between never releases twice. A job's provider files are deleted best-effort when the stage is
+        built (G30). A user whose usage documents (this month and the two before) hold no open reservation never
+        transcribed, or has nothing open: nothing is read, and the purge is never held by transcript queries."""
+        now = self._clock()
+        months = [month_key(now - timedelta(days=31 * back)) for back in range(3)]
+        months = list(dict.fromkeys(months))
+        usages = [await self._repo.get_model_usage(user_id, month) for month in months]
+        if all(u.transcribe_reserved_usd <= 0 for u in usages):
+            return
+        item_ids: Set[str] = set()
+        for stage_state in (TRANSCRIPT_READY, TRANSCRIPT_WORKING, TRANSCRIPT_WAITING, TRANSCRIPT_PARKED, TRANSCRIPT_HELD):
+            page = await self._repo.transcript_records(user_id, stage_state, _PURGE_JOB_SCAN)
+            if len(page) >= _PURGE_JOB_SCAN:
+                logger.warning(f"[DriveIndex] purge of {user_id[:8]}: {stage_state} recordings fill the scan page; "
+                               f"reservations past it are not released")
+            item_ids.update(rec.item_id for rec in page)
+        batches = await self._repo.get_open_batches(user_id, now + timedelta(days=3650), _PURGE_JOB_SCAN)
+        for batch in batches:   # a job whose record is gone is left for collection: its batch names it
+            item_ids.update(key.rsplit(":", 1)[0] for key in batch.request_keys)
+        released = 0.0
+        for item_id in sorted(item_ids):
+            try:
+                job = await self._repo.get_transcript_job(user_id, item_id)
+            except ValueError:
+                logger.error(f"[DriveIndex] transcript job of {item_id[:8]} is unreadable in the purge: deleted unreleased")
+                continue
+            if job is None:
+                continue
+            if job.reserved_usd > 0:
+                await self._repo.save_transcript_job(replace(job, reserved_usd=0.0, reserved_month=""))
+                await self._reserve_transcribe(user_id, -job.reserved_usd, job.reserved_month or month_key(now))
+                released += job.reserved_usd
+            if self._transcripts is not None:
+                await self._transcripts.delete_job_files(job.windows)
+        for batch in batches:
+            if batch.reserved_usd > 0:
+                await self._repo.save_batch(replace(batch, reserved_usd=0.0, reserved_month=""))
+                await self._reserve_transcribe(user_id, -batch.reserved_usd, batch.reserved_month or month_key(now))
+                released += batch.reserved_usd
+        if released:
+            summary["purged_released_usd_milli"] = summary.get("purged_released_usd_milli", 0) + round(released * 1000)
+            logger.info(f"[DriveIndex] purge of {user_id[:8]} released ${released:.4f} of open transcription reservations")
 
     async def _has_more(self, user_id: str, state: DriveSyncState, now: datetime, *,
                         upgrade_wrote: bool = False, models: Optional[_Models] = None,
