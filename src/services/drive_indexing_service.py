@@ -73,7 +73,9 @@ DriveNoteLifecycle, built only with the notes kill switch on. With it, every del
 transcript mirror's hook) also reports a check for each deleted record that carried a note (`owner_note_id`), into a
 tick-scoped accumulator (`_TICK_NOTES`); `_save_state` folds it into the state at every save, the error paths' saves
 included, and never into a purging state (a purge archives nothing). At the start of the work-off (a complete round) the
-round end works the checks within the item-call budget, then the daily audit runs. Without it, none of this runs.
+round end works the checks within the item-call budget, then the daily audit runs, then the snapshot refresh of the
+noted records this tick renamed, moved or saw edited (§7.5: `_apply`'s hook, and `note_snapshot_due` for the merge
+entries). Without it, none of this runs.
 """
 from __future__ import annotations
 
@@ -521,6 +523,8 @@ class _Mirror:
 
 # Per tick: None outside a tick or with no mirror repository wired (no root ids, no marks).
 _TICK_MIRROR: ContextVar[Optional[_Mirror]] = ContextVar("drive_tick_mirror", default=None)
+
+
 @dataclass
 class _NoteChecks:
     """Owner notes (DRIVE_FILE_NOTES_RFC §3.4, §7.1): the checks this tick's deletes reported, by note id, and the
@@ -536,6 +540,7 @@ class _NoteChecks:
 
 # Per tick: None outside a tick or without the notes lifecycle wired (no check is collected).
 _TICK_NOTES: ContextVar[Optional[_NoteChecks]] = ContextVar("drive_tick_notes", default=None)
+
 # What makes the tick read the marked records again for its counters: it changed a marking itself (review of S1)
 _MARK_CHANGES = ("inaccessible", "inaccessible_folders", "inaccessible_rechecked", "access_regained")
 
