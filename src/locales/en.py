@@ -163,6 +163,7 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.DRIVE_REPLACED.value: "✏️ Replaced: {path} ({before} → {after}; the previous version is in its version history)",
     UIMessage.DRIVE_DELETE_FAILED.value: "⚠️ Deleting {path} did not complete.",
     UIMessage.DRIVE_REPLACE_FAILED.value: "⚠️ Replacing {path} did not complete.",
+    UIMessage.DRIVE_MIRROR_WRITE_REFUSED.value: "This folder is managed by the bot; change it in OneDrive.",
     UIMessage.DEEP_RESEARCH_DRIVE_FOLDER.value: "Deep research",
     UIMessage.DEEP_RESEARCH_DRIVE_COPIED.value: "📁 Copied to your drive: {path}",
     UIMessage.DEEP_RESEARCH_DRIVE_NOT_CONNECTED.value: "Not copied to your drive: the drive is not connected.",

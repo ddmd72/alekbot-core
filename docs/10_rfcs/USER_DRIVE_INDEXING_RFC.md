@@ -4962,7 +4962,7 @@ card and the open text do.
 - **One flag, one result section, two sources.** `drive_deleted` on `search_files_in_drive` is the owner-notes RFC's
   flag; it reaches **archived transcripts** (this section) and **archived and dormant notes** (notes S3). Whichever ships
   first adds the field, the manifest text and the section; the other adds its source. The field description is shared,
-  because the delegate tool keeps the first description per field name (`agent_manifest.py:653-654`): "true only when the
+  because the delegate tool keeps the first description per field name (`agent_manifest.py:653-654`): "search_files_in_drive: true only when the
   user explicitly asks about deleted or removed files: searches transcripts of deleted recordings and your notes on
   deleted files. Never for an ordinary search." It is parsed from `"true"`, `"yes"`, `"1"` (the delegate tool types every
   context field as a string); an empty `drive_query` is allowed with it and lists the newest.
