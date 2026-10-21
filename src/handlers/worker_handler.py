@@ -1018,11 +1018,11 @@ class WorkerHandler:
             creds = await self._oauth_credentials.get_credentials(user_id, "gmail")
             if creds is None or creds.needs_reconnect:
                 return
+            # Before the save: a failure here must leave the flag down so the next run retries the notice.
+            await self._agent_factory.ensure_agents_for_user(user_id)
             creds.needs_reconnect = True
             await self._oauth_credentials.save_credentials(creds)
             logger.warning(f"[Worker] Gmail marked needs_reconnect for {user_id[:8]}")
-            # notify() routes through the eager Quick agent, absent on a cold instance until this runs.
-            await self._agent_factory.ensure_agents_for_user(user_id)
             await self._notification.notify(
                 kind=NotificationKind.DOCUMENT_DELIVERY,
                 user_id=user_id,

@@ -270,3 +270,25 @@ class TestJobMainRealDelivery:
         queue, code = await self._run_real(monkeypatch, None)
         assert code is None
         queue.enqueue_worker_task.assert_not_awaited()
+
+
+class TestGmailReconnectEnsureFailure:
+    async def test_ensure_failure_saves_nothing_and_next_run_notifies(self):
+        creds = MagicMock(needs_reconnect=False)
+        oauth = AsyncMock()
+        oauth.get_credentials.return_value = creds
+        worker, log = _ordered_worker(oauth_credentials=oauth)
+        worker._agent_factory.ensure_agents_for_user.side_effect = RuntimeError("cold")
+        await worker._flag_gmail_reconnect("u1", "a1")
+        oauth.save_credentials.assert_not_awaited()
+        assert creds.needs_reconnect is False
+        worker._notification.notify.assert_not_awaited()
+
+        async def _ok(_uid):
+            log.append("ensure")
+
+        worker._agent_factory.ensure_agents_for_user.side_effect = _ok
+        await worker._flag_gmail_reconnect("u1", "a1")
+        oauth.save_credentials.assert_awaited_once()
+        assert creds.needs_reconnect is True
+        assert log == ["ensure", "notify"]
