@@ -25,7 +25,9 @@ Collection (plan Task 13, §27.5-§27.6, G37):
     interpolated_share(spec, transcript) -> float  the share of the window's stamps interpolation would compute
     in_batch(job, batch_name) -> windows           the job's windows carried by that batch
     file_gone(window) -> window                    its provider file is gone: re-extracted and re-uploaded once
-    after_failed_batch(window, now) -> window      its batch failed whole: resubmitted once, re-extracted once if expired
+    after_failed_batch(window, now, *, bought)     its batch failed whole: resubmitted once, re-extracted once if expired
+    unsubmitted(job, batch_name) -> job            a batch that was never created (T-R28): its windows back as they were
+    repointed(job, old, new) -> job                the windows of a `submitting` document move to the provider's batch name
     all_done(job) -> bool                          every window answered (a gap marker counts): the file can be finalized
     stitch_job(job, results) -> StitchedTranscript the windows on the file's clock, speakers aligned, stamps interpolated
 """
@@ -167,9 +169,10 @@ def is_repurchase(window: JobWindow) -> bool:
     """Collection sent the window back at least once (a failed answer, a gone file, the time or the interpolation check,
     each counted on the window): every later submission of it is a new purchase, reserved at submit (T-R8) and carried
     by its batch (T-R11), so its cost is booked in the batch's month. A window resubmitted only because its batch failed
-    whole is not one: nothing was bought, and the file's reservation still covers it (G39)."""
+    whole is not one: nothing was bought, and the file's reservation still covers it (G39) — unless that batch's outcome
+    is unknown and it was booked as bought (`lost_purchases`, T-R29)."""
     return window.attempts > 0 or window.time_resubmits > 0 or window.interp_resubmits > 0 \
-        or window.coverage_resubmits > 0
+        or window.coverage_resubmits > 0 or window.lost_purchases > 0
 
 
 def interpolated_share(spec: WindowSpec, transcript: WindowTranscript) -> float:
@@ -204,12 +207,17 @@ def file_gone(window: JobWindow) -> JobWindow:
     return replace(window, state=EXTRACTED, file_ref="", files_expire_at=None, batch_name="", reupload_used=True)
 
 
-def after_failed_batch(window: JobWindow, now: datetime) -> JobWindow:
+def after_failed_batch(window: JobWindow, now: datetime, *, bought: bool = False) -> JobWindow:
     """The window's batch failed, expired or was cancelled whole (§27.5, Δ104): resubmitted once (`batch_resubmits`),
     then a gap marker. Nothing was bought, so a window that was a first purchase loses its request key and stays covered
     by the file's reservation (`is_repurchase`); a re-purchase keeps it and is reserved again at submit. A window whose
     provider file will not outlive a batch (TRANSCRIBE_FILE_LIFE_AT_SUBMIT, stage A's rule) is re-extracted and
-    re-uploaded, once per window; when that is spent it is a gap marker too."""
+    re-uploaded, once per window; when that is spent it is a gap marker too.
+
+    `bought` (T-R29): the batch's outcome is unknown (the provider no longer answers for it) and its cost was booked as
+    spent, so the window counts a lost purchase and comes back a re-purchase (key kept, reserved again at submit)."""
+    if bought:
+        window = replace(window, lost_purchases=window.lost_purchases + 1)
     if window.batch_resubmits >= 1:
         return replace(window, state=DONE, gap=True, batch_name="")
     out = replace(window, state=UPLOADED, batch_name="", batch_resubmits=window.batch_resubmits + 1,
@@ -219,6 +227,23 @@ def after_failed_batch(window: JobWindow, now: datetime) -> JobWindow:
     if window.reupload_used:
         return replace(out, state=DONE, gap=True)
     return replace(out, state=EXTRACTED, file_ref="", files_expire_at=None, reupload_used=True)
+
+
+def unsubmitted(job: TranscriptJob, batch_name: str) -> TranscriptJob:
+    """T-R28: the batch `batch_name` was never created at the provider (a definite refusal, or a `submitting` document
+    the provider never listed): its windows go back `uploaded` exactly as they were before the submission — nothing
+    happened to them, so no counter moves; a first purchase loses the request key `submitted` gave it (the file's
+    reservation covers it again), a re-purchase keeps it (reserved again at the next submit)."""
+    windows = tuple(replace(w, state=UPLOADED, batch_name="", request_key=w.request_key if is_repurchase(w) else "")
+                    if w.state == SUBMITTED and w.batch_name == batch_name else w for w in job.windows)
+    return replace(job, windows=windows, batch_name="" if job.batch_name == batch_name else job.batch_name)
+
+
+def repointed(job: TranscriptJob, old_name: str, new_name: str) -> TranscriptJob:
+    """T-R28: the windows a `submitting` document carried now name the provider's batch (the document moved to it)."""
+    windows = tuple(replace(w, batch_name=new_name) if w.state == SUBMITTED and w.batch_name == old_name else w
+                    for w in job.windows)
+    return replace(job, windows=windows, batch_name=new_name if job.batch_name == old_name else job.batch_name)
 
 
 def all_done(job: TranscriptJob) -> bool:
@@ -233,13 +258,13 @@ def stitch_job(job: TranscriptJob, results: Mapping[int, WindowTranscript]) -> S
     """The file's transcript from its windows' stored answers (§27.6): a gap marker for a window done as a gap (or
     whose answer is missing), placed at its seam cut so the cut keeps it; speakers aligned by code (the count is the
     aligned one, any uncertain seam marks the transcript); stamps interpolated WITH the specs; `truncated` when any gap
-    stands in it. Languages in order of first appearance."""
+    stands in it or a long window was accepted short (`accepted_short`, T-R31). Languages in order of first appearance."""
     windows = sorted(job.windows, key=lambda w: w.spec.index)
     specs = [w.spec for w in windows]
     cuts = seam_cuts(specs)
     pairs: List[Tuple[WindowSpec, WindowTranscript]] = []
     languages: Dict[str, None] = {}
-    truncated = False
+    truncated = any(w.accepted_short and not w.gap for w in windows)
     for k, window in enumerate(windows):
         answer = None if window.gap else results.get(window.spec.index)
         if answer is None:

@@ -5,7 +5,9 @@ Window plan, coverage check, time sanity and the content key (docs/10_rfcs/USER_
 from typing import Sequence, Tuple
 
 from src.domain.drive_index import DriveIndexRecord
-from src.domain.drive_index_params import TRANSCRIBE_COVERAGE_MIN, TRANSCRIBE_OVERLAP_S, TRANSCRIBE_WINDOW_S
+from src.domain.drive_index_params import (
+    TRANSCRIBE_COVERAGE_MIN, TRANSCRIBE_COVERAGE_TAIL_S, TRANSCRIBE_OVERLAP_S, TRANSCRIBE_WINDOW_S,
+)
 from src.domain.drive_transcript import Segment, WindowSpec
 
 BACKWARD_JITTER_S = 5.0     # §27.6 "Time sanity": a start may step back this far
@@ -33,12 +35,15 @@ def plan_windows(duration_s: float, window_s: float = TRANSCRIBE_WINDOW_S,
 
 
 def coverage_ok(window: WindowSpec, segments: Sequence[Segment], no_speech: bool) -> bool:
-    """Δ129: the last segment starts at least `TRANSCRIBE_COVERAGE_MIN` of the window in; a `no_speech` window is ok."""
+    """Δ129, T-R31: the last segment starts within the window's tolerance of its end, `max((1 - TRANSCRIBE_COVERAGE_MIN)
+    x d, TRANSCRIBE_COVERAGE_TAIL_S)`: a tenth of a long window, a minute of a short one (a recording that ends in a
+    quiet minute is not a truncated answer). A `no_speech` window is ok; any other needs a segment."""
     if no_speech:
         return True
     if not segments:
         return False
-    return max(s.start_s for s in segments) >= TRANSCRIBE_COVERAGE_MIN * window.duration_s
+    tolerance = max((1.0 - TRANSCRIBE_COVERAGE_MIN) * window.duration_s, float(TRANSCRIBE_COVERAGE_TAIL_S))
+    return max(s.start_s for s in segments) >= window.duration_s - tolerance - 1e-9
 
 
 def times_ok(window: WindowSpec, segments: Sequence[Segment]) -> bool:

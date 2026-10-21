@@ -390,7 +390,8 @@ def _window_to_doc(window: JobWindow) -> Dict[str, Any]:
             "interp_resubmits": window.interp_resubmits,
             "coverage_resubmits": window.coverage_resubmits, "gap": window.gap, "batch_name": window.batch_name,
             "files_expire_at": window.files_expire_at, "reupload_used": window.reupload_used,
-            "batch_resubmits": window.batch_resubmits, "refused": window.refused}
+            "batch_resubmits": window.batch_resubmits, "refused": window.refused,
+            "lost_purchases": window.lost_purchases, "accepted_short": window.accepted_short}
 
 
 def _window_from_doc(data: Mapping[str, Any]) -> JobWindow:
@@ -406,7 +407,8 @@ def _window_from_doc(data: Mapping[str, Any]) -> JobWindow:
         coverage_resubmits=int(data.get("coverage_resubmits", 0)),
         gap=bool(data.get("gap", False)), batch_name=data.get("batch_name", ""),
         files_expire_at=_dt(data.get("files_expire_at")), reupload_used=bool(data.get("reupload_used", False)),
-        batch_resubmits=int(data.get("batch_resubmits", 0)), refused=bool(data.get("refused", False)))
+        batch_resubmits=int(data.get("batch_resubmits", 0)), refused=bool(data.get("refused", False)),
+        lost_purchases=int(data.get("lost_purchases", 0)), accepted_short=bool(data.get("accepted_short", False)))
 
 
 def job_to_doc(job: TranscriptJob) -> Dict[str, Any]:
@@ -443,7 +445,8 @@ def batch_to_doc(batch: TranscriptBatch) -> Dict[str, Any]:
             "submitted_at": batch.submitted_at, "last_polled_at": batch.last_polled_at,
             "reserved_usd": batch.reserved_usd, "reserved_month": batch.reserved_month, "state": batch.state,
             "created_at": batch.created_at, "next_poll_at": batch.next_poll_at, "kind": batch.kind,
-            "booked_at": batch.booked_at}
+            "booked_at": batch.booked_at, "display_name": batch.display_name, "provider_name": batch.provider_name,
+            "lookups": batch.lookups}
 
 
 def batch_from_doc(data: Mapping[str, Any]) -> TranscriptBatch:
@@ -453,7 +456,8 @@ def batch_from_doc(data: Mapping[str, Any]) -> TranscriptBatch:
         reserved_usd=float(data.get("reserved_usd", 0.0)), reserved_month=data.get("reserved_month", ""),
         state=data.get("state", "submitted"), created_at=_dt(data.get("created_at")),
         next_poll_at=_dt(data.get("next_poll_at")), kind=data.get("kind", "transcribe"),
-        booked_at=_dt(data.get("booked_at")))
+        booked_at=_dt(data.get("booked_at")), display_name=data.get("display_name", ""),
+        provider_name=data.get("provider_name", ""), lookups=int(data.get("lookups", 0)))
 
 
 def transcript_head_to_doc(user_id: str, stored: StoredTranscript, parts: int) -> Dict[str, Any]:
@@ -1505,7 +1509,14 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
     async def get_open_batches(self, user_id: str, now: datetime, limit: int) -> List[TranscriptBatch]:
         query = (self._db.collection(self._batches_name).where(filter=FieldFilter("user_id", "==", user_id))
                  .where(filter=FieldFilter("next_poll_at", "<=", now)).order_by("next_poll_at").limit(limit))
-        return [batch_from_doc(snap.to_dict()) for snap in await query.get()]
+        out: List[TranscriptBatch] = []
+        for snap in await query.get():   # one unreadable document is dropped alone, never the poll of the others
+            try:
+                out.append(batch_from_doc(snap.to_dict()))
+            except (KeyError, ValueError, TypeError) as exc:
+                logger.error(f"[DriveIndex] a transcript batch document of user={user_id[:8]} is unreadable "
+                             f"({type(exc).__name__}): skipped")
+        return out
 
     async def get_transcript(self, user_id: str, content_key: str) -> Optional[StoredTranscript]:
         """Head and parts are separate reads, so a put landing between them shows as a token mismatch: the head is read
