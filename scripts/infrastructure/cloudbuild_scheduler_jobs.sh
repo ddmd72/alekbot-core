@@ -185,7 +185,7 @@ gcloud scheduler jobs describe alek-bot-dev-sweep-consolidation \
 gcloud scheduler jobs describe alek-bot-dev-email-indexing-watchdog \
   --location=us-central1 --project=$PROJECT_ID 2>/dev/null \
 && gcloud scheduler jobs update http alek-bot-dev-email-indexing-watchdog \
-  --schedule="23 */2 * * *" \
+  --schedule="27 */2 * * *" \
   --uri="$SERVICE_URL/worker" \
   --oidc-service-account-email="$SA" \
   --oidc-token-audience="$SERVICE_URL/worker" \
@@ -196,7 +196,7 @@ gcloud scheduler jobs describe alek-bot-dev-email-indexing-watchdog \
   --attempt-deadline=60s \
   --project=$PROJECT_ID \
 || gcloud scheduler jobs create http alek-bot-dev-email-indexing-watchdog \
-  --schedule="23 */2 * * *" \
+  --schedule="27 */2 * * *" \
   --uri="$SERVICE_URL/worker" \
   --oidc-service-account-email="$SA" \
   --oidc-token-audience="$SERVICE_URL/worker" \
