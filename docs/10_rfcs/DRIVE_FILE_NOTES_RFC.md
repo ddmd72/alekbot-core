@@ -39,35 +39,6 @@ break). §13 lists where this RFC departs from them.
 | OD10 Cabinet page | Later, maybe never | D19 | none |
 | OD11 / OD12 | Not in folder listings; refused on files the bot cannot open | D20 | none |
 
-### 0.4 Rev 3.2: D21 and the S1 core's deltas
-
-The S1 core was reviewed ("freeze after fixes", two fix rounds). Its full contract and delta list live with the build
-(the core contract and report); the ones that change this text:
-
-| Change | Rule now | Where |
-|---|---|---|
-| **D21** (owner, 2026-10-21): the RFC contradicted itself — §7.3, §8, §4.1 and §6.4 promised changes to archived and dormant notes through their `drive_note:` ref, §4.4 refused them | A `drive_note:` ref edits (`set`), undoes, clears and erases an archived or other-drive note from the store alone, with no drive call and no connection; the note stays archived or bound to its drive. Only a NEW note for a file that is gone or not on the connected drive is refused. Amends D17 | §4.4, §8 |
-| Write precondition | `write_version` compares `current_version` AND a parent `revision` counter that every parent write bumps (owner, lifecycle and erase writes), so an owner write prepared before an archive or re-activation fails instead of overwriting it | §3.1, §4.4 step 5 |
-| Vector repair | `set_vector` takes the version that was embedded and stores nothing for a newer one | §5.1 b step 5 |
-| Undo re-run guard | A second undo in the same (session, turn) — a failover re-run — is a no-op; the tool passes a non-empty `turn_id` on every path | §4.2, §4.4 |
-| Provider key | One domain constant, `ONEDRIVE_PROVIDER_KEY = "microsoft_onedrive"` (the adapter's credential key), builds every `i:` key in the main service and the indexer; a domain parser reads a key back (a stub's binding) | §3.1, §5.1 a |
-| Lifecycle | `archive` on a cleared note stamps `archived_at` / `last_seen_at` and keeps it cleared; `reactivate` on such a note removes the stamp; lifecycle writes set `last_writer` = indexer | §3.1, §7.1, §7.2 |
-| Watermark paging | `changed_since` pages on the pair (`updated_at`, `note_id`) — index 2 gains `note_id` — so more than `NOTE_PAGE` notes inside the 60 s skew (an erase-all) cannot stall the notes step | §3.5, §5.1 b |
-| Erase | The store never stops part-way: a note that conflicts is reported and the rest are erased; the service nudges every erased item and then refuses with the count left, so the owner asks again | §4.8 |
-| Validation | Format characters (`Cf`: bidi, zero-width) are removed with control characters; a classifier name shared by two values is refused with the candidates; more than 3 life areas are refused | §4.3 |
-
-### 0.3 Rev 3.1: one deleted-files surface with the transcripts mirror
-
-The transcripts mirror (`USER_DRIVE_INDEXING_RFC.md` §27.9, rev 3.28) now archives a deleted recording's transcript and
-reaches it only through an explicit deleted-files search (owner decision D48 there). Notes stay bot-side (D1): nothing of
-a note goes to the drive, and the mirror never writes one.
-
-| Shared piece | Rule | Where |
-|---|---|---|
-| `drive_deleted` | One flag, one result section, two sources: archived and dormant notes (here) and archived transcripts (index RFC §27.9.11). Whichever ships first adds the field, the manifest text and the section; the other adds its source. One description for both (first description per field name wins). | §6.4 |
-| The section | Heading `Deleted files (N):`; one entry per gone item; an item with both an archived transcript and a note shows both lines in one entry | §6.4 |
-| The deletion "why" | `gone` / `unstored` / `unknown` for every record delete, derived at the service's call sites; built by whichever slice ships first (transcripts T2 derives it without changing `ObservationPlan`, index RFC §27.9.4, Δ188), consumed by both | §7.1 |
-
 ### 0.2 Rev 2: the builder-check review
 
 | Review item | Fix | Where |
@@ -86,6 +57,35 @@ a note goes to the drive, and the mirror never writes one.
 | D8 / OD5 wording | (rev 2: a deferral of D8.) **Superseded in rev 3** by D15: no content-key re-binding at all. | — |
 | OD3 | Per-note history erase and erase-all, each behind a confirmation code. Confirmed by the owner (D13). | §4.8 |
 | Minors 1–19 | Folded in where cheap (skill-gate plumbing, deterministic first id, idempotent writes, one lock, string flag parse, queries and indexes, watermark paging, tick accumulator, rendering call sites, SCD2 wording, 404 order, folder re-binding, the anti-goal test, adapter readers, kill-switch scope). | throughout |
+
+### 0.3 Rev 3.1: one deleted-files surface with the transcripts mirror
+
+The transcripts mirror (`USER_DRIVE_INDEXING_RFC.md` §27.9, rev 3.28) now archives a deleted recording's transcript and
+reaches it only through an explicit deleted-files search (owner decision D48 there). Notes stay bot-side (D1): nothing of
+a note goes to the drive, and the mirror never writes one.
+
+| Shared piece | Rule | Where |
+|---|---|---|
+| `drive_deleted` | One flag, one result section, two sources: archived and dormant notes (here) and archived transcripts (index RFC §27.9.11). Whichever ships first adds the field, the manifest text and the section; the other adds its source. One description for both (first description per field name wins). | §6.4 |
+| The section | Heading `Deleted files (N):`; one entry per gone item; an item with both an archived transcript and a note shows both lines in one entry | §6.4 |
+| The deletion "why" | `gone` / `unstored` / `unknown` for every record delete, derived at the service's call sites; built by whichever slice ships first (transcripts T2 derives it without changing `ObservationPlan`, index RFC §27.9.4, Δ188), consumed by both | §7.1 |
+
+### 0.4 Rev 3.2: D21 and the S1 core's deltas
+
+The S1 core was reviewed ("freeze after fixes", two fix rounds). Its full contract and delta list live with the build
+(the core contract and report); the ones that change this text:
+
+| Change | Rule now | Where |
+|---|---|---|
+| **D21** (owner, 2026-10-21): the RFC contradicted itself — §7.3, §8, §4.1 and §6.4 promised changes to archived and dormant notes through their `drive_note:` ref, §4.4 refused them | A `drive_note:` ref edits (`set`), undoes, clears and erases an archived or other-drive note from the store alone, with no drive call and no connection; the note stays archived or bound to its drive. Only a NEW note for a file that is gone or not on the connected drive is refused. Amends D17 | §4.4, §8 |
+| Write precondition | `write_version` compares `current_version` AND a parent `revision` counter that every parent write bumps (owner, lifecycle and erase writes), so an owner write prepared before an archive or re-activation fails instead of overwriting it | §3.1, §4.4 step 5 |
+| Vector repair | `set_vector` takes the version that was embedded and stores nothing for a newer one | §5.1 b step 5 |
+| Undo re-run guard | A second undo in the same (session, turn) — a failover re-run — is a no-op; the tool passes a non-empty `turn_id` on every path | §4.2, §4.4 |
+| Provider key | One domain constant, `ONEDRIVE_PROVIDER_KEY = "microsoft_onedrive"` (the adapter's credential key), builds every `i:` key in the main service and the indexer; a domain parser reads a key back (a stub's binding) | §3.1, §5.1 a |
+| Lifecycle | `archive` on a cleared note stamps `archived_at` / `last_seen_at` and keeps it cleared; `reactivate` on such a note removes the stamp; lifecycle writes set `last_writer` = indexer | §3.1, §7.1, §7.2 |
+| Watermark paging | `changed_since` pages on the pair (`updated_at`, `note_id`) — index 2 gains `note_id` — so more than `NOTE_PAGE` notes inside the 60 s skew (an erase-all) cannot stall the notes step | §3.5, §5.1 b |
+| Erase | The store never stops part-way: a note that conflicts is reported and the rest are erased; the service nudges every erased item and then refuses with the count left, so the owner asks again | §4.8 |
+| Validation | Format characters (`Cf`: bidi, zero-width) are removed with control characters; a classifier name shared by two values is refused with the candidates; more than 3 life areas are refused | §4.3 |
 
 ---
 
@@ -111,11 +111,11 @@ Binding. Recorded, not reopened.
 | D14 | **No change to consolidation now.** The owner's sentence describing a file stays an ordinary chat message. Backlog: the consolidator should learn to keep file-describing sentences out of memory (separate work, §16). |
 | D15 | **A file is identified only by the current provider's item id.** A provider switch, another drive, or a file deleted and uploaded again is a **migration** (possibly LLM-assisted, a separate future feature): a deliberate boundary, not a gap. No content-key re-binding in v1. The content key stays in the note's snapshot, as data for that migration. |
 | D16 | **The deleted-files search also shows dormant notes** (bound to a drive that is not connected), labelled. |
-| D17 | **Indexing off: writing allowed. Disconnected: new notes refused; delete, undo and erase allowed.** Edits by `drive_note:` ref allowed too (amended by D21). |
+| D17 | **Indexing off: writing allowed. Disconnected: new notes and edits refused; delete, undo and erase allowed.** Amended by D21: edits by `drive_note:` ref are allowed too. |
 | D18 | **A call with Lelik counts as chat**, as a voice memo in chat does: a note may be written from a call. Lelik forwards it to Alek through `ask_alek` / `tell_alek`; the receipt goes to chat (§4.9). |
 | D19 | **No Cabinet page for notes** — later, maybe never. |
-| D21 | **Amends D17 (rev 3.2).** A note that is archived, or bound to another (no longer connected) drive, can still be edited (`set`), undone, cleared and erased through its `drive_note:` ref; none of these needs the live file, and the note stays archived or bound to its drive. The one thing refused is creating a NEW note for a file that no longer exists or is not on the connected drive. |
 | D20 | **The note is not shown in folder listings** (`list_files_in_drive`); it is shown in search cards and when a file is opened. **Notes on files the bot cannot open (§26.2) are refused**, with the copy instruction. |
+| D21 | **Amends D17 (rev 3.2).** A note that is archived, or bound to another (no longer connected) drive, can still be edited (`set`), undone, cleared and erased through its `drive_note:` ref; none of these needs the live file, and the note stays archived or bound to its drive. The one thing refused is creating a NEW note for a file that no longer exists or is not on the connected drive. |
 
 ---
 
@@ -559,12 +559,16 @@ so it never runs on one model call or one paste. Both forms use a confirmation c
   the count of his notes and `` `$drive-notes erase-all <code>` ``.
 - **Pasting the command** (`ConversationHandler._handle_drive_notes_command`, before any LLM call, own notes only, like
   `$skill`) calls `DriveNoteService.erase(user_id, code)`. It deletes every version and leaves per note a contentless
-  stub: only `note_id`, `user_id`, `account_id`, `state = cleared`, `erase_pending = true`, `match_keys` and
-  `updated_at` (bumped). Text, classifiers, `keys`, `note_vector`, `snapshot`, `binding` and `last_writer` are gone at
+  stub: only `note_id`, `user_id`, `account_id`, `state = cleared`, `erase_pending = true`, `match_keys`,
+  `revision` and `updated_at` (both bumped). Text, classifiers, `keys`, `note_vector`, `snapshot`, `binding` and `last_writer` are gone at
   once. The stub exists only so the indexer's notes step sees the change (§5.1 b), clears the record's copy and then
   deletes the stub: a document that is simply deleted never appears in a `changed_since` query, so the copy on the
   record would outlive the note. With indexing off there is no copy (the opt-out purged the index) and the stubs are
-  deleted at once. The reply confirms the count erased.
+  deleted at once. The reply confirms the count erased. **Partial erase** (rev 3.2): the code is spent when it is
+  redeemed, so the store never stops part-way. A note it could not erase (a concurrent write that outlasted its
+  retries, or a store error on that note) is reported and the rest are erased, nudged (or their stubs deleted); the
+  reply then says how many were erased and how many could not be erased right now, and the owner asks again (a new
+  request lists what is left).
 - A wrong, expired or someone else's code: "no such erase request"; nothing happens.
 - Requested on a call, the erase code is posted to the chat like a receipt (§4.9); the owner pastes it there.
 
@@ -958,7 +962,7 @@ whenever the noted item itself is observed (named residual).
 | Index rebuild (`drive_index_rebuild.py`) | Untouched (purge ≠ planner delete). | Onboarding re-creates records; entry (a) merges every note. |
 | Indexing opt-out | Kept, dormant (no tick runs). Tool writes still allowed (status `indexing_off`). | Search is off; `drive_deleted` still works. |
 | Opt back in | Untouched. | Onboarding merges (entry a). |
-| Drive disconnected (access lost) | Kept. **Edits, undo, clear and erase allowed by `drive_note:` ref** (no Graph call, §4.4, D21); a new note refused until reconnected. | The index keeps cards (with notes) for the 30-day grace; after the purge, nothing until reconnect. |
+| Drive disconnected (access lost) | Kept. **Clear, undo and erase allowed by either ref** (`drive:` through the ref key `r:`, or `drive_note:`), **edits by the `drive_note:` ref** (no Graph call, §4.4, D21); a new note refused until reconnected. | The index keeps cards (with notes) for the 30-day grace; after the purge, nothing until reconnect. |
 | Reconnect, same drive | Bindings still valid (same item ids). | Records re-created after a purge get their notes (entry a). |
 | A different drive connected | Old-drive notes dormant (§7.3, D15); never re-bound, not even a file with the same content. Changeable, undoable and deletable by their `drive_note:` ref. | Dormant notes appear only in `drive_deleted` (D16). |
 | Provider switch | Document ids unchanged; dormant, as above. Moving them is a future migration (D15). | As above. |
@@ -1014,6 +1018,9 @@ whenever the noted item itself is observed (named residual).
 | Kill switch off | No writes anywhere (§3.6); reads keep working; merged copies stay until the next merge. |
 | The receipt post fails on a call | Logged at ERROR; the note is stored and the answer returns; the next search card shows it (§4.9). |
 | An erase code expires or is pasted twice | "No such erase request"; nothing erased (atomic `get_and_delete`). |
+| A note conflicts or hits a store error during an erase | Reported, never raised by the store: the rest are erased and nudged; the owner is told how many are left and asks again (§4.8). A missing index is logged at ERROR, a transient error at WARNING. |
+| A corrupt note document during an erase-all (named residual) | Its `ValidationError` aborts the rest of the erase after the code is spent, and the notes already erased are not nudged. Bounded: those are content-free stubs already, and their `updated_at` bump puts them in the next `changed_since`, so the nudge is only latency. Failing loudly on corrupt data is intended. |
+| `delete_stub` fails during an erase with indexing off (named residual) | The outage stops the stub loop and the owner sees "try again" instead of the partial-erase counts. The leftover stubs hold no content and are harmless. |
 
 ---
 
@@ -1045,7 +1052,7 @@ Tests (new files):
   item, a cleared note reused; **two concurrent first writes give one lineage** (deterministic id, must-not-exist
   precondition) and a taken deterministic id falls back to a random one; precondition conflict retried once; **an
   identical write is a no-op with no new version**; classifier-only write and its receipt; a proposed note confirmed by "yes" is written (no
-  owner-words check, D11); security reject; `set` refused when not connected; **clear and undo work while disconnected and on dormant and archived notes,
+  owner-words check, D11); security reject; `set` by a `drive:` ref refused when not connected (a `drive_note:` ref edits from the store, D21); **clear and undo work while disconnected and on dormant and archived notes,
   by `drive:` (ref key) and by `drive_note:` refs, with no Graph call**; the 404 order (inaccessible from the record
   first, then not found); **clear empties `text`, classifiers, `keys` and `note_vector`**; embedding failure → pending;
   nudge failure never fails the write; searchability statuses; `NOTES_PER_USER_MAX`; logs carry no text.

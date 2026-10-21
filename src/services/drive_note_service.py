@@ -370,8 +370,8 @@ class DriveNoteService:
         if left:
             raise DriveNoteRefused(
                 NoteRefusal.CONFLICT,
-                f"{result.erased} notes were erased; {len(left)} could not be, because they changed at the same time: "
-                "ask to erase them again.", erased=result.erased, left=len(left), note_ids=list(result.left))
+                f"{result.erased} notes were erased; {len(left)} could not be erased right now: ask to erase them "
+                "again.", erased=result.erased, left=len(left), note_ids=list(result.left))
         return result.erased
 
     # ------------------------------------------------------------------------------------------------------------------
