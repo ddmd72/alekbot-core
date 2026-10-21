@@ -150,7 +150,7 @@ async def test_agent_is_not_a_delegation_agent():
     assert (await agent.execute(msg)).status is AgentStatus.FAILED
 
 
-@pytest.mark.parametrize("duration_s,expected", [(60.0, 1_000), (1800.0, 30_000), (1860.5, 31_009),
+@pytest.mark.parametrize("duration_s,expected", [(60.0, 4_096), (300.0, 5_000), (1800.0, 30_000), (1860.5, 31_009),
                                                  (2760.0, 46_000), (4000.0, 65_536)])
 def test_output_cap_is_per_window_and_bounded_by_the_ceiling(duration_s, expected):
     req = _agent().build_request(WindowSpec(index=0, start_s=0.0, duration_s=duration_s), prompt=PROMPT, key="k",
