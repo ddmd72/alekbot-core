@@ -49,7 +49,7 @@ def deploy_indexes(file_path, project_id, database_id="us-production"):
                 failures.append(f"{collection}.{idx['fieldPath']}")
             continue
         fields = idx.get("fields", [])
-        query_scope = idx.get("queryScope", "COLLECTION").lower()
+        query_scope = idx.get("queryScope", "COLLECTION").lower().replace("_", "-")   # gcloud: collection-group
 
         cmd = [
             "gcloud", "firestore", "indexes", "composite", "create",

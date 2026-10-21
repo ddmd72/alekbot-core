@@ -47,7 +47,7 @@ async def test_last_months_usage_reads_as_zero():
     last = w.clock.now - timedelta(days=40)
     await w.repo.add_model_usage("u", month_key(last), last.date().isoformat(), "reader", 1.25, 0.0, 4)
     status = await w.search_svc.indexing_status("u")
-    assert status.usd_month == {"reader": 0.0, "triage": 0.0, "profile": 0.0, "passage": 0.0}
+    assert status.usd_month == {"reader": 0.0, "triage": 0.0, "profile": 0.0, "passage": 0.0, "transcribe": 0.0}
 
 
 async def test_no_sync_state_has_nothing_to_show():

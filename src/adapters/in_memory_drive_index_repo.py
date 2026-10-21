@@ -17,7 +17,13 @@ from ..domain.drive_index import DriveChunk, DriveIndexRecord, DriveSyncState, L
 from ..domain.drive_index_lean import ChunkId, DriveChunkLean, DriveHintLean, DriveRecordLean, lean_of
 from ..domain.drive_index_params import CONCEPT_KEYS_MAX
 from ..domain.drive_search import is_not_read_yet, is_unread
-from ..domain.drive_usage import added_usage, closed_initial, new_initial_build, spent_initial
+from ..domain.drive_transcript import (
+    StoredTranscript, TranscriptBatch, TranscriptJob, WindowTranscript, batch_doc_id, batch_url_fields,
+    job_url_fields, normalized_batch,
+)
+from ..domain.drive_usage import (
+    added_usage, closed_initial, new_initial_build, reserved_field, reserved_usage, spent_initial,
+)
 from ..ports.drive_index_repository import DriveIndexRepository
 from ..utils.logger import logger
 
@@ -52,6 +58,12 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
         self.hints: Dict[Tuple[str, str, int, int], Tuple[DriveHintDoc, List[float]]] = {}
         self.usage: Dict[Tuple[str, str], ModelUsageMonth] = {}
         self.initial: Dict[str, InitialBuild] = {}
+        # Transcripts (§27.3-§27.5, §27.8 b): jobs by (user_id, item_id), their window results by (user_id, item_id,
+        # index), batches by (user_id, provider name) and the store by (user_id, content_key)
+        self.transcript_jobs: Dict[Tuple[str, str], TranscriptJob] = {}
+        self.window_results: Dict[Tuple[str, str, int], WindowTranscript] = {}
+        self.batches: Dict[Tuple[str, str], TranscriptBatch] = {}
+        self.transcripts: Dict[Tuple[str, str], StoredTranscript] = {}
         self._lock = asyncio.Lock()
 
     # -- sync state --------------------------------------------------------------------------
@@ -206,14 +218,15 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
                 self.records[key] = replace(self.records[key], inaccessible_notified_since=since)
 
     async def count_unread(self, user_id: str, kinds: AbstractSet[str],
-                           triaged: AbstractSet[str] = frozenset(), *, pending: Optional[bool] = None) -> int:
-        admitted, images = frozenset(kinds), frozenset(triaged)
+                           triaged: AbstractSet[str] = frozenset(), *, pending: Optional[bool] = None,
+                           transcribed: AbstractSet[str] = frozenset()) -> int:
+        admitted, images, media = frozenset(kinds), frozenset(triaged), frozenset(transcribed) - frozenset(kinds)
         if pending:
-            return sum(1 for r in self._user(user_id) if is_not_read_yet(r, admitted, images))
+            return sum(1 for r in self._user(user_id) if is_not_read_yet(r, admitted, images, media))
         if pending is False:
             return sum(1 for r in self._user(user_id)
-                       if is_unread(r, admitted, images) and r.state is not RecordState.PENDING)
-        return sum(1 for r in self._user(user_id) if is_unread(r, admitted, images))
+                       if is_unread(r, admitted, images, media) and r.state is not RecordState.PENDING)
+        return sum(1 for r in self._user(user_id) if is_unread(r, admitted, images, media))
 
     async def count_by_state(self, user_id: str) -> Dict[str, int]:
         counts: Dict[str, int] = {}
@@ -457,6 +470,12 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
             current = self.usage.get((user_id, month), ModelUsageMonth())
             self.usage[(user_id, month)] = added_usage(current, day, cls, usd, fallback_usd, calls, covered_usd)
 
+    async def reserve_model_usd(self, user_id: str, month: str, cls: str, delta_usd: float) -> None:
+        reserved_field(cls)   # ValueError for a class with no reservations, before any write
+        async with self._lock:
+            current = self.usage.get((user_id, month), ModelUsageMonth())
+            self.usage[(user_id, month)] = reserved_usage(current, cls, delta_usd)
+
     async def get_initial_build(self, user_id: str) -> InitialBuild:
         return self.initial.get(user_id) or new_initial_build()
 
@@ -471,6 +490,121 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
     async def close_initial_build(self, user_id: str, now: datetime) -> None:
         async with self._lock:
             self.initial[user_id] = closed_initial(self.initial.get(user_id) or new_initial_build(), now)
+
+    # -- transcripts: jobs, window results, batches, the store (§27.3-§27.5, §27.8 b) ---------------------------------
+
+    async def get_transcript_job(self, user_id: str, item_id: str) -> Optional[TranscriptJob]:
+        return self.transcript_jobs.get((user_id, item_id))
+
+    async def save_transcript_job(self, job: TranscriptJob) -> None:
+        _refuse_urls("job", job_url_fields(job))
+        self.transcript_jobs[(job.user_id, job.item_id)] = job
+
+    async def delete_transcript_job(self, user_id: str, item_id: str) -> None:
+        self.transcript_jobs.pop((user_id, item_id), None)
+        for key in [k for k in self.window_results if k[:2] == (user_id, item_id)]:
+            del self.window_results[key]
+
+    async def save_window_result(self, user_id: str, item_id: str, index: int, result: WindowTranscript) -> None:
+        self.window_results[(user_id, item_id, index)] = result
+
+    async def get_window_results(self, user_id: str, item_id: str) -> Dict[int, WindowTranscript]:
+        return {k[2]: v for k, v in sorted(self.window_results.items()) if k[:2] == (user_id, item_id)}
+
+    async def create_batch(self, batch: TranscriptBatch) -> bool:
+        _refuse_urls("batch", batch_url_fields(batch))
+        batch = normalized_batch(batch)
+        async with self._lock:
+            if (batch.user_id, batch.name) in self.batches:
+                return False
+            self.batches[(batch.user_id, batch.name)] = batch
+            return True
+
+    async def save_batch(self, batch: TranscriptBatch) -> None:
+        _refuse_urls("batch", batch_url_fields(batch))
+        batch = normalized_batch(batch)
+        self.batches[(batch.user_id, batch.name)] = batch
+
+    async def delete_batch(self, user_id: str, name: str) -> None:
+        self.batches.pop((user_id, name), None)
+
+    async def get_open_batches(self, user_id: str, now: datetime, limit: int) -> List[TranscriptBatch]:
+        due = [b for b in self.batches.values()
+               if b.user_id == user_id and b.next_poll_at is not None and b.next_poll_at <= now]
+        return sorted(due, key=lambda b: (b.next_poll_at, batch_doc_id(b.user_id, b.name)))[:limit]
+
+    async def get_transcript(self, user_id: str, content_key: str) -> Optional[StoredTranscript]:
+        return self.transcripts.get((user_id, content_key))
+
+    async def put_transcript(self, user_id: str, stored: StoredTranscript) -> None:
+        self.transcripts[(user_id, stored.content_key)] = stored
+
+    async def touch_transcript(self, user_id: str, content_key: str, last_used_at: datetime) -> None:
+        current = self.transcripts.get((user_id, content_key))
+        if current is not None:
+            self.transcripts[(user_id, content_key)] = replace(current, last_used_at=last_used_at)
+
+    async def delete_transcript(self, user_id: str, content_key: str) -> None:
+        self.transcripts.pop((user_id, content_key), None)
+
+    # -- transcripts: queues on the records, copies in flight, orphans, purge (§27.3, §27.8 b, G12) ----------------------
+
+    async def transcript_queue(self, user_id: str, limit: int) -> List[DriveIndexRecord]:
+        ready = sorted((r for r in self._user(user_id) if r.transcript_state == JobState.READY.value),
+                       key=lambda r: (r.parent_id, r.item_id))
+        ready.sort(key=lambda r: r.effective_day, reverse=True)   # stable: (parent_id, item_id) within a day
+        return ready[:limit]
+
+    async def transcript_wakeups(self, user_id: str, now: datetime, limit: int) -> List[DriveIndexRecord]:
+        due = [r for r in self._user(user_id) if r.transcript_wake_at is not None and r.transcript_wake_at <= now]
+        return sorted(due, key=lambda r: (r.transcript_wake_at, r.item_id))[:limit]
+
+    async def transcript_records(self, user_id: str, state: str, limit: int) -> List[DriveIndexRecord]:
+        return sorted((r for r in self._user(user_id) if r.transcript_state == state), key=lambda r: r.item_id)[:limit]
+
+    async def jobs_by_content_key(self, user_id: str, content_key: str) -> List[TranscriptJob]:
+        return sorted((j for (u, _), j in self.transcript_jobs.items() if u == user_id and j.content_key == content_key),
+                      key=lambda j: j.item_id)
+
+    async def orphan_transcripts(self, user_id: str, before: datetime, limit: int) -> List[str]:
+        old = [s for (u, _), s in self.transcripts.items() if u == user_id and s.last_used_at is not None and s.last_used_at < before]
+        return [s.content_key for s in sorted(old, key=lambda s: (s.last_used_at, s.content_key))[:limit]]
+
+    async def transcript_key_in_use(self, user_id: str, content_key: str) -> bool:
+        return any(r.transcript_key == content_key for r in self._user(user_id))
+
+    async def delete_user_transcript_jobs(self, user_id: str, limit: int) -> int:
+        keys = sorted(k for k in self.transcript_jobs if k[0] == user_id)[:limit]
+        for key in keys:
+            await self.delete_transcript_job(*key)
+        return len(keys)
+
+    async def delete_user_transcript_orphans(self, user_id: str, limit: int, *, keep_transcripts: bool) -> int:
+        """The user's window results, all of them: called after the helpers returned 0, so none has a job (parts are not
+        separate documents here, so `keep_transcripts` changes nothing), as on Firestore where the sweep cannot tell."""
+        keys = sorted(k for k in self.window_results if k[0] == user_id)[:limit]
+        for key in keys:
+            del self.window_results[key]
+        return len(keys)
+
+    async def delete_user_batches(self, user_id: str, limit: int) -> int:
+        keys = sorted(k for k in self.batches if k[0] == user_id)[:limit]
+        for key in keys:
+            del self.batches[key]
+        return len(keys)
+
+    async def delete_user_transcripts(self, user_id: str, limit: int) -> int:
+        keys = sorted(k for k in self.transcripts if k[0] == user_id)[:limit]
+        for key in keys:
+            del self.transcripts[key]
+        return len(keys)
+
+
+def _refuse_urls(kind: str, fields: Sequence[str]) -> None:
+    """§27.4: no URL is persisted (as the Firestore adapter): logs the field names and refuses the write."""
+    if fields:
+        logger.error(f"[DriveIndex] transcript {kind} refused: URL-like value in {', '.join(fields)}")
+        raise ValueError(f"transcript {kind} holds a URL in {', '.join(fields)}")
 
 
 def _query_keys(keys: Sequence[str], method: str) -> List[str]:

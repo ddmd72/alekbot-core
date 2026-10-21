@@ -19,7 +19,7 @@ call at search time (D19, D28). Decisions that need no I/O are in `drive_tiers`,
 `drive_tier_pool`, `drive_tier_explain` and `drive_search`; this class reads and calls them.
 
 Public interface:
-    DriveSearchService(repo, embeddings, users, drive, *, embedding_space, clock, nonce, monotonic)
+    DriveSearchService(repo, embeddings, users, drive, *, embedding_space, clock, nonce, monotonic, transcribe_cap_usd)
     await search(user_id, request) -> DriveSearchResult
     await indexing_status(user_id) -> DriveIndexingStatus     # Cabinet (§6)
     await access_note(user_id, *, item_id=None, path=None) -> Optional[str]   # list/open on a 404 (§26.2, Δ55)
@@ -39,7 +39,7 @@ from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Mapping, Opti
 
 from ..domain.drive_card import card_text
 from ..domain.drive_enrich_plan import COVERAGE_COUNTERS, GAP_HELD, GAP_NO_PASSAGES, GAP_WAITING
-from ..domain.drive_enrichment import USD_CAPS, HintItem, UsageClass
+from ..domain.drive_enrichment import USD_CAPS, HintItem, JobState, UsageClass
 from ..domain.drive_index import (
     KEYS_VERSION, MIGRATION_GATE_KEY, POLICY_VERSION, DriveIndexRecord, DriveSyncState, EpochPhase, Priority,
     RecordState, Scope, inaccessible,
@@ -49,7 +49,7 @@ from ..domain.drive_index_params import (
     ABOUT_FETCH, ABOUT_SHOWN, CARD_FETCH, CHUNK_FETCH, FETCH_MAX, FOLDER_INMEM_CARDS, FOLDER_INMEM_CHUNKS,
     GROUP_READ_MAX, HINT_FETCH, INACCESSIBLE_SCAN_MAX, K, LABELLED_SHOWN, MAX_CARD_RECORDS_PER_USER, MENTIONED_SHOWN, NAME_FETCH,
     NAME_KEY_QUERIES, PASSAGE_MAX_CHUNKS_PER_FILE, PROFILE_MIN_CHARS, RELATED_MAX, RELATED_SMALL, TRANSLATED_SHOWN, WINDOW_CHARS_TOTAL_V2,
-    WINDOW_MAX, WORD_FETCH, WORD_FILES_MAX,
+    TRANSCRIBE_USD_PER_MONTH, TRANSCRIPT_OPEN_MAX_CHARS, WINDOW_MAX, WORD_FETCH, WORD_FILES_MAX,
 )
 from ..domain.drive_index_planner import month_key
 from ..domain.drive_indexing_status import DriveIndexingStatus
@@ -57,11 +57,12 @@ from ..domain.drive_keys import fetch_batches, name_match_v2, query_concepts, qu
 from ..domain.drive_match import Concept, KeyFamily, MatchTier, QueryConcepts
 from ..domain.drive_search_texts import ACCESS_NOTE_FILE, ACCESS_NOTE_FOLDER
 from ..domain.drive_search import (
-    INACCESSIBLE_COUNTER, MAX_CHAIN_DEPTH, NOT_READ_YET_COUNTER, STATUS_AMBIGUOUS_FOLDER, STATUS_FOLDER_NOT_FOUND, STATUS_OK, UNREAD_COUNTER,
+    INACCESSIBLE_COUNTER, MAX_CHAIN_DEPTH, REFERENCE_REMINDER, wrap_untrusted, NOT_READ_YET_COUNTER, STATUS_AMBIGUOUS_FOLDER, STATUS_FOLDER_NOT_FOUND, STATUS_OK, UNREAD_COUNTER,
     DriveSearchCard, DriveSearchEnvelope, DriveSearchRequest, DriveSearchResult, content_admitted, cosine_distance,
     hides_descendants, in_date_range, kinds_for, make_card, normalize_path, path_match, record_visible,
     render_results, resolve_chain, search_gate,
 )
+from ..domain.drive_transcript_render import card_segment, open_text
 from ..domain.drive_tier_explain import explain, not_matched, passage_window
 from ..domain.drive_tier_pool import (
     ConceptHits, candidate_ids, concept_trigrams, document_frequency, document_frequency_common, name_word_concepts,
@@ -271,9 +272,11 @@ class _Folder:
 class DriveSearchService:
     def __init__(self, repo: DriveIndexRepository, embeddings: EmbeddingService, users: UserRepository,
                  drive: UserDrivePort, *, embedding_space: str, clock: Callable[[], datetime] = _utcnow,
-                 nonce: Callable[[], str] = _nonce, monotonic: Callable[[], float] = time.monotonic) -> None:
+                 nonce: Callable[[], str] = _nonce, monotonic: Callable[[], float] = time.monotonic,
+                 transcribe_cap_usd: float = TRANSCRIBE_USD_PER_MONTH) -> None:
         """`embedding_space` is the space query vectors are embedded in (the adapter's EMBEDDING_SPACE). The
-        kNN streams run only while the index's cards are in it (§12.3)."""
+        kNN streams run only while the index's cards are in it (§12.3). `transcribe_cap_usd` is the transcription cap
+        the indexer applies (`effective_monthly_cap(DRIVE_TRANSCRIBE_USD_CAP)`, T-R3), shown by the Cabinet."""
         self._repo = repo
         self._embeddings = embeddings
         self._users = users
@@ -282,6 +285,7 @@ class DriveSearchService:
         self._nonce = nonce
         self._monotonic = monotonic
         self._space = embedding_space
+        self._transcribe_cap = transcribe_cap_usd
 
     # ------------------------------------------------------------------------------------------
     # Search
@@ -1327,6 +1331,26 @@ class DriveSearchService:
             return None
         return ACCESS_NOTE_FOLDER if rec.is_folder else ACCESS_NOTE_FILE
 
+    async def transcript_text(self, user_id: str, item_id: str, *, path: str = "",
+                              label: str = "") -> Optional[str]:
+        """What opening a transcribed recording returns (§27.11): the transcript, or the stub's card line, inside the
+        nonce wrapper under the reference reminder, capped at `TRANSCRIPT_OPEN_MAX_CHARS` (G19). None when the record
+        has no current transcript, so the caller keeps its own branch (Δ121). Speech is other people's: never logged."""
+        rec = (await self._repo.get_records(user_id, [item_id])).get(item_id)
+        if rec is None or rec.transcript_state != JobState.CURRENT.value:
+            return None
+        if rec.transcript_stub:
+            body = card_segment(rec)
+        elif rec.transcript_key:
+            stored = await self._repo.get_transcript(user_id, rec.transcript_key)
+            body = open_text(stored, max_chars=TRANSCRIPT_OPEN_MAX_CHARS) if stored is not None else None
+        else:
+            body = None
+        if not body:
+            return None
+        wrapped = wrap_untrusted(f"{label}\n{body}" if label else body, nonce=self._nonce(), ref=f"drive:{item_id}", path=path)
+        return f"{REFERENCE_REMINDER}\n{wrapped}"
+
     async def _building(self, user_id: str, state: DriveSyncState) -> bool:
         """The set of items may be incomplete (§10.2): an epoch not idle, a first-seen or re-listing record
         due (class 2, RFC Δ18), or an unresolved record being resolved at CASCADE priority — limit-1 queries,
@@ -1357,7 +1381,9 @@ class DriveSearchService:
             access_lost_at=state.access_lost_at, purging=state.purging,
             readable_chunks=await self._repo.readable_chunk_total(user_id),
             # what each month's cap has paid: the initial build's dollars are its own line, never against a cap (XC-4)
-            usd_month={c.value: usage.cap_usd(c.value) for c in UsageClass}, usd_caps=dict(USD_CAPS),
+            usd_month={c.value: usage.cap_usd(c.value) for c in UsageClass},
+            # the transcription cap as the indexer applies it: the optional knob only lowers it (T-R3)
+            usd_caps={**USD_CAPS, UsageClass.TRANSCRIBE.value: self._transcribe_cap},
             initial_build_spent_usd=build.spent_usd, initial_build_allowance_usd=build.allowance_usd,
             initial_build_closed=build.closed_at is not None,
         )

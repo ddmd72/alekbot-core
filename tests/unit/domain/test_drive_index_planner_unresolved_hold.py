@@ -9,7 +9,8 @@ import pytest
 from src.domain import drive_index_policy as policy
 from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus
 from src.domain.drive_index import (
-    POLICY_VERSION, DriveChange, DriveIndexRecord, EpochPhase, FolderProbe, Reason, RecordState, Scope,
+    POLICY_VERSION, STRUCTURE_POLICY_SINCE, DriveChange, DriveIndexRecord, EpochPhase, FolderProbe, Reason, RecordState,
+    Scope,
 )
 from src.domain.drive_index_params import MAX_ATTEMPTS
 from src.domain.drive_index_planner import (
@@ -114,9 +115,10 @@ def test_a_new_content_version_under_the_hold_is_read_again():
 
 
 def test_a_policy_bump_replan_of_a_dense_folder_keeps_its_childrens_outcomes():
-    """A POLICY_VERSION bump re-plans a folder of 800 children without a probe: it becomes unresolved and rescopes its
-    children, then its probe decides it is normal and rescopes them again. Every outcome survives (F2-1)."""
-    big = folder(item_id="F", name="Scans", policy_version=POLICY_VERSION - 1, child_count=800,
+    """A structure-changing policy bump (a record older than STRUCTURE_POLICY_SINCE, Ruling T-R5) re-plans a folder of
+    800 children without a probe: it becomes unresolved and rescopes its children, then its probe decides it is normal
+    and rescopes them again. Every outcome survives (F2-1)."""
+    big = folder(item_id="F", name="Scans", policy_version=STRUCTURE_POLICY_SINCE - 1, child_count=800,
                  probed_child_count=800, has_card=True)
     bumped = plan_observation(change_from_record(big), big, None, None, CTX, None, observed=False).upsert
     assert (bumped.scope, bumped.state, bumped.rescope_pending) == (Scope.UNRESOLVED, RecordState.UNRESOLVED, True)

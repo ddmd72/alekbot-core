@@ -14,8 +14,8 @@ Public interface:
     resolve_chain(rec, lookup, root_item_id) -> Optional[(path, ancestor_ids)]
     normalize_path(path) -> str;  path_match(candidate, wanted) -> Optional[str]
     cosine_distance(a, b) -> float
-    is_unread(rec, admitted=None, triaged=None) -> bool;  content_admitted() -> bool
-    is_not_read_yet(rec, admitted=None, triaged=None) -> bool   (waiting, not unreadable: F5-2)
+    is_unread(rec, admitted=None, triaged=None, transcribed=None) -> bool;  content_admitted() -> bool
+    is_not_read_yet(rec, admitted=None, triaged=None, transcribed=None) -> bool   (waiting, not unreadable: F5-2)
     escape_text(text) -> str;  wrap_untrusted(text, *, nonce, ref, path) -> str
     render_results(result) -> str
     make_card(rec, path, summary, nonce)
@@ -435,26 +435,33 @@ def content_admitted() -> bool:
     """Whether the policy reads any kind's content (ADMITTED_KINDS or TRIAGED_KINDS, read at call time): then
     search runs the content streams and the envelope says `content_search`. Per policy, not per user: a user whose
     documents are not read yet is told so by `unread` and `building`, never by "only names were searched"."""
-    return any(admission(kind) is not Admission.NONE for kind in KIND_NAMES)
+    # a transcribed kind (§27) adds no content stream until its transcript is indexed (a later task)
+    return any(admission(kind) in (Admission.CONTENT, Admission.TRIAGE) for kind in KIND_NAMES)
 
 
 def _content_kind(rec: DriveIndexRecord, admitted: Optional[FrozenSet[str]],
-                  triaged: Optional[FrozenSet[str]]) -> bool:
+                  triaged: Optional[FrozenSet[str]], transcribed: Optional[FrozenSet[str]] = None) -> bool:
     if admitted is not None:
-        return rec.kind in admitted or (rec.kind in (triaged or frozenset())
-                                        and rec.triage_verdict is TriageVerdict.TEXT)
+        return (rec.kind in admitted or rec.kind in (transcribed or frozenset())
+                or (rec.kind in (triaged or frozenset()) and rec.triage_verdict is TriageVerdict.TEXT))
     granted = admission(rec.kind)
-    # An image is a document only once triage said it shows text (§24.5); photographs are never unread.
-    return granted is Admission.CONTENT or (granted is Admission.TRIAGE and rec.triage_verdict is TriageVerdict.TEXT)
+    # An image is a document only once triage said it shows text (§24.5); photographs are never unread. A recording is
+    # one once it is transcribed (§27.11 "Coverage", G2).
+    return (granted is Admission.CONTENT or granted is Admission.TRANSCRIBE
+            or (granted is Admission.TRIAGE and rec.triage_verdict is TriageVerdict.TEXT))
 
 
 def is_unread(rec: DriveIndexRecord, admitted: Optional[FrozenSet[str]] = None,
-              triaged: Optional[FrozenSet[str]] = None) -> bool:
+              triaged: Optional[FrozenSet[str]] = None, transcribed: Optional[FrozenSet[str]] = None) -> bool:
     """A document of an admitted kind, or an image of a `triaged` kind that triage found to show text (§24.5), whose
     content is not searchable (§10.2 `unread`). Photos, code, archives and other kinds that are not admitted never
     count. `admitted` None reads the policy now (`admission`, both lists), so the Slice 2+4 flip is seen without a
-    re-import; with `admitted` given, only the kinds in `triaged` are triaged (review D-M4)."""
-    if rec.is_folder or not _content_kind(rec, admitted, triaged):
+    re-import; with `admitted` given, only the kinds in `triaged` are triaged (review D-M4) and only those in
+    `transcribed` are recordings counted (§27.11: a user without transcription never has media "unread", G3).
+    A recording with no sound is not unread: `no_text` on a recording is a `no_speech`/`no_audio` stub (G20)."""
+    if rec.is_folder or not _content_kind(rec, admitted, triaged, transcribed):
+        return False
+    if rec.reason is Reason.NO_TEXT and admission(rec.kind) is Admission.TRANSCRIBE:
         return False
     if rec.state is RecordState.PENDING:
         return rec.indexed_generation is None
@@ -481,11 +488,11 @@ def date_source(rec: DriveIndexRecord) -> Optional[str]:
 
 
 def is_not_read_yet(rec: DriveIndexRecord, admitted: Optional[FrozenSet[str]] = None,
-                    triaged: Optional[FrozenSet[str]] = None) -> bool:
+                    triaged: Optional[FrozenSet[str]] = None, transcribed: Optional[FrozenSet[str]] = None) -> bool:
     """An unread document that is only waiting (final review F5-2): `pending` with no readable generation — queued,
     held for next month, scheduled by an upgrade pass. Never one held by the card cap (`card_capped`, whatever its
     state): the "index is full" line covers it. The other unread documents could not be read."""
-    return (rec.state is RecordState.PENDING and not rec.card_capped and is_unread(rec, admitted, triaged))
+    return (rec.state is RecordState.PENDING and not rec.card_capped and is_unread(rec, admitted, triaged, transcribed))
 
 
 def make_card(rec: DriveIndexRecord, path: str, summary: str, nonce: str) -> DriveSearchCard:

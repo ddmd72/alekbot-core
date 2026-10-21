@@ -9,6 +9,7 @@ them to UserAgentFactory as typed ports. Owns the session store and the
 overflow-callback's deferred factory reference.
 """
 
+import os
 from typing import Callable, Optional, Any
 
 from ..config.environment import EnvironmentConfig
@@ -25,6 +26,7 @@ from ..adapters.xml_prompt_assembler import XmlPromptAssembler
 from ..adapters.fact_management_adapter import FactManagementAdapter
 from ..adapters.in_memory_provider_resilience import InMemoryProviderResilience
 from ..domain.deduplication_service import SmartDeduplication
+from ..domain.drive_transcript_plan import effective_monthly_cap
 from ..services.configuration_service import ConfigurationService
 from ..services.biographical_context_service import BiographicalContextService
 from ..services.fact_write_service import FactWriteService
@@ -198,6 +200,8 @@ class ServiceContainer:
                 repo=self.drive_index_repo, embeddings=self.embedding_service,
                 users=FirestoreUserRepository(db_client, env_config, account_repo), drive=self.user_drive,
                 embedding_space=GeminiEmbeddingAdapter.EMBEDDING_SPACE,
+                # the Cabinet shows the transcription cap the indexer applies: the optional knob only lowers it (T-R3)
+                transcribe_cap_usd=effective_monthly_cap(os.getenv("DRIVE_TRANSCRIBE_USD_CAP")),
             )
 
         self.notes_adapter = FirestoreAgentNoteAdapter(db_client, env_config)

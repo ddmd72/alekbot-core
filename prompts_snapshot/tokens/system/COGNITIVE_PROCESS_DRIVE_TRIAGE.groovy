@@ -2,12 +2,13 @@
 category: cognitive_process
 class: cognitive_process
 metadata:
-  description: DriveImageTriageAgent v3 — text or photo, photo descriptions, capture (USER_DRIVE_INDEXING_RFC
-    §25.4.3, §26.3)
+  description: DriveImageTriageAgent v3 — text or photo, photo descriptions, capture
+    (USER_DRIVE_INDEXING_RFC §25.4.3, §26.3)
   override_by:
   - SYSTEM
   - AGENT
-  source: 'v3 draft 2026-10-19: capture (USER_DRIVE_INDEXING_RFC §26.3), location prior (D39), not uploaded'
+  source: 'v3 draft 2026-10-19: capture (USER_DRIVE_INDEXING_RFC §26.3), location
+    prior (D39), not uploaded'
 source_file: firestore_utils/uploads/COGNITIVE_PROCESS_DRIVE_TRIAGE.json
 token_id: COGNITIVE_PROCESS_DRIVE_TRIAGE
 uploaded_by: local_script

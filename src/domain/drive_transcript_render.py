@@ -1,0 +1,104 @@
+"""
+What a transcript looks like to the index, to the card and to Smart's open (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md
+§27.8 a, §27.11; plan G17-G19). Pure: no clock, no I/O, no logging.
+
+Public interface:
+    TRANSCRIPT_BODY_VERSION                                    # versions `render_body`, the indexed layout (G18)
+    render_body(transcript) -> str                             # one paragraph per segment, a stamp at every head
+    card_segment(rec) -> Optional[str]                         # `transcript: 47 min, 2 speakers, uk/en` or a stub line
+    open_text(stored, *, max_chars) -> str                     # what `open_file_from_drive` returns, capped (G19)
+
+The labels are language-neutral (G17): `Speaker N`, `[MM:SS]`, `[~MM:SS]`. The localized header, stubs, gap sentence
+and summary belong to the mirror file, not here. Every stub has this deterministic structural rendering.
+"""
+from typing import List, Optional
+
+from src.domain.drive_index import DriveIndexRecord, RecordState
+from src.domain.drive_enrichment import JobState
+from src.domain.drive_transcript import StitchedTranscript, StoredTranscript, TranscriptStub
+from src.domain.drive_transcript_time import format_stamp
+
+TRANSCRIPT_BODY_VERSION = 1
+
+GAP_TEXT = "[this part could not be transcribed]"
+UNCERTAIN_SEAM_LINE = "[speaker labels may differ between parts of this recording]"
+_STUB_TEXT = {
+    TranscriptStub.NO_SPEECH.value: "no speech detected",
+    TranscriptStub.TOO_LONG.value: "too long",
+    TranscriptStub.TOO_LARGE.value: "too large",
+    TranscriptStub.NO_AUDIO.value: "no audio track",
+}
+
+
+def render_body(transcript: StitchedTranscript) -> str:
+    """One paragraph per segment, separated by one blank line so the chunker's paragraph split puts a stamp at every
+    chunk head. A single speaker carries no label."""
+    labelled = transcript.speakers > 1
+    paragraphs: List[str] = []
+    for seg in transcript.segments:
+        stamp = f"[{'~' if seg.interpolated else ''}{format_stamp(seg.start_s)}]"
+        if seg.gap:
+            paragraphs.append(f"{stamp} {GAP_TEXT}")
+            continue
+        text = " ".join(seg.text.split())
+        if not text:
+            continue
+        label = f"Speaker {seg.speaker}: " if labelled and seg.speaker is not None else ""
+        paragraphs.append(f"{stamp} {label}{text}")
+    return "\n\n".join(paragraphs)
+
+
+def _stub_line(stub: str, seconds: int = 0) -> Optional[str]:
+    text = _STUB_TEXT.get(stub)
+    if text is None:
+        return None
+    if stub == TranscriptStub.TOO_LONG.value and seconds > 0:
+        text = f"{text}: {format_stamp(seconds)}"
+    return f"transcript: none ({text})"
+
+
+def card_segment(rec: DriveIndexRecord) -> Optional[str]:
+    """The transcript line of a media card; None while there is nothing to say (no transcript, a failed one, or a
+    record whose index run failed: no chunks back a "transcript: N min" line, T-R24)."""
+    if rec.transcript_state != JobState.CURRENT.value or rec.state is RecordState.FAILED:
+        return None
+    if rec.transcript_stub:
+        return _stub_line(rec.transcript_stub, rec.transcript_seconds)
+    if rec.transcript_seconds <= 0:
+        return None
+    parts = [f"{max(1, (rec.transcript_seconds + 30) // 60)} min"]
+    if rec.transcript_speakers > 0:
+        parts.append(f"{rec.transcript_speakers} speaker{'' if rec.transcript_speakers == 1 else 's'}")
+    if rec.transcript_languages:
+        parts.append("/".join(rec.transcript_languages))
+    return "transcript: " + ", ".join(parts)
+
+
+def open_text(stored: StoredTranscript, *, max_chars: int, mirror_path: str = "") -> str:
+    """The transcript as Smart reads it: the indexed body, cut at a paragraph boundary so the whole result (seam line
+    and cut note included) stays within `max_chars` (G19). The note points at `mirror_path` when the caller has one.
+    A stub is its card line; nothing stored is the empty string."""
+    transcript = stored.transcript
+    if transcript is None:
+        return _stub_line(stored.stub) or ""
+    full = render_body(transcript)
+    head = UNCERTAIN_SEAM_LINE + "\n\n" if transcript.uncertain_seam else ""
+    if len(head) + len(full) <= max_chars:
+        return head + full
+    pointer = f" The full text is in {mirror_path}." if mirror_path else ""
+
+    def note(shown: int) -> str:
+        return (f"[Transcript cut at {shown} of {len(full)} characters.{pointer} "
+                f"Search for a passage to read a specific part.]")
+
+    room = max(0, max_chars - len(head) - len(note(len(full))) - 2)
+    kept: List[str] = []
+    size = 0
+    for paragraph in full.split("\n\n"):
+        added = len(paragraph) + (2 if kept else 0)
+        if size + added > room:
+            break
+        kept.append(paragraph)
+        size += added
+    body = "\n\n".join(kept) if kept else full[:room]
+    return head + body + "\n\n" + note(len(body))

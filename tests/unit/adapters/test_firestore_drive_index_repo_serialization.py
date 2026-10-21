@@ -77,7 +77,12 @@ def full_record() -> DriveIndexRecord:
         card_accuracy=88, accuracy_version=1, pages_refused=2, read_by_fallback=True,   # §26.4 (Δ61)
         # §26.2 (D33, Δ47, Δ68): files the bot cannot open; the last is the fan-out's own field (Δ54)
         inaccessible_since=T - timedelta(days=4), inaccessible_checked_at=T - timedelta(hours=8),
-        inaccessible_reobserved=True, inaccessible_notified_since=T - timedelta(days=5))
+        inaccessible_reobserved=True, inaccessible_notified_since=T - timedelta(days=5),
+        # §27 (transcripts): plain fields, strings for states and holds (Δ47)
+        transcript_state="waiting", transcript_key="q:4096", transcript_version=1,
+        transcript_wake_at=T + timedelta(hours=9), transcript_attempts=2, transcript_hold="budget",
+        transcript_hold_version="1:q:4096", transcript_stub="too_long", transcript_seconds=3725,
+        transcript_speakers=3, transcript_languages=("uk", "en"), transcript_body_version=1)
 
 
 def full_state() -> DriveSyncState:
@@ -93,7 +98,7 @@ def full_state() -> DriveSyncState:
         triage_images_used=12, upgrade_parked_month="2026-10",
         model_backoff_by_agent={"drive_reader": T + timedelta(minutes=20), "drive_profiler": T + timedelta(minutes=5)},
         described_count=7, described_grew_at=T - timedelta(hours=2), migration_alerted=True, stall_alerted=True,
-        fallback_alerted_day="2026-10-09")
+        fallback_alerted_day="2026-10-09", purge_keep_transcripts=True)
 
 
 def stored(value):
@@ -136,7 +141,7 @@ class TestRecordSerialization:
     def test_read_datetimes_are_plain_utc(self):
         back = record_from_doc(stored(record_to_doc(full_record())))
         for name in ("modified_at", "fs_modified_at", "effective_date", "dirty_since", "due_at", "attempt_started_at",
-                     "model_read_at"):
+                     "model_read_at", "transcript_wake_at"):
             value = getattr(back, name)
             assert type(value) is datetime and value.utcoffset() == timedelta(0), name
 

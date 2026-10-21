@@ -41,6 +41,7 @@ from ..domain.drive_search import (
     REFERENCE_REMINDER, REFERENCE_REMINDER_ATTACHED, render_results, request_from_fields, require_search_terms,
     wrap_untrusted,
 )
+from ..domain.drive_index_policy import TRANSCRIBED_KINDS, kind_of
 from ..domain.exceptions import WorkspaceRefused
 from ..domain.language import LanguageCode
 from ..domain.skill import SKILL_REF_PREFIX
@@ -631,7 +632,7 @@ class FileManagementAgent(BaseAgent):
         if not is_drive_ref(ref):
             return await self._fetch(message, payload, user_id)  # lenient read
         try:
-            return await self._open_drive_item(message, ref, user_id)
+            return await self._open_drive_item(message, ref, user_id, payload)
         except DriveItemNotFoundError:
             item_id = parse_drive_ref(ref)
             note = await self._access_note(user_id, item_id=item_id) if item_id is not None else None
@@ -639,7 +640,18 @@ class FileManagementAgent(BaseAgent):
                 raise
             return self._fail(message, note)
 
-    async def _open_drive_item(self, message: AgentMessage, ref: str, user_id: str) -> AgentResponse:
+    async def _transcript_of(self, user_id: str, item: Any) -> Optional[str]:
+        """The wrapped transcript of a recording, or None (none stored, or the lookup failed: the file branch stays)."""
+        try:
+            text = await self._drive_search.transcript_text(user_id, item.item_id, path=item.path,
+                                                          label=drive_label(item))
+        except Exception:
+            logger.warning("FileManagementAgent: transcript lookup failed", exc_info=True)
+            return None
+        return text or None
+
+    async def _open_drive_item(self, message: AgentMessage, ref: str, user_id: str,
+                               payload: Optional[dict] = None) -> AgentResponse:
         item = await self._conversion_service.get_drive_item(ref, user_id)
         if item.is_folder:
             return self._fail(message, f"'{item.path or '/'}' is a folder; use list_files_in_drive.")
@@ -649,6 +661,19 @@ class FileManagementAgent(BaseAgent):
             return self._ok(message, f"'{item.path}' is in a format that cannot be viewed yet ({mime}).", [item])
         vision_cap = (MAX_DRIVE_VISION_IMAGE_BYTES if mime.startswith("image/")
                       else MAX_DRIVE_VISION_PDF_BYTES if mime == "application/pdf" else None)
+        # A recording is decided the way the indexer decides it: by the kind classifier (extension first), not the
+        # provider's mime, so a transcribed .opus/.ogg/.mkv with a generic mime still opens as its transcript.
+        recording = kind_of(item.name, item.mime_type or "", False) in TRANSCRIBED_KINDS
+        if recording and (payload or {}).get("original") is True:
+            # The recording itself comes as a drive link, never as bytes into chat (§27.11, Δ121).
+            link = item.web_url or "(no link available)"
+            body = wrap_untrusted(f"{drive_label(item)}\nLink to the original recording: {link}",
+                                  nonce=secrets.token_hex(8), ref=item.ref, path=item.path)
+            return self._ok(message, f"{REFERENCE_REMINDER}\n{body}", [item])
+        if recording and self._drive_search is not None:
+            transcript = await self._transcript_of(user_id, item)
+            if transcript is not None:
+                return self._ok(message, transcript, [item])
         try:
             if vision_cap is not None:
                 if item.size_bytes > vision_cap:

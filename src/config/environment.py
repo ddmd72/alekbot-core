@@ -386,6 +386,46 @@ class EnvironmentConfig:
         return f"{self.firestore_collection_prefix}drive_model_usage"
 
     @property
+    def drive_transcript_jobs_collection(self) -> str:
+        """
+        Transcript job documents, one per media file in flight, with a `windows` subcollection of window results
+        (USER_DRIVE_INDEXING_RFC §27.3, §27.5). Dev: development_drive_transcript_jobs
+        """
+        return f"{self.firestore_collection_prefix}drive_transcript_jobs"
+
+    @property
+    def drive_transcript_batches_collection(self) -> str:
+        """
+        Provider batch documents, one per submitted batch (USER_DRIVE_INDEXING_RFC §27.5, G10).
+        Dev: development_drive_transcript_batches
+        """
+        return f"{self.firestore_collection_prefix}drive_transcript_batches"
+
+    @property
+    def drive_transcripts_collection(self) -> str:
+        """
+        The transcript store under the content key, sharded into a `parts` subcollection when large
+        (USER_DRIVE_INDEXING_RFC §27.4, §27.8 b). Dev: development_drive_transcripts
+        """
+        return f"{self.firestore_collection_prefix}drive_transcripts"
+
+    @property
+    def drive_transcript_windows_subcollection(self) -> str:
+        """
+        Window results under a transcript job (`{jobs}/{id}/windows/{index}`, plan G11). Env-prefixed because
+        Firestore collection-group ids are not scoped by parent. Dev: development_drive_transcript_windows
+        """
+        return f"{self.firestore_collection_prefix}drive_transcript_windows"
+
+    @property
+    def drive_transcript_parts_subcollection(self) -> str:
+        """
+        Shards of a large stored transcript (`{store}/{id}/parts/{token}-{n}`, USER_DRIVE_INDEXING_RFC §27.4).
+        Env-prefixed for the same reason as the windows. Dev: development_drive_transcript_parts
+        """
+        return f"{self.firestore_collection_prefix}drive_transcript_parts"
+
+    @property
     def drive_sync_state_collection(self) -> str:
         """
         User-drive sync state, one per user (USER_DRIVE_INDEXING_RFC §3.5).

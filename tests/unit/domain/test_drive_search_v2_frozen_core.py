@@ -149,7 +149,8 @@ class TestEnums:
 
     def test_hint_and_usage(self):
         assert [t.value for t in HintType] == ["keyword", "question"]
-        assert [c.value for c in UsageClass] == ["reader", "triage", "profile", "passage"]
+        assert [c.value for c in UsageClass] == ["reader", "triage", "profile", "passage",
+                                                  "transcribe"]   # §27.10 (D46), appended
 
     def test_reply_status(self):
         assert [s.value for s in ModelReplyStatus] == ["ok", "refused", "failed", "invalid", "stopped_at_cap",
@@ -209,7 +210,8 @@ class TestEnums:
     def test_job_usage_classes_and_caps(self):
         assert JOB_USAGE_CLASS == {"profile": "profile", "passages": "passage"}
         assert USD_CAPS == {"reader": P.READER_USD_PER_MONTH, "triage": P.TRIAGE_USD_PER_MONTH,
-                            "profile": P.PROFILE_USD_PER_MONTH, "passage": P.PASSAGE_USD_PER_MONTH}
+                            "profile": P.PROFILE_USD_PER_MONTH, "passage": P.PASSAGE_USD_PER_MONTH,
+                            "transcribe": P.TRANSCRIBE_USD_PER_MONTH}   # §27.10 (D46): the fifth class
 
     def test_states_compare_as_plain_strings(self):
         """Record fields hold states as `str` (§25.13.2): the enums are str-valued."""
@@ -235,7 +237,10 @@ class TestTypes:
         # P5 review M1: per-class initial-build share, appended (positional construction unchanged)
         (ModelUsageMonth, ["reader_usd", "triage_usd", "profile_usd", "passage_usd", "fallback_usd", "calls",
                            "daily", "reader_initial_usd", "triage_initial_usd", "profile_initial_usd",
-                           "passage_initial_usd"]),
+                           "passage_initial_usd",
+                           # §27.10 (Δ106, G8, G9): the transcribe class, its (always-zero) build share and its open
+                           # reservations, appended (positional construction unchanged)
+                           "transcribe_usd", "transcribe_initial_usd", "transcribe_reserved_usd"]),
         (InitialBuild, ["allowance_usd", "spent_usd", "opened_at", "closed_at"]),
         (DriveRecordLean, ["item_id", "parent_id", "name", "kind", "effective_date", "about_keys", "name_tokens", "state",
                            "scope", "has_card", "indexed_generation", "content_hash", "valid_until"]),

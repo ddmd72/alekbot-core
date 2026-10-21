@@ -54,12 +54,13 @@ class TestPolicyTable:
     def test_no_key_values_and_no_passages(self, kind, rule):
         assert dp.PROFILE_POLICY[kind] == dp.KindPolicy(rule, O.NO_KEY_VALUES, False)
 
-    @pytest.mark.parametrize("kind, rule", [("eml", I.EMAIL), ("msg", I.EMAIL), ("subtitles", I.CUES)])
+    @pytest.mark.parametrize("kind, rule", [("eml", I.EMAIL), ("msg", I.EMAIL), ("subtitles", I.CUES),
+                                            ("audio", I.CUES), ("video", I.CUES)])
     def test_mail_and_cues(self, kind, rule):
         assert dp.PROFILE_POLICY[kind] == dp.KindPolicy(rule, O.FULL, True)
 
-    @pytest.mark.parametrize("kind", ["code", "log", "archive", "disk_image", "database", "executable", "audio",
-                                      "video", "data_dump", "other"])
+    @pytest.mark.parametrize("kind", ["code", "log", "archive", "disk_image", "database", "executable",
+                                      "data_dump", "other"])
     def test_no_profile(self, kind):
         assert dp.policy_of(kind, text_chars=10_000) == dp.NO_POLICY
 

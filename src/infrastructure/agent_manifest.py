@@ -572,8 +572,10 @@ FILE_MANAGEMENT = AgentDescriptor(
             'Optional context={"folder": "<path or drive:<id> ref of a folder>"}; omit for the top level.'
         ),
         Intent.OPEN_FILE_FROM_DRIVE: (
-            "Open a file from the user's drive and return its content (text, or the image/PDF itself). "
-            'Requires: context={"file_ref": "drive:<id> from a [Drive: ...] label"}'
+            "Open a file from the user's drive and return its content (text, or the image/PDF itself); a "
+            "transcribed recording returns its transcript. "
+            'Requires: context={"file_ref": "drive:<id> from a [Drive: ...] label"}; optional '
+            '"original": true ONLY when the user asks for the recording itself (it comes as a link).'
         ),
         Intent.MOVE_FILE_IN_DRIVE: (
             "Move and/or rename a file or folder already on the user's drive. A chat file is not on the drive: "
@@ -631,7 +633,11 @@ FILE_MANAGEMENT = AgentDescriptor(
         },
         Intent.LIST_FILES_IN_DRIVE: {"folder": ("Optional. Folder path on the drive, or a folder's drive:<id> ref; omit "
                                                 "for the top level")},
-        Intent.OPEN_FILE_FROM_DRIVE: {"file_ref": "drive:<id> ref from a [Drive: ...] label"},
+        Intent.OPEN_FILE_FROM_DRIVE: {
+            "file_ref": "drive:<id> ref from a [Drive: ...] label",
+            "original": {"type": "boolean", "description": ("open_file_from_drive only: set true only when the user "
+                                                            "asks for the recording itself, not its content")},
+        },
         Intent.MOVE_FILE_IN_DRIVE: {
             "file_ref": "drive:<id> ref of the file or folder",
             "folder": "Optional. Destination folder path",

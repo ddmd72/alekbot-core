@@ -1020,5 +1020,85 @@
     "collectionGroup": "development_drive_index_hints",
     "fieldPath": "hint_vector",
     "indexes": []
+  },
+  {
+    "collectionGroup": "development_drive_index_records",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "transcript_state", "order": "ASCENDING" },
+      { "fieldPath": "effective_day", "order": "DESCENDING" },
+      { "fieldPath": "parent_id", "order": "ASCENDING" },
+      { "fieldPath": "item_id", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_index_records",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "transcript_wake_at", "order": "ASCENDING" },
+      { "fieldPath": "item_id", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_transcript_jobs",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "content_key", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_transcript_batches",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "next_poll_at", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_transcripts",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "last_used_at", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_transcript_windows",
+    "queryScope": "COLLECTION_GROUP",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "index", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_transcript_parts",
+    "queryScope": "COLLECTION_GROUP",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "index", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_transcripts",
+    "fieldPath": "segments",
+    "indexes": []
+  },
+  {
+    "collectionGroup": "development_drive_transcripts",
+    "fieldPath": "summary",
+    "indexes": []
+  },
+  {
+    "collectionGroup": "development_drive_transcript_parts",
+    "fieldPath": "segments",
+    "indexes": []
+  },
+  {
+    "collectionGroup": "development_drive_transcript_windows",
+    "fieldPath": "segments",
+    "indexes": []
   }
 ]

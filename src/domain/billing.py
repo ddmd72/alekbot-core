@@ -285,6 +285,48 @@ def calculate_cost(
     return round(cost, 6)
 
 
+# Gemini Batch API (drive transcripts, USER_DRIVE_INDEXING_RFC §27, Δ105/Δ131/Δ132): every token of a batch job is
+# billed at half the interactive rate. The price rows are NOT touched (G7): `gemini-3.8-flash` stays at the held final
+# $1.50/$7.50 (price_consensus.HOLD_FINAL_PRICE), so a batch hour books at the held price, not the promotional one.
+BATCH_DISCOUNT = 0.5
+
+
+@dataclass(frozen=True)
+class BatchUsage:
+    """Tokens one batch request used, priced as the batch bills them: one input rate for every modality (audio is
+    not dearer than text), thought tokens in the output leg, the whole at `BATCH_DISCOUNT`. An unknown model prices
+    at 0.0, as `calculate_cost` does; callers flag it (`is_priced`).
+
+    At the held $1.50/$7.50 a 30-minute window of 45 000 audio tokens plus ~12 000 output tokens (T0 measured about
+    400 per audio minute, thoughts included) books 45 000 x $0.75/M + 12 000 x $3.75/M = ~$0.079, about $0.16 per
+    audio hour at that density (G7); a runaway window is bounded by its per-window output cap and the reservation."""
+    model: str
+    audio_input_tokens: int = 0
+    text_input_tokens: int = 0
+    output_tokens: int = 0
+    thought_tokens: int = 0
+
+    def is_priced(self) -> bool:
+        return self.model in _PRICING_PER_MILLION_TOKENS
+
+    def cost(self) -> float:
+        interactive = calculate_cost(self.model, self.audio_input_tokens + self.text_input_tokens,
+                                     self.output_tokens + self.thought_tokens)
+        return round(interactive * BATCH_DISCOUNT, 6)
+
+
+def batch_transcription_input_usd(tokens: int) -> float:
+    """What `tokens` of input cost in a transcription batch job: the held `gemini-3.8-flash` input rate at
+    `BATCH_DISCOUNT`. Planning only (a window's fixed text-input allowance, drive transcripts T-R19)."""
+    return tokens * _PRICING_PER_MILLION_TOKENS["gemini-3.8-flash"]["input"] / 1e6 * BATCH_DISCOUNT
+
+
+def batch_transcription_output_usd(tokens: int) -> float:
+    """What `tokens` of output (thoughts included) cost in a transcription batch job: the held `gemini-3.8-flash`
+    output rate at `BATCH_DISCOUNT`. Planning only (a window's output cap, drive transcripts T-R26)."""
+    return tokens * _PRICING_PER_MILLION_TOKENS["gemini-3.8-flash"]["output"] / 1e6 * BATCH_DISCOUNT
+
+
 # Non-token (flat-rate or per-second REST API) service pricing — companion to
 # _PRICING_PER_MILLION_TOKENS. Prices can change under you (see CLAUDE.md
 # Economics section) — this is the one place to update them.

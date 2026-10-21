@@ -13,7 +13,13 @@ from typing import Any, Mapping, Optional, Tuple
 
 from .drive_enrichment import DriveProfile, PhotoObject
 
-POLICY_VERSION = 2                            # 2: the Slice 2+4 kinds admitted (§24.1)
+POLICY_VERSION = 3                            # 2: the Slice 2+4 kinds admitted (§24.1); 3: audio and video admitted
+                                              # for transcription (§27.3); re-plans media records only: structure
+                                              # decisions stand from STRUCTURE_POLICY_SINCE, no card re-embed
+# The policy version since which a record's structure decisions (density probe, opaque marker, README read) are valid.
+# A bump that only changes media admission must not re-decide structure for every user, so these checks compare
+# against this, not POLICY_VERSION. Raise it only when a bump changes how folders are classified.
+STRUCTURE_POLICY_SINCE = 2
 CARD_VERSION = 4                              # 2: brief, caption and lead text in the card (§24.4); 3: profile and
                                               # photo fields, no lead text but for machine text (§25.2.7); 4: the
                                               # capture segment, no brief doc type (§26.3, Δ64); S6 (unreleased)
@@ -23,6 +29,7 @@ CARD_VERSION = 4                              # 2: brief, caption and lead text 
 # stored place while the stamp matches, so a record stamped 2 without forms would never get them.
 GEO_TABLE_VERSION = 2
 NAME_KEYS_VERSION = 2                         # the name-stream keyer; 2: drive_keys.name_keys_v2 (§25.2.4)
+TRANSCRIBE_VERSION = 1                        # the transcript pipeline (§27); deliberately not in CURRENT_VERSIONS (Δ122)
 EXTRACTION_VERSION = 3                        # chunker, text gate, content_terms normaliser (§12.3, §24.6); 2: maximal query forms (D-M1); 3: written-out dates (F5-5)
 TRIAGE_VERSION = 3                            # image triage prompt and verdict rules (§5.3, §24.5); 2: enriched (§25.4.3);
                                               # 3: a text image's capture (§26.3); S6 (unreleased) adds the photo
@@ -386,6 +393,20 @@ class DriveIndexRecord:
     accuracy_version: int = 0
     pages_refused: int = 0
     read_by_fallback: bool = False
+    # -- §27 (transcripts): plain fields, strings for states and holds (no enum, Δ47's rollback invariant); neutral
+    # defaults until the transcript stage writes them. `transcript_state` is a JobState value.
+    transcript_state: str = "none"
+    transcript_key: str = ""                  # the content key of the stored transcript
+    transcript_version: int = 0               # TRANSCRIBE_VERSION it was made under
+    transcript_wake_at: Optional[datetime] = None
+    transcript_attempts: int = 0
+    transcript_hold: Optional[str] = None
+    transcript_hold_version: str = ""
+    transcript_stub: str = ""                 # too_large / too_long / no_audio / no_speech / failed
+    transcript_seconds: int = 0
+    transcript_speakers: int = 0
+    transcript_languages: Tuple[str, ...] = ()   # the card's languages (§27.11): the card needs no store read
+    transcript_body_version: int = 0          # G18
 
     @property
     def stale(self) -> bool:
@@ -448,6 +469,7 @@ class DriveSyncState:
     migration_alerted: bool = False           # awaiting the from-scratch rebuild: alerted once
     stall_alerted: bool = False               # the rebuild stalled for DESCRIBED_STALL_AFTER: alerted once
     fallback_alerted_day: str = ""            # "YYYY-MM-DD" the fallback alert was posted for
+    purge_keep_transcripts: bool = False      # §27.8 b: the running purge keeps the stored transcripts
 
     def cards_in_space(self, embedding_space: str) -> bool:
         """The card stream answers queries embedded in `embedding_space`: no card is left in another space."""
