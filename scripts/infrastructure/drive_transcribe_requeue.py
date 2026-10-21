@@ -158,7 +158,18 @@ async def requeue(repo: DriveIndexRepository, user_id: str, *, apply: bool, now:
     return 0, f"requeued: {summary(plan)}{note}"
 
 
-async def _main(user_id: str, apply: bool) -> int:
+def resolve_cap(cli: Optional[float], env: Optional[str]) -> Tuple[float, str]:
+    """The monthly cap this run assumes and where it came from: `--cap-usd`, else the deploy-only
+    DRIVE_TRANSCRIBE_USD_CAP_DEV (what the live indexer was deployed with), else the $20 maximum. The local
+    DRIVE_TRANSCRIBE_USD_CAP is not read: it is not what the live service applies."""
+    if cli is not None:
+        return effective_monthly_cap(str(cli)), "--cap-usd"
+    if (env or "").strip():
+        return effective_monthly_cap(env), "DRIVE_TRANSCRIBE_USD_CAP_DEV"
+    return effective_monthly_cap(None), "default (no cap knob)"
+
+
+async def _main(user_id: str, apply: bool, cap_usd: Optional[float] = None) -> int:
     from google.cloud import firestore
 
     from src.adapters.firestore_drive_index_repo import FirestoreDriveIndexRepository
@@ -171,9 +182,11 @@ async def _main(user_id: str, apply: bool) -> int:
 
     accounts = FirestoreAccountRepository(db_client=db, collection_name=env.account_collection_name)
     user = await FirestoreUserRepository(db, env, accounts).get_user(user_id)
+    cap, source = resolve_cap(cap_usd, os.getenv("DRIVE_TRANSCRIBE_USD_CAP_DEV"))
+    print(f"monthly cap assumed: ${cap:.2f} (from {source}; make sure it is the live one)")
     code, message = await requeue(FirestoreDriveIndexRepository(db, env), user_id, apply=apply,
                                   now=datetime.now(timezone.utc), owner=f"requeue-{uuid.uuid4().hex}",
-                                  cap_usd=effective_monthly_cap(os.getenv("DRIVE_TRANSCRIBE_USD_CAP")),
+                                  cap_usd=cap,
                                   user_enabled=None if user is None else bool(user.config.drive_transcribe_enabled))
     print(message)
     return code
@@ -183,5 +196,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--user", required=True, help="the user whose transcripts are re-bought")
     parser.add_argument("--apply", action="store_true", help="reset the jobs (default: dry run, estimate only)")
+    parser.add_argument("--cap-usd", type=float, default=None,
+                        help="the live monthly cap to assume (default: DRIVE_TRANSCRIBE_USD_CAP_DEV from .env, else $20)")
     args = parser.parse_args()
-    sys.exit(asyncio.run(_main(args.user, args.apply)))
+    sys.exit(asyncio.run(_main(args.user, args.apply, args.cap_usd)))

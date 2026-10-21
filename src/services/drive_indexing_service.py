@@ -3368,7 +3368,7 @@ class DriveIndexingService:
 
     async def _sweep_transcript_orphans(self, user_id: str, keep: bool, summary: Dict[str, int]) -> bool:
         """T-R14: the collection-group sweep of window and part documents, one round. True when it is finished (0 left, or
-        its index is missing: logged ERROR naming the index, retried at the next purge or daily pass)."""
+        its index is missing: logged ERROR naming the index, retried on the next purge; there is no daily pass)."""
         try:
             deleted = await self._repo.delete_user_transcript_orphans(user_id, RECORD_WRITE_BATCH, keep_transcripts=keep)
         except DriveIndexStoreUnavailable as exc:
@@ -3433,10 +3433,14 @@ class DriveIndexingService:
                 logger.error(f"[DriveIndex] open batch holds ${batch.reserved_usd:.4f} with no reservation month: "
                              f"left unsettled")
                 continue
+            # a batch whose cost a collection already booked (`booked_at`, T-R22) is only released: booking its
+            # reservation as well would count the same purchase twice
+            already = batch.booked_at is not None
             _fence()
             await self._repo.save_batch(replace(batch, reserved_usd=0.0, reserved_month=""))
-            await self._settle_reservation(user_id, batch.reserved_usd, batch.reserved_month, book=True)
-            booked += batch.reserved_usd
+            await self._settle_reservation(user_id, batch.reserved_usd, batch.reserved_month, book=not already)
+            booked, released = (booked, released + batch.reserved_usd) if already else (
+                booked + batch.reserved_usd, released)
         if released or booked:
             summary["purged_released_usd_milli"] = summary.get("purged_released_usd_milli", 0) + round(released * 1000)
             summary["purged_booked_usd_milli"] = summary.get("purged_booked_usd_milli", 0) + round(booked * 1000)

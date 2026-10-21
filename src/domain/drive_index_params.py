@@ -210,6 +210,8 @@ TRANSCRIBE_AUDIO_TOKENS_PER_S = 25          # audio input tokens per second of a
 TRANSCRIBE_WINDOW_S = 1_800                 # §27.4: 30-45 min allowed (Δ129); keep <= 45 min: parse_stamp is strict M:SS below one hour
 TRANSCRIBE_OVERLAP_S = 60                   # §27.6, Δ108: both windows hold a few utterances of every speaker
 TRANSCRIBE_COVERAGE_MIN = 0.9               # Δ129: last segment start / window duration below it = failed attempt
+TRANSCRIBE_COVERAGE_TAIL_S = 60             # T-R31: the coverage tolerance is max((1 - COVERAGE_MIN) x d, this); a short window's quiet tail passes
+TRANSCRIBE_SHORT_ACCEPT_MAX_S = 300         # T-R31: a second clean (STOP) short answer is accepted as it is up to this window length; a longer one is accepted marked `truncated`
 TRANSCRIBE_MAX_SECONDS = 14_400             # Δ100: 4 h, the cost bound and the 1 MiB document bound
 TRANSCRIBE_MAX_BYTES = 8 * 1024 ** 3        # Δ100: 8 GiB, checked from metadata before any ffprobe
 TRANSCRIBE_EXTRACT_WALL_S = 240             # §27.4: one extraction step's wall (~32 CPU-s per 30-min window plus network)
@@ -222,6 +224,9 @@ BATCH_POLL_EVERY_S = 300                    # Δ133
 BATCH_POLLS_PER_TICK = 10                   # §27.5: one poll per distinct batch, at most this many a tick
 BATCH_SLOW_AFTER_S = 3_600                  # §27.5: a batch older than this drops to the slow cadence
 BATCH_POLL_SLOW_S = 1_800                   # §27.5: the slow poll interval (the API's contract is 24 h)
+BATCH_SUBMIT_LOOKUPS = 3                    # T-R28: a `submitting` batch the provider does not list after this many lookups ...
+BATCH_SUBMIT_LOOKUP_MIN_AGE_S = 900         # ... and at least this old was never created: its windows and reservation go back
+BATCH_ERROR_BACKOFF_S = 1_800               # a batch whose handling raised (not an outage) is polled again after this, the others go on
 TRANSCRIBE_MAX_GAP_S = 75                   # D43: "once a minute"; a longer gap between a speaker's stamps is interpolated
 INTERPOLATED_MAX_SHARE = 0.3                # §27.6: a window above this share of interpolated stamps is resubmitted once
 STITCH_MIN_MATCHED_WORDS = 6                # §27.6: a seam mapping with fewer matched words is marked uncertain

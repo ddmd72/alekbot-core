@@ -11,7 +11,7 @@ The limits are applied before any parser library is imported.
 
 Public interface:
     EXIT_MEMORY, EXIT_BAD_REQUEST, CPU_GRACE_S
-    apply_limits(memory_bytes, cpu_s, file_bytes) -> None
+    apply_limits(memory_bytes, cpu_s, file_bytes, nproc=None) -> None
     is_memory_failure(exc) -> bool
     serve(handler) -> int
     dispatch(request) -> dict
@@ -27,7 +27,7 @@ import resource
 import sys
 import traceback
 import warnings
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, Optional
 
 EXIT_MEMORY = 3
 EXIT_BAD_REQUEST = 4
@@ -35,12 +35,14 @@ CPU_GRACE_S = 2                  # hard RLIMIT_CPU above the soft one: SIGXCPU f
 _MAX_REQUEST_BYTES = 64 * 1024
 
 
-def apply_limits(memory_bytes: int, cpu_s: int, file_bytes: int) -> None:
+def apply_limits(memory_bytes: int, cpu_s: int, file_bytes: int, nproc: Optional[int] = None) -> None:
     """RLIMIT_CORE 0 (a SIGXCPU core dump of a 1 GiB child would land on Cloud Run's in-memory disk), RLIMIT_CPU,
     RLIMIT_FSIZE (one file the child writes) and RLIMIT_AS. macOS refuses RLIMIT_AS; only Linux must honour it."""
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     resource.setrlimit(resource.RLIMIT_CPU, (cpu_s, cpu_s + CPU_GRACE_S))
     resource.setrlimit(resource.RLIMIT_FSIZE, (file_bytes, file_bytes))
+    if nproc is not None:    # per-uid count of processes and threads: a fork bomb stops here (media child, M3)
+        resource.setrlimit(resource.RLIMIT_NPROC, (nproc, nproc))
     try:
         resource.setrlimit(resource.RLIMIT_AS, (memory_bytes, memory_bytes))
     except (ValueError, OSError):
@@ -66,7 +68,8 @@ def serve(handler: Callable[[Dict[str, Any]], Dict[str, Any]]) -> int:
     try:
         request = json.loads(sys.stdin.buffer.read(_MAX_REQUEST_BYTES))
         out = str(request["out"])
-        apply_limits(int(request["memory_bytes"]), int(request["cpu_s"]), int(request["file_bytes"]))
+        apply_limits(int(request["memory_bytes"]), int(request["cpu_s"]), int(request["file_bytes"]),
+                     int(request["nproc"]) if request.get("nproc") else None)
     except Exception:  # the parent maps this exit code to `error`; the traceback goes to its stderr file
         traceback.print_exc()
         return EXIT_BAD_REQUEST

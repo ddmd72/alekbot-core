@@ -98,8 +98,10 @@ async def spawn(request: Mapping[str, Any], workdir: str, stderr: IO[bytes], *, 
         except asyncio.TimeoutError:
             timed_out = True
         finally:
+            # Always: a child that exited 0 can leave an ffmpeg grandchild in its group. A group id with no member
+            # left is unsignalable, so the late call is harmless.
+            kill_group(proc.pid)
             if proc.returncode is None:
-                kill_group(proc.pid)
                 await proc.wait()
         return int(proc.returncode if proc.returncode is not None else -signal.SIGKILL), timed_out
 

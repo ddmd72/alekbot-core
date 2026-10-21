@@ -326,7 +326,7 @@ async def test_sweep_refuses_while_a_tick_holds_the_lease(sweep):
     assert code == 1 and "retry" in message and repo.transcript_jobs and repo.transcripts
 
 
-async def test_sweep_missing_index_is_reported_and_reservations_are_left(sweep):
+async def test_sweep_missing_index_is_reported_after_the_reservations_are_settled(sweep):
     repo = await _orphaned(sweep)
 
     async def unavailable(user_id, limit, *, keep_transcripts):
