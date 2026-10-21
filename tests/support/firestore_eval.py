@@ -17,7 +17,9 @@ from __future__ import annotations
 import math
 from typing import Any, Dict, List, Optional
 
-from google.api_core.exceptions import NotFound
+import asyncio
+
+from google.api_core.exceptions import AlreadyExists, FailedPrecondition, NotFound
 from google.cloud.firestore_v1.vector import Vector
 
 from tests.unit.adapters import firestore_drive_eval_fakes as _base
@@ -31,11 +33,47 @@ def stored_vector(value: Any) -> List[float]:
     return [float(x) for x in value]
 
 
+class WriteOption:
+    """What `client.write_option(last_update_time=...)` returns in the fake."""
+
+    def __init__(self, last_update_time: Any = None) -> None:
+        self.last_update_time = last_update_time
+
+
 class EvalDocRef(_base.EvalDocRef):
-    async def update(self, data: Dict[str, Any]) -> None:
+    def _bump(self) -> None:
+        versions = self.col.__dict__.setdefault("versions", {})
+        versions[self.id] = versions.get(self.id, 0) + 1
+
+    async def get(self, transaction: Any = None, field_paths: Optional[List[str]] = None) -> EvalSnap:
+        if self.col.__dict__.get("yield_on_get"):
+            await asyncio.sleep(0)   # lets concurrent callers interleave at a read
+        snap = await super().get(transaction=transaction, field_paths=field_paths)
+        snap.update_time = self.col.__dict__.get("versions", {}).get(self.id, 0)
+        return snap
+
+    async def create(self, data: Dict[str, Any]) -> None:
+        if self.id in self.col.docs:
+            raise AlreadyExists(f"Document exists: {self.col.name}/{self.id}")
+        _write(self.col, self.id, data)
+        self._bump()
+
+    async def set(self, data: Dict[str, Any], merge: Any = False) -> None:
+        await super().set(data, merge)
+        self._bump()
+
+    async def delete(self) -> None:
+        await super().delete()
+        self._bump()
+
+    async def update(self, data: Dict[str, Any], option: Optional[WriteOption] = None) -> None:
         if self.id not in self.col.docs:
             raise NotFound(f"No document to update: {self.col.name}/{self.id}")
+        wanted = None if option is None else option.last_update_time
+        if wanted is not None and self.col.__dict__.get("versions", {}).get(self.id, 0) != wanted:
+            raise FailedPrecondition(f"Document changed: {self.col.name}/{self.id}")
         _write(self.col, self.id, data, merge=list(data))
+        self._bump()
 
 
 class EvalCollection(_base.EvalCollection):
@@ -79,6 +117,9 @@ class EvalCollection(_base.EvalCollection):
 
 
 class EvalDb(_base.EvalDb):
+    def write_option(self, last_update_time: Any = None) -> WriteOption:
+        return WriteOption(last_update_time)
+
     def collection(self, name: str) -> EvalCollection:
         if name not in self.cols:
             self.cols[name] = EvalCollection(name)
