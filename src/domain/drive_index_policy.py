@@ -49,6 +49,7 @@ SLICE2_TRIAGED_KINDS: FrozenSet[str] = frozenset({"image"})
 
 ADMITTED_KINDS: FrozenSet[str] = SLICE2_CONTENT_KINDS   # content read (§5.1)
 TRIAGED_KINDS: FrozenSet[str] = SLICE2_TRIAGED_KINDS    # every image enters triage first (§5.3, §24.5)
+TRANSCRIBED_KINDS: FrozenSet[str] = frozenset({"audio", "video"})   # transcribed, not parsed (§27.3, policy 3)
 _SHEET_KINDS: FrozenSet[str] = frozenset({"xlsx", "xls"})
 
 
@@ -57,6 +58,7 @@ class Admission(str, Enum):
     NONE = "none"          # metadata only (kind_not_admitted)
     CONTENT = "content"    # downloaded and extracted
     TRIAGE = "triage"      # a thumbnail is triaged first; only a `text` verdict admits the content
+    TRANSCRIBE = "transcribe"   # audio and video: transcribed by the transcript stage, never parsed (§27.3)
 
 _SECRET_PATTERNS = ("id_rsa*", "id_ed25519*", "*.pem", "*.p12", "*.pfx", "*.kdbx", "*.keychain*")
 _OS_PATTERNS = ("~$*", ".~lock.*#", "thumbs.db", "desktop.ini", ".ds_store", "*.tmp")   # .~lock: LibreOffice
@@ -86,11 +88,13 @@ def kind_of(name: str, mime: str, is_folder: bool) -> str:
 
 
 def admission(kind: str) -> Admission:
-    """Read at call time, so a test (or the flip) that rebinds ADMITTED_KINDS / TRIAGED_KINDS is seen."""
+    """Read at call time, so a test (or the flip) that rebinds ADMITTED_KINDS / TRIAGED_KINDS / TRANSCRIBED_KINDS is seen."""
     if kind in ADMITTED_KINDS:
         return Admission.CONTENT
     if kind in TRIAGED_KINDS:
         return Admission.TRIAGE
+    if kind in TRANSCRIBED_KINDS:
+        return Admission.TRANSCRIBE
     return Admission.NONE
 
 

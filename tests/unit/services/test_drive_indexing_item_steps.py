@@ -115,7 +115,9 @@ class TestRelistingOnlyWalkableFolders:
         w.drive.add(".git", parent=repo, folder=True)
         await w.settle()
         assert w.rec(repo).scope is Scope.OPAQUE_ROOT
+        # a bump that changes how folders are classified raises STRUCTURE_POLICY_SINCE with it (Ruling T-R5)
         monkeypatch.setattr(planner, "POLICY_VERSION", POLICY_VERSION + 1)
+        monkeypatch.setattr(planner, "STRUCTURE_POLICY_SINCE", POLICY_VERSION + 1)
         monkeypatch.setattr(svc_mod, "CURRENT_VERSIONS", {**CURRENT_VERSIONS, "policy": POLICY_VERSION + 1})
         wasted = []
         real_list = w.drive.list_children_changes

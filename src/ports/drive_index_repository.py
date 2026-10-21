@@ -22,6 +22,7 @@ from typing import AbstractSet, Dict, List, Mapping, Optional, Sequence, Tuple
 from src.domain.drive_enrichment import DriveHintDoc, InitialBuild, ModelUsageMonth
 from src.domain.drive_index import DriveChunk, DriveIndexRecord, DriveSyncState, RecordState
 from src.domain.drive_index_lean import ChunkId, DriveChunkLean, DriveHintLean, DriveRecordLean
+from src.domain.drive_transcript import StoredTranscript, TranscriptBatch, TranscriptJob, WindowTranscript
 
 
 class DriveIndexRepository(ABC):
@@ -129,13 +130,16 @@ class DriveIndexRepository(ABC):
 
     @abstractmethod
     async def count_unread(self, user_id: str, kinds: AbstractSet[str],
-                           triaged: AbstractSet[str] = frozenset(), *, pending: Optional[bool] = None) -> int:
+                           triaged: AbstractSet[str] = frozenset(), *, pending: Optional[bool] = None,
+                           transcribed: AbstractSet[str] = frozenset()) -> int:
         """Documents of a kind in `kinds`, and images of a kind in `triaged` whose `triage_verdict` is `text`, whose
         content is not searchable (§10.2 `unread`, drive_search.is_unread): not folders, and `pending` without an
         `indexed_generation`, or `failed`, or `metadata_only` for too_large, no_text, machine_text or user_chunk_cap
         (count aggregation queries). A kind in both lists counts as a document. `pending=True` counts only the
         documents not read yet (drive_search.is_not_read_yet: pending, not `card_capped`), `pending=False` only those
-        that could not be read (the other classes); None counts every class (final review F5-2)."""
+        that could not be read (the other classes); None counts every class (final review F5-2). `transcribed`: recordings
+        counted like documents except that `no_text` is not an unread reason for them (a silent recording is a stub, not
+        unreadable, §27.11, G20); empty by default, so every other caller is unchanged."""
 
     @abstractmethod
     async def inaccessible_records(self, user_id: str, limit: int, *, lean: bool = False) -> List[DriveIndexRecord]:
@@ -365,9 +369,23 @@ class DriveIndexRepository(ABC):
                               calls: int, covered_usd: float = 0.0) -> None:
         """Atomically add `usd` to the month's `<cls>_usd` (`cls` a UsageClass value), `fallback_usd` and `calls`
         to theirs, `covered_usd` (the share of `usd` the initial build paid) to `<cls>_initial_usd`, and
-        (usd, fallback_usd) to `daily[day]` ("YYYY-MM-DD"). Not idempotent: a call that fails after
+        (usd, fallback_usd) to `daily[day]` ("YYYY-MM-DD"; `day == ""` writes no daily entry). Not idempotent: a call that fails after
         its write committed (an ambiguous timeout, DriveIndexStoreUnavailable) may have added, so a caller must not
         retry it blindly; a retry over-counts (the safe direction: a cap closes early)."""
+
+    @abstractmethod
+    async def reserve_model_usd(self, user_id: str, month: str, cls: str, delta_usd: float) -> None:
+        """Atomically add `delta_usd` (negative releases) to the `<cls>_reserved_usd` of `month`'s usage document
+        ("YYYY-MM", the RESERVATION's month, G9): the dollars a batch may still cost, counted by the hard cap beside
+        what was collected (Δ106). Server-side increment, so concurrent reservations are never lost, and no
+        cross-document transaction. Only classes bought ahead (`transcribe`) have the field; any other is a
+        ValueError, before any write.
+
+        Not idempotent, and the failure directions differ from `add_model_usage`: a retried reservation over-counts
+        (safe, the cap closes early), but a retried RELEASE (negative delta) under-counts the open reservations, can
+        take them below 0 and lift the available dollars above the cap (breaks Δ106). A release is issued exactly
+        once, behind the batch/job document's state change, and never retried blindly; readers clamp the field at
+        max(0, reserved)."""
 
     @abstractmethod
     async def get_initial_build(self, user_id: str) -> InitialBuild:
@@ -384,3 +402,120 @@ class DriveIndexRepository(ABC):
     @abstractmethod
     async def close_initial_build(self, user_id: str, now: datetime) -> None:
         """Close the initial build at `now`; an already closed build keeps its `closed_at`. It never reopens (D27)."""
+
+    # -- transcripts (§27.3-§27.5, §27.8 b): jobs, window results, batches, the store ---------------------------------
+    # No document holds a download URL or a provider file URI: the job keeps the file NAME (`files/<id>`).
+
+    @abstractmethod
+    async def get_transcript_job(self, user_id: str, item_id: str) -> Optional[TranscriptJob]:
+        """The job document of a media file; None when there is none."""
+
+    @abstractmethod
+    async def save_transcript_job(self, job: TranscriptJob) -> None:
+        """Replace the job document (windows included) with `job`. Window RESULTS are not part of it
+        (`save_window_result`), and a save never touches them."""
+
+    @abstractmethod
+    async def delete_transcript_job(self, user_id: str, item_id: str) -> None:
+        """Delete the job document and its window results; missing is a no-op."""
+
+    @abstractmethod
+    async def save_window_result(self, user_id: str, item_id: str, index: int, result: WindowTranscript) -> None:
+        """Store window `index`'s parsed answer in the job's `windows/{index}` subcollection (G11); replaces."""
+
+    @abstractmethod
+    async def get_window_results(self, user_id: str, item_id: str) -> Dict[int, WindowTranscript]:
+        """Every stored window result of the job, by window index."""
+
+    @abstractmethod
+    async def create_batch(self, batch: TranscriptBatch) -> bool:
+        """Write a new batch document keyed by (user, provider batch name); False, writing nothing, when one exists."""
+
+    @abstractmethod
+    async def save_batch(self, batch: TranscriptBatch) -> None:
+        """Replace the batch document. A closed batch (done, failed) is saved with `next_poll_at=None`."""
+
+    @abstractmethod
+    async def delete_batch(self, user_id: str, name: str) -> None:
+        """Delete the batch document; missing is a no-op."""
+
+    @abstractmethod
+    async def get_open_batches(self, user_id: str, now: datetime, limit: int) -> List[TranscriptBatch]:
+        """Batches due for a poll: `next_poll_at <= now` (an open batch has one, a closed batch does not), earliest
+        `next_poll_at` first (§27.5)."""
+
+    @abstractmethod
+    async def get_transcript(self, user_id: str, content_key: str) -> Optional[StoredTranscript]:
+        """The stored transcript under the content key, shards reassembled; None when absent (or when a shard the
+        head names is missing, which is logged)."""
+
+    @abstractmethod
+    async def put_transcript(self, user_id: str, stored: StoredTranscript) -> None:
+        """Store the transcript under its content key. Above TRANSCRIPT_DOC_BYTES the segments go into `parts/{n}`
+        documents, written first; the head document is written last, so a head always names parts that exist."""
+
+    @abstractmethod
+    async def touch_transcript(self, user_id: str, content_key: str, last_used_at: datetime) -> None:
+        """Set `last_used_at` on the head document only; a missing transcript is a no-op (nothing is created)."""
+
+    @abstractmethod
+    async def delete_transcript(self, user_id: str, content_key: str) -> None:
+        """Delete the transcript's head and its parts; missing is a no-op."""
+
+    # -- transcripts: queues on the records, copies in flight, orphans, purge (§27.3, §27.8 b, G12) ------------------
+
+    @abstractmethod
+    async def transcript_queue(self, user_id: str, limit: int) -> List[DriveIndexRecord]:
+        """Records with `transcript_state == "ready"`, ordered by (effective_day DESC, parent_id, item_id): the
+        `enrich_queue` order (§27.3)."""
+
+    @abstractmethod
+    async def transcript_wakeups(self, user_id: str, now: datetime, limit: int) -> List[DriveIndexRecord]:
+        """Records with `transcript_wake_at <= now`, earliest first (then item_id)."""
+
+    @abstractmethod
+    async def transcript_records(self, user_id: str, state: str, limit: int) -> List[DriveIndexRecord]:
+        """Records with `transcript_state == state`, by item_id: the stage's in-flight jobs (`working`: extraction to
+        resume, a mid-job park woken by the plan) and copies waiting on another file (`waiting`), which neither
+        `transcript_queue` (ready only) nor `transcript_wakeups` (the wake-up is cleared) returns. Equality filters
+        only: single-field indexes serve it."""
+
+    @abstractmethod
+    async def jobs_by_content_key(self, user_id: str, content_key: str) -> List[TranscriptJob]:
+        """The user's job documents whose `content_key` is the key, by item_id: the in-flight copy check (G12). The key
+        is matched as a field value, never through a document id."""
+
+    @abstractmethod
+    async def orphan_transcripts(self, user_id: str, before: datetime, limit: int) -> List[str]:
+        """Content keys of the user's stored transcripts with `last_used_at < before`, least recently used first. A head with
+        `last_used_at=None` is not returned (callers always set it)."""
+
+    @abstractmethod
+    async def transcript_key_in_use(self, user_id: str, content_key: str) -> bool:
+        """True when a record of the user carries `transcript_key == content_key`, in any transcript state: the orphan
+        sweep keeps such a stored transcript (a re-finalize, G18/G31, reads it with no model call, Δ122). Equality
+        filters only: single-field indexes serve it."""
+
+    @abstractmethod
+    async def delete_user_transcript_jobs(self, user_id: str, limit: int) -> int:
+        """Purge: delete up to `limit` of the user's job documents with their window results. Returns the number
+        of jobs deleted; call until 0. Filters on `user_id` only."""
+
+    @abstractmethod
+    async def delete_user_batches(self, user_id: str, limit: int) -> int:
+        """Purge: delete up to `limit` of the user's batch documents. Returns the number deleted; call until 0."""
+
+    @abstractmethod
+    async def delete_user_transcripts(self, user_id: str, limit: int) -> int:
+        """Purge: delete up to `limit` of the user's stored transcripts with their parts (any token). Returns the
+        number of transcripts deleted; call until 0."""
+
+    @abstractmethod
+    async def delete_user_transcript_orphans(self, user_id: str, limit: int, *, keep_transcripts: bool) -> int:
+        """Purge: delete up to `limit` of the user's window documents and, unless `keep_transcripts`, part documents,
+        through collection-group sweeps that need their composite indexes. It deletes ALL of the user's documents in
+        those groups, live ones included: it cannot tell an orphan from a live document. It may run only after all three
+        `delete_user_*` helpers returned 0 in the same purge. `keep_transcripts=True` (a rebuild that keeps the store,
+        `purge_keep_transcripts`) sweeps the windows group only and never touches parts; False sweeps both. A
+        DriveIndexStoreUnavailable from it (a missing index) is logged as ERROR naming the index and never fails or
+        holds the purge: it is retried on the next purge or daily pass. Returns the number deleted."""

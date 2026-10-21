@@ -1,6 +1,8 @@
 """The recording Firestore client of firestore_drive_fakes, extended for the chunk collection (USER_DRIVE_INDEXING_RFC
 §3.3, §24.6): queries also take `start_after` and `sum`, and the records collection answers `sum` too. Search v2's
-hint and usage collections (§25.2.2, §25.4.5) exist as well, so a repository read of them is recorded, not a KeyError."""
+hint and usage collections (§25.2.2, §25.4.5) exist as well, so a repository read of them is recorded, not a KeyError;
+so do the transcript collections (§27.3-§27.5, §27.8 b) and the two collection groups of their subcollections
+(env-prefixed ids, ruling T-R13): `collection_group` answers only those two ids, so a read of any other group fails."""
 from types import SimpleNamespace
 
 from src.adapters.firestore_drive_index_repo import FirestoreDriveIndexRepository, chunk_to_doc
@@ -11,6 +13,11 @@ from tests.unit.adapters.firestore_drive_fakes import RECS, STATES, Collection, 
 CHUNKS = "test_drive_index_chunks"
 HINTS = "test_drive_index_hints"
 USAGE = "test_drive_model_usage"
+JOBS = "test_drive_transcript_jobs"
+BATCHES = "test_drive_transcript_batches"
+TRANSCRIPTS = "test_drive_transcripts"
+WINDOWS = "test_drive_transcript_windows"   # collection-group ids of the job and store subcollections
+PARTS = "test_drive_transcript_parts"
 
 
 class ChunkQuery(Query):
@@ -41,7 +48,12 @@ class ChunkDb(Db):
     def __init__(self):
         super().__init__()
         self.cols = {RECS: ChunkCollection(RECS), STATES: Collection(STATES), CHUNKS: ChunkCollection(CHUNKS),
-                     HINTS: ChunkCollection(HINTS), USAGE: Collection(USAGE)}
+                     HINTS: ChunkCollection(HINTS), USAGE: Collection(USAGE), JOBS: ChunkCollection(JOBS),
+                     BATCHES: ChunkCollection(BATCHES), TRANSCRIPTS: ChunkCollection(TRANSCRIPTS)}
+        self.groups = {WINDOWS: ChunkCollection(WINDOWS), PARTS: ChunkCollection(PARTS)}
+
+    def collection_group(self, group):
+        return self.groups[group]
 
 
 def make_chunk_repo(db, env_config):
@@ -50,6 +62,11 @@ def make_chunk_repo(db, env_config):
     env_config.drive_index_chunks_collection = CHUNKS
     env_config.drive_index_hints_collection = HINTS
     env_config.drive_model_usage_collection = USAGE
+    env_config.drive_transcript_jobs_collection = JOBS
+    env_config.drive_transcript_batches_collection = BATCHES
+    env_config.drive_transcripts_collection = TRANSCRIPTS
+    env_config.drive_transcript_windows_subcollection = WINDOWS
+    env_config.drive_transcript_parts_subcollection = PARTS
     return FirestoreDriveIndexRepository(db, env_config)
 
 

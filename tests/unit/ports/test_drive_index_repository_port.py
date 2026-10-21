@@ -22,10 +22,23 @@ _EXPECTED = {
     "delete_hints_except", "delete_user_hints", "hints_page", "enrich_queue", "enrich_wakeups", "count_by_job_state",
     "keys_pending_page", "count_describe_gaps", "get_records_lean",   # XC-3/XC-9
     "get_model_usage", "add_model_usage", "get_initial_build",
+    "reserve_model_usd",   # §27.10 (Δ106, G9): month-scoped transcription reservations
     "spend_initial_build", "close_initial_build",
     # files the bot cannot open (§26.2, D33): the tick's counters and the fan-out's notice read the marked records;
     # the fan-out alone writes its notice flag (Δ54)
     "inaccessible_records", "set_inaccessible_notified",
+    # transcripts (§27.3-§27.5, §27.8 b; plan Task 7A): jobs + window results, provider batches, the sharded store
+    "get_transcript_job", "save_transcript_job", "delete_transcript_job", "save_window_result", "get_window_results",
+    "create_batch", "save_batch", "delete_batch", "get_open_batches",
+    "get_transcript", "put_transcript", "touch_transcript", "delete_transcript",
+    # transcripts (plan Task 7B): the record queues, the in-flight copy check (G12), the store's orphans, the purge
+    # helpers, and the collection-group orphan sweep kept apart from them (ruling T-R14)
+    "transcript_queue", "transcript_wakeups", "jobs_by_content_key", "orphan_transcripts",
+    "delete_user_transcript_jobs", "delete_user_batches", "delete_user_transcripts", "delete_user_transcript_orphans",
+    # transcript stage A (plan Task 12): in-flight `working` jobs and copy-waiting records, which neither queue returns
+    "transcript_records",
+    # transcript stage B (plan Task 13): the orphan sweep keeps a stored transcript a record still carries (§27.8 b)
+    "transcript_key_in_use",
 }
 
 

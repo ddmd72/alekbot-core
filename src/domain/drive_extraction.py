@@ -24,6 +24,7 @@ from .drive_index_params import MODEL_EXTRACT_DENSITY, MODEL_EXTRACT_GARBAGE
 
 PARSER = "parser"   # the child-process parser adapter (§24.3)
 READER = "reader"   # the document reader agent (§24.2)
+TRANSCRIBE_LINK = "transcribe-gemini"   # the `extracted_by` link of a transcribed audio/video file (§27, G4)
 
 # Which extractor reads which kind, in order; the next link runs only when model_route says so (§9).
 EXTRACTOR_CHAINS: Mapping[str, Tuple[str, ...]] = {"pdf": (PARSER, READER), "image": (READER,)}

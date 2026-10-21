@@ -6,7 +6,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 from src.domain.drive_index import (
-    GEO_TABLE_VERSION, NAME_KEYS_VERSION, POLICY_VERSION, ContentClass, DriveChange, DriveIndexRecord, DriveSyncState,
+    GEO_TABLE_VERSION, NAME_KEYS_VERSION, POLICY_VERSION, STRUCTURE_POLICY_SINCE, ContentClass, DriveChange, DriveIndexRecord, DriveSyncState,
     EpochPhase, FolderProbe, Priority, Reason, RecordState, Scope,
 )
 from src.domain.drive_index_params import NAME_MIN_TRIGRAMS, STALE_ALERT_AFTER
@@ -70,13 +70,15 @@ class TestVersionUpgrades:
 
 class TestDensityDecision:
     def test_policy_bump_re_decides_density(self):
-        """reuse_policy_off — §5.2: a density decision taken under an older policy is taken again."""
+        """reuse_policy_off — §5.2: a density decision taken under a policy older than STRUCTURE_POLICY_SINCE is taken
+        again; one taken since then stands across a bump that does not change structure (Ruling T-R5)."""
         dense = folder_rec("c", "cache", scope=Scope.OPAQUE_ROOT, reason=Reason.DENSE_TREE, child_count=700,
                            probed_child_count=700)
         change = folder_change("c", "cache", 700)
         assert needs_probe(change, Scope.NORMAL, dense) is False   # same policy: the decision stands
-        old = replace(dense, policy_version=POLICY_VERSION - 1)
+        old = replace(dense, policy_version=STRUCTURE_POLICY_SINCE - 1)
         assert needs_probe(change, Scope.NORMAL, old) is True
+        assert needs_probe(change, Scope.NORMAL, replace(dense, policy_version=STRUCTURE_POLICY_SINCE)) is False
 
     def test_reopened_big_repository_waits_for_a_probe(self):
         """reopen_big_off — §5.2: density is decided before the re-opened folder's children are applied."""

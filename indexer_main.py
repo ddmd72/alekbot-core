@@ -30,6 +30,13 @@ Environment variables (set at deploy time in cloudbuild-dev.yaml):
   BILLING_SLACK_WEBHOOK_URL     Secret, optional: the advisory daily budget alert of the quota service.
   DRIVE_UPGRADE_PASS            Optional emergency switch (§25.8): "off" stops every version upgrade pass. Deployed
                                 from DRIVE_UPGRADE_PASS_DEV in .env (Makefile), so it survives a deploy (XC-7).
+  DRIVE_TRANSCRIBE_ENABLED      Optional kill switch (§27.13) of audio/video transcription: "on" (1/on/true/yes) builds
+                                the transcript stage; default off, then the object graph is the pre-transcription one.
+                                Deployed from DRIVE_TRANSCRIBE_ENABLED_DEV in .env (Makefile), default off.
+  DRIVE_TRANSCRIBE_USD_CAP      Optional: a positive number that LOWERS the $20 monthly transcription cap (never raises
+                                it; empty = $20). Deployed from DRIVE_TRANSCRIBE_USD_CAP_DEV in .env, on this service and
+                                on the main service (the Cabinet shows it).
+  DRIVE_PARSER_USER             The unprivileged user the parser and media children run as (Dockerfile).
   MICROSOFT_TODO_CLIENT_ID      Secret: the drive app registration (token refresh).
   MICROSOFT_TODO_CLIENT_SECRET  Secret: same.
   SERVICE_ACCOUNT_EMAIL         Secret: the /worker OIDC gate and the OIDC identity of the tasks this
@@ -65,10 +72,11 @@ from src.adapters.subprocess_content_extractor import PARSER_USER_ENV, Subproces
 from src.composition.drive_indexing_setup import (
     build_drive_index_repository, build_drive_task_queue, build_place_lookup,
 )
-from src.composition.drive_model_setup import build_drive_models
+from src.composition.drive_model_setup import build_drive_models, build_drive_transcription
 from src.composition.memory_telemetry_setup import build_memory_telemetry
 from src.composition.prompt_assembly_setup import build_prompt_assembly_service
 from src.config.environment import EnvironmentConfig
+from src.domain.drive_transcript_plan import effective_monthly_cap
 from src.services.drive_indexing_service import DriveIndexingService
 from src.utils.logger import logger, quiet_third_party_loggers
 
@@ -120,13 +128,24 @@ def build_app() -> Quart:
         keys={key: os.environ.get(key) for key in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY")},
         alert_sink=SlackWebhookAdapter(billing_webhook) if billing_webhook else None,
     )
+    drive = OneDriveAdapter(
+        oauth_credentials=oauth_credentials,
+        client_id=os.environ["MICROSOFT_TODO_CLIENT_ID"],
+        client_secret=os.environ["MICROSOFT_TODO_CLIENT_SECRET"],
+    )
+    index_repo = build_drive_index_repository(db, env_config)
+    # Transcription (§27.13): the kill switch and the optional cap knob are read ONCE, here. The cap only lowers
+    # $20 (T-R3) and the same value goes to the stage and to the tick's cap math. Switch off: no stage is built.
+    transcribe_on = transcribe_enabled(os.environ.get("DRIVE_TRANSCRIBE_ENABLED"))
+    transcribe_cap = effective_monthly_cap(os.environ.get("DRIVE_TRANSCRIBE_USD_CAP"))
+    transcripts = build_drive_transcription(
+        enabled=transcribe_on, repo=index_repo, drive=drive, models=models,
+        keys={"GEMINI_API_KEY": os.environ.get("GEMINI_API_KEY")}, parser_user=os.environ.get(PARSER_USER_ENV),
+        monthly_cap_usd=transcribe_cap,
+    )
     indexing = DriveIndexingService(
-        drive=OneDriveAdapter(
-            oauth_credentials=oauth_credentials,
-            client_id=os.environ["MICROSOFT_TODO_CLIENT_ID"],
-            client_secret=os.environ["MICROSOFT_TODO_CLIENT_SECRET"],
-        ),
-        repo=build_drive_index_repository(db, env_config),
+        drive=drive,
+        repo=index_repo,
         embeddings=embeddings,
         queue=queue,
         users=users,
@@ -139,6 +158,9 @@ def build_app() -> Quart:
         profiler=models.profiler,
         passages=models.passages,
         upgrade_pass=upgrade_pass_enabled(os.environ.get("DRIVE_UPGRADE_PASS")),
+        transcripts=transcripts,
+        transcribe_enabled=transcribe_on and transcripts is not None,
+        transcribe_cap_usd=transcribe_cap,
     )
 
     app.register_blueprint(create_indexer_worker_blueprint(indexing, gate))
@@ -149,6 +171,11 @@ def build_app() -> Quart:
 def upgrade_pass_enabled(value: Any) -> bool:
     """DRIVE_UPGRADE_PASS (§25.8): an optional emergency switch, on unless set to 0/off/false/no."""
     return (str(value or "on")).strip().lower() not in ("0", "off", "false", "no")
+
+
+def transcribe_enabled(value: Any) -> bool:
+    """DRIVE_TRANSCRIBE_ENABLED (§27.13): the transcription kill switch, OFF unless set to 1/on/true/yes."""
+    return (str(value or "off")).strip().lower() in ("1", "on", "true", "yes")
 
 
 async def serve_until_shutdown(app: Any, config: Any, shutdown: asyncio.Event, *,

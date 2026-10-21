@@ -30,14 +30,15 @@ class AccessCounts:
 
 
 def access_counts(records: Iterable[DriveIndexRecord], admitted: Optional[FrozenSet[str]] = None,
-                  triaged: Optional[FrozenSet[str]] = None) -> AccessCounts:
+                  triaged: Optional[FrozenSet[str]] = None,
+                  transcribed: Optional[FrozenSet[str]] = None) -> AccessCounts:
     files = unnotified = waiting = 0
     for rec in records:
         if rec.is_folder or not inaccessible(rec):
             continue
         files += 1
         unnotified += int(rec.inaccessible_notified_since != rec.inaccessible_since)
-        waiting += int(is_not_read_yet(rec, admitted, triaged))
+        waiting += int(is_not_read_yet(rec, admitted, triaged, transcribed))
     return AccessCounts(files=files, unnotified=unnotified, waiting=waiting)
 
 

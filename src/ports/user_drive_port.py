@@ -107,6 +107,12 @@ class UserDrivePort(ABC):
         DriveFileTooLarge as soon as the stream passes `max_bytes`, DriveItemNotFoundError for a missing item."""
 
     @abstractmethod
+    async def download_url(self, user_id: str, item_id: str) -> str:
+        """The provider's short-lived, pre-authenticated download URL for a file, for a tool that streams it (ffmpeg,
+        USER_DRIVE_INDEXING_RFC §27.4). The URL is a secret: never log it, never put it in a document or an error.
+        Raises DriveItemNotFoundError for a missing item or one with no downloadable content."""
+
+    @abstractmethod
     async def get_thumbnail(self, user_id: str, item_id: str, size: str) -> Optional[bytes]:
         """A provider-rendered image of the item (`size` e.g. "medium" or "c2048x2048"), JPEG or PNG; None when the
         provider has no rendition for it. The indexer never decodes or scales an image itself (§5.3)."""

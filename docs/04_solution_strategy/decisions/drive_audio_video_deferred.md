@@ -2,6 +2,8 @@
 
 **Date:** 2026-10-13
 **Status:** Accepted, deferred (User Drive Step 2; owner, 2026-10-13)
+**Superseded 2026-10-21 for audio and video** by [drive_transcripts_t1.md](drive_transcripts_t1.md): transcripts arrive as a job with its own
+states (Gemini Batch), not through the extractor seam named here. The rest of this record stands.
 **Context:** [USER_DRIVE_INDEXING_RFC.md](../../10_rfcs/USER_DRIVE_INDEXING_RFC.md) §14, §24 (opening paragraph),
 §5.1; `SLICE2_CONTENT_KINDS` and `EXTRACTOR_CHAINS` in `src/domain/drive_index_policy.py` and
 `src/domain/drive_extraction.py`.

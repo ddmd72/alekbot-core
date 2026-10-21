@@ -107,6 +107,9 @@ PROFILE_POLICY: Mapping[str, KindPolicy] = {
     "eml": _EMAIL,
     "msg": _EMAIL,
     "subtitles": KindPolicy(InputRule.CUES, ProfileOutput.FULL, True),
+    # a transcript reads as subtitles (§27.8 a): head 6 000 + tail 1 500, doc2query yes; no PROFILE_VERSION bump
+    "audio": KindPolicy(InputRule.CUES, ProfileOutput.FULL, True),
+    "video": KindPolicy(InputRule.CUES, ProfileOutput.FULL, True),
     "folder": KindPolicy(InputRule.README, ProfileOutput.NO_KEY_VALUES, False),   # a collapsed folder's README
 }
 TEMPLATE_POLICY = KindPolicy(InputRule.NONE, ProfileOutput.TEMPLATE, False)

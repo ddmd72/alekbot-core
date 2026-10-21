@@ -61,10 +61,10 @@ from .drive_card import (
     structurally_card_eligible,
 )
 from .drive_enrichment import DriveProfile, PhotoDescription
-from .drive_extraction import ExtractionOutcome, TriageResult, chain_for
+from .drive_extraction import TRANSCRIBE_LINK, ExtractionOutcome, TriageResult, chain_for
 from .drive_index import (
     CARD_VERSION, EXTRACTION_VERSION, GEO_TABLE_VERSION, KEYS_VERSION, MIGRATION_GATE_KEY, NAME_KEYS_VERSION, POLICY_VERSION,
-    TRIAGE_VERSION, ContentClass, DocumentBrief, DriveChange, DriveIndexRecord, DriveSyncState, EpochPhase, FolderProbe,
+    STRUCTURE_POLICY_SINCE, TRIAGE_VERSION, ContentClass, DocumentBrief, DriveChange, DriveIndexRecord, DriveSyncState, EpochPhase, FolderProbe,
     Priority, Reason, RecordState, Scope, TriageVerdict, inaccessible,
 )
 from .drive_index_params import (
@@ -74,7 +74,7 @@ from .drive_index_params import (
     STALE_ALERT_AFTER, TICK_DEADLINE_S,
 )
 from .drive_index_policy import (
-    Admission, admission, card_rank_of, content_class_of, density_still_valid, is_dense, is_dot_name,
+    TRANSCRIBED_KINDS, Admission, admission, card_rank_of, content_class_of, density_still_valid, is_dense, is_dot_name,
     is_generated_dir, is_marker_child, is_readme_name, item_rule, kind_of, readme_readable, searchable, size_cap,
 )
 from .drive_keys import name_keys_v2
@@ -150,7 +150,7 @@ def parent_scope(parent_id: str, parent: Optional[DriveIndexRecord], root_item_i
 
 def _density_decision_reusable(change: DriveChange, previous: Optional[DriveIndexRecord]) -> bool:
     return (previous is not None and previous.probed_child_count > 0
-            and previous.policy_version == POLICY_VERSION
+            and previous.policy_version >= STRUCTURE_POLICY_SINCE
             and previous.scope in (Scope.NORMAL, Scope.OPAQUE_ROOT)
             and density_still_valid(previous.probed_child_count, change.child_count))
 
@@ -165,7 +165,7 @@ def needs_probe(change: DriveChange, pscope: Optional[Scope], previous: Optional
 
 def _marker_opaque(rec: Optional[DriveIndexRecord]) -> bool:
     return (rec is not None and rec.scope is Scope.OPAQUE_ROOT and rec.reason is Reason.OPAQUE_ROOT
-            and rec.policy_version == POLICY_VERSION and not is_generated_dir(rec.name))
+            and rec.policy_version >= STRUCTURE_POLICY_SINCE and not is_generated_dir(rec.name))
 
 
 def classify(change: DriveChange, pscope: Optional[Scope], probe: Optional[FolderProbe],
@@ -218,6 +218,8 @@ def classify(change: DriveChange, pscope: Optional[Scope], probe: Optional[Folde
     elif adm is Admission.CONTENT:
         if change.size_bytes > size_cap(kind):
             return c(Scope.NORMAL, RecordState.METADATA_ONLY, Reason.TOO_LARGE)
+    elif adm is Admission.TRANSCRIBE:
+        pass   # no download cap here: the media caps are the transcript plan's (§27.4); a stub outcome stands below
     else:
         return c(Scope.NORMAL, RecordState.METADATA_ONLY, Reason.KIND_NOT_ADMITTED)
     if previous is not None and _outcome_stands(previous, change.content_version):
@@ -332,7 +334,7 @@ def _build(change: DriveChange, cls: Classification, existing: Optional[DriveInd
         content_class=cls.content_class, scope=cls.scope, state=cls.state, reason=cls.reason,
         content_version=change.content_version, modified_at=change.modified_at,
         fs_modified_at=change.fs_modified_at,
-        effective_date=_effective(change, base.brief, ctx.now, base.profile),
+        effective_date=_effective(change, base.brief, ctx.now, base.profile, cls.kind),
         place_name=place_name, place_forms=place_forms, geo_table_version=geo_version, policy_version=POLICY_VERSION,
         card_rank=card_rank_of(cls.content_class),
         name_tokens=name_keys_v2(change.name) if searchable(cls.reason) else (), name_keys_version=NAME_KEYS_VERSION,
@@ -363,7 +365,7 @@ def _readme_due(existing: Optional[DriveIndexRecord], rec: DriveIndexRecord) -> 
     if not collapsed_folder(rec) or not readme_readable():
         return False
     return (existing is None or not collapsed_folder(existing) or existing.child_count != rec.child_count
-            or existing.policy_version != POLICY_VERSION)
+            or existing.policy_version < STRUCTURE_POLICY_SINCE)
 
 
 def _readme_touched(change: DriveChange, parent: Optional[DriveIndexRecord],
@@ -378,8 +380,11 @@ def _readme_touched(change: DriveChange, parent: Optional[DriveIndexRecord],
 
 
 def _effective(change: DriveChange, brief: Optional[DocumentBrief], now: datetime,
-               profile: Optional[DriveProfile] = None) -> datetime:
-    """The profile's verified issue date first (§25.4.1, D13 extended), else the brief's date (D13), else §3.1."""
+               profile: Optional[DriveProfile] = None, kind: str = "") -> datetime:
+    """The profile's verified issue date first (§25.4.1, D13 extended), else the brief's date (D13), else §3.1. A
+    transcribed recording (`kind` audio/video) always takes §3.1: a date said aloud never re-dates it (§27.8 a, G38)."""
+    if kind in TRANSCRIBED_KINDS:
+        return effective_date(change, now)
     issued = issued_of(profile) if profile is not None else None
     if issued is not None:
         return datetime(issued.year, issued.month, issued.day, tzinfo=timezone.utc)
@@ -580,7 +585,7 @@ def content_due(rec: DriveIndexRecord, now: Optional[datetime] = None) -> bool:
     if (rec.state is not RecordState.PENDING or rec.card_capped or inaccessible(rec) or _indexed_now(rec)
             or _held(rec, now)):
         return False   # an inaccessible record holds its content work until the bot can read it again (§26.2)
-    adm = admission(rec.kind)
+    adm = admission(rec.kind)   # a TRANSCRIBE kind never reaches the index step (§27.3, Δ95)
     return adm is Admission.CONTENT or (adm is Admission.TRIAGE
                                         and valid_verdict(rec, rec.content_version) is TriageVerdict.TEXT)
 
@@ -597,10 +602,10 @@ def quiet_over(rec: DriveIndexRecord, now: datetime) -> bool:
     """§7.3: the record's content or triage work may start at `now` — it is not dirty, or its quiet period (QUIET
     untouched, at most MAX_DEFER dirty) has ended. A record due for other work (a card, a re-embed) is not thereby due
     for its content."""
-    return _content_due_at(rec, now) <= now
+    return content_due_at(rec, now) <= now
 
 
-def _content_due_at(rec: DriveIndexRecord, now: datetime) -> datetime:
+def content_due_at(rec: DriveIndexRecord, now: datetime) -> datetime:
     """§7.3: an edit waits until untouched for QUIET or dirty for MAX_DEFER; anything not dirty (first sight, a
     nudge, an upgrade, a release) is due at once."""
     if rec.dirty_since is None:
@@ -646,7 +651,7 @@ def _works(rec: DriveIndexRecord, first_seen: bool, now: datetime) -> List[Tuple
     if _card_due(rec):
         works.append((Priority.FIRST_SEEN if first_seen else Priority.EDIT, now))
     if content_due(rec) or triage_due(rec):
-        at = _content_due_at(rec, now)
+        at = content_due_at(rec, now)
         cls = Priority.FIRST_SEEN if first_seen else Priority.EDIT
         if rec.defer_until is not None:   # a deferral survives any re-scheduling until the work ends
             at = max(at, rec.defer_until)
@@ -756,6 +761,8 @@ def extractor_stale(rec: DriveIndexRecord, versions: Mapping[str, int]) -> bool:
     if not rec.extracted_by:
         return False
     link, _, version = rec.extracted_by.rpartition("@")
+    if link == TRANSCRIBE_LINK and admission(rec.kind) is Admission.TRANSCRIBE:
+        return False   # its own pipeline decides (§27, G4); chain_for("audio") would call it stale on every upgrade
     return link not in chain_for(rec.kind) or str(versions.get(link, "")) != version
 
 
@@ -925,7 +932,7 @@ def indexed(rec: DriveIndexRecord, *, outcome: ExtractionOutcome, generation: in
                    read_by_fallback=outcome.read_by_fallback, keys_version=KEYS_VERSION, keys_pending=False,
                    keys_capped=keys_capped, profile_input_fingerprint=profile_fingerprint,
                    effective_date=_effective(change_from_record(rec), outcome.brief, rec.effective_date or now,
-                                             rec.profile))
+                                             rec.profile, rec.kind))
     if new_version:
         done = replace(done, profile_attempts=0, passages_attempts=0)
     return _settled(done, now)
@@ -954,7 +961,8 @@ def demoted(rec: DriveIndexRecord, reason: Reason, now: datetime, *, outcome: Op
                    pages_refused=outcome.pages_refused if outcome is not None else 0,
                    read_by_fallback=outcome.read_by_fallback if outcome is not None else False,
                    card_accuracy=None,   # no readable text to confirm a card against (§26.4)
-                   effective_date=_effective(change_from_record(rec), brief, rec.effective_date or now))
+                   effective_date=_effective(change_from_record(rec), brief, rec.effective_date or now,
+                                             kind=rec.kind))
     return _settled(done, now)
 
 
@@ -1005,7 +1013,8 @@ def triaged(rec: DriveIndexRecord, result: TriageResult, now: datetime,
                        indexed_generation=None, chunk_space="", chunk_reembed_pending=False, lead_text="", brief=None,
                        dirty_since=None, capture="", capture_source="",   # a photograph has none (Δ57)
                        card_accuracy=None, accuracy_version=0,            # nor a score (§26.4)
-                       effective_date=_effective(change_from_record(rec), None, rec.effective_date or now))
+                       effective_date=_effective(change_from_record(rec), None, rec.effective_date or now,
+                                             kind=rec.kind))
         done = _without_photo(done) if photo is None else replace(
             done, photo_description=photo.description, photo_objects=tuple(photo.objects), photo_scene=photo.scene,
             photo_scene_labels=photo.scene_labels, visible_text=photo.visible_text)

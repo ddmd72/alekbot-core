@@ -326,6 +326,10 @@ class FixtureDrive(UserDrivePort):
             raise DriveFileTooLarge(max_bytes)
         return len(data)
 
+    async def download_url(self, user_id: str, item_id: str) -> str:
+        """The eval never transcribes audio or video, so the fixture drive has no download URL to hand out."""
+        raise DriveItemNotFoundError(item_id)
+
     async def get_thumbnail(self, user_id: str, item_id: str, size: str) -> Optional[bytes]:
         """The same rendition for every size: the fixture's pictures are already small (S0f, S0g)."""
         self.thumbnail_calls.append((item_id, size))

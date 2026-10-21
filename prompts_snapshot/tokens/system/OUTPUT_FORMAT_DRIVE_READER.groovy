@@ -6,7 +6,8 @@ metadata:
   override_by:
   - SYSTEM
   - AGENT
-  source: 'v2 draft 2026-10-14: capture, no brief doc_type (USER_DRIVE_INDEXING_RFC §26.3, Δ64), not uploaded'
+  source: 'v2 draft 2026-10-14: capture, no brief doc_type (USER_DRIVE_INDEXING_RFC
+    §26.3, Δ64), not uploaded'
 source_file: firestore_utils/uploads/OUTPUT_FORMAT_DRIVE_READER.json
 token_id: OUTPUT_FORMAT_DRIVE_READER
 uploaded_by: local_script

@@ -16,6 +16,7 @@ metadata:
     risk_score: 0.0
     zone: trusted
 token_id: OUTPUT_FORMAT_JSON
+uploaded_by: lelik_voice_summary_2026-10-21
 ---
     output_schema {
         contract: "RAW JSON only — first char '{', last char '}'. No prose, no code blocks, no XML/<parameter> tags. Output MUST validate against json_schema below. Emit every field as a real JSON key — NEVER serialise a field as text inside another field; never write </parameter> or <invoke>."
@@ -25,7 +26,7 @@ token_id: OUTPUT_FORMAT_JSON
             "required": ["full_response", "response_summary", "rich_content", "link_list"],
             "properties": {
                 "full_response":    { "type": "string" },
-                "response_summary": { "type": "string", "maxLength": 300 },
+                "response_summary": { "type": "string", "maxLength": 600 },
                 "rich_content": {
                     "anyOf": [
                         { "type": "null" },
@@ -77,7 +78,7 @@ token_id: OUTPUT_FORMAT_JSON
 
     field_guidelines {
         full_response: "Slack mrkdwn: *bold*, _italic_, • for lists. No HTML, no **double-asterisk**, no # headers. Natural flow with line breaks. Use emojis."
-        response_summary: "Max 300 chars, plain text. Preserve tone and emojis."
+        response_summary: "Up to 60 words, plain text: your answer retold in your own voice — the same character and humour, with emojis — keeping its facts, numbers and names. Later turns see this answer only through this summary."
         rich_content: "null by default. Use when visual layout adds clear value."
         link_list: """
             Empty array [] when there are no sources. NEVER invent URLs — populate ONLY with
@@ -124,7 +125,7 @@ token_id: OUTPUT_FORMAT_JSON
         widget_example: '''
         {
             "full_response": "Weather in Berlin today:\n• ☀️ Day: +22°C, clear\n• 🌙 Night: +14°C\n• 💨 Wind: 3 m/s",
-            "response_summary": "☀️ Berlin: +22°C day, +14°C night, clear",
+            "response_summary": "☀️ Berlin today: +22°C by day, +14°C at night, clear sky, wind 3 m/s 💨 — weather for being outside, not in a meeting 😏",
             "rich_content": {
                 "type": "widget",
                 "data": {
@@ -139,7 +140,7 @@ token_id: OUTPUT_FORMAT_JSON
         table_example: '''
         {
             "full_response": "Here's a comparison of the plans:\n\n• *Basic* — 10 GB, no support, $9/mo\n• *Pro* — 100 GB, email support, $29/mo\n• *Enterprise* — unlimited, 24/7 support, $99/mo\n\n_Pro is the best value for most users_ 👌",
-            "response_summary": "Plans: Basic $9, Pro $29, Enterprise $99/mo",
+            "response_summary": "💸 Plans: Basic $9 (10 GB, no support), Pro $29 (100 GB, email support), Enterprise $99/mo (unlimited, 24/7). Pro is the sweet spot 👌 — Enterprise is for those who enjoy paying for calm.",
             "rich_content": {
                 "type": "table",
                 "data": {

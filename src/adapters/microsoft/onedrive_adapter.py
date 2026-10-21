@@ -262,6 +262,16 @@ class OneDriveAdapter(UserDrivePort):
                     raise ValueError(f"Drive download failed ({resp.status})")
                 return bytes(await resp.read())
 
+    async def download_url(self, user_id: str, item_id: str) -> str:
+        """The item's pre-authenticated download URL (§27.4), read by the same GET as `download`. It is never
+        logged and never put in an error, and it is not fetched here, so no bearer token goes to its host."""
+        async with aiohttp.ClientSession() as s:
+            raw = await self._call(s, user_id, "GET", f"/me/drive/items/{_q(item_id)}")
+            url = raw.get("@microsoft.graph.downloadUrl")
+            if not url:
+                raise DriveItemNotFoundError(f"No downloadable content for item {item_id}")
+            return str(url)
+
     # -- writes -------------------------------------------------------------
 
     async def upload(self, user_id: str, parent_id: str, filename: str, data: bytes, content_type: str) -> DriveItem:

@@ -7,7 +7,8 @@ code in rev 3.15 and again, after the final cross-cutting review, in rev 3.16; r
 switch after the live check. **Search v2** (owner decisions D14–D28 and D30, D29 and D31 by the arbiter) is designed
 in §25 and **implemented and live since 2026-10-14** (PR #64; results on the synthetic fixture: §25.7.1);
 §25 overrides §5.5, §8.5, §10, §14, §15 and §24 where they disagree. Slice 3 not built. Phase 0 hardening merged (PR #57, §16). **Audio and video transcripts** (owner decisions D41–D47,
-engineering deltas Δ95–Δ126) are designed in §27 and not built.
+engineering deltas Δ95–Δ173) are designed in §27; **T1 (extraction, batch, store, index, open) is built on
+`feat/drive-transcripts` and not deployed; T2 (the mirror folder) and T3 (the summary) are not built** (§27.19).
 **Card accuracy, capture and files the bot cannot open** (owner decisions D33–D40, engineering deltas Δ47–Δ91) are
 designed in §26 and **built (slices S1–S6) and deployed 2026-10-19** (PRs #81–#84; the owner's index rebuilt, gate key
 `accuracy` applied); §26 states what that release changed.
@@ -149,6 +150,10 @@ To Do mirror (`TaskSearchIndex`), `src/domain/rrf.py`, `TaskQueue.enqueue_worker
   alignment (the brief's sequential context-passing would take up to 24 h per window), a content-hash transcript
   store, the mirror as a reconciled projection excluded from indexing, hardening of ffmpeg in the parser sandbox,
   batch pricing in `billing.py`. Not built.
+- Rev 3.26 (2026-10-21): §27 brought in line with the T1 build (§27.19, Δ136–Δ173): the segment muxer is replaced by a
+  local-intermediate pass (Δ161), the cap is hard from the moment a file fits (Δ164), per-window output caps and a
+  $0.30/h reservation (Δ165), the kill switch is a Cloud Build substitution with an optional lowering cap knob (Δ145),
+  `CARD_VERSION` is not bumped (Δ139), plus the rest of the gap list the build closed. T1 is built, not deployed.
 
 **Owner decisions (2026-10-11)**
 - The App Folder is meant to become a real document store. It is empty only because the feature is being built.
@@ -4176,12 +4181,14 @@ put. Both ride the unreleased `TRIAGE_VERSION` 3, `CARD_VERSION` 4 and `KEYS_VER
 
 ---
 
-## 27. Transcripts of audio and video (rev 3.25, 2026-10-20; T0 passed, GO; proposed, not built)
+## 27. Transcripts of audio and video (rev 3.26, 2026-10-21; T0 passed, GO; **T1 built on `feat/drive-transcripts`, not deployed; T2 mirror and T3 summary not built**)
 
 Owner decisions D41–D47 (§21). The engineering decisions that carry them out are the deltas Δ95–Δ135 (§27.16), each
 with its reason. This section lifts the §14 row "Audio and video transcripts" and `decisions/drive_audio_video_deferred.md`
 (the seam it names is **not** the one used: Δ95). Where §27 and §5.1, §5.3, §14 or §24's opening paragraph disagree,
-§27 wins for what is built; §24's statement that audio and video "stay metadata-only" stays true until slice T1 ships.
+§27 wins for what is built; §24's statement that audio and video "stay metadata-only" stays true until slice T1 is deployed
+(and for a user whose own transcription flag is off, always). **§27.19 is the as-built summary of T1 and lists what is not
+built; where an older paragraph of §27 disagrees with a Δ136–Δ173 row, the row wins.**
 **Rollout shape (arbiter call):** §26 is deployed and the owner's index is rebuilt, so §27 ships as an **ordinary
 upgrade on top of it** — its own version bumps (§27.13), its own prompt-token upload window (§27.15), no rebuild and no
 migration gate. Every number about the spike comes from `scripts/memory/spike_transcribe/REPORT.md` (private; its transcripts are
@@ -4219,8 +4226,9 @@ and JSONL); a response schema works in batch (with the trap of Δ131); batch acc
   under 5 minutes (24 h is a target of the API, not what was seen). Four concurrent batches: no throttling. The Files API expiry is
   create + 48 h; the key's quota tier is not visible.
 - **Usage.** The audio/text split is present in batch usage (`prompt_tokens_details`); audio is 25 tokens per second. Thinking is on by
-  default and billed as output (up to 32.8k tokens on one 87-min run); `thinking_level=LOW` works, `MINIMAL` is rejected. Output ≈ 200
-  tokens per audio minute; no loops, monotonic times.
+  default and billed as output (up to 32.8k tokens on one 87-min run); `thinking_level=LOW` works, `MINIMAL` is rejected. Output
+  **≈ 400–450 tokens per audio minute** (read from the T0 meta files, thoughts counted in; an earlier text of this line said ≈ 200, which the meta
+  files do not support); no loops, monotonic times.
 - **Time format and window length** (the owner's 21:47 recording repeated to 87:08). Integer-second `start_s`: 30 and 60 min complete but the
   timestamps are **wrong (≈ +40 % stretch)**; 90 min truncated at 21:44. `MM:SS` strings: 30, 45 and 60 min complete, drift ≈ −0.1 s (max +0.9 s);
   90 min: one of three synchronous runs truncated at 21:44, the batch run with thinking LOW was complete (drift −0.3 s median). Three of seven
@@ -4267,8 +4275,11 @@ kinds are dispatched before `_index_step` reaches the chain (`src/services/drive
 - **Policy.** A new admission mode `Admission.TRANSCRIBE` for `TRANSCRIBED_KINDS = {audio, video}` next to
   `CONTENT` and `TRIAGE` (`drive_index_policy.py:55-60`, `:88-95`); `POLICY_VERSION` 2 → 3. The upgrade pass
   re-classifies the existing media records from `metadata_only / kind_not_admitted` to `pending` (metadata only, no
-  read, §12.3) and the planner sets their transcript job `ready`. **No rebuild** (Δ96): the bump is a new class of work,
-  not a re-index of anything that was read. The gate key stays `accuracy` (Δ65); the new version keys (§27.13) join
+  read, §12.3) and `transcript_plan` (run on every record write, §27.19) sets their transcript job `ready`. **No rebuild** (Δ96): the bump is a new class of work,
+  not a re-index of anything that was read. **Structure decisions are decoupled from the bump (T-R5, Δ166):** the density probe, the
+  opaque marker and the README read compare against `STRUCTURE_POLICY_SINCE = 2`, not `POLICY_VERSION`, so a media-only bump re-reads
+  no README, re-probes no dense folder and re-plans no marker folder for any user; a future change of how folders are classified must
+  raise `STRUCTURE_POLICY_SINCE` explicitly. The gate key stays `accuracy` (Δ65); the new version keys (§27.13) join
   `CURRENT_VERSIONS` and an existing state lacks them, which the upgrade pass reads as "run" — the v2 → v2.x path.
 - **Job state on the record**, plain fields only (Δ47's rollback invariant: no new enum value): `transcript_state`
   (`none`, `ready`, `working`, `waiting`, `current`, `held`, `parked`, `failed`, as strings, the vocabulary of
@@ -4278,18 +4289,24 @@ kinds are dispatched before `_index_step` reaches the chain (`src/services/drive
   live on the record (it is read by every query and its lean projection, `drive_index_lean.py`): they live in a job
   document `{prefix}drive_transcript_jobs/{user_id}:{item_id}` (Δ97). `extracted_by` of the readable generation is
   `transcribe-gemini@<TRANSCRIBE_VERSION>`.
-- **Queue and order.** `transcript_queue(user_id, now, limit)` reads `transcript_state == "ready"` by `effective_day`
-  newest first, then `parent_id`, `item_id` (the `enrich_queue` order, §25.4.5); `transcript_wakeups` reads
+- **Queue and order.** `transcript_queue(user_id, limit)` (no `now`: a ready record is due by definition) reads `transcript_state == "ready"` by `effective_day`
+  newest first, then `parent_id`, `item_id` (the `enrich_queue` order, §25.4.5); `transcript_wakeups(user_id, now, limit)` reads
   `transcript_wake_at <= now`. Two composite indexes (owner step, §27.15). A file's quiet period and `MAX_DEFER` apply
   to its content version (a recording still uploading is not read: `QUIET` 10 min, §7.3), and an edited
   recording waits `TRANSCRIBE_REREAD_COOLDOWN` (24 h) after its last transcription, as the reader does (§7.3). A
   new content version resets the job (`transcript_attempts`, holds) and, through the content key, either hits the
   cache or pays again (D42: "a new file version re-transcribes").
-- **Tick placement.** Cheap steps (poll, collect, summarize-submit, finalize) run first and take no share. The
+- **Eligibility (T-R24, Δ168).** A record is a transcript candidate only when it is a `normal`-scope recording with a resolved content
+  version, no never-download reason, not inaccessible (§26.2) and **not card-capped**: a card-capped recording would be transcribed and
+  indexed with no card, so it is `none` and its job (and reservation) is dropped; on card release it goes `pending → ready` and hits the
+  store, with no model cost. A record that is `pending` again (a chunk-cap release, a re-read) is never `current`: it is `ready`
+  and re-indexed from the store, again with no model call.
+- **Tick placement.** Cheap steps (poll, collect, finalize; the summary submit is T3) run first and take no share (a finalize takes one file slot, Δ160). The
   extraction stage then gets a start window of at least `TRANSCRIBE_SHARE` (25 %) of the start budget, after the
   enrichment phase (`_due_loop`, `drive_indexing_service.py:953-998`), with its worst case joined to the §7.1
-  deadline sum (`TRANSCRIBE_EXTRACT_WALL_S` + upload + margin; a test asserts it, as `enrichment_allowed` does at
-  `:255-260`). The mirror stage (§27.9) runs last under its own op budget.
+  deadline sum (`TRANSCRIBE_EXTRACT_WALL_S` + `TRANSCRIBE_UPLOAD_S` + margin; a test asserts it, as `enrichment_allowed` does at
+  `:255-260`). While the user has ready extraction work, the content classes and enrichment leave `TRANSCRIBE_SHARE` of the start budget
+  to it (Δ148); otherwise both are unchanged. The mirror stage (§27.9) is T2 and not built.
 
 ### 27.4 Extraction (Δ98–Δ100)
 One new child operation family, run in the parser sandbox model (§9, §24.3, §24.14), not inside the document parser:
@@ -4310,17 +4327,31 @@ indexer is the same image.
   (60 s) overlap and runs the child once per step to produce as many windows as the step's wall allows. A window is
   `-ss <start> -t <len>` (input-side, Δ134) with the audio-only output of the spike; windows already uploaded (recorded in the job
   document) are skipped, so a long file is **resumable across ticks** and no step blocks a tick past its deadline.
-- **What `-ss` costs (T0 measured it; Δ134).** An input-side `-ss` over HTTP Range reads ≈ 5 % of the file for a 5-minute window at any seek
+- **What `-ss` costs (T0 measured it; Δ134; the one-pass hedge below is replaced by Δ161).** An input-side `-ss` over HTTP Range reads ≈ 5 % of the file for a 5-minute window at any seek
   point (5, 60, 180 min) in mp4/mov/mkv/webm, with 2–4 range requests and ≈ 2 s; the real Graph URL answers 206 and `-ss 15min -t 300`
-  read 22.8 of 93.7 MB in 4 requests. So "one window per step" with `-ss` is the default, and the quadratic case feared before T0 does not
-  occur. When **all** windows of a file are needed in the same step, the child runs ffmpeg's `segment` muxer (`-f segment -segment_time <window>`)
-  **in one pass** (200-min files: mp4 149 MB, webm 78 MB, ≈ 50 s for 6 × 1800 s + 1 × 1200 s) and the parent uploads each window file as it
-  completes; a pass cut by the wall resumes at the first missing window with `-ss`. Either way the whole-file read is bounded by the caps below.
+  read 22.8 of 93.7 MB in 4 requests. So per-window `-ss` is the path for a file whose duration is known, and the quadratic case feared before T0 does not
+  occur. **As built (Δ161, T-R15), the `segment` muxer is not used.** A file whose duration `ffprobe` cannot give (browser- and
+  phone-recorded webm/mkv often carry neither `Duration` nor `Cues`) is read in **passes of at most `MEDIA_PASS_MAX_WINDOWS` = 3
+  planned windows** (the standard 1800 s / 60 s plan): pass 1 reads the remote file once into one **local** Opus file (`-ss` first start,
+  `-t` the span, the same Δ99 flags), pass 2 cuts each overlapping window from that local file by stream copy (file protocol and Ogg
+  only). End of file (a clean short run) ends the plan and fixes the duration; reaching the `-t` bound with more audio is the `too_long`
+  stub; a pass cut by a limit or the wall keeps its fully contained windows and the next pass resumes at the first missing one. Why: the
+  muxer cannot produce the 60 s overlap that stitching needs (Δ108), which the reviewer measured with real ffmpeg. Cost: one local copy
+  of about 16 MB per pass chunk.
+- **A remote run's exit code (Δ161, T-R16).** A remote run goes under `-xerror` (so a connection that keeps dropping is non-zero rather
+  than a quiet short file) with reconnect flags. A network errno exit is `MediaUnreadable` (a transient; the next attempt gets a fresh
+  URL). Any other non-zero exit is re-run **once without `-xerror`**, because `-xerror` also makes one corrupt packet fatal; a clean run
+  that is short is the real end of the audio, and its measured length is recorded (this also holds on the known-duration path: a header
+  that over-states the audio, as in some mp4 video and VBR mp3, shortens the last window instead of failing the file forever). Named
+  residual: a drop reconnect cannot recover, in that re-run, reads as an end of file.
 - **Hardening of an untrusted-media decoder (Δ99).** ffmpeg is a larger decoder surface than the document parsers
   and reads attacker-chosen files from any user's drive; §24.14's trigger ("a code-execution CVE in a parser the child
   loads, or users who do not trust one another") is nearer than it was. Required in the child: `-nostdin`,
   `-protocol_whitelist https,tls,tcp,crypto` (a crafted playlist or `concat` entry cannot open `file:` or other hosts),
-  a demuxer allowlist chosen from the sniffed head (`-f mov,mp4,m4a,matroska,webm,mp3,wav,flac,ogg,aac`), no filter
+  a demuxer allowlist as `-format_whitelist mov,mp4,m4a,matroska,webm,mp3,wav,flac,ogg,aac` on ffprobe and ffmpeg
+  plus `-f` pinned to the probed demuxer on the extraction run (Δ146: `-f` takes one demuxer, not a list; a short name admits the
+  demuxer whose name lists it, and the whitelist is copied to nested inputs, which is what refuses a playlist's children), `-tls_verify 1 -ca_file`
+  (ffmpeg verifies nothing by default), `-rw_timeout`, `-hide_banner -loglevel error -nostats`, no filter
   graph taken from the file, `-map 0:a:0` only, `-vn -sn -dn`. The URL is the one extra secret the child holds (read
   access to one file for its lifetime). The §24.14 residual (metadata-server token, network) is unchanged and still
   owner-accepted; **this section adds two gates (arbiter call, Δ125):** a global kill switch (`DRIVE_TRANSCRIBE_ENABLED`,
@@ -4330,12 +4361,15 @@ indexer is the same image.
   parser service stays the prerequisite before the flag is enabled for any user other than the owner (OQ-T3).
 - **Caps, never a silent skip (Δ100).** `TRANSCRIBE_MAX_SECONDS` 4 h and `TRANSCRIBE_MAX_BYTES` 8 GiB (metadata
   size checked first, then `ffprobe` duration — `facets.video.duration` is a hint, never trusted, and audio has none).
-  Over a cap the job ends as a **stub transcript** (`transcript_stub` `too_long` / `too_large`, a one-sentence file in
-  the UI language saying so and giving the duration), the record `metadata_only / too_large`. A file with no audio
-  stream is `no_audio`, a deterministic stub with **no model call**. A file ffmpeg cannot read is a per-file transient
+  Over a cap the job ends as a **stub transcript** (`transcript_stub` `too_long` / `too_large`; the one-sentence localized
+  file is T2, today the stub is the card line and the open text), the record `metadata_only / too_large` (`too_long` maps to the
+  same reason). A file with no audio
+  stream is `no_audio`, a deterministic stub with **no model call**; `no_audio` and `no_speech` map to the record
+  `metadata_only / no_text` (Δ151), and are not counted as unread: the recording was read. A file ffmpeg cannot read is a per-file transient
   (`extract_error`, §8.2) and `failed` at `MAX_ATTEMPTS`: no stub (it might be fixed), counted in the coverage line.
 - The 4-hour cap keeps a transcript under Firestore's 1 MiB document bound (4 h × 200 wpm ≈ 48 000 words ≈ 350 KB
-  structured); a build test pins it, and a transcript over `TRANSCRIPT_DOC_BYTES` (900 KB) is sharded into `parts/{n}`.
+  structured); a build test pins it, and a transcript over `TRANSCRIPT_DOC_BYTES` (900 KB) is sharded into a parts subcollection
+  (`{prefix}drive_transcript_parts`, Δ143).
 
 ### 27.5 The batch flow (Δ101–Δ106)
 - **A port of its own (Δ101).** `BatchTranscriptionPort`: `upload_audio(path) -> FileRef`, `submit(requests) ->
@@ -4345,7 +4379,8 @@ indexer is the same image.
   (`requirements.txt:6`) has a batches surface that T0 pins and wire-tests. A new adapter file `GeminiBatchAdapter`
   (one public class per file, no cross-adapter imports, REQ-ARCH-23), wire tests at the SDK boundary and contract
   rules in `tests/contracts/adapter_contracts.py` (`docs/how_to/ADAPTER_WIRE_TESTING.md`). The model id is
-  `GeminiAdapter`'s BALANCED tier (`gemini_adapter.py:76`, `gemini-3.8-flash`), read from the adapter, never copied;
+  `GeminiAdapter`'s BALANCED tier (`gemini_adapter.py:76`, `gemini-3.8-flash`), read from the adapter by the composition and passed to the
+  batch adapter's constructor (Δ156: REQ-ARCH-23 forbids the import), never copied;
   **never flash-lite** (D44). There is no provider switch for this class: `agent_providers` does not apply.
 - **The agent (Δ102).** `DriveTranscriberAgent` (`agent_type` `drive_transcriber`) owns the prompt and the parse,
   per `docs/how_to/NEW_AGENT_PLAYBOOK.md` and the output-format standard: tokens `COGNITIVE_PROCESS_DRIVE_TRANSCRIBER`
@@ -4353,6 +4388,8 @@ indexer is the same image.
   regex fallback, no tools, no history. Honest difference from the other drive agents: it does **not** go through
   `BaseAgent._call_llm` (a batch is not a call), so retry/failover/`TokenLedger` scope are not inherited; the agent
   builds requests and parses results, and a runner in `composition/` (the `DriveReaderRunner` pattern) wires it.
+  Each window also carries a per-window output ceiling, `max_output_tokens = min(65 536, max(TRANSCRIBE_MIN_OUTPUT_TOKENS = 4 096, ceil(1 000 × audio minutes)))` (≈ 2.2 × the
+  ≈ 450 tokens per minute T0 measured; thoughts count toward it, so a short window needs the floor), so a runaway window is bounded in money (Δ165, Δ174, T-R19, T-R26).
   Output schema per window: `{language_codes: [..], speakers: int, no_speech: bool, segments: [{start: str,
   speaker: int|null, text: str}]}` (`start` is a `MM:SS` string from the window's start, `H:MM:SS` from one hour, **never integer seconds**: T0
   measured a ≈ +40 % stretch of integer-second times on 30- and 60-minute windows, and ≈ 0.1 s drift with strings, Δ128; the parser reads the
@@ -4378,31 +4415,61 @@ indexer is the same image.
   output leg** (`candidates + thoughts`).
 - **Coverage check (Δ129).** A window whose last segment starts far short of the window length (`TRANSCRIBE_COVERAGE_MIN` 0.9 of the window
   duration, and not a `no_speech` window) is a **truncated answer** — the model can stop silently with finish reason `STOP` — and counts as a
-  failed attempt: the window is resubmitted (`MAX_ATTEMPTS`), never stitched short.
-- **Failure handling.** Request-level error or invalid JSON after the one parse rule (no regex): that window is
-  resubmitted, charged as a per-file attempt (`MAX_ATTEMPTS`, §8.2); a batch that expires or fails whole resubmits its
+  failed attempt: the window is resubmitted (`MAX_ATTEMPTS`), never stitched short. **Exception (Δ175, T-R27):** a coverage failure whose answer finished with
+  `STOP` (the audio simply ends in silence) is resubmitted once without counting an attempt (`JobWindow.coverage_resubmits`; the resubmit is reserved at submit and booked); a
+  second STOP-short answer is accepted (counter `windows_accepted_short`). `MAX_TOKENS`, an empty or unknown finish and invalid output keep `MAX_ATTEMPTS`. It takes two
+  STOP-short answers: a `MAX_TOKENS`-short answer followed by a STOP-short one costs one more resubmit.
+- **Failure handling (as built: Δ155, Δ160, Δ162, Δ167).** Request-level error or invalid JSON after the one parse rule (no regex): that window is
+  resubmitted, charged as a per-file attempt (`MAX_ATTEMPTS`, §8.2). Every per-response error is that key's result error and is charged
+  as an attempt by the stage; the adapter never raises on one and surfaces the rpc `code` and `transient` flag, so the stage can read a
+  "file gone" answer (rpc 5 or 7) as a reason to re-extract and re-upload the window once (`reupload_used`); there is no uncharged per-response
+  resubmit (T-R18; a transient storm costs at most `MAX_ATTEMPTS` per window and a few gap markers). A charged **file-level**
+  attempt (an unreadable probe or extraction, a limit kill with nothing produced, a download URL the drive refuses) puts the record `held` with hold
+  `retry` and `transcript_wake_at = now + backoff(attempts)` (the planner's per-item backoff, 5 min × 2^n, cap 6 h), so a transient Graph error
+  does not fail a file in minutes; `failed` at `MAX_ATTEMPTS`, never a stub (T-R21). A job that still has a `submitted` window is left untouched
+  by the extraction step (T-R20): collection settles it first, so a batch's cost is booked before its reservation is released. A booked
+  batch carries `booked_at`: a collection that finds it set books nothing and bills nothing again (T-R22). **All windows gap and none
+  refused is not a transcript:** the job is dropped (cost booked, reservation released) and the file charged an attempt (retry hold, then
+  `failed`, no stub); all gaps with at least one refusal finalize truncated; partial gaps are unchanged (T-R23, G37). Retry counts per check:
+  invalid output, a response's own error and a short window run to `MAX_ATTEMPTS`, then a gap marker; the time validator gets one resubmit,
+  then a gap marker; an interpolation share above the bound one resubmit, then accepted with `~` stamps; a refusal is a gap marker at once.
+  Beyond those: a batch that expires or fails whole resubmits its
   open windows once; a content-policy block on a window yields a **gap marker** for that span (`[mm:ss] [this part
   could not be transcribed]`), the transcript is `truncated`, never dropped. A Gemini outage or a missing key is an
   uncharged outage with its own backoff entry (`model_backoff_by_agent["drive_transcriber"]`, §25.4.6): extraction
   and submission stop, cards, mirror and everything else go on. Collected input files are deleted from the Files API
-  on success and on abandon (`delete_file`; no copy kept at the provider longer than needed).
+  on success and on abandon (`delete_file`; no copy kept at the provider longer than needed). An uploaded window is submitted
+  only with `TRANSCRIBE_FILE_LIFE_AT_SUBMIT` (24 h, the batch API's contract) of its provider file's life left; less is re-extracted first
+  (Δ172).
 - **Cost accounting (Δ105).** `billing.py` has no audio input rate and no batch discount today (`calculate_cost`,
   `src/domain/billing.py:258-282`, prices one token class per model). Required, per CLAUDE.md "cost is priced per
   model that RAN": a **single** input rate for `gemini-3.8-flash` (T0: no separate audio rate; $0.75 / $3.75 per million until 2026-12-31, $1.50 / $7.50
   after, as dated `PRICE_SCHEDULE` entries with `make check-pricing` coverage, Δ132), a `batch` multiplier (0.5) applied to **both** the input and
   the output leg, and a `ModelUsage` leg keyed by (model, batch) with the audio and text token counts kept apart (the provider prices them
-  alike; the split is for accounting) and thought tokens added to the output leg. The adapter must read the response's
-  per-modality prompt-token details (the usage object today yields one prompt count). The cost of a window is
-  recorded **when its result is collected**, to the user's account through a runner-scoped ledger (no
+  alike; the split is for accounting) and thought tokens added to the output leg. **As built (Δ141, Δ157):** the price rows are untouched —
+  `gemini-3.8-flash` stays at the held final $1.50 / $7.50 (T-R1), so a batch hour books ≈ $0.16, not ≈ $0.08, and $20 buys ≈ 125 audio
+  hours until 2027; the batch multiplier is `BATCH_DISCOUNT` 0.5 on both legs in `BatchUsage`; and there is no (model, batch) `ModelUsage`
+  leg (G36): the runner prices each collected answer with `BatchUsage.cost()` and bills it with `QuotaService.record_usage`. The adapter reads the response's
+  per-modality prompt-token details. The cost of a window is
+  recorded **when its result is collected**, to the user's account through the runner (no
   `_execution_billing_scope` exists across hours), and written to `drive_model_usage` as the class `transcribe`
   (`UsageClass.TRANSCRIBE`, `src/domain/drive_enrichment.py:65`; `transcribe_usd`, kept by a purge like the others).
-- **Reservation at submit, settlement at collection (Δ106, D46; arbiter call).** A window is submitted only if its
-  estimate, `window_seconds × TRANSCRIBE_HOUR_USD_ESTIMATE / 3600`, fits what is left of the month's cap **after every
-  pending reservation** (`available("transcribe") − Σ reserved`, as `_affordable` at `drive_indexing_service.py:2284`
-  but reservation-aware). The estimate is **reserved** on the job document (and summed per user in
-  `drive_model_usage` as `transcribe_reserved_usd`) when the batch is submitted and **settled** when the result is
-  collected: the reservation is released and the real cost (§27.5, Δ105) is booked. A batch that fails or expires
-  releases its reservations. The cap is therefore hard: batches in flight can never overshoot it. If it does not fit, otherwise the job is `parked` with `transcript_wake_at` at the month start, as the
+- **Reservation, then settlement at collection (Δ106, D46; arbiter call; as built Δ164, Δ165).** The unit of the fit check is the **whole
+  file**: its estimate is the sum over its planned windows of `window_seconds × TRANSCRIBE_HOUR_USD_ESTIMATE / 3600` plus the fixed
+  text-input allowance of `TRANSCRIBE_WINDOW_PROMPT_TOKENS` per window at the held batch input rate (overlaps are paid; a container with
+  no duration header reserves the `TRANSCRIBE_MAX_SECONDS` worst case and is re-settled once its duration is known). It must fit what is left of the month's
+  cap **after every pending reservation** (`available_usd(ctx) − Σ reserved`). The estimate is **reserved** on the job document (and summed per user in
+  `drive_model_usage` as `transcribe_reserved_usd`) **at the moment the file fits, before its first window is extracted** (G39: a long
+  file is extracted over several ticks, and a check made only at submission would let two files pass one cap) and **settled**
+  when the results are collected: the real cost (Δ105) is booked, then the reservation is released. A resubmitted window (a retried or
+  re-collected one) is reserved again before it goes out (T-R8); that sum rides on the **batch** document (T-R11), the job's pair stays the file's
+  reservation. A reservation is released and the real cost booked **in the month the reservation was made** (G9, `reserved_month`), so
+  a batch collected after a month turn cannot hand the next month dollars it never reserved. Reservation = the worst case:
+  `TRANSCRIBE_HOUR_USD_ESTIMATE` is **$0.30/h** (was $0.20), chosen so a window's reservation is at least its worst case (input plus the
+  output cap at the held batch rates ≈ $0.29/h); a test pins that the estimate bounds the formula (Δ165, T-R19). Each window's reservation is
+  `window_cost_usd = max(the hour-rate estimate, audio input at TRANSCRIBE_AUDIO_TOKENS_PER_S = 25 + TRANSCRIBE_WINDOW_PROMPT_TOKENS + the window's output cap, at the held batch price)`,
+  so the hard cap holds for short windows too (an 8 s window reserves ≈ $0.017; Δ174, T-R26). Over-reserving can only
+  limit what is in flight, never raise spend. If the file does not fit, the job is `parked` with `transcript_wake_at` at the next month start, as the
   reader's files are (§24.7, §25.4.5), and a *file's windows are never cut to the dollars left* — the whole file is
   held, so the transcript is never half bought. Newest-first order means the cap's dollars go to the newest recordings.
 
@@ -4431,7 +4498,11 @@ indexer is the same image.
   the window length by more than 10 s (counted; one resubmit, then the gap marker). Where consecutive starts of the same
   speaker are more than `TRANSCRIBE_MAX_GAP_S` (75 s) apart, the renderer **interpolates** timestamps at sentence
   boundaries by character proportion and prints them with a tilde (`[~12:40]`) — "at least once a minute" (D43) is
-  then true of the printed text without pretending the model measured it; the share of interpolated stamps is logged,
+  then true of the printed text without pretending the model measured it. **As built (Δ170, T-R7):** the span is measured to the next
+  printed stamp of **any** speaker, not the same speaker's (a short reply followed by a long turn of someone else is not a long silence of the
+  first speaker), and the interpolation happens at stitch time (`drive_transcript_stitch.interpolate`), after the seam cut, on the whole
+  file's segments — not in the renderer; the renderer only prints the stamp it is given. A segment is split into pieces of about
+  `INTERPOLATE_TARGET_S` (60 s) at sentence boundaries; the share of interpolated stamps is logged,
   and a window above `INTERPOLATED_MAX_SHARE` (0.3) is resubmitted once.
 
 ### 27.7 The summary (Δ110)
@@ -4447,7 +4518,8 @@ source text), only the transcript is.
 
 ### 27.8 Writing the outputs
 **(a) The index.** The transcript's Markdown body (speaker labels and `[mm:ss]` stamps included, header and summary
-excluded) enters the ordinary text path `_read_text` (`drive_indexing_service.py:1650`): text gate (a looping ASR
+excluded; **language-neutral**: `Speaker N`, `[MM:SS]`, `[~MM:SS]`, `[this part could not be transcribed]`, so the index never depends on the
+UI language, Δ149; the localized header, stubs and summary belong to the mirror file, T2/T3) enters the ordinary text path `_read_text` (`drive_indexing_service.py:1650`): text gate (a looping ASR
 hallucination is exactly what the gate catches; it applies, and the transcript is still mirrored), chunker, chunk cap,
 embeddings, the §7.4 fence, then the profile and passage hints by the existing enrichment jobs. `PROFILE_POLICY` gains
 rows for `audio` and `video` (profile input: head 6 000 + tail 1 500 of the body; doc2query yes; the VTT/SRT row,
@@ -4456,9 +4528,13 @@ writes `n:` terms for them; the cost is noise on bare-number queries and is acce
 neither a date nor an amount). **No new doc type** (Δ111): the model picks among the existing `DOC_TYPES`
 (`drive_labels.py:22-27`, `notes`, `report`, `article`); a `recording` value would change a hash-pinned names table
 and bump `KEYS_VERSION`, a whole-drive re-key, for a type the `k:` kind keys (`video`, `audio`) already name.
-An all-silent transcript (`no_speech`) has **no chunks**: the record is `metadata_only / no_text` (existing reason).
+An all-silent transcript (`no_speech`) has **no chunks**: the record is `metadata_only / no_text` (existing reason; not counted as
+unread, Δ151). A recording's `effective_date` always stays §3.1: a date said aloud never re-dates it, neither through the profile nor at
+`indexed()` (Δ163, G38). The layout of the indexed body is versioned by `TRANSCRIPT_BODY_VERSION` (on the record as
+`transcript_body_version`): a mismatch, or a record read under another `EXTRACTION_VERSION`, re-finalizes from the store (embeddings only,
+no model call), so a layout change does not need `TRANSCRIBE_VERSION` and never re-buys audio (Δ138, Δ149).
 **(b) The transcript store and the content-hash cache (Δ112).** `{prefix}drive_transcripts/{user_id}:{content_key}`
-holds the structured result — windows' stitched `segments`, languages, speaker count, duration, `no_speech`/stub,
+(the stored-result type is `StoredTranscript`, Δ171) holds the structured result — windows' stitched `segments`, languages, speaker count, duration, `no_speech`/stub,
 the summary and its language, `transcribe_version`, `render_version`, `summary_version`, `last_used_at` — never the
 rendered Markdown. `content_key` = `content_hash_of(change)` (`quickXorHash:size`, `src/domain/drive_card.py:68-70`),
 else `item:{item_id}:{cTag}` (no sharing; logged). **There is no sha1 fallback (Δ135):** T0 found `quickXorHash` on 101 of 101 files and `sha1Hash`
@@ -4538,9 +4614,14 @@ is mirrored folder by folder, and each transcript file is `<source name>.md`: `V
 ### 27.10 Budget, priority and the pace
 - `TRANSCRIBE_USD_PER_MONTH` (D46) is a fifth class (a **hard** cap: pending reservations count, Δ106) in `drive_model_usage` beside reader $4, triage $3, profile $4,
   passages $20 (§25.4.5), counted from collected batch results at the batch price. **Initial value $20, unchanged by T0** (its own logic holds: a cap sized by the measured batch rate, not the ceiling). At T0's rates $20 buys **≈ 250 audio
-  hours a month now ($0.08/h) and ≈ 125 after 2026-12-31 ($0.16/h)**; at the $0.40/h ceiling it would still buy 50. The owner can raise it. The Cabinet adds a line
+  hours a month now ($0.08/h) and ≈ 125 after 2026-12-31 ($0.16/h)**; at the $0.40/h ceiling it would still buy 50. **As built, the held price applies
+  (Δ141, T-R1): billing keeps `gemini-3.8-flash` at its final price so cost is never under-reported, so a batch hour books ≈ $0.16 now and the $20 cap buys ≈ 125
+  hours until 2027 (cost if that is wrong: the cap buys half the hours until then).** The owner can raise it. An optional deploy knob,
+  `DRIVE_TRANSCRIBE_USD_CAP`, can only **lower** it (`effective_monthly_cap` = `min(20, knob)`; empty = $20; a value that is not a finite
+  non-negative number counts as empty), for a bounded first run (Δ145, T-R3); the Cabinet shows the effective cap. The Cabinet adds a line
   (`model_usd_month`, `model_usd_caps`). No initial-build allowance: D27's closed for every user and the owner's rule
-  (2026-10-19) is that no reset is part of a rollout.
+  (2026-10-19) is that no reset is part of a rollout; the code enforces it (Δ142): `available_usd` and the spend path leave the initial
+  balance out for the `transcribe` class, so a user whose build is still open does not pay for transcription from it.
 - **Backlog pace.** Extraction at ≈ 1.07 CPU-s per audio minute is ≈ 32 s of CPU for a 30-minute window plus the
   network time of its bytes (about 5 MB/s observed): with a 25 % start window (2 min of the 8-minute start budget) a
   tick yields 2–3 windows, **≈ 1.5–3 audio hours per tick-hour per user**; the dollar cap, not the CPU, binds first. A
@@ -4550,11 +4631,16 @@ is mirrored folder by folder, and each transcript file is `<source name>.md`: `V
 
 ### 27.11 What Smart sees (Δ121)
 - **Card.** A transcribed media card gains `transcript: 47 min, 2 speakers, uk/en` (stub: `transcript: none (no speech
-  detected)`), `CARD_VERSION` 4 → 5 (only media cards change text, so only they are re-embedded, §8.5). Passages come
+  detected)`), **`CARD_VERSION` is not bumped (Δ139, G5):** `card_hash` hashes the version with the text, so a bump re-embeds every card on the drive
+  while the new segment exists only on transcribed records and changes no other card's text (precedent: §26.13's scene-labels segment shipped under 4). The card carries its
+  languages from the record (`transcript_languages`), so the card needs no store read. Passages come
   from the ordinary chunk windows, with the `[mm:ss]` stamp at their head so Smart can say *where* in a recording.
 - **Open.** `open_file_from_drive` on a transcribed audio or video ref returns the transcript text inside the nonce
   wrapper and the reference reminder (D2, §10.4), not the media bytes; the file-delivery branch for video
-  (`file_management_agent.py:619-626`) stays for a recording with no transcript yet. **Arbiter call (Δ121):** the
+  (`file_management_agent.py:619-626`) stays for a recording with no transcript yet. A recording is recognised by the kind
+  classifier (extension first), not the provider mime, so a transcribed `.opus`, `.ogg` or `.mkv` with a generic mime still opens as its
+  transcript. The text is capped at `TRANSCRIPT_OPEN_MAX_CHARS` = 60 000 characters at a paragraph boundary with a note that says it was cut
+  and suggests searching for a passage (Δ150, G19); the speaker-labels-may-differ line heads the open text when a seam was uncertain. **Arbiter call (Δ121):** the
   transcript is the default; an optional boolean `original` on the open intent (manifest field description: "set true only
   when the user asks for the recording itself, not its content") returns the **original as a drive link** (`web_url`),
   never bytes into chat, for audio and video alike.
@@ -4562,8 +4648,10 @@ is mirrored folder by folder, and each transcript file is `<source name>.md`: `V
   by what was said; open its ref for the transcript; the transcript file lives in the Transcripts folder; ask for `original` only when the user wants the recording
   itself, and it comes as a link." And one
   line in `src/utils/capabilities.py` (what the bot can do with recordings). The protocol token is not touched.
-- **Coverage.** The envelope's "not read yet" already counts pending media once they are admitted; a recording that
-  failed or exceeded a cap is named by the existing `unread` classes (`failed`, `too_large`).
+- **Coverage (Δ137, G2, G3, G20).** The earlier text said the envelope already counts pending media; it did not (the counters passed
+  `ADMITTED_KINDS`/`TRIAGED_KINDS` explicitly). Now `TRANSCRIBED_KINDS` joins both counters **only for a user whose transcription is on**
+  (kill switch and own flag), so a user without it never sees a recording as "not read yet" or "could not be read"; a recording that failed
+  or exceeded a cap is named by the existing `unread` classes (`failed`, `too_large`); a `no_speech`/`no_audio` recording is not unread.
 
 ### 27.12 Privacy, disclosure, security
 - Audio reaches **Google** only, already the provider for embeddings, the drive fallback and photos' fallback; the
@@ -4571,7 +4659,10 @@ is mirrored folder by folder, and each transcript file is `<source name>.md`: `V
   Developer API is used with the project's key (no new service account, no new GCP API to enable unless T0 finds
   otherwise).
 - §6's opt-in text gains one sentence (en/uk/fr/es `LANG_DICT`): recordings on the drive are transcribed by a model
-  provider during indexing, the transcript is stored in the index and as files in a folder of the user's drive.
+  provider during indexing, the transcript is stored in the index and as files in a folder of the user's drive. **As built (Δ154, G24):** the
+  strings (`drive.transcribe_disclosure`) are shown in the Drive section of the Cabinet **only while the user's own flag is on**, so it
+  does not tell a user without transcription that his recordings are transcribed; the sentence says the transcripts are kept in the index
+  and does not mention a folder until T2 exists. The Cabinet toggle (later) reuses them.
   There is **a second user** with drive indexing enabled (an empty drive today). For them transcription stays **off**
   — `drive_transcribe_enabled` defaults to False and is not set — until the zero-credential parser service exists
   (owner, 2026-10-19; OQ-T3). Consent is **per user and explicit (arbiter call, Δ125):** `drive_transcribe_enabled` is its own flag, default False,
@@ -4588,14 +4679,18 @@ is mirrored folder by folder, and each transcript file is `<source name>.md`: `V
 |---|---|---|
 | `POLICY_VERSION` (`policy`) 2 → 3 | `TRANSCRIBED_KINDS` admitted | re-classification of media records (metadata only) |
 | `TRANSCRIBE_VERSION` | prompt, schema, model, window and stitching rules | **nothing automatically** (Δ122): re-buying audio is the owner's act, `scripts/infrastructure/drive_transcribe_requeue.py` |
-| `RENDER_VERSION` (`render`) | Markdown layout, header, labels | mirror files, from the store; no model call |
-| `SUMMARY_VERSION` (`summary`) | summary prompt/schema | summaries, from stored transcripts (cheap, batched) |
-| `CARD_VERSION` (`card`) 4 → 5 | the transcript segment | media cards only |
+| `RENDER_VERSION` (`render`) | Markdown layout, header, labels | mirror files, from the store; no model call. **T2; not built, and not a map key (Δ140): a module constant checked per document (the mirror's `rendered_hash`)** |
+| `SUMMARY_VERSION` (`summary`) | summary prompt/schema | summaries, from stored transcripts (cheap, batched). **T3; not built; not a map key (Δ140)** |
+| `CARD_VERSION` (`card`) | the transcript segment | **not bumped (Δ139)**; media cards with a transcript gain a segment on their next card write |
+| `TRANSCRIPT_BODY_VERSION` (record field `transcript_body_version`) | the indexed body's layout | re-finalize from the store, embeddings only (Δ149) |
+| `STRUCTURE_POLICY_SINCE` = 2 | how folders are classified | not touched by a media-only `POLICY_VERSION` bump (Δ166) |
 | `PROFILE_POLICY` rows | audio/video profile input | profiles of media records (existing `PROFILE_VERSION` rules) |
 | `EXTRACTION_VERSION`, `KEYS_VERSION`, `NAME_KEYS_VERSION` | unchanged | — |
 `TRANSCRIBE_VERSION` is not in `CURRENT_VERSIONS`' auto-upgrade targets by decision: a prompt tweak must never re-bill a
-drive; the stored transcript keeps its version and the requeue script lists what would change and what it would cost.
-**Rollback.** Levers, in order: `DRIVE_TRANSCRIBE_ENABLED` off (all stages stop; jobs, store and mirror stay; reads of
+drive; the stored transcript keeps its version and the requeue script lists what would change and what it would cost. The
+`transcribe-gemini` extractor link on a recording is never extractor-stale whatever its version (Δ138): `chain_for("audio")` is the parser
+chain, and without that rule every upgrade pass would re-plan every transcribed record and find it stale again, forever.
+**Rollback.** Levers, in order: the per-user flag off for one user, or `DRIVE_TRANSCRIBE_ENABLED` off (the stage is not even built; all stages stop; jobs, store and mirror stay; reads of
 transcripts from the index keep working); the previous image (every new record field is a plain field and no enum
 gains a value, so the old code parses every record; old code reads media records as `kind_not_admitted` after its
 own policy re-check and collects their chunks). The mirror folder and its files are the user's after rollback: deleting
@@ -4657,14 +4752,24 @@ unmeasured language.
 ### 27.15 Owner steps and rollout
 1. T0 spike (done, GO; its decision note is the Δ128–Δ135 text here); the Gemini key's tier supports Batch — **confirmed by T0** on the existing
    `GEMINI_API_KEY`, no new GCP API.
-2. Back up, then upload the prompt layer in the paused window (`--apply` is human-only): `COGNITIVE_PROCESS_` and
-   `OUTPUT_FORMAT_` tokens, blueprints and profiles for `drive_transcriber` and `drive_transcript_summary`.
-3. Composite indexes `READY` before deploy: `user_id + transcript_state + effective_day desc (+ parent_id, item_id)`,
-   `user_id + transcript_wake_at`, and the mirror documents' lookups; `drive_index_smoke.py` runs the new reads.
+2. Back up, then upload the prompt layer in the paused window (`--apply` is the owner's act by default; see the first-run exception at the end of this section): for T1 the four documents of
+   `drive_transcriber` — the `COGNITIVE_PROCESS_DRIVE_TRANSCRIBER` and `OUTPUT_FORMAT_DRIVE_TRANSCRIBER` tokens, its blueprint and its profile
+   (`drive_transcript_summary`'s are T3).
+3. Composite indexes `READY` before deploy (`make deploy-indexes`, declared in `config/firestore.indexes.json`): on the records
+   `user_id + transcript_state + effective_day desc + parent_id + item_id` and `user_id + transcript_wake_at + item_id`; on the job, batch
+   and store collections `user_id + content_key`, `user_id + next_poll_at` and `user_id + last_used_at`; two **collection-group** indexes
+   (`user_id + index` on the windows and the parts subcollections) the orphan sweep needs (Δ159); and single-field exemptions for the
+   large `segments` / `summary` fields. The mirror's lookups are T2. `drive_index_smoke.py` runs every new read.
 4. Pause the drive queue and the fan-out job; deploy main and indexer together (ffmpeg and the unprivileged user are in
    the image already); **verify both serve the new image**; resume. The policy bump makes existing media records due;
-   the kill switch is off until the owner enables it in the environment, and the owner then sets `drive_transcribe_enabled` for their own user (the kill switch is an `.env`-loaded optional knob, not a Cloud Build
-   substitution).
+   the kill switch is off until the owner enables it, and the owner then sets `drive_transcribe_enabled` for their own user. **The kill
+   switch rides as a Cloud Build substitution (Δ145, G13), not as a by-hand environment variable:** the indexer's env is set with
+   `--set-env-vars`, which replaces every variable on each deploy, so a value set by hand would vanish. It comes from the deploy-only
+   `.env` key `DRIVE_TRANSCRIBE_ENABLED_DEV` (default `off`), and the optional lowering cap from `DRIVE_TRANSCRIBE_USD_CAP_DEV`
+   (also on the main service, which shows it); never the local `DRIVE_TRANSCRIBE_ENABLED` / `DRIVE_TRANSCRIBE_USD_CAP`
+   (the deploy-substitution trap).
+4a. **The first live run is bounded by the cap knob (Δ145, T-R3):** set `DRIVE_TRANSCRIBE_USD_CAP_DEV` low (the first night used $10) before
+   enabling. Enabling starts the **whole backlog, newest first**, under the hard cap; the knob is the only lever between "off" and $20.
 5. **Backlog estimate before turning it on:** a read-only script (output only to `scripts/memory/`, Δ67's rule) sums
    `facets.video.duration` over the owner's index and counts audio files (no duration facet: it reports the byte total
    and an estimate at the spike's 10.8 MB/h) and prints minutes and the cost at $0.08, $0.16 and $0.40 per hour.
@@ -4672,6 +4777,8 @@ unmeasured language.
    the owner's phone; raise the cap if the estimate says the backlog should finish sooner.
 7. No rebuild and no `drive_initial_build_reset.py`. The orphan-doc sweep script (`drive_transcript_sweep.py`) is run
    only after a rollback to code that predates §27.
+
+**First-run exception.** For the first run (2026-10-21) the owner explicitly delegated these steps to the assistant: the four prompt uploads (after a prompt-layer backup and a mirror check), the composite index deploy, the deploy with the switch off then on with a $10 cap, and setting the owner's per-user flag. Every other prompt upload and every `--apply` stays the owner's act.
 
 ### 27.16 Deltas: what §27 decides beyond D41–D47
 | # | Today | §27 | Why |
@@ -4716,6 +4823,46 @@ unmeasured language.
 | Δ133 | Δ104: first poll 20 min, then 30 min | First poll 2.5 min, then 5 min; 30 min only as a fallback for a batch older than 1 h | T0 latency 2–5 min |
 | Δ134 | §27.4: `-ss` cost unknown; one-pass `segment` as a hedge | `-ss` over Range per window (≈ 5 % of the file per 5-min window; mp4/mov/mkv/webm and the Graph URL); `segment` muxer in one pass when all windows are needed; a fresh `downloadUrl` per window/tick (it lives ≈ 60 min: 206 at +60 min, 401 at +75 min) | T0 measurements |
 | Δ135 | §27.8: `quickXorHash`, else `sha1Hash` | `quickXorHash:size` only, else the `item:{item_id}:{cTag}` key; no sha1 | T0: quickXor on 101/101, sha1/sha256 on 50/101 |
+| Δ136 | §27.14 lists `download_url` under T2 | In T1: `UserDrivePort.download_url(user_id, item_id)` (plan G1) | T1's extraction reads the Graph URL (§27.4) |
+| Δ137 | §27.11: the envelope "already counts pending media" | It did not. `TRANSCRIBED_KINDS` joins `not_read_yet` and `unread` only for a user whose transcription is on (kill switch and own flag); `no_speech` and `no_audio` are not unread (G2, G3, G20; T-R10: `_unread_counters(transcription_on=False)` keeps today's calls byte-identical) | A user without transcription must never read "not read yet" with no prospect; a silent recording was read |
+| Δ138 | §27.3 / Δ122: `TRANSCRIBE_VERSION` never auto-upgrades | Also: the `transcribe-gemini` link on a recording is never extractor-stale, and a `current` record whose `transcript_body_version` or `extraction_version` is not the code's is re-finalized from the store, embeddings only (G4, G18, G31) | `chain_for("audio")` is the parser chain: every upgrade pass would re-plan every transcribed record and find it stale again, forever |
+| Δ139 | §27.11: `CARD_VERSION` 4 → 5, "only media cards re-embedded" | No bump. `card_hash` hashes the version, so a bump re-embeds every card on the drive; the new segment exists only on transcribed records and changes no other card's text (G5) | A whole-drive card re-embed for no change; precedent §26.13 |
+| Δ140 | Δ124: `render` and `summary` join `CURRENT_VERSIONS` | They do not. `RENDER_VERSION` and `SUMMARY_VERSION` stay module constants checked per document (T2/T3); the map is unchanged (G6) | No record-level criterion would settle them; a map key would cost one no-op upgrade pass per bump and break the key-set pin |
+| Δ141 | Δ105 / Δ132: dated entries $0.75 / $3.75 until 2026-12-31 | The held final price stays (`HOLD_FINAL_PRICE`); only `BATCH_DISCOUNT` 0.5 is added. A batch hour books ≈ $0.16, so $20 buys ≈ 125 audio hours until 2027, not ≈ 250 (G7, T-R1) | Never under-report cost; cost if wrong: the cap buys half the hours until 2027, and the owner can raise it |
+| Δ142 | §27.10: "no initial-build allowance" | Enforced in code: `available_usd` and the spend path exclude the `transcribe` class from the initial balance (G8) | A future user's open build would otherwise pay for transcription |
+| Δ143 | Δ97: windows and parts "in the job document" | `{prefix}drive_transcript_batches` is a collection of its own (one poll per batch; G10); window results are a subcollection of the job and shards a subcollection of the store, both **env-prefixed** (`{prefix}drive_transcript_windows`, `{prefix}drive_transcript_parts`) instead of `windows/{index}` and `parts/{n}` (G11, T-R13); a reservation is recorded and released in its own month (`reserved_month`, G9 as revised: the cost is booked into the reservation's month too); a batch carries the sum of its re-purchases' reservations (T-R11) | Segments would bloat a document every poll rewrites; collection-group ids are database-global, and the env prefix exists to scope them |
+| Δ144 | Δ112: the cache covers a copy made after the first transcript exists | Two copies first seen together are not both bought: a second record with the same key whose job is `working` or `waiting` waits for it (G12) | The cap and the bill; needs the `user_id + content_key` job index |
+| Δ145 | §27.15 step 4: the kill switch is "not a Cloud Build substitution" | It is one (`_DRIVE_TRANSCRIBE_ENABLED`, default `off`, from `DRIVE_TRANSCRIBE_ENABLED_DEV`); plus an optional `DRIVE_TRANSCRIBE_USD_CAP` (`_DRIVE_TRANSCRIBE_USD_CAP`, from `DRIVE_TRANSCRIBE_USD_CAP_DEV`) that can only lower the $20 cap, on the indexer and the main service (G13, G34, T-R3) | `--set-env-vars` replaces every variable on each deploy; enabling starts the whole backlog, so the first run needs a lever below $20 |
+| Δ146 | §27.4: `-f mov,mp4,…` demuxer list | `-format_whitelist` with the list on ffprobe and ffmpeg, `-f` pinned to the probed demuxer on the extraction run; `-tls_verify 1 -ca_file`, `-rw_timeout`, quiet logging (G14) | `-f` takes one demuxer; ffmpeg verifies TLS by default nowhere |
+| Δ147 | §27.4: same child launcher | The media extractor lives in `src/adapters/drive_parser/` with its own launcher (≈ 120 duplicated lines); the two converge when the parsers move to the zero-credential service (G15) | REQ-ARCH-08 and the existing extractor's tests |
+| Δ148 | §27.3: a 25 % window "after the enrichment phase" | While the user has ready extraction work, the content classes yield to `1 − ENRICH_SHARE − TRANSCRIBE_SHARE` and enrichment's stop leaves `TRANSCRIBE_SHARE`; the deadline sum adds `TRANSCRIBE_UPLOAD_S` (G16) | On a busy tick the window would get nothing |
+| Δ149 | §27.8 a: speaker labels and stamps in the indexed body | The body is language-neutral (`Speaker N`, `[MM:SS]`, `[~MM:SS]`); `TRANSCRIPT_BODY_VERSION` on the record triggers a re-index from the store with no model call (G17, G18) | A localized label would make the index depend on the UI language; a layout change must not re-buy audio |
+| Δ150 | §27.11: open returns "the transcript text" | Capped at `TRANSCRIPT_OPEN_MAX_CHARS` 60 000 at a paragraph boundary with a note (G19) | Four hours ≈ 300 000 characters |
+| Δ151 | §27.4: stub outcomes | `no_audio` and `no_speech` → `metadata_only / no_text`; `too_long` and `too_large` → `too_large`; `failed` has no stub (G20) | The existing reasons; no new enum value |
+| Δ152 | §27.3: state vocabulary "as in §25.4.5" | `none ready working waiting current held parked failed`; `held` is a timed hold named by `transcript_hold` (`cooldown`, `quiet`, `retry`, `resubmit`), `parked` the month's cap, `failed` `MAX_ATTEMPTS`; a model backoff is **not** a record state, it gates the queue read (G21, §25.4.6) | A record state would cost a write per ready file on every outage |
+| Δ153 | §27.9: the mirror | **T2, not built.** Recorded rulings for it: an opt-out purge with the drive still connected deletes the bot's own mirror folder (recoverable from the recycle bin); turning transcription off keeps transcripts, store and mirror; an access-loss purge cannot reach the drive and leaves it (G22, T-R2) | A stale mirror would be indexed as documents on re-enable; cost if wrong: the owner loses visible transcript files on opt-out |
+| Δ154 | §27.12: the sentence goes in §6's opt-in text | The strings ship now and show in the Cabinet's Drive section only while the user's own flag is on (G24) | Else a user without transcription is told his recordings are transcribed |
+| Δ155 | §24.14: no account-error recognition in the Gemini adapter | The batch adapter classifies: 429, 5xx, timeouts, network and account 4xx → uncharged outage (agent backoff); a per-response error → that key's result error, charged by the stage; a refused input → `refused`, a gap marker (G25, T-R18) | A provider incident must not fail files |
+| Δ156 | §27.5: the model id "read from the adapter" | The composition reads `GeminiAdapter.MODEL_TIERS[BALANCED]` and passes it to `GeminiBatchAdapter`; `google-genai` floor raised to 2.17.0 (G26, G27) | REQ-ARCH-23; the batch surface was measured on 2.17.0 |
+| Δ157 | Δ105: a (model, batch) `ModelUsage` leg through a runner ledger | `BatchUsage.cost()` prices each answer and `QuotaService.record_usage` bills it; no `prompt_content` row and no Logfire span for a window (G28, G36). The ledger-free path books the same money with one type fewer | A batch is not a call; transcripts are other people's speech and should not be copied into BigQuery |
+| Δ158 | — | The owner's flag is set by a dry-run-by-default script, `scripts/infrastructure/drive_transcribe_flag.py` (`--user USER [--off] [--apply]`, `--off` turns it off); no Cabinet toggle (G29) | Consent per user, explicit |
+| Δ159 | §27.8 b: purge deletes the store | The purge deletes a user's jobs (with window results), batches and, unless `purge_keep_transcripts`, the store; its orphan sweep is a separate port method `delete_user_transcript_orphans`, run after the helpers return 0, and a missing collection-group index is logged ERROR without failing or holding the purge; best-effort `delete_file` at the provider (G30, T-R14) | The privacy path must not depend on an index that only transcripts need |
+| Δ160 | §27.3: finalize "takes no share" | A finalize embeds up to ≈ 125 chunks, so it takes one file slot and starts only while time is left; poll and collect stay share-free (G32). A collected answer for a record that is gone, out of the pipeline or at another content version is booked, its job and provider files deleted and its reservation released once (G33); a job with a `submitted` window is left to collection (T-R20) | Ten files landing in one batch would take the tick; a held reservation must not outlive its job |
+| Δ161 | Δ134: `segment` muxer in one pass; Δ99: a remote run's failure | Replaced by the local-intermediate pass for a file with no duration (≤ `MEDIA_PASS_MAX_WINDOWS` = 3 windows per pass, remote → local Opus, then stream-copy cuts that keep the 60 s overlap; eof fixes the duration; reaching the bound is `too_long`; a limit kill resumes at the first missing window) and the exit-code rule (network errno → unreadable; other non-zero → one re-run without `-xerror`; a clean short run is the end of the audio and its measured length is kept) (G35, T-R15, T-R16) | The muxer cannot produce the overlap Δ108 needs; one corrupt packet must not fail a file forever; an over-stated header must not fail the last window forever |
+| Δ162 | §27.5: retry rules per check | Per check: invalid, a response error, a short window → `MAX_ATTEMPTS`, then a gap marker; time validator → one resubmit, then a gap marker; interpolation share → one resubmit, then accepted; refusal → a gap marker; **all windows gap and none refused → not finalized**: the job is dropped and the file charged an attempt, no stub (G37, T-R23) | A long file must not fail for one bad window; a provider incident must not freeze a gap-only transcript as current |
+| Δ163 | §27.8 a: `effective_date` "stays §3.1" | Enforced: a recording is exempt from the profile's `issued` date and the brief's held date, in `effective_from` and at `indexed()` (G38) | A date said in a recording would re-date the file |
+| Δ164 | §27.5: "reserved when the batch is submitted" | Reserved when the **whole file fits**, before its first window; a resubmitted window is reserved again before it goes out; park, failure and abandon release (G39, T-R8, T-R20) | A long file is extracted over several ticks; a check at submission lets two files pass one cap |
+| Δ165 | Δ132: estimate $0.20/h | `TRANSCRIBE_HOUR_USD_ESTIMATE` $0.30/h, `TRANSCRIBE_WINDOW_PROMPT_TOKENS` 2 000 per window, and per-window `max_output_tokens = min(65 536, ceil(1 000 × minutes))`; a test pins that the estimate bounds the formula (T-R19) | Δ106 says hard: a window's reservation must be at least its worst case; cost if wrong: fewer hours in flight near month end (a $10 cap ≈ 33 h reserved at once) |
+| Δ166 | §27.3: `POLICY_VERSION` 2 → 3 only | `STRUCTURE_POLICY_SINCE` = 2: density, opaque-marker and README decisions compare against it, not `POLICY_VERSION` (T-R5) | A media-only bump must not re-read READMEs or re-probe folders for every user; a future structure change must raise it explicitly |
+| Δ167 | — | Edit cooldown (`TRANSCRIBE_REREAD_COOLDOWN`) is anchored on the purchase or reservation time of the current key, not on completion (`model_read_at` at `start_file` and at `mark_current`); applies on a free cache hit too (T-R9) | The parameter promises "re-bought at most this often"; a completion anchor lets in-flight edits re-buy |
+| Δ168 | — | `_eligible` excludes card-capped records; `_is_current` requires a non-`pending` record; `card_segment` skips a `failed` record (T-R24) | A card-capped recording was transcribed and indexed with no card; a chunk-cap release left a current-and-pending file never re-indexed |
+| Δ169 | — | Batch-level booking idempotency: `TranscriptBatch.booked_at` (T-R22); the purge **books** a reservation that backs audio in flight (any job with a `submitted` window, every open batch) as transcribe spend in its own month and releases only reservations with nothing in flight (T-R25) | The over-report class was fixed twice; the provider bills what runs. Residual: a process crash inside one write can still double-book |
+| Δ170 | §27.6: "consecutive printed stamps" of the same speaker | The span runs to the next printed stamp of any speaker; interpolation happens at stitch time (T-R7) | D43's once-a-minute holds; the same-speaker reading left long turns unstamped |
+| Δ171 | §27.8 b: `TranscriptStore` | The stored-result type is `StoredTranscript` (REQ-ARCH-07 rejects `*Store` classes in `domain/`); the domain types gain the job and window fields additively (`batch_name`, `files_expire_at`, `reupload_used`, `content_version`, `transcribed_at`, `booked_at`, `kind`, `reserved_month`, …) with defaults, nothing removed (T-R6, T-R12) | Names and field lists only |
+| Δ172 | — | Two parameters the plan needed: `TRANSCRIBE_FILE_LIFE_AT_SUBMIT` (24 h) and `TRANSCRIBE_MIN_RUN_WALL_S` (90 s) | A window is submitted only with a day of provider-file life left; a further run in a step needs wall for one 30-minute window |
+| Δ173 | — | The `transcript_plan` runs on every record write even with transcription off (it plans job state, acts on none, writes nothing visible); the stage runs only with the kill switch and the user's flag on | One code path; OFF verified off by the reviewer |
+| Δ174 | Δ165: `max_output_tokens = min(65 536, ceil(1 000 × minutes))`; reservation by the hour rate | Cap = `min(65 536, max(TRANSCRIBE_MIN_OUTPUT_TOKENS = 4 096, ceil(1 000 × audio minutes)))`; each window reserves `window_cost_usd = max(hour-rate estimate, audio input at TRANSCRIBE_AUDIO_TOKENS_PER_S = 25 + TRANSCRIBE_WINDOW_PROMPT_TOKENS + the window's output cap, at the held batch price)` (an 8 s window ≈ $0.017) (T-R26) | Live evidence: an 8 s window got a cap of 134 and hit `MAX_TOKENS` with an empty answer, because thinking tokens count toward the cap; the hour rate under-reserved short windows, so the hard cap did not hold for them |
+| Δ175 | §27.5 coverage check: a short window is a failed attempt (`MAX_ATTEMPTS`) | A coverage failure whose answer finished with `STOP` is resubmitted once without counting an attempt (`JobWindow.coverage_resubmits`; still reserved at submit and booked); a second STOP-short answer is accepted (counter `windows_accepted_short`); `MAX_TOKENS`, empty or unknown finish and invalid output keep `MAX_ATTEMPTS`. Known limit: an accepted short answer skips the interpolation-share check; a very short window can practically never pass the 0.9 rule, so it always costs two purchases (cents); an absolute tolerance is a later improvement (T-R27) | Live evidence: a 137 s recording ending in silence and an 8 s window failed coverage on every attempt, though the model had finished normally |
 
 ### 27.17 Open questions (each with a recommendation)
 - **OQ-T1 Window length (30 min) against output drift and cost — resolved by T0 (Δ129).** 30, 45 and 60 min were complete with `MM:SS` times
@@ -4741,8 +4888,19 @@ unmeasured language.
 ### 27.18 Parameters (initial)
 | Name | Initial | Basis |
 |---|---|---|
-| `TRANSCRIBE_USD_PER_MONTH` (D46) | $20 | ≈ 250 h at $0.08/h now, ≈ 125 h at $0.16/h after the promotion, 50 h at the $0.40/h ceiling (T0) |
-| `TRANSCRIBE_HOUR_USD_ESTIMATE` | $0.20 per audio hour | above the post-promotion $0.16 (T0, Δ132); the owner's $0.40 stays the outer ceiling |
+| `TRANSCRIBE_USD_PER_MONTH` (D46) | $20 | (at the held price ≈ 125 h) ≈ 250 h at $0.08/h now, ≈ 125 h at $0.16/h after the promotion, 50 h at the $0.40/h ceiling (T0) |
+| `TRANSCRIBE_HOUR_USD_ESTIMATE` | **$0.30** per audio hour (was $0.20) | a window's reservation must bound its worst case: audio input plus the output cap at the held batch price ≈ $0.29/h (Δ165, T-R19); pinned by a test |
+| `TRANSCRIBE_WINDOW_PROMPT_TOKENS` | 2 000 per window | the fixed text input (system instruction and task text, ≈ 1 130 tokens measured), rounded up, added to the hour rate (Δ165) |
+| per-window `max_output_tokens` | `min(65 536, max(4 096, ceil(1 000 × audio minutes)))` | ≈ 2.2 × the ≈ 450 tokens per audio minute T0 measured; the floor covers thinking tokens on short windows (Δ165, Δ174) |
+| `TRANSCRIBE_MIN_OUTPUT_TOKENS` | 4 096 | floor of the per-window output cap: an 8 s window with a 134-token cap hit `MAX_TOKENS` with an empty answer (Δ174, T-R26) |
+| `TRANSCRIBE_AUDIO_TOKENS_PER_S` | 25 | audio input tokens per second in a window's reservation (T0 measured 24.996/s) (Δ174) |
+| `MEDIA_PASS_MAX_WINDOWS` | 3 | planned windows cut from one remote read of a file with no duration (Δ161) |
+| `TRANSCRIBE_UPLOAD_S` | 60 | the worst case of uploading one window; joins the tick deadline sum (Δ148) |
+| `TRANSCRIBE_FILE_LIFE_AT_SUBMIT` | 24 h | an uploaded window is submitted only with this much of its provider file's life left; less is re-extracted (Δ172) |
+| `TRANSCRIBE_MIN_RUN_WALL_S` | 90 | a further extraction run of a file within one step starts only with this much of the step's wall left (Δ172) |
+| `TRANSCRIPT_OPEN_MAX_CHARS` | 60 000 | the most an open returns (Δ150) |
+| `STRUCTURE_POLICY_SINCE` | 2 | the policy version since which structure decisions stand (Δ166) |
+| `DRIVE_TRANSCRIBE_USD_CAP` | empty = $20 | an optional deploy knob that can only lower the monthly cap (Δ145) |
 | `TRANSCRIBE_WINDOW_S` / `TRANSCRIBE_OVERLAP_S` | 1 800 (30–45 min allowed) / 60 | §27.4, §27.6, Δ129–Δ130 |
 | `TRANSCRIBE_COVERAGE_MIN` | 0.9 | last segment start / window duration below it = failed attempt (Δ129) |
 | `TRANSCRIBE_MAX_SECONDS` / `TRANSCRIBE_MAX_BYTES` | 14 400 / 8 GiB | cost bound and the 1 MiB document bound |
@@ -4759,4 +4917,38 @@ unmeasured language.
 | `MIRROR_OPS_PER_TICK` / `MIRROR_SCAN_PAGE` | 40 / 100 | Graph writes per tick; a rotating drift scan |
 | `MIRROR_AUDIT_DAYS` | 7 | worst-case time to undo a user's edit |
 | `MIRROR_NAME_MAX` / `MIRROR_PATH_MAX` | 240 / 380 | OneDrive's 255-name and 400-path limits |
-| `DRIVE_TRANSCRIBE_ENABLED` | off until the owner enables | `os.getenv`, an optional knob |
+| `DRIVE_TRANSCRIBE_ENABLED` | off until the owner enables | `os.getenv`, an optional knob, deployed as a Cloud Build substitution (Δ145) |
+
+### 27.19 T1 as built (rev 3.26, 2026-10-21; branch `feat/drive-transcripts`, not deployed)
+What the code does today, so the reasoning above is not read as the state of the system. Where this list and an older paragraph
+disagree, the Δ136–Δ175 rows win.
+
+**Built (T1).** `Admission.TRANSCRIBE` and `POLICY_VERSION` 3 with `STRUCTURE_POLICY_SINCE` 2; the transcript state on the record
+(Δ152) and the job, batch, store, window and part documents (Δ143); the media child (`drive_parser/media*.py`: probe, per-window and
+pass extraction, hardened argv, rlimits, Δ99/Δ146/Δ161) behind `MediaAudioPort`; `GeminiBatchAdapter` behind `BatchTranscriptionPort`;
+`DriveTranscriberAgent` and `DriveTranscriptRunner`; the pure domain (`drive_transcript*.py`: windows, stitch and speaker alignment,
+interpolation, render, plan); `DriveTranscriptStage` (extraction and submission; poll, collect, settle, finalize, orphan sweep);
+the tick placement, kill switch, per-user flag and the purge; `UsageClass.TRANSCRIBE`, the batch price and the hard cap with
+reservations; the card segment, `open_file_from_drive` (transcript by default, `original` as a link), the skill and capabilities lines,
+the Cabinet cap line and disclosure; the composite and collection-group indexes; the four prompt documents of `drive_transcriber`.
+
+**The job, end to end.** A recording (`audio`/`video`) of a user with the kill switch and his flag on becomes `ready` (queue: newest
+first). The stage fetches a fresh download URL, probes it (duration, audio track, container), stubs it (`too_large`, `too_long`, `no_audio`)
+or reserves the whole file's estimate against the month's cap (else parks it until the next month), cuts audio-only Opus windows (≈ 30 min,
+60 s overlap), uploads them to the provider and submits one Gemini batch per user per step, keyed `{item_id}:{window}`. Later ticks poll
+(first after 2.5 min, then every 5 min), collect, book the real cost into the reservation's month, release the reservation, apply the
+per-window check rules (Δ162), stitch (seam cut, speaker alignment by code, interpolation) and finalize: the language-neutral body goes through the
+ordinary text path (gate, chunker, embeddings, §7.4 fence), the structured result goes to the store under the content key, the card gains
+`transcript: 47 min, 2 speakers, uk/en`, and the record is `current`. A copy, a rename or a move has the same key and never pays again.
+
+**Not built.** T2, the mirror folder (§27.9, `UIMessage.DRIVE_TRANSCRIPTS_FOLDER`, `conflict` mode on upload, the reconciliation, the audit):
+no transcript file is written to the user's drive; the transcript exists in the index and as the open text only. T3, the summary
+(§27.7, `DriveTranscriptSummaryAgent`, `SUMMARY_VERSION`, `RENDER_VERSION`, the header lines): there is no summary and the uncertain-seam
+line is printed only in the open text. The Cabinet transcription toggle (§27.12), the zero-credential parser service (OQ-T3: the flag
+stays off for every user but the owner), the scripts beyond the flag script are built in `scripts/infrastructure/` (`drive_transcribe_backlog.py`, `drive_transcribe_requeue.py`, the only re-buy path, and `drive_transcript_sweep.py`, the rollback), but their live runs are not, and the live eval
+numbers (§27.14: bars are recorded from the first live run).
+
+**Residuals the build accepted.** A drop that ffmpeg's reconnect cannot recover, in the re-run without `-xerror`, reads as the end of the file
+(Δ161). A process crash inside one Firestore write can still double-book a batch (Δ169). Speaker alignment on real multi-window audio is
+unmeasured until the live eval; a speaker silent through a whole overlap becomes a new label (Δ109). Prompts for `drive_transcriber` are
+uploaded by the owner, by default never from an agent session (§27.15). For the first run (2026-10-21) the owner explicitly delegated these steps to the assistant: the four prompt uploads (after a prompt-layer backup and a mirror check), the composite index deploy, the deploy with the switch off then on with a $10 cap, and setting the owner's per-user flag.
