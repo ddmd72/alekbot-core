@@ -33,8 +33,8 @@ recordings (§27)"; T1 record [drive_transcripts_t1.md](drive_transcripts_t1.md)
    overwritten by the bot (at the weekly audit at the latest); a rename or a move inside the folder is moved back. To keep a custom version, copy the file to another folder.
    Deleting an archived file makes the bot forget it (the document is deleted, the pin released); moving a file out of `_Transcripts` makes it the owner's copy. This
    **reverses** the earlier "an archived file is only followed, never rewritten" (§27.9.9) and the read-me's "do not edit" wording is now backed by behaviour (Δ241, built).
-   The bot still never deletes or re-creates an archived file. The read-me and the Cabinet `drive.mirror_clause` say it in the four languages. **Exception: detached files**
-   (the source is still there but has no stored transcript, so there is nothing to rewrite from) are left alone: the audit follows a rename or move and writes nothing.
+   The bot still never deletes or re-creates an archived file. The read-me and the Cabinet `drive.mirror_clause` say it in the four languages. Detached files (a recording that
+   left the index's scope; the file stays in place) are no exception: they keep their stored copy under a pin, so they are overwritten and moved back the same way (Δ243).
 2. **No mirror-only off switch.** The mirror is part of transcription. The stop lever is the user's transcription flag or the kill switch, and both also stop paid
    transcription, batches in flight included. The runbook states this side effect.
 
@@ -61,8 +61,8 @@ recordings (§27)"; T1 record [drive_transcripts_t1.md](drive_transcripts_t1.md)
 ## Consequences and costs
 
 - **Pace.** At most 40 Graph writes, 10 reads and 200 store stamps a tick; 5 000 first-time files take about 22 hours. No continuation is requested.
-- **Index dependency.** The indexer wires the ledger always (one `roots` query per tick) and the purge reads the pins; the Δ217 composite indexes must be
-  `READY` before the revision serves, or every purge and the owner's ticks stall as a store outage (Δ230).
+- **Index dependency.** The indexer wires the ledger always (one `roots` query per tick); the Δ217 composite indexes (10 on the ledger) must be `READY`
+  before the revision serves (Δ230), or the owner's mirror does nothing (the tick goes on, Δ236). The purge's pin reads need no composite (Δ237).
 - **Re-enable cost.** About $0.16 per audio hour at the held price for every active transcript, newest first, under the monthly cap (live $10, §27.9.12).
 - **Rollback.** Pause the queue and the fan-out, move `_Transcripts` out of the App Folder, deploy the old image, resume; reverse after the roll-forward. A T1
   image loses the pins within 30 days (named residual). `drive_transcript_sweep.py` keeps the mirror's data unless `--mirror`; `--mirror --apply` also needs `--after-rollback` and the owner's prior removal of `_Transcripts` from the App Folder (Δ229).

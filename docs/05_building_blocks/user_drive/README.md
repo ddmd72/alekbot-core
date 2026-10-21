@@ -1353,9 +1353,8 @@ A recording with no speech ("no speech", a silent clip) also gets a file: a shor
 **The files belong to the bot (owner ruling, 2026-10-21).** You do not edit transcript files on the drive. Every `.md` in `_Transcripts`, active or archived, is the
 bot's and is overwritten by it, at the weekly audit at the latest; a rename or a move inside the folder is moved back. To keep your own version, **copy the file to
 another folder**. Two more rules follow from it: deleting an archived file makes the bot forget it (its stored copy is released and it drops out of the deleted-files
-search), and moving a file out of `_Transcripts` makes it your copy (the bot lets go of it). The one exception is a **detached** transcript: a recording whose source is
-still on the drive but has no stored transcript the bot can rewrite it from (it left the index's scope). Nothing can be rewritten from, so the bot leaves the file alone
-(it follows a rename or a move inside the folder and writes nothing). The read-me and the Cabinet text say the same in the user's language.
+search), and moving a file out of `_Transcripts` makes it your copy (the bot lets go of it). A **detached** transcript (its recording left the index's scope, so the file stays where it
+is instead of moving to the Archive) is no exception: it keeps its stored copy under a pin, so it is overwritten and moved back the same way (RFC Δ243). The read-me and the Cabinet text say the same in the user's language.
 
 **What happens to a file.** The mirror step runs last in the tick, after a complete round, for a user with both switches on (§5, step 5a):
 - **Create / replace / move.** A recording whose transcript is `current` is made due by a flag on its record (`mirror_due`, set when the digest of its name,
@@ -1382,7 +1381,7 @@ still on the drive but has no stored transcript the bot can rewrite it from (it 
   current root (a folder the owner moved out gets no write until it is moved back).
 - **The audit** (weekly, one listing page per read, with a rotating scan between): an edit of an active file is overwritten, a deleted or moved active file is re-created or
   moved back, an edited archived file is overwritten from its stored copy and a renamed or moved one is moved back (Δ241; the bot never deletes or re-creates an archived
-  file), a detached file is only followed, a foreign item is counted and left alone, a missing read-me is rewritten. A listing that answers 404 is confirmed with a read before anything under it is discarded.
+  file), a detached file is treated like an archived one (Δ243), an active file both moved and edited is moved back and rewritten (Δ242), a foreign item is counted and left alone, a missing read-me is rewritten. A listing that answers 404 is confirmed with a read before anything under it is discarded.
 - **The root's loss.** If the root folder disappears, nothing happens for 24 hours and until a complete round and a confirming read agree; then archived documents are
   deleted (the files went with the folder, their pins are released), active ones are cleared and re-created under a new root. A restored old root is never written to again.
 
@@ -1969,8 +1968,9 @@ and index-time descriptions instead of query-time ranking. The full delta table 
   - *The spike.* The Graph behaviour the step rests on was measured on the owner's App Folder on 2026-10-21 (RFC Δ216): `fail` on the simple PUT and on PATCH, the path-relative
     GET, equal `cTag`s, a case-only rename in one PATCH, a leading underscore, the too-long-path answers; `permanentDelete` is unavailable, so every bot delete lands in the recycle bin.
   - *Indexes.* The mirror's composite indexes (`config/firestore.indexes.json`: records `mirror_due` and `mirror_retry_at`; the ledger's marks, children, kind walk, detached
-    recheck, the four pin queries, `mirror_item_id` and the three archived-search indexes) must be `READY` **before the T2 revision ships** (RFC Δ230): a missing index is a
-    store outage, so every purge (opt-outs too, through the pin reads) and the owner's ticks would stall. Check with
+    recheck, `pinned`'s two, `mirror_item_id` and the three archived-search indexes: 10 on the ledger) must be `READY` **before the T2 revision ships** (RFC Δ230): a
+    missing index makes the mirror do nothing (the tick itself goes on, Δ236) and the transcript stage's orphan sweep keep everything. No purge waits on a mirror
+    index: `pinned_keys` needs only single-field indexes (Δ237). Check with
     `gcloud firestore indexes composite list --database=us-production --project=<PROJECT_ID>`, then `drive_index_smoke.py`.
   - *Rollback.* Pause the drive queue and the fan-out job, move `_Transcripts` out of the App Folder (it keeps its item id), deploy the old image, resume. After the
     roll-forward: pause, move the folder back, deploy, resume. A stray T2 tick in between only sets the root-loss mark, which the 24 h grace keeps from acting. A rollback to a
