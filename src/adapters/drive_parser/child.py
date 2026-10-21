@@ -114,6 +114,10 @@ def dispatch(request: Dict[str, Any]) -> Dict[str, Any]:
             return {"status": "text", "pages": pages}
         except PdfSplitFailed as exc:
             return {"status": exc.status.value, "detail": exc.detail}
+    if op in ("media_probe", "media_windows"):   # ffprobe / ffmpeg on a download URL (§27.4); the grandchild inherits the limits
+        from src.adapters.drive_parser.media import run_probe, run_windows
+
+        return run_probe(request) if op == "media_probe" else run_windows(request)
     return {"status": "error", "detail": f"unknown op {op!r}"}
 
 

@@ -28,6 +28,7 @@ class MediaProbe:
     duration_s: float
     has_audio: bool
     container: str = ""
+    duration_known: bool = True       # False: ffprobe said N/A (a browser-recorded webm/mkv, G35); `duration_s` is 0.0
 
 
 @dataclass(frozen=True)
@@ -36,6 +37,43 @@ class WindowSpec:
     index: int
     start_s: float
     duration_s: float
+
+
+class MediaUnreadable(Exception):
+    """ffprobe/ffmpeg could not read the file (per-file transient: `extract_error`, §8.2). `detail` carries lengths and
+    hashes only, never the URL or ffmpeg's text."""
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(detail)
+        self.detail = detail
+
+
+class MediaStatus(str, Enum):
+    """How a media child run ended when it was not an unreadable file: mirrors `ExtractionStatus` timeout/memory."""
+    OK = "ok"
+    TIMEOUT = "timeout"
+    MEMORY = "memory"
+
+
+@dataclass(frozen=True)
+class MediaProbeOutcome:
+    """`probe` result: `probe` is set only when `status` is OK."""
+    status: MediaStatus
+    probe: Optional[MediaProbe] = None
+    detail: str = ""
+
+
+@dataclass(frozen=True)
+class MediaWindowsOutcome:
+    """`extract_windows` result. `windows`: (spec, local path) of every window finished before the wall, in order; on
+    TIMEOUT a prefix of the request (the caller resumes at the first missing one). For a pass without a known duration
+    (G35) the specs are read from the produced files and `duration_s` is the covered media time; `reached_bound` is
+    True when the pass stopped at `TRANSCRIBE_MAX_SECONDS` (the `too_long` stub)."""
+    status: MediaStatus
+    windows: Tuple[Tuple[WindowSpec, str], ...] = ()
+    duration_s: float = 0.0
+    reached_bound: bool = False
+    detail: str = ""
 
 
 @dataclass(frozen=True)
