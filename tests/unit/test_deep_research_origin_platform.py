@@ -295,13 +295,25 @@ class TestEventFilter:
 
 
 class TestDedup:
-    async def test_claims_job_before_delivery(self):
+    async def test_claim_is_recorded_before_delivery(self):
         dedup = _FakeDedup()
-        resp, _, deliver = await _post2(
-            "response.completed", {"id": "r1", "metadata": _MD2, "output_text": "t"}, dedup=dedup)
+        log = []
+        orig = dedup.try_mark_processed
+
+        async def claim(key):
+            log.append("claim")
+            return await orig(key)
+
+        async def deliver(**_):
+            log.append("deliver")
+
+        dedup.try_mark_processed = claim
+        resp, _, _ = await _post2(
+            "response.completed", {"id": "r1", "metadata": _MD2, "output_text": "t"},
+            dedup=dedup, deliver_side=deliver)
         assert resp.status_code == 200
+        assert log == ["claim", "deliver"]
         assert "openai_deep_research:r1" in dedup.claimed
-        deliver.assert_awaited_once()
 
     async def test_duplicate_is_skipped_with_200(self):
         dedup = _FakeDedup()
@@ -351,3 +363,36 @@ class TestEmptyUserAndIncomplete:
         assert kw["channel_id_override"] == "C1" and kw["platform_override"] == "telegram"
         assert "incomplete" in kw["system_alert"]
         deliver.assert_not_called()
+
+
+class TestEnqueueFailureNotice:
+    async def _run(self, queue):
+        from src.services.deep_research_delivery import deliver_deep_research
+        notifier = AsyncMock()
+        await deliver_deep_research(
+            result_text="r", user_id="u", account_id="a", query="q", task_queue=queue,
+            session_id="u:C1", channel_id_override="C1", platform_override="telegram",
+            failure_notification=notifier)
+        return notifier
+
+    async def test_enqueue_failure_notifies_once_with_overrides(self):
+        queue = AsyncMock()
+        queue.enqueue_agent_task.side_effect = RuntimeError("tasks down")
+        notifier = await self._run(queue)
+        notifier.notify.assert_awaited_once()
+        kw = notifier.notify.await_args.kwargs
+        assert kw["channel_id_override"] == "C1" and kw["platform_override"] == "telegram"
+        assert "tasks down" not in kw["system_alert"]
+
+    async def test_enqueue_ok_does_not_notify(self):
+        notifier = await self._run(AsyncMock())
+        notifier.notify.assert_not_called()
+
+    async def test_notice_failure_is_not_raised(self):
+        queue = AsyncMock()
+        queue.enqueue_agent_task.side_effect = RuntimeError("tasks down")
+        from src.services.deep_research_delivery import deliver_deep_research
+        notifier = AsyncMock()
+        notifier.notify.side_effect = RuntimeError("slack down")
+        await deliver_deep_research(result_text="r", user_id="u", account_id="a", query="q",
+                                    task_queue=queue, failure_notification=notifier)
