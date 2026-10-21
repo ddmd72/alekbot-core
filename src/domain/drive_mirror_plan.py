@@ -52,6 +52,12 @@ from .drive_mirror_render import RENDER_VERSION
 
 MIRROR_PLAN_VERSION = 1
 
+
+def seed_version() -> str:
+    """The root document's `seed_version` once the seed is done (§27.9.4): `"{MIRROR_PLAN_VERSION}.{RENDER_VERSION}"`,
+    read at call time. The one formula: the mirror step and the tick both use it."""
+    return f"{MIRROR_PLAN_VERSION}.{RENDER_VERSION}"
+
 _SEP = "\x1f"
 REDO_DIGEST = "redo"   # `mirrored_digest` of a record whose mirror item must be placed or written again: never a real
                        # digest (those are 32 hex), and not "" (a folder with "" is not eligible, and a record with ""
