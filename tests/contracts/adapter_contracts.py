@@ -842,6 +842,23 @@ BATCH_FILE_URI_FROM_STORED_NAME = ContractRule(
     validators={"gemini_batch": _check_file_uri_from_name},
 )
 
+BATCH_FIND_BY_SUBMITTED_DISPLAY_NAME = ContractRule(
+    name="BATCH_FIND_BY_SUBMITTED_DISPLAY_NAME",
+    description=(
+        "find_batch(display_name) matches a listed job by exactly the display name submit() sent for the same argument "
+        "(the adapter's hash), never by the raw argument (T-R28). Input: {argument, submitted: the display name "
+        "batches.create received, matched: the display_name of the job find_batch returned}."
+    ),
+    validators={
+        "gemini_batch": lambda d: (
+            _eq(d["matched"], d["submitted"],
+                "Gemini batch: find_batch must match the display name submit sent for the same argument"),
+            _true(d["argument"] not in (d["submitted"] or ""),
+                  "Gemini batch: the raw display name must never reach the provider"),
+        ),
+    },
+)
+
 BATCH_PER_RESPONSE_ERROR_SURFACED = ContractRule(
     name="BATCH_PER_RESPONSE_ERROR_SURFACED",
     description=(

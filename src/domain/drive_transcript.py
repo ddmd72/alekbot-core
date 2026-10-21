@@ -181,6 +181,8 @@ class JobWindow:
     reupload_used: bool = False       # the one re-extract and re-upload of an expired file is spent
     batch_resubmits: int = 0          # the one resubmit after its batch failed, expired or was cancelled whole (§27.5)
     refused: bool = False             # its gap marker stands for a provider refusal (an all-gap file is final only then, T-R23)
+    lost_purchases: int = 0           # batches it rode whose outcome is unknown, booked as bought (T-R29): a re-purchase since
+    accepted_short: bool = False      # a window over TRANSCRIBE_SHORT_ACCEPT_MAX_S accepted short (T-R31): the transcript is `truncated`
 
 
 @dataclass(frozen=True)
@@ -201,7 +203,14 @@ class TranscriptJob:
 
 @dataclass(frozen=True)
 class TranscriptBatch:
-    """One provider batch: one user, windows of several files as independent requests (Δ103)."""
+    """One provider batch: one user, windows of several files as independent requests (Δ103).
+
+    T-R28: a submission writes its document BEFORE the provider is asked, in state `submitting`, under a name of its
+    own (`submitting/<id>`, never a provider name) with the `display_name` the adapter hashes, the request keys and the
+    reservation, and the windows are marked in it; the provider's batch name is recorded on it (`provider_name`) the
+    moment the call returns, then the document is moved to that name (the batch everybody polls). A call that failed
+    ambiguously leaves it `submitting`: the poll looks the provider batch up by its display name (`lookups` counts the
+    misses) and either moves it, or after BATCH_SUBMIT_LOOKUPS misses hands its windows and reservation back."""
     name: str
     user_id: str
     request_keys: Tuple[str, ...] = ()
@@ -209,11 +218,14 @@ class TranscriptBatch:
     last_polled_at: Optional[datetime] = None
     reserved_usd: float = 0.0         # the sum of this submission's reservations (T-R11), not the file's
     reserved_month: str = ""          # "YYYY-MM" of that reservation (G9)
-    state: str = "submitted"          # submitted | done | failed; a closed batch has no `next_poll_at`
+    state: str = "submitted"          # submitting | submitted | done | failed; a closed batch has no `next_poll_at`
     created_at: Optional[datetime] = None
     next_poll_at: Optional[datetime] = None   # None = closed; set = open and due then (§27.5)
     kind: str = BATCH_KIND_TRANSCRIBE
     booked_at: Optional[datetime] = None      # when its collected cost was booked: a re-collection books nothing (T-R22)
+    display_name: str = ""            # `submitting` only: the name the adapter hashes into the provider's display name (T-R28)
+    provider_name: str = ""           # `submitting` only: the provider's batch name, once the submit call returned it (T-R28)
+    lookups: int = 0                  # `submitting` only: lookups by display name that found nothing (T-R28)
 
 
 def safe_doc_id(raw: str) -> str:
@@ -242,6 +254,7 @@ def transcript_doc_id(user_id: str, content_key: str) -> str:
 
 
 BATCH_CLOSED_STATES: Tuple[str, ...] = ("done", "failed")
+BATCH_SUBMITTING = "submitting"       # written before the provider is asked (T-R28); open, polled by its lookup
 
 
 def normalized_batch(batch: TranscriptBatch) -> TranscriptBatch:
@@ -272,5 +285,6 @@ def job_url_fields(job: TranscriptJob) -> List[str]:
 
 
 def batch_url_fields(batch: TranscriptBatch) -> List[str]:
-    found = url_fields(name=batch.name, reserved_month=batch.reserved_month, state=batch.state, kind=batch.kind)
+    found = url_fields(name=batch.name, reserved_month=batch.reserved_month, state=batch.state, kind=batch.kind,
+                       display_name=batch.display_name, provider_name=batch.provider_name)
     return found + [f"request_keys[{i}]" for i, k in enumerate(batch.request_keys) if url_fields(k=k)]

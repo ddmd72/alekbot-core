@@ -3,7 +3,7 @@ GeminiBatchAdapter — BatchTranscriptionPort over the Gemini Batch API (docs/10
 
 Public interface:
     GeminiBatchAdapter(api_key, model, *, file_base_url=..., call_timeout_s=..., upload_timeout_s=...)
-    upload_audio / submit / poll / collect / delete_file  (see BatchTranscriptionPort)
+    upload_audio / submit / find_batch / poll / collect / delete_file  (see BatchTranscriptionPort)
 
 Batch rules (Δ131, measured on google-genai 2.17.0):
   * the schema goes as a typed `response_schema` with `response_mime_type="application/json"`; an inline request's
@@ -46,6 +46,8 @@ T = TypeVar("T")
 
 DEFAULT_FILE_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 _FILE_TTL = timedelta(hours=48)  # the Files API keeps an input for 48 h; used when the SDK returns no expiry
+FIND_PAGE_SIZE = 100            # find_batch: jobs per listed page
+FIND_MAX_JOBS = 2_000           # find_batch: jobs scanned at most (weeks of this project's batches); past it: not found
 
 _STATES: Dict[Any, BatchStatus] = {
     types.JobState.JOB_STATE_UNSPECIFIED: BatchStatus.PENDING,
@@ -117,6 +119,26 @@ class GeminiBatchAdapter(BatchTranscriptionPort):
             raise LLMUnavailableError("submit: the provider returned a job without a name")
         logger.info("[GeminiBatch] submitted batch (requests=%d)", len(inlined))
         return BatchRef(name=job.name or "", keys=tuple(r.key for r in requests))
+
+    async def find_batch(self, display_name: str) -> Optional[BatchRef]:
+        wanted = _hash(display_name)   # the name submit() sent; the raw one never reaches the provider
+
+        async def scan() -> Optional[types.BatchJob]:
+            pager = await self.client.aio.batches.list(config=types.ListBatchJobsConfig(page_size=FIND_PAGE_SIZE))
+            scanned = 0
+            async for job in pager:
+                if job.display_name == wanted:
+                    return job
+                scanned += 1
+                if scanned >= FIND_MAX_JOBS:
+                    logger.warning("[GeminiBatch] find: scan bound reached (jobs=%d), not found", scanned)
+                    return None
+            return None
+
+        job = await self._call("find", self._call_timeout_s, scan)
+        found = job is not None and bool(job.name)
+        logger.info("[GeminiBatch] find by display name: %s", "found" if found else "not found")
+        return BatchRef(name=job.name or "") if job is not None and job.name else None
 
     async def poll(self, batch: BatchRef) -> BatchStatus:
         job = await self._call("poll", self._call_timeout_s, lambda: self.client.aio.batches.get(name=batch.name))

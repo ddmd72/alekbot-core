@@ -2,7 +2,9 @@
 DriveTranscriptStage — the transcript stage on the indexer. Part A: extraction, upload, submission
 (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §27.3-§27.6, §27.10; plan Task 12; G12, G18, G20, G31, G35, G39; rulings T-R8,
 T-R9, T-R11, T-R15, T-R16, T-R18). Part B: poll, collect, settle, resubmit, finalize, orphan sweep (§27.5-§27.8; plan
-Task 13; G9, G20, G32, G33, G37; rulings T-R11, T-R18, T-R20).
+Task 13; G9, G20, G32, G33, G37; rulings T-R11, T-R18, T-R20). Final-review fixes: T-R28 (a submission on record before it
+is made), T-R29 (an unknown batch outcome booked as bought), T-R30 (copies wait for any same-key record at the key),
+T-R31 (a long window accepted short is stored truncated).
 
 Public interface:
     DriveTranscriptStage(repo, drive, media, batch, runner, *, clock, monotonic, monthly_cap_usd, temp_root)
@@ -26,7 +28,7 @@ step started before it ends before the tick deadline, G16):
    reservation (a crash between writes) starts again, one whose windows are all submitted is set `waiting`; an
    unreadable job document is dropped and charged one attempt.
 2. copies waiting on another file (G12; `waiting` with no job of their own): finalized from the store once the other
-   lands, back to `ready` when it is no longer in flight.
+   lands, back to `ready` when no same-key record holds the key any more (working, waiting, parked or held, T-R30).
 3. the queue, newest first (`transcript_queue`): a store hit finalizes with no ffmpeg and no model (Δ112; also a
    `current` record whose body or extraction version is no longer the code's, G18/G31: the plan made it `ready`); a
    copy in flight waits; otherwise a fresh download URL (never stored, never logged, Δ98/Δ134), the probe (its duration,
@@ -34,6 +36,10 @@ step started before it ends before the tick deadline, G16):
    A container without a duration header reserves the worst case and learns its duration from the extraction (G35).
 4. one submission per user per step (Δ103): every file whose windows are all uploaded, keys `{item_id}:{index}`; a
    re-purchase of a window collection sent back is reserved on its own (T-R8), its sum carried by the batch (T-R11).
+   The reservation, a `submitting` batch document and the windows marked in it are written BEFORE the provider is
+   asked (T-R28); its answer is recorded with no fence in between and the document moved to the provider's name. A
+   certain refusal (a 4xx, 429 included) gives everything back once; any other failure keeps the document for the
+   poll to look up by display name.
 
 Money (Δ106): the context is built from the usage document of `month_key(now)` and threaded through every decision of
 the step, so two files never pass one cap (G39). Every reservation is written before what it pays for; every release
@@ -51,7 +57,11 @@ else the tick does goes on. Nothing from a transcript, no download URL and no pr
 1. polls at most BATCH_POLLS_PER_TICK due batches, one poll each (first BATCH_POLL_FIRST_S after submission, set by part
    A; then every BATCH_POLL_EVERY_S, every BATCH_POLL_SLOW_S once older than BATCH_SLOW_AFTER_S). An open batch is always
    saved with its next poll. A provider outage on a poll or a collection backs the agent off and ends the polling; a
-   batch the provider no longer knows (a client error) is settled as failed.
+   batch the provider no longer knows (a client error) is settled as failed and its money BOOKED as bought (T-R29).
+   A `submitting` document is looked up by its display name: found, it is moved to the provider batch; not found after
+   BATCH_SUBMIT_LOOKUPS lookups and BATCH_SUBMIT_LOOKUP_MIN_AGE_S, its windows and reservation go back once (T-R28).
+   One batch's own error (a bad document, a bug) is logged and that batch polled again after BATCH_ERROR_BACKOFF_S;
+   the others go on.
 2. collects a succeeded batch: the runner parses and bills each answer (Δ105); the stage books the real cost first
    (`spend("transcribe", ...)`) in the month of the reservation that paid for each window (G9: the file's month for a
    first purchase, the batch's for a re-purchase; an answer with text but no priced cost at its window's estimate) and
@@ -81,6 +91,7 @@ import os
 import shutil
 import tempfile
 import time
+import uuid
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from typing import Callable, Dict, List, Mapping, Optional, Protocol, Sequence, Set, Tuple
@@ -90,21 +101,22 @@ from ..domain.drive_enrichment import UsageClass
 from ..domain.drive_extraction import TRANSCRIBE_LINK, DriveModelUnavailable
 from ..domain.drive_index import TRANSCRIBE_VERSION, DriveIndexRecord
 from ..domain.drive_index_params import (
-    BATCH_POLL_FIRST_S, BATCH_POLLS_PER_TICK, TRANSCRIBE_EXTRACT_WALL_S, TRANSCRIBE_MAX_SECONDS,
-    TRANSCRIBE_MIN_RUN_WALL_S, TRANSCRIBE_USD_PER_MONTH, TRANSCRIBE_WINDOW_S, TRANSCRIPT_ORPHAN_TTL,
+    BATCH_ERROR_BACKOFF_S, BATCH_POLL_FIRST_S, BATCH_POLLS_PER_TICK, BATCH_SUBMIT_LOOKUP_MIN_AGE_S,
+    BATCH_SUBMIT_LOOKUPS, TRANSCRIBE_EXTRACT_WALL_S, TRANSCRIBE_MAX_SECONDS, TRANSCRIBE_MIN_RUN_WALL_S,
+    TRANSCRIBE_USD_PER_MONTH, TRANSCRIBE_WINDOW_S, TRANSCRIPT_ORPHAN_TTL,
 )
 from ..domain.drive_index_planner import month_key
 from ..domain.drive_transcript import (
-    JobWindow, MediaProbe, MediaStatus, MediaUnreadable, MediaWindowsOutcome, StoredTranscript, TranscriptBatch,
+    BATCH_CLOSED_STATES, BATCH_SUBMITTING, JobWindow, MediaProbe, MediaStatus, MediaUnreadable, MediaWindowsOutcome, StoredTranscript, TranscriptBatch,
     TranscriptJob, TranscriptStub, WindowInput, WindowOutcome, WindowResult, WindowSpec, WindowTranscript,
 )
 from ..domain.drive_transcript_job import (
     DONE, SUBMITTED, after_failed_batch, all_done, check_window, file_gone, in_batch, is_repurchase, poll_after,
-    ready_to_submit, request_key, resettled, resubmits, split_request_key, stitch_job, submitted, windows_to_extract,
-    with_uploaded,
+    ready_to_submit, repointed, request_key, resettled, resubmits, split_request_key, stitch_job, submitted,
+    unsubmitted, windows_to_extract, with_uploaded,
 )
 from ..domain.drive_transcript_plan import (
-    CURRENT, FAILED, NONE, READY, TRANSCRIBER_AGENT, WAITING, WORKING, Reservation, StartOutcome, TranscriptContext,
+    CURRENT, FAILED, HELD, NONE, PARKED, READY, TRANSCRIBER_AGENT, WAITING, WORKING, Reservation, StartOutcome, TranscriptContext,
     WindowAction, WindowCheck, charge_attempt, mark_current, park, release, resume_window, start_file, state_for_job,
     stub_record, wait_for_copy, window_estimate_usd, window_failed,
 )
@@ -131,6 +143,12 @@ _FILE_GONE_CODES = (5, 7)           # rpc NOT_FOUND / PERMISSION_DENIED on a fil
 # the connection, its throttling and a revoked grant are the tick's (re-raised).
 _URL_ERRORS = (DriveItemNotFoundError, DriveAccessDenied, asyncio.TimeoutError, ValueError, OSError)
 _DRIVE_SYSTEMIC = (DriveNotConnectedError, DriveThrottled, DriveReauthRequired)
+_IN_FLIGHT = (WORKING, WAITING, PARKED, HELD)   # a same-key record in one of these holds the key: a copy waits (T-R30)
+_SUBMITTING_PREFIX = "submitting/"   # the name of a batch document written before the provider is asked (T-R28)
+# A submission the provider certainly did not create: a 4xx refusal of the create call (429 included), or no call made
+# (a missing prompt). Any other LLMError (a timeout, a 5xx, a dropped connection, a job without a name) may have
+# created the batch: its outcome is unknown, and the `submitting` document stays to be looked up (T-R28).
+_SUBMIT_REFUSED = (LLMClientError, LLMRateLimitError, DriveModelUnavailable)
 
 
 class TranscriptHost(Protocol):
@@ -182,6 +200,20 @@ class TranscriptRunner(Protocol):
 
 class _JobUnwritable(Exception):
     """The store refused a job document (a plain ValueError of its codec): the file is charged, never the tick."""
+
+
+# What one batch's handling may raise that is that batch's own problem (a bad document, a bug), never the tick's: the
+# batch is logged and polled again after BATCH_ERROR_BACKOFF_S, the other batches go on. Outages are handled where they
+# happen; the lease, an opt-out and the store's systemic errors are none of these and end the tick as anywhere else.
+_BATCH_LOCAL = (ValueError, KeyError, TypeError, AttributeError, IndexError, ArithmeticError, _JobUnwritable)
+
+
+@dataclass
+class _Tracked:
+    """The latest saved form of the batch being handled, so the error path never writes back an older one (a lost
+    `booked_at` would book twice, a reopened closed batch would release twice); `gone` once its document is deleted."""
+    batch: TranscriptBatch
+    gone: bool = False
 
 
 @dataclass
@@ -583,12 +615,19 @@ class DriveTranscriptStage:
     async def _submit(self, user_id: str, host: TranscriptHost, step: _Step, summary: Dict[str, int]) -> None:
         """One batch for every file whose windows are all uploaded (Δ103). A window collection sent back is a new
         purchase: reserved here (`resume_window`, T-R8), its sum carried by the batch document (T-R11); when it does
-        not fit, its file is parked mid-job (`park(..., resubmit=True)`) and goes in no batch."""
+        not fit, its file is parked mid-job (`park(..., resubmit=True)`) and goes in no batch.
+
+        T-R28, the purchase is on record before it is made: the reservation, then a `submitting` batch document (its
+        own name, the display name the adapter hashes, the request keys, the reservation), then each job's windows
+        marked in it, and only then the provider call. Its answer is recorded on that document with no fence in
+        between, and the document is moved to the provider's name (`_complete_submission`). A call that failed for
+        certain (`_SUBMIT_REFUSED`) gives everything back once; any other failure keeps the document and the marks: the
+        poll looks the provider batch up by its display name (`_poll_submitting`), so the windows are never bought twice
+        and a batch that ran is always booked."""
         if not step.ready:
             return
         now = self._clock()
-        inputs: List[WindowInput] = []
-        files: List[Tuple[DriveIndexRecord, TranscriptJob]] = []
+        files: List[Tuple[DriveIndexRecord, TranscriptJob, List[WindowInput]]] = []
         held = 0.0
         for item_id in sorted(step.ready):
             rec, job = step.ready[item_id]
@@ -608,42 +647,127 @@ class DriveTranscriptStage:
                 continue
             step.ctx = ctx
             held += file_held
-            files.append((rec, job))
-            inputs += [WindowInput(key=request_key(job.item_id, w.spec.index), window=w.spec, file_name=w.file_ref,
-                                   file_mime=WINDOW_MIME) for w in job.windows if w.state == "uploaded"]
-        if not inputs:
+            files.append((rec, job, [WindowInput(key=request_key(job.item_id, w.spec.index), window=w.spec,
+                                                 file_name=w.file_ref, file_mime=WINDOW_MIME)
+                                     for w in job.windows if w.state == "uploaded"]))
+        if not any(inputs for _, _, inputs in files):
             return
         month = month_key(step.ctx.now)   # the month every reservation of this step was decided in (G9)
+        slot = f"{_SUBMITTING_PREFIX}{uuid.uuid4().hex}"
+        pending = TranscriptBatch(name=slot, user_id=user_id,
+                                  request_keys=tuple(i.key for _, _, inputs in files for i in inputs),
+                                  created_at=now, reserved_usd=held, reserved_month=month if held > 0 else "",
+                                  state=BATCH_SUBMITTING, next_poll_at=now + timedelta(seconds=BATCH_POLL_FIRST_S),
+                                  display_name=f"{user_id}:{slot}")
         host.fence()
         if held > 0:
-            await host.reserve(held, month)
-        try:
-            ref = await self._runner.submit(inputs, display_name=f"{user_id}:{now.isoformat()}")
-        except (LLMError, DriveModelUnavailable) as exc:
+            await host.reserve(held, month)   # written before the purchase it pays for
+        if not await self._repo.create_batch(pending):
+            logger.error(f"[DriveTranscript] a submitting batch document for user={user_id[:8]} already existed: "
+                         f"nothing submitted")
             if held > 0:
-                await host.release(held, month)   # nothing was bought: given back once, before anything else
+                await host.release(held, month)
                 step.freed(held, month)
+            return
+        marked: List[Tuple[DriveIndexRecord, TranscriptJob, TranscriptJob, List[WindowInput]]] = []
+        for rec, job, inputs in files:
+            if not inputs:
+                continue
+            try:
+                done = submitted(job, slot)
+                await self._save_job(host, done)
+            except _JobUnwritable:
+                continue   # logged by `_save_job`; stage A drops the document and charges the file
+            marked.append((rec, job, done, inputs))
+        if not marked:
+            await self._drop_pending(host, pending, summary)
+            step.freed(held, month)
+            return
+        inputs = [i for _, _, _, file_inputs in marked for i in file_inputs]
+        try:
+            ref = await self._runner.submit(inputs, display_name=pending.display_name)
+        except _SUBMIT_REFUSED as exc:   # nothing was created: the marks, the document and the reservation go back
+            for _, job, _, _ in marked:
+                with contextlib.suppress(_JobUnwritable):
+                    await self._save_job(host, job)
+            await self._drop_pending(host, pending, summary)
+            step.freed(held, month)
             await self._outage(host, step, summary, f"submit: {type(exc).__name__}")
             return
-        host.fence()
-        batch = TranscriptBatch(name=ref.name, user_id=user_id, request_keys=tuple(i.key for i in inputs),
-                                submitted_at=now, created_at=now, reserved_usd=held,
-                                reserved_month=month if held > 0 else "", state="submitted",
-                                next_poll_at=now + timedelta(seconds=BATCH_POLL_FIRST_S))
-        if not await self._repo.create_batch(batch):   # first: the purchase is on record before the jobs name it
-            logger.error(f"[DriveTranscript] batch document for user={user_id[:8]} already existed")
-        records: List[DriveIndexRecord] = []
-        before: Dict[str, DriveIndexRecord] = {}
-        for rec, job in files:
-            done = submitted(job, ref.name)
-            await self._save_job(host, done)
-            records.append(replace(rec, transcript_state=state_for_job(done)))
-            before[rec.item_id] = rec
-        await host.commit(records, before)
+        except LLMError as exc:   # outcome unknown: possibly bought, never bought twice (T-R28)
+            logger.warning(f"[DriveTranscript] submit for user={user_id[:8]} ended {type(exc).__name__}: the batch "
+                           f"may exist; looked up by its display name at the next poll, windows kept in it")
+            _inc(summary, "batch_submit_unknown")
+            await self._outage(host, step, summary, f"submit: {type(exc).__name__}")
+            return
+        # no fence between the provider's answer and the record of it: the purchase is never lost (T-R28)
+        pending = replace(pending, provider_name=ref.name, request_keys=tuple(i.key for i in inputs))
+        await self._repo.save_batch(pending)
+        await self._complete_submission(user_id, host, pending, now, marked=[(rec, done) for rec, _, done, _ in marked])
         _inc(summary, "windows_submitted", len(inputs))
         _inc(summary, "transcript_batches")
-        logger.info(f"[DriveTranscript] submitted user={user_id[:8]} files={len(files)} windows={len(inputs)} "
+        logger.info(f"[DriveTranscript] submitted user={user_id[:8]} files={len(marked)} windows={len(inputs)} "
                     f"reserved_resubmits=${held:.4f}")
+
+    async def _complete_submission(self, user_id: str, host: TranscriptHost, pending: TranscriptBatch, now: datetime,
+                                   *, marked: Optional[Sequence[Tuple[DriveIndexRecord, TranscriptJob]]] = None
+                                   ) -> TranscriptBatch:
+        """T-R28: a `submitting` document whose provider batch is known (`provider_name`) moves to that name, in an
+        order that makes a stop anywhere harmless: the jobs' windows name the provider batch first (no document of that
+        name exists yet, so nothing polls them half-moved), then the batch document is created under the provider name
+        (it carries the reservation from now on), then the `submitting` one is deleted. A stop before the delete is
+        completed by the next poll of the `submitting` document; idempotent. `marked`: the jobs as the submission left
+        them, with their records (the submission itself); otherwise the jobs are read (a completion after a stop)."""
+        real_name = pending.provider_name
+        if marked is None:
+            loaded = await self._load_files(user_id, self._items_of(pending))
+            pairs = [(rec, job) for rec, job, unreadable in loaded.values() if job is not None]
+        else:
+            pairs = [(rec, job) for rec, job in marked]
+        records: List[DriveIndexRecord] = []
+        before: Dict[str, DriveIndexRecord] = {}
+        for rec, job in pairs:
+            if not in_batch(job, pending.name):
+                continue
+            moved = repointed(job, pending.name, real_name)
+            try:
+                await self._save_job(host, moved)
+            except _JobUnwritable:
+                continue   # logged; stage A drops the document and charges the file
+            if marked is not None and rec is not None:
+                records.append(replace(rec, transcript_state=state_for_job(moved)))
+                before[rec.item_id] = rec
+        if records:
+            await host.commit(records, before)
+        created = pending.created_at or now
+        real = TranscriptBatch(name=real_name, user_id=user_id, request_keys=pending.request_keys,
+                               submitted_at=created, created_at=created, reserved_usd=pending.reserved_usd,
+                               reserved_month=pending.reserved_month, state="submitted",
+                               next_poll_at=max(now, created + timedelta(seconds=BATCH_POLL_FIRST_S)))
+        host.fence()
+        if not await self._repo.create_batch(real):
+            logger.info(f"[DriveTranscript] batch document for user={user_id[:8]} existed: a completion repeated")
+        await self._repo.delete_batch(user_id, pending.name)
+        return real
+
+    async def _drop_pending(self, host: TranscriptHost, pending: TranscriptBatch, summary: Dict[str, int]) -> None:
+        """A `submitting` document whose batch was certainly never created: deleted first, then its reservation is
+        released once (the jobs it named were handed back before)."""
+        host.fence()
+        await self._repo.delete_batch(pending.user_id, pending.name)
+        if pending.reserved_usd > 0:
+            await host.release(pending.reserved_usd, pending.reserved_month)
+        _inc(summary, "batches_never_created")
+
+    @staticmethod
+    def _items_of(batch: TranscriptBatch) -> List[str]:
+        item_ids: List[str] = []
+        for key in batch.request_keys:
+            with contextlib.suppress(ValueError):
+                item_id = split_request_key(key)[0]
+                if item_id not in item_ids:
+                    item_ids.append(item_id)
+        return item_ids
 
     # ------------------------------------------------------------------------------------------------------------
     # Outcomes
@@ -720,8 +844,13 @@ class DriveTranscriptStage:
 
     async def _release_job(self, user_id: str, host: TranscriptHost, job: Optional[TranscriptJob],
                            step: Optional[_Step]) -> None:
-        """The job keeps its windows and gives its reservation back: the document first, the release once after it."""
+        """The job keeps its windows and gives its reservation back: the document first, the release once after it.
+        Not while a window of it is in a batch (T-R20): that batch may still run and bill against the reservation, which
+        collection settles when it drops or finishes the job."""
         if job is None or job.reserved_usd <= 0:
+            return
+        if any(w.state == SUBMITTED for w in job.windows):
+            logger.info(f"[DriveTranscript] job of {_short(job.item_id)} has windows in a batch: reservation kept")
             return
         usd, month = job.reserved_usd, job.reserved_month
         await self._save_job(host, replace(job, reserved_usd=0.0, reserved_month=""))
@@ -762,7 +891,9 @@ class DriveTranscriptStage:
     async def _poll_batches(self, user_id: str, host: TranscriptHost, summary: Dict[str, int],
                             finished: List[str]) -> None:
         """One poll per due batch, at most BATCH_POLLS_PER_TICK (Δ104). A provider outage ends the polling of this
-        step and backs the agent off; the batch stays as it was and is polled again next step."""
+        step and backs the agent off; the batch stays as it was and is polled again next step. One batch's own error
+        (`_BATCH_LOCAL`: a bad document, a bug) is logged, that batch is polled again after BATCH_ERROR_BACKOFF_S, and
+        the others go on."""
         now = self._clock()
         try:
             due = await self._repo.get_open_batches(user_id, now, BATCH_POLLS_PER_TICK)
@@ -772,43 +903,126 @@ class DriveTranscriptStage:
             _inc(summary, "batch_unreadable")
             return
         for batch in due:
-            if not batch.request_keys:   # nothing to collect, ever: closed, never rescheduled forever
-                logger.error(f"[DriveTranscript] a batch of user={user_id[:8]} has no request keys: closed as failed")
-                await self._close_batch(host, batch, "failed", now, summary)
-                continue
-            ref = BatchRef(name=batch.name, keys=batch.request_keys)   # keys: collect needs them (Task 10)
+            track = _Tracked(batch)
             try:
-                status = await self._batch.poll(ref)
-            except LLMAccountError as exc:   # a 403 on the batch is the account's, not the batch's (Task 10)
-                await self._collect_outage(host, summary, f"poll: {type(exc).__name__}")
-                return
-            except LLMClientError as exc:   # the provider no longer knows the batch: nothing can be collected
-                logger.error(f"[DriveTranscript] a batch of user={user_id[:8]} is gone at the provider "
-                               f"({type(exc).__name__}, status={exc.http_status}): settled as failed")
-                status = BatchStatus.FAILED
-            except LLMError as exc:
-                await self._collect_outage(host, summary, f"poll: {type(exc).__name__}")
-                return
-            _inc(summary, "batch_polls")
-            if status in (BatchStatus.PENDING, BatchStatus.RUNNING):
-                await self._reschedule(host, batch, now)
-            elif status is BatchStatus.SUCCEEDED:
-                if not await self._collect(user_id, host, batch, ref, summary, finished):
+                if not await self._poll_one(user_id, host, track, now, summary, finished):
                     return
-            else:
-                await self._failed_batch(user_id, host, batch, status, summary, finished)
+            except _BATCH_LOCAL as exc:
+                logger.error(f"[DriveTranscript] a batch of user={user_id[:8]} could not be handled "
+                             f"({type(exc).__name__}): polled again in {BATCH_ERROR_BACKOFF_S // 60} min")
+                _inc(summary, "batch_errors")
+                if not track.gone and track.batch.state not in BATCH_CLOSED_STATES:
+                    host.fence()
+                    await self._repo.save_batch(replace(track.batch, last_polled_at=now,
+                                                        next_poll_at=now + timedelta(seconds=BATCH_ERROR_BACKOFF_S)))
 
-    async def _reschedule(self, host: TranscriptHost, batch: TranscriptBatch, now: datetime) -> None:
+    async def _poll_one(self, user_id: str, host: TranscriptHost, track: _Tracked, now: datetime,
+                        summary: Dict[str, int], finished: List[str]) -> bool:
+        """One due batch; False when an outage ends this step's polling."""
+        batch = track.batch
+        if batch.state == BATCH_SUBMITTING:
+            return await self._poll_submitting(user_id, host, track, now, summary)
+        if not batch.request_keys:   # nothing to collect, ever: closed, never rescheduled forever
+            logger.error(f"[DriveTranscript] a batch of user={user_id[:8]} has no request keys: closed as failed")
+            await self._close_batch(host, track, "failed", now, summary)
+            return True
+        ref = BatchRef(name=batch.name, keys=batch.request_keys)   # keys: collect needs them (Task 10)
+        unknown = False
+        try:
+            status = await self._batch.poll(ref)
+        except LLMAccountError as exc:   # a 403 on the batch is the account's, not the batch's (Task 10)
+            await self._collect_outage(host, summary, f"poll: {type(exc).__name__}")
+            return False
+        except LLMClientError as exc:   # the provider no longer knows the batch: nothing can be collected
+            logger.error(f"[DriveTranscript] a batch of user={user_id[:8]} is gone at the provider "
+                         f"({type(exc).__name__}, status={exc.http_status}): settled as failed, booked as bought")
+            status, unknown = BatchStatus.FAILED, True
+        except LLMError as exc:
+            await self._collect_outage(host, summary, f"poll: {type(exc).__name__}")
+            return False
+        _inc(summary, "batch_polls")
+        if status in (BatchStatus.PENDING, BatchStatus.RUNNING):
+            await self._reschedule(host, track, now)
+        elif status is BatchStatus.SUCCEEDED:
+            return await self._collect(user_id, host, track, ref, summary, finished)
+        else:
+            await self._failed_batch(user_id, host, track, status, summary, finished, unknown=unknown)
+        return True
+
+    async def _poll_submitting(self, user_id: str, host: TranscriptHost, track: _Tracked, now: datetime,
+                               summary: Dict[str, int]) -> bool:
+        """T-R28: a submission whose provider call failed with an unknown outcome (or whose move a stop cut short). A
+        known provider name completes the move. Otherwise the provider batch is looked up by the display name: found,
+        it is recorded (no fence) and the move completed; not found, the miss is counted, and after
+        BATCH_SUBMIT_LOOKUPS misses at least BATCH_SUBMIT_LOOKUP_MIN_AGE_S after the submission the batch was never
+        created: its windows go back as they were and the document and its reservation are given back once."""
+        pending = track.batch
+        if not pending.provider_name:
+            try:
+                found = await self._batch.find_batch(pending.display_name) if pending.display_name else None
+            except LLMError as exc:
+                await self._collect_outage(host, summary, f"find: {type(exc).__name__}")
+                return False
+            _inc(summary, "batch_lookups")
+            if found is None:
+                lookups = pending.lookups + 1
+                age = now - (pending.created_at or now)
+                if lookups >= BATCH_SUBMIT_LOOKUPS and age >= timedelta(seconds=BATCH_SUBMIT_LOOKUP_MIN_AGE_S):
+                    await self._never_created(user_id, host, track, now, summary)
+                    return True
+                track.batch = replace(pending, lookups=lookups, last_polled_at=now,
+                                      next_poll_at=poll_after(pending, now))
+                host.fence()
+                await self._repo.save_batch(track.batch)
+                return True
+            track.batch = replace(pending, provider_name=found.name)
+            await self._repo.save_batch(track.batch)   # no fence: the purchase is on record first
+            logger.warning(f"[DriveTranscript] a submission of user={user_id[:8]} with an unknown outcome was found "
+                           f"at the provider: moved to it")
+            _inc(summary, "batch_submit_found")
+        await self._complete_submission(user_id, host, track.batch, now)
+        track.gone = True
+        _inc(summary, "batch_submit_completed")
+        return True
+
+    async def _never_created(self, user_id: str, host: TranscriptHost, track: _Tracked, now: datetime,
+                             summary: Dict[str, int]) -> None:
+        """T-R28: the provider never listed the submission: nothing was bought. Each job's windows in it go back as
+        they were (`unsubmitted`) and its record follows them (a job whose record is gone or changed is dropped, its
+        reservation released once); then the document goes and its own reservation is released once."""
+        pending = track.batch
+        files = await self._load_files(user_id, self._items_of(pending))
+        for item_id, (rec, job, unreadable) in files.items():
+            if job is None or not in_batch(job, pending.name):
+                continue
+            back = unsubmitted(job, pending.name)
+            try:
+                await self._save_job(host, back)
+                if rec is None or not self._live(rec, job):
+                    await self._abandon(user_id, host, back, None)
+                else:
+                    await self._after_windows(host, rec, back, [])
+            except _JobUnwritable:
+                logger.error(f"[DriveTranscript] job of {_short(item_id)} refused by the store after a submission "
+                             f"that was never created")
+        logger.warning(f"[DriveTranscript] a submission of user={user_id[:8]} was never created at the provider "
+                       f"({pending.lookups + 1} lookups): {len(pending.request_keys)} windows handed back")
+        await self._drop_pending(host, pending, summary)
+        track.gone = True
+
+    async def _reschedule(self, host: TranscriptHost, track: _Tracked, now: datetime) -> None:
         """An open batch is always saved with its next poll (never None: it would never be polled again)."""
+        track.batch = replace(track.batch, last_polled_at=now, next_poll_at=poll_after(track.batch, now))
         host.fence()
-        await self._repo.save_batch(replace(batch, last_polled_at=now, next_poll_at=poll_after(batch, now)))
+        await self._repo.save_batch(track.batch)
 
-    async def _collect(self, user_id: str, host: TranscriptHost, batch: TranscriptBatch, ref: BatchRef,
+    async def _collect(self, user_id: str, host: TranscriptHost, track: _Tracked, ref: BatchRef,
                        summary: Dict[str, int], finished: List[str]) -> bool:
         """A succeeded batch: the runner parses and bills every answer; the real cost is booked first, in the month of
         the reservation that paid for each window (G9); then each file takes its answers (G37, G33); then the batch is
         closed and its own reservation released, once, after that state change (Δ106, T-R11). False on an outage."""
         now = self._clock()
+        batch = track.batch
         booked = batch.booked_at is not None   # a collection that failed after booking: neither billed nor booked again
         try:
             results = await self._runner.collect(ref, account_id=host.account_id, bill=not booked)
@@ -817,12 +1031,12 @@ class DriveTranscriptStage:
             return False
         except ValueError as exc:   # not succeeded when collected (a race with the poll): polled again
             logger.error(f"[DriveTranscript] collect refused for a batch of user={user_id[:8]}: {type(exc).__name__}")
-            await self._reschedule(host, batch, now)
+            await self._reschedule(host, track, now)
             return True
         answers = self._by_item(batch, results)
         files = await self._load_files(user_id, list(answers))
         if not booked:
-            batch = await self._book(host, batch, answers, files, now)
+            batch = track.batch = await self._book(host, batch, answers, files, now)
         for item_id, by_index in answers.items():
             rec, job, unreadable = files[item_id]
             try:
@@ -832,7 +1046,7 @@ class DriveTranscriptStage:
                 logger.error(f"[DriveTranscript] job of {_short(item_id)} refused by the store at collection: "
                              f"its answers are booked, the document is stage A's to drop")
         _inc(summary, "windows_collected", sum(len(v) for v in answers.values()))
-        await self._close_batch(host, batch, "done", now, summary)
+        await self._close_batch(host, track, "done", now, summary)
         return True
 
     def _by_item(self, batch: TranscriptBatch,
@@ -954,6 +1168,8 @@ class DriveTranscriptStage:
             if decided.action is WindowAction.ACCEPT:
                 _inc(summary, "windows_accepted_short" if check is WindowCheck.COVERAGE
                      else "windows_accepted_interpolated")
+                if decided.window.accepted_short:   # a long window: its transcript is stored `truncated` (T-R31)
+                    _inc(summary, "windows_accepted_truncated")
                 return replace(decided.window, batch_name=""), result.transcript
             return replace(decided.window, batch_name=""), None
         if result.outcome is WindowOutcome.REFUSED:
@@ -1026,19 +1242,22 @@ class DriveTranscriptStage:
         logger.info(f"[DriveTranscript] answers for {_short(job.item_id)} dropped (record gone or changed): "
                     f"settled, job deleted")
 
-    async def _failed_batch(self, user_id: str, host: TranscriptHost, batch: TranscriptBatch, status: BatchStatus,
-                            summary: Dict[str, int], finished: List[str]) -> None:
+    async def _failed_batch(self, user_id: str, host: TranscriptHost, track: _Tracked, status: BatchStatus,
+                            summary: Dict[str, int], finished: List[str], *, unknown: bool = False) -> None:
         """A batch that failed, expired or was cancelled whole (§27.5, Δ104): nothing to collect or book. Its windows
         go back once (`after_failed_batch`: re-extracted once when the provider file will not outlive a batch, a gap
-        marker the second time), the batch is closed and its own reservation released once after that."""
+        marker the second time), the batch is closed and its own reservation released once after that.
+
+        `unknown` (T-R29): the provider no longer answers for the batch (a client error on the poll), so whether it ran
+        and billed is unknown. Its money is BOOKED as spent, never only released (as the purge does, T-R25): the
+        batch's own reservation (its re-purchases) and the first-purchase share of each job (its windows' estimates),
+        in their months (`_book_unknown`); the windows come back as re-purchases (reserved again when resubmitted)."""
         now = self._clock()
-        item_ids: List[str] = []
-        for key in batch.request_keys:
-            with contextlib.suppress(ValueError):
-                item_id = split_request_key(key)[0]
-                if item_id not in item_ids:
-                    item_ids.append(item_id)
+        batch = track.batch
+        item_ids = self._items_of(batch)
         files = await self._load_files(user_id, item_ids)
+        if unknown and batch.booked_at is None:
+            batch = track.batch = await self._book_unknown(host, batch, files, now)
         for item_id in item_ids:
             rec, job, unreadable = files[item_id]
             if unreadable or job is None:
@@ -1050,13 +1269,13 @@ class DriveTranscriptStage:
             if not carried:
                 continue
             try:
-                if rec is None or not self._live(rec, job):
+                if rec is None or not self._live(rec, job):   # booked above when `unknown`; the job goes
                     await self._settle_dropped(user_id, host, job, carried, summary)
                     continue
                 retired: List[JobWindow] = []
                 new_windows: Dict[int, JobWindow] = {}
                 for window in carried:
-                    new = after_failed_batch(window, now)
+                    new = after_failed_batch(window, now, bought=unknown)
                     if new.file_ref != window.file_ref or new.state == DONE:
                         retired.append(window)
                         new = replace(new, file_ref="")
@@ -1073,14 +1292,46 @@ class DriveTranscriptStage:
         logger.warning(f"[DriveTranscript] a batch of user={user_id[:8]} ended {status.value}: "
                        f"{len(batch.request_keys)} windows sent back")
         _inc(summary, f"batch_{status.value}")
-        await self._close_batch(host, batch, "failed", now, summary)
+        await self._close_batch(host, track, "failed", now, summary)
 
-    async def _close_batch(self, host: TranscriptHost, batch: TranscriptBatch, state: str, now: datetime,
+    async def _book_unknown(self, host: TranscriptHost, batch: TranscriptBatch,
+                            files: Mapping[str, Tuple[Optional[DriveIndexRecord], Optional[TranscriptJob], bool]],
+                            now: datetime) -> TranscriptBatch:
+        """T-R29: a batch whose outcome is unknown is booked as bought, in the month of the reservation that paid for
+        each part (G9): the batch's own reservation (its re-purchases, T-R11) in its month, each first-purchase window
+        it carried at its estimate in its file's month (the job's reservation, which is released when the job ends, as
+        after a collection). The T-R22 order: one fence, the spends, then `booked_at`, so a repeat books nothing."""
+        fallback = batch.reserved_month or month_key(now)
+        buckets: Dict[str, Tuple[float, int]] = {}
+        if batch.reserved_usd > 0:
+            buckets[fallback] = (batch.reserved_usd, 0)
+        for rec, job, unreadable in files.values():
+            if job is None:
+                continue
+            for window in in_batch(job, batch.name):
+                if is_repurchase(window):
+                    continue   # covered by the batch's own reservation, booked above
+                month = job.reserved_month or fallback
+                usd, calls = buckets.get(month, (0.0, 0))
+                buckets[month] = (usd + window_estimate_usd(window), calls + 1)
+        host.fence()
+        for month, (usd, calls) in sorted(buckets.items()):
+            if usd > 0:
+                await host.spend(UsageClass.TRANSCRIBE.value, usd, calls, month)
+        out = replace(batch, booked_at=now)
+        await self._repo.save_batch(out)
+        logger.warning(f"[DriveTranscript] a batch of user={batch.user_id[:8]} with an unknown outcome booked as "
+                       f"bought: ${sum(u for u, _ in buckets.values()):.4f}")
+        return out
+
+    async def _close_batch(self, host: TranscriptHost, track: _Tracked, state: str, now: datetime,
                            summary: Dict[str, int]) -> None:
         """The batch's state change first (closed: never polled again), then its own reservation released, once, in its
         month (T-R11, Δ106). Never retried: a closed batch is not returned by the poll query."""
+        batch = track.batch
+        track.batch = replace(batch, state=state, last_polled_at=now, next_poll_at=None)
         host.fence()
-        await self._repo.save_batch(replace(batch, state=state, last_polled_at=now, next_poll_at=None))
+        await self._repo.save_batch(track.batch)
         if batch.reserved_usd > 0:
             await host.release(batch.reserved_usd, batch.reserved_month)
         _inc(summary, "batches_closed")
@@ -1247,7 +1498,9 @@ class DriveTranscriptStage:
         return outcome.probe
 
     async def _copy_in_flight(self, user_id: str, rec: DriveIndexRecord, key: str) -> bool:
-        """G12: another file of the user with this shared key has a job and is `working` or `waiting` at it."""
+        """G12, T-R30: another file of the user with this shared key has a job and holds the key in a state that is not
+        final: `working`, `waiting`, `parked` (the cap, or a mid-job resubmit) or `held` (any hold: a T-R21 retry backs
+        off with its windows kept). A copy waits for it rather than buying the same audio a second time."""
         try:
             jobs = await self._repo.jobs_by_content_key(user_id, key)
         except ValueError:
@@ -1258,7 +1511,7 @@ class DriveTranscriptStage:
         if not others:
             return False
         recs = await self._repo.get_records(user_id, others)
-        return any(r.transcript_state in (WORKING, WAITING) and r.transcript_key == key for r in recs.values())
+        return any(r.transcript_state in _IN_FLIGHT and r.transcript_key == key for r in recs.values())
 
     async def _save_job(self, host: TranscriptHost, job: TranscriptJob) -> None:
         host.fence()

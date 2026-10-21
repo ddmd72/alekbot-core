@@ -3433,10 +3433,14 @@ class DriveIndexingService:
                 logger.error(f"[DriveIndex] open batch holds ${batch.reserved_usd:.4f} with no reservation month: "
                              f"left unsettled")
                 continue
+            # a batch whose cost a collection already booked (`booked_at`, T-R22) is only released: booking its
+            # reservation as well would count the same purchase twice
+            already = batch.booked_at is not None
             _fence()
             await self._repo.save_batch(replace(batch, reserved_usd=0.0, reserved_month=""))
-            await self._settle_reservation(user_id, batch.reserved_usd, batch.reserved_month, book=True)
-            booked += batch.reserved_usd
+            await self._settle_reservation(user_id, batch.reserved_usd, batch.reserved_month, book=not already)
+            booked, released = (booked, released + batch.reserved_usd) if already else (
+                booked + batch.reserved_usd, released)
         if released or booked:
             summary["purged_released_usd_milli"] = summary.get("purged_released_usd_milli", 0) + round(released * 1000)
             summary["purged_booked_usd_milli"] = summary.get("purged_booked_usd_milli", 0) + round(booked * 1000)
