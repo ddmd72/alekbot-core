@@ -67,6 +67,9 @@ class MirrorRoot:
     # read-me is saved. A re-run adopts a `_README.md` only when it was created at or after this time (minus the
     # clock skew) with the read-me's size, so an owner's `_README.md` is never taken for the bot's
     readme_pending_at: Optional[datetime] = None
+    # when step 1 last found the read-me's name held by an item that is not the bot's (§27.9.1): the name is read
+    # again only MIRROR_AUDIT_DAYS later (the audit's cadence), not every tick; None when nothing blocks it
+    readme_blocked_at: Optional[datetime] = None
 
 
 @dataclass(frozen=True)
