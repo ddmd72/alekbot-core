@@ -1348,7 +1348,7 @@
    "synth": ""
   },
   {
-   "duration_s": 1320.0,
+   "duration_s": 1710.0,
    "family": "unique_22min",
    "id": "unique_22min_audio",
    "kind": "audio",
@@ -1617,6 +1617,84 @@
      "speaker": 1,
      "start_s": 1300.0,
      "text": "Item 44. The old ledger crosses the heavy engine near the tower on day 20."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 1330.0,
+     "text": "Item 45. The narrow window circles the small ledger near the depot on day 23."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 1360.0,
+     "text": "Item 46. The small harbour protects the narrow garden near the tower on day 22."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 1390.0,
+     "text": "Item 47. The old engine crosses the narrow garden near the chapel on day 16."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 1420.0,
+     "text": "Item 48. The green bridge measures the green harbour near the chapel on day 6."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 1450.0,
+     "text": "Item 49. The heavy lantern protects the bright ledger near the tower on day 14."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 1480.0,
+     "text": "Item 50. The heavy bridge reaches the old lantern near the station on day 7."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 1510.0,
+     "text": "Item 51. The small window paints the small ledger near the river on day 24."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 1540.0,
+     "text": "Item 52. The bright engine reaches the bright orchard near the river on day 7."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 1570.0,
+     "text": "Item 53. The bright engine borders the small window near the chapel on day 9."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 1600.0,
+     "text": "Item 54. The heavy lantern follows the green bridge near the station on day 28."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 1630.0,
+     "text": "Item 55. The distant window circles the bright garden near the depot on day 10."
+    },
+    {
+     "language": "en",
+     "speaker": 1,
+     "start_s": 1660.0,
+     "text": "Item 56. The quiet window protects the heavy window near the depot on day 18."
+    },
+    {
+     "language": "en",
+     "speaker": 0,
+     "start_s": 1690.0,
+     "text": "Item 57. The bright lantern reaches the bright ledger near the quarry on day 28."
     }
    ],
    "probes": [
@@ -1630,7 +1708,11 @@
     850.0,
     970.0,
     1090.0,
-    1210.0
+    1210.0,
+    1330.0,
+    1450.0,
+    1570.0,
+    1690.0
    ],
    "speakers": 2,
    "synth": ""

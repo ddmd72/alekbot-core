@@ -53,10 +53,11 @@ def test_the_seam_clip_is_70_minutes_and_crosses_a_window_boundary():
     assert any(spec.lines[i].start_s < TRANSCRIBE_WINDOW_S <= spec.lines[i + 1].start_s for i in range(len(spec.lines) - 1))
 
 
-def test_unique_clip_is_22_minutes_and_has_no_repeated_line():
+def test_unique_clip_is_one_window_past_22_minutes_and_has_no_repeated_line():
     spec = next(s for s in fx.build_specs() if s.family == "unique_22min")
     texts = [ln.text for ln in spec.lines]
-    assert spec.duration_s == 1320.0 and len(set(texts)) == len(texts) == 44
+    assert spec.duration_s == 1710.0 and len(plan_windows(spec.duration_s)) == 1
+    assert spec.duration_s > 22 * 60 and len(set(texts)) == len(texts) == 57
 
 
 def test_early_clips_start_their_first_line_at_three_seconds():
