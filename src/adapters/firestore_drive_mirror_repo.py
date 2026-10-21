@@ -44,7 +44,7 @@ from ..domain.drive_mirror import (
 )
 from ..domain.drive_mirror_plan import mark_held, marked, unmarked
 from ..ports.drive_mirror_repository import ARCHIVE_FAMILY, NAME_FAMILY, DriveMirrorRepository
-from ..utils.logger import logger
+from ..utils.logger import exc_brief, logger
 
 IN_VALUES_MAX = 30                              # Firestore's limit on the values of one array-contains-any
 PIN_PAGE = 500                                  # content keys read per page of the pins' two queries
@@ -308,19 +308,24 @@ class FirestoreDriveMirrorRepository(DriveMirrorRepository):
         return bool(await base.where(filter=FieldFilter("gone_pending", "==", True)).limit(1).get())
 
     async def pinned_keys(self, user_id: str) -> FrozenSet[str]:
+        """Equality filters only, paged by document id (final review I4, Δ237): `user_id` and one pinning condition,
+        no range and no ordering on any field but the document id, so the single-field indexes serve both queries (the
+        `transcript_records` practice) and no composite index is needed. Every purge of every user reads this, and a
+        privacy purge must not depend on a mirror-only index (T-R14). Firestore returns an equality query in
+        document-id order; the next page starts after the last id."""
         keys: set = set()
         for condition in (FieldFilter("state", "in", list(_PINNING_STATES)),
                           FieldFilter("gone_pending", "==", True)):
-            last = ""
+            after: Optional[str] = None
             while True:
-                query = (self._docs.where(filter=FieldFilter("user_id", "==", user_id)).where(filter=condition)
-                         .where(filter=FieldFilter("content_key", ">", last)).order_by("content_key")
-                         .select(["content_key"]).limit(PIN_PAGE))
-                page = [(snap.to_dict() or {}).get("content_key", "") for snap in await query.get()]
-                keys.update(page)
-                if len(page) < PIN_PAGE:
+                query = self._docs.where(filter=FieldFilter("user_id", "==", user_id)).where(filter=condition)
+                if after is not None:
+                    query = query.where(filter=FieldFilter(FieldPath.document_id(), ">", self._ref(after)))
+                snaps = list(await query.select(["content_key"]).limit(PIN_PAGE).get())
+                keys.update(key for snap in snaps if (key := (snap.to_dict() or {}).get("content_key", "")))
+                if len(snaps) < PIN_PAGE:
                     break
-                last = page[-1]
+                after = snaps[-1].id
         return frozenset(keys)
 
 
@@ -336,12 +341,14 @@ def _store_errors(method: Callable[..., Any]) -> Callable[..., Any]:
         try:
             return await method(*args, **kwargs)
         except _TRANSIENT as exc:
-            logger.warning(f"[DriveMirror] mirror store {method.__name__} failed: {type(exc).__name__}: {exc}")
+            logger.warning(f"[DriveMirror] mirror store {method.__name__} failed: {exc_brief(exc)}")
             raise DriveIndexStoreUnavailable(f"{method.__name__}: {type(exc).__name__}") from exc
         except _MISSING_INDEX as exc:
+            # the log line carries the type and a digest only (§27.12, final review M3): the provider's message holds the
+            # index-creation console URL with the project id; the raised error keeps it for the smoke check and the
+            # deploy step, which print it to the operator
             logger.error(f"[DriveMirror] mirror store {method.__name__} failed, an index is missing or building: "
-                         f"{type(exc).__name__}: {exc}")
-            # the provider's message names the index to create (the smoke check and the deploy step print it)
+                         f"{exc_brief(exc)}")
             raise DriveIndexStoreUnavailable(f"{method.__name__}: {type(exc).__name__}: {exc}") from exc
     return run
 

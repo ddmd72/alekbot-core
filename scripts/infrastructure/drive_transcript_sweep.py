@@ -257,8 +257,8 @@ async def sweep_user(repo: DriveIndexRepository, user_id: str, *, apply: bool, n
         try:   # before anything is settled or deleted (M2)
             pins = await mirror_repo.pinned_keys(user_id)
         except DriveIndexStoreUnavailable:
-            return 1, ("the pin queries need the ledger's composite indexes (user_id + content_key/state/gone_pending, "
-                       "Δ217; `make deploy-indexes`) and they are not READY: nothing was settled or deleted; re-run once they are")
+            return 1, ("the pin queries failed (the ledger store is unavailable; they need no composite index, Δ237): "
+                       "nothing was settled or deleted; re-run once the store answers")
     scan = months_back(now, months)
     live = [state for state in (READY, WAITING, WORKING) if await repo.transcript_records(user_id, state, 1)]
     if live and not after_rollback:
