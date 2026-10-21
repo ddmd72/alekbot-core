@@ -46,7 +46,8 @@ class FirestoreCompanionExtractionQueue(CompanionExtractionQueue):
         )
         if session_id:
             query = query.where(filter=FieldFilter("session_id", "==", session_id))
-        query = query.limit(limit)
+        # Oldest first; needs the (session_id, status, created_at) composite index.
+        query = query.order_by("created_at").limit(limit)
         docs = await query.get()
         return [CompanionExtractionBatch(**doc.to_dict()) for doc in docs]
 
