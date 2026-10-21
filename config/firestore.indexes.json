@@ -1100,5 +1100,139 @@
     "collectionGroup": "development_drive_transcript_windows",
     "fieldPath": "segments",
     "indexes": []
+  },
+  {
+    "collectionGroup": "development_drive_index_records",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "mirror_due", "order": "ASCENDING" },
+      { "fieldPath": "effective_day", "order": "DESCENDING" },
+      { "fieldPath": "item_id", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_index_records",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "mirror_retry_at", "order": "ASCENDING" },
+      { "fieldPath": "item_id", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_transcript_mirror",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "drive_id", "order": "ASCENDING" },
+      { "fieldPath": "gone_pending", "order": "ASCENDING" },
+      { "fieldPath": "mark_ready_at", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_transcript_mirror",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "drive_id", "order": "ASCENDING" },
+      { "fieldPath": "mirror_parent_id", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_transcript_mirror",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "drive_id", "order": "ASCENDING" },
+      { "fieldPath": "kind", "order": "ASCENDING" },
+      { "fieldPath": "__name__", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_transcript_mirror",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "drive_id", "order": "ASCENDING" },
+      { "fieldPath": "state", "order": "ASCENDING" },
+      { "fieldPath": "checked_at", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_transcript_mirror",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "content_key", "order": "ASCENDING" },
+      { "fieldPath": "state", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_transcript_mirror",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "content_key", "order": "ASCENDING" },
+      { "fieldPath": "gone_pending", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_transcript_mirror",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "state", "order": "ASCENDING" },
+      { "fieldPath": "content_key", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_transcript_mirror",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "gone_pending", "order": "ASCENDING" },
+      { "fieldPath": "content_key", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_transcript_mirror",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "mirror_item_id", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_transcript_mirror",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "state", "order": "ASCENDING" },
+      { "fieldPath": "archived_at", "order": "DESCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_transcript_mirror",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "state", "order": "ASCENDING" },
+      { "fieldPath": "archive_keys", "arrayConfig": "CONTAINS" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_transcript_mirror",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "state", "order": "ASCENDING" },
+      { "fieldPath": "name_keys", "arrayConfig": "CONTAINS" }
+    ]
+  },
+  {
+    "collectionGroup": "development_drive_transcript_mirror",
+    "fieldPath": "archive_keys",
+    "indexes": []
   }
 ]

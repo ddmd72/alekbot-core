@@ -17,7 +17,7 @@ outlived its lease cannot purge or overwrite the state of the tick that took ove
 """
 from abc import ABC, abstractmethod
 from datetime import date, datetime
-from typing import AbstractSet, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import AbstractSet, Dict, FrozenSet, List, Mapping, Optional, Sequence, Tuple
 
 from src.domain.drive_enrichment import DriveHintDoc, InitialBuild, ModelUsageMonth
 from src.domain.drive_index import DriveChunk, DriveIndexRecord, DriveSyncState, RecordState
@@ -474,11 +474,13 @@ class DriveIndexRepository(ABC):
         """Records with `transcript_wake_at <= now`, earliest first (then item_id)."""
 
     @abstractmethod
-    async def transcript_records(self, user_id: str, state: str, limit: int) -> List[DriveIndexRecord]:
+    async def transcript_records(self, user_id: str, state: str, limit: int,
+                                 after: Optional[str] = None) -> List[DriveIndexRecord]:
         """Records with `transcript_state == state`, by item_id: the stage's in-flight jobs (`working`: extraction to
         resume, a mid-job park woken by the plan) and copies waiting on another file (`waiting`), which neither
         `transcript_queue` (ready only) nor `transcript_wakeups` (the wake-up is cleared) returns. Equality filters
-        only: single-field indexes serve it."""
+        only: single-field indexes serve it. `after` is a start-after cursor (an item id): only records past it are
+        returned (the mirror's seed pass, §27.9.4); the default is unchanged."""
 
     @abstractmethod
     async def jobs_by_content_key(self, user_id: str, content_key: str) -> List[TranscriptJob]:
@@ -509,6 +511,24 @@ class DriveIndexRepository(ABC):
     async def delete_user_transcripts(self, user_id: str, limit: int) -> int:
         """Purge: delete up to `limit` of the user's stored transcripts with their parts (any token). Returns the
         number of transcripts deleted; call until 0."""
+
+    @abstractmethod
+    async def delete_user_transcripts_except(self, user_id: str, limit: int, keep: FrozenSet[str],
+                                             after: Optional[str] = None) -> Tuple[int, Optional[str]]:
+        """Purge (Δ186, Δ214): page the user's stored transcript heads by document id from `after` (None: the start), at
+        most `limit` heads per call, and delete the ones whose content key is not in `keep`, with their parts. Returns
+        `(deleted, next_cursor)`: pass `next_cursor` back as `after`; it is None only at the end (a page made only of kept
+        heads deletes nothing but is not the end). `delete_user_transcripts` stays for its callers."""
+
+    # -- the transcript mirror's queue (§27.9.4, Δ187, Δ217) ----------------------------------------------
+
+    @abstractmethod
+    async def mirror_queue(self, user_id: str, limit: int) -> List[DriveIndexRecord]:
+        """Records with `mirror_due == True`, newest `effective_day` first, then item_id."""
+
+    @abstractmethod
+    async def mirror_wakeups(self, user_id: str, now: datetime, limit: int) -> List[DriveIndexRecord]:
+        """Records with `mirror_retry_at <= now` (a parked record whose hold is ripe), earliest first, then item_id."""
 
     @abstractmethod
     async def delete_user_transcript_orphans(self, user_id: str, limit: int, *, keep_transcripts: bool) -> int:

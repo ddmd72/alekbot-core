@@ -63,7 +63,7 @@ import uuid
 from dataclasses import fields, is_dataclass, replace
 from datetime import date, datetime, timezone
 from enum import Enum
-from typing import AbstractSet, Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import AbstractSet, Any, Callable, Dict, FrozenSet, List, Mapping, Optional, Sequence, Tuple
 
 from google.api_core.exceptions import (
     Aborted, AlreadyExists, DeadlineExceeded, FailedPrecondition, InternalServerError, NotFound, ResourceExhausted,
@@ -1599,10 +1599,25 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
                  .order_by("transcript_wake_at").order_by("item_id").limit(limit))
         return await self._read(query)
 
-    async def transcript_records(self, user_id: str, state: str, limit: int) -> List[DriveIndexRecord]:
+    async def transcript_records(self, user_id: str, state: str, limit: int,
+                                 after: Optional[str] = None) -> List[DriveIndexRecord]:
         """Two equality filters and no ordering (single-field indexes serve it, the `delete_chunks_except` practice);
-        Firestore returns them in document-id order (`record_key`: the user, then the item id)."""
-        query = (self._user_query(user_id).where(filter=FieldFilter("transcript_state", "==", state)).limit(limit))
+        Firestore returns them in document-id order (`record_key`: the user, then the item id). `after` adds a range on
+        the document id (the implicit order), which the same single-field indexes serve: no composite."""
+        query = self._user_query(user_id).where(filter=FieldFilter("transcript_state", "==", state))
+        if after is not None:
+            query = query.where(filter=FieldFilter(FieldPath.document_id(), ">", self._ref(user_id, after)))
+        return await self._read(query.limit(limit))
+
+    async def mirror_queue(self, user_id: str, limit: int) -> List[DriveIndexRecord]:
+        """`mirror_due == true`, newest `effective_day` first, then item id (one composite, §27.15 step 8c)."""
+        query = (self._user_query(user_id).where(filter=FieldFilter("mirror_due", "==", True))
+                 .order_by("effective_day", direction=firestore.Query.DESCENDING).order_by("item_id").limit(limit))
+        return await self._read(query)
+
+    async def mirror_wakeups(self, user_id: str, now: datetime, limit: int) -> List[DriveIndexRecord]:
+        query = (self._user_query(user_id).where(filter=FieldFilter("mirror_retry_at", "<=", now))
+                 .order_by("mirror_retry_at").order_by("item_id").limit(limit))
         return await self._read(query)
 
     async def jobs_by_content_key(self, user_id: str, content_key: str) -> List[TranscriptJob]:
@@ -1681,6 +1696,25 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
     async def delete_user_transcripts(self, user_id: str, limit: int) -> int:
         """Store heads and their part documents (any token)."""
         return await self._purge_with_subdocs(self._transcripts_name, self._parts_name, user_id, limit)
+
+    async def delete_user_transcripts_except(self, user_id: str, limit: int, keep: FrozenSet[str],
+                                             after: Optional[str] = None) -> Tuple[int, Optional[str]]:
+        """One page of the user's heads by document id (equality on `user_id` and the implicit order: single-field
+        indexes serve it), the unkept ones deleted with their parts. `next_cursor` is the page's last id, None only when
+        the page came back short (the end): a page of kept heads deletes nothing and is not the end (Δ214)."""
+        query = self._db.collection(self._transcripts_name).where(filter=FieldFilter("user_id", "==", user_id))
+        if after is not None:
+            query = query.where(filter=FieldFilter(FieldPath.document_id(), ">",
+                                                   self._db.collection(self._transcripts_name).document(after)))
+        snaps = await query.select(["content_key"]).limit(limit).get()
+        doomed = [snap for snap in snaps if (snap.to_dict() or {}).get("content_key", "") not in keep]
+        subdocs: List[Any] = []
+        for snap in doomed:
+            col = self._db.collection(f"{self._transcripts_name}/{snap.reference.id}/{self._parts_name}")
+            subdocs += [s.reference for s in await col.select([FieldPath.document_id()]).get()]
+        await self._delete_refs(subdocs, KEYED_DELETE_BATCH)
+        await self._delete_refs([snap.reference for snap in doomed], KEYED_DELETE_BATCH)
+        return len(doomed), (snaps[-1].reference.id if snaps and len(snaps) >= limit else None)
 
 
 # Transient on Firestore's side: the same call may succeed later, so it is never one file's failure (§8.2).

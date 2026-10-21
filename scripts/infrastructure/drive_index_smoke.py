@@ -17,25 +17,29 @@ import os
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Awaitable, Callable, List, Sequence, Tuple
+from typing import Awaitable, Callable, List, Optional, Sequence, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.adapters.firestore_drive_index_repo import FirestoreDriveIndexRepository  # noqa: E402
+from src.adapters.firestore_drive_mirror_repo import FirestoreDriveMirrorRepository  # noqa: E402
 from src.domain.drive_enrichment import EnrichJob, JobState  # noqa: E402
 from src.domain.drive_index import Priority  # noqa: E402
 from src.domain.drive_index_params import CONCEPT_KEYS_MAX  # noqa: E402
 from src.domain.drive_index_policy import SLICE2_CONTENT_KINDS, SLICE2_TRIAGED_KINDS  # noqa: E402
 from src.domain.drive_search import KIND_FAMILIES  # noqa: E402
+from src.ports.drive_mirror_repository import ARCHIVE_FAMILY, NAME_FAMILY  # noqa: E402
 
 _VECTOR = [1.0] + [0.0] * 767   # any non-zero 768-dim vector
 
 
-def checks(repo: FirestoreDriveIndexRepository, user_id: str) -> List[Tuple[str, Callable[[], Awaitable[object]]]]:
+def checks(repo: FirestoreDriveIndexRepository, user_id: str,
+           mirror_repo: Optional[FirestoreDriveMirrorRepository] = None) -> List[Tuple[str, Callable[[], Awaitable[object]]]]:
     """Every read the tick and the search issue, each once. The two within-rank eviction queries run directly:
     `lowest_ranked_carded` reaches them only when a carded record exists. The chunk page runs with a cursor, which
     uses the same index as the first page. The unread counts run one by one, over the content kinds the flip admits
-    and the kinds it triages (text images), so a missing index is named per query."""
+    and the kinds it triages (text images), so a missing index is named per query. With `mirror_repo` the transcript
+    mirror's reads follow (§27.9; `mirror_checks`): the record queue and wake-ups, the roots, every ledger query."""
     now = datetime.now(timezone.utc)
     dated, undated = repo.eviction_rank_queries(user_id, 3)
     return [
@@ -77,6 +81,7 @@ def checks(repo: FirestoreDriveIndexRepository, user_id: str) -> List[Tuple[str,
         # files the bot cannot open (§26.2, §26.9 step 3): the tick's counters and the fan-out's notice
         ("inaccessible_records", lambda: repo.inaccessible_records(user_id, 5)),
         *transcript_checks(repo, user_id, now),
+        *(mirror_checks(repo, mirror_repo, user_id, now) if mirror_repo is not None else []),
     ]
 
 
@@ -145,6 +150,36 @@ def transcript_checks(repo: FirestoreDriveIndexRepository, user_id: str,
     ]
 
 
+def mirror_checks(repo: FirestoreDriveIndexRepository, mirror: FirestoreDriveMirrorRepository, user_id: str,
+                  now: datetime) -> List[Tuple[str, Callable[[], Awaitable[object]]]]:
+    """The transcript mirror's reads (§27.9, §27.15 step 8c), all read-only: the records' mirror queue, wake-ups and the
+    seed pass's cursor read, then the roots and every ledger query, each once, so a missing composite index is named per
+    query. The purge's scanning delete (`delete_user_transcripts_except`) deletes, so only its page query's shape
+    (equality and the document id, single-field indexes) is not run here."""
+    drive, key, keys = "smoke-drive", "smoke-user:file:smoke-item", ["w:smoke"]
+    return [
+        ("mirror_queue", lambda: repo.mirror_queue(user_id, 5)),
+        ("mirror_wakeups", lambda: repo.mirror_wakeups(user_id, now, 5)),
+        ("transcript_records[after]", lambda: repo.transcript_records(user_id, "current", 5, after="smoke-item")),
+        ("mirror roots", lambda: mirror.roots(user_id)),
+        ("mirror get_root", lambda: mirror.get_root(user_id, drive)),
+        ("mirror get_docs", lambda: mirror.get_docs(user_id, [key])),
+        ("mirror by_mirror_item", lambda: mirror.by_mirror_item(user_id, "smoke-mirror-item")),
+        ("mirror ready_marks", lambda: mirror.ready_marks(user_id, drive, now, 5)),
+        ("mirror children", lambda: mirror.children(user_id, drive, "smoke-parent", 5)),
+        ("mirror folder_docs", lambda: mirror.folder_docs(user_id, drive, None, 5)),
+        ("mirror folder_docs[cursor]", lambda: mirror.folder_docs(user_id, drive, key, 5)),
+        ("mirror scan_page", lambda: mirror.scan_page(user_id, drive, None, 5)),
+        ("mirror scan_page[cursor]", lambda: mirror.scan_page(user_id, drive, key, 5)),
+        ("mirror detached_due", lambda: mirror.detached_due(user_id, drive, now, 5)),
+        ("mirror archived_newest", lambda: mirror.archived_newest(user_id, 5)),
+        ("mirror archived_by_keys[archive]", lambda: mirror.archived_by_keys(user_id, ARCHIVE_FAMILY, keys, 5)),
+        ("mirror archived_by_keys[name]", lambda: mirror.archived_by_keys(user_id, NAME_FAMILY, keys, 5)),
+        ("mirror pinned", lambda: mirror.pinned(user_id, "smoke-key")),
+        ("mirror pinned_keys", lambda: mirror.pinned_keys(user_id)),
+    ]
+
+
 async def _family_knn(repo: FirestoreDriveIndexRepository, user_id: str, kinds: Sequence[str]) -> None:
     """A family's kNN as the search runs it: card, chunk and hint kNN once per member kind (RFC Δ37, §25.5.2)."""
     for kind in kinds:
@@ -153,10 +188,11 @@ async def _family_knn(repo: FirestoreDriveIndexRepository, user_id: str, kinds: 
         await repo.find_nearest_hints(user_id, _VECTOR, 5, kind=kind)
 
 
-async def run_smoke(repo: FirestoreDriveIndexRepository, user_id: str) -> List[Tuple[str, str]]:
+async def run_smoke(repo: FirestoreDriveIndexRepository, user_id: str,
+                    mirror_repo: Optional[FirestoreDriveMirrorRepository] = None) -> List[Tuple[str, str]]:
     """Run every check; return (name, error) for each one that raised."""
     failures: List[Tuple[str, str]] = []
-    for name, call in checks(repo, user_id):
+    for name, call in checks(repo, user_id, mirror_repo):
         try:
             await call()
             print(f"✅ {name}")
@@ -174,8 +210,9 @@ async def _main(user_id: str) -> int:
     env = EnvironmentConfig()
     db = firestore.AsyncClient(project=os.getenv("GOOGLE_CLOUD_PROJECT") or None, database=env.firestore_database_id)
     repo = FirestoreDriveIndexRepository(db, env)
-    failures = await run_smoke(repo, user_id)
-    print(f"{len(failures)} of {len(checks(repo, user_id))} queries failed" if failures else "All queries ran.")
+    mirror = FirestoreDriveMirrorRepository(db, env)
+    failures = await run_smoke(repo, user_id, mirror)
+    print(f"{len(failures)} of {len(checks(repo, user_id, mirror))} queries failed" if failures else "All queries ran.")
     return 1 if failures else 0
 
 

@@ -10,7 +10,7 @@ import asyncio
 import math
 from dataclasses import replace
 from datetime import date, datetime, timezone
-from typing import AbstractSet, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import AbstractSet, Dict, FrozenSet, List, Mapping, Optional, Sequence, Tuple
 
 from ..domain.drive_enrichment import DriveHintDoc, EnrichJob, InitialBuild, JobState, ModelUsageMonth
 from ..domain.drive_index import DriveChunk, DriveIndexRecord, DriveSyncState, LeaseLost, Reason, RecordState
@@ -19,7 +19,7 @@ from ..domain.drive_index_params import CONCEPT_KEYS_MAX
 from ..domain.drive_search import is_not_read_yet, is_unread
 from ..domain.drive_transcript import (
     StoredTranscript, TranscriptBatch, TranscriptJob, WindowTranscript, batch_doc_id, batch_url_fields,
-    job_url_fields, normalized_batch,
+    job_url_fields, normalized_batch, transcript_doc_id,
 )
 from ..domain.drive_usage import (
     added_usage, closed_initial, new_initial_build, reserved_field, reserved_usage, spent_initial,
@@ -559,8 +559,19 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
         due = [r for r in self._user(user_id) if r.transcript_wake_at is not None and r.transcript_wake_at <= now]
         return sorted(due, key=lambda r: (r.transcript_wake_at, r.item_id))[:limit]
 
-    async def transcript_records(self, user_id: str, state: str, limit: int) -> List[DriveIndexRecord]:
-        return sorted((r for r in self._user(user_id) if r.transcript_state == state), key=lambda r: r.item_id)[:limit]
+    async def transcript_records(self, user_id: str, state: str, limit: int,
+                                 after: Optional[str] = None) -> List[DriveIndexRecord]:
+        found = (r for r in self._user(user_id) if r.transcript_state == state and (after is None or r.item_id > after))
+        return sorted(found, key=lambda r: r.item_id)[:limit]
+
+    async def mirror_queue(self, user_id: str, limit: int) -> List[DriveIndexRecord]:
+        due = sorted((r for r in self._user(user_id) if r.mirror_due), key=lambda r: r.item_id)
+        due.sort(key=lambda r: r.effective_day, reverse=True)   # stable: item_id ascending within a day
+        return due[:limit]
+
+    async def mirror_wakeups(self, user_id: str, now: datetime, limit: int) -> List[DriveIndexRecord]:
+        ripe = [r for r in self._user(user_id) if r.mirror_retry_at is not None and r.mirror_retry_at <= now]
+        return sorted(ripe, key=lambda r: (r.mirror_retry_at, r.item_id))[:limit]
 
     async def jobs_by_content_key(self, user_id: str, content_key: str) -> List[TranscriptJob]:
         return sorted((j for (u, _), j in self.transcript_jobs.items() if u == user_id and j.content_key == content_key),
@@ -598,6 +609,17 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
         for key in keys:
             del self.transcripts[key]
         return len(keys)
+
+    async def delete_user_transcripts_except(self, user_id: str, limit: int, keep: FrozenSet[str],
+                                             after: Optional[str] = None) -> Tuple[int, Optional[str]]:
+        heads = sorted((transcript_doc_id(u, ck), ck) for (u, ck) in self.transcripts if u == user_id)
+        page = [(doc_id, ck) for doc_id, ck in heads if after is None or doc_id > after][:limit]
+        deleted = 0
+        for _, ck in page:
+            if ck not in keep:
+                del self.transcripts[(user_id, ck)]
+                deleted += 1
+        return deleted, (page[-1][0] if len(page) == limit and page else None)
 
 
 def _refuse_urls(kind: str, fields: Sequence[str]) -> None:
