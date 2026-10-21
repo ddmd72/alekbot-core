@@ -858,6 +858,8 @@ def writes_outside(w: MirrorWorld, root_id: str):
             out.append(method)
         if method == "move" and len(chains) == 2 and root_id not in chains[1]:
             out.append(method)
+        if method == "move" and len(chains) == 1 and root_id not in chains[0]:
+            out.append(method)                             # a rename in place: where the item is at the call
     return out
 
 

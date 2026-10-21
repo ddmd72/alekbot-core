@@ -123,9 +123,16 @@ def _retry_after_hint(value: Optional[str]) -> float:
     return min(max(seconds, 0.0), float(TICK_DEADLINE_S))
 
 
+# A path-addressed segment (`items/{id}:/{name}:`): the name is percent-encoded by `_q`, so it holds no '/' or ':'
+_NAMED_SEGMENT_RE = re.compile(r":/([^/:]+):")
+
+
 def _where(path: str) -> str:
-    """A call's path for logs: no query string (delta links carry long opaque tokens)."""
-    return path.split("?", 1)[0]
+    """A call's path for logs and error texts: no query string (delta links carry long opaque tokens), and a
+    path-addressed name (an upload's or `child_by_name`'s `:/<name>:`) replaced by its length, `:/<n chars>:` — a file
+    name never reaches a log line (USER_DRIVE_INDEXING_RFC §27.12; final review I2)."""
+    bare = path.split("?", 1)[0]
+    return _NAMED_SEGMENT_RE.sub(lambda m: f":/<{len(unquote(m.group(1)))} chars>:", bare)
 
 
 def _is_graph_url(url: Optional[str]) -> bool:
@@ -623,7 +630,7 @@ class OneDriveAdapter(UserDrivePort):
                     if status == 404:
                         raise DriveItemNotFoundError(f"Drive item not found: {_where(path)}")
                     if status == 409:
-                        raise DriveNameConflictError(f"Drive name taken: {path}")
+                        raise DriveNameConflictError(f"Drive name taken: {_where(path)}")
                     if status == 507:
                         logger.warning(f"Drive {method} {_where(path)}: 507 insufficient storage")
                         raise DriveStorageFull("The drive is full")
