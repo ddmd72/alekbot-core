@@ -200,12 +200,13 @@ def order_moves(moves: Sequence[Move]) -> List[Move]:
             seen[node.key] = len(chain)
             chain.append(node)
             nxt = blocker(node)
-            assert nxt is not None
+            if nxt is None:                                 # unreachable: every pending move is blocked here
+                raise ValueError("order_moves: inconsistent blockers")
             node = nxt
         victim = min(chain[seen[node.key]:], key=lambda m: m.key)
-        assert victim.from_name is not None
-        tmp = temp_name(victim.from_name, victim.key)
-        out.append(Move(victim.key, victim.from_parent, victim.from_name, victim.from_parent or "", tmp))
+        base = victim.from_name or ""                       # a cycle member is never a creation
+        tmp = temp_name(base, victim.key)
+        out.append(Move(victim.key, victim.from_parent, base, victim.from_parent or "", tmp))
         pending.remove(victim)
         pending.append(Move(victim.key, victim.from_parent, tmp, victim.to_parent, victim.to_name))
     return out
