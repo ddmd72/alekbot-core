@@ -9,12 +9,13 @@ provider refuses or fails individually is that request's `BatchResult`, never an
 Public interface:
     BatchTranscriptionPort.upload_audio(path, mime) -> FileRef
     BatchTranscriptionPort.submit(requests, *, display_name) -> BatchRef
+    BatchTranscriptionPort.find_batch(display_name) -> Optional[BatchRef]
     BatchTranscriptionPort.poll(batch) -> BatchStatus
     BatchTranscriptionPort.collect(batch) -> Mapping[str, BatchResult]
     BatchTranscriptionPort.delete_file(ref) -> None
 """
 from abc import ABC, abstractmethod
-from typing import Mapping, Sequence
+from typing import Mapping, Optional, Sequence
 
 from src.domain.batch_transcription import BatchRef, BatchRequest, BatchResult, BatchStatus, FileRef
 
@@ -27,6 +28,13 @@ class BatchTranscriptionPort(ABC):
     @abstractmethod
     async def submit(self, requests: Sequence[BatchRequest], *, display_name: str) -> BatchRef:
         """Creates one batch job from `requests`. `display_name` is hashed by the adapter: the provider never sees it."""
+
+    @abstractmethod
+    async def find_batch(self, display_name: str) -> Optional[BatchRef]:
+        """The provider's batch job that `submit` created with this `display_name` (matched by the adapter's hash of
+        it, never by the raw argument), or None when the provider lists no such job (T-R28: a submit call that failed
+        ambiguously — a timeout, a 5xx, a dropped connection — may still have created it). The returned ref has no
+        `keys`; the caller has them. Outages raise as every call does; a scan has a bound, past which it is None."""
 
     @abstractmethod
     async def poll(self, batch: BatchRef) -> BatchStatus:
