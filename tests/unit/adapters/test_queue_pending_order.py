@@ -40,10 +40,11 @@ def comp():
 
 @pytest.mark.asyncio
 async def test_consolidation_returns_oldest_first_across_pending_and_retry(cons):
-    for bid, ts, st in [("zz", 3.0, BatchStatus.PENDING), ("aa", 1.0, BatchStatus.RETRY_PENDING),
-                        ("mm", 2.0, BatchStatus.PENDING)]:
+    for bid, ts, st in [("aa", 3.0, BatchStatus.PENDING), ("mm", 2.0, BatchStatus.PENDING),
+                        ("zz", 1.0, BatchStatus.RETRY_PENDING)]:
         await cons.enqueue_batch(_batch(ConsolidationBatch, "user_id", "u1", bid, ts, st))
     first = await cons.get_pending_batches(user_id="u1", limit=1)
+    assert ("order_by", "created_at", "ASCENDING") in cons.collection.executed[-1]
     assert [b.created_at for b in first] == [1.0]
     await cons.delete_batch(first[0].batch_id)
     second = await cons.get_pending_batches(user_id="u1", limit=1)
@@ -63,10 +64,11 @@ async def test_consolidation_filters_other_user_and_completed(cons):
 
 @pytest.mark.asyncio
 async def test_companion_returns_oldest_first_across_pending_and_retry(comp):
-    for bid, ts, st in [("zz", 3.0, BatchStatus.PENDING), ("aa", 1.0, BatchStatus.RETRY_PENDING),
-                        ("mm", 2.0, BatchStatus.PENDING)]:
+    for bid, ts, st in [("aa", 3.0, BatchStatus.PENDING), ("mm", 2.0, BatchStatus.PENDING),
+                        ("zz", 1.0, BatchStatus.RETRY_PENDING)]:
         await comp.enqueue_batch(_batch(CompanionExtractionBatch, "session_id", "s1", bid, ts, st))
     first = await comp.get_pending_batches(session_id="s1", limit=1)
+    assert ("order_by", "created_at", "ASCENDING") in comp.collection.executed[-1]
     assert [b.created_at for b in first] == [1.0]
     await comp.delete_batch(first[0].batch_id)
     second = await comp.get_pending_batches(session_id="s1", limit=1)

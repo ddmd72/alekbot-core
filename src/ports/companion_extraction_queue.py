@@ -21,9 +21,9 @@ class CompanionExtractionQueue(ABC):
 
     @abstractmethod
     async def get_pending_batches(
-        self, session_id: Optional[str] = None, limit: int = 10
+        self, session_id: str, limit: int = 10
     ) -> List[CompanionExtractionBatch]:
-        """Get pending/retry_pending batches, optionally filtered by session_id."""
+        """Get pending/retry_pending batches, oldest first, for one session."""
 
     @abstractmethod
     async def get_queue_size(self, session_id: str) -> int:

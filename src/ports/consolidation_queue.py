@@ -13,8 +13,8 @@ class ConsolidationQueue(ABC):
         pass
 
     @abstractmethod
-    async def get_pending_batches(self, user_id: Optional[str] = None, limit: int = 10) -> List[ConsolidationBatch]:
-        """Get pending/retry_pending batches, optionally filtered by user_id."""
+    async def get_pending_batches(self, user_id: str, limit: int = 10) -> List[ConsolidationBatch]:
+        """Get pending/retry_pending batches, oldest first, for one user."""
         pass
 
     @abstractmethod

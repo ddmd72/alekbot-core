@@ -34,13 +34,11 @@ class FirestoreConsolidationQueue(ConsolidationQueue):
         await doc_ref.set(batch.model_dump())
         return batch.batch_id
     
-    async def get_pending_batches(self, user_id: Optional[str] = None, limit: int = 10) -> List[ConsolidationBatch]:
+    async def get_pending_batches(self, user_id: str, limit: int = 10) -> List[ConsolidationBatch]:
         query = self.collection.where(
             filter=FieldFilter("status", "in", [BatchStatus.PENDING.value, BatchStatus.RETRY_PENDING.value])
         )
-        
-        if user_id:
-            query = query.where(filter=FieldFilter("user_id", "==", user_id))
+        query = query.where(filter=FieldFilter("user_id", "==", user_id))
             
         # Oldest first; needs the (user_id, status, created_at) composite index.
         query = query.order_by("created_at").limit(limit)

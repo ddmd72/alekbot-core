@@ -39,13 +39,12 @@ class FirestoreCompanionExtractionQueue(CompanionExtractionQueue):
         return batch.batch_id
 
     async def get_pending_batches(
-        self, session_id: Optional[str] = None, limit: int = 10
+        self, session_id: str, limit: int = 10
     ) -> List[CompanionExtractionBatch]:
         query = self.collection.where(
             filter=FieldFilter("status", "in", [BatchStatus.PENDING.value, BatchStatus.RETRY_PENDING.value])
         )
-        if session_id:
-            query = query.where(filter=FieldFilter("session_id", "==", session_id))
+        query = query.where(filter=FieldFilter("session_id", "==", session_id))
         # Oldest first; needs the (session_id, status, created_at) composite index.
         query = query.order_by("created_at").limit(limit)
         docs = await query.get()
