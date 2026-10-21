@@ -1231,8 +1231,7 @@ class DriveIndexingService:
     async def _notes_count(self, user_id: str, tick: _TickNotes) -> int:
         """The user's note documents (stubs included), read once per tick: the gate of both entries."""
         if tick.count is None:
-            assert self._notes is not None
-            tick.count = await self._notes.count(user_id)
+            tick.count = await self._notes.count(user_id) if self._notes is not None else 0
         return tick.count
 
     async def _lookup_notes(self, user_id: str, writes: List[DriveIndexRecord]) -> List[DriveIndexRecord]:
@@ -1292,7 +1291,8 @@ class DriveIndexingService:
         if note.erase_pending or not (archived or (note.state == NoteState.CLEARED.value
                                                    and note.archived_at is not None)):
             return note
-        assert self._notes is not None
+        if self._notes is None:
+            return note
         _fence()
         try:
             done = await self._notes.reactivate(user_id, note.note_id, bound_at=self._clock())
@@ -1367,7 +1367,8 @@ class DriveIndexingService:
         only if the copy is its own (another note's copy of the same item is left to that note). Records that do not
         exist are skipped (entry a merges them when they appear). Each erase stub is deleted after the commit, once its
         record's copy is cleared or it has no record on this drive."""
-        assert self._notes is not None
+        if self._notes is None:
+            return
         per_item: Dict[str, List[Tuple[str, Optional[NoteView]]]] = {}
         stubs: List[str] = []
         for note in page:
@@ -1433,7 +1434,8 @@ class DriveIndexingService:
         through every note from its own cursor and moves them; both share NOTE_EMBED_PER_TICK. `set_vector` stores only
         over the version that was embedded (a newer write keeps its own). The pass stops at a note whose embedding
         failed, so none is left behind; when it reaches the end, `notes_space` is stamped."""
-        assert self._notes is not None
+        if self._notes is None:
+            return state
         try:
             pending = [n for n in await self._notes.embedding_pending(user_id, NOTE_EMBED_PER_TICK)
                        if not n.erase_pending and not n.content.is_empty]
@@ -1472,7 +1474,8 @@ class DriveIndexingService:
         """Embed each note's text (`note_embedding_text`, as the main service does) and store it under the version
         that was embedded. Returns how many of `notes`, in order, were handled before the first embedding failure (a
         stored or refused `set_vector` both count: a newer version keeps its own vector)."""
-        assert self._notes is not None
+        if self._notes is None:
+            return 0
         handled = 0
         for note in notes:
             name = note.snapshot.name if note.snapshot is not None else ""
