@@ -34,7 +34,9 @@ def conversion():
 
 @pytest.fixture
 def search():
-    return AsyncMock(spec=DriveSearchService)
+    svc = AsyncMock(spec=DriveSearchService)
+    svc.archived_text.return_value = None   # §27.9.11: not a file of the bot's _Transcripts folder
+    return svc
 
 
 @pytest.fixture

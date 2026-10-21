@@ -56,12 +56,13 @@ from ..adapters.firestore_task_search_index import FirestoreTaskSearchIndex
 from ..adapters.microsoft import OneDriveAdapter
 from ..adapters.microsoft.todo_adapter import MicrosoftToDoAdapter
 from ..ports.drive_index_repository import DriveIndexRepository
+from ..ports.drive_mirror_repository import DriveMirrorRepository
 from ..ports.task_queue import TaskQueue
 from ..ports.user_drive_port import UserDrivePort
 from ..services.user_drive_service import UserDriveService
 from ..adapters.firestore_user_repo import FirestoreUserRepository
 from ..services.drive_search_service import DriveSearchService
-from .drive_indexing_setup import build_drive_index_repository, build_drive_task_queue
+from .drive_indexing_setup import build_drive_index_repository, build_drive_mirror_repository, build_drive_task_queue
 from ..services.task_indexing_service import TaskIndexingService
 from ..adapters.gcs_file_storage_adapter import GcsFileStorageAdapter
 from ..adapters.gcs_workspace_adapter import GcsWorkspaceAdapter
@@ -181,6 +182,9 @@ class ServiceContainer:
         self.user_drive_service: Optional[UserDriveService] = None
         self.drive_index_repo: Optional[DriveIndexRepository] = None
         self.drive_task_queue: Optional[TaskQueue] = None
+        # The transcript mirror's roots and ledger (§27.9): the Step 1 guard, the deleted-files search and the open of
+        # an archived transcript read them on the main service.
+        self.drive_mirror_repo: Optional[DriveMirrorRepository] = None
         if config.get("MICROSOFT_TODO_CLIENT_ID") and config.get("MICROSOFT_TODO_CLIENT_SECRET"):
             self.user_drive = OneDriveAdapter(
                 oauth_credentials=self.oauth_credentials,
@@ -189,7 +193,9 @@ class ServiceContainer:
             )
             self.drive_index_repo = build_drive_index_repository(db_client, env_config)
             self.drive_task_queue = build_drive_task_queue(config, env_config)
-            self.user_drive_service = UserDriveService(self.user_drive, nudge_queue=self.drive_task_queue)
+            self.drive_mirror_repo = build_drive_mirror_repository(db_client, env_config)
+            self.user_drive_service = UserDriveService(self.user_drive, nudge_queue=self.drive_task_queue,
+                                                       mirror_roots=self.drive_mirror_repo)
 
         # Drive search (USER_DRIVE_INDEXING_RFC §10.1): over the index, on the main service. The opt-in
         # flag is read from Firestore on every search, never from the agent cache, so the service gets
@@ -206,6 +212,7 @@ class ServiceContainer:
                 embedding_space=GeminiEmbeddingAdapter.EMBEDDING_SPACE,
                 # the Cabinet shows the transcription cap the indexer applies: the optional knob only lowers it (T-R3)
                 transcribe_cap_usd=effective_monthly_cap(os.getenv("DRIVE_TRANSCRIBE_USD_CAP")),
+                mirror=self.drive_mirror_repo,
             )
 
         self.notes_adapter = FirestoreAgentNoteAdapter(db_client, env_config)

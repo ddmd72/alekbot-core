@@ -15,6 +15,7 @@ import os
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, List, Mapping, Optional
 
 from ..adapters.firestore_drive_index_repo import FirestoreDriveIndexRepository
+from ..adapters.firestore_drive_mirror_repo import FirestoreDriveMirrorRepository
 from ..adapters.gcp_task_queue import GcpTaskQueue
 from ..adapters.geo_place_table import load_place_rows
 from ..adapters.microsoft import ONEDRIVE_PROVIDER
@@ -23,6 +24,7 @@ from ..domain.drive_index_planner import PlaceOf
 from ..domain.place_lookup import PlaceIndex
 from ..ports.alert_sink import AlertSinkPort
 from ..ports.drive_index_repository import DriveIndexRepository
+from ..ports.drive_mirror_repository import DriveMirrorRepository
 from ..ports.oauth_credentials_port import OAuthCredentialsPort
 from ..ports.task_queue import TaskQueue
 from ..ports.user_drive_port import UserDrivePort
@@ -45,6 +47,12 @@ def drive_queue_name(env_config: EnvironmentConfig) -> str:
 
 def build_drive_index_repository(db_client: Any, env_config: EnvironmentConfig) -> DriveIndexRepository:
     return FirestoreDriveIndexRepository(db_client, env_config)
+
+
+def build_drive_mirror_repository(db_client: Any, env_config: EnvironmentConfig) -> DriveMirrorRepository:
+    """The transcript mirror's roots and ledger (USER_DRIVE_INDEXING_RFC §27.9): read by the main service for the Step 1
+    guard, the deleted-files search and the open of an archived transcript."""
+    return FirestoreDriveMirrorRepository(db_client, env_config)
 
 
 def build_drive_task_queue(config: Mapping[str, Any], env_config: EnvironmentConfig) -> Optional[TaskQueue]:
