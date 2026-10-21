@@ -7,7 +7,7 @@ is made), T-R29 (an unknown batch outcome booked as bought), T-R30 (copies wait 
 T-R31 (a long window accepted short is stored truncated).
 
 Public interface:
-    DriveTranscriptStage(repo, drive, media, batch, runner, *, clock, monotonic, monthly_cap_usd, temp_root)
+    DriveTranscriptStage(repo, drive, media, batch, runner, *, clock, monotonic, monthly_cap_usd, temp_root, mirror)
         async extract_step(user_id, host, *, stop_at) -> {counter: n}     one extraction step of one user's tick
         async cheap_steps(user_id, host, *, stop_at) -> {counter: n}      poll, collect, finalize, the orphan sweep
         async drop_jobs(user_id, host, item_ids) -> int                   jobs of records that left the pipeline
@@ -129,6 +129,7 @@ from ..domain.user_drive import (
 )
 from ..ports.batch_transcription_port import BatchTranscriptionPort
 from ..ports.drive_index_repository import DriveIndexRepository
+from ..ports.drive_mirror_repository import DriveMirrorRepository
 from ..ports.media_audio_port import MediaAudioPort
 from ..ports.user_drive_port import UserDrivePort
 from ..utils.logger import logger
@@ -247,9 +248,11 @@ class DriveTranscriptStage:
     def __init__(self, repo: DriveIndexRepository, drive: UserDrivePort, media: MediaAudioPort,
                  batch: BatchTranscriptionPort, runner: TranscriptRunner, *,
                  clock: Callable[[], datetime] = _utcnow, monotonic: Callable[[], float] = time.monotonic,
-                 monthly_cap_usd: float = TRANSCRIBE_USD_PER_MONTH, temp_root: Optional[str] = None) -> None:
+                 monthly_cap_usd: float = TRANSCRIBE_USD_PER_MONTH, temp_root: Optional[str] = None,
+                 mirror: Optional[DriveMirrorRepository] = None) -> None:
         """`monthly_cap_usd` is `effective_monthly_cap(DRIVE_TRANSCRIBE_USD_CAP)`, decided by the composition
-        (T-R3); `temp_root` holds each step's window files, deleted when the step ends."""
+        (T-R3); `temp_root` holds each step's window files, deleted when the step ends; `mirror` the transcript
+        mirror's ledger, whose pins the orphan sweep keeps (§27.9.6, Δ186; None: no mirror, no pins)."""
         self._repo = repo
         self._drive = drive
         self._media = media
@@ -259,6 +262,7 @@ class DriveTranscriptStage:
         self._monotonic = monotonic
         self._cap = monthly_cap_usd
         self._temp_root = temp_root
+        self._mirror = mirror
         self._swept: Dict[str, date] = {}   # the orphan sweep's day per user: in process, no sync-state field (§27.8 b)
 
     # ------------------------------------------------------------------------------------------------------------
@@ -1477,14 +1481,17 @@ class DriveTranscriptStage:
         """§27.8 b, once a day per user: a stored transcript no record has used for TRANSCRIPT_ORPHAN_TTL is deleted.
         One a record still carries (`transcript_key`, any state) is kept and touched instead: a re-finalize (G18, G31)
         reads it with no model call, so sweeping it would re-buy the audio (Δ122); the touch also keeps it out of the
-        next sweep's page, which is ordered by `last_used_at`."""
+        next sweep's page, which is ordered by `last_used_at`. So is one the mirror ledger pins (an archived or detached
+        file, or a pending deletion mark, on any drive of the user: §27.9.6, Δ186, Δ217): the touch moves pinned heads
+        off the front of the page, so they never crowd out the real orphans."""
         now = self._clock()
         if self._swept.get(user_id) == now.date():
             return
         keys = await self._repo.orphan_transcripts(user_id, now - TRANSCRIPT_ORPHAN_TTL, _ORPHAN_PAGE)
         for key in keys:
             host.fence()
-            if await self._repo.transcript_key_in_use(user_id, key):
+            if (await self._repo.transcript_key_in_use(user_id, key)
+                    or (self._mirror is not None and await self._mirror.pinned(user_id, key))):
                 await self._repo.touch_transcript(user_id, key, now)
                 _inc(summary, "transcript_orphans_kept")
             else:

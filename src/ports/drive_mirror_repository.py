@@ -71,11 +71,13 @@ class DriveMirrorRepository(ABC):
     # -- deletion marks (§27.9.4) --------------------------------------------------------------
 
     @abstractmethod
-    async def mark_gone(self, user_id: str, marks: Sequence[DeletionNotice]) -> int:
+    async def mark_gone(self, user_id: str, marks: Sequence[DeletionNotice], *, drive_id: str = "") -> int:
         """Mark the ledger documents of the noticed source items (a `file` and a `folder` document are candidates for
         each item id). Updates **existing** documents only, never creates one. On a marked document the earliest
         `gone_at` stays, `mark_ready_at` only moves later and the why only upgrades (`drive_mirror_plan.marked`); a new
-        mark sets `mark_ready_at = at + MIRROR_ARCHIVE_GRACE`. Returns the number of documents updated."""
+        mark sets `mark_ready_at = at + MIRROR_ARCHIVE_GRACE`. The keys carry no drive id (§27.9.3), so with `drive_id`
+        a document of another drive is left unmarked; "" (the tick knows no drive) checks nothing. Returns the number of
+        documents updated."""
 
     @abstractmethod
     async def clear_mark(self, user_id: str, key: str) -> None:

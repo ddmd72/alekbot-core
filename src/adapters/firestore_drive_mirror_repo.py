@@ -209,12 +209,14 @@ class FirestoreDriveMirrorRepository(DriveMirrorRepository):
     def _mark_update(doc: MirrorDoc) -> Dict[str, Any]:
         return {name: _plain(getattr(doc, name)) for name in _MARK_FIELDS}
 
-    async def mark_gone(self, user_id: str, marks: Sequence[DeletionNotice]) -> int:
+    async def mark_gone(self, user_id: str, marks: Sequence[DeletionNotice], *, drive_id: str = "") -> int:
         by_key: Dict[str, List[DeletionNotice]] = {}
         for notice in marks:
             for kind in (KIND_FILE, KIND_FOLDER):
                 by_key.setdefault(f"{user_id}:{kind}:{notice.item_id}", []).append(notice)
         existing = await self.get_docs(user_id, list(by_key))
+        if drive_id:   # the key carries no drive id (§27.9.3): a document of another drive is not this notice's
+            existing = {k: d for k, d in existing.items() if d.drive_id == drive_id}
         updates = []
         for key, doc in existing.items():
             for notice in by_key[key]:

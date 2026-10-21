@@ -77,7 +77,7 @@ class InMemoryDriveMirrorRepository(DriveMirrorRepository):
 
     # -- marks --------------------------------------------------------------------------------------
 
-    async def mark_gone(self, user_id: str, marks: Sequence[DeletionNotice]) -> int:
+    async def mark_gone(self, user_id: str, marks: Sequence[DeletionNotice], *, drive_id: str = "") -> int:
         by_key: Dict[str, List[DeletionNotice]] = {}
         for notice in marks:
             for kind in (KIND_FILE, KIND_FOLDER):
@@ -85,7 +85,7 @@ class InMemoryDriveMirrorRepository(DriveMirrorRepository):
         updated = 0
         for key, notices in by_key.items():
             doc = self.docs.get(key)
-            if doc is None or doc.user_id != user_id:
+            if doc is None or doc.user_id != user_id or (drive_id and doc.drive_id != drive_id):
                 continue
             for notice in notices:
                 doc = marked(doc, notice)
