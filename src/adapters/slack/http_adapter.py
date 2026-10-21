@@ -39,7 +39,8 @@ from ...utils.logging_context import set_log_context
 
 BUSY_WAIT_S = 100  # in-process wait for the session lock; above the 90 s long-turn mark that releases it
 BUSY_REQUEUE_DELAY_S = 15
-BUSY_MAX_REQUEUES = 12  # 3 min: outlasts the 90 s long-turn mark that releases the lock
+# 12 x 15 s of delay, plus BUSY_WAIT_S in-process per step: ~23 min of patience in all, each step holding a request slot
+BUSY_MAX_REQUEUES = 12
 # Residuals: a third+ message behind two long turns can exhaust the re-queues and gets the notice;
 # repeated failed re-queues during a Cloud Tasks outage lose the message (ERROR log); if every in-process
 # create retry fails but the task WAS created, the original's Cloud Tasks retry finds the lock free and runs
@@ -244,6 +245,10 @@ class HTTPModeAdapter(SlackAdapter):
                 logger.warning("⚠️ Missing event_data or session_id in worker task")
                 return {"ok": False, "error": "Missing required fields"}, 400
 
+            # Events the processing path ignores must not wait on the lock, re-queue, or post the busy notice.
+            if self._ignored_before_lock(event_data.get("event") or {}):
+                return {"ok": True}, 200
+
             # Per-session lock: serialize concurrent workers for the same session.
             # Strong local ref keeps the lock alive in WeakValueDictionary until function returns.
             lock = self._session_locks.get(session_id)
@@ -286,9 +291,6 @@ class HTTPModeAdapter(SlackAdapter):
                     event = event_data.get("event", {})
                     event_type = event.get("type")
 
-                    if event.get("bot_id"):
-                        return {"ok": True}, 200
-
                     if event_type == "message":
                         await self._process_message_event(event, session_id, turn_id=turn_id,
                                                            release_lock=release_lock)
@@ -305,6 +307,13 @@ class HTTPModeAdapter(SlackAdapter):
         except Exception as e:
             logger.error(f"❌ Error in worker task: {e}", exc_info=True)
             return {"error": str(e)}, 500
+
+    @staticmethod
+    def _ignored_before_lock(event: Dict[str, Any]) -> bool:
+        # Mirrors _process_message_event: only plain and file_share messages are handled.
+        if event.get("bot_id") or not event.get("user"):
+            return True
+        return event.get("type") == "message" and event.get("subtype") not in (None, "file_share")
 
     async def _requeue_busy(
         self, payload: Dict[str, Any], event_data: Dict[str, Any], session_id: str, headers: Dict[str, Any],
