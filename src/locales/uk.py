@@ -168,7 +168,7 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.DRIVE_REPLACED.value: "✏️ Замінено: {path} ({before} → {after}; попередня версія — в історії версій)",
     UIMessage.DRIVE_DELETE_FAILED.value: "⚠️ Видалення {path} не завершилося.",
     UIMessage.DRIVE_REPLACE_FAILED.value: "⚠️ Заміна {path} не завершилася.",
-    UIMessage.DRIVE_MIRROR_WRITE_REFUSED.value: "Цю папку веде бот; змінюйте її в OneDrive.",
+    UIMessage.DRIVE_MIRROR_WRITE_REFUSED.value: "Цю папку веде бот, і її файли перезаписуються; щоб зберегти власну версію, скопіюйте файл до іншої папки.",
     UIMessage.DRIVE_TRANSCRIPTS_README.value: (
         "# Розшифровки\n\n"
         "Цю папку веде бот: файли тут можуть бути переписані; не редагуйте їх. "

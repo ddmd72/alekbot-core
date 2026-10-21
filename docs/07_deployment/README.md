@@ -813,7 +813,7 @@ then does nothing and its reads fail loudly, so do not deploy on "it is building
    gcloud firestore indexes composite list --database=us-production --project=$GOOGLE_CLOUD_PROJECT \
      --format="table(name, queryScope, state)" | grep -E "drive_transcript_mirror|drive_index_records"
    ```
-   **Every printed row must say `READY`** (14 are new); any `CREATING` or `NEEDS_REPAIR` is a stop. `composite list` does not show field overrides, so check the
+   **Every printed row must say `READY`** (12 are new: 10 on the ledger, 2 on the records); any `CREATING` or `NEEDS_REPAIR` is a stop. `composite list` does not show field overrides, so check the
    `archive_keys` exemption separately:
    ```bash
    gcloud firestore indexes fields describe archive_keys --collection-group=<PREFIX>drive_transcript_mirror \

@@ -139,7 +139,7 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.DRIVE_REPLACED.value: "✏️ Remplacé : {path} ({before} → {after} ; la version précédente est dans l'historique des versions)",
     UIMessage.DRIVE_DELETE_FAILED.value: "⚠️ La suppression de {path} n'a pas abouti.",
     UIMessage.DRIVE_REPLACE_FAILED.value: "⚠️ Le remplacement de {path} n'a pas abouti.",
-    UIMessage.DRIVE_MIRROR_WRITE_REFUSED.value: "Ce dossier est géré par le bot ; modifiez-le dans OneDrive.",
+    UIMessage.DRIVE_MIRROR_WRITE_REFUSED.value: "Ce dossier est géré par le bot et ses fichiers sont réécrits ; pour garder votre propre version, copiez le fichier dans un autre dossier.",
     UIMessage.DRIVE_TRANSCRIPTS_README.value: (
         "# Transcriptions\n\n"
         "Géré par le bot : les fichiers ici peuvent être réécrits ; ne les modifiez pas. "
