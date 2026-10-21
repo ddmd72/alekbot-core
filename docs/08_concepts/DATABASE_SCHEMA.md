@@ -262,8 +262,8 @@ What the fact fields mean (versions, `lineage_id`, `state`, expiry) is explained
   
   that says what the collection holds and its document id.
   
-  "valid_to": null,                     // null = current truth
-  "is_current": true,
+  
+  
 
   
   // Written by FirestoreFactRepository on every add_fact/update_fact.
@@ -280,10 +280,10 @@ What the fact fields mean (versions, `lineage_id`, `state`, expiry) is explained
 
 
 
-- **Vector Search (Main):** `account_id` + `is_current` + `vector` (768-dim, COSINE)
-- **Vector Search (Tags):** `account_id` + `is_current` + `tags_vector` (768-dim, COSINE)  
+
   
-- **Vector Search (Metadata):** `account_id` + `is_current` + `metadata_vector` (768-dim, COSINE)  
+  
+  
   
 - **Lineage History:** `lineage_id` + `created_at` (DESC)
 
@@ -712,7 +712,7 @@ What the fact fields mean (versions, `lineage_id`, `state`, expiry) is explained
 
 
 
-Used by `SearchEnrichmentService` and `FirestoreFactRepository.search_facts()`. Each filter field must be included in the index for Firestore to accept the query.
+
 
 
 | :----- | :------ | :------ | :-- | :--- |
@@ -741,8 +741,8 @@ Used by `SearchEnrichmentService` and `FirestoreFactRepository.search_facts()`. 
 
 
 | :----- | :------ | :------ | :-- | :--- |
-| `account_id` ASC, `domain` ASC, `state` ASC, `created_at` ASC | `search_facts_by_domain()` | Retrieve all current facts in a domain set (e.g. `["health", "medical_records"]`) for router context injection | ✅ | ⚠️ missing |
-| `account_id` ASC, `domain` ASC, `created_at` ASC, `state` ASC | `search_facts_by_domain()` | Variant with different field order (Firestore requires matching order) | ✅ | ⚠️ missing |
+
+
 
 
 ---

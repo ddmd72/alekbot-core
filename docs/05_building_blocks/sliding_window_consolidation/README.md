@@ -124,7 +124,7 @@ Provided via `FactManagementPort` (injected at construction):
 | `search_existing_facts` | Multi-vector RRF search (text + tags + metadata vectors) |
 | `count_words` | Returns word count of a fact's content |
 | `create_fact` | Write new fact via `FactWriteService.add_facts_batch` |
-| `update_fact` | SCD2 update (new version, old marked inactive) |
+| `update_fact` | In-place update; re-embeds all three vectors on a content change, bumps `version` only then (real versions: FACT_LIFECYCLE_RFC S2) |
 | `merge_facts` | Merge N facts into one (new content, old superseded) |
 | `discard_fact` | Mark fact as discarded (soft delete) |
 
