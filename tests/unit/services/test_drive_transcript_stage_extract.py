@@ -10,7 +10,8 @@ import pytest
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.domain.drive_index import EXTRACTION_VERSION, Reason, RecordState
 from src.domain.drive_index_params import (
-    BATCH_POLL_FIRST_S, MAX_ATTEMPTS, TRANSCRIBE_EXTRACT_WALL_S, TRANSCRIBE_MAX_SECONDS, TRANSCRIBE_REREAD_COOLDOWN,
+    BATCH_POLL_FIRST_S, MAX_ATTEMPTS, RETRY_BASE, TRANSCRIBE_EXTRACT_WALL_S, TRANSCRIBE_MAX_SECONDS,
+    TRANSCRIBE_REREAD_COOLDOWN,
 )
 from src.domain.drive_transcript import (
     JobWindow, MediaStatus, MediaUnreadable, Segment, StitchedTranscript, StoredTranscript, TranscriptJob, WindowSpec,
@@ -61,6 +62,11 @@ def _job(env, item_id):
 
 def _reserved(env):
     return max(0.0, env.repo.usage.get((USER, MONTH)).transcribe_reserved_usd) if (USER, MONTH) in env.repo.usage else 0.0
+
+
+def _past_wake(env, rec):
+    """T-R21: a charged attempt is held for retry until its wake-up; move the clock just past it."""
+    env.clock.advance((rec.transcript_wake_at - env.clock.now).total_seconds() + 1)
 
 
 def _stitched(*texts, duration=120.0, speakers=1, languages=("uk",)):
@@ -233,7 +239,12 @@ async def test_unreadable_file_fails_at_max_attempts_without_stub(tmp_path):
         await _step(env)
         rec = await _get(env, "a")
         assert rec.transcript_attempts == attempt and rec.transcript_stub == ""
-    assert rec.transcript_state == "failed" and env.media.runs == [] and env.host.reserves == []
+        if attempt < MAX_ATTEMPTS:   # T-R21: held for retry, the backoff doubling, until its wake-up
+            assert (rec.transcript_state, rec.transcript_hold) == ("held", "retry")
+            assert rec.transcript_wake_at == env.clock.now + RETRY_BASE * 2 ** (attempt - 1)
+            _past_wake(env, rec)
+    assert rec.transcript_state == "failed" and rec.transcript_wake_at is None
+    assert env.media.runs == [] and env.host.reserves == []
 
 
 async def test_an_unreadable_extraction_releases_the_reservation_and_keeps_counting(tmp_path):
@@ -241,11 +252,15 @@ async def test_an_unreadable_extraction_releases_the_reservation_and_keeps_count
     await _add(env, record("a"), a=Recording(600, extract_error=MediaUnreadable("corrupt")))
     await _step(env)
     rec = await _get(env, "a")
-    assert rec.transcript_attempts == 1 and rec.transcript_state == "ready"
+    assert rec.transcript_attempts == 1 and (rec.transcript_state, rec.transcript_hold) == ("held", "retry")
+    assert rec.transcript_wake_at == env.clock.now + RETRY_BASE   # T-R21: held for retry, not ready at once
     assert sum(u for u, _ in env.host.releases) == pytest.approx(sum(u for u, _ in env.host.reserves)) and _reserved(env) == 0
     for _ in range(MAX_ATTEMPTS - 1):
+        _past_wake(env, rec)
         await _step(env)
-    assert (await _get(env, "a")).transcript_state == "failed" and _job(env, "a") is None
+        rec = await _get(env, "a")
+    assert rec.transcript_state == "failed" and rec.transcript_attempts == MAX_ATTEMPTS and _job(env, "a") is None
+    assert sum(u for u, _ in env.host.releases) == pytest.approx(sum(u for u, _ in env.host.reserves)) and _reserved(env) == 0
 
 
 # -- money (Δ106, G39) ----------------------------------------------------------------------------------------------
@@ -398,7 +413,9 @@ async def test_a_run_killed_before_its_first_window_is_charged(tmp_path, status)
     await _add(env, record("a"), a=Recording(600, status=status))
     await _step(env)
     rec = await _get(env, "a")
-    assert rec.transcript_attempts == 1 and rec.transcript_state == "ready" and env.batch.uploads == []
+    assert rec.transcript_attempts == 1 and env.batch.uploads == []
+    assert (rec.transcript_state, rec.transcript_hold) == ("held", "retry")   # T-R21: backs off until its wake-up
+    assert rec.transcript_wake_at == env.clock.now + RETRY_BASE
     assert _reserved(env) == pytest.approx(0.0)
 
 
