@@ -215,3 +215,14 @@ def structurally_card_eligible(rec: DriveIndexRecord) -> bool:
     """What the structure and the policy allow, before the card cap (§5.4) has its say."""
     return (rec.scope in (Scope.NORMAL, Scope.OPAQUE_ROOT)
             and rec.state not in (RecordState.UNRESOLVED, RecordState.DELETING) and searchable(rec.reason))
+
+
+def owner_note_line(text: str, doc_type: str, life_areas: Tuple[str, ...]) -> str:
+    """STUB (part C's worktree only): part B owns this renderer (DRIVE_FILE_NOTES_RFC §6.2), body copied from B's
+    `drive_card.owner_note_line`. `noted by the owner: «<text>» (type contract; life areas home)`, or `noted by the
+    owner: type contract` for a classifier-only note; "" for no note."""
+    labels = ([f"type {doc_type}"] if doc_type else []) + (
+        ["life areas " + ", ".join(life_areas)] if life_areas else [])
+    if text:
+        return f"noted by the owner: «{text}»" + (f" ({'; '.join(labels)})" if labels else "")
+    return "noted by the owner: " + "; ".join(labels) if labels else ""

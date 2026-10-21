@@ -5,8 +5,9 @@
 #          §6.4 step 3): the deleted-files search's meaning fallback, `find_nearest` prefiltered on user_id, state and
 #          embedding_space. `make deploy-indexes` skips vector indexes, so it is created here; it is not declared in
 #          config/firestore.indexes.json (the composites 1-5 are).
-# Owner-run, once, before the deploy; wait for READY (the status command is printed at the end).
-# Usage:   PROJECT_ID=<project> [COLLECTION_PREFIX=development_] bash ./scripts/infrastructure/create_drive_note_vector_index.sh
+# Owner-run, once, before the deploy; wait for READY (the status command is printed at the end). A dry run by default:
+# it prints the gcloud command; APPLY=1 creates the index.
+# Usage:   PROJECT_ID=<project> [COLLECTION_PREFIX=development_] [APPLY=1] bash ./scripts/infrastructure/create_drive_note_vector_index.sh
 # ==============================================================================
 
 set -euo pipefail
@@ -16,11 +17,19 @@ DATABASE_ID="us-production"
 COLLECTION="${COLLECTION_PREFIX-development_}drive_notes"
 VECTOR_CONFIG='{"dimension":"768", "flat": "{}"}'
 
+APPLY="${APPLY:-0}"
+
+# A dry run unless APPLY=1: the command is printed, nothing is created.
 # An index that already exists is fine (re-runs); any other failure stops the script with a non-zero exit.
 create_index() {
   local label="$1"
   shift
   local out
+  if [[ "$APPLY" != "1" ]]; then
+    echo "   🔎 $label (dry run, APPLY=1 creates it):"
+    echo "      gcloud firestore indexes composite create $*"
+    return 0
+  fi
   if out=$(gcloud firestore indexes composite create "$@" 2>&1); then
     echo "   ✅ $label: create request issued"
     return 0
@@ -34,7 +43,7 @@ create_index() {
   return 1
 }
 
-echo "🔧 Drive note vector index"
+echo "🔧 Drive note vector index ($([[ "$APPLY" == "1" ]] && echo apply || echo dry run))"
 echo "   Database:   $DATABASE_ID"
 echo "   Collection: $COLLECTION"
 echo ""

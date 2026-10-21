@@ -4,13 +4,18 @@ deleted records report a check, how checks fold into the sync state, which notes
 a confirmed observation leaves. Pure: no I/O, no clock, no logging. The tick and `DriveNoteLifecycle` (services/) call
 these and do the reads and writes.
 
+The round end's and the audit's period constants are part B's (`drive_note_merge`: NOTE_CHECKS_MAX, NOTE_AUDIT_EVERY,
+NOTE_AUDIT_SKIP_DAYS, RFC §15); the two caps below are this module's.
+
 Public interface:
-    NOTE_CHECKS_MAX, NOTE_CHECKS_STORED_MAX, NOTE_AUDIT_EVERY, NOTE_AUDIT_SKIP_DAYS
+    NOTE_CHECKS_STORED_MAX, NOTE_AUDIT_CALL_SHARE
     checks_of(records, why, last_seen_at) -> Tuple[NoteCheck, ...]     # the deleted records that carried a note
     fold_checks(stored, new, cap=NOTE_CHECKS_STORED_MAX) -> Tuple[Tuple[NoteCheck, ...], int]
     without_checks(checks, done) -> Tuple[NoteCheck, ...]
     audit_due(audited_at, now) -> bool
-    audit_candidates(notes, *, provider_key, drive_id, now) -> List[DriveNote]
+    audit_key(note) -> AuditKey                                        # the audit's order and its pass cursor
+    audit_candidates(notes, *, provider_key, drive_id, now, after=None) -> List[DriveNote]
+    audit_cursor(state) -> Optional[AuditKey]
     refreshed_snapshot(old, change, *, path, now) -> NoteSnapshot      # the item was found: what the bot saw now
     moved_snapshot(old, path) -> Optional[NoteSnapshot]                # the item is gone: only its last known path
     record_moved(before, after) -> bool                                # §7.5: a noted record's name, parent or content
@@ -20,22 +25,25 @@ Public interface:
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Collection, Iterable, List, Optional, Sequence, Tuple
 
 from .drive_card import content_hash_of
-from .drive_index import DriveChange, DriveIndexRecord
+from .drive_index import DriveChange, DriveIndexRecord, DriveSyncState
 from .drive_note import CONTENT_KEY_FAMILY, DriveNote, NoteSnapshot, NoteState, binding_parts_of
 from .drive_note_check import NoteCheck
+from .drive_note_merge import NOTE_AUDIT_EVERY, NOTE_AUDIT_SKIP_DAYS
 
-# §7.1: a round end works through at most this many checks (each a record read; a `gone` one also an item call within
-# ITEM_CALLS_PER_TICK); the rest wait for the next round end
-NOTE_CHECKS_MAX = 500
 # The sync state is one Firestore document (1 MiB): past this many stored checks the newest are dropped, logged; the
 # daily audit (§7.4) is the backstop, as for a check lost with a failed save (§3.4)
 NOTE_CHECKS_STORED_MAX = 2_000
-NOTE_AUDIT_EVERY = timedelta(hours=24)       # §7.4: the audit's period (`notes_audited_at`)
-NOTE_AUDIT_SKIP_DAYS = 7                     # §7.4: a note whose snapshot is younger is not read again
+# §7.4: the audit takes at most this share of the item calls left when it starts (the round end's are spent first), so
+# probes, parent lookups, re-listings and access re-checks of the same tick always keep the rest; with the default 20
+# calls it reads 13, so a pass over 25 notes that all fail ends in two ticks
+NOTE_AUDIT_CALL_SHARE = 0.65
+
+AuditKey = Tuple[datetime, str]      # (snapshot_at, note_id); a note never snapshotted sorts first
+_NEVER = datetime.min.replace(tzinfo=timezone.utc)
 
 
 def checks_of(records: Iterable[DriveIndexRecord], why: str,
@@ -70,11 +78,26 @@ def audit_due(audited_at: Optional[datetime], now: datetime) -> bool:
     return audited_at is None or now - audited_at >= NOTE_AUDIT_EVERY
 
 
-def audit_candidates(notes: Iterable[DriveNote], *, provider_key: str, drive_id: str,
-                     now: datetime) -> List[DriveNote]:
+def audit_key(note: DriveNote) -> AuditKey:
+    """The audit's order (§7.4): the longest unseen first (`snapshot.snapshot_at`; never snapshotted first), then the
+    note id. The pass cursor is the key of the last note a pass tried."""
+    seen = note.snapshot.snapshot_at if note.snapshot is not None else None
+    return (seen or _NEVER, note.note_id)
+
+
+def audit_cursor(state: DriveSyncState) -> Optional[AuditKey]:
+    """The running pass's cursor (`notes_audit_after_id` set), else None (no pass running)."""
+    if not state.notes_audit_after_id:
+        return None
+    return (state.notes_audit_after_at or _NEVER, state.notes_audit_after_id)
+
+
+def audit_candidates(notes: Iterable[DriveNote], *, provider_key: str, drive_id: str, now: datetime,
+                     after: Optional[AuditKey] = None) -> List[DriveNote]:
     """The active notes the audit may read by id (§7.4): bound to the index's drive of this provider (a dormant note is
-    another drive's, and is never read), not an erase stub, and not seen by the bot in the last NOTE_AUDIT_SKIP_DAYS
-    (`snapshot.snapshot_at`). The longest unseen first; a note never snapshotted counts as the oldest."""
+    another drive's, and is never read), not an erase stub, not seen by the bot in the last NOTE_AUDIT_SKIP_DAYS, and —
+    in a pass that resumes — after the pass cursor `after`, so a note that failed is not tried twice in one pass. In
+    `audit_key` order."""
     horizon = now - timedelta(days=NOTE_AUDIT_SKIP_DAYS)
     found: List[DriveNote] = []
     for note in notes:
@@ -86,12 +109,10 @@ def audit_candidates(notes: Iterable[DriveNote], *, provider_key: str, drive_id:
         seen = note.snapshot.snapshot_at if note.snapshot is not None else None
         if seen is not None and seen > horizon:
             continue
+        if after is not None and audit_key(note) <= after:
+            continue
         found.append(note)
-    return sorted(found, key=lambda n: (_seen(n) or datetime.min.replace(tzinfo=now.tzinfo), n.note_id))
-
-
-def _seen(note: DriveNote) -> Optional[datetime]:
-    return note.snapshot.snapshot_at if note.snapshot is not None else None
+    return sorted(found, key=audit_key)
 
 
 def chain_path(name: str, names_up: Sequence[str]) -> str:

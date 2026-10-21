@@ -10,7 +10,9 @@ import pytest
 from src.domain.drive_index import DriveChange, DriveIndexStoreUnavailable, DriveSyncState, LeaseLost
 from src.domain.drive_note import NoteState
 from src.domain.drive_note_check import WHY_GONE, NoteCheck
-from src.domain.drive_note_lifecycle import NOTE_AUDIT_EVERY, NOTE_AUDIT_SKIP_DAYS
+from src.domain.drive_note_merge import NOTE_AUDIT_EVERY, NOTE_AUDIT_SKIP_DAYS
+
+from src.services import drive_indexing_service as svc_mod
 
 from .drive_index_fakes import ROOT
 from .drive_note_world import DRIVE, NotesWorld
@@ -95,9 +97,38 @@ class TestAudit:
             _unseen(w, nid)
         state, _ = await w.lifecycle.audit("u", _state(), take_item_call=_budget(2), fence=_no_fence)
         assert sum(w.note(n).state == NoteState.ARCHIVED.value for n in ids) == 2
-        assert state.notes_audited_at is None                  # continues on the next tick
+        assert state.notes_audited_at is None and state.notes_audit_after_id   # continues on the next tick
         state, _ = await w.lifecycle.audit("u", state, take_item_call=_budget(2), fence=_no_fence)
         assert all(w.note(n).state == NoteState.ARCHIVED.value for n in ids) and state.notes_audited_at is not None
+        assert state.notes_audit_after_id == "" and state.notes_audit_after_at is None
+
+    async def test_a_cut_pass_resumes_after_its_cursor_and_never_retries_a_failing_note(self, w):
+        ids = sorted(w.note_on(f"x{i}", merge=False) for i in range(5))
+        for n, nid in enumerate(ids):
+            _unseen(w, nid, days=NOTE_AUDIT_SKIP_DAYS + 10 - n)     # ids[0] the longest unseen
+        reads = []
+
+        async def failing(user_id, item_id):
+            reads.append(item_id)
+            raise TimeoutError("slow")
+
+        w.drive.get_change = failing
+        state, _ = await w.lifecycle.audit("u", _state(), take_item_call=_budget(2), fence=_no_fence)
+        assert reads == ["x0", "x1"] and state.notes_audit_after_id == ids[1]
+        assert state.notes_audit_after_at == w.note(ids[1]).snapshot.snapshot_at
+        state, _ = await w.lifecycle.audit("u", state, take_item_call=_budget(2), fence=_no_fence)
+        assert reads[2:] == ["x2", "x3"] and state.notes_audited_at is None
+        state, _ = await w.lifecycle.audit("u", state, take_item_call=_budget(2), fence=_no_fence)
+        assert reads[4:] == ["x4"] and state.notes_audited_at == w.clock.now and state.notes_audit_after_id == ""
+        state, counts = await w.lifecycle.audit("u", state, take_item_call=_budget(2), fence=_no_fence)
+        assert reads[5:] == [] and counts == {}                 # stamped: nothing until the next day
+
+    async def test_a_running_pass_continues_whatever_the_stamp_says(self, w):
+        nid = w.note_on("gone-item", merge=False)
+        _unseen(w, nid)
+        running = _state(notes_audited_at=w.clock.now, notes_audit_after_id="a-note-before")
+        state, _ = await w.lifecycle.audit("u", running, take_item_call=_budget(5), fence=_no_fence)
+        assert w.note(nid).state == NoteState.ARCHIVED.value and state.notes_audit_after_id == ""
 
     async def test_once_a_day(self, w):
         nid = w.note_on("gone-item", merge=False)
@@ -122,6 +153,48 @@ class TestAudit:
         state, counts = await w.lifecycle.audit("u", DriveSyncState(user_id="u"), take_item_call=_budget(5),
                                                 fence=_no_fence)
         assert counts == {} and state.notes_audited_at is None
+
+    async def test_persistently_failing_notes_never_starve_the_tick(self, w, monkeypatch):
+        """Review I3: 25 notes whose reads keep failing, the default 20 item calls a tick. The audit takes 13 per tick
+        (NOTE_AUDIT_CALL_SHARE), so its pass ends in two ticks, each tick keeps the rest of its item calls for its own
+        work (7, then 8), and the next tick reads nothing (stamped)."""
+        budgets = []
+        real_budget = svc_mod._Budget
+
+        def budget(*args, **kwargs):
+            made = real_budget(*args, **kwargs)
+            budgets.append(made)
+            return made
+
+        monkeypatch.setattr(svc_mod, "_Budget", budget)
+        a = w.drive.add("a.pdf")
+        await w.settle()
+        ids = [w.note_on(f"bad{i:02d}", merge=False) for i in range(25)]
+        for nid in ids:
+            _unseen(w, nid)
+        reads = []
+        orig = w.drive.get_change
+
+        async def failing(user_id, item_id):
+            if item_id.startswith("bad"):
+                reads.append(item_id)
+                raise TimeoutError("slow")
+            return await orig(user_id, item_id)
+
+        w.drive.get_change = failing
+        stamped = (await w.state()).notes_audited_at          # the onboarding's pass (no candidates then)
+        w.clock.advance(NOTE_AUDIT_EVERY.total_seconds())
+        await w.tick()
+        assert len(reads) == 13 and budgets[-1].item_calls == 7
+        state = await w.state()
+        assert state.notes_audited_at == stamped and state.notes_audit_after_id   # cut: the cursor, no stamp
+        await w.tick()
+        assert sorted(reads) == sorted(f"bad{i:02d}" for i in range(25))   # each note's item once in the pass
+        state = await w.state()
+        assert state.notes_audited_at == w.clock.now and state.notes_audit_after_id == ""
+        assert budgets[-1].item_calls == 8
+        await w.tick()
+        assert len(reads) == 25 and budgets[-1].item_calls == 20 and w.rec(a) is not None
 
     async def test_the_audit_runs_in_the_tick_and_is_stamped(self, w):
         a = w.drive.add("a.pdf")
@@ -214,7 +287,9 @@ class TestGuards:
         await w.lifecycle.round_end("u", state, take_item_call=_budget(5), fence=_no_fence)
         assert w.note(nid).snapshot.path == "old/place.pdf"
 
-    async def test_a_port_still_reporting_a_deletion_reads_as_not_found(self, w):
+    async def test_a_port_answering_a_deletion_is_unknown_and_keeps_the_check(self, w):
+        """Default: delta decides existence (the tick's re-check step reads it the same way); §7.1 archives on a
+        not-found only."""
         nid = w.note_on("gone-item", merge=False)
 
         async def deleted(user_id, item_id):
@@ -222,5 +297,14 @@ class TestGuards:
 
         w.drive.get_change = deleted
         state = _state(note_checks=(NoteCheck(nid, "gone-item", WHY_GONE, None),))
-        await w.lifecycle.round_end("u", state, take_item_call=_budget(5), fence=_no_fence)
-        assert w.note(nid).state == NoteState.ARCHIVED.value
+        after, done, _ = await w.lifecycle.round_end("u", state, take_item_call=_budget(5), fence=_no_fence)
+        assert w.note(nid).state == NoteState.ACTIVE.value and done == frozenset()
+        assert after.note_checks == state.note_checks
+
+    async def test_a_check_for_a_note_on_another_drive_is_dropped(self, w):
+        nid = w.note_on("gone-item", merge=False, drive="d2")
+        reads = []
+        w.drive.get_change = lambda u, i: reads.append(i)
+        state = _state(note_checks=(NoteCheck(nid, "gone-item", WHY_GONE, None),))
+        after, done, _ = await w.lifecycle.round_end("u", state, take_item_call=_budget(5), fence=_no_fence)
+        assert done == {nid} and reads == [] and w.note(nid).state == NoteState.ACTIVE.value

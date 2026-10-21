@@ -270,7 +270,8 @@ _STATE_READERS: Dict[str, Callable[[Any], Any]] = {
     "described_count": int, "described_grew_at": _dt,
     "migration_alerted": bool, "stall_alerted": bool, "fallback_alerted_day": str,
     "purge_keep_transcripts": bool,
-    "note_checks": _note_checks, "notes_audited_at": _dt,     # owner notes (DRIVE_FILE_NOTES_RFC §3.4)
+    # owner notes (DRIVE_FILE_NOTES_RFC §3.4, §7.4)
+    "note_checks": _note_checks, "notes_audited_at": _dt, "notes_audit_after_at": _dt, "notes_audit_after_id": str,
 }
 
 

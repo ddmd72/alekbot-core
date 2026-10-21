@@ -9,11 +9,13 @@ from src.domain.drive_note import (
     erase_stub, ref_key,
 )
 from src.domain.drive_note_check import WHY_GONE, WHY_UNSTORED, NoteCheck
+from src.domain.drive_index import DriveSyncState
 from src.domain.drive_note_lifecycle import (
-    NOTE_AUDIT_EVERY, NOTE_AUDIT_SKIP_DAYS, NOTE_CHECKS_MAX, NOTE_CHECKS_STORED_MAX, audit_candidates, audit_due,
-    chain_path, checks_of, fold_checks, moved_snapshot, record_moved, refreshed_snapshot, snapshot_from_record,
-    snapshot_stale, without_checks,
+    NOTE_AUDIT_CALL_SHARE, NOTE_CHECKS_STORED_MAX, audit_candidates, audit_cursor, audit_due, audit_key, chain_path,
+    checks_of, fold_checks, moved_snapshot, record_moved, refreshed_snapshot, snapshot_from_record, snapshot_stale,
+    without_checks,
 )
+from src.domain.drive_note_merge import NOTE_AUDIT_EVERY, NOTE_AUDIT_SKIP_DAYS, NOTE_CHECKS_MAX
 
 T = datetime(2026, 10, 22, 9, 0, tzinfo=timezone.utc)
 P = ONEDRIVE_PROVIDER_KEY
@@ -35,8 +37,10 @@ def test_the_why_words_are_the_transcript_mirrors():
 
 
 def test_the_parameters():
-    assert NOTE_CHECKS_MAX == 500 and NOTE_CHECKS_STORED_MAX == 2000
-    assert NOTE_AUDIT_EVERY == timedelta(hours=24) and NOTE_AUDIT_SKIP_DAYS == 7
+    """C's two caps; the period constants are part B's (drive_note_merge, RFC §15), imported."""
+    assert NOTE_CHECKS_STORED_MAX == 2000 and NOTE_AUDIT_CALL_SHARE == 0.65
+    assert int(20 * NOTE_AUDIT_CALL_SHARE) == 13          # of the default ITEM_CALLS_PER_TICK: 7 stay for the tick
+    assert NOTE_CHECKS_MAX == 500 and NOTE_AUDIT_EVERY == timedelta(hours=24) and NOTE_AUDIT_SKIP_DAYS == 7
 
 
 class TestChecksOf:
@@ -88,6 +92,22 @@ class TestAudit:
         ]
         got = audit_candidates(notes, provider_key=P, drive_id="d1", now=T)
         assert [n.note_id for n in got] == ["never", "old"]     # never seen first, then the longest unseen
+
+    def test_a_resumed_pass_starts_after_the_cursor(self):
+        old = T - timedelta(days=NOTE_AUDIT_SKIP_DAYS + 3)
+        notes = [_note("a", item="a"), _note("b", item="b", seen=old), _note("c", item="c", seen=old),
+                 _note("d", item="d", seen=old + timedelta(days=1))]
+        after = audit_key(notes[1])
+        got = audit_candidates(notes, provider_key=P, drive_id="d1", now=T, after=after)
+        assert [n.note_id for n in got] == ["c", "d"]
+        assert audit_key(notes[0]) < audit_key(notes[1]) < audit_key(notes[2])
+
+    def test_the_cursor_of_the_state(self):
+        assert audit_cursor(DriveSyncState(user_id="u")) is None
+        never = audit_cursor(DriveSyncState(user_id="u", notes_audit_after_id="n1"))
+        assert never is not None and never[1] == "n1" and never == audit_key(_note("n1"))
+        dated = audit_cursor(DriveSyncState(user_id="u", notes_audit_after_at=T, notes_audit_after_id="n2"))
+        assert dated == (T, "n2")
 
 
 class TestSnapshots:

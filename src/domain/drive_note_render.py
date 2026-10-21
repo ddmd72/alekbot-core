@@ -1,39 +1,37 @@
 """
-The owner notes' side of the deleted-files search (docs/10_rfcs/DRIVE_FILE_NOTES_RFC.md §6.4, D9, D16, D21): the note
-store's keys, the strict-AND match over a note's keys and its last known name's keys, and the lines of a note entry.
-Pure: no I/O, no clock, no logging. The section, its heading and the wrapper are the shared ones
+The owner notes' side of the deleted-files search (docs/10_rfcs/DRIVE_FILE_NOTES_RFC.md §6.4, D9, D16, D21): the keys a
+note is matched on, the strict-AND match over a note's keys and its last known name's keys, and the lines of a note
+entry. Pure: no I/O, no clock, no logging. The section, its heading and the wrapper are the shared ones
 (`drive_deleted_search`, one surface with the transcripts mirror, §0.3); this module fills a `DeletedHit`.
+
+Owned elsewhere and imported: the note store's keys and their version (`drive_note_merge.note_store_keys`,
+`NOTE_STORE_KEYS_VERSION`, part B: B writes them on every owner write) and the note line (`drive_card.owner_note_line`,
+part B: one renderer for cards, the open header and these entries).
 
 Every entry is data, never instructions: it is rendered inside the nonce-tagged wrapper, the note's text included (§6.3).
 
 Public interface:
-    NOTE_STORE_KEYS_VERSION                           # "<KEYS_VERSION>.<NOTE_KEYS_VERSION>": the stored `keys` layout
-    NoteKeyer                                         # (text, doc_type, life_areas) -> the note's keys (§5.4)
-    note_store_keys(content, name, note_keys) -> Tuple[str, ...]   # what a note's `keys` hold (§3.1)
-    search_keys(note, note_keys) -> FrozenSet[str]    # the stored keys, or recomputed on a layout mismatch
+    StoreKeys                                         # (content, name) -> (keys, keys_version): B's note_store_keys
+    search_keys(note, store_keys=note_store_keys) -> FrozenSet[str]   # stored keys, or recomputed on a layout mismatch
     note_matches(concepts, keys) -> bool              # strict AND, no allowances
-    owner_note_line(text, doc_type, life_areas) -> str
-    matched_line(concepts, note_keys_of_note) -> str
-    note_ref_line(note_id) -> str
+    matched_line(concepts, own_keys, name_keys) -> str
+    note_ref_line(note_id, *, dormant) -> str
     note_hit(note, *, dormant, nonce, matched, day) -> DeletedHit
-    coverage lines: ARCHIVE_SCAN_CUT_LINE, MORE_NOTES_LINE, DORMANT_HIDDEN_LINE
+    coverage lines: ARCHIVE_SCAN_CUT_LINE, MORE_NOTES_LINE, DORMANT_HIDDEN_LINE; MEANING_LINE
 """
 from __future__ import annotations
 
 from typing import Callable, Collection, FrozenSet, List, Sequence, Tuple
 
+from .drive_card import owner_note_line
 from .drive_deleted_search import DeletedHit
-from .drive_index import KEYS_VERSION
-from .drive_keys import name_keys_v2
 from .drive_match import Concept
-from .drive_note import NOTE_KEYS_VERSION, DriveNote, NoteContent, binding_parts_of, note_ref
+from .drive_note import DriveNote, NoteContent, binding_parts_of, note_ref
+from .drive_note_merge import NOTE_STORE_KEYS_VERSION, note_store_keys
 
-NOTE_STORE_KEYS_VERSION = f"{KEYS_VERSION}.{NOTE_KEYS_VERSION}"
+# part B's `drive_note_merge.note_store_keys`: (content, name) -> (the note document's keys, their version)
+StoreKeys = Callable[[NoteContent, str], Tuple[List[str], str]]
 
-# B's `drive_keys.note_keys(text, doc_type, life_areas)` (§5.4): the note's exact keys, classifiers first
-NoteKeyer = Callable[[str, str, Sequence[str]], Sequence[str]]
-
-OWNER_NOTE_PREFIX = "noted by the owner: "
 MEANING_LINE = "closest by meaning, unverified"
 REF_LINE = ("{ref} — the file is gone: this ref works only for annotate_drive_file (to change, undo or remove the "
             "note)")
@@ -44,21 +42,14 @@ MORE_NOTES_LINE = "{count} more notes on deleted files matched."
 DORMANT_HIDDEN_LINE = "The drive is not connected, so notes on files of other drives are not shown."
 
 
-def note_store_keys(content: NoteContent, name: str, note_keys: NoteKeyer) -> Tuple[str, ...]:
-    """A note document's `keys` (§3.1): the note's own keys (`note_keys`, part B's keyer) and the name keys v2 of the
-    item's last known name, unique, in that order."""
-    own = note_keys(content.text, content.doc_type, content.life_areas) if not content.is_empty else ()
-    return tuple(dict.fromkeys((*own, *(name_keys_v2(name) if name else ()))))
-
-
-def search_keys(note: DriveNote, note_keys: NoteKeyer) -> FrozenSet[str]:
+def search_keys(note: DriveNote, store_keys: StoreKeys = note_store_keys) -> FrozenSet[str]:
     """The keys the deleted-files search matches a note on: the stored ones under the current layout, otherwise
-    recomputed in memory (§3.1 `keys_version`): a note written before its keys existed (S1 stores none) still
-    matches."""
+    recomputed in memory with the store's own function (§3.1 `keys_version`), so a note written before its keys existed
+    still matches. `store_keys` is injectable for tests only."""
     if note.keys_version == NOTE_STORE_KEYS_VERSION and note.keys:
         return frozenset(note.keys)
     name = note.snapshot.name if note.snapshot is not None else ""
-    return frozenset(note_store_keys(note.content, name, note_keys))
+    return frozenset(store_keys(note.content, name)[0])
 
 
 def note_matches(concepts: Sequence[Concept], keys: Collection[str]) -> bool:
@@ -66,19 +57,6 @@ def note_matches(concepts: Sequence[Concept], keys: Collection[str]) -> bool:
     (the note's words, numbers and classifiers) or its word keys (the name's). An empty query matches everything."""
     held = keys if isinstance(keys, (set, frozenset)) else set(keys)
     return all(any(k in held for k in (*c.about_keys, *c.word_keys)) for c in concepts)
-
-
-def owner_note_line(text: str, doc_type: str = "", life_areas: Sequence[str] = ()) -> str:
-    """The note as a result line (§6.2's form): `noted by the owner: «<text>» (type contract; life areas home)`, or
-    `noted by the owner: type contract` for a classifier-only note; "" for an empty triple."""
-    parts: List[str] = []
-    if doc_type:
-        parts.append(f"type {doc_type.replace('_', ' ')}")
-    if life_areas:
-        parts.append("life areas " + ", ".join(a.replace("_", " ") for a in life_areas))
-    if text:
-        return OWNER_NOTE_PREFIX + f"«{text}»" + (f" ({'; '.join(parts)})" if parts else "")
-    return OWNER_NOTE_PREFIX + "; ".join(parts) if parts else ""
 
 
 def matched_line(concepts: Sequence[Concept], own_keys: Collection[str], name_keys: Collection[str]) -> str:
@@ -107,7 +85,7 @@ def note_hit(note: DriveNote, *, dormant: bool, nonce: str, matched: str, day: s
     name = snapshot.name if snapshot is not None else ""
     path = (snapshot.path or name) if snapshot is not None else ""
     parts = binding_parts_of(note)
-    line = owner_note_line(note.text, note.doc_type, note.life_areas)
+    line = owner_note_line(note.text, note.doc_type, tuple(note.life_areas))
     return DeletedHit(
         name=name or note.ref, path=path, day=day,
         refs=(note_ref_line(note.note_id, dormant=dormant),),

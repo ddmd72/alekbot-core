@@ -2,21 +2,20 @@
 entry) and the shared section's merge of one item's hits (§0.3)."""
 from datetime import datetime, timezone
 
+from src.domain.drive_card import owner_note_line
 from src.domain.drive_deleted_search import DeletedHit, merge_hits, render_deleted
-from src.domain.drive_index import KEYS_VERSION
 from src.domain.drive_keys import name_keys_v2, query_concepts
-from src.domain.drive_note import (
-    NOTE_KEYS_VERSION, ONEDRIVE_PROVIDER_KEY, DriveNote, NoteBinding, NoteContent, NoteSnapshot, NoteState,
-)
-from src.domain.drive_note_render import (
-    NOTE_STORE_KEYS_VERSION, matched_line, note_hit, note_matches, note_store_keys, owner_note_line, search_keys,
-)
+from src.domain.drive_note import ONEDRIVE_PROVIDER_KEY, DriveNote, NoteBinding, NoteSnapshot, NoteState
+from src.domain.drive_note_merge import NOTE_STORE_KEYS_VERSION
+from src.domain.drive_note_render import matched_line, note_hit, note_matches, search_keys
 
 T = datetime(2026, 10, 1, tzinfo=timezone.utc)
 
 
-def keyer(text, doc_type, life_areas):
-    return tuple(f"e:{w.lower()}" for w in (*text.split(), doc_type, *life_areas) if w)
+def store_keys(content, name):
+    """A stand-in for part B's `note_store_keys`: `e:` of each word and classifier, then the name keys v2."""
+    words = tuple(f"e:{w.lower()}" for w in (*content.text.split(), content.doc_type, *content.life_areas) if w)
+    return list(dict.fromkeys((*words, *name_keys_v2(name)))), NOTE_STORE_KEYS_VERSION
 
 
 def _concepts(q):
@@ -31,49 +30,29 @@ def _note(**kw):
     return DriveNote(**base)
 
 
-class TestNoteLine:
-
-    def test_text_and_classifiers(self):
-        assert owner_note_line("Petya's estimate", "contract", ["home", "legal_admin"]) == \
-            "noted by the owner: «Petya's estimate» (type contract; life areas home, legal admin)"
-
-    def test_classifier_only_has_no_empty_quote(self):
-        assert owner_note_line("", "contract") == "noted by the owner: type contract"
-
-    def test_text_only_and_empty(self):
-        assert owner_note_line("x") == "noted by the owner: «x»" and owner_note_line("") == ""
-
-
 class TestKeys:
 
-    def test_the_layout_version(self):
-        assert NOTE_STORE_KEYS_VERSION == f"{KEYS_VERSION}.{NOTE_KEYS_VERSION}"
-
-    def test_note_keys_then_name_keys(self):
-        keys = note_store_keys(NoteContent("Petya kitchen", "contract", ()), "estimate.pdf", keyer)
-        assert keys[:3] == ("e:petya", "e:kitchen", "e:contract")
-        assert set(name_keys_v2("estimate.pdf")) <= set(keys) and len(keys) == len(set(keys))
-
-    def test_an_empty_triple_has_only_name_keys(self):
-        assert note_store_keys(NoteContent(), "a.pdf", keyer) == name_keys_v2("a.pdf")
-
-    def test_search_keys_stored_or_recomputed(self):
+    def test_search_keys_stored_or_recomputed_with_the_stores_function(self):
         stored = _note(keys=["e:x"], keys_version=NOTE_STORE_KEYS_VERSION)
-        assert search_keys(stored, keyer) == {"e:x"}
-        assert "e:kitchen" in search_keys(_note(keys=["e:x"], keys_version="old"), keyer)
-        assert "e:kitchen" in search_keys(_note(), keyer)          # S1 wrote no keys
+        assert search_keys(stored, store_keys) == {"e:x"}
+        assert "e:kitchen" in search_keys(_note(keys=["e:x"], keys_version="old"), store_keys)
+        assert "e:kitchen" in search_keys(_note(), store_keys)          # S1 wrote no keys
+
+    def test_the_default_is_part_bs_function(self):
+        """With no injection the keys come from `drive_note_merge.note_store_keys` (the name keys at least)."""
+        assert set(name_keys_v2("estimate.pdf")) <= search_keys(_note())
 
 
 class TestMatch:
 
     def test_strict_and(self):
-        keys = search_keys(_note(), keyer)
+        keys = search_keys(_note(), store_keys)
         assert note_matches(_concepts("kitchen estimate"), keys)
         assert not note_matches(_concepts("kitchen lisbon"), keys)
         assert note_matches((), keys)
 
     def test_matched_line_names_where(self):
-        keys = search_keys(_note(), keyer)
+        keys = search_keys(_note(), store_keys)
         names = set(name_keys_v2("estimate.pdf"))
         assert matched_line(_concepts("kitchen estimate"), keys - names, names) == \
             'matched: your note "kitchen", name "estimate"'
@@ -88,6 +67,7 @@ class TestHit:
         assert (hit.name, hit.path, hit.day, hit.ref, hit.item, hit.item_key) == (
             "estimate.pdf", "Home/estimate.pdf", "2026-10-01", "drive_note:n1", None, "d1:i1")
         assert hit.note_line == "noted by the owner: «Petya kitchen» (type contract)\nmatched: x"
+        assert hit.note_line.split("\n")[0] == owner_note_line("Petya kitchen", "contract", ())   # part B's renderer
         out = render_deleted([hit], connected=True)
         assert "estimate.pdf | Home/estimate.pdf | gone from the drive (deleted or moved out of the bot's folder), " \
                "2026-10-01" in out

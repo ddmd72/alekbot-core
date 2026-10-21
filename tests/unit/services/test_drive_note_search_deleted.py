@@ -13,12 +13,13 @@ from src.adapters.in_memory_drive_mirror_repo import InMemoryDriveMirrorReposito
 from src.adapters.in_memory_drive_note_repo import InMemoryDriveNoteRepository
 from src.agents.file_management_agent import _flag
 from src.domain.drive_index import DriveChange, DriveIndexStoreUnavailable
-from src.domain.drive_keys import word_keys
+from src.domain.drive_keys import name_keys_v2, word_keys
 from src.domain.drive_mirror import KIND_ARCHIVE, KIND_FILE, MIRROR_ACTIVE, MIRROR_ARCHIVED, MirrorDoc, MirrorRoot
 from src.domain.drive_note import (
     ONEDRIVE_PROVIDER_KEY, DriveNote, NoteBinding, NoteSnapshot, NoteState, binding_key, erase_stub, ref_key,
 )
-from src.domain.drive_note_render import DORMANT_HIDDEN_LINE, MEANING_LINE, NOTE_STORE_KEYS_VERSION, note_store_keys
+from src.domain.drive_note_merge import NOTE_STORE_KEYS_VERSION
+from src.domain.drive_note_render import DORMANT_HIDDEN_LINE, MEANING_LINE
 from src.domain.user_drive import DriveConnection
 from src.ports.drive_index_repository import DriveIndexRepository
 from src.ports.embedding_service import EmbeddingService
@@ -31,10 +32,12 @@ T0 = datetime(2026, 10, 1, 9, 0, tzinfo=timezone.utc)
 SPACE = "gemini-embedding-2/768"
 
 
-def keyer(text, doc_type, life_areas):
-    """A stand-in for part B's note keyer (§5.4): `e:` of each lower-cased word, `e:` of the classifiers."""
-    words = [w.strip(".,").lower() for w in text.split()]
-    return tuple(f"e:{w}" for w in (*words, doc_type, *life_areas) if w)
+def store_keys(content, name):
+    """A stand-in for part B's `note_store_keys` (§3.1, §5.4): `e:` of each lower-cased word and classifier, then the
+    name keys v2."""
+    words = [w.strip(".,").lower() for w in content.text.split()]
+    own = [f"e:{w}" for w in (*words, content.doc_type, *content.life_areas) if w]
+    return list(dict.fromkeys((*own, *name_keys_v2(name)))), NOTE_STORE_KEYS_VERSION
 
 
 def _note(n, *, state=NoteState.ARCHIVED, drive="d1", text="Petya kitchen estimate", name=None, at=None,
@@ -49,8 +52,8 @@ def _note(n, *, state=NoteState.ARCHIVED, drive="d1", text="Petya kitchen estima
         archived_at=(at or T0 + timedelta(minutes=n)) if state == NoteState.ARCHIVED else None,
         updated_at=T0 + timedelta(minutes=n), note_vector=vector, embedding_space=space if vector else "")
     if stored_keys:
-        note = note.model_copy(update={"keys": list(note_store_keys(note.content, name, keyer)),
-                                       "keys_version": NOTE_STORE_KEYS_VERSION})
+        keys, version = store_keys(note.content, name)
+        note = note.model_copy(update={"keys": keys, "keys_version": version})
     return note
 
 
@@ -68,7 +71,7 @@ class World:
         self.svc = DriveSearchService(self.index, self.emb, AsyncMock(), self.drive, embedding_space=SPACE,
                                       nonce=lambda: f"nonce{next(counter):04d}", mirror=mirror)
         nonces = itertools.count(1)
-        self.source = DriveNoteDeletedSearch(self.notes, self.emb, embedding_space=SPACE, note_keys=keyer,
+        self.source = DriveNoteDeletedSearch(self.notes, self.emb, embedding_space=SPACE, store_keys=store_keys,
                                              nonce=lambda: f"note{next(nonces):04d}")
         self.svc.add_deleted_source(self.source)
 

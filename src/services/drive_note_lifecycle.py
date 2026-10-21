@@ -36,9 +36,10 @@ from ..domain.drive_index_lean import DriveRecordLean
 from ..domain.drive_note import NOTES_PER_USER_MAX, ONEDRIVE_PROVIDER_KEY, DriveNote, NoteState, binding_parts_of
 from ..domain.drive_note_check import WHY_GONE
 from ..domain.drive_note_lifecycle import (
-    NOTE_CHECKS_MAX, audit_candidates, audit_due, chain_path, moved_snapshot, refreshed_snapshot, snapshot_from_record,
-    snapshot_stale,
+    audit_candidates, audit_cursor, audit_due, audit_key, chain_path, moved_snapshot, refreshed_snapshot,
+    snapshot_from_record, snapshot_stale,
 )
+from ..domain.drive_note_merge import NOTE_CHECKS_MAX
 from ..domain.drive_search import MAX_CHAIN_DEPTH
 from ..domain.user_drive import DriveAccessDenied, DriveItemNotFoundError
 from ..ports.drive_index_repository import DriveIndexRepository
@@ -92,7 +93,8 @@ class DriveNoteLifecycle:
         done: Set[str] = set()
         for check in checks:
             note = notes.get(check.note_id)
-            if note is None or cache.get(check.item_id) is not None or not self._bound_to(note, check.item_id):
+            if note is None or cache.get(check.item_id) is not None or not self._bound_to(note, check.item_id,
+                                                                                            state.drive_id):
                 done.add(check.note_id)          # the record is back, or the note no longer names this item
                 _inc(counts, "note_checks_dropped")
                 continue
@@ -130,19 +132,24 @@ class DriveNoteLifecycle:
     async def audit(self, user_id: str, state: DriveSyncState, *, take_item_call: Callable[[], bool],
                     fence: Callable[[], None]) -> Tuple[DriveSyncState, Dict[str, int]]:
         """Once a day (`notes_audited_at`): every active note on the index's drive whose item has no record, unseen for
-        NOTE_AUDIT_SKIP_DAYS, read by id within the budget. `notes_audited_at` is stamped only when the pass did not run
-        out of item calls; a pass cut short continues on the next tick (the notes it read are fresh and skipped)."""
+        NOTE_AUDIT_SKIP_DAYS, read by id. A pass moves a cursor (`notes_audit_after_*`, the `audit_key` of the last note
+        it tried, whatever the outcome), so a pass cut by its item calls resumes after it on the next tick and a note
+        that keeps failing is tried once per pass, never at the front of every tick; `notes_audited_at` is stamped,
+        and the cursor cleared, when the pass ends. `take_item_call` is the tick's audit share (NOTE_AUDIT_CALL_SHARE)."""
         now = self._clock()
-        if not state.drive_id or not audit_due(state.notes_audited_at, now):
+        after = audit_cursor(state)
+        if not state.drive_id or (after is None and not audit_due(state.notes_audited_at, now)):
             return state, {}
         try:
             active = await self._notes.active(user_id, NOTES_PER_USER_MAX)
         except DriveIndexStoreUnavailable as exc:
             logger.error(f"[DriveNote] audit for {user_id[:8]}: note store unavailable: {exc_brief(exc)}")
             return state, {}
-        candidates = audit_candidates(active, provider_key=self._provider, drive_id=state.drive_id, now=now)
+        candidates = audit_candidates(active, provider_key=self._provider, drive_id=state.drive_id, now=now,
+                                      after=after)
         counts: Dict[str, int] = {}
         finished = True
+        tried: Optional[DriveNote] = None
         if candidates:
             items = [self._item_of(n) for n in candidates]
             cache: Dict[str, Optional[DriveRecordLean]] = dict(await self._index.get_records_lean(user_id, items))
@@ -152,6 +159,7 @@ class DriveNoteLifecycle:
                 if not take_item_call():
                     finished = False
                     break
+                tried = note
                 _inc(counts, "notes_audited")
                 verdict, change = await self._observe(user_id, item_id)
                 if verdict == _GONE:
@@ -162,9 +170,14 @@ class DriveNoteLifecycle:
                     if await self._refresh(user_id, note, change, state.root_item_id, cache, fence):
                         _inc(counts, "note_snapshots_refreshed")
         logger.info(f"[DriveNote] audit for {user_id[:8]}: active={len(active)} candidates={len(candidates)} "
-                    f"finished={finished} " + " ".join(f"{k}={v}" for k, v in sorted(counts.items())))
+                    f"resumed={after is not None} finished={finished} "
+                    + " ".join(f"{k}={v}" for k, v in sorted(counts.items())))
         if finished:
-            state = replace(state, notes_audited_at=now)
+            return replace(state, notes_audited_at=now, notes_audit_after_at=None, notes_audit_after_id=""), counts
+        if tried is not None:
+            at, note_id = audit_key(tried)
+            state = replace(state, notes_audit_after_at=None if tried.snapshot is None or tried.snapshot.snapshot_at
+                            is None else at, notes_audit_after_id=note_id)
         return state, counts
 
     # ------------------------------------------------------------------------------------------------------------------
@@ -188,7 +201,7 @@ class DriveNoteLifecycle:
         counts: Dict[str, int] = {}
         for note_id, item_id in moved.items():
             note, rec = notes.get(note_id), records.get(item_id)
-            if note is None or rec is None or not self._bound_to(note, item_id):
+            if note is None or rec is None or not self._bound_to(note, item_id, state.drive_id):
                 continue
             if not snapshot_stale(note.snapshot, rec):
                 continue
@@ -207,11 +220,14 @@ class DriveNoteLifecycle:
     # helpers
     # ------------------------------------------------------------------------------------------------------------------
 
-    def _bound_to(self, note: DriveNote, item_id: str) -> bool:
+    def _bound_to(self, note: DriveNote, item_id: str, drive_id: str) -> bool:
+        """The note still names this item on the index's drive (a drive switch purges the state, so another drive's
+        note never reaches here; checked anyway). An erase stub names nothing."""
         if note.erase_pending:
             return False
         parts = binding_parts_of(note)
-        return parts is not None and parts.provider_key == self._provider and parts.item_id == item_id
+        return (parts is not None and parts.provider_key == self._provider and parts.item_id == item_id
+                and (not drive_id or parts.drive_id == drive_id))
 
     @staticmethod
     def _item_of(note: DriveNote) -> str:
@@ -219,8 +235,9 @@ class DriveNoteLifecycle:
         return parts.item_id if parts is not None else ""
 
     async def _observe(self, user_id: str, item_id: str) -> Tuple[str, Optional[DriveChange]]:
-        """One `get_change`: gone (not found, or a port still reporting a deletion), found, or unknown (a per-item
-        error). A systemic error (not connected, throttled) propagates: the tick ends as it would on any item call."""
+        """One `get_change`: gone (not found), found, or unknown (a per-item error, or a port answering with a
+        deletion: delta decides existence, as the tick's re-check step reads it; §7.1 archives on not-found only). A
+        systemic error (not connected, throttled) propagates: the tick ends as it would on any item call."""
         try:
             change = await self._drive.get_change(user_id, item_id)
         except DriveItemNotFoundError:
@@ -229,7 +246,8 @@ class DriveNoteLifecycle:
             logger.warning(f"[DriveNote] reading item {item_id} for {user_id[:8]} failed: {exc_brief(exc)}; kept")
             return _UNKNOWN, None
         if change.deleted:
-            return _GONE, None
+            logger.warning(f"[DriveNote] reading item {item_id} for {user_id[:8]} answered a deletion; kept")
+            return _UNKNOWN, None
         return _FOUND, change
 
     async def _archive(self, user_id: str, note: DriveNote, last_seen_at: Optional[datetime], root_item_id: str,

@@ -392,3 +392,35 @@ class TestSnapshotRefresh:
 
 def test_the_hook_does_nothing_outside_a_tick():
     svc_mod.note_snapshot_due("n1", "i1")      # no accumulator: no error, nothing kept
+
+
+class TestOnlyRecordsThatLeft:
+    """Review minor: a check is made in `_commit` for a record it really deletes; a delete site that names records
+    that stay (a rescope page, an upgrade page) reports none."""
+
+    async def test_a_rescope_that_keeps_the_children_reports_no_check(self, w):
+        folder = w.drive.add("Contracts", folder=True)
+        a, nid = await _noted(w, parent=folder)
+        w.repo.records[("u", folder)] = replace(w.rec(folder), rescope_pending=True, due_at=w.clock.now,
+                                                priority=3)
+        seen = []
+        real = w.lifecycle.round_end
+
+        async def spy(user_id, state, **kwargs):
+            seen.append(state.note_checks)
+            return await real(user_id, state, **kwargs)
+
+        w.lifecycle.round_end = spy
+        await w.tick()
+        assert w.rec(a) is not None and w.rec(folder).rescope_pending is False
+        assert (await w.state()).note_checks == ()
+        await w.tick()
+        assert seen[-1] == ()                     # nothing ever reached a round end
+
+    async def test_an_upgrade_page_reports_no_check(self, w):
+        a, nid = await _noted(w)
+        st = await w.state()
+        await w.repo.save_sync_state(replace(st, applied_versions={**st.applied_versions, "policy": 0}))
+        await w.settle()
+        assert w.rec(a) is not None and (await w.state()).note_checks == ()
+        assert w.note(nid).state == NoteState.ACTIVE.value

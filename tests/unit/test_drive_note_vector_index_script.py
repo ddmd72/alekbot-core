@@ -37,3 +37,30 @@ def test_the_find_nearest_prefilter_is_the_scripts():
     assert 'FieldFilter("state", "==", state)' in body
     assert 'FieldFilter("embedding_space", "==", embedding_space)' in body
     assert "self._user(user_id)" in body
+
+
+def _run(tmp_path, apply):
+    """The script with a fake `gcloud` first on PATH that records its arguments: nothing reaches the cloud."""
+    import os
+    import subprocess
+    log = tmp_path / "gcloud.log"
+    fake = tmp_path / "gcloud"
+    fake.write_text(f'#!/bin/bash\necho "$@" >> "{log}"\n')
+    fake.chmod(0o755)
+    env = {"PATH": f"{tmp_path}:{os.environ['PATH']}", "PROJECT_ID": "test-project"}
+    if apply:
+        env["APPLY"] = "1"
+    out = subprocess.run(["bash", str(SCRIPT)], env=env, capture_output=True, text=True, check=True).stdout
+    return out, (log.read_text() if log.exists() else "")
+
+
+def test_a_dry_run_by_default_prints_and_creates_nothing(tmp_path):
+    out, calls = _run(tmp_path, apply=False)
+    assert calls == "" and "dry run" in out
+    assert "gcloud firestore indexes composite create --project=test-project" in out
+
+
+def test_apply_creates_the_index(tmp_path):
+    out, calls = _run(tmp_path, apply=True)
+    assert calls.count("firestore indexes composite create") == 1
+    assert "--collection-group=development_drive_notes" in calls and "field-path=note_vector" in calls

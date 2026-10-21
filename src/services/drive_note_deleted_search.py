@@ -11,12 +11,12 @@ never the index, so it needs neither the opt-in flag nor a connection (it runs b
 - Nothing exact: the meaning fallback — one `find_nearest` on `note_vector`, prefiltered on `state = archived` and the
   current embedding space (a vector of another space is never compared), at most MEANING_MAX lines labelled "closest
   by meaning, unverified". Dormant notes have no meaning fallback (keys only).
-- An empty query lists the newest NEWEST_MAX; at most DELETED_SHOW_MAX entries are shown, the rest counted.
+- An empty query reads the newest NEWEST_MAX and shows the newest DELETED_SHOW_MAX (5), the rest counted.
 - Every entry carries the note's `drive_note:` ref, which works only with annotate_drive_file (D21: change, undo or
   remove the note of a gone file); the note is data inside the wrapper (§6.3). Logs carry counts, never text.
 
 Public interface:
-    DriveNoteDeletedSearch(notes, embeddings, *, embedding_space, note_keys, provider_key, nonce)
+    DriveNoteDeletedSearch(notes, embeddings, *, embedding_space, store_keys, provider_key, nonce)
     await (user_id, concepts, connection) -> (hits, coverage lines)       # the DeletedSource signature
 """
 from __future__ import annotations
@@ -32,8 +32,9 @@ from ..domain.drive_match import Concept
 from ..domain.drive_note import (
     ARCHIVE_SCAN_MAX, NOTES_PER_USER_MAX, ONEDRIVE_PROVIDER_KEY, DriveNote, NoteState, binding_parts_of,
 )
+from ..domain.drive_note_merge import note_store_keys
 from ..domain.drive_note_render import (
-    ARCHIVE_SCAN_CUT_LINE, DORMANT_HIDDEN_LINE, MEANING_LINE, MORE_NOTES_LINE, NoteKeyer, matched_line, note_hit,
+    ARCHIVE_SCAN_CUT_LINE, DORMANT_HIDDEN_LINE, MEANING_LINE, MORE_NOTES_LINE, StoreKeys, matched_line, note_hit,
     note_matches, search_keys,
 )
 from ..domain.user_drive import DriveConnection
@@ -52,15 +53,15 @@ def _nonce() -> str:
 
 class DriveNoteDeletedSearch:
     def __init__(self, notes: DriveNoteRepository, embeddings: EmbeddingService, *, embedding_space: str,
-                 note_keys: NoteKeyer, provider_key: str = ONEDRIVE_PROVIDER_KEY,
+                 store_keys: StoreKeys = note_store_keys, provider_key: str = ONEDRIVE_PROVIDER_KEY,
                  nonce: Callable[[], str] = _nonce) -> None:
         """`embedding_space` is the space query vectors are embedded in (the adapter's EMBEDDING_SPACE): the meaning
-        fallback compares only note vectors in it. `note_keys` is the note keyer of §5.4 (part B's
-        `drive_keys.note_keys`), used when a note's stored keys are of another layout."""
+        fallback compares only note vectors in it. `store_keys` is part B's `drive_note_merge.note_store_keys`, used when
+        a note's stored keys are of another layout; injectable for tests only."""
         self._notes = notes
         self._embeddings = embeddings
         self._space = embedding_space
-        self._note_keys = note_keys
+        self._store_keys = store_keys
         self._provider = provider_key
         self._nonce = nonce
 
@@ -86,7 +87,7 @@ class DriveNoteDeletedSearch:
             found = [(n, d, "") for n, d in pool[:NEWEST_MAX]]
         else:
             for note, is_dormant in pool:
-                keys = search_keys(note, self._note_keys)
+                keys = search_keys(note, self._store_keys)
                 if note_matches(concepts, keys):
                     name_keys = frozenset(name_keys_v2(note.snapshot.name)) if note.snapshot and note.snapshot.name \
                         else frozenset()

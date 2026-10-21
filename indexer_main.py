@@ -76,7 +76,7 @@ from src.composition.drive_indexing_setup import (
 )
 from src.composition.drive_model_setup import build_drive_mirror, build_drive_models, build_drive_transcription
 from src.composition.drive_note_setup import (
-    DRIVE_NOTES_ENABLED_ENV, build_drive_note_lifecycle, build_drive_note_repository, drive_notes_enabled,
+    DRIVE_NOTES_ENABLED_ENV, build_drive_note_lifecycle, build_drive_note_repository, drive_notes_switch_on,
 )
 from src.composition.memory_telemetry_setup import build_memory_telemetry
 from src.composition.prompt_assembly_setup import build_prompt_assembly_service
@@ -158,10 +158,11 @@ def build_app() -> Quart:
         enabled=transcribe_on and transcripts is not None, repo=index_repo, mirror_repo=mirror_repo, drive=drive,
         users=users, account_repo=account_repo, profile_repo=profile_repo, assembly_service=assembly_service,
     )
-    # Owner notes (DRIVE_FILE_NOTES_RFC §7): the archive checks and the daily audit, only with the kill switch on (§3.6)
-    note_lifecycle = build_drive_note_lifecycle(
-        enabled=drive_notes_enabled(os.environ.get(DRIVE_NOTES_ENABLED_ENV)),
-        notes=build_drive_note_repository(db, env_config), index=index_repo, drive=drive)
+    # Owner notes (DRIVE_FILE_NOTES_RFC §5.1, §7): the store only with the kill switch on (§3.6); the archive checks and
+    # the daily audit with it. One store instance for part B's `notes=` and this lifecycle.
+    notes_on = drive_notes_switch_on(os.environ.get(DRIVE_NOTES_ENABLED_ENV))
+    note_repo = build_drive_note_repository(db, env_config) if notes_on else None
+    note_lifecycle = build_drive_note_lifecycle(enabled=notes_on, notes=note_repo, index=index_repo, drive=drive)
     indexing = DriveIndexingService(
         drive=drive,
         repo=index_repo,

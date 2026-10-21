@@ -489,6 +489,10 @@ class DriveSyncState:
     # the state on a purge, which is right: a purge archives nothing, and the audit is the backstop.
     note_checks: Tuple[NoteCheck, ...] = ()
     notes_audited_at: Optional[datetime] = None
+    # the audit pass cursor (§7.4): the (snapshot_at, note_id) of the last note a pass tried; "" = no pass running. A pass
+    # cut by its item-call share resumes after it, and `notes_audited_at` is stamped when the pass ends
+    notes_audit_after_at: Optional[datetime] = None
+    notes_audit_after_id: str = ""
 
     def cards_in_space(self, embedding_space: str) -> bool:
         """The card stream answers queries embedded in `embedding_space`: no card is left in another space."""

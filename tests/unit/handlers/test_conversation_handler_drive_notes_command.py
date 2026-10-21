@@ -127,7 +127,8 @@ class TestEraseAll:
         env.put(1)
         env.put(2)
         sent = await _run(env, "drive-notes erase-all")
-        assert sent == [_ui(UIMessage.DRIVE_NOTES_ERASE_ALL_ASK, count=2), "`$drive-notes erase-all c0ffe0`"]
+        assert sent == [_ui(UIMessage.DRIVE_NOTE_ERASE_ALL_REQUEST, count=2, minutes=10),
+                        "`$drive-notes erase-all c0ffe0`"]                   # part A's erase renderer
         assert all(not n.erase_pending for n in env.notes.notes.values())
         env.coordinator.route_message.assert_not_called()
 
@@ -135,7 +136,7 @@ class TestEraseAll:
         ids = [env.put(1), env.put(2)]
         await _run(env, "drive-notes erase-all")
         sent = await _run(env, "drive-notes erase-all c0ffe0")
-        assert sent == [_ui(UIMessage.DRIVE_NOTES_ERASED, count=2)]
+        assert sent == [_ui(UIMessage.DRIVE_NOTE_ERASED, count=2)]
         for nid in ids:
             assert env.notes.notes[(U, nid)].erase_pending and (U, nid) not in env.notes.versions
 
@@ -149,7 +150,7 @@ class TestOneNote:
         keep, gone = env.put(1), env.put(2)
         request = await env.service.request_erase(U, f"drive_note:{gone}")
         sent = await _run(env, f"drive-notes erase {request.code}")
-        assert sent == [_ui(UIMessage.DRIVE_NOTES_ERASED, count=1)]
+        assert sent == [_ui(UIMessage.DRIVE_NOTE_ERASED, count=1)]
         assert env.notes.notes[(U, gone)].erase_pending and not env.notes.notes[(U, keep)].erase_pending
 
     async def test_the_stub_holds_no_content(self, env):
@@ -221,7 +222,7 @@ class TestPartialAndFailures:
         env.notes._erase_one = flaky
         await _run(env, "drive-notes erase-all")
         sent = await _run(env, "drive-notes erase-all c0ffe0")
-        assert sent == [_ui(UIMessage.DRIVE_NOTES_ERASE_PARTIAL, erased=1, left=1)]
+        assert sent == [_ui(UIMessage.DRIVE_NOTE_ERASE_PARTIAL, erased=1, left=1)]
 
     async def test_an_unexpected_error_answers_unavailable(self, env):
         env.put(1)
@@ -249,7 +250,20 @@ class TestUsage:
     async def test_every_language_has_the_strings(self):
         from src.locales import en, es, fr
         keys = [m.value for m in UIMessage if m.name.startswith("DRIVE_NOTES_")]
-        assert len(keys) == 7
+        assert sorted(keys) == ["drive_notes_no_such_request", "drive_notes_none", "drive_notes_unavailable",
+                                "drive_notes_usage"]                     # C's four; the erase replies are A's
         for module in (uk_locale, en, es, fr):
             assert all(k in module.UI_STRINGS for k in keys)
-        assert "{erased}" in en.UI_STRINGS["drive_notes_erase_partial"] and "{left}" in en.UI_STRINGS["drive_notes_erase_partial"]
+
+    async def test_uk_and_fr_use_the_informal_register(self):
+        """The feature speaks ти / tu (part A's receipts, e0dc71fc); none of C's strings says ви / vous."""
+        from src.locales import fr
+        keys = [m.value for m in UIMessage if m.name.startswith("DRIVE_NOTES_")]
+        uk_text = " ".join(uk_locale.UI_STRINGS[k] for k in keys).lower()
+        fr_text = " ".join(fr.UI_STRINGS[k] for k in keys).lower()
+        for formal in ("ваш", "вставте", "попросіть", " вас", " вам"):
+            assert formal not in uk_text
+        assert "твої" in uk_text and "встав " in uk_text and "у тебе" in uk_text
+        for formal in ("vous", " vos ", "collez", "votre"):
+            assert formal not in fr_text
+        assert "tes notes" in fr_text and "colle " in fr_text and "tu n'as" in fr_text
