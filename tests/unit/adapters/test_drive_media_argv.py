@@ -79,6 +79,17 @@ def test_pass_argv_is_guarded_bounded_and_resumable():
     assert _value(resumed, "-ss") == "3480.000" and resumed.index("-ss") < resumed.index("-i")
 
 
+def test_remote_runs_reconnect_and_fail_on_error():
+    expected = ["-reconnect", "1", "-reconnect_on_network_error", "1", "-reconnect_delay_max", "5"]
+    for argv in (_window(), media.build_pass_argv(URL, CA, "matroska,webm", 0, 600, "/w/pass.opus"),
+                 media.build_probe_argv(URL, CA)):
+        start = argv.index("-reconnect")
+        assert argv[start:start + 6] == expected and start < argv.index("-i")
+    for argv in (_window(), media.build_pass_argv(URL, CA, "matroska,webm", 0, 600, "/w/pass.opus")):
+        assert "-xerror" in argv and argv.index("-xerror") < argv.index("-i")
+    assert "-xerror" not in media.build_cut_argv("/w/p.opus", 0, 10, "/w/x")      # local cuts are not remote runs
+
+
 def test_the_cut_reads_only_local_ogg():
     argv = media.build_cut_argv("/w/pass.opus", 1_740.0, 1_800.0, "/w/window_1.opus.part")
     assert _value(argv, "-protocol_whitelist") == "file" and _value(argv, "-format_whitelist") == "ogg"

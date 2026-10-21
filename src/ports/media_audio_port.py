@@ -28,4 +28,6 @@ class MediaAudioPort(ABC):
         `container` is the probed format, pinned on the run; empty or invalid raises MediaUnreadable.
         Known duration: one `-ss/-t` run per window. `duration_known=False` (G35, T-R15): `windows` is a contiguous
         slice (at most `MEDIA_PASS_MAX_WINDOWS`) of the standard plan; one remote read of the span, the windows cut from
-        it locally, the duration read from the result (`eof`). Raises MediaUnreadable."""
+        it locally, the duration read from the result (`eof`). A slice that is too long or not contiguous raises ValueError
+        (a caller bug). Raises MediaUnreadable for an unreadable file, a dropped connection that kept dropping, or a
+        limit hit before the first window finished."""
