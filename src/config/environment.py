@@ -433,6 +433,22 @@ class EnvironmentConfig:
         """
         return f"{self.firestore_collection_prefix}drive_sync_state"
 
+    @property
+    def drive_mirror_roots_collection(self) -> str:
+        """
+        The transcript mirror's root documents, one per user and drive (`{user_id}:{drive_id}`); no purge deletes them
+        (USER_DRIVE_INDEXING_RFC §27.9.2). Dev: development_drive_mirror_roots
+        """
+        return f"{self.firestore_collection_prefix}drive_mirror_roots"
+
+    @property
+    def drive_transcript_mirror_collection(self) -> str:
+        """
+        The transcript mirror's ledger, one document per mirrored file, source folder and archive folder; no purge
+        deletes it (USER_DRIVE_INDEXING_RFC §27.9.3). Dev: development_drive_transcript_mirror
+        """
+        return f"{self.firestore_collection_prefix}drive_transcript_mirror"
+
     # --- Infrastructure Collections (Stable) ---
 
     @property
