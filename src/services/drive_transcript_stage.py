@@ -791,7 +791,7 @@ class DriveTranscriptStage:
                 _inc(summary, "transcript_finalize_dropped")
                 return
             done = mark_current(indexed, now, seconds=int(round(transcript.duration_s)), speakers=transcript.speakers,
-                                languages=transcript.language_codes)
+                                languages=transcript.language_codes, truncated=transcript.truncated)
             await self._commit(host, done, indexed)
         host.fence()
         await self._repo.touch_transcript(user_id, stored.content_key, now)
@@ -1430,7 +1430,7 @@ class DriveTranscriptStage:
                                       last_used_at=now)
             before = indexed
             done = mark_current(indexed, now, seconds=int(round(stitched.duration_s)), speakers=stitched.speakers,
-                                languages=stitched.language_codes)
+                                languages=stitched.language_codes, truncated=stitched.truncated)
         host.fence()
         await self._repo.put_transcript(user_id, stored)
         await self._abandon(user_id, host, job, None)

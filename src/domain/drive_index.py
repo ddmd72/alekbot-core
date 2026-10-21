@@ -407,6 +407,7 @@ class DriveIndexRecord:
     transcript_speakers: int = 0
     transcript_languages: Tuple[str, ...] = ()   # the card's languages (§27.11): the card needs no store read
     transcript_body_version: int = 0          # G18
+    transcript_truncated: bool = False        # part of the recording may be missing from the transcript (T-R31)
 
     @property
     def stale(self) -> bool:

@@ -433,13 +433,13 @@ def resume_window(window: JobWindow, ctx: TranscriptContext) -> WindowResult:
 
 
 def mark_current(rec: DriveIndexRecord, now: datetime, *, seconds: int, speakers: int, languages: Tuple[str, ...],
-                 stub: str = "") -> DriveIndexRecord:
+                 stub: str = "", truncated: bool = False) -> DriveIndexRecord:
     """The job finished: a transcript (or the model's `no_speech` stub) is stored at this content key. Attempts and holds
     are spent. `model_read_at` anchors the edit cooldown."""
     out = replace(rec, transcript_state=CURRENT, transcript_key=content_key(rec)[0],
                   transcript_version=TRANSCRIBE_VERSION, transcript_body_version=TRANSCRIPT_BODY_VERSION,
                   transcript_stub=stub, transcript_seconds=seconds, transcript_speakers=speakers,
-                  transcript_languages=languages, model_read_at=now, transcript_attempts=0,
+                  transcript_languages=languages, transcript_truncated=truncated, model_read_at=now, transcript_attempts=0,
                   transcript_hold=None, transcript_hold_version="", transcript_wake_at=None)
     if stub:
         out = demoted(out, _STUB_RECORD_REASON[TranscriptStub(stub)], now)
