@@ -41,6 +41,7 @@ from ..domain.drive_search import (
     REFERENCE_REMINDER, REFERENCE_REMINDER_ATTACHED, render_results, request_from_fields, require_search_terms,
     wrap_untrusted,
 )
+from ..domain.drive_index_policy import TRANSCRIBED_KINDS, kind_of
 from ..domain.exceptions import WorkspaceRefused
 from ..domain.language import LanguageCode
 from ..domain.skill import SKILL_REF_PREFIX
@@ -642,11 +643,12 @@ class FileManagementAgent(BaseAgent):
     async def _transcript_of(self, user_id: str, item: Any) -> Optional[str]:
         """The wrapped transcript of a recording, or None (none stored, or the lookup failed: the file branch stays)."""
         try:
-            text = await self._drive_search.transcript_text(user_id, item.item_id, path=item.path)
+            text = await self._drive_search.transcript_text(user_id, item.item_id, path=item.path,
+                                                          label=drive_label(item))
         except Exception:
             logger.warning("FileManagementAgent: transcript lookup failed", exc_info=True)
             return None
-        return text if isinstance(text, str) and text else None
+        return text or None
 
     async def _open_drive_item(self, message: AgentMessage, ref: str, user_id: str,
                                payload: Optional[dict] = None) -> AgentResponse:
@@ -659,7 +661,9 @@ class FileManagementAgent(BaseAgent):
             return self._ok(message, f"'{item.path}' is in a format that cannot be viewed yet ({mime}).", [item])
         vision_cap = (MAX_DRIVE_VISION_IMAGE_BYTES if mime.startswith("image/")
                       else MAX_DRIVE_VISION_PDF_BYTES if mime == "application/pdf" else None)
-        recording = mime.startswith(("audio/", "video/"))
+        # A recording is decided the way the indexer decides it: by the kind classifier (extension first), not the
+        # provider's mime, so a transcribed .opus/.ogg/.mkv with a generic mime still opens as its transcript.
+        recording = kind_of(item.name, item.mime_type or "", False) in TRANSCRIBED_KINDS
         if recording and (payload or {}).get("original") is True:
             # The recording itself comes as a drive link, never as bytes into chat (§27.11, Δ121).
             link = item.web_url or "(no link available)"

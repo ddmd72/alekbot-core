@@ -69,3 +69,10 @@ async def test_none_when_no_current_transcript():
 async def test_none_when_the_store_has_nothing():
     svc, _ = _service(_rec(), None)
     assert await svc.transcript_text("u", "a1") is None
+
+
+async def test_label_goes_inside_the_wrapper():
+    svc, _ = _service(_rec(), _stored("hello"))
+    text = await svc.transcript_text("u", "a1", path="p", label="[Drive: p (5 KB) ref=drive:a1]")
+    inner = text.split(REFERENCE_REMINDER, 1)[1]
+    assert inner.index("[Drive: p") > inner.index("<drive_document") and inner.index("[Drive: p") < inner.index("[00:00]")
