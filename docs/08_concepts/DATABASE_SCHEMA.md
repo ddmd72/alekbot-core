@@ -262,8 +262,8 @@ Collections are separated into **Domain** (versioned) and **Infrastructure** (st
   // SCD Type 2
   "created_at": "timestamp",
   "valid_from": "timestamp",
-  "valid_to": null,                     // null = current truth
-  "is_current": true,
+  "valid_to": null,                     // null = current truth; set on superseded/archived/invalidated
+  "is_current": true,                   // latest document of its lineage; false only when superseded
 
   // Biographical context ordering (adapter-internal — NOT in FactEntity domain model)
   // Written by FirestoreFactRepository on every add_fact/update_fact.
@@ -280,10 +280,10 @@ Collections are separated into **Domain** (versioned) and **Infrastructure** (st
 
 **Indexes (us-production - READY):**
 
-- **Vector Search (Main):** `account_id` + `is_current` + `vector` (768-dim, COSINE)
-- **Vector Search (Tags):** `account_id` + `is_current` + `tags_vector` (768-dim, COSINE)  
+- **Vector Search (Main):** `account_id` + `state` (== "current", see `firestore_repo.py`) + `vector` (768-dim, COSINE)
+- **Vector Search (Tags):** `account_id` + `state` + `tags_vector` (768-dim, COSINE)  
   ✨ **NEW:** Created 2026-02-09 for category/domain queries
-- **Vector Search (Metadata):** `account_id` + `is_current` + `metadata_vector` (768-dim, COSINE)  
+- **Vector Search (Metadata):** `account_id` + `state` + `metadata_vector` (768-dim, COSINE)  
   ✨ **NEW:** Created 2026-02-09 for structured data queries
 - **Lineage History:** `lineage_id` + `created_at` (DESC)
 - **Legacy Fallback:** `owner_id` + `is_current` + `vector` (COSINE) - Deprecated
@@ -712,7 +712,7 @@ Updated on every message received via `ConversationHandler` → `UserNotificatio
 
 ### 7.1 Vector Search Indexes — `development_domain_facts_v2` / `domain_facts_v2`
 
-Used by `SearchEnrichmentService` and `FirestoreFactRepository.search_facts()`. Each filter field must be included in the index for Firestore to accept the query.
+Used by `SearchEnrichmentService`, `FirestoreFactRepository.search_facts()` and `add_fact_if_unique()` (dedup, `state == "current"` only). Each filter field must be included in the index for Firestore to accept the query.
 
 | Fields | Used by | Purpose | Dev | Prod |
 | :----- | :------ | :------ | :-- | :--- |
@@ -741,8 +741,8 @@ Used by `SearchEnrichmentService.build_enriched_context()` for router enrichment
 
 | Fields | Used by | Purpose | Dev | Prod |
 | :----- | :------ | :------ | :-- | :--- |
-| `account_id` ASC, `domain` ASC, `state` ASC, `created_at` ASC | `search_facts_by_domain()` | Retrieve all current facts in a domain set (e.g. `["health", "medical_records"]`) for router context injection | ✅ | ⚠️ missing |
-| `account_id` ASC, `domain` ASC, `created_at` ASC, `state` ASC | `search_facts_by_domain()` | Variant with different field order (Firestore requires matching order) | ✅ | ⚠️ missing |
+| `account_id` ASC, `state` ASC, `domain` ASC, `created_at` DESC | `search_facts_by_domain()` | Retrieve the newest current facts in a domain set (e.g. `["health", "medical_records"]`, newest first, limited) for router context injection | ✅ | ⚠️ missing |
+| `account_id` ASC, `domain` ASC, `created_at` ASC, `state` ASC | — | Variant with different field order; `search_facts_by_domain()` no longer uses it (it orders DESC, row above) | ✅ | ⚠️ missing |
 | `account_id` ASC, `domain` ASC, `created_at` ASC | — | Older variant, superseded by state-filtered queries | ✅ | — |
 
 ---

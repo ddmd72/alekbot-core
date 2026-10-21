@@ -450,7 +450,7 @@ ConsolidationAgent:
     Extracts: "User moved recently" (medium conf)
     ↓
 Creates Fact: "User resides in Berlin, Germany"
-Updates old fact: "User lived in Warsaw" → is_current=False
+Supersedes old fact: "User lived in Warsaw" → state=superseded, is_current=False
     ↓
 Batch deleted from queue
 ```
