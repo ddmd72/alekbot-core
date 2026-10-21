@@ -8,7 +8,8 @@ import pytest
 
 from src.domain.drive_index_params import BATCH_SUBMIT_LOOKUP_MIN_AGE_S, BATCH_SUBMIT_LOOKUPS
 from src.domain.drive_transcript_plan import file_estimate_usd
-from src.domain.exceptions import LLMUnavailableError
+from src.domain.drive_index_params import BATCH_ERROR_BACKOFF_S
+from src.domain.exceptions import BatchLookupInconclusive, LLMUnavailableError
 from tests.unit.services import test_drive_transcript_stage_extract as ext
 from tests.unit.services import test_drive_transcript_stage_final_f1 as f1
 from tests.unit.services.drive_transcript_fakes import USER, FakeMedia, Recording, record
@@ -20,7 +21,7 @@ async def test_an_inconclusive_lookup_never_counts_toward_the_miss_limit(tmp_pat
     env.runner.raise_next = LLMUnavailableError("connection reset")
     await f1._extract(env)
     ((_, pending),) = env.repo.batches.items()
-    env.batch.find_error = LLMUnavailableError("find: scan bound")
+    env.batch.find_error = BatchLookupInconclusive("find: scan bound")
     env.clock.now = pending.created_at + timedelta(seconds=BATCH_SUBMIT_LOOKUP_MIN_AGE_S * 10)
     for _ in range(BATCH_SUBMIT_LOOKUPS + 3):
         f1._due(env, env.repo.batches[(USER, pending.name)])
@@ -29,6 +30,29 @@ async def test_an_inconclusive_lookup_never_counts_toward_the_miss_limit(tmp_pat
     assert env.host.releases == []                       # the money is kept
     window = f1._job(env, "a").windows[0]
     assert window.state == "submitted"                   # the windows are not offered for a second purchase
+
+
+async def test_an_inconclusive_lookup_does_not_starve_the_other_batches(tmp_path):
+    env = f1._env(tmp_path)
+    await f1._add(env, record("a"), a=Recording(600))
+    env.runner.raise_next = LLMUnavailableError("connection reset")
+    await f1._extract(env)                                   # a: a `submitting` document with an unknown outcome
+    await f1._add(env, record("b"), b=Recording(600))
+    await f1._extract(env)                                   # b: a normal batch
+    (open_b,) = [x for x in f1._batches(env) if x.state == "submitted"]
+    (pending,) = [x for x in f1._batches(env) if x.state == "submitting"]
+    f1._answer(env, open_b)
+    env.clock.now = max(pending.next_poll_at, open_b.next_poll_at)
+    env.batch.find_error = BatchLookupInconclusive("find: scan bound")
+    outages_before = list(env.host.outages)
+    pending_reserved = pending.reserved_usd
+    summary = await f1._cheap(env)
+    assert summary["batch_lookup_inconclusive"] == 1
+    assert (await f1._get(env, "b")).transcript_state == "current"       # the other batch was collected in this step
+    assert env.host.outages == outages_before                             # the transcriber is not backed off
+    kept = env.repo.batches[(USER, pending.name)]
+    assert kept.lookups == 0 and kept.reserved_usd == pending_reserved   # no miss counted, the money held
+    assert kept.next_poll_at == env.clock.now + timedelta(seconds=BATCH_ERROR_BACKOFF_S)
 
 
 class UnderstatedMedia(FakeMedia):
