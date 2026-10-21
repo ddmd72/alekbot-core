@@ -234,3 +234,129 @@ async def test_edited_archived_stub_without_a_store_entry_is_rewritten_from_its_
     node.data, node.ctag = b"mine", "c-owner"
     counters = await audit(w)
     assert counters["mirror_archive_rewritten"] == 1 and "No speech was detected" in w.content(a)
+
+
+# -- round 2 ------------------------------------------------------------------------------------------------------------
+
+async def _detached(w: MirrorWorld, name: str = "a.mp4") -> str:
+    from src.domain.drive_mirror import MIRROR_DETACHED, UNSTORED
+    (a,) = await mirrored(w, name)
+    await w.delete_source(a, why=UNSTORED)
+    w.advance(2 * timedelta(hours=1))
+    await w.run()
+    assert w.doc(a).state == MIRROR_DETACHED
+    return a
+
+
+async def test_edited_detached_file_is_rewritten_from_its_pinned_copy():
+    """Δ243: a detached file keeps its pinned store entry (Δ190), so an edit is rewritten like an archived one's."""
+    from src.domain.drive_mirror_render import render_archived
+    from .test_drive_transcript_mirror_audit import audit, item_of
+    w = MirrorWorld()
+    a = await _detached(w)
+    node = item_of(w, a)
+    node.data, node.ctag = b"my notes", "c-owner"
+    w.reset_calls()
+    counters = await audit(w)
+    assert counters["mirror_archive_rewritten"] == 1
+    assert [(c[0], c[1]["item_id"]) for c in w.drive.writes()] == [("replace_content", node.item_id)]
+    doc = w.doc(a)
+    assert node.data == render_archived(await w.repo.get_transcript(USER, doc.content_key), doc, w.last_host.texts)
+    assert doc.state == "detached" and await w.mirror.pinned(USER, doc.content_key)
+    w.reset_calls()
+    await audit(w)
+    assert w.drive.writes() == []
+
+
+async def test_renamed_detached_file_is_moved_back():
+    from .test_drive_transcript_mirror_audit import audit, item_of
+    w = MirrorWorld()
+    a = await _detached(w)
+    place = (w.doc(a).mirror_parent_id, w.doc(a).mirror_name)
+    node = item_of(w, a)
+    node.name = "kept.md"
+    w.reset_calls()
+    counters = await audit(w)
+    assert counters["mirror_moved_back"] == 1 and (node.parent_id, node.name) == place
+    assert [c[0] for c in w.drive.writes()] == ["move"]
+
+
+async def test_detached_file_moved_out_keeps_its_pin_and_is_not_written():
+    """Deletion and move-out handling stay as they were: a detached document loses its item, keeps its pin."""
+    from .test_drive_transcript_mirror_audit import audit, item_of
+    w = MirrorWorld()
+    a = await _detached(w)
+    node = item_of(w, a)
+    node.parent_id = AREA
+    w.reset_calls()
+    await audit(w)
+    assert w.drive.writes() == [] and node.parent_id == AREA
+    doc = w.doc(a)
+    assert doc is not None and not doc.mirror_item_id and await w.mirror.pinned(USER, doc.content_key)
+
+
+async def test_moved_and_edited_active_file_is_moved_back_then_rewritten():
+    """Δ242: the move-back keeps the recorded cTag, clears the rendered hash and makes the record due, so step 4
+    rewrites the owner's edit."""
+    from .test_drive_transcript_mirror_audit import audit, item_of
+    w = MirrorWorld()
+    (a,) = await mirrored(w, "a.mp4")
+    original, ctag = w.content(a), w.doc(a).mirror_ctag
+    node = item_of(w, a)
+    node.name, node.data, node.ctag = "renamed.md", b"edited", "c-owner"
+    w.reset_calls()
+    counters = await audit(w)
+    assert counters["mirror_moved_back"] == 1 and node.name == "a.mp4.md"
+    assert w.doc(a).mirror_ctag == ctag and w.doc(a).rendered_hash == "" and w.rec(a).mirror_due
+    await w.run()
+    assert w.content(a) == original
+
+
+async def test_moved_and_edited_active_file_with_a_blocked_way_back_is_rewritten():
+    from .test_drive_transcript_mirror_audit import audit, item_of
+    w = MirrorWorld()
+    (a,) = await mirrored(w, "a.mp4")
+    original = w.content(a)
+    node = item_of(w, a)
+    node.name, node.data, node.ctag = "renamed.md", b"edited", "c-owner"
+    owner = w.drive.add_file(w.root.root_item_id, "a.mp4.md", b"mine")
+    counters = await audit(w)
+    assert counters["mirror_move_back_blocked"] == 1
+    assert w.doc(a).rendered_hash == "" and w.rec(a).mirror_due
+    await w.run()
+    assert b"edited" not in node.data and w.content(a) == original and w.drive.nodes[owner].data == b"mine"
+    assert w.mirror_path(a).startswith("a.mp4~")
+
+
+async def test_a_sibling_rename_keeps_the_recorded_ctag():
+    """Δ242: `_patch` keeps the recorded cTag, so an edit made before a sibling rename is still found by the audit."""
+    from .test_drive_transcript_mirror_audit import audit, item_of
+    w = MirrorWorld()
+    (x,) = await mirrored(w, "X")
+    folder = await w.folder("X.md")
+    await w.recording("in.mp4", folder)
+    await w.run()
+    ctag = w.doc(x).mirror_ctag
+    node = item_of(w, x)
+    node.data, node.ctag = b"edited", "c-owner"
+    await w.update(folder, name="Y")                         # the collision goes: X is renamed back by the settle
+    await w.run()
+    assert node.name == "X.md" and w.doc(x).mirror_ctag == ctag
+    counters = await audit(w)
+    assert counters["mirror_rewrite_due"] == 1
+    await w.run()
+    assert b"edited" not in node.data
+
+
+async def test_archived_edit_with_nothing_to_rewrite_from_records_the_listed_ctag():
+    from .test_drive_transcript_mirror_audit import archived, audit, item_of
+    w = MirrorWorld()
+    a = await archived(w)
+    w.repo.transcripts.pop((USER, w.doc(a).content_key))     # no store entry, and no stub
+    node = item_of(w, a)
+    node.data, node.ctag = b"mine", "c-owner"
+    counters = await audit(w)
+    assert counters["mirror_edit_left"] == 1 and w.doc(a).mirror_ctag == "c-owner"
+    w.reset_calls()
+    counters = await audit(w)
+    assert not counters.get("mirror_edit_left") and w.drive.writes() == []

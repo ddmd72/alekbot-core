@@ -628,16 +628,19 @@ class Guard:
         assert item not in w.drive.planted, f"{name} of a planted item"
         assert not self._chain(item) & prev, f"{name} of an item under a previous root"
         archived = [d for d in w.mirror.docs.values() if d.mirror_item_id == item and d.state == MIRROR_ARCHIVED]
+        # Δ243: a detached file keeps its pinned store entry and is rewritten and moved back like an archived one
+        pinned_files = archived + [d for d in w.mirror.docs.values() if d.mirror_item_id == item
+                                   and d.state == MIRROR_DETACHED and d.kind == KIND_FILE]
         if name == "replace_content":
-            # owner ruling 2026-10-21 (Δ241): the one rewrite of an archived file allowed is the audit's, of its edit,
-            # back to the render of its pinned store entry
-            assert not archived or (self.in_audit and self._archived_render(archived[0], args[1])), \
+            # owner ruling 2026-10-21 (Δ241, Δ243): the one rewrite of an archived or detached file allowed is the
+            # audit's, of its edit, back to the render of its pinned store entry
+            assert not pinned_files or (self.in_audit and self._archived_render(pinned_files[0], args[1])), \
                 "an archived file rewritten"
             assert self._placeable(item, current, prev), "a file rewritten outside the root"
-            assert not self.in_audit or item == root.readme_item_id or archived, "the audit rewrote a file itself"
+            assert not self.in_audit or item == root.readme_item_id or pinned_files, "the audit rewrote a file itself"
         if name == "move":
-            # Δ241: the audit moves an archived file only back to its own ledger place
-            assert not (self.in_audit and archived) or self._to_ledger_place(archived[0], item, args, kw), \
+            # Δ241, Δ243: the audit moves an archived or detached file only back to its own ledger place
+            assert not (self.in_audit and pinned_files) or self._to_ledger_place(pinned_files[0], item, args, kw), \
                 "the audit moved an archived file"
         if name == "delete":
             assert not self.in_audit, "a Graph delete from the audit"
