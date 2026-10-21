@@ -1,9 +1,7 @@
-"""A named report task is retried by name; AlreadyExists is a hand-off (S1b task W fix round 1)."""
+"""A named report task is retried by name; a normal return is a hand-off (S1b task W fix round 1)."""
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from google.api_core.exceptions import AlreadyExists, DeadlineExceeded
-
 from src.services.deep_research_delivery import deliver_deep_research
 
 
@@ -17,9 +15,9 @@ async def _run(queue, dedup="j1"):
     return ok, notifier, sleep
 
 
-async def test_timeout_then_already_exists_is_handed_off_without_notice():
+async def test_timeout_then_success_is_handed_off_without_notice():
     queue = AsyncMock()
-    queue.enqueue_agent_task.side_effect = [DeadlineExceeded("t"), AlreadyExists("x")]
+    queue.enqueue_agent_task.side_effect = [TimeoutError("t"), "task-name"]
     ok, notifier, sleep = await _run(queue)
     assert ok is True
     notifier.notify.assert_not_awaited()
@@ -30,7 +28,7 @@ async def test_timeout_then_already_exists_is_handed_off_without_notice():
 
 async def test_all_attempts_failing_notifies_once_with_retry_suppressed():
     queue = AsyncMock()
-    queue.enqueue_agent_task.side_effect = DeadlineExceeded("t")
+    queue.enqueue_agent_task.side_effect = TimeoutError("t")
     ok, notifier, sleep = await _run(queue)
     assert ok is False
     assert queue.enqueue_agent_task.await_count == 3
@@ -41,7 +39,7 @@ async def test_all_attempts_failing_notifies_once_with_retry_suppressed():
 
 async def test_unnamed_task_is_not_retried():
     queue = AsyncMock()
-    queue.enqueue_agent_task.side_effect = DeadlineExceeded("t")
+    queue.enqueue_agent_task.side_effect = TimeoutError("t")
     ok, notifier, _ = await _run(queue, dedup=None)
     assert ok is False
     assert queue.enqueue_agent_task.await_count == 1

@@ -16,8 +16,6 @@ import html as html_lib
 from datetime import datetime, timezone
 from typing import Any, Optional, Protocol, TYPE_CHECKING
 
-from google.api_core.exceptions import AlreadyExists
-
 from ..domain.deep_research_notices import report_not_prepared_notice
 from ..domain.deep_research_drive_copy import DEEP_RESEARCH_REPORT_CONTEXT_KEY, marker_query
 from ..domain.file_access import DEFAULT_FILE_LINK_TTL
@@ -280,8 +278,8 @@ async def deliver_deep_research(
 
     html_query = _build_html_page_query(query, result_text)
 
-    # A named task makes a retried create safe: a create that timed out after the task was made
-    # ends in AlreadyExists, which is a hand-off. Unnamed tasks are not retried (a retry could double them).
+    # A named task makes a retried create safe: the queue adapter turns "already exists" (a create that
+    # timed out after the task was made) into a normal return. Unnamed tasks are not retried (a retry could double them).
     attempts = 3 if report_dedup_id else 1
     try:
         for attempt in range(attempts):
@@ -304,8 +302,6 @@ async def deliver_deep_research(
                     deadline_seconds=720,
                     **({"dedup_key": f"deep_research_report:{report_dedup_id}"} if report_dedup_id else {}),
                 )
-                break
-            except AlreadyExists:
                 break
             except Exception as exc:
                 if attempt == attempts - 1:
