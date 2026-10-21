@@ -20,7 +20,7 @@ from src.domain.drive_index import (
 )
 from src.domain.drive_index_params import ACCESS_LOSS_TTL, MIRROR_ARCHIVE_GRACE
 from src.domain.drive_mirror import GONE, KIND_FOLDER, UNKNOWN, UNSTORED
-from src.domain.drive_mirror_plan import mirror_digest
+from src.domain.drive_mirror_plan import mirror_digest, mirror_plan
 from src.domain.user_drive import DriveConnection, DriveItemNotFoundError
 from src.services import drive_indexing_service as svc_mod
 
@@ -479,8 +479,8 @@ async def test_inaccessible_source_is_never_marked(world):
 
 
 async def test_abandon_run_changes_no_digest_field(world):
-    """`_abandon_run` writes outside `_commit` (§27.9.4): it changes no field the mirror digest reads, nor the mirror's
-    own fields, so the mirror plan is not needed there."""
+    """`_abandon_run` writes outside `_commit` (§27.9.4): it changes no field the mirror digest reads, and its write runs
+    the mirror plan, so the queue flag is the one the plan gives the run's record (never stale)."""
     w = world()
     audio = w.add_recording()
     await w.to_current(audio)
@@ -490,8 +490,16 @@ async def test_abandon_run_changes_no_digest_field(world):
     await w.svc._abandon_run("u", run, None, w.clock.now)
     back = w.rec(audio)
     assert mirror_digest(back) == mirror_digest(run)
+    planned = mirror_plan(run)
+    assert back.mirror_due and planned.mirror_due   # a stale flag (False on a due record) is replanned
     assert (back.mirrored_digest, back.mirror_held_digest, back.mirror_retry_at, back.mirror_due) == (
-        run.mirrored_digest, run.mirror_held_digest, run.mirror_retry_at, run.mirror_due)
+        planned.mirrored_digest, planned.mirror_held_digest, planned.mirror_retry_at, planned.mirror_due)
+    # a record whose flag already matches its digest keeps every mirror field as it is
+    settled = replace(run, mirrored_digest=mirror_digest(run), mirror_held_digest="", mirror_retry_at=None)
+    await w.svc._abandon_run("u", settled, None, w.clock.now)
+    again = w.rec(audio)
+    assert (again.mirrored_digest, again.mirror_held_digest, again.mirror_retry_at, again.mirror_due) == (
+        settled.mirrored_digest, "", None, False)
 
 
 async def test_marks_only_for_mirrored_records_and_roots(world):
@@ -608,15 +616,27 @@ _DELETE_SITES = {"_apply", "_sweep", "_cascade_step", "_remove_orphan", "_rescop
                  "_upgrade_page"}
 
 
-def _commit_calls():
+def _functions():
     tree = ast.parse(textwrap.dedent(inspect.getsource(svc_mod)))
-    for fn in ast.walk(tree):
-        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        for node in ast.walk(fn):
-            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                    and node.func.attr == "_commit" and len(node.args) >= 3):
-                yield fn.name, node
+    return [fn for fn in ast.walk(tree) if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))]
+
+
+def _calls(fn, attr: str):
+    return [node for node in ast.walk(fn)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == attr]
+
+
+def _deletes_arg(call: ast.Call):
+    """The `deletes` argument of a `_commit` call, positional (third) or by keyword; None when it passes none."""
+    if len(call.args) >= 3:
+        return call.args[2]
+    return next((k.value for k in call.keywords if k.arg == "deletes"), None)
+
+
+def _commit_calls():
+    for fn in _functions():
+        for node in _calls(fn, "_commit"):
+            yield fn.name, node
 
 
 def _literal_empty(node: ast.expr) -> bool:
@@ -630,11 +650,16 @@ def test_every_delete_site_passes_a_why():
     source record."""
     sites = set()
     for name, call in _commit_calls():
-        if _literal_empty(call.args[2]):
+        deletes = _deletes_arg(call)
+        assert deletes is not None or any(k.arg is None for k in call.keywords), f"{name}: a _commit with no deletes?"
+        if deletes is not None and _literal_empty(deletes):
             continue
         sites.add(name)
         assert any(k.arg == "gone" for k in call.keywords), f"{name} deletes without a why"
     assert sites == _DELETE_SITES
+    # the record deletes happen inside `_commit` only, so no delete can bypass the marks
+    deleters = {fn.name for fn in _functions() for call in _calls(fn, "delete_records")}
+    assert deleters == {"_commit"}
     plan_calls = [n for n in ast.walk(ast.parse(textwrap.dedent(inspect.getsource(svc_mod))))
                   if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "_commit_plan"]
     assert plan_calls and all(len(c.args) == 3 for c in plan_calls)
