@@ -33,6 +33,7 @@ class DeepResearchPort(ABC):
         system_prompt: Optional[str] = None,
         session_id: Optional[str] = None,
         second_pass: bool = False,
+        origin_platform: Optional[str] = None,
     ) -> str:
         """
         Submit a deep research job and arrange for result delivery.
@@ -52,6 +53,8 @@ class DeepResearchPort(ABC):
             system_prompt:  Optional assembled prompt from PromptBuilder.
                             Adapters that do not use a system prompt may ignore this.
                             Future Claude-backed adapter will use it as a system block.
+            origin_platform: Platform the request came from ("slack"/"telegram"); carried to
+                            delivery with the channel in session_id so the report returns there.
 
         Returns:
             job_id: Opaque string identifying the submitted job.
