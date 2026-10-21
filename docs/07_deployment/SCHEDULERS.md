@@ -202,6 +202,17 @@ Note: `update` uses `--update-headers`, `create` uses `--headers`. This is a `gc
 
 ---
 
+## Deep Research Failed (task, no schedule)
+
+| Field | Value |
+|-------|-------|
+| **Payload** | `{"task_type": "deep_research_failed", "user_id", "account_id", "session_id", "origin_platform", "query", "reason"}` |
+| **Enqueued by** | `job_main.py` on an agent failure, an empty result or a failed delivery (`reason`: `agent_failed` / `empty_result` / `delivery_failed`), with `dedup_key` `deep_research_failed:<job_id>` |
+| **Handler** | `WorkerHandler._handle_deep_research_failed()`: tells the user in the origin channel; 400 without user/account, 500 when the notice is not delivered (Cloud Tasks retries) |
+| **Residual** | A job killed by its task timeout runs no code and sends nothing |
+
+---
+
 ## Cost
 
 Each scheduler job invocation costs ~$0.10/month per job (first 3 jobs free).
