@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from datetime import timedelta
 
 import pytest
@@ -12,7 +13,7 @@ from src.domain.drive_index_params import MIRROR_FAILED_RETRY, MIRROR_MAX_ATTEMP
 from src.domain.drive_mirror import LONG_PATHS_NAME, MIRROR_ACTIVE
 from src.domain.drive_mirror_plan import mirror_digest
 from src.domain.user_drive import (
-    DriveAccessDenied, DriveNotConnectedError, DrivePathTooLong, DriveReauthRequired, DriveStorageFull,
+    DriveAccessDenied, DriveItemNotFoundError, DriveNotConnectedError, DrivePathTooLong, DriveReauthRequired, DriveStorageFull,
     DriveThrottled,
 )
 
@@ -184,7 +185,7 @@ async def test_store_unavailable_and_lease_lost_re_raise():
         await w2.service.run("user-1", host)
 
 
-async def test_unexpected_error_is_logged_and_skipped(caplog):
+async def test_unexpected_error_is_logged_and_charged(caplog):
     w = MirrorWorld()
     await _ready(w)
     a = await w.recording("a.mp4", day="2026-10-02")
@@ -194,7 +195,8 @@ async def test_unexpected_error_is_logged_and_skipped(caplog):
         counters = await w.run()
     assert counters["mirror_errors"] == 1
     assert [r for r in caplog.records if r.levelno == logging.ERROR and "unexpected RuntimeError" in r.getMessage()]
-    assert w.doc(a).attempts == 0 and w.mirror_path(b) == "b.mp4.md"
+    # fix round 1 (M3, the controller's ruling on Δ204): charged like any per-action failure, so it parks after the limit
+    assert w.doc(a).attempts == 1 and not w.rec(a).mirror_due and w.mirror_path(b) == "b.mp4.md"
 
 
 async def test_counters_refresh_after_a_failed_action():
@@ -230,3 +232,89 @@ async def test_no_drive_id_skips_the_step():
     await w.recording("a.mp4", AREA)
     counters = await w.run(drive_id="")
     assert counters == {"mirror_no_drive_id": 1} and w.drive.calls == []
+
+
+# -- fix round 1 -----------------------------------------------------------------------------------------------------
+
+async def test_get_root_error_returns_counters():
+    w = MirrorWorld()
+
+    async def broken(*a, **kw):
+        raise RuntimeError("decode failed")
+
+    w.mirror.get_root = broken                            # type: ignore[assignment]
+    counters = await w.run()
+    assert counters["mirror_errors"] == 1
+
+
+async def test_create_folder_error_returns_counters():
+    w = MirrorWorld()
+    await w.recording("a.mp4")
+    w.drive.fail("create_folder", RuntimeError("unmapped adapter error"))
+    counters = await w.run()
+    assert counters["mirror_errors"] == 1 and w.root is None
+
+
+@pytest.mark.parametrize("read", ["ready_marks", "mirror_queue", "seed"])
+async def test_corrupt_doc_decode_returns_counters(read):
+    w = MirrorWorld()
+    await _ready(w)
+    await w.recording("a.mp4")
+
+    async def corrupt(*a, **kw):
+        raise ValueError("a stored field does not decode")
+
+    if read == "ready_marks":
+        w.mirror.ready_marks = corrupt                    # type: ignore[assignment]
+    elif read == "mirror_queue":
+        w.repo.mirror_queue = corrupt                     # type: ignore[assignment]
+    else:
+        await w.mirror.save_root(replace(w.root, seed_version=""))
+        w.repo.transcript_records = corrupt               # type: ignore[assignment]
+    counters = await w.run()
+    assert counters["mirror_errors"] == 1
+
+
+async def test_unexpected_error_parks_and_frees_the_queue_head(monkeypatch):
+    from src.services import drive_transcript_mirror as mod
+    monkeypatch.setattr(mod, "QUEUE_PAGE", 1)             # one bad record fills the whole page
+    w = MirrorWorld()
+    await _ready(w)
+    bad = await w.recording("bad.mp4", day="2026-10-05")
+    good = await w.recording("good.mp4", day="2026-10-01")
+    w.drive.fail("upload", RuntimeError("render bug"), _named("bad.mp4.md"), times=99)
+    await w.run()
+    assert w.mirror_path(good) == "good.mp4.md"           # the head no longer blocks the older record
+    for _ in range(MIRROR_MAX_ATTEMPTS):
+        doc = w.doc(bad)
+        if doc.failed_at is not None:
+            break
+        w.advance(doc.retry_at - w.clock)
+        await w.run()
+    assert w.doc(bad).failed_at is not None and w.doc(bad).attempts == MIRROR_MAX_ATTEMPTS
+    w.reset_calls()
+    w.advance(HOUR)
+    await w.run()
+    assert w.drive.writes() == []                         # parked: no longer retried
+
+
+async def test_log_lines_carry_no_path_or_name(caplog):
+    w = MirrorWorld()
+    await _ready(w)
+    a = await w.recording("Secret Interview.mp4")
+    w.drive.fail("upload", DriveItemNotFoundError("Drive item not found: /me/drive/items/p1:/Secret Interview.mp4.md:"
+                                                  "/content"))
+    w.drive.fail("get_change", RuntimeError("while reading /drive/root:/Apps/Alek/Secret Interview.mp4"))
+    with caplog.at_level(logging.DEBUG):
+        counters = await w.run()
+    assert counters["mirror_errors"] == 1
+    assert "Secret" not in caplog.text and "/me/drive" not in caplog.text
+    assert all(r.exc_info is None for r in caplog.records)
+    errors = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
+    assert errors and "message digest" in errors[0] and "drive_transcript_mirror.py" in errors[0]   # frames kept
+    assert f"due file {_hid(a)}" in errors[0] and a not in errors[0].split("\n")[0]
+
+
+def _hid(item_id: str) -> str:
+    import hashlib
+    return hashlib.sha256(item_id.encode("utf-8")).hexdigest()[:10]
