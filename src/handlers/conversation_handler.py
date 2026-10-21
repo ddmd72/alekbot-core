@@ -10,6 +10,7 @@ import re
 import json
 import asyncio
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Callable, Coroutine, List, Optional, Any, TYPE_CHECKING
 
@@ -24,6 +25,7 @@ from ..domain.turn_clock import (
 from ..domain.memory_telemetry import SCOPE_CHAT_TURN
 from ..domain.notification_kind import NotificationKind
 from ..domain.llm import Message, MessagePart
+from ..domain.turn_identity import TURN_ID_CONTEXT_KEY
 from ..domain.exceptions import (
     MemoryDraftNotFound,
     SkillCapExceeded,
@@ -933,6 +935,9 @@ class ConversationHandler(ConversationHandlerPort):
                     "origin_channel_id": channel_id,
                     "origin_platform": getattr(response_channel, "platform", "slack"),
                     "interactive_delivery": True,
+                    # Fixed before Smart runs, the same on a failover re-run (drive notes' undo guard): the
+                    # platform's turn id when there is one; never written back to metadata (it gates long turns).
+                    TURN_ID_CONTEXT_KEY: context.metadata.get("turn_id") or f"chat:{uuid.uuid4().hex}",
                 }
                 if history_messages:
                     agent_context["history"] = [m.model_dump() for m in history_messages]

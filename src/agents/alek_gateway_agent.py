@@ -22,6 +22,7 @@ from ..domain.llm import MessagePart
 from ..domain.messaging import SmartResponse
 from ..domain.result_links import build_link_copy
 from ..domain.retry_policy import NO_RETRY_POLICY
+from ..domain.turn_identity import TURN_ID_CONTEXT_KEY
 from ..infrastructure.agent_manifest import Intent
 from ..utils.logger import logger
 from .base_agent import BaseAgent
@@ -83,6 +84,7 @@ class AlekGatewayAgent(BaseAgent):
         user_id = message.context.get("user_id")
         account_id = message.context.get("account_id")
         errand = message.payload.get("intent") == Intent.TELL_ALEK
+        origin = "voice:tell_alek" if errand else "voice:ask_alek"
         text = _commission(
             message.payload.get("query", ""),
             message.payload.get("reasoning"),
@@ -99,7 +101,9 @@ class AlekGatewayAgent(BaseAgent):
             context={
                 **message.context,
                 "current_message_parts": [MessagePart(text=text)],
-                "run_origin": "voice:tell_alek" if errand else "voice:ask_alek",
+                "run_origin": origin,
+                # The call's turn (LelikAgent fixed it per delegation); this message's own id when it came without one.
+                TURN_ID_CONTEXT_KEY: message.context.get(TURN_ID_CONTEXT_KEY) or f"{origin}:{message.task_id}",
             },
             # Explicit, so Smart's own 300 s config cap does not cut an answer the relay abandoned.
             timeout_ms=ASK_ALEK_TIMEOUT_MS,
