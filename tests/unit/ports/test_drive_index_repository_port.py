@@ -37,6 +37,8 @@ _EXPECTED = {
     "delete_user_transcript_jobs", "delete_user_batches", "delete_user_transcripts", "delete_user_transcript_orphans",
     # transcript stage A (plan Task 12): in-flight `working` jobs and copy-waiting records, which neither queue returns
     "transcript_records",
+    # transcript stage B (plan Task 13): the orphan sweep keeps a stored transcript a record still carries (§27.8 b)
+    "transcript_key_in_use",
 }
 
 
