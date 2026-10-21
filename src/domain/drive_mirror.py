@@ -105,6 +105,11 @@ class MirrorDoc:
     archive_day: str = ""
     archive_keys: Tuple[str, ...] = ()
     name_keys: Tuple[str, ...] = ()
+    # the file was re-placed in `Long paths` after a path-too-long answer (§27.9.5, Δ204): the placement source it was
+    # re-placed for (`placement_source(rec)`), "" when not. While the record's source still equals it, the file's
+    # placement is `Long paths`, so a suffixed name there is never moved back every tick; a rename or move of the source
+    # re-decides the placement.
+    long_path_source: str = ""
 
     @property
     def key(self) -> str:
