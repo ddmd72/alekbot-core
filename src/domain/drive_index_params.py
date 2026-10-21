@@ -204,6 +204,7 @@ CAPTURE_BUDGET_S = 5.0                           # the signals walk's own time b
 # Initial values; the T1 eval gate may revise them. Each comment names the RFC basis.
 TRANSCRIBE_USD_PER_MONTH = 20.0             # D46: the month's hard cap; ~125 audio hours at the post-promotion $0.16/h
 TRANSCRIBE_HOUR_USD_ESTIMATE = 0.30         # per audio hour, reserved at submit; bounds a window's worst case: audio input + the per-window output cap at the held batch price (T-R19)
+TRANSCRIBE_WINDOW_PROMPT_TOKENS = 2_000     # per window, on top of the hour rate: system instruction + task text (~1 130 tokens measured), rounded up (T-R19 N2)
 TRANSCRIBE_WINDOW_S = 1_800                 # §27.4: 30-45 min allowed (Δ129); keep <= 45 min: parse_stamp is strict M:SS below one hour
 TRANSCRIBE_OVERLAP_S = 60                   # §27.6, Δ108: both windows hold a few utterances of every speaker
 TRANSCRIBE_COVERAGE_MIN = 0.9               # Δ129: last segment start / window duration below it = failed attempt
