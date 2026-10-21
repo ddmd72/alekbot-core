@@ -874,7 +874,7 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
     async def count_unread(self, user_id: str, kinds: AbstractSet[str],
                            triaged: AbstractSet[str] = frozenset(), *, pending: Optional[bool] = None,
                            transcribed: AbstractSet[str] = frozenset()) -> int:
-        """Count aggregations over the unread classes (six per 30 kinds, for the documents and for the text images),
+        """Count aggregations over the unread classes (per 30 kinds: six classes for the documents and for the text images, five for the transcribed kinds, which have no `no_text` class),
         summed; never a scan. The classes are disjoint (by state, then by reason; a kind in one list only), so the
         sum counts each record once."""
         queries = self.unread_count_queries(user_id, kinds, triaged, pending, transcribed)
