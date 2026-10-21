@@ -37,9 +37,12 @@ from typing import Dict, List, Optional, Tuple
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.domain.drive_index import TRANSCRIBE_VERSION, DriveIndexRecord  # noqa: E402
-from src.domain.drive_index_params import TRANSCRIBE_MAX_SECONDS  # noqa: E402
+from src.domain.drive_index_params import TRANSCRIBE_MAX_SECONDS, TRANSCRIBE_USD_PER_MONTH  # noqa: E402
 from src.domain.drive_index_policy import TRANSCRIBED_KINDS  # noqa: E402
-from src.domain.drive_transcript_plan import file_estimate_usd  # noqa: E402
+from src.domain.drive_index_planner import month_key  # noqa: E402
+from src.domain.drive_transcript_plan import (  # noqa: E402
+    CURRENT, HELD, PARKED, READY, WAITING, WORKING, effective_monthly_cap, file_estimate_usd,
+)
 from src.ports.drive_index_repository import DriveIndexRepository  # noqa: E402
 
 _HOLD = timedelta(minutes=10)    # the lease is held for the writes of one run
@@ -62,7 +65,7 @@ class Plan:
 
 
 def is_candidate(rec: DriveIndexRecord) -> bool:
-    return (not rec.is_folder and rec.kind in TRANSCRIBED_KINDS and rec.transcript_state == "current"
+    return (not rec.is_folder and rec.kind in TRANSCRIBED_KINDS and rec.transcript_state == CURRENT
             and rec.transcript_key != "" and 0 < rec.transcript_version < TRANSCRIBE_VERSION
             and rec.transcript_stub in _REDONE_STUBS)
 
@@ -80,7 +83,7 @@ def build_plan(records: List[DriveIndexRecord]) -> Plan:
             continue
         if is_candidate(rec):
             candidates.setdefault(rec.transcript_key, []).append(rec)
-        elif rec.transcript_state in ("current", "waiting", "working", "ready", "held", "parked"):
+        elif rec.transcript_state in (CURRENT, WAITING, WORKING, READY, HELD, PARKED):
             blocked.add(rec.transcript_key)
     plan = Plan()
     for key, recs in sorted(candidates.items()):
@@ -112,20 +115,36 @@ async def load_plan(repo: DriveIndexRepository, user_id: str) -> Plan:
 
 def reset(rec: DriveIndexRecord) -> DriveIndexRecord:
     """The record goes back to the queue; the stage buys the key again, since the stored transcript is deleted."""
-    return replace(rec, transcript_state="ready", transcript_stub="", transcript_attempts=0, transcript_hold=None,
+    return replace(rec, transcript_state=READY, transcript_stub="", transcript_attempts=0, transcript_hold=None,
                    transcript_hold_version="", transcript_wake_at=None, model_read_at=None)
 
 
-async def requeue(repo: DriveIndexRepository, user_id: str, *, apply: bool, now: datetime,
-                  owner: str) -> Tuple[int, str]:
-    """Returns (exit code, message). The estimate is in the message either way, before anything is written."""
+async def headroom_note(repo: DriveIndexRepository, user_id: str, plan: Plan, now: datetime, cap_usd: float,
+                        user_enabled: Optional[bool]) -> str:
+    """The month's headroom (cap - spent - reserved) beside the estimate, with a warning when the estimate exceeds it or
+    the user's drive_transcribe_enabled is off (`user_enabled` None = unknown, no warning about it)."""
+    usage = await repo.get_model_usage(user_id, month_key(now))
+    room = max(0.0, cap_usd - usage.cap_usd("transcribe") - max(0.0, usage.transcribe_reserved_usd))
+    note = f"; this month's headroom ${room:,.2f} (cap ${cap_usd:,.2f} less spent and reserved)"
+    if plan.estimate_usd > room:
+        note += " — WARNING: the estimate exceeds it, the stage parks what does not fit until next month"
+    if user_enabled is False:
+        note += " — WARNING: drive_transcribe_enabled is OFF for this user, nothing will be bought until it is on"
+    return note
+
+
+async def requeue(repo: DriveIndexRepository, user_id: str, *, apply: bool, now: datetime, owner: str,
+                  cap_usd: float = TRANSCRIBE_USD_PER_MONTH, user_enabled: Optional[bool] = None) -> Tuple[int, str]:
+    """Returns (exit code, message). The estimate and the month's headroom are in the message either way, before
+    anything is written."""
     if await repo.get_sync_state(user_id) is None:
         return 1, "no sync state: nothing is indexed for this user"
     plan = await load_plan(repo, user_id)
     if not plan.groups:
         return 0, "nothing to redo" + (f" ({plan.skipped_shared} files skipped, shared)" if plan.skipped_shared else "")
+    note = await headroom_note(repo, user_id, plan, now, cap_usd, user_enabled)
     if not apply:
-        return 0, f"dry run: {summary(plan)}; re-run with --apply"
+        return 0, f"dry run: {summary(plan)}{note}; re-run with --apply"
     if await repo.acquire_lease(user_id, owner, now, now + _HOLD, create=False) is None:
         return 1, "a tick holds the lease (or the state just went away); retry in a few minutes"
     try:
@@ -136,7 +155,7 @@ async def requeue(repo: DriveIndexRepository, user_id: str, *, apply: bool, now:
             await repo.delete_transcript(user_id, key)
     finally:
         await repo.release_lease(user_id, owner)
-    return 0, f"requeued: {summary(plan)}"
+    return 0, f"requeued: {summary(plan)}{note}"
 
 
 async def _main(user_id: str, apply: bool) -> int:
@@ -147,8 +166,15 @@ async def _main(user_id: str, apply: bool) -> int:
 
     env = EnvironmentConfig()
     db = firestore.AsyncClient(project=os.getenv("GOOGLE_CLOUD_PROJECT") or None, database=env.firestore_database_id)
+    from src.adapters.firestore_account_repo import FirestoreAccountRepository
+    from src.adapters.firestore_user_repo import FirestoreUserRepository
+
+    accounts = FirestoreAccountRepository(db_client=db, collection_name=env.account_collection_name)
+    user = await FirestoreUserRepository(db, env, accounts).get_user(user_id)
     code, message = await requeue(FirestoreDriveIndexRepository(db, env), user_id, apply=apply,
-                                  now=datetime.now(timezone.utc), owner=f"requeue-{uuid.uuid4().hex}")
+                                  now=datetime.now(timezone.utc), owner=f"requeue-{uuid.uuid4().hex}",
+                                  cap_usd=effective_monthly_cap(os.getenv("DRIVE_TRANSCRIBE_USD_CAP")),
+                                  user_enabled=None if user is None else bool(user.config.drive_transcribe_enabled))
     print(message)
     return code
 

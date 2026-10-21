@@ -98,7 +98,7 @@ async def test_a_purge_already_running_without_the_flag_gets_it(script):
     await _indexed(repo, purging=True)
     code, message = await script.rebuild(repo, "u", apply=True, now=T0, owner="r")
     state = await repo.get_sync_state("u")
-    assert code == 0 and state.purge_keep_transcripts and "may have run already" in message
+    assert code == 0 and state.purge_keep_transcripts and "may have run already" in message and "orphaned" in message
 
 
 async def test_a_purge_already_running_with_the_flag_is_left_alone(script):
@@ -139,3 +139,25 @@ async def test_run_passes_the_choice_to_every_user(script):
     await _indexed(repo)
     code, _ = await script.run(repo, ["u"], hints_only=False, apply=True, now=T0, keep_transcripts=False)
     assert code == 0 and not (await repo.get_sync_state("u")).purge_keep_transcripts
+
+
+async def test_drop_on_a_running_keep_purge_cannot_change_the_mode(script):
+    repo = InMemoryDriveIndexRepository()
+    await _indexed(repo, purging=True, purge_keep_transcripts=True)
+    code, message = await script.rebuild(repo, "u", apply=True, now=T0, owner="r", keep_transcripts=False)
+    assert code == 1 and "cannot be changed" in message and (await repo.get_sync_state("u")).purge_keep_transcripts
+
+
+async def test_the_read_back_happens_while_the_lease_is_still_held(script):
+    repo = InMemoryDriveIndexRepository()
+    await _indexed(repo)
+    seen = []
+    real_get = repo.get_sync_state
+
+    async def get(user_id):
+        state = await real_get(user_id)
+        seen.append(state.lease_owner if state else None)
+        return state
+    repo.get_sync_state = get
+    await script.rebuild(repo, "u", apply=True, now=T0, owner="r")
+    assert seen[-1] == "r"

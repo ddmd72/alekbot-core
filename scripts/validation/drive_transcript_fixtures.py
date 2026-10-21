@@ -21,7 +21,8 @@ Families (the eval's metrics in `drive_eval/transcript_eval.py` read the `family
   no_speech_tone    tone and silence only: the model must answer `no_speech`
   no_speech_music   a synthetic chord progression, no voice
   seams_70min       70 minutes of unique lines, one every 40 s: windows meet inside it (seam duplicates and losses)
-  unique_22min      22 minutes of unique lines, one every 30 s (the T0 gap, Δ129: the silent `STOP` on unique audio)
+  unique_22min      28.5 minutes of unique lines, one every 30 s: ONE window, past the 22 minutes the T0 gap left
+                    unmeasured (Δ129: the silent `STOP` on unique audio)
   early_<n>s        short clips, the first line at 3 s: the early-timestamp effect
 Engines: `say` on macOS, `espeak-ng` elsewhere; a language the engine has no voice for is reported and its clips skipped.
 """
@@ -161,9 +162,9 @@ def build_specs() -> List[ClipSpec]:
     specs.append(_speech("seams_70min_audio", "seams_70min", "audio", "en", unique_lines(105, seed=70), ["en"], 2,
                          40.0, 10.0, tail_s=0.0))
     specs[-1] = _fit(specs[-1], 4200.0)
-    specs.append(_speech("unique_22min_audio", "unique_22min", "audio", "en", unique_lines(44, seed=22), ["en"], 2,
+    specs.append(_speech("unique_22min_audio", "unique_22min", "audio", "en", unique_lines(57, seed=22), ["en"], 2,
                          30.0, 10.0, tail_s=0.0))
-    specs[-1] = _fit(specs[-1], 1320.0)
+    specs[-1] = _fit(specs[-1], 1710.0)
     for seconds in (20, 45, 90):
         texts = unique_lines(max(2, seconds // 15), seed=seconds)
         spec = _speech(f"early_{seconds}s_audio", f"early_{seconds}s", "audio", "en", texts, ["en"], 2, 12.0, 3.0)

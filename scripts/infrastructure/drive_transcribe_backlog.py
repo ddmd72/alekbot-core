@@ -36,7 +36,7 @@ from src.domain.drive_index_params import (  # noqa: E402
     TRANSCRIBE_HOUR_USD_ESTIMATE, TRANSCRIBE_MAX_BYTES, TRANSCRIBE_MAX_SECONDS,
 )
 from src.domain.drive_index_policy import TRANSCRIBED_KINDS  # noqa: E402
-from src.domain.drive_transcript_plan import file_estimate_usd  # noqa: E402
+from src.domain.drive_transcript_plan import CURRENT, file_estimate_usd  # noqa: E402
 from src.ports.drive_index_repository import DriveIndexRepository  # noqa: E402
 
 BYTES_PER_HOUR = 10.8e6                       # the spike's audio figure (§27.2)
@@ -66,7 +66,7 @@ def classify(rec: DriveIndexRecord) -> Tuple[str, float]:
     """(bucket, seconds) of one record; the bucket `skip` is a record that is not media."""
     if rec.is_folder or rec.kind not in TRANSCRIBED_KINDS:
         return "skip", 0.0
-    if rec.transcript_state == "current":
+    if rec.transcript_state == CURRENT:
         return "already_transcribed", 0.0
     if rec.size_bytes > TRANSCRIBE_MAX_BYTES:
         return "too_large", 0.0

@@ -72,6 +72,9 @@ async def rebuild(repo: DriveIndexRepository, user_id: str, *, apply: bool, now:
     if state is None:
         return 1, "no sync state: nothing is indexed for this user"
     if state.purging:
+        if not keep_transcripts and state.purge_keep_transcripts:
+            return 1, ("a purge is already running in keep-transcripts mode; its mode cannot be changed from here "
+                       "(let it finish, then rebuild again with --drop-transcripts)")
         if not (keep_transcripts and not state.purge_keep_transcripts):
             return 0, "a purge is already running; the next tick finishes it and starts epoch 1"
         if not apply:
@@ -100,14 +103,15 @@ async def _set_flags(repo: DriveIndexRepository, user_id: str, *, now: datetime,
         return 1, "a tick holds the lease (or the state just went away); retry in a few minutes"
     try:
         await repo.save_sync_state(replace(lease, purging=True, purge_keep_transcripts=keep), owner)
+        after = await repo.get_sync_state(user_id)   # read back while the lease is still ours (M4)
     finally:
         await repo.release_lease(user_id, owner)
-    after = await repo.get_sync_state(user_id)
     if after is None or not after.purging or after.purge_keep_transcripts != keep:
         return 1, "the purge flags did not stick (the state changed under the write); re-run, or check the state"
     kept = "the stored transcripts are kept" if keep else "the stored transcripts are deleted with it"
     if running:
-        return 0, f"keep-transcripts flag set on the running purge; its first steps may have run already; {kept}"
+        return 0, (f"keep-transcripts flag set on the running purge; its first steps may have run already, so parts of "
+                    f"transcripts it already deleted may be orphaned (a later sweep removes them); {kept}")
     return 0, f"marked purging: the next tick purges the index and rebuilds it from epoch 1; {kept}"
 
 
