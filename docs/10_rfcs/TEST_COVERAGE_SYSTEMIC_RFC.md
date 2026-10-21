@@ -129,7 +129,7 @@ this RFC's packages; the packages below add the tests that would have caught eac
 | 7 | DST: the hourly daily-review match is `astimezone(user_tz).hour != review_hour` | `src/services/email_review_service.py:56-57` | on the fall-back day (2026-10-25 in Europe/Madrid) the review can be enqueued twice; at spring-forward it can be skipped |
 | 8 | Unknown `task_type` falls through to the Slack handler | `main.py:1260-1261` | a typo or a retired task type is handled as a Slack event instead of being refused |
 | 9 | `sweep_companion_consolidation` has a handler and no trigger | `src/handlers/worker_handler.py:182,383`; `docs/07_deployment/SCHEDULERS.md:265-272`; `src/infrastructure/agent_manifest.py:714` | stuck companion batches are never re-triggered |
-| 10 | `email_indexing_watchdog` is scheduled only by a manual script | `scripts/infrastructure/setup-email-watchdog-scheduler.sh` (absent from the deploy-time scheduler script) | a fresh deploy has no watchdog |
+| 10 | `email_indexing_watchdog` is scheduled only by a manual script | `scripts/infrastructure/setup-email-watchdog-scheduler.sh` (absent from the deploy-time scheduler script) | a fresh deploy has no watchdog (resolved 2026-10-22, S1b: the job is in the deploy-time scheduler script, the manual script is retired) |
 | 11 | The task-search vector indexes are not defined in git: vector queries with `user_id ==`, `status !=`, `list_id ==` pre-filters, 0 entries in `config/firestore.indexes.json` and none in any index script | `src/adapters/firestore_task_search_index.py:141-152` | a rebuilt database has no index for task search |
 | 12 | `create_prod_vector_indexes.py` is stale: an unprefixed collection deleted on 2026-05-31, `is_current`, `EUCLIDEAN`; it provokes a failing query to print a link and creates nothing | `scripts/infrastructure/create_prod_vector_indexes.py:11-12,29-36` | misleading as an index source |
 | 13 | Two database defaults: `(default)` in `main.py`, the live named database in `environment.py` | `main.py:106`; `src/config/environment.py:72` | any path that reads the env var without the config object opens the wrong database when the variable is unset |
@@ -285,7 +285,7 @@ deleted id is reusable only after minutes).
 
 - A **render step** turns `config/firestore.indexes.json` (120 entries: 96 `development_*`, 24 unprefixed legacy or
   dead names) into the test set: keep `development_*`, rewrite to `test_`, drop the rest.
-- The index scripts take the database **explicitly**; no live default (today `create_firestore_indexes.sh:9`,
+- The index scripts take the database **explicitly**; no live default (today `create_firestore_indexes.sh:9` (resolved 2026-10-22, S1b: the script is retired),
   `create_drive_vector_indexes.sh:13` and `deploy_firestore_indexes.py:33,97` default to the live database).
 - `create_prod_vector_indexes.py` is dropped from the list (§1.4 item 12); the missing task-search vector index
   definitions are added to git (§1.4 item 11).
