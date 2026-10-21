@@ -1,7 +1,7 @@
 """Smart's use_skill / draft_skill tools — served locally by the DelegationEngine, never via the coordinator."""
 
 from dataclasses import asdict
-from typing import Any, Awaitable, Callable, Dict, List, Mapping, Sequence, Set
+from typing import Any, Awaitable, Callable, Dict, List, Mapping, Optional, Sequence, Set
 
 from pydantic import ValidationError
 
@@ -48,12 +48,28 @@ def build_use_skill_tool_declaration() -> Dict[str, Any]:
     }
 
 
-def make_use_skill_handler(skills: Sequence[Skill], visible: Mapping[str, int]) -> LocalToolHandler:
+class LoadedSkills:
+    """The skills whose body this execution has in context (DRIVE_FILE_NOTES_RFC §4.5 layer 3): visible in history
+    (`visible`, any version) or loaded in this execution through use_skill (`now`). Built per execution attempt and
+    shared by the use_skill handler, which adds to `now`, and by a handler that needs a skill loaded first (the
+    drive-note tool's gate), which asks `name in loaded`."""
+
+    def __init__(self, visible: Optional[Mapping[str, int]] = None) -> None:
+        self.visible: Dict[str, int] = dict(visible or {})
+        self.now: Set[str] = set()
+
+    def __contains__(self, name: object) -> bool:
+        return name in self.now or name in self.visible
+
+
+def make_use_skill_handler(skills: Sequence[Skill], visible: Mapping[str, int],
+                           loaded: Optional[LoadedSkills] = None) -> LocalToolHandler:
     """Build per execution: `loaded_now` must never outlive one transcript (provider rotation restarts it).
     `visible` maps a skill whose body history shows to that body's version; only the current version short-circuits
-    (AGENT_WORKSPACE_RFC §11.2)."""
+    (AGENT_WORKSPACE_RFC §11.2). `loaded`, when given, is the execution's shared set: the skills this handler loads
+    are recorded in `loaded.now`, so another handler can see them (its own set otherwise)."""
     by_name = {s.name: s for s in skills}
-    loaded_now: Set[str] = set()
+    loaded_now: Set[str] = loaded.now if loaded is not None else set()
 
     async def handle(tool_call: ToolCall) -> ToolResult:
         name = str((tool_call.args or {}).get("name", "")).strip()
