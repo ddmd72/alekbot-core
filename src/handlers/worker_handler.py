@@ -552,8 +552,9 @@ class WorkerHandler:
         if not (event_type and job_id and user_id and account_id):
             return {"error": "missing event_type, job_id, user_id or account_id"}, 400
         if self._deep_research_fetch is None:
+            # 4xx: Cloud Tasks would retry a 5xx forever against a service that can never retrieve.
             logger.error("[DeepResearch] webhook event delivered but OpenAI retrieval is not configured")
-            return {"error": "openai deep research not configured"}, 501
+            return {"error": "retrieval not configured"}, 422
         session_id = payload.get("session_id") or ""
         origin_channel_id = session_id.split(":", 1)[1] if ":" in session_id else None
         origin_platform = payload.get("origin_platform") or None

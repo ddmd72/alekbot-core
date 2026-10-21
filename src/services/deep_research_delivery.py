@@ -11,9 +11,12 @@ Shared by WorkerHandler, AgentWorkerHandler, and deep_research_webhooks.
 - NotificationPort        — structural Protocol for UserNotificationService
 """
 
+import asyncio
 import html as html_lib
 from datetime import datetime, timezone
 from typing import Any, Optional, Protocol, TYPE_CHECKING
+
+from google.api_core.exceptions import AlreadyExists
 
 from ..domain.deep_research_notices import report_not_prepared_notice
 from ..domain.deep_research_drive_copy import DEEP_RESEARCH_REPORT_CONTEXT_KEY, marker_query
@@ -46,6 +49,7 @@ class NotificationPort(Protocol):
         session_id: Optional[str] = None,
         channel_id_override: Optional[str] = None,
         platform_override: Optional[str] = None,
+        suppress_transient_retry: bool = False,
     ) -> NotifyResult: ...
 
     async def notify_raw(
@@ -276,25 +280,39 @@ async def deliver_deep_research(
 
     html_query = _build_html_page_query(query, result_text)
 
+    # A named task makes a retried create safe: a create that timed out after the task was made
+    # ends in AlreadyExists, which is a hand-off. Unnamed tasks are not retried (a retry could double them).
+    attempts = 3 if report_dedup_id else 1
     try:
-        await task_queue.enqueue_agent_task(
-            agent_id="html_page_generator_agent",
-            intent="create_html_page",
-            query=html_query,
-            context={
-                "user_id": user_id,
-                "account_id": account_id,
-                "session_id": session_id or "",
-                "task_complexity": "deep_reasoning",
-                # Marks the page as a deep research report: AgentWorkerHandler offers it to the drive
-                # copy (decisions/deep_research_drive_copy.md); the question names it if it has no title.
-                DEEP_RESEARCH_REPORT_CONTEXT_KEY: marker_query(query),
-                **({"origin_channel_id": channel_id_override} if channel_id_override else {}),
-                **({"origin_platform": platform_override} if platform_override else {}),
-            },
-            deadline_seconds=720,
-            **({"dedup_key": f"deep_research_report:{report_dedup_id}"} if report_dedup_id else {}),
-        )
+        for attempt in range(attempts):
+            try:
+                await task_queue.enqueue_agent_task(
+                    agent_id="html_page_generator_agent",
+                    intent="create_html_page",
+                    query=html_query,
+                    context={
+                        "user_id": user_id,
+                        "account_id": account_id,
+                        "session_id": session_id or "",
+                        "task_complexity": "deep_reasoning",
+                        # Marks the page as a deep research report: AgentWorkerHandler offers it to the drive
+                        # copy (decisions/deep_research_drive_copy.md); the question names it if it has no title.
+                        DEEP_RESEARCH_REPORT_CONTEXT_KEY: marker_query(query),
+                        **({"origin_channel_id": channel_id_override} if channel_id_override else {}),
+                        **({"origin_platform": platform_override} if platform_override else {}),
+                    },
+                    deadline_seconds=720,
+                    **({"dedup_key": f"deep_research_report:{report_dedup_id}"} if report_dedup_id else {}),
+                )
+                break
+            except AlreadyExists:
+                break
+            except Exception as exc:
+                if attempt == attempts - 1:
+                    raise
+                logger.warning("[DeepResearch] report task create failed (attempt %d), retrying by name: %s",
+                               attempt + 1, exc)
+                await asyncio.sleep(0.5 * (2 ** attempt))
         logger.info("[DeepResearch] HtmlPageGenerator task enqueued for user=%s", user_id[:8])
         return True
     except Exception as exc:
@@ -305,14 +323,17 @@ async def deliver_deep_research(
         notifier = failure_notification or notification
         if notifier:
             try:
-                await notifier.notify(
+                result = await notifier.notify(
                     kind=NotificationKind.DEEP_RESEARCH,
                     user_id=user_id,
                     account_id=account_id,
                     system_alert=report_not_prepared_notice(query),
                     channel_id_override=channel_id_override,
                     platform_override=platform_override,
+                    suppress_transient_retry=True,
                 )
+                if not result.delivered and not result.sent:
+                    logger.error("[DeepResearch] Failure notice not sent: %s", result.error)
             except Exception as notify_exc:
                 logger.error("[DeepResearch] Failure notice not delivered: %s", notify_exc, exc_info=True)
     return False
