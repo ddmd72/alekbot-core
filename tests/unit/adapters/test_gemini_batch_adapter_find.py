@@ -90,7 +90,9 @@ async def test_find_stops_at_its_scan_bound():
     page = [_job(f"batches/n{i}", "tr-other") for i in range(100)]
     pages = [page] * (FIND_MAX_JOBS // 100) + [[_job("batches/late", shown)]]
     _install_pages(adapter, pages, seen)
-    assert await adapter.find_batch(DISPLAY) is None
+    # Round 2: the bound is inconclusive (the job may lie past it), an outage-class error, never a `None` miss
+    with pytest.raises(LLMUnavailableError, match="scan bound"):
+        await adapter.find_batch(DISPLAY)
     assert len(seen) == FIND_MAX_JOBS // 100   # the page past the bound is never fetched
 
 
