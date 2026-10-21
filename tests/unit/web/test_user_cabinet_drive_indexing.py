@@ -9,6 +9,7 @@ from quart import Quart
 from src.domain.drive_index_params import TICK_DEADLINE_S
 from src.domain.drive_indexing_status import DriveIndexingStatus
 from src.domain.drive_task_keys import DRIVE_SYNC_TASK
+from src.domain.user import UserBotConfig
 from src.domain.user_drive import DriveConnection
 from src.ports.task_queue import TaskQueue
 from src.ports.user_drive_port import UserDrivePort
@@ -61,7 +62,10 @@ class TestStatus:
                                      readable_chunks=17, usd_month={"reader": 0.5, "triage": 0.25},
                                      usd_caps={"reader": 4.0, "triage": 3.0}, initial_build_spent_usd=40.0,
                                      initial_build_allowance_usd=40.0, initial_build_closed=True)
-        async with _app(_drive(), _search(status)).test_client() as client:
+        # §27.12/G24: the status reads the user's own transcription flag; a real config with the flag at its default
+        users = MagicMock()
+        users.get_user = AsyncMock(return_value=SimpleNamespace(config=UserBotConfig()))
+        async with _app(_drive(), _search(status), user_repo=users).test_client() as client:
             body = await (await client.get("/api/drive/status", headers=_AUTH)).get_json()
         assert body == {
             "connected": True, "provider": "OneDrive", "needs_reconnect": False,
@@ -74,7 +78,8 @@ class TestStatus:
                          # cap and the initial build replace the retired §24.7 page and image counters
                          "readable_chunks": 17, "model_usd_month": {"reader": 0.5, "triage": 0.25},
                          "model_usd_caps": {"reader": 4.0, "triage": 3.0},
-                         "initial_build": {"spent_usd": 40.0, "allowance_usd": 40.0, "closed": True}},
+                         "initial_build": {"spent_usd": 40.0, "allowance_usd": 40.0, "closed": True},
+                         "transcribe_enabled": False},   # §27.12/G24: the user's flag, always present
         }
 
     async def test_needs_reconnect(self):

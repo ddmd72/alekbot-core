@@ -34,11 +34,13 @@ async def test_the_label_keeps_the_real_path(item):
     conversion = AsyncMock(spec=FileConversionService)
     conversion.get_drive_item.return_value = item
     conversion.resolve_bytes.return_value = b"%PDF" if item is PDF else b"video"
+    search = AsyncMock(spec=DriveSearchService)
+    search.transcript_text.return_value = None   # §27.11: an untranscribed recording keeps the file branch
     agent = FileManagementAgent(
         config=AgentConfig(agent_id="file_management_agent_u1", agent_type="file_management", capabilities={},
                            metadata={}),
         conversion_service=conversion, storage=AsyncMock(spec=FileStoragePort), notification=AsyncMock(),
-        drive_service=AsyncMock(spec=UserDriveService), drive_search=AsyncMock(spec=DriveSearchService))
+        drive_service=AsyncMock(spec=UserDriveService), drive_search=search)
     resp = await agent.execute(_msg(file_ref=item.ref))
     assert resp.result.startswith(REFERENCE_REMINDER_ATTACHED + "\n")
     assert f"[Drive: {item.path} (" in resp.result and "&amp;" not in resp.result and "&#x27;" not in resp.result

@@ -54,3 +54,7 @@ A described file's result carries `card accuracy: N%`. 100% — everything in th
 - **Freshness**: results show the drive as of the time they state. If the user refers to a recent edit, or a result is marked stale, open the file (it is read live) before quoting it.
 - **Versions**: when several results look like versions of one document and their values differ, never pick silently: answer from the version its name or date marks as latest, say which, and list the others with their dates.
 - **Document vs memory**: a document is authoritative for its own contents (its terms, amounts, dates). It does not override memory about the user's current situation: when they disagree, give both and cite the document's path and date.
+
+## Recordings
+
+- A recording is found by what was said; open its ref for the transcript; ask for `original` only when the user wants the recording itself, and it comes as a link.
