@@ -121,12 +121,15 @@ class WindowOutcome(str, Enum):
 
 @dataclass(frozen=True)
 class WindowResult:
-    """One collected window: the parsed `transcript` when `outcome` is ok, and the dollars already billed for it."""
+    """One collected window: the parsed `transcript` when `outcome` is ok, `usd` the priced cost of the result (0 when it
+    came without usage or its model is unpriced; independent of the account write), `billed` whether that cost reached
+    the account."""
     key: str
     outcome: WindowOutcome
     transcript: Optional[WindowTranscript] = None
     transient: bool = False
     usd: float = 0.0
+    billed: bool = False
 
 
 @dataclass(frozen=True)

@@ -137,3 +137,42 @@ async def test_collect_never_logs_transcript_text(caplog):
     with caplog.at_level(logging.DEBUG):
         await runner.collect(BatchRef(name="b", keys=("item:0",)), account_id="acc-1")
     assert all("SECRETWORDS" not in r.getMessage() for r in caplog.records)
+
+
+async def test_failed_record_usage_still_reports_the_priced_cost():
+    quota = AsyncMock(spec=QuotaService)
+    quota.record_usage.side_effect = RuntimeError("firestore")
+    usage = _usage()
+    port = _port({"item:0": BatchResult(key="item:0", text=GOOD, usage=usage)})
+    runner, _ = _runner(port, quota=quota)
+    out = await runner.collect(BatchRef(name="b", keys=("item:0",)), account_id="acc-1")
+    assert out["item:0"].usd == pytest.approx(usage.cost()) and out["item:0"].usd > 0
+
+
+async def test_no_quota_service_still_reports_the_priced_cost():
+    usage = _usage()
+    port = _port({"item:0": BatchResult(key="item:0", text=GOOD, usage=usage)})
+    runner = DriveTranscriptRunner(port, prompt_builder(), None)
+    out = await runner.collect(BatchRef(name="b", keys=("item:0",)), account_id="acc-1")
+    assert out["item:0"].usd == pytest.approx(usage.cost()) and out["item:0"].usd > 0
+
+
+async def test_unpriced_model_is_zero_and_one_error_per_collect(caplog):
+    usage = BatchUsage(model="no-such-model", audio_input_tokens=1000, output_tokens=10)
+    port = _port({k: BatchResult(key=k, text=GOOD, usage=usage) for k in ("a", "b")})
+    runner, quota = _runner(port)
+    with caplog.at_level(logging.ERROR):
+        out = await runner.collect(BatchRef(name="b", keys=("a", "b")), account_id="acc-1")
+    assert out["a"].usd == 0.0 and out["b"].usd == 0.0
+    quota.record_usage.assert_not_awaited()
+    assert len([r for r in caplog.records if r.levelno == logging.ERROR]) == 1
+
+
+async def test_collect_log_counts_finish_reasons_only(caplog):
+    port = _port({"a": BatchResult(key="a", text=GOOD, usage=_usage(), finish_reason="STOP"),
+                  "b": BatchResult(key="b", text="not json", usage=_usage(), finish_reason="MAX_TOKENS")})
+    runner, _ = _runner(port)
+    with caplog.at_level(logging.INFO):
+        await runner.collect(BatchRef(name="b", keys=("a", "b")), account_id="acc-1")
+    line = next(r.getMessage() for r in caplog.records if "collected" in r.getMessage())
+    assert "MAX_TOKENS" in line and "STOP" in line
