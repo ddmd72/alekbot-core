@@ -356,6 +356,16 @@ class DriveProfilerAgentConfig:
 
 
 @dataclass
+class DriveTranscriberAgentConfig:
+    """Batch transcription of one audio window (USER_DRIVE_INDEXING_RFC §27.5). Not a `_call_llm` agent: no timeout or
+    parse retry here (a batch is hours; the stage resubmits). `max_tokens` is the provider's output ceiling; each
+    window's own cap is min(this, ceil(1000 x seconds / 60)) (T-R19). T0 measured about 400-450 output tokens per
+    audio minute, and the thought tokens count toward the cap."""
+    max_tokens: int = 65_536
+    thinking: str = "low"
+
+
+@dataclass
 class DrivePassageAgentConfig:
     call_timeout_s: int = PASSAGES_TIMEOUT_S
     max_tokens: int = PASSAGES_OUTPUT_TOKENS
@@ -387,6 +397,7 @@ DRIVE_READER = DriveReaderAgentConfig()
 DRIVE_TRIAGE = DriveTriageAgentConfig()
 DRIVE_PROFILER = DriveProfilerAgentConfig()
 DRIVE_PASSAGES = DrivePassageAgentConfig()
+DRIVE_TRANSCRIBER = DriveTranscriberAgentConfig()
 
 
 # ---------------------------------------------------------------------------
