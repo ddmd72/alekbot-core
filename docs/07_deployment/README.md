@@ -722,6 +722,64 @@ but the index must be rebuilt, not upgraded in place:
 5. Resume the queue and the job. **The purge is mandatory**, and the re-index that follows is a **second one**, under
    monthly caps the first already spent: expect it to be slower.
 
+### Transcripts of recordings (§27)
+
+USER_DRIVE_INDEXING_RFC §27 (slice T1, branch `feat/drive-transcripts`; T2 mirror folder and T3 summary are not built); the owner's
+map is `docs/05_building_blocks/user_drive/README.md` §4.23. An **ordinary upgrade on top of §26**: no rebuild, no migration gate, no
+initial-build reset (Δ126). It reuses the shell variables and the pause/resume commands of § Search v2 above. Two switches keep it
+off until the owner turns it on: the indexer's kill switch and the user's own flag. Nothing here is a secret; the key names only.
+
+**Keys (deploy-only, in `.env`, never the local `DRIVE_TRANSCRIBE_ENABLED` / `DRIVE_TRANSCRIBE_USD_CAP`: the deploy-substitution trap).**
+- `DRIVE_TRANSCRIBE_ENABLED_DEV` — `on` (also `1`, `true`, `yes`) turns the kill switch on; empty or absent deploys `off`. The Makefile
+  passes it as `_DRIVE_TRANSCRIBE_ENABLED`, and `cloudbuild-dev.yaml` sets `DRIVE_TRANSCRIBE_ENABLED` on the indexer. It is a Cloud Build substitution
+  and not a by-hand variable because `--set-env-vars` replaces every variable on each deploy: a value set with `gcloud run services update` is gone at
+  the next deploy (the same reason as `DRIVE_UPGRADE_PASS`). A manual `gcloud builds submit` without the Makefile deploys `off`.
+- `DRIVE_TRANSCRIBE_USD_CAP_DEV` — optional number of dollars, e.g. `10`. It can only **lower** the $20 monthly cap (a larger or unparsable
+  value is the default). Empty = $20. Set on the indexer and on the main service (the Cabinet shows the effective cap). **Set it low for
+  the first run**: turning the flag on starts the whole backlog, newest recordings first, and this cap is the only lever between off and $20.
+- `GEMINI_API_KEY` already exists on the indexer (embeddings, fallback). With the switch on and no key the stage is not built and an ERROR is
+  logged.
+
+**Rollout**
+1. **Gates:** `make check` green on the branch.
+2. **Back up the prompt layer** (owner): `$PY firestore_utils/backup_prompt_layer.py`.
+3. **Indexes `READY`:** `make deploy-indexes PROJECT_ID=$GOOGLE_CLOUD_PROJECT` creates the new composites (records: `user_id +
+   transcript_state + effective_day + parent_id + item_id`, `user_id + transcript_wake_at + item_id`; the job, batch and store collections), the **two collection-group indexes**
+   on the window and part subcollections (`user_id + index`; the purge's orphan sweep needs them) and the single-field exemptions for the large
+   `segments` and `summary` fields. Same `READY` check as Search v2 step 2, then `$PY scripts/infrastructure/drive_index_smoke.py $DEV_USER_ID`
+   (it now runs every transcript read, including the two collection-group reads). Without the collection-group indexes the sweep is logged ERROR and
+   skipped; it never fails or holds a purge.
+4. **Upload the four prompt documents** (the owner's act; `docs/how_to/NEW_AGENT_PLAYBOOK.md`; by default never from an agent session; the first run's exception is below), after the backup, from
+   `firestore_utils/uploads/`: tokens `COGNITIVE_PROCESS_DRIVE_TRANSCRIBER` and `OUTPUT_FORMAT_DRIVE_TRANSCRIBER`, the blueprint
+   `drive_transcriber_agent_v1` and the profile `drive_transcriber` (repo copies of the sources in `prompts_snapshot/`). Without them the stage cannot
+   submit: a missing prompt is a model outage for this class (no fallback prompt), so nothing is lost, and the same four are all that T1 needs
+   (the summary agent's are T3). The prompt assembly caches a template for 24 h per instance.
+5. **Pause the queue and the fan-out job**, wait for the running tick (commands as Search v2 step 3).
+6. **Deploy main and the indexer together with the switch OFF:** `make deploy` (no `DRIVE_TRANSCRIBE_ENABLED_DEV`). The policy bump
+   (`POLICY_VERSION` 3) re-classifies existing audio and video records to `pending`, metadata only, for every user; nobody's flag is on, so no
+   recording counts as "not read yet" and nothing is sent anywhere. `ffmpeg` and the unprivileged parser user are in the image already.
+7. **Verify both services serve the new image** (command as § Card accuracy step 6), then **resume** the queue and the job.
+8. **Estimate the backlog** before enabling (RFC §27.15 step 5): sum the owner's recording durations (read-only; output only under
+   `scripts/memory/`). At the held price a hour books about $0.16, so $20 buys about 125 hours a month until 2027.
+9. **To try it:** set `DRIVE_TRANSCRIBE_ENABLED_DEV=on` and `DRIVE_TRANSCRIBE_USD_CAP_DEV=<low>` in `.env`, `make deploy` again (steps 5–7 around it),
+   then set the owner's own flag: `scripts/infrastructure/drive_transcribe_flag.py` (usage `--user USER [--off] [--apply]`: dry run by default; `--apply` is the owner's act by default, `--off` turns the flag off). For the first run (2026-10-21) the owner explicitly delegated these steps to the assistant: the four prompt uploads (after a prompt-layer backup and a mirror check), the composite index deploy, the deploy with the switch off then on with a $10 cap, and setting the owner's per-user flag. Do
+   not set it for any other user: the parser is not yet a separate zero-credential service (RFC OQ-T3).
+10. **Watch:** `make logs-indexer` for the `[DriveIndex]` tick line (`windows_extracted`, `windows_submitted`, `windows_collected`,
+    `transcripts_finalized`, `transcribe_usd`, `transcribe_reserved_usd`), the Cabinet's cost line, and the first transcript through a search by a
+    sentence from the recording. Raise the cap only after reading the estimate and the first days.
+
+**Rollback / levers, fastest first**
+1. The user's flag off (the same flag script, `drive_transcribe_flag.py --user USER --off --apply`): his new work stops, his transcripts, store and index stay and keep answering.
+2. Kill switch off: remove the key (or set `off`), redeploy. The stage is not built; open batches stay at the provider and their reservations
+   stay until the switch is on again or the user opts out of indexing (the purge then books or releases them).
+3. The previous image: every new field is plain and no enum gained a value, so the old code parses every record and treats media as
+   `kind_not_admitted` (it collects their chunks). A purge under old code leaves the transcript documents behind; the sweep script (RFC §27.15
+   step 7) removes them.
+4. Opt-out of drive indexing for one user: the purge removes jobs, batches and stored transcripts (a rebuild keeps the store).
+
+**Also in this release:** a `google-genai` floor of 2.17.0 (`requirements.txt`; the batch surface was measured on it), the Cabinet's "transcribing
+recordings" cost line, and the disclosure sentence (shown only for a user whose flag is on).
+
 ## Sandbox render service
 
 `alek-bot-sandbox-render-dev` runs `render.docx` (the Node script a model wrote for a DOCX) for the main service

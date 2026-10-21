@@ -186,6 +186,7 @@ Full per-agent detail (mechanics, intents, tiers, gotchas) lives in
 | DriveImageTriage | ECO (same switch and fallback) | none (indexer only) | 800 px thumbnail batch of 8 → text or photo + description, objects, scene, visible text (triage v2); `ImageTriagePort` via `DriveTriageRunner` |
 | DriveProfiler | ECO (same switch and fallback) | none (indexer only) | one text file's stored text → profile (type, life areas, dates, entities, values, topics, en/es/uk/ru word lists), verified against the text; `DocumentProfilerPort` via `DriveProfilerRunner` |
 | DrivePassages | ECO (same switch and fallback) | none (indexer only) | 2 chunks → keywords and questions with evidence quotes (doc2query), grounded in the chunk; `PassageHintPort` via `DrivePassageRunner` |
+| DriveTranscriber | Gemini `gemini-3.8-flash` on the **Batch API** (BALANCED, no provider switch, never flash-lite) | none (indexer only; not a `_call_llm` agent) | one ≈ 30-min audio window → `{language_codes, speakers, no_speech, segments[{start MM:SS, speaker, text}]}`; `BatchTranscriptionPort` via `DriveTranscriptRunner`; built only with the kill switch on; **T1 built, not deployed** |
 
 **Long-running turns** — one absolute 25-min clock per chat turn (`domain/turn_clock.py`,
 `TurnClock` in a `ContextVar`; `use_turn_clock=True` only on Smart's top-level engine). At 90 s
@@ -695,7 +696,21 @@ thumbnails). Model agents run on GPT-6 Luna by default, Claude by `agent_provide
 model that ran; a model outage defers only model work, except a reader 5xx/timeout/unexpected error, which is charged
 to the file (`failed` at 3); an edited reader-read file is re-read at most once per 24 h; card headroom is decided
 before any content work. Text passes a machine-text gate, is chunked (generation-fenced) and embedded. Audio and video
-stay metadata-only. No rollback to the Slice 1 revision.
+are metadata-only unless the user's transcription is on (next paragraph). No rollback to the Slice 1 revision.
+
+**Transcripts of recordings (RFC §27; T1 built on `feat/drive-transcripts`, not deployed; the mirror folder T2 and the summary T3 are not built).**
+Audio and video are `Admission.TRANSCRIBE` (`POLICY_VERSION` 3; structure decisions compare `STRUCTURE_POLICY_SINCE` = 2, so the bump redoes no folder work).
+Not an extractor chain link: a **job with its own states on the record** (`transcript_state`: `none ready working waiting current held parked failed`), advanced by
+`DriveTranscriptStage` on the indexer across ticks — probe the Graph download URL, cut audio-only Opus windows (≈ 30 min, 60 s overlap) with ffmpeg in the
+parser sandbox, upload to the Gemini Files API, one **Gemini Batch** per user per step (half price), poll, collect, stitch and align speakers by code, then
+index the transcript through the ordinary text path and store it under the content key (a copy or move never pays again). **Two switches, both off by default:**
+the indexer's kill switch `DRIVE_TRANSCRIBE_ENABLED` (a Cloud Build substitution from the deploy-only `DRIVE_TRANSCRIBE_ENABLED_DEV`) and the user's
+`UserBotConfig.drive_transcribe_enabled` (owner's script; only the owner, until the zero-credential parser service exists). **Hard monthly cap**
+(`transcribe` class, `TRANSCRIBE_USD_PER_MONTH` $20, no initial-build share): a whole file's estimate is **reserved** before its first window and settled at
+collection in the reservation's month; a file that does not fit is parked whole until next month; an optional `DRIVE_TRANSCRIBE_USD_CAP_DEV` can only lower the
+cap. Billing keeps the held `gemini-3.8-flash` price (≈ $0.16/audio hour, ≈ 125 h/month until 2027). No `prompt_content`/Logfire row per window (a batch is not a
+call). `open_file_from_drive` on a transcribed recording returns the transcript (`original: true` → a link). Rollout and levers: `docs/07_deployment/README.md` →
+"Transcripts of recordings (§27)"; the owner's map `docs/05_building_blocks/user_drive/README.md` §4.23; decision `decisions/drive_transcripts_t1.md`.
 **Search v2 (live since 2026-10-14, PR #64):** intelligence at
 index time, zero-LLM search. The indexer describes each text file once (`drive_profiler`: type and life areas from
 fixed enums, dates, entities, values, topics, en/es/uk/ru word lists, verified against the text), writes passage hints
