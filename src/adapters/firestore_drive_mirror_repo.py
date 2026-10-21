@@ -37,6 +37,7 @@ from google.cloud.firestore_v1.field_path import FieldPath
 
 from ..config.environment import EnvironmentConfig
 from ..domain.drive_index import DriveIndexStoreUnavailable
+from ..domain.drive_index_params import RECORD_WRITE_BATCH
 from ..domain.drive_mirror import (
     KIND_ARCHIVE, KIND_FILE, KIND_FOLDER, MIRROR_ARCHIVED, MIRROR_DETACHED, DeletionNotice, MirrorDoc,
     MirrorRoot,
@@ -191,8 +192,10 @@ class FirestoreDriveMirrorRepository(DriveMirrorRepository):
         await self._ref(doc.key).set(doc_to_doc(doc))
 
     async def delete_doc(self, user_id: str, key: str) -> None:
-        if key.startswith(f"{user_id}:"):
-            await self._ref(key).delete()
+        ref = self._ref(key)
+        snap = await ref.get()
+        if snap.exists and (snap.to_dict() or {}).get("user_id") == user_id:   # ownership by the document, not the key text
+            await ref.delete()
 
     async def by_mirror_item(self, user_id: str, mirror_item_id: str) -> Optional[MirrorDoc]:
         query = (self._docs.where(filter=FieldFilter("user_id", "==", user_id))
@@ -212,12 +215,15 @@ class FirestoreDriveMirrorRepository(DriveMirrorRepository):
             for kind in (KIND_FILE, KIND_FOLDER):
                 by_key.setdefault(f"{user_id}:{kind}:{notice.item_id}", []).append(notice)
         existing = await self.get_docs(user_id, list(by_key))
-        batch = self._db.batch()
+        updates = []
         for key, doc in existing.items():
             for notice in by_key[key]:
                 doc = marked(doc, notice)
-            batch.update(self._ref(key), self._mark_update(doc))
-        if existing:
+            updates.append((key, self._mark_update(doc)))
+        for part in _chunks(updates, RECORD_WRITE_BATCH):   # a folder of recordings deleted at once: one batch is too big
+            batch = self._db.batch()
+            for key, data in part:
+                batch.update(self._ref(key), data)
             await batch.commit()
         return len(existing)
 
