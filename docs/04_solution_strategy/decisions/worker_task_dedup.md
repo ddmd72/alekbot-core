@@ -1,7 +1,7 @@
 # A redelivered `/worker` Cloud Task is skipped, claimed by task name
 
 **Date:** 2026-10-09
-**Status:** Live
+**Status:** Live; widened in S1b (2026-10-22), pending deploy
 **Scope:** `/worker` (`main.py`) and `WorkerHandler`: every Cloud Tasks delivery (all `task_type`s,
 `telegram_update`, queued Slack events). Introduced for `agent_execution` (deep research, documents,
 images, `tell_alek` errands); widened to every delivery in S1b.
@@ -68,10 +68,11 @@ whatever the trigger.
 
 If an instance dies mid-task (OOM) without raising, the claim stays. A redelivery within 30 minutes
 is then skipped and the task is lost. Before this change it would have re-run. This is rare, and an
-OOM would likely repeat on a re-run anyway.
+OOM would likely repeat on a re-run anyway. This residual now also covers chat turns (queued Slack
+events, `telegram_update`), which were never claimed before.
 
-A task still running past its dispatch deadline (600 s default for `email_indexing`,
-`companion_consolidation` and agent tasks without a manifest deadline; the Cloud Run timeout is 1800 s)
+A task still running past its dispatch deadline (`companion_consolidation` sets 600 s explicitly; `email_indexing` and agent tasks without a
+manifest deadline get the 600 s default; the Cloud Run timeout is 1800 s)
 gets Cloud Tasks' retry at the deadline acked as a duplicate. If the original then fails, nothing
 retries it (the consolidation sweeps cover consolidation).
 
