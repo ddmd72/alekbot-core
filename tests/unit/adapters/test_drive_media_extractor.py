@@ -18,7 +18,7 @@ from src.domain.drive_transcript_windows import plan_windows
 from src.domain.drive_transcript import MediaStatus, MediaUnreadable, WindowSpec
 from src.ports.media_audio_port import MediaAudioPort
 from tests.unit.adapters.drive_media_fixtures import (
-    HAVE_FFMPEG, MediaServer, make_audio_mp4, make_cueless_webm, make_corrupt_mp4, make_overstated_mp3, make_overstated_mp4, make_seekable_webm, make_stepped_tone_webm,
+    HAVE_FFMPEG, MediaServer, make_audio_mp4, make_cueless_webm, make_corrupt_cueless_mkv, make_corrupt_mp4, make_overstated_mp3, make_overstated_mp4, make_seekable_webm, make_stepped_tone_webm,
     tone_hz_at,
 )
 
@@ -404,6 +404,81 @@ async def test_one_corrupt_packet_does_not_fail_the_file(tmp_path):
         result = await extractor.extract_windows(server.url("/c.mp4"), [WindowSpec(0, 0.0, 120.0)],
                                                  str(tmp_path / "o"), wall_s=60, container=probe.container)
     assert result.status is MediaStatus.OK and len(result.windows) == 1 and not result.eof
+
+
+@needs_ffmpeg
+async def test_a_corrupt_packet_late_in_a_long_file_is_re_run_after_earlier_windows_spent_cpu(tmp_path):
+    """N7: the re-run decision judges the failed run's own CPU, not the CPU every earlier window of the step spent.
+    15 min of AAC, 2 KB overwritten at 90 %, 60 s windows, a 3 s CPU limit the earlier windows exceed together."""
+    mp4 = make_corrupt_mp4(tmp_path / "c.mp4", 900, at=0.9)
+    plan = plan_windows(900.0, window_s=60, overlap_s=5)
+    with MediaServer(tmp_path, {"/c.mp4": mp4}) as server:
+        extractor = SubprocessMediaExtractor(ca_file=server.ca_pem, temp_root=str(tmp_path), cpu_limit_s=3)
+        probe = (await extractor.probe(server.url("/c.mp4"))).probe
+        result = await extractor.extract_windows(server.url("/c.mp4"), plan, str(tmp_path / "o"), wall_s=170,
+                                                 container=probe.container)
+    assert result.status is MediaStatus.OK and not result.eof
+    assert [w.index for w, _ in result.windows] == [w.index for w in plan]
+
+
+@needs_ffmpeg
+async def test_a_corrupt_cluster_in_a_pass_is_re_run_and_yields_its_windows(tmp_path, monkeypatch):
+    """The pass path: `-xerror` makes the corrupt cluster fatal; the re-run without it conceals it and the pass still
+    cuts every planned window (T-R16, N7). Through the extractor, then child-side in process to see the two runs."""
+    mkv = make_corrupt_cueless_mkv(150, at=0.5)
+    plan = plan_windows(150.0, window_s=60, overlap_s=10)
+    with MediaServer(tmp_path, {"/rec.mkv": mkv}) as server:
+        extractor = SubprocessMediaExtractor(ca_file=server.ca_pem, temp_root=str(tmp_path))
+        probe = (await extractor.probe(server.url("/rec.mkv"))).probe
+        assert not probe.duration_known and probe.container == WEBM
+        result = await extractor.extract_windows(server.url("/rec.mkv"), plan, str(tmp_path / "o"), wall_s=120,
+                                                 container=probe.container, duration_known=False)
+        assert result.status is MediaStatus.OK
+        assert [w.index for w, _ in result.windows] == [w.index for w in plan]
+
+        remote_runs = []
+        real = media._run_ffmpeg
+
+        def spy(argv, deadline):
+            outcome = real(argv, deadline)
+            if "-xerror" in argv or "https" in argv[argv.index("-protocol_whitelist") + 1]:
+                remote_runs.append(("-xerror" in argv, outcome[0]))
+            return outcome
+
+        monkeypatch.setattr(media, "_run_ffmpeg", spy)
+        out = tmp_path / "o2"
+        out.mkdir()
+        child = media.run_windows({"url": server.url("/rec.mkv"), "ca_file": server.ca_pem, "container": WEBM,
+                                   "duration_known": False, "out_dir": str(out), "wall_s": 120,
+                                   "windows": [{"index": w.index, "start_s": w.start_s, "duration_s": w.duration_s}
+                                               for w in plan]})
+    assert remote_runs[0][0] is True and remote_runs[0][1] not in (0, None)     # the corrupt cluster under -xerror
+    assert remote_runs[1:] == [(False, 0)]                                       # the one re-run conceals it
+    assert child["status"] == "ok" and [w["index"] for w in child["windows"]] == [w.index for w in plan]
+
+
+def test_a_limit_is_judged_on_the_runs_own_cpu_not_the_childs_total(tmp_path, monkeypatch):
+    """Two sequential runs of 0.6 x cpu_s each: together over 0.9 x cpu_s, neither alone. RLIMIT_CPU is per process,
+    so neither run was cut by it; the other run's 0.95 x cpu_s was."""
+    clock = {"cpu": 0.0}
+    monkeypatch.setattr(media.resource, "getrusage",
+                        lambda who: SimpleNamespace(ru_utime=clock["cpu"], ru_stime=0.0))
+
+    def fake_run(argv, **kwargs):
+        clock["cpu"] += float(argv[0])
+        return SimpleNamespace(returncode=183)
+
+    monkeypatch.setattr(media.subprocess, "run", fake_run)
+    request = {"cpu_s": 10, "file_bytes": 0}
+    out = str(tmp_path / "missing.opus")
+    deadline = time.monotonic() + 60
+    for _ in range(2):
+        code, timed_out, cpu = media._run_ffmpeg(["6.0"], deadline)
+        assert (code, timed_out, cpu) == (183, False, pytest.approx(6.0))
+        assert not media._hit_a_limit(request, out, cpu)
+    assert clock["cpu"] >= 0.9 * request["cpu_s"]               # the summed total would have read as a limit
+    code, _, cpu = media._run_ffmpeg(["9.5"], deadline)
+    assert media._hit_a_limit(request, out, cpu)
 
 
 def test_network_exit_codes_are_computed_for_this_platform():
