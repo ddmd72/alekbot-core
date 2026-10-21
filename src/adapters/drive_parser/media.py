@@ -2,8 +2,9 @@
 Child-side ffprobe / ffmpeg for the drive transcript extractor (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §27.4, Δ99, Δ134).
 
 Runs inside the unprivileged parser child after `serve` applied the limits (ffmpeg inherits them). The URL arrives in the
-stdin request and lives in the ffmpeg argv only: readable by root and the parser uid, the named Δ99 secret. Nothing here
-logs it, and ffmpeg's stderr is left to the parent's digest.
+stdin request and lives in the ffmpeg argv only. `/proc/<pid>/cmdline` is world-readable, so the URL is exposed to every
+local user: that is acceptable only because the image holds root and the parser user (`driveparser`) alone, the named
+Δ99 secret. Nothing here logs it, and ffmpeg's stderr is left to the parent's digest.
 
 Public interface:
     build_probe_argv(url, ca_file) -> List[str]
@@ -28,13 +29,15 @@ import subprocess
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-from src.domain.drive_index_params import MEDIA_PASS_MAX_WINDOWS, TRANSCRIBE_MAX_SECONDS
+from src.domain.drive_index_params import MEDIA_PASS_MAX_WINDOWS, TRANSCRIBE_MAX_SECONDS, TRANSCRIBE_WINDOW_S
 
 FFMPEG = "ffmpeg"
 FFPROBE = "ffprobe"
-PROTOCOL_WHITELIST = "https,tls,tcp,crypto"
+PROTOCOL_WHITELIST = "https,tls,tcp"      # no allowlisted demuxer needs `crypto` (encrypted HLS segments only)
 # G14: a short name admits the demuxer whose name lists it ("mov" -> "mov,mp4,m4a,3gp,3g2,mj2"); copied to nested inputs.
-FORMAT_WHITELIST = "mov,mp4,m4a,matroska,webm,mp3,wav,flac,ogg,aac"
+# avi, asf (wma/wmv), aiff, amr, flv: the self-contained demuxers of the other admitted audio/video kinds (T-R32); none
+# opens a second resource (no playlist, no concat).
+FORMAT_WHITELIST = "mov,mp4,m4a,matroska,webm,mp3,wav,flac,ogg,aac,avi,asf,aiff,amr,flv"
 # A dropped connection must neither end the read quietly (ffmpeg exits 0 after "Stream ends prematurely", which a pass
 # would read as the end of the file, Δ100) nor lose it: reconnect with a Range read, and `-xerror` makes a connection
 # that keeps dropping a non-zero exit.
@@ -178,12 +181,14 @@ def _regular(path: str) -> bool:
         return False
 
 
-def _file_duration(path: str) -> float:
-    """Duration of a window we wrote ourselves (local Ogg Opus file, `file` only)."""
+def _file_duration(path: str, deadline: Optional[float] = None) -> float:
+    """Duration of a window we wrote ourselves (local Ogg Opus file, `file` only). Bounded by the step's remaining
+    deadline when given (never above 30 s, never below one second)."""
+    timeout = 30.0 if deadline is None else min(30.0, max(_remaining(deadline), _MIN_BUDGET_S))
     argv = [FFPROBE, "-hide_banner", "-v", "error", "-protocol_whitelist", "file", "-format_whitelist", "ogg",
             "-show_entries", "format=duration", "-of", "csv=p=0", "-i", path]
     try:
-        done = subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, timeout=30, check=False)
+        done = subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, timeout=timeout, check=False)
         value = float(done.stdout.decode("ascii", "replace").strip())
     except (subprocess.TimeoutExpired, ValueError):
         return 0.0
@@ -211,16 +216,20 @@ def _run_each(request: Dict[str, Any], url: str, ca_file: str, container: str, o
     if not isinstance(specs, list) or not 0 < len(specs) <= MAX_WINDOWS_PER_RUN:
         raise ValueError("window count out of range")
     written: List[Dict[str, Any]] = []
-    for spec in specs:
+    last = len(specs) - 1
+    for position, spec in enumerate(specs):
         index, start, length = int(spec["index"]), float(spec["start_s"]), float(spec["duration_s"])
         if index < 0 or not (math.isfinite(start) and math.isfinite(length)) or start < 0 or length <= 0:
             raise ValueError("window spec out of range")
         if _remaining(deadline) <= _MIN_BUDGET_S:
             return {"status": "timeout", "windows": written, "detail": "wall before window"}
+        # The last window is the file's last one (every other planned window is full length): a header that
+        # understates the audio would otherwise leave the rest unread. Ask for a full window, keep what is there (M2).
+        asked = float(TRANSCRIBE_WINDOW_S) if position == last and length < TRANSCRIBE_WINDOW_S else length
         final = os.path.join(out_dir, window_name(index))
         part = final + ".part"
         code, timed_out, _ = _run_remote(
-            lambda xerror: build_window_argv(url, ca_file, container, start, length, part, xerror),
+            lambda xerror: build_window_argv(url, ca_file, container, start, asked, part, xerror),
             request, deadline, part)
         if timed_out:
             _discard(part)
@@ -228,17 +237,25 @@ def _run_each(request: Dict[str, Any], url: str, ca_file: str, container: str, o
         if code != 0:
             _discard(part)
             return {"status": "error", "detail": f"ffmpeg exit {code}"}
-        real = _file_duration(part) if _regular(part) and os.path.getsize(part) > 0 else 0.0
+        real = _file_duration(part, deadline) if _regular(part) and os.path.getsize(part) > 0 else 0.0
         if real <= 0:                    # a header-only Ogg is what a seek past the end of the audio leaves
             _discard(part)
+            if _remaining(deadline) <= 0:
+                return {"status": "timeout", "windows": written, "detail": "wall in window"}
             if start > 0 and written:    # the audio ended before this window began (T-R16)
-                return {"status": "ok", "windows": written, "eof": True, "duration_s": start}
+                reached = max(w["start_s"] + w["duration_s"] for w in written)
+                return {"status": "ok", "windows": written, "eof": True, "duration_s": min(start, reached)}
             return {"status": "error", "detail": "no audio produced"}
         os.replace(part, final)
         written.append({"index": index, "start_s": start, "duration_s": real})   # the measured length, never the plan's
-        if real < length - _TRUNCATED_WINDOW_S:
-            # A clean run that comes out short is the real end of the audio (the header duration overstated it).
+        if position == last and (real < length - _TRUNCATED_WINDOW_S
+                                 or (asked > length and real > length + _TRUNCATED_WINDOW_S
+                                     and real < asked - _TRUNCATED_WINDOW_S)):
+            # The last window came out short of its plan (the header overstated the audio) or past it but short of
+            # a full window (the header understated it): the audio ends here.
             return {"status": "ok", "windows": written, "eof": True, "duration_s": start + real}
+        # A clean short window that is NOT the last is no evidence of the end: a mid-file gap looks the same. The
+        # next windows run; only a header-only window confirms the end (M1).
     return {"status": "ok", "windows": written, "eof": False}
 
 
@@ -293,7 +310,7 @@ def _run_pass(request: Dict[str, Any], url: str, ca_file: str, container: str, o
         cut = timed_out or limit
         if not cut and code != 0:
             return {"status": "error", "detail": f"ffmpeg exit {code}"}
-        duration = _file_duration(pass_path) if _regular(pass_path) else 0.0
+        duration = _file_duration(pass_path, deadline) if _regular(pass_path) else 0.0
         if duration <= 0:
             return _no_progress(limit) if cut else {"status": "error", "detail": "no audio produced"}
         eof = (not cut) and duration < span - _BOUND_SLACK_S
@@ -311,7 +328,7 @@ def _run_pass(request: Dict[str, Any], url: str, ca_file: str, container: str, o
             if timed_out:
                 _discard(part)
                 return {"status": "timeout", "windows": windows}
-            if code != 0 or not _regular(part) or os.path.getsize(part) == 0 or _file_duration(part) <= 0:
+            if code != 0 or not _regular(part) or os.path.getsize(part) == 0 or _file_duration(part, deadline) <= 0:
                 _discard(part)                         # header-only Ogg from a seek past the end, or a failed cut
                 if code != 0:
                     return {"status": "error", "detail": f"ffmpeg cut exit {code}"}
