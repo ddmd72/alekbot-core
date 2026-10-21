@@ -125,8 +125,10 @@ class WorkerHandler:
         oauth_credentials: "Optional[OAuthCredentialsPort]" = None,
         drive_sync_scheduler: "Optional[DriveSyncSchedulerService]" = None,
         task_dedup: "Optional[DedupStore]" = None,
+        daily_review_marks: "Optional[DedupStore]" = None,
     ) -> None:
         self._task_dedup = task_dedup
+        self._daily_review_marks = daily_review_marks
         self._slack_worker: Optional[Callable[[dict, dict], Awaitable[Tuple[dict, int]]]] = None
         self._telegram_worker: Optional[Callable[[dict], Awaitable[Tuple[dict, int]]]] = None
         self._agent_worker = agent_worker_handler
@@ -1000,9 +1002,9 @@ class WorkerHandler:
 
     async def _handle_start_daily_email_review(self) -> Tuple[dict, int]:
         """
-        Fan-out: enqueue daily_email_review for all Gmail users with gmail_daily_review enabled
-        and whose gmail_daily_review_hour matches the current hour in their timezone.
-        Called by Cloud Scheduler hourly.
+        Fan-out: enqueue daily_email_review once per user per local date. Called hourly;
+        a user is eligible during the first 3 hours from gmail_daily_review_hour and the
+        (user, slot date) mark makes every later tick in the window a no-op.
         """
         if not self._email_review or not self._task_dispatch:
             logger.warning("[Worker] start_daily_email_review: required services not configured")
@@ -1011,17 +1013,58 @@ class WorkerHandler:
         now_utc = datetime.now(timezone.utc)
         eligible = await self._email_review.find_eligible_users(self._user_repo, now_utc)
 
-        for user_id, account_id in eligible:
-            await self._task_dispatch.enqueue_worker_task(
-                "daily_email_review",
-                {"user_id": user_id, "account_id": account_id},
-                deadline_seconds=dispatch_deadline_s(NotificationKind.DAILY_DIGEST),
-            )
-            logger.info(f"[Worker] start_daily_email_review: enqueued for {user_id[:8]}")
+        marks = self._daily_review_marks
+        if marks is None:
+            logger.warning("[Worker] start_daily_email_review: no daily_review_marks store, duplicates possible")
 
-        started = len(eligible)
-        logger.info(f"[Worker] start_daily_email_review complete: started={started}")
-        return {"started": started}, 200
+        started = 0
+        failed = 0
+        for user in eligible:
+            mark_key = f"daily_review:{user.user_id}:{user.slot_date.isoformat()}"
+            if marks is not None:
+                try:
+                    claimed = await marks.try_mark_processed(mark_key)
+                except Exception as exc:
+                    # A double review is worse than a one-hour delay: retried next tick.
+                    logger.error(
+                        f"[Worker] start_daily_email_review: claim failed for {user.user_id[:8]}: {exc}",
+                        exc_info=True,
+                    )
+                    failed += 1
+                    continue
+                if not claimed:
+                    logger.info(
+                        f"[Worker] start_daily_email_review: already started for "
+                        f"{user.user_id[:8]} on {user.slot_date}"
+                    )
+                    continue
+            try:
+                await self._task_dispatch.enqueue_worker_task(
+                    "daily_email_review",
+                    {"user_id": user.user_id, "account_id": user.account_id},
+                    deadline_seconds=dispatch_deadline_s(NotificationKind.DAILY_DIGEST),
+                )
+            except Exception as exc:
+                logger.error(
+                    f"[Worker] start_daily_email_review: enqueue failed for {user.user_id[:8]}: {exc}",
+                    exc_info=True,
+                )
+                failed += 1
+                if marks is not None:
+                    try:
+                        await marks.release(mark_key)
+                    except Exception as rel_exc:
+                        logger.error(
+                            f"[Worker] start_daily_email_review: mark release failed for "
+                            f"{user.user_id[:8]}: {rel_exc}",
+                            exc_info=True,
+                        )
+                continue
+            started += 1
+            logger.info(f"[Worker] start_daily_email_review: enqueued for {user.user_id[:8]}")
+
+        logger.info(f"[Worker] start_daily_email_review complete: started={started} failed={failed}")
+        return {"started": started, "failed": failed}, 200
 
     async def _handle_daily_email_review(self, payload: dict) -> Tuple[dict, int]:
         """
