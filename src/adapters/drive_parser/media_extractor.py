@@ -32,6 +32,10 @@ from src.utils.logger import logger
 
 MEDIA_MEMORY_LIMIT_BYTES = 1024 * 1024 * 1024    # RLIMIT_AS (the spike: ffmpeg needed 19 MB)
 MEDIA_FILE_LIMIT_BYTES = 64 * 1024 * 1024        # RLIMIT_FSIZE: one Opus window (30 min at 24 kb/s is ~5 MB)
+# RLIMIT_NPROC (per uid: processes and threads, ffmpeg's frame threads included): ffmpeg + ffprobe measured ~20 tasks on
+# 12 cores; 256 leaves room for a bigger box and the document child, and stops a fork bomb. Set only for the unprivileged
+# parser user: root ignores it and a dev user's own processes would count against it.
+MEDIA_NPROC_LIMIT = 256
 PROBE_WALL_S = 60.0
 CHILD_WALL_MARGIN_S = 10.0                       # the child stops its own ffmpeg this long before the parent's kill
 _FALLBACK_CA_FILE = "/etc/ssl/certs/ca-certificates.crt"
@@ -132,6 +136,8 @@ class SubprocessMediaExtractor(MediaAudioPort):
                 child_wall = max(wall_s - CHILD_WALL_MARGIN_S, wall_s * 0.5)
                 request = {**payload, "out": out, "memory_bytes": self._memory, "cpu_s": self._cpu,
                            "file_bytes": self._file_bytes, "wall_s": child_wall, "out_dir": workdir}
+                if self._sandbox is not None:
+                    request["nproc"] = MEDIA_NPROC_LIMIT
                 if len(json.dumps(request)) > launch.MAX_REQUEST_BYTES:
                     raise MediaUnreadable("request too large")
                 with open(os.path.join(workdir, "stderr.txt"), "w+b") as errors:

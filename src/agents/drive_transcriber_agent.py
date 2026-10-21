@@ -22,6 +22,7 @@ is a plain mapping that the batch adapter turns into the provider's typed schema
 from __future__ import annotations
 
 import json
+import re
 import math
 from typing import Any, List, Optional
 
@@ -106,6 +107,10 @@ class DriveTranscriberAgent(BaseAgent):
             raise DriveOutputInvalid(f"invalid transcript output: {err}") from err
 
 
+_MAX_LANGUAGE_CODES = 5
+_LANGUAGE_CODE = re.compile(r"^[a-z]{2,3}(-([A-Za-z]{2}|[0-9]{3}))?$")      # ISO 639-1/-3, optional region
+
+
 def _parse(raw: str) -> WindowTranscript:
     data = json.loads(raw)    # JSONDecodeError is a ValueError
     if not isinstance(data, dict):
@@ -113,6 +118,8 @@ def _parse(raw: str) -> WindowTranscript:
     codes = _field(data, "language_codes")
     if not isinstance(codes, list) or not all(isinstance(c, str) for c in codes):
         raise ValueError("`language_codes` must be an array of strings")
+    if len(codes) > _MAX_LANGUAGE_CODES or not all(_LANGUAGE_CODE.match(c) for c in codes):
+        raise ValueError("`language_codes` must be at most 5 ISO 639 codes")
     speakers = _field(data, "speakers")
     if not _is_int(speakers) or speakers < 0:
         raise ValueError("`speakers` must be a non-negative integer")
