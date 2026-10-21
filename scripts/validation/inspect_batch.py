@@ -22,7 +22,7 @@ async def inspect_batch(batch_id: str):
     config = load_settings()
     env_config = config["ENVIRONMENT_CONFIG"]
     
-    db = firestore.AsyncClient(project=config.get("GOOGLE_CLOUD_PROJECT"))
+    db = firestore.AsyncClient(project=config.get("GOOGLE_CLOUD_PROJECT"), database=env_config.firestore_database_id)
     
     # Collection name
     collection_name = f"{env_config.firestore_collection_prefix}consolidation_queue"
@@ -73,7 +73,9 @@ async def inspect_batch(batch_id: str):
             print(f"   {i+1}. {text}... [Tags: {tags}]")
             
     # Raw JSON dump to file for detailed inspection
-    output_file = f"batch_{batch_id}_dump.json"
+    out_dir = Path(__file__).resolve().parent.parent / "memory"  # gitignored: batches carry user text
+    out_dir.mkdir(exist_ok=True)
+    output_file = out_dir / f"batch_{batch_id}_dump.json"
     with open(output_file, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=2, default=str)
     

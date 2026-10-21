@@ -20,9 +20,9 @@ async def fix_user_email(user_id: str, email: str = None):
     env_config = config["ENVIRONMENT_CONFIG"]
     
     if env_config.use_emulator:
-        db = firestore.AsyncClient(project="emulator-project")
+        db = firestore.AsyncClient(project="emulator-project", database=env_config.firestore_database_id)
     else:
-        db = firestore.AsyncClient(project=config["GOOGLE_CLOUD_PROJECT"])
+        db = firestore.AsyncClient(project=config["GOOGLE_CLOUD_PROJECT"], database=env_config.firestore_database_id)
 
     collection_name = env_config.domain_users_collection
     logger.info(f"📂 Reading from: {collection_name}")

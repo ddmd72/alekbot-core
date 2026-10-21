@@ -6,8 +6,8 @@ from google.cloud import firestore
 from src.config.environment import EnvironmentConfig
 
 async def backup_collections(collections_list):
-    db = firestore.AsyncClient()
     config = EnvironmentConfig()
+    db = firestore.AsyncClient(database=config.firestore_database_id)
 
     # Require explicit confirmation when targeting production
     prefix = config.firestore_collection_prefix
@@ -18,8 +18,7 @@ async def backup_collections(collections_list):
             sys.exit(1)
     timestamp = int(time.time())
     
-    for col_base in collections_list:
-        source_col_name = f"{prefix}{col_base}"
+    for source_col_name in collections_list:
         backup_col_name = f"{source_col_name}_backup_{timestamp}"
         
         print(f"📦 Backing up {source_col_name} to {backup_col_name}...")
@@ -38,8 +37,9 @@ async def backup_collections(collections_list):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--collections", default="facts,sessions", help="Comma-separated list of collections to backup")
+    parser.add_argument("--collections", default=None, help="Comma-separated FULL collection names (default: live facts + sessions)")
     args = parser.parse_args()
 
-    collections = args.collections.split(",")
+    env = EnvironmentConfig()
+    collections = args.collections.split(",") if args.collections else [env.domain_facts_collection, env.sessions_collection]
     asyncio.run(backup_collections(collections))
