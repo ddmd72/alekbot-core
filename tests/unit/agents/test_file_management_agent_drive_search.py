@@ -159,6 +159,7 @@ class TestOpenIsWrapped:
     async def test_a_sent_video_carries_the_reminder(self, conversion, search):
         conversion.get_drive_item.return_value = CLIP
         conversion.resolve_bytes.return_value = b"video"
+        search.transcript_text.return_value = None   # §27.11: an untranscribed recording keeps the file branch
         agent = FileManagementAgent(
             config=AgentConfig(agent_id="file_management_agent_u1", agent_type="file_management",
                                capabilities={}, metadata={}),
