@@ -96,13 +96,13 @@ async def test_status_flags_a_mirror_root_even_with_indexing_off_and_the_transcr
     assert body["indexing"]["mirror_root"] is True and body["indexing"]["transcribe_enabled"] is False
 
 
-async def test_status_has_no_flag_without_a_root():
+async def test_status_flag_is_false_without_a_root():
     app, _ = _app(False)
-    assert "mirror_root" not in (await _status(app))["indexing"]
+    assert (await _status(app))["indexing"]["mirror_root"] is False
 
 
 async def test_a_failing_lookup_never_breaks_the_status():
     app, search = _app(True)
     search.has_mirror_root.side_effect = RuntimeError("boom")
     body = await _status(app)
-    assert body["connected"] is True and "mirror_root" not in body["indexing"]
+    assert body["connected"] is True and body["indexing"]["mirror_root"] is False
