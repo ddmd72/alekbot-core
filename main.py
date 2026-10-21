@@ -103,7 +103,7 @@ async def main():
         env_config = config["ENVIRONMENT_CONFIG"]
 
         # Database name (supports Named Database for multi-region migration)
-        database_id = os.getenv("FIRESTORE_DATABASE", "(default)")
+        database_id = env_config.firestore_database_id
         
         if env_config.use_emulator:
             logger.info(f"🏠 Using Firestore EMULATOR at {env_config.get_emulator_host()}")

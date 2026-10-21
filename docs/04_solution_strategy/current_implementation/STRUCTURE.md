@@ -21,7 +21,6 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   ├── prompt/         # Prompt debugging & comparison
 │   ├── vectors/        # Vector/embedding diagnostics
 │   ├── validation/     # Validation & test scripts
-│   ├── debug_firestore_latency.py # 🆕 Firestore latency diagnostics
 │   └── deprecated/     # Legacy scripts (do not use)
 │
 ├── tests/              # Test suite

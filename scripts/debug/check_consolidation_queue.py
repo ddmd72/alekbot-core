@@ -20,7 +20,7 @@ async def check_queue(account_id: str):
     
     config = load_settings()
     env_config = EnvironmentConfig()
-    db = firestore.AsyncClient(project=config["GOOGLE_CLOUD_PROJECT"])
+    db = firestore.AsyncClient(project=config["GOOGLE_CLOUD_PROJECT"], database=env_config.firestore_database_id)
     collection = env_config.consolidation_queue_collection
     
     print(f"📂 Using collection: {collection}")
