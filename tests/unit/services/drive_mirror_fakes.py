@@ -80,8 +80,10 @@ class ScriptedDrive(UserDrivePort):
     def __init__(self, area_path: str = AREA_PATH) -> None:
         self.nodes: Dict[str, Node] = {AREA: Node(AREA, "", "", True)}
         self.calls: List[Tuple[str, Dict[str, Any]]] = []
-        # (method, the ancestor chain of each folder the write touches, taken at the call): a later prune cannot hide it
-        self.write_parents: List[Tuple[str, Tuple[Tuple[str, ...], ...]]] = []
+        # (method, the ancestor chain of each folder the write touches, taken at the call, and the id a create made):
+        # a later prune cannot hide where a write went
+        self.write_parents: List[Tuple[str, Tuple[Tuple[str, ...], ...], Optional[str]]] = []
+        self.planted: set = set()     # ids the TEST created (sources, foreign items): the step must never write them
         self.faults: List[Fault] = []
         self.clock: datetime = START
         self.area_path_value = area_path
@@ -122,7 +124,11 @@ class ScriptedDrive(UserDrivePort):
         return tuple(out)
 
     def _touch(self, method: str, *folders: Optional[str]) -> None:
-        self.write_parents.append((method, tuple(self.chain(f) for f in folders if f is not None)))
+        self.write_parents.append((method, tuple(self.chain(f) for f in folders if f is not None), None))
+
+    def _created(self, item_id: str) -> None:
+        method, chains, _ = self.write_parents[-1]
+        self.write_parents[-1] = (method, chains, item_id)
 
     def _call(self, method: str, **args: Any) -> None:
         self.calls.append((method, args))
@@ -136,11 +142,24 @@ class ScriptedDrive(UserDrivePort):
         return f"{prefix}{next(self._seq)}"
 
     def add_folder(self, parent: str, name: str, created_at: Optional[datetime] = None) -> str:
+        """A folder the test plants (a source folder, a foreign one): remembered in `planted`."""
+        item_id = self._make_folder(parent, name, created_at)
+        self.planted.add(item_id)
+        return item_id
+
+    def add_file(self, parent: str, name: str, data: bytes = b"foreign", created_at: Optional[datetime] = None) -> str:
+        """A file the test plants (a recording, a foreign file): remembered in `planted`."""
+        item_id = self._make_file(parent, name, data, created_at)
+        self.planted.add(item_id)
+        return item_id
+
+    def _make_folder(self, parent: str, name: str, created_at: Optional[datetime] = None) -> str:
         item_id = self._new_id("F")
         self.nodes[item_id] = Node(item_id, name, parent, True, ctag=self._ctag(), created_at=created_at or self.clock)
         return item_id
 
-    def add_file(self, parent: str, name: str, data: bytes = b"foreign", created_at: Optional[datetime] = None) -> str:
+    def _make_file(self, parent: str, name: str, data: bytes = b"foreign",
+                   created_at: Optional[datetime] = None) -> str:
         item_id = self._new_id("X")
         self.nodes[item_id] = Node(item_id, name, parent, False, data, self._ctag(), created_at or self.clock)
         return item_id
@@ -208,7 +227,8 @@ class ScriptedDrive(UserDrivePort):
         self._folder(parent_id)
         if self.child(parent_id, name) is not None:
             raise DriveNameConflictError(name)
-        item_id = self.add_folder(parent_id, name)
+        item_id = self._make_folder(parent_id, name)
+        self._created(item_id)
         self._fault("create_folder", {"parent_id": parent_id, "name": name}, "after")
         return self._item(self.nodes[item_id])
 
@@ -226,7 +246,8 @@ class ScriptedDrive(UserDrivePort):
                 return self._item(existing)
             stem, dot, ext = filename.rpartition(".")
             filename = f"{stem} (1).{ext}" if dot else f"{filename} (1)"
-        item_id = self.add_file(parent_id, filename, data)
+        item_id = self._make_file(parent_id, filename, data)
+        self._created(item_id)
         self._fault("upload", {"parent_id": parent_id, "name": filename}, "after")
         return self._item(self.nodes[item_id])
 

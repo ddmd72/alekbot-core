@@ -110,6 +110,9 @@ class MirrorDoc:
     # placement is `Long paths`, so a suffixed name there is never moved back every tick; a rename or move of the source
     # re-decides the placement.
     long_path_source: str = ""
+    # the byte size of the file a create's intent was about to upload (Δ210): a re-run with no record to render (its
+    # source gone) still tells its own file from a foreign one by it; 0 for a folder's intent or none
+    pending_size: int = 0
 
     @property
     def key(self) -> str:

@@ -60,12 +60,13 @@ async def test_alek_suffix_numbered_then_error(caplog):
     for name in root_name_candidates():
         w.drive.add_folder(AREA, name)
     await w.recording("a.mp4")
-    with caplog.at_level(logging.ERROR):
+    with caplog.at_level(logging.WARNING):
         counters = await w.run()
     assert w.root is None
     assert counters["mirror_root_names_taken"] == 1
-    assert [c[1]["name"] for c in w.drive.writes()] == list(root_name_candidates())
-    assert [r for r in caplog.records if r.levelno == logging.ERROR and "[DriveMirror]" in r.getMessage()]
+    assert w.drive.writes() == []                         # fix round 1 (M7): every name is read first, none written
+    assert [c[1]["name"] for c in w.drive.calls if c[0] == "child_by_name"] == list(root_name_candidates())
+    assert [r for r in caplog.records if r.levelno == logging.WARNING and "every root name" in r.getMessage()]
 
 
 async def test_readme_written_once_in_the_ui_language():
@@ -685,6 +686,8 @@ async def test_404_on_a_patch_tells_item_from_destination():
 
 @pytest.mark.parametrize("seed", range(12))
 async def test_every_write_ends_under_the_root(seed):
+    """Every Graph write lands under the root (its own creation excepted, and only that), no write ever targets an
+    item the test planted (a source, or a foreign item put into the mirror), and crashes at random points heal."""
     rnd = random.Random(seed)
     w = MirrorWorld()
     folders = [AREA]
@@ -709,18 +712,41 @@ async def test_every_write_ends_under_the_root(seed):
                                                           if d.kind == KIND_FOLDER and d.mirror_item_id])
             if parent in w.drive.nodes:
                 w.drive.add_file(parent, rnd.choice(["a.mp4.md", "x.md", "junk"]))
+        if rnd.random() < 0.15:
+            w.drive.crash_after(rnd.choice(["upload", "create_folder", "move"]))
         w.advance(timedelta(minutes=rnd.choice([1, 10, 70])))
-        counters = await w.run(ops=rnd.choice([3, 10, 40]))
+        try:
+            counters = await w.run(ops=rnd.choice([3, 10, 40]))
+        except Crash:
+            continue
         assert not counters.get("mirror_errors") and not counters.get("mirror_charged"), counters
+    for _ in range(3):                                    # let leftover crash points fire and heal
+        try:
+            await w.run()
+        except Crash:
+            pass
     root_id = w.root.root_item_id
     assert w.drive.write_parents
-    for method, chains in w.drive.write_parents:
-        if method == "create_folder" and chains == ((AREA,),):
-            continue                                       # the root's own creation
+    for method, chains, created in w.drive.write_parents:
+        if method == "create_folder" and chains == ((AREA,),) and created is not None:
+            node = w.drive.nodes.get(created)
+            assert node is not None and node.name in root_name_candidates()
+            # the root's own creation; or the named crash orphan of §27.9.2 (created, the process died before the
+            # root document was written): never adopted, never written into, so it stays empty
+            assert created == root_id or w.drive.children(created) == [], "a non-root folder under the App Folder"
+            continue
         assert chains and all(root_id in chain for chain in chains), method
+    names = [c[1]["name"] for c in w.drive.calls if c[0] == "create_folder" and c[1]["parent_id"] == AREA]
+    assert names and set(names) <= set(root_name_candidates())
+    touched = [c for c in w.drive.calls if c[0] in ("replace_content", "move", "delete")]
+    assert not [c for c in touched if c[1]["item_id"] in w.drive.planted]
+    uploads = [c for c in w.drive.calls if c[0] == "upload"]
+    assert uploads and all(c[1]["conflict"] == "fail" for c in uploads)
     archived = [d for d in w.mirror.docs.values() if d.state == MIRROR_ARCHIVED]
     for d in archived:
         assert w.drive.path_of(d.mirror_item_id).startswith(f"{w.drive.path_of(root_id)}/{ARCHIVE_NAME}/")
+    held = [d.mirror_item_id for d in w.mirror.docs.values() if d.mirror_item_id]
+    assert len(held) == len(set(held))                    # no two ledger documents claim one item
 
 
 # -- further rules of the step ---------------------------------------------------------------------------------------
@@ -898,3 +924,70 @@ async def test_gone_folder_over_detached_files_is_detached():
     assert w.doc(a).state == MIRROR_DETACHED and w.folder_doc(folder).state == MIRROR_DETACHED
     assert not w.folder_doc(folder).gone_pending
     assert w.folder_doc(folder).mirror_item_id in w.drive.nodes
+
+
+# -- fix round 1 -----------------------------------------------------------------------------------------------------
+
+async def test_intent_never_adopts_a_file_another_document_holds():
+    w = MirrorWorld()
+    await _bare_root(w)
+    a = await w.recording("x.mp4")
+    w.drive.crash_before("upload")
+    with pytest.raises(Crash):
+        await w.run()
+    size = w.doc(a).pending_size
+    assert size > 0
+    theirs = w.drive.add_file(w.root.root_item_id, "x.mp4.md", b"y" * size)      # ours by time and size, but ...
+    from src.domain.drive_mirror import KIND_FILE, MirrorDoc
+    await w.mirror.save_doc(MirrorDoc(USER, DRIVE, KIND_FILE, "ghost", source_name="other.mp4",
+                                      mirror_item_id=theirs, mirror_parent_id=w.root.root_item_id,
+                                      mirror_name="x.mp4.md"))                 # ... another document's item
+    await w.run()
+    assert w.doc(a).mirror_item_id != theirs and w.mirror_path(a).startswith("x.mp4~")
+    assert w.drive.nodes[theirs].data == b"y" * size
+
+
+async def test_intent_doc_with_a_gone_source_adopts_then_archives():
+    w = MirrorWorld()
+    await _bare_root(w)
+    a = await w.recording("x.mp4")
+    w.drive.crash_after("upload")                         # the file landed, the document never learned its id
+    with pytest.raises(Crash):
+        await w.run()
+    assert not w.doc(a).mirror_item_id and w.doc(a).pending_op
+    await w.delete_source(a)
+    w.advance(2 * HOUR)
+    await w.run()
+    doc = w.doc(a)
+    assert doc.state == MIRROR_ARCHIVED and w.mirror_path(a).startswith(f"{ARCHIVE_NAME}/") \
+        and w.mirror_path(a).endswith("/x.mp4.md")
+    assert not [n for n in w.drive.children(w.root.root_item_id) if not n.is_folder and n.name != README_NAME]
+
+
+async def test_intent_doc_with_nothing_on_the_drive_is_deleted():
+    w = MirrorWorld()
+    await _bare_root(w)
+    a = await w.recording("x.mp4")
+    w.drive.crash_before("upload")
+    with pytest.raises(Crash):
+        await w.run()
+    await w.delete_source(a, why=UNSTORED)
+    w.advance(2 * HOUR)
+    counters = await w.run()
+    assert w.doc(a) is None and counters["mirror_intent_dropped"] == 1
+    assert [c[0] for c in w.drive.calls].count("child_by_name") == 1               # one read resolved it
+
+
+async def test_archive_never_keeps_a_temporary_name():
+    w = MirrorWorld()
+    a, b = await mirrored(w, "A.mp4", "B.mp4")
+    await w.update(a, name="B.mp4")
+    await w.update(b, name="A.mp4")
+    await w.run(ops=1)                                    # the swap stops after its first move: a temporary name
+    stuck = next(i for i in (a, b) if "~tmp" in w.doc(i).mirror_name)
+    old_name = w.doc(stuck).source_name
+    await w.delete_source(stuck)
+    w.advance(2 * HOUR)
+    await w.run()
+    doc = w.doc(stuck)
+    assert doc.state == MIRROR_ARCHIVED and doc.mirror_name == f"{old_name}.md" and "~tmp" not in w.mirror_path(stuck)
