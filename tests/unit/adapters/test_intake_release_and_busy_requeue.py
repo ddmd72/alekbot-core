@@ -365,9 +365,10 @@ async def test_ignored_event_with_exhausted_requeues_posts_no_notice():
     channel = MagicMock()
     channel.send_message = AsyncMock()
     with patch.object(slack_mod, "SlackResponseChannel", return_value=channel):
-        _, status = await adapter.handle_queued_event(
+        body, status = await adapter.handle_queued_event(
             _event_payload({"subtype": "message_changed"}, BUSY_MAX_REQUEUES), {})
     assert status == 200
+    assert body == {"ok": True}
     channel.send_message.assert_not_awaited()
 
 
@@ -394,3 +395,14 @@ async def test_exhausted_notice_is_posted_for_a_real_user_message():
     with patch.object(slack_mod, "SlackResponseChannel", return_value=channel):
         await adapter.handle_queued_event(_event_payload({}, BUSY_MAX_REQUEUES), {})
     channel.send_message.assert_awaited_once()
+
+
+async def test_unsupported_event_type_returns_at_once_while_the_session_is_busy(monkeypatch):
+    monkeypatch.setattr(slack_mod, "BUSY_WAIT_S", 5)
+    adapter, queue, lock = _busy_adapter_locked()
+    await lock.acquire()
+    body, status = await asyncio.wait_for(
+        adapter.handle_queued_event(_event_payload({"type": "member_joined_channel"}), {}), 1)
+    assert (body, status) == ({"ok": True}, 200)
+    queue.enqueue_slack_event.assert_not_awaited()
+    adapter._process_message_event.assert_not_awaited()
