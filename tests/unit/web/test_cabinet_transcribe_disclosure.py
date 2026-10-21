@@ -1,5 +1,6 @@
 """The transcription disclosure sentence (USER_DRIVE_INDEXING_RFC §27.12, plan G24): strings in every Cabinet
-language, shown only while the user's drive_transcribe_enabled flag is on, with no toggle."""
+language, shown only while the user's drive_transcribe_enabled flag is on (and, since T-R34, the kill switch: its own
+cases are test_cabinet_transcribe_switch_gate.py), with no toggle."""
 from unittest.mock import AsyncMock, MagicMock
 from pathlib import Path
 
@@ -52,6 +53,7 @@ def _app(flag):
         invite_service=MagicMock(), session_service=session_service, user_repo=user_repo,
         fact_repo=MagicMock(), embedding_service=MagicMock(), user_drive=drive,
         drive_search_service=search, drive_task_queue=AsyncMock(),
+        drive_transcribe_switch_on=True,   # the switch is on: the user's flag decides (T-R34)
     ))
     return app
 

@@ -524,13 +524,19 @@ async def test_outage_stops_extraction_only(tmp_path):
     assert len(env.runner.submits) == 1
 
 
-async def test_a_submit_outage_leaves_the_windows_uploaded(tmp_path):
+async def test_a_submit_outage_keeps_the_windows_in_a_submitting_batch(tmp_path):
+    # T-R28: an outage on the submit call (503-class, outcome unknown) may have bought the batch, so the windows stay
+    # marked in the `submitting` document written before the call and the poll looks it up; never `uploaded` again
+    # (that would buy them twice). The record is still `working`: the move to `waiting` waits for the provider name.
     env = _env(tmp_path)
     await _add(env, record("a"), a=Recording(600))
     env.runner.raise_next = LLMUnavailableError("down")
     await _step(env)
-    assert env.host.outages == [TRANSCRIBER_AGENT] and env.repo.batches == {}
-    assert [w.state for w in _job(env, "a").windows] == ["uploaded"]
+    ((_, pending),) = env.repo.batches.items()
+    assert env.host.outages == [TRANSCRIBER_AGENT] and pending.state == "submitting" and not pending.provider_name
+    assert pending.request_keys == ("a:0",) and pending.reserved_usd == 0.0    # a first purchase: the file's money
+    assert [(w.state, w.batch_name) for w in _job(env, "a").windows] == [("submitted", pending.name)]
+    assert env.host.releases == []
     assert (await _get(env, "a")).transcript_state == "working"
 
 

@@ -4340,15 +4340,18 @@ indexer is the same image.
   of about 16 MB per pass chunk.
 - **A remote run's exit code (Δ161, T-R16).** A remote run goes under `-xerror` (so a connection that keeps dropping is non-zero rather
   than a quiet short file) with reconnect flags. A network errno exit is `MediaUnreadable` (a transient; the next attempt gets a fresh
-  URL). Any other non-zero exit is re-run **once without `-xerror`**, because `-xerror` also makes one corrupt packet fatal; a clean run
-  that is short is the real end of the audio, and its measured length is recorded (this also holds on the known-duration path: a header
-  that over-states the audio, as in some mp4 video and VBR mp3, shortens the last window instead of failing the file forever). Named
-  residual: a drop reconnect cannot recover, in that re-run, reads as an end of file.
+  URL). Any other non-zero exit is re-run **once without `-xerror`**, because `-xerror` also makes one corrupt packet fatal; so is an
+  exit 0 that wrote an error to stderr and came out short of its own `-t` bound, because ffmpeg 6.1 ends an `-xerror` run at a corrupt
+  packet with exit 0 and the output so far (7.1 and 8.0 exit 183; measured, CI runs 6.1). A clean run that is short with nothing logged
+  is the real end of the audio, and its measured length is recorded (this also holds on the known-duration path: a header
+  that over-states the audio, as in some mp4 video and VBR mp3, shortens the last window instead of failing the file forever). An error
+  alone is no reason to re-run: 8.0 logs one at the end of a sound Opus stream. Named residual: a drop reconnect cannot recover, in that
+  re-run, reads as an end of file.
 - **Hardening of an untrusted-media decoder (Δ99).** ffmpeg is a larger decoder surface than the document parsers
   and reads attacker-chosen files from any user's drive; §24.14's trigger ("a code-execution CVE in a parser the child
   loads, or users who do not trust one another") is nearer than it was. Required in the child: `-nostdin`,
-  `-protocol_whitelist https,tls,tcp,crypto` (a crafted playlist or `concat` entry cannot open `file:` or other hosts),
-  a demuxer allowlist as `-format_whitelist mov,mp4,m4a,matroska,webm,mp3,wav,flac,ogg,aac` on ffprobe and ffmpeg
+  `-protocol_whitelist https,tls,tcp` (`crypto` removed, Δ180) (a crafted playlist or `concat` entry cannot open `file:` or other hosts),
+  a demuxer allowlist as `-format_whitelist mov,mp4,m4a,matroska,webm,mp3,wav,flac,ogg,aac,avi,asf,aiff,amr,flv` (the last five added by Δ180, T-R32; any other refusal stays `MediaUnreadable`) on ffprobe and ffmpeg
   plus `-f` pinned to the probed demuxer on the extraction run (Δ146: `-f` takes one demuxer, not a list; a short name admits the
   demuxer whose name lists it, and the whitelist is copied to nested inputs, which is what refuses a playlist's children), `-tls_verify 1 -ca_file`
   (ffmpeg verifies nothing by default), `-rw_timeout`, `-hide_banner -loglevel error -nostats`, no filter
@@ -4419,6 +4422,7 @@ indexer is the same image.
   `STOP` (the audio simply ends in silence) is resubmitted once without counting an attempt (`JobWindow.coverage_resubmits`; the resubmit is reserved at submit and booked); a
   second STOP-short answer is accepted (counter `windows_accepted_short`). `MAX_TOKENS`, an empty or unknown finish and invalid output keep `MAX_ATTEMPTS`. It takes two
   STOP-short answers: a `MAX_TOKENS`-short answer followed by a STOP-short one costs one more resubmit.
+  **Amended (Δ179, T-R31):** the tolerance is `max(0.1 × window, 60 s)`; a second short answer is accepted for any window; above 300 s it is stored as possibly incomplete (truncated), shown as possibly incomplete (card and opened text), never silently.
 - **Failure handling (as built: Δ155, Δ160, Δ162, Δ167).** Request-level error or invalid JSON after the one parse rule (no regex): that window is
   resubmitted, charged as a per-file attempt (`MAX_ATTEMPTS`, §8.2). Every per-response error is that key's result error and is charged
   as an attempt by the stage; the adapter never raises on one and surfaces the rpc `code` and `transient` flag, so the stage can read a
@@ -4441,6 +4445,10 @@ indexer is the same image.
   on success and on abandon (`delete_file`; no copy kept at the provider longer than needed). An uploaded window is submitted
   only with `TRANSCRIBE_FILE_LIFE_AT_SUBMIT` (24 h, the batch API's contract) of its provider file's life left; less is re-extracted first
   (Δ172).
+- **Submit is recorded first (Δ176, Δ177, T-R28, T-R29).** The batch document is written as `submitting` before the provider call. A definite refusal (4xx,
+  429, missing prompt) releases the reservation once; an ambiguous error (timeout, 5xx, transport) keeps the document and each poll looks the batch up by
+  display name (at most 3 lookups, at least 15 min, scan of at most 2 000 jobs), else the windows are released once. A poll client error **books** its
+  reservations instead of releasing them. A copy waits while a record with the same key is working, waiting, parked or held (Δ178, T-R30).
 - **Cost accounting (Δ105).** `billing.py` has no audio input rate and no batch discount today (`calculate_cost`,
   `src/domain/billing.py:258-282`, prices one token class per model). Required, per CLAUDE.md "cost is priced per
   model that RAN": a **single** input rate for `gemini-3.8-flash` (T0: no separate audio rate; $0.75 / $3.75 per million until 2026-12-31, $1.50 / $7.50
@@ -4766,8 +4774,9 @@ unmeasured language.
    switch rides as a Cloud Build substitution (Δ145, G13), not as a by-hand environment variable:** the indexer's env is set with
    `--set-env-vars`, which replaces every variable on each deploy, so a value set by hand would vanish. It comes from the deploy-only
    `.env` key `DRIVE_TRANSCRIBE_ENABLED_DEV` (default `off`), and the optional lowering cap from `DRIVE_TRANSCRIBE_USD_CAP_DEV`
-   (also on the main service, which shows it); never the local `DRIVE_TRANSCRIBE_ENABLED` / `DRIVE_TRANSCRIBE_USD_CAP`
+   (also on the main service, which shows it; the main service gets the switch too, `DRIVE_TRANSCRIBE_ENABLED`, and the Cabinet shows the disclosure only when the switch and the user's flag are both on); `make deploy` refuses unless the switch is explicitly `on` or `off` and echoes the effective switch and cap (Δ182, T-R34); never the local `DRIVE_TRANSCRIBE_ENABLED` / `DRIVE_TRANSCRIBE_USD_CAP`
    (the deploy-substitution trap).
+3a. CI installs ffmpeg (Δ181, T-R33), so the real-ffmpeg tests run there; the requeue script takes `--cap-usd` to match the live cap.
 4a. **The first live run is bounded by the cap knob (Δ145, T-R3):** set `DRIVE_TRANSCRIBE_USD_CAP_DEV` low (the first night used $10) before
    enabling. Enabling starts the **whole backlog, newest first**, under the hard cap; the knob is the only lever between "off" and $20.
 5. **Backlog estimate before turning it on:** a read-only script (output only to `scripts/memory/`, Δ67's rule) sums
@@ -4863,6 +4872,13 @@ unmeasured language.
 | Δ173 | — | The `transcript_plan` runs on every record write even with transcription off (it plans job state, acts on none, writes nothing visible); the stage runs only with the kill switch and the user's flag on | One code path; OFF verified off by the reviewer |
 | Δ174 | Δ165: `max_output_tokens = min(65 536, ceil(1 000 × minutes))`; reservation by the hour rate | Cap = `min(65 536, max(TRANSCRIBE_MIN_OUTPUT_TOKENS = 4 096, ceil(1 000 × audio minutes)))`; each window reserves `window_cost_usd = max(hour-rate estimate, audio input at TRANSCRIBE_AUDIO_TOKENS_PER_S = 25 + TRANSCRIBE_WINDOW_PROMPT_TOKENS + the window's output cap, at the held batch price)` (an 8 s window ≈ $0.017) (T-R26) | Live evidence: an 8 s window got a cap of 134 and hit `MAX_TOKENS` with an empty answer, because thinking tokens count toward the cap; the hour rate under-reserved short windows, so the hard cap did not hold for them |
 | Δ175 | §27.5 coverage check: a short window is a failed attempt (`MAX_ATTEMPTS`) | A coverage failure whose answer finished with `STOP` is resubmitted once without counting an attempt (`JobWindow.coverage_resubmits`; still reserved at submit and booked); a second STOP-short answer is accepted (counter `windows_accepted_short`); `MAX_TOKENS`, empty or unknown finish and invalid output keep `MAX_ATTEMPTS`. Known limit: an accepted short answer skips the interpolation-share check; a very short window can practically never pass the 0.9 rule, so it always costs two purchases (cents); an absolute tolerance is a later improvement (T-R27) | Live evidence: a 137 s recording ending in silence and an 8 s window failed coverage on every attempt, though the model had finished normally |
+| Δ176 | §27.5: submit, then record the batch | The batch document is written in state `submitting` (hashed display name, request keys, reservation) **before** the provider call; no fence between submit and the final save. A definite refusal (4xx, 429, a missing prompt, model unavailable) releases the reservation once and removes the document. An ambiguous error (timeout, 5xx, transport, lease lost) keeps it: each poll looks the batch up by display name (`find_batch`, at most 2 000 jobs scanned); found, it completes; after 3 misses and at least 15 min the windows go back as they were and the reservation is released once (T-R28) | A batch that was bought but never recorded would be paid and then bought again; the document written first makes "possibly bought" visible |
+| Δ177 | §27.5: a poll error settles the batch | A client error from the poll (not auth or rate) **books** the batch reservation and the first-purchase share of its jobs, never releases; the windows come back as a lost purchase (kept key, reserved again at the next submit). A failure the provider reports as a status (FAILED, EXPIRED, CANCELLED) still releases (T-R29) | The provider may have billed the work; under-reporting spend is the worse error (T-R1) |
+| Δ178 | Δ144: a copy waits for a `working` or `waiting` record | A copy also waits while another record with the same key is `parked`, `held` (any hold) or `working`/`waiting` (T-R30) | A record in a retry hold or parked is not finished; the copy would buy the same audio a second time |
+| Δ179 | Δ129 / Δ175: coverage 0.9; second STOP-short accepted | Tolerance is `max(0.1 × window, 60 s)`. A second short answer is accepted for any window; above 300 s it is stored as possibly incomplete (`truncated`), and so is a transcript with a gap marker. The card then reads `…, may be incomplete` and the opened text starts with one plain note that part of the recording may be missing. The card text changes only for such transcripts, so no `CARD_VERSION` bump (T-R31) | A 30-minute window that stopped early was passed as complete without anyone being told; one fixed 0.9 rule failed short windows that end in silence |
+| Δ180 | Δ99: allowlisted demuxers | `avi`, `asf` (wma/wmv), `aiff`, `amr`, `flv` are allowlisted and joined to the hostile set; the `crypto` protocol is removed; any other refusal stays `MediaUnreadable`. A mid-file short window no longer ends the file; the last window is requested at its full length; the process group is always killed; `RLIMIT_NPROC` is 256 under the sandbox user; language codes in an answer are validated (T-R32) | Real recordings in those containers were refused; the rest closes sandbox gaps the final review found Δ180 also declares (T-R28 follow-up): the batch lookup scans at most 2 000 listed jobs and an exhausted scan is inconclusive (`BatchLookupInconclusive`: the money stays held, no miss is counted, the document is asked again after the error backoff, the transcriber is not backed off and the other batches go on); provider batch jobs are never deleted, so the list only grows (an early stop on `create_time` is a later improvement). The understated-header top-up (`_resettle` reserves the difference before any upload, or parks the file mid-job) has a cross-month residual: the fit check uses the current month while the difference is booked in the reservation month (at most about $0.13). |
+| Δ181 | §17: CI | CI installs ffmpeg, so the real-ffmpeg tests run there; the CPU and wall-limit ones carry `@pytest.mark.timing` (T-R33) | Tests that need a real decoder must not silently skip in CI |
+| Δ182 | §27.15 step 4: deploy defaults | `make deploy` refuses unless `DRIVE_TRANSCRIBE_ENABLED_DEV` is explicitly `on` or `off`, and echoes the effective switch and cap. The main service also receives `DRIVE_TRANSCRIBE_ENABLED`: the Cabinet shows the disclosure only when the switch and the user's flag are both on. The requeue script takes `--cap-usd` so its headroom matches the live cap (T-R34) | A deploy that silently dropped the switch turned the stage off; the Cabinet claimed transcription while the indexer was off |
 
 ### 27.17 Open questions (each with a recommendation)
 - **OQ-T1 Window length (30 min) against output drift and cost — resolved by T0 (Δ129).** 30, 45 and 60 min were complete with `MM:SS` times

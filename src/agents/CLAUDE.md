@@ -111,7 +111,7 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     refused is halved down to the chunk. Prompts are owner-uploaded tokens (`COGNITIVE_PROCESS_` / `OUTPUT_FORMAT_`
     `DRIVE_PROFILER`, `DRIVE_PASSAGES`); no fallback prompt.
 - DriveTranscriber (`drive_transcriber`) — audio-window transcription for the drive's recordings
-  (USER_DRIVE_INDEXING_RFC §27.5, Δ102; T1 built, not deployed).
+  (USER_DRIVE_INDEXING_RFC §27.5, Δ102; T1 live since 2026-10-21, owner only).
   - **Not a `_call_llm` agent** (Δ102): a Gemini **Batch** request is not a call, so no retry, failover, `TokenLedger` scope,
     `prompt_content` row or Logfire span is inherited. `DriveTranscriberAgent` only builds the request (prompt + schema + the
     uploaded provider file's name) and parses the answer; `DriveTranscriptRunner` (`composition/`) submits through
@@ -119,7 +119,7 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     through `QuotaService.record_usage`. `can_handle` is False; no tools, no history.
   - **Tier / provider:** Gemini only, the BALANCED model `gemini-3.8-flash` (read from `GeminiAdapter.MODEL_TIERS` by the
     composition and passed to the batch adapter, REQ-ARCH-23), never flash-lite (D44); `agent_providers` does not apply;
-    `thinking_level=LOW` on every request; per-window `max_output_tokens = min(65 536, ceil(1 000 × minutes))`
+    `thinking_level=LOW` on every request; per-window `max_output_tokens = min(65 536, max(4 096, ceil(1 000 × audio minutes)))`
     (`DRIVE_TRANSCRIBER` in `agent_config.py`).
   - **Output:** `{language_codes, speakers, no_speech, segments: [{start: "MM:SS"|"H:MM:SS", speaker: int|null, text}]}`,
     `json.loads` once, strict field checks, **no regex fallback**; `DriveOutputInvalid` is the window's failed attempt. `start` is

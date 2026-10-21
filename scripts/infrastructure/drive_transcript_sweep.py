@@ -67,6 +67,7 @@ def months_back(now: datetime, count: int) -> List[str]:
 class Settlement:
     booked: float = 0.0       # reservations of audio that may still bill, counted as transcribe spend
     released: float = 0.0     # reservations with nothing in flight, only taken out of the counter
+    no_month: int = 0         # documents holding reserved money but no reserved_month: they cannot be settled by month (N2)
 
 
 async def _open_reservations(repo: DriveIndexRepository, user_id: str, months: Sequence[str]) -> List[Tuple[str, float]]:
@@ -99,6 +100,8 @@ async def settle_reservations(repo: DriveIndexRepository, user_id: str, months: 
         item_ids.update(rec.item_id for rec in await repo.transcript_records(user_id, state, _SCAN))
     per_month: Dict[str, float] = {}
     for batch in batches:
+        if batch.reserved_usd > 0 and not batch.reserved_month:
+            out.no_month += 1
         if batch.reserved_usd <= 0 or not batch.reserved_month:
             continue
         out.booked += batch.reserved_usd
@@ -111,6 +114,8 @@ async def settle_reservations(repo: DriveIndexRepository, user_id: str, months: 
             job = await repo.get_transcript_job(user_id, item_id)
         except ValueError:
             continue          # unreadable: deleted unsettled, its month counter is released below
+        if job is not None and job.reserved_usd > 0 and not job.reserved_month:
+            out.no_month += 1
         if job is None or job.reserved_usd <= 0 or not job.reserved_month:
             continue
         in_flight = any(w.state == SUBMITTED for w in job.windows)
@@ -140,6 +145,13 @@ async def _drain(deleter, user_id: str) -> int:   # type: ignore[no-untyped-def]
             return total
 
 
+def _no_month_note(settlement: Settlement) -> str:
+    """N2: money held by a document with no `reserved_month` is not settled by month; say how many there are."""
+    if not settlement.no_month:
+        return ""
+    return f"; {settlement.no_month} documents hold reserved money with no reserved_month (not settled by month)"
+
+
 async def sweep_user(repo: DriveIndexRepository, user_id: str, *, apply: bool, now: datetime, owner: str,
                      months: int = _MONTHS, after_rollback: bool = False) -> Tuple[int, str]:
     """Returns (exit code, message): counts and dollar amounts only."""
@@ -152,7 +164,7 @@ async def sweep_user(repo: DriveIndexRepository, user_id: str, *, apply: bool, n
         plan = await settle_reservations(repo, user_id, scan, apply=False, now=now)
         return 0, (f"dry run: would book ${plan.booked:.4f} in flight, release ${plan.released:.4f}, then delete the "
                    f"transcript jobs, batches, stored transcripts and window/part documents (months scanned: "
-                   f"{len(scan)}); re-run with --apply")
+                   f"{len(scan)}){_no_month_note(plan)}; re-run with --apply")
     leased = False
     if await repo.get_sync_state(user_id) is not None:
         if await repo.acquire_lease(user_id, owner, now, now + _HOLD, create=False) is None:
@@ -175,7 +187,7 @@ async def sweep_user(repo: DriveIndexRepository, user_id: str, *, apply: bool, n
             await repo.release_lease(user_id, owner)
     return 0, (f"booked ${settled.booked:.4f} in flight, released ${settled.released:.4f}; deleted {jobs} jobs, "
                f"{batches} batches, {stored} stored transcripts, {orphans} window/part documents"
-               f"{'; reservations still open: ' + str(len(remaining)) if remaining else ''}")
+               f"{'; reservations still open: ' + str(len(remaining)) if remaining else ''}{_no_month_note(settled)}")
 
 
 async def run(repo: DriveIndexRepository, user_ids: Sequence[str], *, apply: bool, now: datetime,

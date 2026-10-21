@@ -114,6 +114,7 @@ def test_a_bad_parser_user_fails_the_start(monkeypatch, setup, message):
         SubprocessMediaExtractor(sandbox_user="driveparser")
 
 
+@pytest.mark.timing   # asserts a wall-clock bound (< 15 s) (owner rule 2026-10-20, T-R33)
 async def test_wall_kills_group(tmp_path):
     out = tmp_path / "out"
     extractor = _stub(tmp_path)
@@ -185,12 +186,15 @@ async def test_probe_and_windows_over_https(tmp_path):
         probe = outcome.probe
         assert outcome.status is MediaStatus.OK and probe.has_audio and probe.duration_known
         assert probe.duration_s == pytest.approx(100.0, abs=1.0) and "mp4" in probe.container
-        windows = [WindowSpec(0, 0.0, 40.0), WindowSpec(1, 30.0, 40.0)]
+        # Plan-shaped: the request's last window is the file's last (M2: it is read at a full window's length, and a
+        # header that is right ends it where the plan does, so no eof is reported).
+        windows = [WindowSpec(0, 0.0, 40.0), WindowSpec(1, 30.0, 70.0)]
         result = await extractor.extract_windows(server.url("/a.mp4"), windows, str(tmp_path / "o"), wall_s=60,
                                                  container=probe.container)
         assert result.status is MediaStatus.OK and not result.eof
         assert [(w.index, w.start_s) for w, _ in result.windows] == [(0, 0.0), (1, 30.0)]
-        assert [w.duration_s for w, _ in result.windows] == [pytest.approx(40.0, abs=0.5)] * 2   # measured, not planned
+        assert [w.duration_s for w, _ in result.windows] == [pytest.approx(40.0, abs=0.5),
+                                                             pytest.approx(70.0, abs=0.5)]   # measured, not planned
         for _, path in result.windows:
             assert Path(path).read_bytes()[:4] == b"OggS"
         assert any(r[2] for r in server.requests)                # input-side -ss read through Range requests
@@ -283,6 +287,7 @@ def test_a_pass_that_reaches_the_bound_says_so(tmp_path, monkeypatch):
     assert [w["index"] for w in result["windows"]] == [0, 1, 2]
 
 
+@pytest.mark.timing   # the outcome is set by a 3 CPU-s RLIMIT_CPU against decode speed (owner rule 2026-10-20, T-R33)
 @needs_ffmpeg
 async def test_a_pass_cut_by_the_cpu_limit_returns_the_windows_inside_the_prefix(tmp_path):
     """SIGXCPU ends the pass-1 ffmpeg; the killed Ogg prefix is valid, so the windows fully inside it come back as a
@@ -352,6 +357,7 @@ async def test_a_known_duration_window_cut_short_by_a_drop_is_not_reported_at_it
     assert not list((tmp_path / "o").glob("window_*"))
 
 
+@pytest.mark.timing   # the outcome is set by a 3 CPU-s RLIMIT_CPU against decode speed (owner rule 2026-10-20, T-R33)
 @needs_ffmpeg
 async def test_a_limit_before_the_first_window_is_an_error_not_a_loop(tmp_path):
     """N2: a CPU cut that finishes no window would repeat forever as a TIMEOUT; it is the file's error."""
@@ -396,7 +402,8 @@ async def test_an_mp3_whose_header_overstates_the_duration_ends_at_the_audio(tmp
 
 @needs_ffmpeg
 async def test_one_corrupt_packet_does_not_fail_the_file(tmp_path):
-    """`-xerror` makes the glitch fatal (rc 183); the re-run without it conceals it (T-R16)."""
+    """`-xerror` makes the glitch fatal (rc 183 on ffmpeg 7.1 / 8.0; exit 0 with a short output on 6.1); the re-run
+    without it conceals it (T-R16)."""
     mp4 = make_corrupt_mp4(tmp_path / "c.mp4", 120)
     with MediaServer(tmp_path, {"/c.mp4": mp4}) as server:
         extractor = SubprocessMediaExtractor(ca_file=server.ca_pem, temp_root=str(tmp_path))
@@ -406,6 +413,7 @@ async def test_one_corrupt_packet_does_not_fail_the_file(tmp_path):
     assert result.status is MediaStatus.OK and len(result.windows) == 1 and not result.eof
 
 
+@pytest.mark.timing   # each run must stay under a 3 CPU-s RLIMIT_CPU (owner rule 2026-10-20, T-R33)
 @needs_ffmpeg
 async def test_a_corrupt_packet_late_in_a_long_file_is_re_run_after_earlier_windows_spent_cpu(tmp_path):
     """N7: the re-run decision judges the failed run's own CPU, not the CPU every earlier window of the step spent.
@@ -452,9 +460,118 @@ async def test_a_corrupt_cluster_in_a_pass_is_re_run_and_yields_its_windows(tmp_
                                    "duration_known": False, "out_dir": str(out), "wall_s": 120,
                                    "windows": [{"index": w.index, "start_s": w.start_s, "duration_s": w.duration_s}
                                                for w in plan]})
-    assert remote_runs[0][0] is True and remote_runs[0][1] not in (0, None)     # the corrupt cluster under -xerror
-    assert remote_runs[1:] == [(False, 0)]                                       # the one re-run conceals it
+    # The corrupt cluster under -xerror ends the first run: exit 183 on ffmpeg 7.1 / 8.0, exit 0 with a short output
+    # and an error logged on 6.1. Either way it is re-run once (T-R16), and the re-run conceals it.
+    assert remote_runs[0][0] is True and remote_runs[0][1] is not None
+    assert remote_runs[1:] == [(False, 0)]
     assert child["status"] == "ok" and [w["index"] for w in child["windows"]] == [w.index for w in plan]
+
+
+# -- An -xerror run that only looks clean (ffmpeg 6.1) ---------------------------------------------------------------
+# ffmpeg 6.1 ends an `-xerror` run at a corrupt packet with exit 0 and the output so far; 7.1 and 8.0 exit 183. The
+# fake ffmpeg below plays each behaviour so the rule is pinned whatever ffmpeg the machine has (measured outputs:
+# ffmpeg-versions-report.md).
+
+@pytest.fixture
+def stderr_file(tmp_path):
+    """fd 2 is a regular file, as in the child (the parent's stderr file)."""
+    saved = os.dup(2)
+    with open(tmp_path / "stderr.txt", "w+b") as fh:
+        os.dup2(fh.fileno(), 2)
+        try:
+            yield
+        finally:
+            os.dup2(saved, 2)
+            os.close(saved)
+
+
+def _fake_runs(monkeypatch, behaviour):
+    """`behaviour(xerror, argv) -> (code, produced_s, logged)`; records (xerror, code) per remote run (a pass's local
+    cuts are not recorded)."""
+    runs = []
+
+    def run(argv, deadline):
+        xerror = "-xerror" in argv
+        code, produced, logged = behaviour(xerror, argv)
+        if logged:
+            os.write(2, b"[aac @ 0x1] Error submitting packet to decoder: Invalid data found when processing input\n")
+        with open(argv[-1], "wb") as fh:
+            fh.write(b"OggS" + str(produced).encode())
+        if "https" in argv[argv.index("-protocol_whitelist") + 1]:
+            runs.append((xerror, code))
+        return code, False, 0.1
+
+    def duration(path, deadline=None):
+        with open(path, "rb") as fh:
+            return float(fh.read()[4:])
+
+    monkeypatch.setattr(media, "_run_ffmpeg", run)
+    monkeypatch.setattr(media, "_file_duration", duration)
+    return runs
+
+
+def _windows_request(tmp_path, windows, duration_known=True):
+    return {"url": "https://h/f", "ca_file": "/x/ca.pem", "container": "mp3", "out_dir": str(tmp_path),
+            "wall_s": 60.0, "duration_known": duration_known,
+            "windows": [{"index": i, "start_s": st, "duration_s": d} for i, st, d in windows]}
+
+
+@pytest.mark.parametrize("first_code", [0, 183], ids=["ffmpeg-6.1", "ffmpeg-7.1-8.0"])
+def test_an_xerror_run_cut_at_a_corrupt_packet_is_re_run_whatever_its_exit(tmp_path, monkeypatch, stderr_file,
+                                                                             first_code):
+    """120 s file, one window: the -xerror run stops at 58 s with an error logged; never an eof at 58 s."""
+    runs = _fake_runs(monkeypatch, lambda xerror, argv: (first_code, 58.0, True) if xerror else (0, 120.0, True))
+    result = media.run_windows(_windows_request(tmp_path, [(0, 0.0, 120.0)]))
+    assert runs == [(True, first_code), (False, 0)]
+    assert result["status"] == "ok" and result["eof"] is False
+    assert [(w["index"], w["duration_s"]) for w in result["windows"]] == [(0, 120.0)]
+
+
+@pytest.mark.parametrize("first_code", [0, 183], ids=["ffmpeg-6.1", "ffmpeg-7.1-8.0"])
+def test_a_pass_cut_at_a_corrupt_cluster_is_re_run_and_keeps_its_later_windows(tmp_path, monkeypatch, stderr_file,
+                                                                                first_code):
+    """A 150 s file without a duration, one pass of three windows: the -xerror pass stops at 75 s with an error
+    logged; the windows after it are not dropped and no eof is reported at 75 s."""
+    def behaviour(xerror, argv):
+        if "https" not in argv[argv.index("-protocol_whitelist") + 1]:       # a local cut of the pass file
+            return 0, float(argv[argv.index("-t") + 1]), False
+        return (first_code, 75.0, True) if xerror else (0, 150.0, True)
+    runs = _fake_runs(monkeypatch, behaviour)
+    windows = [(0, 0.0, 60.0), (1, 50.0, 60.0), (2, 100.0, 50.0)]
+    result = media.run_windows(_windows_request(tmp_path, windows, duration_known=False))
+    assert runs == [(True, first_code), (False, 0)]
+    assert result["status"] == "ok" and result["eof"] is False
+    assert [w["index"] for w in result["windows"]] == [0, 1, 2]
+
+
+def test_a_clean_short_run_with_nothing_logged_is_the_real_end(tmp_path, monkeypatch, stderr_file):
+    """The audio ends at 58 s (header overstated it): exit 0, nothing logged, no re-run, eof at the measured end."""
+    runs = _fake_runs(monkeypatch, lambda xerror, argv: (0, 58.0, False))
+    result = media.run_windows(_windows_request(tmp_path, [(0, 0.0, 120.0)]))
+    assert runs == [(True, 0)]
+    assert result["eof"] is True and result["duration_s"] == pytest.approx(58.0)
+
+
+def test_an_error_logged_by_a_run_that_reaches_its_bound_is_no_reason_to_re_run(tmp_path, monkeypatch, stderr_file):
+    """ffmpeg 8.0 logs an Opus packet-header error on a sound stream: a full-length window stands as it is."""
+    runs = _fake_runs(monkeypatch, lambda xerror, argv: (0, float(argv[argv.index("-t") + 1]), True))
+    result = media.run_windows(_windows_request(tmp_path, [(0, 0.0, 60.0), (1, 50.0, 60.0)]))
+    assert runs == [(True, 0), (True, 0)]
+    assert [w["index"] for w in result["windows"]] == [0, 1]
+
+
+def test_unknown_stderr_counts_as_logged():
+    """stderr that is not a regular file cannot be measured: a short exit-0 run is then re-run, never trusted."""
+    assert media._logged_since(None) is True
+    read_end, write_end = os.pipe()
+    saved = os.dup(2)
+    try:
+        os.dup2(write_end, 2)
+        assert media._stderr_size() is None and media._logged_since(0) is True
+    finally:
+        os.dup2(saved, 2)
+        for fd in (saved, read_end, write_end):
+            os.close(fd)
 
 
 def test_a_limit_is_judged_on_the_runs_own_cpu_not_the_childs_total(tmp_path, monkeypatch):
@@ -518,6 +635,7 @@ async def test_tls_verify_refuses_an_untrusted_server(tmp_path):
         assert (await trusted.probe(server.url("/a.mp4"))).probe is not None
 
 
+@pytest.mark.timing   # the outcome is set by a 1.5 s wall against decode speed (owner rule 2026-10-20, T-R33)
 @needs_ffmpeg
 def test_a_wall_in_a_window_returns_the_windows_finished_before_it(tmp_path):
     """The child stops its own ffmpeg before the parent's kill: finished windows come back, in order, and a window cut

@@ -12,7 +12,7 @@ from src.domain.drive_index_params import MAX_ATTEMPTS, RETRY_BASE, TRANSCRIBE_R
 from src.domain.drive_transcript import JobWindow, MediaStatus, StoredTranscript, TranscriptJob, WindowSpec
 from src.domain.drive_transcript_plan import window_estimate_usd
 from src.domain.drive_transcript_render import TRANSCRIPT_BODY_VERSION
-from src.domain.exceptions import LLMUnavailableError
+from src.domain.exceptions import LLMRateLimitError
 from src.services.drive_transcript_stage import TRANSCRIBER_AGENT
 
 from tests.unit.services.drive_transcript_fakes import NOW, OLD, USER, Recording, record
@@ -156,7 +156,9 @@ async def test_a_submit_outage_gives_the_resubmit_reservation_back_once(tmp_path
     window, job = _resubmit_job()
     env.repo.transcript_jobs[(USER, "a")] = job
     await _add(env, replace(record("a"), transcript_state="working", transcript_key="hash-a"))
-    env.runner.raise_next = LLMUnavailableError("down")
+    # T-R28: only a definite refusal (here a 429) proves nothing was bought and gives the money back; an ambiguous
+    # error keeps it on the `submitting` document (test_drive_transcript_stage_final_f1.py, the ambiguous cases).
+    env.runner.raise_next = LLMRateLimitError("429", http_status=429)
     await _step(env)
     estimate = window_estimate_usd(window)
     assert env.host.reserves == [(pytest.approx(estimate), MONTH)]
