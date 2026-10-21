@@ -347,6 +347,20 @@ Local runs read `ONEDRIVE_REDIRECT_URI` from `.env` (a separate key from the dep
 localhost value never reaches the deployed revision). With it unset, `/auth/connect-onedrive` answers 501;
 the Cabinet hides the drive card only when the adapter itself is absent (To Do keys unset).
 
+## Firestore index definitions
+
+`config/firestore.indexes.json` is the live database's index configuration: only `development_`-prefixed
+collections appear in it (a test enforces the prefix). `make deploy-indexes` applies the composites and skips vector
+entries; vector indexes are created by `scripts/infrastructure/create_drive_vector_indexes.sh` (drive) and
+`scripts/infrastructure/create_task_search_vector_indexes.sh` (task search). A vector index carries only the dimension
+(768) and `flat`; the distance measure is chosen per query, so no script sets one.
+
+The live database still holds indexes of collections that no longer exist (the retired unprefixed prod collections
+`facts`, `domain_facts_v2`, `domain_email_facts_v1`, `sessions`, `email_indexing_jobs_v1`, `companion_records`) and
+of the unused `development_facts`. The email vector indexes in the old `user_id, state, …` field order are not live
+either; git now carries the live `state, user_id, …` order. Deleting the stale live indexes
+(`gcloud firestore indexes composite delete`) is an optional owner step.
+
 ## Drive Indexer Service
 
 `alek-bot-indexer-dev` runs the per-user `drive_sync` tick of the drive index
