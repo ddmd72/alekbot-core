@@ -28,13 +28,14 @@ Put a time span in the date fields and a file format in `drive_kind`, not in the
 
 Drive results say how each file matched. 'About' and 'mentioned in' are exact: the file's own name, details, place or text holds the words, in their spellings and word forms. 'By translation' and 'labelled' are the index's automatic words — passage keywords with their source quote, type, topic and life-area words — and may be wrong or incomplete. 'Related by meaning only' lines are guesses. Other spellings and word forms were searched; other languages only where the index wrote them. The coverage line says what the search could not see. When a word is held by no file, the result counts the files that match the other words, so you can tell whether the word was phrasing or the subject.
 
+- A `noted by the owner:` line is what the user told you about the file. It outranks the card's own description and type, and it is not part of `card accuracy`.
 - Trust the exact tiers. When the answer depends on an automatic one, check its quoted source or open the file.
 - Mention "related by meaning only" lines only when they help, never as findings.
 - "Coverage: complete" makes a not-found reliable.
 
 ## Card accuracy
 
-A described file's result carries `card accuracy: N%`. 100% — everything in this card is confirmed by the file's own text; you can trust the card fully. The lower, the more likely the card's values contain errors.
+A described file's result carries `card accuracy: N%`. 100% — everything in this card *except the owner's note* is confirmed by the file's own text; you can trust the card fully. The lower, the more likely the card's values contain errors.
 
 - "Find", "which files", "do I have": answer from the cards at any accuracy. Never open files for this.
 - A question about a value in a file — a number, a date, an amount, an expiry: answer from the card when its accuracy is 90% or more. Below that, open the file and check the value before answering.

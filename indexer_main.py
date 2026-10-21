@@ -72,7 +72,8 @@ from src.adapters.microsoft import OneDriveAdapter
 from src.adapters.slack.webhook_adapter import SlackWebhookAdapter
 from src.adapters.subprocess_content_extractor import PARSER_USER_ENV, SubprocessContentExtractor
 from src.composition.drive_indexing_setup import (
-    build_drive_index_repository, build_drive_mirror_repository, build_drive_task_queue, build_place_lookup,
+    build_drive_index_repository, build_drive_mirror_repository, build_drive_note_repository, build_drive_task_queue,
+    build_place_lookup, drive_notes_enabled,
 )
 from src.composition.drive_model_setup import build_drive_mirror, build_drive_models, build_drive_transcription
 from src.composition.memory_telemetry_setup import build_memory_telemetry
@@ -155,6 +156,10 @@ def build_app() -> Quart:
         enabled=transcribe_on and transcripts is not None, repo=index_repo, mirror_repo=mirror_repo, drive=drive,
         users=users, account_repo=account_repo, profile_repo=profile_repo, assembly_service=assembly_service,
     )
+    # The owner's notes (DRIVE_FILE_NOTES_RFC §5.1): the tick merges them into the records; DRIVE_NOTES_ENABLED (an
+    # optional kill switch, os.getenv, default on) off builds no store, so the tick does no notes work.
+    notes = build_drive_note_repository(db, env_config,
+                                        enabled=drive_notes_enabled(os.environ.get("DRIVE_NOTES_ENABLED")))
     indexing = DriveIndexingService(
         drive=drive,
         repo=index_repo,
@@ -177,6 +182,7 @@ def build_app() -> Quart:
         mirror=mirror.mirror,
         localization=mirror.localization,
         language=mirror.language,
+        notes=notes,
     )
 
     app.register_blueprint(create_indexer_worker_blueprint(indexing, gate))

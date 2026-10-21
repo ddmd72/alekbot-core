@@ -118,6 +118,8 @@ if TYPE_CHECKING:
     from ..services.workspace_service import WorkspaceService
     from ..services.user_drive_service import UserDriveService
     from ..services.drive_search_service import DriveSearchService
+    from ..services.drive_note_service import DriveNoteService
+    from ..ports.user_drive_port import UserDrivePort
     from ..services.localization_service import LocalizationService
     from ..ports.language_service_port import LanguageServicePort
 
@@ -196,6 +198,10 @@ class UserAgentFactory(AgentFactoryPort):
         language_service: Optional["LanguageServicePort"] = None,
         drive_search_service: Optional["DriveSearchService"] = None,
         alert_sink: Optional[AlertSinkPort] = None,
+        # DRIVE_FILE_NOTES_RFC: the note service (part A builds it in the container and gives it to Smart; part B reads
+        # it for the open header) and the drive port (the connected drive's id for that read)
+        drive_note_service: Optional["DriveNoteService"] = None,
+        user_drive: Optional["UserDrivePort"] = None,
     ) -> None:
         # Resolved once: a bad SANDBOX_RENDER stops the start, and the sandbox runner is shared by all users.
         self._docx_runner_factory = docx_runner_factory()
@@ -242,6 +248,8 @@ class UserAgentFactory(AgentFactoryPort):
         self.long_turn_registry = long_turn_registry
         self.user_drive_service = user_drive_service
         self.drive_search_service = drive_search_service
+        self.drive_note_service = drive_note_service
+        self.user_drive = user_drive
         self.alert_sink = alert_sink
         self.localization = localization
         self.language_service = language_service
@@ -871,6 +879,8 @@ class UserAgentFactory(AgentFactoryPort):
             localization=self.localization,
             language_service=self.language_service,
             drive_search=self.drive_search_service,
+            drive_notes=self.drive_note_service,   # the open header's note (DRIVE_FILE_NOTES_RFC §6.2)
+            drive_port=self.user_drive,
         )
 
     def _build_domain_researcher(self, user_id: str, ctx: _UserContext) -> DomainResearcherAgent:

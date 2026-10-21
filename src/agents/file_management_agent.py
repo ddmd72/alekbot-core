@@ -22,6 +22,9 @@ Mutating intents refuse a ref from the other store and run shielded from cancell
 delete and replace post a receipt via notify_raw (USER_DRIVE_RFC §4.4, §4.10, §4.13).
 File text and search results reach the model only inside the escaped, nonce-tagged wrapper
 (USER_DRIVE_INDEXING_RFC §10.4, D2).
+open_file_from_drive shows the owner's current note on the file (DRIVE_FILE_NOTES_RFC §6.2, §6.3), read from the note
+store by binding, inside the wrapper, so Smart sees what a new note would replace; list_files_in_drive never shows it
+(D20).
 """
 
 import asyncio
@@ -36,6 +39,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, Optional, Set
 import aiofiles
 
 from ..agents.base_agent import BaseAgent
+from ..domain.drive_card import owner_note_line
 from ..domain.agent import AgentMessage, AgentResponse, AgentConfig, AgentIntent, AgentStatus
 from ..domain.drive_search import (
     REFERENCE_REMINDER, REFERENCE_REMINDER_ATTACHED, render_results, request_from_fields, require_search_terms,
@@ -84,6 +88,8 @@ if TYPE_CHECKING:
     from ..services.user_drive_service import UserDriveService
     from ..services.file_conversion_service import FileConversionService
     from ..services.user_notification_service import UserNotificationService
+    from ..services.drive_note_service import DriveNoteService
+    from ..ports.user_drive_port import UserDrivePort
 
 
 def _flag(value: Any) -> bool:
@@ -136,8 +142,14 @@ class FileManagementAgent(BaseAgent):
         localization: Optional["LocalizationService"] = None,
         language_service: Optional["LanguageServicePort"] = None,
         drive_search: Optional["DriveSearchService"] = None,
+        drive_notes: Optional["DriveNoteService"] = None,
+        drive_port: Optional["UserDrivePort"] = None,
     ) -> None:
+        """`drive_notes` and `drive_port` give the open header its note (DRIVE_FILE_NOTES_RFC §6.2): the note service
+        reads by binding, the port gives the connected drive's id for it. Without either, no note line."""
         super().__init__(config)
+        self._drive_notes = drive_notes
+        self._drive_port = drive_port
         self._drive = drive_service
         self._drive_search = drive_search
         self._localization = localization
@@ -698,6 +710,32 @@ class FileManagementAgent(BaseAgent):
             return None
         return text or None
 
+    async def _note_line_of(self, user_id: str, item_id: str) -> str:
+        """The owner's note on the item as a search card renders it (DRIVE_FILE_NOTES_RFC §6.2): the store's current
+        note, by binding on the connected drive (one connection read, one note read). "" without one, without the note
+        service, or on any failure: the open goes on without the line."""
+        if self._drive_notes is None or self._drive_port is None:
+            return ""
+        try:
+            connection = await self._drive_port.connection(user_id)
+            if not connection.connected or not connection.drive_id:
+                return ""
+            note = await self._drive_notes.note_for_item(user_id, connection.drive_id, item_id)
+        except Exception as exc:
+            logger.warning("FileManagementAgent: note lookup failed: %s", exc_brief(exc))
+            return ""
+        if note is None:
+            return ""
+        return owner_note_line(note.text, note.doc_type, tuple(note.life_areas))
+
+    @staticmethod
+    def _with_note(text: str, item: Any, line: str) -> str:
+        """`text` followed by the note line in its own wrapper (the note is data, never instructions, §6.3)."""
+        if not line:
+            return text
+        return text + "\n" + wrap_untrusted(f"{drive_label(item)}\n{line}", nonce=secrets.token_hex(8), ref=item.ref,
+                                            path=item.path)
+
     async def _open_drive_item(self, message: AgentMessage, ref: str, user_id: str,
                                payload: Optional[dict] = None) -> AgentResponse:
         item = await self._conversion_service.get_drive_item(ref, user_id)
@@ -706,6 +744,7 @@ class FileManagementAgent(BaseAgent):
         archived = await self._archived_transcript_of(user_id, ref, item)
         if archived is not None:
             return self._ok(message, archived, [item])
+        note = await self._note_line_of(user_id, item.item_id)
         mime = item.mime_type or (mimetypes.guess_type(item.name)[0] or "application/octet-stream")
         # Vision caps and unsupported formats are decided on metadata, before any download (§4.6).
         if mime.startswith("image/") and mime not in VISION_IMAGE_MIME_TYPES:
@@ -718,13 +757,14 @@ class FileManagementAgent(BaseAgent):
         if recording and (payload or {}).get("original") is True:
             # The recording itself comes as a drive link, never as bytes into chat (§27.11, Δ121).
             link = item.web_url or "(no link available)"
-            body = wrap_untrusted(f"{drive_label(item)}\nLink to the original recording: {link}",
+            noted = f"\n{note}" if note else ""
+            body = wrap_untrusted(f"{drive_label(item)}{noted}\nLink to the original recording: {link}",
                                   nonce=secrets.token_hex(8), ref=item.ref, path=item.path)
             return self._ok(message, f"{REFERENCE_REMINDER}\n{body}", [item])
         if recording and self._drive_search is not None:
             transcript = await self._transcript_of(user_id, item)
             if transcript is not None:
-                return self._ok(message, transcript, [item])
+                return self._ok(message, self._with_note(transcript, item, note), [item])
         try:
             if vision_cap is not None:
                 if item.size_bytes > vision_cap:
@@ -735,8 +775,8 @@ class FileManagementAgent(BaseAgent):
                 async with aiofiles.open(tmp_path, "wb") as f:
                     await f.write(data)
                 # The model reads an attached PDF or image natively: the reminder travels with it (D2).
-                return self._ok(message, f"{REFERENCE_REMINDER_ATTACHED}\n{drive_label(item)} is "
-                                         f"attached. You can see and analyse it directly.",
+                return self._ok(message, self._with_note(f"{REFERENCE_REMINDER_ATTACHED}\n{drive_label(item)} is "
+                                                         f"attached. You can see and analyse it directly.", item, note),
                                 [item], metadata={"file_data": {"path": tmp_path, "mime_type": mime}})
             if mime.startswith("video/"):
                 data = await self._conversion_service.resolve_bytes(ref, user_id)
@@ -748,14 +788,15 @@ class FileManagementAgent(BaseAgent):
                     channel_id_override=message.context.get("origin_channel_id"),
                     platform_override=message.context.get("origin_platform"),
                 )
-                return self._ok(message, f"{REFERENCE_REMINDER_ATTACHED}\n{drive_label(item)} has "
-                                         f"been sent to the user as a file.", [item])
+                return self._ok(message, self._with_note(f"{REFERENCE_REMINDER_ATTACHED}\n{drive_label(item)} has "
+                                                         f"been sent to the user as a file.", item, note), [item])
         except DriveFileTooLargeError as e:
             return self._ok(message, f"'{item.path}' is {format_size(item.size_bytes)}; files above "
                                      f"{format_size(e.limit_bytes)} cannot be opened yet.", [item])
         content = await self._conversion_service.resolve_content(ref, user_id)
         # File text is untrusted: it reaches the model only inside the wrapper (RFC §10.4, RFC Δ11).
-        wrapped = wrap_untrusted(f"{drive_label(item)}\n{content}", nonce=secrets.token_hex(8),
+        noted = f"\n{note}" if note else ""   # the header: label, the owner's note (§6.2), then the file's text
+        wrapped = wrap_untrusted(f"{drive_label(item)}{noted}\n{content}", nonce=secrets.token_hex(8),
                                  ref=item.ref, path=item.path)
         return self._ok(message, f"{REFERENCE_REMINDER}\n{wrapped}", [item])
 
