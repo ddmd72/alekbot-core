@@ -17,6 +17,11 @@ class LLMUnavailableError(LLMError):
     """Provider returned 503 Service Unavailable — provider is temporarily down."""
 
 
+class BatchLookupInconclusive(LLMUnavailableError):
+    """A batch lookup that could not decide (the scan bound was reached before the job was found): neither found nor a
+    miss. The caller keeps what it holds and asks again later; it is not an outage of the provider."""
+
+
 class LLMTimeoutError(LLMError):
     """Wall-clock budget exhausted before the provider responded.
 

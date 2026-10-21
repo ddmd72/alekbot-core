@@ -75,7 +75,7 @@ from src.domain.drive_index import (
 )
 from src.domain.drive_index_params import (
     MAX_ATTEMPTS, TRANSCRIBE_AUDIO_TOKENS_PER_S, TRANSCRIBE_HOUR_USD_ESTIMATE, TRANSCRIBE_MIN_OUTPUT_TOKENS, TRANSCRIBE_WINDOW_PROMPT_TOKENS, TRANSCRIBE_MAX_BYTES, TRANSCRIBE_MAX_SECONDS,
-    TRANSCRIBE_REREAD_COOLDOWN, TRANSCRIBE_USD_PER_MONTH,
+    TRANSCRIBE_REREAD_COOLDOWN, TRANSCRIBE_SHORT_ACCEPT_MAX_S, TRANSCRIBE_USD_PER_MONTH,
 )
 from src.domain.drive_index_planner import backoff, content_due_at, demoted, month_key, next_month_start, quiet_over
 from src.domain.drive_index_policy import Admission, admission
@@ -433,13 +433,13 @@ def resume_window(window: JobWindow, ctx: TranscriptContext) -> WindowResult:
 
 
 def mark_current(rec: DriveIndexRecord, now: datetime, *, seconds: int, speakers: int, languages: Tuple[str, ...],
-                 stub: str = "") -> DriveIndexRecord:
+                 stub: str = "", truncated: bool = False) -> DriveIndexRecord:
     """The job finished: a transcript (or the model's `no_speech` stub) is stored at this content key. Attempts and holds
     are spent. `model_read_at` anchors the edit cooldown."""
     out = replace(rec, transcript_state=CURRENT, transcript_key=content_key(rec)[0],
                   transcript_version=TRANSCRIBE_VERSION, transcript_body_version=TRANSCRIPT_BODY_VERSION,
                   transcript_stub=stub, transcript_seconds=seconds, transcript_speakers=speakers,
-                  transcript_languages=languages, model_read_at=now, transcript_attempts=0,
+                  transcript_languages=languages, transcript_truncated=truncated, model_read_at=now, transcript_attempts=0,
                   transcript_hold=None, transcript_hold_version="", transcript_wake_at=None)
     if stub:
         out = demoted(out, _STUB_RECORD_REASON[TranscriptStub(stub)], now)
@@ -484,14 +484,17 @@ def window_failed(window: JobWindow, check: WindowCheck, ctx: TranscriptContext,
     would reserve the whole file again), and the caller reserves only the parked window with `resume_window`.
     `COVERAGE` (T-R27): a short answer that finished cleanly (`finish_reason` STOP) is resubmitted ONCE, uncharged
     (`coverage_resubmits`); if the second is short again and also STOP, the audio ends in silence: ACCEPT. A short answer
-    that did not finish cleanly (MAX_TOKENS, none) keeps the MAX_ATTEMPTS rule.
+    that did not finish cleanly (MAX_TOKENS, none) keeps the MAX_ATTEMPTS rule. T-R31: that acceptance stands as it is
+    only for a window up to TRANSCRIBE_SHORT_ACCEPT_MAX_S; a longer one is accepted `accepted_short`, so its transcript
+    is stored `truncated` (the model may have stopped early, Δ129) and never silently.
     A resubmitted window goes back to `uploaded`."""
     if check is WindowCheck.REFUSED:
         return WindowResult(replace(window, state="done", gap=True), WindowAction.GAP, None, ctx)
     if check is WindowCheck.COVERAGE and finish_reason == FINISH_STOP:
         if window.coverage_resubmits < 1:
             return _resubmit(replace(window, coverage_resubmits=window.coverage_resubmits + 1, state="uploaded"), ctx)
-        return WindowResult(replace(window, state="done"), WindowAction.ACCEPT, None, ctx)
+        marked = window.spec.duration_s > TRANSCRIBE_SHORT_ACCEPT_MAX_S
+        return WindowResult(replace(window, state="done", accepted_short=marked), WindowAction.ACCEPT, None, ctx)
     if check in (WindowCheck.INVALID, WindowCheck.COVERAGE):
         attempts = window.attempts + 1
         if attempts >= MAX_ATTEMPTS:

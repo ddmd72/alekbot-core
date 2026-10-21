@@ -40,6 +40,7 @@ def _extractor(server, tmp_path):
     return SubprocessMediaExtractor(ca_file=server.ca_pem, temp_root=str(tmp_path))
 
 
+@pytest.mark.timing   # asserts a wall-clock bound (DEFINED_WITHIN_S) (owner rule 2026-10-20, T-R33)
 @pytest.mark.parametrize("path", ["/list.m3u8", "/concat.txt", "/empty.mp4", "/truncated.mp4", "/garbage.mp4"])
 async def test_hostile_files_end_as_a_defined_outcome(served, tmp_path, path):
     extractor = _extractor(served, tmp_path)
@@ -75,23 +76,27 @@ async def test_the_good_file_still_works_beside_them(served, tmp_path):
     assert result.status is MediaStatus.OK and len(result.windows) == 1
 
 
+@pytest.mark.timing   # asserts a wall-clock bound on a real decode (owner rule 2026-10-20, T-R33)
 async def test_four_hours_of_silence_probes_long_and_one_window_stays_under_the_limits(tmp_path):
     """A 1x1-ish video with 4 h of silence is cheap to store and costly to decode: the probe says 4 h, and one window
-    comes out as a valid Opus file under the child's CPU / file / address-space limits."""
+    comes out as a valid Opus file under the child's CPU / file / address-space limits. The window is plan-shaped: a
+    window that is not the file's last is always a full TRANSCRIBE_WINDOW_S (1 800 s), and a request's last window is
+    read at that length (M2), so this is the size production decodes."""
     big = make_silent_video_mp4(tmp_path / "big.mp4", 14_400)
     with MediaServer(tmp_path, {"/big.mp4": big}) as server:
         extractor = SubprocessMediaExtractor(ca_file=server.ca_pem, temp_root=str(tmp_path))
         probe = (await extractor.probe(server.url("/big.mp4"))).probe
         assert probe.duration_s == pytest.approx(14_400.0, abs=2.0) and probe.has_audio
         started = time.monotonic()
-        result = await extractor.extract_windows(server.url("/big.mp4"), [WindowSpec(7, 7_000.0, 300.0)],
+        result = await extractor.extract_windows(server.url("/big.mp4"), [WindowSpec(7, 7_000.0, 1_800.0)],
                                                  str(tmp_path / "o"), wall_s=120, container=probe.container)
     assert result.status is MediaStatus.OK and time.monotonic() - started < DEFINED_WITHIN_S
     ((spec, path),) = result.windows
     shown = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_name:format=duration",
                             "-of", "default=nw=1", path], capture_output=True, text=True, check=True).stdout
     assert "codec_name=opus" in shown and spec.index == 7
-    assert float(shown.split("duration=")[1].split()[0]) == pytest.approx(300.0, abs=1.0)
+    assert float(shown.split("duration=")[1].split()[0]) == pytest.approx(1_800.0, abs=1.0)
+    assert spec.duration_s == pytest.approx(1_800.0, abs=1.0) and not result.eof   # audio goes on past it
 
 
 # =============================================================================

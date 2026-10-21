@@ -700,7 +700,7 @@ to the file (`failed` at 3); an edited reader-read file is re-read at most once 
 before any content work. Text passes a machine-text gate, is chunked (generation-fenced) and embedded. Audio and video
 are metadata-only unless the user's transcription is on (next paragraph). No rollback to the Slice 1 revision.
 
-**Transcripts of recordings (RFC §27; T1 built on `feat/drive-transcripts`, not deployed; the mirror folder T2 and the summary T3 are not built).**
+**Transcripts of recordings (RFC §27; T1 live since 2026-10-21 for the owner only, $10 cap; the mirror folder T2 and the summary T3 are not built).**
 Audio and video are `Admission.TRANSCRIBE` (`POLICY_VERSION` 3; structure decisions compare `STRUCTURE_POLICY_SINCE` = 2, so the bump redoes no folder work).
 Not an extractor chain link: a **job with its own states on the record** (`transcript_state`: `none ready working waiting current held parked failed`), advanced by
 `DriveTranscriptStage` on the indexer across ticks — probe the Graph download URL, cut audio-only Opus windows (≈ 30 min, 60 s overlap) with ffmpeg in the

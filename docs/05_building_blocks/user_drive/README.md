@@ -10,7 +10,7 @@ location prior and scene labels; decisions D33–D40): **all six slices are buil
 the owner's index rebuilt, gate key `accuracy` applied).** S1 files the bot cannot open is §4.18, S2 capture §4.19, S3/S4 card accuracy and the small fixes
 §4.20, S6 the location prior and scene labels §4.21, S5 the owner scripts and the eval additions §4.22. Everything
 marked "(branch)" below is now deployed code (2026-10-19).
-RFC §27 (transcripts of audio and video; decisions D41–D47, deltas Δ95–Δ173): **slice T1 is built on `feat/drive-transcripts` and not deployed;
+RFC §27 (transcripts of audio and video; decisions D41–D47, deltas Δ95–Δ175): **slice T1 is live since 2026-10-21 (the owner only, $10 monthly cap; other users have transcription off);
 the mirror folder (T2) and the summary (T3) are not built.** How it works end to end, in plain English, is §4.23; the rollout and
 the switches are §7.2 and `docs/07_deployment/README.md` → "Transcripts of recordings (§27)".
 
@@ -78,7 +78,7 @@ The user's long-term file area: their OneDrive App Folder, behind the provider-n
   call. It returns files in **tiers** that say how each matched (About, Mentioned in, By translation, Labelled,
   Related by meaning only), with strict AND over the query's words and a coverage line that says what it could not
   see. It replaces v1's ranked fusion (§6.6). The rollout purges and rebuilds every user's index (D30).
-- **Transcripts of recordings, T1 built and not deployed** (RFC §27, `feat/drive-transcripts`): an opt-in **on top of** indexing.
+- **Transcripts of recordings, T1 live since 2026-10-21, owner only** (RFC §27): an opt-in **on top of** indexing.
   A user's audio and video are transcribed in the background by Gemini Flash on the Batch API, under a hard monthly dollar cap,
   and the transcript is indexed like any text file, so a recording is found by what was said and Smart opens its transcript.
   Two switches must both be on: the indexer's kill switch (`DRIVE_TRANSCRIBE_ENABLED`, off by default) and the user's own flag
@@ -238,7 +238,7 @@ the cost and the fallback's share; the reader still raises `DriveModelUnavailabl
   folder's own record (`reobserve_pending`, `reobserve_cursor`), worked page by page in class 2 (RFC Δ18).
 - **Policy (§5).** Since `POLICY_VERSION` 2 the §5.1 document kinds are admitted for content (`admission()` →
   `CONTENT`): PDF, DOCX, PPTX, XLSX/XLS, ODT/ODS/ODP, EPUB, HTML, Markdown, text, CSV, JSON, RTF, MSG, EML and VTT/SRT
-  subtitles. Every image is admitted for triage (`TRIAGE`). Since `POLICY_VERSION` 3 (RFC §27, built, not deployed) audio and video are admitted for **transcription**
+  subtitles. Every image is admitted for triage (`TRIAGE`). Since `POLICY_VERSION` 3 (RFC §27, live) audio and video are admitted for **transcription**
   (`Admission.TRANSCRIBE`): not parsed, never in the content classes, handled by the transcript stage (§4.23).
   Everything else (`doc`, `ppt`, `mhtml`, iWork, archives, code, …) is `metadata_only` (reason `kind_not_admitted`) with a card.
   (Structure decisions compare against `STRUCTURE_POLICY_SINCE` = 2, so the version 3 bump re-reads no README and re-probes no folder.) A content kind over its
@@ -1256,7 +1256,7 @@ ref. Coverage counts closed files only in scope, as their own sentence, never as
   fixtures: `fixture_texts_s26.py`, `fixture_images_s26.py`, `synthetic_s26.py` (an ID-card-like scan, a phone photo of a
   document, a screenshot, a landmark photo, a closed item in the fake drive).
 
-### 4.23 Transcripts of recordings (RFC §27, T1 built, not deployed)
+### 4.23 Transcripts of recordings (RFC §27, T1 live since 2026-10-21, owner only)
 
 **In plain English.** The owner has voice memos, meetings and videos on the drive. Today the index knows only their name, date and
 length. With transcription on, the bot listens to them in the background and writes down what was said, with who said it and when
@@ -1290,7 +1290,9 @@ only while the flag is on.
 7. The result is **indexed** through the ordinary text path (gate, chunks, embeddings) and stored under the file's content key, the card gains
    `transcript: 47 min, 2 speakers, uk/en`, and the record is `current`. A copy, rename or move has the same key and never pays again.
 
-**Record states** (`transcript_state`): `none` (not a candidate: a folder, a never-read name, card-capped, inaccessible, or the stage is off),
+**After the final review (2026-10-21).** A batch is written down as `submitting` before it is sent; if the answer to the send is unclear, the bot finds the batch at the provider by its name (up to three tries, at least 15 minutes) and otherwise releases the money once, and a poll error counts its money as spent instead of released. A copy of a recording waits while its twin is working, waiting, parked or on hold. A window shorter than expected is judged with a tolerance of 10 % or 60 s, whichever is larger; a second short answer is accepted only for windows up to 5 minutes, and a longer one is stored as truncated, so the card says "may be incomplete" and the opened text starts with a note that part of the recording may be missing. More containers are accepted (avi, wma/wmv, aiff, amr, flv), the sandbox is tighter, and CI installs ffmpeg. `make deploy` refuses unless the switch is explicitly on or off, and the Cabinet shows the disclosure only when the switch and the user's flag are both on. RFC §27.16, Δ176–Δ182.
+
+**Record states** (`transcript_state`): `none` (not a candidate: a folder, a never-read name, card-capped, or inaccessible; while the stage is off the plan still runs and media go `ready`/`held`, Δ173),
 `ready`, `working` (extracting or uploading), `waiting` (submitted), `current` (done, or a stub), `held` (a timed hold, `transcript_hold`:
 `cooldown`, `quiet`, `retry` after a failed attempt with a backoff up to 6 h, `resubmit`), `parked` (the month's cap), `failed` (three charged attempts; no stub).
 A model outage is not a state: it pauses the stage's queue and the records stay `ready`.
@@ -1331,7 +1333,7 @@ audio still running at the provider (it will be billed) and releases the rest.
 **After the first live run (2026-10-21).** A window's output cap has a 4 096-token floor and each window reserves its own worst case, so short windows are bounded too (Δ174, T-R26); a short answer that finished normally (`STOP`, audio ending in silence) is resent once for free and a second one is accepted, so such recordings no longer fail (Δ175, T-R27; a very short window always costs two purchases, cents).
 
 **Not built.** The mirror folder (T2: one Markdown file per transcript in a bot-owned folder of the drive), the summary (T3), the Cabinet toggle.
-The decisions are in [drive_transcripts_t1.md](../../04_solution_strategy/decisions/drive_transcripts_t1.md); the reasoning and the 38 deltas of the build are RFC §27.16 (Δ136–Δ173) and §27.19.
+The decisions are in [drive_transcripts_t1.md](../../04_solution_strategy/decisions/drive_transcripts_t1.md); the reasoning and the deltas of the build are RFC §27.16 (Δ136–Δ175) and §27.19.
 
 ---
 
@@ -1942,7 +1944,7 @@ already read, then run the revision script. Rollback: restore the six-token back
 the previous tip; the purge is mandatory and the second re-index runs under the caps the first spent. The paragraph that
 follows is slice S1 alone; it is part of the same rollout.
 
-**Transcripts (RFC §27; T1 built on `feat/drive-transcripts`, not deployed)** have their own runbook: [docs/07_deployment/README.md](../../07_deployment/README.md)
+**Transcripts (RFC §27; T1 live since 2026-10-21, owner only)** have their own runbook: [docs/07_deployment/README.md](../../07_deployment/README.md)
 → "Transcripts of recordings (§27)". In short: the composite and collection-group indexes `READY` plus the smoke; back up and upload the four
 `drive_transcriber` prompt documents (owner); pause; deploy main and the indexer with the switch **off**; verify both serve the new image; resume;
 then, to try it, set `DRIVE_TRANSCRIBE_ENABLED_DEV=on` and a low `DRIVE_TRANSCRIBE_USD_CAP_DEV` in `.env`, redeploy, and set the owner's flag with

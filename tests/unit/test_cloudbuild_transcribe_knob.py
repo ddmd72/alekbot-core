@@ -1,7 +1,8 @@
 """The transcription kill switch and its cap knob survive a deploy (USER_DRIVE_INDEXING_RFC §27.13; plan Task 14B; G13,
 T-R3): `--set-env-vars` replaces every variable, so both ride as substitutions fed by deploy-only .env keys
 (DRIVE_TRANSCRIBE_ENABLED_DEV, DRIVE_TRANSCRIBE_USD_CAP_DEV; never the local keys). The switch defaults OFF in the
-Makefile and in the `substitutions:` block; the cap, which only lowers $20, reaches the indexer AND the main service."""
+Makefile and in the `substitutions:` block; the cap, which only lowers $20, reaches the indexer AND the main service, and
+so does the switch since T-R34 (the Cabinet shows the disclosure only while it is on)."""
 import re
 from pathlib import Path
 
@@ -24,10 +25,11 @@ def test_the_indexer_deploy_sets_the_switch_and_the_cap_from_substitutions():
     assert env["DRIVE_TRANSCRIBE_USD_CAP"] == "$_DRIVE_TRANSCRIBE_USD_CAP"
 
 
-def test_the_main_service_gets_the_cap_for_the_cabinet_but_not_the_switch():
+def test_the_main_service_gets_the_cap_and_the_switch_for_the_cabinet():
     env = _env("alek-bot-dev")
     assert env["DRIVE_TRANSCRIBE_USD_CAP"] == "$_DRIVE_TRANSCRIBE_USD_CAP"
-    assert "DRIVE_TRANSCRIBE_ENABLED" not in env
+    # T-R34: the same substitution as the indexer's, so the Cabinet and the indexer never disagree on the switch
+    assert env["DRIVE_TRANSCRIBE_ENABLED"] == "$_DRIVE_TRANSCRIBE_ENABLED"
 
 
 def test_substitution_default_off():

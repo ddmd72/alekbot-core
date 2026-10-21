@@ -24,6 +24,10 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Install ffmpeg
+        # The media extractor tests run the real ffmpeg/ffprobe (they skip without them).
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
       - name: make check
         # make check = ruff check src/ + mypy (domain/ports) + unit/architecture tests.
         # No secrets: the unit suite mocks all I/O at the port/SDK boundary.

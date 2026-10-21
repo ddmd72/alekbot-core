@@ -23,11 +23,11 @@ def _value(argv, flag):
 def test_protocol_whitelist_pinned():
     for argv in (_window(), media.build_probe_argv(URL, CA),
                  media.build_pass_argv(URL, CA, "matroska,webm", 0, 600, "/w/pass.opus")):
-        assert _value(argv, "-protocol_whitelist") == "https,tls,tcp,crypto"
+        assert _value(argv, "-protocol_whitelist") == "https,tls,tcp"      # no `crypto` (Δ180, T-R32)
 
 
 def test_format_whitelist_pinned():
-    expected = "mov,mp4,m4a,matroska,webm,mp3,wav,flac,ogg,aac"
+    expected = "mov,mp4,m4a,matroska,webm,mp3,wav,flac,ogg,aac,avi,asf,aiff,amr,flv"   # the last five: T-R32
     assert _value(media.build_probe_argv(URL, CA), "-format_whitelist") == expected
     assert _value(_window(), "-format_whitelist") == expected
     assert _value(_window(), "-f") == "mov,mp4,m4a,3gp,3g2,mj2"       # the probed demuxer pinned on the extraction run
