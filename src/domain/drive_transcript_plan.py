@@ -28,12 +28,13 @@ Public interface:
     TRANSCRIBER_AGENT                                                       the class's model backoff key (§25.4.6)
 
 The state table, first match wins (`DriveIndexRecord.transcript_state`, plain strings, G21):
-    none      not a TRANSCRIBE-admitted kind, not `normal` scope, a folder, not resolved or being deleted, a never-download
-              reason (dot name, secret, OS artefact, remote item, package, malware, dense tree, kind not yet admitted),
-              no content version, or inaccessible (§26.2).
+    none      not a TRANSCRIBE-admitted kind, not `normal` scope, a folder, card-capped (T-R24), not resolved or being
+              deleted, a never-download reason (dot name, secret, OS artefact, remote item, package, malware, dense
+              tree, kind not yet admitted), no content version, or inaccessible (§26.2).
     current   a transcript or stub exists at this content key and TRANSCRIPT_BODY_VERSION (the stage wrote `current`; the
-              plan never looks in the store). A stale body version, or a record read under another EXTRACTION_VERSION
-              (G31), is not current: the record is `ready` and the stage finds the store hit. A TRANSCRIBE_VERSION bump changes NOTHING by itself (Δ122: re-buying is the requeue
+              plan never looks in the store). A stale body version, a record read under another EXTRACTION_VERSION
+              (G31), or a record `pending` again (its reading lost: a chunk-cap release, a re-read; T-R24), is not
+              current: the record is `ready` and the stage finds the store hit. A TRANSCRIBE_VERSION bump changes NOTHING by itself (Δ122: re-buying is the requeue
               script's job): it is not part of the key, and records stay as they are.
     current   (too_large) `size_bytes > TRANSCRIBE_MAX_BYTES`: the plan writes the stub itself from metadata (record
               `metadata_only / too_large` through `demoted`, no probe, no model). Only while `enabled`.
@@ -265,18 +266,29 @@ def leaves_job(written: DriveIndexRecord, planned: DriveIndexRecord) -> bool:
 # -- the plan -----------------------------------------------------------------------------------------------------
 
 def _eligible(rec: DriveIndexRecord) -> bool:
+    """A card-capped record is not (T-R24): its reading would never be found (§5.4, search never shows content
+    without a card), so it is not bought; its job is dropped (`leaves_job`). When the cap releases it, it is `pending`
+    again and re-planned, and a transcript already stored is a store hit with no model cost."""
     return (admission(rec.kind) is Admission.TRANSCRIBE and rec.scope is Scope.NORMAL and not rec.is_folder
-            and not inaccessible(rec) and rec.state not in (RecordState.UNRESOLVED, RecordState.DELETING)
+            and not inaccessible(rec) and not rec.card_capped
+            and rec.state not in (RecordState.UNRESOLVED, RecordState.DELETING)
             and bool(rec.content_version) and rec.reason not in _NEVER_TRANSCRIBED)
 
 
 def _is_current(rec: DriveIndexRecord, key: str) -> bool:
     """A record read under another EXTRACTION_VERSION is not current either (G31): its outcome no longer stands, the
     upgrade re-plan would leave it `pending` forever, and the stage's store path re-finalizes it with no model call.
-    `extraction_version == 0` (never stamped) is not stale: the planner's own rule (`stale_versions`)."""
+    `extraction_version == 0` (never stamped) is not stale: the planner's own rule (`stale_versions`).
+
+    Nor is a record that is `pending` again (T-R24): its reading is gone while the transcript stands — the chunk cap
+    released it (`chunk_released`), a failed re-embed sent it to a re-read, a new cTag with the same bytes re-planned it
+    — and no index run reads a media file (`content_due` is false for TRANSCRIBE kinds), so it would stay `pending` for
+    good; the stage's store path indexes it again with no model call. A finished file is never `pending`: a transcript
+    leaves it `indexed`, a stub or a gate or cap refusal `metadata_only`."""
     stale_extraction = rec.extraction_version > 0 and rec.extraction_version != EXTRACTION_VERSION
     return (rec.transcript_state == CURRENT and rec.transcript_key == key
-            and rec.transcript_body_version == TRANSCRIPT_BODY_VERSION and not stale_extraction)
+            and rec.transcript_body_version == TRANSCRIPT_BODY_VERSION and not stale_extraction
+            and rec.state is not RecordState.PENDING)
 
 
 def _settle(rec: DriveIndexRecord, state: str, *, hold: Optional[str] = None,

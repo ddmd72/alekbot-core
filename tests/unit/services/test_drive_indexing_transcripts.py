@@ -583,6 +583,57 @@ async def test_a_job_with_a_window_in_a_batch_is_left_on_delete(world):
     assert w.job(audio) is None and w.reserved() == pytest.approx(0.0)
 
 
+async def test_a_card_capped_recording_leaves_the_pipeline_and_its_job_is_dropped(world, monkeypatch):
+    """T-R24 (I1): a recording the card cap evicts is not bought — its reading would never be found — so its job goes
+    and the reservation is released exactly once; nothing more is extracted for it."""
+    w = world(seconds_per_window=100.0)
+    audio = w.add_recording(duration=4000.0)   # three windows, two per step: still working after the tick
+    await w.tick()
+    assert w.rec(audio).transcript_state == "working" and w.reserved() > 0
+    releases: List[float] = []
+    real = w.repo.reserve_model_usd
+
+    async def spy(user_id, month, cls, delta):
+        if delta < 0:
+            releases.append(delta)
+        return await real(user_id, month, cls, delta)
+    w.repo.reserve_model_usd = spy
+    # the card cap is full and a better-ranked file arrives: the recording's card is evicted (`capped`, §5.4)
+    monkeypatch.setattr(svc_mod, "MAX_CARD_RECORDS_PER_USER", 1)
+    w.repo.records[("u", audio)] = replace(w.rec(audio), card_rank=99)
+    w.add_doc("lease.md", prose(5))
+    runs = len(w.media.runs)
+    await w.settle()
+    rec = w.rec(audio)
+    assert rec.card_capped and rec.transcript_state == "none"
+    assert w.job(audio) is None and w.reserved() == pytest.approx(0.0) and len(releases) == 1
+    assert len(w.media.runs) == runs and w.runner.submits == []
+
+
+async def test_a_transcript_the_chunk_cap_refused_is_indexed_from_the_store_once_released(world, monkeypatch):
+    """T-R24 (I2): the chunk cap refuses the transcript (`metadata_only / user_chunk_cap`, the transcript stored and
+    `current`); once the cap releases the record it is `pending`, not current, and the stage indexes it from the store:
+    no new extraction, no new submission, no new collection."""
+    from src.domain import drive_index_run as run_mod
+    w = world()
+    audio = w.add_recording()
+    await w.to_waiting(audio)
+    w.answer(w.batches()[-1])
+    w.clock.advance(BATCH_POLL_FIRST_S + 1)
+    monkeypatch.setattr(run_mod, "MAX_CHUNKS_PER_USER", 0)   # no headroom while it is finalized
+    await w.tick()
+    assert w.summary_total("demoted") == 1 and w.readable(audio) == []
+    rec = w.rec(audio)
+    assert rec.reason is Reason.USER_CHUNK_CAP or rec.transcript_state == "ready"   # refused, or released already
+    assert w.job(audio) is None                                             # finalized: the job is gone
+    monkeypatch.setattr(run_mod, "MAX_CHUNKS_PER_USER", 10_000)
+    w.clock.advance(timedelta(hours=1).total_seconds())
+    await w.settle()
+    rec = w.rec(audio)
+    assert rec.transcript_state == "current" and rec.state is RecordState.INDEXED and w.readable(audio)
+    assert len(w.runner.submits) == 1 and len(w.runner.collects) == 1 and len(w.media.runs) == 1
+
+
 def _ctx(w) -> TranscriptContext:
     return TranscriptContext(now=w.clock(), enabled=True, month_usd=0.0, reserved_usd=0.0, cap_usd=20.0)
 

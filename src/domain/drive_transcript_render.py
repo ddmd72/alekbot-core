@@ -13,7 +13,7 @@ and summary belong to the mirror file, not here. Every stub has this determinist
 """
 from typing import List, Optional
 
-from src.domain.drive_index import DriveIndexRecord
+from src.domain.drive_index import DriveIndexRecord, RecordState
 from src.domain.drive_enrichment import JobState
 from src.domain.drive_transcript import StitchedTranscript, StoredTranscript, TranscriptStub
 from src.domain.drive_transcript_time import format_stamp
@@ -58,8 +58,9 @@ def _stub_line(stub: str, seconds: int = 0) -> Optional[str]:
 
 
 def card_segment(rec: DriveIndexRecord) -> Optional[str]:
-    """The transcript line of a media card; None while there is nothing to say (no transcript, a failed one)."""
-    if rec.transcript_state != JobState.CURRENT.value:
+    """The transcript line of a media card; None while there is nothing to say (no transcript, a failed one, or a
+    record whose index run failed: no chunks back a "transcript: N min" line, T-R24)."""
+    if rec.transcript_state != JobState.CURRENT.value or rec.state is RecordState.FAILED:
         return None
     if rec.transcript_stub:
         return _stub_line(rec.transcript_stub, rec.transcript_seconds)
