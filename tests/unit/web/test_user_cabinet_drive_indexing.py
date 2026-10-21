@@ -79,7 +79,8 @@ class TestStatus:
                          "readable_chunks": 17, "model_usd_month": {"reader": 0.5, "triage": 0.25},
                          "model_usd_caps": {"reader": 4.0, "triage": 3.0},
                          "initial_build": {"spent_usd": 40.0, "allowance_usd": 40.0, "closed": True},
-                         "transcribe_enabled": False},   # §27.12/G24: the user's flag, always present
+                         "transcribe_enabled": False,    # §27.12/G24: the user's flag, always present
+                         "mirror_root": False},          # Δ202: the user has a _Transcripts folder, always present
         }
 
     async def test_needs_reconnect(self):

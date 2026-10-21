@@ -31,7 +31,7 @@ To add a new specialist agent:
 
 from ..domain.companion_config import CompanionConfig
 from ..domain.drive_search_texts import (
-    DRIVE_DATE_FROM_DESCRIPTION, DRIVE_DATE_TO_DESCRIPTION, DRIVE_KIND_DESCRIPTION, DRIVE_QUERY_DESCRIPTION,
+    DRIVE_DATE_FROM_DESCRIPTION, DRIVE_DATE_TO_DESCRIPTION, DRIVE_DELETED_DESCRIPTION, DRIVE_KIND_DESCRIPTION, DRIVE_QUERY_DESCRIPTION,
 )
 from ..domain.voice_errand import TELL_ALEK_INTENT
 from .agent_registry import AgentDescriptor, ExecutionMode, FanoutSpec
@@ -608,9 +608,13 @@ FILE_MANAGEMENT = AgentDescriptor(
             "a passage match, the passage; and says what the search covered and how fresh the index is. "
             "drive_query is required unless the request is filter-only: for filter-only requests (\"files I saved "
             "this week\", \"all my spreadsheets\") leave drive_query empty and set only the filters. "
+            "Set drive_deleted to true only when the user explicitly asks about deleted or removed files: it then "
+            "searches transcripts of deleted recordings and the notes on deleted files, instead of the ordinary "
+            "search; an empty drive_query lists the newest. Never for an ordinary search. "
             'Context: {"drive_query": "<the subject, a document type or purpose, or words, a number or an amount to '
             'find inside>", "drive_folder": "<path or drive:<id>>", '
-            '"drive_kind": "<type>", "drive_date_from": "YYYY-MM-DD", "drive_date_to": "YYYY-MM-DD"}'
+            '"drive_kind": "<type>", "drive_date_from": "YYYY-MM-DD", "drive_date_to": "YYYY-MM-DD", '
+            '"drive_deleted": "true"}'
         ),
     },
     context_schemas={
@@ -661,6 +665,7 @@ FILE_MANAGEMENT = AgentDescriptor(
             "drive_kind": DRIVE_KIND_DESCRIPTION,
             "drive_date_from": DRIVE_DATE_FROM_DESCRIPTION,
             "drive_date_to": DRIVE_DATE_TO_DESCRIPTION,
+            "drive_deleted": DRIVE_DELETED_DESCRIPTION,   # shared with the owner-notes RFC §6.4 (one surface)
         },
     },
     internal=False,

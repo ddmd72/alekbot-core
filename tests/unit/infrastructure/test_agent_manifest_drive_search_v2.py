@@ -23,7 +23,10 @@ def test_time_spans_go_to_the_date_fields_and_types_to_the_query():
 
 
 def test_no_new_field_and_no_mode():
-    assert set(_SCHEMA) == {"drive_query", "drive_folder", "drive_kind", "drive_date_from", "drive_date_to"}
+    # D19 held for Search v2: no v2 field, no mode. `drive_deleted` is the later, owner-decided deleted-files flag
+    # (D48, Δ195, §27.9.11; DRIVE_FILE_NOTES_RFC §6.4), not a Search v2 field.
+    assert set(_SCHEMA) == {"drive_query", "drive_folder", "drive_kind", "drive_date_from", "drive_date_to",
+                            "drive_deleted"}
 
 
 def test_the_capability_names_document_types_and_the_tiers():

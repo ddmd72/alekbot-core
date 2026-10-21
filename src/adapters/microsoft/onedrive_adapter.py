@@ -33,7 +33,7 @@ import re
 import time
 from dataclasses import replace
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple
 from urllib.parse import quote, unquote
 
 import aiohttp  # module import on purpose: tests patch aiohttp.ClientSession
@@ -49,8 +49,10 @@ from ...domain.user_drive import (
     DriveItemNotFoundError,
     DriveNameConflictError,
     DriveNotConnectedError,
+    DrivePathTooLong,
     DriveReauthRequired,
     DriveResyncRequired,
+    DriveStorageFull,
     DriveThrottled,
     join_drive_path,
 )
@@ -121,9 +123,16 @@ def _retry_after_hint(value: Optional[str]) -> float:
     return min(max(seconds, 0.0), float(TICK_DEADLINE_S))
 
 
+# A path-addressed segment (`items/{id}:/{name}:`): the name is percent-encoded by `_q`, so it holds no '/' or ':'
+_NAMED_SEGMENT_RE = re.compile(r":/([^/:]+):")
+
+
 def _where(path: str) -> str:
-    """A call's path for logs: no query string (delta links carry long opaque tokens)."""
-    return path.split("?", 1)[0]
+    """A call's path for logs and error texts: no query string (delta links carry long opaque tokens), and a
+    path-addressed name (an upload's or `child_by_name`'s `:/<name>:`) replaced by its length, `:/<n chars>:` — a file
+    name never reaches a log line (USER_DRIVE_INDEXING_RFC §27.12; final review I2)."""
+    bare = path.split("?", 1)[0]
+    return _NAMED_SEGMENT_RE.sub(lambda m: f":/<{len(unquote(m.group(1)))} chars>:", bare)
 
 
 def _is_graph_url(url: Optional[str]) -> bool:
@@ -186,7 +195,26 @@ def _to_change(raw: Dict[str, Any]) -> DriveChange:
         web_url=str(raw.get("webUrl", "")),
         child_count=int((folder or {}).get("childCount") or 0),
         facets=facets,
+        created_at=_parse_time(raw.get("createdDateTime")),
     )
+
+
+class _BadRequest(ValueError):
+    """A 400 that is not a path-length refusal. A ValueError, so every caller keeps its old mapping;
+    `code` is Graph's top-level error code (read for the code only, never logged in full)."""
+
+    def __init__(self, message: str, code: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+def _error_codes(body: str) -> Tuple[str, str]:
+    """(error code, innerError code) of a Graph error body; '' for what is absent or unparseable."""
+    try:
+        error = (json.loads(body) or {}).get("error") or {}
+        return str(error.get("code") or ""), str((error.get("innerError") or {}).get("code") or "")
+    except (ValueError, AttributeError, TypeError):
+        return "", ""
 
 
 class _CursorGone(ValueError):
@@ -274,16 +302,17 @@ class OneDriveAdapter(UserDrivePort):
 
     # -- writes -------------------------------------------------------------
 
-    async def upload(self, user_id: str, parent_id: str, filename: str, data: bytes, content_type: str) -> DriveItem:
+    async def upload(self, user_id: str, parent_id: str, filename: str, data: bytes, content_type: str,
+                     conflict: Literal["rename", "replace", "fail"] = "rename") -> DriveItem:
         async with aiohttp.ClientSession() as s:
             target = f"/me/drive/items/{_q(parent_id)}:/{_q(filename)}:"
             if len(data) <= _SIMPLE_UPLOAD_MAX:
                 raw = await self._call(s, user_id, "PUT",
-                                       f"{target}/content?@microsoft.graph.conflictBehavior=rename",
+                                       f"{target}/content?@microsoft.graph.conflictBehavior={conflict}",
                                        data=data, content_type=content_type)
             else:
                 raw = await self._session_upload(s, user_id, f"{target}/createUploadSession",
-                                                 {"item": {"@microsoft.graph.conflictBehavior": "rename"}}, data)
+                                                 {"item": {"@microsoft.graph.conflictBehavior": conflict}}, data)
             return await self._item(s, user_id, raw)
 
     async def replace_content(self, user_id: str, item_id: str, data: bytes, content_type: str) -> DriveItem:
@@ -309,10 +338,30 @@ class OneDriveAdapter(UserDrivePort):
 
     async def create_folder(self, user_id: str, parent_id: str, name: str) -> DriveItem:
         async with aiohttp.ClientSession() as s:
-            raw = await self._call(s, user_id, "POST", f"/me/drive/items/{_q(parent_id)}/children",
-                                   json={"name": name, "folder": {},
-                                         "@microsoft.graph.conflictBehavior": "fail"})
+            try:
+                raw = await self._call(s, user_id, "POST", f"/me/drive/items/{_q(parent_id)}/children",
+                                       json={"name": name, "folder": {},
+                                             "@microsoft.graph.conflictBehavior": "fail"})
+            except _BadRequest as exc:
+                if exc.code == "invalidRequest":
+                    # S1 (Δ216): a folder created near the path limit answered a plain 400 invalidRequest.
+                    raise DrivePathTooLong("Drive folder path is too long") from exc
+                raise
             return await self._item(s, user_id, raw)
+
+    async def child_by_name(self, user_id: str, parent_id: str, name: str) -> Optional[DriveChange]:
+        """The child with exactly that name: one path-relative GET (S1: works inside the App Folder), no search."""
+        async with aiohttp.ClientSession() as s:
+            try:
+                raw = await self._call(s, user_id, "GET", f"/me/drive/items/{_q(parent_id)}:/{_q(name)}:")
+            except DriveItemNotFoundError:
+                return None
+        return _to_change(raw)
+
+    async def area_path(self, user_id: str) -> str:
+        """Decoded absolute path of the area root from the drive root (e.g. '/Apps/Alek-bot'). Log its length only."""
+        async with aiohttp.ClientSession() as s:
+            return await self._root_abs(s, user_id)
 
     async def delete(self, user_id: str, item_id: str) -> None:
         async with aiohttp.ClientSession() as s:
@@ -581,11 +630,21 @@ class OneDriveAdapter(UserDrivePort):
                     if status == 404:
                         raise DriveItemNotFoundError(f"Drive item not found: {_where(path)}")
                     if status == 409:
-                        raise DriveNameConflictError(f"Drive name taken: {path}")
+                        raise DriveNameConflictError(f"Drive name taken: {_where(path)}")
+                    if status == 507:
+                        logger.warning(f"Drive {method} {_where(path)}: 507 insufficient storage")
+                        raise DriveStorageFull("The drive is full")
                     if status == 204:
                         return {}
                     if not resp.ok:
                         body = await resp.text()
+                        if status == 400:
+                            code, inner = _error_codes(body)
+                            if inner == "pathIsTooLong":
+                                logger.warning(f"Drive {method} {_where(path)}: 400 path is too long")
+                                raise DrivePathTooLong("Drive path is too long")
+                            logger.error(f"Drive {method} {_where(path)} failed (400): {code}/{inner}")
+                            raise _BadRequest(f"Drive {method} failed (400)", code)
                         logger.error(f"Drive {method} {_where(path)} failed ({status}): {body[:300]}")
                         raise ValueError(f"Drive {method} failed ({status})")
                     return dict(await resp.json())
@@ -675,4 +734,5 @@ class OneDriveAdapter(UserDrivePort):
             modified_at=datetime.fromisoformat(modified.replace("Z", "+00:00")) if modified else None,
             web_url=str(raw.get("webUrl", "")),
             child_count=int((raw.get("folder") or {}).get("childCount") or 0),
+            ctag=str(raw.get("cTag") or ""),
         )

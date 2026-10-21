@@ -69,12 +69,25 @@ class DriveRootProtectedError(Exception):
     """An operation would delete or move the area root."""
 
 
+class DriveMirrorWriteRefused(Exception):
+    """A chat write whose target, source or destination is the bot's transcript folder, lies under it, or contains it
+    (USER_DRIVE_INDEXING_RFC §27.9.8, the Step 1 guard). The agent answers with one localized line."""
+
+
 class DrivePathError(ValueError):
     """A request the drive rules refuse (bad path, wrong item kind, wrong mode)."""
 
 
 class DriveNameConflictError(Exception):
     """The provider refused a create because the name is taken."""
+
+
+class DriveStorageFull(Exception):
+    """The provider refused a write: the drive is full."""
+
+
+class DrivePathTooLong(Exception):
+    """The provider refused a write because the resulting path is too long."""
 
 
 @dataclass(frozen=True)
@@ -89,6 +102,7 @@ class DriveItem:
     modified_at: Optional[datetime] = None
     web_url: str = ""
     child_count: int = 0
+    ctag: str = ""
 
     @property
     def ref(self) -> str:

@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import os
 import sys
@@ -135,6 +136,14 @@ def quiet_third_party_loggers() -> None:
     """
     for name in ("slack_bolt", "slack_sdk", "websocket", "httpx", "httpcore"):
         logging.getLogger(name).setLevel(logging.WARNING)
+
+
+def exc_brief(exc: BaseException) -> str:
+    """An exception as a log line may carry it where its message must not appear: the type name and the first 12 hex
+    characters of sha256(str(exc)), which tells repeats apart. A message can hold a drive path, a file name, a URL or a
+    store's index-creation link with the project id (USER_DRIVE_INDEXING_RFC §27.12, Δ233)."""
+    digest = hashlib.sha256(str(exc).encode("utf-8", "replace")).hexdigest()[:12]
+    return f"{type(exc).__name__} (message digest {digest})"
 
 
 logger = setup_logger()

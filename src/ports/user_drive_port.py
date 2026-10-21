@@ -4,10 +4,11 @@ UserDrivePort — the user's long-term file area (docs/10_rfcs/USER_DRIVE_RFC.md
 Provider-neutral: ids are opaque, paths are relative to the area root and readable
 (never percent-encoded). An implementation raises DriveNotConnectedError when access is
 missing or expired, DriveItemNotFoundError for a missing item and DriveNameConflictError
-when a create hits a taken name.
+when a create hits a taken name. Every write may also raise DriveStorageFull (the drive is full) or
+DrivePathTooLong (the resulting path exceeds the provider's limit).
 """
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from src.domain.drive_index import DriveChange, DriveChanges, DriveChildrenPage
 from src.domain.user_drive import DriveConnection, DriveItem
@@ -49,25 +50,38 @@ class UserDrivePort(ABC):
         """File content. Callers check size from get_item first."""
 
     @abstractmethod
-    async def upload(self, user_id: str, parent_id: str, filename: str, data: bytes, content_type: str) -> DriveItem:
-        """New file in `parent_id`; never overwrites (a clash gets a provider-suffixed name)."""
+    async def upload(self, user_id: str, parent_id: str, filename: str, data: bytes, content_type: str,
+                     conflict: Literal["rename", "replace", "fail"] = "rename") -> DriveItem:
+        """New file in `parent_id`. `conflict` says what a taken name does: "rename" (the default, every existing
+        caller) gets a provider-suffixed name and never overwrites; "replace" overwrites the file; "fail" raises
+        DriveNameConflictError. May raise DriveStorageFull or DrivePathTooLong."""
 
     @abstractmethod
     async def replace_content(self, user_id: str, item_id: str, data: bytes, content_type: str) -> DriveItem:
-        """Overwrite an existing file's content, keeping its id and name."""
+        """Overwrite an existing file's content, keeping its id and name. May raise DriveStorageFull."""
 
     @abstractmethod
     async def move(self, user_id: str, item_id: str,
                    new_parent_id: Optional[str] = None, new_name: Optional[str] = None) -> DriveItem:
-        """Move and/or rename; the id is unchanged."""
+        """Move and/or rename; the id is unchanged. DriveNameConflictError when the target name is taken."""
 
     @abstractmethod
     async def create_folder(self, user_id: str, parent_id: str, name: str) -> DriveItem:
-        """Create one folder; DriveNameConflictError if the name is taken."""
+        """Create one folder; DriveNameConflictError if the name is taken. May raise DrivePathTooLong (the
+        provider refuses a folder whose path is too long) or DriveStorageFull."""
 
     @abstractmethod
     async def delete(self, user_id: str, item_id: str) -> None:
-        """Delete a file or folder (the provider keeps it recoverable)."""
+        """Delete a file or folder (the provider keeps it recoverable: the recycle bin, never beyond)."""
+
+    @abstractmethod
+    async def child_by_name(self, user_id: str, parent_id: str, name: str) -> Optional[DriveChange]:
+        """The child of `parent_id` with exactly that name, None when there is none. Never a search."""
+
+    @abstractmethod
+    async def area_path(self, user_id: str) -> str:
+        """The decoded absolute path of the area root from the drive root, for the path-length rule
+        (USER_DRIVE_INDEXING_RFC §27.9, Δ193). Never logged in full: log its length."""
 
     # -- change capture for the index (USER_DRIVE_INDEXING_RFC §4) --------------------------
 

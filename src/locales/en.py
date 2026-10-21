@@ -163,6 +163,25 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.DRIVE_REPLACED.value: "✏️ Replaced: {path} ({before} → {after}; the previous version is in its version history)",
     UIMessage.DRIVE_DELETE_FAILED.value: "⚠️ Deleting {path} did not complete.",
     UIMessage.DRIVE_REPLACE_FAILED.value: "⚠️ Replacing {path} did not complete.",
+    UIMessage.DRIVE_MIRROR_WRITE_REFUSED.value: "This folder is managed by the bot and its files are overwritten; to keep your own version, copy the file to another folder.",
+    UIMessage.DRIVE_TRANSCRIPTS_README.value: (
+        "# Transcripts\n\n"
+        "Managed by the bot: files here may be rewritten; do not edit them. "
+        "The bot overwrites every file here, in Archive/ too, so a change you make does not last. "
+        "To keep your own version, copy the file to another folder. "
+        "Transcripts of deleted recordings are in Archive/; deleting a file there makes the bot forget it."
+    ),
+    UIMessage.DRIVE_TRANSCRIPT_OPEN_RECORDING.value: "open the recording",
+    UIMessage.DRIVE_TRANSCRIPT_MANAGED_LINE.value: (
+        "Managed by the bot: this file may be rewritten. Automatic transcript, may contain errors."
+    ),
+    UIMessage.DRIVE_TRANSCRIPT_DURATION_MINUTES.value: "{n} min",
+    UIMessage.DRIVE_TRANSCRIPT_SPEAKERS_ONE.value: "{n} speaker",
+    UIMessage.DRIVE_TRANSCRIPT_SPEAKERS_MANY.value: "{n} speakers",
+    UIMessage.DRIVE_TRANSCRIPT_STUB_NO_SPEECH.value: "No speech was detected in this recording ({duration}).",
+    UIMessage.DRIVE_TRANSCRIPT_STUB_TOO_LONG.value: "This recording is too long to transcribe ({duration}).",
+    UIMessage.DRIVE_TRANSCRIPT_STUB_TOO_LARGE.value: "This recording is too large to transcribe.",
+    UIMessage.DRIVE_TRANSCRIPT_STUB_NO_AUDIO.value: "This recording has no audio track.",
     UIMessage.DEEP_RESEARCH_DRIVE_FOLDER.value: "Deep research",
     UIMessage.DEEP_RESEARCH_DRIVE_COPIED.value: "📁 Copied to your drive: {path}",
     UIMessage.DEEP_RESEARCH_DRIVE_NOT_CONNECTED.value: "Not copied to your drive: the drive is not connected.",

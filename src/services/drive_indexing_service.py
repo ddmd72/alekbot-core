@@ -10,7 +10,8 @@ so a crash between writes repeats the step instead of skipping work.
 Public interface:
     DriveIndexingService(drive, repo, embeddings, queue, users, place_of, embedding_space, *, extractors=None,
                          triage=None, profiler=None, passages=None, upgrade_pass=True, transcripts=None,
-                         transcribe_enabled=False, transcribe_cap_usd=TRANSCRIBE_USD_PER_MONTH, clock, monotonic)
+                         transcribe_enabled=False, transcribe_cap_usd=TRANSCRIBE_USD_PER_MONTH, mirror_repo=None,
+                         mirror=None, localization=None, language=None, clock, monotonic)
     await tick(user_id, nudge=None) -> TickResult
 
 `extractors` maps `drive_extraction.PARSER` / `READER` to their ContentExtractorPort and `triage` is the
@@ -50,6 +51,22 @@ otherwise every INACCESSIBLE_RETRY_SLOW (Δ51, OQ-C1); a readable answer clears 
 resumes. A parent lookup's 404 still removes an orphan (RFC Δ29) and a nudge's 404 writes nothing. The tick counts the
 marked files for the coverage line and the fan-out's notice (`_unread_counters`, Δ56); it never writes the fan-out's
 `inaccessible_notified_since` (Δ54).
+
+The transcript mirror's hooks (§27.9.2-§27.9.6, §27.9.12; plan Task 20B): `mirror_repo` is the DriveMirrorRepository. With
+it, the tick reads every root document of the user once at its start (`_TICK_MIRROR`), and the planner keeps those
+folders opaque (`PlanContext.mirror_root_ids`); every record write runs `mirror_plan`; every delete site passes the why
+of the deletes the mirror must hear of (`_mirror_notices`), and `_commit` writes the durable marks before the record
+writes (Δ208). The purge keeps the store entries the ledger pins and never writes the mirror collections. Without it,
+none of this runs. With it, a user with no root document costs the one roots query per tick, plus reads only: every
+purge that does not keep the store reads `pinned_keys`, and the stage's daily orphan sweep reads `pinned` for each orphan
+key no record uses; no mark and no other mirror call.
+
+The mirror step (§27.9.5; plan Task 21C): `mirror` is the DriveTranscriptMirror, built only with the kill switch on, and
+`localization` / `language` give its files their strings and the user's UI language (all three or none). It runs last in
+the work-off (after a complete round), only for a user whose transcription is on, through the `_TickHost` as its
+`MirrorHost`, within its own budgets and window (`_Budget.mirror_stop`). While the user has mirror work it can do now
+(`_mirror_ready`, Δ209, Δ217) the content classes, enrichment and extraction stop MIRROR_RESERVE_S earlier. Mirror work
+never asks for a continuation; its counters join the tick line (`mirror={...}`).
 """
 from __future__ import annotations
 
@@ -62,7 +79,9 @@ import uuid
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Awaitable, Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple
+from typing import (
+    TYPE_CHECKING, Awaitable, Callable, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Set, Tuple,
+)
 
 from ..domain import drive_enrich_plan as enrich
 from ..domain.drive_accuracy import accuracy_settled, scored
@@ -94,7 +113,8 @@ from ..domain.drive_index import (
 from ..domain.drive_index_params import (
     CASCADE_OPS_PER_TICK, EMBED_FILE_BUDGET_S, EMBED_IN_FLIGHT, ENRICH_FILE_BUDGET_S, ENRICH_IN_FLIGHT,
     ENRICH_QUEUE_PAGE, ENRICH_SHARE, ENRICH_WAKEUPS_PAGE, FILE_START_MARGIN_S, INACCESSIBLE_SCAN_MAX, SUBFOLDER_SCAN_MAX,
-    ITEM_CALLS_PER_TICK, LEASE_MARGIN,
+    ITEM_CALLS_PER_TICK, LEASE_MARGIN, MIRROR_OPS_PER_TICK, MIRROR_READS_PER_TICK, MIRROR_RESERVE_S,
+    MIRROR_ROOT_GRACE, MIRROR_STAMPS_PER_TICK,
     MAINTENANCE_SHARE, MAX_ATTEMPTS, MAX_CARD_RECORDS_PER_USER, MAX_CHUNKS_PER_USER, MODEL_EXTRACT_PAGES_PER_MONTH,
     MODEL_IN_FLIGHT,
     NUDGE_RETRY_DELAY_S, PASSAGE_CHUNK_USD_ESTIMATE, PASSAGE_CHUNKS_PER_CALL, PASSAGE_IN_FLIGHT, PROBE_CHILDREN,
@@ -113,6 +133,12 @@ from ..domain.drive_index_planner import (
     stale_versions, structure_stale, triage_due, triaged, with_card, with_retry, without_card,
 )
 from ..domain.drive_keys import word_form_keys, word_keys_capped
+from ..domain import drive_mirror_plan as mirror_versions
+from ..domain.drive_mirror import GONE, UNKNOWN, UNSTORED, DeletionNotice, MirrorRoot
+from ..domain.drive_mirror_plan import local_day, mirror_plan
+from ..domain.drive_mirror_render import MirrorStrings
+from ..domain.language import LanguageCode
+from ..domain.ui_messages import UIMessage
 from ..domain.drive_profile import (
     PROFILE_POLICY, ProfileOutput, TemplateReason, input_fingerprint, profile_input, record_policy, stored_text,
     template_profile, grade, GradeCounts,
@@ -140,22 +166,26 @@ from ..domain.drive_transcript_job import SUBMITTED
 from ..domain.drive_usage import added_usage
 from ..domain.exceptions import LLMClientError, LLMError, LLMRateLimitError, LLMUnavailableError
 from ..domain.user_drive import (
-    DriveAccessDenied, DriveFileTooLarge, DriveItemNotFoundError, DriveNotConnectedError, DriveReauthRequired,
-    DriveResyncRequired, DriveThrottled,
+    DriveAccessDenied, DriveConnection, DriveFileTooLarge, DriveItemNotFoundError, DriveNotConnectedError,
+    DriveReauthRequired, DriveResyncRequired, DriveThrottled,
 )
 from ..ports.content_extractor_port import ContentExtractorPort
 from ..ports.document_profiler_port import DocumentProfilerPort
 from ..ports.drive_index_repository import DriveIndexRepository
+from ..ports.drive_mirror_repository import DriveMirrorRepository
 from ..ports.embedding_service import EmbeddingService
 from ..ports.image_triage_port import ImageTriagePort
+from ..ports.language_service_port import LanguageServicePort
 from ..ports.passage_hint_port import PassageHintPort
 from ..ports.task_queue import TaskQueue
 from ..ports.user_drive_port import UserDrivePort
 from ..ports.user_repository import UserRepository
-from ..utils.logger import logger
+from ..utils.logger import exc_brief, logger
 
 if TYPE_CHECKING:   # REQ-ARCH-22: a service never imports another at run time; the stage is injected
+    from .drive_transcript_mirror import DriveTranscriptMirror
     from .drive_transcript_stage import DriveTranscriptStage
+    from .localization_service import LocalizationService
 
 _DUE_PAGE = 100
 def _last_months(now: datetime, count: int) -> List[str]:
@@ -273,6 +303,10 @@ class _Budget:
     # G16: TRANSCRIBE_SHARE while the user has ready extraction work (decided once, before the due loop), else 0: the
     # content classes and enrichment then leave that share of the start budget to the extraction step
     transcribe_share: float = 0.0
+    # Δ209: MIRROR_RESERVE_S while the user has mirror work the step can do now (decided once, at the work-off's start),
+    # else 0: the content classes, enrichment and extraction then stop that much earlier, and the mirror step's window
+    # is at least that long
+    mirror_reserve: float = 0.0
 
     def elapsed(self) -> float:
         return self.monotonic() - self.started
@@ -283,25 +317,41 @@ class _Budget:
     def content_allowed(self) -> bool:
         """Content classes 0-2 use at most `1 - ENRICH_SHARE` of the start budget, enrichment time not counted
         (§25.4.5): enrichment keeps at least its share. While the user has ready extraction work they also leave
-        `transcribe_share` (G16); without it the rule is unchanged."""
+        `transcribe_share` (G16); while he has mirror work they stop `mirror_reserve` before the start budget's end
+        (Δ209). Without either the rule is unchanged."""
         elapsed = self.elapsed()
         total = TICK_START_BUDGET.total_seconds()
-        return elapsed < total and elapsed - self.enrich_s < (1 - ENRICH_SHARE - self.transcribe_share) * total
+        return (elapsed < total - self.mirror_reserve
+                and elapsed - self.enrich_s < (1 - ENRICH_SHARE - self.transcribe_share) * total)
 
     def enrichment_limit(self) -> float:
         """Where enrichment's start window ends at the latest (seconds into the tick): the start budget, less the
-        extraction step's share while the user has ready extraction work (G16)."""
+        extraction step's share while the user has ready extraction work (G16) and less the mirror's reserve while he
+        has mirror work (Δ209)."""
         total = TICK_START_BUDGET.total_seconds()
-        return total - self.transcribe_share * total
+        return total - self.transcribe_share * total - self.mirror_reserve
 
     def extraction_stop(self) -> Optional[float]:
         """The extraction step's start window (§27.3, G16), as an absolute `monotonic()` value, or None when no step
         may start: TRANSCRIBE_SHARE of the start budget from where the step begins, whatever the due loop used, cut so a
         file step started inside it still ends before the tick deadline — its worst case (one extraction wall, an
-        upload, the start margin) joins the §7.1 sum, as `enrichment_allowed`'s does."""
+        upload, the start margin) joins the §7.1 sum, as `enrichment_allowed`'s does. While the user has mirror work
+        the window ends `mirror_reserve` earlier (Δ209)."""
         at = self.elapsed()
         last_start = TICK_DEADLINE_S - (TRANSCRIBE_EXTRACT_WALL_S + TRANSCRIBE_UPLOAD_S + FILE_START_MARGIN_S)
-        stop = min(at + TRANSCRIBE_SHARE * TICK_START_BUDGET.total_seconds(), last_start)
+        stop = min(at + TRANSCRIBE_SHARE * TICK_START_BUDGET.total_seconds(), last_start) - self.mirror_reserve
+        return self.started + stop if stop > at else None
+
+    def mirror_stop(self) -> Optional[float]:
+        """The mirror step's window (§27.9.5, Δ209), as an absolute `monotonic()` value, or None when it has no time:
+        what is left of the start budget; while the user has mirror work, at least `mirror_reserve` from where the step
+        begins (the steps before it may overrun the start budget by a file's worst case). Cut so a Graph call started
+        at its end still ends before the tick deadline (FILE_START_MARGIN_S covers one call): the reserve and that
+        margin join the §7.1 deadline sum."""
+        at = self.elapsed()
+        total = TICK_START_BUDGET.total_seconds()
+        end = max(total, at + self.mirror_reserve) if self.mirror_reserve else total
+        stop = min(end, TICK_DEADLINE_S - FILE_START_MARGIN_S)
         return self.started + stop if stop > at else None
 
     def enrichment_allowed(self, stop_at: float) -> bool:
@@ -414,6 +464,7 @@ class _Transcription:
     extract_ran: bool = False
     extract_progressed: bool = False
     commits: int = 0
+    mirror_counts: Dict[str, int] = field(default_factory=dict)   # the mirror step's counters for the tick line
 
 
 # Per tick: None outside a tick (the plan then runs with transcription off and no job is dropped).
@@ -431,6 +482,35 @@ class _Marks:
 
 # Per tick: None when the last tick counted no marked file (nothing read at the start).
 _TICK_CLOSED: ContextVar[Optional[_Marks]] = ContextVar("drive_tick_closed", default=None)
+
+
+@dataclass
+class _PurgeStore:
+    """The purge run's pass over the transcript store (Δ214): the pinned content keys read at the purge's start, the
+    scanning helper's cursor (held in the run: a purge resumed by a later tick starts again) and whether it ended."""
+    pins: FrozenSet[str] = frozenset()
+    cursor: Optional[str] = None
+    done: bool = False
+
+
+@dataclass
+class _Mirror:
+    """The user's transcript mirror roots as the tick read them at its start (§27.9.2, Δ184, Δ205): `root_ids` is the
+    union of every root document's current and previous ids (what the planner keeps opaque); `current_ids` the current
+    roots, whose record going to `deleting` or being deleted sets the root-loss mark (a previous root triggers nothing,
+    §27.9.9); `gone_ids` the current roots whose mark is set (read at the start, then kept by this tick's own writes, so
+    a root record written back calls `clear_root_gone` only when there is a mark to clear); `drive_id` the mirror's drive
+    (`connection.drive_id`, else the sync state's; "" when neither is known); `roots` the documents as read (the
+    reserve's check reads the connected drive's seed version and full-drive hold from them, Δ209)."""
+    root_ids: FrozenSet[str]
+    current_ids: FrozenSet[str]
+    gone_ids: Set[str]
+    drive_id: str
+    roots: Tuple[MirrorRoot, ...] = ()
+
+
+# Per tick: None outside a tick or with no mirror repository wired (no root ids, no marks).
+_TICK_MIRROR: ContextVar[Optional[_Mirror]] = ContextVar("drive_tick_mirror", default=None)
 # What makes the tick read the marked records again for its counters: it changed a marking itself (review of S1)
 _MARK_CHANGES = ("inaccessible", "inaccessible_folders", "inaccessible_rechecked", "access_regained")
 
@@ -486,7 +566,14 @@ class DriveIndexingService:
                  passages: Optional[PassageHintPort] = None, upgrade_pass: bool = True,
                  transcripts: Optional["DriveTranscriptStage"] = None, transcribe_enabled: bool = False,
                  transcribe_cap_usd: float = TRANSCRIBE_USD_PER_MONTH,
+                 mirror_repo: Optional["DriveMirrorRepository"] = None,
+                 mirror: Optional["DriveTranscriptMirror"] = None,
+                 localization: Optional["LocalizationService"] = None,
+                 language: Optional[LanguageServicePort] = None,
                  clock: Callable[[], datetime] = _utcnow, monotonic: Callable[[], float] = time.monotonic) -> None:
+        if mirror is not None and (mirror_repo is None or localization is None or language is None):
+            raise ValueError("the transcript mirror step needs the mirror repository, the localization service and "
+                             "the UI-language resolution")
         self._drive = drive
         self._repo = repo
         self._embeddings = embeddings
@@ -507,6 +594,21 @@ class DriveIndexingService:
         # the month's transcription cap: `effective_monthly_cap(DRIVE_TRANSCRIBE_USD_CAP)`, decided by the composition
         # (T-R3; REQ-ARCH-17: a service reads no environment), the same value the stage is built with
         self._transcribe_cap = transcribe_cap_usd
+        # the transcript mirror's roots and ledger (§27.9.2-§27.9.4): the roots keep the bot's folder opaque, the ledger
+        # takes the deletion marks and holds the pins (the purge keeps what it pins); None: no mirror (nothing of it runs)
+        self._mirror_repo = mirror_repo
+        # the mirror step itself (§27.9.5; built only with the kill switch on) and what its files are written in: the
+        # strings (LocalizationService) and the user's UI language (USER -> ACCOUNT -> SYSTEM, §27.9.1)
+        self._mirror = mirror
+        self._localization = localization
+        self._language = language
+        self._timezones: Dict[str, str] = {}   # `UserBotConfig.timezone`, read with the opt-in flag (the archive day)
+        # root setup that made no progress (no root document, or a confirmed loss's reset and new root), per user: the
+        # failures in a row and when the reserve may be taken for it again (`_note_root_setup`; process memory only)
+        self._root_setup_holds: Dict[str, Tuple[int, datetime]] = {}
+        # the step could not start (its UI language or strings unreadable), per user: the same ladder, held off the
+        # reserve only (`_note_step_unavailable`; process memory only)
+        self._mirror_step_holds: Dict[str, Tuple[int, datetime]] = {}
         self._clock = clock
         self._monotonic = monotonic
         self._gate_checked: Dict[str, float] = {}
@@ -565,7 +667,7 @@ class DriveIndexingService:
             if action is AccessAction.RESUME_AFTER_REGAIN:
                 state = replace(state, access_lost_at=None)
                 logger.info(f"[DriveIndex] access regained for {user_id[:8]}; continuing from the cursor")
-            return await self._run(user_id, state, nudge, now, enabled, summary, cont)
+            return await self._run(user_id, state, nudge, now, enabled, summary, cont, connection)
         except LeaseLost as exc:
             # another tick holds the lease, or this one's is ending: it carries on from the last saved state
             logger.info(f"[DriveIndex] tick for {user_id[:8]} stopped, its lease is gone: {exc}")
@@ -577,7 +679,8 @@ class DriveIndexingService:
                 await self._continue(user_id, tick_id, delay_seconds=cont.delay_s)
 
     async def _run(self, user_id: str, state: DriveSyncState, nudge: Optional[Nudge], now: datetime,
-                   enabled: bool, summary: Dict[str, int], cont: _Continuation) -> TickResult:
+                   enabled: bool, summary: Dict[str, int], cont: _Continuation,
+                   connection: Optional[DriveConnection] = None) -> TickResult:
         budget = _Budget(started=self._monotonic(), monotonic=self._monotonic)
         self._gate_checked[user_id] = budget.started   # the gate just read the flag
         state = replace(state, continuation_enqueued_at=None)
@@ -587,14 +690,16 @@ class DriveIndexingService:
                        await self._repo.get_initial_build(user_id))
         spend_token = _TICK_SPEND.set(spend)
         closed_token = _TICK_CLOSED.set(None)   # read inside the tick's error handling (_run_spending)
+        mirror_token = _TICK_MIRROR.set(None)   # read at the start of _run_spending, inside its error handling
         transcription = _Transcription(on=self._transcription_on(user_id))   # as the gate read it: kept for the tick
         if transcription.on:
             transcription.host = _TickHost(self, user_id, budget, models, summary, transcription)
         transcription_token = _TICK_TRANSCRIPTION.set(transcription)
         try:
             return await self._run_spending(user_id, state, nudge, now, enabled, budget, summary, cont, saved,
-                                            models, spend)
+                                            models, spend, connection)
         finally:
+            _TICK_MIRROR.reset(mirror_token)
             _TICK_TRANSCRIPTION.reset(transcription_token)
             _TICK_CLOSED.reset(closed_token)
             _TICK_SPEND.reset(spend_token)
@@ -618,6 +723,22 @@ class DriveIndexingService:
                 by_parent.setdefault(rec.parent_id, []).append(rec.item_id)
         return _Marks(records, {parent: tuple(kids) for parent, kids in by_parent.items()})
 
+    async def _start_mirror(self, user_id: str, state: DriveSyncState,
+                            connection: Optional[DriveConnection]) -> Optional[_Mirror]:
+        """Every root document of the user, read once at the tick's start (one query, §27.9.2, Δ205): after the purge
+        branch, so the first enumeration after any purge already keeps the bot's folder opaque. Whatever the switches
+        (classification is never gated by them). A backend error is `DriveIndexStoreUnavailable` and ends the tick;
+        there is no empty fallback, which would index the whole mirror during one enumeration."""
+        if self._mirror_repo is None:
+            return None
+        roots = await self._mirror_repo.roots(user_id)
+        current = frozenset(r.root_item_id for r in roots if r.root_item_id)
+        every = current | frozenset(p for r in roots for p in r.previous_root_ids if p)
+        drive_id = (connection.drive_id if connection is not None else "") or state.drive_id or ""
+        return _Mirror(root_ids=every, current_ids=current,
+                       gone_ids={r.root_item_id for r in roots if r.root_item_id and r.root_gone_at is not None},
+                       drive_id=drive_id, roots=tuple(roots))
+
     async def _end_marks(self, user_id: str, state: DriveSyncState, summary: Mapping[str, int], *,
                          settled: bool) -> Optional[List[DriveIndexRecord]]:
         """The marked records the counters are made from (Δ56, Δ71), or None to leave them uncounted. A settled tick
@@ -635,8 +756,11 @@ class DriveIndexingService:
 
     async def _run_spending(self, user_id: str, state: DriveSyncState, nudge: Optional[Nudge], now: datetime,
                             enabled: bool, budget: _Budget, summary: Dict[str, int], cont: _Continuation,
-                            saved: _Saved, models: _Models, spend: _Spend) -> TickResult:
+                            saved: _Saved, models: _Models, spend: _Spend,
+                            connection: Optional[DriveConnection] = None) -> TickResult:
         try:
+            # the roots first, before any observation: a read error ends the tick (systemic), never "no roots" (Δ205)
+            _TICK_MIRROR.set(await self._start_mirror(user_id, state, connection))
             _TICK_CLOSED.set(await self._start_marks(user_id, state))
             if nudge is not None:
                 await self._observe_nudge(user_id, state, nudge, now, budget, summary)
@@ -669,7 +793,9 @@ class DriveIndexingService:
                             systemic_failures=0,
                             last_success_at=now if (progressed or not more) else state.last_success_at)
             await self._save_state(state)
-            self._log(user_id, "continued" if more else "done", summary, budget, models, spend)
+            transcription = _TICK_TRANSCRIPTION.get()
+            self._log(user_id, "continued" if more else "done", summary, budget, models, spend,
+                      mirror=transcription.mirror_counts if transcription is not None else None)
             return TickResult("done", summary, models.cost)
         except LeaseLost:
             raise   # nothing more may be written, not even the error
@@ -815,8 +941,10 @@ class DriveIndexingService:
         return state
 
     def _ctx(self, user_id: str, state: DriveSyncState, now: datetime) -> PlanContext:
+        mirror = _TICK_MIRROR.get()
         return PlanContext(user_id=user_id, root_item_id=state.root_item_id, epoch=state.epoch,
-                           phase=state.epoch_phase, now=now, place_of=self._place_of)
+                           phase=state.epoch_phase, now=now, place_of=self._place_of,
+                           mirror_root_ids=mirror.root_ids if mirror is not None else frozenset())
 
     async def _apply(self, user_id: str, ctx: PlanContext, changes: Sequence[DriveChange], budget: _Budget,
                      summary: Dict[str, int], *, relisting: bool = False, nudged: bool = False) -> None:
@@ -834,6 +962,7 @@ class DriveIndexingService:
         writes: Dict[str, DriveIndexRecord] = {}
         deletes: Set[str] = set()
         collects: Set[str] = set()
+        gone: Dict[str, str] = {}   # §27.9.4: a tombstone is `gone`, any other planner delete `unstored`
         for change in changes:
             try:
                 existing = cache.get(change.item_id)
@@ -857,9 +986,12 @@ class DriveIndexingService:
             if (nudged and plan.upsert is not None and plan.upsert.due_at is not None
                     and card_eligible(plan.upsert) and plan.upsert.card_hash != card_hash(plan.upsert)):
                 plan = replace(plan, upsert=schedule(plan.upsert, ctx.now, first_seen=False))
+            if plan.delete_item_id is not None and existing is not None:
+                gone.update(self._mirror_notices([existing], GONE if change.deleted else UNSTORED))
             self._fold(plan, cache, writes, deletes, collects)
         await self._observe_closed_children(user_id, ctx, changes, cache, writes, deletes)
-        await self._commit(user_id, list(writes.values()), deletes, collects=collects)
+        # a delete re-upserted later in the page left `deletes` (`_fold`): `_commit` drops its notice with it
+        await self._commit(user_id, list(writes.values()), deletes, collects=collects, gone=gone)
         summary["observed"] = summary.get("observed", 0) + len(changes)
 
     async def _observe_closed_children(self, user_id: str, ctx: PlanContext, changes: Sequence[DriveChange],
@@ -902,7 +1034,10 @@ class DriveIndexingService:
     async def _maybe_probe(self, user_id: str, change: DriveChange, parent: Optional[DriveIndexRecord],
                            existing: Optional[DriveIndexRecord], ctx: PlanContext,
                            budget: _Budget) -> Optional[FolderProbe]:
-        if not needs_probe(change, parent_scope(change.parent_id, parent, ctx.root_item_id), existing):
+        if change.item_id in ctx.mirror_root_ids:
+            return None   # a mirror root is opaque whatever its density (§27.9.8): no probe call
+        if not needs_probe(change, parent_scope(change.parent_id, parent, ctx.root_item_id, ctx.mirror_root_ids),
+                           existing):
             return None
         if not budget.item_call_allowed():
             return None   # the folder waits as probe_pending; its children are held unresolved (§3.6)
@@ -934,7 +1069,8 @@ class DriveIndexingService:
     async def _commit(self, user_id: str, writes: List[DriveIndexRecord], deletes: Set[str],
                       card_vectors: Optional[Dict[str, List[float]]] = None, *,
                       collects: Optional[Set[str]] = None,
-                      before: Optional[Mapping[str, DriveIndexRecord]] = None) -> None:
+                      before: Optional[Mapping[str, DriveIndexRecord]] = None,
+                      gone: Optional[Mapping[str, str]] = None) -> None:
         """`collects`: items whose chunks (every generation) go before the records are written (§3.4, §7.6).
         `before`: the records the writes were derived from; a write that drops its readable generation collects it
         (drops_readable, R3 F2-2), so a caller holding the record never has to remember to.
@@ -943,7 +1079,15 @@ class DriveIndexingService:
         state, it only never stubs) and then the enrichment plan. While transcription is on for the user, the job of a
         record the write takes off it (`leaves_job`) or deletes is dropped first (`drop_jobs`: its reservation released
         once, T-R20: a job with a window in a batch is left to collection), so a crash between the two writes leaves a
-        record without a job (restarted by the stage), never a job holding money for a record that left."""
+        record without a job (restarted by the stage), never a job holding money for a record that left.
+
+        The transcript mirror (§27.9.4): `mirror_plan` runs after the transcript plan and before the enrichment plan.
+        `gone` is the why of the deletes that matter to the mirror (`_mirror_notices`: a mirrored record or a root),
+        decided at the call site; every caller that deletes passes it ({} when none matters). A delete not named there
+        is no notice; with `gone` None every delete is `unknown` (one read later, never wrong). While the user has a
+        root, the marks go before the record writes (Δ208: a crash leaves a mark for a record that still exists, which
+        the mirror clears, never a deleted record with no mark), and a root's record written back clears its mark after
+        it is written."""
         if before:
             dropped = {w.item_id for w in writes if drops_readable(before.get(w.item_id), w)}
             collects = (collects or set()) | dropped if dropped else collects
@@ -956,13 +1100,67 @@ class DriveIndexingService:
         ctx = self._enrich_ctx()
         tctx = self._transcript_ctx()
         # every write's plans: the transcript job's (§27.3), then the keys, enrichment jobs and queue fields (§25.4.9)
-        planned = [enrich.planned(transcript_plan(w, tctx), ctx) for w in writes]
+        planned = [enrich.planned(mirror_plan(transcript_plan(w, tctx)), ctx) for w in writes]
         await self._drop_transcript_jobs(user_id, writes, planned, deletes)
         writes = planned
+        mirror = _TICK_MIRROR.get()
+        if mirror is not None and mirror.root_ids:
+            await self._mark_mirror(user_id, mirror, writes, deletes, gone)
         for start in range(0, len(writes), RECORD_WRITE_BATCH):
             await self._repo.upsert_records(writes[start:start + RECORD_WRITE_BATCH], card_vectors)
+        if mirror is not None and mirror.gone_ids:
+            await self._clear_root_marks(user_id, mirror, writes)
         if deletes:
             await self._repo.delete_records(user_id, sorted(deletes))
+
+    def _mirror_notices(self, records: Iterable[DriveIndexRecord], why: str) -> Dict[str, str]:
+        """The deletes the mirror must hear of (§27.9.4), with their why: a record the mirror has written a file or a
+        folder for (`mirrored_digest`), or a mirror root's own record. Pure; `_commit` keeps the ones it deletes."""
+        mirror = _TICK_MIRROR.get()
+        roots = mirror.root_ids if mirror is not None else frozenset()
+        return {r.item_id: why for r in records if r.mirrored_digest or r.item_id in roots}
+
+    async def _mark_mirror(self, user_id: str, mirror: _Mirror, writes: Sequence[DriveIndexRecord], deletes: Set[str],
+                           gone: Optional[Mapping[str, str]]) -> None:
+        """The durable marks of one commit, behind the commit's fence (Δ208): `mark_gone` for the noticed file and folder
+        records (existing ledger documents of the mirror's drive only), `mark_root_gone` for a current root whose
+        record is deleted or written as `deleting` (§27.9.9). A previous root triggers nothing."""
+        repo = self._mirror_repo
+        if repo is None:
+            return
+        # An empty `mirror.drive_id` (neither the connection nor the sync state knows the drive) sends `mark_gone` with no
+        # drive check, so it may mark a document of any of the user's drives under that source id. That is safe only
+        # because OneDrive item ids are drive-unique (the ledger key carries no drive id; the Δ is recorded in Task 21E).
+        whys = {item: (gone.get(item) if gone is not None else UNKNOWN) for item in deletes}
+        noticed = {item: why for item, why in whys.items() if why}
+        lost = {item for item in noticed if item in mirror.current_ids}
+        lost |= {w.item_id for w in writes if w.item_id in mirror.current_ids and w.state is RecordState.DELETING}
+        now = self._clock()
+        marks = [DeletionNotice(item, why, now) for item, why in sorted(noticed.items())
+                 if item not in mirror.root_ids]
+        if marks:
+            _fence()
+            marked = await repo.mark_gone(user_id, marks, drive_id=mirror.drive_id)
+            logger.info(f"[DriveIndex] mirror notices for {user_id[:8]}: {len(marks)} sent, {marked} marked")
+        for root_id in sorted(lost - mirror.gone_ids):
+            _fence()
+            if await repo.mark_root_gone(user_id, root_id, now):
+                logger.warning(f"[DriveIndex] the transcript mirror root of {user_id[:8]} left the index; "
+                               f"root-loss mark set")
+            mirror.gone_ids.add(root_id)
+
+    async def _clear_root_marks(self, user_id: str, mirror: _Mirror, writes: Sequence[DriveIndexRecord]) -> None:
+        """A current root whose record is written back as not `deleting` (a recycle-bin restore, a move back in: the same
+        item id) clears its root-loss mark (§27.9.9, Δ203), after the record is written."""
+        repo = self._mirror_repo
+        if repo is None:
+            return
+        for root_id in sorted({w.item_id for w in writes if w.item_id in mirror.gone_ids
+                               and w.state is not RecordState.DELETING}):
+            _fence()
+            if await repo.clear_root_gone(user_id, root_id):
+                logger.info(f"[DriveIndex] the transcript mirror root of {user_id[:8]} is back; root-loss mark cleared")
+            mirror.gone_ids.discard(root_id)
 
     # ------------------------------------------------------------------------------------------
     # Work off (only after a complete round, RFC Δ15)
@@ -973,7 +1171,11 @@ class DriveIndexingService:
         """§7.1 step 2 as Search v2 orders it (§25.4.5): content classes 0-2 within their share, then enrichment with at
         least ENRICH_SHARE, then classes 3-4 (keys work included) within the maintenance share of what is left, then
         the upgrade pass and the cap releases. With transcription on for the user (§27.3): the transcript stage's
-        cheap steps right after the sweep, and its extraction step right after the due loop."""
+        cheap steps right after the sweep, and its extraction step right after the due loop. With the mirror step
+        wired as well (§27.9.5): it runs last, whatever class the due loop stopped at, and while the user has mirror
+        work it can do now the steps before it leave it MIRROR_RESERVE_S (Δ209, `_mirror_ready`, decided here once)."""
+        if _transcribing() and await self._mirror_ready(user_id):
+            budget.mirror_reserve = MIRROR_RESERVE_S
         if state.epoch_phase is EpochPhase.SWEEPING:
             state = await self._sweep(user_id, state, now, budget, summary)
         if _transcribing():
@@ -992,7 +1194,171 @@ class DriveIndexingService:
             state = await self._upgrade_step(user_id, state, now, budget, summary)
             await self._release_card_cap(user_id, now, summary)
             await self._release_chunk_cap(user_id, now, summary)
+        if _transcribing():
+            await self._mirror_step(user_id, state, budget)   # last (§27.9.5): after a complete round only
         return state
+
+    # -- the transcript mirror's step (§27.9.5; plan Task 21C) ---------------------------------------------------
+
+    def _mirror_wired(self) -> bool:
+        return self._mirror is not None and _TICK_MIRROR.get() is not None
+
+    async def _mirror_ready(self, user_id: str) -> bool:
+        """The user has mirror work the step can do now (Δ209, Δ217): one cheap check, at most three single-document
+        reads — root setup (no root document for the connected drive yet, or a confirmed loss whose ledger reset and
+        new root are under way: the current id already in `previous_root_ids`, checked before the root-loss mark it
+        still carries) or an unfinished seed (no read), a record in `mirror_queue`, a ripe wake-up, a mark whose
+        `mark_ready_at` has passed. Never while the tick has no mirror drive id, the root-loss mark is set and still
+        inside its grace (past the grace its one confirming read is work, Δ239), or the full-drive hold
+        (`quota_hold_until`) lasts: the step does nothing then, so held work never takes the reserve.
+        Root setup that keeps failing (every name taken, a full drive, a refusal) is held off the reserve with a
+        back-off (`_note_root_setup`; Task 21C fix round 1, a delta to Δ209): the step still tries it every tick, in what
+        the start budget left; so is a step whose UI language could not be had (`_note_step_unavailable`). A store error
+        of the three queries (a mirror index missing or building) is no reserve, logged at ERROR, never the end of the
+        work-off (Δ236)."""
+        mirror = _TICK_MIRROR.get()
+        if self._mirror is None or self._mirror_repo is None or mirror is None or not mirror.drive_id:
+            return False
+        now = self._clock()
+        held_step = self._mirror_step_holds.get(user_id)
+        if held_step is not None and now < held_step[1]:
+            return False   # the step's language or strings could not be had: no reserve until the hold ends
+        root = _connected_root(mirror)
+        if root is None or root.root_item_id in root.previous_root_ids:
+            held = self._root_setup_holds.get(user_id)
+            return held is None or now >= held[1]   # root setup (and then the seed) is due
+        if root.root_item_id in mirror.gone_ids:
+            # the step stops at its root-loss check (Δ217) and only waits — unless the grace is over: then its one
+            # confirming read is due (the round is complete: the work-off runs only then), Δ239
+            if root.root_gone_at is None or now < root.root_gone_at + MIRROR_ROOT_GRACE:
+                return False
+            held = self._root_setup_holds.get(user_id)
+            return held is None or now >= held[1]   # a confirming read that keeps failing is held off (Δ244)
+        if root.quota_hold_until is not None and now < root.quota_hold_until:
+            return False
+        if root.seed_version != _mirror_seed_version():
+            return True
+        try:
+            if await self._repo.mirror_queue(user_id, 1):
+                return True
+            if await self._repo.mirror_wakeups(user_id, now, 1):
+                return True
+            return bool(await self._mirror_repo.ready_marks(user_id, mirror.drive_id, now, 1))
+        except DriveIndexStoreUnavailable as exc:
+            # a mirror index missing or building, or a store outage, must not skip the index's work-off (the owner's
+            # invariant "the index never stalls because of the mirror", Δ236): no reserve, the work-off goes on
+            logger.error(f"[DriveIndex] transcript mirror of {user_id[:8]}: the readiness check failed "
+                         f"({exc_brief(exc)}); no reserved tail this tick")
+            return False
+
+    async def _mirror_step(self, user_id: str, state: DriveSyncState, budget: _Budget) -> None:
+        """The mirror step for one user, through the tick's host (`_TickHost` as `MirrorHost`), in its window
+        (`_Budget.mirror_stop`). It runs only with the step wired and transcription on (the caller's check); with no
+        mirror drive id it does not run and counts `mirror_no_drive_id` (§27.9.2). Its files are written in the user's
+        UI language, resolved here; when the language or the strings cannot be had the step waits for the next tick
+        (a file is never rendered in a guessed language: the language is not in the digest, Δ120), and the reserve is
+        held off for it (`_note_step_unavailable`). The step raises only its systemic classes (Task 21A); of those,
+        DriveThrottled and DriveIndexStoreUnavailable are contained here (Δ236: counted as `mirror_systemic`, logged by
+        type, the tick goes on and saves its work-off as usual — the index never stalls because of the mirror), while
+        LeaseLost and DriveNotConnectedError (DriveReauthRequired included) end the tick as anywhere else. An opt-out
+        found by a mirror write is the host's own stop signal (`_TickHost.stop_exceptions`): `_OptedOut` passes through
+        the step unchanged and ends the tick as anywhere else. Mirror work never asks for a
+        continuation (`_has_more` does not look at it): the fan-out paces it."""
+        transcription = _TICK_TRANSCRIPTION.get()
+        mirror = _TICK_MIRROR.get()
+        if (not self._mirror_wired() or self._mirror is None or mirror is None or transcription is None
+                or transcription.host is None or self._localization is None or self._language is None):
+            return
+        counts = transcription.mirror_counts
+        if not mirror.drive_id:
+            _inc(counts, "mirror_no_drive_id")
+            logger.warning(f"[DriveIndex] transcript mirror of {user_id[:8]}: no drive id is known for the connected "
+                           f"drive; the mirror step does not run this tick")
+            return
+        stop_at = budget.mirror_stop()
+        if stop_at is None:
+            logger.info(f"[DriveIndex] transcript mirror of {user_id[:8]}: no time left in the tick; next tick")
+            return
+        try:
+            lang = await self._language.resolve_ui_language(user_id)
+            strings = _mirror_strings(self._localization, lang)
+        except Exception as exc:   # a user or account read, a missing string: not the step's own error classes
+            _inc(counts, "mirror_errors")
+            hold = self._note_step_unavailable(user_id)
+            logger.warning(f"[DriveIndex] transcript mirror of {user_id[:8]}: the UI language or its strings could "
+                           f"not be read ({type(exc).__name__}); the mirror step waits for the next tick, no reserved "
+                           f"tail for it for {hold}")
+            return
+        self._mirror_step_holds.pop(user_id, None)
+        host = transcription.host
+        host.begin_mirror(drive_id=mirror.drive_id, tz_name=self._timezones.get(user_id, ""), language=lang.value,
+                          strings=strings, round_complete=state.round_complete,
+                          epoch_idle=state.epoch_phase is EpochPhase.IDLE and state.initial_enumeration_done,
+                          stop_at=stop_at)
+        try:
+            out = await self._mirror.run(user_id, host)
+        except (DriveThrottled, DriveIndexStoreUnavailable) as exc:
+            # contained (Δ236): a throttled mirror write or a mirror index missing must not end the tick, which would
+            # drop the work-off's unsaved state, count a systemic failure and hold `last_success_at` back. The mirror
+            # never asks for a continuation, so the fan-out's next tick tries it again. LeaseLost, the host's stop
+            # (`_OptedOut`) and DriveNotConnectedError still end the tick.
+            _inc(counts, "mirror_systemic")
+            line = (f"[DriveIndex] transcript mirror of {user_id[:8]}: the step stopped ({exc_brief(exc)}); the tick "
+                    f"goes on, the mirror waits for the next tick")
+            if isinstance(exc, DriveThrottled):
+                logger.warning(line)
+            else:
+                logger.error(line)
+            self._note_root_setup(user_id, mirror, {})
+            return
+        for key in _MIRROR_TICK_COUNTERS:
+            _inc(counts, key, out.get(key, 0))
+        self._note_root_setup(user_id, mirror, out)
+
+    def _step_root_hold(self, user_id: str) -> timedelta:
+        """One more failure in a row on `_root_setup_holds`: 10 min doubling to 6 h (Δ227). Returns the hold."""
+        failures = self._root_setup_holds.get(user_id, (0, self._clock()))[0] + 1
+        hold = min(ROOT_SETUP_HOLD_BASE * (2 ** (failures - 1)), ROOT_SETUP_HOLD_CAP)
+        self._root_setup_holds[user_id] = (failures, self._clock() + hold)
+        return hold
+
+    def _note_step_unavailable(self, user_id: str) -> timedelta:
+        """The step could not start (its UI language or strings could not be had): the reserve is held off for the user
+        with the root-setup hold's ladder (10 min doubling to 6 h; process memory, Δ227), so a lasting failure cannot
+        take the reserved tail on every tick (final review, deploy Minor 2). The step itself is still tried every tick;
+        the first start clears the hold. Returns the hold."""
+        failures = self._mirror_step_holds.get(user_id, (0, self._clock()))[0] + 1
+        hold = min(ROOT_SETUP_HOLD_BASE * (2 ** (failures - 1)), ROOT_SETUP_HOLD_CAP)
+        self._mirror_step_holds[user_id] = (failures, self._clock() + hold)
+        return hold
+
+    def _note_root_setup(self, user_id: str, mirror: _Mirror, out: Mapping[str, int]) -> None:
+        """After a run that had root setup to do (no root document at the tick's start, or a confirmed loss's reset
+        under way): progress (a root created, documents reset, the loss confirmed) clears the user's hold; none puts
+        the reserve on hold for ROOT_SETUP_HOLD_BASE, doubling per failure in a row up to ROOT_SETUP_HOLD_CAP (a delta to Δ209).
+        Process memory, not a stored field: no root document exists to hold it, the indexer is one instance, and a
+        restart costs at most one reserved tail. With a root document: a root-loss mark whose confirming read failed
+        steps the same ladder (Δ244); the mark gone (cleared, or the loss confirmed) clears the hold."""
+        root = _connected_root(mirror)
+        if root is not None and root.root_item_id not in root.previous_root_ids:
+            if root.root_item_id not in mirror.gone_ids:
+                self._root_setup_holds.pop(user_id, None)   # no mark, or the step cleared it or confirmed the loss
+            elif out.get("mirror_root_read_failed") or out.get("mirror_errors"):
+                # the root-loss mark is still set and its confirming read failed (Δ244), charged or unexpected: a run
+                # that keeps the root in `gone_ids` stops at step 0, so its only `mirror_errors` are that read's. The same
+                # ladder, so a read that keeps failing does not take the reserve on every tick; a run that did not get to
+                # the read keeps the hold as it is
+                hold = self._step_root_hold(user_id)
+                logger.info(f"[DriveIndex] transcript mirror of {user_id[:8]}: the root-loss read failed; no reserved "
+                            f"tail for it for {hold}")
+            return
+        if any(out.get(key) for key in _ROOT_SETUP_PROGRESS):
+            self._root_setup_holds.pop(user_id, None)
+            return
+        hold = self._step_root_hold(user_id)
+        failures = self._root_setup_holds[user_id][0]
+        logger.info(f"[DriveIndex] transcript mirror of {user_id[:8]}: root setup made no progress ({failures} in a "
+                    f"row); no reserved tail for it for {hold}")
 
     async def _sweep(self, user_id: str, state: DriveSyncState, now: datetime, budget: _Budget,
                      summary: Dict[str, int]) -> DriveSyncState:
@@ -1016,7 +1382,8 @@ class DriveIndexingService:
                     for update in plan.parent_updates:
                         if update.item_id not in deletes:
                             writes[update.item_id] = update   # re-opened, with its re-listing due (durable)
-            await self._commit(user_id, list(writes.values()), deletes, collects=_ever_read(stale))
+            await self._commit(user_id, list(writes.values()), deletes, collects=_ever_read(stale),
+                               gone=self._mirror_notices(stale, GONE))   # not seen by a full enumeration: gone
             budget.cascade_ops -= len(stale)
             summary["swept"] = summary.get("swept", 0) + len(stale)
         return state
@@ -1206,7 +1573,7 @@ class DriveIndexingService:
             return False
         kids = await self._repo.children(user_id, folder.item_id, None, min(budget.cascade_ops, RECORD_WRITE_BATCH))
         if not kids:
-            await self._commit(user_id, [], {folder.item_id})
+            await self._commit(user_id, [], {folder.item_id}, gone=self._mirror_notices([folder], GONE))
             budget.cascade_ops -= 1
             summary["deleted"] = summary.get("deleted", 0) + 1
             return True
@@ -1217,7 +1584,8 @@ class DriveIndexingService:
                 return False   # worked in this page; the folder comes back in the next one
             await self._commit(user_id, [replace(folder, due_at=now + _STEP_ASIDE)], set())
             return True
-        await self._commit(user_id, dying, files, collects=_ever_read([k for k in kids if not k.is_folder]))
+        await self._commit(user_id, dying, files, collects=_ever_read([k for k in kids if not k.is_folder]),
+                           gone=self._mirror_notices([k for k in kids if not k.is_folder], GONE))
         budget.cascade_ops -= len(files) + len(dying)
         summary["deleted"] = summary.get("deleted", 0) + len(files)
         return True
@@ -1240,7 +1608,7 @@ class DriveIndexingService:
         parent = await self._parent_of(user_id, rec, ctx)
         plan = plan_observation(change_from_record(rec), replace(rec, attempts=0), parent, probe, ctx, parent,
                                 observed=False)
-        await self._commit_plan(user_id, plan)
+        await self._commit_plan(user_id, plan, rec)
         return True
 
     async def _resolve_step(self, user_id: str, rec: DriveIndexRecord, state: DriveSyncState, ctx: PlanContext,
@@ -1256,7 +1624,7 @@ class DriveIndexingService:
                                    set())
                 return True
             await self._commit_plan(user_id, plan_observation(change_from_record(rec), rec, parent, None, ctx, parent,
-                                                              observed=False))
+                                                              observed=False), rec)
             return True
         if not budget.item_call_allowed():
             return False
@@ -1283,7 +1651,7 @@ class DriveIndexingService:
             await self._remove_orphan(user_id, rec, ctx)
             return True
         grandparent = (await self._repo.get_records(user_id, [parent_change.parent_id])).get(parent_change.parent_id)
-        await self._commit_plan(user_id, plan_observation(parent_change, None, grandparent, None, ctx))
+        await self._commit_plan(user_id, plan_observation(parent_change, None, grandparent, None, ctx), None)
         return True
 
     async def _remove_orphan(self, user_id: str, rec: DriveIndexRecord, ctx: PlanContext) -> None:
@@ -1291,7 +1659,8 @@ class DriveIndexingService:
         if rec.is_folder:
             await self._commit(user_id, [_dying(rec, ctx.now)], set())
         else:
-            await self._commit(user_id, [], {rec.item_id}, collects=_ever_read([rec]))
+            await self._commit(user_id, [], {rec.item_id}, collects=_ever_read([rec]),
+                               gone=self._mirror_notices([rec], GONE))   # its parent is definitely not found
 
     async def _rescope_step(self, user_id: str, folder: DriveIndexRecord, ctx: PlanContext, budget: _Budget,
                             summary: Dict[str, int]) -> bool:
@@ -1313,7 +1682,8 @@ class DriveIndexingService:
         budget.cascade_ops -= max(len(kids), 1)
         current = cache.get(folder.item_id) or folder
         writes.pop(folder.item_id, None)
-        await self._commit(user_id, list(writes.values()), deletes, collects=collects)    # the children first ...
+        await self._commit(user_id, list(writes.values()), deletes, collects=collects,
+                           gone=self._mirror_notices(kids, UNSTORED))    # the children first ...
         done = len(kids) < limit
         if current.scope is folder.scope:
             current = replace(current, rescope_pending=not done, cascade_cursor=None if done else kids[-1].item_id)
@@ -1360,12 +1730,15 @@ class DriveIndexingService:
             return None
         return (await self._repo.get_records(user_id, [rec.parent_id])).get(rec.parent_id)
 
-    async def _commit_plan(self, user_id: str, plan: ObservationPlan) -> None:
+    async def _commit_plan(self, user_id: str, plan: ObservationPlan, source: Optional[DriveIndexRecord]) -> None:
+        """A re-plan of a stored record (`source`, the record the plan was made from; None for a record not stored
+        yet): a delete it decides is `unstored` for the mirror (§27.9.4)."""
         writes: Dict[str, DriveIndexRecord] = {}
         deletes: Set[str] = set()
         collects: Set[str] = set()
         self._fold(plan, {}, writes, deletes, collects)
-        await self._commit(user_id, list(writes.values()), deletes, collects=collects)
+        await self._commit(user_id, list(writes.values()), deletes, collects=collects,
+                           gone=self._mirror_notices([source] if source is not None else [], UNSTORED))
 
     # -- cards and the card cap (§5.4, §8.5) ---------------------------------------------------
 
@@ -2059,7 +2432,8 @@ class DriveIndexingService:
                                                     observed=False)), {}, writes, deletes, collects)
         if fresh.item_id not in writes and fresh.item_id not in deletes:
             writes[fresh.item_id] = _maintenance(schedule(current, ctx.now, first_seen=False))
-        await self._commit(user_id, list(writes.values()), deletes, collects=collects)
+        await self._commit(user_id, list(writes.values()), deletes, collects=collects,
+                           gone=self._mirror_notices([fresh], UNSTORED))
 
     async def _end_run(self, user_id: str, before: DriveIndexRecord, final: DriveIndexRecord, cls: Optional[int],
                        summary: Dict[str, int], mark: Optional[_RunMark] = None, *,
@@ -2080,12 +2454,14 @@ class DriveIndexingService:
 
     async def _abandon_run(self, user_id: str, run: DriveIndexRecord, cls: Optional[int], now: datetime) -> None:
         """A systemic error ends the tick mid-run (§8.2): the attempt is cleared with `attempts` untouched and the
-        content due again; the started generation is never reused. Best effort: the error itself is re-raised."""
+        content due again; the started generation is never reused. Best effort: the error itself is re-raised. It writes
+        outside `_commit` and changes no field the mirror digest reads; the mirror plan still runs, so `mirror_due` can
+        never go stale here (§27.9.4)."""
         back = _maintenance_kept(schedule(_cleared(replace(run, defer_until=None, defer_priority=None)), now,
                                           first_seen=not run.has_card), cls)
         try:
             _fence()
-            await self._repo.upsert_records([enrich.planned(transcript_plan(back, self._transcript_ctx()),
+            await self._repo.upsert_records([enrich.planned(mirror_plan(transcript_plan(back, self._transcript_ctx())),
                                                             self._enrich_ctx())])
         except Exception as exc:
             logger.warning(f"[DriveIndex] could not clear the run of item {run.item_id} for {user_id[:8]}: {exc}; "
@@ -2575,8 +2951,8 @@ class DriveIndexingService:
         rec = (await self._repo.get_records(user_id, [item_id])).get(item_id)
         if rec is None or rec.profile_state != _READY or not self._jobs_now(rec, models, now)[0]:
             return
-        if not budget.enrichment_allowed(TICK_START_BUDGET.total_seconds()):
-            return
+        if not budget.enrichment_allowed(TICK_START_BUDGET.total_seconds() - budget.mirror_reserve):
+            return   # the start budget's end, less the mirror's reserve while it has work (Δ209)
         budget.profiled_inline.add(item_id)
         started = self._monotonic()
         try:
@@ -3290,7 +3666,8 @@ class DriveIndexingService:
             if rec.item_id not in deletes and self._stale(enrich.planned(writes.get(rec.item_id, rec),
                                                                          self._enrich_ctx()), pending):
                 found = True
-        await self._commit(user_id, list(writes.values()), deletes, collects=collects)
+        await self._commit(user_id, list(writes.values()), deletes, collects=collects,
+                           gone=self._mirror_notices(page, UNSTORED))
         summary["upgraded"] = summary.get("upgraded", 0) + len(writes)
         month = month_key(now) if held else ""
         if len(page) == _DUE_PAGE:
@@ -3316,6 +3693,7 @@ class DriveIndexingService:
             await self._save_state(replace(state, purging=True))
         budget = _Budget(started=self._monotonic(), monotonic=self._monotonic)
         keep = state.purge_keep_transcripts   # read at the purge's start: a rebuild keeps the store (§27.8 b)
+        store = _PurgeStore(pins=await self._purge_pins(user_id, keep))
         released = swept = docs_done = False
         while budget.time_left():
             _fence()
@@ -3323,11 +3701,12 @@ class DriveIndexingService:
                 await self._release_transcript_reservations(user_id, summary)
                 released = True
             if not docs_done:
-                if await self._purge_transcript_documents(user_id, keep, summary):
+                if await self._purge_transcript_documents(user_id, keep, summary, store):
                     continue
                 docs_done = True
             if not swept:   # T-R14: only after the three helpers returned 0, never failing or holding the purge
-                swept = await self._sweep_transcript_orphans(user_id, keep, summary)
+                # while any pin exists the sweep runs in its keep mode (windows only): a pinned entry keeps its parts
+                swept = await self._sweep_transcript_orphans(user_id, keep or bool(store.pins), summary)
                 if not swept:
                     continue
             hints = await self._repo.delete_user_hints(user_id, RECORD_WRITE_BATCH)   # hints first (§25.2.2)
@@ -3350,20 +3729,48 @@ class DriveIndexingService:
         cont.request()
         return TickResult("purging", summary)
 
-    async def _purge_transcript_documents(self, user_id: str, keep: bool, summary: Dict[str, int]) -> bool:
+    async def _purge_pins(self, user_id: str, keep: bool) -> FrozenSet[str]:
+        """The store entries the mirror ledger pins (§27.9.6, §27.9.12, Δ186, Δ217), read once at the purge's start: per
+        user, on every drive, so the access-loss and drive-switch purges keep an archived transcript too. A purge that
+        keeps the whole store (a rebuild) reads none; nor does a service with no mirror repository. Reads only: the
+        purge never writes the mirror collections."""
+        if keep or self._mirror_repo is None:
+            return frozenset()
+        return await self._mirror_repo.pinned_keys(user_id)
+
+    async def _purge_transcript_documents(self, user_id: str, keep: bool, summary: Dict[str, int],
+                                          store: "_PurgeStore") -> bool:
         """One round of the purge's transcript deletes: the user's jobs (with their window results), then batches, then
-        the store unless `keep` (a rebuild keeps it). Repository only, with or without the stage. True when it deleted."""
+        the store unless `keep` (a rebuild keeps it). Repository only, with or without the stage. True when it deleted
+        (or, while pins exist, when the scan of the store has not reached its end).
+
+        With pins (`store.pins`, Δ186, Δ214) the store goes through the scanning helper `delete_user_transcripts_except`,
+        whose cursor the purge run holds: a page made only of pinned heads deletes nothing but is not the end, so the
+        helper is called until its cursor is None. Without pins it is the plain delete, as before T2."""
         for key, deleter in (("purged_transcript_jobs", self._repo.delete_user_transcript_jobs),
                              ("purged_transcript_batches", self._repo.delete_user_batches)):
             deleted = await deleter(user_id, RECORD_WRITE_BATCH)
             if deleted:
                 summary[key] = summary.get(key, 0) + deleted
                 return True
-        if not keep:
-            stored = await self._repo.delete_user_transcripts(user_id, RECORD_WRITE_BATCH)
-            if stored:
-                summary["purged_transcripts"] = summary.get("purged_transcripts", 0) + stored
-                return True
+        if keep:
+            return False
+        if store.pins:
+            if store.done:
+                return False
+            stored, store.cursor = await self._repo.delete_user_transcripts_except(user_id, RECORD_WRITE_BATCH,
+                                                                                   store.pins, store.cursor)
+            _inc(summary, "purged_transcripts", stored)
+            if store.cursor is None:
+                store.done = True
+                kept = len(store.pins)
+                logger.info(f"[DriveIndex] purge of {user_id[:8]} kept the store entries of {kept} pinned "
+                            f"transcript{'s' if kept != 1 else ''} (the mirror's archive)")
+            return stored > 0 or not store.done
+        stored = await self._repo.delete_user_transcripts(user_id, RECORD_WRITE_BATCH)
+        if stored:
+            summary["purged_transcripts"] = summary.get("purged_transcripts", 0) + stored
+            return True
         return False
 
     async def _sweep_transcript_orphans(self, user_id: str, keep: bool, summary: Dict[str, int]) -> bool:
@@ -3551,6 +3958,7 @@ class DriveIndexingService:
         profile = await self._users.get_user(user_id)
         if profile is not None:
             self._account_ids[user_id] = str(getattr(profile, "account_id", "") or "")
+            self._timezones[user_id] = str(getattr(profile.config, "timezone", "") or "")
         self._transcribe_flags[user_id] = bool(
             profile is not None and getattr(profile.config, "drive_transcribe_enabled", False))
         return bool(profile is not None and profile.config.drive_indexing_enabled)
@@ -3563,12 +3971,14 @@ class DriveIndexingService:
 
     @staticmethod
     def _log(user_id: str, end: str, summary: Dict[str, int], budget: _Budget, models: _Models,
-             spend: Optional[_Spend] = None) -> None:
+             spend: Optional[_Spend] = None, mirror: Optional[Mapping[str, int]] = None) -> None:
         """The tick line (§12.1, §25.7 telemetry): the summary counts, and the dollars per class spent this tick (the
         fallback's share and what the initial build covered), the enrichment time and the rebuild progress. The
         transcript stage adds `windows_extracted`, `windows_submitted`, `windows_collected` and `transcripts` (files made
         `current`) to the counts, `transcribe_usd` (collected dollars booked) to the classes and
-        `transcribe_reserved_usd` (this tick's net reservations) after them (§27.10)."""
+        `transcribe_reserved_usd` (this tick's net reservations) after them (§27.10). The mirror step's counters
+        (`_MIRROR_TICK_COUNTERS`, non-zero only) follow as `mirror={...}`: kept out of the summary, so they never count
+        as the index's progress (`last_success_at`)."""
         elapsed = budget.monotonic() - budget.started
         cost = f" model_cost=${models.cost:.4f}" if models.calls or models.cost else ""
         usd = ""
@@ -3577,7 +3987,9 @@ class DriveIndexingService:
         if spend is not None and spend.reserved_usd:   # this tick's net transcription reservations (§27.10)
             usd += f" transcribe_reserved_usd=${spend.reserved_usd:+.4f}"
         enriched = f" enrich_s={budget.enrich_s:.1f}" if budget.enrich_s else ""
-        logger.info(f"[DriveIndex] tick user={user_id[:8]} end={end} {summary}{cost}{usd}{enriched} "
+        counts = {k: mirror[k] for k in _MIRROR_TICK_COUNTERS if mirror and mirror.get(k)}
+        mirrored = f" mirror={counts}" if counts else ""
+        logger.info(f"[DriveIndex] tick user={user_id[:8]} end={end} {summary}{cost}{usd}{enriched}{mirrored} "
                     f"duration={elapsed:.1f}s")
 
 
@@ -3585,7 +3997,14 @@ class _TickHost:
     """The `TranscriptHost` (drive_transcript_stage) one tick lends the transcript stage for one user (§27.3; plan
     Task 14). Every method is the tick's own rule, so the stage writes nothing the tick would not: the lease fence, a
     record write through `_commit` (the plans, drops_readable), an index run through the ordinary text path under the
-    tick's file budget (G32), the usage documents (G8, G9, Δ106) and the per-agent backoff (§25.4.6)."""
+    tick's file budget (G32), the usage documents (G8, G9, Δ106) and the per-agent backoff (§25.4.6).
+
+    It is also the mirror step's `MirrorHost` (drive_transcript_mirror; §27.9.5, plan Task 21C), set up by
+    `begin_mirror` right before the step runs: the drive id, the user's zone and UI language and its strings, the
+    round and epoch facts, the step's own budgets (MIRROR_OPS_PER_TICK Graph writes, MIRROR_READS_PER_TICK Graph reads
+    — never the index's ITEM_CALLS_PER_TICK — and MIRROR_STAMPS_PER_TICK stamps), its window, and the tick's list of
+    marked roots (`root_mark_changed`). The mirror's `commit(records)` passes no `before`: a plain `_commit` (its writes
+    change no card text and no transcript state)."""
 
     def __init__(self, svc: "DriveIndexingService", user_id: str, budget: _Budget, models: _Models,
                  summary: Dict[str, int], transcription: _Transcription) -> None:
@@ -3595,6 +4014,19 @@ class _TickHost:
         self._models = models
         self.summary = summary
         self._transcription = transcription
+        # MirrorHost (begin_mirror sets them for the step's run)
+        self.drive_id = ""
+        self.tz_name = ""
+        self.language = ""
+        self.round_complete = False
+        self.epoch_idle = False
+        self.opted_out = False   # a mirror write found indexing turned off (the tick then leaves as _OptedOut)
+        self.stop_exceptions = (_OptedOut,)   # MirrorHost: the step re-raises it unchanged, like a lost lease
+        self._ops = 0
+        self._reads = 0
+        self._stamps = 0
+        self._mirror_stop: Optional[float] = None
+        self._strings: Optional[MirrorStrings] = None
 
     @property
     def account_id(self) -> str:
@@ -3603,10 +4035,36 @@ class _TickHost:
     def fence(self) -> None:
         _fence()
 
-    async def commit(self, records: Sequence[DriveIndexRecord], before: Mapping[str, DriveIndexRecord]) -> None:
-        """`_commit`, with the card of a record the stage changed scheduled again: a transcript or stub line changes
-        the card text after the run's own scheduling (§27.11), so the due loop embeds it once more."""
+    def begin_mirror(self, *, drive_id: str, tz_name: str, language: str, strings: MirrorStrings,
+                     round_complete: bool, epoch_idle: bool, stop_at: float) -> None:
+        """The mirror step's run starts: its facts, fresh budgets and its window (an absolute `monotonic()` value)."""
+        self.drive_id = drive_id
+        self.tz_name = tz_name
+        self.language = language
+        self.round_complete = round_complete
+        self.epoch_idle = epoch_idle
+        self.opted_out = False
+        self._strings = strings
+        self._mirror_stop = stop_at
+        self._ops = MIRROR_OPS_PER_TICK
+        self._reads = MIRROR_READS_PER_TICK
+        self._stamps = MIRROR_STAMPS_PER_TICK
+
+    async def commit(self, records: Sequence[DriveIndexRecord],
+                     before: Optional[Mapping[str, DriveIndexRecord]] = None) -> None:
+        """The transcript stage (`before` given): `_commit`, with the card of a record the stage changed scheduled
+        again: a transcript or stub line changes the card text after the run's own scheduling (§27.11), so the due loop
+        embeds it once more. The mirror step (no `before`): a plain `_commit` (fenced, the plans applied, so a stamp
+        clears `mirror_due`); an opt-out it finds stops the step at once as `_OptedOut` itself (a declared
+        `stop_exceptions` member; nothing more may be written)."""
         if not records:
+            return
+        if before is None:
+            try:
+                await self._svc._commit(self._user_id, list(records), set())
+            except _OptedOut:
+                self.opted_out = True
+                raise
             return
         now = self._svc._clock()
         writes = [_card_rescheduled(r, now) for r in records]
@@ -3637,11 +4095,100 @@ class _TickHost:
         self._models.agent_outage(agent, self._svc._clock())
         await self._svc._persist_usage(self._models)
 
+    # -- MirrorHost (drive_transcript_mirror) -------------------------------------------------------------------
+
+    def ops_left(self) -> int:
+        return self._ops
+
+    def spend_op(self) -> None:
+        self._ops -= 1
+
+    def reads_left(self) -> int:
+        return self._reads
+
+    def spend_read(self) -> None:
+        self._reads -= 1
+
+    def stamps_left(self) -> int:
+        return self._stamps
+
+    def spend_stamp(self) -> None:
+        self._stamps -= 1
+
+    def time_left(self) -> float:
+        """Seconds left in the step's window (`_Budget.mirror_stop`); none once an opt-out was found."""
+        if self._mirror_stop is None or self.opted_out:
+            return 0.0
+        return max(0.0, self._mirror_stop - self._budget.monotonic())
+
+    def now(self) -> datetime:
+        return self._svc._clock()
+
+    def day(self) -> str:
+        """The user's local date (`UserBotConfig.timezone`, else UTC)."""
+        return local_day(self.now(), self.tz_name)
+
+    def strings(self) -> MirrorStrings:
+        if self._strings is None:
+            raise RuntimeError("the mirror host was not set up for a run (begin_mirror)")
+        return self._strings
+
+    def root_mark_changed(self, root_item_id: str, gone: bool) -> None:
+        """The step set or cleared a root-loss mark: the tick's list follows (never re-read from the documents, so a
+        confirmed loss, cleared here while `root_gone_at` is still on its document, stays cleared for the tick)."""
+        mirror = _TICK_MIRROR.get()
+        if mirror is None or not root_item_id:
+            return
+        if gone:
+            mirror.gone_ids.add(root_item_id)
+        else:
+            mirror.gone_ids.discard(root_item_id)
+
 
 def _transcribing() -> bool:
     """Transcription is on for the user of the running tick (the kill switch and the user's flag, read at its gate)."""
     transcription = _TICK_TRANSCRIPTION.get()
     return transcription is not None and transcription.on
+
+
+# Root setup that keeps failing is held off the reserve (Task 21C fix round 1, a delta to Δ209): 10 min (the fan-out's period), doubling, at most 6 h
+ROOT_SETUP_HOLD_BASE = timedelta(minutes=10)
+ROOT_SETUP_HOLD_CAP = timedelta(hours=6)
+# What counts as root setup's progress in a run: a root created, documents reset, the loss confirmed
+_ROOT_SETUP_PROGRESS = ("mirror_root_created", "mirror_reset", "mirror_reset_dropped", "mirror_root_lost")
+
+
+def _connected_root(mirror: _Mirror) -> Optional[MirrorRoot]:
+    """The root document of the connected drive, as the tick read it at its start."""
+    return next((r for r in mirror.roots if r.drive_id == mirror.drive_id), None)
+
+
+# The mirror step's counters the tick line carries (§27.9.5, plan Task 21C); the step logs the rest on its own line.
+_MIRROR_TICK_COUNTERS = ("mirror_created", "mirror_replaced", "mirror_moved", "mirror_archived", "mirror_restored",
+                         "mirror_detached", "mirror_pruned", "mirror_foreign", "mirror_failed", "mirror_errors",
+                         "mirror_quota_full", "mirror_no_drive_id", "mirror_ops", "mirror_systemic")
+
+
+_mirror_seed_version = mirror_versions.seed_version   # one formula, in the domain (the mirror step uses it too)
+
+
+def _mirror_strings(localization: "LocalizationService", lang: LanguageCode) -> MirrorStrings:
+    """The mirror files' text in `lang` (§27.9.1, §27.9.10): the read-me, the header's labels and managed line, the
+    four stub sentences. No folder name: they are fixed in every language (D49)."""
+    def text(message: UIMessage) -> str:
+        return localization.get_ui_string(lang, message)
+    return MirrorStrings(
+        open_recording=text(UIMessage.DRIVE_TRANSCRIPT_OPEN_RECORDING),
+        managed_line=text(UIMessage.DRIVE_TRANSCRIPT_MANAGED_LINE),
+        duration_minutes=text(UIMessage.DRIVE_TRANSCRIPT_DURATION_MINUTES),
+        speakers_one=text(UIMessage.DRIVE_TRANSCRIPT_SPEAKERS_ONE),
+        speakers_many=text(UIMessage.DRIVE_TRANSCRIPT_SPEAKERS_MANY),
+        stub_no_speech=text(UIMessage.DRIVE_TRANSCRIPT_STUB_NO_SPEECH),
+        stub_too_long=text(UIMessage.DRIVE_TRANSCRIPT_STUB_TOO_LONG),
+        stub_too_large=text(UIMessage.DRIVE_TRANSCRIPT_STUB_TOO_LARGE),
+        stub_no_audio=text(UIMessage.DRIVE_TRANSCRIPT_STUB_NO_AUDIO),
+        readme=text(UIMessage.DRIVE_TRANSCRIPTS_README),
+    )
 
 
 def _card_rescheduled(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:

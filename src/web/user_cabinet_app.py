@@ -25,7 +25,7 @@ from ..ports.language_service_port import LanguageServicePort
 from ..ports.agent_note_port import AgentNotePort
 from ..ports.recurrence_port import RecurrencePort
 from ..ports.user_drive_port import UserDrivePort
-from ..utils.logger import logger
+from ..utils.logger import exc_brief, logger
 from .cabinet_auth import make_auth_required
 
 # Documentation owner (loaded from environment variable - Secret Manager)
@@ -1305,6 +1305,13 @@ def create_user_cabinet_blueprint(
             logger.warning("Drive status: reading the transcription flag failed", exc_info=True)
             return False
 
+    async def _mirror_root(user_id: str) -> bool:
+        try:
+            return (await drive_search_service.has_mirror_root(user_id)) is True
+        except Exception as exc:
+            logger.warning(f"Drive status: reading the transcript folder failed: {exc_brief(exc)}")
+            return False
+
     @bp.route("/api/drive/status", methods=["GET"])
     @auth_required
     async def drive_status():
@@ -1327,6 +1334,8 @@ def create_user_cabinet_blueprint(
                 body["indexing"] = _indexing_json(await drive_search_service.indexing_status(g.user_id))
                 # The transcription disclosure shows only while the user's own flag is on (§27.12, G24); no toggle.
                 body["indexing"]["transcribe_enabled"] = await _transcribe_enabled(g.user_id)
+                # The bot's _Transcripts folder outlives an opt-out; its disclosure clause shows whenever one exists (Δ202).
+                body["indexing"]["mirror_root"] = await _mirror_root(g.user_id)
             except Exception as exc:
                 # The connection card (Connect/Disconnect/Reconnect) must not depend on the index read.
                 logger.error(f"Error fetching drive indexing status: {exc}", exc_info=True)
