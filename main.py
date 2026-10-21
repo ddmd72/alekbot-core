@@ -461,15 +461,6 @@ async def main():
             localization=_localization,
             language=_language_service,
         )
-        # Cloud Tasks is at-least-once: claims keyed by task name stop a redelivered task
-        # from running twice. TTL 1800s = the longest dispatch_deadline Cloud Tasks allows,
-        # so every attempt of a task is over before its claim expires.
-        agent_worker_handler._task_dedup = FirestoreDedupStore(
-            db_client=db_client,
-            collection_name=env_config.worker_task_dedup_collection,
-            ttl_seconds=1800,
-        )
-
         # Anthropic client — created once, shared by ClaudeDeepResearchRunnerAgent instances.
         # The agent receives the client via constructor; does not import or instantiate the SDK.
         anthropic_client = None
@@ -739,7 +730,15 @@ async def main():
             )
 
         # Worker handler — dispatches Cloud Tasks to appropriate handlers
+        # Cloud Tasks is at-least-once: claims keyed by task name stop a redelivered task
+        # from running twice. TTL 1800s = the longest dispatch_deadline Cloud Tasks allows,
+        # so every attempt of a task is over before its claim expires.
         worker_handler = WorkerHandler(
+            task_dedup=FirestoreDedupStore(
+                db_client=db_client,
+                collection_name=env_config.worker_task_dedup_collection,
+                ttl_seconds=1800,
+            ),
             agent_worker_handler=agent_worker_handler,
             email_indexing_service=email_indexing_service,
             notification_service=notification_service,
@@ -847,6 +846,7 @@ async def main():
             memory_fact_service=container.memory_fact_service,
             long_turn_service=long_turn_service,
         )
+        worker_handler.attach_slack_worker(slack_adapter.handle_queued_event)
         notification_channel_factory.register_factory(
             "slack",
             lambda channel_id: SlackResponseChannel(
@@ -1145,6 +1145,7 @@ async def main():
                             task_queue=agent_task_queue,
                             long_turn_service=long_turn_service,
                         )
+                        worker_handler.attach_telegram_worker(telegram_adapter.handle_queued_update)
                         def _make_telegram_channel(adapter, channel_id):
                             try:
                                 return TelegramResponseChannel(
@@ -1251,15 +1252,10 @@ async def main():
                             delivery.retry_count, delivery.execution_count,
                         )
                     with memory_scope(SCOPE_WORKER_TASK, str(payload.get("task_type") or "slack_event")):
-                        if payload.get("task_type") == "telegram_update" and telegram_adapter is not None:
-                            body, status = await telegram_adapter.handle_queued_update(payload)
-                            return jsonify(body), status
-                        result = await worker_handler.handle(payload, delivery=delivery)
-                        if result is not None:
-                            body, status = result
-                            return jsonify(body), status
-                        # Unknown task_type — fall back to slack adapter handler
-                        return await slack_adapter._handle_worker_task()
+                        body, status = await worker_handler.handle(
+                            payload, delivery=delivery, headers=dict(request.headers),
+                        )
+                        return jsonify(body), status
 
                 # ====================================================================
                 # Remote MCP connector for claude.ai Custom Connectors

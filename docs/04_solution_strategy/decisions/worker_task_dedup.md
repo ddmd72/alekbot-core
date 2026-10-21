@@ -1,9 +1,10 @@
-# A redelivered `agent_execution` Cloud Task is skipped, claimed by task name
+# A redelivered `/worker` Cloud Task is skipped, claimed by task name
 
 **Date:** 2026-10-09
-**Status:** Live
-**Scope:** `/worker` (`main.py`), `WorkerHandler`, `AgentWorkerHandler`, all `task_type=agent_execution`
-tasks: deep research, documents, images, `tell_alek` errands.
+**Status:** Live; widened in S1b (2026-10-22), pending deploy
+**Scope:** `/worker` (`main.py`) and `WorkerHandler`: every Cloud Tasks delivery (all `task_type`s,
+`telegram_update`, queued Slack events). Introduced for `agent_execution` (deep research, documents,
+images, `tell_alek` errands); widened to every delivery in S1b.
 
 ## Problem
 
@@ -37,16 +38,21 @@ whatever the trigger.
      `X-CloudTasks-TaskExecutionCount` for every Cloud Tasks request (`CloudTaskDelivery`, `domain/`).
    - Queue `agent-tasks-dev` logs every attempt (`--log-sampling-ratio=1.0`).
    - The next duplicate will therefore show whether it was a retry or a redelivery.
-2. **Claim by task name.**
-   - `AgentWorkerHandler` atomically creates a claim document named after the task
+2. **Claim by task name, in `WorkerHandler.handle`, for every Cloud Tasks delivery.**
+   - `WorkerHandler` atomically creates a claim document named after the task
      (`{prefix}worker_task_dedup`, `DedupStore.try_mark_processed`, TTL 1800 s, which is the longest
-     `dispatch_deadline` Cloud Tasks allows) before running.
+     `dispatch_deadline` Cloud Tasks allows) before dispatching.
    - A delivery that finds a claim returns 200 `{"status": "duplicate"}` and runs nothing.
-   - **An attempt that raises releases its claim** (`DedupStore.release`). The 500 makes Cloud Tasks
-     retry, and that legitimate retry must run.
-   - A `FAILED` agent response keeps the claim: it returns 200, the user has already been told, and
-     Cloud Tasks will not retry.
+   - **The claim is released when the attempt raises, returns >= 500, or returns 429** (queued Slack
+     event, session busy). Cloud Tasks retries those, and the retry must run. Other results keep the
+     claim: a `FAILED` agent response returns 200, the user was told, and nothing retries.
    - **Fails open:** if the claim store errors, the task runs. A duplicate is better than a lost task.
+   - Requests without Cloud Tasks headers (Cloud Scheduler, manual curl) are never claimed.
+   - `WorkerHandler` is the only dispatcher: `telegram_update` and the queued Slack event (no
+     `task_type`) go to the adapters attached at wiring time; any other `task_type` is a 400
+     (it used to fall through silently to the Slack handler).
+   - `execute_reminder` needs nothing more: the fire-time claim is atomic and there is one task per
+     fire, so only a redelivery overlapped, and the task claim now covers it.
 
 ## Alternatives rejected
 
@@ -62,7 +68,13 @@ whatever the trigger.
 
 If an instance dies mid-task (OOM) without raising, the claim stays. A redelivery within 30 minutes
 is then skipped and the task is lost. Before this change it would have re-run. This is rare, and an
-OOM would likely repeat on a re-run anyway.
+OOM would likely repeat on a re-run anyway. This residual now also covers chat turns (queued Slack
+events, `telegram_update`), which were never claimed before.
+
+A task still running past its dispatch deadline (`companion_consolidation` sets 600 s explicitly; `email_indexing` and agent tasks without a
+manifest deadline get the 600 s default; the Cloud Run timeout is 1800 s)
+gets Cloud Tasks' retry at the deadline acked as a duplicate. If the original then fails, nothing
+retries it (the consolidation sweeps cover consolidation).
 
 ## Deployment
 
