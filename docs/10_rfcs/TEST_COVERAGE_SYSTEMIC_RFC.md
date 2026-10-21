@@ -1,0 +1,588 @@
+# RFC: Tests that verify behaviour behind the ports — a system-wide plan
+
+**Status:** Accepted for implementation (owner, 2026-10-21): rev 2, independent review applied; owner decisions §7 and
+confirmations at the end. Test infrastructure created 2026-10-21; nothing else built.
+**Trigger:** the fact-lifecycle audit (`FACT_LIFECYCLE_RFC.md` §1, Appendix B): eleven defects in memory facts, none
+caught by ~16 000 tests, in a subsystem reported as ~100% covered.
+**Evidence:** a full unit run with coverage on 2026-10-21 (15 995 passed, 89.6% of 46 534 statements), taken **before
+the fact S1 fix merged**; a read-only blind-spot analysis of the fact lifecycle (owner-local report
+`scripts/memory/test_blind_spots_report_2026_10_21.md`); two independent reviews of rev 1 (feasibility, and gaps
+across the whole system) and a binding arbitration of their findings. Every code reference below was checked against
+`main` after S1 merged.
+
+## 1. Problem
+
+### 1.1 The suite measures execution of the caller, not behaviour behind the port
+
+- Before S1, the fact lifecycle's callers were fully covered (`consolidation_agent.py`, `fact_write_service.py` 100%),
+  the code that stores facts was not (`fact_management_adapter.py` 15%, `firestore_repo.py` 17%). Replacing 12
+  lifecycle methods with functions that raise left the same 486 tests green. S1 added a write→read round-trip suite on
+  an evaluating fake (`tests/unit/adapters/test_fact_store_roundtrip.py`, `tests/support/fact_store.py`); the rest of
+  the codebase still has the pattern.
+- The pattern is written down as the convention. `tests/CLAUDE.md` prescribes `AsyncMock(spec=PortClass)` and
+  `assert_called_once()`: a test proves the caller called the port, never what the port did.
+- A `MagicMock` Firestore client answers any query with whatever the test canned. Ordering, a missing field, an
+  equality filter on an absent field, a projection that drops a field, a filter on the wrong flag: none of these can
+  fail on a mock. That is exactly the class of the fact defects (oldest-first domain query, `context` dropped by the
+  projection, `is_current` drift, 88 invisible documents).
+- **High line coverage on a mock hides the same class.** At least a dozen stores sit at 77–100% on `MagicMock` with no
+  evaluating fake in any of their test files: `firestore_ephemeral_store` (the single-use voice ticket),
+  `firestore_dedup_store`, `firestore_long_turn_registry`, `firestore_agent_note_adapter` (the reminder delivery stamp),
+  `firestore_skill_repository`, `firestore_quota_service`, `firestore_channel_binding_adapter`,
+  `firestore_memory_fact_draft_repository`, `firestore_companion_memory_repository`, `firestore_iam_adapter`. Work
+  chosen by line coverage would leave all of them open. This plan chooses work by **inventory** (P11).
+- The same mock-the-neighbour pattern sits **above** the ports: handlers mock internal services without a spec, so an
+  argument that a service ignores unless another one is also set is never noticed (§1.4 item 6).
+
+### 1.2 Where the behaviour behind the ports is untested (coverage before S1, 2026-10-21)
+
+The numbers come from `cov.json` taken before S1 merged; S1 raised the two fact-store files. P2 re-measures with branch
+coverage on.
+
+| Layer | Coverage | Statements |
+|---|---|---|
+| domain | 99.2% | 9 331 |
+| infrastructure | 97.3% | 1 319 |
+| agents | 96.1% | 5 001 |
+| services | 93.9% | 9 664 |
+| handlers | 93.2% | 1 794 |
+| **adapters** | **80.5%** | 12 564 |
+| **web** | **64.5%** | 2 743 |
+| root entry points (`main.py`, `relay_main.py`, `indexer_main.py`, `sandbox_main.py`, `job_main.py`) | **not measured** (`.coveragerc` `source = src`) | — |
+
+Inside adapters and web, the low end is the stores and surfaces the product depends on:
+
+| File | Coverage | What it holds |
+|---|---|---|
+| `firestore_whitelist_repo.py` | **absent from the coverage data** (no unit test imports it) | who may use the bot (both access gates) |
+| `firestore_short_link_repository.py`, `firestore_notification_state_adapter.py`, `google_tasks_adapter.py` (frozen), `playwright_html_renderer.py`, `gcp_log_sink.py` | absent | |
+| `firestore_invite_code_repo.py` | absent from the unit run; imported only by `tests/integration/test_firestore_invite_code_repo.py` | invite codes |
+| `firestore_prompt_repository.py` | 14% | every agent's prompt |
+| `fact_management_adapter.py` / `firestore_repo.py` | 15% / 17% (before S1) | long-term memory |
+| `firestore_indexed_email_repo.py` | 22% | email memory |
+| `gmail_provider_adapter.py` | 28% | inbox access |
+| `prompt_v3/firestore_token_repository.py` | 30% | prompt tokens |
+| `web/oauth_app.py` / `web/user_cabinet_app.py` | 31% / 38% | sign-in, connect flows, Cabinet API (whitelist gate) |
+| `firestore_mcp_client_repository.py` / `firestore_oauth_credentials_adapter.py` | 49% / 51% | OAuth clients and tokens |
+| `slack/http_adapter.py` | 56% | Slack ingress |
+| `microsoft/todo_adapter.py` | 60% | tasks |
+| `firestore_consolidation_queue.py`, `firestore_user_repo.py`, `gcp_task_queue.py` | 62–65% | queues, users |
+
+Seventeen source files that existed then are absent from the coverage data (`telemetry.py` and `server.py` are
+omitted by `.coveragerc`). Coverage cannot tell "never imported" from "imported at collection only", so P2 replaces it
+with a static check.
+
+The store that works shows the method: `firestore_drive_index_repo.py` 99.9% on an evaluating Firestore fake
+(`tests/unit/adapters/firestore_drive_eval_fakes.py`), a parity suite against the in-memory repository
+(`test_drive_index_v2_parity.py`) and offline index-provisioning tests (`test_firestore_drive_index_provisioning.py`
+and four siblings). The LLM adapters (83–98%) are wire-tested at the SDK boundary (`docs/how_to/ADAPTER_WIRE_TESTING.md`),
+which proves translation, not conformance to the provider (§4a).
+
+### 1.3 Other blind-spot classes (each with a live instance)
+
+1. **Prompt ↔ code.** Prompts live in Firestore; nothing checks them against the code. Live: `HISTORICAL` in
+   `COGNITIVE_PROCESS_CONSOLIDATION` vs the `ARCHIVAL` enum (`src/domain/entities.py:61`); `metadata` promised on
+   `update_fact` and absent from the schema; the Tasks prompt names `task_id` + `list_id`, the schema requires
+   `task_ref` (`src/agents/tasks_agent.py:196-299`). No `CONSOLIDATION_*` token is referenced by any test.
+2. **Spec ↔ code.** `DELIBERATE_FACT_MANAGEMENT_RFC.md` is "Implemented" in the RFC index and "Proposed" in its header;
+   11 of the 15 paths it cites do not exist, including every test file it promised.
+3. **Write-only fields.** `ttl_days`, `last_updated`, `valid_to` were written and never read; `expires_at`,
+   `replaces_fact_id` never written. Nothing fails when a field loses its last reader.
+4. **Configuration drift.** `main.py:106` defaults the database id to Firestore's `(default)` database,
+   `src/config/environment.py:72` to the live named database. More than 80 files under `scripts/` build a Firestore
+   client and never pass `database=`. The 2026-02-16 migration that should have given 88 legacy facts a `state` opened
+   `(default)`.
+5. **Tools report success after dropping input** (`update_fact` ignored `metadata` and returned `updated`).
+6. **`tests/integration/` mixes three things**: tests on mocks, the offline G2 end to end, and tests that write to
+   real Firestore without isolation (`test_sliding_window_e2e.py:84` opens a client on the configured project with no
+   `database=`; `test_prompt_4level_e2e.py:158` writes and deletes tokens in the configured database).
+7. **Coverage gates exist but do not run.** `make test-coverage` (global 70% + per-file thresholds,
+   `scripts/check_coverage_thresholds.py`) is not in CI; only five notification-era files have thresholds; `branch =
+   False`.
+8. **Redelivery, interleaving and clocks.** Cloud Tasks is at-least-once, but only `agent_execution` claims its task
+   (`main.py:464-470`); `daily_email_review` and `execute_reminder` are not safe to run twice (§1.4). The hourly
+   daily-review match is DST-blind (§1.4). No suite provokes interleavings, although per-instance accumulators under
+   `asyncio.gather` once inflated billing 3.6× (`decisions/billing_execution_scoped_ledger.md`).
+9. **Reachability.** `WorkerHandler.handle` dispatches 21 task types (`src/handlers/worker_handler.py:166-212`); in
+   the coverage data (before S1), 12 of its dispatch lines never run, including every scheduler-triggered type. An unknown
+   `task_type` falls through to the Slack handler, and one handler has no trigger (§1.4).
+10. **Data already stored.** B9 (88 facts without `state`) was a data defect left by old code. Fixtures built through
+    the pydantic model fill defaults, so a legacy document cannot even be expressed in a test.
+
+**Already guarded, not to be rebuilt:** locale key parity (`tests/unit/test_ui_message_strings.py:36`) and
+`config.get` key registration (`tests/unit/test_arch_config_key_registration.py`). They are the precedent for the
+meta-tests below.
+
+### 1.4 Defects found by this review
+
+The two reviews found live defects while checking this plan. They are **fixed in a separate urgent session**, not in
+this RFC's packages; the packages below add the tests that would have caught each class.
+
+| # | Defect | Where (current `main`) | Effect |
+|---|---|---|---|
+| 1 | Dedup claim on an expired mark: `create()` raises because the mark still exists, `is_duplicate()` says False because it expired (`:43-44`), and the method returns True **without rewriting the mark** | `src/adapters/firestore_dedup_store.py:63-79` (`try_mark_processed`); used for `agent_execution` claims (`main.py:467`) and Telegram event dedup (`main.py:1116`) | after expiry and before Firestore's TTL purge, every redelivery passes the claim |
+| 2 | Consolidation queue order: `get_pending_batches` has `order_by("created_at")` commented out ("we need an index"); the service takes `limit=1`; batch ids are random | `src/adapters/firestore_consolidation_queue.py:45-47`; `src/services/consolidation_service.py:90,155` | a backlog is consolidated in random order. The fix needs a composite index |
+| 3 | Consolidation cleanup order: "delete oldest" with its `order_by` commented out | `src/adapters/firestore_consolidation_queue.py:184-196` | deletes in doc-id order, not oldest first |
+| 4 | `daily_email_review` has no redelivery claim | `src/handlers/worker_handler.py:946-1016` | a redelivered task runs a second full review and posts a second report |
+| 5 | `execute_reminder` is check-then-act: it reads `last_delivered_due`, delivers, then stamps with a plain `update` | `src/handlers/worker_handler.py:800,871`; `src/adapters/firestore_agent_note_adapter.py:305-315` | two overlapping attempts both deliver |
+| 6 | Deep-research polling passes `channel_id_override` without `platform_override`; `resolve_channel` honours the override only when both are set | `src/handlers/worker_handler.py:451,475,517,531`; `src/services/user_notification_service.py:119` | the result goes to the primary channel, not the one the user asked in |
+| 7 | DST: the hourly daily-review match is `astimezone(user_tz).hour != review_hour` | `src/services/email_review_service.py:56-57` | on the fall-back day (2026-10-25 in Europe/Madrid) the review can be enqueued twice; at spring-forward it can be skipped |
+| 8 | Unknown `task_type` falls through to the Slack handler | `main.py:1260-1261` | a typo or a retired task type is handled as a Slack event instead of being refused |
+| 9 | `sweep_companion_consolidation` has a handler and no trigger | `src/handlers/worker_handler.py:182,383`; `docs/07_deployment/SCHEDULERS.md:265-272`; `src/infrastructure/agent_manifest.py:714` | stuck companion batches are never re-triggered |
+| 10 | `email_indexing_watchdog` is scheduled only by a manual script | `scripts/infrastructure/setup-email-watchdog-scheduler.sh` (absent from the deploy-time scheduler script) | a fresh deploy has no watchdog |
+| 11 | The task-search vector indexes are not defined in git: vector queries with `user_id ==`, `status !=`, `list_id ==` pre-filters, 0 entries in `config/firestore.indexes.json` and none in any index script | `src/adapters/firestore_task_search_index.py:141-152` | a rebuilt database has no index for task search |
+| 12 | `create_prod_vector_indexes.py` is stale: an unprefixed collection deleted on 2026-05-31, `is_current`, `EUCLIDEAN`; it provokes a failing query to print a link and creates nothing | `scripts/infrastructure/create_prod_vector_indexes.py:11-12,29-36` | misleading as an index source |
+| 13 | Two database defaults: `(default)` in `main.py`, the live named database in `environment.py` | `main.py:106`; `src/config/environment.py:72` | any path that reads the env var without the config object opens the wrong database when the variable is unset |
+
+## 2. Principles (owner, 2026-10-21, and what follows from them)
+
+1. **No test calls a real LLM.** Tests run hundreds of times a session. A model's behaviour is judged only by evals the
+   owner approves (cost rules). A test may replay a recorded or scripted model reply (as the drive G2 test does): no
+   model runs, no cost.
+2. **`make check` stays offline and fast.** Enforced, not hoped: network access is blocked in the unit suite (H3).
+3. **Real cloud writes are allowed in a separate gate, if the live data is never touched** (§4).
+4. **Every port with a stateful implementation is tested against its semantics, not its calls.** A fake used by
+   service tests must behave like the real thing, and that likeness is itself tested (P5, P12).
+5. **Every adapter is tested behind its port**, at the boundary where it talks to the SDK, HTTP or the database.
+6. **New behaviour = new tests; the reviewer rule for existing tests is unchanged** (CLAUDE.md). Tests that encode a
+   defect go to a reviewer.
+7. **Coverage that matters is measured where defects live**: per layer with branch coverage, per critical file, by an
+   inventory of stateful adapters, and by semantic mutation (a suite that survives broken code verifies nothing). Line
+   coverage on a `MagicMock` SDK does not count toward the adapter floor.
+
+## 3. Harness
+
+### H1. A shared evaluating Firestore fake
+
+Start from `tests/support/firestore_eval.py` (S1, on `main`). It subclasses the drive fake
+(`tests/unit/adapters/firestore_drive_eval_fakes.py`, 421 lines: filters incl. `in`/`array_contains*`, value-type
+ordering with the `__name__` tie-break, cursors, `limit`, `select` projections, cosine `find_nearest` with
+`distance_result_field`, `Increment`, `DELETE_FIELD`, aggregations, batches, pass-through transactions) and adds
+`find_nearest` without a result field, `distance_threshold`, and `NotFound` on `update` of a missing document. H1 grows
+that module, collection-agnostic, by exactly this list:
+
+| Feature | Used at | Fake today |
+|---|---|---|
+| Dotted field paths, first-class in `update`, `where`, `order_by` and nested reads | `firestore_account_repo.py:81-84` (`"usage.total_tokens": Increment`); `firestore_user_repo.py:66,154` (`platform_identities.{p}`) | `update` writes the literal dotted key |
+| `WriteResult.transform_results` | `firestore_account_repo.py:120-123` | `update` returns `None` |
+| Positional `where("f", "==", v)` | `firestore_session_store.py:289,332`; `prompt_v3/firestore_token_repository.py:142,163` | keyword-only `filter=` |
+| `ArrayUnion` / `ArrayRemove` | `firestore_whitelist_repo.py:119,143` | the sentinel is stored as the value |
+| `SERVER_TIMESTAMP` | 12 sites, e.g. `firestore_whitelist_repo.py:120` | the sentinel is stored as the value |
+| `DocumentReference.create()` + `AlreadyExists` | `firestore_dedup_store.py:72`, `firestore_short_link_repository.py:34`, `firestore_memory_fact_draft_repository.py:42`, `firestore_skill_repository.py:236`, `firestore_drive_index_repo.py:633,1496` | no `create` |
+| Subcollections (`doc.collection()`) + `list_documents()` | `firestore_skill_repository.py:114` and others | none |
+| Auto-id `collection.document()` | `firestore_prompt_repository.py:372` | an id is required |
+| `collection_group` | `firestore_drive_index_repo.py:1642` | none |
+| `!=`, which also excludes documents missing the field | `firestore_task_search_index.py:143` | unsupported operator |
+| `stream(transaction=)`, `get_all(..., transaction=)` | `firestore_user_repo.py:164`; `firestore_skill_repository.py:154,167` | no `transaction` argument |
+| Transaction semantics (reads before writes, writes applied at commit, a retry re-runs the body), with **one** global patch of `google.cloud.firestore.async_transactional` | 16 `async_transactional` sites in `src/adapters`; `firestore_ephemeral_store.py:49-89` relies on the retry re-reading | pass-through; the patch targets the drive module only |
+| Assert `COSINE` in `find_nearest` | all vector queries use cosine today | cosine assumed |
+
+Two rule changes:
+
+- **Remove the equality-only vector pre-filter refusal** (`firestore_drive_eval_fakes.py:55`) from the generalised fake.
+  Firestore accepts range and `!=` pre-filters; production uses them (`firestore_indexed_email_repo.py`,
+  `firestore_task_search_index.py:141-152`).
+- **Refuse undeclared composite queries.** A query with equality + range/`in`/`!=` + `order_by`, or a vector query with
+  pre-filters, must match an index in the rendered `config/firestore.indexes.json` (§4 render step), else the fake
+  raises `FailedPrecondition`. This generalises the drive provisioning tests to every collection, so a missing index
+  fails in `make check`, not in production. It is why `order_by` in §1.4 items 2–3 was commented out.
+
+**Seeding by raw dict.** Kits seed documents as raw dicts, including legacy shapes (a missing field, a string date, an
+unknown enum value), and assert that every reader handles or excludes them on purpose.
+
+### H2. Port contract kits
+
+**Step 0, semantics inventory.** Port docstrings say nothing about the dimensions where the defects live
+(`ConsolidationQueuePort.get_pending_batches`, `src/ports/consolidation_queue.py:16-17`, states no order). Before any
+kit, for each port: write its contract on seven axes into the docstring — **order, limit, legacy documents, tenancy,
+atomicity, idempotency, errors** — derived from what the callers assume (grep the call sites). An Opus reviewer
+approves it. The kit then tests the docstring.
+
+**The kit.** One abstract test class per port, run against every implementation: the Firestore adapter on H1 in
+`make check`, the same adapter on the test database in `make test-cloud` (§4), and any in-memory implementation. The
+drive parity suite is the precedent.
+
+**Inventory meta-test.** Every class in `src/adapters/` that implements a stateful port (all `firestore_*`, `gcs_*`,
+`fact_management_adapter`, both queues, `prompt_v3/firestore_*`) is instantiated in at least one kit on H1, or has an
+allowlist entry with a reason. The allowlist may only shrink.
+
+### H3. Network guard
+
+`pytest-socket` (pinned), enabled by an autouse fixture in a new `tests/unit/conftest.py` (calling
+`pytest_socket.socket_allow_hosts`) and in the `test-g2-offline` target, not by `pytest.ini` addopts (that would also
+hit integration and cloud):
+
+- **`--allow-hosts=127.0.0.1,::1` and `--allow-unix-socket`.** Socket creation and binding stay allowed; only
+  `connect()` to a non-loopback address raises. Without the unix-socket allowance every asyncio event loop fails
+  (`socketpair` in the selector loop). Loopback tests stay in `make check`: the sandbox supervisor's two-process run
+  (`tests/unit/web/test_sandbox_supervisor.py:277,303,382`) and the TLS media server
+  (`tests/unit/adapters/drive_media_fixtures.py`).
+- **gRPC tripwire** in the same conftest: `google.auth.default` raises, and `grpc.secure_channel` /
+  `grpc.aio.secure_channel` raise unless the target is localhost. Firestore talks through gRPC's own sockets, which
+  `pytest-socket` does not see; unit tests do build real clients with anonymous credentials.
+- **Out of scope, stated:** subprocess children (drive parser, sandbox engine, `ffmpeg`).
+
+### H4. Prompt-snapshot vocabulary tables
+
+Tokens are prose, so "every enum value a token names" cannot be extracted generically (`HISTORICAL` is a legitimate
+`context_priority` value next to the `ARCHIVED` state; Tasks prose names `task_id`/`list_id` as output fields). H4 is
+**per-agent declared vocabulary tables** — `(token, field) → enum class or tool schema` — checked against the code
+over `prompts_snapshot/`, starting with Consolidation and Tasks. Each table also checks that every token a profile
+lists exists and every token a blueprint orders is assigned.
+
+Limits, stated: the snapshot is only as current as the last `firestore_utils/snapshot_pull.py`; user and account
+overrides are never mirrored (`prompts_snapshot/README.md:24`), so the USER and ACCOUNT levels are invisible to H4
+(P10 tests the resolution itself).
+
+### H5. Field registry (facts only, for now)
+
+Grep cannot find readers (`FactEntity(**data)` reads every field; `state` has over a thousand whole-word hits in
+`src/`). H5 is **AST-based**: attribute access `<entity>.field` and literal keys `data["field"]` / `.get("field")` in
+modules that import the entity; `**data` construction counts as no reader. Or derive it from the round-trip suite (a
+field no assertion observes after a round trip). Facts only; other entities get the H2 round-trip invariant ("every
+written field is returned by every reader") instead.
+
+### H6. Spec-status checker
+
+A test over `docs/10_rfcs/`: the status in the RFC index matches the RFC header, and an RFC whose status means
+implemented has every path it cites in code blocks present in the tree. Headers are free-form today (`IMPLEMENTED`,
+`✅ IMPLEMENTED`, `Phases 1–7 Complete`, `Step 1 live`, some with none), so it ships with a **status normalisation
+table** and an **exemption list** (older RFCs citing since-renamed paths). Draft and Proposed RFCs are exempt.
+
+## 4. The cloud test gate (real writes, live data untouched)
+
+**Isolation and guards:**
+
+1. **A separate Firestore database** in the same project, never the live one and never `(default)` (scripts already
+   hit it by mistake, §1.3.4). Its name and the GCS test bucket's come from `.env` (the test database name from `.env`;
+   secrets rule). The guard enforces a pattern: the name ends in `-test` and differs from the live
+   `FIRESTORE_DATABASE`.
+2. **`APP_ENV=test`**, which maps to the `test_` collection prefix (`environment.py:52-59`), so even a misrouted client
+   cannot land in `development_*` collections.
+3. **A dedicated test service account** with `roles/datastore.user` under an IAM condition on the test database only.
+   Client libraries and REST enforce database-level conditions; the Console does not.
+   - **Local runs impersonate it** (`gcloud auth application-default login --impersonate-service-account=…`); the
+     fixture asserts `credentials.service_account_email` equals the test SA before any write. Without this, local runs
+     use the owner's project-wide rights and the condition protects nothing.
+   - **CI uses Workload Identity Federation**, limited to `refs/heads/main` of this repository; pool, provider and SA
+     names live in GitHub variables. CI has no GCP auth today (`.github/workflows/ci.yml:33`).
+4. **Guards check the constructed client** (its database and project), not env vars.
+5. **Cloud fixtures build repositories directly from an `EnvironmentConfig`**, never through composition or
+   `load_settings()`. Under `APP_ENV=test`, `is_development` is False, so queue names switch to the `-prod` suffix
+   (`src/composition/drive_indexing_setup.py:42`, `src/composition/slack_adapter_factory.py:147`) and
+   `load_settings()` chases every empty key into Secret Manager.
+
+**One runner at a time.** Global documents (the whitelist doc, system prompt tokens, short-link and invite namespaces,
+dedup keys) and cross-tenant scans (`get_stuck_batch_user_ids`, `list_sync_user_ids`) mean per-run tenant ids do not
+isolate concurrent runs. A **lease document** in the test database, taken in a transaction with a TTL, serialises CI
+and local runs alike. Per-run tenant ids stay for hygiene.
+
+**Cleanup.** Each test deletes what its run wrote; tests of global documents restore the prior content; the wipe of
+the whole test database runs only under the lease. Never delete-and-recreate the database (it drops indexes, and a
+deleted id is reusable only after minutes).
+
+**Indexes.**
+
+- A **render step** turns `config/firestore.indexes.json` (120 entries: 96 `development_*`, 24 unprefixed legacy or
+  dead names) into the test set: keep `development_*`, rewrite to `test_`, drop the rest.
+- The index scripts take the database **explicitly**; no live default (today `create_firestore_indexes.sh:9`,
+  `create_drive_vector_indexes.sh:13` and `deploy_firestore_indexes.py:33,97` default to the live database).
+- `create_prod_vector_indexes.py` is dropped from the list (§1.4 item 12); the missing task-search vector index
+  definitions are added to git (§1.4 item 11).
+- **Source of truth:** `gcloud firestore indexes composite list` on the live database, diffed against git; a
+  difference is a finding.
+- Index creation is an **owner step**: `datastore.user` cannot create indexes.
+
+**GCS.** A test bucket with object versioning (workspace `history`/`restore` need it), a 1-day lifecycle delete and a
+noncurrent-version rule, same guards. **Cloud Tasks:** a paused test queue, so enqueue is real and nothing is
+dispatched.
+
+**What runs there:** the H2 kits against the real adapters (this is what proves H1 right), vector search and index
+behaviour the fake cannot prove, and **deterministic precondition tests** (`create()` on an existing document,
+Firestore transactions with a conflicting write placed by the test, GCS `if_generation_match`) instead of contention
+tests, which are slow and nondeterministic.
+
+**Gate:** `make test-cloud`, serial. CI: a separate job after a merge to `main` (like `timing`), never on a PR, never
+in `make check`. Cost: named databases have no free quota; reads and writes stay in the cents per run.
+
+**Before any of this, a 1-hour emulator spike** (P3): does the Firestore emulator (`EnvironmentConfig.use_emulator`,
+`main.py:108-112`) run our queries, including vector search? If it covers the non-vector part, the parity slice (P5)
+runs the non-vector probes there, offline; vector probes still need the test database.
+
+## 4a. Third-party contracts (owner, 2026-10-21)
+
+**Today.** Every third-party adapter is tested by mocking at its boundary, at three depths:
+
+| Depth | Who | What it proves |
+|---|---|---|
+| SDK method mocked, request kwargs asserted, named rules (`tests/contracts/adapter_contracts.py`, `ADAPTER_WIRE_TESTING.md`) | Claude, Gemini, OpenAI, Grok | our translation matches a rule we wrote |
+| HTTP session mocked, responses **recorded from the real API** (`tests/fixtures/onedrive_delta/*.json`) | OneDrive | our parsing matches what the provider really sent once |
+| SDK/HTTP client mocked with **hand-written** payloads | Gmail, Slack, Telegram, To Do, Twilio, GCS, Cloud Tasks, Cloudflare SFU, Unsplash, MCP Maps, the realtime voice providers | our code matches what the test author believes the provider does |
+
+A mock is only as true as its author's belief (the recorded misses: OpenAI's `strict` default, a Firestore projection
+dropping the distance field, Graph returning raw paths, xAI's running-total audio seconds). The owner's direction:
+**contracts in a standard format; mocks must conform to the contracts; the contracts themselves are checked against the
+real providers, outside CI.**
+
+### Contracts
+
+- `contracts/providers/<provider>/openapi.yaml`: a **subset in the provider's native OpenAPI version** (3.0 or 3.1) —
+  only the operations and fields our adapters use. Each operation carries `x-source` (URL) and `x-retrieved` (date).
+- **Recorded fixtures first, authored schemas after.** The misses on record were semantic and were found by recorded
+  responses and docs review, not by schema shape.
+- Sources, extracted by a script (`scripts/contracts/extract_subset.py`, source pinned by commit or date):
+
+| Provider | Source | Note |
+|---|---|---|
+| OpenAI | `openai/openai-openapi` (MIT, OAS 3.1) | REST; realtime only as event-schema components |
+| Twilio | `twilio/twilio-oai` (MIT, OAS 3.0) | form-encoded PascalCase bodies |
+| Cloudflare SFU | the separate Realtime API spec in Cloudflare's docs (CC-BY-4.0: attribution in the repo) | the general `cloudflare/api-schemas` has no SFU data plane (`cloudflare_sfu_adapter.py:10,79-109` calls it) |
+| Microsoft Graph | `microsoftgraph/msgraph-metadata` (MIT, OAS 3.0) | needs an **alias layer**: `/me/drive/…` and colon addressing map to `/drives/{id}/items/…`; parsing takes ~19 s and ~1 GB, fine weekly, never per test |
+| Gmail, Gemini, Google OAuth (token, revoke, userinfo; `src/services/google_oauth_service.py:26-29`) | Google discovery documents (Gmail and `oauth2` in `googleapis/discovery-artifact-manager`; Gemini from the live discovery endpoint) | a small discovery→OpenAPI subset converter, budgeted in P17 |
+| Telegram Bot API | community spec `PaulSonOfLars/telegram-bot-api-spec` (MIT) | extracted, not hand-authored |
+| Anthropic, xAI, Slack Web API | authored from the documentation | Slack's official specs were archived in 2021 |
+| Firebase ID-token verification | authored from the documentation (token claims) | |
+
+- **Our own HTTP boundaries get contracts too** (`contracts/internal/`): `/worker` (21 `WorkerHandler` task types plus `telegram_update`), the voice control
+  plane (`/voice/session-config`, `/voice/delegate`, `/voice/submit-transcript`), the sandbox render API, the indexer
+  `/worker`. The server's route tests and the client's tests validate against the same file.
+- **WebSocket protocols are not OpenAPI operations.** OpenAI Realtime, xAI Realtime, Twilio Media Streams and the SFU
+  legs (`openai_realtime_adapter.py`, `xai_realtime_adapter.py`, `src/handlers/media_stream_handler.py`,
+  `src/handlers/sfu_stream_handler.py`) get a **JSON Schema per event type** (OpenAI's realtime components extracted;
+  xAI, Twilio and the SFU legs authored) plus **recorded session transcripts**, checked with one helper
+  `assert_message(provider, event_type, payload)`. No AsyncAPI tooling.
+- Semantic rules a schema cannot express (a default we must override, "never send `temperature`", "this field is a
+  running total") stay as named `ContractRule`s in `tests/contracts/adapter_contracts.py`, each pointing at the
+  operation or event it refines.
+
+### Mocks conform to the contracts (consumer side, in `make check`)
+
+**The existing SDK-level wire tests stay untouched.** They mock the SDK method and assert its kwargs; SDK kwargs are
+not the HTTP body (Gemini restructures `config` into camelCase REST fields; Twilio's `to=`/`from_=` become form fields
+`To`/`From`; Stainless SDKs move `betas` into a header). Routing them through an HTTP contract would edit about 500
+existing tests under the reviewer rule, and `ADAPTER_WIRE_TESTING.md:134` forbids HTTP mocking as written.
+
+Instead, **new conformance tests at the HTTP transport run the real SDK**:
+
+| Transport seam | Adapters |
+|---|---|
+| `respx` / `httpx.MockTransport` | OpenAI, Anthropic, xAI (OpenAI SDK), google-genai, python-telegram-bot |
+| `aioresponses` | Gmail (raw `aiohttp`, `gmail_provider_adapter.py:26`), Slack `AsyncWebClient`, Google OAuth (`aiohttp`) |
+| a custom `twilio.http.HttpClient` | Twilio |
+
+The captured request is validated against the contract operation; recorded response JSON goes through the real SDK
+parser. **Cheap first step for the Stainless SDKs:** validate the SDK kwargs against the SDK's generated param types
+(`pydantic.TypeAdapter` on e.g. `openai.types.responses.ResponseCreateParams`), which come from the provider's spec, so
+an invented field fails and an SDK pin bump carries spec changes.
+
+`ADAPTER_WIRE_TESTING.md` is amended: **SDK-level tests prove translation; transport-level tests prove conformance.**
+
+- One helper, `tests/contracts/openapi_contract.py`: `assert_request(provider, operation_id, method, path, query, body)`
+  and `assert_response(provider, operation_id, status, body)`, on `openapi-core` (validates 3.0 and 3.1) or
+  per-operation JSON Schemas compiled once and validated with `jsonschema`, cached per process (milliseconds per call).
+  `openapi-spec-validator` checks the subset files in a meta-test.
+- Response fixtures live under `tests/fixtures/providers/<provider>/` with `_meta {operation_id, source: recorded |
+  documented-error, recorded_at}`. A meta-test validates every fixture against its operation and fails on a
+  `documented-error` fixture without a doc link.
+- A coverage meta-test: every operation in a provider contract has at least one conformance test, and every adapter
+  call site maps to an operation (a per-adapter `OPERATIONS` table the test checks against the code).
+
+### Contracts checked against reality (provider side, never in PR CI)
+
+Three mechanisms, cheapest first:
+
+1. **Spec drift, scheduled, automatic.** A weekly GitHub workflow re-fetches the official specs (public, no secrets),
+   re-extracts our subsets and diffs them against `contracts/`. A diff posts to Slack and opens an issue. Covers the
+   providers with a published spec.
+2. **Contract review with Claude, in a session** (owner's preferred). A skill `provider-contract-review`, run monthly
+   by a scheduled routine and on demand after an incident or a provider announcement: per provider, read the current
+   reference, changelog and deprecation notices; compare with `contracts/`, the `ContractRule`s and the adapter code;
+   report each difference with the doc link and a proposed contract change. The owner approves; the change lands as a
+   PR, and the conforming tests then show which adapters it breaks.
+3. **Live probes, manual or scheduled, never per build** (`make contract-probe PROVIDER=…`): call the real provider,
+   validate the response against the contract, and refresh the recorded fixture. Reads where free; writes only where a
+   test environment exists or the write cleans itself up:
+
+| Provider | Test environment | Probe |
+|---|---|---|
+| Slack | **developer sandbox** (free Enterprise org via the Developer Program; needs a card on file) | reads + writes in the sandbox |
+| Telegram | **official test environment** (separate test-DC bot, `/test/` endpoints) | reads + writes there |
+| Twilio | **test credentials + magic numbers** (validated as live, no calls placed, no charge) | Calls/Messages creation with magic numbers |
+| Microsoft Graph (OneDrive, To Do) | M365 developer sandbox is **eligibility-restricted** | owner's account: App Folder `__contract_probe__/` create → read → delete; To Do: a dedicated test list |
+| Gmail, Google OAuth | none | reads only, on the owner's account or a dedicated test Google account |
+| Our GCP (Firestore, GCS, Cloud Tasks) | the cloud gate's test resources (§4) | full, there |
+| Cloudflare SFU | none | session create → close, only if free; otherwise contract review only |
+| LLM providers | none; **no generation calls** (§2.1) | spec drift + contract review; free metadata reads (`models.list` / `retrieve`, owner decision 6); an OpenAI Realtime session-create only if it generates nothing |
+| Unsplash, Google Maps MCP | Unsplash demo mode; Maps none | reads within free quota |
+
+Probe credentials stay in `.env` / Secret Manager (never in git); probes print counts and diffs, never personal content.
+
+## 4b. Test-time budget: 3 minutes locally; CI may take longer (owner, 2026-10-21)
+
+The budget is for **local runs**: the agent runs the suite hundreds of times a session. CI runs once per push and may
+take longer.
+
+**Today.** `make test-unit` takes ~1:34 on the 12-core Mac when the machine is quiet. On 2026-10-21 the same suite with
+coverage took 13:24 while other sessions ran their suites (load average ~270): the cost is contention, not the suite.
+CI: 4:37 wall (install 0:34, apt `ffmpeg` 0:30, pytest 3:01 on a 4-core runner).
+
+**Local, three tiers:**
+
+1. **Inner loop: `make test-affected`** = `pytest --testmon` plus a fixed **always-run set** (`-m datafile`). testmon
+   selects by executed Python lines, so it misses tests whose input is a data file (H4 over `prompts_snapshot/`, H6 over
+   `docs/10_rfcs/`, the index-provisioning tests over `config/firestore.indexes.json`, `tests/unit/test_cloudbuild_*`,
+   skill files, fixtures) and code run in subprocesses (drive parser child, sandbox engine). Those tests carry the
+   `datafile` marker. `.testmondata` is seeded into each new worktree from the main checkout, so the first run is not a
+   cold full suite. testmon is pinned and never combined with coverage (it pauses the outer measurement).
+2. **Before a commit: `make check`, ≤ 3:00 on a quiet machine.** Lint, mypy, the unit suite and the fast contract and
+   fake-based suites this RFC adds. `--durations=25` prints the slowest tests as an **advisory report** locally; the
+   1-second-per-test budget is **enforced only on the CI runner**, since a loaded Mac produces the same false failures
+   the `timing` marker removed.
+3. **Slow suites only in CI.** `@pytest.mark.slow` mirrors the `timing` pattern (`tests/conftest.py:31-40` skip hook,
+   Makefile `-m "not timing"` at `:239`). The coverage gate is a **run mode** of `make ci`, not a marked test.
+
+**One full suite at a time on the machine.** A pytest hook in `tests/conftest.py` takes `fcntl.flock` on a lock file in
+the temp dir, in `pytest_configure` of the **controller only** (not in xdist workers), and only for large sessions
+(`-n` given, or a collection above a threshold checked at collection finish). It prints the holder and waits with a
+timeout. `fcntl` exists on macOS and Linux (the `flock` command does not exist on macOS), the kernel releases the lock
+when the process dies, and the hook covers make, direct `pytest` calls and subagents alike.
+
+**CI.** The PR job switches from `make check` to **`make ci`** (= `make check` + slow tests + the coverage gate),
+≤ ~10 min; the repo is public, so GitHub-hosted runners cost nothing and sharding is available. After a merge to
+`main`: the cloud gate, timing tests, the skip-ledger job (P22). Weekly: spec drift, mutation metric. Monthly: contract
+review. Manual: probes.
+
+## 5. Work packages
+
+### Done criterion: semantic mutants
+
+A raise-mutant is killed by any test that merely calls the method; the defects found were semantic (ASC for DESC, a
+dropped projection field, a missing state flag, a missing tenant check). Each package therefore ends with a **semantic
+mutation check**, run by a small pytest plugin (generalised from the blind-spot report's prototype), with this operator
+set:
+
+- drop or flip an `order_by`;
+- remove one `where` (the tenancy filter is mandatory);
+- drop one field from a `select` or a `model_dump`;
+- replace an `except` body with "return success";
+- skip one write in a multi-write path;
+- drop one forwarded keyword argument.
+
+A package is done when every mutant in its set is killed or ruled equivalent by the reviewer. `mutmut` (P23) is a
+metric only, never a done-gate.
+
+### Packages
+
+Effort is realistic working days, after both reviews. Gate: `check` = `make check`; `ci` = `make ci` on a PR;
+`cloud` = `make test-cloud` after a merge; `sched` = scheduled or manual.
+
+| # | Package | Gate | Effort | What it catches | Tranche |
+|---|---|---|---|---|---|
+| P1 | **Test-time budget** (§4b): `make test-affected` with the `datafile` always-run set and worktree seeding; the `fcntl` lock hook; `slow` marker; `make ci` and the PR job switched to it; advisory durations report | check / ci | 1–1.5 | a local loop that grows past 3 min; five parallel full suites | 1 |
+| P2 | **Rules and gates**: H3 network guard + gRPC tripwire; `tests/CLAUDE.md` rewritten (fakes with semantics over call assertions; adapters need behind-port tests; no real LLM; MagicMock coverage does not count); coverage per layer with `branch = True`, floor at the re-measured values, only rising; root `*_main.py` into `[run] source`; subprocess coverage configured (`[run] patch = subprocess`) or omitted with a reason; a static "no test imports module X" check with an allowlist that only shrinks; the semantic-mutation plugin | check / ci | 1.5–2 | the convention itself; unmeasured entry points | 1 |
+| P3 | **Emulator spike** (§4): which of our queries, vector included, the emulator runs | — | 1 h | decides how much of P5 runs offline | 1 |
+| P4 | **H1 fake** (the full add-list, index refusal, raw-dict seeding, one transaction patch) **+ the fact store kit** (S1's round-trip suite folded in; semantics inventory for the fact ports) | check | 2.5–3.5 | the fact defect class; missing indexes offline | 1 |
+| P5 | **Fake-vs-real parity slice** (before any other kit is built on H1): mixed-type ordering; missing-field filters and orderings; `!=`/`in`/range + kNN pre-filters; dotted paths; `Increment`/`ArrayUnion`/`SERVER_TIMESTAMP` results; projection + `distance_result_field`; `create()` on an existing document — run on H1 and on the test database (non-vector part on the emulator if P3 says so) | check + cloud | 1 + owner infra step | a wrong fake rule spreading into every later kit | 1 |
+| P6 | **Access-control stores** on H1 + kits: `firestore_whitelist_repo`, `firestore_mcp_client_repository`, `firestore_oauth_credentials_adapter`, `firestore_iam_adapter`, `firestore_invite_code_repo`; negatives: a revoked email is refused, a token of another client is refused, an expired code is refused | check | 2 | access holes in the stores | 1 |
+| P7 | **Inbound gates**: every refusal site in an auth path executed by a test — the deep-research webhook signature (`src/web/deep_research_webhooks.py:102-141`), the Slack route's signature enforcement and dedup (`src/adapters/slack/http_adapter.py:138-140`), MCP OAuth refusals (`src/services/mcp_authorization_service.py:166-167,193-194,400-401`), the sign-in ID-token failure (`src/services/authentication_service.py:441-446`), the `/worker` OIDC gate and Telegram intercept (`main.py:1234-1262`), the Microsoft Graph webhook; a meta-test over each Quart app's `url_map` and the relay, indexer and sandbox routes requiring at least one negative test per route (unauthenticated, bad signature, foreign tenant); a line-level check that every `raise`/4xx return in the auth services and verifiers runs | check | 1–1.5 | an inverted or bypassed gate | 1 |
+| P8 | **Prompt vocabularies** (H4) for Consolidation and Tasks | check | 2–3 | `HISTORICAL`, `metadata`, Tasks `task_ref` drift | 1 |
+| P9 | **Wiring and reachability**: every `task_type` in the scheduler scripts and every enqueue call site dispatches through `WorkerHandler.handle` to a non-501 handler under a production-shaped container built with fakes; every handler is reachable or allowlisted as manual-only with a reason; every Optional handler dependency is non-None in the production wiring; an unknown `task_type` is refused | check | 1 | dead features, missing triggers, §1.4 items 8–10 | 1 |
+| P10 | **Prompt stores**: `firestore_prompt_repository`, `prompt_v3/*` on H1 + kits; 4-level resolution (USER > ACCOUNT > AGENT > SYSTEM) semantics | check | 1.5–2 | a wrong prompt for every agent | 2 |
+| P11 | **Every other stateful store, by inventory** (H2 meta-test), ordered by risk: voice tickets / ephemeral store, dedup, notes delivery stamp, quota, long turns first; then indexed email, session store, consolidation and companion queues, user, account, task search index, channel binding, skills, memory-fact drafts, companion memory, email job and exclusions, GCS stores, `gcp_task_queue` | check | 5–7 | ordering, projections, missing fields, tenancy, atomicity in stores that look covered | 2 |
+| P12 | **Cloud gate, full** (§4): lease, render step, explicit-database scripts, missing index definitions, GCS bucket, paused queue, WIF for the post-merge job; every H2 kit against the real adapters; precondition tests | cloud | 2–3 | fake ≠ Firestore across all kits | 2 |
+| P13 | **Service seams**: handler-level tests that run the **real** `UserNotificationService`, `TaskDispatchService`, `AgentCoordinator`, `SearchEnrichmentService` and `PromptBuilder` over H1 and port fakes for each entry path (worker task types, `ConversationHandler`, `AgentWorkerHandler`), asserting the observable outcome (which channel, which history entry); mutation operator: drop one forwarded kwarg | check | 2 | parameter coupling between services (§1.4 item 6) | 2 |
+| P14 | **Scripted-LLM end to end** for every agent that writes state through tools (Consolidation, Notes, Tasks, Smart's local tools `propose_memory_facts` / `draft_skill` / `workspace`, FileManagement drive mutations): a scripted tool call that uses every declared field, asserted on the final store state; a generic check that every declared tool field changes stored state or is refused — nothing accepted and dropped | check | 1.5 | tools that report success after dropping input (§1.3.5) | 2 |
+| P15 | **Redelivery and interleaving**: each `/worker` task type run twice, sequentially and concurrently (`asyncio.gather`), on H1, asserting one user-visible effect, or documented as idempotent by construction; a gather-interleaving test for each shared mutable singleton (agent instances, factory caches, ledgers) | check | 1.5 | §1.4 items 1, 4, 5; the 3.6× billing class | 2 |
+| P16 | **Clock suite**: a pinned clock and a table of instants (both 2026 DST transitions in Europe/Madrid, Europe/Kyiv, America/New_York; month end; UTC midnight) through every function that matches an hour or a day boundary (daily review, billing rotation, drive monthly budgets, reminder `due`, Cabinet 24h cap, scratch 7-day TTL) | check | 0.5 | §1.4 item 7 and its class | 2 |
+| P17 | **Provider contracts, consumer side** (§4a): recorded fixtures first; `contracts/` subsets (extracted, aliased, converted, authored; internal APIs); WebSocket event schemas + recorded transcripts; Stainless param-type validation; transport-level conformance tests per provider; the helpers and meta-tests; `ADAPTER_WIRE_TESTING.md` amended; then the low-coverage adapters: `gmail_provider_adapter`, `slack/http_adapter`, `slack/response_channel`, `microsoft/todo_adapter`, `gcp_task_queue`, Telegram, Twilio, Cloudflare SFU, Google OAuth, the four voice files | check | 10–15 | mocks that disagree with the provider | 2 |
+| P18 | **Reality checks** (§4a): spec-drift workflow, `provider-contract-review` skill + monthly routine, `make contract-probe` for the sandboxed providers | sched | 2–3 + owner sandbox setup | contracts that disagree with reality | 3 |
+| P19 | **Web surfaces, the rest**: `oauth_app`, `user_cabinet_app` route-level tests through the Quart test client on H1 stores — connect flows (with Google token mocks), session cap, every Cabinet write route | check | 1.5–2 | data-exposure bugs beyond the gates of P7 | 3 |
+| P20 | **Field registry and spec drift**: H5 for facts (AST); H6 with the normalisation table; one Firestore database default (§1.4 item 13) and a lint test requiring `database=` in scripts | check | 1.5–2.5 | write-only fields, spec drift, wrong database | 3 |
+| P21 | **Data audit**: a pure checker per entity (invariants from the H2 inventory), unit-tested in `make check`; the owner runs it read-only against live data; output to `scripts/memory/` | check + owner | 1 | data-class defects like B9 | 3 |
+| P22 | **Infrastructure in git**: a skip ledger (a meta-test lists every `skipif`; CI reports which ran) and a post-merge job that runs `npm ci` + the real-node DOCX and PDF render and builds `Dockerfile.sandbox`; a TTL list in git (every model writing `expires_at` appears in it) and the runbook generated from it; a Secret Manager fallback suite (`src/config/settings.py` `get_secret` / `load_settings`) | check / post-merge | 1.5 | tests that run in no gate; TTL and secret drift | 3 |
+| P23 | **Mutation metric**: `mutmut` on the store modules, weekly or owner-run; survivors are a backlog | sched | 0.5 | suites that verify nothing, as a trend | 3 |
+| P24 | **`tests/integration/` split**: `tests/integration/offline/` (mocked, scripted; may join `make check` if fast) and `tests/cloud/` (§4); the two cloud-writing tests move under the guards or go to a reviewer for retirement | check / cloud | 0.5 | live-data pollution by tests | 3 |
+
+**Totals.** Tranche 1 (P1–P9) ≈ 12–16 days; tranche 2 (P10–P17) ≈ 24–33; tranche 3 (P18–P24) ≈ 9–11. **Whole plan
+≈ 45–59 days.**
+
+How the reviewers' figures relate: rev 1 said 19–21 days. The feasibility review re-estimated rev 1's scope at
+≈ 33–45 days (first block WP12 + WP0–WP3 ≈ 9–12). The gaps review added new scope at rev 1's rates (≈ 31–34 total, +≈12
+days of new packages). Applying both — the feasibility rates and the gaps scope — gives the totals above. The first
+tranche is larger than 9–12 because the arbitration moved the emulator spike, the parity slice, the inbound gates and
+reachability into it. P17 alone is about a quarter of the plan.
+
+## 6. Execution
+
+- Order: tranche 1 strictly in the order P1 → P2 → P3 → P4 → P5 → P6 + P7 → P8 → P9. No kit other than the fact kit is
+  built on H1 before P5 has run.
+- Subagents per package from a precise brief (Sonnet for mechanical suites with a clear done-criterion; Opus for the
+  H2 semantics inventories, P6, P7, P19 and every review), each in its own worktree with `.testmondata` seeded; I
+  verify and integrate (`feedback_code_via_subagents`).
+- Every package: new tests only; any existing test found to encode a defect goes to a reviewer with the failing
+  assertion and the spec (CLAUDE.md reviewer rule).
+- Defects found while writing the tests are fixed in the same package when obvious, else listed for the owner with
+  context. The §1.4 defects are fixed in their own urgent session first.
+- Each package's report states coverage before/after (branch), the inventory meta-test delta, and the semantic
+  mutation result.
+
+## 7. Owner decisions (2026-10-21)
+
+Package names in brackets map rev 1's numbers to this revision.
+
+1. **Cloud gate (§4): yes.**
+2. **Network guard in `make check` (H3): yes.**
+3. **Coverage floor in CI (WP0 → P2): yes** — per layer at today's values, only rising; a source file no test imports
+   fails. (Rev 2 implements the second half as a static check with a shrinking allowlist, since coverage cannot detect
+   it and a hard failure on day one would turn CI red.)
+4. **Order: yes** — WP12 + WP0–WP3 first (P1, P2, P4, P6, P8), then WP4–WP7, then the rest. Work starts the week of
+   2026-10-26. (Rev 2 inserts the spike, the parity slice, the inbound gates and reachability into the first tranche;
+   see Owner confirmations 1.)
+5. **Reality checks (§4a): yes** — spec drift weekly, contract review with Claude monthly, probes where a sandbox exists
+   or the write cleans itself up. The Slack developer sandbox and the Telegram test-environment bot are set up by the
+   owner when WP7b (P18) starts.
+6. **LLM metadata reads in probes: allowed** (`models.list` / `retrieve`; never a generation call).
+7. **Budget:** 3 minutes is for local runs; CI may take longer (§4b).
+
+## Owner confirmations (both confirmed 2026-10-21)
+
+1. **Realistic effort: ≈ 45–59 days in all; first tranche ≈ 12–16.** Context: rev 1 said 19–21. The feasibility review
+   put rev 1's own scope at ≈ 33–45 (first block ≈ 9–12); the gaps review added about 12 days of new packages
+   (stores by inventory, service seams, scripted end to end, inbound gates, reachability, redelivery, clocks, data
+   audit); the arbitration accepted both and moved four items into the first tranche. Recommendation: confirm the
+   first tranche as ordered (it closes access gates, the fact store, the fake's validity and reachability, and changes
+   the convention so new code stops adding to the gap), and decide the scope of P17 when tranche 2 starts: it is about
+   a quarter of the plan, and the cheap part (recorded fixtures, Stainless param-type validation) gives most of its
+   value.
+2. **The test database, service account and identity setup are needed in tranche 1, not at the end.** Context: P5
+   (the parity slice) needs the test Firestore database, the test service account with `datastore.user` under a
+   database-scoped IAM condition, the impersonation grant (`serviceAccountTokenCreator` on that SA for your user), and
+   the composite and vector indexes created from the rendered definitions (`datastore.user` cannot create indexes).
+   CI's post-merge job additionally needs Workload Identity Federation limited to `main`. All of these are owner infra
+   steps that widen access, so I do not run them. Recommendation: do the database, SA, impersonation grant and index
+   creation before P5 (about half an hour, from a script I prepare that reads every name from `.env`); defer WIF to
+   P12, because the parity slice runs locally first. If the P3 spike shows the emulator covers the non-vector probes,
+   only the vector probes wait on this step.
+
+   **Done 2026-10-21** with the owner's OK, by `scripts/infrastructure/setup_test_gate.sh` (idempotent, dry run by
+   default, every name from `.env` `TEST_*`): the test Firestore database; the test service account holding
+   `datastore.user` and `datastore.indexAdmin` under an IAM condition on the test database only (so index creation in
+   the test database needs no owner step); the owner's impersonation grant; a versioned test bucket with a 1-day
+   lifecycle; a paused test queue; and Workload Identity for CI on `main` (repository secrets `TEST_WIF_PROVIDER`,
+   `TEST_SA_EMAIL`). Verified: the impersonated account writes and reads the test database and is refused
+   (`PermissionDenied`) on the live database.
+
+## Appendix. Execution order across this RFC and FACT_LIFECYCLE_RFC (owner-approved, 2026-10-21)
+
+Two streams at most (one machine; parallel full suites choke each other).
+
+| Phase | Stream | Items, in order |
+|---|---|---|
+| 0 | — | the urgent defect session for §1.4 (in flight); nobody else touches the worker handler, the dedup store or the consolidation queue until it is merged |
+| 1 | — | P1 → P2 → P3; the owner's test-infrastructure step |
+| 2 | A, memory | P4 → P5 → P8 (Consolidation + Tasks) → P21 → FACT_LIFECYCLE_RFC S2 → S3 → S4 → S5 |
+| 2 | B, security and breadth | P6 → P7 → P9 → P15 + P16 (P9, P15, P16 after the defect session is merged) → P11 → P13 + P14 → P10 → the cheap part of P18 (spec-drift workflow, monthly contract-review skill) |
+| 3 | — | P12 → P19 + P20 → P22 + P23 + P24 |
+| 4 | — | P17 (start with OpenAI and Claude, then Gmail and Graph), P18 live probes (owner sandboxes) |
+
+The live status of every item is kept in the project's working notes, not in this file.
