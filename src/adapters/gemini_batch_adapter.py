@@ -34,6 +34,7 @@ from google.genai import types
 from ..domain.batch_transcription import BatchRef, BatchRequest, BatchResult, BatchStatus, FileRef
 from ..domain.billing import BatchUsage
 from ..domain.exceptions import (
+    BatchLookupInconclusive,
     LLMAccountError,
     LLMClientError,
     LLMRateLimitError,
@@ -134,7 +135,7 @@ class GeminiBatchAdapter(BatchTranscriptionPort):
                     # Inconclusive, not a miss: the job may lie past the bound (jobs are never deleted, the list only
                     # grows). The stage treats it as an outage and keeps the money.
                     logger.warning("[GeminiBatch] find: scan bound reached (jobs=%d), inconclusive", scanned)
-                    raise LLMUnavailableError("find: scan bound")
+                    raise BatchLookupInconclusive("find: scan bound")
             return None
 
         job = await self._call("find", self._call_timeout_s, scan)

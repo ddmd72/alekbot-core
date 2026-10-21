@@ -123,7 +123,7 @@ from ..domain.drive_transcript_plan import (
 from ..domain.drive_transcript_plan import WindowResult as WindowDecision
 from ..domain.drive_transcript_render import TRANSCRIPT_BODY_VERSION, render_body
 from ..domain.drive_transcript_windows import content_key, plan_windows
-from ..domain.exceptions import LLMAccountError, LLMClientError, LLMError, LLMRateLimitError
+from ..domain.exceptions import BatchLookupInconclusive, LLMAccountError, LLMClientError, LLMError, LLMRateLimitError
 from ..domain.user_drive import (
     DriveAccessDenied, DriveItemNotFoundError, DriveNotConnectedError, DriveReauthRequired, DriveThrottled,
 )
@@ -981,6 +981,16 @@ class DriveTranscriptStage:
         if not pending.provider_name:
             try:
                 found = await self._batch.find_batch(pending.display_name) if pending.display_name else None
+            except BatchLookupInconclusive:
+                # Neither found nor a miss: the money stays held, no miss is counted, the transcriber is not backed
+                # off and the other batches go on; this document is asked again after the error backoff.
+                logger.error(f"[DriveTranscript] the lookup of a submission of user={user_id[:8]} was inconclusive "
+                             f"(scan bound): money held, asked again in {BATCH_ERROR_BACKOFF_S // 60} min")
+                _inc(summary, "batch_lookup_inconclusive")
+                host.fence()
+                await self._repo.save_batch(replace(pending, last_polled_at=now,
+                                                    next_poll_at=now + timedelta(seconds=BATCH_ERROR_BACKOFF_S)))
+                return True
             except LLMError as exc:
                 await self._collect_outage(host, summary, f"find: {type(exc).__name__}")
                 return False
