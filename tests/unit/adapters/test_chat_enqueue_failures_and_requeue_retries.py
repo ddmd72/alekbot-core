@@ -162,3 +162,16 @@ async def test_redelivery_with_a_free_session_processes_normally():
     assert status == 200
     adapter._process_message_event.assert_awaited_once()
     queue.enqueue_slack_event.assert_not_awaited()
+
+
+async def test_redelivery_header_in_quart_title_case_hands_off_at_once(monkeypatch):
+    # Quart title-cases incoming header names: production sees X-Cloudtasks-Taskretrycount.
+    monkeypatch.setattr(slack_mod, "BUSY_WAIT_S", 60)
+    queue = MagicMock()
+    queue.enqueue_slack_event = AsyncMock(return_value="t")
+    adapter = _busy_adapter(queue)
+    lock = await _held(adapter)  # noqa: F841
+    _, status = await asyncio.wait_for(
+        adapter.handle_queued_event(PAYLOAD, {"X-Cloudtasks-Taskretrycount": "1"}), 2)
+    assert status == 200
+    assert queue.enqueue_slack_event.call_args.kwargs["task_name"] == slack_mod._task_name("Ev1", 1)
