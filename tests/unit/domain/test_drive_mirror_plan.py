@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from src.domain.drive_index import DriveIndexRecord
+from src.domain.drive_index import DriveIndexRecord, RecordState
 from src.domain.drive_index_params import MIRROR_ARCHIVE_GRACE, MIRROR_FAILED_RETRY, MIRROR_ROOT_GRACE
 from src.domain.drive_index_planner import backoff
 from src.domain.drive_mirror import (
@@ -13,7 +13,7 @@ from src.domain.drive_mirror import (
 from src.domain.drive_mirror_names import Placement, temp_name
 from src.domain.drive_mirror_plan import (
     MIRROR_PLAN_VERSION, Action, Decision, RootDecision, charged, file_action, folder_action, local_day, mark_decision,
-    mark_held, marked, mirror_digest, mirror_eligible, mirror_plan, prune_due, reset_charges, retry_due, root_decision,
+    charged_doc, digest_changed, mark_held, marked, mirror_digest, mirror_eligible, mirror_plan, prune_due, reset_charges, retry_due, root_decision,
     stamped, unmarked, woken,
 )
 from src.domain import drive_mirror_plan, drive_mirror_render
@@ -31,12 +31,13 @@ def _rec(**kw):
 
 
 def _folder(**kw):
-    return DriveIndexRecord(user_id="u", item_id="f1", parent_id="p0", name="Videos", is_folder=True, **kw)
+    return DriveIndexRecord(user_id="u", item_id="f1", parent_id="p0", name="Videos", is_folder=True,
+                           **{"state": RecordState.METADATA_ONLY, **kw})
 
 
 def _doc(**kw):
     base = dict(user_id="u", drive_id="d", kind=KIND_FILE, source_item_id="i1", source_name="Interview.mp4",
-                source_parent_id="p1", mirror_name="Interview.mp4.md", rendered_hash="h1")
+                source_parent_id="p1", mirror_name="Interview.mp4.md", rendered_hash="h1", mirror_item_id="m1")
     base.update(kw)
     return MirrorDoc(**base)
 
@@ -77,9 +78,16 @@ def test_digest_changes_on_render_and_plan_version(monkeypatch):
 
 
 def test_render_language_not_in_digest():
-    # the digest is a function of the record alone: no language input exists, so a UI-language change re-renders nothing
-    import inspect
-    assert list(inspect.signature(mirror_digest).parameters) == ["rec"]
+    from src.domain.drive_mirror_render import render_file
+    from src.domain.drive_transcript import Segment, StitchedTranscript, StoredTranscript
+    from tests.unit.domain.test_drive_mirror_render import EN, UK
+    rec = _rec()
+    stored = StoredTranscript("k", StitchedTranscript((Segment(0.0, 1, "hi"),), ("en",), 1, 5.0))
+    en = render_file(stored, rec, EN, source_path="p", recorded_on="d")
+    uk = render_file(stored, rec, UK, source_path="p", recorded_on="d")
+    assert en != uk                                    # the language changes the file ...
+    assert mirror_digest(rec) == mirror_digest(replace(rec))   # ... and the digest is a function of the record alone
+    assert mirror_plan(stamped(rec)).mirror_due is False
 
 
 # -- due -----------------------------------------------------------------------------------------------------------
@@ -306,17 +314,18 @@ def test_charge_backoff_and_park_at_5():
 
 
 def test_parked_retried_on_new_digest_or_after_7_days():
-    parked = _doc(attempts=5, failed_at=T, retry_at=T + timedelta(hours=1))
-    assert retry_due(parked, now=T + timedelta(days=6), digest_changed=False) is False
-    assert retry_due(parked, now=T + MIRROR_FAILED_RETRY, digest_changed=False) is True
-    assert retry_due(parked, now=T + timedelta(days=1), digest_changed=True) is True
+    parked = _doc(attempts=5, failed_at=T, retry_at=T + timedelta(hours=1), failed_digest="d1")
+    assert retry_due(parked, now=T + timedelta(days=6), digest="") is False
+    assert retry_due(parked, now=T + MIRROR_FAILED_RETRY, digest="") is True
+    assert retry_due(parked, now=T + timedelta(days=1), digest="other") is True
+    assert retry_due(parked, now=T + timedelta(days=1), digest="d1") is False
 
 
 def test_backing_off_waits_for_retry_at_and_a_clean_doc_is_due():
     doc = _doc(attempts=2, retry_at=T + timedelta(minutes=20))
-    assert retry_due(doc, now=T + timedelta(minutes=19), digest_changed=False) is False
-    assert retry_due(doc, now=T + timedelta(minutes=20), digest_changed=False) is True
-    assert retry_due(_doc(), now=T, digest_changed=False) is True
+    assert retry_due(doc, now=T + timedelta(minutes=19), digest="") is False
+    assert retry_due(doc, now=T + timedelta(minutes=20), digest="") is True
+    assert retry_due(_doc(), now=T, digest="") is True
 
 
 def test_reset_charges():
@@ -345,3 +354,52 @@ def test_local_day_uses_the_user_zone_else_utc():
     assert local_day(late, "") == "2026-10-21"
     assert local_day(late, "Not/AZone") == "2026-10-21"
     assert local_day(datetime(2026, 10, 21, 23, 30), "Europe/Madrid") == "2026-10-22"     # naive = UTC
+
+
+# -- fix round 1 ---------------------------------------------------------------------------------------------------
+
+def test_create_when_the_doc_holds_only_an_intent():
+    intent = _doc(mirror_item_id="", pending_op="create", pending_name="Interview.mp4.md", pending_parent_id="P", pending_at=T)
+    assert file_action(_rec(), intent, "h1", _place()) is Action.CREATE
+    assert file_action(_rec(), replace(intent, state=MIRROR_ARCHIVED), "h1", _place()) is Action.CREATE
+    assert file_action(_rec(), replace(intent, state=MIRROR_DETACHED), "h1", _place()) is Action.CREATE
+    folder_intent = _doc(kind=KIND_FOLDER, source_item_id="f1", source_name="Videos", source_parent_id="p0",
+                         mirror_name="Videos", mirror_item_id="", pending_op="create")
+    assert folder_action(_folder(), folder_intent, _place("Videos")) is Action.CREATE
+    assert folder_action(_folder(), replace(folder_intent, mirror_item_id="m1"), _place("Videos")) is Action.STAMP_ONLY
+
+
+def test_charged_records_the_failed_digest_and_a_new_digest_is_told_from_a_wakeup():
+    rec = mirror_plan(_rec())
+    doc, _ = charged(_doc(), rec, T)
+    assert doc.failed_digest == mirror_digest(rec)
+    assert digest_changed(doc, mirror_digest(rec)) is False
+    assert digest_changed(doc, mirror_digest(replace(rec, name="X.mp4"))) is True
+    assert digest_changed(_doc(), "anything") is False          # never failed: nothing to be new against
+    assert reset_charges(doc, mirror_digest(rec)) == doc        # woken at the same digest: the budget stays
+    fresh = reset_charges(doc, mirror_digest(replace(rec, name="X.mp4")))
+    assert (fresh.attempts, fresh.failed_digest, fresh.retry_at) == (0, "", None)
+    assert reset_charges(doc).attempts == 0                      # a success resets unconditionally
+
+
+def test_charged_doc_is_doc_only_and_charged_reuses_it():
+    doc = charged_doc(_doc(), T)
+    assert (doc.attempts, doc.retry_at, doc.failed_digest) == (1, T + backoff(1), "")
+    full, _ = charged(_doc(), mirror_plan(_rec()), T)
+    assert replace(full, failed_digest="") == doc
+
+
+def test_marked_twice_keeps_earliest_gone_at_latest_ready_and_upgrades_why():
+    first = marked(_doc(), DeletionNotice("i1", UNSTORED, T))
+    later = T + timedelta(hours=3)
+    again = marked(first, DeletionNotice("i1", GONE, later))
+    assert again.gone_at == T and again.gone_why == GONE and again.mark_ready_at == later + MIRROR_ARCHIVE_GRACE
+    earlier = marked(again, DeletionNotice("i1", UNKNOWN, T - timedelta(hours=1)))
+    assert earlier.gone_at == T - timedelta(hours=1) and earlier.gone_why == GONE
+    assert earlier.mark_ready_at == later + MIRROR_ARCHIVE_GRACE
+
+
+@pytest.mark.parametrize("state", ["deleting", "unresolved"])
+def test_folder_in_a_dead_state_is_not_eligible(state):
+    folder = replace(_folder(), mirrored_digest="old", state=RecordState(state))
+    assert mirror_eligible(folder) is False and mirror_plan(folder).mirror_due is False

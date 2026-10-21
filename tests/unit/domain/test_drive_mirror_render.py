@@ -74,7 +74,7 @@ def test_render_escapes_markdown_in_names():
     text = _render(rec=rec, path="R&D/_old*/[a]")
     lines = text.split("\n")
     assert lines[0] == "# a\\_b\\*c \\[x\\]\\(y\\) \\#1 \\<i\\> z"
-    assert lines[1].startswith("R&D/\\_old\\*/\\[a\\] ")
+    assert lines[1].startswith("R&amp;D/\\_old\\*/\\[a\\] ")
 
 
 def test_link_cannot_break_out_of_the_markdown_link():
@@ -162,3 +162,9 @@ def test_archive_keys_skip_gap_segments():
 
 def test_archive_keys_empty_for_a_stub():
     assert archive_word_keys(StoredTranscript("k", None, stub="no_speech")) == ()
+
+
+@pytest.mark.parametrize("path,expected", [("- notes/a", "\\- notes/a"), ("+x", "\\+x"), ("1. a", "\\1. a"),
+                                           ("---/x", "\\---/x"), ("a - b", "a - b")])
+def test_path_line_escapes_a_leading_block_marker(path, expected):
+    assert _render(path=path, rec=_rec(web_url="")).split("\n")[1] == expected

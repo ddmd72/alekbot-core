@@ -97,6 +97,7 @@ class MirrorDoc:
     pending_parent_id: str = ""
     pending_at: Optional[datetime] = None
     attempts: int = 0
+    failed_digest: str = ""      # the record digest the last charged failure happened at ("" for a mark: no record)
     retry_at: Optional[datetime] = None
     failed_at: Optional[datetime] = None
     checked_at: Optional[datetime] = None
