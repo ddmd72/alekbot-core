@@ -1328,6 +1328,8 @@ audio still running at the provider (it will be billed) and releases the rest.
 | The recording is edited or deleted while its batch runs | The result is booked and dropped; the reservation is released; the job is deleted |
 | Process dies between two writes | The next tick finds the `working` record with no job (or an unbooked answer) and starts again; booking is once per batch (a crash inside a single write can still double-book) |
 
+**After the first live run (2026-10-21).** A window's output cap has a 4 096-token floor and each window reserves its own worst case, so short windows are bounded too (Δ174, T-R26); a short answer that finished normally (`STOP`, audio ending in silence) is resent once for free and a second one is accepted, so such recordings no longer fail (Δ175, T-R27; a very short window always costs two purchases, cents).
+
 **Not built.** The mirror folder (T2: one Markdown file per transcript in a bot-owned folder of the drive), the summary (T3), the Cabinet toggle.
 The decisions are in [drive_transcripts_t1.md](../../04_solution_strategy/decisions/drive_transcripts_t1.md); the reasoning and the 38 deltas of the build are RFC §27.16 (Δ136–Δ173) and §27.19.
 

@@ -5,7 +5,7 @@
 **Supersedes:** [drive_audio_video_deferred.md](drive_audio_video_deferred.md) for audio and video (that record said transcripts would
 arrive "through the extractor seam"; they did not, see below). It stays correct for everything else it names.
 **Context:** [USER_DRIVE_INDEXING_RFC.md](../../10_rfcs/USER_DRIVE_INDEXING_RFC.md) §27 (owner decisions D41–D47 in §21; the 38 engineering
-deltas of the build are Δ136–Δ173 in §27.16 and the as-built summary is §27.19); owner's map
+deltas of the build are Δ136–Δ175 in §27.16 and the as-built summary is §27.19); owner's map
 [user_drive/README.md](../../05_building_blocks/user_drive/README.md) §4.23; rollout `docs/07_deployment/README.md` → "Transcripts of recordings (§27)".
 
 ## Decision
@@ -56,7 +56,7 @@ deltas of the build are Δ136–Δ173 in §27.16 and the as-built summary is §2
 - **Open for T2.** Rulings recorded but not built: an opt-out purge with the drive connected deletes the bot's own mirror folder (recoverable from the recycle bin);
   turning transcription off keeps transcripts and the mirror.
 
-## Rulings that shaped the build (full list: RFC §27.16, Δ136–Δ173)
+## Rulings that shaped the build (full list: RFC §27.16, Δ136–Δ175)
 
 Held price (T-R1); mirror-folder opt-out (T-R2); lowering cap knob (T-R3); structure decisions decoupled from the policy version (T-R5); the stored
 type is `StoredTranscript` (T-R6); interpolation spans to the next stamp of any speaker (T-R7); resubmits must fit and reserve (T-R8); cooldown anchored on
@@ -64,6 +64,8 @@ purchase (T-R9); per-submission reservations on the batch document (T-R11); env-
 (T-R14); local-intermediate pass (T-R15) and the ffmpeg exit-code rule (T-R16); per-response errors are charged attempts (T-R18); per-window output
 cap and the $0.30/h estimate (T-R19); a job with a submitted window is left to collection (T-R20); retry backoff for charged attempts (T-R21); batch booking
 idempotency (T-R22); all-gap files are not finalized (T-R23); card-capped records are not candidates (T-R24); the purge books in-flight reservations (T-R25).
+
+After the first live run (2026-10-21), two more rulings: the output cap has a 4 096-token floor and every window reserves its own worst case (audio input, prompt and output cap at the held batch price), because thinking tokens exhausted a 134-token cap on an 8 s window (Δ174, T-R26); a coverage failure that ended with `STOP` is resubmitted once without counting an attempt and a second one is accepted, because recordings that end in silence failed on every attempt (Δ175, T-R27; known limit: the accepted short answer skips the interpolation-share check).
 
 **Trigger to revisit:** the zero-credential parser service exists (turn the flag on for a second user), the first live eval records its bars (revisit
 the window length and the cap), or the promotional price window ends and the held price stops being conservative.

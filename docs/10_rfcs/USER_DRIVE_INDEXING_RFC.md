@@ -4388,8 +4388,8 @@ indexer is the same image.
   regex fallback, no tools, no history. Honest difference from the other drive agents: it does **not** go through
   `BaseAgent._call_llm` (a batch is not a call), so retry/failover/`TokenLedger` scope are not inherited; the agent
   builds requests and parses results, and a runner in `composition/` (the `DriveReaderRunner` pattern) wires it.
-  Each window also carries a per-window output ceiling, `max_output_tokens = min(65 536, ceil(1 000 × audio minutes))` (≈ 2.2 × the
-  ≈ 450 tokens per minute T0 measured; thoughts count toward it), so a runaway window is bounded in money (Δ165, T-R19).
+  Each window also carries a per-window output ceiling, `max_output_tokens = min(65 536, max(TRANSCRIBE_MIN_OUTPUT_TOKENS = 4 096, ceil(1 000 × audio minutes)))` (≈ 2.2 × the
+  ≈ 450 tokens per minute T0 measured; thoughts count toward it, so a short window needs the floor), so a runaway window is bounded in money (Δ165, Δ174, T-R19, T-R26).
   Output schema per window: `{language_codes: [..], speakers: int, no_speech: bool, segments: [{start: str,
   speaker: int|null, text: str}]}` (`start` is a `MM:SS` string from the window's start, `H:MM:SS` from one hour, **never integer seconds**: T0
   measured a ≈ +40 % stretch of integer-second times on 30- and 60-minute windows, and ≈ 0.1 s drift with strings, Δ128; the parser reads the
@@ -4415,7 +4415,10 @@ indexer is the same image.
   output leg** (`candidates + thoughts`).
 - **Coverage check (Δ129).** A window whose last segment starts far short of the window length (`TRANSCRIBE_COVERAGE_MIN` 0.9 of the window
   duration, and not a `no_speech` window) is a **truncated answer** — the model can stop silently with finish reason `STOP` — and counts as a
-  failed attempt: the window is resubmitted (`MAX_ATTEMPTS`), never stitched short.
+  failed attempt: the window is resubmitted (`MAX_ATTEMPTS`), never stitched short. **Exception (Δ175, T-R27):** a coverage failure whose answer finished with
+  `STOP` (the audio simply ends in silence) is resubmitted once without counting an attempt (`JobWindow.coverage_resubmits`; the resubmit is reserved at submit and booked); a
+  second STOP-short answer is accepted (counter `windows_accepted_short`). `MAX_TOKENS`, an empty or unknown finish and invalid output keep `MAX_ATTEMPTS`. It takes two
+  STOP-short answers: a `MAX_TOKENS`-short answer followed by a STOP-short one costs one more resubmit.
 - **Failure handling (as built: Δ155, Δ160, Δ162, Δ167).** Request-level error or invalid JSON after the one parse rule (no regex): that window is
   resubmitted, charged as a per-file attempt (`MAX_ATTEMPTS`, §8.2). Every per-response error is that key's result error and is charged
   as an attempt by the stage; the adapter never raises on one and surfaces the rpc `code` and `transient` flag, so the stage can read a
@@ -4463,7 +4466,9 @@ indexer is the same image.
   reservation. A reservation is released and the real cost booked **in the month the reservation was made** (G9, `reserved_month`), so
   a batch collected after a month turn cannot hand the next month dollars it never reserved. Reservation = the worst case:
   `TRANSCRIBE_HOUR_USD_ESTIMATE` is **$0.30/h** (was $0.20), chosen so a window's reservation is at least its worst case (input plus the
-  output cap at the held batch rates ≈ $0.29/h); a test pins that the estimate bounds the formula (Δ165, T-R19). Over-reserving can only
+  output cap at the held batch rates ≈ $0.29/h); a test pins that the estimate bounds the formula (Δ165, T-R19). Each window's reservation is
+  `window_cost_usd = max(the hour-rate estimate, audio input at TRANSCRIBE_AUDIO_TOKENS_PER_S = 25 + TRANSCRIBE_WINDOW_PROMPT_TOKENS + the window's output cap, at the held batch price)`,
+  so the hard cap holds for short windows too (an 8 s window reserves ≈ $0.017; Δ174, T-R26). Over-reserving can only
   limit what is in flight, never raise spend. If the file does not fit, the job is `parked` with `transcript_wake_at` at the next month start, as the
   reader's files are (§24.7, §25.4.5), and a *file's windows are never cut to the dollars left* — the whole file is
   held, so the transcript is never half bought. Newest-first order means the cap's dollars go to the newest recordings.
@@ -4856,6 +4861,8 @@ unmeasured language.
 | Δ171 | §27.8 b: `TranscriptStore` | The stored-result type is `StoredTranscript` (REQ-ARCH-07 rejects `*Store` classes in `domain/`); the domain types gain the job and window fields additively (`batch_name`, `files_expire_at`, `reupload_used`, `content_version`, `transcribed_at`, `booked_at`, `kind`, `reserved_month`, …) with defaults, nothing removed (T-R6, T-R12) | Names and field lists only |
 | Δ172 | — | Two parameters the plan needed: `TRANSCRIBE_FILE_LIFE_AT_SUBMIT` (24 h) and `TRANSCRIBE_MIN_RUN_WALL_S` (90 s) | A window is submitted only with a day of provider-file life left; a further run in a step needs wall for one 30-minute window |
 | Δ173 | — | The `transcript_plan` runs on every record write even with transcription off (it plans job state, acts on none, writes nothing visible); the stage runs only with the kill switch and the user's flag on | One code path; OFF verified off by the reviewer |
+| Δ174 | Δ165: `max_output_tokens = min(65 536, ceil(1 000 × minutes))`; reservation by the hour rate | Cap = `min(65 536, max(TRANSCRIBE_MIN_OUTPUT_TOKENS = 4 096, ceil(1 000 × audio minutes)))`; each window reserves `window_cost_usd = max(hour-rate estimate, audio input at TRANSCRIBE_AUDIO_TOKENS_PER_S = 25 + TRANSCRIBE_WINDOW_PROMPT_TOKENS + the window's output cap, at the held batch price)` (an 8 s window ≈ $0.017) (T-R26) | Live evidence: an 8 s window got a cap of 134 and hit `MAX_TOKENS` with an empty answer, because thinking tokens count toward the cap; the hour rate under-reserved short windows, so the hard cap did not hold for them |
+| Δ175 | §27.5 coverage check: a short window is a failed attempt (`MAX_ATTEMPTS`) | A coverage failure whose answer finished with `STOP` is resubmitted once without counting an attempt (`JobWindow.coverage_resubmits`; still reserved at submit and booked); a second STOP-short answer is accepted (counter `windows_accepted_short`); `MAX_TOKENS`, empty or unknown finish and invalid output keep `MAX_ATTEMPTS`. Known limit: an accepted short answer skips the interpolation-share check; a very short window can practically never pass the 0.9 rule, so it always costs two purchases (cents); an absolute tolerance is a later improvement (T-R27) | Live evidence: a 137 s recording ending in silence and an 8 s window failed coverage on every attempt, though the model had finished normally |
 
 ### 27.17 Open questions (each with a recommendation)
 - **OQ-T1 Window length (30 min) against output drift and cost — resolved by T0 (Δ129).** 30, 45 and 60 min were complete with `MM:SS` times
@@ -4884,7 +4891,9 @@ unmeasured language.
 | `TRANSCRIBE_USD_PER_MONTH` (D46) | $20 | (at the held price ≈ 125 h) ≈ 250 h at $0.08/h now, ≈ 125 h at $0.16/h after the promotion, 50 h at the $0.40/h ceiling (T0) |
 | `TRANSCRIBE_HOUR_USD_ESTIMATE` | **$0.30** per audio hour (was $0.20) | a window's reservation must bound its worst case: audio input plus the output cap at the held batch price ≈ $0.29/h (Δ165, T-R19); pinned by a test |
 | `TRANSCRIBE_WINDOW_PROMPT_TOKENS` | 2 000 per window | the fixed text input (system instruction and task text, ≈ 1 130 tokens measured), rounded up, added to the hour rate (Δ165) |
-| per-window `max_output_tokens` | `min(65 536, ceil(1 000 × audio minutes))` | ≈ 2.2 × the ≈ 450 tokens per audio minute T0 measured (Δ165) |
+| per-window `max_output_tokens` | `min(65 536, max(4 096, ceil(1 000 × audio minutes)))` | ≈ 2.2 × the ≈ 450 tokens per audio minute T0 measured; the floor covers thinking tokens on short windows (Δ165, Δ174) |
+| `TRANSCRIBE_MIN_OUTPUT_TOKENS` | 4 096 | floor of the per-window output cap: an 8 s window with a 134-token cap hit `MAX_TOKENS` with an empty answer (Δ174, T-R26) |
+| `TRANSCRIBE_AUDIO_TOKENS_PER_S` | 25 | audio input tokens per second in a window's reservation (T0 measured 24.996/s) (Δ174) |
 | `MEDIA_PASS_MAX_WINDOWS` | 3 | planned windows cut from one remote read of a file with no duration (Δ161) |
 | `TRANSCRIBE_UPLOAD_S` | 60 | the worst case of uploading one window; joins the tick deadline sum (Δ148) |
 | `TRANSCRIBE_FILE_LIFE_AT_SUBMIT` | 24 h | an uploaded window is submitted only with this much of its provider file's life left; less is re-extracted (Δ172) |
@@ -4912,7 +4921,7 @@ unmeasured language.
 
 ### 27.19 T1 as built (rev 3.26, 2026-10-21; branch `feat/drive-transcripts`, not deployed)
 What the code does today, so the reasoning above is not read as the state of the system. Where this list and an older paragraph
-disagree, the Δ136–Δ173 rows win.
+disagree, the Δ136–Δ175 rows win.
 
 **Built (T1).** `Admission.TRANSCRIBE` and `POLICY_VERSION` 3 with `STRUCTURE_POLICY_SINCE` 2; the transcript state on the record
 (Δ152) and the job, batch, store, window and part documents (Δ143); the media child (`drive_parser/media*.py`: probe, per-window and
