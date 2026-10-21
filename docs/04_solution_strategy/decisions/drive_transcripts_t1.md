@@ -1,7 +1,7 @@
 # Decision: Audio and video are transcribed by a stage with its own job model (Gemini Batch), behind two switches and a hard cap
 
 **Date:** 2026-10-21
-**Status:** Accepted; T1 built on `feat/drive-transcripts`, not deployed. T2 (mirror folder) and T3 (summary) not built.
+**Status:** Accepted; T1 live since 2026-10-21 (owner only, $10 monthly cap). T2 (mirror folder) and T3 (summary) not built.
 **Supersedes:** [drive_audio_video_deferred.md](drive_audio_video_deferred.md) for audio and video (that record said transcripts would
 arrive "through the extractor seam"; they did not, see below). It stays correct for everything else it names.
 **Context:** [USER_DRIVE_INDEXING_RFC.md](../../10_rfcs/USER_DRIVE_INDEXING_RFC.md) §27 (owner decisions D41–D47 in §21; the 38 engineering

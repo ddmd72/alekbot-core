@@ -676,6 +676,7 @@ async def main():
             user_drive=container.user_drive,
             drive_search_service=container.drive_search_service,
             drive_task_queue=container.drive_task_queue,
+            drive_transcribe_switch_on=container.drive_transcribe_switch_on,
         )
 
         # Services for WorkerHandler — wrap ports so the handler never imports ports directly
