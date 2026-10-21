@@ -17,7 +17,8 @@ from src.domain.drive_mirror import (
 )
 from src.domain.drive_mirror_names import is_root_name
 from src.domain.drive_mirror_plan import audit_due, cleared_item, lost_root_reset
-from src.domain.drive_mirror_render import readme_bytes
+from src.domain.drive_mirror_render import readme_bytes, render_archived
+from src.domain.drive_transcript import StoredTranscript
 
 from .drive_mirror_fakes import AREA, DRIVE, EN, START, USER, Crash, MirrorWorld, stored
 
@@ -535,8 +536,9 @@ class Guard:
     """Call-time checks on every Graph write of the step (I2): no planted item is written; nothing is written to, or
     moved out of, an item under a previous root; every create, destination and rewritten file is under the current
     root (RFC §27.12; an item absent from the drive is allowed, its call answers 404 and writes nothing); no archived
-    document's item is rewritten; the audit issues no Graph delete, moves no archived item and rewrites nothing but the
-    read-me (its repairs go through step 4). A violation raises inside the step, where `_guard` counts it as
+    document's item is rewritten, except by the audit back to the render of its pinned store entry; the audit issues
+    no Graph delete, moves an archived item only back to its ledger place, and rewrites nothing but the read-me and
+    edited archived files (its other repairs go through step 4; owner ruling 2026-10-21, Δ241). A violation raises inside the step, where `_guard` counts it as
     `mirror_errors`; `violations` keeps the message."""
 
     def __init__(self, w: MirrorWorld) -> None:
@@ -580,6 +582,20 @@ class Guard:
             return False
         return current in chain or not chain
 
+    def _archived_render(self, doc, data):
+        stored_entry = self.w.repo.transcripts.get((USER, doc.content_key))
+        if stored_entry is None and doc.transcript_stub:
+            stored_entry = StoredTranscript(doc.content_key, None, stub=doc.transcript_stub)
+        return stored_entry is not None and data == render_archived(stored_entry, doc, EN)
+
+    def _to_ledger_place(self, doc, item, args, kw):
+        node = self.w.drive.nodes.get(item)
+        new_parent = kw.get("new_parent_id") if "new_parent_id" in kw else (args[1] if len(args) > 1 else None)
+        new_name = kw.get("new_name") if "new_name" in kw else (args[2] if len(args) > 2 else None)
+        parent = new_parent or (node.parent_id if node else "")
+        name = new_name or (node.name if node else "")
+        return (parent, name) == (doc.mirror_parent_id, doc.mirror_name)
+
     def check(self, name, args, kw):
         w = self.w
         root = w.root
@@ -598,11 +614,16 @@ class Guard:
         assert not self._chain(item) & prev, f"{name} of an item under a previous root"
         archived = [d for d in w.mirror.docs.values() if d.mirror_item_id == item and d.state == MIRROR_ARCHIVED]
         if name == "replace_content":
-            assert not archived, "an archived file rewritten"
+            # owner ruling 2026-10-21 (Δ241): the one rewrite of an archived file allowed is the audit's, of its edit,
+            # back to the render of its pinned store entry
+            assert not archived or (self.in_audit and self._archived_render(archived[0], args[1])), \
+                "an archived file rewritten"
             assert self._placeable(item, current, prev), "a file rewritten outside the root"
-            assert not self.in_audit or item == root.readme_item_id, "the audit rewrote a file itself"
+            assert not self.in_audit or item == root.readme_item_id or archived, "the audit rewrote a file itself"
         if name == "move":
-            assert not (self.in_audit and archived), "the audit moved an archived file"
+            # Δ241: the audit moves an archived file only back to its own ledger place
+            assert not (self.in_audit and archived) or self._to_ledger_place(archived[0], item, args, kw), \
+                "the audit moved an archived file"
         if name == "delete":
             assert not self.in_audit, "a Graph delete from the audit"
             assert self._placeable(item, current, prev), "a delete outside the root"

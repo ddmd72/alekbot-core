@@ -162,3 +162,75 @@ async def test_record_whose_document_cannot_be_read_backs_off_then_parks():
         w.advance(rec.mirror_retry_at - w.clock)
     assert holds[:MIRROR_MAX_ATTEMPTS - 1] == [backoff(n) for n in range(1, MIRROR_MAX_ATTEMPTS)]
     assert holds[MIRROR_MAX_ATTEMPTS - 1:] == [MIRROR_FAILED_RETRY, MIRROR_FAILED_RETRY]   # parked, and stays parked
+
+
+# -- item 11: an archived file is the bot's (owner ruling 2026-10-21, Δ241) -------------------------------------------
+
+async def test_edited_archived_file_is_rewritten_from_the_store():
+    from src.domain.drive_mirror_render import render_archived
+    from src.domain.drive_transcript_render import open_text
+    from .test_drive_transcript_mirror_audit import archived, audit, item_of
+    w = MirrorWorld()
+    a = await archived(w)
+    original = w.content(a)
+    node = item_of(w, a)
+    node.data, node.ctag = b"my own notes", "c-owner"
+    w.reset_calls()
+    counters = await audit(w)
+    assert counters["mirror_archive_rewritten"] == 1
+    assert [(c[0], c[1]["item_id"]) for c in w.drive.writes()] == [("replace_content", node.item_id)]
+    doc = w.doc(a)
+    stored_entry = await w.repo.get_transcript(USER, doc.content_key)
+    assert node.data == render_archived(stored_entry, doc, w.last_host.texts)
+    body = open_text(stored_entry, max_chars=10 ** 9)
+    assert body in w.content(a) and body in original           # the body open and search serve
+    assert "# a.mp4" in w.content(a) and "my own notes" not in w.content(a)
+    assert doc.mirror_ctag == node.ctag and await w.mirror.pinned(USER, doc.content_key)
+    w.reset_calls()
+    await audit(w)                                             # its own cTag is the reference now
+    assert w.drive.writes() == []
+
+
+async def test_renamed_archived_file_is_moved_back():
+    from .test_drive_transcript_mirror_audit import archived, audit, item_of
+    w = MirrorWorld()
+    a = await archived(w)
+    place = (w.doc(a).mirror_parent_id, w.doc(a).mirror_name)
+    node = item_of(w, a)
+    node.name = "kept.md"
+    w.reset_calls()
+    counters = await audit(w)
+    assert counters["mirror_moved_back"] == 1
+    assert (node.parent_id, node.name) == place and w.doc(a).state == "archived"
+    assert [c[0] for c in w.drive.writes()] == ["move"]
+
+
+async def test_archived_file_moved_inside_the_mirror_is_moved_back_and_its_edit_rewritten():
+    from .test_drive_transcript_mirror_audit import archived, audit, item_of
+    w = MirrorWorld()
+    a = await archived(w)
+    place = (w.doc(a).mirror_parent_id, w.doc(a).mirror_name)
+    node = item_of(w, a)
+    node.parent_id = w.root.root_item_id                     # out of the archive, still in the mirror
+    node.data, node.ctag = b"scribbled", "c-owner"
+    w.reset_calls()
+    await audit(w)
+    assert (node.parent_id, node.name) == place
+    assert [c[0] for c in w.drive.writes()] == ["replace_content", "move"]
+    assert b"scribbled" not in node.data
+    assert writes_outside(w, w.root.root_item_id) == []
+
+
+async def test_edited_archived_stub_without_a_store_entry_is_rewritten_from_its_snapshot():
+    from .test_drive_transcript_mirror_audit import audit, item_of
+    w = MirrorWorld()
+    a = await w.recording("quiet.mp4", stub="no_speech", store=False)
+    await w.run()
+    await w.delete_source(a)
+    w.advance(2 * timedelta(hours=1))
+    await w.run()
+    assert w.doc(a).state == "archived" and w.doc(a).transcript_stub == "no_speech"
+    node = item_of(w, a)
+    node.data, node.ctag = b"mine", "c-owner"
+    counters = await audit(w)
+    assert counters["mirror_archive_rewritten"] == 1 and "No speech was detected" in w.content(a)
