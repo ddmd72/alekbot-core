@@ -79,12 +79,17 @@ def test_indexes_are_declared_for_the_live_collection_only():
     # images, final review F5-2) + 8 Search v2 composites (§25.2.5: about, about by kind, expiring, enrichment queue,
     # wake-ups, profile and passages state counts, keys pending) + 2 per-job enrichment queues (P5 review MINOR 6)
     # + 1 for the records the bot cannot open (user_id + inaccessible_since, §26.2, §26.9 step 3) + 2 transcript
-    # queues (the ready queue and the wake-ups, §27.3) + 2 vector entries
-    assert len(_declared_indexes()) == 36
+    # queues (the ready queue and the wake-ups, §27.3) + 2 transcript mirror queues (the mirror queue and its wake-ups,
+    # §27.15 step 8c) + 2 vector entries
+    assert len(_declared_indexes()) == 38
     assert _declared_indexes().count([("user_id", "ASCENDING"), ("transcript_state", "ASCENDING"),
                                       ("effective_day", "DESCENDING"), ("parent_id", "ASCENDING"),
                                       ("item_id", "ASCENDING")]) == 1
     assert _declared_indexes().count([("user_id", "ASCENDING"), ("transcript_wake_at", "ASCENDING"),
+                                      ("item_id", "ASCENDING")]) == 1
+    assert _declared_indexes().count([("user_id", "ASCENDING"), ("mirror_due", "ASCENDING"),
+                                      ("effective_day", "DESCENDING"), ("item_id", "ASCENDING")]) == 1
+    assert _declared_indexes().count([("user_id", "ASCENDING"), ("mirror_retry_at", "ASCENDING"),
                                       ("item_id", "ASCENDING")]) == 1
     assert _declared_indexes("drive_index_records") == []   # RFC Δ22: the unprefixed collections were deleted
 
@@ -124,8 +129,20 @@ def test_deploy_creates_the_drive_composites_and_leaves_the_vectors_to_their_scr
     # +1 readable_chunk_total's sum, +1 chunk_capped, +3 count_unread, +3 count_unread over text images (review D-M4),
     # +2 the not-read-yet count over documents and text images (F5-2), +8 Search v2 (§25.2.5), +2 per-job enrichment
     # queues (P5 review MINOR 6), +1 the records the bot cannot open (§26.2, §26.9 step 3), +2 the transcript queue
-    # and wake-ups (§27.3); the 2 vector entries: create_drive_vector_indexes.sh
-    assert len(drive) == len(declared) == 34
+    # and wake-ups (§27.3), +2 the transcript mirror queue and its wake-ups (§27.15 step 8c); the 2 vector entries:
+    # create_drive_vector_indexes.sh
+    assert len(drive) == len(declared) == 36
+    mirror_queue = [c for c in drive if "--field-config=field-path=mirror_due,order=ascending" in c]
+    assert len(mirror_queue) == 1 and mirror_queue[0][-4:] == [
+        "--field-config=field-path=user_id,order=ascending",
+        "--field-config=field-path=mirror_due,order=ascending",
+        "--field-config=field-path=effective_day,order=descending",
+        "--field-config=field-path=item_id,order=ascending"]
+    mirror_wakeups = [c for c in drive if "--field-config=field-path=mirror_retry_at,order=ascending" in c]
+    assert len(mirror_wakeups) == 1 and mirror_wakeups[0][-3:] == [
+        "--field-config=field-path=user_id,order=ascending",
+        "--field-config=field-path=mirror_retry_at,order=ascending",
+        "--field-config=field-path=item_id,order=ascending"]
     transcript_queue = [c for c in drive if "--field-config=field-path=transcript_state,order=ascending" in c]
     assert len(transcript_queue) == 1 and transcript_queue[0][-5:] == [
         "--field-config=field-path=user_id,order=ascending",
