@@ -4340,10 +4340,13 @@ indexer is the same image.
   of about 16 MB per pass chunk.
 - **A remote run's exit code (Δ161, T-R16).** A remote run goes under `-xerror` (so a connection that keeps dropping is non-zero rather
   than a quiet short file) with reconnect flags. A network errno exit is `MediaUnreadable` (a transient; the next attempt gets a fresh
-  URL). Any other non-zero exit is re-run **once without `-xerror`**, because `-xerror` also makes one corrupt packet fatal; a clean run
-  that is short is the real end of the audio, and its measured length is recorded (this also holds on the known-duration path: a header
-  that over-states the audio, as in some mp4 video and VBR mp3, shortens the last window instead of failing the file forever). Named
-  residual: a drop reconnect cannot recover, in that re-run, reads as an end of file.
+  URL). Any other non-zero exit is re-run **once without `-xerror`**, because `-xerror` also makes one corrupt packet fatal; so is an
+  exit 0 that wrote an error to stderr and came out short of its own `-t` bound, because ffmpeg 6.1 ends an `-xerror` run at a corrupt
+  packet with exit 0 and the output so far (7.1 and 8.0 exit 183; measured, CI runs 6.1). A clean run that is short with nothing logged
+  is the real end of the audio, and its measured length is recorded (this also holds on the known-duration path: a header
+  that over-states the audio, as in some mp4 video and VBR mp3, shortens the last window instead of failing the file forever). An error
+  alone is no reason to re-run: 8.0 logs one at the end of a sound Opus stream. Named residual: a drop reconnect cannot recover, in that
+  re-run, reads as an end of file.
 - **Hardening of an untrusted-media decoder (Δ99).** ffmpeg is a larger decoder surface than the document parsers
   and reads attacker-chosen files from any user's drive; §24.14's trigger ("a code-execution CVE in a parser the child
   loads, or users who do not trust one another") is nearer than it was. Required in the child: `-nostdin`,
