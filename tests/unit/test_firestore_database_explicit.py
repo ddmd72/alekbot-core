@@ -12,6 +12,7 @@ FIRESTORE_MODULES = {
     "google.cloud.firestore_v1.async_client",
 }
 CLIENT_NAMES = {"Client", "AsyncClient"}
+FACTORIES = {"from_service_account_json", "from_service_account_info"}
 # The helper is where scripts get a client; its own calls pass database= through **kwargs.
 HELPER = "scripts/_firestore.py"
 # Files queued for deletion by the integrator; remove an entry when its file is deleted
@@ -65,7 +66,7 @@ def _dotted(node: ast.AST) -> str:
 def _has_explicit_database(call: ast.Call) -> bool:
     for k in call.keywords:
         if k.arg == "database":
-            return not (isinstance(k.value, ast.Constant) and k.value.value is None)
+            return not (isinstance(k.value, ast.Constant) and k.value.value in (None, ""))
     return False  # absent, or hidden in **kwargs
 
 
@@ -91,19 +92,31 @@ def find_violations(source: str, allow_kwargs: bool = False) -> list[int]:
             return n.id in class_names
         return isinstance(n, ast.Attribute) and n.attr in CLIENT_NAMES and _dotted(n.value) in module_names
 
-    # module-level aliases such as `C = firestore.AsyncClient`, followed to a fixed point
+    # aliases such as `C = firestore.AsyncClient`, in any scope, plain/annotated/tuple, followed to a fixed point
+    def pairs():
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                for tgt in node.targets:
+                    if isinstance(tgt, (ast.Tuple, ast.List)) and isinstance(node.value, (ast.Tuple, ast.List)):
+                        yield from zip(tgt.elts, node.value.elts)
+                    else:
+                        yield tgt, node.value
+            elif isinstance(node, ast.AnnAssign) and node.value is not None:
+                yield node.target, node.value
+
     changed = True
     while changed:
         changed = False
-        for node in tree.body:
-            if isinstance(node, ast.Assign) and is_client_ref(node.value):
-                for tgt in node.targets:
-                    if isinstance(tgt, ast.Name) and tgt.id not in class_names:
-                        class_names.add(tgt.id)
-                        changed = True
+        for tgt, val in pairs():
+            if isinstance(tgt, ast.Name) and tgt.id not in class_names and is_client_ref(val):
+                class_names.add(tgt.id)
+                changed = True
     bad = []
     for node in ast.walk(tree):
-        if isinstance(node, ast.Call) and is_client_ref(node.func):
+        if not isinstance(node, ast.Call):
+            continue
+        f = node.func
+        if is_client_ref(f) or (isinstance(f, ast.Attribute) and f.attr in FACTORIES and is_client_ref(f.value)):
             if allow_kwargs and any(k.arg is None for k in node.keywords):
                 continue
             if not _has_explicit_database(node):
@@ -135,6 +148,34 @@ def test_every_firestore_client_names_its_database():
     assert not offenders, "Firestore client without database=:\n" + "\n".join(offenders)
 
 
+def test_scan_covers_every_folder_and_entry_point():
+    rels = {p.relative_to(ROOT).as_posix() for p in _files()}
+    for prefix in ("src/", "scripts/", "firestore_utils/"):
+        assert any(r.startswith(prefix) for r in rels), prefix
+    for name in ("main.py", "job_main.py", "indexer_main.py", "sandbox_main.py", "relay_main.py"):
+        assert name in rels, name
+
+
+def test_firestore_utils_defaults_match_environment_config(monkeypatch):
+    from src.config.environment import EnvironmentConfig
+
+    monkeypatch.delenv("FIRESTORE_DATABASE", raising=False)
+    expected = EnvironmentConfig().firestore_database_id
+    found = []
+    for p in (ROOT / "firestore_utils").rglob("*.py"):
+        for node in ast.walk(ast.parse(p.read_text(encoding="utf-8"))):
+            if (
+                isinstance(node, ast.Call)
+                and _dotted(node.func) in ("os.environ.get", "os.getenv")
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and node.args[0].value == "FIRESTORE_DATABASE"
+            ):
+                assert len(node.args) > 1 and ast.literal_eval(node.args[1]) == expected, p.name
+                found.append(p.name)
+    assert found, "no FIRESTORE_DATABASE default found in firestore_utils/"
+
+
 def test_pending_deletion_entries_still_exist():
     stale = sorted(p for p in PENDING_DELETION if not (ROOT / p).exists())
     assert not stale, "already deleted; remove from PENDING_DELETION:\n" + "\n".join(stale)
@@ -153,6 +194,12 @@ def test_pending_deletion_entries_still_exist():
         "from google.cloud import firestore\ndb = firestore.AsyncClient(**kw)",
         "from google.cloud import firestore\nC = firestore.AsyncClient\ndb = C(project='p')",
         "from google.cloud.firestore import Client\nC = Client\nD = C\ndb = D()",
+        "from google.cloud import firestore\ndb = firestore.Client(database='')",
+        "from google.cloud import firestore\ndb = firestore.Client.from_service_account_json('k.json')",
+        "from google.cloud import firestore\ndb = firestore.AsyncClient.from_service_account_info(i)",
+        "from google.cloud import firestore\ndef f():\n    C = firestore.Client\n    return C()",
+        "from google.cloud import firestore\nA, B = 1, firestore.Client\ndb = B()",
+        "from google.cloud import firestore\nC: type = firestore.Client\ndb = C()",
     ],
 )
 def test_scanner_catches_missing_database(source):
@@ -165,6 +212,8 @@ def test_scanner_catches_missing_database(source):
     [
         "from google.cloud import firestore\ndb = firestore.AsyncClient(project='p', database='x')",
         "from google.cloud import firestore\nC = firestore.AsyncClient\ndb = C(database='x')",
+        "from google.cloud import firestore\ndb = firestore.Client.from_service_account_json('k', database='x')",
+        "from google.cloud import bigquery\nc = bigquery.Client.from_service_account_json('k')",
         "import httpx\nc = httpx.AsyncClient()",
         "from google.cloud import bigquery\nc = bigquery.Client()",
         "from google.cloud.tasks_v2 import CloudTasksAsyncClient\nc = CloudTasksAsyncClient()",
