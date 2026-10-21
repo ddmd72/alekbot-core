@@ -41,7 +41,7 @@ def _worker(store, notify):
     notification.notify = notify
     return WorkerHandler(
         agent_worker_handler=MagicMock(), email_indexing_service=MagicMock(), notification_service=notification,
-        consolidation_service=None, coordinator=MagicMock(), agent_factory=MagicMock(), indexed_email_repo=None,
+        consolidation_service=None, coordinator=MagicMock(), agent_factory=AsyncMock(), indexed_email_repo=None,
         user_repo=MagicMock(), task_dispatch=AsyncMock(), email_review=review, oauth_credentials=store,
     )
 

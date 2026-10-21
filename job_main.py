@@ -110,6 +110,27 @@ def _build_task_queue() -> GcpTaskQueue:
     )
 
 
+async def _report_failure(task_queue, context: dict, query: str, reason: str) -> None:
+    """Ask the main service to tell the user the research failed; never raises (the job exits 1 next)."""
+    session_id = context.get("session_id", "")
+    try:
+        await task_queue.enqueue_worker_task(
+            "deep_research_failed",
+            {
+                "user_id": context.get("user_id", ""),
+                "account_id": context.get("account_id", ""),
+                "session_id": session_id,
+                "origin_platform": context.get("origin_platform") or "",
+                "query": (context.get("original_query") or query)[:200],
+                "reason": reason,
+            },
+            # A job retry must not notify twice.
+            dedup_key=f"deep_research_failed:{context.get('job_id') or session_id}",
+        )
+    except Exception as exc:
+        logger.error("[ResearchJob] Failure notice not enqueued: reason=%s error=%s", reason, exc, exc_info=True)
+
+
 async def _capture_research_result(
     result: dict, result_text: str, user_id: str, context: dict
 ) -> None:
@@ -215,12 +236,14 @@ async def _run_job() -> None:
             "[ResearchJob] Agent failed: user=%s error=%s",
             user_id[:8], response.error,
         )
+        await _report_failure(task_queue, context, query, "agent_failed")
         sys.exit(1)
 
     result = response.result or {}
     result_text = result.get("text", "")
     if not result_text:
         logger.error("[ResearchJob] Agent returned empty result — aborting delivery")
+        await _report_failure(task_queue, context, query, "empty_result")
         sys.exit(1)
 
     # Durable content capture BEFORE delivery — deep research is expensive; if
@@ -244,7 +267,7 @@ async def _run_job() -> None:
     origin_platform = context.get("origin_platform") or None  # absent on pre-deploy jobs
 
     try:
-        await deliver_deep_research(
+        handed_off = await deliver_deep_research(
             result_text=result_text,
             user_id=user_id,
             account_id=context.get("account_id", ""),
@@ -259,11 +282,14 @@ async def _run_job() -> None:
             channel_id_override=origin_channel_id,
             platform_override=origin_platform,
         )
+        if handed_off is False:  # the report task could not be enqueued (swallowed inside)
+            raise RuntimeError("report task not enqueued")
     except Exception as exc:
         logger.error(
             "[ResearchJob] Delivery failed: user=%s error=%s",
             user_id[:8], exc, exc_info=True,
         )
+        await _report_failure(task_queue, context, query, "delivery_failed")
         sys.exit(1)
 
     logger.info("[ResearchJob] Completed and delivered: user=%s", user_id[:8])
