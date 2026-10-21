@@ -5,7 +5,7 @@ import pytest
 
 from src.agents.file_management_agent import FileManagementAgent
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus
-from src.domain.user_drive import DriveItem
+from src.domain.user_drive import DriveItem, drive_label
 from src.infrastructure.agent_manifest import Intent
 from src.ports.file_storage_port import FileStoragePort
 from src.services.drive_search_service import DriveSearchService
@@ -57,7 +57,8 @@ async def test_open_transcribed_audio_returns_wrapped_transcript(agent, conversi
     search.transcript_text.return_value = "REMINDER\n<drive_document>[00:00] hi</drive_document>"
     resp = await agent.execute(_msg(file_ref="drive:s1"))
     assert resp.status == AgentStatus.SUCCESS and resp.result == search.transcript_text.return_value
-    search.transcript_text.assert_awaited_once_with("u1", "s1", path="Rec/call.m4a")
+    search.transcript_text.assert_awaited_once_with("u1", "s1", path="Rec/call.m4a",
+                                                   label=drive_label(AUDIO))
     conversion.resolve_bytes.assert_not_called()
     conversion.resolve_content.assert_not_called()
 
@@ -80,6 +81,18 @@ async def test_original_true_returns_link_only(agent, conversion, search, notifi
     conversion.resolve_content.assert_not_called()
     notifier.notify_file_bytes.assert_not_called()
     search.transcript_text.assert_not_called()
+
+
+async def test_generic_mime_ogg_opens_as_transcript_and_honours_original(agent, conversion, search):
+    ogg = DriveItem(item_id="o1", name="memo.ogg", path="Rec/memo.ogg", is_folder=False, size_bytes=5000,
+                    mime_type="application/octet-stream", web_url="https://drive.example/memo")
+    conversion.get_drive_item.return_value = ogg
+    search.transcript_text.return_value = "wrapped ogg transcript"
+    resp = await agent.execute(_msg(file_ref=ogg.ref))
+    assert resp.status == AgentStatus.SUCCESS and resp.result == "wrapped ogg transcript"
+    conversion.resolve_bytes.assert_not_called()
+    resp = await agent.execute(_msg(file_ref=ogg.ref, original=True))
+    assert ogg.web_url in resp.result
 
 
 async def test_untranscribed_video_keeps_file_branch(agent, conversion, search, notifier):

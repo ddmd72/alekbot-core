@@ -1322,9 +1322,7 @@ def create_user_cabinet_blueprint(
             try:
                 body["indexing"] = _indexing_json(await drive_search_service.indexing_status(g.user_id))
                 # The transcription disclosure shows only while the user's own flag is on (§27.12, G24); no toggle.
-                # Present only when on: an off flag adds nothing to the block.
-                if await _transcribe_enabled(g.user_id):
-                    body["indexing"]["transcribe_enabled"] = True
+                body["indexing"]["transcribe_enabled"] = await _transcribe_enabled(g.user_id)
             except Exception as exc:
                 # The connection card (Connect/Disconnect/Reconnect) must not depend on the index read.
                 logger.error(f"Error fetching drive indexing status: {exc}", exc_info=True)

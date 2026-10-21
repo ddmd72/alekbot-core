@@ -1331,7 +1331,8 @@ class DriveSearchService:
             return None
         return ACCESS_NOTE_FOLDER if rec.is_folder else ACCESS_NOTE_FILE
 
-    async def transcript_text(self, user_id: str, item_id: str, *, path: str = "") -> Optional[str]:
+    async def transcript_text(self, user_id: str, item_id: str, *, path: str = "",
+                              label: str = "") -> Optional[str]:
         """What opening a transcribed recording returns (§27.11): the transcript, or the stub's card line, inside the
         nonce wrapper under the reference reminder, capped at `TRANSCRIPT_OPEN_MAX_CHARS` (G19). None when the record
         has no current transcript, so the caller keeps its own branch (Δ121). Speech is other people's: never logged."""
@@ -1347,7 +1348,7 @@ class DriveSearchService:
             body = None
         if not body:
             return None
-        wrapped = wrap_untrusted(body, nonce=self._nonce(), ref=f"drive:{item_id}", path=path)
+        wrapped = wrap_untrusted(f"{label}\n{body}" if label else body, nonce=self._nonce(), ref=f"drive:{item_id}", path=path)
         return f"{REFERENCE_REMINDER}\n{wrapped}"
 
     async def _building(self, user_id: str, state: DriveSyncState) -> bool:
