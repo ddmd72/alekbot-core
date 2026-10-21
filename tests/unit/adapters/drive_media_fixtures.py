@@ -178,3 +178,29 @@ def make_seekable_webm(path, seconds: int) -> bytes:
     """Opus in webm written to a file: has a Duration and Cues."""
     _ffmpeg("-f", "lavfi", "-i", f"sine=frequency=440:duration={seconds}", "-c:a", "libopus", str(path))
     return path.read_bytes()
+
+
+def make_overstated_mp4(path, video_s: int, audio_s: int) -> bytes:
+    """A video longer than its audio: the header duration overstates the audio."""
+    _ffmpeg("-f", "lavfi", "-i", f"color=c=black:s=16x16:r=1:d={video_s}", "-f", "lavfi", "-i",
+            f"sine=frequency=440:duration={audio_s}", "-c:v", "libx264", "-c:a", "aac", "-movflags", "+faststart",
+            str(path))
+    return path.read_bytes()
+
+
+def make_overstated_mp3(path, seconds: int) -> bytes:
+    """VBR mp3 without a Xing/TOC header (half tone, half noise): the duration is estimated from the first bitrate."""
+    half = seconds // 2
+    _ffmpeg("-f", "lavfi", "-i", f"sine=frequency=440:duration={half}", "-f", "lavfi", "-i",
+            f"anoisesrc=d={half}:a=0.5", "-filter_complex", "[0][1]concat=n=2:v=0:a=1", "-c:a", "libmp3lame",
+            "-q:a", "5", "-write_xing", "0", str(path))
+    return path.read_bytes()
+
+
+def make_corrupt_mp4(path, seconds: int) -> bytes:
+    """An AAC mp4 with 2 KB overwritten in the middle of its media data (moov first, so the file still opens)."""
+    _ffmpeg("-f", "lavfi", "-i", f"anoisesrc=d={seconds}:a=0.3", "-c:a", "aac", "-movflags", "+faststart", str(path))
+    data = bytearray(path.read_bytes())
+    mid = len(data) // 2
+    data[mid:mid + 2048] = bytes((i * 37 + 11) % 256 for i in range(2048))
+    return bytes(data)

@@ -16,6 +16,7 @@ Public interface:
 from __future__ import annotations
 
 import contextlib
+import errno
 import json
 import math
 import os
@@ -39,6 +40,12 @@ FORMAT_WHITELIST = "mov,mp4,m4a,matroska,webm,mp3,wav,flac,ogg,aac"
 # that keeps dropping a non-zero exit.
 RECONNECT_FLAGS = ["-reconnect", "1", "-reconnect_on_network_error", "1", "-reconnect_delay_max", "5"]
 REMOTE_RUN_FLAGS = ["-xerror"]
+# ffmpeg exits with `AVERROR(errno) & 0xff`, and errno numbers differ between Linux and macOS: computed at runtime.
+# These are the I/O failures of a connection (a transient: the next attempt gets a fresh URL). Any other non-zero exit
+# of a remote run is re-run once WITHOUT `-xerror` (reconnect kept), because `-xerror` also makes one corrupt packet
+# fatal where ffmpeg would conceal it (T-R16). Named residual: a drop that reconnect cannot recover, in that re-run,
+# reads as an end of the file, as a clean run's short output does.
+NETWORK_ERRNOS = (errno.EIO, errno.ECONNRESET, errno.ETIMEDOUT, errno.EPIPE, errno.ECONNREFUSED)
 NETWORK_TIMEOUT_US = 30_000_000       # -rw_timeout: a stalled socket ends as an error, not a wall-clock kill
 MAX_WINDOWS_PER_RUN = 64
 _LIMIT_SIGNALS = (-signal.SIGXCPU, -signal.SIGXFSZ)   # an rlimit ended ffmpeg: its output so far is a valid prefix
@@ -76,18 +83,19 @@ _OUTPUT_FLAGS = ["-map", "0:a:0", "-vn", "-sn", "-dn", "-map_metadata", "-1", "-
 
 
 def build_window_argv(url: str, ca_file: str, container: str, start_s: float, length_s: float,
-                      out_path: str) -> List[str]:
+                      out_path: str, xerror: bool = True) -> List[str]:
     """One window: input-side `-ss` / `-t` (Range reads, Δ134), audio only, to `out_path`."""
-    return ([FFMPEG, "-nostdin", "-hide_banner", "-loglevel", "error", "-nostats", "-y"] + REMOTE_RUN_FLAGS
+    return ([FFMPEG, "-nostdin", "-hide_banner", "-loglevel", "error", "-nostats", "-y"] + (REMOTE_RUN_FLAGS if xerror else [])
             + _input_guard(url, ca_file, container)
             + ["-ss", f"{start_s:.3f}", "-t", f"{length_s:.3f}", "-i", url] + _OUTPUT_FLAGS + ["-f", "opus", out_path])
 
 
-def build_pass_argv(url: str, ca_file: str, container: str, start_s: float, span_s: float, out_path: str) -> List[str]:
+def build_pass_argv(url: str, ca_file: str, container: str, start_s: float, span_s: float, out_path: str,
+                    xerror: bool = True) -> List[str]:
     """The one remote read of a pass over a file without a duration (G35, T-R15): `-ss` only when resuming past the
     start, `-t` bounding it, one Ogg Opus file out. The windows are cut from that file locally."""
     seek = ["-ss", f"{start_s:.3f}"] if start_s > 0 else []
-    return ([FFMPEG, "-nostdin", "-hide_banner", "-loglevel", "error", "-nostats", "-y"] + REMOTE_RUN_FLAGS
+    return ([FFMPEG, "-nostdin", "-hide_banner", "-loglevel", "error", "-nostats", "-y"] + (REMOTE_RUN_FLAGS if xerror else [])
             + _input_guard(url, ca_file, container)
             + seek + ["-t", f"{span_s:.3f}", "-i", url] + _OUTPUT_FLAGS + ["-f", "opus", out_path])
 
@@ -140,6 +148,20 @@ def _run_ffmpeg(argv: List[str], deadline: float) -> Tuple[Optional[int], bool]:
     return done.returncode, False
 
 
+def network_exit_codes() -> frozenset:
+    return frozenset((-e) & 0xFF for e in NETWORK_ERRNOS)
+
+
+def _run_remote(build: Any, request: Dict[str, Any], deadline: float, out_path: str) -> Tuple[Optional[int], bool]:
+    """A remote ffmpeg run under `-xerror`; a non-zero exit that is neither a limit, the wall nor a network error is
+    re-run once without it (T-R16)."""
+    code, timed_out = _run_ffmpeg(build(True), deadline)
+    if (timed_out or code == 0 or code in _LIMIT_SIGNALS or code in network_exit_codes()
+            or _hit_a_limit(request, out_path)):
+        return code, timed_out
+    return _run_ffmpeg(build(False), deadline)
+
+
 def _regular(path: str) -> bool:
     try:
         return stat.S_ISREG(os.lstat(path).st_mode)
@@ -188,17 +210,27 @@ def _run_each(request: Dict[str, Any], url: str, ca_file: str, container: str, o
             return {"status": "timeout", "windows": written, "detail": "wall before window"}
         final = os.path.join(out_dir, window_name(index))
         part = final + ".part"
-        code, timed_out = _run_ffmpeg(build_window_argv(url, ca_file, container, start, length, part), deadline)
+        code, timed_out = _run_remote(
+            lambda xerror: build_window_argv(url, ca_file, container, start, length, part, xerror),
+            request, deadline, part)
         if timed_out:
             _discard(part)
             return {"status": "timeout", "windows": written, "detail": "wall in window"}
-        real = _file_duration(part) if code == 0 and _regular(part) and os.path.getsize(part) > 0 else 0.0
-        if real <= 0 or real < length - _TRUNCATED_WINDOW_S:
-            _discard(part)        # header-only Ogg (a seek past the end), or a window cut short: never its planned length
-            return {"status": "error", "detail": f"ffmpeg exit {code}" if code != 0 else "window shorter than planned"}
+        if code != 0:
+            _discard(part)
+            return {"status": "error", "detail": f"ffmpeg exit {code}"}
+        real = _file_duration(part) if _regular(part) and os.path.getsize(part) > 0 else 0.0
+        if real <= 0:                    # a header-only Ogg is what a seek past the end of the audio leaves
+            _discard(part)
+            if start > 0 and written:    # the audio ended before this window began (T-R16)
+                return {"status": "ok", "windows": written, "eof": True, "duration_s": start}
+            return {"status": "error", "detail": "no audio produced"}
         os.replace(part, final)
-        written.append({"index": index, "start_s": start, "duration_s": length})
-    return {"status": "ok", "windows": written}
+        written.append({"index": index, "start_s": start, "duration_s": real})   # the measured length, never the plan's
+        if real < length - _TRUNCATED_WINDOW_S:
+            # A clean run that comes out short is the real end of the audio (the header duration overstated it).
+            return {"status": "ok", "windows": written, "eof": True, "duration_s": start + real}
+    return {"status": "ok", "windows": written, "eof": False}
 
 
 def _discard(path: str) -> None:
@@ -245,7 +277,9 @@ def _run_pass(request: Dict[str, Any], url: str, ca_file: str, container: str, o
     span = last_end - first_start
     pass_path = os.path.join(out_dir, "pass.opus")
     try:
-        code, timed_out = _run_ffmpeg(build_pass_argv(url, ca_file, container, first_start, span, pass_path), deadline)
+        code, timed_out = _run_remote(
+            lambda xerror: build_pass_argv(url, ca_file, container, first_start, span, pass_path, xerror),
+            request, deadline, pass_path)
         limit = code in _LIMIT_SIGNALS or (code != 0 and not timed_out and _hit_a_limit(request, pass_path))
         cut = timed_out or limit
         if not cut and code != 0:

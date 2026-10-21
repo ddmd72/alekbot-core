@@ -104,7 +104,7 @@ class SubprocessMediaExtractor(MediaAudioPort):
             if item[0] not in allowed:
                 raise MediaUnreadable("window outside the request")
             specs.append((WindowSpec(index=item[0], start_s=item[1], duration_s=item[2]), item[3]))
-        eof = result.get("eof") is True and not duration_known
+        eof = result.get("eof") is True
         reached = result.get("reached_bound") is True and not duration_known and not eof
         total = 0.0
         if eof:
