@@ -46,8 +46,9 @@ REMOTE_RUN_FLAGS = ["-xerror"]
 # ffmpeg exits with `AVERROR(errno) & 0xff`, and errno numbers differ between Linux and macOS: computed at runtime.
 # These are the I/O failures of a connection (a transient: the next attempt gets a fresh URL). Any other non-zero exit
 # of a remote run is re-run once WITHOUT `-xerror` (reconnect kept), because `-xerror` also makes one corrupt packet
-# fatal where ffmpeg would conceal it (T-R16). Named residual: a drop that reconnect cannot recover, in that re-run,
-# reads as an end of the file, as a clean run's short output does.
+# fatal where ffmpeg would conceal it (T-R16); so is an exit 0 that logged an error and came out short of its bound
+# (ffmpeg 6.1 ends such a run with exit 0, see `_run_remote`). Named residual: a drop that reconnect cannot recover, in
+# that re-run, reads as an end of the file, as a clean run's short output does.
 NETWORK_ERRNOS = (errno.EIO, errno.ECONNRESET, errno.ETIMEDOUT, errno.EPIPE, errno.ECONNREFUSED)
 NETWORK_TIMEOUT_US = 30_000_000       # -rw_timeout: a stalled socket ends as an error, not a wall-clock kill
 MAX_WINDOWS_PER_RUN = 64
@@ -165,13 +166,47 @@ def network_exit_codes() -> frozenset:
 
 def _run_remote(build: Any, request: Dict[str, Any], deadline: float,
                 out_path: str) -> Tuple[Optional[int], bool, float]:
-    """A remote ffmpeg run under `-xerror`; a non-zero exit that is neither a limit, the wall nor a network error is
-    re-run once without it (T-R16). Returns the code, timeout flag and CPU of the run whose code it returns."""
-    code, timed_out, cpu = _run_ffmpeg(build(True), deadline)
-    if (timed_out or code == 0 or code in _LIMIT_SIGNALS or code in network_exit_codes()
+    """A remote ffmpeg run under `-xerror`, re-run once without it (T-R16) when it failed or when it only
+    looks clean. Returns the code, timeout flag and CPU of the run whose code it returns.
+
+    Failed: a non-zero exit that is neither a limit, the wall nor a network error. Looks clean: exit 0, but it wrote
+    an error to stderr and its output is short of its own `-t` bound. ffmpeg 6.1 ends an `-xerror` run at a corrupt
+    packet with exit 0 and the output so far (7.1 and 8.0 exit 183); taken as clean, that short output would read as
+    the end of the audio and truncate the file. A clean run that reaches its bound, or that is short with nothing
+    logged (the real end), stands: an error alone is no evidence (8.0 logs one at the end of a sound Opus stream)."""
+    first = build(True)
+    logged_from = _stderr_size()
+    code, timed_out, cpu = _run_ffmpeg(first, deadline)
+    if (timed_out or code in _LIMIT_SIGNALS or code in network_exit_codes()
             or _hit_a_limit(request, out_path, cpu)):
         return code, timed_out, cpu
+    if code == 0 and not (_logged_since(logged_from) and _short_of_bound(first, out_path, deadline)):
+        return code, timed_out, cpu
     return _run_ffmpeg(build(False), deadline)
+
+
+def _stderr_size() -> Optional[int]:
+    """Size of this child's stderr when it is a regular file (the parent's stderr file, which ffmpeg inherits), else
+    None. ffmpeg runs at `-loglevel error`, so any growth across one run is an error it reported."""
+    try:
+        info = os.fstat(2)
+    except OSError:
+        return None
+    return info.st_size if stat.S_ISREG(info.st_mode) else None
+
+
+def _logged_since(size: Optional[int]) -> bool:
+    """Did the run write to stderr? Unknown (stderr is not a regular file) counts as yes: a re-run costs a read, a
+    wrong 'no' costs the rest of the file."""
+    now = _stderr_size()
+    return size is None or now is None or now > size
+
+
+def _short_of_bound(argv: List[str], out_path: str, deadline: float) -> bool:
+    """The run's output ends more than `_BOUND_SLACK_S` before the run's own `-t` (no output: short)."""
+    bound = float(argv[argv.index("-t") + 1])
+    produced = _file_duration(out_path, deadline) if _regular(out_path) and os.path.getsize(out_path) > 0 else 0.0
+    return produced < bound - _BOUND_SLACK_S
 
 
 def _regular(path: str) -> bool:
