@@ -1145,6 +1145,7 @@ async def main():
                             task_queue=agent_task_queue,
                             long_turn_service=long_turn_service,
                         )
+                        worker_handler.attach_telegram_worker(telegram_adapter.handle_queued_update)
                         def _make_telegram_channel(adapter, channel_id):
                             try:
                                 return TelegramResponseChannel(
@@ -1175,7 +1176,6 @@ async def main():
 
                         # Register in factory
                         PlatformAdapterFactory.register("telegram", telegram_adapter)
-                        worker_handler.attach_telegram_worker(telegram_adapter.handle_queued_update)
 
                         logger.info("✅ Telegram adapter registered at /telegram/webhook")
                     except Exception as e:
