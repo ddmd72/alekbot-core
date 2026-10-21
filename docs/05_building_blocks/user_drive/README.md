@@ -1348,6 +1348,14 @@ owner can read a transcript on his phone without asking the bot. The folder is *
 `Videos/2024/Interview.mp4` has `_Transcripts/Videos/2024/Interview.mp4.md`. A short `_README.md` in the user's language says the folder is managed by
 the bot, files may be rewritten, do not edit them, and transcripts of deleted recordings are in `Archive/`. The mirror calls no model; the files are
 rendered from the stored transcript. The index never indexes the folder (its subtree is opaque), so a plain search never returns a mirror file.
+A recording with no speech ("no speech", a silent clip) also gets a file: a short stub saying so, so every recording has one.
+
+**The files belong to the bot (owner ruling, 2026-10-21).** You do not edit transcript files on the drive. Every `.md` in `_Transcripts`, active or archived, is the
+bot's and is overwritten by it, at the weekly audit at the latest; a rename or a move inside the folder is moved back. To keep your own version, **copy the file to
+another folder**. Two more rules follow from it: deleting an archived file makes the bot forget it (its stored copy is released and it drops out of the deleted-files
+search), and moving a file out of `_Transcripts` makes it your copy (the bot lets go of it). The one exception is a **detached** transcript: a recording whose source is
+still on the drive but has no stored transcript the bot can rewrite it from (it left the index's scope). Nothing can be rewritten from, so the bot leaves the file alone
+(it follows a rename or a move inside the folder and writes nothing). The read-me and the Cabinet text say the same in the user's language.
 
 **What happens to a file.** The mirror step runs last in the tick, after a complete round, for a user with both switches on (§5, step 5a):
 - **Create / replace / move.** A recording whose transcript is `current` is made due by a flag on its record (`mirror_due`, set when the digest of its name,
@@ -1356,8 +1364,8 @@ rendered from the stored transcript. The index never indexes the folder (its sub
   folder, not of its files). A name that is taken, or a name that collides with a folder, gets a numbered suffix; the reserved names `_README.md`, `Archive`
   and `Long paths` win any collision. A path too long for OneDrive puts the file in `Long paths`.
 - **Delete → archive (D48).** When the source is deleted, the ledger gets a durable mark. After a complete round and one hour (so a restore from the recycle bin or a
-  re-listed folder cancels it) the file moves to **`_Transcripts/Archive/<YYYY-MM-DD>/<path>.md`** (the day in the user's time zone). The bot never deletes an
-  archived file; its stored transcript stays pinned. A restored recording moves its file back. A source that merely left the index's scope (a dot-folder, a repository)
+  re-listed folder cancels it; **moving a recording out of the App Folder counts as a delete**) the file moves to **`_Transcripts/Archive/<YYYY-MM-DD>/<path>.md`** (the day in the user's time zone). The bot never deletes an
+  archived file; its stored transcript stays pinned, and only the owner's delete of the archived file releases it. A restored recording moves its file back. A source that merely left the index's scope (a dot-folder, a repository)
   is **detached**: the file stays where it is, pinned, and a weekly check turns it into an archive if the source is really gone.
 - **Searching the archive.** Only `search_files_in_drive` with `drive_deleted` reaches archived transcripts ("search in deleted files"). It reads the ledger, shows at
   most five hits (each checked with one `get_change`), works even with drive search turned off, and never mixes into a normal search. An archived file opens from its
@@ -1373,8 +1381,8 @@ rendered from the stored transcript. The index never indexes the folder (its sub
   after the intent with the rendered size, so a foreign file is never overwritten. The owner's `_README.md` is never adopted. Every write is checked to end under the
   current root (a folder the owner moved out gets no write until it is moved back).
 - **The audit** (weekly, one listing page per read, with a rotating scan between): an edit of an active file is overwritten, a deleted or moved active file is re-created or
-  moved back, an archived file is only followed (renamed, moved inside the mirror) and never rewritten, a foreign item is counted and left alone, a missing read-me is
-  rewritten. A listing that answers 404 is confirmed with a read before anything under it is discarded.
+  moved back, an edited archived file is overwritten from its stored copy and a renamed or moved one is moved back (Δ241; the bot never deletes or re-creates an archived
+  file), a detached file is only followed, a foreign item is counted and left alone, a missing read-me is rewritten. A listing that answers 404 is confirmed with a read before anything under it is discarded.
 - **The root's loss.** If the root folder disappears, nothing happens for 24 hours and until a complete round and a confirming read agree; then archived documents are
   deleted (the files went with the folder, their pins are released), active ones are cleared and re-created under a new root. A restored old root is never written to again.
 
@@ -1392,10 +1400,22 @@ rendered from the stored transcript. The index never indexes the folder (its sub
 | Indexing is turned off while the step runs | The tick ends `disabled`; the next tick purges the index and **leaves the drive alone** (OQ-T10) |
 
 **Opt-out, rollback and the owner's levers.** An indexing opt-out deletes nothing on the drive; a re-enable re-identifies the root and re-buys the transcripts of the
-recordings that still exist (about $0.16 per audio hour, newest first, under the $20 cap). Rollback to an image that predates T2: pause the queue and the fan-out,
+recordings that still exist (about $0.16 per audio hour, newest first, under the monthly cap; live $10 through `DRIVE_TRANSCRIBE_USD_CAP_DEV`). Rollback to an image that predates T2: pause the queue and the fan-out,
 move `_Transcripts` out of the App Folder, deploy, resume; the reverse for the roll-forward (§7 and `docs/07_deployment/README.md`). `drive_transcript_sweep.py` removes
 the orphan documents after a rollback and **keeps** the mirror's ledger, root documents and pinned transcripts unless `--mirror`. `drive_mirror_status.py` shows the
 state of the mirror per user (§7).
+
+**The stop lever.** There is **no mirror-only off switch** (owner ruling, 2026-10-21): the mirror is part of transcription. To stop it, turn off the user's transcription flag
+or the kill switch; **both also stop transcription itself, batches already in flight included**, until switched back on.
+
+**What it costs.** The mirror calls no model, so it costs Firestore operations only: about $0.1 to 0.2 a month for the owner today (about 30 reads a tick, no writes when
+idle), about $0.7 a month at 5 000 transcripts (the rotating scan and the weekly audit). A first mirror or a render-version bump is a one-off burst (about $0.6 for folders
+of 100 files). The second user (transcription off) costs one roots query a tick, about $0.003 a month. The main service adds a few small reads for every user (not only
+those with transcription): a ledger lookup on each drive open, a roots read on each drive mutation and Cabinet status, and two pin queries per opt-out purge.
+
+**Known residuals.** Moving an active mirror folder back after the owner took it out of `_Transcripts` also carries any of his own files he put inside it into the opaque
+area, where they drop out of search; copy your files out of the mirror, do not store them in it. A `_Transcripts` folder that already exists in the App Folder before the
+first run makes the bot create `_Transcripts (Alek)`.
 
 **Not built.** The summary (T3), the Cabinet toggle. The decisions are in [drive_transcripts_t1.md](../../04_solution_strategy/decisions/drive_transcripts_t1.md) and
 [drive_transcripts_mirror_archive.md](../../04_solution_strategy/decisions/drive_transcripts_mirror_archive.md); the reasoning and the deltas of the build are RFC §27.16
