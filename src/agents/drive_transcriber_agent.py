@@ -27,6 +27,7 @@ from typing import Any, List, Optional
 
 from ..domain.agent import AgentConfig, AgentMessage, AgentResponse
 from ..domain.batch_transcription import BatchRequest
+from ..domain.drive_index_params import TRANSCRIBE_MIN_OUTPUT_TOKENS
 from ..domain.drive_transcript import Segment, WindowSpec, WindowTranscript
 from ..domain.drive_transcript_time import format_stamp, parse_stamp
 from ..infrastructure.agent_config import DRIVE_TRANSCRIBER
@@ -87,7 +88,10 @@ class DriveTranscriberAgent(BaseAgent):
         length = format_stamp(math.ceil(window.duration_s))
         # T-R19: the cap bounds the worst case of a runaway window to its reservation (Δ106); T0 measured ~400-450
         # output tokens per audio minute, thoughts included, so 1000 per minute leaves room for a dense recording.
-        cap = min(DRIVE_TRANSCRIBER.max_tokens, math.ceil(_OUTPUT_TOKENS_PER_MINUTE_CAP * window.duration_s / 60))
+        # T-R26: thinking tokens count toward the cap, so a short window keeps a floor (an 8 s window got 134 and hit
+        # MAX_TOKENS with an empty answer).
+        cap = min(DRIVE_TRANSCRIBER.max_tokens,
+                  max(TRANSCRIBE_MIN_OUTPUT_TOKENS, math.ceil(_OUTPUT_TOKENS_PER_MINUTE_CAP * window.duration_s / 60)))
         return BatchRequest(key=key, system_instruction=prompt, user_text=_TASK.format(length=length),
                             response_schema=_RESPONSE_SCHEMA, file_name=file_name, file_mime=file_mime,
                             thinking_level=self._thinking, max_output_tokens=cap)

@@ -205,6 +205,8 @@ CAPTURE_BUDGET_S = 5.0                           # the signals walk's own time b
 TRANSCRIBE_USD_PER_MONTH = 20.0             # D46: the month's hard cap; ~125 audio hours at the post-promotion $0.16/h
 TRANSCRIBE_HOUR_USD_ESTIMATE = 0.30         # per audio hour, reserved at submit; bounds a window's worst case: audio input + the per-window output cap at the held batch price (T-R19)
 TRANSCRIBE_WINDOW_PROMPT_TOKENS = 2_000     # per window, on top of the hour rate: system instruction + task text (~1 130 tokens measured), rounded up (T-R19 N2)
+TRANSCRIBE_MIN_OUTPUT_TOKENS = 4_096         # floor of a window's output cap: thinking tokens count toward the output cap, so a short window needs headroom (T-R26)
+TRANSCRIBE_AUDIO_TOKENS_PER_S = 25          # audio input tokens per second of audio, for the worst-case estimate (T-R19, T-R26)
 TRANSCRIBE_WINDOW_S = 1_800                 # §27.4: 30-45 min allowed (Δ129); keep <= 45 min: parse_stamp is strict M:SS below one hour
 TRANSCRIBE_OVERLAP_S = 60                   # §27.6, Δ108: both windows hold a few utterances of every speaker
 TRANSCRIBE_COVERAGE_MIN = 0.9               # Δ129: last segment start / window duration below it = failed attempt
