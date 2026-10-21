@@ -84,6 +84,7 @@ class ClaudeDeepResearchAdapter(DeepResearchPort):
         system_prompt: Optional[str] = None,
         session_id: Optional[str] = None,
         second_pass: bool = False,
+        origin_platform: Optional[str] = None,
     ) -> str:
         """
         Trigger a Cloud Run Job execution for ClaudeDeepResearchRunnerAgent.
@@ -102,6 +103,7 @@ class ClaudeDeepResearchAdapter(DeepResearchPort):
             "job_id": job_id,
             "session_id": session_id or "",
             "second_pass": second_pass,
+            "origin_platform": origin_platform or "",
         }
         await self._job_runner.run_job(
             job_name=self._job_name,

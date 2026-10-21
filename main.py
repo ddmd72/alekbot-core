@@ -330,12 +330,15 @@ async def main():
         # Optional model_override pins a specific model from env var, bypassing tier mapping.
         # Gemini provider removed 2026-05-29 — see decisions/gemini_deep_research_adapter_removal.md.
         job_registry = ProviderRegistry()
+        _openai_dr_fetch = None
         if config.get("OPENAI_API_KEY"):
-            job_registry.register("openai", OpenAIDeepResearchAdapter(
+            _openai_dr_adapter = OpenAIDeepResearchAdapter(
                 api_key=config["OPENAI_API_KEY"],
                 webhook_url=config.get("OPENAI_DEEP_RESEARCH_WEBHOOK_URL"),
                 model_override=os.getenv("OPENAI_DEEP_RESEARCH_MODEL"),
-            ))
+            )
+            _openai_dr_fetch = _openai_dr_adapter.fetch_response
+            job_registry.register("openai", _openai_dr_adapter)
             logger.info("🔬 Deep research adapter registered: provider=openai")
         if config.get("ANTHROPIC_API_KEY") and config.get("GOOGLE_CLOUD_PROJECT"):
             queue_suffix = "dev" if env_config.is_development else "prod"
@@ -774,6 +777,13 @@ async def main():
             task_queue=agent_task_queue,
             prompt_content_store=container.prompt_content_store,
             link_service=file_link_service,
+            fetch_response=_openai_dr_fetch,
+            # 72 h = OpenAI's webhook retry window; liveness follows each doc's own expires_at.
+            dedup_store=FirestoreDedupStore(
+                db_client=db_client,
+                collection_name=env_config.worker_task_dedup_collection,
+                ttl_seconds=259200,
+            ),
         )
 
         ms_tasks_webhook_bp = create_microsoft_tasks_webhook_blueprint(

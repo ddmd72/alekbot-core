@@ -184,6 +184,7 @@ async def deliver_deep_research(
     platform_override: Optional[str] = None,
     link_service: Optional["FileLinkService"] = None,
     short_link_service: Optional["ShortLinkService"] = None,
+    failure_notification: Optional["NotificationPort"] = None,
 ) -> None:
     """
     Deliver deep research result:
@@ -192,6 +193,9 @@ async def deliver_deep_research(
       3. Enqueue HtmlPageGenerator Cloud Task → styled HTML report delivered to user. The task's context
          carries DEEP_RESEARCH_REPORT_CONTEXT_KEY, so its delivery also offers the HTML to the opt-in
          drive copy (every entry point — Claude runner, Cloud Run Job, OpenAI webhook, polling — ends here).
+
+    failure_notification — told (origin channel) when the HTML report task cannot be enqueued; falls back
+                  to `notification`. The enqueue failure itself is never raised.
 
     round1_text — raw first-pass result before the critic second pass.
                   If equal to result_text (second pass disabled), uploaded once as "report".
@@ -289,3 +293,19 @@ async def deliver_deep_research(
             "[DeepResearch] Failed to enqueue HtmlPageGenerator task for user=%s: %s",
             user_id[:8], exc, exc_info=True,
         )
+        notifier = failure_notification or notification
+        if notifier:
+            try:
+                await notifier.notify(
+                    kind=NotificationKind.DEEP_RESEARCH,
+                    user_id=user_id,
+                    account_id=account_id,
+                    system_alert=(
+                        "Deep research finished, but the report could not be prepared. "
+                        "The research may be retried."
+                    ),
+                    channel_id_override=channel_id_override,
+                    platform_override=platform_override,
+                )
+            except Exception as notify_exc:
+                logger.error("[DeepResearch] Failure notice not delivered: %s", notify_exc, exc_info=True)
