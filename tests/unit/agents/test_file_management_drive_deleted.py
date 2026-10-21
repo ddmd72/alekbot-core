@@ -28,7 +28,7 @@ def _msg(intent=Intent.SEARCH_FILES_IN_DRIVE, **payload):
 def search():
     svc = AsyncMock(spec=DriveSearchService)
     svc.search.return_value = DriveSearchResult(status=STATUS_OK, matched_total=0)
-    svc.search_deleted.return_value = "Deleted files (0):\nNo deleted file matched."
+    svc.search_deleted.return_value = ("Deleted files (0):\nNo deleted file matched.", [])
     return svc
 
 
@@ -119,3 +119,12 @@ def test_the_line_exists_in_every_language():
     for module in (en, es, fr, uk):
         strings = next(v for k, v in vars(module).items() if isinstance(v, dict) and UIMessage.DRIVE_DELETE_FAILED.value in v)
         assert strings[UIMessage.DRIVE_MIRROR_WRITE_REFUSED.value].strip()
+
+
+async def test_shown_mirror_files_reach_drive_context(search, drive_service):
+    from src.domain.user_drive import DriveItem
+    item = DriveItem(item_id="m1", name="call1.md", path="_Transcripts/Archive/2026-10-05/call1.md", is_folder=False)
+    search.search_deleted.return_value = ("Deleted files (1):\n...", [item])
+    resp = await _agent(search, drive_service).execute(_msg(drive_deleted="true"))
+    assert resp.history_context["drive_context"] == [
+        {"path": "_Transcripts/Archive/2026-10-05/call1.md", "ref": "drive:m1"}]    # "open the second one" has a ref

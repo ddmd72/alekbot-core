@@ -693,7 +693,7 @@ class FileManagementAgent(BaseAgent):
         except Exception:
             logger.warning("FileManagementAgent: archived transcript lookup failed", exc_info=True)
             return None
-        return text if isinstance(text, str) and text else None
+        return text or None
 
     async def _open_drive_item(self, message: AgentMessage, ref: str, user_id: str,
                                payload: Optional[dict] = None) -> AgentResponse:
@@ -765,8 +765,8 @@ class FileManagementAgent(BaseAgent):
             # The deleted-files search (§27.9.11): transcripts of deleted recordings (and, with the owner-notes source,
             # notes on deleted files). Instead of the ordinary search; an empty query lists the newest. It runs with
             # drive search off: it reads the ledger, not the index.
-            text = await self._drive_search.search_deleted(user_id, str(payload.get("drive_query") or ""))
-            return self._ok(message, f"{REFERENCE_REMINDER}\n{text}", [])
+            text, items = await self._drive_search.search_deleted(user_id, str(payload.get("drive_query") or ""))
+            return self._ok(message, f"{REFERENCE_REMINDER}\n{text}", list(items))
         try:
             request = request_from_fields(payload.get("drive_query"), payload.get("drive_folder"),
                                           payload.get("drive_kind"), payload.get("drive_date_from"),

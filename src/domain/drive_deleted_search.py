@@ -24,6 +24,7 @@ from .drive_match import Concept
 from .drive_search import wrap_untrusted
 from .drive_transcript import StoredTranscript
 from .drive_transcript_time import format_stamp
+from .user_drive import DriveItem
 
 PASSAGE_MAX_CHARS = 300
 
@@ -53,6 +54,7 @@ class DeletedHit:
     verified: bool = True
     nonce: str = ""
     ref: str = ""
+    item: Optional[DriveItem] = None    # the drive file the entry's ref opens, so the agent can keep the ref in drive_context
 
 
 def transcript_line(seconds: float, speakers: int, languages: Sequence[str]) -> str:
@@ -113,9 +115,10 @@ def _entry(hit: DeletedHit) -> str:
     return "\n".join(lines)
 
 
-def render_deleted(hits: Sequence[DeletedHit], *, more: int, connected: bool) -> str:
+def render_deleted(hits: Sequence[DeletedHit], *, more: int = 0, connected: bool,
+                   coverage: Sequence[str] = ()) -> str:
     """`Deleted files (N):`, one wrapped entry per hit, then the coverage lines: `more` archived transcripts that
-    matched and were not shown, and (when `connected` is False) that the archive could not be checked."""
+    matched and were not shown, `coverage` the sources' own lines, and (when `connected` is False) that the archive could not be checked."""
     lines: List[str] = [f"Deleted files ({len(hits)}):"]
     if not hits:
         lines.append(NONE_MATCHED_LINE)
@@ -123,6 +126,7 @@ def render_deleted(hits: Sequence[DeletedHit], *, more: int, connected: bool) ->
         lines.append(wrap_untrusted(_entry(hit), nonce=hit.nonce, ref=hit.ref, path=hit.path))
     if more > 0:
         lines.append(f"{more} more archived transcripts matched.")
+    lines.extend(line for line in coverage if line)
     if not connected:
         lines.append(DRIVE_NOT_CONNECTED_LINE)
     return "\n".join(lines)

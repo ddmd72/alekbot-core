@@ -6,6 +6,7 @@ Public interface:
     TRANSCRIPT_BODY_VERSION                                    # versions `render_body`, the indexed layout (G18)
     render_body(transcript) -> str                             # one paragraph per segment, a stamp at every head
     card_segment(rec) -> Optional[str]                         # `transcript: 47 min, 2 speakers, uk/en` or a stub line
+    open_needs_cut(stored, *, max_chars) -> bool               # whether open_text would cut
     open_text(stored, *, max_chars) -> str                     # what `open_file_from_drive` returns, capped (G19)
     cap_plain_text(text, *, max_chars, path) -> str            # a transcript file read as text, cut the same way
 
@@ -78,20 +79,14 @@ def card_segment(rec: DriveIndexRecord) -> Optional[str]:
     return "transcript: " + ", ".join(parts)
 
 
-def open_text(stored: StoredTranscript, *, max_chars: int, mirror_path: str = "") -> str:
-    """The transcript as Smart reads it: the indexed body, cut at a paragraph boundary so the whole result (seam line
-    and cut note included) stays within `max_chars` (G19). The note points at `mirror_path` when the caller has one.
-    A stub is its card line; nothing stored is the empty string."""
-    transcript = stored.transcript
-    if transcript is None:
-        return _stub_line(stored.stub) or ""
-    full = render_body(transcript)
-    head = (TRUNCATED_NOTE + "\n\n" if transcript.truncated else "") \
+def _head(transcript: StitchedTranscript) -> str:
+    return (TRUNCATED_NOTE + "\n\n" if transcript.truncated else "") \
         + (UNCERTAIN_SEAM_LINE + "\n\n" if transcript.uncertain_seam else "")
-    if len(head) + len(full) <= max_chars:
-        return head + full
-    pointer = f" The full text is in {mirror_path}." if mirror_path else ""
 
+
+def _cut(full: str, head: str, max_chars: int, pointer: str) -> str:
+    """`head` + `full` cut at a paragraph boundary so the whole result, the cut note included, stays within
+    `max_chars` (G19). `pointer` is the note's optional "The full text is in …" sentence."""
     def note(shown: int) -> str:
         return (f"[Transcript cut at {shown} of {len(full)} characters.{pointer} "
                 f"Search for a passage to read a specific part.]")
@@ -109,25 +104,35 @@ def open_text(stored: StoredTranscript, *, max_chars: int, mirror_path: str = ""
     return head + body + "\n\n" + note(len(body))
 
 
+def _pointer(path: str) -> str:
+    return f" The full text is in {path}." if path else ""
+
+
+def open_needs_cut(stored: StoredTranscript, *, max_chars: int) -> bool:
+    """True when `open_text` would cut this transcript at `max_chars` (so the caller looks up the file path only then)."""
+    transcript = stored.transcript
+    if transcript is None:
+        return False
+    return len(_head(transcript)) + len(render_body(transcript)) > max_chars
+
+
+def open_text(stored: StoredTranscript, *, max_chars: int, mirror_path: str = "") -> str:
+    """The transcript as Smart reads it: the indexed body, cut at a paragraph boundary so the whole result (seam line
+    and cut note included) stays within `max_chars` (G19). The note points at `mirror_path` when the caller has one.
+    A stub is its card line; nothing stored is the empty string."""
+    transcript = stored.transcript
+    if transcript is None:
+        return _stub_line(stored.stub) or ""
+    full = render_body(transcript)
+    head = _head(transcript)
+    if len(head) + len(full) <= max_chars:
+        return head + full
+    return _cut(full, head, max_chars, _pointer(mirror_path))
+
+
 def cap_plain_text(text: str, *, max_chars: int, path: str = "") -> str:
     """A transcript file read as plain text (an archived transcript with no store entry, §27.9.11), cut the way
     `open_text` cuts: at a paragraph boundary, the cut note inside `max_chars` and naming the file's `path`."""
     if len(text) <= max_chars:
         return text
-    pointer = f" The full text is in {path}." if path else ""
-
-    def note(shown: int) -> str:
-        return (f"[Transcript cut at {shown} of {len(text)} characters.{pointer} "
-                f"Search for a passage to read a specific part.]")
-
-    room = max(0, max_chars - len(note(len(text))) - 2)
-    kept: List[str] = []
-    size = 0
-    for paragraph in text.split("\n\n"):
-        added = len(paragraph) + (2 if kept else 0)
-        if size + added > room:
-            break
-        kept.append(paragraph)
-        size += added
-    body = "\n\n".join(kept) if kept else text[:room]
-    return body + "\n\n" + note(len(body))
+    return _cut(text, "", max_chars, _pointer(path))

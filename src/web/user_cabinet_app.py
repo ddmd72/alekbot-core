@@ -1335,8 +1335,7 @@ def create_user_cabinet_blueprint(
                 # The transcription disclosure shows only while the user's own flag is on (§27.12, G24); no toggle.
                 body["indexing"]["transcribe_enabled"] = await _transcribe_enabled(g.user_id)
                 # The bot's _Transcripts folder outlives an opt-out; its disclosure clause shows whenever one exists (Δ202).
-                if await _mirror_root(g.user_id):
-                    body["indexing"]["mirror_root"] = True
+                body["indexing"]["mirror_root"] = await _mirror_root(g.user_id)
             except Exception as exc:
                 # The connection card (Connect/Disconnect/Reconnect) must not depend on the index read.
                 logger.error(f"Error fetching drive indexing status: {exc}", exc_info=True)
