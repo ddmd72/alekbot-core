@@ -4217,7 +4217,7 @@ with its reason. This section lifts the §14 row "Audio and video transcripts" a
 (and for a user whose own transcription flag is off, always). **§27.19 is the as-built summary of T1 and lists what is not
 built; where an older paragraph of §27 disagrees with a Δ136–Δ173 row, the row wins.** **Rev 3.27 redesigned T2 (§27.9) before
 it was built: owner decisions D48 (a deleted recording's transcript is archived, never deleted) and D49 (the folder is
-`_Transcripts`), OQ-T10 answered, and the rows Δ183–Δ216.**
+`_Transcripts`), OQ-T10 answered, and the rows Δ183–Δ217.**
 **Rollout shape (arbiter call):** §26 is deployed and the owner's index is rebuilt, so §27 ships as an **ordinary
 upgrade on top of it** — its own version bumps (§27.13), its own prompt-token upload window (§27.15), no rebuild and no
 migration gate. Every number about the spike comes from `scripts/memory/spike_transcribe/REPORT.md` (private; its transcripts are
@@ -4582,7 +4582,7 @@ helper that a page of pinned heads cannot end early, and while a user has a pin 
 mode (window documents only), so a pinned transcript's parts survive. A rollback to a T1 image does not know the pins
 (§27.9.12).
 
-### 27.9 The mirror folder (D42, D48, D49; rev 3.28 design, Δ183–Δ216; T2, not built)
+### 27.9 The mirror folder (D42, D48, D49; rev 3.28 design, Δ183–Δ217; T2, not built)
 **Rev 3.27 (2026-10-21, before any T2 code)** rewrote this section after a critique of the rev 3.26 design (private:
 `scripts/memory/research_drive_notes_mirror_critique.md`) and the owner decision D48 (§21: a deleted recording's
 transcript is archived, never deleted). **Rev 3.28 (the same day)** folds in a builder-check review of rev 3.27 (private:
@@ -4594,7 +4594,7 @@ complete round and a grace hour and moves back on a restore (D48, Δ189); work i
 marks, not a per-tick diff of everything (Δ187, Δ188); creates never overwrite a user's file (Δ191); names, collisions,
 cycles and the path length are specified (Δ192, Δ193); chat writes into the folder are refused (Δ194); the deleted-files
 search reaches the archive (Δ195); a mirror write error never stalls the index (Δ204); the root's own loss is graced and
-reversible until confirmed (Δ203). Where a row Δ113–Δ120 or Δ153 disagrees with this section, the Δ183–Δ216 row wins.
+reversible until confirmed (Δ203). Where a row Δ113–Δ120 or Δ153 disagrees with this section, the Δ183–Δ217 row wins.
 
 #### 27.9.1 Structure (D49)
 One bot-owned root folder at the App Folder root named **`_Transcripts`** (owner, D49: the leading underscore marks it as
@@ -4614,7 +4614,7 @@ read-me and the file headers (it has none today; the strings are files, no I/O; 
 `deep_research_drive_copy_service.py:73-83`).
 
 #### 27.9.2 The root's identity lives outside the sync state (Δ184, Δ203, Δ205)
-`{prefix}drive_mirror_roots/{user_id}:{drive_id}` holds `drive_id`, `root_item_id`, `root_name`, `readme_item_id`,
+`{prefix}drive_mirror_roots/{user_id}:{drive_id}` holds `drive_id`, `root_item_id`, `root_name`, `readme_item_id`, `readme_ctag`,
 `previous_root_ids`, `created_at`, the root-loss mark (`root_gone_at`, §27.9.9), the mirror's own cursors, clocks and
 holds (`seed_version`, `seed_cursor`, `scan_cursor`, `audited_at`, `audit_folder_key`, `audit_page_cursor`,
 `orphans_reported`, `quota_hold_until`). The indexer writes it, behind the lease fence, **the moment Graph answers the
@@ -4650,7 +4650,7 @@ folder and per transcribed file, so a source-folder rename over 1 000 recordings
 `mirror_name`, `mirror_ctag`, `rendered_hash`, `render_version`, `render_language`, `state` (`active`, `archived`,
 `detached`, plain strings), the snapshot the archive needs (`source_path`, `seconds`, `speakers`, `languages`, refreshed
 at every render, so an archive never needs the record that is gone), the deletion mark (`gone_pending`, `gone_why`,
-`gone_at`, §27.9.4), the write intent (`pending_op`, `pending_name`, `pending_parent_id`, `pending_at`, §27.9.5), the
+`gone_at`, `mark_ready_at`, §27.9.4), the write intent (`pending_op`, `pending_name`, `pending_parent_id`, `pending_at`, §27.9.5), the
 error state (`attempts`, `retry_at`, `failed_at`, §27.9.5), `checked_at`, and on an archived file `archived_at`,
 `archive_day`, `archive_keys`, `name_keys` (§27.9.11). Its own port, `DriveMirrorRepository` (a Firestore and an
 in-memory adapter): the drive index repository is already the largest adapter in the repo, and the ledger has another
@@ -4673,7 +4673,12 @@ The rev 3.26 text compared "every record with a transcript job `current`" with "
   `current` (a new version being transcribed, a hold, a card cap, an inaccessible file) is never due: its last file stays
   until the new transcript is current. The mirror reads `mirror_queue(user_id, limit)` (`mirror_due == true`,
   `effective_day` newest first, then `item_id`; one composite index) and, after a successful action, writes the record
-  back through `_commit` with `mirrored_digest` set, so the same function clears `mirror_due`. **A source folder's record
+  back through `_commit` with `mirrored_digest` set, so the same function clears `mirror_due`. **A held record leaves the
+  queue (Δ217):** a failed action writes the record back with `mirror_due = false`, `mirror_retry_at` (the retry time, or
+  the park's end) and `mirror_held_digest` (the digest it failed at); `mirror_plan` keeps such a record off the queue while
+  its digest equals `mirror_held_digest`, and puts it back at once when the digest changes (the hold is cleared);
+  `mirror_wakeups(user_id, now, limit)` (`mirror_retry_at <= now`, T1's `transcript_wakeups` shape) clears the hold of the
+  ripe ones, which makes them due again. So a page of failing recent recordings can never starve the older ones. **A source folder's record
   is stamped the moment its mirror folder document is created**, so its later rename makes it due (Δ113's one move).
   `_abandon_run` writes records outside `_commit` (`drive_indexing_service.py:2088`); it changes no digest field, so the
   mirror plan is not needed there (stated, tested).
@@ -4703,13 +4708,17 @@ The rev 3.26 text compared "every record with a transcript job `current`" with "
 Runs **last in `_work_off`** (so only after a complete round), for a user with the kill switch and his own flag on,
 within `MIRROR_OPS_PER_TICK` (40 Graph writes), `MIRROR_READS_PER_TICK` (10 Graph reads: its own bucket, never the
 index's `ITEM_CALLS_PER_TICK`), `MIRROR_STAMPS_PER_TICK` (200 store reads and renders that end in a stamp with no Graph
-write), and the deadline. **It has a reserved tail** (Δ209): while the user has mirror work (a due record, a ripe mark, an
-unfinished seed), the content classes, enrichment and extraction stop `MIRROR_RESERVE_S` (45 s) before the start budget's
+write), and the deadline. **It has a reserved tail** (Δ209): while the user has mirror work **the step can do now** (a record
+in `mirror_queue`, a ripe wake-up, a mark whose `mark_ready_at` has passed, an unfinished seed; never while the root-loss
+mark is set, `quota_hold_until` is in the future, or the tick has no mirror drive id; Δ217), the content classes, enrichment and extraction stop `MIRROR_RESERVE_S` (45 s) before the start budget's
 end, and the reserve joins the §7.1 deadline sum (a test asserts it, as `enrichment_allowed` does), so the mirror makes
 progress while a T1 backlog fills every tick. Mirror work never asks for a continuation: the 10-minute fan-out paces it
 (≈ 240 writes an hour; 5 000 first-time files ≈ 22 h, which is the pace, not a failure). Order inside a tick:
+0. **The root-loss check** (§27.9.9). **While `root_gone_at` is set, the step stops here** (Δ217): no other step runs, so
+   no create meets a 404 and no root read is spent per file; it resumes when the mark is cleared or the loss confirmed.
 1. **Root setup.** No root document for the connected drive → create `_Transcripts` (name rule of §27.9.2), write the
-   root document, then `_README.md`. A confirmed root loss (§27.9.9) → the same, after the ledger is reset.
+   root document, then `_README.md` (its `cTag` stored as `readme_ctag`). A confirmed root loss (§27.9.9) → the same,
+   after the ledger is reset.
 2. **Seed page** while `seed_version` differs (§27.9.4).
 3. **Marks** older than `MIRROR_ARCHIVE_GRACE` (1 h), oldest first: the source's record exists again (a restore, a move
    back in) → the mark is cleared; `gone` → **archive** (§27.9.6); `unstored` → **detach**; `unknown` → one `get_change`
@@ -4735,7 +4744,7 @@ progress while a T1 backlog fills every tick. Mirror work never asks for a conti
 **Idempotency (Δ191, Δ210).** An action is recorded on its document only after Graph answered, so a crash re-runs it. A
 **create records its intent first** (`pending_op`, `pending_name`, `pending_parent_id`, `pending_at`). A re-run with an
 intent **first reads the name** (`child_by_name`): absent → create with `fail`; present and **ours** — created by the app
-at or after `pending_at` (`DriveChange.created_at`, Task 18), and for a file of exactly the rendered byte size — → adopt it
+at or after `pending_at − MIRROR_CLOCK_SKEW` (5 min, Graph's clock against the indexer's; `DriveChange.created_at`, Task 18), and for a file of exactly the rendered byte size — → adopt it
 (a file is then `replace_content`d by id); present and anything else → a foreign item: never overwritten, the mirror's
 item takes the collision suffix. So `replace` is never sent at a name, and the crash after a 409 cannot destroy a user's
 file. This is adoption of a **bot item by its recorded intent**, never of a root.
@@ -4773,8 +4782,10 @@ from the store, an archived one is the owner's deletion, §27.9.9); the destinat
   rejects or 423 locked, `OSError`, `TimeoutError`, `DriveAccessDenied` on one call): logged with the status and the
   document key, the document's `attempts` + 1 and `retry_at = now + backoff(attempts)` (the planner's 5 min × 2ⁿ, cap
   6 h); at `MIRROR_MAX_ATTEMPTS` (5) `failed_at` is set and the document is skipped (counter `mirror_failed`) until its
-  record's digest changes or `MIRROR_FAILED_RETRY` (7 days) passes. Due work and marks skip documents whose `retry_at` is
-  in the future.
+  record's digest changes or `MIRROR_FAILED_RETRY` (7 days) passes. The hold is mirrored onto the record
+  (`mirror_retry_at`, `mirror_held_digest`, §27.9.4) for due work, and onto the mark as `mark_ready_at` for a mark (a mark
+  is created with `mark_ready_at = gone_at + MIRROR_ARCHIVE_GRACE`; a failure or an ancestor's `reobserve_pending` moves it
+  later), so both queries exclude held work themselves instead of skipping it after reading a page.
 - **Anything else escaping an action** is logged at ERROR, counted, and the step moves to the next document; the step
   never raises out of `_work_off` except for the systemic classes, so the counter refresh after it always runs.
 
@@ -4810,8 +4821,9 @@ from the store, an archived one is the owner's deletion, §27.9.9); the destinat
   name), with the snapshot already on the document (source path, duration, speakers, languages) and the day. Zero LLM,
   zero embeddings. With no stored entry (it went with an opt-out before the source was deleted), only `name_keys` are
   written (named residual, §27.9.12).
-- **The stored transcript stays** while a ledger document of the connected drive that is `archived` or `detached`, **or
-  carries `gone_pending`**, references its content key ("pinned", Δ186): exempt from the orphan sweep (§27.8 b), which also
+- **The stored transcript stays** while **any** ledger document of the user — on any drive (Δ217: with no drive connected,
+  or another one, a drive-scoped pin would let the access-loss and drive-switch purges delete the archive) — that is
+  `archived` or `detached`, **or carries `gone_pending`**, references its content key ("pinned", Δ186): exempt from the orphan sweep (§27.8 b), which also
   refreshes its `last_used_at` so pinned heads never crowd the sweep's page, and from every purge (§27.9.12). So a restore
   or a move back in, at any time, never re-buys audio, and the deleted-files search can show a passage. The pin goes with
   the document; the ordinary orphan sweep then applies.
@@ -5219,15 +5231,20 @@ unmeasured language.
       (5) the approot's `parentReference.path` and its decoded length (print the length only); (6) a case-only rename in
       one PATCH; (7) a folder whose name starts with `_` is created and listed normally (D49); (8) the status and body for a
       path over 400 characters (a create, and a folder move that pushes a descendant over), and, from the documentation if
-      it cannot be reproduced, a full drive (507). The results go into a Δ row; Task 18 holds the fallback for every "no".
+      it cannot be reproduced, a full drive (507). The results are recorded as Δ216; Task 18 carries the consequences.
    b. **OQ-T10 answered (owner, 2026-10-21): an opt-out deletes nothing on the drive** (§27.9.12). The owner also confirms
       that the deleted-files search keeps answering from the ledger after drive search is turned off (§27.17).
-   c. **Composite indexes `READY`** before the deploy: on the records `user_id + mirror_due + effective_day desc +
-      item_id`; on the roots `user_id`; on the ledger `user_id + drive_id + gone_pending + gone_at`, `user_id + drive_id +
-      mirror_parent_id`, `user_id + drive_id + state + checked_at`, `user_id + drive_id + retry_at`, `user_id + content_key
-      + state`, `user_id + mirror_item_id`, `user_id + state + archived_at desc`, and the two array indexes `user_id + state
-      + archive_keys` and `user_id + state + name_keys` (the deleted-files search spans drives); a single-field exemption
-      for `archive_keys`; `drive_index_smoke.py` runs every new read.
+   c. **Composite indexes `READY`** before the deploy (a mirror query without its index is `DriveIndexStoreUnavailable`,
+      systemic for the whole tick, so the list must be complete): on the records `user_id + mirror_due + effective_day
+      desc + item_id` and `user_id + mirror_retry_at + item_id` (wake-ups); on the roots `user_id`; on the ledger, the
+      mirror step's `user_id + drive_id + gone_pending + mark_ready_at` (marks), `user_id + drive_id + mirror_parent_id`
+      (children), `user_id + drive_id + kind + __name__` (the audit's folder walk and the scan), `user_id + drive_id + state
+      + checked_at` (detached rechecks); the pins' two queries each, user-wide (Δ217; a Firestore OR needs one index per
+      disjunct): `user_id + content_key + state` and `user_id + content_key + gone_pending` for `pinned`, `user_id + state
+      + content_key` and `user_id + gone_pending + content_key` for `pinned_keys`; `user_id + mirror_item_id` (opening an
+      archived file); the deleted-files search's `user_id + state + archived_at desc` and the two array indexes `user_id +
+      state + archive_keys` and `user_id + state + name_keys` (spanning drives); a single-field exemption for
+      `archive_keys`; `drive_index_smoke.py` runs every new read.
    d. **Deploy** main and indexer together (paused window, as step 4). With the owner's flag on, the first tick creates
       `_Transcripts` and its `_README.md`, the seed pass marks his existing transcripts due, and files appear at up to ≈ 40
       writes a tick (the reserved tail, Δ209, keeps that going during a T1 backlog).
@@ -5326,7 +5343,7 @@ unmeasured language.
 | Δ183 | §27.12: transcripts "purged with the index"; D42: "a delete deletes it" | **Owner decision D48 (2026-10-21, §21):** a deleted (or moved-out) recording's mirror transcript is archived, never deleted by the bot; the owner deletes junk by hand; archived transcripts are excluded from the default search, and only an explicit "search in deleted files" request reaches them | The owner: otherwise search returns irrelevant old things forever. The replaced rule was a design principle, not a legal requirement (the household exemption for the owner's own use; the text holds no voiceprint). Caveat: other users or non-personal use need consent and a retention rule first (OQ-T3, Δ125) |
 | Δ184 | Plan Task 18 / G23: `mirror_root_id`, `mirror_root_name` on the sync state, written by a fenced method outside `STATE_FIELDS` | A root document per drive, `{prefix}drive_mirror_roots/{user_id}:{drive_id}`, written the moment Graph answers the creation; **no purge deletes it**; never adopted by name: `_Transcripts (Alek)`, then `(Alek 2)` … `(Alek 5)` (§27.9.2) | The rebuild, the opt-out and the access-loss purge delete the sync state; with Δ116's no-adoption rule the next tick would create a second root and index the first one's files as documents, a duplicate hit of every transcript (critique §0.2) |
 | Δ185 | Δ153: an opt-out purge with the drive connected deletes the bot's mirror folder | **OQ-T10 answered (owner, 2026-10-21): an opt-out deletes nothing on the drive**; the folder, the root document, the ledger and the pinned store entries stay, and a re-enable re-identifies the root and resumes; the cost of a re-enable (re-buying the active transcripts, ≈ $0.16 per audio hour under the cap) is stated in §27.9.12 | The folder holds the archive, which D48 says the bot never deletes; deleting only the active part would force a full re-render on re-enable |
-| Δ186 | §27.8 b, Δ159: the purge deletes the store unless the rebuild keep; the orphan sweep deletes what no record uses | The ledger is never purged; a store entry that a ledger document of the connected drive in state `archived` or `detached`, **or carrying `gone_pending`**, references is **pinned** against the orphan sweep (which also refreshes its `last_used_at`) and every purge; while a user has a pin, the purge's collection-group sweep runs in its keep mode (windows only) | A restore or a move back in never re-buys audio, and the archive stays searchable after any purge (D48); without `gone_pending` the T1 sweep, which runs earlier in the same tick, could delete the entry during the grace hour; an unrefreshed pin would sit at the front of the sweep's least-recently-used page for ever (review I1, I2) |
+| Δ186 | §27.8 b, Δ159: the purge deletes the store unless the rebuild keep; the orphan sweep deletes what no record uses | The ledger is never purged; a store entry that **any** ledger document of the user (any drive, Δ217) in state `archived` or `detached`, **or carrying `gone_pending`**, references is **pinned** against the orphan sweep (which also refreshes its `last_used_at`) and every purge; while a user has a pin, the purge's collection-group sweep runs in its keep mode (windows only) | A restore or a move back in never re-buys audio, and the archive stays searchable after any purge (D48); without `gone_pending` the T1 sweep, which runs earlier in the same tick, could delete the entry during the grace hour; an unrefreshed pin would sit at the front of the sweep's least-recently-used page for ever (review I1, I2) |
 | Δ187 | §27.9 rev 3.26: desired = every record with a current transcript, actual = every mirror document, each tick | `mirror_due` and `mirrored_digest` on the record, set by a pure `mirror_plan` in `_commit`; `mirror_queue` newest first (one composite index); a source folder's record stamped when its mirror folder is created; a seed pass per `seed_version` for records written before T2 or before a `RENDER_VERSION` / `MIRROR_PLAN_VERSION` bump (§27.9.4) | The full diff reads ≈ 10 000 documents a tick for 5 000 transcripts (≈ 1.4 million reads a day); records written before T2 are never rewritten by observation, so they need seeding; an unstamped folder would never move (review I14) |
 | Δ188 | §27.9: "the record-delete path deletes the mirror file at once"; the root's deletion handled in `_apply` | Every `_commit` deletion of a mirrored record, and a root's record going to `deleting` or deleted, carries a why (`gone`, `unstored`, else `unknown`), derived at the service's call sites (`ObservationPlan` unchanged), written as a durable mark on the ledger (a root's on its root document); every decision is the mirror step's, after a complete round; the owner-notes RFC (§7.1 there) consumes the same why | A delete and a recycle-bin restore can arrive in one round, and the cascade deletes children without tombstones (critique Rule 1); a mark on the ledger survives a lost state save and a purge |
 | Δ189 | §27.9: a deleted source's mirror file is deleted | Archived **per file** to `_Transcripts/Archive/<YYYY-MM-DD>/<mirror path>` (the user's day of `gone_at`), only after a complete round and `MIRROR_ARCHIVE_GRACE` (1 h); frozen (never re-rendered, rewritten by the audit or deleted by the bot; chat refused); a restore moves it back; stubs archived too; not retroactive (§27.9.6) | D48. A dated folder, not a first line "source deleted": no content rewrite, the date visible on a phone, no collision when a path is deleted twice, a day's junk deleted in one action. Per file, not per deleted folder: the cascade order across ticks and the path limit make a folder move unsafe (critique Rule 2 rejected, Rule 1 kept) |
@@ -5357,6 +5374,7 @@ unmeasured language.
 | Δ214 | Plan 20A (rev 3.27): `delete_user_transcripts_except(…) -> int` | A scanning helper `delete_user_transcripts_except(user_id, limit, keep, after) -> (deleted, next_cursor)`, called until the cursor is None; the orphan-document sweep script keeps pinned keys the same way unless `--mirror`; a rollback to a T1 image lets T1's orphan sweep delete the pinned transcripts within 30 days (named residual) | A page of only pinned heads returned 0 and ended the purge, so an opt-out kept transcripts it should delete (review C3, I13) |
 | Δ215 | D42: the mirror folder has a UI-language name; a one-line `README.md` | **Owner decision D49 (2026-10-21, §21):** the root is `_Transcripts` in every language (the underscore marks a system folder the bot may rewrite), the archive `Archive`, the long-path folder `Long paths`; a short localized read-me `_README.md` in the root says the bot manages the folder, files may be rewritten, do not edit, and transcripts of deleted recordings are in `Archive/` (§27.9.1) | The owner wants the folder to look like a system folder; fixed names also remove every language-dependent rename and collision |
 | Δ216 | Δ191–Δ193 rested on documented Graph behaviour; the plan's S1 was to check it | **S1 measured (2026-10-21, the owner's App Folder, a throwaway folder):** `conflictBehavior=fail` honoured on the simple PUT and on PATCH rename and move (409 `nameAlreadyExists`; a PATCH rename fails on a taken name by default); the path-relative GET works inside the App Folder; the upload's `cTag` and `eTag` equal a later GET's and listing's; the approot's `parentReference.path` is present; a case-only rename works in one PATCH (the two-move rule is dropped); a leading-underscore folder is fine (D49); a path over the limit answers 400 `invalidRequest` with `innerError` `pathIsTooLong` on a PUT and a plain 400 `invalidRequest` on a folder creation (both read as `DrivePathTooLong`); a 304-character name was accepted (`MIRROR_NAME_MAX` 240 stays as margin); folders under the area root are created through the root's item id (`special/approot/children` answers 400); `permanentDelete` is unavailable, so every bot delete lands in the recycle bin; 507 not produced | Evidence instead of assumptions for the adapter and the error classes; no fallback code is needed |
+| Δ217 | Rev 3.28: pins "of the connected drive"; retry and park state only on the ledger document, skipped after the queue read; the reserve on any mirror work | **Re-review fixes (rev 3.28.1):** pins are per **user**, on every drive (`pinned`, `pinned_keys` take no drive; two queries, one index per disjunct); a held record carries `mirror_retry_at` and `mirror_held_digest` and leaves `mirror_queue` (`mirror_wakeups` re-arms it; a new digest re-arms it at once); a mark carries `mark_ready_at`, which the marks query orders and filters on; the reserved tail counts only work the step can do now (never during the root-loss mark, a full-drive hold or with no drive id); the step stops after the root-loss check while that mark is set; the intent re-run allows `MIRROR_CLOCK_SKEW` (5 min) on Graph's created time; `readme_ctag` on the root document; the full index list in §27.15 8c | A drive-scoped pin let the access-loss and drive-switch purges delete the archive's stored transcripts; a page of parked records starved every older one and kept 45 s of index time reserved for nothing; a missing index is systemic for the tick |
 
 ### 27.17 Open questions (each with a recommendation)
 - **OQ-T1 Window length (30 min) against output drift and cost — resolved by T0 (Δ129).** 30, 45 and 60 min were complete with `MM:SS` times
@@ -5425,6 +5443,7 @@ unmeasured language.
 | `MIRROR_NAME_MAX` | 240 | OneDrive's 255-name limit with margin |
 | `ONEDRIVE_PATH_MAX` / `MIRROR_PATH_MARGIN` | 400 / 10 | the decoded path from the drive root, App Folder prefix included (Δ193); replaces `MIRROR_PATH_MAX` 380 |
 | `ARCHIVE_KEYS_MAX` | 12 000 | word keys an archived transcript keeps for the deleted-files search: measured ≈ 2.3 keys per distinct word, a 4-hour recording ≈ 5 000 distinct words (Δ213) |
+| `MIRROR_CLOCK_SKEW` | 5 min | the margin on Graph's created time when an intent re-run decides an item is its own (Δ217) |
 | `MIRROR_ROOT_GRACE` | 24 h | the root's loss acts only this long after a complete round and a confirming read (Δ203) |
 | `MIRROR_RESERVE_S` | 45 s | the start-budget tail left to the mirror while it has work; joins the deadline sum (Δ209) |
 | `MIRROR_MAX_ATTEMPTS` / `MIRROR_FAILED_RETRY` | 5 / 7 days | per-document write failures before it is parked; when a parked document is tried again without a new digest (Δ204) |
@@ -5456,7 +5475,7 @@ per-window check rules (Δ162), stitch (seam cut, speaker alignment by code, int
 ordinary text path (gate, chunker, embeddings, §7.4 fence), the structured result goes to the store under the content key, the card gains
 `transcript: 47 min, 2 speakers, uk/en`, and the record is `current`. A copy, a rename or a move has the same key and never pays again.
 
-**Not built.** T2, the mirror folder (§27.9, redesigned in rev 3.27–3.28 before any code: D48, D49, Δ183–Δ216; `_Transcripts`, `conflict` mode on upload, the reconciliation, the archive, the audit, the deleted-files search):
+**Not built.** T2, the mirror folder (§27.9, redesigned in rev 3.27–3.28 before any code: D48, D49, Δ183–Δ217; `_Transcripts`, `conflict` mode on upload, the reconciliation, the archive, the audit, the deleted-files search):
 no transcript file is written to the user's drive; the transcript exists in the index and as the open text only. T3, the summary
 (§27.7, `DriveTranscriptSummaryAgent`, `SUMMARY_VERSION`, `RENDER_VERSION`, the header lines): there is no summary and the uncertain-seam
 line is printed only in the open text. The Cabinet transcription toggle (§27.12), the zero-credential parser service (OQ-T3: the flag
