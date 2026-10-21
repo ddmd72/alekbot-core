@@ -67,3 +67,5 @@ idempotency (T-R22); all-gap files are not finalized (T-R23); card-capped record
 
 **Trigger to revisit:** the zero-credential parser service exists (turn the flag on for a second user), the first live eval records its bars (revisit
 the window length and the cap), or the promotional price window ends and the held price stops being conservative.
+
+**Owner steps, first run.** Prompt uploads and the flag script's `--apply` are the owner's act, by default never from an agent session. For the first run (2026-10-21) the owner explicitly delegated these steps to the assistant: the four prompt uploads (after a prompt-layer backup and a mirror check), the composite index deploy, the deploy with the switch off then on with a $10 cap, and setting the owner's per-user flag.
