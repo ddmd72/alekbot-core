@@ -6,6 +6,7 @@
 **Owner:** AI Engineering
 **Milestone:** Phase 2 — Async Specialist Agents
 **Depends on:** ACP_V2_SIMPLIFIED_RFC.md (ASYNC infrastructure)
+**Delta 2026-10-22:** OpenAI webhook events carry only data.id; the handler retrieves the response.
 
 ---
 
@@ -932,7 +933,7 @@ async def create_interaction(
     Delivery mechanism is adapter-specific:
       GeminiDeepResearchAdapter → enqueues deep_research_polling Cloud Task.
       OpenAIDeepResearchAdapter → embeds user_id/account_id/original_query as OpenAI
-                                  metadata; OpenAI echoes them back in the webhook payload.
+                                  metadata; the webhook handler reads them from the retrieved response.
     """
 ```
 
@@ -988,7 +989,7 @@ class OpenAIDeepResearchAdapter(DeepResearchPort):
     Delivery model: WEBHOOK — OpenAI calls /webhooks/openai/deep-research on completion.
     No task_queue dependency — adapter does not enqueue Cloud Tasks.
 
-    user_id/account_id/original_query embedded as OpenAI metadata; echoed in webhook payload.
+    user_id/account_id/original_query embedded as OpenAI metadata; read from the retrieved response in the webhook.
     """
 
     def __init__(self, api_key: str, webhook_url: str) -> None:
