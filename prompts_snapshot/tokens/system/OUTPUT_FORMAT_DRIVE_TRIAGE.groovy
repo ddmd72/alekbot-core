@@ -6,7 +6,8 @@ metadata:
   override_by:
   - SYSTEM
   - AGENT
-  source: 'v3 draft 2026-10-19: capture (USER_DRIVE_INDEXING_RFC §26.3), scene labels (D40), not uploaded'
+  source: 'v3 draft 2026-10-19: capture (USER_DRIVE_INDEXING_RFC §26.3), scene labels
+    (D40), not uploaded'
 source_file: firestore_utils/uploads/OUTPUT_FORMAT_DRIVE_TRIAGE.json
 token_id: OUTPUT_FORMAT_DRIVE_TRIAGE
 uploaded_by: local_script

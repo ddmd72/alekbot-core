@@ -2,12 +2,13 @@
 category: cognitive_process
 class: cognitive_process
 metadata:
-  description: DriveDocumentReaderAgent — verbatim transcription, the capture and the brief (USER_DRIVE_INDEXING_RFC
-    §24.2, §24.4)
+  description: DriveDocumentReaderAgent — verbatim transcription, the capture and
+    the brief (USER_DRIVE_INDEXING_RFC §24.2, §24.4)
   override_by:
   - SYSTEM
   - AGENT
-  source: 'v2 draft 2026-10-14: capture, no brief doc_type (USER_DRIVE_INDEXING_RFC §26.3, Δ64), not uploaded'
+  source: 'v2 draft 2026-10-14: capture, no brief doc_type (USER_DRIVE_INDEXING_RFC
+    §26.3, Δ64), not uploaded'
 source_file: firestore_utils/uploads/COGNITIVE_PROCESS_DRIVE_READER.json
 token_id: COGNITIVE_PROCESS_DRIVE_READER
 uploaded_by: local_script
