@@ -15,13 +15,14 @@ from quart import Blueprint, request, jsonify
 
 from .base import SlackAdapter
 from .response_channel import SlackResponseChannel
+from ...domain.cloud_task_delivery import RETRY_COUNT_HEADER
 from ...domain.messaging import MessageContext, FileAttachment
+from ...domain.ui_messages import UIMessage
 from ...domain.prompt import ANONYMOUS_ACCOUNT_ID  # SESSION_26
 from ...ports.task_queue import TaskQueue
 from ...ports.conversation_handler_port import ConversationHandlerPort
 from ...ports.platform_auth_port import PlatformAuthPort
 from ...ports.session_store import SessionStore
-from ...ports.dedup_store import DedupStore
 from ...ports.language_service_port import LanguageServicePort
 from ...ports.localization_port import LocalizationPort
 from ...utils.logger import logger
@@ -34,6 +35,33 @@ from ...utils.telemetry import (
     get_trace_ids
 )
 from ...utils.logging_context import set_log_context
+
+
+BUSY_WAIT_S = 100  # in-process wait for the session lock; above the 90 s long-turn mark that releases it
+BUSY_REQUEUE_DELAY_S = 15
+BUSY_MAX_REQUEUES = 12  # 3 min: outlasts the 90 s long-turn mark that releases the lock
+# Residuals: a third+ message behind two long turns can exhaust the re-queues and gets the notice;
+# repeated failed re-queues during a Cloud Tasks outage lose the message (ERROR log); if every in-process
+# create retry fails but the task WAS created, the original's Cloud Tasks retry finds the lock free and runs
+# the turn while the re-queued copy also runs (duplicate turn).
+BUSY_CREATE_BACKOFF_S = (0.5, 1.0, 2.0)
+
+
+def _task_name(event_id: Optional[str], requeues: int = 0) -> Optional[str]:
+    if not event_id:
+        return None
+    base = f"slack-{hashlib.sha256(event_id.encode()).hexdigest()[:32]}"
+    return f"{base}-r{requeues}" if requeues else base
+
+
+def _retry_count(headers: Dict[str, Any]) -> int:
+    for key, value in (headers or {}).items():
+        if key.lower() == RETRY_COUNT_HEADER.lower():
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return 0
+    return 0
 
 
 class HTTPModeAdapter(SlackAdapter):
@@ -53,7 +81,6 @@ class HTTPModeAdapter(SlackAdapter):
         session_store: SessionStore,
         conversation_handler: ConversationHandlerPort,
         iam_service: PlatformAuthPort,
-        dedup_store: DedupStore,
         audio_service: Optional[Any] = None,
         language_service: Optional[LanguageServicePort] = None,
         localization: Optional[LocalizationPort] = None,
@@ -73,7 +100,6 @@ class HTTPModeAdapter(SlackAdapter):
         self.slack_bot_token: str = config.get("SLACK_BOT_TOKEN") or ""
         self.task_service = task_service
         self.session_store = session_store
-        self.dedup_store = dedup_store
         self._language_service = language_service
         self._localization = localization
         self._session_locks: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
@@ -159,11 +185,6 @@ class HTTPModeAdapter(SlackAdapter):
             }):
                 logger.info(f"📨 Event received: type={event_type}")
 
-                # Atomic check-and-set to prevent race conditions during Slack retries
-                if not await self.dedup_store.try_mark_processed(event_id):
-                    logger.info(f"⏭️ Duplicate event {event_id[:16]}... skipped")
-                    return jsonify({"ok": True}), 200
-
             session_id = (
                 event.get("thread_ts") or
                 event.get("ts") or
@@ -187,7 +208,10 @@ class HTTPModeAdapter(SlackAdapter):
             await self.task_service.enqueue_slack_event(
                 event_data=event_data,
                 session_id=session_id,
-                trace_headers=trace_headers
+                trace_headers=trace_headers,
+                # Named task: Slack's retry of the same event_id is ALREADY_EXISTS (success), not a duplicate turn.
+                # Slack retries land within minutes, inside Cloud Tasks' name-reuse hold (>= ~1 h after completion).
+                task_name=_task_name(event_id),
             )
 
             return jsonify({"ok": True}), 200
@@ -227,11 +251,18 @@ class HTTPModeAdapter(SlackAdapter):
                 lock = asyncio.Lock()
                 self._session_locks[session_id] = lock
 
+            if lock.locked() and _retry_count(headers) > 0:
+                # A redelivery may follow a re-queue whose create timed out: hand off at once, so the
+                # same-name create answers ALREADY_EXISTS if the copy exists.
+                return await self._requeue_busy(payload, event_data, session_id, headers)
             if lock.locked():
-                logger.info(f"⏭️ Session {session_id[:8]} busy, returning 429 for Cloud Tasks retry")
-                return {"ok": False, "error": "session_busy"}, 429
-
-            await lock.acquire()
+                # asyncio.Lock is FIFO, so waiters on one instance keep arrival order.
+                try:
+                    await asyncio.wait_for(lock.acquire(), BUSY_WAIT_S)
+                except asyncio.TimeoutError:
+                    return await self._requeue_busy(payload, event_data, session_id, headers)
+            else:
+                await lock.acquire()
             released = False
 
             def release_lock() -> None:
@@ -274,6 +305,64 @@ class HTTPModeAdapter(SlackAdapter):
         except Exception as e:
             logger.error(f"❌ Error in worker task: {e}", exc_info=True)
             return {"error": str(e)}, 500
+
+    async def _requeue_busy(
+        self, payload: Dict[str, Any], event_data: Dict[str, Any], session_id: str, headers: Dict[str, Any],
+    ) -> Tuple[Dict[str, Any], int]:
+        # The queue's quick retries would burn out inside one running turn; a delayed new task waits it out.
+        requeues = int(payload.get("busy_requeues") or 0)
+        if requeues >= BUSY_MAX_REQUEUES:
+            logger.error(f"❌ Session {session_id[:8]} still busy after {requeues} re-queues, dropping the message")
+            await self._notify_busy_drop(event_data.get("event") or {})
+            return {"ok": True, "dropped": "session_busy"}, 200
+        logger.info(f"⏭️ Session {session_id[:8]} busy, re-queueing in {BUSY_REQUEUE_DELAY_S}s ({requeues + 1}/{BUSY_MAX_REQUEUES})")
+        trace_headers = {k: v for k, v in headers.items() if k.lower() in ("traceparent", "tracestate", "x-trace-id")}
+        # Same-name retries: a create that timed out may have made the task; ALREADY_EXISTS counts as handed off.
+        for attempt in range(len(BUSY_CREATE_BACKOFF_S) + 1):
+            try:
+                await self.task_service.enqueue_slack_event(
+                    event_data=event_data,
+                    session_id=session_id,
+                    delay_seconds=BUSY_REQUEUE_DELAY_S,
+                    trace_headers=trace_headers or None,
+                    busy_requeues=requeues + 1,
+                    task_name=_task_name(event_data.get("event_id"), requeues + 1),
+                )
+                break
+            except Exception as e:
+                logger.error(f"❌ Busy re-queue failed (attempt {attempt + 1}): {e}", exc_info=True)
+                if attempt == len(BUSY_CREATE_BACKOFF_S):
+                    return {"error": str(e)}, 500
+                await asyncio.sleep(BUSY_CREATE_BACKOFF_S[attempt])
+        return {"ok": True, "requeued": requeues + 1}, 200
+
+    async def _notify_busy_drop(self, event: Dict[str, Any]) -> None:
+        # Best effort: the message is already lost, a failed notice must not turn the answer into a retry.
+        channel = event.get("channel")
+        if not channel:
+            return
+        try:
+            ui_lang = await self._busy_notice_language(event.get("user"))
+            response_channel = SlackResponseChannel(
+                self.app.client, channel, self.slack_bot_token, language=ui_lang, localization=self._localization,
+            )
+            await response_channel.send_message(
+                response_channel._ui_string(UIMessage.MESSAGE_NOT_PROCESSED_BUSY),
+                thread_id=event.get("thread_ts"),
+            )
+        except Exception as e:
+            logger.error(f"❌ Could not post the busy-drop notice: {e}", exc_info=True)
+
+    async def _busy_notice_language(self, slack_user_id: Optional[str]):
+        from ...domain.language import LanguageCode
+        if slack_user_id:
+            try:
+                decision = await self.iam_service.authorize("slack", platform_user_id=slack_user_id)
+                if decision.user is not None:
+                    return (await self._resolve_language(decision.user.user_id))[0]
+            except Exception as e:
+                logger.warning(f"⚠️ Busy notice language lookup failed, using default: {e}")
+        return LanguageCode.UK
 
     async def _handle_worker_task(self):
         # Quart wrapper kept for callers that still go through the request object.

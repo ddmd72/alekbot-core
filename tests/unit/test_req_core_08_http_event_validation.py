@@ -13,7 +13,6 @@ def http_adapter():
         session_store=AsyncMock(),
         conversation_handler=AsyncMock(),
         iam_service=AsyncMock(),
-        dedup_store=AsyncMock(),
     )
 
 

@@ -211,7 +211,6 @@ def slack_adapter():
         session_store=AsyncMock(),
         conversation_handler=AsyncMock(),
         iam_service=AsyncMock(),
-        dedup_store=AsyncMock(),
     )
 
 
@@ -225,12 +224,38 @@ async def test_queued_event_missing_fields_is_400(slack_adapter):
         {"ok": False, "error": "Missing required fields"}, 400)
 
 
-async def test_queued_event_busy_session_is_429(slack_adapter):
+async def test_queued_event_busy_session_waits_then_requeues_and_keeps_the_claim(
+        slack_adapter, monkeypatch):
+    # S1b AB2: a busy session is no longer 429 (the queue's quick retries burn out inside one turn).
+    # The delivery waits in-process for the lock, then hands the event to a named, delayed task and
+    # answers 200, so WorkerHandler keeps its claim and a redelivery of this task is a duplicate.
+    from src.adapters.slack import http_adapter as slack_mod
+    monkeypatch.setattr(slack_mod, "BUSY_WAIT_S", 0.01)
+    slack_adapter._process_message_event = AsyncMock()
+    slack_adapter.task_service.enqueue_slack_event = AsyncMock(return_value="t")
     lock = asyncio.Lock()
     await lock.acquire()
     slack_adapter._session_locks["u1:C1"] = lock
-    assert await slack_adapter.handle_queued_event(_SLACK_PAYLOAD, {}) == (
-        {"ok": False, "error": "session_busy"}, 429)
+    store = _MemoryDedup()
+    h = _handler(store)
+    h.attach_slack_worker(slack_adapter.handle_queued_event)
+    payload = {"event": {"event_id": "E1", "event": {"type": "message", "text": "hi"}},
+               "session_id": "u1:C1"}
+
+    assert await h.handle(payload, delivery=_delivery(), headers={}) == (
+        {"ok": True, "requeued": 1}, 200)
+
+    slack_adapter.task_service.enqueue_slack_event.assert_awaited_once()
+    kwargs = slack_adapter.task_service.enqueue_slack_event.call_args.kwargs
+    assert kwargs["event_data"] == payload["event"]
+    assert kwargs["session_id"] == "u1:C1"
+    assert kwargs["busy_requeues"] == 1
+    assert kwargs["delay_seconds"] == slack_mod.BUSY_REQUEUE_DELAY_S
+    assert kwargs["task_name"] == slack_mod._task_name("E1", 1)
+    slack_adapter._process_message_event.assert_not_awaited()
+    assert store.marks == {"task-1"}
+    assert await h.handle(payload, delivery=_delivery(), headers={}) == ({"status": "duplicate"}, 200)
+    slack_adapter.task_service.enqueue_slack_event.assert_awaited_once()
 
 
 async def test_queued_event_success_is_200_and_processes_message(slack_adapter):
