@@ -110,6 +110,24 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     A profile stopped at the cap is asked once more with halved list caps; a passage batch stopped at the cap or
     refused is halved down to the chunk. Prompts are owner-uploaded tokens (`COGNITIVE_PROCESS_` / `OUTPUT_FORMAT_`
     `DRIVE_PROFILER`, `DRIVE_PASSAGES`); no fallback prompt.
+- DriveTranscriber (`drive_transcriber`) — audio-window transcription for the drive's recordings
+  (USER_DRIVE_INDEXING_RFC §27.5, Δ102; T1 built, not deployed).
+  - **Not a `_call_llm` agent** (Δ102): a Gemini **Batch** request is not a call, so no retry, failover, `TokenLedger` scope,
+    `prompt_content` row or Logfire span is inherited. `DriveTranscriberAgent` only builds the request (prompt + schema + the
+    uploaded provider file's name) and parses the answer; `DriveTranscriptRunner` (`composition/`) submits through
+    `BatchTranscriptionPort` (`GeminiBatchAdapter`), parses each collected answer and bills it with `BatchUsage.cost()`
+    through `QuotaService.record_usage`. `can_handle` is False; no tools, no history.
+  - **Tier / provider:** Gemini only, the BALANCED model `gemini-3.8-flash` (read from `GeminiAdapter.MODEL_TIERS` by the
+    composition and passed to the batch adapter, REQ-ARCH-23), never flash-lite (D44); `agent_providers` does not apply;
+    `thinking_level=LOW` on every request; per-window `max_output_tokens = min(65 536, ceil(1 000 × minutes))`
+    (`DRIVE_TRANSCRIBER` in `agent_config.py`).
+  - **Output:** `{language_codes, speakers, no_speech, segments: [{start: "MM:SS"|"H:MM:SS", speaker: int|null, text}]}`,
+    `json.loads` once, strict field checks, **no regex fallback**; `DriveOutputInvalid` is the window's failed attempt. `start` is
+    never integer seconds (T0: ≈ +40 % stretch). Prompts are owner-uploaded tokens `COGNITIVE_PROCESS_DRIVE_TRANSCRIBER` /
+    `OUTPUT_FORMAT_DRIVE_TRANSCRIBER` + blueprint + profile; a missing prompt is a model outage for the class, no fallback prompt.
+  - **Where it runs:** the indexer only, from `DriveTranscriptStage` (`build_drive_transcription`, built only with
+    `DRIVE_TRANSCRIBE_ENABLED` on). Which outcome costs a file an attempt is the stage's decision (T-R18); a provider outage is an uncharged backoff
+    (`drive_transcriber` key). Building block: `docs/05_building_blocks/user_drive/README.md` §4.23.
 - DocPlanner (ASYNC, PERFORMANCE, intent `create_document`) — LLM → JSON layout spec →
   fire-and-forget delegate to DocGenerator → DeliveryItem("file_upload").
 - DocGenerator (internal, BALANCED, intent `generate_docx_code`) — LLM writes Node.js script →

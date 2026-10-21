@@ -10,6 +10,9 @@ location prior and scene labels; decisions D33–D40): **all six slices are buil
 the owner's index rebuilt, gate key `accuracy` applied).** S1 files the bot cannot open is §4.18, S2 capture §4.19, S3/S4 card accuracy and the small fixes
 §4.20, S6 the location prior and scene labels §4.21, S5 the owner scripts and the eval additions §4.22. Everything
 marked "(branch)" below is now deployed code (2026-10-19).
+RFC §27 (transcripts of audio and video; decisions D41–D47, deltas Δ95–Δ173): **slice T1 is built on `feat/drive-transcripts` and not deployed;
+the mirror folder (T2) and the summary (T3) are not built.** How it works end to end, in plain English, is §4.23; the rollout and
+the switches are §7.2 and `docs/07_deployment/README.md` → "Transcripts of recordings (§27)".
 
 | Question | Read |
 |---|---|
@@ -44,7 +47,9 @@ marked "(branch)" below is now deployed code (2026-10-19).
 | What triage is told about a photo's place; what a `scene:` line is; why "sunsets" finds a photo | §4.21 (branch) |
 | How the owner reviews low-accuracy cards, measures vocabulary misses, rebuilds a user, and what the eval now checks | §4.22 (branch), §7.2 |
 | Smart said "N documents could not be read": what counts, and how to find which and why | §7.1 (could not be read) |
-| Deploy order, owner steps, and why there is no rollback to Slice 1; the Search v2 rollout (D30 gate, rebuild) | §7.2 |
+| Why a recording is searchable by what was said; how it is transcribed, what it costs, why it waits; who can switch it on | §4.23 |
+| A recording shows "transcript: none" or sits in "waiting": which state it is in and why | §4.23 (states) |
+| Deploy order, owner steps, and why there is no rollback to Slice 1; the Search v2 rollout (D30 gate, rebuild); the transcripts switches and rollback | §7.2 |
 | Where a piece of code lives | §8 |
 
 ---
@@ -63,8 +68,9 @@ The user's long-term file area: their OneDrive App Folder, behind the provider-n
   the parser cannot read go to a model (GPT-6 Luna by default, Claude Haiku 5.5 by a user's switch, Gemini Flash as
   the fallback); every image is triaged first, and photographs get a
   short caption (a richer description since Search v2). Smart answers a clause, an amount or a date from the documents and searches the drive on its own when
-  the answer may be there. One extraction path for chat uploads and `open_file_from_drive` (Slice 3) and audio/video
-  transcripts are not built ([decision](../../04_solution_strategy/decisions/drive_audio_video_deferred.md)).
+  the answer may be there. One extraction path for chat uploads and `open_file_from_drive` (Slice 3) is not built. Audio and video were metadata-only here
+  ([decision](../../04_solution_strategy/decisions/drive_audio_video_deferred.md), superseded for recordings by
+  [drive_transcripts_t1.md](../../04_solution_strategy/decisions/drive_transcripts_t1.md)): see the next bullet.
 - **Search v2, live since 2026-10-14** (PR #64; RFC §25, D14–D31): the index describes each
   file once at index time — a **profile** per text file (type, life areas, dates, names, values, topics, and the
   words a user may say for them in en/es/uk/ru), **passage hints** per chunk (keywords and questions with a quote from
@@ -72,6 +78,12 @@ The user's long-term file area: their OneDrive App Folder, behind the provider-n
   call. It returns files in **tiers** that say how each matched (About, Mentioned in, By translation, Labelled,
   Related by meaning only), with strict AND over the query's words and a coverage line that says what it could not
   see. It replaces v1's ranked fusion (§6.6). The rollout purges and rebuilds every user's index (D30).
+- **Transcripts of recordings, T1 built and not deployed** (RFC §27, `feat/drive-transcripts`): an opt-in **on top of** indexing.
+  A user's audio and video are transcribed in the background by Gemini Flash on the Batch API, under a hard monthly dollar cap,
+  and the transcript is indexed like any text file, so a recording is found by what was said and Smart opens its transcript.
+  Two switches must both be on: the indexer's kill switch (`DRIVE_TRANSCRIBE_ENABLED`, off by default) and the user's own flag
+  (`drive_transcribe_enabled`, off by default, set by the owner's script). No transcript file is written to the drive yet (T2) and
+  there is no summary yet (T3). See §4.23.
 
 The drive is the source of truth; the index is a disposable mirror. Everything in it can be rebuilt from the drive.
 
@@ -111,9 +123,15 @@ Cloud Tasks queue drive-sync-dev (max-concurrent-dispatches=1)
           → ImageTriagePort: DriveTriageRunner (DriveImageTriageAgent, batches of 8 thumbnails, triage v2)
           → DocumentProfilerPort: DriveProfilerRunner (DriveProfilerAgent, one profile per text file)
           → PassageHintPort: DrivePassageRunner (DrivePassageAgent, 2 chunks per call)
+          → transcript stage (only with the kill switch and the user's flag on, §4.23): MediaAudioPort
+              (SubprocessMediaExtractor: ffprobe/ffmpeg in the parser sandbox, reads the Graph download URL)
+              → BatchTranscriptionPort (GeminiBatchAdapter: Files upload, batch submit/poll/collect)
+              → DriveTranscriptRunner (DriveTranscriberAgent), then the ordinary text path
           → GeminiEmbeddingAdapter (card, chunk and hint vectors)
           → FirestoreDriveIndexRepository ({prefix}drive_index_records, {prefix}drive_index_chunks,
-              {prefix}drive_index_hints, {prefix}drive_sync_state, {prefix}drive_model_usage)
+              {prefix}drive_index_hints, {prefix}drive_sync_state, {prefix}drive_model_usage; transcripts:
+              {prefix}drive_transcript_jobs (+ {prefix}drive_transcript_windows), {prefix}drive_transcript_batches,
+              {prefix}drive_transcripts (+ {prefix}drive_transcript_parts))
 
 Smart → delegate_to_specialist(search_files_in_drive) → FileManagementAgent
   → DriveSearchService (zero-LLM) → FirestoreDriveIndexRepository: about, name, word and hint key streams per query
@@ -146,6 +164,8 @@ Deploy units, queue, scheduler job and the two-pass first deploy: [docs/07_deplo
 | `PassageHintPort` (Search v2) | `DrivePassageRunner` | keywords and questions with evidence quotes per chunk (§4.17) |
 | `TaskQueue` | `GcpTaskQueue` (second instance) | bound to `drive-sync-dev` and the indexer's `/worker`; built only when `DRIVE_INDEXER_URL` is set |
 | `AlertSinkPort` | `SlackWebhookAdapter` (the ops sink) | the fan-out's staleness alert |
+| `MediaAudioPort` (§27) | `SubprocessMediaExtractor` (`drive_parser/media*.py`) | `probe(url)` and `extract_windows(url, windows)`: audio-only Opus windows of a recording, in the parser sandbox (§4.23) |
+| `BatchTranscriptionPort` (§27) | `GeminiBatchAdapter` | upload a window, submit/poll/collect a batch, delete the provider file; the only batch boundary |
 
 No port for the policy, the planner, the card builder, the run rules, the text gate, the chunker, the keyer, the
 enrichment plan, the grounding, the tiers or the place lookup: they are pure domain code (`src/domain/drive_*.py`,
@@ -218,8 +238,10 @@ the cost and the fallback's share; the reader still raises `DriveModelUnavailabl
   folder's own record (`reobserve_pending`, `reobserve_cursor`), worked page by page in class 2 (RFC Δ18).
 - **Policy (§5).** Since `POLICY_VERSION` 2 the §5.1 document kinds are admitted for content (`admission()` →
   `CONTENT`): PDF, DOCX, PPTX, XLSX/XLS, ODT/ODS/ODP, EPUB, HTML, Markdown, text, CSV, JSON, RTF, MSG, EML and VTT/SRT
-  subtitles. Every image is admitted for triage (`TRIAGE`). Everything else (`doc`, `ppt`, `mhtml`, iWork, audio,
-  video, archives, code, …) is `metadata_only` (reason `kind_not_admitted`) with a card. A content kind over its
+  subtitles. Every image is admitted for triage (`TRIAGE`). Since `POLICY_VERSION` 3 (RFC §27, built, not deployed) audio and video are admitted for **transcription**
+  (`Admission.TRANSCRIBE`): not parsed, never in the content classes, handled by the transcript stage (§4.23).
+  Everything else (`doc`, `ppt`, `mhtml`, iWork, archives, code, …) is `metadata_only` (reason `kind_not_admitted`) with a card.
+  (Structure decisions compare against `STRUCTURE_POLICY_SINCE` = 2, so the version 3 bump re-reads no README and re-probes no folder.) A content kind over its
   download cap (45 MiB; 10 MiB for XLSX/XLS) is `metadata_only / too_large` before any download. Dot-names,
   secret-shaped names (`id_rsa*`, `*.kdbx`, a non-Keynote `*.key`, …) and remote/package/malware items keep a card
   with their reason and are never read. OS and lock artefacts (`~$*`, `.~lock.*#`, `Thumbs.db`, `desktop.ini`,
@@ -703,6 +725,7 @@ No alert of its own: the outage shows as ERROR / WARNING lines (`[drive_reader]`
 | Triage dollars per user per month | $3 (`TRIAGE_USD_PER_MONTH`) | the rest wait in class 3 for the next month |
 | Profile dollars per user per month (Search v2) | $4 (`PROFILE_USD_PER_MONTH`; ≈ $0.0008 a file) | the job is `parked` until the month turns |
 | Passage-hint dollars per user per month (Search v2) | $20 (`PASSAGE_USD_PER_MONTH`; ≈ $0.0004 a chunk) | `parked`; a wave shrinks to the batches the dollars left pay for |
+| Transcription dollars per user per month (RFC §27.10) | $20 (`TRANSCRIBE_USD_PER_MONTH`, a **hard** cap: open reservations count; an optional deploy knob can only lower it; ≈ 125 audio hours at the held price ≈ $0.16/h) | the whole file is `parked` until the next month, never cut to the dollars left; **no initial-build allowance** |
 | Initial build, once per user (D27) | $40 (`INITIAL_BUILD_USD`) | spent first, on every class, before the monthly caps; closes when spent or when the first onboarding has settled with no job ready or parked; never reopens (a purge, rebuild or toggle does not renew it; only `drive_initial_build_reset.py` does — and the §26 rebuild does not use it, owner rule 2026-10-19: it runs under the monthly caps) |
 | Enrichment per file | 300 s (`ENRICH_FILE_BUDGET_S`), 3 files at once, 2 passage calls per file | the file resumes from its saved passage progress next time |
 | Enrichment share of the start budget | at least 40 % (`ENRICH_SHARE`); content classes 0–2 get the other 60 % | a start window: work started in it runs to its own budget |
@@ -808,6 +831,7 @@ itself makes no model call, only one query embedding):
 |---|---|---|
 | **Profile** (Search v2: one call per text file, re-profiled at most once per 24 h after an edit; templates cost $0) | ≈ 3 500 in + 750 out ≈ $0.0008 a file | `PROFILE_USD_PER_MONTH` $4, after the initial build |
 | **Passage hints** (Search v2: 2 chunks per call, the first 100 chunks of a file, no EPUB, sheets or JSON) | ≈ 750 in + 650 out ≈ $0.0004 a chunk | `PASSAGE_USD_PER_MONTH` $20, after the initial build; an edit reuses its unchanged chunks' hints; re-hinted at most once per 24 h |
+| **Transcription** (RFC §27: Gemini Flash on the Batch API, audio windows of ≈ 30 min; opt-in per user) | batch = half the interactive price on input and output; billed at the **held** final price of `gemini-3.8-flash`, ≈ $0.16 per audio hour (≈ 400–450 output tokens per audio minute, thoughts included); a window's output is capped | `TRANSCRIBE_USD_PER_MONTH` $20, **hard**: a file's estimate (`TRANSCRIBE_HOUR_USD_ESTIMATE` $0.30/h plus a fixed prompt allowance per window, overlaps paid) is reserved before its first window; an optional `DRIVE_TRANSCRIBE_USD_CAP` can only lower it; no initial-build share |
 | **Initial build** (D27) | the first full description of a drive, every class | `INITIAL_BUILD_USD` $40 once per user; the monthly ceiling after it is $31 ($4 + $3 + $4 + $20) |
 | **Reader** (scans, screenshots, images with text, PDFs the parser cannot read) | GPT-6 Luna by default (or Haiku 5.5), $0.10 / $0.50 per million input / output tokens; a page ≈ $0.0006. A failover call runs on Gemini Flash (`gemini-3.8-flash`, $1.50 / $7.50, promotional until 2026-12-31 — 15× the primary's token price), priced per model that ran | `READER_USD_PER_MONTH` $4 per user (Search v2; ≈ 6 666 pages, `MODEL_EXTRACT_PAGES_PER_MONTH` derived from it), after the one-time initial build (D27), 200 pages per file; an edit re-reads at most once per 24 h (`MODEL_REREAD_COOLDOWN`); a file whose reads keep failing as an outage at most `MAX_ATTEMPTS` times; a refused page or image is never retried |
 | **Triage** (every image, 8 thumbnails of 800 px per call; triage v2 adds ≈ 250 output tokens a photo) | the same models and fallback; an 800 px thumbnail costs more input tokens than the 176 px one did; not priced per image yet — the live model check's triage leg prints the real cost | `TRIAGE_USD_PER_MONTH` $3 per user (Search v2, after the initial build; the 20 000-image cap is retired); a failing batch costs its call and parse retry, a refused one halves only down to the refused image |
@@ -1232,6 +1256,81 @@ ref. Coverage counts closed files only in scope, as their own sentence, never as
   fixtures: `fixture_texts_s26.py`, `fixture_images_s26.py`, `synthetic_s26.py` (an ID-card-like scan, a phone photo of a
   document, a screenshot, a landmark photo, a closed item in the fake drive).
 
+### 4.23 Transcripts of recordings (RFC §27, T1 built, not deployed)
+
+**In plain English.** The owner has voice memos, meetings and videos on the drive. Today the index knows only their name, date and
+length. With transcription on, the bot listens to them in the background and writes down what was said, with who said it and when
+(`[12:40] Speaker 2: …`). That text is indexed like any document, so a search for a sentence from a meeting finds the recording, and Smart can
+open the transcript and answer from it. Nothing is read aloud or sent to a chat on its own.
+
+**Who gets it.** Two switches, both off by default. (1) The **kill switch** `DRIVE_TRANSCRIBE_ENABLED` on the indexer: off means the
+transcription stage is not even built. (2) The user's own flag `drive_transcribe_enabled`, separate from "index my drive": indexing alone
+never sends a recording anywhere. It is set by the owner's script; there is no Cabinet toggle yet, and only the owner has it on (the
+decoder surface of ffmpeg on other people's files waits for the zero-credential parser service). The Cabinet shows a sentence about it
+only while the flag is on.
+
+**What happens to one recording** (the stage, `drive_transcript_stage.py`):
+1. A recording the policy admits becomes `ready` on the record (`transcript_state`). The queue is newest first. A recording still being
+   uploaded waits out the quiet period; an edited one waits 24 h after it was last bought.
+2. The stage asks the drive for a fresh short-lived download URL and **probes** it (never stored, never logged): length, audio track, container.
+   Over 4 hours or 8 GiB, or no audio track: a **stub** (no model call), shown as "transcript: none (…)". Otherwise the whole file's cost
+   estimate is **reserved** against the month's cap; if it does not fit the file is `parked` until next month, whole, never half bought.
+3. ffmpeg, as the unprivileged parser user with CPU/size/memory limits, cuts **audio-only** Opus windows of about 30 minutes with a
+   60 s overlap, reading the file over HTTP ranges. A file with no usable duration is read in passes of at most three windows. Each window
+   is uploaded to Google's Files API.
+4. One **Gemini batch** per user per step carries every ready window as an independent request (batch is half price; answers come in
+   minutes, up to a day). Each window has an output cap. Later ticks **poll** (first after 2.5 min, then every 5), **collect**, **book** the
+   real cost into the month of the reservation, release the reservation, and delete the provider's copy of each answered window.
+5. Each answer is checked: valid JSON, the last segment reaches near the window's end (a silently truncated answer is a failed attempt),
+   times are monotonic and inside the window. A bad window is resent a limited number of times, then becomes a gap marker
+   (`[this part could not be transcribed]`); a provider refusal is a gap marker at once. A file whose windows all failed is retried later,
+   not saved.
+6. The windows are **stitched** by code: times re-based to the file, the overlap cut at its middle, speaker numbers matched across windows by
+   the words in the overlap (an unmatched speaker gets a new number), long turns given `~` stamps so there is a stamp about once a minute.
+7. The result is **indexed** through the ordinary text path (gate, chunks, embeddings) and stored under the file's content key, the card gains
+   `transcript: 47 min, 2 speakers, uk/en`, and the record is `current`. A copy, rename or move has the same key and never pays again.
+
+**Record states** (`transcript_state`): `none` (not a candidate: a folder, a never-read name, card-capped, inaccessible, or the stage is off),
+`ready`, `working` (extracting or uploading), `waiting` (submitted), `current` (done, or a stub), `held` (a timed hold, `transcript_hold`:
+`cooldown`, `quiet`, `retry` after a failed attempt with a backoff up to 6 h, `resubmit`), `parked` (the month's cap), `failed` (three charged attempts; no stub).
+A model outage is not a state: it pauses the stage's queue and the records stay `ready`.
+
+**Outcomes on the record.** A transcript with text: `indexed`. `no_speech` and `no_audio`: `metadata_only / no_text` (not counted as unread).
+`too_large` and `too_long`: `metadata_only / too_large`. A file ffmpeg cannot read: `failed` after three attempts, counted in the coverage line.
+Over the 4-hour cap there is no partial transcript.
+
+**Money.** A fifth class in `drive_model_usage`, `transcribe`: $20 a month, a **hard** cap (open reservations count), no initial-build share.
+Batch input and output are priced at half the interactive rate at the **held** final price of `gemini-3.8-flash`, so a hour of audio books
+about $0.16 and the cap buys about 125 hours until 2027 (this is deliberate: cost is never under-reported). A file's reservation is
+$0.30 per audio hour plus a small per-window allowance, an upper bound of a window's worst case. An optional deploy key
+`DRIVE_TRANSCRIBE_USD_CAP_DEV` can only lower the cap (used to bound the first live run). The Cabinet's cost line shows the class and its cap. The batch has no
+prompt-content row in BigQuery and no Logfire span; the tick line and the batch log lines carry counts only.
+
+**Search and open.** A transcribed card carries the transcript line; passages come from the chunk windows with the `[mm:ss]` stamp at their
+head, so Smart can say where in a recording. `open_file_from_drive` on a transcribed recording returns the transcript (at most 60 000 characters, then a note) inside
+the untrusted wrapper, not the video; with `original: true` it returns a link to the recording, never bytes into chat. Until a transcript exists the
+open behaves as before. A date said in a recording never changes the file's date. The `drive-search` skill carries one line about recordings.
+
+**Privacy.** Audio goes to Google only (Files API, deleted after collection; the 48 h expiry bounds the rest). Transcripts are other people's
+speech: stored like chunks, never logged, served as untrusted data. An opt-out purge removes jobs, batches and the stored transcripts; a
+rebuild keeps the stored transcripts (`purge_keep_transcripts`) so audio is not bought twice. The purge **books** a reservation that backs
+audio still running at the provider (it will be billed) and releases the rest.
+
+**Failure behaviour in one table.**
+
+| Event | What happens |
+|---|---|
+| Gemini outage, 429, a missing key | Uncharged: the stage stops extracting and submitting for a while; everything else the tick does goes on |
+| ffmpeg cannot read the file, the drive refuses the URL | A charged attempt, `held / retry`, `failed` after three; no stub |
+| A window answers invalid, short or with a response error | Resent (limited), then a gap marker |
+| A batch expires or fails whole | Its open windows go back once; a provider file that vanished is re-uploaded once |
+| The cap does not fit the file | `parked` until the 1st of next month |
+| The recording is edited or deleted while its batch runs | The result is booked and dropped; the reservation is released; the job is deleted |
+| Process dies between two writes | The next tick finds the `working` record with no job (or an unbooked answer) and starts again; booking is once per batch (a crash inside a single write can still double-book) |
+
+**Not built.** The mirror folder (T2: one Markdown file per transcript in a bot-owned folder of the drive), the summary (T3), the Cabinet toggle.
+The decisions are in [drive_transcripts_t1.md](../../04_solution_strategy/decisions/drive_transcripts_t1.md); the reasoning and the 38 deltas of the build are RFC §27.16 (Δ136–Δ173) and §27.19.
+
 ---
 
 ## 5. The tick
@@ -1257,7 +1356,11 @@ ref. Coverage counts closed files only in scope, as their own sentence, never as
    4 retries. When one class runs out of budget, lower classes wait (RFC Δ19). A deleting folder whose children are
    all deleting folders outside the page steps aside one second behind them. Search v2 splits the order: classes 0–2
    within 60 % of the start budget, then the **enrichment** phase (§4.17, a start window of at least 40 %), then
-   classes 3–4 (keys work included) within the maintenance share of what is left.
+   classes 3–4 (keys work included) within the maintenance share of what is left. **Transcripts (RFC §27.3, only for a
+   user with both switches on):** the cheap steps (poll open batches, collect, finalize, the daily orphan sweep) run first and take no
+   share (a finalize takes one file slot); the extraction step (probe, reserve, cut windows, upload, submit) runs right after the
+   due loop in its own start window of at least `TRANSCRIBE_SHARE` (25 %), and while it has work the content classes and
+   enrichment leave that share to it. Waiting for a batch continues nothing: the 10-minute fan-out polls.
 5. **Upgrade** (only if no class stopped on its budget): one bounded pass over the records when the versions or the
    embedding space changed; a pass that left stale records waits for due work before verifying again (RFC Δ30). Then
    the card-cap and chunk-cap releases.
@@ -1444,7 +1547,7 @@ by meaning; the drive is too small to tell related from unrelated" (never under 
      searched (content off, or a generic-words-only request);
    - "N text files are not described yet" (a profile or passage job `ready`, `deferred` or `parked`) and "N text files
      could not be described" (`held`). A file already described is not counted while its re-description waits.
-     Folders, photos, audio and video are never counted: they hold no text to describe;
+     Folders and photos are never counted: they hold no text to describe (a transcribed recording is a text file once its transcript is indexed, §4.23);
    - files without passage keywords **by policy** (EPUB, sheets, JSON, files past 100 chunks) are **not** a gap: their
      own words were searched, only translated and synonym keywords are missing by design. They never make coverage
      incomplete (UAT 2026-10-14: counting them made every answer hedge). A separate neutral note — "N books, sheets
@@ -1801,8 +1904,8 @@ triaged as `text`, in one of these states:
 - `metadata_only` with reason `too_large`, `no_text`, `machine_text` or `user_chunk_cap`.
 
 It does **not** count a password-protected file (`encrypted`), a file the parser or provider cannot handle
-(`unsupported`, stored as `kind_not_admitted`), photographs, or kinds that are never read (code, archives, audio,
-video, `doc`, …); Smart is not told about those. "N documents are not read yet" is the other counter: `pending` with
+(`unsupported`, stored as `kind_not_admitted`), photographs, or kinds that are never read (code, archives, `doc`, …;
+audio and video too, for a user whose transcription is off); Smart is not told about those. "N documents are not read yet" is the other counter: `pending` with
 no readable generation, not card-capped — they will be read.
 
 To find which: there is no listing script. In the Firestore console, filter `{prefix}drive_index_records` on
@@ -1836,6 +1939,15 @@ profiles ≈ 165 a day, reader ≈ 6 600 pages a month, passages ≈ 50 000 chun
 already read, then run the revision script. Rollback: restore the six-token backup, mark every user `purging`, deploy
 the previous tip; the purge is mandatory and the second re-index runs under the caps the first spent. The paragraph that
 follows is slice S1 alone; it is part of the same rollout.
+
+**Transcripts (RFC §27; T1 built on `feat/drive-transcripts`, not deployed)** have their own runbook: [docs/07_deployment/README.md](../../07_deployment/README.md)
+→ "Transcripts of recordings (§27)". In short: the composite and collection-group indexes `READY` plus the smoke; back up and upload the four
+`drive_transcriber` prompt documents (owner); pause; deploy main and the indexer with the switch **off**; verify both serve the new image; resume;
+then, to try it, set `DRIVE_TRANSCRIBE_ENABLED_DEV=on` and a low `DRIVE_TRANSCRIBE_USD_CAP_DEV` in `.env`, redeploy, and set the owner's flag with
+`scripts/infrastructure/drive_transcribe_flag.py` (dry run, then `--apply`). **Levers, fastest first:** the user's flag off (stops new work for him, keeps
+transcripts); the kill switch off and a redeploy (the stage is not even built; open batches stay at the provider and their reservations stay until it is
+switched on again or the user opts out of indexing); the previous image (every new field is plain, no enum value was added). No rebuild, no migration
+gate, no initial-build reset. The money: open reservations are released or booked at a purge, never lost (§4.23).
 
 **Files the bot cannot open (RFC §26.2; deployed 2026-10-19)** add no prompt and no version bump of their own. Owner steps
 before the deploy: the composite index `user_id + inaccessible_since` on `{prefix}drive_index_records` (declared in
@@ -1902,6 +2014,7 @@ The levers are forward ones; the first two are a code change plus a deploy, the 
 | Services | `src/services/drive_indexing_service.py`, `drive_search_service.py`, `drive_sync_scheduler_service.py`, `user_drive_service.py` |
 | Wiring, indexer routes | `src/composition/drive_indexing_setup.py`, `indexer_main.py`, `src/web/indexer_worker_app.py` |
 | Agent, manifest | `src/agents/file_management_agent.py`, `src/infrastructure/agent_manifest.py` |
+| Transcripts (§4.23; RFC §27) | domain `src/domain/drive_transcript.py` (types), `drive_transcript_job.py` (job and batch documents), `drive_transcript_plan.py` (state table, budget, cap), `drive_transcript_windows.py`, `drive_transcript_stitch.py`, `drive_transcript_render.py`, `drive_transcript_time.py`; `src/domain/batch_transcription.py`; ports `media_audio_port.py`, `batch_transcription_port.py`; adapters `drive_parser/media.py`, `media_extractor.py`, `media_launch.py`, `gemini_batch_adapter.py`; `src/agents/drive_transcriber_agent.py`; `src/composition/drive_transcript_runner.py`, `drive_model_setup.py` (`build_drive_transcription`); `src/services/drive_transcript_stage.py`; tick hooks in `drive_indexing_service.py`; open: `file_management_agent.py`, `DriveSearchService.transcript_text` |
 | Deep research copies (§1.1) | `src/domain/deep_research_drive_copy.py`, `src/services/deep_research_drive_copy_service.py`, `AgentWorkerHandler._copy_deep_research_report`, `deliver_deep_research` (the marker), `/api/drive/deep-research-copy` |
 | Eval and checks | `scripts/validation/drive_eval/` (`runner.py`, `smart_dry_run.py`, `live_check.py`, `make_fixtures.py`; Search v2: `search_v2_eval.py`, `v2_metrics.py`, `dump_enrichment.py`, `enrichment_*.py`, `v1_baseline.py`, `scale_calibrate.py`, `make_fixtures_v2.py`), `scripts/validation/drive_model_check.py`, `tests/fixtures/drive_eval/`, `tests/integration/test_drive_g2_end_to_end.py` |
 | Ops and spike scripts | `scripts/infrastructure/drive_index_rebuild.py` (`--all-users`, `--hints-only`), `drive_initial_build_reset.py`, `drive_index_smoke.py`, `create_drive_vector_indexes.sh`, `deploy_firestore_indexes.py`, `drive_extract_s1.py` (S1), `drive_chunk_knn_cost.py` (S3); `scripts/onedrive/probe_renditions.py` (S0g) |
