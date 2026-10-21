@@ -77,6 +77,14 @@ class DriveNameConflictError(Exception):
     """The provider refused a create because the name is taken."""
 
 
+class DriveStorageFull(Exception):
+    """The provider refused a write: the drive is full."""
+
+
+class DrivePathTooLong(Exception):
+    """The provider refused a write because the resulting path is too long."""
+
+
 @dataclass(frozen=True)
 class DriveItem:
     """One file or folder in the area. `path` is relative to the area root ('' for the root)."""
@@ -89,6 +97,7 @@ class DriveItem:
     modified_at: Optional[datetime] = None
     web_url: str = ""
     child_count: int = 0
+    ctag: str = ""
 
     @property
     def ref(self) -> str:

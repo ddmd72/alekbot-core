@@ -28,11 +28,12 @@ import json
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, List, Literal, Mapping, Optional, Tuple
 
 from src.domain.drive_index import DriveChange, DriveChanges, DriveChildrenPage
 from src.domain.user_drive import (
-    DriveConnection, DriveFileTooLarge, DriveItem, DriveItemNotFoundError, DriveResyncRequired,
+    DriveConnection, DriveFileTooLarge, DriveItem, DriveItemNotFoundError, DriveNameConflictError,
+    DriveResyncRequired,
 )
 from src.ports.user_drive_port import UserDrivePort
 
@@ -42,6 +43,7 @@ from .mini_pdf import text_pdf
 ROOT_ID = "fx-root"
 DRIVE_ID = "fx-drive"
 DEFAULT_FS_MODIFIED = "2026-01-15T09:00:00Z"   # generated entries without their own date
+AREA_PATH = "/Apps/Alek-bot"                   # synthetic: the area root's absolute path (child_by_name, area_path)
 _FULL = "fx:full:"
 _DELTA = "fx:delta"
 _CHILDREN = "fx:children:"
@@ -103,6 +105,7 @@ class FixtureDrive(UserDrivePort):
         self._generated: Dict[str, Tuple[str, int]] = {}  # item_id -> (content_template, n) of a bulk member
         self._closed: set = set()                        # §26.2: listed by delta, 404 on every id-addressed call
         self.downloads: List[str] = []
+        self._version = 0                                # upload counter: a new cTag per write
         self.thumbnail_calls: List[Tuple[str, str]] = []
         for entry in manifest.get("items", []):
             self._add(entry["path"], bool(entry.get("folder")), entry)
@@ -169,6 +172,7 @@ class FixtureDrive(UserDrivePort):
             mime_type="" if folder else str(entry.get("mime", "")),
             content_version="" if folder else f"ctag-{item_id}",
             modified_at=modified, fs_modified_at=modified, facets=_facets(entry.get("facets") or {}),
+            created_at=modified,
         )
 
     # -- lookups for the runner ------------------------------------------------------------------
@@ -219,7 +223,8 @@ class FixtureDrive(UserDrivePort):
             raise DriveItemNotFoundError(item_id)
         return DriveItem(item_id=item_id, name=change.name, path=self._paths[item_id], is_folder=change.is_folder,
                          size_bytes=change.size_bytes, mime_type=change.mime_type, modified_at=change.modified_at,
-                         child_count=change.child_count or 0)
+                         child_count=change.child_count or 0,
+                         ctag="" if change.is_folder else change.content_version)
 
     # -- indexing reads (USER_DRIVE_INDEXING_RFC §4) -------------------------------------------
 
@@ -294,9 +299,51 @@ class FixtureDrive(UserDrivePort):
             raise DriveItemNotFoundError(item_id)
         return self._content.get(item_id, b"")
 
-    async def upload(self, user_id: str, parent_id: str, filename: str, data: bytes,
-                     content_type: str) -> DriveItem:
-        raise NotImplementedError("the eval drive is read-only")
+    async def upload(self, user_id: str, parent_id: str, filename: str, data: bytes, content_type: str,
+                     conflict: Literal["rename", "replace", "fail"] = "rename") -> DriveItem:
+        """The one write the fixture takes (the mirror's tests): `rename` suffixes a taken name ("a 1.md"),
+        `replace` overwrites the file keeping its id, `fail` raises DriveNameConflictError."""
+        if parent_id != ROOT_ID and (parent_id not in self._items or not self._items[parent_id].is_folder):
+            raise DriveItemNotFoundError(parent_id)
+        parent_path = "" if parent_id == ROOT_ID else self._paths[parent_id]
+
+        def at(name: str) -> str:
+            return f"{parent_path}/{name}" if parent_path else name
+
+        name = filename
+        taken = item_id_for(at(name)) in self._items
+        if taken and conflict == "fail":
+            raise DriveNameConflictError(f"Drive name taken: {filename}")
+        if taken and conflict == "rename":
+            stem, dot, ext = filename.rpartition(".") if "." in filename else (filename, "", "")
+            n = 1
+            while item_id_for(at(f"{stem} {n}{dot}{ext}")) in self._items:
+                n += 1
+            name = f"{stem} {n}{dot}{ext}"
+        path = at(name)
+        item_id = item_id_for(path)
+        self._version += 1
+        existing = self._items.get(item_id)
+        now = datetime.now(timezone.utc)
+        self._content[item_id] = data
+        self._paths[item_id] = path
+        self._items[item_id] = DriveChange(
+            item_id=item_id, parent_id=parent_id, name=name, is_folder=False, size_bytes=len(data),
+            mime_type=content_type, content_version=f"ctag-{item_id}-{self._version}",
+            modified_at=now, fs_modified_at=now, created_at=existing.created_at if existing else now)
+        self._order = sorted(self._items, key=lambda i: self._paths[i].split("/"))
+        return self._item(item_id)
+
+    async def child_by_name(self, user_id: str, parent_id: str, name: str) -> Optional[DriveChange]:
+        if parent_id != ROOT_ID and parent_id not in self._items:
+            raise DriveItemNotFoundError(parent_id)
+        for change in self._items.values():
+            if change.parent_id == parent_id and change.name == name and change.item_id not in self._closed:
+                return change
+        return None
+
+    async def area_path(self, user_id: str) -> str:
+        return AREA_PATH
 
     async def replace_content(self, user_id: str, item_id: str, data: bytes, content_type: str) -> DriveItem:
         raise NotImplementedError("the eval drive is read-only")
