@@ -182,6 +182,56 @@ gcloud scheduler jobs describe alek-bot-dev-sweep-consolidation \
   --attempt-deadline=60s \
   --project=$PROJECT_ID
 
+gcloud scheduler jobs describe alek-bot-dev-email-indexing-watchdog \
+  --location=us-central1 --project=$PROJECT_ID 2>/dev/null \
+&& gcloud scheduler jobs update http alek-bot-dev-email-indexing-watchdog \
+  --schedule="23 */2 * * *" \
+  --uri="$SERVICE_URL/worker" \
+  --oidc-service-account-email="$SA" \
+  --oidc-token-audience="$SERVICE_URL/worker" \
+  --http-method=POST \
+  --message-body='{"task_type":"email_indexing_watchdog"}' \
+  --update-headers="Content-Type=application/json" \
+  --location=us-central1 \
+  --attempt-deadline=60s \
+  --project=$PROJECT_ID \
+|| gcloud scheduler jobs create http alek-bot-dev-email-indexing-watchdog \
+  --schedule="23 */2 * * *" \
+  --uri="$SERVICE_URL/worker" \
+  --oidc-service-account-email="$SA" \
+  --oidc-token-audience="$SERVICE_URL/worker" \
+  --http-method=POST \
+  --message-body='{"task_type":"email_indexing_watchdog"}' \
+  --headers="Content-Type=application/json" \
+  --location=us-central1 \
+  --attempt-deadline=60s \
+  --project=$PROJECT_ID
+
+gcloud scheduler jobs describe alek-bot-dev-sweep-companion-consolidation \
+  --location=us-central1 --project=$PROJECT_ID 2>/dev/null \
+&& gcloud scheduler jobs update http alek-bot-dev-sweep-companion-consolidation \
+  --schedule="47 * * * *" \
+  --uri="$SERVICE_URL/worker" \
+  --oidc-service-account-email="$SA" \
+  --oidc-token-audience="$SERVICE_URL/worker" \
+  --http-method=POST \
+  --message-body='{"task_type":"sweep_companion_consolidation"}' \
+  --update-headers="Content-Type=application/json" \
+  --location=us-central1 \
+  --attempt-deadline=60s \
+  --project=$PROJECT_ID \
+|| gcloud scheduler jobs create http alek-bot-dev-sweep-companion-consolidation \
+  --schedule="47 * * * *" \
+  --uri="$SERVICE_URL/worker" \
+  --oidc-service-account-email="$SA" \
+  --oidc-token-audience="$SERVICE_URL/worker" \
+  --http-method=POST \
+  --message-body='{"task_type":"sweep_companion_consolidation"}' \
+  --headers="Content-Type=application/json" \
+  --location=us-central1 \
+  --attempt-deadline=60s \
+  --project=$PROJECT_ID
+
 gcloud scheduler jobs describe alek-bot-dev-start-daily-email-review \
   --location=us-central1 --project=$PROJECT_ID 2>/dev/null \
 && gcloud scheduler jobs update http alek-bot-dev-start-daily-email-review \
