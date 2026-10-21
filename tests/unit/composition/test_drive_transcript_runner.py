@@ -176,3 +176,11 @@ async def test_collect_log_counts_finish_reasons_only(caplog):
         await runner.collect(BatchRef(name="b", keys=("a", "b")), account_id="acc-1")
     line = next(r.getMessage() for r in caplog.records if "collected" in r.getMessage())
     assert "MAX_TOKENS" in line and "STOP" in line
+
+
+async def test_an_error_result_carries_its_rpc_code():
+    """T-R18: the stage recognises 5/7 on a file-ref request as the input file gone (re-upload once)."""
+    port = _port({"a": BatchResult(key="a", error="file not found", code=5)})
+    runner, _ = _runner(port)
+    out = await runner.collect(BatchRef(name="b", keys=("a",)), account_id="acc-1")
+    assert out["a"].outcome is WindowOutcome.ERROR and out["a"].code == 5
