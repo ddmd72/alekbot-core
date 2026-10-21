@@ -2,6 +2,8 @@
 from datetime import date
 from unittest.mock import AsyncMock, MagicMock
 
+from src.domain.notification_kind import NotificationKind
+from src.infrastructure.notification_sla import dispatch_deadline_s
 from src.domain.daily_review_window import EligibleReviewUser
 from src.handlers.worker_handler import WorkerHandler
 from src.ports.dedup_store import DedupStore
@@ -125,3 +127,26 @@ async def test_mark_key_names_user_and_slot_date():
     worker, _ = _worker([_u("user-1")], marks)
     await worker._handle_start_daily_email_review()
     assert marks.marks == {"daily_review:user-1:2026-10-22"}
+
+
+async def test_mark_is_held_when_enqueue_is_called():
+    marks = _MemoryDedup()
+    seen = []
+
+    async def enqueue(*args, **kwargs):
+        seen.append("daily_review:user-1:2026-10-22" in marks.marks)
+
+    worker, _ = _worker([_u("user-1")], marks, AsyncMock(side_effect=enqueue))
+    await worker._handle_start_daily_email_review()
+    assert seen == [True]
+
+
+async def test_enqueue_passes_dedup_key_and_deadline():
+    worker, dispatch = _worker([_u("user-1", "acc-9")], _MemoryDedup())
+    await worker._handle_start_daily_email_review()
+    dispatch.enqueue_worker_task.assert_awaited_once_with(
+        "daily_email_review",
+        {"user_id": "user-1", "account_id": "acc-9"},
+        deadline_seconds=dispatch_deadline_s(NotificationKind.DAILY_DIGEST),
+        dedup_key="daily_review:user-1:2026-10-22",
+    )

@@ -1043,6 +1043,8 @@ class WorkerHandler:
                     "daily_email_review",
                     {"user_id": user.user_id, "account_id": user.account_id},
                     deadline_seconds=dispatch_deadline_s(NotificationKind.DAILY_DIGEST),
+                    # A queue call that errored after creating the task cannot yield a second task.
+                    dedup_key=mark_key,
                 )
             except Exception as exc:
                 logger.error(
