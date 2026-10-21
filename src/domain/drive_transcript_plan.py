@@ -69,12 +69,12 @@ from datetime import datetime
 from enum import Enum
 from typing import FrozenSet, Optional, Tuple
 
-from src.domain.billing import batch_transcription_input_usd
+from src.domain.billing import batch_transcription_input_usd, batch_transcription_output_usd
 from src.domain.drive_index import (
     EXTRACTION_VERSION, TRANSCRIBE_VERSION, DriveIndexRecord, Reason, RecordState, Scope, inaccessible,
 )
 from src.domain.drive_index_params import (
-    MAX_ATTEMPTS, TRANSCRIBE_HOUR_USD_ESTIMATE, TRANSCRIBE_WINDOW_PROMPT_TOKENS, TRANSCRIBE_MAX_BYTES, TRANSCRIBE_MAX_SECONDS,
+    MAX_ATTEMPTS, TRANSCRIBE_AUDIO_TOKENS_PER_S, TRANSCRIBE_HOUR_USD_ESTIMATE, TRANSCRIBE_MIN_OUTPUT_TOKENS, TRANSCRIBE_WINDOW_PROMPT_TOKENS, TRANSCRIBE_MAX_BYTES, TRANSCRIBE_MAX_SECONDS,
     TRANSCRIBE_REREAD_COOLDOWN, TRANSCRIBE_USD_PER_MONTH,
 )
 from src.domain.drive_index_planner import backoff, content_due_at, demoted, month_key, next_month_start, quiet_over
@@ -188,6 +188,19 @@ def window_prompt_usd() -> float:
     return batch_transcription_input_usd(TRANSCRIBE_WINDOW_PROMPT_TOKENS)
 
 
+def window_cost_usd(duration_s: float) -> float:
+    """One window's reservation (T-R19, T-R26): the larger of the hour-rate estimate and its worst case, audio input +
+    text input + the output cap (`max(TRANSCRIBE_MIN_OUTPUT_TOKENS, 1000 per minute)`, as the agent sets it) at the
+    batch rates. The floor matters for a short window, whose cap is the minimum, not the per-minute figure."""
+    seconds = max(0.0, duration_s)
+    hour_rate = estimate_usd(seconds) + window_prompt_usd()
+    output_cap = max(TRANSCRIBE_MIN_OUTPUT_TOKENS, math.ceil(1_000 * seconds / 60))
+    worst = (batch_transcription_input_usd(math.ceil(TRANSCRIBE_AUDIO_TOKENS_PER_S * seconds)
+                                           + TRANSCRIBE_WINDOW_PROMPT_TOKENS)
+             + batch_transcription_output_usd(output_cap))
+    return max(hour_rate, worst)
+
+
 def available_usd(ctx: TranscriptContext) -> float:
     """What the month's cap has left after what was collected and what is reserved (no initial-build allowance)."""
     return max(0.0, ctx.cap_usd - ctx.month_usd - ctx.reserved_usd)
@@ -199,7 +212,7 @@ def fits(estimate: float, ctx: TranscriptContext) -> bool:
 
 def file_estimate_usd(duration_s: float) -> float:
     """The file's estimate: the SUM over its planned windows, overlaps paid for (the cost is per audio sent)."""
-    return sum(estimate_usd(w.duration_s) + window_prompt_usd() for w in plan_windows(duration_s))
+    return sum(window_cost_usd(w.duration_s) for w in plan_windows(duration_s))
 
 
 def reserve_if_fits(estimate: float, ctx: TranscriptContext) -> Tuple[Optional[Reservation], TranscriptContext]:
@@ -483,7 +496,7 @@ def window_failed(window: JobWindow, check: WindowCheck, ctx: TranscriptContext)
 
 
 def window_estimate_usd(window: JobWindow) -> float:
-    return estimate_usd(window.spec.duration_s) + window_prompt_usd()
+    return window_cost_usd(window.spec.duration_s)
 
 
 def _resubmit(window: JobWindow, ctx: TranscriptContext) -> WindowResult:

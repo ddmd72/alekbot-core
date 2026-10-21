@@ -321,6 +321,12 @@ def batch_transcription_input_usd(tokens: int) -> float:
     return tokens * _PRICING_PER_MILLION_TOKENS["gemini-3.8-flash"]["input"] / 1e6 * BATCH_DISCOUNT
 
 
+def batch_transcription_output_usd(tokens: int) -> float:
+    """What `tokens` of output (thoughts included) cost in a transcription batch job: the held `gemini-3.8-flash`
+    output rate at `BATCH_DISCOUNT`. Planning only (a window's output cap, drive transcripts T-R26)."""
+    return tokens * _PRICING_PER_MILLION_TOKENS["gemini-3.8-flash"]["output"] / 1e6 * BATCH_DISCOUNT
+
+
 # Non-token (flat-rate or per-second REST API) service pricing — companion to
 # _PRICING_PER_MILLION_TOKENS. Prices can change under you (see CLAUDE.md
 # Economics section) — this is the one place to update them.

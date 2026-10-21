@@ -173,3 +173,11 @@ def test_prompt_says_skip_what_cannot_be_made_out():
     assert "closest words" not in cog
     assert "skip a word that cannot be made out and continue" in cog
     assert "Transcribe the whole window to its end" in cog
+
+
+@pytest.mark.parametrize("duration_s", [8.0, 30.0, 60.0])
+def test_a_short_window_keeps_the_thinking_floor(duration_s):
+    """T-R26: thinking tokens count toward the cap; 134 tokens for an 8 s window ended MAX_TOKENS with no answer."""
+    req = _agent().build_request(WindowSpec(index=0, start_s=0.0, duration_s=duration_s), prompt=PROMPT, key="k",
+                                 file_name="files/x", file_mime="audio/ogg")
+    assert req.max_output_tokens == 4_096
