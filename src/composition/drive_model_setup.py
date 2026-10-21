@@ -8,7 +8,9 @@ and the triage, and Search v2's profiler and passage hints (§25.4.4), all over 
 provider), one prompt builder and one quota service (`build_drive_models`). The extractor registry is
 `{PARSER: parser, READER: reader runner}` (EXTRACTOR_CHAINS ids); the reader cuts PDFs with the same sandboxed
 parser. `indexer_main.py` wires all four into DriveIndexingService (Search v2 P5); `build_drive_model_extractors`
-keeps the v1 shape (extractors, triage) for the callers that need only those.
+keeps the v1 shape (extractors, triage) for the callers that need only those. `build_drive_transcription` builds the
+transcript stage and `build_drive_mirror` the transcript mirror's step with its localization (both only with the kill
+switch on; the mirror's ledger is the caller's, built whatever the switch).
 
 Deliberately absent: prompt caching (the prompts are below the providers' minimum cacheable size), the alerting
 proxy (a scan the provider refuses is a per-file outcome, not a Slack alert), the prompt-content store (verbatim
@@ -22,6 +24,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional, Tuple
 
 from ..adapters.claude_adapter import ClaudeAdapter
+from ..adapters.file_localization_adapter import FileLocalizationAdapter
 from ..adapters.firestore_quota_service import FirestoreQuotaService
 from ..adapters.drive_parser.media_extractor import SubprocessMediaExtractor
 from ..adapters.gemini_adapter import GeminiAdapter
@@ -31,18 +34,24 @@ from ..adapters.openai_adapter import OpenAIAdapter
 from ..domain.drive_extraction import PARSER, READER
 from ..domain.user import PerformanceTier
 from ..ports.account_repository import AccountRepository
+from ..ports.prompt_v3.agent_profile_repository import AgentProfileRepository
 from ..ports.alert_sink import AlertSinkPort
 from ..ports.content_extractor_port import ContentExtractorPort
 from ..ports.document_profiler_port import DocumentProfilerPort
 from ..ports.drive_index_repository import DriveIndexRepository
+from ..ports.drive_mirror_repository import DriveMirrorRepository
 from ..ports.image_triage_port import ImageTriagePort
+from ..ports.language_service_port import LanguageServicePort
 from ..ports.passage_hint_port import PassageHintPort
 from ..ports.quota_service import QuotaService
 from ..ports.user_drive_port import UserDrivePort
 from ..ports.user_repository import UserRepository
 from ..services.agent_context_builder import AgentContextBuilder
 from ..services.prompt_builder import PromptBuilder
+from ..services.drive_transcript_mirror import DriveTranscriptMirror
 from ..services.drive_transcript_stage import DriveTranscriptStage
+from ..services.language_preference_service import LanguagePreferenceService
+from ..services.localization_service import LocalizationService
 from ..services.provider_registry import ProviderRegistry
 from ..utils.logger import logger
 from .drive_passage_runner import DrivePassageRunner
@@ -123,13 +132,15 @@ def build_drive_models(*, parser: Any, users: UserRepository, account_repo: Acco
 
 def build_drive_transcription(*, enabled: bool, repo: DriveIndexRepository, drive: UserDrivePort, models: DriveModels,
                               keys: Mapping[str, Optional[str]], parser_user: Optional[str],
-                              monthly_cap_usd: float) -> Optional[DriveTranscriptStage]:
+                              monthly_cap_usd: float,
+                              mirror: Optional[DriveMirrorRepository] = None) -> Optional[DriveTranscriptStage]:
     """The transcript stage (USER_DRIVE_INDEXING_RFC §27; plan Task 14B). Built ONLY while the kill switch
     (`DRIVE_TRANSCRIBE_ENABLED`) is on, so a deploy with it off leaves the indexer's object graph as it was; without
     GEMINI_API_KEY it is not built either (logged ERROR: the switch is on and nothing can transcribe). The batch adapter
     runs the BALANCED Gemini model (G26, never flash-lite, D44); the media extractor runs its children as the image's
     unprivileged parser user. `monthly_cap_usd` is `effective_monthly_cap(DRIVE_TRANSCRIBE_USD_CAP)`, decided once by
-    the caller and shared with DriveIndexingService."""
+    the caller and shared with DriveIndexingService. `mirror` is the transcript mirror's ledger, whose pins the stage's
+    orphan sweep keeps (§27.9.6, Δ186)."""
     if not enabled:
         return None
     gemini_key = (keys.get("GEMINI_API_KEY") or "").strip()
@@ -142,7 +153,34 @@ def build_drive_transcription(*, enabled: bool, repo: DriveIndexRepository, driv
     batch = GeminiBatchAdapter(api_key=gemini_key, model=GeminiAdapter.MODEL_TIERS[PerformanceTier.BALANCED])
     runner = DriveTranscriptRunner(batch, models.prompt_builder, quota_service=models.quota)
     return DriveTranscriptStage(repo, drive, SubprocessMediaExtractor(sandbox_user=parser_user), batch, runner,
-                                monthly_cap_usd=monthly_cap_usd)
+                                monthly_cap_usd=monthly_cap_usd, mirror=mirror)
+
+
+@dataclass(frozen=True)
+class DriveMirrorWiring:
+    """The transcript mirror's parts for DriveIndexingService (USER_DRIVE_INDEXING_RFC §27.9; plan Task 21C): the step,
+    and what its files are written in — the strings and the user's UI language. All None while the step is not built."""
+    mirror: Optional[DriveTranscriptMirror] = None
+    localization: Optional[LocalizationService] = None
+    language: Optional[LanguageServicePort] = None
+
+
+def build_drive_mirror(*, enabled: bool, repo: DriveIndexRepository, mirror_repo: DriveMirrorRepository,
+                       drive: UserDrivePort, users: UserRepository, account_repo: AccountRepository,
+                       profile_repo: AgentProfileRepository, assembly_service: Any) -> DriveMirrorWiring:
+    """The mirror step (§27.9.5), built ONLY while transcription runs (`enabled`: the kill switch on and the stage
+    built), so a deploy with the switch off keeps the object graph it had: the ledger (`mirror_repo`) is built by the
+    caller whatever the switch, because classification, the deletion marks and the pins need it (§27.9.2, §27.9.4,
+    §27.9.12). The step writes through `UserDrivePort`, never `UserDriveService` (whose guard refuses the mirror,
+    §27.9.8). Its read-me and file headers are localized: the file strings (`LocalizationService`, no I/O) and the UI
+    language USER -> ACCOUNT -> SYSTEM (`LanguagePreferenceService.resolve_ui_language`, the deep-research copy's
+    precedent; the indexer reads only that method)."""
+    if not enabled:
+        return DriveMirrorWiring()
+    language = LanguagePreferenceService(user_repo=users, account_repo=account_repo, profile_repo=profile_repo,
+                                         prompt_builder=assembly_service)
+    return DriveMirrorWiring(mirror=DriveTranscriptMirror(repo, mirror_repo, drive),
+                             localization=LocalizationService(FileLocalizationAdapter()), language=language)
 
 
 def build_drive_model_extractors(*, parser: Any, users: UserRepository, account_repo: AccountRepository,
