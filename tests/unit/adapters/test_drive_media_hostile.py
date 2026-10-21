@@ -11,7 +11,7 @@ import pytest
 
 from src.adapters.drive_parser.media_extractor import SubprocessMediaExtractor
 from src.domain.drive_transcript import MediaStatus, MediaUnreadable, WindowSpec
-from tests.unit.adapters.drive_media_fixtures import HAVE_FFMPEG, MediaServer, make_audio_mp4, make_silent_video_mp4
+from tests.unit.adapters.drive_media_fixtures import HAVE_FFMPEG, MediaServer, make_audio_mp4, make_cueless_webm, make_silent_video_mp4
 
 pytestmark = pytest.mark.skipif(not HAVE_FFMPEG, reason="needs ffmpeg and ffprobe")
 DEFINED_WITHIN_S = 60
@@ -28,6 +28,7 @@ def served(tmp_path):
                        b"https://other.invalid/x.mp3\n#EXT-X-ENDLIST\n"),
         "/concat.txt": b"ffconcat version 1.0\nfile 'file:///etc/passwd'\nfile 'https://other.invalid/y.mp3'\n",
         "/empty.mp4": b"",
+        "/rec.webm": make_cueless_webm(20),
         "/truncated.mp4": good[:3000],                    # the moov atom sits at the end of this file
         "/garbage.mp4": bytes(range(256)) * 40,
     }
@@ -152,6 +153,9 @@ def test_image_honours_tls_verify_and_the_hostile_set_passes_as_the_parser_user(
                        "error", "-tls_verify", "1", "-ca_file", "/ca/ca.pem", "-i",
                        base.replace("localhost", "wrong-name.invalid") + "/good.mp4")
     assert mismatch.returncode != 0                     # a trusted CA, the wrong host name: Debian's ffmpeg is GnuTLS
+    pipe_webm = _docker(*mount, "--entrypoint", "ffmpeg", _IMAGE, "-nostdin", "-v", "error", "-xerror", "-tls_verify",
+                        "1", "-ca_file", "/ca/ca.pem", "-f", "matroska,webm", "-i", base + "/rec.webm", "-f", "null", "-")
+    assert pipe_webm.returncode == 0, pipe_webm.stderr[-200:]   # -xerror does not fail a clean cue-less recording
     ran = _docker(*mount, "--entrypoint", "python", _IMAGE, "-c", _IMAGE_HOSTILE, base, "/ca/ca.pem",
                   user="driveparser")
     assert ran.returncode == 0, ran.stderr[-400:]

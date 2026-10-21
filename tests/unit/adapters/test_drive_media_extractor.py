@@ -18,7 +18,7 @@ from src.domain.drive_transcript_windows import plan_windows
 from src.domain.drive_transcript import MediaStatus, MediaUnreadable, WindowSpec
 from src.ports.media_audio_port import MediaAudioPort
 from tests.unit.adapters.drive_media_fixtures import (
-    HAVE_FFMPEG, MediaServer, make_audio_mp4, make_cueless_webm, make_seekable_webm, make_stepped_tone_webm,
+    HAVE_FFMPEG, MediaServer, make_audio_mp4, make_cueless_webm, make_corrupt_mp4, make_overstated_mp3, make_overstated_mp4, make_seekable_webm, make_stepped_tone_webm,
     tone_hz_at,
 )
 
@@ -188,7 +188,9 @@ async def test_probe_and_windows_over_https(tmp_path):
         windows = [WindowSpec(0, 0.0, 40.0), WindowSpec(1, 30.0, 40.0)]
         result = await extractor.extract_windows(server.url("/a.mp4"), windows, str(tmp_path / "o"), wall_s=60,
                                                  container=probe.container)
-        assert result.status is MediaStatus.OK and [w[0] for w in result.windows] == windows
+        assert result.status is MediaStatus.OK and not result.eof
+        assert [(w.index, w.start_s) for w, _ in result.windows] == [(0, 0.0), (1, 30.0)]
+        assert [w.duration_s for w, _ in result.windows] == [pytest.approx(40.0, abs=0.5)] * 2   # measured, not planned
         for _, path in result.windows:
             assert Path(path).read_bytes()[:4] == b"OggS"
         assert any(r[2] for r in server.requests)                # input-side -ss read through Range requests
@@ -359,6 +361,56 @@ async def test_a_limit_before_the_first_window_is_an_error_not_a_loop(tmp_path):
         with pytest.raises(MediaUnreadable):
             await extractor.extract_windows(server.url("/rec.webm"), plan_windows(14_400)[:3], str(tmp_path / "o"),
                                             wall_s=170, container=WEBM, duration_known=False)
+
+
+@needs_ffmpeg
+async def test_video_longer_than_the_audio_ends_at_the_audio(tmp_path):
+    """The header says 100 s, the audio is 60 s (T-R16): the window keeps its measured length and the file's end is
+    the audio's end, not an error."""
+    mp4 = make_overstated_mp4(tmp_path / "v.mp4", video_s=100, audio_s=60)
+    with MediaServer(tmp_path, {"/v.mp4": mp4}) as server:
+        extractor = SubprocessMediaExtractor(ca_file=server.ca_pem, temp_root=str(tmp_path))
+        probe = (await extractor.probe(server.url("/v.mp4"))).probe
+        assert probe.duration_s == pytest.approx(100.0, abs=1.0)
+        plan = [WindowSpec(0, 0.0, 40.0), WindowSpec(1, 30.0, 40.0), WindowSpec(2, 60.0, 40.0)]
+        result = await extractor.extract_windows(server.url("/v.mp4"), plan, str(tmp_path / "o"), wall_s=60,
+                                                 container=probe.container)
+    assert result.status is MediaStatus.OK and result.eof and result.duration_s == pytest.approx(60.0, abs=1.0)
+    assert [w.index for w, _ in result.windows] == [0, 1]                 # window 2 was never run
+    assert result.windows[1][0].duration_s == pytest.approx(30.0, abs=1.0)
+
+
+@needs_ffmpeg
+async def test_an_mp3_whose_header_overstates_the_duration_ends_at_the_audio(tmp_path):
+    mp3 = make_overstated_mp3(tmp_path / "a.mp3", 120)
+    with MediaServer(tmp_path, {"/a.mp3": mp3}) as server:
+        extractor = SubprocessMediaExtractor(ca_file=server.ca_pem, temp_root=str(tmp_path))
+        probe = (await extractor.probe(server.url("/a.mp3"))).probe
+        if probe.duration_s < 122:
+            pytest.skip("this ffmpeg estimates the duration exactly")
+        result = await extractor.extract_windows(server.url("/a.mp3"), [WindowSpec(0, 0.0, probe.duration_s)],
+                                                 str(tmp_path / "o"), wall_s=60, container=probe.container)
+    assert result.status is MediaStatus.OK and result.eof and result.duration_s == pytest.approx(120.0, abs=2.0)
+    assert len(result.windows) == 1
+
+
+@needs_ffmpeg
+async def test_one_corrupt_packet_does_not_fail_the_file(tmp_path):
+    """`-xerror` makes the glitch fatal (rc 183); the re-run without it conceals it (T-R16)."""
+    mp4 = make_corrupt_mp4(tmp_path / "c.mp4", 120)
+    with MediaServer(tmp_path, {"/c.mp4": mp4}) as server:
+        extractor = SubprocessMediaExtractor(ca_file=server.ca_pem, temp_root=str(tmp_path))
+        probe = (await extractor.probe(server.url("/c.mp4"))).probe
+        result = await extractor.extract_windows(server.url("/c.mp4"), [WindowSpec(0, 0.0, 120.0)],
+                                                 str(tmp_path / "o"), wall_s=60, container=probe.container)
+    assert result.status is MediaStatus.OK and len(result.windows) == 1 and not result.eof
+
+
+def test_network_exit_codes_are_computed_for_this_platform():
+    import errno
+    codes = media.network_exit_codes()
+    assert (-errno.EIO) & 0xFF in codes and (-errno.ECONNRESET) & 0xFF in codes
+    assert 0 not in codes and all(0 < c < 256 for c in codes)
 
 
 async def test_an_empty_container_is_refused_before_any_child_runs(tmp_path):

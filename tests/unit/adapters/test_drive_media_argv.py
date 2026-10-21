@@ -90,6 +90,12 @@ def test_remote_runs_reconnect_and_fail_on_error():
     assert "-xerror" not in media.build_cut_argv("/w/p.opus", 0, 10, "/w/x")      # local cuts are not remote runs
 
 
+def test_the_rerun_without_xerror_keeps_the_reconnect_and_every_guard():
+    plain = media.build_window_argv(URL, CA, "matroska,webm", 0, 10, "/w/x", xerror=False)
+    assert "-xerror" not in plain and "-reconnect" in plain and "-tls_verify" in plain
+    assert "-xerror" not in media.build_pass_argv(URL, CA, "matroska,webm", 0, 10, "/w/x", xerror=False)
+
+
 def test_the_cut_reads_only_local_ogg():
     argv = media.build_cut_argv("/w/pass.opus", 1_740.0, 1_800.0, "/w/window_1.opus.part")
     assert _value(argv, "-protocol_whitelist") == "file" and _value(argv, "-format_whitelist") == "ogg"

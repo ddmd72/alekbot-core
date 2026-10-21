@@ -67,8 +67,9 @@ class MediaProbeOutcome:
 class MediaWindowsOutcome:
     """`extract_windows` result. `windows`: (spec, local path) of every window finished before the wall, in order, each
     with the plan's index and start and its real length; on TIMEOUT a prefix of the request (the caller resumes at the
-    first missing one). For a pass without a known duration (G35, T-R15): `eof` is True when the file ended inside the
-    pass, and `duration_s` is then the file's now-known duration; `reached_bound` is True when the pass ended at
+    first missing one). `eof` is True when the audio ended inside the run (a cue-less pass, G35/T-R15, or a known-duration
+    window that came out short because the header duration overstated it, T-R16), and `duration_s` is then the real
+    duration; every window carries its MEASURED length; `reached_bound` is True when the pass ended at
     `TRANSCRIBE_MAX_SECONDS` with the file still going (the `too_long` stub)."""
     status: MediaStatus
     windows: Tuple[Tuple[WindowSpec, str], ...] = ()
