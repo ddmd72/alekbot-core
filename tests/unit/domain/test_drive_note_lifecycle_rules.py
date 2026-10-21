@@ -1,0 +1,119 @@
+"""The pure rules of an owner note's lifecycle in the indexer (DRIVE_FILE_NOTES_RFC §3.4, §7.1, §7.4, §7.5): which
+deleted records report a check, how checks fold, which notes the audit reads, and the snapshot an observation leaves."""
+from datetime import datetime, timedelta, timezone
+
+from src.domain.drive_index import DriveChange, DriveIndexRecord
+from src.domain.drive_mirror import GONE, UNSTORED
+from src.domain.drive_note import (
+    CONTENT_KEY_FAMILY, ONEDRIVE_PROVIDER_KEY, DriveNote, NoteBinding, NoteSnapshot, NoteState, binding_key,
+    erase_stub, ref_key,
+)
+from src.domain.drive_note_check import WHY_GONE, WHY_UNSTORED, NoteCheck
+from src.domain.drive_note_lifecycle import (
+    NOTE_AUDIT_EVERY, NOTE_AUDIT_SKIP_DAYS, NOTE_CHECKS_MAX, NOTE_CHECKS_STORED_MAX, audit_candidates, audit_due,
+    chain_path, checks_of, fold_checks, moved_snapshot, refreshed_snapshot, without_checks,
+)
+
+T = datetime(2026, 10, 22, 9, 0, tzinfo=timezone.utc)
+P = ONEDRIVE_PROVIDER_KEY
+
+
+def _check(note_id, item_id="i", why=WHY_GONE):
+    return NoteCheck(note_id=note_id, item_id=item_id, why=why, last_seen_at=T)
+
+
+def _note(note_id, *, item="a", drive="d1", provider=P, state=NoteState.ACTIVE, seen=None):
+    binding = NoteBinding(provider_key=provider, drive_id=drive, item_id=item)
+    return DriveNote(note_id=note_id, user_id="u", state=state, current_version=1, text="x", binding=binding,
+                     snapshot=NoteSnapshot(name=f"{item}.pdf", path=f"Docs/{item}.pdf", snapshot_at=seen),
+                     match_keys=[binding_key(provider, drive, item), ref_key(item)])
+
+
+def test_the_why_words_are_the_transcript_mirrors():
+    assert (WHY_GONE, WHY_UNSTORED) == (GONE, UNSTORED)
+
+
+def test_the_parameters():
+    assert NOTE_CHECKS_MAX == 500 and NOTE_CHECKS_STORED_MAX == 2000
+    assert NOTE_AUDIT_EVERY == timedelta(hours=24) and NOTE_AUDIT_SKIP_DAYS == 7
+
+
+class TestChecksOf:
+
+    def test_only_records_with_a_note_report_one(self):
+        recs = [DriveIndexRecord(user_id="u", item_id="a", owner_note_id="n1"),
+                DriveIndexRecord(user_id="u", item_id="b")]
+        assert checks_of(recs, WHY_UNSTORED, T) == (NoteCheck("n1", "a", WHY_UNSTORED, T),)
+
+    def test_no_record_no_check(self):
+        assert checks_of([], WHY_GONE, T) == ()
+
+
+class TestFold:
+
+    def test_one_check_per_note_and_the_later_why_wins_in_place(self):
+        stored = (_check("n1", why=WHY_UNSTORED), _check("n2"))
+        folded, dropped = fold_checks(stored, [_check("n3"), _check("n1", why=WHY_GONE)])
+        assert [c.note_id for c in folded] == ["n1", "n2", "n3"] and dropped == 0
+        assert folded[0].why == WHY_GONE
+
+    def test_past_the_cap_the_newest_are_dropped(self):
+        folded, dropped = fold_checks([_check(f"s{i}") for i in range(3)], [_check("x"), _check("y")], cap=4)
+        assert [c.note_id for c in folded] == ["s0", "s1", "s2", "x"] and dropped == 1
+
+    def test_without_checks(self):
+        assert without_checks((_check("n1"), _check("n2")), {"n1"}) == (_check("n2"),)
+
+
+class TestAudit:
+
+    def test_due_once_a_day(self):
+        assert audit_due(None, T) is True
+        assert audit_due(T - NOTE_AUDIT_EVERY, T) is True
+        assert audit_due(T - NOTE_AUDIT_EVERY + timedelta(seconds=1), T) is False
+
+    def test_candidates_are_active_on_the_drive_and_unseen_for_seven_days(self):
+        old = T - timedelta(days=NOTE_AUDIT_SKIP_DAYS, seconds=1)
+        fresh = T - timedelta(days=NOTE_AUDIT_SKIP_DAYS) + timedelta(seconds=1)
+        notes = [
+            _note("never", item="a"),
+            _note("old", item="b", seen=old),
+            _note("fresh", item="c", seen=fresh),
+            _note("dormant", item="d", drive="d2", seen=old),
+            _note("other-provider", item="e", provider="gdrive", seen=old),
+            _note("archived", item="f", state=NoteState.ARCHIVED, seen=old),
+            _note("cleared", item="g", state=NoteState.CLEARED, seen=old),
+            erase_stub(_note("stub", item="h", seen=old)),
+        ]
+        got = audit_candidates(notes, provider_key=P, drive_id="d1", now=T)
+        assert [n.note_id for n in got] == ["never", "old"]     # never seen first, then the longest unseen
+
+
+class TestSnapshots:
+
+    def test_chain_path(self):
+        assert chain_path("a.pdf", ["Sub", "Docs"]) == "Docs/Sub/a.pdf"
+        assert chain_path("a.pdf", []) == "a.pdf"
+
+    def test_refreshed_from_the_observation_kind_and_date_kept(self):
+        old = NoteSnapshot(name="old.pdf", path="Docs/old.pdf", parent_item_id="p0", kind="pdf",
+                           effective_date=T - timedelta(days=9), content_key="q0:1", snapshot_at=T - timedelta(days=30))
+        change = DriveChange(item_id="a", parent_id="p1", name="new.pdf", size_bytes=7, mime_type="application/pdf",
+                             fs_modified_at=T - timedelta(days=1), facets={"hashes": {"quickXorHash": "qx"}})
+        got = refreshed_snapshot(old, change, path="Repo/new.pdf", now=T)
+        assert (got.name, got.path, got.parent_item_id, got.size_bytes) == ("new.pdf", "Repo/new.pdf", "p1", 7)
+        assert (got.content_key, got.content_key_family, got.snapshot_at) == ("qx:7", CONTENT_KEY_FAMILY, T)
+        assert (got.kind, got.effective_date) == ("pdf", T - timedelta(days=9))
+        assert old.path == "Docs/old.pdf"                       # never mutated
+
+    def test_refreshed_keeps_the_path_when_the_chain_is_unknown(self):
+        old = NoteSnapshot(name="a.pdf", path="Docs/a.pdf")
+        got = refreshed_snapshot(old, DriveChange(item_id="a", parent_id="p", name="a.pdf"), path=None, now=T)
+        assert got.path == "Docs/a.pdf" and got.content_key == "" and got.content_key_family == ""
+
+    def test_moved_snapshot_only_when_the_path_changed(self):
+        old = NoteSnapshot(name="a.pdf", path="Docs/a.pdf", snapshot_at=T - timedelta(days=2))
+        assert moved_snapshot(old, None) is None and moved_snapshot(old, "Docs/a.pdf") is None
+        moved = moved_snapshot(old, "Archive/a.pdf")
+        assert moved is not None and moved.path == "Archive/a.pdf" and moved.snapshot_at == old.snapshot_at
+        assert moved_snapshot(None, "x") is None

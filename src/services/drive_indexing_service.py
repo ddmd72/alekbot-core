@@ -11,7 +11,7 @@ Public interface:
     DriveIndexingService(drive, repo, embeddings, queue, users, place_of, embedding_space, *, extractors=None,
                          triage=None, profiler=None, passages=None, upgrade_pass=True, transcripts=None,
                          transcribe_enabled=False, transcribe_cap_usd=TRANSCRIBE_USD_PER_MONTH, mirror_repo=None,
-                         mirror=None, localization=None, language=None, clock, monotonic)
+                         mirror=None, localization=None, language=None, note_lifecycle=None, clock, monotonic)
     await tick(user_id, nudge=None) -> TickResult
 
 `extractors` maps `drive_extraction.PARSER` / `READER` to their ContentExtractorPort and `triage` is the
@@ -67,6 +67,13 @@ the work-off (after a complete round), only for a user whose transcription is on
 `MirrorHost`, within its own budgets and window (`_Budget.mirror_stop`). While the user has mirror work it can do now
 (`_mirror_ready`, Δ209, Δ217) the content classes, enrichment and extraction stop MIRROR_RESERVE_S earlier. Mirror work
 never asks for a continuation; its counters join the tick line (`mirror={...}`).
+
+Owner notes' lifecycle (docs/10_rfcs/DRIVE_FILE_NOTES_RFC.md §7.1, §7.4; plan part C): `note_lifecycle` is the
+DriveNoteLifecycle, built only with the notes kill switch on. With it, every delete site's why (`_mirror_notices`, the
+transcript mirror's hook) also reports a check for each deleted record that carried a note (`owner_note_id`), into a
+tick-scoped accumulator (`_TICK_NOTES`); `_save_state` folds it into the state at every save, the error paths' saves
+included, and never into a purging state (a purge archives nothing). At the start of the work-off (a complete round) the
+round end works the checks within the item-call budget, then the daily audit runs. Without it, none of this runs.
 """
 from __future__ import annotations
 
@@ -137,6 +144,8 @@ from ..domain import drive_mirror_plan as mirror_versions
 from ..domain.drive_mirror import GONE, UNKNOWN, UNSTORED, DeletionNotice, MirrorRoot
 from ..domain.drive_mirror_plan import local_day, mirror_plan
 from ..domain.drive_mirror_render import MirrorStrings
+from ..domain.drive_note_check import NoteCheck
+from ..domain.drive_note_lifecycle import checks_of, fold_checks
 from ..domain.language import LanguageCode
 from ..domain.ui_messages import UIMessage
 from ..domain.drive_profile import (
@@ -183,6 +192,7 @@ from ..ports.user_repository import UserRepository
 from ..utils.logger import exc_brief, logger
 
 if TYPE_CHECKING:   # REQ-ARCH-22: a service never imports another at run time; the stage is injected
+    from .drive_note_lifecycle import DriveNoteLifecycle
     from .drive_transcript_mirror import DriveTranscriptMirror
     from .drive_transcript_stage import DriveTranscriptStage
     from .localization_service import LocalizationService
@@ -511,6 +521,18 @@ class _Mirror:
 
 # Per tick: None outside a tick or with no mirror repository wired (no root ids, no marks).
 _TICK_MIRROR: ContextVar[Optional[_Mirror]] = ContextVar("drive_tick_mirror", default=None)
+@dataclass
+class _NoteChecks:
+    """Owner notes (DRIVE_FILE_NOTES_RFC §3.4, §7.1): the checks this tick's deletes reported, by note id, and the
+    `last_seen_at` they carry (the state's `observed_as_of` at the tick's start: the last round that saw the items).
+    Folded into the state at every save; the round end takes out the ones it finished."""
+    last_seen_at: Optional[datetime]
+    pending: Dict[str, NoteCheck] = field(default_factory=dict)
+    dropped_logged: bool = False
+
+
+# Per tick: None outside a tick or without the notes lifecycle wired (no check is collected).
+_TICK_NOTES: ContextVar[Optional[_NoteChecks]] = ContextVar("drive_tick_notes", default=None)
 # What makes the tick read the marked records again for its counters: it changed a marking itself (review of S1)
 _MARK_CHANGES = ("inaccessible", "inaccessible_folders", "inaccessible_rechecked", "access_regained")
 
@@ -570,6 +592,7 @@ class DriveIndexingService:
                  mirror: Optional["DriveTranscriptMirror"] = None,
                  localization: Optional["LocalizationService"] = None,
                  language: Optional[LanguageServicePort] = None,
+                 note_lifecycle: Optional["DriveNoteLifecycle"] = None,
                  clock: Callable[[], datetime] = _utcnow, monotonic: Callable[[], float] = time.monotonic) -> None:
         if mirror is not None and (mirror_repo is None or localization is None or language is None):
             raise ValueError("the transcript mirror step needs the mirror repository, the localization service and "
@@ -609,6 +632,8 @@ class DriveIndexingService:
         # the step could not start (its UI language or strings unreadable), per user: the same ladder, held off the
         # reserve only (`_note_step_unavailable`; process memory only)
         self._mirror_step_holds: Dict[str, Tuple[int, datetime]] = {}
+        # owner notes' round-end checks and daily audit (DRIVE_FILE_NOTES_RFC §7); None: the kill switch is off
+        self._note_lifecycle = note_lifecycle
         self._clock = clock
         self._monotonic = monotonic
         self._gate_checked: Dict[str, float] = {}
@@ -695,10 +720,12 @@ class DriveIndexingService:
         if transcription.on:
             transcription.host = _TickHost(self, user_id, budget, models, summary, transcription)
         transcription_token = _TICK_TRANSCRIPTION.set(transcription)
+        notes_token = _TICK_NOTES.set(_NoteChecks(state.observed_as_of) if self._note_lifecycle is not None else None)
         try:
             return await self._run_spending(user_id, state, nudge, now, enabled, budget, summary, cont, saved,
                                             models, spend, connection)
         finally:
+            _TICK_NOTES.reset(notes_token)
             _TICK_MIRROR.reset(mirror_token)
             _TICK_TRANSCRIPTION.reset(transcription_token)
             _TICK_CLOSED.reset(closed_token)
@@ -1115,7 +1142,13 @@ class DriveIndexingService:
 
     def _mirror_notices(self, records: Iterable[DriveIndexRecord], why: str) -> Dict[str, str]:
         """The deletes the mirror must hear of (§27.9.4), with their why: a record the mirror has written a file or a
-        folder for (`mirrored_digest`), or a mirror root's own record. Pure; `_commit` keeps the ones it deletes."""
+        folder for (`mirrored_digest`), or a mirror root's own record. `_commit` keeps the ones it deletes.
+
+        Every delete site passes its why here, so this is also where an owner note hears of its record's delete
+        (DRIVE_FILE_NOTES_RFC §7.1): each record with `owner_note_id` reports a check into the tick's accumulator. A
+        delete re-upserted later in the page still reports one; the round end drops it, finding the record present."""
+        records = list(records)
+        _note_notices(records, why)
         mirror = _TICK_MIRROR.get()
         roots = mirror.root_ids if mirror is not None else frozenset()
         return {r.item_id: why for r in records if r.mirrored_digest or r.item_id in roots}
@@ -1174,6 +1207,8 @@ class DriveIndexingService:
         cheap steps right after the sweep, and its extraction step right after the due loop. With the mirror step
         wired as well (§27.9.5): it runs last, whatever class the due loop stopped at, and while the user has mirror
         work it can do now the steps before it leave it MIRROR_RESERVE_S (Δ209, `_mirror_ready`, decided here once)."""
+        if self._note_lifecycle is not None:
+            state = await self._notes_round_end(user_id, state, budget, summary)
         if _transcribing() and await self._mirror_ready(user_id):
             budget.mirror_reserve = MIRROR_RESERVE_S
         if state.epoch_phase is EpochPhase.SWEEPING:
@@ -1199,6 +1234,32 @@ class DriveIndexingService:
         return state
 
     # -- the transcript mirror's step (§27.9.5; plan Task 21C) ---------------------------------------------------
+
+    async def _notes_round_end(self, user_id: str, state: DriveSyncState, budget: _Budget,
+                               summary: Dict[str, int]) -> DriveSyncState:
+        """Owner notes at the round end (DRIVE_FILE_NOTES_RFC §5.1 c, §7.1, §7.4): the archive checks — the stored
+        ones and this tick's, folded — within the item-call budget, then the daily audit. Cheap: no share of the start
+        budget beyond their item calls. The finished checks leave the accumulator too, so a later save does not put them
+        back."""
+        lifecycle = self._note_lifecycle
+        acc = _TICK_NOTES.get()
+        if lifecycle is None or acc is None:
+            return state
+        state = replace(state, note_checks=fold_checks(state.note_checks, list(acc.pending.values()))[0])
+
+        def take_item_call() -> bool:
+            if not budget.item_call_allowed():
+                return False
+            budget.item_calls -= 1
+            return True
+
+        state, done, counts = await lifecycle.round_end(user_id, state, take_item_call=take_item_call, fence=_fence)
+        for note_id in done:
+            acc.pending.pop(note_id, None)
+        state, audited = await lifecycle.audit(user_id, state, take_item_call=take_item_call, fence=_fence)
+        for key, value in (*counts.items(), *audited.items()):
+            _inc(summary, key, value)
+        return state
 
     def _mirror_wired(self) -> bool:
         return self._mirror is not None and _TICK_MIRROR.get() is not None
@@ -3879,7 +3940,7 @@ class DriveIndexingService:
 
     async def _save_state(self, state: DriveSyncState) -> None:
         _fence()
-        await self._repo.save_sync_state(state, _owner())
+        await self._repo.save_sync_state(_with_note_checks(state), _owner())
 
     def _upgrade_due(self, state: DriveSyncState) -> bool:
         """The version constants or the embedding space differ from what the index was last verified under."""
@@ -4196,6 +4257,30 @@ def _card_rescheduled(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
     if card_eligible(rec) and rec.card_hash != card_hash(rec) and (rec.due_at is None or rec.due_at > now):
         return schedule(rec, now, first_seen=not rec.has_card)
     return rec
+
+
+def _note_notices(records: Sequence[DriveIndexRecord], why: str) -> None:
+    """Owner notes (DRIVE_FILE_NOTES_RFC §7.1): a check for every deleted record that carried a note, into the tick's
+    accumulator; nothing without the notes lifecycle wired."""
+    acc = _TICK_NOTES.get()
+    if acc is None:
+        return
+    for check in checks_of(records, why, acc.last_seen_at):
+        acc.pending[check.note_id] = check
+
+
+def _with_note_checks(state: DriveSyncState) -> DriveSyncState:
+    """The state to save with the tick's note checks folded in (§3.4: at every save, the error paths' too). A purging
+    state gets none: a purge archives nothing and deletes the state with its checks."""
+    acc = _TICK_NOTES.get()
+    if acc is None or not acc.pending or state.purging:
+        return state
+    folded, dropped = fold_checks(state.note_checks, list(acc.pending.values()))
+    if dropped and not acc.dropped_logged:
+        acc.dropped_logged = True
+        logger.warning(f"[DriveIndex] {state.user_id[:8]} has more note checks than the state keeps; {dropped} "
+                       f"dropped (the daily notes audit catches them)")
+    return replace(state, note_checks=folded)
 
 
 def _fence() -> None:
