@@ -119,7 +119,7 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     through `QuotaService.record_usage`. `can_handle` is False; no tools, no history.
   - **Tier / provider:** Gemini only, the BALANCED model `gemini-3.8-flash` (read from `GeminiAdapter.MODEL_TIERS` by the
     composition and passed to the batch adapter, REQ-ARCH-23), never flash-lite (D44); `agent_providers` does not apply;
-    `thinking_level=LOW` on every request; per-window `max_output_tokens = min(65 536, ceil(1 000 × minutes))`
+    `thinking_level=LOW` on every request; per-window `max_output_tokens = min(65 536, max(4 096, ceil(1 000 × audio minutes)))`
     (`DRIVE_TRANSCRIBER` in `agent_config.py`).
   - **Output:** `{language_codes, speakers, no_speech, segments: [{start: "MM:SS"|"H:MM:SS", speaker: int|null, text}]}`,
     `json.loads` once, strict field checks, **no regex fallback**; `DriveOutputInvalid` is the window's failed attempt. `start` is

@@ -118,7 +118,7 @@ from ..domain.drive_transcript_job import (
 from ..domain.drive_transcript_plan import (
     CURRENT, FAILED, HELD, NONE, PARKED, READY, TRANSCRIBER_AGENT, WAITING, WORKING, Reservation, StartOutcome, TranscriptContext,
     WindowAction, WindowCheck, charge_attempt, mark_current, park, release, resume_window, start_file, state_for_job,
-    stub_record, wait_for_copy, window_estimate_usd, window_failed,
+    stub_record, wait_for_copy, window_estimate_usd, window_failed, file_estimate_usd, reserve_if_fits,
 )
 from ..domain.drive_transcript_plan import WindowResult as WindowDecision
 from ..domain.drive_transcript_render import TRANSCRIPT_BODY_VERSION, render_body
@@ -591,9 +591,30 @@ class DriveTranscriptStage:
                         summary: Dict[str, int]) -> Optional[Tuple[DriveIndexRecord, TranscriptJob]]:
         """The real duration is known (`eof`, or a duration measured by an earlier run): the plan, the windows and the
         reservation follow it (T-R15, T-R16). The job is saved first; the dollars over the real estimate are released
-        after it, once."""
+        after it, once.
+
+        A measured duration longer than the one reserved for (a header that understated it, Δ106/T-R26) reserves the
+        difference first, once, in the reservation month, before any upload; when it does not fit the file is parked
+        mid-job (T-R21) and the step for it ends."""
+        extra = file_estimate_usd(duration_s) - job.reserved_usd
+        topped = False
+        if extra > 1e-9 and job.reserved_usd > 0:
+            reservation, ctx = reserve_if_fits(extra, step.ctx)
+            if reservation is None:
+                await self._commit(host, park(rec, step.ctx, resubmit=True), rec)
+                _inc(summary, "transcript_parked_mid_job")
+                logger.info(f"[DriveTranscript] {_short(rec.item_id)}: the measured duration needs ${extra:.4f} more "
+                            f"than reserved and it does not fit: parked")
+                return None
+            month = job.reserved_month or reservation.month
+            host.fence()
+            await host.reserve(extra, month)   # written before anything it pays for
+            if month == month_key(step.ctx.now):
+                step.ctx = ctx
+            job = replace(job, reserved_usd=job.reserved_usd + extra, reserved_month=month)
+            topped = True
         settled = resettled(job, duration_s)
-        changed = (settled.job.duration_s != job.duration_s or settled.release_usd > 0 or settled.dropped)
+        changed = (settled.job.duration_s != job.duration_s or settled.release_usd > 0 or settled.dropped or topped)
         if not changed:
             return rec, job
         await self._save_job(host, settled.job)

@@ -730,7 +730,7 @@ initial-build reset (Δ126). It reuses the shell variables and the pause/resume 
 off until the owner turns it on: the indexer's kill switch and the user's own flag. Nothing here is a secret; the key names only.
 
 **Keys (deploy-only, in `.env`, never the local `DRIVE_TRANSCRIBE_ENABLED` / `DRIVE_TRANSCRIBE_USD_CAP`: the deploy-substitution trap).**
-- `DRIVE_TRANSCRIBE_ENABLED_DEV` — `on` (also `1`, `true`, `yes`) turns the kill switch on. **Required**: `make deploy` refuses unless it is exactly `on` or `off` (T-R34), so a checkout without the key cannot silently deploy it off. It also rides to the main service, where the Cabinet shows the disclosure only if it is on. The Makefile
+- `DRIVE_TRANSCRIBE_ENABLED_DEV` — `on` turns the kill switch on, `off` turns it off (no other value is accepted, T-R34). **Required**: `make deploy` refuses unless it is exactly `on` or `off` (T-R34), so a checkout without the key cannot silently deploy it off. It also rides to the main service, where the Cabinet shows the disclosure only if it is on. The Makefile
   passes it as `_DRIVE_TRANSCRIBE_ENABLED`, and `cloudbuild-dev.yaml` sets `DRIVE_TRANSCRIBE_ENABLED` on the indexer. It is a Cloud Build substitution
   and not a by-hand variable because `--set-env-vars` replaces every variable on each deploy: a value set with `gcloud run services update` is gone at
   the next deploy (the same reason as `DRIVE_UPGRADE_PASS`). A manual `gcloud builds submit` without the Makefile deploys `off`.

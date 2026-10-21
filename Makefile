@@ -86,8 +86,8 @@ _SANDBOX_RENDER_CALLERS = $(SANDBOX_RENDER_CALLERS_DEV)
 # the local DRIVE_UPGRADE_PASS (CLAUDE.md, "Deploy-substitution trap").
 _DRIVE_UPGRADE_PASS = $(or $(DRIVE_UPGRADE_PASS_DEV),on)
 
-# Transcription of audio and video (USER_DRIVE_INDEXING_RFC §27.13). The kill switch is OFF unless DRIVE_TRANSCRIBE_ENABLED_DEV=on
-# is in .env; DRIVE_TRANSCRIBE_USD_CAP_DEV (a number, empty = the $20 monthly maximum) can only LOWER the cap. Both ride as
+# Transcription of audio and video (USER_DRIVE_INDEXING_RFC §27.13). DRIVE_TRANSCRIBE_ENABLED_DEV is REQUIRED in .env and must be exactly on or off
+# (`make deploy` refuses otherwise, T-R34); the switch is on only for `on`; DRIVE_TRANSCRIBE_USD_CAP_DEV (a number, empty = the $20 monthly maximum) can only LOWER the cap. Both ride as
 # substitutions to the indexer (the cap to the main service too: the Cabinet shows it). Deploy-only keys, never the
 # local DRIVE_TRANSCRIBE_ENABLED / DRIVE_TRANSCRIBE_USD_CAP (CLAUDE.md, "Deploy-substitution trap").
 _DRIVE_TRANSCRIBE_ENABLED = $(or $(DRIVE_TRANSCRIBE_ENABLED_DEV),off)

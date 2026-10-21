@@ -145,3 +145,25 @@ async def test_find_error_on_a_later_page_is_mapped_too():
     adapter.client.aio.batches.list = list_
     with pytest.raises(LLMUnavailableError):
         await adapter.find_batch(DISPLAY)
+
+
+@pytest.mark.asyncio
+async def test_find_at_the_scan_bound_is_inconclusive_not_a_miss():
+    """Round 2: the job may lie past the bound (jobs are never deleted): an outage-class error, never `None`."""
+    adapter = _adapter()
+    seen: List[Optional[str]] = []
+    page = [_job(f"batches/n{i}", "tr-other") for i in range(100)]
+    _install_pages(adapter, [page] * (FIND_MAX_JOBS // 100) + [[_job("batches/late", "x")]], seen)
+    with pytest.raises(LLMUnavailableError, match="scan bound"):
+        await adapter.find_batch(DISPLAY)
+
+
+@pytest.mark.asyncio
+async def test_find_that_finds_it_at_the_last_scanned_job_still_returns_it():
+    adapter = _adapter()
+    shown = await _submitted_display_name(adapter, DISPLAY)
+    seen: List[Optional[str]] = []
+    page = [_job(f"batches/n{i}", "tr-other") for i in range(99)] + [_job("batches/last", shown)]
+    _install_pages(adapter, [page] * 1, seen)
+    found = await adapter.find_batch(DISPLAY)
+    assert found is not None and found.name == "batches/last"

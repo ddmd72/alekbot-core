@@ -47,7 +47,7 @@ T = TypeVar("T")
 DEFAULT_FILE_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 _FILE_TTL = timedelta(hours=48)  # the Files API keeps an input for 48 h; used when the SDK returns no expiry
 FIND_PAGE_SIZE = 100            # find_batch: jobs per listed page
-FIND_MAX_JOBS = 2_000           # find_batch: jobs scanned at most (weeks of this project's batches); past it: not found
+FIND_MAX_JOBS = 2_000           # find_batch: jobs scanned at most (weeks of this project's batches); past it: inconclusive (LLMUnavailableError)
 
 _STATES: Dict[Any, BatchStatus] = {
     types.JobState.JOB_STATE_UNSPECIFIED: BatchStatus.PENDING,
@@ -131,8 +131,10 @@ class GeminiBatchAdapter(BatchTranscriptionPort):
                     return job
                 scanned += 1
                 if scanned >= FIND_MAX_JOBS:
-                    logger.warning("[GeminiBatch] find: scan bound reached (jobs=%d), not found", scanned)
-                    return None
+                    # Inconclusive, not a miss: the job may lie past the bound (jobs are never deleted, the list only
+                    # grows). The stage treats it as an outage and keeps the money.
+                    logger.warning("[GeminiBatch] find: scan bound reached (jobs=%d), inconclusive", scanned)
+                    raise LLMUnavailableError("find: scan bound")
             return None
 
         job = await self._call("find", self._call_timeout_s, scan)
