@@ -23,6 +23,8 @@ from ..domain.user_drive import (
     MAX_DRIVE_DOWNLOAD_BYTES,
     DeleteOutcome,
     DriveItem,
+    DriveItemNotFoundError,
+    DriveMirrorWriteRefused,
     DriveNameConflictError,
     DrivePathError,
     DriveRootProtectedError,
@@ -42,6 +44,7 @@ from ..domain.user_drive import (
 from ..domain.drive_index import Nudge
 from ..domain.drive_index_params import TICK_DEADLINE_S
 from ..domain.drive_task_keys import DRIVE_SYNC_TASK, nudge_key, tick_payload
+from ..ports.drive_mirror_repository import DriveMirrorRepository
 from ..ports.task_queue import TaskQueue
 from ..ports.user_drive_port import UserDrivePort
 from ..utils.logger import logger
@@ -59,9 +62,13 @@ def _require_valid_name(name: str) -> None:
 
 
 class UserDriveService:
-    def __init__(self, drive: UserDrivePort, nudge_queue: Optional[TaskQueue] = None) -> None:
+    def __init__(self, drive: UserDrivePort, nudge_queue: Optional[TaskQueue] = None,
+                 mirror_roots: Optional[DriveMirrorRepository] = None) -> None:
+        """`mirror_roots` is the transcript mirror's repository: with it, every mutation is checked against the bot's
+        `_Transcripts` folder (§27.9.8, the Step 1 guard). Without it, or for a user with no root, nothing extra is read."""
         self._drive = drive
         self._nudge_queue = nudge_queue
+        self._mirror_roots = mirror_roots
 
     @property
     def display_name(self) -> str:
@@ -104,6 +111,7 @@ class UserDriveService:
     async def ensure_folder(self, user_id: str, folder: str) -> FolderResolution:
         if not split_folder_path(folder):
             raise DrivePathError("A folder name is required")
+        await self._refuse_mirror(user_id, path=folder)
         resolution, created_ids = await self._resolve(user_id, folder, create=True)
         await self._nudge(user_id, created_ids)
         return resolution
@@ -111,6 +119,7 @@ class UserDriveService:
     async def save(self, user_id: str, data: bytes, filename: str, content_type: str,
                    folder: Optional[str]) -> SaveOutcome:
         target = folder if folder and folder.strip() else DEFAULT_INBOX_FOLDER
+        await self._refuse_mirror(user_id, path=target)   # before _resolve(create=True) creates anything
         resolution, created_ids = await self._resolve(user_id, target, create=True)
         children = await self._drive.list_children(user_id, resolution.folder.item_id)
         wanted = name_key(filename)
@@ -154,10 +163,12 @@ class UserDriveService:
             _require_valid_name(new_name)
         await self._refuse_root(user_id, item_id)
         before = await self._drive.get_item(user_id, item_id)
+        await self._refuse_mirror(user_id, item=before)
         created: List[str] = []
         parent_id: Optional[str] = None
         created_ids: List[str] = []
         if folder and folder.strip():
+            await self._refuse_mirror(user_id, path=folder)
             self._refuse_move_into_self(before, folder)
             resolution, created_ids = await self._resolve(user_id, folder, create=True)
             parent_id, created = resolution.folder.item_id, resolution.created
@@ -168,6 +179,7 @@ class UserDriveService:
 
     async def append_text(self, user_id: str, item_id: str, text: str) -> UpdateOutcome:
         item = await self._drive.get_item(user_id, item_id)
+        await self._refuse_mirror(user_id, item=item)
         if item.is_folder or not is_text_file(item.name, item.mime_type):
             raise DrivePathError(f"'{item.path}' is not a text file; text can only be appended to text files")
         if item.size_bytes > MAX_DRIVE_APPEND_FILE_BYTES:
@@ -188,6 +200,7 @@ class UserDriveService:
 
     async def replace_with(self, user_id: str, item_id: str, data: bytes, content_type: str) -> UpdateOutcome:
         item = await self._drive.get_item(user_id, item_id)
+        await self._refuse_mirror(user_id, item=item)
         if item.is_folder:
             raise DrivePathError(f"'{item.path}' is a folder; only a file's content can be replaced")
         updated = await self._drive.replace_content(user_id, item_id, data, content_type)
@@ -197,6 +210,7 @@ class UserDriveService:
     async def delete(self, user_id: str, item_id: str) -> DeleteOutcome:
         await self._refuse_root(user_id, item_id)
         item = await self._drive.get_item(user_id, item_id)
+        await self._refuse_mirror(user_id, item=item)
         count, capped = (await self._count_files(user_id, item.item_id)) if item.is_folder else (1, False)
         await self._drive.delete(user_id, item_id)
         await self._nudge(user_id, [item.item_id])
@@ -218,6 +232,42 @@ class UserDriveService:
     async def _refuse_root(self, user_id: str, item_id: str) -> None:
         if item_id == (await self._drive.get_root(user_id)).item_id:
             raise DriveRootProtectedError("The drive area itself cannot be deleted or moved")
+
+    async def _refuse_mirror(self, user_id: str, *, item: Optional[DriveItem] = None,
+                             path: Optional[str] = None) -> None:
+        """The Step 1 guard (§27.9.8): refuse a write whose target is the bot's transcript folder (a current or a
+        previous root), lies under it, or (for an `item`) contains it. `item` is a source or target item; `path` a
+        requested folder path (a save, a created folder, a move's destination), where only "is or under" matters. One
+        query for the roots and one read per root path, only for a user who has a root. Paths are compared with
+        `name_key` (case-insensitive, NFC), as folder resolution matches them."""
+        if self._mirror_roots is None:
+            return
+        roots = await self._mirror_roots.roots(user_id)
+        if not roots:
+            return
+        root_ids = {rid for r in roots for rid in (r.root_item_id, *r.previous_root_ids) if rid}
+        if item is not None and item.item_id in root_ids:
+            raise DriveMirrorWriteRefused("mirror root")
+        wanted: List[Tuple[Tuple[str, ...], bool]] = []
+        if item is not None and item.path:
+            wanted.append((tuple(name_key(s) for s in split_folder_path(item.path)), item.is_folder))
+        if path is not None:
+            wanted.append((tuple(name_key(s) for s in split_folder_path(path)), False))
+        if not any(parts for parts, _ in wanted):
+            return
+        for rid in sorted(root_ids):
+            try:
+                root_item = await self._drive.get_item(user_id, rid)
+            except DriveItemNotFoundError:
+                continue   # a root that is gone has no path to guard; its id is checked above
+            own = tuple(name_key(s) for s in split_folder_path(root_item.path or ""))
+            if not own:
+                continue
+            for parts, contains in wanted:
+                if not parts:
+                    continue
+                if parts[:len(own)] == own or (contains and own[:len(parts)] == parts):
+                    raise DriveMirrorWriteRefused("mirror folder")
 
     @staticmethod
     def _refuse_move_into_self(item: DriveItem, folder: str) -> None:

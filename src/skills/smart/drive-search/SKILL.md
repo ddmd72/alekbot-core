@@ -58,3 +58,8 @@ A described file's result carries `card accuracy: N%`. 100% — everything in th
 ## Recordings
 
 - A recording is found by what was said; open its ref for the transcript; ask for `original` only when the user wants the recording itself, and it comes as a link.
+- The transcript is also a file in the bot's `_Transcripts` folder on the drive. That folder is managed by the bot: read it, never write to it (a save, edit, move or delete there is refused). A transcript of a recording that was deleted stays in its Archive; it is never found by a default search.
+
+## Deleted files
+
+- Search deleted files (`drive_deleted`) only when the user asks about files that were deleted or removed; it finds transcripts of deleted recordings and your notes on deleted files. An empty `drive_query` lists the newest. Open a hit with its `drive:` ref to read the transcript. It is never for an ordinary search.

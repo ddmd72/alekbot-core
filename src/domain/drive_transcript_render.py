@@ -7,6 +7,7 @@ Public interface:
     render_body(transcript) -> str                             # one paragraph per segment, a stamp at every head
     card_segment(rec) -> Optional[str]                         # `transcript: 47 min, 2 speakers, uk/en` or a stub line
     open_text(stored, *, max_chars) -> str                     # what `open_file_from_drive` returns, capped (G19)
+    cap_plain_text(text, *, max_chars, path) -> str            # a transcript file read as text, cut the same way
 
 The labels are language-neutral (G17): `Speaker N`, `[MM:SS]`, `[~MM:SS]`. The localized header, stubs, gap sentence
 and summary belong to the mirror file, not here. Every stub has this deterministic structural rendering.
@@ -106,3 +107,27 @@ def open_text(stored: StoredTranscript, *, max_chars: int, mirror_path: str = ""
         size += added
     body = "\n\n".join(kept) if kept else full[:room]
     return head + body + "\n\n" + note(len(body))
+
+
+def cap_plain_text(text: str, *, max_chars: int, path: str = "") -> str:
+    """A transcript file read as plain text (an archived transcript with no store entry, §27.9.11), cut the way
+    `open_text` cuts: at a paragraph boundary, the cut note inside `max_chars` and naming the file's `path`."""
+    if len(text) <= max_chars:
+        return text
+    pointer = f" The full text is in {path}." if path else ""
+
+    def note(shown: int) -> str:
+        return (f"[Transcript cut at {shown} of {len(text)} characters.{pointer} "
+                f"Search for a passage to read a specific part.]")
+
+    room = max(0, max_chars - len(note(len(text))) - 2)
+    kept: List[str] = []
+    size = 0
+    for paragraph in text.split("\n\n"):
+        added = len(paragraph) + (2 if kept else 0)
+        if size + added > room:
+            break
+        kept.append(paragraph)
+        size += added
+    body = "\n\n".join(kept) if kept else text[:room]
+    return body + "\n\n" + note(len(body))

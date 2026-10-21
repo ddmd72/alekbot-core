@@ -73,6 +73,7 @@ class UIMessage(Enum):
     DRIVE_REPLACED = "drive_replaced"
     DRIVE_DELETE_FAILED = "drive_delete_failed"
     DRIVE_REPLACE_FAILED = "drive_replace_failed"
+    DRIVE_MIRROR_WRITE_REFUSED = "drive_mirror_write_refused"   # the Step 1 guard (USER_DRIVE_INDEXING_RFC §27.9.8)
     # Deep research report copy to the user's drive (decisions/deep_research_drive_copy.md): the drive
     # folder's name per UI language, and the one line that follows the delivered report's link.
     DEEP_RESEARCH_DRIVE_FOLDER = "deep_research_drive_folder"

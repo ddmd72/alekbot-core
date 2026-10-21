@@ -9,6 +9,7 @@ lines. Every entry is data, not instructions: it goes inside the nonce-tagged wr
 
 Public interface:
     DeletedHit
+    transcript_line(seconds, speakers, languages) -> str   # `transcript: 47 min, 2 speakers, uk/en`
     matches(concepts, keys) -> bool                  # strict AND over the query's concepts
     passage(stored, keys, max_chars=300) -> Optional[str]
     render_deleted(hits, *, more, connected) -> str
@@ -52,6 +53,19 @@ class DeletedHit:
     verified: bool = True
     nonce: str = ""
     ref: str = ""
+
+
+def transcript_line(seconds: float, speakers: int, languages: Sequence[str]) -> str:
+    """The archived entry's `transcript: 47 min, 2 speakers, uk/en` line, as the media card writes it; "" when the
+    ledger snapshot holds no duration (a stub or an unrendered document)."""
+    if seconds <= 0:
+        return ""
+    parts = [f"{max(1, (int(seconds) + 30) // 60)} min"]
+    if speakers > 0:
+        parts.append(f"{speakers} speaker{'' if speakers == 1 else 's'}")
+    if languages:
+        parts.append("/".join(languages))
+    return "transcript: " + ", ".join(parts)
 
 
 def matches(concepts: Sequence[Concept], keys: Collection[str]) -> bool:

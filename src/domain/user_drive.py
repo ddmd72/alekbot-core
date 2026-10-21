@@ -69,6 +69,11 @@ class DriveRootProtectedError(Exception):
     """An operation would delete or move the area root."""
 
 
+class DriveMirrorWriteRefused(Exception):
+    """A chat write whose target, source or destination is the bot's transcript folder, lies under it, or contains it
+    (USER_DRIVE_INDEXING_RFC §27.9.8, the Step 1 guard). The agent answers with one localized line."""
+
+
 class DrivePathError(ValueError):
     """A request the drive rules refuse (bad path, wrong item kind, wrong mode)."""
 
