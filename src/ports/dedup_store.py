@@ -17,7 +17,14 @@ class DedupStore(ABC):
 
     @abstractmethod
     async def try_mark_processed(self, event_id: str) -> bool:
-        """Atomically mark event as processed. Return True if newly marked, False if duplicate."""
+        """Atomically claim the event.
+
+        True only when this caller now holds a live mark; False when a live mark exists.
+        An expired mark is re-claimable. Errors other than "already marked" raise.
+        Residual: the SDK retries a commit on ServiceUnavailable/ResourceExhausted; if the first write landed
+        but its response was lost, the retry sees our own mark and returns False (a false duplicate).
+        Fixing that needs a claim token.
+        """
 
     @abstractmethod
     async def release(self, event_id: str) -> None:
