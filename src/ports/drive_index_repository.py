@@ -474,6 +474,13 @@ class DriveIndexRepository(ABC):
         """Records with `transcript_wake_at <= now`, earliest first (then item_id)."""
 
     @abstractmethod
+    async def transcript_records(self, user_id: str, state: str, limit: int) -> List[DriveIndexRecord]:
+        """Records with `transcript_state == state`, by item_id: the stage's in-flight jobs (`working`: extraction to
+        resume, a mid-job park woken by the plan) and copies waiting on another file (`waiting`), which neither
+        `transcript_queue` (ready only) nor `transcript_wakeups` (the wake-up is cleared) returns. Equality filters
+        only: single-field indexes serve it."""
+
+    @abstractmethod
     async def jobs_by_content_key(self, user_id: str, content_key: str) -> List[TranscriptJob]:
         """The user's job documents whose `content_key` is the key, by item_id: the in-flight copy check (G12). The key
         is matched as a field value, never through a document id."""

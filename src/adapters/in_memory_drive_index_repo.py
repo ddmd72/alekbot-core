@@ -559,6 +559,9 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
         due = [r for r in self._user(user_id) if r.transcript_wake_at is not None and r.transcript_wake_at <= now]
         return sorted(due, key=lambda r: (r.transcript_wake_at, r.item_id))[:limit]
 
+    async def transcript_records(self, user_id: str, state: str, limit: int) -> List[DriveIndexRecord]:
+        return sorted((r for r in self._user(user_id) if r.transcript_state == state), key=lambda r: r.item_id)[:limit]
+
     async def jobs_by_content_key(self, user_id: str, content_key: str) -> List[TranscriptJob]:
         return sorted((j for (u, _), j in self.transcript_jobs.items() if u == user_id and j.content_key == content_key),
                       key=lambda j: j.item_id)

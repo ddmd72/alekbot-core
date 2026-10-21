@@ -1581,6 +1581,12 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
                  .order_by("transcript_wake_at").order_by("item_id").limit(limit))
         return await self._read(query)
 
+    async def transcript_records(self, user_id: str, state: str, limit: int) -> List[DriveIndexRecord]:
+        """Two equality filters and no ordering (single-field indexes serve it, the `delete_chunks_except` practice);
+        Firestore returns them in document-id order (`record_key`: the user, then the item id)."""
+        query = (self._user_query(user_id).where(filter=FieldFilter("transcript_state", "==", state)).limit(limit))
+        return await self._read(query)
+
     async def jobs_by_content_key(self, user_id: str, content_key: str) -> List[TranscriptJob]:
         """A QUERY on the raw `content_key` field (the document id is escaped, never matched): the jobs of one user
         that carry the key. Few by construction (copies of one recording)."""

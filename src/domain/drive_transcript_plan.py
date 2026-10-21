@@ -16,6 +16,7 @@ Public interface:
     transcript_plan(rec, ctx) -> rec                                        the state table below
     reset_on_new_version(rec) -> rec                                        a new content version clears the job (D42)
     start_file(rec, ctx, probe) -> FileStart                                the stage's step after the probe (Task 12 step 4)
+    wait_for_copy(rec) -> rec                                               a copy waits for another file's result (G12)
     stub_from_probe(probe) / stub_record(rec, stub, now, seconds) / mark_current(rec, now, ...)
     charge_attempt(rec) -> rec                                              a file-level failed attempt (`failed` at MAX_ATTEMPTS)
     state_for_job(job) -> "working" | "waiting"
@@ -28,8 +29,8 @@ The state table, first match wins (`DriveIndexRecord.transcript_state`, plain st
               reason (dot name, secret, OS artefact, remote item, package, malware, dense tree, kind not yet admitted),
               no content version, or inaccessible (§26.2).
     current   a transcript or stub exists at this content key and TRANSCRIPT_BODY_VERSION (the stage wrote `current`; the
-              plan never looks in the store). A stale body version is not current: the record is `ready` and the stage
-              finds the store hit. A TRANSCRIBE_VERSION bump changes NOTHING by itself (Δ122: re-buying is the requeue
+              plan never looks in the store). A stale body version, or a record read under another EXTRACTION_VERSION
+              (G31), is not current: the record is `ready` and the stage finds the store hit. A TRANSCRIBE_VERSION bump changes NOTHING by itself (Δ122: re-buying is the requeue
               script's job): it is not part of the key, and records stay as they are.
     current   (too_large) `size_bytes > TRANSCRIBE_MAX_BYTES`: the plan writes the stub itself from metadata (record
               `metadata_only / too_large` through `demoted`, no probe, no model). Only while `enabled`.
@@ -64,7 +65,9 @@ from enum import Enum
 from typing import FrozenSet, Optional, Tuple
 
 from src.domain.billing import batch_transcription_input_usd
-from src.domain.drive_index import TRANSCRIBE_VERSION, DriveIndexRecord, Reason, RecordState, Scope, inaccessible
+from src.domain.drive_index import (
+    EXTRACTION_VERSION, TRANSCRIBE_VERSION, DriveIndexRecord, Reason, RecordState, Scope, inaccessible,
+)
 from src.domain.drive_index_params import (
     MAX_ATTEMPTS, TRANSCRIBE_HOUR_USD_ESTIMATE, TRANSCRIBE_WINDOW_PROMPT_TOKENS, TRANSCRIBE_MAX_BYTES, TRANSCRIBE_MAX_SECONDS,
     TRANSCRIBE_REREAD_COOLDOWN, TRANSCRIBE_USD_PER_MONTH,
@@ -249,8 +252,12 @@ def _eligible(rec: DriveIndexRecord) -> bool:
 
 
 def _is_current(rec: DriveIndexRecord, key: str) -> bool:
+    """A record read under another EXTRACTION_VERSION is not current either (G31): its outcome no longer stands, the
+    upgrade re-plan would leave it `pending` forever, and the stage's store path re-finalizes it with no model call.
+    `extraction_version == 0` (never stamped) is not stale: the planner's own rule (`stale_versions`)."""
+    stale_extraction = rec.extraction_version > 0 and rec.extraction_version != EXTRACTION_VERSION
     return (rec.transcript_state == CURRENT and rec.transcript_key == key
-            and rec.transcript_body_version == TRANSCRIPT_BODY_VERSION)
+            and rec.transcript_body_version == TRANSCRIPT_BODY_VERSION and not stale_extraction)
 
 
 def _settle(rec: DriveIndexRecord, state: str, *, hold: Optional[str] = None,
@@ -328,22 +335,39 @@ def start_file(rec: DriveIndexRecord, ctx: TranscriptContext, probe: MediaProbe)
     The probe is untrusted input. A file with no audio stream is a true stub whatever its duration says. Otherwise a
     duration that is 0, negative, NaN or infinite cannot be planned (no windows, a $0 estimate that fits any cap): it is a
     charged attempt (`charge_attempt`, `failed` at MAX_ATTEMPTS, no stub), not a stub, because a stub states a fact
-    about the recording and this is a probe that did not answer sensibly (same class as ffmpeg failing to read it)."""
+    about the recording and this is a probe that did not answer sensibly (same class as ffmpeg failing to read it).
+
+    A container with no duration header (`duration_known=False`, a browser-recorded webm, G35/T-R15) is not unreadable:
+    its duration is learned while it is extracted. The reservation is the worst case, `file_estimate_usd` of
+    TRANSCRIBE_MAX_SECONDS, re-settled to the real estimate when the extraction reaches the end of the audio
+    (`drive_transcript_job.resettled`); `transcript_seconds` stays 0 until then."""
     if not ctx.enabled:
         return FileStart(rec, StartOutcome.DISABLED, None, ctx)
     if not probe.has_audio:
         return FileStart(stub_record(rec, TranscriptStub.NO_AUDIO, ctx.now), StartOutcome.STUBBED, None, ctx)
+    if not probe.duration_known:
+        return _reserve_start(rec, ctx, TRANSCRIBE_MAX_SECONDS, seconds=0)
     if not _usable_duration(probe.duration_s):
         return FileStart(charge_attempt(rec), StartOutcome.UNREADABLE, None, ctx)
     stub = stub_from_probe(probe)
     if stub is not None:
         return FileStart(stub_record(rec, stub, ctx.now, int(probe.duration_s)), StartOutcome.STUBBED, None, ctx)
-    reservation, held = reserve_if_fits(file_estimate_usd(probe.duration_s), ctx)
+    return _reserve_start(rec, ctx, probe.duration_s, seconds=int(probe.duration_s))
+
+
+def _reserve_start(rec: DriveIndexRecord, ctx: TranscriptContext, planned_s: float, *, seconds: int) -> FileStart:
+    reservation, held = reserve_if_fits(file_estimate_usd(planned_s), ctx)
     if reservation is None:
         return FileStart(park(rec, ctx), StartOutcome.PARKED, None, ctx)
     working = replace(_settle(rec, WORKING), transcript_key=content_key(rec)[0],
-                      transcript_seconds=int(probe.duration_s), model_read_at=ctx.now)   # the purchase time (T-R9)
+                      transcript_seconds=seconds, model_read_at=ctx.now)   # the purchase time (T-R9)
     return FileStart(working, StartOutcome.STARTED, reservation, held)
+
+
+def wait_for_copy(rec: DriveIndexRecord) -> DriveIndexRecord:
+    """G12: another file with the same shared content key is being transcribed; this one waits for its stored result
+    (`waiting` at this key, with no job of its own, nothing reserved). Kept by the plan while the key stands."""
+    return replace(_settle(rec, WAITING), transcript_key=content_key(rec)[0])
 
 
 def park(rec: DriveIndexRecord, ctx: TranscriptContext, *, resubmit: bool = False) -> DriveIndexRecord:
