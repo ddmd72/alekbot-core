@@ -18,7 +18,7 @@ def _slack(**extra):
     config = {"SLACK_BOT_TOKEN": "x", "GOOGLE_CLOUD_PROJECT": "p", "CLOUD_RUN_SERVICE_URL": "http://localhost:8080"}
     with patch(_SLACK + "SlackMediaAdapter"), patch(_SLACK + "GcsMediaAdapter"), \
             patch(_SLACK + "SlackChannelHistorySource"), patch(_SLACK + "RichContentService"), \
-            patch(_SLACK + "FirestoreEventDedupStore"), patch(_SLACK + "GcpTaskQueue"), \
+            patch(_SLACK + "GcpTaskQueue"), \
             patch(_SLACK + "HTTPModeAdapter"), patch(_SLACK + "ConversationHandler") as handler:
         SlackAdapterFactory.create_adapter(
             app=MagicMock(), config=config, env_config=env_config, coordinator=AsyncMock(),

@@ -1213,6 +1213,24 @@
     ]
   },
   {
+    "collectionGroup": "development_consolidation_queue",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "status", "order": "ASCENDING" },
+      { "fieldPath": "created_at", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_companion_extraction_queue",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "session_id", "order": "ASCENDING" },
+      { "fieldPath": "status", "order": "ASCENDING" },
+      { "fieldPath": "created_at", "order": "ASCENDING" }
+    ]
+  },
+  {
     "collectionGroup": "development_drive_transcript_mirror",
     "fieldPath": "archive_keys",
     "indexes": []

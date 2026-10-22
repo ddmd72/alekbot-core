@@ -33,5 +33,8 @@ async def test_unconfigured_is_a_quiet_200():
 
 
 async def test_drive_sync_is_not_a_main_service_task():
-    """drive_sync runs on the indexer service only; the main /worker falls back for it (None)."""
-    assert await _worker(AsyncMock()).handle({"task_type": "drive_sync", "user_id": "u"}) is None
+    """drive_sync runs on the indexer service only; the main /worker refuses it as an unknown task_type."""
+    scheduler = AsyncMock()
+    result = await _worker(scheduler).handle({"task_type": "drive_sync", "user_id": "u"})
+    assert result == ({"error": "unknown task_type"}, 400)
+    scheduler.fan_out.assert_not_awaited()

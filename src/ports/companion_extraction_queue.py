@@ -4,8 +4,7 @@ CompanionExtractionQueue — session-scoped analog of ConsolidationQueue
 keys by user_id is keyed by session_id here instead — same shape,
 different identity axis (RFC §2, §6).
 
-No cleanup_old_batches: ConsolidationQueue's version has no caller in
-ConsolidationService either — not proven necessary, so not copied (YAGNI).
+No cleanup_old_batches: it had no caller and was removed from ConsolidationQueue too.
 """
 from abc import ABC, abstractmethod
 from typing import List, Optional
@@ -22,9 +21,9 @@ class CompanionExtractionQueue(ABC):
 
     @abstractmethod
     async def get_pending_batches(
-        self, session_id: Optional[str] = None, limit: int = 10
+        self, session_id: str, limit: int = 10
     ) -> List[CompanionExtractionBatch]:
-        """Get pending/retry_pending batches, optionally filtered by session_id."""
+        """Get pending/retry_pending batches, oldest first, for one session."""
 
     @abstractmethod
     async def get_queue_size(self, session_id: str) -> int:

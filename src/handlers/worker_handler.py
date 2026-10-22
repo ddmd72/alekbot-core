@@ -16,7 +16,6 @@ Supported task_types:
                                      remain (session-keyed analog of consolidation)
   - sweep_companion_consolidation → fan-out cron: re-trigger companion extraction for every
                                      session with stuck batches
-  - deep_research_polling    → poll Gemini job, deliver via notification service
   - fire_due_reminders       → cron tick: claim each due note (atomic precondition on `due`)
                                 and enqueue per-fire `execute_reminder` Cloud Tasks
   - execute_reminder         → run one claimed reminder fire: load note, idempotency
@@ -31,6 +30,7 @@ Supported task_types:
   - daily_email_review            → fetch last 24h emails, deliver structured payload to SmartAgent for analysis
   - repair_email_embeddings       → run one batch of EmailEmbeddingRepairService (re-embed indexed emails
                                      where embedding_pending=True after transient API failures)
+  - deep_research_failed          → the research Cloud Run Job failed: tell the user in the origin channel
   - video_generation_polling      → poll VideoGenerationPort job, deliver via deliver_video()
   - start_drive_sync              → fan-out: DriveSyncSchedulerService enqueues one drive_sync tick per
                                      user on the drive queue (the indexer service runs it), raises the
@@ -40,8 +40,9 @@ Supported task_types:
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional, Tuple
 
 
 if TYPE_CHECKING:
@@ -52,6 +53,9 @@ if TYPE_CHECKING:
     from ..ports.indexed_email_repository import IndexedEmailRepository
     from ..ports.media_storage_port import MediaStoragePort
     from ..ports.account_repository import AccountRepository
+    from ..ports.dedup_store import DedupStore
+    from ..ports.task_claim_store import TaskClaimStore
+    from ..ports.prompt_content_store import PromptContentStore
     from ..ports.oauth_credentials_port import OAuthCredentialsPort
     from ..ports.video_generation_port import VideoPollResult
     from ..services.file_link_service import FileLinkService
@@ -61,14 +65,13 @@ if TYPE_CHECKING:
 
 from ..domain.cloud_task_delivery import CloudTaskDelivery
 from ..domain.complexity_settings import resolve_complexity_settings
+from ..domain import deep_research_notices as dr_notices
 from ..domain.exceptions import OAuthGrantRevokedError
 from ..domain.notification_kind import NotificationKind
 from ..domain.workspace import fire_key as workspace_fire_key
 from ..infrastructure.notification_sla import dispatch_deadline_s
 from ..handlers.agent_worker_handler import AgentWorkerHandler
-from ..services.deep_research_delivery import (
-    NotificationPort, deliver_deep_research,
-)
+from ..services.deep_research_delivery import NotificationPort, deliver_deep_research
 from ..services.consolidation_service import ConsolidationService
 from ..services.provider_registry import ProviderRegistry
 from ..services.email_embedding_repair_service import EmailEmbeddingRepairService
@@ -90,8 +93,9 @@ class WorkerHandler:
     """
     Dispatches /worker HTTP payloads to specialized handlers.
 
-    Owns no business logic — delegates to existing handlers/services.
-    Falls back to slack_adapter._handle_worker_task() for unknown task_types.
+    Owns no business logic — delegates to existing handlers/services. The only dispatcher of
+    /worker: it claims every Cloud Tasks delivery by task name (decisions/worker_task_dedup.md)
+    and routes telegram updates and queued Slack events to the adapters attached by main.py.
     """
 
     def __init__(
@@ -105,7 +109,6 @@ class WorkerHandler:
         indexed_email_repo: Optional[IndexedEmailRepository],
         user_repo: Any,  # UserRepository
         task_dispatch: Optional[TaskDispatchService] = None,
-        job_registry: Optional[ProviderRegistry] = None,
         video_registry: Optional[ProviderRegistry] = None,
         quota_service: Optional[object] = None,
         media_storage: Optional[MediaStoragePort] = None,
@@ -122,7 +125,20 @@ class WorkerHandler:
         companion_extraction: "Optional[CompanionExtractionService]" = None,
         oauth_credentials: "Optional[OAuthCredentialsPort]" = None,
         drive_sync_scheduler: "Optional[DriveSyncSchedulerService]" = None,
+        task_claims: "Optional[TaskClaimStore]" = None,
+        daily_review_marks: "Optional[DedupStore]" = None,
+        deep_research_fetch: "Optional[Callable[[str], Awaitable[dict]]]" = None,
+        prompt_content_store: "Optional[PromptContentStore]" = None,
     ) -> None:
+        self._task_claims = task_claims
+        # Keys of attempts running in this process. Check-and-add has no await between, so
+        # asyncio's single thread makes it race-free without a lock.
+        self._running_claims: set[str] = set()
+        self._deep_research_fetch = deep_research_fetch
+        self._prompt_content_store = prompt_content_store
+        self._daily_review_marks = daily_review_marks
+        self._slack_worker: Optional[Callable[[dict, dict], Awaitable[Tuple[dict, int]]]] = None
+        self._telegram_worker: Optional[Callable[[dict], Awaitable[Tuple[dict, int]]]] = None
         self._agent_worker = agent_worker_handler
         self._email_indexing = email_indexing_service
         self._notification = notification_service
@@ -132,7 +148,6 @@ class WorkerHandler:
         self._indexed_email_repo = indexed_email_repo
         self._user_repo = user_repo
         self._task_dispatch = task_dispatch
-        self._job_registry: Optional[ProviderRegistry] = job_registry
         self._video_registry: Optional[ProviderRegistry] = video_registry
         self._quota_service = quota_service
         self._media_storage = media_storage
@@ -150,25 +165,123 @@ class WorkerHandler:
         self._oauth_credentials = oauth_credentials
         self._drive_sync_scheduler = drive_sync_scheduler
 
+    def attach_slack_worker(
+        self, fn: Callable[[dict, dict], Awaitable[Tuple[dict, int]]],
+    ) -> None:
+        """Late wiring: the Slack adapter is built after this handler."""
+        self._slack_worker = fn
+
+    def attach_telegram_worker(
+        self, fn: Callable[[dict], Awaitable[Tuple[dict, int]]],
+    ) -> None:
+        """Late wiring: the Telegram adapter is built after this handler (and may be absent)."""
+        self._telegram_worker = fn
+
     async def handle(
-        self, payload: dict, delivery: Optional[CloudTaskDelivery] = None,
-    ) -> Optional[Tuple[dict, int]]:
+        self,
+        payload: dict,
+        delivery: Optional[CloudTaskDelivery] = None,
+        headers: Optional[dict] = None,
+    ) -> Tuple[dict, int]:
         """
-        Dispatch to appropriate handler by task_type.
+        Claim the delivery, dispatch by task_type, release the claim when the attempt
+        should be retried.
 
-        ``delivery`` — the Cloud Tasks headers of this request (None outside Cloud Tasks);
-        agent_execution uses it to skip a redelivered task.
+        ``delivery`` — the Cloud Tasks headers of this request (None outside Cloud Tasks:
+        scheduler, manual curl); a second delivery of a claimed task is acked as duplicate.
+        ``headers`` — the request headers, passed to the queued Slack event worker.
 
-        Returns (body_dict, status_code) for known task_types, or None for
-        unknown types (caller should handle fallback).
+        Always returns (body_dict, status_code).
         """
+        key = delivery.task_name if delivery is not None and self._task_claims is not None else None
+        if key is not None:
+            # Another attempt of this task is live in this process: a true duplicate, no store call.
+            if key in self._running_claims:
+                logger.info("[WorkerHandler] Skipping concurrent delivery: task=%s", key)
+                return {"status": "duplicate"}, 200
+            self._running_claims.add(key)  # before any await: closes the check-then-add window
+        try:
+            return await self._run_claimed(payload, delivery, headers or {}, key is not None)
+        finally:
+            # Only the attempt that added the key removes it, and only after mark_done/release finished.
+            if key is not None:
+                self._running_claims.discard(key)
+
+    async def _run_claimed(
+        self, payload: dict, delivery: Optional[CloudTaskDelivery], headers: dict, claimable: bool
+    ) -> Tuple[dict, int]:
+        attempt = uuid.uuid4().hex
+        if claimable and not await self._claim(delivery, payload, attempt):
+            return {"status": "duplicate"}, 200
+        try:
+            body, status = await self._dispatch(payload, headers)
+        except BaseException:
+            await self._release(delivery, attempt)
+            raise
+        # 5xx and 429 ask Cloud Tasks to retry: the retry must not be skipped as a duplicate.
+        if status >= 500 or status == 429:
+            await self._release(delivery, attempt)
+        else:
+            await self._mark_done(delivery, attempt)
+        return body, status
+
+    async def _claim(self, delivery: Optional[CloudTaskDelivery], payload: dict, attempt: str) -> bool:
+        """False only when a finished attempt holds the claim; any other running claim is taken over
+        as a dead attempt (single instance: decisions/worker_task_dedup.md).
+        Fails open: a store error runs the task — a duplicate beats a lost task."""
+        if delivery is None or self._task_claims is None:
+            return True
+        key = delivery.task_name
+        try:
+            claimed = await self._task_claims.try_claim(key, attempt)
+        except Exception as exc:
+            logger.error(
+                "[WorkerHandler] task claim failed, running anyway: task=%s error=%s",
+                key, exc, exc_info=True,
+            )
+            return True
+        if not claimed:
+            logger.info(
+                "[WorkerHandler] Skipping redelivered task: task=%s task_type=%s "
+                "retry_count=%s execution_count=%s",
+                key, payload.get("task_type"),
+                delivery.retry_count, delivery.execution_count,
+            )
+        return claimed
+
+    async def _mark_done(self, delivery: Optional[CloudTaskDelivery], attempt: str) -> None:
+        if delivery is None or self._task_claims is None:
+            return
+        try:
+            await self._task_claims.mark_done(delivery.task_name, attempt)
+        except Exception as exc:
+            logger.error("[WorkerHandler] claim mark_done failed: task=%s error=%s",
+                         delivery.task_name, exc, exc_info=True)
+
+    async def _release(self, delivery: Optional[CloudTaskDelivery], attempt: str) -> None:
+        if delivery is None or self._task_claims is None:
+            return
+        try:
+            await self._task_claims.release(delivery.task_name, attempt)
+        except Exception as exc:
+            logger.error(
+                "[WorkerHandler] claim release failed — the retry takes the claim over: "
+                "task=%s error=%s", delivery.task_name, exc, exc_info=True,
+            )
+
+    async def _dispatch(self, payload: dict, headers: dict) -> Tuple[dict, int]:
         task_type = payload.get("task_type")
         if task_type == "agent_execution":
             user_id = payload.get("context", {}).get("user_id", "")
             if user_id:
                 await self._agent_factory.ensure_agents_for_user(user_id)
-            result = await self._agent_worker.handle_task(payload, delivery=delivery)
+            result = await self._agent_worker.handle_task(payload)
             return result, 200
+        elif task_type == "telegram_update":
+            if self._telegram_worker is None:
+                logger.error("[WorkerHandler] telegram_update delivered but Telegram is not configured")
+                return {"error": "telegram not configured"}, 503
+            return await self._telegram_worker(payload)
         elif task_type == "email_indexing":
             return await self._handle_email_indexing(payload)
         elif task_type == "email_indexing_watchdog":
@@ -181,8 +294,10 @@ class WorkerHandler:
             return await self._handle_companion_consolidation(payload)
         elif task_type == "sweep_companion_consolidation":
             return await self._handle_sweep_companion_consolidation()
-        elif task_type == "deep_research_polling":
-            return await self._handle_deep_research_polling(payload)
+        elif task_type == "deep_research_failed":
+            return await self._handle_deep_research_failed(payload)
+        elif task_type == "deep_research_webhook_event":
+            return await self._handle_deep_research_webhook_event(payload)
         elif task_type == "video_generation_polling":
             return await self._handle_video_generation_polling(payload)
         elif task_type == "setup_microsoft_todo":
@@ -209,7 +324,14 @@ class WorkerHandler:
             return await self._handle_repair_email_embeddings()
         elif task_type == "start_drive_sync":
             return await self._handle_start_drive_sync()
-        return None  # unknown task_type — caller handles fallback
+        elif task_type is None and "event" in payload and "session_id" in payload:
+            # Queued Slack event (GcpTaskQueue.enqueue_slack_event): no task_type by design.
+            if self._slack_worker is None:
+                logger.error("[WorkerHandler] Slack event delivered but no Slack worker is attached")
+                return {"error": "slack not configured"}, 503
+            return await self._slack_worker(payload, headers)
+        logger.error("[WorkerHandler] unknown task_type=%r", task_type)
+        return {"error": "unknown task_type"}, 400
 
     # ------------------------------------------------------------------
     # Email indexing
@@ -400,113 +522,97 @@ class WorkerHandler:
         return {"swept": len(session_ids)}, 200
 
     # ------------------------------------------------------------------
-    # Deep Research polling (Gemini)
+    # Deep research job failure notice
     # ------------------------------------------------------------------
 
-    _MAX_POLL_ATTEMPTS = 30   # 30 × 120s = 60 min = Gemini Deep Research max window
-
-    async def _handle_deep_research_polling(self, payload: dict) -> Tuple[dict, int]:
-        """
-        Poll deep research interaction status. Re-enqueue if in_progress.
-        On completion: deliver via notification service.
-
-        Each invocation is its own Cloud Tasks HTTP request → full Cloud Run CPU.
-        No sleep between attempts — delay is handled by Cloud Tasks schedule_time.
-        """
-        interaction_id     = payload.get("interaction_id", "")
-        user_id            = payload.get("user_id", "")
-        account_id         = payload.get("account_id", "")
-        query              = payload.get("query", "")
-        attempt            = payload.get("attempt", 0)
-        consecutive_errors = payload.get("consecutive_errors", 0)
-        provider           = payload.get("provider", "gemini")
-        session_id         = payload.get("session_id", "")
-
-        # Derive origin channel from per-channel session_id (format: "user_id:channel_id")
+    async def _handle_deep_research_failed(self, payload: dict) -> Tuple[dict, int]:
+        """The research job (Cloud Run Job) cannot notify; it enqueues this task to tell the user."""
+        user_id = payload.get("user_id")
+        account_id = payload.get("account_id")
+        if not user_id or not account_id:
+            return {"error": "missing user_id or account_id"}, 400
+        session_id = payload.get("session_id") or ""
         origin_channel_id = session_id.split(":", 1)[1] if ":" in session_id else None
-
-        job_port = None
-        if self._job_registry:
-            try:
-                job_port = self._job_registry.get(provider)
-            except ValueError:
-                logger.debug("No deep research job port registered for provider %r", provider)
-        if not job_port or not self._task_dispatch:
-            logger.error(
-                f"[DeepResearch] Missing dependencies in WorkerHandler "
-                f"(provider={provider!r}, available="
-                f"{self._job_registry.list_available() if self._job_registry else []})"
-            )
-            return {"error": "deep_research not configured"}, 500
-
+        query = payload.get("query") or ""
+        # notify() routes through the eager Quick agent, absent on a cold instance until this runs.
         await self._agent_factory.ensure_agents_for_user(user_id)
+        alert = (
+            dr_notices.report_not_prepared_notice(query)
+            if payload.get("reason") == "delivery_failed"
+            else dr_notices.research_failed_notice(query)
+        )
+        return await self._send_deep_research_notice(
+            user_id, account_id, alert, origin_channel_id, payload.get("origin_platform") or None,
+            context=f"reason={payload.get('reason')}",
+        )
 
-        if attempt >= self._MAX_POLL_ATTEMPTS:
-            logger.warning(f"[DeepResearch] Polling timeout: interaction={interaction_id[:16]}")
-            await self._notification.notify(
-                kind=NotificationKind.DEEP_RESEARCH,
-                user_id=user_id,
-                account_id=account_id,
-                system_alert="Deep research timed out after 60 minutes without producing a result.",
-                channel_id_override=origin_channel_id,
+    async def _send_deep_research_notice(
+        self, user_id: str, account_id: str, alert: str,
+        origin_channel_id: Optional[str], origin_platform: Optional[str], context: str,
+    ) -> Tuple[dict, int]:
+        """One deep-research notice; 5xx (Cloud Tasks retries, claim released) only when nothing was sent."""
+        result = await self._notification.notify(
+            kind=NotificationKind.DEEP_RESEARCH,
+            user_id=user_id,
+            account_id=account_id,
+            system_alert=alert,
+            channel_id_override=origin_channel_id,
+            platform_override=origin_platform,
+            # This handler's 5xx makes Cloud Tasks retry; the agent must not retry inside as well.
+            suppress_transient_retry=True,
+        )
+        if not result.delivered and not result.sent:
+            logger.warning(
+                "[DeepResearch] notice not sent: user=%s %s error=%s", user_id[:8], context, result.error,
             )
-            return {"status": "timeout"}, 200
+            return {"error": result.error or "delivery_failed"}, 500
+        if not result.delivered:
+            # A resend would double a message that may already be on the channel.
+            logger.warning(
+                "[DeepResearch] notice sent but not confirmed: user=%s %s error=%s; not retried",
+                user_id[:8], context, result.error,
+            )
+        return {"status": "ok"}, 200
+
+    # ------------------------------------------------------------------
+    # OpenAI deep research webhook event (the webhook only enqueues this)
+    # ------------------------------------------------------------------
+
+    async def _handle_deep_research_webhook_event(self, payload: dict) -> Tuple[dict, int]:
+        """Deliver one OpenAI deep-research outcome: report for a completed job, a notice otherwise.
+        The report text is re-read by job id here, so it never travels through Cloud Tasks."""
+        event_type = payload.get("event_type") or ""
+        job_id = payload.get("job_id") or ""
+        user_id = payload.get("user_id") or ""
+        account_id = payload.get("account_id") or ""
+        if not (event_type and job_id and user_id and account_id):
+            return {"error": "missing event_type, job_id, user_id or account_id"}, 400
+        if self._deep_research_fetch is None:
+            # 4xx: Cloud Tasks would retry a 5xx forever against a service that can never retrieve.
+            logger.error("[DeepResearch] webhook event delivered but OpenAI retrieval is not configured")
+            return {"error": "retrieval not configured"}, 422
+        session_id = payload.get("session_id") or ""
+        origin_channel_id = session_id.split(":", 1)[1] if ":" in session_id else None
+        origin_platform = payload.get("origin_platform") or None
+        query = payload.get("query") or ""
 
         try:
-            status, payload_text = await job_port.get_status(interaction_id)
-            consecutive_errors = 0  # reset on any successful API response
+            response = await self._deep_research_fetch(job_id)
         except Exception as exc:
-            consecutive_errors += 1
-            logger.warning(
-                f"[DeepResearch] Poll attempt={attempt} failed "
-                f"(consecutive_errors={consecutive_errors}): {exc}"
-            )
-            # 5 consecutive errors → interaction is dead, not a transient blip.
-            if consecutive_errors >= 5:
-                logger.error(
-                    f"[DeepResearch] Interaction presumed dead after {consecutive_errors} "
-                    f"consecutive errors: interaction={interaction_id[:16]}"
+            logger.error("[DeepResearch] response retrieval failed: job=%s error=%s", job_id[:16], exc, exc_info=True)
+            return {"error": "retrieval_failed"}, 500
+        await self._agent_factory.ensure_agents_for_user(user_id)
+
+        if event_type == "response.completed":
+            output_text = response.get("output_text") or ""
+            # Durable capture BEFORE delivery: research is expensive and the result must survive a failed delivery.
+            if self._prompt_content_store is not None:
+                await self._prompt_content_store.record_dr_result(
+                    output_text=output_text, query=query, user_id=user_id, account_id=account_id,
+                    model=response.get("model", ""), provider="openai", source="openai_webhook", job_id=job_id,
                 )
-                await self._notification.notify(
-                    kind=NotificationKind.DEEP_RESEARCH,
-                    user_id=user_id,
-                    account_id=account_id,
-                    system_alert="Deep research did not complete — the research session expired or encountered a persistent error.",
-                    channel_id_override=origin_channel_id,
-                )
-                return {"status": "dead", "attempt": attempt}, 200
-
-            await self._task_dispatch.enqueue_deep_research_polling(
-                interaction_id=interaction_id,
-                user_id=user_id,
-                account_id=account_id,
-                query=query,
-                attempt=attempt + 1,
-                consecutive_errors=consecutive_errors,
-                delay_seconds=120,
-                provider=provider,
-                session_id=session_id,
-            )
-            return {"status": "retry", "attempt": attempt + 1}, 200
-
-        if status == "in_progress":
-            await self._task_dispatch.enqueue_deep_research_polling(
-                interaction_id=interaction_id,
-                user_id=user_id,
-                account_id=account_id,
-                query=query,
-                attempt=attempt + 1,
-                consecutive_errors=0,
-                delay_seconds=120,
-                provider=provider,
-                session_id=session_id,
-            )
-            logger.info(f"[DeepResearch] In progress, attempt={attempt + 1}")
-            return {"status": "polling", "attempt": attempt + 1}, 200
-
-        if status == "completed":
-            await deliver_deep_research(
-                result_text=payload_text,
+            handed_off = await deliver_deep_research(
+                result_text=output_text,
                 user_id=user_id,
                 account_id=account_id,
                 query=query,
@@ -515,22 +621,34 @@ class WorkerHandler:
                 media_storage=self._media_storage,
                 link_service=self._link_service,
                 channel_id_override=origin_channel_id,
+                platform_override=origin_platform,
+                failure_notification=self._notification,
+                report_dedup_id=job_id,
             )
+            if not handed_off:
+                # deliver_deep_research has notified the user (or logged that the notice failed); a retry would upload and notify again.
+                logger.error("[DeepResearch] report task not enqueued: job=%s user=%s", job_id[:16], user_id[:8])
+                return {"status": "report_not_enqueued"}, 200
+            logger.info("[DeepResearch] report delivered: user=%s job=%s", user_id[:8], job_id[:16])
+            return {"status": "ok"}, 200
 
-            logger.info(f"[DeepResearch] Delivered to user={user_id[:8]}")
-            return {"status": "delivered"}, 200
-
-        # status == "failed"
-        logger.error(
-            f"[DeepResearch] Operation failed: interaction={interaction_id[:16]}, error={payload_text}"
+        if event_type == "response.failed":
+            error = (response.get("error") or {}).get("message", "unknown error")
+            logger.error("[DeepResearch] job failed: job=%s error=%s", job_id[:16], error)
+            alert = dr_notices.provider_error_notice(query)
+        elif event_type == "response.incomplete":
+            reason = (response.get("incomplete_details") or {}).get("reason", "unknown")
+            logger.warning("[DeepResearch] job incomplete: job=%s reason=%s", job_id[:16], reason)
+            alert = dr_notices.incomplete_notice(query)
+        elif event_type == "response.cancelled":
+            logger.info("[DeepResearch] job cancelled: job=%s", job_id[:16])
+            alert = dr_notices.cancelled_notice(query)
+        else:
+            logger.error("[DeepResearch] unknown webhook event type %r: job=%s", event_type, job_id[:16])
+            return {"error": "unknown event_type"}, 400
+        return await self._send_deep_research_notice(
+            user_id, account_id, alert, origin_channel_id, origin_platform, context=f"event={event_type}",
         )
-        await self._notification.notify(
-            kind=NotificationKind.DEEP_RESEARCH,
-            user_id=user_id, account_id=account_id,
-            system_alert="Deep research did not complete — the AI provider returned an error.",
-            channel_id_override=origin_channel_id,
-        )
-        return {"status": "failed"}, 200
 
     # ------------------------------------------------------------------
     # Video generation polling (Grok)
@@ -542,9 +660,7 @@ class WorkerHandler:
         """
         Poll video generation status. Re-enqueue if pending. On done: deliver via
         deliver_video(). On failed/expired: notify the user directly, no silent
-        drop — matches _handle_deep_research_polling's shape, but this one is
-        actually reachable from a real kickoff site (GrokVideoAdapter, Task 1),
-        unlike its deep-research sibling. See VIDEO_GENERATION_RFC.md §3.4 step 4.
+        drop. Kicked off by GrokVideoAdapter. See VIDEO_GENERATION_RFC.md §3.4 step 4.
 
         duration_s is resolved ONCE here (not re-read in the pending/done branches)
         so it survives multiple poll cycles: the re-enqueue call below threads it
@@ -583,6 +699,10 @@ class WorkerHandler:
                 f"{self._video_registry.list_available() if self._video_registry else []})"
             )
             return {"error": "video_generation not configured"}, 500
+
+        # notify() routes through the eager Quick agent, absent on a cold instance until this runs.
+        if user_id:
+            await self._agent_factory.ensure_agents_for_user(user_id)
 
         if attempt >= self._MAX_VIDEO_POLL_ATTEMPTS:
             logger.warning(f"[VideoGeneration] Polling timeout: request={request_id[:16]}")
@@ -900,6 +1020,8 @@ class WorkerHandler:
             creds = await self._oauth_credentials.get_credentials(user_id, "gmail")
             if creds is None or creds.needs_reconnect:
                 return
+            # Before the save: a failure here must leave the flag down so the next run retries the notice.
+            await self._agent_factory.ensure_agents_for_user(user_id)
             creds.needs_reconnect = True
             await self._oauth_credentials.save_credentials(creds)
             logger.warning(f"[Worker] Gmail marked needs_reconnect for {user_id[:8]}")
@@ -920,9 +1042,9 @@ class WorkerHandler:
 
     async def _handle_start_daily_email_review(self) -> Tuple[dict, int]:
         """
-        Fan-out: enqueue daily_email_review for all Gmail users with gmail_daily_review enabled
-        and whose gmail_daily_review_hour matches the current hour in their timezone.
-        Called by Cloud Scheduler hourly.
+        Fan-out: enqueue daily_email_review once per user per local date. Called hourly;
+        a user is eligible during the first 3 hours from gmail_daily_review_hour and the
+        (user, slot date) mark makes every later tick in the window a no-op.
         """
         if not self._email_review or not self._task_dispatch:
             logger.warning("[Worker] start_daily_email_review: required services not configured")
@@ -931,17 +1053,60 @@ class WorkerHandler:
         now_utc = datetime.now(timezone.utc)
         eligible = await self._email_review.find_eligible_users(self._user_repo, now_utc)
 
-        for user_id, account_id in eligible:
-            await self._task_dispatch.enqueue_worker_task(
-                "daily_email_review",
-                {"user_id": user_id, "account_id": account_id},
-                deadline_seconds=dispatch_deadline_s(NotificationKind.DAILY_DIGEST),
-            )
-            logger.info(f"[Worker] start_daily_email_review: enqueued for {user_id[:8]}")
+        marks = self._daily_review_marks
+        if marks is None:
+            logger.warning("[Worker] start_daily_email_review: no daily_review_marks store, duplicates possible")
 
-        started = len(eligible)
-        logger.info(f"[Worker] start_daily_email_review complete: started={started}")
-        return {"started": started}, 200
+        started = 0
+        failed = 0
+        for user in eligible:
+            mark_key = f"daily_review:{user.user_id}:{user.slot_date.isoformat()}"
+            if marks is not None:
+                try:
+                    claimed = await marks.try_mark_processed(mark_key)
+                except Exception as exc:
+                    # A double review is worse than a one-hour delay: retried next tick.
+                    logger.error(
+                        f"[Worker] start_daily_email_review: claim failed for {user.user_id[:8]}: {exc}",
+                        exc_info=True,
+                    )
+                    failed += 1
+                    continue
+                if not claimed:
+                    logger.info(
+                        f"[Worker] start_daily_email_review: already started for "
+                        f"{user.user_id[:8]} on {user.slot_date}"
+                    )
+                    continue
+            try:
+                await self._task_dispatch.enqueue_worker_task(
+                    "daily_email_review",
+                    {"user_id": user.user_id, "account_id": user.account_id},
+                    deadline_seconds=dispatch_deadline_s(NotificationKind.DAILY_DIGEST),
+                    # A queue call that errored after creating the task cannot yield a second task.
+                    dedup_key=mark_key,
+                )
+            except Exception as exc:
+                logger.error(
+                    f"[Worker] start_daily_email_review: enqueue failed for {user.user_id[:8]}: {exc}",
+                    exc_info=True,
+                )
+                failed += 1
+                if marks is not None:
+                    try:
+                        await marks.release(mark_key)
+                    except Exception as rel_exc:
+                        logger.error(
+                            f"[Worker] start_daily_email_review: mark release failed for "
+                            f"{user.user_id[:8]}: {rel_exc}",
+                            exc_info=True,
+                        )
+                continue
+            started += 1
+            logger.info(f"[Worker] start_daily_email_review: enqueued for {user.user_id[:8]}")
+
+        logger.info(f"[Worker] start_daily_email_review complete: started={started} failed={failed}")
+        return {"started": started, "failed": failed}, 200
 
     async def _handle_daily_email_review(self, payload: dict) -> Tuple[dict, int]:
         """

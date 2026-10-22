@@ -133,18 +133,20 @@ class TelegramWebhookAdapter(PlatformPort):
             message = update.message
             update_id = update.update_id
 
-            # 3. Dedup check with namespace
             dedup_key = f"telegram::{update_id}"
-            if not await self.dedup_store.try_mark_processed(dedup_key):
-                logger.info(f"⏭️ Duplicate update {update_id} skipped")
-                return jsonify({"ok": True}), 200
 
             # 4. Hand off to a Cloud Task: a chat turn may run ~25 min, and an inline
             # webhook loses its CPU once Telegram drops the connection (LONG_RUNNING_TURNS_RFC §5.8).
             if self._task_queue is not None:
+                # Named task: Telegram's retry of this update_id is ALREADY_EXISTS (None = already queued = success).
                 await self._task_queue.enqueue_worker_task(
                     task_type="telegram_update", payload={"update": body}, deadline_seconds=1800,
+                    dedup_key=dedup_key,
                 )
+                return jsonify({"ok": True}), 200
+            # Inline path (no queue): the intake mark is the only duplicate guard.
+            if not await self.dedup_store.try_mark_processed(dedup_key):
+                logger.info(f"⏭️ Duplicate update {update_id} skipped")
                 return jsonify({"ok": True}), 200
             await self._process_message(message, update_id=update_id)
             return jsonify({"ok": True}), 200
@@ -154,7 +156,7 @@ class TelegramWebhookAdapter(PlatformPort):
             return jsonify({"error": str(e)}), 500
 
     async def handle_queued_update(self, payload: dict) -> tuple:
-        """Worker side of the hand-off. Dedup already ran at intake."""
+        """Worker side of the hand-off. The task is named and the worker claims it."""
         try:
             update = Update.de_json(payload.get("update") or {}, self.bot)
             if update and update.message:
