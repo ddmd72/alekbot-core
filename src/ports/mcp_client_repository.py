@@ -42,9 +42,9 @@ class MCPClientRepository(ABC):
     async def get_client(self, client_id: str) -> Optional[MCPClient]:
         """Return the client, or None when absent (an unknown client is refused).
 
-        Legacy: missing redirect_uris reads as [] (the SDK client model then fails to build: refused); missing grant_types, response_types
-            or token_endpoint_auth_method read as the model defaults; missing scope reads as "user_context"
-            (observed).
+        Legacy: missing redirect_uris reads as [] (the SDK client model then fails to build: refused); missing
+            grant_types, response_types or token_endpoint_auth_method read as the model defaults; missing scope reads
+            as "user_context" (observed).
         """
 
     @abstractmethod
