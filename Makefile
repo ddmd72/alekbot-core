@@ -293,9 +293,11 @@ check-types: ## mypy (lenient) on src/adapters — informational, never fails
 	@echo "🔎 mypy on adapters/ (informational)..."
 	@$(PYTHON) -m mypy --config-file mypy-adapters.ini | tail -n 1 || true
 
+# The per-test budget (PYTEST_DURATION_BUDGET_S) is for the unit suite: this end-to-end test runs a whole indexer tick
+# (~14 s) by design, so the target clears the variable that `make ci` passes down.
 test-g2-offline: ## G2 end to end on the fixture folder (real parser, scripted models, offline)
 	@echo "🧪 Running the offline G2 end-to-end test..."
-	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/integration/test_drive_g2_end_to_end.py -q --asyncio-mode=auto
+	PYTEST_DURATION_BUDGET_S= DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/integration/test_drive_g2_end_to_end.py -q --asyncio-mode=auto
 
 test-ci: ## Unit suite once: slow tests, data-file audit and the coverage gate (part of `make ci`)
 	@echo "🧪 Running the full unit suite (slow tests, data-file audit, coverage)..."
