@@ -653,7 +653,7 @@ async def main():
             invite_service=invite_service,
             session_service=session_service,
             user_repo=user_repo,
-            fact_repo=FirestoreFactRepository(db_client=db_client, env_config=env_config),
+            fact_repo=container.repository,
             embedding_service=container.embedding_service,
             oauth_credentials_port=oauth_credentials_port,
             gmail_oauth_service=gmail_oauth_service,
