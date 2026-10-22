@@ -9,7 +9,6 @@ src.adapters.firestore_email_job_repo  # Firestore store (email indexing job jou
 src.adapters.firestore_notification_state_adapter  # Firestore store (last active channel); wired from main.py only
 src.adapters.firestore_short_link_repository  # Firestore store (short links); wired from main.py only
 src.adapters.gcp_log_sink  # Cloud Logging sink; wired from main.py only
-src.adapters.google_tasks_adapter  # GoogleTasks adapter, frozen by decision (MicrosoftToDo is live)
 src.adapters.playwright_html_renderer  # headless-Chromium renderer; wired from main.py only
 src.adapters.telegram.media_adapter  # Telegram upload adapter; wiring only
 src.adapters.xml_prompt_assembler  # XML prompt assembler; reached only through service_container wiring

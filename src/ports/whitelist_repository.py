@@ -27,8 +27,9 @@ class WhitelistRepository(ABC):
         """Return the whitelist as stored now; no cache, so a removal refuses on the next call.
 
         Missing config: an empty whitelist (no one allowed), never an error.
-        Legacy: a missing allowed_emails or allowed_domains reads as empty; a null one raises (observed). Known defect: entries are returned as stored, so one written in mixed case outside this
-            port (scripts/admin/init_whitelist.py:22) never matches (firestore_whitelist_repo.py:90-91).
+        Legacy: a missing allowed_emails or allowed_domains reads as empty; a null one raises (observed).
+        Case: entries are returned lowercased and stripped (an entry that is blank after stripping is dropped), so one
+            written in mixed case outside this port (scripts/admin/init_whitelist.py:22) still matches.
         """
         pass
 

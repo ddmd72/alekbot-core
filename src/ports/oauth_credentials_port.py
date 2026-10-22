@@ -18,12 +18,12 @@ class OAuthCredentialsPort(ABC):
     - Tenancy: a read for one (user_id, provider) never returns another user's or another provider's record. The
       adapter keys `{user_id}_{provider}` without comparing the stored fields; unambiguous because user ids are
       uuid4, with no `_` (observed).
-    - Expiry: no method checks or refreshes token_expiry; the caller refreshes and saves.
+    - Expiry: no method checks or refreshes token_expiry; the caller refreshes and updates.
     - Legacy documents: a missing needs_reconnect reads as False, a missing or null drive_id as "". A document
       missing any other field raises in get_credentials (observed).
     - Atomicity: one document per write, no compare-and-set, last writer wins. Callers set needs_reconnect by get
-      + save and accept the race between saves (decisions/gmail_grant_revoked_reconnect.md); that save, like a
-      refresh, also re-creates a record revoked meanwhile (worker_handler.py:1019-1025; see save_credentials).
+      + update_credentials and accept the race between two updates (decisions/gmail_grant_revoked_reconnect.md);
+      an update never re-creates a record revoked meanwhile (see update_credentials).
     - Errors: backend errors propagate; no method turns an error into "connected" or "not connected".
     """
 
@@ -33,21 +33,29 @@ class OAuthCredentialsPort(ABC):
     ) -> Optional[OAuthCredentials]:
         """Return the record of (user_id, provider), or None when there is none (not connected).
 
-        Returns every OAuthCredentials field as saved, token_expiry tz-aware UTC, so get → save keeps them all
+        Returns every OAuthCredentials field as saved, token_expiry tz-aware UTC, so get → update keeps them all
             (worker_handler.py:1019-1025, onedrive_adapter.py:542-545). A record with needs_reconnect True is
             returned; the caller decides.
         """
 
     @abstractmethod
     async def save_credentials(self, credentials: OAuthCredentials) -> None:
-        """Store `credentials` as the record of (credentials.user_id, credentials.provider).
+        """Store `credentials` as the record of (credentials.user_id, credentials.provider): the consent path.
 
-        Idempotency: replaces the whole record, so a save after a new consent or a successful refresh clears
-            needs_reconnect.
-        Known defect: callers of revoke_credentials need a disconnect to stand, but a save is an upsert, so a token
-            refresh in flight during a disconnect writes the grant back (graph_auth.py:123 against
-            onedrive_adapter.py:247; also email_review_service.py:205, email_search_service.py:288,
-            google_tasks_adapter.py:235).
+        Upsert: creates the record or replaces the whole one, so a save after a new consent clears needs_reconnect.
+            Only a consent (oauth_app.py) calls it; a refresh or a flag write goes through update_credentials, so it
+            cannot bring back a record that revoke_credentials deleted.
+        """
+
+    @abstractmethod
+    async def update_credentials(self, credentials: OAuthCredentials) -> bool:
+        """Replace the record of (credentials.user_id, credentials.provider) only if it still exists: the path for a
+        token refresh and for the needs_reconnect flag.
+
+        Returns True when the record was replaced (the whole record, as save_credentials does, so a refresh clears
+            needs_reconnect), False when there is none: nothing is written, and the caller treats the user as not
+            connected. The existence check and the write are one atomic backend operation, not a read then a write,
+            so a disconnect that lands first stands.
         """
 
     @abstractmethod
