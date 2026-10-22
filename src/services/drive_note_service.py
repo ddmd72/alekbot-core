@@ -47,6 +47,7 @@ from ..domain.drive_note import (
     note_after_write, note_content, note_embedding_text, note_word_count, parse_note_target, ref_key, searchability,
     snapshot_of, state_after, undo_source,
 )
+from ..domain.drive_note_merge import note_store_keys
 from ..domain.drive_task_keys import DRIVE_SYNC_TASK, nudge_key, tick_payload
 from ..domain.prompt_v3.security import TrustZone
 from ..domain.user_drive import DriveItem, DriveItemNotFoundError, DriveNotConnectedError, make_drive_ref
@@ -162,9 +163,10 @@ class DriveNoteService:
                                         bound_by=provenance.origin))
             version = next_version(expected, content, NoteAction.SET, provenance, now,
                                    not_before=await self._valid_from_of(user_id, existing))
+            keys, keys_version = note_store_keys(content, snapshot.name)   # §3.1: the deleted-files search's keys (S2)
             written = note_after_write(base, version, NoteState.ACTIVE, provenance, now, vector=vector,
                                        embedding_space=self._space, embedding_pending=pending, binding=binding,
-                                       snapshot=snapshot)
+                                       snapshot=snapshot, keys=keys, keys_version=keys_version)
             try:
                 await self._notes.write_version(written, version, expected_version=expected)
             except DriveNoteConflict:
@@ -207,9 +209,10 @@ class DriveNoteService:
             now = self._clock()
             version = next_version(note.current_version, content, NoteAction.SET, provenance, now,
                                    not_before=await self._valid_from_of(user_id, note))
+            keys, keys_version = note_store_keys(content, name)
             written = note_after_write(note.model_copy(update={"account_id": note.account_id or account_id}), version,
                                        state, provenance, now, vector=vector, embedding_space=self._space,
-                                       embedding_pending=pending)
+                                       embedding_pending=pending, keys=keys, keys_version=keys_version)
             try:
                 await self._notes.write_version(written, version, expected_version=note.current_version)
             except DriveNoteConflict:
@@ -297,9 +300,10 @@ class DriveNoteService:
             version = next_version(note.current_version, content, NoteAction.RESTORE, provenance, now,
                                    restored_from=source_v,
                                    not_before=current.valid_from if current is not None else None)
+            keys, keys_version = note_store_keys(content, name)   # an empty restore (a cleared note) has none
             written = note_after_write(note.model_copy(update={"account_id": note.account_id or account_id}), version,
                                        state, provenance, now, vector=vector, embedding_space=self._space,
-                                       embedding_pending=pending)
+                                       embedding_pending=pending, keys=keys, keys_version=keys_version)
             try:
                 await self._notes.write_version(written, version, expected_version=note.current_version)
             except DriveNoteConflict:

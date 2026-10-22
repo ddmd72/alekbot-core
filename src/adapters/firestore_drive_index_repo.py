@@ -247,6 +247,7 @@ _RECORD_READERS: Dict[str, Callable[[Any], Any]] = {
     # §27 (transcripts)
     "transcript_wake_at": _dt, "transcript_languages": _strs, "transcript_hold": _optional(str),
     "mirror_retry_at": _dt,       # §27.9.4
+    "owner_life_areas": _strs,    # DRIVE_FILE_NOTES_RFC §3.3
 }
 
 _STATE_READERS: Dict[str, Callable[[Any], Any]] = {
@@ -262,6 +263,10 @@ _STATE_READERS: Dict[str, Callable[[Any], Any]] = {
     "described_count": int, "described_grew_at": _dt,
     "migration_alerted": bool, "stall_alerted": bool, "fallback_alerted_day": str,
     "purge_keep_transcripts": bool,
+    # DRIVE_FILE_NOTES_RFC §3.4: the notes step's watermark pair, pass end and space-pass cursor
+    "notes_applied_at": _dt, "notes_scanned_at": _dt, "notes_space_at": _dt, "notes_paging": bool,
+    "notes_tick_at": _dt,
+    "notes_merge_version": int,
 }
 
 

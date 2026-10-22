@@ -464,6 +464,7 @@ class ServiceContainer:
             "file_storage": self.file_storage,
             "user_drive_service": self.user_drive_service,
             "drive_search_service": self.drive_search_service,
+            "user_drive": self.user_drive,   # the open header's drive id (DRIVE_FILE_NOTES_RFC §6.2)
             "prompt_content_store": self.prompt_content_store,
             "skill_service": self.skill_service,
             "memory_fact_service": self.memory_fact_service,

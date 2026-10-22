@@ -41,6 +41,9 @@ class DriveRecordLean:
     indexed_generation: Optional[int]
     content_hash: Optional[str]
     valid_until: Optional[datetime]
+    # DRIVE_FILE_NOTES_RFC §3.3, §6.1 (review I7): the note merged into this record ("" for none), so the duplicate
+    # collapse can show the noted copy of identical files. A record stored before it reads back "".
+    owner_note_id: str = ""
 
 
 @dataclass(frozen=True)

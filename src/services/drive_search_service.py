@@ -1005,20 +1005,31 @@ class DriveSearchService:
 
     def _collapse(self, tiered: Mapping[MatchTier, List[str]], pool: _Pool,
                   scope: _Scope) -> Tuple[List[Tuple[MatchTier, str]], Dict[str, List[str]]]:
-        """The shown files in tier order, identical copies (same content hash, not empty) collapsed into the first
-        shown one's `also_at`."""
+        """The shown files in tier order, identical copies (same content hash, not empty) collapsed into one shown
+        copy's `also_at`: the first noted copy when any copy carries the owner's note (decided on the lean
+        `owner_note_id`, DRIVE_FILE_NOTES_RFC §6.1, review I7), else the first shown one."""
+        candidates = [(tier, item) for tier in _TIERS for item in tiered.get(tier, [])[:_SHOWN[tier]]]
+
+        def collapsible(item: str) -> Optional[str]:
+            digest = pool.leans[item].content_hash
+            return digest if digest and not digest.endswith(":0") else None
+
+        keeper: Dict[str, str] = {}
+        for _, item in candidates:
+            digest = collapsible(item)
+            if digest is None:
+                continue
+            noted = bool(pool.leans[item].owner_note_id)
+            if digest not in keeper or (noted and not pool.leans[keeper[digest]].owner_note_id):
+                keeper[digest] = item
         shown: List[Tuple[MatchTier, str]] = []
-        first: Dict[str, str] = {}
         also_at: Dict[str, List[str]] = {}
-        for tier in _TIERS:
-            for item in tiered.get(tier, [])[:_SHOWN[tier]]:
-                digest = pool.leans[item].content_hash
-                if digest and not digest.endswith(":0") and digest in first:
-                    also_at.setdefault(first[digest], []).append(scope.paths[item])
-                    continue
-                if digest:
-                    first[digest] = item
-                shown.append((tier, item))
+        for tier, item in candidates:
+            digest = collapsible(item)
+            if digest is not None and keeper[digest] != item:
+                also_at.setdefault(keeper[digest], []).append(scope.paths[item])
+                continue
+            shown.append((tier, item))
         return shown, also_at
 
     async def _build_cards(self, user_id: str, shown: Sequence[Tuple[MatchTier, str]],
@@ -1045,7 +1056,7 @@ class DriveSearchService:
             if tier in _PASSAGE_TIERS and text:
                 passage = passage_window(text, explained.spans, min(WINDOW_MAX, budget))
                 budget -= len(passage)
-            card = make_card(rec, scope.paths[item], card_text(rec), self._nonce())
+            card = make_card(rec, scope.paths[item], card_text(rec, owner=False), self._nonce())
             out.append(replace(card, tier=tier.value, sources=explained.sources, passage=passage,
                                not_matched=not_matched(match), keys_cut=rec.keys_capped,
                                also_at=tuple(also_at.get(item, ())), expiry_match=_expiry_match(match)))
@@ -1053,7 +1064,7 @@ class DriveSearchService:
 
     def _related_card(self, pool: _Pool, scope: _Scope, item: str, similar: bool) -> DriveSearchCard:
         rec = pool.fulls[item]
-        card = make_card(rec, scope.paths[item], card_text(rec), self._nonce())
+        card = make_card(rec, scope.paths[item], card_text(rec, owner=False), self._nonce())
         return replace(card, tier=MatchTier.RELATED.value, similar_name=similar)
 
     @staticmethod
@@ -1149,7 +1160,7 @@ class DriveSearchService:
                 continue   # keep scanning: a later duplicate still adds its path to a shown card
             if same_as:
                 by_hash[same_as] = len(cards)
-            cards.append(make_card(rec, path, card_text(rec), self._nonce()))
+            cards.append(make_card(rec, path, card_text(rec, owner=False), self._nonce()))
         return tuple(cards)
 
     # ------------------------------------------------------------------------------------------
@@ -1200,7 +1211,7 @@ class DriveSearchService:
             return matches[0]
         if not matches or guessed:
             return DriveSearchResult(status=STATUS_FOLDER_NOT_FOUND, folder_lookup_truncated=page_full)
-        cards = tuple(make_card(f.record, f.path, card_text(f.record), self._nonce())
+        cards = tuple(make_card(f.record, f.path, card_text(f.record, owner=False), self._nonce())
                       for f in sorted(matches, key=lambda f: f.path)[:K])
         return DriveSearchResult(status=STATUS_AMBIGUOUS_FOLDER, cards=cards)
 
