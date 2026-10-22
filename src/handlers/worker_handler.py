@@ -1022,7 +1022,9 @@ class WorkerHandler:
             # Before the save: a failure here must leave the flag down so the next run retries the notice.
             await self._agent_factory.ensure_agents_for_user(user_id)
             creds.needs_reconnect = True
-            await self._oauth_credentials.save_credentials(creds)
+            if not await self._oauth_credentials.update_credentials(creds):
+                logger.info(f"[Worker] Gmail disconnected meanwhile for {user_id[:8]}, nothing to flag")
+                return
             logger.warning(f"[Worker] Gmail marked needs_reconnect for {user_id[:8]}")
             await self._notification.notify(
                 kind=NotificationKind.DOCUMENT_DELIVERY,

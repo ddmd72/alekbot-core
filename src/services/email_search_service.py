@@ -167,6 +167,8 @@ class EmailSearchService:
             return "[Error: Gmail is not connected for this user. Ask the user to reconnect via /link-gmail.]"
 
         creds = await self._maybe_refresh(creds)
+        if creds is None:
+            return "[Error: Gmail is not connected for this user. Ask the user to reconnect via /link-gmail.]"
         contents = await self._gmail.batch_get_full_content(creds, [email_id], deep=False)
         email = contents.get(email_id)
         if not email:
@@ -205,6 +207,8 @@ class EmailSearchService:
             return "[Error: Gmail is not connected for this user.]"
 
         creds = await self._maybe_refresh(creds)
+        if creds is None:
+            return "[Error: Gmail is not connected for this user.]"
         contents = await self._gmail.batch_get_full_content(creds, [email_id], deep=True)
         email = contents.get(email_id)
         if not email:
@@ -285,5 +289,7 @@ class EmailSearchService:
         if expiry and expiry <= now:
             logger.info("📧 EmailSearchService: refreshing expired Gmail token")
             creds = await self._gmail.refresh_token(creds)
-            await self._oauth.save_credentials(creds)
+            if not await self._oauth.update_credentials(creds):
+                logger.info("📧 EmailSearchService: Gmail disconnected during token refresh")
+                return None
         return creds

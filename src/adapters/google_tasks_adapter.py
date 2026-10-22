@@ -232,7 +232,12 @@ class GoogleTasksAdapter(TasksProviderPort):
         now = datetime.now(timezone.utc)
         if creds.token_expiry and (creds.token_expiry - now).total_seconds() < 300:
             creds = await self._refresh_token(creds)
-            await self._credentials_repo.save_credentials(creds)
+            if not await self._credentials_repo.update_credentials(creds):
+                # Disconnected while the token endpoint answered: not connected, as when no record is found.
+                raise ValueError(
+                    f"No Google Tasks credentials found for user {user_id[:8]}. "
+                    "Please connect Google Tasks via /auth/connect-google-tasks"
+                )
 
         return creds
 
