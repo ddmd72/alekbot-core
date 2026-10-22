@@ -1022,13 +1022,28 @@ working implementation).
 
 **Last Updated:** 2026-03-14
 
+## S1b deploy order
+
+The consolidation and companion queues now read the oldest pending batch first (`order_by created_at`). Their two
+composite indexes in `config/firestore.indexes.json` (`development_consolidation_queue`: `user_id`, `status`,
+`created_at`; `development_companion_extraction_queue`: `session_id`, `status`, `created_at`) must be `READY`
+**before** the code is deployed, otherwise those queries fail. Issue them with the `deploy-indexes` Make target
+(`PROJECT_ID=<PROJECT_ID>`), wait until both are `READY`, then deploy the code.
+
+**Rollback.** Route traffic back to the old revision **and** set the research job back to its old image. Queued
+`deep_research_webhook_event` / `deep_research_failed` tasks would get 400 from the old code and be lost; OpenAI
+deep-research delivery is broken again on the old code (it reads metadata from id-only events); the old claim check
+fails open on the new claim docs (it runs the task). Do not deploy between H:12 and H+2:12 local for any
+daily-review user (H = review hour): the old code left no marks, so a rollback in that span can run a second review.
+
 ## Cloud Tasks redelivery dedup
 
 `docs/04_solution_strategy/decisions/worker_task_dedup.md`. Two one-time owner steps, neither blocks
 a deploy:
 
-1. **TTL policy on the task-claim collection** (per database). Each `agent_execution` delivery
-   creates a claim document with `expires_at` 30 min after creation; without the policy they are
+1. **TTL policy on the task-claim collection** (per database). Every Cloud Tasks delivery to `/worker`
+   creates a claim document with `expires_at` 1 h after the claim's last write (claim, take-over or done); a released claim is deleted at once; the same collection holds 48 h
+   daily-review marks and 72 h OpenAI deep-research webhook claims. Without the policy they are
    never deleted:
    ```bash
    gcloud firestore fields ttls update expires_at --collection-group=<prefix>worker_task_dedup \

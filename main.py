@@ -13,6 +13,7 @@ from src.web.voice_control_plane_app import create_voice_control_plane_blueprint
 from src.web.voice_webhook_app import create_voice_webhook_blueprint
 from src.web.mcp_error_logger import McpErrorLogger
 from src.adapters.firestore_dedup_store import FirestoreDedupStore
+from src.adapters.firestore_task_claim_store import FirestoreTaskClaimStore
 from src.adapters.firestore_ephemeral_store import FirestoreEphemeralStore
 from src.adapters.firestore_user_repo import FirestoreUserRepository
 from src.adapters.firestore_account_repo import FirestoreAccountRepository
@@ -330,12 +331,15 @@ async def main():
         # Optional model_override pins a specific model from env var, bypassing tier mapping.
         # Gemini provider removed 2026-05-29 — see decisions/gemini_deep_research_adapter_removal.md.
         job_registry = ProviderRegistry()
+        _openai_dr_fetch = None
         if config.get("OPENAI_API_KEY"):
-            job_registry.register("openai", OpenAIDeepResearchAdapter(
+            _openai_dr_adapter = OpenAIDeepResearchAdapter(
                 api_key=config["OPENAI_API_KEY"],
                 webhook_url=config.get("OPENAI_DEEP_RESEARCH_WEBHOOK_URL"),
                 model_override=os.getenv("OPENAI_DEEP_RESEARCH_MODEL"),
-            ))
+            )
+            _openai_dr_fetch = _openai_dr_adapter.fetch_response
+            job_registry.register("openai", _openai_dr_adapter)
             logger.info("🔬 Deep research adapter registered: provider=openai")
         if config.get("ANTHROPIC_API_KEY") and config.get("GOOGLE_CLOUD_PROJECT"):
             queue_suffix = "dev" if env_config.is_development else "prod"
@@ -461,15 +465,6 @@ async def main():
             localization=_localization,
             language=_language_service,
         )
-        # Cloud Tasks is at-least-once: claims keyed by task name stop a redelivered task
-        # from running twice. TTL 1800s = the longest dispatch_deadline Cloud Tasks allows,
-        # so every attempt of a task is over before its claim expires.
-        agent_worker_handler._task_dedup = FirestoreDedupStore(
-            db_client=db_client,
-            collection_name=env_config.worker_task_dedup_collection,
-            ttl_seconds=1800,
-        )
-
         # Anthropic client — created once, shared by ClaudeDeepResearchRunnerAgent instances.
         # The agent receives the client via constructor; does not import or instantiate the SDK.
         anthropic_client = None
@@ -739,7 +734,21 @@ async def main():
             )
 
         # Worker handler — dispatches Cloud Tasks to appropriate handlers
+        # Cloud Tasks is at-least-once: claims keyed by task name stop a redelivered task
+        # from running twice; a claim whose attempt died is taken over by the retry.
+        # TTL 3600s is garbage collection and the done-window, not the liveness rule.
         worker_handler = WorkerHandler(
+            task_claims=FirestoreTaskClaimStore(
+                db_client=db_client,
+                collection_name=env_config.worker_task_dedup_collection,
+                ttl_seconds=3600,
+            ),
+            # One review per user per local date; 48 h outlives the 3 h window and the date edge.
+            daily_review_marks=FirestoreDedupStore(
+                db_client=db_client,
+                collection_name=env_config.worker_task_dedup_collection,
+                ttl_seconds=172800,
+            ),
             agent_worker_handler=agent_worker_handler,
             email_indexing_service=email_indexing_service,
             notification_service=notification_service,
@@ -749,7 +758,6 @@ async def main():
             indexed_email_repo=indexed_email_repo,
             user_repo=user_repo,
             task_dispatch=_task_dispatch_service,
-            job_registry=job_registry,
             video_registry=video_registry,
             quota_service=quota_service,
             media_storage=gcs_media_adapter,
@@ -766,15 +774,20 @@ async def main():
             companion_extraction=companion_extraction_service,
             oauth_credentials=oauth_credentials_port,
             drive_sync_scheduler=_drive_sync_scheduler,
+            deep_research_fetch=_openai_dr_fetch,
+            prompt_content_store=container.prompt_content_store,
         )
 
         deep_research_webhooks_bp = create_deep_research_webhooks_blueprint(
-            notification_service=notification_service,
             webhook_secret=config.get("OPENAI_DEEP_RESEARCH_WEBHOOK_SECRET"),
-            media_storage=gcs_media_adapter,
-            task_queue=agent_task_queue,
-            prompt_content_store=container.prompt_content_store,
-            link_service=file_link_service,
+            task_queue=_task_dispatch_service,
+            fetch_response=_openai_dr_fetch,
+            # 72 h = OpenAI's webhook retry window; liveness follows each doc's own expires_at.
+            dedup_store=FirestoreDedupStore(
+                db_client=db_client,
+                collection_name=env_config.worker_task_dedup_collection,
+                ttl_seconds=259200,
+            ),
         )
 
         ms_tasks_webhook_bp = create_microsoft_tasks_webhook_blueprint(
@@ -847,6 +860,7 @@ async def main():
             memory_fact_service=container.memory_fact_service,
             long_turn_service=long_turn_service,
         )
+        worker_handler.attach_slack_worker(slack_adapter.handle_queued_event)
         notification_channel_factory.register_factory(
             "slack",
             lambda channel_id: SlackResponseChannel(
@@ -1145,6 +1159,7 @@ async def main():
                             task_queue=agent_task_queue,
                             long_turn_service=long_turn_service,
                         )
+                        worker_handler.attach_telegram_worker(telegram_adapter.handle_queued_update)
                         def _make_telegram_channel(adapter, channel_id):
                             try:
                                 return TelegramResponseChannel(
@@ -1251,15 +1266,10 @@ async def main():
                             delivery.retry_count, delivery.execution_count,
                         )
                     with memory_scope(SCOPE_WORKER_TASK, str(payload.get("task_type") or "slack_event")):
-                        if payload.get("task_type") == "telegram_update" and telegram_adapter is not None:
-                            body, status = await telegram_adapter.handle_queued_update(payload)
-                            return jsonify(body), status
-                        result = await worker_handler.handle(payload, delivery=delivery)
-                        if result is not None:
-                            body, status = result
-                            return jsonify(body), status
-                        # Unknown task_type — fall back to slack adapter handler
-                        return await slack_adapter._handle_worker_task()
+                        body, status = await worker_handler.handle(
+                            payload, delivery=delivery, headers=dict(request.headers),
+                        )
+                        return jsonify(body), status
 
                 # ====================================================================
                 # Remote MCP connector for claude.ai Custom Connectors

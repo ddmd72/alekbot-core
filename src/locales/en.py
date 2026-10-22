@@ -192,4 +192,5 @@ UI_STRINGS: Dict[str, str] = {
         "The list is attached."
     ),
     UIMessage.DRIVE_INACCESSIBLE_LIST_TITLE.value: "Files the bot cannot open",
+    UIMessage.MESSAGE_NOT_PROCESSED_BUSY.value: "⚠️ I could not process your last message because I was busy for too long. Please send it again.",
 }

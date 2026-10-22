@@ -15,9 +15,13 @@ class TaskQueue(Protocol):
         event_data: Dict[str, Any],
         session_id: str,
         delay_seconds: int = 0,
-        trace_headers: Optional[Dict[str, str]] = None
+        trace_headers: Optional[Dict[str, str]] = None,
+        busy_requeues: int = 0,
+        task_name: Optional[str] = None,
     ) -> str:
-        """Enqueue a Slack event for background processing."""
+        """Enqueue a Slack event for background processing. busy_requeues counts re-queues of a busy session.
+
+        task_name: deterministic Cloud Tasks name; ALREADY_EXISTS (task already queued) counts as success."""
         ...
 
     async def create_queue_if_not_exists(self) -> None:
@@ -39,6 +43,7 @@ class TaskQueue(Protocol):
         query: str,
         context: Dict[str, Any],
         deadline_seconds: Optional[int] = None,
+        dedup_key: Optional[str] = None,
     ) -> str:
         """
         Enqueue an async agent task for background execution.
@@ -47,6 +52,8 @@ class TaskQueue(Protocol):
         Worker receives payload with task_type="agent_execution".
         deadline_seconds: Cloud Tasks dispatch_deadline override (default = Cloud Tasks default ~10 min).
                           Set to 1800 for long-running research tasks (Claude deep research).
+        dedup_key: names the task, so a second enqueue with the same key (a retried create whose
+                   first attempt succeeded) returns the existing task's name instead of a second task.
         """
         ...
 
@@ -65,31 +72,6 @@ class TaskQueue(Protocol):
 
         Returns task name (Cloud Tasks task ID).
         Worker receives payload with task_type="companion_consolidation".
-        """
-        ...
-
-    async def enqueue_deep_research_polling(
-        self,
-        interaction_id: str,
-        user_id: str,
-        account_id: str,
-        query: str = "",
-        attempt: int = 0,
-        consecutive_errors: int = 0,
-        delay_seconds: int = 30,
-        provider: str = "gemini",
-        session_id: str = "",
-    ) -> str:
-        """
-        Enqueue a deep_research_polling Cloud Task.
-
-        Worker receives payload with task_type="deep_research_polling".
-        provider: "gemini" | "openai" — carried in the payload so WorkerHandler
-                  can route polling to the correct DeepResearchPort adapter.
-        attempt: retry counter for timeout guard (max 120 × 30s = 60 min).
-        delay_seconds: schedule this many seconds in the future (Cloud Tasks schedule_time).
-        First enqueue uses delay_seconds=30 — no point polling immediately after kick-off.
-        session_id: original conversation session for delivery back to user's thread.
         """
         ...
 
@@ -115,8 +97,7 @@ class TaskQueue(Protocol):
                     channel_id_override is silently ignored unless platform_override is ALSO set.
         attempt: retry counter for timeout guard.
         delay_seconds: schedule this many seconds in the future (Cloud Tasks schedule_time).
-        First enqueue uses delay_seconds=30 (mirrors enqueue_deep_research_polling's
-        own convention — no point polling immediately after kick-off).
+        First enqueue uses delay_seconds=30 (no point polling immediately after kick-off).
         session_id: original conversation session for delivery back to user's thread.
         """
         ...

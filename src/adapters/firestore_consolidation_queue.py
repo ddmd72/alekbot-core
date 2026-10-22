@@ -34,17 +34,14 @@ class FirestoreConsolidationQueue(ConsolidationQueue):
         await doc_ref.set(batch.model_dump())
         return batch.batch_id
     
-    async def get_pending_batches(self, user_id: Optional[str] = None, limit: int = 10) -> List[ConsolidationBatch]:
+    async def get_pending_batches(self, user_id: str, limit: int = 10) -> List[ConsolidationBatch]:
         query = self.collection.where(
             filter=FieldFilter("status", "in", [BatchStatus.PENDING.value, BatchStatus.RETRY_PENDING.value])
         )
-        
-        if user_id:
-            query = query.where(filter=FieldFilter("user_id", "==", user_id))
+        query = query.where(filter=FieldFilter("user_id", "==", user_id))
             
-        # To get the oldest, we need an index, but for now we get any
-        # query = query.order_by("created_at").limit(limit)
-        query = query.limit(limit)
+        # Oldest first; needs the (user_id, status, created_at) composite index.
+        query = query.order_by("created_at").limit(limit)
         
         docs = await query.get()
         return [ConsolidationBatch(**doc.to_dict()) for doc in docs]
@@ -180,32 +177,3 @@ class FirestoreConsolidationQueue(ConsolidationQueue):
             if uid:
                 user_ids.add(uid)
         return list(user_ids)
-
-    async def cleanup_old_batches(self, user_id: str, max_messages: int = 600) -> int:
-        """Delete oldest completed/failed batches if total > max_messages."""
-        current_size = await self.get_queue_size(user_id)
-        
-        if current_size <= max_messages:
-            return 0
-        
-        # Get completed/failed batches ordered by age
-        query = (
-            self.collection
-            .where(filter=FieldFilter("user_id", "==", user_id))
-            .where(filter=FieldFilter("status", "in", ["completed", "failed"]))
-            # .order_by("created_at")
-        )
-        
-        docs = await query.get()
-        batches = [ConsolidationBatch(**doc.to_dict()) for doc in docs]
-        
-        deleted_count = 0
-        for batch in batches:
-            if current_size <= max_messages:
-                break
-            
-            await self.collection.document(batch.batch_id).delete()
-            current_size -= len(batch.messages)
-            deleted_count += 1
-        
-        return deleted_count

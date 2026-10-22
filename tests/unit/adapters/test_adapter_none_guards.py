@@ -28,7 +28,7 @@ def _slack(config=None):
         app=AsyncMock(),
         config=config if config is not None else {"SLACK_SIGNING_SECRET": "s", "SLACK_BOT_TOKEN": "xoxb"},
         task_service=AsyncMock(), session_store=AsyncMock(), conversation_handler=AsyncMock(),
-        iam_service=AsyncMock(), dedup_store=AsyncMock(),
+        iam_service=AsyncMock(),
     )
 
 

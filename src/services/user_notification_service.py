@@ -11,7 +11,7 @@ Flow (notify):
 Callers:
   - fire_due_reminders worker (proactive self-reminders)
   - email indexing worker (batch progress / completion)
-  - deep_research_polling worker (async research delivery)
+  - deep_research_webhook_event / deep_research_failed workers (async research delivery)
   - AgentWorkerHandler (async document delivery via notify_document_link / notify_file_bytes)
 """
 from datetime import datetime, timezone

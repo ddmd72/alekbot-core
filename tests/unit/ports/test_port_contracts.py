@@ -48,9 +48,9 @@ class TestConsolidationQueueContract:
         assert hasattr(ConsolidationQueue, "delete_batch")
         assert getattr(ConsolidationQueue.delete_batch, "__isabstractmethod__", False)
 
-    def test_has_cleanup_old_batches(self):
-        assert hasattr(ConsolidationQueue, "cleanup_old_batches")
-        assert getattr(ConsolidationQueue.cleanup_old_batches, "__isabstractmethod__", False)
+    def test_cleanup_old_batches_removed(self):
+        """cleanup_old_batches had no caller and was removed from the port (S1b task C)."""
+        assert not hasattr(ConsolidationQueue, "cleanup_old_batches")
 
     def test_has_update_batch_status(self):
         assert hasattr(ConsolidationQueue, "update_batch_status")
@@ -69,19 +69,23 @@ class TestConsolidationQueueContract:
         source = inspect.getsource(ConsolidationQueue)
         for method_name in [
             "enqueue_batch", "get_pending_batches", "get_queue_size",
-            "delete_batch", "cleanup_old_batches", "update_batch_status",
+            "delete_batch", "update_batch_status",
             "increment_attempts",
         ]:
             count = source.count(f"async def {method_name}(")
             assert count == 1, f"{method_name} defined {count} times, expected 1"
 
     def test_all_abstract_methods_count(self):
-        """Port should have exactly 9 abstract methods."""
+        """Port should have exactly these 8 abstract methods (cleanup_old_batches removed, S1b task C)."""
         abstract_methods = {
             name for name, method in inspect.getmembers(ConsolidationQueue)
             if getattr(method, "__isabstractmethod__", False)
         }
-        assert len(abstract_methods) == 9, f"Expected 9 abstract methods, got {abstract_methods}"
+        assert abstract_methods == {
+            "enqueue_batch", "get_pending_batches", "get_queue_size", "delete_batch",
+            "update_batch_status", "increment_attempts", "reset_recoverable_batches",
+            "get_stuck_batch_user_ids",
+        }, f"Unexpected abstract methods: {abstract_methods}"
 
     def test_enqueue_batch_signature(self):
         sig = inspect.signature(ConsolidationQueue.enqueue_batch)
@@ -93,7 +97,9 @@ class TestConsolidationQueueContract:
         sig = inspect.signature(ConsolidationQueue.get_pending_batches)
         params = list(sig.parameters.keys())
         assert params == ["self", "user_id", "limit"]
-        assert sig.parameters["user_id"].default is None
+        # user_id is required: the unkeyed query had no caller and no composite index (S1b task C).
+        assert sig.parameters["user_id"].default is inspect.Parameter.empty
+        assert sig.parameters["user_id"].annotation is str
         assert sig.parameters["limit"].default == 10
 
 
@@ -133,11 +139,10 @@ class TestConsolidationQueueMockImplementation:
         await mock_queue.delete_batch("b1")
         mock_queue.delete_batch.assert_called_once_with("b1")
 
-    @pytest.mark.asyncio
-    async def test_cleanup_old_batches(self, mock_queue):
-        mock_queue.cleanup_old_batches.return_value = 3
-        result = await mock_queue.cleanup_old_batches("u1", max_messages=600)
-        assert result == 3
+    def test_spec_mock_rejects_cleanup_old_batches(self, mock_queue):
+        """A spec'd mock no longer offers the removed cleanup_old_batches."""
+        with pytest.raises(AttributeError):
+            mock_queue.cleanup_old_batches
 
     @pytest.mark.asyncio
     async def test_increment_attempts(self, mock_queue):
