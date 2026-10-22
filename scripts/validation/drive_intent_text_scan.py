@@ -11,6 +11,8 @@ Writes into `--out-dir` (default scripts/memory/drive_intent_scan_<stamp>/):
                    and its files under `<name>.v<version>.files/` — the bodies the rewrite starts from
 
     venv/bin/python -m scripts.validation.drive_intent_text_scan [--include-new] [--out-dir scripts/memory/...]
+    venv/bin/python -m scripts.validation.drive_intent_text_scan --check-rewrites scripts/memory/<scan>/rewrite
+        (no Firestore: each rewritten SKILL.md must parse and name no old intent, drive-only field or drive-search)
 Env: DEV_USER_ID, DEV_ACCOUNT_ID (.env), FIRESTORE_DATABASE (default us-production), the workspace bucket from
 load_settings (GCS_WORKSPACE_BUCKET; without it the workspace is reported as not scanned).
 """
@@ -101,6 +103,26 @@ async def collect(src: ScanSources, user_id: str, account_id: str, now: datetime
     return items, exports, skipped
 
 
+def check_rewrites(folder: Path) -> List[str]:
+    """Problems of the rewritten skills in `folder` (`<name>.md`, SKILL.md format): unreadable, or still naming what
+    the scan looks for. Empty = every rewrite is intent-free. Reads only local files."""
+    from src.utils.skill_md import parse_skill_md
+
+    problems: List[str] = []
+    files = sorted(folder.glob("*.md"))
+    if not files:
+        return [f"no rewritten skill (*.md) in {folder}"]
+    for path in files:
+        try:
+            skill = parse_skill_md(path.read_text(encoding="utf-8"))
+        except Exception as exc:   # noqa: BLE001 — any parse failure is the problem being reported
+            problems.append(f"{path.name}: not a valid SKILL.md ({exc})")
+            continue
+        for hit in scan([ScanItem("skill", skill.name, f"{skill.description}\n{skill.body}")]):
+            problems.append(f"{path.name}: line {hit.line_no} names `{hit.pattern}`: {hit.line}")
+    return problems
+
+
 def resolve_out(out: Optional[Path], stamp: str) -> Path:
     path = (out or _MEMORY / f"drive_intent_scan_{stamp}").resolve()
     if _MEMORY.resolve() not in path.parents:
@@ -164,6 +186,8 @@ def _args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
     parser.add_argument("--include-new", action="store_true",
                         help="also find work_with_drive_files (the rollback scan, DRIVE_SPECIALIST_RFC §13 step 5)")
     parser.add_argument("--out-dir", type=Path, default=None, help="under scripts/memory/ only")
+    parser.add_argument("--check-rewrites", type=Path, default=None,
+                        help="a folder of rewritten SKILL.md files to check (no Firestore read)")
     return parser.parse_args(argv)
 
 
@@ -180,8 +204,15 @@ async def _main(args: argparse.Namespace) -> int:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     from dotenv import load_dotenv
 
+    args = _args(argv)
+    if args.check_rewrites is not None:
+        problems = check_rewrites(args.check_rewrites)
+        for problem in problems:
+            print(problem)
+        print("rewrites: intent-free" if not problems else f"rewrites: {len(problems)} problem(s)")
+        return 1 if problems else 0
     load_dotenv(_REPO / ".env")
-    return asyncio.run(_main(_args(argv)))
+    return asyncio.run(_main(args))
 
 
 if __name__ == "__main__":

@@ -130,3 +130,24 @@ def test_the_output_folder_must_be_under_scripts_memory(tmp_path, monkeypatch):
     monkeypatch.setattr(script, "_MEMORY", tmp_path / "memory")
     with pytest.raises(SystemExit, match="scripts/memory"):
         script.resolve_out(tmp_path / "elsewhere", "stamp")
+
+
+def test_a_rewritten_skill_must_parse_and_name_no_old_intent(tmp_path):
+    good = skill_markdown("drive-inbox", "Use when sorting the drive's Inbox.", "Find the new files on the drive, then "
+                          "move each into its folder.")
+    (tmp_path / "drive-inbox.md").write_text(good, encoding="utf-8")
+    assert script.check_rewrites(tmp_path) == []
+    assert script.main(["--check-rewrites", str(tmp_path)]) == 0
+    (tmp_path / "drive-workspace.md").write_text(skill_markdown(
+        "drive-workspace", "Use when saving files.", "Load drive-search first, then call save_file_to_drive."),
+        encoding="utf-8")
+    (tmp_path / "broken.md").write_text("no frontmatter", encoding="utf-8")
+    problems = script.check_rewrites(tmp_path)
+    assert any(p.startswith("broken.md: not a valid SKILL.md") for p in problems)
+    assert {p.split("`")[1] for p in problems if p.startswith("drive-workspace.md")} == {
+        "drive-search", "save_file_to_drive"}
+    assert script.main(["--check-rewrites", str(tmp_path)]) == 1
+
+
+def test_an_empty_rewrite_folder_is_a_problem(tmp_path):
+    assert script.check_rewrites(tmp_path) == [f"no rewritten skill (*.md) in {tmp_path}"]

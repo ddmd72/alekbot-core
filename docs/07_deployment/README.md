@@ -347,6 +347,58 @@ Local runs read `ONEDRIVE_REDIRECT_URI` from `.env` (a separate key from the dep
 localhost value never reaches the deployed revision). With it unset, `/auth/connect-onedrive` answers 501;
 the Cabinet hides the drive card only when the adapter itself is absent (To Do keys unset).
 
+## The drive specialist (`work_with_drive_files`)
+
+Smart reaches the drive through one LLM specialist (`docs/10_rfcs/DRIVE_SPECIALIST_RFC.md` §10, §13;
+`decisions/drive_specialist.md`). No new service, secret or Cloud Build substitution: the specialist runs in the main
+service, on the Claude and OpenAI keys it already has. The change is prompts, the owner's stored texts and the
+deploy; the order matters. Agents prepare the files and may run the dry runs; every `--apply`, upload and deploy is the
+owner's.
+
+**Before the deploy — the owner's stored texts (RFC §10 step 6).** Texts that name a removed intent cost a rejected
+call after the cut; rewritten intent-free ("find it on the drive", "save it to the drive") they work with the old
+code and the new, so this step can land days early and survives a revert.
+1. `venv/bin/python -m scripts.validation.drive_intent_text_scan` — read-only; writes `report.md`, `backup.json`
+   (each hit's full text and version) and every custom skill as `skills/<name>.v<n>.md` under
+   `scripts/memory/drive_intent_scan_<stamp>/`.
+2. Rewrite each hit intent-free: the custom skills (`drive-workspace`, `drive-inbox`, `document-facts-batches`, any
+   other) as new versions — prepare `scripts/memory/drive_intent_scan_<stamp>/rewrite/<name>.md`, check it with
+   `--check-rewrites` (no old intent, drive-only field or `drive-search` left), then
+   `python scripts/skills/seed_custom_skill.py --user <USER_ID> --account <ACCOUNT_ID> --file <rewrite>.md`; a skill
+   that also carries files is redrafted in chat (`draft_skill`, `$skill save`). Reminders, directives, workspace files
+   and overrides: edit each in place through its own surface (Smart's reminder and workspace tools, the Cabinet).
+3. Rerun the scan: no hit left.
+
+**The prompts (RFC §10.1).**
+4. Back up the prompt layer: `$PY firestore_utils/backup_prompt_layer.py` (into `scripts/memory/`). This is the restore
+   point of the rollback.
+5. Drift check: `python firestore_utils/snapshot_pull.py --check`. A `snapshot_pull.py` run by another session before
+   the upload overwrites the branch's mirror files; re-apply them from the branch if it happened.
+6. Dry run (an agent may run it): `python firestore_utils/snapshot_upload.py <files>` for
+   `prompts_snapshot/tokens/system/{COGNITIVE_PROCESS_DRIVE,PROTOCOL_DRIVE_SEARCH,OUTPUT_FORMAT_DRIVE}.groovy`,
+   `prompts_snapshot/blueprints/drive_agent_v1.yaml`, `prompts_snapshot/profiles/drive.yaml` and
+   `prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy`.
+7. Apply, in this order: the specialist's five files first (additive: the running revision never reads them), then
+   `PROTOCOL_AGENT_SELECTION` **right before the deploy** (it names `work_with_drive_files`, which the running revision
+   does not have). `python firestore_utils/snapshot_upload.py --apply <files>`.
+
+**The deploy.**
+8. `make deploy`, then `$admin_cache_reset` (the prompt template is cached for 24 h per instance).
+9. `snapshot_pull.py`, commit the mirror.
+10. G3 "after" (`smart_dry_run --repeats N`, the same `N` as the step-0 "before"), and the specialist eval against
+    the spike's stage-1 report (`specialist_ab --smart-model gpt-6.1-sol --max-usd 3 --compare <report> --compare-design
+    today`); watch the `[DriveAgent]` log line (status, ops, turns, ms) for a few days.
+
+**If the deploy fails after step 7:** restore `PROTOCOL_AGENT_SELECTION` from the step-4 backup
+(`snapshot_upload.py --apply` of the backed-up file), then `$admin_cache_reset`.
+
+**Rollback (RFC §13).** 1. Restore `PROTOCOL_AGENT_SELECTION` from the step-4 backup. 2. Deploy the `git revert` of the
+merge commit. 3. `$admin_cache_reset`. 4. `snapshot_pull.py`, commit the mirror. 5. Texts written after the deploy:
+`drive_intent_text_scan --include-new` finds `work_with_drive_files` in reminders, the workspace, skills and
+directives; back up and rewrite each intent-free (a stale one costs one self-corrected rejected call). The drive, the
+index and the receipts are written by the same code in both versions; the new drive tokens can stay. If the drive notes
+change was built on top, revert it first.
+
 ## Firestore index definitions
 
 `config/firestore.indexes.json` is the live database's index configuration: only `development_`-prefixed
