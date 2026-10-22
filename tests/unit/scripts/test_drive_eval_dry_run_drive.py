@@ -148,6 +148,16 @@ async def test_the_fixtures_specialist_and_file_management_share_one_operations_
     assert fixture.coordinator.get_agent("drive_agent_u1") is fixture.drive_agent
 
 
+async def test_the_fixtures_drive_reads_go_through_the_fixture_drive():
+    """The fixture's conversion service holds the fixture drive: a drive: ref resolves there (here a folder)."""
+    from scripts.validation.drive_eval.fixture_drive import item_id_for
+    from scripts.validation.drive_eval.specialist_fixture import build_drive_fixture
+
+    fixture = build_drive_fixture("u1", FixtureDrive(MANIFEST), MagicMock())
+    out = await fixture.operations.open(CONTEXT, "u1", f"drive:{item_id_for('Contracts')}")
+    assert out.text == "'Contracts' is a folder; list it instead."
+
+
 async def test_the_fixtures_video_open_cannot_reach_a_chat():
     """No notifier, observed through behaviour: a delivered video opened from storage is refused, not sent."""
     from scripts.validation.drive_eval.specialist_fixture import build_drive_fixture
@@ -184,7 +194,9 @@ async def test_a_drive_off_case_says_off_in_the_state_block_too():
     as_user = EvalUserSearch(real)
     as_user.off = True
     assert await as_user.search_state("owner") is SearchLine.OFF
-    assert (await as_user.search("owner", DriveSearchRequest(query="lease"))).status == STATUS_DISABLED
+    request = DriveSearchRequest(query="lease")
+    result = await as_user.search("owner", request)
+    assert result.status == STATUS_DISABLED and result.request == request
     real.search_state.assert_not_called()
 
 

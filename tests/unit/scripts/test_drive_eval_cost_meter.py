@@ -63,3 +63,13 @@ def test_g3_needs_a_max_usd():
     with pytest.raises(SystemExit):
         smart_dry_run._args([])
     assert smart_dry_run._args(["--max-usd", "3"]).max_usd == 3.0
+
+
+def test_cache_reads_and_writes_are_priced_at_their_own_rates():
+    """A cached prefix costs billing.py's cache-read and cache-write legs (calculate_cost), never nothing."""
+    from src.domain.billing import calculate_cost
+    read, _ = price("claude-sonnet-5-5", 0, 0, 1_000_000, 0)
+    written, _ = price("claude-sonnet-5-5", 0, 0, 0, 1_000_000)
+    assert read == pytest.approx(calculate_cost("claude-sonnet-5-5", 0, 0, cache_read_tokens=1_000_000)) and read > 0
+    assert written == pytest.approx(calculate_cost("claude-sonnet-5-5", 0, 0, cache_creation_tokens=1_000_000))
+    assert written > read

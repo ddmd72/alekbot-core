@@ -170,3 +170,54 @@ def test_the_report_shows_the_comparison_and_calls_to_removed_intents():
     text = markdown([row], meta, compare(_rows([4.0]), [row]))
     assert "Calls to removed drive intents: 1" in text and "Latency bar" in text and "| after | 1 |" in text
     assert summary([row])["wall_p50_s"] == 5.0
+
+
+async def test_the_in_memory_sessions_keep_each_sessions_id():
+    from scripts.validation.drive_eval.specialist_ab import InMemorySessions
+    from src.domain.llm import Message, MessagePart
+
+    sessions = InMemorySessions()
+    assert (await sessions.load_session("u1:c1")).session_id == "u1:c1"
+    await sessions.append_message("u1:c2", Message(role="user", parts=[MessagePart(text="hi")]))
+    assert (await sessions.load_session("u1:c2")).session_id == "u1:c2"
+
+
+def test_the_history_pair_keeps_the_users_text():
+    user, _ = history_pair("find my leases", "Two leases.", {})
+    assert user.parts[0].text == "find my leases"
+
+
+async def test_a_case_sends_smart_each_turn_as_a_chat_turn_of_the_user():
+    """What run_case gives Smart per turn: the text, the user's ids, an in-memory session per case and repeat, the
+    turn's message parts, and interactive_delivery (Smart then declares the chat-only tools the bar covers)."""
+    from scripts.validation.drive_eval.dry_run_drive import DriveOpLog
+    from scripts.validation.drive_eval.smart_dry_run import DryRunDispatch
+    from scripts.validation.drive_eval.specialist_ab import InMemorySessions, run_case
+
+    seen = []
+
+    class Smart:
+        agent_id = "smart_agent_u1"
+
+        async def execute(self, message):
+            seen.append(message)
+            return SimpleNamespace(result="Done.", metadata={})
+
+    case = {"id": "c1", "kind": "find", "turns": ["find my lease", "open the second"], "gold": {"drive": False}}
+    row = await run_case(case, smart=Smart(), dispatcher=DryRunDispatch(None, None, frozenset()),
+                         drive_log=DriveOpLog(), meter=Meter(), sessions=InMemorySessions(), user_id="u1",
+                         account_id="a1", repeat=2)
+    assert [m.payload["text"] for m in seen] == ["find my lease", "open the second"]
+    for message, text in zip(seen, case["turns"]):
+        ctx = message.context
+        assert (ctx["user_id"], ctx["account_id"], ctx["session_id"]) == ("u1", "a1", "u1:drive_specialist_eval:c1:2")
+        assert [p.text for p in ctx["current_message_parts"]] == [text] and ctx["interactive_delivery"] is True
+    assert row["repeat"] == 2 and row["correct"]
+
+
+def test_a_setup_problem_is_no_run_with_its_own_exit_code(capsys):
+    """An unknown case id is refused before anything is built or paid for: exit 2, the reason on stderr."""
+    from scripts.validation.drive_eval.specialist_ab import EXIT_SETUP, main
+
+    assert main(["--max-usd", "1", "--cases", "no-such-case"]) == EXIT_SETUP
+    assert "no run" in capsys.readouterr().err
