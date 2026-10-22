@@ -1,4 +1,4 @@
-from typing import Dict, FrozenSet, Optional, Type
+from typing import Dict, FrozenSet, Iterable, Optional, Type
 
 
 class LLMError(Exception):
@@ -277,3 +277,29 @@ class WorkspaceRefused(Exception):
 
 class WorkspaceConflict(Exception):
     """A generation precondition failed (HTTP 412): another run wrote or deleted the object since it was read."""
+
+
+class FactResolutionError(Exception):
+    """A fact id could not be followed to a fact the caller may write. The message is the fix the model reads;
+    `current_id` names the fact the chain ended at, when there is one. Not a ValueError: web handlers map that to 404."""
+
+    def __init__(self, message: str, current_id: Optional[str] = None) -> None:
+        super().__init__(message)
+        self.current_id = current_id
+
+
+class FactWriteConflict(Exception):
+    """A fact document changed between the read and the write (precondition failed, or the transaction aborted)."""
+
+    def __init__(self, fact_id: str) -> None:
+        super().__init__(f"fact {fact_id} changed concurrently")
+        self.fact_id = fact_id
+
+
+class InPlaceFieldRefused(Exception):
+    """An in-place fact write named a field outside IN_PLACE_FIELDS. A programming error, not a ValueError, so no
+    web handler turns it into a 4xx."""
+
+    def __init__(self, fields: Iterable[str]) -> None:
+        self.fields = tuple(sorted(fields))
+        super().__init__(f"fields not writable in place: {', '.join(self.fields)}")
