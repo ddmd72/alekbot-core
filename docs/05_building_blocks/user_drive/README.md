@@ -60,8 +60,12 @@ the switches are §7.2, `docs/07_deployment/README.md` → "Transcripts switch a
 
 The user's long-term file area: their OneDrive App Folder, behind the provider-neutral `UserDrivePort`.
 - **Step 1, live** ([USER_DRIVE_RFC.md](../../10_rfcs/USER_DRIVE_RFC.md)): the bot lists, opens, saves, moves,
-  creates folders in, appends to and deletes files through seven `*_drive` intents on FileManagement. The model and
-  history see only `drive:<item_id>` refs and `[Drive: …]` labels, never a provider name.
+  creates folders in, appends to and deletes files. The model and history see only `drive:<item_id>` refs and
+  `[Drive: …]` labels, never a provider name.
+- **The drive specialist** ([DRIVE_SPECIALIST_RFC.md](../../10_rfcs/DRIVE_SPECIALIST_RFC.md), §6.7 below): Smart
+  reaches the drive through one intent, `work_with_drive_files`; the `DriveAgent` specialist does the work through
+  local tools over the user's `DriveOperations` (FileManagement's former drive code). It replaced the 8 drive intents
+  Smart held, and the `drive-search` skill.
 - **Step 2, Slice 1, live** ([USER_DRIVE_INDEXING_RFC.md](../../10_rfcs/USER_DRIVE_INDEXING_RFC.md)): an opt-in
   index that finds a file or folder by name (exact, partial, transliterated, misspelled), kind, date, folder, photo
   facets and place.
@@ -70,7 +74,7 @@ The user's long-term file area: their OneDrive App Folder, behind the provider-n
   the parser cannot read go to a model (GPT-6 Luna by default, Claude Haiku 5.5 by a user's switch, Gemini Flash as
   the fallback); every image is triaged first, and photographs get a
   short caption (a richer description since Search v2). Smart answers a clause, an amount or a date from the documents and searches the drive on its own when
-  the answer may be there. One extraction path for chat uploads and `open_file_from_drive` (Slice 3) is not built. Audio and video were metadata-only here
+  the answer may be there. One extraction path for chat uploads and opened drive files (Slice 3) is not built. Audio and video were metadata-only here
   ([decision](../../04_solution_strategy/decisions/drive_audio_video_deferred.md), superseded for recordings by
   [drive_transcripts_t1.md](../../04_solution_strategy/decisions/drive_transcripts_t1.md)): see the next bullet.
 - **Search v2, live since 2026-10-14** (PR #64; RFC §25, D14–D31): the index describes each
@@ -88,7 +92,7 @@ The user's long-term file area: their OneDrive App Folder, behind the provider-n
   transcripts to `_Transcripts` on the drive (§4.23); there is no summary yet (T3).
 - **T2 read side (built on the T2 branch, not deployed; RFC §27.9.8, §27.9.11).** Chat drive writes are refused under, into
   or over the bot's `_Transcripts` folder (the Step 1 guard in `UserDriveService`; the agent answers one localized line).
-  `search_files_in_drive` with `drive_deleted` (one flag shared with the owner-notes RFC §6.4) searches the transcripts of
+  The deleted-files search (the specialist's `search_deleted_recordings_and_notes`) searches the transcripts of
   deleted recordings from the mirror ledger, even with drive search off; a default search never returns an archived
   transcript. A ref to a file of the mirror opens from the pinned store entry, capped like any transcript. The Cabinet
   says that `_Transcripts` and its Archive stay on the drive after an indexing opt-out (wording to be reviewed by the owner).
@@ -141,7 +145,7 @@ Cloud Tasks queue drive-sync-dev (max-concurrent-dispatches=1)
               {prefix}drive_transcript_jobs (+ {prefix}drive_transcript_windows), {prefix}drive_transcript_batches,
               {prefix}drive_transcripts (+ {prefix}drive_transcript_parts))
 
-Smart → delegate_to_specialist(search_files_in_drive) → FileManagementAgent
+Smart → delegate_to_specialist(work_with_drive_files) → DriveAgent (LLM) → search_drive → DriveOperations
   → DriveSearchService (zero-LLM) → FirestoreDriveIndexRepository: about, name, word and hint key streams per query
       word; card, chunk and hint kNN for the Related tier; filters
 ```
@@ -587,7 +591,7 @@ none), up to five `parties`, an `amount` (value and currency). Field lengths are
 goes into the card; its `doc_date` becomes the record's `effective_date` (D13), so a date filter ("bills dated in
 March") matches the date printed on a scan uploaded in April, and the card's date is labelled `written in the
 document` (§6.5). A question about what a document says ("how much is the March electricity bill") is not rescued by
-the filter: the subject and the month go in `drive_query`, and the card and content streams search them (G3 case
+the filter: the subject and the month go in `query`, and the card and content streams search them (G3 case
 `p-electricity`). Parsed
 documents get no brief. Brief, profile and photo description are model output from untrusted content and reach Smart
 only inside the untrusted wrapper.
@@ -898,7 +902,7 @@ HtmlPageGenerator reaches them without the wrapper until Slice 3
 
 ### 4.15 Timelines: a new file, an edited file, a photo
 
-**A new scanned PDF.** 1. *Seen:* saved by the bot (`save_file_to_drive`), it is a nudge and a tick is enqueued at
+**A new scanned PDF.** 1. *Seen:* saved by the bot (`copy_file_to_drive`), it is a nudge and a tick is enqueued at
 once (behind any tick already running: the queue runs one at a time); uploaded any other way, it arrives in the delta
 feed at the next fan-out tick, every 10 minutes (minutes 3, 13, …). 2. *Classified* `pending`, content due in class 2;
 first sight has no quiet period. 3. In the same tick, after the delta round completes: card headroom, then the run
@@ -1121,10 +1125,10 @@ file, again at the end only if the tick changed a marking — and always on a se
 after a marking cannot hide it from the notice) and takes them out of `not_read_yet`; the count queries are unchanged.
 The read at the tick's start runs inside the tick's error handling (an index still building ends the tick as an
 error).
-`list_files_in_drive` takes a folder's `drive:` ref as well as a path. When list or open meets "not found" (a 404 by
+Listing a folder (`list_folder`) takes a folder's `drive:` ref as well as a path. When list or open meets "not found" (a 404 by
 id, or a path that does not resolve), the agent asks the index (`DriveSearchService.access_note`): a record it knows to
 be closed answers with the same sentence; anything else keeps "no longer on the drive" or "No folder". A move, a delete
-or an update of a `drive:` ref that meets "not found" answers the same way. The `drive-search` skill tells Smart: the
+or an update of a `drive:` ref that meets "not found" answers the same way. A reading line tells Smart (§6.7): the
 file exists; tell the user to copy each file into a new folder they create inside the bot's folder; do not try to open
 it.
 
@@ -1212,14 +1216,14 @@ grades its brief against its chunks (grades not stored). The score is stored (`c
 rendered `card accuracy: 88%` on tier cards and Related cards; it is **never in the card text**, so changing a weight
 re-scores without a re-embed. Telemetry: `graded_not_in_text_<field>`, `graded_labels_normalised`.
 
-**Smart's rule is in the `drive-search` skill** (a git file; the number 90 lives only there): find / which files / do I
+**The rule is in the specialist's `PROTOCOL_DRIVE_SEARCH` and in Smart's card-accuracy reading line** (§6.7; the number 90 lives only in those two texts): find / which files / do I
 have is answered from the cards at any accuracy; a question about a value is answered from the card at 90 % or more,
 and below that Smart opens the file; for a scan or a photo of a document it says where it read the value. The access
 line (§4.18) overrides the stale and accuracy rules. G3 checks both directions (§4.22).
 
 **Small fixes (S4).** Space-separated dates (`07 05 2031`) are read as dates on both sides (validated, never inside a
 phone or IBAN run); `VALUE_LABELS` gains `document_number` and `personal_id_number`; the profile's `doc_type` is the only
-doc type a card shows (the reader's brief returns none from `READER_VERSION` 2); `list_files_in_drive` takes a `drive:`
+doc type a card shows (the reader's brief returns none from `READER_VERSION` 2); listing a folder takes a `drive:`
 ref. Coverage counts closed files only in scope, as their own sentence, never as the reason for "incomplete", and only when the search found nothing (RFC Δ93): with results the sentence is omitted, the closed file's own card carries the access line.
 
 **Rollout facts.** The migration gate key is now `accuracy` (`MIGRATION_GATE_KEY`): every existing sync state is gated
@@ -1250,7 +1254,7 @@ ref. Coverage counts closed files only in scope, as their own sentence, never as
   or normaliser misses: fix the rule, not the card), distributions by doc type, capture, extractor and fallback, and with
   `--weights` the same cards re-scored under a candidate table. Output only under `scripts/memory/` (it names files).
 - **Vocabulary misses:** `… scripts.validation.drive_query_vocabulary --user <id> [--since <date>] [--until <date>]` —
-  read-only; every recorded `search_files_in_drive` query from BigQuery `prompt_content` (30 days) run through the
+  read-only; every recorded drive search query (Smart's `search_files_in_drive` before the specialist, its `search_drive` after) from BigQuery `prompt_content` (30 days) run through the
   concepts, per word how often no file holds it, only an automatic class holds it, or it is held exactly; and whether
   the file the user then opened was in an exact tier. Run after the deploy has collected real queries; tune the profiler
   for words that repeat, not for one query. Output under `scripts/memory/`.
@@ -1317,9 +1321,9 @@ $0.30 per audio hour plus a small per-window allowance, an upper bound of a wind
 prompt-content row in BigQuery and no Logfire span; the tick line and the batch log lines carry counts only.
 
 **Search and open.** A transcribed card carries the transcript line; passages come from the chunk windows with the `[mm:ss]` stamp at their
-head, so Smart can say where in a recording. `open_file_from_drive` on a transcribed recording returns the transcript (at most 60 000 characters, then a note) inside
+head, so Smart can say where in a recording. Opening a transcribed recording (`open_drive_file`) returns the transcript (at most 60 000 characters, then a note) inside
 the untrusted wrapper, not the video; with `original: true` it returns a link to the recording, never bytes into chat. Until a transcript exists the
-open behaves as before. A date said in a recording never changes the file's date. The `drive-search` skill carries one line about recordings.
+open behaves as before. A date said in a recording never changes the file's date. The specialist's `PROTOCOL_DRIVE_SEARCH` carries the recordings line (audio or video, `.webm` is video; dates in names as `YYYY-MM-DD`; a media folder listing as fallback).
 
 **Privacy.** Audio goes to Google only (Files API, deleted after collection; the 48 h expiry bounds the rest). Transcripts are other people's
 speech: stored like chunks, never logged, served as untrusted data. An opt-out purge removes jobs, batches and the stored transcripts; a
@@ -1366,7 +1370,7 @@ is instead of moving to the Archive) is no exception: it keeps its stored copy u
   re-listed folder cancels it; **moving a recording out of the App Folder counts as a delete**) the file moves to **`_Transcripts/Archive/<YYYY-MM-DD>/<path>.md`** (the day in the user's time zone). The bot never deletes an
   archived file; its stored transcript stays pinned, and only the owner's delete of the archived file releases it. A restored recording moves its file back. A source that merely left the index's scope (a dot-folder, a repository)
   is **detached**: the file stays where it is, pinned, and a weekly check turns it into an archive if the source is really gone.
-- **Searching the archive.** Only `search_files_in_drive` with `drive_deleted` reaches archived transcripts ("search in deleted files"). It reads the ledger, shows at
+- **Searching the archive.** Only the deleted-files search (`search_deleted_recordings_and_notes`) reaches archived transcripts ("search in deleted files"). It reads the ledger, shows at
   most five hits (each checked with one `get_change`), works even with drive search turned off, and never mixes into a normal search. An archived file opens from its
   pinned store entry, capped like any transcript.
 - **The guard.** Chat drive writes (save, folder, move, append, replace, delete) are refused under, into or over `_Transcripts` and its ancestors; the agent says one
@@ -1493,12 +1497,12 @@ Lease, queue and service: [decisions/drive_indexer_lease_queue_service.md](../..
 
 This section describes **Search v2** (RFC §25.5, live since 2026-10-14, PR #64). What v1 did and why it went is §6.6.
 
-`search_files_in_drive` (SYNC, FileManagement, zero-LLM; context fields `drive_query`, `drive_folder`, `drive_kind`,
-`drive_date_from`, `drive_date_to`) calls `DriveSearchService.search` (`src/services/drive_search_service.py`). Search
-reads only `drive_query`, never the delegate's `query` (D19). Per the manifest (D25), `drive_query` takes the subject in
-the user's words in any language — a name, a place, a person, a topic, a **document type or purpose** ("tickets",
+The specialist's `search_drive` tool (parameters `query`, `folder`, `kind`, `date_from`, `date_to`) calls
+`DriveOperations.search`, which calls `DriveSearchService.search` (`src/services/drive_search_service.py`), zero-LLM.
+Per the parameter text (`src/domain/drive_tool_texts.py`; D25 before the specialist), `query` takes the subject in the
+user's words in one language — a name, a place, a person, a topic, a **document type or purpose** ("tickets",
 "receipts", "what expires") or what to find inside (a phrase, a number, an amount, an id); "everything about X" puts X.
-A file format goes in `drive_kind`; **a time span ("last year", "2023–2024") goes in the date fields**, not in the
+A file format goes in `kind`; **a time span ("last year", "2023–2024") goes in the date fields**, not in the
 words. No query-time model, no modes, no new fields (D19, D28): one query embedding is the only call.
 
 **The pipeline, in order:**
@@ -1508,11 +1512,11 @@ words. No query-time model, no modes, no new fields (D19, D28): one query embedd
 2. **The D30 gate.** A sync state without the `keys` version (an index built by v1, not rebuilt yet) is **not
    searched at all**: no query embedding, no read. The answer is the reference reminder, the envelope, and
    `REBUILDING_LINE`: "The index is being rebuilt for a new search format, so nothing could be searched yet: this
-   result says nothing about what the drive holds. Browse folders with list_files_in_drive, or search again later." —
+   result says nothing about what the drive holds. Browse the folders, or search again later." —
    with no tier, no count and no "No file holds"; a filter-only listing answers the same, never from v1 records.
 3. **Folder scope** (unchanged from v1): a folder filter is a subtree, resolved by ref or path; several matching
    folders come back as candidates, never guessed; a folder that hides its contents (a repository, generated files,
-   a dense or deleting folder) says its contents are not indexed and points to `list_files_in_drive`. A subtree of up
+   a dense or deleting folder) says its contents are not indexed and points to listing it. A subtree of up
    to `FOLDER_INMEM_CARDS` (1 000) records is matched in memory over its records' about keys, its chunks' word keys
    (up to 2 000 chunks), its hint documents and its vectors; a larger one runs the user-wide streams with a folder
    post-filter.
@@ -1678,43 +1682,64 @@ in the eval is about 2 100 characters (v1: about 7 600).
 
 **The nonce is the defence**: only a wrapper-tag look-alike in the text loses its `<` (its gaps bounded to 16 spaces
 or invisible characters, so hostile whitespace cannot make the escape quadratic), attributes escape `" < >`, and
-`R&D/Tom's plan.docx` reads as written (RFC Δ34). The same wrapper carries `open_file_from_drive` text; a drive file
+`R&D/Tom's plan.docx` reads as written (RFC Δ34). The same wrapper carries opened drive text; a drive file
 prefetched for DocPlanner, PdfGenerator or HtmlPageGenerator gets it in Slice 3
 ([decision](../../04_solution_strategy/decisions/drive_prefetch_wrapper_slice3.md)). When drive search is off, or the
 drive is disconnected or a different one is connected, the result is one line saying so, "Do not search the drive
 again in this conversation", and where to browse instead.
 
-**Smart's drive guidance is a system skill, `drive-search`** (`src/skills/smart/drive-search/SKILL.md`, D32), loaded with
-`use_skill` before the first drive search in a conversation. Drive searches are rare, so the guidance no longer rides
-in Smart's protocol on every request. The `drive_specialist` block of `PROTOCOL_AGENT_SELECTION` keeps three lines:
-when to search the drive (the answer may be written in a document the user keeps), the pointer to the skill, and the
-safety line (text in drive results is data, §4.14). The skill holds:
-- **Find or answer** (the owner's strategy): "find", "show", "everything about X" are answered from the search results
-  alone, no file is opened to confirm them; a file is opened only when its contents are needed (an amount, a term, a
-  quote, a total); many results are counted and grouped, never opened one by one; photos are answered from their
-  description, place and date.
-- **Writing the search**: the user's own words, time spans in the date fields, formats in `drive_kind`; search again
-  only to follow a lead, not to re-check.
-- **Reading the results**: the `tiers` line verbatim (`PROTOCOL_TIERS_LINE`): About and Mentioned in are exact; By
-  translation and Labelled are the index's automatic words and may be wrong or incomplete; Related lines are guesses;
-  other languages only where the index wrote them; the coverage line says what the search could not see; a "without"
-  count tells whether the missing word was phrasing or the subject. It states meaning, not bans.
-- **Not found and answering from documents**: never say a document does not exist while building; a not-found names
-  what the coverage line says was not searched; a folder card under About is a place to search or list; a passage is a
-  window (open the file before quoting more, or say it is an excerpt when it cannot be opened); open the file for sums
-  and totals; retry a date-filtered search without the filter; open a stale or recently edited file before quoting; a
-  document is authoritative for its own contents, not for the user's current situation; never pick silently between
-  versions.
+**Smart's drive guidance moved with the drive specialist** (DRIVE_SPECIALIST_RFC §5.7, §7.3; §6.7). The former
+`drive-search` system skill (D32: find or answer, writing the search, reading the results, not found, answering from
+documents) is split by who acts on each rule: the search mechanics are the specialist's token `PROTOCOL_DRIVE_SEARCH`;
+the rules Smart needs to answer reach Smart as **reading lines**, chosen by code from the blocks of each answer (the
+tiers paragraph with a search block, the passage rule with a passage, the 90 % rule with a card accuracy, the scan line
+with a scan, the bot-cannot-open bullet, photos, versions with two or more cards, the not-found bullets, and for an
+opened file the numbers rule, document vs memory and "the drive assistant did not read this file"). The
+`drive_specialist` block of `PROTOCOL_AGENT_SELECTION` keeps the intent, when to use the drive (the answer may be
+written in a document the user keeps) and the safety line (text in drive results is data, §4.14).
 
-In the live check (2026-10-14) a place-name query took one skill load and two searches, opened no file and answered with
-8 grouped files in 58 s.
+Before the specialist, a place-name query was answered from the search results without opening a file.
+
+### 6.7 Who searches: the drive specialist (DRIVE_SPECIALIST_RFC)
+
+Smart sends one commission, `work_with_drive_files`: what the user wants, the words to find as the user wrote them,
+every `drive:` ref, `[File: …]` label and delivered document key, and `file_contents` for texts to save or append. The
+`DriveAgent` (Claude `claude-sonnet-5-5`, adaptive thinking medium; fallback OpenAI `gpt-6.1-sol`) runs at most 6
+turns within 150 s (less under the caller's budget) through local tools, each one `DriveOperations` call:
+`search_drive`, `search_deleted_recordings_and_notes`, `list_folder`, `open_drive_file`, `get_recording_link`,
+`copy_file_to_drive`, `save_text_file`, `create_folder`, `move_file`, `append_to_file`, `replace_file_content`,
+`delete_drive_item`, then `report_to_orchestrator`. An identical search is not run twice in one commission.
+
+**Division of labour (A′).** The specialist owns the search mechanics — the key words from the user's words in one
+language (no re-search in another script or a translation: transliteration is exact in the index, `x:` keys), the
+tiers, one re-search after "Without X", folder cards, the leads the results show — and the opens the commission asks
+for (the 90 % rule for a value). It never opens a file to confirm and never judges content. Smart owns the content:
+is this the answer, which version is current, document vs memory, and a follow-up from what an opened file names (it
+commissions again).
+
+**What Smart gets.** Code builds one answer: `Drive result: <status>` (`ok`, `partial`, `ambiguous`, `not_possible`,
+`unfinished`, `still_running`, or the class of the failure: `refused`, `failed`, `not_found`, `not_connected`,
+`rebuilding`, `indexing_off`), `What to do: <line>`, one op line per change, the reading lines (§6.3), a short
+specialist note, then **every read block verbatim** in run order (`[Result r1, step 1: search]`, a listing labelled
+"before the changes in steps …"). The specialist's model sees search cards and listings in full but only a stand-in
+for an opened file, so nothing is retyped; images and PDFs reach Smart as a `file_data` list. `drive_context` refs
+are one flat list per commission, so history keeps today's shape (RFC §7.4).
+
+**Who else touches the drive.** FileManagement's `open_file` on a `drive:` ref (the lenient read, the same
+`DriveOperations`); the deep-research copy (`UserDriveService.save` directly); the coordinator's `file_ref` prefetch
+for DocPlanner, PdfGenerator and HtmlPageGenerator (`FileConversionService`). Lelik and the Alek gateway reach the
+drive through Smart.
+
+**Evals.** G3 (`smart_dry_run`) and the specialist eval (`specialist_ab`, `--replay-commissions` for the specialist
+alone) run the production specialist on the fixture drive; every drive write is stubbed at the `DriveOperations`
+class before any agent is built (`dry_run_drive.py`), and the metrics read the drive operation log.
 
 ### 6.4 Two queries, end to end
 
 Both are real runs of the search on the synthetic eval fixture (`tree.json` + `tree_v2.json`, the recorded
 enrichment, offline lexical vectors; 2026-10-25), cards shortened with "…".
 
-**"найди всё про Коїмбру"** (Smart puts the user's words in `drive_query`).
+**"найди всё про Коїмбру"** (Smart quotes the user's words in the commission; the specialist puts them in `query`).
 1. *Concepts.* "найди", "всё" (folded to "все") and "про" are generic and function words: removed and named. One
    concept is left, *коїмбру*. Its keys: word keys `w:коїмбру`, `w:коїмбр` and the skeletons `x:koimbr`,
    `xl:koimbr` (and the variants `x:koimbru`, `xl:koimbru`); hint keys `w:коїмбру`, `w:коїмбр`; about keys
@@ -1806,7 +1831,7 @@ searched file holds …"), and Smart would search again with the subject alone. 
 
 ### 6.5 Dates in queries and filters
 
-**The one date rule.** `drive_query`'s manifest text keeps a date written *inside* a document in the words (it becomes
+**The one date rule.** The `query` parameter's text keeps a date written *inside* a document in the words (it becomes
 an `n:` number term and meets the document's own date in any of five languages); the date fields hold a **time span
 the user gives** ("last year", "2023–2024"; a span left in the words is removed as time words and named in the ignored
 list). The token's `dates` line keeps the retry rule: "If a date-filtered search does not show the file asked for,
@@ -1913,8 +1938,8 @@ and index-time descriptions instead of query-time ranking. The full delta table 
   `tree_g3.json`). It measures the search-initiated rate — a search counts only when it ran (a refused call is not
   a search) — barred from below on the positives and from above on the negatives (chit-chat, memory, web, general:
   searching the drive for them is the regression), and the date-expectation rate (did Smart put a document's date
-  in `drive_query` and a "dated" limit in the filters; a `date_in_query` case with a `date` holds only when that ISO
-  date is among `query_terms(drive_query)` of a search that ran), barred over the date cases only (`date_in_query`,
+  in the search's `query` and a "dated" limit in the filters; a `date_in_query` case with a `date` holds only when that ISO
+  date is among `query_terms(query)` of a search that ran, read from the drive operation log), barred over the date cases only (`date_in_query`,
   `date_filter`); the rate pooled over every case is reported, not barred. A bar is the Wilson lower bound (z =
   1.96) of the recorded rate (the upper bound for the negatives), judged only against bars recorded with the same
   `--repeats` (`bars_g3.json`); bars without a `date_bar` or a `negative_bar` are refused — re-record with
@@ -2127,7 +2152,8 @@ The levers are forward ones; the first two are a code change plus a deploy, the 
 | Model ports | `src/ports/content_extractor_port.py`, `src/ports/image_triage_port.py`, `src/ports/document_profiler_port.py`, `src/ports/passage_hint_port.py` |
 | Parser (sandboxed child) | `src/adapters/subprocess_content_extractor.py`, `src/adapters/drive_parser/child.py`, `readers.py`; `src/utils/document_hardening.py`; the `driveparser` user and the world-writable check in `Dockerfile` |
 | Model agents, runners, wiring | `src/agents/drive_document_reader_agent.py`, `drive_image_triage_agent.py`, `drive_profiler_agent.py`, `drive_passage_agent.py`; `src/infrastructure/drive_model_call.py`; `src/composition/drive_reader_runner.py`, `drive_triage_runner.py`, `drive_profiler_runner.py`, `drive_passage_runner.py`, `drive_agent_build.py`, `drive_model_setup.py`; agent configs `DRIVE_READER` / `DRIVE_TRIAGE` / `DRIVE_PROFILER` / `DRIVE_PASSAGES` in `src/infrastructure/agent_config.py`, provider strategy in `src/services/agent_context_builder.py` |
-| Smart's drive guidance | system skill `src/skills/smart/drive-search/SKILL.md`; trigger, pointer and safety line in `prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy` (`drive_specialist`) |
+| Smart's drive guidance | `prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy` (`drive_specialist`: the intent, when to use the drive, the safety line; the `query_language` exception) and the reading lines with the results (§6.7) |
+| The drive specialist (§6.7) | `src/agents/drive_agent.py`, `src/infrastructure/drive_operations.py`, `drive_tools.py`, `src/domain/drive_pass_through.py`, `drive_answer.py`, `drive_tool_texts.py`; prompt `prompts_snapshot/{profiles/drive.yaml,blueprints/drive_agent_v1.yaml,tokens/system/{COGNITIVE_PROCESS_DRIVE,PROTOCOL_DRIVE_SEARCH,OUTPUT_FORMAT_DRIVE}.groovy}`; wiring `src/composition/drive_specialist_build.py`; eval write stub `scripts/validation/drive_eval/dry_run_drive.py` |
 | Place lookup | `src/domain/place_lookup.py`, `src/adapters/geo_place_table.py`, `src/assets/geo/` |
 | Search result, wrapper, render; Cabinet status | `src/domain/drive_search.py`, `src/domain/drive_indexing_status.py` |
 | Ports | `src/ports/user_drive_port.py`, `src/ports/drive_index_repository.py` |

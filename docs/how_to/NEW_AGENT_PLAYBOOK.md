@@ -566,18 +566,16 @@ Add more classes to `class_order` if you have multiple token classes (e.g. `["id
 > Firestore and are destructive/irreversible. AI prepares the files and the commands below —
 > **only the human owner executes them manually.** See `firestore_utils/README.md`.
 
-**Always dev first, prod after validation.**
+There is one live environment: the `development_`-prefixed collections (root CLAUDE.md → Branching & Environment;
+the prod collections were deleted 2026-05-31). Prompt files live as mirror files under `prompts_snapshot/`
+(`tokens/system/<TOKEN>.groovy`, `blueprints/<id>.yaml`, `profiles/<agent_type>.yaml`); back up the prompt layer
+first (`firestore_utils/backup_prompt_layer.py`, into `scripts/memory/`), then:
 
 ```bash
-# Dev
-python firestore_utils/upload.py development_domain_prompt_tokens_v3_system COGNITIVE_PROCESS_FOO --format json
-python firestore_utils/upload.py development_domain_prompt_blueprints_v3 foo_agent_v1 --format json
-python firestore_utils/upload.py development_domain_prompt_profiles_v3 foo --format json
-
-# Prod (after make test-e2e-all passes against dev)
-python firestore_utils/upload.py domain_prompt_tokens_v3_system COGNITIVE_PROCESS_FOO --format json
-python firestore_utils/upload.py domain_prompt_blueprints_v3 foo_agent_v1 --format json
-python firestore_utils/upload.py domain_prompt_profiles_v3 foo --format json
+python firestore_utils/snapshot_pull.py --check                          # drift check
+python firestore_utils/snapshot_upload.py <files>                         # dry run: per-field diff, no write
+python firestore_utils/snapshot_upload.py --apply <files>                 # owner only, interactive
+python firestore_utils/snapshot_pull.py                                   # then commit the mirror
 ```
 
 > Requires `gcloud auth application-default login` if credentials are missing.
@@ -586,16 +584,12 @@ python firestore_utils/upload.py domain_prompt_profiles_v3 foo --format json
 
 ## Phase 3 — Protocol Tokens
 
-### Step 10 — Update agent selection tokens in Firestore
+### Step 10 — Update the agent selection token
 
-Download current versions:
-
-```bash
-python firestore_utils/download.py development_domain_prompt_tokens_v3_system PROTOCOL_SMART_AGENT_SELECTION
-python firestore_utils/download.py development_domain_prompt_tokens_v3_system PROTOCOL_QUICK_AGENT_SELECTION
-```
-
-Edit `firestore_utils/downloads/PROTOCOL_SMART_AGENT_SELECTION.groovy`. Add a section for each new intent:
+Smart and Quick share one token, `PROTOCOL_AGENT_SELECTION` (both profiles assign it, non-overridable). Edit its
+mirror `prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy` **and** its upload draft
+`firestore_utils/uploads/PROTOCOL_AGENT_SELECTION.json` (a test pins the two equal). Never start from
+`firestore_utils/downloads/`, which is stale. Add a section for each new intent:
 
 ```groovy
 # Inside the existing protocols {} block, add:
@@ -609,13 +603,7 @@ foo: {
 }
 ```
 
-Upload back (**human only**):
-
-```bash
-python firestore_utils/upload.py development_domain_prompt_tokens_v3_system PROTOCOL_SMART_AGENT_SELECTION
-# If Quick should also call this agent:
-python firestore_utils/upload.py development_domain_prompt_tokens_v3_system PROTOCOL_QUICK_AGENT_SELECTION
-```
+Upload with the Step 9 commands (**owner only** for `--apply`); one upload changes Quick and Smart together.
 
 ---
 
@@ -670,9 +658,8 @@ Prompt files (4 files):
   firestore_utils/uploads/foo_agent_v1.json              blueprint upload
   firestore_utils/uploads/foo.json                       profile upload
 
-Firestore token updates (manual download → edit → upload):
-  PROTOCOL_SMART_AGENT_SELECTION           add when/how/anti_patterns for each new intent
-  PROTOCOL_QUICK_AGENT_SELECTION           if Quick should also call this agent
+Shared token (mirror + upload draft, then snapshot_upload.py):
+  PROTOCOL_AGENT_SELECTION                 add when/how/anti_patterns for each new intent (Quick and Smart)
 ```
 
 ---
