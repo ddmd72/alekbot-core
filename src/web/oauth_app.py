@@ -25,6 +25,7 @@ from ..services.google_oauth_service import GoogleOAuthService
 from ..ports.oauth_credentials_port import OAuthCredentialsPort
 from ..config.auth import AuthConfig
 from ..domain.exceptions import AccessDeniedError
+from ..domain.safe_redirect import safe_return_path
 from ..utils.logger import logger
 
 if TYPE_CHECKING:
@@ -93,6 +94,8 @@ def create_oauth_blueprint(
         """
         provider_name = request.args.get("provider")
         next_url = request.args.get("next")
+        if next_url:
+            next_url = safe_return_path(next_url)  # same-site relative path only (open redirect)
         invite_code = request.args.get("code")
 
         try:
@@ -198,7 +201,7 @@ def create_oauth_blueprint(
             )
 
             # Determine redirect target
-            next_url = request.cookies.get("auth_next", "/cabinet")
+            next_url = safe_return_path(request.cookies.get("auth_next"))  # a pre-fix cookie may hold anything
             
             # Create redirect response
             response = await make_response(redirect(next_url))

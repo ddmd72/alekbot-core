@@ -76,13 +76,13 @@ def create_file_access_blueprint(
         if access.gated:
             cabinet_token = request.cookies.get("access_token")
             if not cabinet_token:
-                next_url = quote(request.url, safe="")
+                next_url = quote(request.full_path.rstrip("?"), safe="")
                 return None, redirect(f"/auth/login?next={next_url}")
             try:
                 payload = session_service.verify_access_token(cabinet_token)
             except Exception as e:  # noqa: BLE001
                 logger.warning("[FileAccess] gated: invalid Cabinet token — %s", e)
-                next_url = quote(request.url, safe="")
+                next_url = quote(request.full_path.rstrip("?"), safe="")
                 return None, redirect(f"/auth/login?next={next_url}")
             if payload.get("sub") != access.user_id:
                 # Logged in, but as a different user than the file's owner.
