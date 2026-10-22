@@ -90,6 +90,8 @@ class Intent:
     CREATE_FOLDER_IN_DRIVE = "create_folder_in_drive"
     UPDATE_FILE_IN_DRIVE   = "update_file_in_drive"
     DELETE_FILE_FROM_DRIVE = "delete_file_from_drive"
+    # The user's drive through one LLM specialist (DRIVE_SPECIALIST_RFC §4.1): Smart commissions, DriveAgent works
+    WORK_WITH_DRIVE_FILES  = "work_with_drive_files"
     # Domain research — interactive competency stack definition for agent construction
     DOMAIN_RESEARCH     = "domain_research"
     # Text language tutor — companion agent, bound-channel only (RFC docs/10_rfcs/COMPANION_AGENTS_RFC.md §7/§9)
@@ -674,6 +676,64 @@ FILE_MANAGEMENT = AgentDescriptor(
 )
 
 
+# The user's drive through one LLM specialist (DRIVE_SPECIALIST_RFC §4, §5.1). Smart and Quick see one intent and
+# one field; the specialist works through local tools over the user's DriveOperations and delegates nothing.
+DRIVE_SPECIALIST = AgentDescriptor(
+    agent_id="drive_agent",
+    agent_type="drive",
+    eager=False,
+    capabilities={Intent.WORK_WITH_DRIVE_FILES: ExecutionMode.SYNC},
+    allowed_intents=frozenset(),   # local tools only (§5.4)
+    # The specialist resolves refs itself; the coordinator must not download a `file_ref` first (§5.1).
+    prefetch_file_ref=False,
+    description="The user's drive: finds, opens, keeps, moves, changes and deletes files (DRIVE_SPECIALIST_RFC.md)",
+    capability_descriptions={
+        # One paragraph: _build_delegate_tool_declaration renders each intent as one line (§4.1). No notes
+        # sentence until the drive file notes ship (§9.5).
+        Intent.WORK_WITH_DRIVE_FILES: (
+            "The user's drive: their own long-term files (documents, scans, photos, recordings). "
+            "Finding files is part of it: by name (exact, partial, transliterated or misspelled), by what a file is or "
+            "what is written inside (a subject, a phrase, a number, an amount), type, date, folder, photo details and "
+            "place; deleted files only when the user asks about them (transcripts of deleted recordings and the notes "
+            "on deleted files). Use it when the answer may be in the user's files, and before saying a file is not "
+            "there. "
+            "A find ('find', 'do I have', 'where is', 'which files') is answered from the search results alone; ask to "
+            "open a file only when the user wants something written inside it. "
+            "It also opens files (a recording opens as its transcript; the recording itself comes as a link when the "
+            "user asks for it), lists folders, keeps a copy of a chat file, a document you delivered, a workspace copy "
+            "or a skill file, saves a text you composed, moves and renames, creates folders, appends text to a text "
+            "file, replaces a file's content with another file (the user gets a notice; rewriting with new text is not "
+            "available) and deletes (recoverable from its recycle bin; the user gets a notice). "
+            "Chat files and documents you produce are temporary: to remember, save, keep or put a FILE anywhere, use "
+            "this intent (facts from a document go to memory only through propose_memory_facts, when the user asks). "
+            "Write query as a natural-language instruction with the full picture: what the user wants, the words to "
+            "find as the user wrote them, every drive: ref, [File: …] label and delivered document key it points at, "
+            "and the facts from this conversation it needs. "
+            'File contents to save or append: context={"file_contents": [<one item per file>]}. '
+            "Returns a status and a 'What to do:' line (follow it), then every result verbatim; images and PDFs come "
+            "attached."
+        ),
+    },
+    context_schemas={
+        Intent.WORK_WITH_DRIVE_FILES: {
+            "file_contents": {
+                "type": "array",
+                "description": (
+                    "work_with_drive_files only: the content of text files, one item per file, each exactly as it "
+                    "goes into the file (text you composed or the user gave): a new text file as {\"name\": \"<file "
+                    "name with extension>\", \"text\": \"<full content>\"}, or text to add at the end of a text file "
+                    "as {\"target\": \"<drive: ref of that file>\", \"text\": \"<text to add>\"}. Only what is "
+                    "written into a file's content. Leave it out when no file content is written."
+                ),
+                "items": {"type": "object", "properties": {
+                    "name": {"type": "string"}, "target": {"type": "string"}, "text": {"type": "string"}}},
+            },
+        },
+    },
+    internal=False,
+)
+
+
 DOMAIN_RESEARCHER = AgentDescriptor(
     agent_id="domain_researcher_agent",
     agent_type="domain_researcher",
@@ -937,6 +997,7 @@ ALL_DESCRIPTORS = [
     HTML_PAGE_GENERATOR,
     HELP,
     FILE_MANAGEMENT,
+    DRIVE_SPECIALIST,
     DOMAIN_RESEARCHER,
     TUTOR,
     IMAGE_GENERATION,
