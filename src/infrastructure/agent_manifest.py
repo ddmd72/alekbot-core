@@ -716,8 +716,8 @@ TUTOR = AgentDescriptor(
     # companion memory pipeline was unreachable). window_threshold/batch_size were
     # originally copied from Alek's own consolidation numbers (50/30) but tutor
     # sessions don't share Alek's usage pattern: there is no time/idle-based sweep
-    # for companion extraction (sweep_companion_consolidation has no Cloud Scheduler
-    # job — docs/07_deployment/SCHEDULERS.md — extraction fires purely on
+    # for companion extraction (sweep_companion_consolidation runs hourly at :47, see
+    # docs/07_deployment/SCHEDULERS.md, but only re-triggers stuck batches — extraction fires on
     # window_threshold overflow), so a threshold sized for Alek's slow drip-feed risks
     # a whole tutoring session ending with nothing extracted. Retuned 2026-09-17 to
     # 20/10 — reliably crosses within one active practice session (observed ~20-40

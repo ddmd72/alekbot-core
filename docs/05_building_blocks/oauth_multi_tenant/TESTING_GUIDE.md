@@ -45,10 +45,10 @@ Create OAuth collections:
 
 ```bash
 # Dry-run first
-python scripts/migrate_to_oauth.py
+python scripts/migrate_to_oauth.py (script removed 2026-10-22, S1b)
 
 # If looks good, run live
-python scripts/migrate_to_oauth.py --live
+python scripts/migrate_to_oauth.py --live (script removed 2026-10-22, S1b)
 ```
 
 Verify collections created:
@@ -354,7 +354,7 @@ ls -la $GOOGLE_APPLICATION_CREDENTIALS
 
 **Solution:**
 ```bash
-python scripts/migrate_to_oauth.py --live
+python scripts/migrate_to_oauth.py --live (script removed 2026-10-22, S1b)
 ```
 
 ### "OAuth identity already linked to another user"
