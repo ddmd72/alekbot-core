@@ -19,7 +19,8 @@ _NOW = datetime(2026, 10, 10, 11, 12, tzinfo=timezone.utc)
 
 
 class _Store:
-    """Credentials store that hands out copies, like Firestore."""
+    """Credentials store that hands out copies, like Firestore. A flag write goes through update_credentials, which
+    writes only while the record exists (OAuthCredentialsPort); there is no consent path here."""
 
     def __init__(self):
         self.creds = OAuthCredentials(user_id="u", provider="gmail", access_token="tok", refresh_token="rtok",
@@ -27,11 +28,14 @@ class _Store:
         self.saves = []
 
     async def get_credentials(self, user_id, provider):
-        return replace(self.creds)
+        return replace(self.creds) if self.creds is not None else None
 
-    async def save_credentials(self, creds):
+    async def update_credentials(self, creds):
+        if self.creds is None:
+            return False
         self.saves.append(creds.needs_reconnect)
         self.creds = replace(creds)
+        return True
 
 
 def _worker(store, notify):
