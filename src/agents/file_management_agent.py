@@ -718,9 +718,13 @@ class FileManagementAgent(BaseAgent):
             return ""
         try:
             connection = await self._drive_port.connection(user_id)
-            if not connection.connected or not connection.drive_id:
+            if not connection.connected:
                 return ""
-            note = await self._drive_notes.note_for_item(user_id, connection.drive_id, item_id)
+            # a credential stored before the drive id was read has none: the sync state's (D-I3), as the service does
+            drive_id = connection.drive_id or await self._drive_notes.drive_id_for_connection(user_id, connection)
+            if not drive_id:
+                return ""
+            note = await self._drive_notes.note_for_item(user_id, drive_id, item_id)
         except Exception as exc:
             logger.warning("FileManagementAgent: note lookup failed: %s", exc_brief(exc))
             return ""

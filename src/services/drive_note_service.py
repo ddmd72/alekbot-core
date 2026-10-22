@@ -441,6 +441,11 @@ class DriveNoteService:
                                    "The drive is not connected: connect it first (a note needs the file verified).")
         return drive_id
 
+    async def drive_id_for_connection(self, user_id: str, connection: DriveConnection) -> str:
+        """The connected drive's id with the sync-state fallback (D-I3), for a reader that holds the connection
+        already (the open header's note line). "" when not connected or neither is known."""
+        return await self._drive_id_of(user_id, connection)
+
     async def _drive_id_of(self, user_id: str, connection: DriveConnection) -> str:
         """The connected drive's id: the credential's, else — a credential stored before the drive id was read, or
         whose read failed (it is best-effort) — the sync state's, as the indexer falls back to it. "" when not

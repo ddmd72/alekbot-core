@@ -136,3 +136,24 @@ async def test_a_listing_never_shows_the_note(conversion, notes, port):
     drive.list_folder.return_value = MagicMock(items=[DOC], truncated=False)
     await agent.execute(_msg(Intent.LIST_FILES_IN_DRIVE, folder="Home"))
     notes.note_for_item.assert_not_called()
+
+
+async def test_a_credential_without_a_drive_id_uses_the_sync_states(conversion, notes, port):
+    # D-I3 for the open header: the connection has no drive id, the service resolves it from the sync state
+    port.connection.return_value = DriveConnection(connected=True, drive_id="")
+    notes.drive_id_for_connection.return_value = "drv"
+    conversion.get_drive_item.return_value = DOC
+    conversion.resolve_content.return_value = "Line one of the file."
+    resp = await _agent(conversion, notes, port).execute(_msg(file_ref="drive:d1"))
+    assert LINE in resp.result
+    notes.note_for_item.assert_awaited_once_with("u1", "drv", "d1")
+
+
+async def test_no_drive_id_anywhere_means_no_line(conversion, notes, port):
+    port.connection.return_value = DriveConnection(connected=True, drive_id="")
+    notes.drive_id_for_connection.return_value = ""
+    conversion.get_drive_item.return_value = DOC
+    conversion.resolve_content.return_value = "Line one of the file."
+    resp = await _agent(conversion, notes, port).execute(_msg(file_ref="drive:d1"))
+    assert LINE not in resp.result
+    notes.note_for_item.assert_not_awaited()
