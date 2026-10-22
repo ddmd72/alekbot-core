@@ -95,9 +95,6 @@ class _TrackingFactManagement(FactManagementPort):
             self.changed.append((fid, merged_content))
         return result
 
-    async def discard_candidate(self, reason: str) -> Dict[str, Any]:
-        return await self._real.discard_candidate(reason=reason)
-
 
 class ConsolidationAgent(BaseAgent):
     """
@@ -283,7 +280,6 @@ class ConsolidationAgent(BaseAgent):
         try:
             payload = message.payload
             messages = payload.get("messages", [])
-            observations = payload.get("observations", [])
 
             # Route to v3 or v2 based on configuration
             if self.prompt_version == "v3" and self._fact_management:
@@ -300,11 +296,6 @@ class ConsolidationAgent(BaseAgent):
                     results = await self._synthesize_session_facts_v2(
                         messages, user_id, account_id, bio_context_raw
                     )
-                elif observations:
-                    logger.warning(
-                        "⚠️ [ConsolidationAgent] Observation-based flow deprecated; skipping."
-                    )
-                    results = {"new_facts": [], "new_anchors": []}
                 else:
                     logger.info("ℹ️  [ConsolidationAgent] No data to process")
                     return AgentResponse.success(
@@ -369,16 +360,6 @@ class ConsolidationAgent(BaseAgent):
             if len(llm_facts) == 0 and len(llm_anchors) == 0:
                 if messages:
                     logger.info("ℹ️  [ConsolidationAgent] Session consolidation yielded 0 new facts (valid).")
-                elif observations:
-                    logger.error(
-                        "❌ [ConsolidationAgent] LLM returned empty result for observations. "
-                        "Observations preserved for retry."
-                    )
-                    return AgentResponse.failure(
-                        task_id=message.task_id,
-                        agent_id=self.agent_id,
-                        error="LLM returned invalid format (empty). Observations preserved for retry."
-                    )
             
             # Save facts via FactWriteService (v2 path)
             all_facts_data = llm_facts + llm_anchors
@@ -387,14 +368,6 @@ class ConsolidationAgent(BaseAgent):
                 user_id=user_id,
                 facts_data=all_facts_data
             )
-            
-            # Archive observations
-            if observations:
-                logger.debug(f"   → Archiving {len(observations)} observations...")
-                await self._repo.archive_observations(
-                    [obs['id'] for obs in observations],
-                    owner_id=user_id
-                )
             
             total_duration = time.time() - start_time
             logger.info(
@@ -418,7 +391,6 @@ class ConsolidationAgent(BaseAgent):
                 result={
                     "new_facts": len(llm_facts),
                     "new_anchors": len(llm_anchors),
-                    "observations_processed": len(observations),
                     "message": f"Added {len(llm_facts)} facts and {len(llm_anchors)} anchors"
                 },
                 confidence=1.0,
@@ -1526,12 +1498,6 @@ class ConsolidationAgent(BaseAgent):
             })
 
         return structured
-
-    async def _format_existing_anchors(self, user_id: str) -> str:
-        """Format existing anchors for prompt injection (LEGACY for Groovy format)."""
-        existing_anchors_list = await self._repo.get_active_facts(user_id, tags=["anchor"])
-        # Format anchors for prompt (joining with commas for groovy array)
-        return ",\n".join([f'            "{a.text}"' for a in existing_anchors_list])
 
     async def _get_existing_anchors_list(self, account_id: str) -> List[str]:
         """

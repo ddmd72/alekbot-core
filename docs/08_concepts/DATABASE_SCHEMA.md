@@ -693,7 +693,7 @@ Updated on every message received via `ConversationHandler` → `UserNotificatio
 
 | Collection             | Status                | Note                                                |
 | :--------------------- | :-------------------- | :-------------------------------------------------- |
-| `observations`         | 🗑️ **DELETED**        | Was dead code (`add_observation` never called).     |
+| `observations`         | 🗑️ **DELETED**        | Was dead code (nothing ever wrote to it).           |
 | `users` (no suffix)    | 🗑️ **DELETED**        | Migrated to `_domain_users_v2`; legacy copy removed. |
 | `facts` (no suffix)    | 🗑️ **DELETED**        | Migrated to `_domain_facts_v2`; legacy copy removed. |
 
