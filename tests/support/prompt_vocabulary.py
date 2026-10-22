@@ -100,6 +100,22 @@ def field_line_words(body, field):
     return words
 
 
+def pattern_words(body, pattern):
+    """For each match of `pattern` (group 1 = a list written on one line), the ALLCAPS words captured; `[]` when it never matches."""
+    return [set(re.findall(r"\b[A-Z][A-Z_]{2,}\b", m)) for m in re.findall(pattern, _scan(body, keep_strings=True))]
+
+
+def returns_keys(body):
+    """{tool: keys written as `key:` inside the braces of the tool's `returns: "..."` line}."""
+    out = {}
+    for seg in _scan(body, keep_strings=True).split("@tool ")[1:]:
+        name = re.match(r"\w+", seg).group(0)
+        m = re.search(r'returns:\s*"([^\n]*)"', seg)
+        if m and "{" in m.group(1):
+            out[name] = set(re.findall(r"(\w+)\s*:", m.group(1)[m.group(1).index("{"):]))
+    return out
+
+
 def groovy_tools(body):
     """{name: {"signature": [param names], "params": {key, ...}, "nested": {key: {subkey, ...}}}} for each `@tool`."""
     clean = _scan(body, keep_strings=False)
