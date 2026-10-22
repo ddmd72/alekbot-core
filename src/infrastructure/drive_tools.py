@@ -93,7 +93,9 @@ class DriveToolRun:
         try:
             if change:
                 async with self._order:
-                    if self.left() <= 0 or self._ran_on:   # queued behind the batch past the deadline / a running one
+                    if self._ran_on:   # queued behind a change that is still running
+                        return self._collector.add(step, kind, _not_finished(op, t.NOT_STARTED_BEHIND))
+                    if self.left() <= 0:   # queued behind the batch past the deadline
                         return self._collector.add(step, kind, _not_finished(op, t.NOT_STARTED))
                     started = True
                     outcome = await call()
@@ -111,7 +113,8 @@ class DriveToolRun:
                 self._collector.add(step, kind, DriveOutcome(
                     op=op, cls=OutcomeClass.STILL_RUNNING, text=STILL_RUNNING, success=True))
             else:
-                self._collector.add(step, kind, _not_finished(op, t.NOT_STARTED if change else t.DID_NOT_FINISH))
+                self._collector.add(step, kind, _not_finished(
+                    op, (t.NOT_STARTED_BEHIND if self._ran_on else t.NOT_STARTED) if change else t.DID_NOT_FINISH))
             raise
         result = self._collector.add(step, kind, outcome)
         if outcome.cls is OutcomeClass.STILL_RUNNING and self._on_still_running is not None:
