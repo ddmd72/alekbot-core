@@ -21,11 +21,14 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, Mapping, Optio
 
 from ..domain import drive_answer_texts as t
 from ..domain import drive_tool_texts as tools
-from ..domain.drive_file_contents import FileContentItem
-from ..domain.drive_outcome import DriveOp, DriveOutcome, OutcomeClass
-from ..domain.drive_pass_through import CollectedResult, PassThroughCollector, search_key
+from ..domain.drive_collected_result import CollectedResult
+from ..domain.drive_file_content_item import FileContentItem
+from ..domain.drive_op import DriveOp
+from ..domain.drive_outcome import DriveOutcome
+from ..domain.drive_outcome_class import OutcomeClass
+from ..domain.drive_pass_through import PassThroughCollector, search_key
 from ..domain.llm import ToolCall
-from ..domain.user_drive import drive_label
+from ..domain.user_drive import MOVE_NEEDS_TARGET, drive_label
 from ..utils.logger import logger
 from .delegation_engine import LocalToolHandler, ToolResult
 
@@ -79,18 +82,23 @@ class DriveToolRun:
         step = self.step
         if self.left() <= 0:
             return self._collector.add(step, kind, _not_finished(op, t.NOT_STARTED))
+        started = False
         try:
             if change:
                 async with self._order:
                     if self.left() <= 0:   # queued behind the batch past the deadline
                         return self._collector.add(step, kind, _not_finished(op, t.NOT_STARTED))
+                    started = True
                     outcome = await call()
             else:
                 outcome = await asyncio.wait_for(call(), timeout=max(0.001, self.left()))
         except asyncio.TimeoutError:
             outcome = _not_finished(op, t.DID_NOT_FINISH)
         except asyncio.CancelledError:
-            self._collector.add(step, kind, _not_finished(op, t.DID_NOT_FINISH))
+            # Cancelled while queued behind the batch's order lock: it never started. Cancelled once started: it may
+            # run on under DriveOperations' shield (which arms the late-failure notice), so it did not finish.
+            text = t.DID_NOT_FINISH if started or not change else t.NOT_STARTED
+            self._collector.add(step, kind, _not_finished(op, text))
             raise
         result = self._collector.add(step, kind, outcome)
         if outcome.cls is OutcomeClass.STILL_RUNNING and self._on_still_running is not None:
@@ -147,12 +155,16 @@ class DriveToolRun:
 
     async def _open(self, tc: ToolCall) -> ToolResult:
         ref = str((tc.args or {}).get("file_ref") or "")
+        if not ref.strip():
+            return self._no_ref(tc, DriveOp.OPEN, "file_ref", "the file to open")
         result = await self._run(DriveOp.OPEN, t.KIND_OPEN, lambda: self._ops.open(
             self._context, self._user_id, ref), change=False)
         return self._seen(tc, result)
 
     async def _link(self, tc: ToolCall) -> ToolResult:
         ref = str((tc.args or {}).get("file_ref") or "")
+        if not ref.strip():
+            return self._no_ref(tc, DriveOp.OPEN, "file_ref", "the recording")
         result = await self._run(DriveOp.OPEN, t.KIND_LINK, lambda: self._ops.open(
             self._context, self._user_id, ref, original=True), change=False)
         return self._seen(tc, result)
@@ -177,9 +189,15 @@ class DriveToolRun:
         text = t.NO_ITEM.format(value=str(value or ""), known=", ".join(self._items) or t.NO_ITEMS)
         return self._refuse(tc, op, text, OutcomeClass.NOT_POSSIBLE)
 
+    def _no_ref(self, tc: ToolCall, op: DriveOp, field: str, what: str) -> ToolResult:
+        """An empty ref means "not given": refused before any call, correctable (§7.2)."""
+        return self._refuse(tc, op, t.REF_REQUIRED.format(field=field, what=what), OutcomeClass.REQUEST_ERROR)
+
     async def _copy(self, tc: ToolCall) -> ToolResult:
         args = tc.args or {}
         source = str(args.get("source_ref") or "")
+        if not source.strip():
+            return self._no_ref(tc, DriveOp.COPY, "source_ref", "the file to keep")
 
         async def call() -> DriveOutcome:
             return await self._ops.copy(self._context, self._user_id, source, folder=await self._folder(
@@ -211,8 +229,7 @@ class DriveToolRun:
         folder, new_name = args.get("folder"), args.get("new_name")
         if not (isinstance(folder, str) and folder.strip()) and not (isinstance(new_name, str) and new_name.strip()):
             # the service's own words, before any call: a correctable request shape (§7.2)
-            return self._refuse(tc, DriveOp.MOVE, "Give a destination folder, a new name, or both",
-                                OutcomeClass.REQUEST_ERROR)
+            return self._refuse(tc, DriveOp.MOVE, MOVE_NEEDS_TARGET, OutcomeClass.REQUEST_ERROR)
         ref = str(args.get("file_ref") or "")
 
         async def call() -> DriveOutcome:

@@ -46,6 +46,7 @@ NOT_STARTED = "not started: the time for this request ran out"
 NO_ITEM = ("No file_contents item '{value}' (items: {known}). Nothing was written: the text must come from the "
            "orchestrator in file_contents.")
 NO_ITEMS = "none"
+REF_REQUIRED = "{field} is required: {what}."   # an empty ref is refused before any call (CRUD: empty is not given)
 
 # -- reading lines (§7.3), verbatim from the drive-search skill ----------------------------------------------------
 R_FIND = ('"Find", "show me", "which files", "everything about X", "do I have …" — the user wants the files. Answer '

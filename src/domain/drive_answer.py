@@ -157,8 +157,10 @@ def reading_lines(blocks: Sequence[CollectedResult]) -> List[str]:
         add(t.R_VERSIONS)
     if any(s.cls is OutcomeClass.NOT_FOUND or s.facts.coverage_incomplete or s.facts.building for s in searches):
         add(t.R_BUILDING, t.R_NOT_SEARCHED, t.R_FOLDER_CARD)
+    # Only a file's content opens the "numbers / document vs memory / not read" lines: a body or a vision file, not a
+    # refusal or the line that a video was sent to the chat (M2).
     if any(b.outcome.op is DriveOp.OPEN and b.kind == t.KIND_OPEN and b.outcome.cls is OutcomeClass.OK
-           for b in blocks):
+           and (b.outcome.body or b.outcome.file_data) for b in blocks):
         add(t.R_NUMBERS, t.R_DOC_VS_MEMORY, t.R_NOT_READ)
     return lines
 

@@ -165,6 +165,19 @@ class DriveOperations:
         # duplicate check sees it. dict.setdefault is atomic on the event loop.
         self._mutation_locks: Dict[str, asyncio.Lock] = {}
 
+    # Every public coroutine is classified here, so a new one cannot be added unclassified (a test pins it). A wrapper
+    # that must treat reads and mutations differently (a dry run) reads these sets.
+    READ_METHODS = frozenset({"search", "search_deleted", "list_folder", "open", "fetch_stored", "preflight",
+                              "folder_path"})
+    MUTATION_METHODS = frozenset({"copy", "save_text", "create_folder", "move", "append", "replace", "delete"})
+    # The `DriveOp` each method that returns a `DriveOutcome` reports.
+    OP_OF: Mapping[str, DriveOp] = {
+        "search": DriveOp.SEARCH, "search_deleted": DriveOp.SEARCH, "list_folder": DriveOp.LIST,
+        "open": DriveOp.OPEN, "fetch_stored": DriveOp.OPEN, "copy": DriveOp.COPY, "save_text": DriveOp.SAVE_TEXT,
+        "create_folder": DriveOp.CREATE_FOLDER, "move": DriveOp.MOVE, "append": DriveOp.APPEND,
+        "replace": DriveOp.REPLACE, "delete": DriveOp.DELETE,
+    }
+
     @property
     def configured(self) -> bool:
         return self._drive is not None
@@ -175,7 +188,7 @@ class DriveOperations:
 
     async def search(self, context: Mapping[str, Any], user_id: str, *, query: Any = None, folder: Any = None,
                      kind: Any = None, date_from: Any = None, date_to: Any = None) -> DriveOutcome:
-        """search_files_in_drive (USER_DRIVE_INDEXING_RFC §10). Returned refs go into drive_context, so "open the
+        """Search the drive index (USER_DRIVE_INDEXING_RFC §10). Returned refs go into drive_context, so "open the
         second one" works on the next turn (§10.4 History)."""
         async def run() -> DriveOutcome:
             if self._drive_search is None:
@@ -531,6 +544,12 @@ class DriveOperations:
             task.add_done_callback(self._on_mutation_done)
             try:
                 return await asyncio.wait_for(asyncio.shield(task), timeout=wait_s)
+            except asyncio.CancelledError:
+                # The caller was cancelled (the specialist's deadline) while the shielded mutation runs on: arm its
+                # late-failure notice, as for a wait that ran out (§4.13), and let the cancel through.
+                if not task.done():
+                    self._arm_late_failure_notice(task, op, context, ref, user_id)
+                raise
             except asyncio.TimeoutError:
                 if task.done():
                     # The mutation ended as the wait ran out — usually with its own TimeoutError (aiohttp's socket

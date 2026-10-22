@@ -6,11 +6,13 @@ import pytest
 
 from src.domain import drive_answer_texts as t
 from src.domain import drive_tool_texts as tt
-from src.domain.drive_file_contents import FileContentItem
-from src.domain.drive_outcome import DriveOp, DriveOutcome, OutcomeClass
+from src.domain.drive_file_content_item import FileContentItem
+from src.domain.drive_op import DriveOp
+from src.domain.drive_outcome import DriveOutcome
+from src.domain.drive_outcome_class import OutcomeClass
 from src.domain.drive_pass_through import PassThroughCollector
 from src.domain.llm import ToolCall
-from src.domain.user_drive import DriveItem, MoveOutcome
+from src.domain.user_drive import MOVE_NEEDS_TARGET, DriveItem, MoveOutcome
 from src.infrastructure.drive_operations import DriveOperations
 from src.infrastructure.drive_tools import DriveToolRun
 from src.services.file_conversion_service import FileConversionService
@@ -343,3 +345,103 @@ def test_descriptions_name_no_smart_era_field_or_intent():
         for text in texts:
             for word in _SMART_ERA:
                 assert word not in text, (decl["name"], word)
+
+
+# -- M1: what a cancel records ----------------------------------------------------------------------------------------
+
+async def test_a_mutation_cancelled_while_queued_behind_the_batch_never_started(ops):
+    """It waits on the per-execution order lock; a cancel there ran nothing, so it is "not started"."""
+    gate = asyncio.Event()
+    started = asyncio.Event()
+
+    async def first(*a, **k):
+        started.set()
+        await gate.wait()
+        return _ok(DriveOp.MOVE)
+    ops.move.side_effect = first
+    run, collector = _run(ops)
+    running = asyncio.ensure_future(_call(run, tt.MOVE_FILE, file_ref="drive:f1", folder="A"))
+    await started.wait()
+    queued = asyncio.ensure_future(_call(run, tt.DELETE_DRIVE_ITEM, file_ref="drive:f2"))
+    await asyncio.sleep(0)
+    queued.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await queued
+    gate.set()
+    await running
+    ops.delete.assert_not_called()
+    delete = next(r for r in collector.results if r.outcome.op is DriveOp.DELETE)
+    assert delete.outcome.cls is OutcomeClass.NOT_FINISHED and delete.outcome.text == t.NOT_STARTED
+
+
+async def test_a_mutation_cancelled_once_started_is_recorded_as_not_finished(ops):
+    started = asyncio.Event()
+
+    async def hang(*a, **k):
+        started.set()
+        await asyncio.sleep(10)
+    ops.delete.side_effect = hang
+    run, collector = _run(ops)
+    task = asyncio.ensure_future(_call(run, tt.DELETE_DRIVE_ITEM, file_ref="drive:f1"))
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert collector.results[0].outcome.text == t.DID_NOT_FINISH
+
+
+async def test_a_cancel_after_the_shield_arms_the_late_failure_notice():
+    """DriveOperations: the caller is cancelled while the shielded delete runs on; if it then fails the user is told."""
+    drive = AsyncMock(spec=UserDriveService)
+    release = asyncio.Event()
+
+    async def slow_delete(*a, **k):
+        await release.wait()
+        raise RuntimeError("provider down")
+    drive.delete.side_effect = slow_delete
+    drive.get_item.return_value = FILE
+    notification = AsyncMock()
+    ops = DriveOperations(conversion_service=AsyncMock(spec=FileConversionService), drive_service=drive,
+                          notification=notification)
+    task = asyncio.ensure_future(ops.delete(CTX, "u1", "drive:f1", wait_s=30))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert len(ops._armed) == 1
+    release.set()
+    await asyncio.sleep(0.05)
+    await asyncio.gather(*list(ops._notices), return_exceptions=True)
+    assert not ops._armed
+
+
+# -- M3: an empty ref is not given --------------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("name, args, method", [
+    (tt.OPEN_DRIVE_FILE, {"file_ref": ""}, "open"), (tt.OPEN_DRIVE_FILE, {}, "open"),
+    (tt.GET_RECORDING_LINK, {"file_ref": " "}, "open"), (tt.COPY_FILE_TO_DRIVE, {"source_ref": ""}, "copy"),
+    (tt.COPY_FILE_TO_DRIVE, {"folder": "X"}, "copy")])
+async def test_an_empty_ref_is_refused_before_any_call(ops, name, args, method):
+    run, collector = _run(ops)
+    result = await _call(run, name, **args)
+    getattr(ops, method).assert_not_called()
+    assert "is required" in result.result_str
+    assert collector.results[0].outcome.cls is OutcomeClass.REQUEST_ERROR
+
+
+# -- M4 and M7 ------------------------------------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("name", [tt.MOVE_FILE, tt.DELETE_DRIVE_ITEM])
+def test_move_and_delete_say_file_or_folder(name):
+    declaration = next(d for d in tt.drive_tool_declarations() if d["name"] == name)
+    assert "file or folder" in declaration["parameters"]["properties"]["file_ref"]["description"]
+
+
+async def test_the_move_refusal_is_the_services_own_sentence():
+    """One constant: the tool says before any call what UserDriveService.move raises."""
+    from unittest.mock import MagicMock
+
+    from src.domain.user_drive import DrivePathError
+    with pytest.raises(DrivePathError) as raised:
+        await UserDriveService.move(MagicMock(), "u1", "i1", " ", None)
+    assert str(raised.value) == MOVE_NEEDS_TARGET
