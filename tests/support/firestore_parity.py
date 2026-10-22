@@ -449,6 +449,8 @@ async def transaction_delete_after_read(db: Any, col: str) -> Any:
 async def transaction_read_update_time(db: Any, col: str) -> Any:
     d = db.collection(col).document("a")
     await d.set({"v": 1})
+    other = db.collection(col).document("b")
+    await other.set({"v": 1})
     plain = await d.get()
 
     @firestore.async_transactional
@@ -460,7 +462,8 @@ async def transaction_read_update_time(db: Any, col: str) -> Any:
     after = await d.get()
     inside_after = await read_in_transaction(db.transaction())
     return {"equal_to_plain_read": inside == plain.update_time, "differs_after_write": after.update_time != plain.update_time,
-            "transaction_sees_new": inside_after == after.update_time}
+            "transaction_sees_new": inside_after == after.update_time,
+            "separate_writes_differ": plain.update_time != (await other.get()).update_time}
 
 
 async def get_all_order_not_assumed(db: Any, col: str) -> Any:
@@ -556,7 +559,8 @@ SCENARIOS: List[Scenario] = [
     Scenario("transaction_delete_after_read", transaction_delete_after_read,
              {"first_read": {"v": 1}, "exists_after": False, "second_transaction_sees": False}),
     Scenario("transaction_read_update_time", transaction_read_update_time,
-             {"equal_to_plain_read": True, "differs_after_write": True, "transaction_sees_new": True}),
+             {"equal_to_plain_read": True, "differs_after_write": True, "transaction_sees_new": True,
+              "separate_writes_differ": True}),
     Scenario("get_all_order_not_assumed", get_all_order_not_assumed, {
         "get_all": {"a": {"v": 1}, "b": {"v": 2}, "c": {"v": 3}, "nobody": None},
         "in_transaction": {"a": {"v": 1}, "b": {"v": 2}, "c": {"v": 3}, "nobody": None}}),
