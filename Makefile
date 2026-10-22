@@ -260,6 +260,7 @@ test-coverage: ## Unit tests + global + per-file coverage gate (RFC § 8.4)
 # testmon never runs together with coverage. A fresh worktree gets the main checkout's .testmondata (the first
 # entry of `git worktree list`), so its first run is not a cold full suite. Run 1 selects by executed lines; run 2
 # is the fixed always-run set (tests whose input is a data file or a child process: the `datafile` marker).
+# --testmon-forceselect: without it testmon switches selection off whenever -m is given (testmon 2.2.0).
 TESTMON_SEED = $(shell git worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p' | head -n 1)
 
 test-affected: ## Inner loop: only tests touched by your changes (testmon) + the always-run `datafile` set
@@ -267,7 +268,7 @@ test-affected: ## Inner loop: only tests touched by your changes (testmon) + the
 	@$(XDIST_WARNING)
 	@if [ ! -f .testmondata ] && [ -n "$(TESTMON_SEED)" ] && [ "$(TESTMON_SEED)" != "$(CURDIR)" ] && [ -f "$(TESTMON_SEED)/.testmondata" ]; then \
 		echo "🌱 Seeding .testmondata from $(TESTMON_SEED)"; cp "$(TESTMON_SEED)/.testmondata" .testmondata; fi
-	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/unit/ -n $(PYTEST_WORKERS) -q --asyncio-mode=auto --testmon -m "not datafile and not timing"
+	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/unit/ -n $(PYTEST_WORKERS) -q --asyncio-mode=auto --testmon --testmon-forceselect -m "not datafile and not timing"
 	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/unit/ -n $(PYTEST_WORKERS) -q --asyncio-mode=auto -m "datafile and not timing"
 
 test-integration: ## Run integration tests
