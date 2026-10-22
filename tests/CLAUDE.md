@@ -71,14 +71,14 @@ children (drive parser, sandbox engine, ffmpeg).
 ## Fake against the real thing: the parity scenarios (P5)
 
 `tests/support/firestore_parity.py` holds one set of scenarios, each with ONE documented expected value, run on three backends:
-H1 in `make check` (`tests/unit/support/test_firestore_parity.py`; a known H1 disagreement is a strict xfail there, with its reason),
+H1 in `make check` (`tests/unit/support/test_firestore_parity.py`),
 the Firestore emulator in the same file when `FIRESTORE_EMULATOR_HOST` is set (`npx -y firebase-tools@latest setup:emulators:firestore`,
 then `java -jar ~/.cache/firebase/emulators/cloud-firestore-emulator-v*.jar --host=127.0.0.1 --port=8085`; it does not refuse a
 query for a missing index, so those scenarios skip), and the test database in `tests/cloud/` (`make test-cloud`). The test database
 is the arbiter. A new kit that leans on a Firestore behaviour H1 has not been checked for adds a scenario here first. The cloud
 run reads `TEST_FIRESTORE_DATABASE`, `TEST_SA_EMAIL` and `GOOGLE_CLOUD_PROJECT` from the environment or the repo's dotenv file,
 refuses to start unless the database ends in `-test`, is not the live one and the client uses the test service account's
-impersonated credentials, and creates the scenarios' indexes once (up to 15 minutes). One runner at a time (the lease comes with P12).
+impersonated credentials, and creates the scenarios' indexes once (up to 15 minutes; right after creation a scenario is retried up to 3 times, 30 s apart, because a fresh index failed queries once after reporting READY). One runner at a time (the lease comes with P12).
 
 ## Coverage floors and the untested-module list
 
