@@ -35,7 +35,7 @@ GENERIC_FIELDS = ("original", "append_text", "source_ref", "new_name", "folder",
 # A skill that says "load drive-search first" fails after the cut: the system skill is gone (§10 step 4).
 SKILL_NAMES = ("drive-search",)
 NEAR_LINES = 2
-STORES = ("skill", "skill_file", "skill_draft", "reminder", "directive", "workspace", "prompt_override")
+STORES = ("skill", "skill_file", "skill_draft", "reminder", "directive", "preference", "workspace", "prompt_override")
 
 
 def _word(name: str) -> "re.Pattern[str]":
