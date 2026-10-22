@@ -3,41 +3,52 @@ wraps aside), one copy of each sentence, the 90% bar only in the skill text."""
 import re
 from pathlib import Path
 
-from src.adapters.filesystem_skill_loader import load_system_skills
 
 ROOT = Path(__file__).resolve().parents[3]
-SKILLS = ROOT / "src" / "skills" / "smart"
-
-
-def _body() -> str:
-    return next(s for s in load_system_skills(SKILLS) if s.name == "drive-search").body
 
 
 def _flat(text: str) -> str:
     return re.sub(r"\s+", " ", text)
 
 
+PARAGRAPH = ("A described file's result carries `card accuracy: N%`. 100% — everything in this card is confirmed by the "
+             "file's own text; you can trust the card fully. The lower, the more likely the card's values contain errors.")
+FIND = "\"Find\", \"which files\", \"do I have\": answer from the cards at any accuracy. Never open files for this."
+VALUE = ("A question about a value in a file — a number, a date, an amount, an expiry: answer from the card when its "
+         "accuracy is 90% or more. Below that, open the file and check the value before answering.")
+SCAN = ("For a scan or a photo of a document, the file's text is a reading of the image; when a value matters to the "
+        "user, say where you read it.")
+
+
+def _token() -> str:
+    """The specialist's PROTOCOL_DRIVE_SEARCH token, flattened; the token writes the skill's double quotes and backticks
+    as single quotes (it is one double-quoted string per line)."""
+    text = (ROOT / "prompts_snapshot" / "tokens" / "system" / "PROTOCOL_DRIVE_SEARCH.groovy").read_text(
+        encoding="utf-8").split("\n---\n", 1)[1]
+    return _flat(text)
+
+
+def _as_token_text(line: str) -> str:
+    return line.replace('"', "'").replace("`", "'")
+
+
 def test_the_section_is_there_with_its_rule_lines():
-    body = _flat(_body())
-    for line in (
-        "## Card accuracy",
-        "A described file's result carries `card accuracy: N%`. 100% — everything in this card is confirmed by the "
-        "file's own text; you can trust the card fully. The lower, the more likely the card's values contain errors.",
-        "\"Find\", \"which files\", \"do I have\": answer from the cards at any accuracy. Never open files for this.",
-        "A question about a value in a file — a number, a date, an amount, an expiry: answer from the card when its "
-        "accuracy is 90% or more. Below that, open the file and check the value before answering.",
-        "For a scan or a photo of a document, the file's text is a reading of the image; when a value matters to the "
-        "user, say where you read it.",
-    ):
-        assert line in body, line
+    """Reviewer edit at the cut (DRIVE_SPECIALIST_RFC §5.7, §7.3): the heading went with the skill; each rule line is
+    Smart's reading line, verbatim, and the specialist's token carries the lines it opens by (the paragraph, the find
+    rule and the 90% rule, verbatim; the scan line is Smart's only)."""
+    from src.domain import drive_answer_texts as t
+    assert (t.R_ACCURACY, t.R_ACCURACY_FIND, t.R_ACCURACY_VALUE, t.R_SCAN) == (PARAGRAPH, FIND, VALUE, SCAN)
+    token = _token()
+    for line in (PARAGRAPH, FIND, VALUE):
+        assert _as_token_text(line) in token, line
+    assert "say where you read it" not in token
 
 
-def test_the_inaccessible_file_bullet_is_the_sections_last_and_stands_once():
-    body = _body()
-    bullet = "A result saying the bot cannot open the file: the file exists."
-    assert body.count(bullet) == 1
-    section = body[body.index("## Card accuracy"):body.index("## When nothing is found")]
-    assert section.rstrip().splitlines()[-1].startswith(f"- {bullet}")
+# Reviewer: test_the_inaccessible_file_bullet_is_the_sections_last_and_stands_once retired at the cut. The section and
+# its order went with the skill (DRIVE_SPECIALIST_RFC §5.7); the bullet stands verbatim as Smart's bot-cannot-open
+# reading line (test_drive_search_skill_inaccessible.py::test_the_skill_says_what_to_do_with_a_file_the_bot_cannot_open,
+# test_drive_search_skill_access_override.py) and is delivered once, with the cards that trigger it
+# (tests/unit/domain/test_drive_answer.py, the `inaccessible` reading-line cases).
 
 
 def test_each_rule_sentence_has_one_copy():

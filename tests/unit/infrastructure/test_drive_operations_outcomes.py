@@ -22,7 +22,7 @@ from src.domain.ui_messages import UIMessage
 from src.domain.user_drive import (
     DeleteOutcome, DriveFileTooLargeError, DriveItem, DriveItemNotFoundError, DriveMirrorWriteRefused,
     DriveNameConflictError, DriveNotConnectedError, DrivePathError, DriveRootProtectedError, ListOutcome,
-    MoveOutcome, UpdateOutcome,
+    MoveOutcome,
 )
 from src.infrastructure.agent_manifest import Intent
 from src.infrastructure.drive_operations import (
@@ -252,15 +252,16 @@ async def test_one_user_one_lock_across_two_holders(ops, drive):
         return MoveOutcome(before=FILE, after=FILE, created=[])
     drive.move.side_effect = move
     first, second = _agent(ops), _agent(ops)
-    await asyncio.gather(first.execute(_msg(Intent.MOVE_FILE_IN_DRIVE, file_ref="drive:f1", folder="A")),
+    # Reviewer edit at the cut: FileManagement has no drive mutation intent any more (DRIVE_SPECIALIST_RFC §5.5); the
+    # first holder's mutation goes through the operations object it holds, the order assertion is unchanged
+    await asyncio.gather(first.drive_operations.move(CTX, "u1", "drive:f1", folder="A", wait_s=5),
                          ops.move(CTX, "u1", "drive:f1", folder="B", wait_s=5))
     assert order == [("start", "A"), ("end", "A"), ("start", "B"), ("end", "B")]
     assert second.drive_operations is first.drive_operations
 
 
-async def test_the_agent_maps_an_outcome_back_to_todays_response(ops, drive):
-    drive.append_text.return_value = UpdateOutcome(item=FILE, before_size=1, mode="append")
-    resp = await _agent(ops).execute(_msg(Intent.UPDATE_FILE_IN_DRIVE, file_ref="drive:f1", append_text="x"))
-    assert resp.status == AgentStatus.SUCCESS
-    assert resp.result == "Appended to [Drive: Inbox/lease.pdf (2KB) ref=drive:f1]."
-    assert resp.history_context == {"drive_context": [{"path": "Inbox/lease.pdf", "ref": "drive:f1"}]}
+# Reviewer: test_the_agent_maps_an_outcome_back_to_todays_response retired at the cut. Its intent (update) left
+# FileManagement (DRIVE_SPECIALIST_RFC §5.5); the outcome-to-AgentResponse mapping of the one drive path it keeps, the
+# lenient open_file on a drive: ref, is pinned by test_file_management_agent_drive.py::TestOpenCaps::
+# test_small_image_is_attached_for_vision (SUCCESS, file_data, history_context) and ::test_large_pdf_refused_without_download
+# (SUCCESS with the outcome's text), both through FileManagementAgent.execute.

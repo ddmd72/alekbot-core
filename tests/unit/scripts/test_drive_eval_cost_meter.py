@@ -65,6 +65,17 @@ def test_g3_needs_a_max_usd():
     assert smart_dry_run._args(["--max-usd", "3"]).max_usd == 3.0
 
 
+def test_g3_installs_the_meter_before_it_wraps_smarts_and_the_specialists_llm_calls():
+    """Re-review of part B (I3): G3 wraps Smart's and the specialist's `_call_llm` per instance by capturing the bound
+    method; a bound method captured before Meter.install() keeps the unmetered class function, so the run's two main
+    spenders would never reach the cost stop. The meter goes in first."""
+    import inspect
+    src = inspect.getsource(smart_dry_run._run)
+    installed = src.index("meter.install()")
+    assert installed < src.index("smart_llm = smart._call_llm")
+    assert installed < src.index("specialist_llm = fixture.drive_agent._call_llm")
+
+
 def test_cache_reads_and_writes_are_priced_at_their_own_rates():
     """A cached prefix costs billing.py's cache-read and cache-write legs (calculate_cost), never nothing."""
     from src.domain.billing import calculate_cost

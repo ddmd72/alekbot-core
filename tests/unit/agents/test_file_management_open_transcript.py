@@ -104,8 +104,10 @@ async def test_a_lookup_failure_keeps_the_file_branch(agent, conversion, search,
 
 
 def test_manifest_original_param_described():
-    from src.infrastructure.agent_manifest import FILE_MANAGEMENT
-    schema = FILE_MANAGEMENT.context_schemas[Intent.OPEN_FILE_FROM_DRIVE]["original"]
-    assert schema["type"] == "boolean"
-    assert schema["description"] == ("open_file_from_drive only: set true only when the user asks for the recording "
-                                     "itself, not its content")
+    # Reviewer edit at the cut (DRIVE_SPECIALIST_RFC §5.2: `original` → get_recording_link; §8.1 gives its text): the
+    # boolean field is the specialist's own tool now, with the same rule (only when the user asks for the recording)
+    from src.domain import drive_tool_texts as tt
+    link = next(t for t in tt.drive_tool_declarations() if t["name"] == tt.GET_RECORDING_LINK)
+    assert link["description"] == ("A link to a recording itself, only when the user asks for the recording, not its "
+                                   "content.")
+    assert link["parameters"]["required"] == ["file_ref"]

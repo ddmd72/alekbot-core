@@ -131,6 +131,9 @@ async def test_a_failing_index_lookup_never_hides_the_original_answer(agent, con
 
 
 def test_the_manifest_says_a_folder_ref_is_accepted():
-    from src.infrastructure.agent_manifest import FILE_MANAGEMENT
-    assert "drive:<id>" in FILE_MANAGEMENT.capability_descriptions[Intent.LIST_FILES_IN_DRIVE]
-    assert "drive:<id>" in FILE_MANAGEMENT.context_schemas[Intent.LIST_FILES_IN_DRIVE]["folder"]
+    # Reviewer edit at the cut (DRIVE_SPECIALIST_RFC §8, §8.1): listing is the specialist's `list_folder`, whose
+    # `folder` parameter (one text for every tool's folder) takes a path or a folder's drive: ref
+    from src.domain import drive_tool_texts as tt
+    listing = next(t for t in tt.drive_tool_declarations() if t["name"] == tt.LIST_FOLDER)
+    assert listing["parameters"]["properties"]["folder"]["description"] == tt.LIST_FOLDER_PARAM
+    assert "or a folder's drive: ref" in tt.LIST_FOLDER_PARAM

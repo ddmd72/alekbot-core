@@ -15,9 +15,17 @@ _DESCRIPTION = next(t["description"] for t in drive_tool_declarations() if t["na
 
 
 def test_the_description_offers_content_search():
-    for phrase in ("what is written inside", "scans", "screenshots", "a phrase", "a number or an amount",
-                   "for a passage match, the passage"):
-        assert phrase in _DESCRIPTION, phrase
+    # Reviewer edit at the cut: the capability is offered to Smart by its one drive intent, whose text the RFC gives
+    # verbatim (DRIVE_SPECIALIST_RFC §4.1: "by what a file is or what is written inside (a subject, a phrase, a
+    # number, an amount)", "(documents, scans, photos, recordings)"); the search tool's own line is §8.1's
+    # ("what is written in them"); a passage match is read through the passage reading line (§7.3).
+    from src.domain import drive_answer_texts as t
+    from src.infrastructure.agent_manifest import DRIVE_SPECIALIST, Intent
+    smart = DRIVE_SPECIALIST.capability_descriptions[Intent.WORK_WITH_DRIVE_FILES]
+    for phrase in ("what is written inside (a subject, a phrase, a number, an amount)", "scans"):
+        assert phrase in smart, phrase
+    assert "what is written in them" in _DESCRIPTION
+    assert t.R_PASSAGE.startswith("A passage is a window cut from the file around what matched.")
 
 
 def test_content_words_go_into_drive_query():

@@ -32,7 +32,8 @@ def test_the_date_filter_still_says_photos_go_by_when_they_were_taken():
     assert "a photo's taken date" in _SCHEMA["drive_date_from"]
 
 
-def test_the_context_template_names_what_to_find_inside():
-    template = _DESCRIPTION[_DESCRIPTION.index("Context: "):]
-    assert ('"drive_query": "<the subject, a document type or purpose, or words, a number or an amount to find '
-            'inside>"') in template
+# Reviewer: test_the_context_template_names_what_to_find_inside retired at the cut. Smart's delegate Context template
+# went with the search intent (DRIVE_SPECIALIST_RFC §4.1); what can be searched inside is pinned on the field the
+# searcher reads by test_agent_manifest_drive_content.py::test_content_words_go_into_drive_query (`search_drive.query`:
+# a document type or purpose, or what to find inside: a phrase, a number, an amount, an id), and Smart's commission
+# carries "the words to find as the user wrote them" (test_agent_manifest_drive_specialist.py, the §4.1 text).

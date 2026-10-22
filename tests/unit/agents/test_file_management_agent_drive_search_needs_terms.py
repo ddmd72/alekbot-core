@@ -7,7 +7,6 @@ from unittest.mock import AsyncMock
 import pytest
 
 from src.domain.drive_search import STATUS_OK, DriveSearchResult
-from src.infrastructure.agent_manifest import FILE_MANAGEMENT, Intent
 from src.infrastructure.drive_operations import DriveOperations
 from src.services.drive_search_service import DriveSearchService
 from src.services.file_conversion_service import FileConversionService
@@ -59,17 +58,23 @@ async def test_name_words_or_any_filter_is_enough(search, payload):
 
 
 def test_the_query_field_description_says_it_is_required_and_what_goes_in_it():
-    text = FILE_MANAGEMENT.context_schemas[Intent.SEARCH_FILES_IN_DRIVE]["drive_query"]
+    # Reviewer edit at the cut (DRIVE_SPECIALIST_RFC §7.6, §8.1): the field is the specialist's `search_drive.query`;
+    # field names become parameter names, and the intent prefix and the "`query` field is not read" clause go (§7.6).
+    # Today's intent sentence on filter-only requests moves to the specialist's PROTOCOL_DRIVE_SEARCH, renamed.
+    from pathlib import Path
+    from src.domain import drive_tool_texts as tt
+    text = tt.QUERY
     assert "REQUIRED unless the request is filter-only" in text
-    assert "`query` field is not read" in text
-    # Search v2 (D25, §25.13.6): document types are allowed, a file format goes in drive_kind and a time span in
-    # the date fields (v1's "no type words" and "dates written inside go in drive_query" are reversed by D25)
+    assert "is not read" not in text and "search_files_in_drive" not in text
+    # Search v2 (D25, §25.13.6): document types are allowed, a file format goes in kind and a time span in
+    # the date fields (v1's "no type words" and "dates written inside go in query" are reversed by D25)
     assert "a place, a person, a topic, a document type or purpose" in text
-    assert "A file format goes in drive_kind" in text
-    assert "goes in drive_date_from / drive_date_to, not in the words" in text
-    assert "no type words" not in text.lower() and "Dates written inside the document go in drive_query" not in text
-    intent = FILE_MANAGEMENT.capability_descriptions[Intent.SEARCH_FILES_IN_DRIVE]
-    assert "drive_query is required unless" in intent
+    assert "A file format goes in kind" in text
+    assert "goes in date_from / date_to, not in the words" in text
+    assert "no type words" not in text.lower() and "Dates written inside the document go in query" not in text
+    token = (Path(__file__).resolve().parents[3] / "prompts_snapshot" / "tokens" / "system"
+             / "PROTOCOL_DRIVE_SEARCH.groovy").read_text(encoding="utf-8").split("\n---\n", 1)[1]
+    assert "query is required unless the request is filter-only" in token
 
 
 def test_the_eval_refuses_what_the_agent_refuses():

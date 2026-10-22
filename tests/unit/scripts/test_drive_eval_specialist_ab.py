@@ -103,6 +103,36 @@ async def test_the_cost_stop_skips_the_next_case_when_the_dearest_would_pass_the
     assert ran == ["a"] and "would pass --max-usd 1.0" in stopped
 
 
+async def test_the_owner_run_sends_each_repeat_to_its_case(monkeypatch, tmp_path):
+    """Re-review of part B (mutant #11 of specialist_ab, not equivalent): `_run` hands run_case the repeat it is on,
+    so each repeat gets its own session (`…:<case>:<repeat>`) and its rows are labelled; dropping it would replay
+    repeat 0's history into every later repeat. The world (Firestore, models) is a stand-in; nothing is called."""
+    import argparse
+    from scripts.validation.drive_eval import specialist_ab as ab
+    seen = []
+    world = SimpleNamespace(smart=object(), dispatcher=object(), drive_log=object(), sessions=object(),
+                            meter=Meter(max_usd=5.0), user_id="u1", account_id="a1", restore=[])
+
+    async def build_world(args, gold):
+        return world
+
+    async def run_case(case, **kw):
+        seen.append((case["id"], kw["repeat"], kw["user_id"], kw["account_id"]))
+        return {"id": case["id"], "repeat": kw["repeat"], "correct": True, "round_trips": 1, "smart_llm_calls": 1,
+                "specialist_llm_calls": 1, "wall_s": 1.0, "usd": 0.0, "failures": []}
+
+    monkeypatch.setattr(ab, "build_world", build_world)
+    monkeypatch.setattr(ab, "run_case", run_case)
+    monkeypatch.setattr(ab, "write_report", lambda rows, meta, comparison: (tmp_path / "r.json", tmp_path / "r.md"))
+    monkeypatch.setattr(ab, "markdown", lambda rows, meta, comparison: "")
+    gold = tmp_path / "gold.json"
+    gold.write_text(json.dumps([{"id": "c1"}, {"id": "c2"}]), encoding="utf-8")
+    args = argparse.Namespace(gold=gold, cases="", repeats=2, compare=None, compare_design="", smart_model="",
+                              max_usd=5.0)
+    assert await ab._run(args) == ab.EXIT_OK
+    assert seen == [("c1", 0, "u1", "a1"), ("c2", 0, "u1", "a1"), ("c1", 1, "u1", "a1"), ("c2", 1, "u1", "a1")]
+
+
 def _rows(walls, correct=True):
     return [{"id": f"c{i}", "correct": correct, "wall_s": w, "smart_llm_calls": 2, "specialist_llm_calls": 3,
              "usd": 0.1} for i, w in enumerate(walls)]
