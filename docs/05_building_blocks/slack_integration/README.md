@@ -21,7 +21,7 @@ To handle Slack's strict 3-second timeout and prevent double-processing, the HTT
 2. **Verification:** `HTTPModeAdapter` verifies the `X-Slack-Signature` using HMAC-SHA256.
 3. **Enqueue:** The event is enqueued to **Google Cloud Tasks** under a deterministic task name derived from the `event_id`; `ALREADY_EXISTS` (Slack's retry) means it is already queued. There is no separate dedup store.
 4. **Response:** The adapter immediately returns `200 OK` to Slack.
-5. **Worker:** Cloud Tasks triggers the `/worker` endpoint; `WorkerHandler` claims the delivery by task name (a redelivery is skipped, `decisions/worker_task_dedup.md`) and executes the `ConversationHandler`. A busy session waits in-process up to 100 s, then the event is re-queued under a named task (max 12 x 15 s), then a "resend" notice is posted.
+5. **Worker:** Cloud Tasks triggers the `/worker` endpoint; `WorkerHandler` claims the delivery by task name (a redelivery is skipped, `decisions/worker_task_dedup.md`) and executes the `ConversationHandler`. The lock key is the Slack thread (`thread_ts`, else the message `ts`), released by a first turn at the 90 s long-turn mark. A busy thread waits up to 100 s, then the event is re-queued under a named task (max 12 x 15 s), then a "resend" notice is posted; a redelivery that finds the lock busy re-queues at once.
 
 ### 2.2 Blueprint Pattern
 
