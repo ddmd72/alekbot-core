@@ -81,8 +81,7 @@ class FactManagementAdapter(FactManagementPort):
         try:
             logger.info(
                 f"🔍 [FactManagement] Multi-vector search: "
-                f"keywords={keywords[:3]}{'...' if len(keywords) > 3 else ''}, "
-                f"primary='{primary_query[:40]}...', limit={limit}"
+                f"keywords={len(keywords)}, primary_len={len(primary_query)}, limit={limit}"
             )
             
             # Call SearchEnrichmentService with consolidation mode
@@ -127,7 +126,7 @@ class FactManagementAdapter(FactManagementPort):
                     f"similarity={sim_str} "
                     f"source={result['source']} "
                     f"domain={result['domain']} "
-                    f"content='{result['content'][:60]}...'"
+                    f"content_len={len(result['content'])}"
                 )
 
             logger.info(
@@ -153,12 +152,10 @@ class FactManagementAdapter(FactManagementPort):
             Result dict with fact_id, status, message
         """
         try:
-            # 🔍 DEBUG: Log full tool call for analysis
+            # Fact text and metadata values are personal data: log shapes only.
             logger.info(
-                f"🔧 [FactManagement] create_fact() TOOL CALL:\n"
-                f"   content='{content[:80]}...'\n"
-                f"   metadata keys={list(metadata.keys())}\n"
-                f"   metadata={metadata}"
+                f"🔧 [FactManagement] create_fact() TOOL CALL: "
+                f"content_len={len(content)} metadata keys={list(metadata.keys())}"
             )
             
             # Validate required fields
@@ -197,9 +194,9 @@ class FactManagementAdapter(FactManagementPort):
             )
 
             if saved:
-                logger.info(f"✅ [FactManagement] Created fact: '{content[:50]}...'")
+                logger.info(f"✅ [FactManagement] Created fact (content_len={len(content)})")
             else:
-                logger.warning(f"⚠️  [FactManagement] Failed to create fact: '{content[:50]}...'")
+                logger.warning(f"⚠️  [FactManagement] Failed to create fact (content_len={len(content)})")
 
             return {
                 "fact_id": saved_ids[0] if saved_ids else None,
