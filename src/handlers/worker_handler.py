@@ -590,7 +590,7 @@ class WorkerHandler:
                 report_dedup_id=job_id,
             )
             if not handed_off:
-                # deliver_deep_research already told the user; a retry would upload and tell again.
+                # deliver_deep_research has notified the user (or logged that the notice failed); a retry would upload and notify again.
                 logger.error("[DeepResearch] report task not enqueued: job=%s user=%s", job_id[:16], user_id[:8])
                 return {"status": "report_not_enqueued"}, 200
             logger.info("[DeepResearch] report delivered: user=%s job=%s", user_id[:8], job_id[:16])
