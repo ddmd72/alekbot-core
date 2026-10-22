@@ -231,7 +231,7 @@ auth: ## Authenticate with Google Cloud
 # them) and run only via `make test-timing`: in CI after a merge to main (job `timing`), or by hand.
 PYTEST_WORKERS ?= auto
 PYTEST_XDIST = $(shell $(PYTHON) -c "import xdist" 2>/dev/null && echo yes)
-# --durations=25 is an advisory report of the slowest tests; the 1 s per-test budget is enforced on CI only
+# --durations=25 is an advisory report of the slowest tests; the 1 s per-test budget is a CI warning, never a gate
 # (tests/plugins/duration_budget.py). The PR job sets PYTEST_DURATION_BUDGET_S for `make ci`; it is not exported to
 # recipes, and only the unit run in `test-ci` receives it (the G2 end-to-end test runs a whole indexer tick, ~14 s).
 PYTEST_DURATION_BUDGET_S ?=

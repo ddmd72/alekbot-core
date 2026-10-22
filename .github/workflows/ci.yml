@@ -30,8 +30,9 @@ jobs:
 
       - name: make ci
         # make ci = ruff check src/ + mypy (domain/ports) + the unit suite once (slow tests, data-file audit,
-        # coverage gate) + the offline G2 end to end. The 1 s per-test budget is enforced here and nowhere else:
-        # a test over it that is not `slow` fails the run (tests/plugins/duration_budget.py).
+        # coverage gate) + the offline G2 end to end. The 1 s per-test budget is a WARNING, never a gate (owner
+        # decision 2026-10-22: wall-clock limits flake on the runner): tests over it are listed in the log and as a
+        # `::warning` annotation; an offender that keeps showing up gets `slow` (tests/plugins/duration_budget.py).
         # No secrets: the unit suite mocks all I/O at the port/SDK boundary.
         # A hung test otherwise holds the job for GitHub's 6 h default.
         timeout-minutes: 30

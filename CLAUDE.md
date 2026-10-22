@@ -81,10 +81,11 @@ job after a merge to `main` (never on a PR), or by hand. A new test with a time 
 never put timing tests back into `make check`, and never re-run a suite because a timing test failed.
 **Slow tests, the data-file set and the per-test budget (P1, 2026-10-22).** `@pytest.mark.slow` mirrors `timing`: a
 test over 0.5 s with coverage on (setup + call + teardown; half the 1 s CI budget, for headroom) is skipped unless `RUN_SLOW_TESTS=1`,
-which `make ci` sets; so `make check` stays fast and `make ci` runs everything once. The budget itself is enforced only
-on CI: the PR job sets `PYTEST_DURATION_BUDGET_S=1.0` and the run fails, listing the offenders slowest first, when an
-unmarked test exceeds it (a loaded laptop would give the false failures `timing` removed; locally `--durations=25` is an
-advisory report). `@pytest.mark.datafile` marks a test testmon cannot select (its input is a data file, a `.py` read as
+which `make ci` sets; so `make check` stays fast and `make ci` runs everything once. The budget itself is a CI warning,
+never a gate (owner decision 2026-10-22: wall-clock limits flake on the runner): the PR job sets
+`PYTEST_DURATION_BUDGET_S=1.0` and the run lists the unmarked offenders slowest first (and as a GitHub `::warning`
+annotation) without changing its exit status; an offender that keeps showing up gets `slow`. Locally `--durations=25` is
+an advisory report. `@pytest.mark.datafile` marks a test testmon cannot select (its input is a data file, a `.py` read as
 text, or code in a child process); `make test-affected` runs `--testmon -m "not datafile"` then `-m datafile` (the
 always-run set), seeds `.testmondata` from the main checkout in a new worktree, and never combines testmon with
 coverage. `make ci` runs with `PYTEST_DATAFILE_AUDIT=1`: an audit hook fails the run when an unmarked test reads a file
