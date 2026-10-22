@@ -177,18 +177,32 @@ async def test_the_draft_reader_skips_expired_drafts_and_reads_the_rest_through_
 
     snaps = [SimpleNamespace(id="u1:live", to_dict=lambda: {"expires_at": NOW + timedelta(days=1)}),
              SimpleNamespace(id="u1:old", to_dict=lambda: {"expires_at": NOW - timedelta(days=1)})]
+    other = [SimpleNamespace(id="u2:theirs", to_dict=lambda: {"expires_at": NOW + timedelta(days=1)})]
 
     class Query:
+        """The drafts collection: unfiltered it streams every user's drafts; filtered by user_id, the user's."""
+
+        def __init__(self, docs):
+            self.docs = docs
+
         def where(self, filter):
             assert (filter.field_path, filter.op_string, filter.value) == ("user_id", "==", "u1")
-            return self
+            return Query(snaps)
 
         async def stream(self):
-            for snap in snaps:
+            for snap in self.docs:
                 yield snap
 
     draft = SimpleNamespace(name="drive-sort", description="d", body="b")
     skills = SimpleNamespace(get_draft=AsyncMock(return_value=draft), get_draft_files=AsyncMock(return_value={}))
-    out = await script._DraftReader(Query(), skills).list_drafts("u1", NOW)
+    out = await script._DraftReader(Query(snaps + other), skills).list_drafts("u1", NOW)
     assert out == [("live", draft, {})]
     skills.get_draft.assert_awaited_once_with("u1", "live")
+
+
+async def test_the_rollback_scan_writes_its_hits_on_the_new_intent(tmp_path, monkeypatch):
+    monkeypatch.setattr(script, "_MEMORY", tmp_path)
+    items = [ScanItem("reminder", "n9", "Ask work_with_drive_files for the new scans")]
+    _, before = script.write_outputs(tmp_path / "before", items, {}, [], include_new=False)
+    report, after = script.write_outputs(tmp_path / "after", items, {}, [], include_new=True)
+    assert before == 0 and after == 1 and NEW_INTENT in report.read_text()

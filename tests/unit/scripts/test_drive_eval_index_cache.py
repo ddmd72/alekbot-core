@@ -82,3 +82,39 @@ async def test_an_unreadable_cache_file_is_rebuilt(tmp_path):
     cached.write_bytes(b"not a pickle")
     _, facts = await load_or_build(_builder(drive, EvalClock(), builds), clock=EvalClock(), **kwargs)
     assert builds == [1, 1] and facts["cache"] == "miss"
+
+
+def test_every_input_the_build_reads_is_in_the_key(tmp_path, monkeypatch):
+    """Each input changes the key on its own, so a changed tree, drive byte, fixture module or version is never served a
+    stale index (the key would otherwise hide a change in that input)."""
+    from types import SimpleNamespace
+
+    from scripts.validation.drive_eval import index_cache
+
+    tree, snapshot = _inputs(tmp_path)
+    drive = SimpleNamespace(content_sha256=lambda: "content-a")
+    base = cache_key((tree,), snapshot, drive, "fake/8")
+    renamed = tmp_path / "tree_other.json"
+    renamed.write_text(tree.read_text(encoding="utf-8"), encoding="utf-8")
+    assert cache_key((renamed,), snapshot, drive, "fake/8") != base                          # the tree's name
+    tree.write_text(tree.read_text(encoding="utf-8") + " ", encoding="utf-8")
+    assert cache_key((tree,), snapshot, drive, "fake/8") != base                             # the tree's bytes
+    tree, snapshot = _inputs(tmp_path)
+    assert cache_key((tree,), snapshot, SimpleNamespace(content_sha256=lambda: "content-b"), "fake/8") != base
+    code = tmp_path / "code"
+    code.mkdir()
+    (code / "fixture_texts.py").write_text("A = 1\n", encoding="utf-8")
+    monkeypatch.setattr(index_cache, "_HERE", code)
+    with_code = cache_key((tree,), snapshot, drive, "fake/8")
+    assert with_code != base                                                                  # a fixture module
+    (code / "fixture_texts.py").rename(code / "fixture_drive.py")
+    assert cache_key((tree,), snapshot, drive, "fake/8") != with_code                        # which module holds it
+    (code / "fixture_drive.py").rename(code / "fixture_texts.py")
+    (code / "fixture_texts.py").write_text("A = 2\n", encoding="utf-8")
+    before_versions = cache_key((tree,), snapshot, drive, "fake/8")
+    assert before_versions != with_code                                                       # its bytes
+    monkeypatch.setattr(index_cache, "code_versions", lambda: {"KEYS_VERSION": 99})
+    with_versions = cache_key((tree,), snapshot, drive, "fake/8")
+    assert with_versions != before_versions                                                   # a *_VERSION
+    monkeypatch.setattr(index_cache, "CACHE_FORMAT", index_cache.CACHE_FORMAT + 1)
+    assert cache_key((tree,), snapshot, drive, "fake/8") != with_versions                    # the cache format
