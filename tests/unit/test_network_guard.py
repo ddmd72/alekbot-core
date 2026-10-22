@@ -1,0 +1,184 @@
+"""H3: the unit suite cannot leave the machine (tests/unit/conftest.py, tests/support/network_guard.py)."""
+
+import asyncio
+import socket
+
+import google.auth
+import grpc
+import grpc.aio
+import pytest
+from pytest_socket import SocketConnectBlockedError
+
+from tests.support import network_guard
+from tests.support.plugin_runs import isolate_switches, plugin_conftest
+
+pytest_plugins = ["pytester"]
+
+PUBLIC_IP = "203.0.113.7"  # TEST-NET-3: never routed, and the guard must refuse before any packet leaves
+
+
+def _listener(family=socket.AF_INET, host="127.0.0.1"):
+    server = socket.socket(family, socket.SOCK_STREAM)
+    server.bind((host, 0))
+    server.listen(1)
+    return server
+
+
+class TestSocketGuard:
+    def test_connect_to_a_public_address_raises(self):
+        client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            with pytest.raises(SocketConnectBlockedError, match=PUBLIC_IP):
+                client.connect((PUBLIC_IP, 443))
+        finally:
+            client.close()
+
+    def test_connect_to_a_public_ipv6_address_raises(self):
+        try:
+            client = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+        except OSError:
+            pytest.skip("no IPv6 on this machine")
+        try:
+            with pytest.raises(SocketConnectBlockedError):
+                client.connect(("2001:db8::1", 443, 0, 0))
+        finally:
+            client.close()
+
+    def test_create_connection_to_a_public_address_raises(self):
+        with pytest.raises(SocketConnectBlockedError):
+            socket.create_connection((PUBLIC_IP, 443), timeout=1)
+
+    def test_connect_to_loopback_works(self):
+        server = _listener()
+        try:
+            with socket.create_connection(server.getsockname(), timeout=2) as client:
+                conn, _ = server.accept()
+                client.sendall(b"ping")
+                assert conn.recv(4) == b"ping"
+                conn.close()
+        finally:
+            server.close()
+
+    def test_connect_to_ipv6_loopback_works(self):
+        try:
+            server = _listener(socket.AF_INET6, "::1")
+        except OSError:
+            pytest.skip("no IPv6 loopback on this machine")
+        try:
+            with socket.create_connection(server.getsockname()[:2], timeout=2):
+                conn, _ = server.accept()
+                conn.close()
+        finally:
+            server.close()
+
+    def test_connect_to_a_unix_socket_works(self, tmp_path):
+        path = str(tmp_path / "s.sock")
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        server.bind(path)
+        server.listen(1)
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                client.connect(path)
+                conn, _ = server.accept()
+                conn.close()
+        finally:
+            server.close()
+
+    def test_a_fresh_event_loop_works(self):
+        loop = asyncio.new_event_loop()  # builds a socketpair: creation must stay allowed
+        try:
+            assert loop.run_until_complete(asyncio.sleep(0, "ok")) == "ok"
+        finally:
+            loop.close()
+
+    async def test_asyncio_reaches_loopback_and_not_the_internet(self):
+        async def handle(reader, writer):
+            writer.write(await reader.read(4))
+            await writer.drain()
+            writer.close()
+
+        server = await asyncio.start_server(handle, "127.0.0.1", 0)
+        port = server.sockets[0].getsockname()[1]
+        try:
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+            writer.write(b"echo")
+            assert await reader.read(4) == b"echo"
+            writer.close()
+            with pytest.raises(SocketConnectBlockedError):
+                await asyncio.open_connection(PUBLIC_IP, 443)
+        finally:
+            server.close()
+            await server.wait_closed()
+
+
+class TestGrpcTripwire:
+    def test_google_auth_default_raises_with_the_rule(self):
+        with pytest.raises(network_guard.NetworkGuardError, match="google.auth.default"):
+            google.auth.default()
+
+    def test_secure_channel_to_a_google_host_raises_and_says_how_to_fix_it(self):
+        with pytest.raises(network_guard.NetworkGuardError) as raised:
+            grpc.secure_channel("firestore.googleapis.com:443", grpc.ssl_channel_credentials())
+        assert "firestore.googleapis.com:443" in str(raised.value)
+        assert "tests/integration" in str(raised.value) and "fake" in str(raised.value)
+
+    def test_secure_channel_to_localhost_passes(self):
+        for target in ("localhost:50051", "127.0.0.1:50051", "[::1]:50051", "dns:///localhost:50051"):
+            grpc.secure_channel(target, grpc.ssl_channel_credentials()).close()
+
+    async def test_aio_secure_channel_to_a_google_host_raises(self):
+        with pytest.raises(network_guard.NetworkGuardError, match="grpc.aio.secure_channel"):
+            grpc.aio.secure_channel("firestore.googleapis.com:443", grpc.ssl_channel_credentials())
+
+    async def test_aio_secure_channel_to_localhost_passes(self):
+        channel = grpc.aio.secure_channel("localhost:50051", grpc.ssl_channel_credentials())
+        await channel.close()
+
+    def test_a_look_alike_host_is_not_loopback(self):
+        with pytest.raises(network_guard.NetworkGuardError):
+            grpc.secure_channel("localhost.evil.example:443", grpc.ssl_channel_credentials())
+
+    @pytest.mark.parametrize(
+        "target, host",
+        [
+            ("firestore.googleapis.com:443", "firestore.googleapis.com"),
+            ("dns:///localhost:8080", "localhost"),
+            ("dns://8.8.8.8/example.com:443", "example.com"),
+            ("ipv4:127.0.0.1:80", "127.0.0.1"),
+            ("[::1]:50051", "::1"),
+            ("::1", "::1"),
+            ("localhost", "localhost"),
+            (b"localhost:1", "localhost"),
+        ],
+    )
+    def test_target_host(self, target, host):
+        assert network_guard.target_host(target) == host
+
+    def test_unix_targets_are_local(self):
+        assert network_guard.is_loopback_target("unix:/tmp/x.sock")
+        assert not network_guard.is_loopback_target("10.0.0.1:80")
+
+
+class TestGuardIsPerTest:
+    def test_install_is_undone_after_a_test(self, pytester, monkeypatch):
+        """The patches go through monkeypatch and pytest-socket's teardown: nothing leaks into the next test."""
+        isolate_switches(monkeypatch)
+        original = grpc.secure_channel
+        pytester.makeconftest(plugin_conftest("network_guard"))
+        pytester.makepyfile(
+            test_inner="""
+import socket
+import pytest
+
+def test_blocked():
+    with pytest.raises(RuntimeError, match="203.0.113.7"):
+        socket.create_connection(("203.0.113.7", 443), timeout=1)
+
+def test_public_connect_fails_the_test():
+    socket.create_connection(("203.0.113.7", 443), timeout=1)
+"""
+        )
+        result = pytester.runpytest("-p", "no:cacheprovider", "-rA")
+        result.assert_outcomes(passed=1, failed=1)
+        result.stdout.fnmatch_lines(["PASSED test_inner.py::test_blocked", "FAILED test_inner.py::test_public_connect_fails_the_test*"])
+        assert grpc.secure_channel is original
