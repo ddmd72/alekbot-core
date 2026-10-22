@@ -5,7 +5,7 @@ from google.cloud import firestore
 from google.cloud.firestore import FieldFilter
 from google.cloud.firestore_v1.vector import Vector
 from google.cloud.firestore_v1.base_vector_query import DistanceMeasure
-from ..domain.entities import FactEntity, FactState, FactType
+from ..domain.entities import FactEntity, FactState
 from ..domain.fact_lifecycle import lifecycle_fields
 from ..domain.vector_math import cosine_similarity
 from ..domain.deduplication_service import SmartDeduplication
@@ -79,15 +79,8 @@ class FirestoreFactRepository(FactRepository):
         self._dedup_service = dedup_service or SmartDeduplication()
 
         # Environment-aware collection names (ADR-006 Semantic Naming)
-        # Note: observations are legacy/deprecated, keeping logic for now but marking as such
-        prefix = env_config.firestore_collection_prefix
-        
         # ADR-006: Use semantic domain_facts_v2
         self.facts_col = self.db.collection(env_config.domain_facts_collection)
-        
-        # Legacy/Infra collections
-        self.obs_col = self.db.collection(f"{prefix}observations_deprecated")
-        self.obs_archive_col = self.db.collection(f"{prefix}observations_archive_deprecated")
         
         # ADR-006: Infra collection (stable name)
         self.user_context_col = self.db.collection(env_config.user_context_collection)
@@ -194,15 +187,6 @@ class FirestoreFactRepository(FactRepository):
             data = self._migrate_ownership_fields(data)
             return FactEntity(**data)
         return None
-
-    async def get_facts_by_ids(self, fact_ids: List[str]) -> List[FactEntity]:
-        """Parallel fetch of multiple facts by ID. Missing facts are omitted."""
-        if not fact_ids:
-            return []
-        results = await asyncio.gather(
-            *[self.get_fact_by_id(fid) for fid in fact_ids]
-        )
-        return [f for f in results if f is not None]
 
     @log_execution_time
     async def get_active_facts(self, owner_id: str, tags: Optional[List[str]] = None) -> List[FactEntity]:
@@ -563,81 +547,6 @@ class FirestoreFactRepository(FactRepository):
 
         return None
 
-    async def add_observation(self, observation: Dict[str, Any], owner_id: str) -> None:
-        """
-        Add observation for a user/account.
-
-        Args:
-            observation: Observation data
-            owner_id: Account ID (parameter name kept for backward compatibility)
-        """
-        doc_id = observation.get("id") or f"obs_{datetime.datetime.now(datetime.timezone.utc).timestamp()}"
-        # Store as account_id for new schema, but keep owner_id for backward compatibility
-        observation['account_id'] = owner_id
-        observation['owner_id'] = owner_id  # Keep for backward compatibility
-        await self.obs_col.document(doc_id).set(observation)
-
-    @log_execution_time
-    async def get_observations(self, owner_id: str, limit: int = 50) -> List[Dict[str, Any]]:
-        """
-        Get observations for an account.
-
-        Args:
-            owner_id: Account ID (parameter name kept for backward compatibility)
-        """
-        # Try new field first
-        query = self.obs_col.where(filter=FieldFilter("account_id", "==", owner_id)).limit(limit)
-        docs = await query.get()
-
-        # Fallback to legacy field if no results
-        if not docs:
-            query = self.obs_col.where(filter=FieldFilter("owner_id", "==", owner_id)).limit(limit)
-            docs = await query.get()
-
-        results = []
-        for doc in docs:
-            results.append(doc.to_dict())
-        return results
-
-    async def archive_observations(self, observation_ids: List[str], owner_id: str) -> None:
-        """
-        Archive observations for an account.
-
-        Args:
-            observation_ids: List of observation IDs to archive
-            owner_id: Account ID (parameter name kept for backward compatibility)
-        """
-        # Production safety check
-        self._check_production_safety("archive_observations")
-
-        # Use Firestore Batch API for atomic operations
-        batch = self.db.batch()
-        archived_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
-
-        # First, read all observations to verify ownership
-        observations_to_archive = []
-        for obs_id in observation_ids:
-            doc = await self.obs_col.document(obs_id).get()
-            if doc.exists:
-                data = doc.to_dict()
-                # Verify ownership before archiving (check both new and old fields)
-                account_id = data.get('account_id') or data.get('owner_id')
-                if account_id == owner_id:
-                    data['archived_at'] = archived_at
-                    observations_to_archive.append((obs_id, data))
-                else:
-                    logger.warning(f"⚠️ Skipping archive for observation {obs_id}: Owner mismatch")
-
-        # Batch write: copy to archive + delete from observations
-        for obs_id, data in observations_to_archive:
-            batch.set(self.obs_archive_col.document(obs_id), data)
-            batch.delete(self.obs_col.document(obs_id))
-
-        # Commit all operations atomically
-        if observations_to_archive:
-            await batch.commit()
-            logger.info(f"✅ Archived {len(observations_to_archive)} observations in batch")
-
     async def add_fact_if_unique(
         self, 
         fact: FactEntity, 
@@ -730,53 +639,6 @@ class FirestoreFactRepository(FactRepository):
         # No duplicate found (or smart dedup said NOT duplicate), add the fact
         fact_id = await self.add_fact(fact)
         return True, fact_id
-
-    def _check_production_safety(self, operation: str) -> None:
-        """
-        Check if dangerous operations are allowed in production environment.
-
-        Args:
-            operation: Name of the dangerous operation
-
-        Raises:
-            PermissionError: If operation is blocked in production
-        """
-        if self.env_config.is_production:
-            dangerous_ops = [
-                "archive_observations",  # This deletes observations
-                "delete_all_facts",      # Would be added if we had this method
-                "rebuild_memory",        # Would be added if we had this method
-            ]
-
-            if operation in dangerous_ops:
-                raise PermissionError(
-                    f"❌ Operation '{operation}' blocked in PRODUCTION environment. "
-                    "This operation could delete or modify production data. "
-                    "Use explicit override if absolutely necessary."
-                )
-
-    async def get_biographical_context(
-        self,
-        owner_id: str,
-        limit: int = 100
-    ) -> List[FactEntity]:
-        """
-        Legacy method for backward compatibility.
-        Delegates to cached version.
-
-        Args:
-            owner_id: Account ID (kept as owner_id for backward compatibility)
-        """
-        cached_dicts = await self.get_biographical_context_cached(owner_id, limit)
-        return [FactEntity(
-            account_id=owner_id,
-            created_by_user_id=owner_id,  # Assume same for biographical facts
-            lineage_id="", # Metadata only
-            text=d["text"],
-            tags=d["tags"],
-            type=FactType(d["type"]),
-            is_current=True
-        ) for d in cached_dicts]
 
     async def refresh_biographical_context_cache(
         self, 
