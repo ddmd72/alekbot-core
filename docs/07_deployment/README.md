@@ -521,7 +521,7 @@ first; the protocol is restored right before the deploy of the revert, never ear
    names a removed intent) for every drive turn until the revert ships.
 5. Open the PR of the revert branch (the `main` ruleset refuses a direct push; CI runs on it), then `snapshot_pull.py`
    and commit the mirror in a PR.
-6. Texts written after the deploy: `drive_intent_text_scan --include-new` finds `work_with_drive_files` in reminders,
+6. Texts written after the deploy: `$PY -m scripts.validation.drive_intent_text_scan --include-new` finds `work_with_drive_files` in reminders,
    the workspace, skills and directives; back up and rewrite each intent-free (a stale one costs one self-corrected
    rejected call). The drive, the index and the receipts are written by the same code in both versions; the new drive
    tokens can stay. If the drive notes change was built on top, revert it first.
@@ -530,7 +530,11 @@ first; the protocol is restored right before the deploy of the revert, never ear
 instance that cold-started since step 7 keeps a template built on the new protocol for up to 24 h. Restore the protocol
 as in rollback step 2 (from the mirror file of the commit before the merge:
 `git show <merge>^1:prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy > prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy`,
-dry run, `--apply`), then redeploy the **current** image as a new revision (fresh instances), or retry the deploy.
+dry run, `--apply`), then redeploy the **current** image as a new revision (fresh instances):
+`gcloud run services update <SERVICE> --region=us-central1 --project=<PROJECT_ID> --update-env-vars=REDEPLOY_AT=$(date +%s)`
+(a new revision of the same image; names from `.env`). To retry the deploy instead, first
+`git checkout -- prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy`, then rerun step 7's second
+`--apply` immediately before `make deploy`: the restored old protocol must not meet the new code.
 
 Two windows are accepted, each costing at most **two** self-corrected calls per drive turn: between step 7 and the new
 revision serving, a cold instance of the old revision builds Smart's prompt with the new protocol
