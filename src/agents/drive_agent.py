@@ -53,9 +53,12 @@ if TYPE_CHECKING:
     from ..ports.prompt_builder_port import PromptBuilderPort
 
 AGENT_TYPE = "drive"
+ALERT_TIMEOUT_S = 5.0   # the turn-cap alert never holds the answer back: a hanging sink must not turn it into a timeout (X9)
 # Payload keys the commission may carry besides `query` and `file_contents` (accept liberally, §4.2): shown to the
 # model as part of the commission, never rejected.
-_STRAY_FIELDS = ("file_ref", "folder")
+# The Smart-era drive fields are here too: a stale skill, reminder or history block can still tell Smart to set them (X12).
+_STRAY_FIELDS = ("file_ref", "folder", "drive_query", "drive_folder", "drive_kind", "drive_date_from", "drive_date_to",
+                 "drive_deleted", "new_name", "source_ref", "original", "name")
 _STRAY_HEADER = "Also given with the commission:"
 
 
@@ -254,7 +257,8 @@ class DriveAgent(BaseAgent):
         if turn_cap:
             await self._report_turn_cap(user_id, tools_per_turn)
         report = DriveReport.of(outcome.terminal_tool_args if outcome else None, outcome.text if outcome else "")
-        answer = compose_answer(collector, report, cut=cut, drive_line=preflight.drive)
+        answer = compose_answer(collector, report, cut=cut, drive_line=preflight.drive,
+                                search_line=preflight.search)
         return self._answer(message, answer, collector, started, turns=run.step,
                             delivery_items=list(outcome.delivery_items) if outcome else [])
 
@@ -266,9 +270,10 @@ class DriveAgent(BaseAgent):
         if self._alert_sink is None:
             return
         try:
-            await self._alert_sink.post(
+            await asyncio.wait_for(self._alert_sink.post(
                 f"🚨 Drive specialist hit the turn limit without a report | model {self.model_name} | "
-                f"turns {len(tools_per_turn)}/{DRIVE.max_turns} | user {user_id[:8]}\n{sequence}")
+                f"turns {len(tools_per_turn)}/{DRIVE.max_turns} | user {user_id[:8]}\n{sequence}"),
+                timeout=ALERT_TIMEOUT_S)
         except Exception as exc:
             logger.warning("[DriveAgent] ops alert delivery failed: %s", exc)
 
@@ -277,7 +282,7 @@ class DriveAgent(BaseAgent):
         """The commission as the model reads it; stray fields are part of it, never rejected (§4.2)."""
         text = str(payload.get("query") or "")
         stray = [f"{name}: {payload[name]}" for name in _STRAY_FIELDS
-                 if isinstance(payload.get(name), str) and payload[name]]
+                 if isinstance(payload.get(name), (str, bool)) and payload[name] not in ("", False)]
         return "\n\n".join([text, _STRAY_HEADER + "\n" + "\n".join(stray)]) if stray else text
 
     def _answer(self, message: AgentMessage, answer: DriveAnswer, collector: PassThroughCollector, started: float, *,
