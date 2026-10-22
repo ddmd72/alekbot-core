@@ -738,9 +738,6 @@ async def test_refresh_without_a_context_service_does_nothing(store):
     assert _cache(store) is None
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
-    "known defect: refresh_biographical_context_cache ignores facts_limit/principles_limit and the service uses its own "
-    "config — src/adapters/firestore_repo.py:817-818 (P4 T2 arbiter log, defect 3)"))
 async def test_refresh_holds_at_most_facts_limit_facts(store):
     for i in range(4):
         await store.repo.add_fact(make_fact(f"bio {i}", domain=FactDomain.BIOGRAPHICAL, age_days=i))
@@ -790,9 +787,6 @@ async def test_cached_context_missing_or_empty_cache_returns_empty(store):
     assert await store.repo.get_biographical_context_cached(ACC) == []
 
 
-@pytest.mark.xfail(strict=True, raises=pytest.fail.Exception, reason=(
-    "known defect: get_biographical_context_cached swallows a backend failure and returns [] where the contract raises "
-    "(Lelik fails the call closed on it) — src/adapters/firestore_repo.py:914-916"))
 async def test_cached_context_raises_on_a_backend_failure(store, monkeypatch):
     def boom(_doc_id):
         raise RuntimeError("backend down")
