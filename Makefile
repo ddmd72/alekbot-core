@@ -102,7 +102,7 @@ K ?= 300
 
 .PHONY: help
 .PHONY: install install-dev clean auth
-.PHONY: test test-unit test-coverage test-integration test-g2-offline lint format check
+.PHONY: test test-unit test-coverage test-integration test-cloud test-g2-offline lint format check
 .PHONY: deploy deploy-indexes
 .PHONY: start stop restart
 .PHONY: logs logs-tail logs-tail-clean logs-tail-full logs-perf fetch-logs
@@ -142,6 +142,7 @@ help: ## Show this help message
 	@echo "  make ci              PR job: lint + mypy + unit suite once (slow tests, coverage gate) + G2"
 	@echo "  make test-coverage   Unit tests + per-file coverage gate"
 	@echo "  make test-integration Run integration tests"
+	@echo "  make test-cloud      Cloud gate: the parity scenarios on the Firestore test database (serial, by hand)"
 	@echo "  make lint            Lint src/ with ruff"
 	@echo "  make format          Format src/ with ruff"
 	@echo ""
@@ -236,7 +237,7 @@ XDIST_WARNING = $(if $(PYTEST_XDIST),,echo "⚠️  pytest-xdist not installed �
 
 test: ## Run all tests
 	@echo "🧪 Running all tests..."
-	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/ -v --asyncio-mode=auto
+	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/ -v --asyncio-mode=auto --ignore=tests/cloud
 
 test-unit: ## Run unit tests
 	@echo "🧪 Running unit tests..."
@@ -279,6 +280,12 @@ test-affected: ## Inner loop: only the unit tests testmon selects for your chang
 test-integration: ## Run integration tests
 	@echo "🧪 Running integration tests..."
 	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/integration/ -v --asyncio-mode=auto
+
+# Cloud gate (RFC §4): real writes to the Firestore TEST database behind the guards in tests/cloud/conftest.py; never in
+# `make check` / `make ci` / `make test`. Serial. One manual runner at a time: the lease document comes with P12.
+test-cloud: ## Cloud gate: the parity scenarios on the Firestore test database (serial)
+	@echo "☁️  Running the cloud gate on the test database..."
+	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/cloud -q -p no:randomly --asyncio-mode=auto
 
 lint: ## Lint src/ with ruff (pyflakes + pycodestyle errors)
 	@echo "🔍 Running ruff linter on src/..."
