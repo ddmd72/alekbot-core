@@ -350,10 +350,10 @@ Why: `decisions/sonnet55_adaptive_thinking_stall.md`.
 ### 4.1 The baseline: what the bot sees in every message
 
 **Who gets it.** Every agent whose prompt is built with the biographical cache: Smart and Quick (merged with the
-Router's prefetch), Notes, Tasks, EmailSearch, PdfGenerator, the consolidator. Lelik gets a filtered copy (§4.6). The
-Router, MemorySearch, web, compute, DocPlanner/DocGenerator, HtmlPageGenerator and the drive agents build without it
-(`include_biographical=False`); DeepResearch builds with no account id, so it gets none either
-(`deep_research_agent.py:91-93`).
+Router's prefetch), Notes, Tasks, EmailSearch, PdfGenerator, the consolidator. Lelik gets a filtered copy (§4.6). Every
+other agent builds without it (`include_biographical=False`): the Router, MemorySearch, web, maps, compute,
+DocPlanner/DocGenerator, HtmlPageGenerator, image and video generation, EmailClassification, the companion agents and
+the drive agents; DeepResearch passes no account id, so it gets none either (`deep_research_agent.py:91-93`).
 
 **How it is chosen** (`BiographicalContextService.refresh_context`, `biographical_context_service.py:72-208`):
 1. Limits: `biographical_cache_limit` (default **65**) and `principles_cache_limit` (default **20**)
@@ -525,12 +525,12 @@ uses its own copy of the serializer (same rules as §3 step 3).
 | a pass hits 15 turns | 🚨, pass returns `[]` (`consolidation_agent.py:958-961`) | writes so far stand; candidates not yet written are lost | **succeeds and is deleted** | no |
 | Stage 1/2a/2b raises (provider down after retries, prompt build fails, timeout of 15 min) | `AgentResponse.failure` | writes so far stand | attempts +1 → `retry_pending`; the worker re-enqueues at once; at 3 → `failed` + `CONSOLIDATION_FAILED` log (`consolidation_service.py:129-153`) | yes, the whole batch; Stage 1 runs again over facts it already wrote (the model should find and discard them) |
 | Stage 3 raises | not caught inside the email stage, so the run fails (`consolidation_agent.py:524-632`) | Stage 1–2b writes stand | as above | yes, Stage 1 again |
-| batch `failed` (3 attempts) | if a newer batch of the user is pending, `has_more` is true and the worker enqueues the next task at once (`worker_handler.py:457-459`); that task's `reset_recoverable_batches` turns `failed` back to `retry_pending` with attempts 0 (`firestore_consolidation_queue.py:100-162`), and oldest-first picks the same batch again. Only when nothing else is pending does it wait for the hourly sweep | each attempt pays for the stages that ran before the failure | retried back to back without end; newer batches starve behind it | yes |
+| batch `failed` (3 attempts) | if a newer batch of the user is pending, `has_more` is true and the worker enqueues the next task at once (`worker_handler.py:457-459`); that task's `reset_recoverable_batches` turns `failed` back to `retry_pending` with attempts 0 (`firestore_consolidation_queue.py:100-162`), and oldest-first picks the same batch again. When nothing else is pending it waits for the hourly sweep or the user's next overflow, and an overflow, by creating a newer batch, starts the loop again | each attempt pays for the stages that ran before the failure | retried back to back without end; newer batches starve behind it | yes |
 | worker crashes mid-batch | batch stays `processing`; after 1800 s it is a zombie and is reset | partial writes stand | retried | yes |
 | baseline refresh fails | logged, swallowed (`firestore_repo.py:838-842`) | stored | succeeds | old baseline until the next run |
 | enqueue of the batch fails at overflow | logged `Error in overflow routing` (`overflow_routing_service.py:64-69`) | — | **lost**: the messages were already cut from the session | no |
 | batch stored but the Cloud Task enqueue fails | logged | — | waits in the queue | the hourly sweep |
-| two runs of one user at once | not prevented (§3 step 3): both may search before either writes | duplicates or conflicting updates possible | each batch runs once | — |
+| two runs of one user at once | not prevented (§3 step 3): both may search before either writes | duplicates or conflicting updates possible | two tasks that start together can both take the same pending batch (read, then mark `processing`, no transaction, `consolidation_service.py:90-101`); otherwise each takes a different one | — |
 | provider failover | `_call_llm` fails over to Gemini only before the first tool call; after it the transcript is locked to one provider (`src/agents/CLAUDE.md` → Transcript integrity) | — | — | same-provider retries |
 
 ---
