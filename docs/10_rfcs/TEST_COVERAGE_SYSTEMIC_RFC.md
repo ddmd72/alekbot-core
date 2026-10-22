@@ -179,7 +179,7 @@ that module, collection-agnostic, by exactly this list:
 | `collection_group` | `firestore_drive_index_repo.py:1642` | none |
 | `!=`, which also excludes documents missing the field | `firestore_task_search_index.py:143` | unsupported operator |
 | `stream(transaction=)`, `get_all(..., transaction=)` | `firestore_user_repo.py:164`; `firestore_skill_repository.py:154,167` | no `transaction` argument |
-| Transaction semantics (reads before writes, writes applied at commit, a retry re-runs the body), with **one** global patch of `google.cloud.firestore.async_transactional` | 16 `async_transactional` sites in `src/adapters`; `firestore_ephemeral_store.py:49-89` relies on the retry re-reading | pass-through; the patch targets the drive module only |
+| Transaction semantics (reads before writes, writes applied at commit, a retry re-runs the body), with **one** global patch of `google.cloud.firestore.async_transactional` | 16 `async_transactional` sites in `src/adapters`; `firestore_ephemeral_store.py:49-89` relies on the retry re-reading; a retry is triggered by an aborted commit (a concurrent transaction), never by an outside write during the body — real Firestore and the emulator block it (P3) | pass-through; the patch targets the drive module only |
 | Assert `COSINE` in `find_nearest` | all vector queries use cosine today | cosine assumed |
 
 Two rule changes:
@@ -219,8 +219,8 @@ hit integration and cloud):
 
 - **`--allow-hosts=127.0.0.1,::1` and `--allow-unix-socket`.** Socket creation and binding stay allowed; only
   `connect()` to a non-loopback address raises. Without the unix-socket allowance every asyncio event loop fails
-  (`socketpair` in the selector loop). Loopback tests stay in `make check`: the sandbox supervisor's two-process run
-  (`tests/unit/web/test_sandbox_supervisor.py:277,303,382`) and the TLS media server
+  (`socketpair` in the selector loop). Loopback tests stay allowed: the sandbox supervisor's two-process test
+  (`tests/unit/web/test_sandbox_supervisor.py:277,303,382`) is `slow`, so it runs in `make ci`; the TLS media server
   (`tests/unit/adapters/drive_media_fixtures.py`).
 - **gRPC tripwire** in the same conftest: `google.auth.default` raises, and `grpc.secure_channel` /
   `grpc.aio.secure_channel` raise unless the target is localhost. Firestore talks through gRPC's own sockets, which
@@ -304,7 +304,7 @@ dispatched.
 
 **What runs there:** the H2 kits against the real adapters (this is what proves H1 right), vector search and index
 behaviour the fake cannot prove, and **deterministic precondition tests** (`create()` on an existing document,
-Firestore transactions with a conflicting write placed by the test, GCS `if_generation_match`) instead of contention
+concurrent transactions (the conflict is an aborted commit; P3), GCS `if_generation_match`) instead of contention
 tests, which are slow and nondeterministic.
 
 **Gate:** `make test-cloud`, serial. CI: a separate job after a merge to `main` (like `timing`), never on a PR, never
@@ -313,6 +313,15 @@ in `make check`. Cost: named databases have no free quota; reads and writes stay
 **Before any of this, a 1-hour emulator spike** (P3): does the Firestore emulator (`EnvironmentConfig.use_emulator`,
 `main.py:108-112`) run our queries, including vector search? If it covers the non-vector part, the parity slice (P5)
 runs the non-vector probes there, offline; vector probes still need the test database.
+
+**Result (P3, 2026-10-22).** Emulator v1.22.0 with `google-cloud-firestore` 2.34.1 ran all 30 probes: every H1 write and
+query shape and every P5 shape, **vector search included** (COSINE order and distances, `distance_threshold`, equality,
+range, `!=` and `in` pre-filters, projection with `distance_result_field`). Two differences, both index refusals: it does
+not refuse a composite query or a kNN query without an index. Transactions lock pessimistically, so a conflicting write
+cannot be placed inside the body (the outside write waits 2 s, then `Aborted`); the conflict case is concurrent
+transactions. So P5 runs offline on the emulator in full, and the test database is needed only for the index refusals,
+three points the docs do not pin (null under `!=`, the error class for a precondition on a deleted document, the lock wait)
+and one confirming run. Probe: owner's ops journal.
 
 ## 4a. Third-party contracts (owner, 2026-10-21)
 
@@ -433,18 +442,17 @@ CI: 4:37 wall (install 0:34, apt `ffmpeg` 0:30, pytest 3:01 on a 4-core runner).
 
 **Local, three tiers:**
 
-1. **Inner loop: `make test-affected`** = `pytest --testmon` plus a fixed **always-run set** (`-m datafile`). testmon
+1. **Inner loop: `make test-affected`** = `pytest --testmon`. testmon
    selects by executed Python lines, so it misses tests whose input is a data file (H4 over `prompts_snapshot/`, H6 over
    `docs/10_rfcs/`, the index-provisioning tests over `config/firestore.indexes.json`, `tests/unit/test_cloudbuild_*`,
-   skill files, fixtures) and code run in subprocesses (drive parser child, sandbox engine). Those tests carry the
-   `datafile` marker. `.testmondata` is seeded into each new worktree from the main checkout, so the first run is not a
+   skill files, fixtures) and code run in subprocesses (drive parser child, sandbox engine); the mandatory
+   `make check` before a commit catches those (see the P1 note below). `.testmondata` is seeded into each new worktree from the main checkout, so the first run is not a
    cold full suite. testmon is pinned and never combined with coverage (it pauses the outer measurement).
 2. **Before a commit: `make check`, ≤ 3:00 on a quiet machine.** Lint, mypy, the unit suite and the fast contract and
-   fake-based suites this RFC adds. `--durations=25` prints the slowest tests as an **advisory report** locally; the
-   1-second-per-test budget is **enforced only on the CI runner**, since a loaded Mac produces the same false failures
-   the `timing` marker removed.
-3. **Slow suites only in CI.** `@pytest.mark.slow` mirrors the `timing` pattern (`tests/conftest.py:31-40` skip hook,
-   Makefile `-m "not timing"` at `:239`). The coverage gate is a **run mode** of `make ci`, not a marked test.
+   fake-based suites this RFC adds. `--durations=25` prints the slowest tests as an **advisory report**. There is no
+   per-test duration budget (see the P1 note below).
+3. **Slow suites only in CI.** `@pytest.mark.slow` mirrors the `timing` pattern (the skip hook in `tests/conftest.py`,
+   the Makefile's `-m "not timing"`). The coverage gate is a **run mode** of `make ci`, not a marked test.
 
 **One full suite at a time on the machine.** A pytest hook in `tests/conftest.py` takes `fcntl.flock` on a lock file in
 the temp dir, in `pytest_configure` of the **controller only** (not in xdist workers), and only for large sessions
@@ -456,6 +464,28 @@ when the process dies, and the hook covers make, direct `pytest` calls and subag
 ≤ ~10 min; the repo is public, so GitHub-hosted runners cost nothing and sharding is available. After a merge to
 `main`: the cloud gate, timing tests, the skip-ledger job (P22). Weekly: spec drift, mutation metric. Monthly: contract
 review. Manual: probes.
+
+**Built (P1, 2026-10-22).** `make test-affected` (one `pytest --testmon` run, `.testmondata` seeded into a new worktree),
+`make ci`, the `slow` marker and the `fcntl` suite lock (`tests/plugins/suite_lock.py`, `tests/conftest.py`, `Makefile`,
+`ci.yml`). Deviations from the text above:
+- **No per-test duration budget** (owner decision 2026-10-22): the goal, a fast local `make check`, is met by the `slow`
+  marker, and a wall-clock limit flakes on a shared runner. `--durations=25` stays as an advisory report.
+- **No `datafile` marker, no always-run set, no data-file audit** (owner decision 2026-10-22): testmon misses are caught by
+  the mandatory `make check` before a commit, so the marker set and the audit that kept it honest were not worth carrying.
+- **testmon needs `--testmon-forceselect`.** testmon 2.2.0 switches selection off whenever `-m` is given ("selection
+  automatically deactivated because -m was used"), so `make test-affected` passes `--testmon --testmon-forceselect
+  -m "not timing"`. A no-change rerun then selects 0 tests (testmon turns pytest's exit 5 into 0). A new worktree seeded
+  from the main checkout's `.testmondata` at the same commit also selects 0.
+- **`make check` no longer runs the `slow` tests**, among them 24 of the 36 layering tests of
+  `test_req_arch_01_hexagonal_isolation.py` (the 23 over 0.5 s in the calibration plus `test_agents_layer_isolation`).
+  Each walks the whole of `src/`: 0.5-3.2 s under coverage, 0.8-2.1 s without, and it moves with machine load. A shared
+  parse buys only ~15% (the cost is walking ~600k AST nodes per test), so the decision is to **keep them slow**. They
+  run in `make ci`, so on every PR, but not in `make check` or `make test-affected`.
+- **The slow threshold was calibrated at 0.5 s under coverage**; a test using a module-scoped fixture is marked in every
+  user of that fixture, because under xdist whichever test reaches it first on a worker pays
+  (`test_drive_index_hostile_tree.py`, `TestScale`). Tests that pay a lazy heavy import first (markitdown) are marked too.
+- `.testmondata` is seeded with SQLite's backup API (`scripts/seed_testmondata.py`), not `cp`: testmon uses WAL.
+- Extra knobs, for tests of the machinery only: `PYTEST_SUITE_LOCK_FILE`, `PYTEST_LOCK_REPORT_S`, `PYTEST_LOCK_POLL_S`.
 
 ## 5. Work packages
 
@@ -483,11 +513,11 @@ Effort is realistic working days, after both reviews. Gate: `check` = `make chec
 
 | # | Package | Gate | Effort | What it catches | Tranche |
 |---|---|---|---|---|---|
-| P1 | **Test-time budget** (§4b): `make test-affected` with the `datafile` always-run set and worktree seeding; the `fcntl` lock hook; `slow` marker; `make ci` and the PR job switched to it; advisory durations report | check / ci | 1–1.5 | a local loop that grows past 3 min; five parallel full suites | 1 |
+| P1 | **Test-time budget** (§4b): `make test-affected` (testmon) with worktree seeding; the `fcntl` lock hook; `slow` marker; `make ci` and the PR job switched to it; advisory durations report | check / ci | 1–1.5 | a local loop that grows past 3 min; five parallel full suites | 1 |
 | P2 | **Rules and gates**: H3 network guard + gRPC tripwire; `tests/CLAUDE.md` rewritten (fakes with semantics over call assertions; adapters need behind-port tests; no real LLM; MagicMock coverage does not count); coverage per layer with `branch = True`, floor at the re-measured values, only rising; root `*_main.py` into `[run] source`; subprocess coverage configured (`[run] patch = subprocess`) or omitted with a reason; a static "no test imports module X" check with an allowlist that only shrinks; the semantic-mutation plugin | check / ci | 1.5–2 | the convention itself; unmeasured entry points | 1 |
 | P3 | **Emulator spike** (§4): which of our queries, vector included, the emulator runs | — | 1 h | decides how much of P5 runs offline | 1 |
 | P4 | **H1 fake** (the full add-list, index refusal, raw-dict seeding, one transaction patch) **+ the fact store kit** (S1's round-trip suite folded in; semantics inventory for the fact ports) | check | 2.5–3.5 | the fact defect class; missing indexes offline | 1 |
-| P5 | **Fake-vs-real parity slice** (before any other kit is built on H1): mixed-type ordering; missing-field filters and orderings; `!=`/`in`/range + kNN pre-filters; dotted paths; `Increment`/`ArrayUnion`/`SERVER_TIMESTAMP` results; projection + `distance_result_field`; `create()` on an existing document — run on H1 and on the test database (non-vector part on the emulator if P3 says so) | check + cloud | 1 + owner infra step | a wrong fake rule spreading into every later kit | 1 |
+| P5 | **Fake-vs-real parity slice** (before any other kit is built on H1): mixed-type ordering; missing-field filters and orderings; `!=`/`in`/range + kNN pre-filters; dotted paths; `Increment`/`ArrayUnion`/`SERVER_TIMESTAMP` results; projection + `distance_result_field`; `create()` on an existing document — run on H1 and on the test database (P3 result: vector search runs on the emulator too; the test database is needed for index refusals and the three undocumented points) | check + cloud | 1 + owner infra step | a wrong fake rule spreading into every later kit | 1 |
 | P6 | **Access-control stores** on H1 + kits: `firestore_whitelist_repo`, `firestore_mcp_client_repository`, `firestore_oauth_credentials_adapter`, `firestore_iam_adapter`, `firestore_invite_code_repo`; negatives: a revoked email is refused, a token of another client is refused, an expired code is refused | check | 2 | access holes in the stores | 1 |
 | P7 | **Inbound gates**: every refusal site in an auth path executed by a test — the deep-research webhook signature (`src/web/deep_research_webhooks.py:102-141`), the Slack route's signature enforcement and dedup (`src/adapters/slack/http_adapter.py:138-140`), MCP OAuth refusals (`src/services/mcp_authorization_service.py:166-167,193-194,400-401`), the sign-in ID-token failure (`src/services/authentication_service.py:441-446`), the `/worker` OIDC gate and Telegram intercept (`main.py:1234-1262`), the Microsoft Graph webhook; a meta-test over each Quart app's `url_map` and the relay, indexer and sandbox routes requiring at least one negative test per route (unauthenticated, bad signature, foreign tenant); a line-level check that every `raise`/4xx return in the auth services and verifiers runs | check | 1–1.5 | an inverted or bypassed gate | 1 |
 | P8 | **Prompt vocabularies** (H4) for Consolidation and Tasks | check | 2–3 | `HISTORICAL`, `metadata`, Tasks `task_ref` drift | 1 |
@@ -507,6 +537,30 @@ Effort is realistic working days, after both reviews. Gate: `check` = `make chec
 | P22 | **Infrastructure in git**: a skip ledger (a meta-test lists every `skipif`; CI reports which ran) and a post-merge job that runs `npm ci` + the real-node DOCX and PDF render and builds `Dockerfile.sandbox`; a TTL list in git (every model writing `expires_at` appears in it) and the runbook generated from it; a Secret Manager fallback suite (`src/config/settings.py` `get_secret` / `load_settings`) | check / post-merge | 1.5 | tests that run in no gate; TTL and secret drift | 3 |
 | P23 | **Mutation metric**: `mutmut` on the store modules, weekly or owner-run; survivors are a backlog | sched | 0.5 | suites that verify nothing, as a trend | 3 |
 | P24 | **`tests/integration/` split**: `tests/integration/offline/` (mocked, scripted; may join `make check` if fast) and `tests/cloud/` (§4); the two cloud-writing tests move under the guards or go to a reviewer for retirement | check / cloud | 0.5 | live-data pollution by tests | 3 |
+
+**Built (P2, 2026-10-22).** H3 (`tests/unit/conftest.py` + `tests/support/network_guard.py`; the offline G2 run gets the same guard
+from `-p tests.plugins.network_guard` in `make test-g2-offline`, so no file under `tests/integration/` changed), the per-layer
+floors (`scripts/check_coverage_layers.py`, `.coveragerc` with `branch = True`, the root `*_main.py` and `patch = subprocess`),
+the untested-module check (`tests/unit/test_every_src_module_is_imported_by_a_test.py` + `untested_modules_allowlist.txt`), the
+semantic-mutation driver (`python -m tests.support.semantic_mutants`) and the rewritten `tests/CLAUDE.md`. Deviations from the text above:
+- **A bare `--cov` replaces `--cov=src`.** A `--cov=src` on the command line overrides `[run] source`, so the Makefile passes a bare
+  `--cov` and `.coveragerc` lists `src` plus the five root modules. A root module no test imports (`main.py`) is not in the data at
+  all; the layer script counts it as 0 % from its source with coverage.py's parser. `[report] include_namespace_packages = True` is
+  what makes a never-imported `src/` file show up at 0 % (`src/` and most subdirectories have no `__init__.py`).
+- **The per-file table keeps the line metric.** With branch coverage on, `percent_covered` is branch-aware and `smart_response_agent.py`
+  (100 % of lines, 4 untaken branches) would fall below its 100.0 entry. `check_coverage_thresholds.py` now reads
+  `percent_statements_covered`, so every entry means what it meant when written; raising entries to the branch-aware value is the
+  owner's call (the per-layer floors hold the branches).
+- **Floors carry a 0.3 pp noise margin** below the measured value (owner decision 2026-10-22; deviates from §7 decision 3 'at today's values').
+- **The global `--cov-fail-under=70` stays.** Line coverage under the old config was 90.6 %; branch-aware under the new one 87.9 %
+  (never-imported files now count at 0 %). Both are far above 70, so the number is unchanged.
+- **The module check is `slow`** (parsing ~1 300 test files takes ~3 s), so it runs in `make ci`, not in `make check`.
+- The mutation driver's operators are as listed in §5 above; `except-success` returns `True`/`[]`/`{}`/`""`/`0`/`None` by the return
+  annotation (rule in `tests/support/semantic_mutants/operators.py`). First run, `firestore_repo.py` against
+  `test_fact_store_roundtrip.py`: the survivors sit on lines the round-trip file never executes (queries, projections,
+  observation writes): P4's backlog.
+- **`doc-drop` is the dict-literal case of "drop one field"** (a key of a dict written to a store).
+- **coverage.py cannot tell MagicMock coverage apart:** the floor counts it; a reviewer does not accept it as the adapter's test (§2.7).
 
 **Totals.** Tranche 1 (P1–P9) ≈ 12–16 days; tranche 2 (P10–P17) ≈ 24–33; tranche 3 (P18–P24) ≈ 9–11. **Whole plan
 ≈ 45–59 days.**
@@ -566,8 +620,8 @@ Package names in brackets map rev 1's numbers to this revision.
    CI's post-merge job additionally needs Workload Identity Federation limited to `main`. All of these are owner infra
    steps that widen access, so I do not run them. Recommendation: do the database, SA, impersonation grant and index
    creation before P5 (about half an hour, from a script I prepare that reads every name from `.env`); defer WIF to
-   P12, because the parity slice runs locally first. If the P3 spike shows the emulator covers the non-vector probes,
-   only the vector probes wait on this step.
+   P12, because the parity slice runs locally first. P3 showed the emulator covers all probes, vector search included,
+   so only the index refusals and the three undocumented points wait on this step.
 
    **Done 2026-10-21** with the owner's OK, by `scripts/infrastructure/setup_test_gate.sh` (idempotent, dry run by
    default, every name from `.env` `TEST_*`): the test Firestore database; the test service account holding

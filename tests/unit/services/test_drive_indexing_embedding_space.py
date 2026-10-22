@@ -1,6 +1,7 @@
 """The embedding space is part of what makes a card stale (USER_DRIVE_INDEXING_RFC §12.3): the sync state records the
 space its cards are in, a new space re-embeds every card through the upgrade pass, and until that pass finds no card
 left in the old space the state says the card stream is not usable for the new one."""
+import pytest
 from src.domain.drive_index_params import MAX_ATTEMPTS, RETRY_CAP
 from src.services import drive_indexing_service as svc_mod
 from src.services.drive_indexing_service import DriveIndexingService
@@ -24,6 +25,7 @@ async def test_onboarding_records_the_space_its_cards_are_in():
     assert not state.cards_in_space("other/768")
 
 
+@pytest.mark.slow
 async def test_a_new_space_re_embeds_every_card_and_then_applies():
     w = World(page_size=500)
     items = [w.drive.add(f"doc{i:03d}.pdf") for i in range(250)] + [w.drive.add("Photos", folder=True)]

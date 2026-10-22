@@ -203,6 +203,7 @@ class TestDeleteAllForUser:
 
         collection.where.assert_called_once()
 
+    @pytest.mark.slow
     async def test_delete_all_batches_large_sets(self):
         """Tests that chunk_size=500 logic runs for 600 docs."""
         db, collection, _ = _make_db()

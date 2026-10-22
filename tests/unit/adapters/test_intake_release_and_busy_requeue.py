@@ -210,6 +210,7 @@ async def test_busy_exhausted_posts_notice_and_stops():
     adapter._process_message_event.assert_not_awaited()
 
 
+@pytest.mark.slow
 async def test_busy_requeue_failure_returns_500():
     queue = MagicMock()
     queue.enqueue_slack_event = AsyncMock(side_effect=RuntimeError("boom"))

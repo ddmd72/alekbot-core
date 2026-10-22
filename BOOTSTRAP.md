@@ -71,7 +71,7 @@ Both take the project id explicitly: `.env` holds `GOOGLE_CLOUD_PROJECT`, not `P
 ## 5. Test & lint
 
 ```bash
-make check                # ruff lint + unit/architecture tests — the CI gate, run before every commit
+make ci                   # the CI gate (lint + typecheck + unit suite with slow tests + coverage gates); run `make check` before every commit
 make test                 # full suite
 ```
 

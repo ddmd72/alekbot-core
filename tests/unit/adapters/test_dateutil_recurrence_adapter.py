@@ -93,6 +93,7 @@ class TestNormalize:
         with pytest.raises(ValueError, match="KEY=VALUE"):
             adapter.normalize("FREQ=DAILY;NONSENSE")
 
+    @pytest.mark.slow
     def test_rejects_a_rule_that_never_occurs(self, adapter):
         """31 February — syntactically fine, never happens. Caught at validation so
         no expansion can spin looking for it."""

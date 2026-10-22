@@ -35,6 +35,7 @@ async def test_circuit_breaker_opens_after_failures():
         await breaker.call(failing_call)
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_circuit_breaker_recovers():
     """Test circuit recovers after timeout."""

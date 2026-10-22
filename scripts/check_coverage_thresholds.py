@@ -126,8 +126,12 @@ def check_thresholds(
         if file_data is None:
             missing.append(path)
             continue
-        # coverage.py reports percent_covered as float 0–100.
-        actual = float(file_data.get("summary", {}).get("percent_covered", 0.0))
+        # LINE coverage, 0–100. The table below was written when coverage ran without branch measurement ("100.0 = no
+        # uncovered lines allowed"); `.coveragerc` has `branch = True` since P2, under which `percent_covered` is
+        # branch-aware and would silently raise every entry. Branches are held by the per-layer floors
+        # (scripts/check_coverage_layers.py). Raising an entry to the branch-aware value is the owner's call.
+        summary = file_data.get("summary", {})
+        actual = float(summary.get("percent_statements_covered", summary.get("percent_covered", 0.0)))
         # Allow tiny float-rounding tolerance below the threshold.
         if actual + 1e-6 < required:
             violations.append((path, required, actual))

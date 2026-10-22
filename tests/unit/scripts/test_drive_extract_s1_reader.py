@@ -38,6 +38,7 @@ def test_a_simulated_request_holds_the_window_its_base64_and_a_body(script):
     assert script.held_bytes(held) == len(window) + len(held["base64"]) + len(held["body"])
 
 
+@pytest.mark.slow
 async def test_reader_run_cuts_each_window_while_the_in_flight_ones_are_held(script, tmp_path):
     pages = MODEL_PAGES_PER_CALL * (MODEL_IN_FLIGHT + 2)
     path = make_pdf(tmp_path / "pages.pdf", [f"page {i}" for i in range(pages)])
@@ -84,6 +85,7 @@ def test_the_long_pdfs_also_get_a_reader_shaped_run(script, tmp_path, monkeypatc
     assert not any(name == "tiny.pdf" and split for name, split, _ in calls)
 
 
+@pytest.mark.slow
 def test_main_runs_one_reader_shaped_measurement(script, tmp_path, capsys):
     path = make_pdf(tmp_path / "p.pdf", [f"page {i}" for i in range(12)])
     assert script.main(["--one", str(path), "--kind", "pdf", "--split", "--reader", "--wall-s", "30"]) == 0

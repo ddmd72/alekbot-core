@@ -115,6 +115,7 @@ def test_an_empty_or_invalid_container_is_refused():
             media.build_pass_argv(URL, CA, bad, 0, 10, "/w/x")
 
 
+@pytest.mark.slow
 @pytest.mark.skipif(not HAVE_FFMPEG, reason="needs ffmpeg")
 async def test_url_not_in_parent_logs(tmp_path, monkeypatch, caplog):
     """The URL is on the child's stdin and in the grandchild's argv; this process's own argv and logs never hold it."""

@@ -25,6 +25,7 @@ def w():
     return ContentWorld()
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("photos", [100, 16, 17, 250])
 async def test_holiday_photos_cost_only_batched_triage(w, photos):
     """§16: N photos, camera originals and messenger copies without EXIF, cost ⌈N / TRIAGE_BATCH⌉ triage calls and

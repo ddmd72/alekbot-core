@@ -72,6 +72,7 @@ def _kinds(log):
     return [kind for kind, _ in log]
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_cue_fills_a_slow_reply_and_is_cleared_before_the_first_word():
     async def events():
@@ -93,6 +94,7 @@ async def test_cue_fills_a_slow_reply_and_is_cleared_before_the_first_word():
     assert "cue" not in kinds[first_audio:]
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_a_fast_reply_gets_no_cue():
     async def events():
@@ -111,6 +113,7 @@ async def test_a_fast_reply_gets_no_cue():
     assert "clear" not in _kinds(log)
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_the_pickup_greeting_gets_no_cue():
     async def events():
@@ -126,6 +129,7 @@ async def test_the_pickup_greeting_gets_no_cue():
     assert "cue" not in _kinds(log)
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_cue_fills_a_silent_delegation_wait_and_stops_when_the_caller_speaks():
     async def never(**_):
@@ -152,6 +156,7 @@ async def test_cue_fills_a_silent_delegation_wait_and_stops_when_the_caller_spea
     assert kinds.count("cue") * 20 <= 250 + 150
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_cue_frames_are_20ms_slices_of_the_clip_paced_in_real_time_and_untracked():
     playback = PlaybackTracker()
@@ -177,6 +182,7 @@ async def test_cue_frames_are_20ms_slices_of_the_clip_paced_in_real_time_and_unt
     assert playback.sent_bytes == 0  # the cue never enters the heard-audio accounting
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_no_clip_configured_means_no_cue():
     async def events():

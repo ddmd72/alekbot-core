@@ -100,6 +100,7 @@ def _files() -> list[Path]:
     return [p for p in out if p.exists()]
 
 
+@pytest.mark.slow
 def test_every_firestore_client_names_its_database():
     offenders = []
     for p in _files():

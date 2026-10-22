@@ -32,6 +32,7 @@ def run():
         yield db, mirror_repo.FirestoreDriveMirrorRepository(db, env)
 
 
+@pytest.mark.slow
 async def test_mark_gone_commits_in_chunks(run):
     db, repo = run
     n = RECORD_WRITE_BATCH * 2 + 50

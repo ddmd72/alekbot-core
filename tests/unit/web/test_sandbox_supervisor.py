@@ -364,6 +364,7 @@ SERVER_SCRIPT = textwrap.dedent("""
 """)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("protocol", ["http1", "h2c"])
 def test_supervisor_ends_the_process_group_after_one_request(tmp_path, protocol):
     import httpx

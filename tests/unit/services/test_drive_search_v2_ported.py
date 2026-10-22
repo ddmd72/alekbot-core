@@ -389,6 +389,7 @@ async def test_the_summary_line_counts_the_content_streams(monkeypatch):
         assert part in line, (part, line)
 
 
+@pytest.mark.slow
 async def test_mentioned_passages_share_the_window_budget():
     """Ports test_eight_content_hits_of_three_full_chunks_fit_the_window_budget to v2's budget (§25.5.6): each
     passage at most WINDOW_MAX, all at most WINDOW_CHARS_TOTAL_V2, each cut from the chunk holding the words."""

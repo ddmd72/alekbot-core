@@ -1,5 +1,6 @@
 """Folder-delete cascade progress (USER_DRIVE_INDEXING_RFC §7.6, §7.8): a deleting folder whose remaining children
 are deleting folders the current due page does not hold steps aside, so a wide deleted tree always finishes."""
+import pytest
 from .test_drive_indexing_service import World
 
 
@@ -18,6 +19,7 @@ async def _ticks_until_quiet(w, max_ticks):
 
 class TestCascadeFinishes:
 
+    @pytest.mark.slow
     async def test_a_wide_deleted_tree_is_removed(self):
         """150 subfolders, each holding one subfolder: more than one due page of folders whose children are all
         deleting folders. Each steps aside behind its children instead of stalling the class."""

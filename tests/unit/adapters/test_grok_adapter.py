@@ -833,6 +833,7 @@ _GROK_REQUEST = LLMRequest(
 )
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_asyncio_timeout_translates_to_LLMTimeoutError():
     """asyncio.TimeoutError from our wait_for wrap → LLMTimeoutError."""

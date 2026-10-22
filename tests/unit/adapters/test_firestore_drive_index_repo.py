@@ -157,6 +157,7 @@ class TestRecordWrites:
         assert data["card_vector"] is firestore.DELETE_FIELD and data["has_card_vector"] is False
         assert "card_vector" in db.batches[0].set.call_args.kwargs["merge"]
 
+    @pytest.mark.slow
     async def test_writes_are_batched_at_record_write_batch(self, repo, db):
         await repo.upsert_records([DriveIndexRecord(user_id="u", item_id=f"i{n}") for n in range(401)])
         assert [b.set.call_count for b in db.batches] == [400, 1]
@@ -197,6 +198,7 @@ class TestRecordReads:
         assert set(out) == {"a", "b"} and out["a"].name == "x"
         assert db.get_all_calls == [(["u:a", "u:zz", "u:b"], list(RECORD_FIELDS))]
 
+    @pytest.mark.slow
     async def test_get_records_chunks_large_reads(self, repo, db):
         await repo.get_records("u", [f"i{n}" for n in range(401)])
         assert [len(ids) for ids, _ in db.get_all_calls] == [400, 1]

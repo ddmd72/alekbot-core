@@ -137,6 +137,7 @@ def test_tone_clip_is_tone_and_silence(tmp_path):
     assert _first_loud_sample_s(out) == 0.0 or _first_loud_sample_s(out) < 0.01
 
 
+@pytest.mark.slow
 def test_music_clip_has_energy_and_no_tts_call(tmp_path):
     spec = next(s for s in fx.build_specs() if s.family == "no_speech_music")
 

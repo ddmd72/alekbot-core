@@ -312,6 +312,7 @@ def test_spawn_starts_the_server_in_its_own_group(tmp_path):
     os.close(write_fd)
 
 
+@pytest.mark.slow
 def test_sandbox_main_import_closure_excludes_the_main_service_stack():
     code = ("import sys, sandbox_main;"
             "bad=[m for m in sys.modules if m.startswith(('src.infrastructure','src.agents','src.services',"

@@ -86,6 +86,7 @@ class TestPromptAssemblyCaching:
         result = assembly_service._get_from_cache("nonexistent_key")
         assert result is None
     
+    @pytest.mark.slow
     def test_cache_ttl_expiry(self, assembly_service):
         """Test cache expires after TTL."""
         # Set very short TTL for testing

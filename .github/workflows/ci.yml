@@ -28,12 +28,34 @@ jobs:
         # The media extractor tests run the real ffmpeg/ffprobe (they skip without them).
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
-      - name: make check
-        # make check = ruff check src/ + mypy (domain/ports) + unit/architecture tests.
+      - name: make ci
+        # make ci = ruff check src/ + mypy (domain/ports) + the unit suite once (slow tests, coverage gate)
+        # + the offline G2 end to end.
         # No secrets: the unit suite mocks all I/O at the port/SDK boundary.
-        # A hung test otherwise holds the job for GitHub's 6 h default; the suite takes ~5 min.
-        timeout-minutes: 20
-        run: make check
+        # A hung test otherwise holds the job for GitHub's 6 h default.
+        timeout-minutes: 30
+        run: |
+          set -o pipefail
+          make ci 2>&1 | tee ci-output.log
+
+      - name: Failure summary as an annotation
+        # Job logs are served from blob storage that a cloud session cannot reach; check-run annotations are read
+        # through the API. One annotation carries the failure lines and the tail of the output.
+        if: failure()
+        run: |
+          {
+            grep -E "FAILED|ERROR|Error:|threshold|floor|Required test coverage|make(\[[0-9]+\])?: \*\*\*" ci-output.log | tail -60
+            echo "----- tail -----"
+            tail -40 ci-output.log
+          } | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"} {print}' > summary.txt
+          echo "::error title=make ci failed::$(cat summary.txt)"
+
+      - name: Coverage per layer as a notice
+        # The runner's per-layer table, on green runs too: the floors are calibrated on it (scripts/check_coverage_layers.py).
+        if: always()
+        run: |
+          awk '/^layer +statements/{f=1} f&&/^$/{exit} f' ci-output.log | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"} {print}' > layers.txt
+          [ -s layers.txt ] && echo "::notice title=Coverage per layer::$(cat layers.txt)" || true
 
       - name: Notify Slack (pass/fail)
         if: always()

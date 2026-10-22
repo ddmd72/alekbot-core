@@ -123,6 +123,7 @@ def _photos_world():
 class TestSystemicErrorInsideInlineProbe:
     """The inline density probe's errors are classified, not charged to the item."""
 
+    @pytest.mark.slow
     async def test_disconnect_during_inline_probe_does_not_lose_the_observation(self):
         w, top = _photos_world()
         await w.settle()
@@ -147,6 +148,7 @@ class TestSystemicErrorInsideInlineProbe:
         assert w.rec(top).name == "Holiday"
         assert w.rec(top).child_count == 610
 
+    @pytest.mark.slow
     async def test_throttle_during_inline_probe_ends_the_tick(self):
         w, top = _photos_world()
         await w.settle()
@@ -161,6 +163,7 @@ class TestSystemicErrorInsideInlineProbe:
         res = await w.tick()
         assert res.status == "throttled" and "skipped" not in res.summary
 
+    @pytest.mark.slow
     async def test_transport_error_during_inline_probe_leaves_the_folder_probe_pending(self):
         w, top = _photos_world()
         await w.settle()
@@ -294,6 +297,7 @@ class TestRfcBehaviourPinned:
         st = await w.repo.get_sync_state("u")
         assert st.drive_id == "d2" and w.rec(a) is not None
 
+    @pytest.mark.slow
     async def test_probe_budget_spent_children_held_unresolved_then_resolved(self, monkeypatch):
         """§3.6: one item call per tick for two dense folders. The second waits probe_pending and its children
         are held unresolved, never looped over; both end DENSE_TREE with no child records."""
@@ -385,6 +389,7 @@ class TestUpgradePassSkipsParkedRecords:
         w.drive.list_children_changes = denied
         return f, orig
 
+    @pytest.mark.slow
     async def test_card_bump_with_a_deferred_reprobe_does_not_spin(self, monkeypatch):
         w = World(page_size=2000)
         f, orig = await self._photos_grown_past_dense_with_probe_refused(w)
@@ -402,6 +407,7 @@ class TestUpgradePassSkipsParkedRecords:
         assert w.rec(f).state is not RecordState.UNRESOLVED
         assert not [r for r in w.repo.records.values() if r.parent_id == f and r.state is RecordState.UNRESOLVED]
 
+    @pytest.mark.slow
     async def test_not_dense_outcome_converges_without_a_spin(self, monkeypatch):
         """The probe keeps failing: after its attempts the folder is classified not dense and every child gets
         its card rebuilt, with no zero-delay chain on the way."""

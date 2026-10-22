@@ -61,6 +61,7 @@ def _readable_by_the_indexer(path):
     return kind_of(name, "", False) in SLICE2_CONTENT_KINDS
 
 
+@pytest.mark.slow
 def test_every_file_the_indexer_reads_has_bytes():
     drive = FixtureDrive.from_file(_DIR / "tree.json")
     missing = []

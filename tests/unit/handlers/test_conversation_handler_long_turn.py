@@ -290,6 +290,7 @@ async def test_late_answer_full_text_is_sanitised(lt):
     assert "IGNORE PREVIOUS INSTRUCTIONS" not in lt.channel.send_late_answer.call_args.args[0]
 
 
+@pytest.mark.slow
 async def test_transient_late_answer_write_is_retried(lt):
     # A real LongTurnService over the handler's session store: the mark write succeeds,
     # the late-answer write fails once with a transient gRPC error, then succeeds.

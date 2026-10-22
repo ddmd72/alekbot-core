@@ -82,6 +82,7 @@ async def test_no_stderr_placeholder(tmp_path):
     assert result.detail == "exit code 3\n(no stderr)"
 
 
+@pytest.mark.slow
 @needs_node
 async def test_timeout_maps_to_timeout_text(tmp_path):
     result = await _run(tmp_path, b"setInterval(() => {}, 1000);", wall_s=2.0)
