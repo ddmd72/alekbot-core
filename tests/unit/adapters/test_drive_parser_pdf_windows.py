@@ -110,12 +110,10 @@ def _child(tmp_path, **fields):
 
 
 class TestChildOps:
-    @pytest.mark.datafile
     def test_page_count_op(self, tmp_path):
         assert _child(tmp_path, op="pdf_page_count", path=str(_pdf(tmp_path, 3))) == \
             {"status": "text", "pages_total": 3}
 
-    @pytest.mark.datafile
     def test_cut_op(self, tmp_path):
         out = tmp_path / "w.pdf"
         result = _child(tmp_path, op="cut_pdf_window", path=str(_pdf(tmp_path, 3)), first_page=1, page_count=5,
@@ -123,7 +121,6 @@ class TestChildOps:
         assert result == {"status": "text", "pages": 2}
         assert _page_texts(out) == ["page 2", "page 3"]
 
-    @pytest.mark.datafile
     def test_cut_op_failure_is_a_status(self, tmp_path):
         source = encrypt_pdf(make_pdf(tmp_path / "a.pdf", ["a"]), tmp_path / "l.pdf", user_password="pw")
         result = _child(tmp_path, op="cut_pdf_window", path=str(source), first_page=0, page_count=1,
@@ -142,7 +139,6 @@ def _workroot(tmp_path):
 
 
 class TestAdapter:
-    @pytest.mark.datafile
     async def test_real_child_counts_and_cuts(self, tmp_path):
         extractor = SubprocessContentExtractor(temp_root=str(_workroot(tmp_path)))
         source = _pdf(tmp_path, 7)
@@ -152,7 +148,6 @@ class TestAdapter:
         assert _page_texts(out) == ["page 4", "page 5", "page 6"]
         assert list(_workroot(tmp_path).iterdir()) == []
 
-    @pytest.mark.datafile
     async def test_real_child_encrypted(self, tmp_path):
         locked = encrypt_pdf(make_pdf(tmp_path / "s.pdf", ["a"]), tmp_path / "l.pdf", user_password="pw")
         extractor = SubprocessContentExtractor()
@@ -163,7 +158,6 @@ class TestAdapter:
             await extractor.cut_pdf_window(str(locked), 0, 1, str(tmp_path / "w.pdf"))
         assert failed.value.status is ExtractionStatus.ENCRYPTED
 
-    @pytest.mark.datafile
     async def test_child_status_is_raised(self, tmp_path):
         source = tmp_path / "split_encrypted"
         source.write_bytes(b"x")
@@ -172,7 +166,6 @@ class TestAdapter:
             await stub.cut_pdf_window(str(source), 0, 1, str(tmp_path / "w.pdf"))
         assert failed.value.status is ExtractionStatus.ENCRYPTED
 
-    @pytest.mark.datafile
     @pytest.mark.slow
     async def test_wall_clock_kill_is_timeout(self, tmp_path):
         source = tmp_path / "sleep"
@@ -182,7 +175,6 @@ class TestAdapter:
             await stub.pdf_page_count(str(source))
         assert failed.value.status is ExtractionStatus.TIMEOUT
 
-    @pytest.mark.datafile
     @pytest.mark.parametrize("behaviour", ["bad_count", "no_window", "symlink_window"])
     async def test_a_result_the_child_cannot_back_is_refused(self, tmp_path, behaviour):
         source = tmp_path / behaviour

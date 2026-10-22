@@ -9,8 +9,6 @@ import pytest
 
 from tests.unit.adapters.firestore_drive_fakes import NOW, RECS, Db, executed, make_repo, rec_doc, snap
 
-pytestmark = pytest.mark.datafile
-
 _ROOT = Path(__file__).resolve().parents[3]
 
 

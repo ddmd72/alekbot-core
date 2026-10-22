@@ -1,12 +1,9 @@
 """cloudbuild-dev.yaml deploys the main service before anything of the drive index (USER_DRIVE_INDEXING_RFC
 §12.5): a failing drive step (the queue's one-time IAM grant missing, an indexer that does not start) must never
 block a hotfix of the bot itself."""
-import pytest
 from pathlib import Path
 
 import yaml
-
-pytestmark = pytest.mark.datafile
 
 _ROOT = Path(__file__).resolve().parents[2]
 _BUILD = _ROOT / "cloudbuild-dev.yaml"

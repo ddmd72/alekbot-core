@@ -37,8 +37,6 @@ from src.services.file_conversion_service import FileConversionService
 from src.services.user_drive_service import UserDriveService
 from src.adapters.microsoft.onedrive_adapter import ONEDRIVE_PROVIDER, OneDriveAdapter
 
-pytestmark = pytest.mark.datafile
-
 _FIX = Path(__file__).resolve().parents[2] / "fixtures" / "onedrive_delta"
 _GRAPH = "https://graph.microsoft.com/v1.0"
 _DELTA_START = "/me/drive/special/approot/delta?$top=200"

@@ -68,7 +68,6 @@ async def test_robots_opens_only_the_root():
     assert "Disallow: /\n" in text
 
 
-@pytest.mark.datafile
 def test_landing_page_has_no_placeholders_or_external_assets():
     from pathlib import Path
     html = Path("src/web/static/landing.html").read_text()
@@ -77,7 +76,6 @@ def test_landing_page_has_no_placeholders_or_external_assets():
     assert "<script src" not in html and "fonts.googleapis" not in html
 
 
-@pytest.mark.datafile
 def test_every_external_link_opens_in_a_new_tab():
     import re
     from pathlib import Path
@@ -88,7 +86,6 @@ def test_every_external_link_opens_in_a_new_tab():
     assert all('target="_blank"' in a and "noopener" in a for a in anchors)
 
 
-@pytest.mark.datafile
 def test_cabinet_logout_lands_on_the_public_page_not_the_login():
     from pathlib import Path
     js = Path("src/web/static/cabinet.html").read_text()

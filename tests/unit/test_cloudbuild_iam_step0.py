@@ -1,12 +1,9 @@
 """IAM least-privilege Step 0 (C4): the scheduler step reads the invoker identity from its secret, fails fast,
 pins audiences and manages all jobs (incl. the relay keep-alive); logging is Cloud Logging only."""
-import pytest
 import re
 from pathlib import Path
 
 import yaml
-
-pytestmark = pytest.mark.datafile
 
 _ROOT = Path(__file__).resolve().parents[2]
 _BUILD = _ROOT / "cloudbuild-dev.yaml"

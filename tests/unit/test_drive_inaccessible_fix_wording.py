@@ -32,7 +32,6 @@ def test_the_card_lines_say_a_folder_you_create():
     assert "copy the files into a new folder you create inside the bot's folder" in ACCESS_LINE_FOLDER
 
 
-@pytest.mark.datafile
 def test_the_skill_tells_smart_the_same_fix():
     body = next(s for s in load_system_skills(SKILLS) if s.name == "drive-search").body
     assert "copy each file into a new folder they create inside the bot's folder" in body

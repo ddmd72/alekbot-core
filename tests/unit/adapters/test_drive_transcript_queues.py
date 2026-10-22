@@ -293,7 +293,6 @@ async def test_purge_queries_filter_on_the_user_only(fs):
 
 # -- provisioning -----------------------------------------------------------------------------------------------------
 
-@pytest.mark.datafile
 async def test_every_new_query_has_its_index(fs):
     db, repo = fs
     await repo.upsert_records([_rec("c")])   # the records collection exists
@@ -332,7 +331,6 @@ def _raw():
     return json.loads((_ROOT / "config" / "firestore.indexes.json").read_text())
 
 
-@pytest.mark.datafile
 def test_the_declared_queue_indexes_match_the_brief():
     assert _declared(LIVE_RECS).count([("user_id", "ASCENDING"), ("transcript_state", "ASCENDING"),
                                        ("effective_day", "DESCENDING"), ("parent_id", "ASCENDING"),
@@ -343,13 +341,11 @@ def test_the_declared_queue_indexes_match_the_brief():
     assert _declared(LIVE["store"]) == [[("user_id", "ASCENDING"), ("last_used_at", "ASCENDING")]]
 
 
-@pytest.mark.datafile
 def test_the_heavy_transcript_fields_are_exempt_from_single_field_indexing():
     assert {"segments", "summary"} <= _exempt(LIVE["store"])
     assert "segments" in _exempt(LIVE["parts"]) and "segments" in _exempt(LIVE["windows"])
 
 
-@pytest.mark.datafile
 def test_the_deploy_tool_sends_gcloud_its_collection_group_scope(monkeypatch):
     import importlib.util
     spec = importlib.util.spec_from_file_location("deploy_idx", _ROOT / "scripts" / "infrastructure" /

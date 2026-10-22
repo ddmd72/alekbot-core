@@ -9,8 +9,6 @@ from pathlib import Path
 
 from tests.unit.adapters.drive_extraction_fixtures import make_pdf
 
-pytestmark = pytest.mark.datafile
-
 _ROOT = Path(__file__).resolve().parents[3]
 
 

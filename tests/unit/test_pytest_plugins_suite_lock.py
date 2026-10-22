@@ -71,7 +71,6 @@ def test_a_small_session_takes_no_lock(pytester, holder, monkeypatch):
 
 
 @pytest.mark.slow
-@pytest.mark.datafile
 def test_n_takes_the_lock_at_configure_before_any_collection(pytester, holder, monkeypatch):
     # Exit raised from pytest_configure is not survivable in pytester's in-process mode, so this one is a real child.
     make_importable_for_children(monkeypatch)

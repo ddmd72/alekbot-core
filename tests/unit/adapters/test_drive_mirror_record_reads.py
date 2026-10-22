@@ -65,7 +65,6 @@ async def test_transcript_records_after_cursor(adapter):
     assert [r.item_id for r in await repo.transcript_records("u", "current", 10, after=None)][0] == "c1"
 
 
-@pytest.mark.datafile
 async def test_the_firestore_cursor_read_is_served_by_single_field_indexes(adapter):
     repo, db = adapter
     if db is None:

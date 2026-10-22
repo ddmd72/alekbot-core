@@ -113,7 +113,6 @@ class TestEntryPointsNoTestImports:
         assert layers.missing_entry_points(files) == ["main.py"]
 
 
-@pytest.mark.datafile  # runs the script as a process on a coverage.json file
 class TestScript:
     def run(self, tmp_path, files, **env):
         report = tmp_path / "coverage.json"

@@ -31,13 +31,11 @@ def test_generated_set_gets_the_kinds_the_tick_would_derive(script, tmp_path):
     assert kinds["nested.html"] == "html" and kinds["long.docx"] == "docx"
 
 
-@pytest.mark.datafile
 def test_rlimit_probe_reports_a_verdict(script):
     probe = script.rlimit_probe(limit_mib=64)
     assert isinstance(probe["rlimit_as_honoured"], bool) and probe["platform"]
 
 
-@pytest.mark.datafile
 def test_one_measured_run_prints_a_json_row(script, tmp_path, capsys):
     path = tmp_path / "tiny.txt"
     path.write_text("hello", encoding="utf-8")

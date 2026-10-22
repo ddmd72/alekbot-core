@@ -21,14 +21,12 @@ from tests.unit.services.test_user_agent_factory import (  # noqa: F401 — fixt
 )
 
 
-@pytest.mark.datafile
 def test_container_exposes_memory_fact_service(container):  # noqa: F811
     assert isinstance(container.memory_fact_service, MemoryFactService)
     assert isinstance(container.memory_fact_service._repo, FirestoreMemoryFactDraftRepository)
     assert container.memory_fact_service._sessions is container.session_store
 
 
-@pytest.mark.datafile
 def test_agent_services_includes_memory_fact_service(container):  # noqa: F811
     assert container.agent_services()["memory_fact_service"] is container.memory_fact_service
 

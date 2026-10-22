@@ -52,9 +52,8 @@ make typecheck         # mypy --strict on src/domain + src/ports only
 make check-types       # mypy (lenient) on src/adapters — informational, prints an error count, never fails
 make test              # All tests
 make test-unit         # Unit tests
-make test-affected     # Inner loop: testmon-selected tests + the always-run `datafile` set (seconds on a small diff)
-make ci                # PR job (what CI runs): lint + typecheck + the unit suite once with slow tests, data-file audit, coverage gate + offline G2
-make test-arch         # The hexagonal layering tests (slow-marked, so not in `make check`): run after touching imports across layers
+make test-affected     # Inner loop: only the unit tests testmon selects for your changes (seconds on a small diff)
+make ci                # PR job (what CI runs): lint + typecheck + the unit suite once with slow tests, coverage gate + offline G2
 make test-integration  # Integration tests
 make test-e2e-all      # E2E all agents
 make deploy            # Build + deploy to Cloud Run (single live environment)
@@ -79,17 +78,12 @@ carries `@pytest.mark.timing`; `tests/conftest.py` skips it unless `RUN_TIMING_T
 every full run then failed and was re-run. They run only via `make test-timing`: in CI as the separate `timing`
 job after a merge to `main` (never on a PR), or by hand. A new test with a time threshold gets the marker;
 never put timing tests back into `make check`, and never re-run a suite because a timing test failed.
-**Slow tests, the data-file set and the per-test budget (P1, 2026-10-22).** `@pytest.mark.slow` mirrors `timing`: a
-test over 0.5 s with coverage on (setup + call + teardown; half the 1 s CI budget, for headroom) is skipped unless `RUN_SLOW_TESTS=1`,
-which `make ci` sets; so `make check` stays fast and `make ci` runs everything once. The budget itself is a CI warning,
-never a gate (owner decision 2026-10-22: wall-clock limits flake on the runner): the PR job sets
-`PYTEST_DURATION_BUDGET_S=1.0` and the run lists the unmarked offenders slowest first (and as a GitHub `::warning`
-annotation) without changing its exit status; an offender that keeps showing up gets `slow`. Locally `--durations=25` is
-an advisory report. `@pytest.mark.datafile` marks a test testmon cannot select (its input is a data file, a `.py` read as
-text, or code in a child process); `make test-affected` runs `--testmon -m "not datafile"` then `-m datafile` (the
-always-run set), seeds `.testmondata` from the main checkout in a new worktree, and never combines testmon with
-coverage. `make ci` runs with `PYTEST_DATAFILE_AUDIT=1`: an audit hook fails the run when an unmarked test reads a file
-under the repo or spawns a process, so the marker set cannot rot (`tests/CLAUDE.md`). **One full suite at a time on a
+**Slow tests and the inner loop (P1, 2026-10-22).** `@pytest.mark.slow` mirrors `timing`: a test over 0.5 s with
+coverage on (setup + call + teardown) is skipped unless `RUN_SLOW_TESTS=1`, which `make ci` sets; so `make check` stays fast
+and `make ci` runs everything once. Locally `--durations=25` is an advisory report. `make test-affected` runs
+`pytest --testmon` once, seeds `.testmondata` from the main checkout in a new worktree, and never combines testmon with
+coverage; it selects by executed Python lines, so it can miss a test whose input is a data file or code run in a child
+process: **`make check` before a commit is mandatory** (`tests/CLAUDE.md`). **One full suite at a time on a
 machine:** a session with `-n` (or 2000+ tests) takes `fcntl.flock` on a file in the temp dir, prints the holder and
 waits up to `PYTEST_LOCK_TIMEOUT_S` (1800); `PYTEST_SUITE_LOCK=0` turns it off. **Test rules (P2, 2026-10-22), in `tests/CLAUDE.md`:** fakes with semantics over call assertions; `tests/unit/` is offline (a network guard refuses non-loopback `connect()`, a tripwire refuses `google.auth.default` and non-local gRPC channels); `make ci` enforces per-layer branch-coverage floors that only rise (`scripts/check_coverage_layers.py`) and a shrinking allowlist of src modules no test imports; a package that touches stores is done when `python -m tests.support.semantic_mutants` leaves no survivor. Lint scope is `src/` only (default high-signal ruleset: pyflakes + pycodestyle
 errors). `ruff format` exists as a dev convenience but is not enforced in CI — the codebase is not

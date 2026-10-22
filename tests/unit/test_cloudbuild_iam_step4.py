@@ -1,5 +1,4 @@
 """IAM least-privilege Step 4: the drive indexer runs as its own identity, named through `$PROJECT_ID`."""
-import pytest
 from pathlib import Path
 
 import yaml
@@ -15,6 +14,5 @@ def _deploy_args(service):
     raise AssertionError(f"no deploy step for {service}")
 
 
-@pytest.mark.datafile
 def test_the_indexer_runs_as_its_own_identity():
     assert "--service-account=alek-indexer@$PROJECT_ID.iam.gserviceaccount.com" in _deploy_args("alek-bot-indexer-dev")

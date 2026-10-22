@@ -41,20 +41,17 @@ def test_unknown_op_is_an_error_result():
     assert dispatch({"op": "nope"})["status"] == "error"
 
 
-@pytest.mark.datafile
 def test_unreadable_request_exits_bad_request(tmp_path):
     proc = _run(b"{not json")
     assert proc.returncode == EXIT_BAD_REQUEST
     assert not (tmp_path / "result.json").exists()
 
 
-@pytest.mark.datafile
 def test_limits_it_cannot_apply_exit_bad_request(tmp_path):
     proc = _run(_request(tmp_path, op="extract", path="x", kind="text", cpu_s=-1))
     assert proc.returncode == EXIT_BAD_REQUEST
 
 
-@pytest.mark.datafile
 def test_cpu_limit_is_applied_before_the_handler(tmp_path):
     code = ("import resource, sys\n"
             "from src.adapters.drive_parser.child import serve\n"

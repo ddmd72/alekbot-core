@@ -241,7 +241,6 @@ def test_outage_writes_no_record_state():
     assert transcript_plan(rec, _ctx()) == rec and rec.transcript_state == "ready"
 
 
-@pytest.mark.datafile
 def test_plan_reads_no_store():
     assert list(inspect.signature(transcript_plan).parameters) == ["rec", "ctx"]
     src = inspect.getsource(pm)

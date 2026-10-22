@@ -105,19 +105,16 @@ def _container(monkeypatch, **extra):
 
 
 class TestContainerDriveIndexWiring:
-    @pytest.mark.datafile
     def test_absent_without_microsoft_app_registration(self, monkeypatch):
         c = _container(monkeypatch)
         assert c.drive_index_repo is None and c.drive_task_queue is None
 
-    @pytest.mark.datafile
     def test_repo_without_queue_when_indexer_url_unset(self, monkeypatch):
         monkeypatch.delenv("DRIVE_INDEXER_URL", raising=False)
         c = _container(monkeypatch, MICROSOFT_TODO_CLIENT_ID="cid", MICROSOFT_TODO_CLIENT_SECRET="sec")
         assert c.drive_index_repo is not None and c.drive_task_queue is None
         assert c.user_drive_service._nudge_queue is None
 
-    @pytest.mark.datafile
     def test_nudges_go_to_the_drive_queue(self, monkeypatch, recording_queue):
         monkeypatch.setenv("DRIVE_INDEXER_URL", "https://indexer.example.invalid")
         c = _container(monkeypatch, MICROSOFT_TODO_CLIENT_ID="cid", MICROSOFT_TODO_CLIENT_SECRET="sec",

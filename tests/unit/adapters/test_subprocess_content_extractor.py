@@ -15,8 +15,6 @@ from src.domain.drive_index_params import MAX_TEXT_CHARS
 from src.ports.content_extractor_port import ContentExtractorPort
 from tests.unit.adapters.drive_extraction_fixtures import encrypt_pdf, make_docx, make_member_bomb, make_pdf
 
-pytestmark = pytest.mark.datafile
-
 STUB = "tests.unit.adapters.drive_parser_child_stub"
 CUT_STUB = "tests.unit.adapters.drive_parser_cut_stub"
 

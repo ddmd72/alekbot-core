@@ -1,5 +1,4 @@
 """Final review F3: the requeue's cap source and the sweep's no-reserved_month count (N2)."""
-import pytest
 import importlib.util
 from pathlib import Path
 
@@ -27,12 +26,10 @@ def test_cap_prefers_the_flag_then_the_dev_key_then_the_default():
     assert requeue.resolve_cap(50.0, None)[0] == 20.0    # the knob only lowers
 
 
-@pytest.mark.datafile
 def test_the_cli_has_a_cap_flag():
     assert "--cap-usd" in (_DIR / "drive_transcribe_requeue.py").read_text()
 
 
-@pytest.mark.datafile
 def test_the_local_cap_key_is_not_read():
     text = (_DIR / "drive_transcribe_requeue.py").read_text()
     assert 'getenv("DRIVE_TRANSCRIBE_USD_CAP")' not in text

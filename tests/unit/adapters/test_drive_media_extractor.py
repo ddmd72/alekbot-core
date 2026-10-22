@@ -22,8 +22,6 @@ from tests.unit.adapters.drive_media_fixtures import (
     tone_hz_at,
 )
 
-pytestmark = pytest.mark.datafile
-
 needs_ffmpeg = pytest.mark.skipif(not HAVE_FFMPEG, reason="needs ffmpeg and ffprobe")
 WEBM = "matroska,webm"
 STUB = "tests.unit.adapters.drive_media_child_stub"

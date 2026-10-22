@@ -19,8 +19,6 @@ from src.domain.drive_index_policy import (
     SLICE2_CONTENT_KINDS, is_dot_name, is_generated_dir, is_marker_child, item_rule, kind_of,
 )
 
-pytestmark = pytest.mark.datafile
-
 _DIR = Path(__file__).resolve().parents[2] / "fixtures" / "drive_eval"
 _FILES = _DIR / "files"
 _MAX_TOTAL = 1_500_000

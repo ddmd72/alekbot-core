@@ -126,7 +126,6 @@ def test_output_root_not_inside_work_root_refused(tmp_path):
         build_engine_registry(plan)
 
 
-@pytest.mark.datafile
 def test_setup_module_imports_no_web_module():
     tree = ast.parse(pathlib.Path(sandbox_setup.__file__).read_text())
     mods = []

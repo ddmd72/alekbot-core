@@ -1,12 +1,9 @@
 """Cloud Build rejects a step arg over 10 000 characters ("build step N arg M too long") at submit time,
 after the image build, so a deploy fails late. The scheduler-jobs script lives in a file for that reason."""
-import pytest
 import re
 from pathlib import Path
 
 import yaml
-
-pytestmark = pytest.mark.datafile
 
 _ROOT = Path(__file__).resolve().parents[2]
 _BUILD = _ROOT / "cloudbuild-dev.yaml"

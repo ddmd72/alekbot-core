@@ -22,8 +22,6 @@ from src.domain.drive_keys import name_keys_v2, name_match_v2, name_word_concept
 from src.domain.drive_tier_pool import concept_trigrams
 from src.domain.drive_tiers import name_query_keys
 
-pytestmark = pytest.mark.datafile
-
 _DIR = Path(__file__).resolve().parents[2] / "fixtures" / "drive_eval"
 
 # Files with no text layer: the words the generator drew (make_fixtures.FIXTURES).

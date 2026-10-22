@@ -15,7 +15,6 @@ from src.adapters.notification_channel_factory import NotificationChannelFactory
 
 
 class TestNotificationChannelFactory:
-    @pytest.mark.datafile
     def test_no_slack_response_channel_import(self):
         """Factory must not import SlackResponseChannel directly."""
         import src.adapters.notification_channel_factory as module

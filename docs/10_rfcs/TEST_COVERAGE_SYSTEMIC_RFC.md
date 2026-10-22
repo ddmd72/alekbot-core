@@ -433,16 +433,15 @@ CI: 4:37 wall (install 0:34, apt `ffmpeg` 0:30, pytest 3:01 on a 4-core runner).
 
 **Local, three tiers:**
 
-1. **Inner loop: `make test-affected`** = `pytest --testmon` plus a fixed **always-run set** (`-m datafile`). testmon
+1. **Inner loop: `make test-affected`** = `pytest --testmon`. testmon
    selects by executed Python lines, so it misses tests whose input is a data file (H4 over `prompts_snapshot/`, H6 over
    `docs/10_rfcs/`, the index-provisioning tests over `config/firestore.indexes.json`, `tests/unit/test_cloudbuild_*`,
-   skill files, fixtures) and code run in subprocesses (drive parser child, sandbox engine). Those tests carry the
-   `datafile` marker. `.testmondata` is seeded into each new worktree from the main checkout, so the first run is not a
+   skill files, fixtures) and code run in subprocesses (drive parser child, sandbox engine); the mandatory
+   `make check` before a commit catches those (see the P1 note below). `.testmondata` is seeded into each new worktree from the main checkout, so the first run is not a
    cold full suite. testmon is pinned and never combined with coverage (it pauses the outer measurement).
 2. **Before a commit: `make check`, ≤ 3:00 on a quiet machine.** Lint, mypy, the unit suite and the fast contract and
-   fake-based suites this RFC adds. `--durations=25` prints the slowest tests as an **advisory report** locally; the
-   1-second-per-test budget is **enforced only on the CI runner**, since a loaded Mac produces the same false failures
-   the `timing` marker removed.
+   fake-based suites this RFC adds. `--durations=25` prints the slowest tests as an **advisory report**. There is no
+   per-test duration budget (see the P1 note below).
 3. **Slow suites only in CI.** `@pytest.mark.slow` mirrors the `timing` pattern (`tests/conftest.py:31-40` skip hook,
    Makefile `-m "not timing"` at `:239`). The coverage gate is a **run mode** of `make ci`, not a marked test.
 
@@ -457,33 +456,25 @@ when the process dies, and the hook covers make, direct `pytest` calls and subag
 `main`: the cloud gate, timing tests, the skip-ledger job (P22). Weekly: spec drift, mutation metric. Monthly: contract
 review. Manual: probes.
 
-**Built (P1, 2026-10-22).** `make test-affected`, `make ci`, the `slow` / `datafile` markers, the CI duration budget, the
-data-file audit and the `fcntl` lock are in `tests/plugins/` (+ `tests/conftest.py`, `Makefile`, `ci.yml`). Deviations
-from the text above:
+**Built (P1, 2026-10-22).** `make test-affected` (one `pytest --testmon` run, `.testmondata` seeded into a new worktree),
+`make ci`, the `slow` marker and the `fcntl` suite lock (`tests/plugins/suite_lock.py`, `tests/conftest.py`, `Makefile`,
+`ci.yml`). Deviations from the text above:
+- **No per-test duration budget** (owner decision 2026-10-22): the goal, a fast local `make check`, is met by the `slow`
+  marker, and a wall-clock limit flakes on a shared runner. `--durations=25` stays as an advisory report.
+- **No `datafile` marker, no always-run set, no data-file audit** (owner decision 2026-10-22): testmon misses are caught by
+  the mandatory `make check` before a commit, so the marker set and the audit that kept it honest were not worth carrying.
 - **testmon needs `--testmon-forceselect`.** testmon 2.2.0 switches selection off whenever `-m` is given ("selection
-  automatically deactivated because -m was used"), so run 1 of `make test-affected` passes `--testmon
-  --testmon-forceselect -m "not datafile and not timing"`. A no-change rerun then selects 0 tests (6.8 s; testmon turns
-  pytest's exit 5 into 0). A new worktree seeded from the main checkout's `.testmondata` at the same commit also selects 0.
+  automatically deactivated because -m was used"), so `make test-affected` passes `--testmon --testmon-forceselect
+  -m "not timing"`. A no-change rerun then selects 0 tests (testmon turns pytest's exit 5 into 0). A new worktree seeded
+  from the main checkout's `.testmondata` at the same commit also selects 0.
 - **`make check` no longer runs the `slow` tests**, among them 24 of the 36 layering tests of
   `test_req_arch_01_hexagonal_isolation.py` (the 23 over 0.5 s in the calibration plus `test_agents_layer_isolation`).
   Each walks the whole of `src/`: 0.5-3.2 s under coverage, 0.8-2.1 s without, and it moves with machine load. A shared
-  parse buys only ~15% (the cost is walking ~600k AST nodes per test), so the decision is to **keep them slow** and add
-  `make test-arch` (the module alone, `-n 4`, ~10-15 s) for the loop after touching imports across layers. They run in
-  `make ci`, so on every PR, but not in `make check` or `make test-affected` (the `datafile` run does not set
-  `RUN_SLOW_TESTS`).
-- **The slow threshold was calibrated at 0.5 s under coverage** (2x headroom against the 1.0 s CI budget); a test using a
-  module-scoped fixture is marked in every user of that fixture, because under xdist whichever test reaches it first on a
-  worker pays (`test_drive_index_hostile_tree.py`, `TestScale`). Tests that pay a lazy heavy import first (markitdown) are
-  marked too.
-- **Audit attribution.** The nearest caller outside the stdlib decides: import machinery, pytest-family packages (not for
-  spawns: a child started through `pytester` is the test's), source lines read to format a traceback or a warning, and lazy
-  imports inside a test are not data reads. Reads at collection time belong to every test of the module. A read inside a
-  module-scoped fixture lands on the first test that uses it on that worker, so a module whose reads sit in such a
-  fixture gets a module-level marker (the "stale" list prints these as informational noise).
-- **The budget applies to the unit run only.** `PYTEST_DURATION_BUDGET_S` is a make variable that is not exported to
-  recipes; `test-ci` passes it to its pytest call, so the 14 s G2 end-to-end test never sees it. Tests that would pay a
-  heavy lazy import first (markitdown) no longer do: `tests/conftest.py` imports it once per worker at session start, so
-  which test pays does not depend on how xdist hands out tests.
+  parse buys only ~15% (the cost is walking ~600k AST nodes per test), so the decision is to **keep them slow**. They
+  run in `make ci`, so on every PR, but not in `make check` or `make test-affected`.
+- **The slow threshold was calibrated at 0.5 s under coverage**; a test using a module-scoped fixture is marked in every
+  user of that fixture, because under xdist whichever test reaches it first on a worker pays
+  (`test_drive_index_hostile_tree.py`, `TestScale`). Tests that pay a lazy heavy import first (markitdown) are marked too.
 - `.testmondata` is seeded with SQLite's backup API (`scripts/seed_testmondata.py`), not `cp`: testmon uses WAL.
 - Extra knobs, for tests of the machinery only: `PYTEST_SUITE_LOCK_FILE`, `PYTEST_LOCK_REPORT_S`, `PYTEST_LOCK_POLL_S`.
 
@@ -513,7 +504,7 @@ Effort is realistic working days, after both reviews. Gate: `check` = `make chec
 
 | # | Package | Gate | Effort | What it catches | Tranche |
 |---|---|---|---|---|---|
-| P1 | **Test-time budget** (§4b): `make test-affected` with the `datafile` always-run set and worktree seeding; the `fcntl` lock hook; `slow` marker; `make ci` and the PR job switched to it; advisory durations report | check / ci | 1–1.5 | a local loop that grows past 3 min; five parallel full suites | 1 |
+| P1 | **Test-time budget** (§4b): `make test-affected` (testmon) with worktree seeding; the `fcntl` lock hook; `slow` marker; `make ci` and the PR job switched to it; advisory durations report | check / ci | 1–1.5 | a local loop that grows past 3 min; five parallel full suites | 1 |
 | P2 | **Rules and gates**: H3 network guard + gRPC tripwire; `tests/CLAUDE.md` rewritten (fakes with semantics over call assertions; adapters need behind-port tests; no real LLM; MagicMock coverage does not count); coverage per layer with `branch = True`, floor at the re-measured values, only rising; root `*_main.py` into `[run] source`; subprocess coverage configured (`[run] patch = subprocess`) or omitted with a reason; a static "no test imports module X" check with an allowlist that only shrinks; the semantic-mutation plugin | check / ci | 1.5–2 | the convention itself; unmeasured entry points | 1 |
 | P3 | **Emulator spike** (§4): which of our queries, vector included, the emulator runs | — | 1 h | decides how much of P5 runs offline | 1 |
 | P4 | **H1 fake** (the full add-list, index refusal, raw-dict seeding, one transaction patch) **+ the fact store kit** (S1's round-trip suite folded in; semantics inventory for the fact ports) | check | 2.5–3.5 | the fact defect class; missing indexes offline | 1 |

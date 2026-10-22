@@ -3,13 +3,10 @@ T-R3): `--set-env-vars` replaces every variable, so both ride as substitutions f
 (DRIVE_TRANSCRIBE_ENABLED_DEV, DRIVE_TRANSCRIBE_USD_CAP_DEV; never the local keys). The switch defaults OFF in the
 Makefile and in the `substitutions:` block; the cap, which only lowers $20, reaches the indexer AND the main service, and
 so does the switch since T-R34 (the Cabinet shows the disclosure only while it is on)."""
-import pytest
 import re
 from pathlib import Path
 
 import yaml
-
-pytestmark = pytest.mark.datafile
 
 _ROOT = Path(__file__).resolve().parents[2]
 _BUILD = yaml.safe_load((_ROOT / "cloudbuild-dev.yaml").read_text())

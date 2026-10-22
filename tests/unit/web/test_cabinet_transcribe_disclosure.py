@@ -16,8 +16,6 @@ from src.web.user_cabinet_app import create_user_cabinet_blueprint
 
 from .test_cabinet_drive_index_strings import LANGS, _dicts
 
-pytestmark = pytest.mark.datafile
-
 
 @pytest.mark.parametrize("lang", LANGS)
 def test_the_sentence_exists_in_every_language(lang):

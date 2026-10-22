@@ -88,7 +88,6 @@ async def test_501_when_not_configured(oauth_port):
     assert resp.status_code == 501
 
 
-@pytest.mark.datafile
 def test_provider_key_matches_adapter():
     assert f'"{ONEDRIVE_PROVIDER}"' in inspect.getsource(oauth_app)
 

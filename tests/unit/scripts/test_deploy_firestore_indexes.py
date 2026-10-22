@@ -13,8 +13,6 @@ from types import SimpleNamespace
 
 import pytest
 
-pytestmark = pytest.mark.datafile
-
 _SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "infrastructure" / "deploy_firestore_indexes.py"
 
 _INDEXES = [

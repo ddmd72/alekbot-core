@@ -17,8 +17,6 @@ from src.web.user_cabinet_app import create_user_cabinet_blueprint
 
 from .test_cabinet_drive_index_strings import LANGS, _dicts
 
-pytestmark = pytest.mark.datafile
-
 _HTML = Path("src/web/static/cabinet.html").read_text(encoding="utf-8")
 
 

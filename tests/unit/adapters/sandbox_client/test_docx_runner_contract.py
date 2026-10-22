@@ -19,8 +19,6 @@ from src.ports.docx_runner_port import DocxRunnerError
 from tests.unit.adapters.sandbox_client.sandbox_client_helpers import BASE, good_token, real_app_transport
 from tests.unit.web.test_sandbox_app import FakeEngine
 
-pytestmark = pytest.mark.datafile
-
 _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
 _HAS_NODE = shutil.which("node") is not None and os.path.isdir(os.path.join(_ROOT, "docx_generator", "node_modules", "docx"))
 needs_node = pytest.mark.skipif(

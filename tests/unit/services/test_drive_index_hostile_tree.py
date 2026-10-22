@@ -91,7 +91,6 @@ def indexed():
     return asyncio.run(run())
 
 
-@pytest.mark.datafile
 @pytest.mark.slow
 @pytest.mark.parametrize("path", sorted(EXPECTED))
 def test_scope_and_reason(indexed, path):

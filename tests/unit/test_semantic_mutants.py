@@ -246,7 +246,6 @@ WEAK = textwrap.dedent(
 
 
 @pytest.mark.slow
-@pytest.mark.datafile  # runs child pytest processes on files under tmp_path and the repo's plugin modules
 class TestDriver:
     @pytest.fixture
     def toy(self, tmp_path):

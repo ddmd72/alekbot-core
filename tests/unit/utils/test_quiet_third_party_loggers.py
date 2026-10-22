@@ -7,8 +7,6 @@ import pytest
 
 from src.utils.logger import quiet_third_party_loggers
 
-pytestmark = pytest.mark.datafile
-
 ROOT = Path(__file__).resolve().parents[3]
 ENTRY_POINTS = ["main.py", "indexer_main.py", "relay_main.py", "job_main.py"]
 

@@ -8,8 +8,6 @@ import pytest
 
 from src.adapters.sandbox_engine import limits_exec
 
-pytestmark = pytest.mark.datafile
-
 _LINUX = sys.platform == "linux"
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
 _REPORT = (

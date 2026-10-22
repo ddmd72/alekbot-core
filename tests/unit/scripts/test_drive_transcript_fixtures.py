@@ -92,13 +92,11 @@ def test_the_gold_json_matches_the_specs_and_carries_text_and_intended_starts():
     json.dumps(gold, ensure_ascii=False)
 
 
-@pytest.mark.datafile
 def test_the_committed_gold_is_what_the_script_generates():
     committed = json.loads(fx.GOLD_PATH.read_text(encoding="utf-8"))
     assert committed == json.loads(json.dumps(fx.gold(fx.build_specs())))
 
 
-@pytest.mark.datafile
 def test_the_committed_gold_holds_no_media_and_no_path():
     text = fx.GOLD_PATH.read_text(encoding="utf-8")
     assert "scripts/memory" not in text and "/Users/" not in text and ".m4a" not in text
