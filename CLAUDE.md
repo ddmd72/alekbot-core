@@ -519,7 +519,7 @@ on both voice paths as of 2026-09-27, no longer `high`).
 **Consolidation** — Owner's map: `docs/05_building_blocks/memory/README.md`.
 Long-term memory formation: sliding window fills → batch to Cloud Tasks queue →
 ConsolidationAgent ("Life Chronicler") extracts facts/principles from raw messages (non-blocking).
-Thresholds are global: threshold=70/batch=50 live (`domain/settings.py`; the `is_production` branch sets 50/30);
+Thresholds are global: threshold=70/batch=50 live (`domain/settings.py`; the `is_production` branch in `config/settings.py` sets 50/30);
 `UserBotConfig.consolidation_threshold` has no effect anywhere, `consolidation_batch_size` only sizes the `$consolidate`
 cut. Consolidation writes skip the number-aware 0.96 dedup (`skip_deduplication=True`): the model decides duplicates
 after searching; the 0.96 check runs only on the non-live v2 path. 3 vectors/fact + SCD2 (`update_fact` re-embeds on content change; `is_current` = latest of lineage, false only when superseded — `decisions/fact_s1_defects.md`); biographical cache updated for next conversation.
@@ -545,7 +545,7 @@ See `docs/10_rfcs/MEMORY_FACT_CONFIRMATION_RFC.md` + `decisions/memory_facts_own
 **Standing Directives** — user behavioral rules ("never give partial answers", "trace conditional
 logic before judging") are a first-class fact domain `FactDomain.AGENT_DIRECTIVE`, rendered as a
 binding `standing_directives {}` block in the system prompt of every agent built with the biographical context
-(Smart, Quick, Notes, Tasks, EmailSearch, PdfGenerator; the consolidator excluded) on every request (NOT
+(Smart, Quick, Notes, Tasks, EmailSearch, PdfGenerator; the consolidator and Lelik excluded) on every request (NOT
 biographical `preference`, NOT firing self-reminders). Rendering = a channel split at
 `PromptBuilder.build_for_agent` (mirrors `query_specific_context`): partitions the flat cache list
 into `static_bio` / `directives`, each its own `assemble()` param; gated by `include_directives`
