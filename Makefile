@@ -200,7 +200,7 @@ install: ## Install dependencies
 
 install-dev: install ## Install dependencies + test/lint tools
 	@echo "📦 Installing dev tools..."
-	$(PYTHON) -m pip install pytest pytest-asyncio pytest-mock pytest-xdist pytest-testmon pytest-cov ruff
+	$(PYTHON) -m pip install pytest pytest-asyncio pytest-mock pytest-xdist pytest-testmon pytest-cov pytest-socket ruff
 
 clean: ## Clean up temporary files and caches
 	@echo "🧹 Cleaning up temporary files..."
@@ -252,8 +252,10 @@ test-timing: ## Wall-clock/CPU-time tests only, serial (CI runs it after a merge
 	@echo "⏱  Running timing tests..."
 	RUN_TIMING_TESTS=1 DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/unit/ -q --asyncio-mode=auto -m timing
 
-# Coverage flags shared by test-coverage and ci (thresholds belong to the RFC §8.4 gate; P2 replaces it).
-COVERAGE_FLAGS = --cov=src --cov-report=term-missing:skip-covered --cov-report=json --cov-fail-under=70
+# Coverage flags shared by test-coverage and ci. A bare `--cov` takes its sources from .coveragerc (src + the root *_main.py
+# entry points, branch coverage on); a `--cov=src` here would replace that list. Gates: the global floor below, the per-file
+# table (RFC §8.4) and the per-layer floors (P2).
+COVERAGE_FLAGS = --cov --cov-report=term-missing:skip-covered --cov-report=json --cov-fail-under=70
 
 test-coverage: ## Unit tests + global + per-file coverage gate (RFC § 8.4)
 	@echo "🧪 Running unit tests with coverage..."
@@ -262,6 +264,8 @@ test-coverage: ## Unit tests + global + per-file coverage gate (RFC § 8.4)
 	    --asyncio-mode=auto -m "not timing" $(COVERAGE_FLAGS)
 	@echo "🚦 Enforcing per-file coverage thresholds..."
 	@$(PYTHON) scripts/check_coverage_thresholds.py
+	@echo "🚦 Enforcing per-layer coverage floors..."
+	@$(PYTHON) scripts/check_coverage_layers.py
 
 # testmon never runs together with coverage. A fresh worktree gets the main checkout's .testmondata (the first
 # entry of `git worktree list`; copied with SQLite's backup API, testmon uses WAL), so its first run is not a cold suite. Run 1 selects by executed lines; run 2
@@ -299,7 +303,7 @@ check-types: ## mypy (lenient) on src/adapters — informational, never fails
 
 test-g2-offline: ## G2 end to end on the fixture folder (real parser, scripted models, offline)
 	@echo "🧪 Running the offline G2 end-to-end test..."
-	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/integration/test_drive_g2_end_to_end.py -q --asyncio-mode=auto
+	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/integration/test_drive_g2_end_to_end.py -q --asyncio-mode=auto -p tests.plugins.network_guard
 
 test-arch: ## The hexagonal layering tests (slow-marked, so not in `make check`): run after touching imports across layers
 	@echo "🏛  Running the layering tests..."
@@ -312,6 +316,8 @@ test-ci: ## Unit suite once: slow tests, data-file audit and the coverage gate (
 	    --asyncio-mode=auto -m "not timing" $(COVERAGE_FLAGS)
 	@echo "🚦 Enforcing per-file coverage thresholds..."
 	@$(PYTHON) scripts/check_coverage_thresholds.py
+	@echo "🚦 Enforcing per-layer coverage floors..."
+	@$(PYTHON) scripts/check_coverage_layers.py
 
 check: lint typecheck test-unit test-g2-offline ## Local pre-commit gate: ruff lint + mypy (domain/ports) + unit/architecture tests + offline G2 (CI runs `make ci`)
 	@echo "✅ All checks passed"

@@ -538,6 +538,27 @@ Effort is realistic working days, after both reviews. Gate: `check` = `make chec
 | P23 | **Mutation metric**: `mutmut` on the store modules, weekly or owner-run; survivors are a backlog | sched | 0.5 | suites that verify nothing, as a trend | 3 |
 | P24 | **`tests/integration/` split**: `tests/integration/offline/` (mocked, scripted; may join `make check` if fast) and `tests/cloud/` (§4); the two cloud-writing tests move under the guards or go to a reviewer for retirement | check / cloud | 0.5 | live-data pollution by tests | 3 |
 
+**Built (P2, 2026-10-22).** H3 (`tests/unit/conftest.py` + `tests/support/network_guard.py`; the offline G2 run gets the same guard
+from `-p tests.plugins.network_guard` in `make test-g2-offline`, so no file under `tests/integration/` changed), the per-layer
+floors (`scripts/check_coverage_layers.py`, `.coveragerc` with `branch = True`, the root `*_main.py` and `patch = subprocess`),
+the untested-module check (`tests/unit/test_every_src_module_is_imported_by_a_test.py` + `untested_modules_allowlist.txt`), the
+semantic-mutation driver (`python -m tests.support.semantic_mutants`) and the rewritten `tests/CLAUDE.md`. Deviations from the text above:
+- **A bare `--cov` replaces `--cov=src`.** A `--cov=src` on the command line overrides `[run] source`, so the Makefile passes a bare
+  `--cov` and `.coveragerc` lists `src` plus the five root modules. A root module no test imports (`main.py`) is not in the data at
+  all; the layer script counts it as 0 % from its source with coverage.py's parser. `[report] include_namespace_packages = True` is
+  what makes a never-imported `src/` file show up at 0 % (`src/` and most subdirectories have no `__init__.py`).
+- **The per-file table keeps the line metric.** With branch coverage on, `percent_covered` is branch-aware and `smart_response_agent.py`
+  (100 % of lines, 4 untaken branches) would fall below its 100.0 entry. `check_coverage_thresholds.py` now reads
+  `percent_statements_covered`, so every entry means what it meant when written; raising entries to the branch-aware value is the
+  owner's call (the per-layer floors hold the branches).
+- **The global `--cov-fail-under=70` stays.** Line coverage under the old config was 90.6 %; branch-aware under the new one 87.9 %
+  (never-imported files now count at 0 %). Both are far above 70, so the number is unchanged.
+- **The module check is `slow`** (parsing ~1 300 test files takes ~3 s), so it runs in `make ci`, not in `make check`.
+- The mutation driver's operators are as listed in §5 above; `except-success` returns `True`/`[]`/`{}`/`""`/`0`/`None` by the return
+  annotation (rule in `tests/support/semantic_mutants/operators.py`). First run, `firestore_repo.py` against
+  `test_fact_store_roundtrip.py`: 123 mutants, 3 killed, 120 survived, all 120 on lines that file never executes (queries, projections,
+  observation writes): backlog for P4.
+
 **Totals.** Tranche 1 (P1–P9) ≈ 12–16 days; tranche 2 (P10–P17) ≈ 24–33; tranche 3 (P18–P24) ≈ 9–11. **Whole plan
 ≈ 45–59 days.**
 

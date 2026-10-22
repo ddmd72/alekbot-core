@@ -1,58 +1,103 @@
 # Tests
 
-pytest + pytest-asyncio. asyncio_mode=auto.
+pytest + pytest-asyncio, `asyncio_mode=auto`. Why these rules: `docs/10_rfcs/TEST_COVERAGE_SYSTEMIC_RFC.md`.
 
 ## Running
 
 ```bash
-make test              # All
-make test-unit         # tests/unit/
-make test-integration  # tests/integration/
-make test-e2e-all      # E2E all agents (against real APIs)
+make check             # lint + mypy + unit suite (no slow tests, no coverage) + offline G2: the pre-commit gate
+make test-affected     # inner loop: testmon-selected tests + the always-run `datafile` set
+make ci                # the PR job: check + slow tests, data-file audit, coverage gates (one full run)
+make test-arch         # the layering tests (slow-marked): after touching imports across layers
+make test-integration  # tests/integration/ (some talk to real services); make test-e2e-all: real APIs
 ```
-
-## Structure
 
 ```
 tests/
-  conftest.py      — Shared fixtures: mock_env_config, mock_llm_port, mock_repository
-  unit/            — No external dependencies. AsyncMock for ports.
-  integration/     — With mocked external services.
-  performance/     — Benchmarks (@pytest.mark.performance).
+  conftest.py     — fixtures + the plugins in tests/plugins/ (budget, audit, lock)
+  unit/           — offline, no real service. Fakes and in-memory repositories. conftest.py = the network guard
+  integration/    — mocked or scripted services; the offline G2 end-to-end test runs in `make check`
+  support/        — shared fakes (fact_store.py, firestore_eval.py), network_guard.py, semantic_mutants/
+  contracts/      — adapter contract rules (adapter_contracts.py)
 ```
 
-## Test Pattern
+## The convention
+
+- **Fakes with semantics over call assertions.** A test of a store or a service asserts what ends up stored and what a
+  reader returns, against a fake that evaluates (`tests/support/firestore_eval.py`, `tests/support/fact_store.py`,
+  `tests/unit/adapters/firestore_drive_eval_fakes.py`, the in-memory repositories). `AsyncMock(spec=Port)` plus
+  `assert_called_once()` proves the code called the neighbour, never that the neighbour would do the right thing; it
+  is how a dropped filter, a flipped sort and a lost field stayed green. Use a mock for a boundary you do not own
+  and only to script its answer; assert the outcome, not the call. Same for services above the ports: do not mock an
+  internal service without a spec.
+- **An adapter needs a behind-port test at its boundary** (SDK, HTTP or database), per
+  `docs/how_to/ADAPTER_WIRE_TESTING.md`: mock the SDK object, not the port, and pin the wire format. Line coverage
+  produced by a `MagicMock` SDK does not count toward the adapter floor; the floor is a number about behaviour.
+- **No test calls a real LLM**, and no unit test touches the network (below). A test that needs the real service is an
+  integration test and lives in `tests/integration/`.
+- One test class per service or agent. `@pytest.mark.requirement("REQ-XXX")` for business requirements.
+  Arrange-Act-Assert.
 
 ```python
-class TestMyService:
-    @pytest.fixture
-    def service(self, mock_repository):
-        return MyService(repository=mock_repository)
-
-    @pytest.mark.asyncio
-    async def test_success(self, service, mock_repository):
-        mock_repository.add_fact = AsyncMock(return_value="id123")
-        result = await service.process(entity)
-        assert result == "id123"
-        mock_repository.add_fact.assert_called_once()
+async def test_update_content_reembeds_and_bumps_version(store):   # store = FactStore(): real adapter, repo and service on a fake Firestore
+    fid = await _create(store)
+    res = await store.adapter.update_fact(fid, {"content": "lives in Springfield, Ohio"}, ACC)
+    doc = store.docs[fid]                                           # assert on the raw stored document, not on a mock call
+    assert doc["text"] == "mother is Mariya Doe" and doc["version"] == 2
 ```
 
-## Rules
+## The network guard and the gRPC tripwire (H3)
 
-- Port mocks: `AsyncMock(spec=PortClass)`.
-- Marker `@pytest.mark.requirement("REQ-XXX")` for business requirements.
-- One test class per service/agent.
-- Arrange-Act-Assert.
+Every test under `tests/unit/` (autouse fixture in `tests/unit/conftest.py`, `tests/support/network_guard.py`) runs with
+`connect()` to anything but `127.0.0.1`/`::1`/a unix socket refused (`pytest-socket`; creating and binding sockets
+stays allowed, so asyncio loops and loopback servers work) and with a tripwire on `google.auth.default`,
+`grpc.secure_channel` and `grpc.aio.secure_channel` unless the target is localhost (Firestore talks through gRPC's
+own sockets, which the socket guard does not see). The offline G2 test gets the same guard from
+`-p tests.plugins.network_guard` in `make test-g2-offline`. When it fires: use a fake, a loopback server, or move the
+test to `tests/integration/`. Do not disable the guard in a unit test. **Out of scope, by decision:** subprocess
+children (drive parser, sandbox engine, ffmpeg).
+
+## Coverage floors and the untested-module list
+
+- `.coveragerc` has `branch = True` and measures `src/` plus the root `*_main.py`; `make ci` fails under the global
+  `--cov-fail-under`, the per-file table (`scripts/check_coverage_thresholds.py`) and the **per-layer floors**
+  (`scripts/check_coverage_layers.py`, branch-aware percent per layer). Floors only rise: the script prints "floor can
+  rise to X" when a layer is 0.5 above; raise it in the same change. Never lower one without the owner's per-layer OK.
+- `tests/unit/test_every_src_module_is_imported_by_a_test.py`: every module under `src/` and every root `*_main.py` is
+  imported by some test, or listed with a reason in `tests/unit/untested_modules_allowlist.txt`. A new module needs a
+  test, not an allowlist line. The list only shrinks: the test fails when a listed module is now imported.
+
+## Mutation check: the done-criterion for a package
+
+A package that touches stores, queries or writes is done when every mutant of its modules is killed by its tests or
+ruled equivalent by the reviewer. Mutants: a dropped `order_by`/`where`/`select` field/`model_dump` field/dict key of a
+written document/write/forwarded keyword, a flipped sort direction, an `except` that returns success.
+
+```bash
+python -m tests.support.semantic_mutants --module src.adapters.firestore_repo \
+    --tests tests/unit/adapters/test_fact_store_roundtrip.py          # one child pytest per mutant; exit 1 if any survives
+#   --list  --only 3,7  --operators where-drop,write-skip  --jobs 4  --json out.json  --equivalent FILE
+```
+
+A survivor means the tests do not notice that defect: write the assertion that does. `--equivalent` takes
+`key  # reason` lines (the 8-hex key in the report) and is the reviewer's tool, never the implementer's.
 
 ## Markers, budget and the machine lock (P1, `tests/plugins/`)
 
-- **`@pytest.mark.slow`** — the test takes over 0.5 s with coverage on (setup + call + teardown; half the 1 s CI budget, so CI does not flake). Skipped unless
+
+- **`@pytest.mark.slow`** — the test takes over 0.5 s with coverage on (setup + call + teardown; half the 1 s budget, as headroom). Skipped unless
   `RUN_SLOW_TESTS=1`; `make ci` sets it. Put it on the test, or `pytestmark` when the cost is a module- or class-scoped
   fixture (under xdist whichever test uses the fixture first on a worker pays, so mark all its users). Do not mark a test
   slow to get a green run before asking whether it can be fast.
-- **Per-test budget** — the PR job sets `PYTEST_DURATION_BUDGET_S=1.0`; any unmarked test over it fails the run
-  (`tests/plugins/duration_budget.py`). `slow` and `timing` tests are exempt. Locally it is off; `make check` prints
-  `--durations=25`.
+- **Other markers.** `timing`: asserts on wall-clock or CPU time; skipped unless `RUN_TIMING_TESTS=1` (`make test-timing`,
+  CI after a merge to main); never in `make check`. `docker`: needs the built sandbox image and a daemon; skipped unless
+  `SANDBOX_TEST_IMAGE` is set. `requirement("REQ-XXX")`: ties a test to a business requirement. `performance`: manual
+  benchmarks against real Firestore.
+- **Per-test budget** — a CI warning, never a gate (owner decision 2026-10-22: wall-clock limits flake on the shared
+  runner). The PR job sets `PYTEST_DURATION_BUDGET_S=1.0`; the run lists every unmarked test over it, slowest first with
+  the setup/call/teardown split, and emits a GitHub `::warning` annotation, without changing the exit status
+  (`tests/plugins/duration_budget.py`). `slow` and `timing` tests are exempt. An offender that keeps showing up gets
+  `@pytest.mark.slow`. Locally it is off; `make check` prints `--durations=25`.
 - **`@pytest.mark.datafile`** — the test's input is a file (a prompt snapshot, an RFC, `config/firestore.indexes.json`, a
   cloudbuild yaml, a skill, a fixture, a `.py` read as text or via `inspect.getsource`) or its code runs in a child
   process. testmon cannot select such a test, so `make test-affected` always runs the marked set. Use `pytestmark` when
@@ -69,3 +114,9 @@ class TestMyService:
   gives up after `PYTEST_LOCK_TIMEOUT_S` (1800). `PYTEST_SUITE_LOCK=0` disables it. Tests that run an inner pytest through
   `pytester` start from `tests/support/plugin_runs.py: isolate_switches`, so the outer run's switches and lock do not leak.
 - Tests of the machinery: `tests/unit/test_pytest_plugins_*.py`.
+
+## Existing tests are not edited to pass
+
+The one who writes the code never edits an existing test to make it pass; a reviewer decides each edit
+(root `CLAUDE.md` -> "Tests - REVIEWER RULE"). A failing test is the specification speaking. The network guard may fail
+existing tests: record test id, exception and what it connects to, and hand the list to a reviewer.

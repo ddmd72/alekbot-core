@@ -1,19 +1,35 @@
 # Coverage configuration for pytest-cov.
 #
 # Per-file coverage thresholds are enforced by
-# scripts/check_coverage_thresholds.py (run via `make test-coverage`),
-# not by coverage.py itself — coverage.py only supports a single global
+# scripts/check_coverage_thresholds.py (run via `make test-coverage` and `make ci`), and per-layer floors by
+# scripts/check_coverage_layers.py, not by coverage.py itself — coverage.py only supports a single global
 # fail_under. The thresholds mirror the mandate in
 # docs/10_rfcs/NOTIFICATION_DELIVERY_REFACTOR_RFC.md § 8.4.
 
 [run]
-source = src
-branch = False
+# `source` is read when the Makefile passes a bare `--cov` (a `--cov=src` on the command line would replace it).
+# src is a directory; the root entry points are importable modules, measured when a test imports them. One no test
+# imports (today: main) is not in the data at all: scripts/check_coverage_layers.py counts it as 0 % from its source.
+# Branch coverage is on (P2): the layer floors and the global --cov-fail-under use the branch-aware percentage.
+source =
+    src
+    main
+    relay_main
+    indexer_main
+    sandbox_main
+    job_main
+branch = True
+# Subprocess coverage (coverage >= 7.10): children that inherit the environment (the real PDF/media parser, the sandbox
+# supervisor and engine, other Python helper processes) write their own data files, combined at the end. coverage ships the
+# `a1_coverage.pth` hook, so nothing is written at run time. Limits: a child started with a scrubbed environment or
+# `-S` is not measured; a child under another uid (the drive parser's `driveparser`, the sandbox engine's
+# `sandboxengine`, which only happens when the run itself is root) cannot write the data file, so its data are lost.
+patch = subprocess
 omit =
     src/__init__.py
     */__pycache__/*
-    src/utils/telemetry.py
-    src/utils/server.py
+    */src/utils/telemetry.py
+    */src/utils/server.py
 
 [report]
 # Hide trivial omissions; missing lines surface via --cov-report=term-missing.
@@ -23,6 +39,10 @@ exclude_lines =
     if TYPE_CHECKING:
     if __name__ == .__main__.:
     \.\.\.
+
+# Without this, coverage.py lists only the src/ subpackages that carry an __init__.py, and a file nobody imported is
+# absent from the report instead of showing 0 % (src/ and most of its subdirectories are namespace packages).
+include_namespace_packages = True
 
 [json]
 # scripts/check_coverage_thresholds.py reads this file.

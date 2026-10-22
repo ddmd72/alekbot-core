@@ -91,7 +91,7 @@ always-run set), seeds `.testmondata` from the main checkout in a new worktree, 
 coverage. `make ci` runs with `PYTEST_DATAFILE_AUDIT=1`: an audit hook fails the run when an unmarked test reads a file
 under the repo or spawns a process, so the marker set cannot rot (`tests/CLAUDE.md`). **One full suite at a time on a
 machine:** a session with `-n` (or 2000+ tests) takes `fcntl.flock` on a file in the temp dir, prints the holder and
-waits up to `PYTEST_LOCK_TIMEOUT_S` (1800); `PYTEST_SUITE_LOCK=0` turns it off. Lint scope is `src/` only (default high-signal ruleset: pyflakes + pycodestyle
+waits up to `PYTEST_LOCK_TIMEOUT_S` (1800); `PYTEST_SUITE_LOCK=0` turns it off. **Test rules (P2, 2026-10-22), in `tests/CLAUDE.md`:** fakes with semantics over call assertions; `tests/unit/` is offline (a network guard refuses non-loopback `connect()`, a tripwire refuses `google.auth.default` and non-local gRPC channels); `make ci` enforces per-layer branch-coverage floors that only rise (`scripts/check_coverage_layers.py`) and a shrinking allowlist of src modules no test imports; a package that touches stores is done when `python -m tests.support.semantic_mutants` leaves no survivor. Lint scope is `src/` only (default high-signal ruleset: pyflakes + pycodestyle
 errors). `ruff format` exists as a dev convenience but is not enforced in CI — the codebase is not
 mass-reformatted.
 
