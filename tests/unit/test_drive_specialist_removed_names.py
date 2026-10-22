@@ -49,11 +49,47 @@ def test_no_src_string_or_docstring_names_a_removed_intent():
     assert not found, found
 
 
+# The one allowed exception (cross-cut ruling X12, plan_arbiter_xcut): DriveAgent's `_STRAY_FIELDS` lists the
+# Smart-era fields so a stale caller's value reaches the specialist under "Also given with the commission:" instead of
+# being dropped. The name reaches the model only as the label of a value the caller itself sent; no src text offers it.
+# Allowed: exactly the bare-name elements of that one tuple, nothing else in that file or anywhere.
+_STRAY_FILE = ROOT / "src" / "agents" / "drive_agent.py"
+_STRAY_TUPLE = "_STRAY_FIELDS"
+
+
+def _stray_field_positions() -> dict:
+    """(line, col) → value of each Smart-era field element of `_STRAY_FIELDS` in drive_agent.py."""
+    tree = ast.parse(_STRAY_FILE.read_text(encoding="utf-8"))
+    tuples = [node.value for node in ast.walk(tree) if isinstance(node, ast.Assign)
+              and any(isinstance(t, ast.Name) and t.id == _STRAY_TUPLE for t in node.targets)]
+    assert len(tuples) == 1 and isinstance(tuples[0], ast.Tuple), "one module-level _STRAY_FIELDS tuple"
+    return {(e.lineno, e.col_offset): e.value for e in tuples[0].elts
+            if isinstance(e, ast.Constant) and e.value in SMART_ERA_FIELDS}
+
+
 def test_no_model_facing_src_string_names_a_smart_era_drive_field():
-    """Docstrings may name a Python parameter (`query_concepts(drive_query)`); strings a model reads may not."""
-    found = [f"{p.relative_to(ROOT)}:{line}" for p in _src_files() for line, text, is_doc in _strings(p)
-             if not is_doc and _FIELD.search(text)]
+    """Docstrings may name a Python parameter (`query_concepts(drive_query)`); strings a model reads may not. The one
+    exception is the X12 stray-field tuple, element by element."""
+    allowed = _stray_field_positions()
+    found = []
+    for p in _src_files():
+        source = p.read_text(encoding="utf-8")
+        docs = _docstring_lines(source)
+        for tok in tokenize.generate_tokens(io.StringIO(source).readline):
+            if tok.type != tokenize.STRING and getattr(tokenize, "FSTRING_MIDDLE", None) != tok.type:
+                continue
+            if tok.start[0] in docs or not _FIELD.search(tok.string):
+                continue
+            if p == _STRAY_FILE and tok.start in allowed and tok.string.strip("\"'") == allowed[tok.start]:
+                continue
+            found.append(f"{p.relative_to(ROOT)}:{tok.start[0]}")
     assert not found, found
+
+
+def test_the_stray_field_exception_holds_exactly_the_smart_era_fields():
+    """The allowlist is pinned: every Smart-era field is in the tuple once (X12), so a value is never dropped, and the
+    exception cannot grow past the tuple's bare names."""
+    assert sorted(_stray_field_positions().values()) == sorted(SMART_ERA_FIELDS)
 
 
 def test_the_intent_constants_are_gone_and_no_descriptor_offers_the_old_intents():

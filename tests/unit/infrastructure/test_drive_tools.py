@@ -13,7 +13,7 @@ from src.domain.drive_outcome_class import OutcomeClass
 from src.domain.drive_pass_through import PassThroughCollector
 from src.domain.llm import ToolCall
 from src.domain.user_drive import MOVE_NEEDS_TARGET, DriveItem, MoveOutcome
-from src.infrastructure.drive_operations import DriveOperations
+from src.infrastructure.drive_operations import STILL_RUNNING, DriveOperations
 from src.infrastructure.drive_tools import DriveToolRun
 from src.services.file_conversion_service import FileConversionService
 from src.services.user_drive_service import UserDriveService
@@ -292,20 +292,27 @@ async def test_the_mutation_wait_is_clamped_to_the_deadline(ops, left, wait):
     assert ops.delete.await_args.kwargs["wait_s"] == wait
 
 
-async def test_a_cancelled_call_is_recorded_as_not_finished(ops):
+@pytest.mark.parametrize("method, tool, args, expected", [
+    # X1 (plan_arbiter_xcut): a started change runs on under DriveOperations' shield, so it is still running.
+    ("move", tt.MOVE_FILE, {"file_ref": "drive:f1", "folder": "X"}, (OutcomeClass.STILL_RUNNING, STILL_RUNNING)),
+    # a read has no shield: it did not finish
+    ("search", tt.SEARCH_DRIVE, {"query": "x"}, (OutcomeClass.NOT_FINISHED, t.DID_NOT_FINISH)),
+])
+async def test_a_cancelled_call_is_recorded_before_the_cancel_goes_through(ops, method, tool, args, expected):
     started = asyncio.Event()
 
     async def hang(*a, **k):
         started.set()
         await asyncio.sleep(10)
-    ops.move.side_effect = hang
+    getattr(ops, method).side_effect = hang
     run, collector = _run(ops)
-    task = asyncio.ensure_future(_call(run, tt.MOVE_FILE, file_ref="drive:f1", folder="X"))
+    task = asyncio.ensure_future(_call(run, tool, **args))
     await started.wait()
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
-    assert collector.results[0].outcome.cls is OutcomeClass.NOT_FINISHED
+    assert len(collector.results) == 1
+    assert (collector.results[0].outcome.cls, collector.results[0].outcome.text) == expected
 
 
 async def test_still_running_calls_back(ops):
@@ -374,7 +381,9 @@ async def test_a_mutation_cancelled_while_queued_behind_the_batch_never_started(
     assert delete.outcome.cls is OutcomeClass.NOT_FINISHED and delete.outcome.text == t.NOT_STARTED
 
 
-async def test_a_mutation_cancelled_once_started_is_recorded_as_not_finished(ops):
+async def test_a_mutation_cancelled_once_started_is_recorded_as_still_running(ops):
+    """X1 (plan_arbiter_xcut): the shielded delete runs on after the cancel; today's still-running text, never "did not
+    finish"."""
     started = asyncio.Event()
 
     async def hang(*a, **k):
@@ -387,7 +396,8 @@ async def test_a_mutation_cancelled_once_started_is_recorded_as_not_finished(ops
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
-    assert collector.results[0].outcome.text == t.DID_NOT_FINISH
+    outcome = collector.results[0].outcome
+    assert (outcome.op, outcome.cls, outcome.text) == (DriveOp.DELETE, OutcomeClass.STILL_RUNNING, STILL_RUNNING)
 
 
 async def test_a_cancel_after_the_shield_arms_the_late_failure_notice():

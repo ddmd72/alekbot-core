@@ -4,7 +4,7 @@ work_with_drive_files too. Read-only: the stores are fakes here, and every outpu
 import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, call
 
 import pytest
 
@@ -77,7 +77,8 @@ def _sources(**over):
         note_id="n1", text="Weekly sort", instruction="search_files_in_drive for new scans", workspace_file=None)]))
     facts = SimpleNamespace(get_active_facts_ordered=AsyncMock(return_value=[SimpleNamespace(id="f1", text="Be brief")]))
     entries = {"projects/": [SimpleNamespace(path="projects/inbox.md", generation=7),
-                             SimpleNamespace(path="projects/scan.pdf", generation=8)], "references/": []}
+                             SimpleNamespace(path="projects/scan.pdf", generation=8)], "references/": [],
+               "scratch/": [], "files/": []}   # R2 (plan_arbiter_xcut): scratch/ and files/ are scanned too
     workspace = SimpleNamespace(list=AsyncMock(side_effect=lambda user, folder: entries[folder]),
                                 read=AsyncMock(return_value=SimpleNamespace(data=b"open_file_from_drive the lease")))
     profiles = SimpleNamespace(get_override_tokens=AsyncMock(side_effect=lambda owner, oid: (
@@ -102,9 +103,13 @@ async def test_collect_reads_every_store_read_only():
     assert [(i.store, i.key) for i in items] == [
         ("skill", "recipe-box v4"), ("skill_file", "recipe-box v4:references/rules.md"),
         ("skill_draft", "drive-sort draft c0de"), ("skill_draft", "drive-sort draft c0de:rules.md"), ("reminder", "n1"),
-        ("directive", "f1"), ("workspace", "projects/inbox.md"), ("prompt_override", "user:VOICE_X")]
+        ("directive", "f1"), ("preference", "f1"), ("workspace", "projects/inbox.md"),
+        ("prompt_override", "user:VOICE_X")]
     assert skipped == ["prompt_override account:GONE (token missing)"]
-    src.facts.get_active_facts_ordered.assert_awaited_once_with("a1", domain=FactDomain.AGENT_DIRECTIVE.value)
+    # R2 (plan_arbiter_xcut): directives are read from agent_directive and from preference, in that order
+    assert src.facts.get_active_facts_ordered.await_args_list == [
+        call("a1", domain=FactDomain.AGENT_DIRECTIVE.value), call("a1", domain=FactDomain.PREFERENCE.value)]
+    assert [c.args[1] for c in src.workspace.list.await_args_list] == ["projects/", "references/", "scratch/", "files/"]
     src.notes.list_active_notes.assert_awaited_once_with("u1", NOW)
     src.drafts.list_drafts.assert_awaited_once_with("u1", NOW)
     assert set(exports) == {"recipe-box.v4", "recipe-box.v4.files/references/rules.md"}
