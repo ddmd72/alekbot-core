@@ -183,8 +183,9 @@ def test_lineage_with_exactly_one_current_document_is_clean():
     assert check_lineages(lineage(False, True, False)) == {}
 
 
-def test_lineage_with_no_current_document():
-    assert check_lineages(lineage(False, False)) == {"lineage_no_current": ["d0", "d1"]}
+def test_lineage_of_only_superseded_documents_is_clean():
+    # merge_facts supersedes the sources in their own lineages and writes the merged fact under a new one
+    assert check_lineages(lineage(False, False)) == {}
 
 
 def test_lineage_with_two_current_documents():
@@ -194,11 +195,12 @@ def test_lineage_with_two_current_documents():
 def test_lineages_are_judged_separately_and_only_the_broken_ones_are_listed():
     docs = lineage(True, False, lineage_id="A", prefix="a") + lineage(True, True, lineage_id="B", prefix="b") + \
         lineage(False, lineage_id="C", prefix="c")
-    assert check_lineages(docs) == {"lineage_multiple_current": ["b0", "b1"], "lineage_no_current": ["c0"]}
+    assert check_lineages(docs) == {"lineage_multiple_current": ["b0", "b1"]}
 
 
 def test_is_current_must_be_true_not_merely_truthy():
-    assert check_lineages([("d0", {"lineage_id": "L1", "is_current": "yes"})]) == {"lineage_no_current": ["d0"]}
+    docs = [("d0", {"lineage_id": "L1", "is_current": "yes"}), ("d1", {"lineage_id": "L1", "is_current": True})]
+    assert check_lineages(docs) == {}
 
 
 def test_documents_without_a_lineage_are_left_to_the_entity_check():

@@ -54,7 +54,9 @@ def check_fact(doc_id: str, doc: dict[str, Any]) -> list[str]:
 
 
 def check_lineages(docs: Iterable[tuple[str, dict[str, Any]]]) -> dict[str, list[str]]:
-    """Lineages with not exactly one `is_current=True` document: class -> ids of every document of those lineages."""
+    """Lineages with more than one `is_current=True` document: class -> ids of every document of those lineages."""
+    # No "no current document" class: merge_facts gives the merged fact a NEW lineage (until FACT_LIFECYCLE S2) and
+    # supersedes its sources in their own, so a lineage of only superseded documents is legitimate.
     lineages: dict[Any, list[tuple[str, bool]]] = defaultdict(list)
     for doc_id, doc in docs:
         lineage_id = doc.get("lineage_id")
@@ -62,10 +64,8 @@ def check_lineages(docs: Iterable[tuple[str, dict[str, Any]]]) -> dict[str, list
             lineages[lineage_id].append((doc_id, doc.get("is_current") is True))
     found: dict[str, list[str]] = {}
     for members in lineages.values():
-        current = sum(1 for _, flag in members if flag)
-        if current != 1:
-            cls = "lineage_no_current" if current == 0 else "lineage_multiple_current"
-            found.setdefault(cls, []).extend(doc_id for doc_id, _ in members)
+        if sum(1 for _, flag in members if flag) > 1:
+            found.setdefault("lineage_multiple_current", []).extend(doc_id for doc_id, _ in members)
     return found
 
 
