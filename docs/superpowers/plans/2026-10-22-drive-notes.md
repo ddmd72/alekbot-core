@@ -4527,7 +4527,7 @@ def snapshot_from_record(old: Optional[NoteSnapshot], rec: DriveIndexRecord, *, 
 
 **Files:** `src/agents/file_management_agent.py`.
 
-**Source.** `git checkout ce314e50 -- src/agents/file_management_agent.py tests/unit/agents/test_file_management_open_note_block.py` and `git checkout caa6f889 -- tests/unit/agents/test_file_management_open_note_header.py` (the reviewer's C-I4 edit, caa6f889)
+**Source.** `git checkout ce314e50 -- src/agents/file_management_agent.py tests/unit/agents/test_file_management_open_note_block.py` and `git checkout caa6f889 -- tests/unit/agents/test_file_management_open_note_header.py` (the reviewer's C-I4 edit, caa6f889), then `git checkout 99537848 -- src/agents/file_management_agent.py src/services/drive_note_service.py tests/unit/agents/test_file_management_open_note_header.py` (D-I3 for the open header: `_note_line_of` takes the sync state's drive id through `DriveNoteService.drive_id_for_connection` when the credential has none; two new tests)
 
 **`src/agents/file_management_agent.py` as the source line checks it out** (already in the checkout, nothing to apply) — `git diff cef8f147 ce314e50 -- src/agents/file_management_agent.py`; hunks by owner: B8, final fix:
 
@@ -4692,7 +4692,7 @@ def snapshot_from_record(old: Optional[NoteSnapshot], rec: DriveIndexRecord, *, 
 **Taken whole here, with hunks other tasks own** (one checkout per file, at the first task whose imports it can satisfy; the later owner tasks find it in place and add their tests):
 - `src/skills/smart/drive-search/SKILL.md` — also carries the assembly (D-C16 line).
 
-**Source.** `git checkout ce314e50 -- src/skills/smart/drive-search/SKILL.md tests/unit/skills/test_drive_search_skill_owner_note.py`
+**Source.** `git checkout ce314e50 -- src/skills/smart/drive-search/SKILL.md tests/unit/skills/test_drive_search_skill_owner_note.py`, then `git checkout 99537848 -- src/domain/drive_search_texts.py` (`PROTOCOL_TIERS_LINE` follows the skill's "the owner's note" wording, C-M2; the checkout of `src/domain/drive_search_texts.py` in Task B5 is superseded by this one)
 
 **`src/skills/smart/drive-search/SKILL.md` as the source line checks it out** (already in the checkout, nothing to apply) — `git diff cef8f147 ce314e50 -- src/skills/smart/drive-search/SKILL.md`; hunks by owner: B10, final fix:
 
@@ -6196,6 +6196,8 @@ statement against the code at `ce314e50`. All in English, no secrets.
    assembled feature runs on both services.
 5. `docs/10_rfcs/DRIVE_FILE_NOTES_RFC.md` — the deltas of § RFC deltas below marked **to apply** (the code is the truth
    once built).
+6. `docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md` §25.13.6 — the quoted `tiers` line changes with C-M2 ("text or the owner's note
+   holds the words"); `git checkout 99537848 -- docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md`.
 
 **Done:** the reviewer finds every statement in the code; `make check` unaffected.
 
@@ -6336,6 +6338,8 @@ Each is chosen and stated, not blocking; the reasoning is in the part file named
 - The 14 pending tests are decided (caa6f889, § Task D2); one of them needs a code fix (`PROTOCOL_TIERS_LINE`, Task B10).
 
 ## RFC deltas (one list)
+
+**Changed with C-M2:** the `PROTOCOL_TIERS_LINE` constant (`src/domain/drive_search_texts.py`) and its quote in USER_DRIVE_INDEXING_RFC §25.13.6 now say "text or the owner's note holds the words" (`test_protocol_tiers_line_equals_the_rfc` compares them); also, `DriveNoteService.drive_id_for_connection` is a new public wrapper of the D-I3 fallback, used by the open header.
 
 **Already in the RFC on `ce314e50`** (parts A and B wrote them): §0 subsections in numeric order; D17's wording amended by
 D21; §4.8 partial erase wording and the revision counter; the §8 row; §0.4's same-batch skill load and memory-side
