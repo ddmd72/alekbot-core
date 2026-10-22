@@ -2,7 +2,7 @@
 
 Settings (`TEST_FIRESTORE_DATABASE`, `TEST_SA_EMAIL`, `GOOGLE_CLOUD_PROJECT`; the live `FIRESTORE_DATABASE` for the
 comparison) are read from the environment or the repository's dotenv file inside this process, and never printed: a
-guard that fails says which rule broke, not the values. Any missing setting skips every test here.
+guard that fails says which rule broke, not the values. Without `RUN_CLOUD_TESTS=1` (set by `make test-cloud`), or with any setting missing, every test here skips.
 
 Guards, before any write: no emulator in the environment; the database name ends in `-test` and is not the live
 database; the credentials are impersonated credentials of the test service account (which holds datastore.user on the
@@ -42,6 +42,8 @@ def _setting(name: str) -> str:
 
 @pytest.fixture(scope="module")
 def cloud() -> SimpleNamespace:
+    if os.environ.get("RUN_CLOUD_TESTS") != "1":
+        pytest.skip("cloud gate: run with `make test-cloud` (RUN_CLOUD_TESTS=1); a bare pytest never writes to the test database")
     database, sa, project = _setting("TEST_FIRESTORE_DATABASE"), _setting("TEST_SA_EMAIL"), _setting("GOOGLE_CLOUD_PROJECT")
     if not (database and sa and project):
         pytest.skip("cloud gate not configured: TEST_FIRESTORE_DATABASE, TEST_SA_EMAIL and GOOGLE_CLOUD_PROJECT must all be set")
