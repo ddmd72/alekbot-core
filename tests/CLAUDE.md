@@ -78,7 +78,9 @@ query for a missing index, so those scenarios skip), and the test database in `t
 is the arbiter. A new kit that leans on a Firestore behaviour H1 has not been checked for adds a scenario here first. The cloud
 run reads `TEST_FIRESTORE_DATABASE`, `TEST_SA_EMAIL` and `GOOGLE_CLOUD_PROJECT` from the environment or the repo's dotenv file,
 refuses to start unless the database ends in `-test`, is not the live one and the client uses the test service account's
-impersonated credentials, and creates the scenarios' indexes once (up to 15 minutes; right after creation a scenario is retried up to 3 times, 30 s apart, because a fresh index failed queries once after reporting READY). One runner at a time (the lease comes with P12).
+impersonated credentials, and creates the scenarios' indexes once (up to 15 minutes; a run that creates indexes may fail scenarios of those collections even after READY (seen once, cause unknown): re-run). One runner at a time (the lease comes with P12).
+
+Extending the fake with a new Firestore feature = a new scenario in `tests/support/firestore_parity.py`, run on the emulator and with `make test-cloud`; an adapter that starts using a feature the fake lacks fails loudly (unsupported operator / no such method) — extend the fake then, never work around it in the test.
 
 ## Coverage floors and the untested-module list
 

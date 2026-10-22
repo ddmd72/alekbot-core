@@ -91,23 +91,19 @@ def _to_admin_index(index: Dict[str, Any]) -> Any:
 
 
 @pytest.fixture(scope="module")
-def ensure_indexes(cloud: SimpleNamespace) -> Callable[[str, List[Dict[str, Any]]], bool]:
+def ensure_indexes(cloud: SimpleNamespace) -> Callable[[str, List[Dict[str, Any]]], None]:
     """`ensure(collection, indexes)`: create the missing indexes (in `config/firestore.indexes.json` shape) of a collection
-    on the test database and wait until all are READY. Created once and kept: the collection ids are fixed names.
-    Returns True for a collection whose indexes this run created: a fresh index may refuse queries for a while after
-    it reports READY."""
+    on the test database and wait until all are READY. Created once and kept: the collection ids are fixed names."""
     admin = firestore_admin_v1.FirestoreAdminClient(credentials=cloud.credentials)
     done: Set[str] = set()
-    fresh: Set[str] = set()
 
-    def ensure(collection: str, indexes: List[Dict[str, Any]]) -> bool:
+    def ensure(collection: str, indexes: List[Dict[str, Any]]) -> None:
         if collection in done:
-            return collection in fresh
+            return
         parent = f"projects/{cloud.project}/databases/{cloud.database}/collectionGroups/{collection}"
         have = {_existing_signature(i) for i in admin.list_indexes(parent=parent)}
         for index in indexes:
             if _wanted_signature(index) not in have:
-                fresh.add(collection)
                 try:
                     admin.create_index(parent=parent, index=_to_admin_index(index))
                 except AlreadyExists:
@@ -120,7 +116,7 @@ def ensure_indexes(cloud: SimpleNamespace) -> Callable[[str, List[Dict[str, Any]
                 pytest.fail(f"an index of {collection} needs repair")
             if all(state == Index.State.READY for state in wanted):
                 done.add(collection)
-                return collection in fresh
+                return
             if time.monotonic() > deadline:
                 pytest.fail(f"the indexes of {collection} were not READY within {INDEX_READY_TIMEOUT_S // 60} minutes")
             time.sleep(INDEX_POLL_S)
