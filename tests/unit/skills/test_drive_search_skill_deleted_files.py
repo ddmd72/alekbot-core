@@ -15,8 +15,12 @@ def test_skill_names_the_transcripts_folder_as_bot_managed():
 
 
 def test_skill_deleted_files_line_is_explicit_only():
-    assert "Search deleted files (`drive_deleted`) only when the user asks about files that were deleted or removed" in SKILL
+    # Reviewer edit at the cut: the field is the specialist's tool (DRIVE_SPECIALIST_RFC §5.2: drive_deleted →
+    # search_deleted_recordings_and_notes); the rest of the line moves verbatim
+    assert ("Search deleted files (search_deleted_recordings_and_notes) only when the user asks about files that were "
+            "deleted or removed") in SKILL
     assert "transcripts of deleted recordings and your notes on deleted files" in SKILL
+    assert "It is never for an ordinary search." in SKILL
 
 
 def test_capabilities_line():

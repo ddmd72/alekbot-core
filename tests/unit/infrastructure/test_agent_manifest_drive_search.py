@@ -10,10 +10,15 @@ from src.infrastructure.agent_manifest import ALL_DESCRIPTORS, DRIVE_SPECIALIST,
 
 
 def test_filter_only_guidance_is_where_the_model_reads_it():
-    """Retargeted at the cut: the filter-only rule is in the specialist's `search_drive.query`, the before-saying-not-
-    there rule in Smart's one drive intent (DRIVE_SPECIALIST_RFC §4.1, §7.6)."""
+    """Retargeted at the cut: the filter-only rule is in the specialist's `search_drive.query` and, with today's
+    intent sentence, in its PROTOCOL_DRIVE_SEARCH; a card's ref feeds the open tool; the before-saying-not-there rule
+    is in Smart's one drive intent (DRIVE_SPECIALIST_RFC §4.1, §7.6, §8). Re-review: "EMPTY" restored (today's text)."""
+    from pathlib import Path
     query = tt.QUERY
-    assert "Empty" in query and "filter-only" in query
+    assert "EMPTY" in query and "filter-only" in query
+    token = (Path(__file__).resolve().parents[3] / "prompts_snapshot" / "tokens" / "system"
+             / "PROTOCOL_DRIVE_SEARCH.groovy").read_text(encoding="utf-8").split("\n---\n", 1)[1]
+    assert "leave query empty" in token and "from a card" in tt.OPEN_REF
     text = DRIVE_SPECIALIST.capability_descriptions[Intent.WORK_WITH_DRIVE_FILES]
     assert "before saying a file is not there" in text
 

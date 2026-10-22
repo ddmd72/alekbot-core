@@ -56,6 +56,22 @@ def test_identical_searches_share_a_key_and_the_first_handle_is_kept():
     assert c.earlier_search(key) == "r1"
 
 
+def test_the_collector_holds_each_outcome_as_a_collected_result_in_run_order():
+    """Re-review of part B: the collector's value type (one public class per file, A's M8 split) is what it returns."""
+    from src.domain.drive_collected_result import CollectedResult
+    from src.domain.drive_op import DriveOp
+    from src.domain.drive_outcome import DriveOutcome
+    from src.domain.drive_outcome_class import OutcomeClass
+    found = DriveOutcome(op=DriveOp.SEARCH, cls=OutcomeClass.OK, text="cards", success=True)
+    listed = DriveOutcome(op=DriveOp.LIST, cls=OutcomeClass.OK, text="Inbox", success=True)
+    c = PassThroughCollector()
+    first, second = c.add(1, "search", found), c.add(2, "listing", listed)
+    assert c.results == (first, second) == (CollectedResult(handle="r1", step=1, kind="search", outcome=found),
+                                            CollectedResult(handle="r2", step=2, kind="listing", outcome=listed))
+    with pytest.raises(AttributeError):
+        first.handle = "r9"   # frozen: a recorded result is never rewritten
+
+
 def test_drive_line_from_the_connection():
     assert DriveLine.of(DriveConnection(connected=True)) is DriveLine.CONNECTED
     assert DriveLine.of(DriveConnection(connected=True, needs_reconnect=True)) is DriveLine.RECONNECT_NEEDED

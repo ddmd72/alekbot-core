@@ -43,18 +43,27 @@ def test_only_file_management_opts_out_of_prefetch():
 
 
 def test_descriptions_disambiguate_the_routing_cases():
-    """RFC §3/§4.4/§4.9 routing cases, pinned to the wording the model reads."""
+    """RFC §3/§4.4/§4.9 routing cases, pinned to the wording the model reads. Reviewer edit at the cut
+    (DRIVE_SPECIALIST_RFC §4.1, §4.4, §5.2, §8.1): Smart reads its one drive intent and DELETE_FILE; the specialist
+    reads its tools and its PROTOCOL_DRIVE_SEARCH token, which carries the Step 1 rules of the 8 descriptions."""
+    from pathlib import Path
+    from src.domain import drive_tool_texts as tt
+    from src.infrastructure.agent_manifest import DRIVE_SPECIALIST
+    smart = DRIVE_SPECIALIST.capability_descriptions[Intent.WORK_WITH_DRIVE_FILES]
+    token = (Path(__file__).resolve().parents[3] / "prompts_snapshot" / "tokens" / "system"
+             / "PROTOCOL_DRIVE_SEARCH.groovy").read_text(encoding="utf-8").split("\n---\n", 1)[1]
+    tools = {t["name"] for t in tt.drive_tool_declarations()}
     d = FILE_MANAGEMENT.capability_descriptions
     # "remember this FILE" vs "remember THAT ...": the file intent points facts elsewhere.
-    assert "propose_memory_facts" in d[Intent.SAVE_FILE_TO_DRIVE]
-    # A chat file opened earlier, then "move it to <folder>": not on the drive yet, so save, not move.
-    assert "save_file_to_drive" in d[Intent.MOVE_FILE_IN_DRIVE]
+    assert "propose_memory_facts" in smart
+    # A chat file opened earlier, then "move it to <folder>": not on the drive yet, so copy, not move.
+    assert "A chat file is copied (copy_file_to_drive), never moved" in token
     # The store is in the name, both directions, for the destructive pair.
-    assert "delete_file_from_drive" in d[Intent.DELETE_FILE]
+    assert "work_with_drive_files" in d[Intent.DELETE_FILE]
     assert "[File: ...]" in d[Intent.DELETE_FILE] and "[Drive: ...]" in d[Intent.DELETE_FILE]
-    # update: two safe modes, no full-text overwrite offered.
-    update = d[Intent.UPDATE_FILE_IN_DRIVE]
-    assert "append_text" in update and "source_ref" in update
-    assert "Rewriting a file with new text is not available" in update
-    # Reading from the drive is addressed by [Drive: ...] label and drive:<id> ref.
-    assert "drive:<id>" in d[Intent.OPEN_FILE_FROM_DRIVE] and "[Drive: ...]" in d[Intent.OPEN_FILE_FROM_DRIVE]
+    # update: two safe modes (one tool each), no full-text overwrite offered.
+    assert {tt.APPEND_TO_FILE, tt.REPLACE_FILE_CONTENT} <= tools
+    assert "Rewriting a file with new text is not available" in token
+    assert "rewriting with new text is not available" in smart
+    # Reading from the drive is addressed by [Drive: …] label and drive: ref.
+    assert "drive: ref" in tt.OPEN_REF and "[Drive: …] label" in tt.OPEN_REF

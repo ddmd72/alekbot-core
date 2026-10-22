@@ -122,7 +122,9 @@ def test_the_skill_states_the_query_discipline():
 
 
 def test_the_manifest_query_text_ends_with_the_discipline_sentence():
-    assert T.DRIVE_QUERY_DESCRIPTION.endswith("All words must match: use the user's few key words in one language.")
+    # Reviewer edit at the cut: the field text is the specialist's `search_drive.query` (DRIVE_SPECIALIST_RFC §7.6)
+    from src.domain import drive_tool_texts as tt
+    assert tt.QUERY.endswith("All words must match: use the user's few key words in one language.")
 
 
 # -- Smart runs as an interactive turn: under the turn clock -----------------------------------------------------------

@@ -3,7 +3,7 @@ manifest field descriptions are the frozen `drive_search_texts` strings, and the
 document-type queries and the tiers without adding a field (D19: no new Smart field, no mode)."""
 from src.domain import drive_tool_texts as tt
 from src.domain.drive_tool_texts import drive_tool_declarations
-from src.infrastructure.agent_manifest import FILE_MANAGEMENT, Intent
+from src.infrastructure.agent_manifest import Intent
 
 # Retargeted at the cut (DRIVE_SPECIALIST_RFC §7.6, §8.1): the search fields are `search_drive`'s parameters, their
 # texts the specialist-owned constants of drive_tool_texts.py.
@@ -31,5 +31,15 @@ def test_no_new_field_and_no_mode():
 
 
 def test_the_capability_names_document_types_and_the_tiers():
-    text = FILE_MANAGEMENT.capability_descriptions[Intent.SEARCH_FILES_IN_DRIVE]
-    assert "a ticket, a receipt, a contract" in text and "related by meaning" in text
+    # Reviewer edit at the cut: Smart's one drive intent offers the document-type search in the RFC's words
+    # (DRIVE_SPECIALIST_RFC §4.1, "by what a file is"), the searcher's `query` names the types (D25), and the tiers
+    # reach both halves: the specialist's token and Smart's tiers reading line (§5.7, §7.3)
+    from pathlib import Path
+    from src.domain import drive_answer_texts as t
+    from src.infrastructure.agent_manifest import DRIVE_SPECIALIST
+    assert "by what a file is" in DRIVE_SPECIALIST.capability_descriptions[Intent.WORK_WITH_DRIVE_FILES]
+    assert "'tickets', 'receipts', 'contracts'" in _SCHEMA["query"]
+    token = (Path(__file__).resolve().parents[3] / "prompts_snapshot" / "tokens" / "system"
+             / "PROTOCOL_DRIVE_SEARCH.groovy").read_text(encoding="utf-8")
+    assert "'Related by meaning only' lines are guesses" in t.R_TIERS
+    assert "'Related by meaning only' lines are guesses" in token
