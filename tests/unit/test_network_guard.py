@@ -47,6 +47,7 @@ class TestSocketGuard:
 
     def test_connect_ex_to_a_public_address_raises_too(self):
         client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        client.settimeout(1)
         try:
             with pytest.raises(SocketConnectBlockedError, match=PUBLIC_IP):
                 client.connect_ex((PUBLIC_IP, 443))
@@ -67,11 +68,11 @@ class TestSocketGuard:
         """Cloud sessions set HTTPS_PROXY to a loopback port; honoured, it would carry requests past the socket guard."""
         import requests
 
-        monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:9")
-        monkeypatch.setenv("https_proxy", "http://127.0.0.1:9")
+        monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:9")
+        monkeypatch.setenv("http_proxy", "http://127.0.0.1:9")
         network_guard.install(monkeypatch)
         with pytest.raises(SocketConnectBlockedError, match=PUBLIC_IP):
-            requests.get(f"https://{PUBLIC_IP}/", timeout=2)
+            requests.get(f"http://{PUBLIC_IP}/", timeout=2)  # plain http: no TLS, no CA bundle involved
 
     def test_create_connection_to_a_public_address_raises(self):
         with pytest.raises(SocketConnectBlockedError):
