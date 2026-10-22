@@ -165,3 +165,29 @@ def first_user_text(llm: Any) -> str:
     """The text of the first user message of the first request ("" when it has none)."""
     first = next((m for m in llm.requests[0].messages if m.role == "user"), None)
     return "".join(p.text or "" for p in first.parts) if first is not None else ""
+
+
+# ----------------------------------------------------------------------
+# A scripted `_call_llm` for specialist tests: replies in order, remembers the requests it was given.
+# ----------------------------------------------------------------------
+
+Reply = Union[LLMResponse, Callable[[], Any]]
+
+
+def script(*responses: Reply) -> Tuple[Callable[..., Any], List[LLMRequest]]:
+    """`(call_llm, seen)`: the n-th call returns the n-th reply (a callable reply is awaited); `seen` collects the
+    requests."""
+    seen: List[LLMRequest] = []
+
+    async def call(request: LLMRequest, turn: int = 0) -> LLMResponse:
+        seen.append(request)
+        reply = responses[len(seen) - 1]
+        if callable(reply):
+            return await reply()
+        return reply
+    return call, seen
+
+
+def calls(*pairs: Tuple[str, dict]) -> LLMResponse:
+    """One model turn that emits these `(tool name, args)` calls."""
+    return LLMResponse(text="", tool_calls=[ToolCall(name=n, args=a) for n, a in pairs])

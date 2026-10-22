@@ -13,6 +13,11 @@ verbatim; `metadata.file_data` holds the vision files, `history_context.drive_co
 "Correct your input and try again" suffix never reaches a drive answer. The only failures: a missing prompt (before any
 LLM call), a circuit-breaker refusal, an external cancellation, a hard timeout the soft deadline failed to prevent.
 
+A run that ends at the turn cap without a report (the Sonnet 5.5 filler-tool stall, `decisions/sonnet55_adaptive_thinking_stall.md`:
+"no workaround, loud monitoring") is logged at ERROR with the per-turn tool-name sequence and alerted once through
+`alert_sink` (consolidation's precedent). The sol fallback does not cover it: it only answers provider errors on the first
+call. Neither the log nor the alert carries arguments, file names or more than the first 8 characters of the user id.
+
 No fallback prompt: the Firestore prompt (profile `drive`) is the single source of truth.
 """
 
@@ -24,10 +29,13 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..agents.base_agent import BaseAgent
 from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse, DeliveryItem
-from ..domain.drive_answer import DriveAnswer, DriveReport, compose_answer
-from ..domain.drive_file_contents import FileContentItem, parse_file_contents
+from ..domain.drive_answer import DriveAnswer, compose_answer
+from ..domain.drive_file_content_item import FileContentItem
+from ..domain.drive_file_contents import parse_file_contents
+from ..domain.drive_line import DriveLine
 from ..domain.drive_pass_through import PassThroughCollector
-from ..domain.drive_search_state import DriveLine, DrivePreflight
+from ..domain.drive_preflight import DrivePreflight
+from ..domain.drive_report import DriveReport
 from ..domain.drive_tool_texts import REPORT_TOOL, drive_tool_declarations
 from ..domain.llm import PROMPT_CACHE_BOUNDARY, LLMRequest, LLMResponse, Message, MessagePart
 from ..domain.retry_policy import NO_RETRY_POLICY
@@ -36,6 +44,7 @@ from ..domain.turn_clock import CURRENT_TURN_CLOCK
 from ..infrastructure.agent_config import DRIVE
 from ..infrastructure.delegation_engine import DelegationEngine, DelegationResult
 from ..infrastructure.drive_tools import DriveToolRun
+from ..ports.alert_sink import AlertSinkPort
 from ..ports.llm_port import AgentExecutionContext
 from ..utils.logger import logger
 
@@ -127,8 +136,10 @@ class DriveAgent(BaseAgent):
         thinking: Optional[str] = None,
         clock: Callable[[], datetime] = _utcnow,
         monotonic: Callable[[], float] = time.monotonic,
+        alert_sink: Optional[AlertSinkPort] = None,
     ) -> None:
-        """`thinking` is the user's `agent_thinking["drive"]`; None takes DRIVE.thinking_effort."""
+        """`thinking` is the user's `agent_thinking["drive"]`; None takes DRIVE.thinking_effort. `alert_sink` takes the
+        one ops alert of a turn-cap exit without a report (None = log only)."""
         super().__init__(config)
         self._set_execution_context(execution_context)
         self._llm = execution_context.provider
@@ -139,6 +150,12 @@ class DriveAgent(BaseAgent):
         self.thinking = thinking if thinking is not None else DRIVE.thinking_effort
         self._clock = clock
         self._monotonic = monotonic
+        self._alert_sink = alert_sink
+
+    @property
+    def operations(self) -> "DriveOperations":
+        """The shared per-user operations (read-only), mirroring `FileManagementAgent.drive_operations`."""
+        return self._ops
 
     async def can_handle(self, message: AgentMessage) -> bool:
         return message.intent == AgentIntent.QUERY
@@ -154,21 +171,33 @@ class DriveAgent(BaseAgent):
         self._on_agent_start()
         items = parse_file_contents(message.payload)
         collector = PassThroughCollector()
-        preflight = await self._ops.preflight(user_id)
+
+        async def no_builder() -> None:
+            return None
+        builder = self._prompt_builder
+        # The preflight reads and the prompt are independent: one round trip, not two (M13).
+        preflight_result, prompt_result = await asyncio.gather(
+            self._ops.preflight(user_id),
+            builder.build_for_agent(
+                agent_type=AGENT_TYPE, user_id=user_id, account_id=context.get("account_id"),
+                include_biographical=False, include_directives=False) if builder is not None else no_builder(),
+            return_exceptions=True)
+        if isinstance(preflight_result, BaseException):
+            raise preflight_result
+        preflight = preflight_result
         if preflight.drive is DriveLine.NOT_CONFIGURED:   # answered at once, no LLM call (§7.2)
             return self._answer(message, compose_answer(collector, DriveReport(), drive_line=preflight.drive),
                                 collector, started, turns=0, delivery_items=[])
-        if self._prompt_builder is None:
+        if isinstance(prompt_result, BaseException):
+            if not isinstance(prompt_result, Exception):
+                raise prompt_result
+            self._on_agent_error(prompt_result, "prompt_builder")
+            return AgentResponse.failure(task_id=message.task_id, agent_id=self.agent_id,
+                                         error=f"PromptBuilder failed: {prompt_result}")
+        if prompt_result is None:
             return AgentResponse.failure(task_id=message.task_id, agent_id=self.agent_id,
                                          error="DriveAgent requires a prompt builder")
-        try:
-            prompt = await self._prompt_builder.build_for_agent(
-                agent_type=AGENT_TYPE, user_id=user_id, account_id=context.get("account_id"),
-                include_biographical=False, include_directives=False)
-        except Exception as exc:
-            self._on_agent_error(exc, "prompt_builder")
-            return AgentResponse.failure(task_id=message.task_id, agent_id=self.agent_id,
-                                         error=f"PromptBuilder failed: {exc}")
+        prompt = prompt_result
 
         deadline = soft_deadline(started, self._monotonic())
         still_running = asyncio.Event()
@@ -182,14 +211,18 @@ class DriveAgent(BaseAgent):
             tools=drive_tool_declarations(), thinking=self.thinking, max_tokens=DRIVE.max_tokens,
         )
 
+        tools_per_turn: List[List[str]] = []   # tool names only, for the turn-cap log and alert
+
         async def call_llm(request: LLMRequest, turn: int = 0) -> LLMResponse:
             if still_running.is_set():
                 # A still-running mutation ended the commission (§5.4): no further turn; this run is cancelled next.
                 await asyncio.Event().wait()
             run.step = turn
             left = int(deadline - self._monotonic())
-            return await self._call_llm(
+            response = await self._call_llm(
                 request.model_copy(update={"timeout": max(1, min(DRIVE.call_timeout_s, left))}), turn)
+            tools_per_turn.append([tc.name for tc in response.tool_calls])
+            return response
 
         engine = asyncio.ensure_future(DelegationEngine(self.coordinator).execute(
             call_llm=call_llm, base_request=base, context=dict(context), max_turns=DRIVE.max_turns,
@@ -198,12 +231,14 @@ class DriveAgent(BaseAgent):
         stop = asyncio.ensure_future(still_running.wait())
         outcome: Optional[DelegationResult] = None
         cut = False
+        turn_cap = False
         try:
             done, _ = await asyncio.wait({engine, stop}, timeout=max(0.0, deadline - self._monotonic()),
                                          return_when=asyncio.FIRST_COMPLETED)
             if engine in done:
                 outcome = engine.result()
                 cut = outcome.failed and outcome.terminal_tool_args is None
+                turn_cap = cut and len(tools_per_turn) >= DRIVE.max_turns
             elif not done:
                 cut = True
                 logger.warning("[DriveAgent] user=%s soft deadline reached; answering from what ran", user_id[:8])
@@ -216,10 +251,26 @@ class DriveAgent(BaseAgent):
                     task.cancel()
             # Let a cancelled engine's handlers record their calls as not finished before the answer is built.
             await asyncio.gather(engine, stop, return_exceptions=True)
+        if turn_cap:
+            await self._report_turn_cap(user_id, tools_per_turn)
         report = DriveReport.of(outcome.terminal_tool_args if outcome else None, outcome.text if outcome else "")
         answer = compose_answer(collector, report, cut=cut, drive_line=preflight.drive)
         return self._answer(message, answer, collector, started, turns=run.step,
                             delivery_items=list(outcome.delivery_items) if outcome else [])
+
+    async def _report_turn_cap(self, user_id: str, tools_per_turn: Sequence[Sequence[str]]) -> None:
+        """The turn limit ended the run without a report: ERROR log, and one best-effort ops alert. Tool names only."""
+        sequence = " | ".join(f"{n}: {','.join(names) or '(no tool)'}" for n, names in enumerate(tools_per_turn, 1))
+        logger.error("[DriveAgent] user=%s hit the turn limit (%s) without a report; tools per turn: %s",
+                     user_id[:8], DRIVE.max_turns, sequence)
+        if self._alert_sink is None:
+            return
+        try:
+            await self._alert_sink.post(
+                f"🚨 Drive specialist hit the turn limit without a report | model {self.model_name} | "
+                f"turns {len(tools_per_turn)}/{DRIVE.max_turns} | user {user_id[:8]}\n{sequence}")
+        except Exception as exc:
+            logger.warning("[DriveAgent] ops alert delivery failed: %s", exc)
 
     @staticmethod
     def _commission(payload: Mapping[str, Any]) -> str:

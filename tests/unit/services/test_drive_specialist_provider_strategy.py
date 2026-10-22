@@ -43,3 +43,11 @@ def test_the_strategy_tier_and_config_entries():
     assert _DEFAULT_AGENT_TIERS["drive"] is PerformanceTier.BALANCED
     assert (DRIVE.max_turns, DRIVE.timeout_ms, DRIVE.soft_deadline_s, DRIVE.thinking_effort) == (6, 180_000, 150.0,
                                                                                                 "medium")
+
+
+def test_the_default_tier_is_balanced_for_users_whose_stored_tiers_predate_it(monkeypatch):
+    """A stored `agent_tiers` without a "drive" key still resolves the specialist at BALANCED (the default fills in)."""
+    config = UserBotConfig(agent_tiers={"smart": PerformanceTier.ECO, "router": PerformanceTier.ECO})
+    assert "drive" not in config.agent_tiers
+    ctx = _builder(monkeypatch).build("drive", config)
+    assert ctx.tier is PerformanceTier.BALANCED and ctx.model_name == "claude-sonnet-5-5"
