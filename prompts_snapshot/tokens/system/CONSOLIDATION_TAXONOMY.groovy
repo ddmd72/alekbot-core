@@ -134,7 +134,7 @@ uploaded_by: local_script
                 examples: ["temporary projects", "detailed preferences", "ephemeral work"]
                 guideline: "Retrieved via semantic search when relevant."
             }
-            HISTORICAL: {
+            ARCHIVAL: {
                 description: "Obsolete, no longer relevant (for superseded/invalidated facts)"
                 baseline: "Never included"
                 cognitive_test: "Is this completely obsolete?"
