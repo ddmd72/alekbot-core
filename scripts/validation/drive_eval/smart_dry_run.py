@@ -64,9 +64,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, FrozenSet, List, Mapping, Optional, Sequence
 
+from src.domain.agent import AgentIntent, AgentMessage
 from src.domain.drive_content_terms import query_terms
 from src.domain.drive_search_texts import (
     ABSENT_IN_SCOPE_LINE, ABSENT_LINE, SEARCHED_ABSENT_IN_SCOPE_LINE, SEARCHED_ABSENT_LINE)
+from src.domain.llm import MessagePart
 from src.domain.memory_fact import PROPOSE_MEMORY_FACTS_TOOL
 from src.domain.skill import DRAFT_SKILL_TOOL
 from src.domain.turn_clock import CURRENT_TURN_CLOCK, TurnClock
@@ -536,6 +538,17 @@ def _args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
     return args
 
 
+def case_message(case: Mapping[str, Any], recipient: str, user_id: str, account_id: str, repeat: int) -> AgentMessage:
+    """The message one case sends to Smart: an interactive chat turn, one session per case and repeat."""
+    return AgentMessage.create(
+        sender="drive_g3_dry_run", recipient=recipient, intent=AgentIntent.QUERY,
+        payload={"text": case["text"]},
+        context={"user_id": user_id, "account_id": account_id,
+                 "session_id": f"{user_id}:drive_g3_dry_run:{case['id']}:{repeat}",
+                 "current_message_parts": [MessagePart(text=case["text"])],
+                 "interactive_delivery": True})   # Smart declares propose_memory_facts: the bar covers it
+
+
 async def _run(args: argparse.Namespace) -> int:
     """Real Smart, Firestore prompts and model keys: the owner's run."""
     from google.cloud import firestore
@@ -548,8 +561,6 @@ async def _run(args: argparse.Namespace) -> int:
     from src.composition.service_container import ServiceContainer
     from src.composition.user_agent_factory import UserAgentFactory
     from src.config.settings import load_settings
-    from src.domain.agent import AgentIntent, AgentMessage
-    from src.domain.llm import MessagePart
     from src.domain.request_context import RequestContext
     from src.services.drive_search_service import DriveSearchService
 
@@ -638,6 +649,8 @@ async def _run(args: argparse.Namespace) -> int:
         rows: List[Dict[str, Any]] = []
         models: set = set()
         specialist_models: set = set()
+        meter = Meter(max_usd=args.max_usd)
+        uninstall_meter = meter.install()   # before any per-instance capture of _call_llm, or those calls go unmetered
         smart_llm = smart._call_llm
 
         async def capturing(request: Any, *a: Any, **kw: Any) -> Any:
@@ -653,8 +666,6 @@ async def _run(args: argparse.Namespace) -> int:
                 return await specialist_llm(request, *a, **kw)
 
             fixture.drive_agent._call_llm = capturing_specialist
-        meter = Meter(max_usd=args.max_usd)
-        uninstall_meter = meter.install()
         case_costs: List[float] = []
         stopped = ""
         for repeat in range(args.repeats):
@@ -667,13 +678,7 @@ async def _run(args: argparse.Namespace) -> int:
                 drive_log.clear()
                 eval_user.off = case.get("drive") == DRIVE_OFF
                 dispatcher.isolate = bool(case.get("isolate"))
-                msg = AgentMessage.create(
-                    sender="drive_g3_dry_run", recipient=smart.agent_id, intent=AgentIntent.QUERY,
-                    payload={"text": case["text"]},
-                    context={"user_id": user_id, "account_id": account_id,
-                             "session_id": f"{user_id}:drive_g3_dry_run:{case['id']}:{repeat}",
-                             "current_message_parts": [MessagePart(text=case["text"])],
-                             "interactive_delivery": True})   # Smart declares propose_memory_facts: the bar covers it
+                msg = case_message(case, smart.agent_id, user_id, account_id, repeat)
                 clock_token = CURRENT_TURN_CLOCK.set(interactive_turn_clock())   # Smart as an interactive turn runs it
                 started = time.monotonic()
                 try:
