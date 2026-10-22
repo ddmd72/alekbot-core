@@ -248,6 +248,38 @@ async def test_collection_group_spans_every_parent_and_the_top_level(db):
     assert "a" not in db.collection("jobs/j1/windows").docs
 
 
+# ------------------------------------------------------------------------------------------ snapshot cursors
+
+async def test_paging_by_snapshot_visits_every_document_once_despite_duplicate_order_values(db):
+    col = db.collection("facts")
+    col.docs.update({f"f{i}": {"acc": "A", "state": "current", "at": i // 3} for i in range(9)})   # 3 documents per `at`
+    col.docs["other"] = {"acc": "B", "state": "current", "at": 1}
+    base = col.where("acc", "==", "A").where("state", "==", "current")
+    for direction in (DESC, "ASCENDING"):
+        query = base.order_by("at", direction=direction)
+        seen, cursor = [], None
+        while True:
+            page = await (query if cursor is None else query.start_after(cursor)).limit(2).get()
+            if not page:
+                break
+            seen += _ids(page)
+            cursor = page[-1]
+        assert sorted(seen) == sorted(f"f{i}" for i in range(9)) and len(seen) == 9
+        assert seen == _ids(await query.get())                    # the pages concatenate to the unpaged order
+    # the implicit ordering of a range filter is part of the cursor too
+    ranged = col.where("at", ">=", 0)
+    first = await ranged.limit(4).get()
+    assert _ids(await ranged.start_after(first[-1]).limit(2).get()) == _ids(await ranged.limit(6).get())[4:]
+
+
+async def test_a_snapshot_cursor_needs_the_ordered_fields_in_the_snapshot(db):
+    col = db.collection("c")
+    col.docs.update({"a": {"at": 1}, "b": {"x": 1}})
+    cursor = await col.document("b").get()
+    with pytest.raises(ValueError, match="order by"):
+        await col.order_by("at").start_after(cursor).get()
+
+
 # -------------------------------------------------------------------------------------------------------- !=
 
 async def test_not_equal_excludes_documents_without_the_field(db):
@@ -578,6 +610,9 @@ def strict():
     lambda c: c.where("n", ">", 1).where("n", "<", 5),
     lambda c: c.order_by("zzz"),
     lambda c: c.where("tags", "array_contains", "t"),
+    # P5 verifies: equality + array-contains(-any) merge without a composite
+    lambda c: c.where("acc", "==", "a").where("tags", "array_contains", "t"),
+    lambda c: c.where("acc", "==", "a").where("kind", "==", "k").where("tags", "array_contains_any", ["t", "u"]),
 ])
 async def test_a_query_the_declared_indexes_serve_runs(strict, build):
     await build(strict[1]).get()
@@ -600,7 +635,7 @@ async def test_a_vector_query_with_or_without_pre_filter_needs_its_vector_index(
     lambda c: c.where("acc", "==", "a").where("kind", ">", "k"),                             # range on a field no index has
     lambda c: c.where("acc", "in", ["a"]).where("zzz", "!=", 1),
     lambda c: c.order_by("acc").order_by("zzz"),                                             # two orderings
-    lambda c: c.where("acc", "==", "a").where("tags", "array_contains", "t"),                # array + other filter, no order
+    lambda c: c.where("acc", "==", "a").where("tags", "array_contains", "t").where("n", ">", 1),   # array + range
     lambda c: c.where("zzz", "==", 1).where("tags", "array_contains", "t").order_by("at", direction=D),
     lambda c: c.where("zzz", "==", True).find_nearest(
         vector_field="v", query_vector=[1.0, 0.0], distance_measure=COSINE, limit=1),        # vector, wrong pre-filter

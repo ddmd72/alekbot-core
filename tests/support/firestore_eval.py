@@ -418,8 +418,9 @@ class EvalQuery:
     def select(self, paths: Any) -> "EvalQuery":
         return self._then(("select", tuple(str(p) for p in paths)))
 
-    def start_after(self, values: Dict[str, Any]) -> "EvalQuery":
-        return self._then(("start_after", dict(values)))
+    def start_after(self, values: Any) -> "EvalQuery":
+        """A dict of the leading orderings' values, or a document snapshot (the client's snapshot cursor)."""
+        return self._then(("start_after", values if isinstance(values, EvalSnap) else dict(values)))
 
     def find_nearest(self, **kw: Any) -> "EvalQuery":
         return self._then(("find_nearest", kw))
@@ -494,14 +495,25 @@ class EvalQuery:
 
         rows.sort(key=sort_key)
         if cursor is not None:
+            # a snapshot cursor: its value for every ordering (implicit ones too) and its path as the `__name__` tiebreak
+            snapshot = cursor if isinstance(cursor, EvalSnap) else None
+            if snapshot is not None:
+                for n, _ in orders:
+                    if _get_path(snapshot._data, n) is _MISSING:
+                        raise ValueError(f'The "order by" field path {n!r} is not present in the cursor data {snapshot._data!r}.')
+                cursor = {n: _get_path(snapshot._data, n) for n, _ in orders}
             names = list(cursor)
             assert names == [n for n, _ in orders][:len(names)], (names, orders)
 
-            def at_key(n: str, d: str, value: Any) -> Any:
+            def part(d: str, value: Any) -> Any:
                 return _Desc(_key(value)) if d == "DESCENDING" else _key(value)
 
-            at = tuple(at_key(n, d, cursor[n]) for n, d in orders[:len(names)])
-            rows = [r for r in rows if at < tuple(at_key(n, d, _get_path(r[3], n)) for n, d in orders[:len(names)])]
+            def tie(path: str) -> tuple:
+                return ((_Desc(path) if last == "DESCENDING" else path),) if snapshot is not None else ()
+
+            at = tuple(part(d, cursor[n]) for n, d in orders[:len(names)]) + tie(f"{snapshot.reference.col.name}/{snapshot.id}" if snapshot else "")
+            rows = [r for r in rows
+                    if at < tuple(part(d, _get_path(r[3], n)) for n, d in orders[:len(names)]) + tie(r[0])]
         if aggregate is not None:
             if aggregate[0] == "count":
                 return [[SimpleNamespace(alias=aggregate[1], value=len(rows[:limit] if limit else rows))]]
@@ -679,9 +691,10 @@ def _load_indexes(indexes: Union[None, str, Path, List[dict]]) -> Optional[List[
 def _required_index(ops: List[tuple]) -> Optional[Tuple[set, List[tuple]]]:
     """(head, tail) of the composite a query needs, or None when Firestore's single-field indexes serve it.
     head: the equality / `in` / array fields, in any order; tail: the orderings in order, then the range fields not
-    already ordered (a vector query: the vector field, with every pre-filter field in the head). Rules: equality-only filters on several fields and any
-    single-field filter or ordering need no composite; a second field next to a range, an ordering, an array filter
-    or a second ordering does; a vector query needs its vector index, with or without a pre-filter."""
+    already ordered (a vector query: the vector field, with every pre-filter field in the head). Rules: filters on
+    several fields that are all equality / `in` / `array_contains*` (Firestore merges the single-field indexes) and
+    any single-field filter or ordering need no composite; a second field next to a range / `!=` or an ordering, or a
+    second ordering, does; a vector query needs its vector index, with or without a pre-filter."""
     wheres = [op for op in ops if op[0] == "where"]
     orders = [(op[1], op[2]) for op in ops if op[0] == "order_by"]
     nearest = [op[1] for op in ops if op[0] == "find_nearest"]
@@ -690,8 +703,8 @@ def _required_index(ops: List[tuple]) -> Optional[Tuple[set, List[tuple]]]:
     if nearest:     # a vector query always needs a declared vector index on its field (never created automatically)
         return {(f, "CONTAINS" if op in _ARRAY_OPS else "EQ") for _, f, op, _ in wheres}, [(nearest[0]["vector_field"], "VECTOR")]
     fields = {f for _, f, _, _ in wheres} | {n for n, _ in orders}
-    has_array = any(op in _ARRAY_OPS for _, _, op, _ in wheres)
-    if len(fields) < 2 or not (orders or range_fields or has_array):
+    # P5 verifies: equality + array-contains(-any) merge without a composite
+    if len(fields) < 2 or not (orders or range_fields):
         return None
     tail = list(orders) + [(f, "ASCENDING") for f in dict.fromkeys(range_fields) if f not in {n for n, _ in orders}]
     return head, tail
