@@ -1,13 +1,8 @@
-"""The drive specialist's preflight: the `drive` and `search` lines of its state block (DRIVE_SPECIALIST_RFC §5.3).
-
-Read over the same facts a search reads (`search_gate`): the model knows up front what can work; the operations still
-carry today's text for these states (§7.2).
-
-Waiver (one public class per file): `DriveLine`, `SearchLine` and `DrivePreflight` are the value types of one contract.
-"""
+"""The `search` line of the drive specialist's state block (DRIVE_SPECIALIST_RFC §5.3), read over the same facts a
+search reads (`search_gate`): the model knows up front what can work; the operations still carry today's text for
+these states (§7.2)."""
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from typing import Optional
@@ -15,19 +10,6 @@ from typing import Optional
 from .drive_index import MIGRATION_GATE_KEY, DriveSyncState, EpochPhase
 from .drive_search import STATUS_DISABLED, STATUS_DISCONNECTED, search_gate
 from .user_drive import DriveConnection
-
-
-class DriveLine(str, Enum):
-    CONNECTED = "connected"
-    RECONNECT_NEEDED = "reconnect needed"
-    NOT_CONNECTED = "not connected"
-    NOT_CONFIGURED = "not configured"
-
-    @classmethod
-    def of(cls, connection: DriveConnection) -> "DriveLine":
-        if not connection.connected:
-            return cls.NOT_CONNECTED
-        return cls.RECONNECT_NEEDED if connection.needs_reconnect else cls.CONNECTED
 
 
 class SearchLine(str, Enum):
@@ -54,9 +36,3 @@ def search_line(enabled: bool, state: Optional[DriveSyncState], connection: Driv
     if state.epoch_phase is not EpochPhase.IDLE:
         return SearchLine.BUILDING
     return SearchLine.ON
-
-
-@dataclass(frozen=True)
-class DrivePreflight:
-    drive: DriveLine
-    search: SearchLine

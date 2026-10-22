@@ -4,10 +4,12 @@ from datetime import datetime, timezone
 
 import pytest
 
-from src.domain.drive_file_contents import FileContentItem, parse_file_contents
+from src.domain.drive_file_content_item import FileContentItem
+from src.domain.drive_file_contents import parse_file_contents
 from src.domain.drive_index import MIGRATION_GATE_KEY, DriveSyncState, EpochPhase
+from src.domain.drive_line import DriveLine
 from src.domain.drive_pass_through import PassThroughCollector, search_key
-from src.domain.drive_search_state import DriveLine, SearchLine, search_line
+from src.domain.drive_search_line import SearchLine, search_line
 from src.domain.user_drive import DriveConnection
 
 NOW = datetime(2026, 10, 22, tzinfo=timezone.utc)

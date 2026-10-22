@@ -14,52 +14,22 @@
 The status is set by code from the outcome classes, never by the model; the model's `question` and `not_done` can only
 lower it (§7.1). "What to do" is today's message of the operation that decided the status.
 
-Waiver (one public class per file): `DriveStatus`, `DriveReport` and `DriveAnswer` are the value types of
-`compose_answer`'s contract.
+`DriveStatus` (drive_status.py) and `DriveReport` (drive_report.py) are the two other value types of this contract.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Sequence, Tuple
 
 from . import drive_answer_texts as t
-from .drive_outcome import DriveOp, OutcomeClass
-from .drive_pass_through import CollectedResult, PassThroughCollector
-from .drive_search_state import DriveLine
+from .drive_collected_result import CollectedResult
+from .drive_line import DriveLine
+from .drive_op import DriveOp
+from .drive_outcome_class import OutcomeClass
+from .drive_pass_through import PassThroughCollector
+from .drive_report import DriveReport
 from .drive_search_texts import REBUILDING_LINE
-
-
-class DriveStatus(str, Enum):
-    STILL_RUNNING = "still_running"
-    UNFINISHED = "unfinished"
-    PARTIAL = "partial"
-    REFUSED = "refused"
-    FAILED = "failed"
-    NOT_FOUND = "not_found"
-    NOT_CONNECTED = "not_connected"
-    NOT_POSSIBLE = "not_possible"
-    AMBIGUOUS = "ambiguous"
-    OK = "ok"
-    REBUILDING = "rebuilding"
-    INDEXING_OFF = "indexing_off"
-
-
-@dataclass(frozen=True)
-class DriveReport:
-    """The terminal tool's arguments (or a plain-text final reply, taken as the note)."""
-    note: str = ""
-    question: str = ""
-    not_done: str = ""
-
-    @classmethod
-    def of(cls, args: Optional[Mapping[str, Any]], plain_text: str = "") -> "DriveReport":
-        args = args or {}
-
-        def text(name: str) -> str:
-            value = args.get(name)
-            return value.strip() if isinstance(value, str) else ""
-        return cls(note=text("note") or plain_text.strip(), question=text("question"), not_done=text("not_done"))
+from .drive_status import DriveStatus
 
 
 @dataclass(frozen=True)
@@ -89,8 +59,12 @@ _CORRECTABLE = frozenset({OutcomeClass.REQUEST_ERROR, OutcomeClass.NOT_POSSIBLE}
 
 def compose_answer(collector: PassThroughCollector, report: DriveReport, *, cut: bool = False,
                    drive_line: DriveLine = DriveLine.CONNECTED) -> DriveAnswer:
-    """`cut`: the soft deadline, an engine exception or the turn limit ended the run before its report."""
-    results = _settled(collector.results)
+    """`cut`: the soft deadline, an engine exception or the turn limit ended the run before its report (§7.2: the
+    status is then `unfinished` whatever finished). A correctable error the model fixed is left out of the status and
+    of the read blocks, but a change's op line is never dropped (§7.2)."""
+    settled = _settled(collector.results)
+    results = [r for r in collector.results if r.handle not in settled]
+    all_changes = [r for r in collector.results if r.outcome.is_change]
     changes = [r for r in results if r.outcome.is_change]
     reads = [r for r in results if not r.outcome.is_change]
     done = [r for r in changes if r.outcome.cls in _DONE]
@@ -101,7 +75,7 @@ def compose_answer(collector: PassThroughCollector, report: DriveReport, *, cut:
     state_line = ""
     if running is not None:
         status, line = DriveStatus.STILL_RUNNING, running.outcome.text
-    elif any(r.outcome.cls is OutcomeClass.NOT_FINISHED for r in results) or (cut and not results):
+    elif cut or any(r.outcome.cls is OutcomeClass.NOT_FINISHED for r in results):
         status, line = DriveStatus.UNFINISHED, t.UNFINISHED_LINE
     elif done and (failed or report.question or report.not_done):
         status = DriveStatus.PARTIAL
@@ -139,8 +113,8 @@ def compose_answer(collector: PassThroughCollector, report: DriveReport, *, cut:
     out = [t.STATUS_HEAD.format(status=status.value), t.WHAT_TO_DO.format(line=line)]
     if state_line and state_line != line:
         out.append(state_line)
-    for r in changes:
-        verdict = t.OP_DONE if r in done else t.OP_NOT_DONE
+    for r in all_changes:
+        verdict = t.OP_DONE if r.outcome.cls in _DONE else t.OP_NOT_DONE
         out.append(t.OP_LINE.format(step=r.step, verdict=verdict, text=r.outcome.text))
     out.extend(t.READING_PREFIX + line for line in reading)
     if report.note:
@@ -196,9 +170,10 @@ _NOT_CONNECTED_TEXT = ("The user's drive is not connected or its access expired.
 _NOT_CONFIGURED_TEXT = "The drive is not configured."
 
 
-def _settled(results: Sequence[CollectedResult]) -> List[CollectedResult]:
-    """A correctable error the model fixed — a later call of the same operation, in a later step, that was not itself
-    a correctable error — is a correction, not an outcome: each such later call settles one earlier error."""
+def _settled(results: Sequence[CollectedResult]) -> set[str]:
+    """The handles of correctable errors the model fixed: a later call of the same operation, in a later step, that
+    was not itself a correctable error, settles one earlier error (the earliest first). A settled error is out of the
+    status and, for a read, out of the blocks; for a change its op line stays (§7.2)."""
     pending: Dict[DriveOp, List[CollectedResult]] = {}
     dropped: set[str] = set()
     for r in results:
@@ -211,7 +186,7 @@ def _settled(results: Sequence[CollectedResult]) -> List[CollectedResult]:
         if earlier is not None:
             queue.remove(earlier)
             dropped.add(earlier.handle)
-    return [r for r in results if r.handle not in dropped]
+    return dropped
 
 
 def _read_blocks(reads: Sequence[CollectedResult]) -> List[CollectedResult]:

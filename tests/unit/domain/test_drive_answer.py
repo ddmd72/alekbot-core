@@ -3,10 +3,15 @@
 import pytest
 
 from src.domain import drive_answer_texts as t
-from src.domain.drive_answer import DriveReport, DriveStatus, compose_answer, reading_lines
-from src.domain.drive_outcome import DriveOp, DriveOutcome, OutcomeClass, ReadFacts
+from src.domain.drive_answer import compose_answer, reading_lines
+from src.domain.drive_line import DriveLine
+from src.domain.drive_op import DriveOp
+from src.domain.drive_outcome import DriveOutcome
+from src.domain.drive_outcome_class import OutcomeClass
 from src.domain.drive_pass_through import PassThroughCollector
-from src.domain.drive_search_state import DriveLine
+from src.domain.drive_read_facts import ReadFacts
+from src.domain.drive_report import DriveReport
+from src.domain.drive_status import DriveStatus
 from src.domain.drive_search_texts import REBUILDING_LINE
 from src.domain.user_drive import DriveItem
 
@@ -76,8 +81,22 @@ def test_a_cut_run_with_nothing_done_is_unfinished():
     assert run(cut=True).status is DriveStatus.UNFINISHED
 
 
-def test_a_cut_run_whose_operations_all_finished_is_judged_by_them():
-    assert run((1, "move", MOVED), cut=True).status is DriveStatus.OK
+def test_a_cut_run_is_unfinished_whatever_finished_and_keeps_what_ran():
+    """§7.2: the run ended without the specialist's report (deadline, engine exception, turn limit). Smart must not
+    read "ok" for a commission whose later steps never ran; the blocks and op lines stay."""
+    answer = run((1, t.KIND_SEARCH, SEARCH_ONE), (2, "move", MOVED), cut=True)
+    assert answer.status is DriveStatus.UNFINISHED
+    assert f"What to do: {t.UNFINISHED_LINE}" in answer.text
+    assert "2. done: Moved:" in answer.text and "[Result r1, step 1: search]" in answer.text
+
+
+def test_a_cut_run_with_only_reads_finished_is_unfinished_not_ok():
+    answer = run((1, t.KIND_SEARCH, SEARCH_ONE), cut=True)
+    assert answer.status is DriveStatus.UNFINISHED and "<card a>" in answer.text
+
+
+def test_a_report_keeps_todays_precedence_when_the_run_was_not_cut():
+    assert run((1, "move", MOVED), report=DriveReport(note="Moved it.")).status is DriveStatus.OK
 
 
 def test_some_done_some_not_is_partial():
@@ -102,10 +121,37 @@ def test_a_text_tool_without_its_item_is_not_possible():
 
 
 def test_a_fixed_correctable_error_is_not_an_outcome():
+    """It does not reach the status or "What to do" (its op line stays, see the next tests)."""
     wrong = bad(DriveOp.SAVE_TEXT, OutcomeClass.NOT_POSSIBLE, "No file_contents item 't9'")
     saved = ok(DriveOp.SAVE_TEXT, "Saved [Drive: Inbox/n.md ref=drive:n].")
     answer = run((1, "save_text", wrong), (2, "save_text", saved))
-    assert answer.status is DriveStatus.OK and "t9" not in answer.text
+    assert answer.status is DriveStatus.OK and "t9" not in answer.text.splitlines()[1]
+
+
+def test_a_fixed_change_error_keeps_its_op_line_and_leaves_the_status():
+    """§7.2 (parity): Smart sees every failed call today. A settled correctable error is out of the status only."""
+    wrong = bad(DriveOp.SAVE_TEXT, OutcomeClass.NOT_POSSIBLE, "No file_contents item 't9'")
+    saved = ok(DriveOp.SAVE_TEXT, "Saved [Drive: Inbox/n.md ref=drive:n].")
+    answer = run((1, "save_text", wrong), (2, "save_text", saved))
+    lines = answer.text.splitlines()
+    assert answer.status is DriveStatus.OK and lines[1] == "What to do: Done."
+    assert "1. not done: No file_contents item 't9'" in lines
+    assert "2. done: Saved [Drive: Inbox/n.md ref=drive:n]." in lines
+
+
+def test_a_failed_change_of_one_target_is_not_hidden_by_a_later_change_of_another():
+    """The case the heuristic cannot tell from a correction: a.pdf failed in step 1, b.pdf moved in step 2."""
+    chat_file = bad(DriveOp.MOVE, OutcomeClass.REQUEST_ERROR, "'a.pdf' is a chat file, not on the user's drive")
+    answer = run((1, "move", chat_file), (2, "move", MOVED))
+    lines = answer.text.splitlines()
+    assert "1. not done: 'a.pdf' is a chat file, not on the user's drive" in lines
+    assert "2. done: Moved: Inbox/a.pdf → [Drive: Archive/a.pdf ref=drive:a]." in lines
+
+
+def test_a_fixed_read_error_is_still_dropped_from_the_blocks():
+    shape = bad(DriveOp.SEARCH, OutcomeClass.REQUEST_ERROR, "kind 'zip' is not a kind")
+    answer = run((1, t.KIND_SEARCH, shape), (2, t.KIND_SEARCH, SEARCH_ONE))
+    assert "zip" not in answer.text and answer.status is DriveStatus.OK
 
 
 def test_an_error_in_the_same_batch_is_not_fixed_by_its_siblings():

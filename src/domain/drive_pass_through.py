@@ -8,13 +8,13 @@ tool co-emitted with the terminal tool.
 
 It also remembers the searches already run, so an identical `search_drive` is not run again (§5.4).
 
-Waiver (one public class per file): `CollectedResult` is the value type `PassThroughCollector` holds.
+`CollectedResult`, the value type it holds, is in drive_collected_result.py.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
+from .drive_collected_result import CollectedResult
 from .drive_outcome import DriveOutcome
 
 SearchKey = Tuple[str, ...]
@@ -24,14 +24,6 @@ _SEARCH_FIELDS = ("query", "folder", "kind", "date_from", "date_to")
 def search_key(args: Mapping[str, Any]) -> SearchKey:
     """Two searches are identical when their normalised query, folder, kind and dates are (§5.4)."""
     return tuple(" ".join(str(args.get(name) or "").casefold().split()) for name in _SEARCH_FIELDS)
-
-
-@dataclass(frozen=True)
-class CollectedResult:
-    handle: str          # r1, r2, … in run order
-    step: int            # the specialist's model turn that emitted the call
-    kind: str            # the result kind its header names (search, listing, open, …)
-    outcome: DriveOutcome
 
 
 class PassThroughCollector:
