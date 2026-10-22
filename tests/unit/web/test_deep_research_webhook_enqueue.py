@@ -71,12 +71,30 @@ async def test_enqueue_failure_releases_the_claim_and_returns_500():
 
 
 async def test_cancelled_request_during_enqueue_releases_the_claim():
+    # Calls the view directly and cancels its task mid-enqueue: how the test client propagates a
+    # CancelledError differs by platform (it hung forever on Linux CI), so it is kept out of the path.
     q, d = AsyncMock(), _dedup()
-    q.enqueue_worker_task.side_effect = asyncio.CancelledError()
-    try:
-        await _post(_app(q, d))
-    except asyncio.CancelledError:
-        pass
+    entered, never = asyncio.Event(), asyncio.Event()
+
+    async def _stuck_enqueue(**_kw):
+        entered.set()
+        await never.wait()
+
+    q.enqueue_worker_task.side_effect = _stuck_enqueue
+    app = _app(q, d)
+    body = json.dumps({"type": "response.completed", "data": {"id": "resp_1", "metadata": _META}})
+    view = app.view_functions["deep_research_webhooks.handle_openai_deep_research"]
+
+    async with app.test_request_context("/webhooks/openai/deep-research", method="POST", data=body,
+                                        headers={"Content-Type": "application/json"}):
+        task = asyncio.ensure_future(view())
+        await asyncio.wait_for(entered.wait(), 5)
+        task.cancel()
+        try:
+            await asyncio.wait_for(task, 5)
+        except asyncio.CancelledError:
+            pass
+    assert task.cancelled()
     d.release.assert_awaited_once_with("openai_deep_research:resp_1")
 
 
