@@ -40,8 +40,11 @@ def pytest_sessionstart(session):
     """Pay the heavy lazy imports once, before any test. Which test would pay them otherwise depends on how xdist hands
     tests to workers, so the same test passed or broke the CI per-test budget from run to run. Runs in every worker and
     in a plain run (not in the xdist controller, which imports no test code). Importing markitdown here changes nothing
-    the tests can see: the laziness assertions run in subprocesses."""
+    the tests can see: the laziness assertions run in subprocesses. Only when the budget is on (CI's `make ci`):
+    targeted runs and `make test-affected` do not pay ~0.9 s for it."""
     config = session.config
+    if not os.getenv("PYTEST_DURATION_BUDGET_S", "").strip():
+        return
     if getattr(config.option, "numprocesses", None) and not hasattr(config, "workerinput"):
         return
     try:

@@ -129,3 +129,10 @@ def test_a_parametrize_id_called_slow_is_not_the_marker(pytester, monkeypatch):
     result = _run(pytester, source)
     assert result.ret == pytest.ExitCode.TESTS_FAILED
     assert "0.05 s budget (2)" in result.stdout.str()
+
+
+def test_a_green_run_says_the_budget_was_checked(pytester, monkeypatch):
+    monkeypatch.setenv("PYTEST_DURATION_BUDGET_S", "5")
+    result = _run(pytester, SLEEPY)
+    assert result.ret == pytest.ExitCode.OK
+    assert "duration budget 5 s: 0 over (2 tests)" in result.stdout.str()

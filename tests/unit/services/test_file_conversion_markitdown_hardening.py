@@ -28,7 +28,6 @@ def _registered_names(md) -> set:
 # build_markitdown — converter allowlist
 # =============================================================================
 
-@pytest.mark.slow
 def test_build_markitdown_excludes_unsafe_converters():
     names = _registered_names(build_markitdown())
     for unsafe in ("ZipConverter", "AudioConverter", "ImageConverter", "YouTubeConverter",
@@ -36,7 +35,6 @@ def test_build_markitdown_excludes_unsafe_converters():
         assert unsafe not in names
 
 
-@pytest.mark.slow
 def test_build_markitdown_keeps_document_converters():
     names = _registered_names(build_markitdown())
     for kept in ("DocxConverter", "XlsxConverter", "XlsConverter", "PptxConverter", "PdfConverter",
@@ -103,7 +101,6 @@ async def test_convert_real_docx_still_works(tmp_path):
     assert "Penalty is 0.1% per day." in result
 
 
-@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_convert_plain_zip_is_not_unpacked(tmp_path):
     path = tmp_path / "archive.zip"
