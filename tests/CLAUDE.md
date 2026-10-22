@@ -88,6 +88,10 @@ Extending the fake with a new Firestore feature = a new scenario in `tests/suppo
   `--cov-fail-under`, the per-file table (`scripts/check_coverage_thresholds.py`) and the **per-layer floors**
   (`scripts/check_coverage_layers.py`, branch-aware percent per layer). Floors only rise: raise a floor only to min(local `make ci`, the CI 'Coverage per layer' notice) − 0.3. The script
   prints "floor can rise to X" when that would be 0.5 above the floor; raise it in the same change. Never lower one without the owner's per-layer OK.
+- The per-file table holds the auth files (verifiers, sign-in, MCP authorization, the gated webhooks and routes) at 100 % lines (P7):
+  a refusal line no test runs fails `make ci`.
+- `tests/unit/web/test_every_route_refuses_anonymous.py` probes every route of every deployed blueprint with an anonymous request: a new
+  route or blueprint must be refused (nothing touched or written) or listed in its `PUBLIC` with a reason.
 - `tests/unit/test_every_src_module_is_imported_by_a_test.py`: every module under `src/` and every root `*_main.py` is
   imported by some test, or listed with a reason in `tests/unit/untested_modules_allowlist.txt`. A new module needs a
   test, not an allowlist line. The list only shrinks: the test fails when a listed module is now imported. The check is `slow`,

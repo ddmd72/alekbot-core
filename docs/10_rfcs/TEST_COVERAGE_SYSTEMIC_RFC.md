@@ -577,7 +577,7 @@ semantic-mutation driver (`python -m tests.support.semantic_mutants`) and the re
 - **Branch coverage:** `firestore_repo.py` 43 to 78 %, `fact_management_adapter.py` 83 to 97 %.
 - **Four known defects are pinned by strict xfails** (they fail the suite when fixed, so the fix removes the marker): the cached biographical context swallows a backend failure; the biographical refresh ignores `facts_limit`/`principles_limit`; a failed merge leaves the sources superseded; `add_facts_batch` fills `saved_ids` only when deduplication is skipped. The fixes are outside this package.
 
-**Built (P5, 2026-10-22).** The fake-vs-real parity slice. Files: `tests/support/firestore_parity.py` (38 scenarios, 34 when P5 was built and four added by P6; one documented expected value
+**Built (P5, 2026-10-22).** The fake-vs-real parity slice. Files: `tests/support/firestore_parity.py` (40 scenarios, 34 when P5 was built, four added by P6 and two by P7; one documented expected value
 each, the index groups), `tests/unit/support/test_firestore_parity.py` (H1 in `make check`; the emulator when `FIRESTORE_EMULATOR_HOST` is set),
 `tests/cloud/` (`conftest.py` guards and index fixture, `test_firestore_parity_cloud.py`), `make test-cloud`. The same scenarios run on H1, the
 emulator (35 of 38; it does not refuse a missing index) and the test database. Deviations and results:
@@ -628,6 +628,26 @@ and `task_id`/`list_id` where the Tasks tools take `task_ref` and return `ref` (
 (`snapshot_upload.py --apply`); until then production still renders the old text. Not covered: `COGNITIVE_PROCESS_CONSOLIDATION` and the universal profile (production renders
 neither; they still say `HISTORICAL`), prose that names a value outside a line naming its field, the `TAXONOMY` keys outside the four definition blocks (e.g. `decision_logic`) and its singular `domain:` lines (`Directive_Maintenance`),
 the `returns:` lines of the Consolidation tools other than `search_existing_facts`, a field added to the Tasks output list that the result does not carry, USER/ACCOUNT overrides.
+
+**Built (P7, 2026-10-22).** Inbound gates. Deviations and results:
+- **Inventory first:** ≈120 routes over the main service, the MCP SDK app, the relay, the indexer and the sandbox, each with its caller,
+  its gate and its refusal test (or none), and the refusal sites of every auth-path file with the lines no test ran.
+- **The route probe** (`tests/unit/web/test_every_route_refuses_anonymous.py`) builds the 16 blueprint factories with their real gates and
+  tripwires behind them, and sends every one of their 99 routes, plus every route of the MCP SDK app, an anonymous request: refused, nothing
+  touched or written. A `PUBLIC` list holds the routes public by design, one reason each. An AST companion ties every `register_blueprint` in
+  `main.py`, `indexer_main.py` and `sandbox_main.py`, and `_is_mcp_path`'s literals, to what the probe builds.
+- **`/worker` is held by an AST check** (`tests/unit/test_main_worker_route_gate.py`: the gate is awaited first, its 401 returned unchanged),
+  the owner's choice over moving `/worker` out of `main.py`; tidying `main.py` is an open owner topic.
+- **The inventory's negative tests**, route-level on real repositories over H1: deep-research Svix HMAC, Slack signature, Graph webhook, voice
+  OIDC, Cabinet owner and foreign tenant, every `/auth/*` refusal, MCP consent and the SDK app, the relay's ticket.
+- **Known defects as strict xfails:** the open redirect after sign-in (a fix PR follows); the Graph webhook trusting the URL's user id (owner:
+  not fixed); two client errors answered 500 instead of 401/400 (`/auth/refresh` with an access token, `/register` with null `redirect_uris`).
+- **F1:** `.coveragerc`'s `\.\.\.` exclude matched a `def` whose signature holds `...` and hid the whole function (1 686 statements in 142
+  files). Anchored to a line that is only `...`. Floors re-set to the honest values with the owner's OK (local run; the CI runner's numbers
+  re-adjust them): domain 98.1 → 98.0, ports 92.2 → 92.0, services 91.2 → 91.3, adapters 80.6 → 81.8, web 63.1 → 75.2, composition
+  89.9 → 90.4, root entry points 34.1 → 33.9; infrastructure, agents, handlers and src (other) unchanged.
+- **C1:** the 18 auth files are in the per-file table at 100 % lines; the lines no test ran are closed with behaviour tests.
+- **The "Telegram intercept in `main.py`" in the P7 row no longer exists:** `telegram_update` is dispatched by `WorkerHandler`.
 
 **Built (P21, 2026-10-23).** The data-audit framework and the fact checker. Files: `scripts/data_audit/facts.py` (pure: `check_fact(doc_id, doc)` and
 `check_lineages(docs)`), `scripts/data_audit/run.py` (the read-only runner; `CHECKERS` maps an entity to its collection property and its checks),

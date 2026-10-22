@@ -47,20 +47,22 @@ LAYERS: List[Tuple[str, Tuple[str, ...]]] = [
 ]
 
 # floor = min observed (CI runner and VM, 2026-10-22) − NOISE_PP, rounded down to 0.1; run-to-run coverage noise is ~0.1 pp
-# (owner decision 2026-10-22). Only rising.
+# (owner decision 2026-10-22). Only rising. One owner-approved exception (2026-10-22, P7 F1): `.coveragerc` stopped
+# hiding whole functions whose signature holds `...`, so domain, ports and the root entry points were re-set from the
+# honest measurement (VM run; the CI runner's numbers re-adjust them to min(VM, CI) − NOISE_PP).
 NOISE_PP = 0.3
 FLOORS: Dict[str, float] = {
-    "src/domain": 98.1,
-    "src/ports": 92.2,
+    "src/domain": 98.0,
+    "src/ports": 92.0,
     "src/infrastructure": 96.3,
     "src/agents": 94.5,
-    "src/services": 91.2,
+    "src/services": 91.3,
     "src/handlers": 91.6,
-    "src/adapters": 81.7,
-    "src/web": 63.1,
-    "src/composition": 89.9,
+    "src/adapters": 81.8,
+    "src/web": 75.2,
+    "src/composition": 90.4,
     "src (other)": 70.1,
-    "root entry points": 34.1,
+    "root entry points": 33.9,
 }
 
 RISE_MARGIN = 0.5
