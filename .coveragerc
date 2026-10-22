@@ -33,12 +33,15 @@ omit =
 
 [report]
 # Hide trivial omissions; missing lines surface via --cov-report=term-missing.
+# The last pattern is a line that is only `...` (a stub body). It is anchored: the unanchored `\.\.\.` it replaced also
+# matched a `def` whose signature holds `...` (`Callable[..., Awaitable]`), and coverage then excluded that whole
+# function (P7 finding F1).
 exclude_lines =
     pragma: no cover
     raise NotImplementedError
     if TYPE_CHECKING:
     if __name__ == .__main__.:
-    \.\.\.
+    ^\s*\.\.\.\s*$
 
 # Without this, coverage.py lists only the src/ subpackages that carry an __init__.py, and a file nobody imported is
 # absent from the report instead of showing 0 % (src/ and most of its subdirectories are namespace packages).

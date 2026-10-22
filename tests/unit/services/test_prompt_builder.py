@@ -19,10 +19,6 @@ Coverage targets (missing lines from 57%):
     - account_id repo exception → warning + empty bio
     - user_id only (no account_id) → warning + empty bio
     - qs_facts (semantic_lens tagged) → query_specific_context built
-  _get_biographical_component()
-    - exception path → returns fallback string
-  _format_biographical_facts()
-    - empty list → returns placeholder string
   _build_lens_instructions()
     - returns formatted string with name + weights
   invalidate_cache()
@@ -30,10 +26,6 @@ Coverage targets (missing lines from 57%):
     - None → clears all
   get_cache_stats()
     - returns correct stats dict
-  UserPromptBuilder._get_component()
-    - custom_id found → returns custom text
-    - custom_id not found → falls back to super()
-    - no custom_id mapped → falls back to super()
 """
 import time
 import pytest
@@ -197,38 +189,6 @@ class TestBuildForAgent:
 
 
 # ---------------------------------------------------------------------------
-# _get_biographical_component()
-# ---------------------------------------------------------------------------
-
-class TestGetBiographicalComponent:
-
-    async def test_exception_returns_fallback(self, mock_repo):
-        mock_repo.get_biographical_context_cached = AsyncMock(side_effect=Exception("fail"))
-        builder = _make_builder(mock_repo)
-        result = await builder._get_biographical_component("user1")
-        assert result == "// Biographical context unavailable"
-
-
-# ---------------------------------------------------------------------------
-# _format_biographical_facts()
-# ---------------------------------------------------------------------------
-
-class TestFormatBiographicalFacts:
-
-    def test_empty_list_returns_placeholder(self, mock_repo):
-        builder = _make_builder(mock_repo)
-        result = builder._format_biographical_facts([])
-        assert result == "// No biographical data available yet."
-
-    def test_facts_formatted_as_bullets(self, mock_repo):
-        builder = _make_builder(mock_repo)
-        facts = [{"text": "fact one"}, {"text": "fact two"}]
-        result = builder._format_biographical_facts(facts)
-        assert "- fact one" in result
-        assert "- fact two" in result
-
-
-# ---------------------------------------------------------------------------
 # _build_lens_instructions()
 # ---------------------------------------------------------------------------
 
@@ -316,7 +276,3 @@ class TestUserPromptBuilderInit:
         builder = UserPromptBuilder(repo=mock_repo, user_id="user1", config=config)
         assert builder.user_id == "user1"
         assert builder.config is config
-
-    # NOTE: UserPromptBuilder._get_component() is dead code — it calls
-    # super()._get_component() which doesn't exist in PromptBuilder.
-    # No tests written for it; tracked as tech debt for removal in next refactor.

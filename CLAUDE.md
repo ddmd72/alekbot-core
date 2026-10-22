@@ -517,12 +517,15 @@ on both voice paths as of 2026-09-27, no longer `high`).
   with no silent refresh** (owner rule: sensitive data), and refresh tokens older than the current
   TTL are rejected. See `decisions/cabinet_session_24h_cap.md`.
 
-**Consolidation** — long-term memory formation: sliding window fills → batch to Cloud Tasks queue →
+**Consolidation** — Owner's map: `docs/05_building_blocks/memory/README.md`.
+Long-term memory formation: sliding window fills → batch to Cloud Tasks queue →
 ConsolidationAgent ("Life Chronicler") extracts facts/principles from raw messages (non-blocking).
-Thresholds (per-user): prod threshold=50/batch=30, dev threshold=70/batch=50. Dedup 0.96 (number-aware —
-a duplicate beats a loss). 3 vectors/fact + SCD2 (`update_fact` re-embeds on content change; `is_current` = latest of lineage, false only when superseded — `decisions/fact_s1_defects.md`); biographical cache updated for next conversation.
+Thresholds are global: threshold=70/batch=50 live (`domain/settings.py`; the `is_production` branch in `config/settings.py` sets 50/30);
+`UserBotConfig.consolidation_threshold` has no effect anywhere, `consolidation_batch_size` only sizes the `$consolidate`
+cut. Consolidation writes skip the number-aware 0.96 dedup (`skip_deduplication=True`): the model decides duplicates
+after searching; the 0.96 check runs only on the non-live v2 path. 3 vectors/fact + SCD2 (`update_fact` re-embeds on content change; `is_current` = latest of lineage, false only when superseded — `decisions/fact_s1_defects.md`); biographical cache updated for next conversation.
 **Serialization:** model parts use `p.text` (summary), NOT `p.full_text` (verbose + web_search_context);
-user parts `p.consolidation_text or p.text` (prefixed `\n\n`; `consolidation_text` is legacy, see below).
+user parts `p.consolidation_text or p.text` (`consolidation_text` is legacy, see below).
 **Loop alerts:** a pass that hits the turn cap without a final report posts a 🚨 ops alert (`AlertSinkPort`);
 while `CONSOLIDATION_STATS_ALERTS` (`os.getenv`, default on, temporary since 2026-10-20) is on, every pass
 posts a 📊 stats line. See `decisions/sonnet55_adaptive_thinking_stall.md`.
@@ -542,7 +545,8 @@ See `docs/10_rfcs/MEMORY_FACT_CONFIRMATION_RFC.md` + `decisions/memory_facts_own
 
 **Standing Directives** — user behavioral rules ("never give partial answers", "trace conditional
 logic before judging") are a first-class fact domain `FactDomain.AGENT_DIRECTIVE`, rendered as a
-binding `standing_directives {}` block in the **orchestrator's** system prompt every request (NOT
+binding `standing_directives {}` block in the system prompt of every agent built with the biographical context
+(Smart, Quick, Notes, Tasks, EmailSearch, PdfGenerator; the consolidator and Lelik excluded) on every request (NOT
 biographical `preference`, NOT firing self-reminders). Rendering = a channel split at
 `PromptBuilder.build_for_agent` (mirrors `query_specific_context`): partitions the flat cache list
 into `static_bio` / `directives`, each its own `assemble()` param; gated by `include_directives`
@@ -818,8 +822,9 @@ swaps the token atomically + injects a system alert so the LLM adopts it immedia
 resolution USER → ACCOUNT → SYSTEM. Domain: `LanguageCode` enum (uk/en/fr/es). Adding a language +
 Cabinet `/api/user/language`: see `docs/10_rfcs/MULTILINGUAL_SUPPORT_RFC.md`.
 
-**Memory search** — 6 parallel queries across different vectors, ranked via Reciprocal Rank Fusion (RRF).
-One search per request, result reused by all agents.
+**Memory search** — parallel queries across different vectors, ranked via Reciprocal Rank Fusion (RRF).
+The Router does one prefetch per message (up to 4 vector channels + the domain channel), shared by the
+orchestrator turn; `search_memory` searches again with up to 7 channels.
 
 ## Economics
 

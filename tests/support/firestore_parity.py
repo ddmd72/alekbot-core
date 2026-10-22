@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from google.api_core import exceptions as gexc
@@ -251,6 +251,37 @@ async def update_precondition_deleted(db: Any, col: str) -> Any:
     return await _outcome(d.update({"v": 2}, option=db.write_option(last_update_time=snap.update_time)))
 
 
+async def delete_missing_document(db: Any, col: str) -> Any:
+    c = db.collection(col)
+    d = c.document("nobody")
+    outcome = await _outcome(d.delete())
+    return {"delete": outcome, "exists": (await d.get()).exists, "ids": await _ids(c)}
+
+
+async def set_replaces_whole_document(db: Any, col: str) -> Any:
+    d = db.collection(col).document("a")
+    await d.set({"a": 1, "b": 2, "m": {"x": 1, "y": 2}})
+    await d.set({"b": 3, "m": {"x": 9}})
+    return (await d.get()).to_dict()
+
+
+async def aware_datetime_stored_as_utc(db: Any, col: str) -> Any:
+    d = db.collection(col).document("a")
+    sent = datetime(2026, 10, 22, 15, 30, 45, 123456, tzinfo=timezone(timedelta(hours=3)))
+    await d.set({"t": sent})
+    got = (await d.get()).to_dict()["t"]
+    return {"utc_fields": (got.year, got.month, got.day, got.hour, got.minute, got.second, got.microsecond),
+            "offset": got.utcoffset(), "same_instant": got == sent}
+
+
+async def document_ids_are_case_sensitive(db: Any, col: str) -> Any:
+    c = db.collection(col)
+    await c.document("Doc").set({"v": 1})
+    await c.document("doc").set({"v": 2})
+    return {"ids": sorted(await _ids(c)), "Doc": (await c.document("Doc").get()).to_dict(),
+            "doc": (await c.document("doc").get()).to_dict()}
+
+
 # ----------------------------------------------------------------------------------------------- vectors
 
 QUERY_VECTOR = [1.0, 0.0, 0.0]
@@ -385,6 +416,36 @@ async def transactions_concurrent(db: Any, col: str) -> Any:
     return {"final": (await d.get()).to_dict()["n"], "body_ran_again": runs["n"] > 2}
 
 
+async def transaction_read_missing_document(db: Any, col: str) -> Any:
+    d = db.collection(col).document("nobody")
+
+    @firestore.async_transactional
+    async def read_only(tx: Any) -> bool:
+        return (await d.get(transaction=tx)).exists
+
+    seen = await read_only(db.transaction())
+    return {"exists_in_transaction": seen, "created": (await d.get()).exists}
+
+
+async def transaction_delete_after_read(db: Any, col: str) -> Any:
+    d = db.collection(col).document("a")
+    await d.set({"v": 1})
+
+    @firestore.async_transactional
+    async def consume(tx: Any) -> Any:
+        snap = await d.get(transaction=tx)
+        tx.delete(d)
+        return snap.to_dict()
+
+    @firestore.async_transactional
+    async def read_again(tx: Any) -> bool:
+        return (await d.get(transaction=tx)).exists
+
+    first = await consume(db.transaction())
+    return {"first_read": first, "exists_after": (await d.get()).exists,
+            "second_transaction_sees": await read_again(db.transaction())}
+
+
 # ------------------------------------------------------------------------------------ the table, indexes
 
 @dataclass(frozen=True)
@@ -430,6 +491,12 @@ SCENARIOS: List[Scenario] = [
     Scenario("update_precondition_stale_fresh", update_precondition_stale_fresh,
              {"stale": "FailedPrecondition", "fresh": "ok", "v": 4}),
     Scenario("update_precondition_deleted", update_precondition_deleted, "FailedPrecondition"),
+    Scenario("delete_missing_document", delete_missing_document, {"delete": "ok", "exists": False, "ids": []}),
+    Scenario("set_replaces_whole_document", set_replaces_whole_document, {"b": 3, "m": {"x": 9}}),
+    Scenario("aware_datetime_stored_as_utc", aware_datetime_stored_as_utc, {
+        "utc_fields": (2026, 10, 22, 12, 30, 45, 123456), "offset": timedelta(0), "same_instant": True}),
+    Scenario("document_ids_are_case_sensitive", document_ids_are_case_sensitive, {
+        "ids": ["Doc", "doc"], "Doc": {"v": 1}, "doc": {"v": 2}}),
     Scenario("knn_cosine", knn_cosine, {
         "all": [["d1", 0.0], ["d4", 0.0012], ["d2", 0.0061], ["d6", 0.2929], ["d3", 1.0]], "limit_2": ["d1", "d4"]},
         group="knn"),
@@ -454,6 +521,10 @@ SCENARIOS: List[Scenario] = [
               "mixed_directions": "FailedPrecondition"},
              group="composite", refuses=True),
     Scenario("transactions_concurrent", transactions_concurrent, {"final": 2, "body_ran_again": True}),
+    Scenario("transaction_read_missing_document", transaction_read_missing_document,
+             {"exists_in_transaction": False, "created": False}),
+    Scenario("transaction_delete_after_read", transaction_delete_after_read,
+             {"first_read": {"v": 1}, "exists_after": False, "second_transaction_sees": False}),
 ]
 
 # Fields of each group's composite and vector indexes, in index order: (field, "ASC" | "VECTOR").

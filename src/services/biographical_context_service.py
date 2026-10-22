@@ -19,6 +19,7 @@ from typing import List, Dict, Optional, Any
 from ..ports.repository import FactRepository
 from ..domain.entities import FactDomain
 from ..domain.settings import SearchConfig
+from ..domain.user import UserBotConfig
 from ..utils.logger import logger
 
 
@@ -72,7 +73,9 @@ class BiographicalContextService:
     async def refresh_context(
         self,
         account_id: str,
-        user_id: Optional[str] = None
+        user_id: Optional[str] = None,
+        facts_limit: Optional[int] = None,
+        principles_limit: Optional[int] = None,
     ) -> Dict[str, List[Dict]]:
         """
         Refresh biographical context using priority-based direct query.
@@ -90,6 +93,8 @@ class BiographicalContextService:
         Args:
             account_id: Account ID to refresh cache for
             user_id: Optional user ID for user-specific overrides (defaults to account_id)
+            facts_limit: Explicit facts limit; wins over the resolved one (None = resolve)
+            principles_limit: Explicit principles limit; wins over the resolved one (None = resolve)
             
         Returns:
             Dict with keys:
@@ -109,21 +114,28 @@ class BiographicalContextService:
                 logger.warning(f"⚠️ Failed to load account {account_id[:8]}: {e}")
         
         account_defaults = account.account_defaults if account else None
-        user_config = account_defaults or SearchConfig()
+        # ConfigurationService reads UserBotConfig fields (SearchConfig has none of them).
+        user_config = account_defaults or UserBotConfig()
         
         if self._config_service:
-            facts_limit = self._config_service.get_biographical_cache_limit(
+            resolved_facts_limit = self._config_service.get_biographical_cache_limit(
                 user_config=user_config,
                 account_defaults=account_defaults
             )
-            principles_limit = self._config_service.get_principles_cache_limit(
+            resolved_principles_limit = self._config_service.get_principles_cache_limit(
                 user_config=user_config,
                 account_defaults=account_defaults
             )
         else:
             search_config = SearchConfig()
-            facts_limit = search_config.DEFAULT_BIOGRAPHICAL_CACHE_LIMIT
-            principles_limit = search_config.DEFAULT_PRINCIPLES_CACHE_LIMIT
+            resolved_facts_limit = search_config.DEFAULT_BIOGRAPHICAL_CACHE_LIMIT
+            resolved_principles_limit = search_config.DEFAULT_PRINCIPLES_CACHE_LIMIT
+
+        # Explicit limits (the consolidator's, possibly a user-level override) win.
+        if facts_limit is None:
+            facts_limit = resolved_facts_limit
+        if principles_limit is None:
+            principles_limit = resolved_principles_limit
         
         logger.info(
             f"🔄 [BiographicalContext] Refreshing cache for account {account_id[:8]}... "

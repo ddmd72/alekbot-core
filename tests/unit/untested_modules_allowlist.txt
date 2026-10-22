@@ -5,13 +5,8 @@
 #
 # Stores and adapters with no behind-port test yet (the store kits of TEST_COVERAGE_SYSTEMIC_RFC build them).
 src.adapters.firestore_email_exclusions_adapter  # Firestore store; reached only through service_container wiring
-src.adapters.firestore_email_job_repo  # Firestore store (email indexing job journal); wiring only
-src.adapters.firestore_mcp_client_repository  # Firestore store (MCP OAuth clients and tokens); only mcp_setup wires it
 src.adapters.firestore_notification_state_adapter  # Firestore store (last active channel); wired from main.py only
-src.adapters.firestore_short_link_repository  # Firestore store (short links); wired from main.py only
-src.adapters.firestore_whitelist_repo  # Firestore store of both access gates; wired from main.py only
 src.adapters.gcp_log_sink  # Cloud Logging sink; wired from main.py only
-src.adapters.google_tasks_adapter  # GoogleTasks adapter, frozen by decision (MicrosoftToDo is live)
 src.adapters.playwright_html_renderer  # headless-Chromium renderer; wired from main.py only
 src.adapters.telegram.media_adapter  # Telegram upload adapter; wiring only
 src.adapters.xml_prompt_assembler  # XML prompt assembler; reached only through service_container wiring
@@ -30,7 +25,6 @@ src.ports.long_turn_registry  # ABC; its Firestore implementation is the thing t
 src.services.google_oauth_service  # incremental Google OAuth; used by the oauth and cabinet apps
 src.utils.logging_context  # trace/session ContextVars; used by logger and handlers
 src.utils.timer  # log_execution_time decorator
-src.web.sandbox_unconfigured_app  # first-pass sandbox app (only /health); sandbox_main.py imports it
 src.agents.domain_researcher_agent  # agent in the manifest; no test imports it by name
 src.handlers.deep_research_delivery  # 7-line backward-compatible re-export of services.deep_research_delivery
 #

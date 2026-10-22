@@ -95,8 +95,11 @@ class _TrackingFactManagement(FactManagementPort):
             self.changed.append((fid, merged_content))
         return result
 
-    async def discard_candidate(self, reason: str) -> Dict[str, Any]:
-        return await self._real.discard_candidate(reason=reason)
+
+# Stage 3 (email) runs under what is left of the agent's budget minus this margin, so the agent's own
+# timeout never fires inside it; with less than _STAGE3_MIN_S left it is skipped.
+_STAGE3_MARGIN_S = 30.0
+_STAGE3_MIN_S = 30.0
 
 
 class ConsolidationAgent(BaseAgent):
@@ -283,7 +286,6 @@ class ConsolidationAgent(BaseAgent):
         try:
             payload = message.payload
             messages = payload.get("messages", [])
-            observations = payload.get("observations", [])
 
             # Route to v3 or v2 based on configuration
             if self.prompt_version == "v3" and self._fact_management:
@@ -300,11 +302,6 @@ class ConsolidationAgent(BaseAgent):
                     results = await self._synthesize_session_facts_v2(
                         messages, user_id, account_id, bio_context_raw
                     )
-                elif observations:
-                    logger.warning(
-                        "⚠️ [ConsolidationAgent] Observation-based flow deprecated; skipping."
-                    )
-                    results = {"new_facts": [], "new_anchors": []}
                 else:
                     logger.info("ℹ️  [ConsolidationAgent] No data to process")
                     return AgentResponse.success(
@@ -369,16 +366,6 @@ class ConsolidationAgent(BaseAgent):
             if len(llm_facts) == 0 and len(llm_anchors) == 0:
                 if messages:
                     logger.info("ℹ️  [ConsolidationAgent] Session consolidation yielded 0 new facts (valid).")
-                elif observations:
-                    logger.error(
-                        "❌ [ConsolidationAgent] LLM returned empty result for observations. "
-                        "Observations preserved for retry."
-                    )
-                    return AgentResponse.failure(
-                        task_id=message.task_id,
-                        agent_id=self.agent_id,
-                        error="LLM returned invalid format (empty). Observations preserved for retry."
-                    )
             
             # Save facts via FactWriteService (v2 path)
             all_facts_data = llm_facts + llm_anchors
@@ -387,14 +374,6 @@ class ConsolidationAgent(BaseAgent):
                 user_id=user_id,
                 facts_data=all_facts_data
             )
-            
-            # Archive observations
-            if observations:
-                logger.debug(f"   → Archiving {len(observations)} observations...")
-                await self._repo.archive_observations(
-                    [obs['id'] for obs in observations],
-                    owner_id=user_id
-                )
             
             total_duration = time.time() - start_time
             logger.info(
@@ -418,7 +397,6 @@ class ConsolidationAgent(BaseAgent):
                 result={
                     "new_facts": len(llm_facts),
                     "new_anchors": len(llm_anchors),
-                    "observations_processed": len(observations),
                     "message": f"Added {len(llm_facts)} facts and {len(llm_anchors)} anchors"
                 },
                 confidence=1.0,
@@ -651,21 +629,48 @@ class ConsolidationAgent(BaseAgent):
         if stage1_response.status != AgentStatus.SUCCESS:
             return stage1_response
 
-        email_start = time.time()
-        email_message = AgentMessage(
-            task_id=message.task_id,
-            sender=message.sender,
-            recipient=message.recipient,
-            intent=message.intent,
-            payload={"task": "consolidate_email"},
-            context=message.context,
-        )
-        email_response = await self._handle_consolidate_email(
-            email_message, user_id, account_id, bio_context_raw, email_start
-        )
+        # Stage 3 is best-effort. Stage 1 has already written its facts, so a Stage 3 error or a slow
+        # Stage 3 must not fail the batch: the whole batch would re-run Stage 1 over the same messages.
+        # The unconsolidated emails stay in the repo and the next run picks them up.
+        email_budget_s = self._stage3_budget_s(message, start_time)
+        if email_budget_s is not None and email_budget_s < _STAGE3_MIN_S:
+            logger.info(
+                f"📧 [ConsolidationAgent] Stage 3 skipped: only {max(email_budget_s, 0):.0f}s of the "
+                f"agent budget left after Stage 1/2 (batch {message.task_id})"
+            )
+            email_response = None
+        else:
+            email_message = AgentMessage(
+                task_id=message.task_id,
+                sender=message.sender,
+                recipient=message.recipient,
+                intent=message.intent,
+                payload={"task": "consolidate_email"},
+                context=message.context,
+            )
+            try:
+                email_response = await asyncio.wait_for(
+                    self._handle_consolidate_email(
+                        email_message, user_id, account_id, bio_context_raw, time.time()
+                    ),
+                    timeout=email_budget_s,
+                )
+            except asyncio.TimeoutError:
+                logger.error(
+                    f"❌ [ConsolidationAgent] Stage 3 (email) timed out (budget {email_budget_s}s); "
+                    f"batch {message.task_id} still succeeds, "
+                    f"emails stay for the next run"
+                )
+                email_response = None
+            except Exception as e:
+                logger.error(
+                    f"❌ [ConsolidationAgent] Stage 3 (email) failed: {type(e).__name__}: {e}; "
+                    f"batch {message.task_id} still succeeds, emails stay for the next run"
+                )
+                email_response = None
 
         stage1_result = stage1_response.result or {}
-        email_result = email_response.result or {}
+        email_result = (email_response.result if email_response else None) or {}
         total_duration = time.time() - start_time
         return AgentResponse.success(
             task_id=message.task_id,
@@ -679,6 +684,17 @@ class ConsolidationAgent(BaseAgent):
             confidence=1.0,
             metadata={"total_duration_ms": int(total_duration * 1000)},
         )
+
+    def _stage3_budget_s(self, message: AgentMessage, start_time: float) -> Optional[float]:
+        """Seconds Stage 3 may run: what is left of this execution's budget minus a margin.
+
+        Same budget resolution as BaseAgent._execute_with_timeout (message override, else agent
+        config); None means the agent runs without a deadline.
+        """
+        timeout_ms = message.timeout_ms if message.timeout_ms is not None else self.config.timeout_ms
+        if timeout_ms is None:
+            return None
+        return timeout_ms / 1000 - (time.time() - start_time) - _STAGE3_MARGIN_S
 
     @staticmethod
     def _format_email_candidates(emails) -> str:
@@ -936,7 +952,10 @@ class ConsolidationAgent(BaseAgent):
 
             # Mirror RouterAgent pattern: touch Firestore between LLM and find_nearest
             # to keep Cloud Run CPU active and unblock gRPC calls.
-            await self._repo.get_biographical_context_cached(owner_id=account_id, limit=100)
+            try:
+                await self._repo.get_biographical_context_cached(owner_id=account_id, limit=100)
+            except Exception as e:
+                logger.warning(f"⚠️ Keep-alive biographical cache read failed (ignored): {e}")
 
             tool_responses = await self._execute_fact_management_tools(
                 tool_calls=response.tool_calls,
@@ -1311,9 +1330,9 @@ class ConsolidationAgent(BaseAgent):
                             "type": "object",
                             "description": "Fact attributes (MUST include: domain, temporal_class, state, context_priority, tags). Separate: tags (general keywords) vs metadata (structured data)",
                             "properties": {
-                                "domain": {"type": "string", "description": "FactDomain (BIOGRAPHICAL, HEALTH, SKILL, etc.)"},
+                                "domain": {"type": "string", "description": "BIOGRAPHICAL/POSSESSION/HEALTH/MEDICAL_RECORDS/LOCATION/WORK/NETWORK/PREFERENCE/AGENT_DIRECTIVE/SKILL/PROJECT/FINANCE/EDUCATION/LEGAL/ENTERTAINMENT/COMMUNICATION"},
                                 "temporal_class": {"type": "string", "description": "PERMANENT/STABLE/DYNAMIC/EPHEMERAL"},
-                                "state": {"type": "string", "description": "CURRENT/ARCHIVED/SUPERSEDED/INVALIDATED"},
+                                "state": {"type": "string", "description": "CURRENT/STALE/ARCHIVED/SUPERSEDED/INVALIDATED"},
                                 "context_priority": {"type": "string", "description": "CRITICAL/HIGH/MEDIUM/LOW/ARCHIVAL"},
                                 "ttl_days": {"type": "integer", "description": "Lifecycle TTL (auto-calculated from temporal_class)"},
                                 "tags": {"type": "array", "items": {"type": "string"}, "description": "General classifications (domain keywords, dates)"},
@@ -1524,19 +1543,17 @@ class ConsolidationAgent(BaseAgent):
 
         return structured
 
-    async def _format_existing_anchors(self, user_id: str) -> str:
-        """Format existing anchors for prompt injection (LEGACY for Groovy format)."""
-        existing_anchors_list = await self._repo.get_active_facts(user_id, tags=["anchor"])
-        # Format anchors for prompt (joining with commas for groovy array)
-        return ",\n".join([f'            "{a.text}"' for a in existing_anchors_list])
-
     async def _get_existing_anchors_list(self, account_id: str) -> List[str]:
         """
         Get existing anchors as list (for VariableFormatter).
         Optimized: uses cached biographical facts instead of Firestore query.
         """
         # Get ALL facts from cache (faster than Firestore query)
-        all_facts = await self._repo.get_biographical_context_cached(owner_id=account_id, limit=100)
+        try:
+            all_facts = await self._repo.get_biographical_context_cached(owner_id=account_id, limit=100)
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to load existing anchors from cache: {e}")
+            return []
         # Filter anchors locally
         return [f.get("text") for f in all_facts if "anchor" in f.get("tags", [])]
 
