@@ -188,7 +188,7 @@ class FactRepository(ABC):
     async def get_latest_fact_by_lineage(self, owner_id: str, lineage_id: str) -> Optional[FactEntity]:
         """Return the `is_current` document of `lineage_id` in account `owner_id`, any state, or None.
 
-        Contract (observed; its one caller, UserPromptBuilder._get_component, is never called).
+        Contract (observed; no caller in src/; FACT_LIFECYCLE_RFC S2 reworks it (filter on state)).
         Legacy: when no account_id matches, the legacy `owner_id` field is tried.
         Order: with several `is_current` documents, which one is returned is unspecified.
         """
