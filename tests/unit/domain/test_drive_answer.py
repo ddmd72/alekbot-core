@@ -37,7 +37,7 @@ def run(*entries, report=DriveReport(), **kw):
 
 SEARCH_CARDS = ok(DriveOp.SEARCH, "REMINDER\n<card a>\n<card b>", [A, B], facts=ReadFacts(cards=2))
 SEARCH_ONE = ok(DriveOp.SEARCH, "REMINDER\n<card a>", [A], facts=ReadFacts(cards=1))
-OPENED = ok(DriveOp.OPEN, "REMINDER\n<drive_document>lease text</drive_document>", [A])
+OPENED = ok(DriveOp.OPEN, "REMINDER\n<drive_document>lease text</drive_document>", [A], body=True)
 LISTING = ok(DriveOp.LIST, "[Drive: Inbox ref=drive:i]\n  [Drive: Inbox/a.pdf ref=drive:a]", [INBOX, A])
 MOVED = ok(DriveOp.MOVE, "Moved: Inbox/a.pdf → [Drive: Archive/a.pdf ref=drive:a].", [A])
 SAVED_AGAIN = ok(DriveOp.COPY, "Already on the drive: [Drive: Inbox/a.pdf ref=drive:a].", [A])
@@ -305,6 +305,20 @@ def test_an_opened_file_adds_the_document_lines_and_a_listing_adds_none():
     assert reading_lines(_blocks(LISTING, kind=t.KIND_LISTING)) == []
     link = ok(DriveOp.OPEN, "REMINDER\nLink to the original recording: https://x", [A])
     assert reading_lines(_blocks(link, kind=t.KIND_LINK)) == []
+
+
+def test_an_open_that_delivered_no_content_adds_no_document_lines():
+    """M2: the HEIC "cannot be viewed yet" answer and the "video sent to the chat" answer are successes without a body
+    or a file; the numbers / document-vs-memory lines would tell Smart to check figures that were never shown."""
+    heic = ok(DriveOp.OPEN, "A HEIC photo cannot be viewed yet.", [A])
+    video = ok(DriveOp.OPEN, "The video was sent to the user's chat.", [A])
+    assert reading_lines(_blocks(heic, kind=t.KIND_OPEN)) == []
+    assert reading_lines(_blocks(video, kind=t.KIND_OPEN)) == []
+
+
+def test_an_opened_vision_file_adds_the_document_lines():
+    image = ok(DriveOp.OPEN, "Opened [Drive: Inbox/a.pdf]", [A], file_data={"path": "/tmp/a.pdf", "mime_type": "application/pdf"})
+    assert reading_lines(_blocks(image, kind=t.KIND_OPEN)) == [t.R_NUMBERS, t.R_DOC_VS_MEMORY, t.R_NOT_READ]
 
 
 def test_an_access_note_on_a_failed_open_adds_the_bot_cannot_open_line():

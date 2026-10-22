@@ -52,7 +52,8 @@ DATE_TO = (
 )
 DELETED_QUERY = "Optional: words to find. Empty lists the newest."
 LIST_FOLDER_PARAM = f"Optional: {_FOLDER}. Empty lists the top level."
-FILE_REF = "The drive: ref of the file, from a card, a [Drive: …] label, the commission or the state block."
+FILE_REF = ("The drive: ref of the file or folder, from a card, a [Drive: …] label, the commission or the state "
+            "block.")
 OPEN_REF = ("The file's drive: ref. A chat file name from a [File: …] label, a delivered document key, a "
             "workspace:<path> file or a skill: file is opened from storage.")
 RECORDING_REF = "The recording's drive: ref."

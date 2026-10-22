@@ -21,6 +21,7 @@ from ..domain.user_drive import (
     DEFAULT_INBOX_FOLDER,
     MAX_DRIVE_APPEND_FILE_BYTES,
     MAX_DRIVE_DOWNLOAD_BYTES,
+    MOVE_NEEDS_TARGET,
     DeleteOutcome,
     DriveConnection,
     DriveItem,
@@ -162,7 +163,7 @@ class UserDriveService:
 
     async def move(self, user_id: str, item_id: str, folder: Optional[str], new_name: Optional[str]) -> MoveOutcome:
         if not (folder and folder.strip()) and not (new_name and new_name.strip()):
-            raise DrivePathError("Give a destination folder, a new name, or both")
+            raise DrivePathError(MOVE_NEEDS_TARGET)
         new_name = new_name.strip() if new_name and new_name.strip() else None
         if new_name is not None:
             _require_valid_name(new_name)
