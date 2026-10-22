@@ -12,7 +12,7 @@ class FactRepository(ABC):
       `account_id`.
     - Current: a read of "current" facts filters on `state == "current"`, never on `is_current`
       (`is_current` means latest document of its lineage).
-    - Identity: `id` is the document id. get_fact_by_id, get_facts_by_ids, get_paginated_facts,
+    - Identity: `id` is the document id. get_fact_by_id, get_paginated_facts,
       search_facts_by_domain, get_lineage, get_latest_fact_by_lineage and get_legacy_facts read it
       from the stored `id` field, which every writer sets equal to the document id; a document
       written outside this port with a different or missing `id` reads back with that value (or a
@@ -49,16 +49,6 @@ class FactRepository(ABC):
         preserves every FactEntity field.
         Tenancy: none; the caller compares account_id.
         Errors: a missing id returns None.
-        """
-        pass
-
-    @abstractmethod
-    async def get_facts_by_ids(self, fact_ids: List[str]) -> List[FactEntity]:
-        """Return each fact as get_fact_by_id does; missing ids are omitted.
-
-        Contract (observed; no caller in src/).
-        Order: input order.
-        Tenancy: none; the caller compares account_id.
         """
         pass
 
@@ -198,40 +188,9 @@ class FactRepository(ABC):
     async def get_latest_fact_by_lineage(self, owner_id: str, lineage_id: str) -> Optional[FactEntity]:
         """Return the `is_current` document of `lineage_id` in account `owner_id`, any state, or None.
 
-        Contract (observed; its one caller, UserPromptBuilder._get_component, is never called).
+        Contract (observed; no caller in src/; FACT_LIFECYCLE_RFC S2 reworks it (filter on state)).
         Legacy: when no account_id matches, the legacy `owner_id` field is tried.
         Order: with several `is_current` documents, which one is returned is unspecified.
-        """
-        pass
-
-    @abstractmethod
-    async def add_observation(self, observation: Dict[str, Any], owner_id: str) -> None:
-        """Store `observation` in the deprecated observations collection.
-
-        Contract (observed; no caller in src/).
-        Document id: observation["id"], else a timestamp id. The input dict gains account_id and
-        owner_id, both `owner_id`.
-        """
-        pass
-
-    @abstractmethod
-    async def get_observations(self, owner_id: str, limit: int = 50) -> List[Dict[str, Any]]:
-        """Return up to `limit` observations of account `owner_id`.
-
-        Contract (observed; no caller in src/).
-        Order: none.
-        Legacy: when no account_id matches, the legacy `owner_id` field is tried.
-        """
-        pass
-
-    @abstractmethod
-    async def archive_observations(self, observation_ids: List[str], owner_id: str) -> None:
-        """Move observations of `owner_id` to the archive collection (copy, then delete).
-
-        Tenancy: an observation moves only when its account_id (or legacy owner_id) equals
-            `owner_id`; foreign and missing ids are skipped. The one caller passes a user id (observed).
-        Atomicity: all moves commit in one batch.
-        Errors: in a production environment raises PermissionError (observed).
         """
         pass
 
@@ -253,19 +212,6 @@ class FactRepository(ABC):
         pass
 
     @abstractmethod
-    async def get_biographical_context(
-        self, 
-        owner_id: str, 
-        limit: int = 100
-    ) -> List[FactEntity]:
-        """Return the cached biographical context of account `owner_id` as FactEntity objects.
-
-        Contract (observed; no caller in src/). Reads the cache as get_biographical_context_cached.
-        Errors: raises KeyError on a non-empty cache, whose entries carry no `type` (observed).
-        """
-        pass
-
-    @abstractmethod
     async def refresh_biographical_context_cache(
         self, 
         owner_id: str,
@@ -278,9 +224,8 @@ class FactRepository(ABC):
             first, then other non-directive domains; of these, facts tagged "mindset" become
             principles (they count toward facts_limit; those beyond principles_limit are dropped);
             agent_directive facts separately, up to 15 (DEFAULT_DIRECTIVES_CACHE_LIMIT).
-        Limit: facts_limit and principles_limit are what the cache holds (None = system default).
-            Known defect: the implementation ignores both and uses the service's own limits
-            (firestore_repo.py:817-818).
+        Limit: facts_limit and principles_limit are what the cache holds; an explicit value wins over the
+            context service's own resolution (account defaults, then system default), None keeps that resolution.
         Idempotency: refreshing an unchanged account writes the same content.
         Errors: never raises; on a failure the previous cache stays (observed). Without a context
             service it does nothing (observed).
@@ -300,8 +245,7 @@ class FactRepository(ABC):
             the facts, then the principles, then the directives, as of the last refresh.
         Limit: ignored; the whole cache is returned (observed).
         Errors: a missing or empty cache returns []; a backend failure raises (Lelik fails the call
-            closed on it). Known defect: the implementation swallows it today
-            (firestore_repo.py:914-916).
+            closed on it); the adapter logs it and re-raises.
         """
         pass
 

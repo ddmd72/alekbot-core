@@ -18,7 +18,8 @@ create_task flow:
   tasks_provider.create_task() → task_indexing.index_task()
 
 update_task / delete_task:
-  list_id always comes from the LLM (populated from prior search_tasks result).
+  the LLM passes task_ref (the short `ref` from a prior search_tasks / list_tasks result);
+  list_id and task_id are resolved from it by TaskIndexingService.resolve_short_id.
 """
 
 from __future__ import annotations
@@ -78,7 +79,8 @@ _TOOL_DECLARATIONS: List[Dict[str, Any]] = [
         "description": (
             "Search the user's tasks by semantic similarity. "
             "Use this instead of list_tasks when the delegation mentions a specific topic, "
-            "name, or description. Returns matching tasks with their IDs and list_ids."
+            "name, or description. Returns matching tasks, each with its `ref` "
+            "(pass it as task_ref to update_task / delete_task)."
         ),
         "parameters": {
             "type": "object",

@@ -693,7 +693,7 @@ What the fact fields mean (versions, `lineage_id`, `state`, expiry) is explained
 
 
 | :--------------------- | :-------------------- | :-------------------------------------------------- |
-| `observations`         | 🗑️ **DELETED**        | Was dead code (`add_observation` never called).     |
+
 
 
 
