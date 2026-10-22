@@ -81,8 +81,7 @@ class FactManagementAdapter(FactManagementPort):
         try:
             logger.info(
                 f"🔍 [FactManagement] Multi-vector search: "
-                f"keywords={keywords[:3]}{'...' if len(keywords) > 3 else ''}, "
-                f"primary='{primary_query[:40]}...', limit={limit}"
+                f"keywords={len(keywords)}, primary_len={len(primary_query)}, limit={limit}"
             )
             
             # Call SearchEnrichmentService with consolidation mode
@@ -127,7 +126,7 @@ class FactManagementAdapter(FactManagementPort):
                     f"similarity={sim_str} "
                     f"source={result['source']} "
                     f"domain={result['domain']} "
-                    f"content='{result['content'][:60]}...'"
+                    f"content_len={len(result['content'])}"
                 )
 
             logger.info(
