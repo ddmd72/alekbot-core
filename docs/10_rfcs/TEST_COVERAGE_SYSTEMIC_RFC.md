@@ -605,10 +605,10 @@ Each file opens with its declared table. Consolidation: `(token, field, enum, mo
 `@tool` blocks of `CONSOLIDATION_TOOLS` against `ConsolidationAgent._get_tool_declarations()` (names, parameters, nested `fact_attributes`/`updates` keys, code `required`
 present in the prompt; `update_fact.metadata`, already in the schema, is guarded here), and every declared tool named by a token (`count_words` is declared in code and named by
 no rendered token: listed as the one exception). Tasks: tools the tokens name are declared and the reverse, every required argument is named, every `*_id`/`*_ref` identifier is
-an argument or a result key (the result keys come from a real `_format_task_list` call), `ref` is named where the tokens tell the model what a search returns, and the listed
+an argument or a result key (the result keys come from a real `_format_task_list` call), `ref` is named where the tokens tell the model what a search returns, each sub-field a token names in parentheses (`linked_resources (display_name + web_url)`) is a key of that result field's entries, and the listed
 status values equal the `update_task` enum. Both files check that every profile token exists and the blueprint's `class_order` equals the profile tokens' classes, one each.
 Two drifts were live and are fixed **in the snapshot only**: the `context_priority` value `HISTORICAL` (the enum's is `ARCHIVAL`) in `CONSOLIDATION_TAXONOMY`/`_POLICIES`/`_TOOLS`,
-and `task_id`/`list_id` where the Tasks tools take `task_ref` and return `ref` (`COGNITIVE_PROCESS_TASKS`, `OUTPUT_FORMAT_TASKS`). **The Firestore upload is the owner's step**
+and `task_id`/`list_id` where the Tasks tools take `task_ref` and return `ref` (`COGNITIVE_PROCESS_TASKS`, `OUTPUT_FORMAT_TASKS`), plus `url` -> `web_url` for linked resources and `attachments (filenames)` -> `(filename)`. **The Firestore upload is the owner's step**
 (`snapshot_upload.py --apply`); until then production still renders the old text. Not covered: `COGNITIVE_PROCESS_CONSOLIDATION` and the universal profile (production renders
 neither; they still say `HISTORICAL`), prose that names a value outside a line naming its field, USER/ACCOUNT overrides.
 

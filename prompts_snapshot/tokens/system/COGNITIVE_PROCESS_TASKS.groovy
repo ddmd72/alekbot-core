@@ -79,7 +79,7 @@ uploaded_by: local_script
             The orchestrator sees only your text. Full fidelity is mandatory.
             When returning tasks — include everything the tool returned:
             title, status, importance, tags, due date, checklist items, linked resources,
-            attachments (filenames), recurrence, reminder, notes.
+            attachments (filename), recurrence, reminder, notes.
             Omit only fields that are null or empty.
             Always include `ref` — the orchestrator passes it as task_ref in follow-up mutations.
         """

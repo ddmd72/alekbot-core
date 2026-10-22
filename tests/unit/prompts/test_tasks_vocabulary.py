@@ -42,7 +42,7 @@ def _all_keys(node, acc=None):
     return acc
 
 
-def _result_keys():
+def _result_task():
     now = datetime(2026, 1, 1)
     task = Task(
         task_id="t1", list_id="l1", list_name="Tasks", user_id="u", title="x", body="b", due_datetime=now,
@@ -52,8 +52,10 @@ def _result_keys():
         attachments=[TaskAttachment(attachment_id="a", filename="f", url="u", gcs_uri="g")],
         linked_resources=[LinkedResource(resource_id="r", web_url="w", display_name="d", application_name="n")],
     )
-    result = object.__new__(TasksAgent)._format_task_list([task])["tasks"][0]   # no state of its own is read
+    return object.__new__(TasksAgent)._format_task_list([task])["tasks"][0]   # no state of its own is read
 
+
+def _keys(result):
     def walk(v):
         if isinstance(v, dict):
             return set(v) | {k for x in v.values() for k in walk(x)}
@@ -63,7 +65,8 @@ def _result_keys():
     return walk(result)
 
 
-RESULT_KEYS = _result_keys()
+RESULT_TASK = _result_task()
+RESULT_KEYS = _keys(RESULT_TASK)
 
 
 def _words(text):
@@ -99,6 +102,20 @@ def test_identifier_fields_the_tokens_name_exist_in_the_schema_or_the_result():
 def test_result_fields_a_token_names_are_what_a_search_returns(token, fields):
     assert fields <= RESULT_KEYS, f"{fields - RESULT_KEYS} is not a key of a serialized task ({sorted(RESULT_KEYS)})"
     assert fields <= _words(PROSE[token]), f"{token} does not name {sorted(fields - _words(PROSE[token]))}"
+
+
+def test_sub_fields_the_prose_names_in_parentheses_are_keys_of_that_result_field():
+    """`linked_resources (display_name + web_url)`: each word must be a key of the entries of that field."""
+    checked = 0
+    for token, body in PROSE.items():
+        for name, words in re.findall(r"\b([a-z_]+) \(([a-z_]+(?: \+ [a-z_]+)*)\)", body):
+            value = RESULT_TASK.get(name)
+            entry = value[0] if isinstance(value, list) else value
+            if isinstance(entry, dict):
+                checked += 1
+                missing = set(words.split(" + ")) - set(entry)
+                assert not missing, f"{token}: {name} ({words}) names {sorted(missing)}; the result has {sorted(entry)}"
+    assert checked >= 3   # linked_resources, recurrence, attachments
 
 
 def test_status_values_the_prose_lists_are_the_schema_enum():
