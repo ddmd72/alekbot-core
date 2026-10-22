@@ -30,7 +30,7 @@ markitdown[all]==0.1.8  # File-to-text conversion: DOCX, XLSX, YouTube, audio + 
 # Drive parser (USER_DRIVE_INDEXING_RFC §5.1, §24.3), imported directly by the sandboxed child: pinned so the
 # extraction a record was indexed with (`extracted_by`) does not drift with each image build. Bumps are deliberate:
 # a changed output for the same file is a SubprocessContentExtractor.VERSION bump.
-pypdf==6.20.1  # PDF page count, encryption check, page windows for the reader
+pypdf==6.21.1  # PDF page count, encryption check, page windows for the reader
 striprtf==0.0.33  # RTF to text (markitdown has no RTF converter)
 defusedxml==0.7.1  # ODF content.xml / manifest and EPUB encryption.xml, no entity expansion
 charset-normalizer==3.4.4  # text kinds that are not UTF-8 (CP1251, UTF-16 without BOM)
