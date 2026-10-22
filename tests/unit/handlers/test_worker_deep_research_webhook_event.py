@@ -6,6 +6,7 @@ import pytest
 from src.domain import deep_research_notices as notices
 from src.domain.notification_kind import NotificationKind
 from src.handlers.worker_handler import WorkerHandler
+from src.ports.task_claim_store import TaskClaimStore
 from src.services.deep_research_delivery import deliver_deep_research
 
 _PAYLOAD = {"task_type": "deep_research_webhook_event", "event_type": "response.completed",
@@ -17,7 +18,7 @@ def _result(delivered=True, sent=True, error=None):
     return MagicMock(delivered=delivered, sent=sent, error=error)
 
 
-def _worker(response=None, notify=None, fetch="default", store=None):
+def _worker(response=None, notify=None, fetch="default", store=None, claims=None):
     notification = AsyncMock()
     notification.notify.return_value = notify or _result()
     fetch_fn = AsyncMock(return_value=response or {"output_text": "REPORT", "model": "m"}) if fetch == "default" else fetch
@@ -27,6 +28,7 @@ def _worker(response=None, notify=None, fetch="default", store=None):
         coordinator=MagicMock(), agent_factory=AsyncMock(),
         indexed_email_repo=None, user_repo=MagicMock(), task_dispatch=AsyncMock(),
         media_storage=MagicMock(), deep_research_fetch=fetch_fn, prompt_content_store=store,
+        task_claims=claims,
     )
     return worker, notification, fetch_fn
 
@@ -189,32 +191,38 @@ class TestDeliverReportTask:
         assert notifier.notify.await_args.kwargs["system_alert"] == notices.report_not_prepared_notice("tides")
 
 
+def _claims():
+    claims = AsyncMock(spec=TaskClaimStore)
+    claims.try_claim.return_value = True
+    return claims
+
+
 class TestThroughHandle:
     async def test_500_releases_the_task_claim(self):
         from src.domain.cloud_task_delivery import CloudTaskDelivery
-        worker, _, _ = _worker(fetch=AsyncMock(side_effect=RuntimeError("api")))
-        dedup = MagicMock()
-        dedup.try_mark_processed = AsyncMock(return_value=True)
-        dedup.release = AsyncMock()
-        worker._task_dedup = dedup
+        claims = _claims()
+        worker, _, _ = _worker(fetch=AsyncMock(side_effect=RuntimeError("api")), claims=claims)
         delivery = MagicMock(spec=CloudTaskDelivery)
         delivery.task_name = "projects/p/tasks/deep_research_webhook_event-abc"
         _, status = await worker.handle(dict(_PAYLOAD), delivery)
         assert status == 500
-        dedup.release.assert_awaited_once_with(delivery.task_name)
+        key, attempt = claims.try_claim.await_args.args
+        assert key == delivery.task_name
+        claims.release.assert_awaited_once_with(delivery.task_name, attempt)
+        claims.mark_done.assert_not_awaited()
 
     async def test_200_keeps_the_task_claim(self):
         from src.domain.cloud_task_delivery import CloudTaskDelivery
-        worker, _, _ = _worker(response={})
-        dedup = MagicMock()
-        dedup.try_mark_processed = AsyncMock(return_value=True)
-        dedup.release = AsyncMock()
-        worker._task_dedup = dedup
+        claims = _claims()
+        worker, _, _ = _worker(response={}, claims=claims)
         delivery = MagicMock(spec=CloudTaskDelivery)
         delivery.task_name = "t"
         _, status = await worker.handle(_payload(event_type="response.cancelled"), delivery)
         assert status == 200
-        dedup.release.assert_not_awaited()
+        key, attempt = claims.try_claim.await_args.args
+        assert key == "t"
+        claims.mark_done.assert_awaited_once_with("t", attempt)
+        claims.release.assert_not_awaited()
 
 
 def test_main_py_wires_fetch_and_store_into_worker_handler():

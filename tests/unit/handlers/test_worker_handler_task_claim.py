@@ -22,14 +22,15 @@ class _MemoryClaims(TaskClaimStore):
     def __init__(self):
         self.claims = {}  # key -> {"attempt": str, "state": "running" | "done"}
 
-    async def try_claim(self, key, attempt, running_here):
+    async def try_claim(self, key, attempt):
         held = self.claims.get(key)
         if held is not None:
             if held["attempt"] == attempt:
                 return True
-            if held["state"] == "done" or running_here:
+            if held["state"] == "done":
                 return False
-        self.claims[key] = {"attempt": attempt, "state": "running"}  # new, or a dead attempt's
+        # New, or a running claim: the caller guarantees no live attempt of this key here, so it is dead.
+        self.claims[key] = {"attempt": attempt, "state": "running"}
         return True
 
     async def mark_done(self, key, attempt):
@@ -49,8 +50,8 @@ class _MemoryClaims(TaskClaimStore):
 def _claimed_attempt(store, task_name):
     """The attempt id the handler claimed `task_name` with (asserting the claim call's shape)."""
     store.try_claim.assert_awaited_once()
-    key, attempt, running_here = store.try_claim.call_args.args
-    assert (key, running_here) == (task_name, False)
+    key, attempt = store.try_claim.call_args.args
+    assert key == task_name
     assert isinstance(attempt, str) and attempt
     return attempt
 
