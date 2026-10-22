@@ -278,9 +278,8 @@ class FactRepository(ABC):
             first, then other non-directive domains; of these, facts tagged "mindset" become
             principles (they count toward facts_limit; those beyond principles_limit are dropped);
             agent_directive facts separately, up to 15 (DEFAULT_DIRECTIVES_CACHE_LIMIT).
-        Limit: facts_limit and principles_limit are what the cache holds (None = system default).
-            Known defect: the implementation ignores both and uses the service's own limits
-            (firestore_repo.py:817-818).
+        Limit: facts_limit and principles_limit are what the cache holds; an explicit value wins over the
+            context service's own resolution (account defaults, then system default), None keeps that resolution.
         Idempotency: refreshing an unchanged account writes the same content.
         Errors: never raises; on a failure the previous cache stays (observed). Without a context
             service it does nothing (observed).
@@ -300,8 +299,7 @@ class FactRepository(ABC):
             the facts, then the principles, then the directives, as of the last refresh.
         Limit: ignored; the whole cache is returned (observed).
         Errors: a missing or empty cache returns []; a backend failure raises (Lelik fails the call
-            closed on it). Known defect: the implementation swallows it today
-            (firestore_repo.py:914-916).
+            closed on it); the adapter logs it and re-raises.
         """
         pass
 
