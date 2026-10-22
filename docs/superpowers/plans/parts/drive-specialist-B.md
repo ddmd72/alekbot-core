@@ -1,5 +1,7 @@
 # Drive specialist — Part B: integration (manifest, Smart side, composition, the cut, evals, owner texts, docs)
 
+> **Superseded by `docs/superpowers/plans/2026-10-22-drive-specialist.md` (the single plan). Kept for reference; do not edit.**
+
 > **Part A's commits come first.** This part is built on part A's final code (branch `plan/drive-specialist-a` at
 > `330f6b00`: `DriveOperations`, `DriveAgent`, the tools, the answer, the prompt files, the tier, the strategy and
 > `DriveAgentConfig`/`DRIVE`). Every task below assumes A1–A6 are applied. Part B's own commits start on top of

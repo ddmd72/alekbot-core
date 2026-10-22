@@ -1,5 +1,7 @@
 # Drive specialist — Part A (core): typed outcomes, pass-through, the answer, the tools, DriveAgent, prompt files
 
+> **Superseded by `docs/superpowers/plans/2026-10-22-drive-specialist.md` (the single plan). Kept for reference; do not edit.**
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
