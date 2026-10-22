@@ -34,11 +34,15 @@ One LLM sample per case is noisy (decisions/directive_applicability_gate.md § V
 confidence bound (z = 1.96, the 95% two-sided interval's lower end) of the rate recorded over `--repeats` runs, and a
 run is judged only against bars recorded with the same `--repeats`.
 
-OWNER-run: real Smart calls on the owner's account (cents per run). Answers can quote the owner's memory, so the
-report goes to the gitignored scripts/memory/drive_g3/.
+OWNER-run: real Smart calls on the owner's account. Answers can quote the owner's memory, so the report goes to the
+gitignored scripts/memory/drive_g3/. `--max-usd` is required and a hard stop (cost_meter.py, DRIVE_SPECIALIST_RFC
+§12): no LLM call starts once the spend reaches it, and no case starts once the spend plus the dearest case so far
+would pass it; a stopped run has no verdict and records nothing. Run a 1-repeat probe first for the real cost. On a
+machine with a local proxy (127.0.0.1:8888), set NO_PROXY='*' or the provider SDKs fail TLS.
 
-    venv/bin/python -m scripts.validation.drive_eval.smart_dry_run --record --repeats 3
-    venv/bin/python -m scripts.validation.drive_eval.smart_dry_run --repeats 3
+    NO_PROXY='*' venv/bin/python -m scripts.validation.drive_eval.smart_dry_run --repeats 1 --max-usd 1
+    NO_PROXY='*' venv/bin/python -m scripts.validation.drive_eval.smart_dry_run --record --repeats 3 --max-usd 3
+    NO_PROXY='*' venv/bin/python -m scripts.validation.drive_eval.smart_dry_run --repeats 3 --max-usd 3
 """
 from __future__ import annotations
 
@@ -49,6 +53,7 @@ import math
 import os
 import re
 import sys
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -113,7 +118,7 @@ _REPO = Path(__file__).resolve().parents[3]
 _FIXTURES = _REPO / "tests" / "fixtures" / "drive_eval"
 _OUT = _REPO / "scripts" / "memory" / "drive_g3"
 
-EXIT_OK, EXIT_REGRESSION, EXIT_SETUP = 0, 1, 2
+EXIT_OK, EXIT_REGRESSION, EXIT_SETUP, EXIT_STOPPED = 0, 1, 2, 3
 
 
 class G3Error(RuntimeError):
@@ -385,6 +390,16 @@ def _searches_after_d29(calls: Sequence[Mapping[str, Any]]) -> int:
     return 0 if first is None else len(ran) - first - 1
 
 
+def wall_p50(rows: Sequence[Mapping[str, Any]]) -> float:
+    """The median drive-turn wall time over the rows that recorded one (DRIVE_SPECIALIST_RFC §12: p50 after ≤ p50
+    before + 25 %); 0.0 with none."""
+    walls = sorted(float(r["wall_s"]) for r in rows if "wall_s" in r)
+    if not walls:
+        return 0.0
+    mid = len(walls) // 2
+    return walls[mid] if len(walls) % 2 else round((walls[mid - 1] + walls[mid]) / 2, 2)
+
+
 def turn_cap_runs(rows: Sequence[Mapping[str, Any]]) -> List[str]:
     """The runs that ended at the turn cap, as `id (run n)`: their own category, not a search-behaviour regression."""
     return [f"{r.get('id')} (run {r.get('repeat', 0)})" for r in rows if r.get("turn_cap")]
@@ -533,6 +548,8 @@ def _args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
     parser.add_argument("--record", action="store_true")
     parser.add_argument("--rebuild-index", action="store_true",
                         help="build the fixture index even when scripts/memory/drive_g3/cache/ holds a matching one")
+    parser.add_argument("--max-usd", type=float, required=True,
+                        help="hard stop on the estimated spend of every LLM call in the run (cost_meter.py)")
     args = parser.parse_args(argv)
     if not args.gold:
         args.gold = [_FIXTURES / "gold_g3.json", _FIXTURES / "gold_g3_v2.json"]
@@ -555,6 +572,7 @@ async def _run(args: argparse.Namespace) -> int:
     from src.domain.request_context import RequestContext
     from src.services.drive_search_service import DriveSearchService
 
+    from .cost_meter import Meter, stop_reason
     from .runner import EvalClock, _EnabledUsers, gold_sha256, load_gold
 
     from scripts.validation.ab_agent_models import _READ_ONLY_INTENTS   # the A/B dry run's read-only set
@@ -634,8 +652,16 @@ async def _run(args: argparse.Namespace) -> int:
         return await smart_llm(request, *a, **kw)
 
     smart._call_llm = capturing
+    meter = Meter(max_usd=args.max_usd)
+    uninstall_meter = meter.install()
+    case_costs: List[float] = []
+    stopped = ""
     for repeat in range(args.repeats):
         for case in gold:
+            stopped = stop_reason(meter, case_costs)
+            if stopped:
+                break
+            mark = meter.mark()
             dispatcher.calls.clear()
             eval_user.off = case.get("drive") == DRIVE_OFF
             dispatcher.isolate = bool(case.get("isolate"))
@@ -647,11 +673,14 @@ async def _run(args: argparse.Namespace) -> int:
                          "current_message_parts": [MessagePart(text=case["text"])],
                          "interactive_delivery": True})   # Smart declares propose_memory_facts, so the bar covers it
             clock_token = CURRENT_TURN_CLOCK.set(interactive_turn_clock())   # Smart as an interactive turn runs it
+            started = time.monotonic()
             try:
                 async with RequestContext(user_id=user_id, account_id=account_id):
                     response = await smart.execute(msg)
             finally:
                 CURRENT_TURN_CLOCK.reset(clock_token)
+            wall_s = round(time.monotonic() - started, 2)
+            case_costs.append(meter.usd_since(mark))
             answer = None if response.result is None else str(response.result)[:4000]
             row = {"id": case["id"], "set": case["set"], "category": case["category"], "repeat": repeat,
                    "searched": searched(dispatcher.calls), "expect": case["expect"],
@@ -659,7 +688,7 @@ async def _run(args: argparse.Namespace) -> int:
                    "drive_off": eval_user.off, "injected": bool(case.get("injected")),
                    "calls": list(dispatcher.calls), "answer": str(answer),
                    "turn_cap": turn_capped(answer), "isolated": dispatcher.isolate,
-                   "counts": drive_counts(dispatcher.calls)}
+                   "counts": drive_counts(dispatcher.calls), "wall_s": wall_s, "usd": case_costs[-1]}
             for flag in ("incident", "time_span", "d29", "must_open", "must_not_open"):
                 row[flag] = bool(case.get(flag))
             if case.get("answer_must_include"):
@@ -667,7 +696,14 @@ async def _run(args: argparse.Namespace) -> int:
                 row["answer_hit"] = answer_ok(row["answer"], case["answer_must_include"])
             rows.append(row)
             print(f"{'S' if row['searched'] else '-'}{'+' if row['expect_hit'] else '!'} [{case['set'][:3]}] "
-                  f"{case['id']} ({case['expect']}): {[c['intent'] for c in row['calls']]}")
+                  f"{case['id']} ({case['expect']}) {wall_s}s ${case_costs[-1]:.4f}: "
+                  f"{[c['intent'] for c in row['calls']]}")
+        if stopped:
+            break
+    uninstall_meter()
+    if not stopped and meter.capped:   # the cap was reached inside the last case
+        stopped = stop_reason(meter, [])
+    print(f"spent ${meter.spent:.4f} of --max-usd {args.max_usd}")
     model = ",".join(sorted(models))
     table = score(rows)
     for scope, line in table.items():
@@ -679,8 +715,14 @@ async def _run(args: argparse.Namespace) -> int:
         print(f"hard failure: {failure}")
     _OUT.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    (_OUT / f"g3_{stamp}.json").write_text(json.dumps({"model": model, "scores": table, "turn_cap_runs": capped, "rows": rows},
+    print(f"drive-turn wall time p50: {wall_p50(rows)}s over {len(rows)} runs")
+    (_OUT / f"g3_{stamp}.json").write_text(json.dumps({"model": model, "wall_p50_s": wall_p50(rows), "scores": table,
+                                                       "turn_cap_runs": capped, "spent_usd": round(meter.spent, 6),
+                                                       "max_usd": args.max_usd, "stopped": stopped, "rows": rows},
                                                       ensure_ascii=False, indent=1), encoding="utf-8")
+    if stopped:
+        print(f"stop: {stopped}\nverdict: none (the run was stopped by the cost cap; nothing recorded)")
+        return EXIT_STOPPED
     if failures:
         print("verdict: regression (hard checks; nothing recorded)")
         return EXIT_REGRESSION
