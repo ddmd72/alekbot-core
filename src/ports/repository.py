@@ -12,14 +12,14 @@ class FactRepository(ABC):
       `account_id`.
     - Current: a read of "current" facts filters on `state == "current"`, never on `is_current`
       (`is_current` means latest document of its lineage).
-    - Identity: `id` is the document id. get_fact_by_id, get_facts_by_ids, get_paginated_facts,
-      search_facts_by_domain, get_lineage, get_latest_fact_by_lineage and get_legacy_facts read it
+    - Identity: `id` is the document id. get_fact_by_id, get_paginated_facts,
+      search_facts_by_domain and get_legacy_facts read it
       from the stored `id` field, which every writer sets equal to the document id; a document
       written outside this port with a different or missing `id` reads back with that value (or a
       fresh uuid).
     - Legacy documents: a document with `owner_id` and no `account_id` is absent from every
-      account-scoped read (they filter the stored `account_id`). Where one is returned (by-id reads,
-      the legacy fallback in get_latest_fact_by_lineage), `owner_id` reads as `account_id` and
+      account-scoped read (they filter the stored `account_id`). Where one is returned (by-id reads),
+      `owner_id` reads as `account_id` and
       `created_by_user_id`. invalidate_fact refuses it with PermissionError. A missing `visibility`
       reads as account_shared, "private" as user_private. A document without `state` matches no
       state-filtered read. A document missing a field a read orders by is absent from that read
@@ -49,16 +49,6 @@ class FactRepository(ABC):
         preserves every FactEntity field.
         Tenancy: none; the caller compares account_id.
         Errors: a missing id returns None.
-        """
-        pass
-
-    @abstractmethod
-    async def get_facts_by_ids(self, fact_ids: List[str]) -> List[FactEntity]:
-        """Return each fact as get_fact_by_id does; missing ids are omitted.
-
-        Contract (observed; no caller in src/).
-        Order: input order.
-        Tenancy: none; the caller compares account_id.
         """
         pass
 
@@ -185,57 +175,6 @@ class FactRepository(ABC):
         pass
 
     @abstractmethod
-    async def get_lineage(self, lineage_id: str) -> List[FactEntity]:
-        """Return every document of `lineage_id`, newest first by created_at.
-
-        Contract (observed; no caller in src/).
-        Tenancy: none; any account, any state.
-        Legacy: `owner_id` is not migrated, so a legacy document fails the call.
-        """
-        pass
-
-    @abstractmethod
-    async def get_latest_fact_by_lineage(self, owner_id: str, lineage_id: str) -> Optional[FactEntity]:
-        """Return the `is_current` document of `lineage_id` in account `owner_id`, any state, or None.
-
-        Contract (observed; its one caller, UserPromptBuilder._get_component, is never called).
-        Legacy: when no account_id matches, the legacy `owner_id` field is tried.
-        Order: with several `is_current` documents, which one is returned is unspecified.
-        """
-        pass
-
-    @abstractmethod
-    async def add_observation(self, observation: Dict[str, Any], owner_id: str) -> None:
-        """Store `observation` in the deprecated observations collection.
-
-        Contract (observed; no caller in src/).
-        Document id: observation["id"], else a timestamp id. The input dict gains account_id and
-        owner_id, both `owner_id`.
-        """
-        pass
-
-    @abstractmethod
-    async def get_observations(self, owner_id: str, limit: int = 50) -> List[Dict[str, Any]]:
-        """Return up to `limit` observations of account `owner_id`.
-
-        Contract (observed; no caller in src/).
-        Order: none.
-        Legacy: when no account_id matches, the legacy `owner_id` field is tried.
-        """
-        pass
-
-    @abstractmethod
-    async def archive_observations(self, observation_ids: List[str], owner_id: str) -> None:
-        """Move observations of `owner_id` to the archive collection (copy, then delete).
-
-        Tenancy: an observation moves only when its account_id (or legacy owner_id) equals
-            `owner_id`; foreign and missing ids are skipped. The one caller passes a user id (observed).
-        Atomicity: all moves commit in one batch.
-        Errors: in a production environment raises PermissionError (observed).
-        """
-        pass
-
-    @abstractmethod
     async def add_fact_if_unique(
         self, 
         fact: FactEntity, 
@@ -249,19 +188,6 @@ class FactRepository(ABC):
         Returns: (True, fact.id) when stored; (False, id of the existing duplicate) when skipped.
         Atomicity: check, then write; two concurrent duplicates can both be stored (observed).
         Defaults: the adapter's default threshold is 0.96 (observed); the caller passes it explicitly.
-        """
-        pass
-
-    @abstractmethod
-    async def get_biographical_context(
-        self, 
-        owner_id: str, 
-        limit: int = 100
-    ) -> List[FactEntity]:
-        """Return the cached biographical context of account `owner_id` as FactEntity objects.
-
-        Contract (observed; no caller in src/). Reads the cache as get_biographical_context_cached.
-        Errors: raises KeyError on a non-empty cache, whose entries carry no `type` (observed).
         """
         pass
 
