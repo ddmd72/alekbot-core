@@ -446,6 +446,36 @@ async def transaction_delete_after_read(db: Any, col: str) -> Any:
             "second_transaction_sees": await read_again(db.transaction())}
 
 
+async def transaction_read_update_time(db: Any, col: str) -> Any:
+    d = db.collection(col).document("a")
+    await d.set({"v": 1})
+    plain = await d.get()
+
+    @firestore.async_transactional
+    async def read_in_transaction(tx: Any) -> Any:
+        return (await d.get(transaction=tx)).update_time
+
+    inside = await read_in_transaction(db.transaction())
+    await d.update({"v": 2})
+    after = await d.get()
+    inside_after = await read_in_transaction(db.transaction())
+    return {"equal_to_plain_read": inside == plain.update_time, "differs_after_write": after.update_time != plain.update_time,
+            "transaction_sees_new": inside_after == after.update_time}
+
+
+async def get_all_order_not_assumed(db: Any, col: str) -> Any:
+    c = db.collection(col)
+    await _seed(c, {"a": {"v": 1}, "b": {"v": 2}, "c": {"v": 3}})
+    refs = [c.document(i) for i in ("c", "a", "nobody", "b")]
+
+    @firestore.async_transactional
+    async def read_each(tx: Any) -> Dict[str, Any]:
+        return {snap.id: snap.to_dict() for snap in [await ref.get(transaction=tx) for ref in refs]}
+
+    return {"get_all": {snap.id: snap.to_dict() async for snap in db.get_all(refs)},
+            "in_transaction": await read_each(db.transaction())}
+
+
 # ------------------------------------------------------------------------------------ the table, indexes
 
 @dataclass(frozen=True)
@@ -525,6 +555,11 @@ SCENARIOS: List[Scenario] = [
              {"exists_in_transaction": False, "created": False}),
     Scenario("transaction_delete_after_read", transaction_delete_after_read,
              {"first_read": {"v": 1}, "exists_after": False, "second_transaction_sees": False}),
+    Scenario("transaction_read_update_time", transaction_read_update_time,
+             {"equal_to_plain_read": True, "differs_after_write": True, "transaction_sees_new": True}),
+    Scenario("get_all_order_not_assumed", get_all_order_not_assumed, {
+        "get_all": {"a": {"v": 1}, "b": {"v": 2}, "c": {"v": 3}, "nobody": None},
+        "in_transaction": {"a": {"v": 1}, "b": {"v": 2}, "c": {"v": 3}, "nobody": None}}),
 ]
 
 # Fields of each group's composite and vector indexes, in index order: (field, "ASC" | "VECTOR").
