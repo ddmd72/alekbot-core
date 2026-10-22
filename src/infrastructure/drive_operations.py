@@ -21,6 +21,7 @@ Public interface (one call = one operation; `context` is the caller's message co
     async replace(context, user_id, ref, source_ref, *, wait_s) -> DriveOutcome
     async delete(context, user_id, ref, *, wait_s) -> DriveOutcome
     async preflight(user_id) -> DrivePreflight           the specialist's state block (§5.3)
+    async folder_path(user_id, folder) -> folder         a write tool's drive: folder ref → its path (§8)
 
 The `_Transcripts` guard, root protection, never-overwrite, append-only and the move rules stay in UserDriveService.
 This module imports no UserDrivePort and no adapter; services are constructor-injected (REQ-ARCH-14: type-only
@@ -377,6 +378,19 @@ class DriveOperations:
         drive, search = await asyncio.gather(drive_line(), search_line())
         return DrivePreflight(drive=drive, search=search)
 
+    async def folder_path(self, user_id: str, folder: Any) -> Any:
+        """A write tool's `folder` given as a `drive:` folder ref becomes the folder's path (DRIVE_SPECIALIST_RFC §8);
+        a path, an empty value or a ref that cannot be read stays as given (the service then answers as today)."""
+        item_id = parse_drive_ref(folder) if isinstance(folder, str) else None
+        if item_id is None or self._drive is None:
+            return folder
+        try:
+            item = await self._drive.get_item(user_id, item_id)
+        except Exception as exc:
+            logger.warning("[DriveOperations] folder ref lookup failed: %s", exc_brief(exc))
+            return folder
+        return item.path if item.is_folder and item.path else folder
+
     # ------------------------------------------------------------------
     # Stored files: chat uploads, delivered documents, skill: and workspace: refs (GCS)
     # ------------------------------------------------------------------
@@ -451,7 +465,7 @@ class DriveOperations:
     async def _fetch_text(self, ref: str, user_id: str) -> DriveOutcome:
         """Fetch and convert to text (docx, txt, csv, etc.)."""
         content = await self._conversion_service.resolve_content(ref, user_id)
-        return DriveOutcome(op=DriveOp.OPEN, cls=OutcomeClass.OK, text=content, success=True)
+        return DriveOutcome(op=DriveOp.OPEN, cls=OutcomeClass.OK, text=content, success=True, body=True)
 
     async def _fetch_binary(self, ref: str, user_id: str, mime_type: str) -> DriveOutcome:
         """Native binary (image/PDF) as file_data for LLM vision, through the conversion service so delivered-document
@@ -700,7 +714,7 @@ class DriveOperations:
                          OutcomeClass.REQUEST_ERROR)
         archived = await self._archived_transcript_of(user_id, ref, item)
         if archived is not None:
-            return _ok(DriveOp.OPEN, archived, [item])
+            return _ok(DriveOp.OPEN, archived, [item], body=True)
         mime = item.mime_type or (mimetypes.guess_type(item.name)[0] or "application/octet-stream")
         # Vision caps and unsupported formats are decided on metadata, before any download (§4.6).
         if mime.startswith("image/") and mime not in VISION_IMAGE_MIME_TYPES:
@@ -715,11 +729,11 @@ class DriveOperations:
             link = item.web_url or "(no link available)"
             body = wrap_untrusted(f"{drive_label(item)}\nLink to the original recording: {link}",
                                   nonce=secrets.token_hex(8), ref=item.ref, path=item.path)
-            return _ok(DriveOp.OPEN, f"{REFERENCE_REMINDER}\n{body}", [item])
+            return _ok(DriveOp.OPEN, f"{REFERENCE_REMINDER}\n{body}", [item], body=True)
         if recording and self._drive_search is not None:
             transcript = await self._transcript_of(user_id, item)
             if transcript is not None:
-                return _ok(DriveOp.OPEN, transcript, [item])
+                return _ok(DriveOp.OPEN, transcript, [item], body=True)
         try:
             if vision_cap is not None:
                 if item.size_bytes > vision_cap:
@@ -753,7 +767,7 @@ class DriveOperations:
         # File text is untrusted: it reaches the model only inside the wrapper (RFC §10.4, RFC Δ11).
         wrapped = wrap_untrusted(f"{drive_label(item)}\n{content}", nonce=secrets.token_hex(8),
                                  ref=item.ref, path=item.path)
-        return _ok(DriveOp.OPEN, f"{REFERENCE_REMINDER}\n{wrapped}", [item])
+        return _ok(DriveOp.OPEN, f"{REFERENCE_REMINDER}\n{wrapped}", [item], body=True)
 
     # ------------------------------------------------------------------
     # Writes and receipts
@@ -799,8 +813,9 @@ class DriveOperations:
 # ----------------------------------------------------------------------
 
 def _ok(op: DriveOp, text: str, items: Sequence[DriveItem], *,
-        file_data: Optional[Dict[str, Any]] = None) -> DriveOutcome:
-    return DriveOutcome(op=op, cls=OutcomeClass.OK, text=text, success=True, items=tuple(items), file_data=file_data)
+        file_data: Optional[Dict[str, Any]] = None, body: bool = False) -> DriveOutcome:
+    return DriveOutcome(op=op, cls=OutcomeClass.OK, text=text, success=True, items=tuple(items), file_data=file_data,
+                        body=body)
 
 
 def _fail(op: DriveOp, text: str, cls: OutcomeClass, *, inaccessible: bool = False) -> DriveOutcome:
