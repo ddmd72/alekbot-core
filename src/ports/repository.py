@@ -13,14 +13,18 @@ class FactRepository(ABC):
     - Current: a read of "current" facts filters on `state == "current"`, never on `is_current`
       (`is_current` means latest document of its lineage).
     - Identity: a returned fact's `id` is its document id.
-    - Legacy documents: a stored `owner_id` without `account_id` reads as both `account_id` and
-      `created_by_user_id`; a missing `visibility` reads as account_shared, "private" as
-      user_private. A document without `state` matches no state-filtered read. A document missing a
-      field a read orders by is absent from that read (observed). A stored document that does not
-      validate as FactEntity fails the whole call (observed).
+    - Legacy documents: a document with `owner_id` and no `account_id` is absent from every
+      account-scoped read (they filter the stored `account_id`). Where one is returned (by-id reads,
+      the legacy fallback in get_latest_fact_by_lineage), `owner_id` reads as `account_id` and
+      `created_by_user_id`. invalidate_fact refuses it with PermissionError. A missing `visibility`
+      reads as account_shared, "private" as user_private. A document without `state` matches no
+      state-filtered read. A document missing a field a read orders by is absent from that read
+      (observed). A stored document that does not validate as FactEntity fails the whole call
+      (observed).
     - Vectors are returned as lists of floats. A read with a projection leaves the omitted fields at
       the model default (named per method).
-    - Atomicity: nothing is transactional; writes replace whole documents, last writer wins.
+    - Atomicity: nothing is transactional; add_fact and update_fact replace whole documents,
+      invalidate_fact updates fields; last writer wins.
     - Errors: backend errors propagate unless the method says it never raises.
     """
 
@@ -35,11 +39,12 @@ class FactRepository(ABC):
 
     @abstractmethod
     async def get_fact_by_id(self, fact_id: str) -> Optional[FactEntity]:
-        """Return the fact stored under `fact_id` in any state, with every field and its three vectors.
+        """Return the fact stored under `fact_id` in any state.
 
-        Callers write the entity back with update_fact, so nothing stored may be lost on the way.
+        Returns every FactEntity field as stored, vectors as lists, so get_fact_by_id → update_fact
+        preserves every FactEntity field.
         Tenancy: none; the caller compares account_id.
-        Errors: a missing id returns None, never raises.
+        Errors: a missing id returns None.
         """
         pass
 
@@ -63,7 +68,8 @@ class FactRepository(ABC):
 
         Order: none; callers sort.
         Limit: none.
-        Projection: no vectors; temporal_class, context and ttl_days keep the model default (observed).
+        Projection: no vectors; temporal_class, context, ttl_days, expires_at and replaces_fact_id
+            keep the model default (observed).
         """
         pass
 
@@ -83,7 +89,8 @@ class FactRepository(ABC):
         Order: context_priority critical, high, medium, low; within one priority newest first by
             created_at. The tail is the least essential (the directive cap backstop invalidates it).
         Legacy: a document without a stored priority rank is absent (observed).
-        Projection: no vectors; temporal_class, context and ttl_days keep the model default (observed).
+        Projection: no vectors; temporal_class, context, ttl_days, expires_at and replaces_fact_id
+            keep the model default (observed).
         """
         pass
 
@@ -91,7 +98,7 @@ class FactRepository(ABC):
     async def get_longest_facts(self, account_id: str, limit: int) -> List[FactEntity]:
         """Return the `limit` `state == "current"` facts of `account_id` with the most words.
 
-        Order: len(text.split()) descending; ties keep get_active_facts order (observed).
+        Order: len(text.split()) descending; ties unspecified.
         Projection: as get_active_facts.
         """
         pass
@@ -136,7 +143,9 @@ class FactRepository(ABC):
 
         Tenancy: account_id, else the RequestContext account, else the user id (observed).
         Order: nearest first (callers rank by position, RRF).
-        Projection: `vector` and `context` are returned; tags_vector and metadata_vector are None.
+        Projection: `vector` and `context` are returned; tags_vector, metadata_vector, ttl_days,
+            expires_at and replaces_fact_id are None, is_current is True and last_updated is now
+            (model defaults, observed).
         Errors: no user id (argument or RequestContext) raises ValueError.
         """
         pass
@@ -261,9 +270,10 @@ class FactRepository(ABC):
     ) -> None:
         """Rebuild the cached biographical context of account `owner_id` from its current facts.
 
-        Content: facts in get_active_facts_ordered order, biographical domain first, then other
-            non-directive domains, up to facts_limit; those tagged "mindset" become principles, up to
-            principles_limit; agent_directive facts separately.
+        Content: up to facts_limit facts in get_active_facts_ordered order, biographical domain
+            first, then other non-directive domains; of these, facts tagged "mindset" become
+            principles (they count toward facts_limit; those beyond principles_limit are dropped);
+            agent_directive facts separately, up to 15 (DEFAULT_DIRECTIVES_CACHE_LIMIT).
         Limit: facts_limit and principles_limit are what the cache holds (None = system default).
         Idempotency: refreshing an unchanged account writes the same content.
         Errors: never raises; on a failure the previous cache stays (observed). Without a context
@@ -274,17 +284,18 @@ class FactRepository(ABC):
     @abstractmethod
     async def get_biographical_context_cached(
         self,
-        owner_id: str,
+        owner_id: Optional[str] = None,
         limit: int = 100
     ) -> List[Dict[str, Any]]:
         """Return the cached biographical context of account `owner_id` (no fact query).
 
-        Tenancy: owner_id None resolves the RequestContext's effective account (observed); no
-            account returns [].
+        Tenancy: owner_id None resolves the RequestContext's effective account; no account returns [].
         Returns: dicts with id, text, domain, tags, context_priority and created_at (ISO string):
             the facts, then the principles, then the directives, as of the last refresh.
         Limit: ignored; the whole cache is returned (observed).
-        Errors: never raises; a missing or empty cache or a backend failure returns [] (observed).
+        Errors: a missing or empty cache returns []; a backend failure raises (Lelik fails the call
+            closed on it). Known defect: the implementation swallows it today
+            (firestore_repo.py:914-916).
         """
         pass
 
@@ -293,7 +304,7 @@ class FactRepository(ABC):
         """Mark fact `fact_id` invalidated (Cabinet write path).
 
         Tenancy: the stored account_id must equal `account_id`.
-        Effect: state invalidated, valid_to and last_updated set to now; is_current and version unchanged.
+        Effect: state invalidated, is_current True, valid_to and last_updated now; version unchanged.
         Errors: a missing id raises ValueError; a fact of another account raises PermissionError;
             nothing is written in either case.
         Atomicity: read, check, then update; not transactional (observed).

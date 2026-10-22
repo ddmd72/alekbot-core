@@ -13,7 +13,8 @@ class FactManagementPort(ABC):
     - Results are JSON-serialisable dicts; the caller hands them to the model verbatim.
     - Errors: never raises. A failure is a result with `status: "failed"` and a `message`; search
       returns [].
-    - Atomicity: concurrent writes to one fact are serialised within one process only (observed).
+    - Atomicity: concurrent writes to one fact are serialised within one adapter instance only
+      (observed).
     """
 
     @abstractmethod
@@ -57,7 +58,8 @@ class FactManagementPort(ABC):
         Lifecycle: is_current True and no valid_to whatever `state` says (observed).
         Idempotency: none; a repeated call creates another fact.
         Errors: a missing required key or an invalid domain, temporal_class, state or
-            context_priority is "failed" with nothing written.
+            context_priority is "failed" with nothing written. A required key present with the
+            value None passes the check (observed).
         """
         pass
 
@@ -78,8 +80,9 @@ class FactManagementPort(ABC):
             "version" when updated.
         Lifecycle: a state change applies domain.fact_lifecycle.lifecycle_fields; re-applying the
             stored state leaves valid_to unchanged.
-        Version: +1 only when text, tags, metadata or temporal_class change; a state-only update keeps
-            version and reported_date. last_updated is set on every update.
+        Version: +1 only when text, tags, metadata or temporal_class change; such a change also sets
+            reported_date to now unless the caller sends one. A state-only update keeps version and
+            reported_date. last_updated is set on every update.
         Vectors: all three are recomputed when text, tags or metadata change.
         Atomicity: an invalid enum or date or an embedding failure is "failed" with nothing written.
         Idempotency: repeating an update changes only last_updated.
