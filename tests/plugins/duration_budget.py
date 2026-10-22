@@ -1,11 +1,15 @@
-"""Per-test duration budget, enforced on CI only (TEST_COVERAGE_SYSTEMIC_RFC §4b).
+"""Per-test duration budget: a CI warning, never a gate (owner decision 2026-10-22; TEST_COVERAGE_SYSTEMIC_RFC §4b).
 
-With env `PYTEST_DURATION_BUDGET_S=<seconds>` the run fails at the end when a test took longer than the budget
-(setup + call + teardown) and is neither `slow` nor `timing`. Unset: this plugin does nothing. A loaded laptop gives
-the same false failures the `timing` marker removed, so only the CI job sets it (`make ci`).
+With env `PYTEST_DURATION_BUDGET_S=<seconds>` the terminal summary lists every test that took longer than the budget
+(setup + call + teardown) and is neither `slow` nor `timing`, slowest first with the setup/call/teardown split. The exit
+status is never changed: wall-clock limits flake on a shared runner (PR #133 failed on exactly this). When
+`GITHUB_ACTIONS=true` the list is also emitted as one `::warning` workflow command, so it shows as an annotation on the
+run. A test that keeps showing up gets `@pytest.mark.slow`. Unset: this plugin does nothing.
 
 Summed on the controller from the phase reports, so it works under xdist. Tests marked `slow` run in `make ci` only
-(RUN_SLOW_TESTS=1) and are exempt here.
+(RUN_SLOW_TESTS=1) and are exempt here. The exemption is decided where the item lives (a worker, under xdist) with
+`get_closest_marker` and shipped in `user_properties`: the report's `keywords` also hold node names and parametrize ids,
+so a case called "slow" would otherwise be exempt.
 """
 
 import os
@@ -17,6 +21,7 @@ ENV_BUDGET = "PYTEST_DURATION_BUDGET_S"
 EXEMPT_MARKERS = ("slow", "timing")
 PROP = "duration_budget_exempt"
 PHASES = ("setup", "call", "teardown")
+MAX_ANNOTATED = 50  # annotations are for a human to read; the terminal summary has the full list
 
 
 class DurationBudget:
@@ -47,8 +52,6 @@ class DurationBudget:
             ((n, total, p) for n, total, p in totals if total > self.budget_s and n not in self._exempt),
             key=lambda item: -item[1],
         )
-        if self.over and session.exitstatus == pytest.ExitCode.OK:
-            session.exitstatus = pytest.ExitCode.TESTS_FAILED
 
     def pytest_terminal_summary(self, terminalreporter) -> None:
         if not self.over:
@@ -56,14 +59,27 @@ class DurationBudget:
                 f"duration budget {self.budget_s:g} s: 0 over ({len(self._phases)} tests)"
             )
             return
-        terminalreporter.section(f"tests over the {self.budget_s:g} s budget ({len(self.over)})", red=True)
+        terminalreporter.section(f"tests over the {self.budget_s:g} s budget ({len(self.over)}) -- warning only", yellow=True)
+        lines = []
         for nodeid, total, phases in self.over:
             split = " ".join(f"{name} {phases[name]:.2f}" for name in PHASES if name in phases)
+            lines.append(f"{total:.2f}s {nodeid} ({split})")
             terminalreporter.write_line(f"{total:8.2f}s  {nodeid}  ({split})")
         terminalreporter.write_line(
-            "Make it faster, or mark it @pytest.mark.slow (runs in `make ci` only) -- tests/CLAUDE.md. "
-            "A large setup is usually a first-use cost paid by whichever test of the worker runs first."
+            "Not a failure. If a test keeps showing up, mark it @pytest.mark.slow (runs in `make ci` only) -- "
+            "tests/CLAUDE.md. A large setup is usually a first-use cost paid by whichever test of the worker runs first."
         )
+        if os.environ.get("GITHUB_ACTIONS") == "true":
+            terminalreporter.write_line(github_warning(self.budget_s, lines))
+
+
+def github_warning(budget_s: float, lines: List[str]) -> str:
+    """One `::warning` workflow command: `%` is escaped first, then the line breaks that the command syntax reserves."""
+    shown = lines[:MAX_ANNOTATED]
+    if len(lines) > len(shown):
+        shown.append(f"... and {len(lines) - len(shown)} more")
+    message = "\n".join(shown).replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+    return f"::warning title=Tests over the {budget_s:g} s budget::{message}"
 
 
 def pytest_configure(config: pytest.Config) -> None:
