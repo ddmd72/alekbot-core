@@ -4,6 +4,11 @@ from pydantic import BaseModel, Field
 import time
 import uuid
 
+# A FAILED batch is revived by the hourly sweep at most this many times in its whole life
+# (3 attempts per round, so 4 x 3 = 12 paid attempts at most). Never reset.
+MAX_FAILED_REVIVALS = 3
+
+
 class BatchStatus(str, Enum):
     PENDING = "pending"
     PROCESSING = "processing"
@@ -26,3 +31,6 @@ class ConsolidationBatch(BaseModel):
     # to distinguish a live run from a zombie: a batch can only be legitimately
     # PROCESSING while its Cloud Task is alive (dispatch_deadline = 1800s).
     processing_started_at: Optional[float] = None
+    # How many times the sweep revived this batch from FAILED. Lifetime counter, never cleared
+    # by a reset; caps the paid retries (MAX_FAILED_REVIVALS).
+    revivals: int = 0
