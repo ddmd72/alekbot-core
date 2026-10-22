@@ -74,7 +74,7 @@ PyYAML>=6.0  # firestore snapshot serializer (firestore_utils) + migration/expor
 # could not co-install; logfire 4.40 widened to <1.45 and unblocked it. This matters
 # more since the router moved to Gemini — that is one untraced LLM call per user
 # message. See decisions/gemini_logfire_instrumentation.md.
-opentelemetry-api==1.43.0
+opentelemetry-api==1.45.1
 opentelemetry-sdk==1.43.0
 opentelemetry-exporter-gcp-trace==1.14.0
 opentelemetry-instrumentation==0.64b0
