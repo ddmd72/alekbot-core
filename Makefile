@@ -135,9 +135,11 @@ help: ## Show this help message
 	@echo "  make auth            Authenticate with Google Cloud"
 	@echo ""
 	@echo "🧪 TESTING & QUALITY:"
-	@echo "  make check           CI gate: ruff lint + unit/architecture tests"
+	@echo "  make check           Local pre-commit gate: ruff lint + mypy + unit/architecture tests (no slow tests, no coverage)"
 	@echo "  make test            Run all tests"
 	@echo "  make test-unit       Run unit tests"
+	@echo "  make test-affected   Inner loop: only the unit tests testmon selects for your changes"
+	@echo "  make ci              PR job: lint + mypy + unit suite once (slow tests, coverage gate) + G2"
 	@echo "  make test-coverage   Unit tests + per-file coverage gate"
 	@echo "  make test-integration Run integration tests"
 	@echo "  make lint            Lint src/ with ruff"
@@ -197,7 +199,7 @@ install: ## Install dependencies
 
 install-dev: install ## Install dependencies + test/lint tools
 	@echo "📦 Installing dev tools..."
-	$(PYTHON) -m pip install pytest pytest-asyncio pytest-mock pytest-xdist ruff
+	$(PYTHON) -m pip install pytest pytest-asyncio pytest-mock pytest-xdist pytest-testmon pytest-cov pytest-socket ruff
 
 clean: ## Clean up temporary files and caches
 	@echo "🧹 Cleaning up temporary files..."
@@ -221,12 +223,15 @@ auth: ## Authenticate with Google Cloud
 # The flag lives here, not in pytest.ini addopts, so a targeted `pytest path::test` stays a single
 # fast process. Integration/e2e stay serial — they touch live services.
 # Without xdist installed the suite falls back to a serial run, with a warning.
+# `slow` tests (over 0.5 s with coverage on) are skipped the same way unless RUN_SLOW_TESTS=1; `make ci` sets it.
+# Only one full suite runs at a time on a machine (tests/plugins/suite_lock.py: flock on a file in the temp dir).
 # Tests marked `timing` assert on wall-clock/CPU time and fail on a loaded machine with no code change. By owner
 # decision (2026-10-20) they are off every everyday run (check, test-unit, plain pytest — tests/conftest.py skips
 # them) and run only via `make test-timing`: in CI after a merge to main (job `timing`), or by hand.
 PYTEST_WORKERS ?= auto
 PYTEST_XDIST = $(shell $(PYTHON) -c "import xdist" 2>/dev/null && echo yes)
-PYTEST_UNIT_FLAGS = $(if $(PYTEST_XDIST),-n $(PYTEST_WORKERS) -q,-v)
+# --durations=25 is an advisory report of the slowest tests.
+PYTEST_UNIT_FLAGS = $(if $(PYTEST_XDIST),-n $(PYTEST_WORKERS) -q,-v) --durations=25
 XDIST_WARNING = $(if $(PYTEST_XDIST),,echo "⚠️  pytest-xdist not installed — running serially (pip install -r requirements.txt)")
 
 test: ## Run all tests
@@ -242,17 +247,34 @@ test-timing: ## Wall-clock/CPU-time tests only, serial (CI runs it after a merge
 	@echo "⏱  Running timing tests..."
 	RUN_TIMING_TESTS=1 DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/unit/ -q --asyncio-mode=auto -m timing
 
+# Coverage flags shared by test-coverage and ci. A bare `--cov` takes its sources from .coveragerc (src + the root *_main.py
+# entry points, branch coverage on); a `--cov=src` here would replace that list. Gates: the global floor below, the per-file
+# table (RFC §8.4) and the per-layer floors (P2).
+COVERAGE_FLAGS = --cov --cov-report=term-missing:skip-covered --cov-report=json --cov-fail-under=70
+
 test-coverage: ## Unit tests + global + per-file coverage gate (RFC § 8.4)
 	@echo "🧪 Running unit tests with coverage..."
 	@$(XDIST_WARNING)
-	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/unit/ $(PYTEST_UNIT_FLAGS) \
-	    --asyncio-mode=auto -m "not timing" \
-	    --cov=src \
-	    --cov-report=term-missing:skip-covered \
-	    --cov-report=json \
-	    --cov-fail-under=70
+	RUN_SLOW_TESTS=1 DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/unit/ $(PYTEST_UNIT_FLAGS) \
+	    --asyncio-mode=auto -m "not timing" $(COVERAGE_FLAGS)
 	@echo "🚦 Enforcing per-file coverage thresholds..."
 	@$(PYTHON) scripts/check_coverage_thresholds.py
+	@echo "🚦 Enforcing per-layer coverage floors..."
+	@$(PYTHON) scripts/check_coverage_layers.py
+
+# testmon never runs together with coverage. A fresh worktree gets the main checkout's .testmondata (the first
+# entry of `git worktree list`; copied with SQLite's backup API, testmon uses WAL), so its first run is not a cold suite.
+# testmon selects by executed Python lines: it can miss a test whose input is a data file or code run in a child
+# process, so `make check` before a commit is mandatory.
+# --testmon-forceselect: without it testmon switches selection off whenever -m is given (testmon 2.2.0).
+TESTMON_SEED = $(shell git -c safe.directory='*' worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p' | head -n 1)
+
+test-affected: ## Inner loop: only the unit tests testmon selects for your changes
+	@echo "🎯 Running affected tests..."
+	@$(XDIST_WARNING)
+	@if [ ! -f .testmondata ] && [ -n "$(TESTMON_SEED)" ] && [ "$(TESTMON_SEED)" != "$(CURDIR)" ] && [ -f "$(TESTMON_SEED)/.testmondata" ]; then \
+		echo "🌱 Seeding .testmondata from $(TESTMON_SEED)"; $(PYTHON) scripts/seed_testmondata.py "$(TESTMON_SEED)/.testmondata" .testmondata; fi
+	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/unit/ -n $(PYTEST_WORKERS) -q --asyncio-mode=auto --testmon --testmon-forceselect -m "not timing"
 
 test-integration: ## Run integration tests
 	@echo "🧪 Running integration tests..."
@@ -266,7 +288,7 @@ format: ## Format src/ with ruff (black-compatible)
 	@echo "✨ Formatting src/ with ruff..."
 	$(PYTHON) -m ruff format src/
 
-typecheck: ## mypy --strict on src/domain + src/ports (part of the CI gate)
+typecheck: ## mypy --strict on src/domain + src/ports (part of `make check` and `make ci`)
 	@echo "🔎 Running mypy (strict) on domain/ + ports/..."
 	$(PYTHON) -m mypy --config-file mypy.ini
 
@@ -276,10 +298,23 @@ check-types: ## mypy (lenient) on src/adapters — informational, never fails
 
 test-g2-offline: ## G2 end to end on the fixture folder (real parser, scripted models, offline)
 	@echo "🧪 Running the offline G2 end-to-end test..."
-	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/integration/test_drive_g2_end_to_end.py -q --asyncio-mode=auto
+	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/integration/test_drive_g2_end_to_end.py -q --asyncio-mode=auto -p tests.plugins.network_guard
 
-check: lint typecheck test-unit test-g2-offline ## CI gate: ruff lint + mypy (domain/ports) + unit/architecture tests + offline G2 end to end
+test-ci: ## Unit suite once: slow tests and the coverage gate (part of `make ci`)
+	@echo "🧪 Running the full unit suite (slow tests, coverage)..."
+	@$(XDIST_WARNING)
+	RUN_SLOW_TESTS=1 DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/unit/ $(PYTEST_UNIT_FLAGS) \
+	    --asyncio-mode=auto -m "not timing" $(COVERAGE_FLAGS)
+	@echo "🚦 Enforcing per-file coverage thresholds..."
+	@$(PYTHON) scripts/check_coverage_thresholds.py
+	@echo "🚦 Enforcing per-layer coverage floors..."
+	@$(PYTHON) scripts/check_coverage_layers.py
+
+check: lint typecheck test-unit test-g2-offline ## Local pre-commit gate: ruff lint + mypy (domain/ports) + unit/architecture tests + offline G2 (CI runs `make ci`)
 	@echo "✅ All checks passed"
+
+ci: lint typecheck test-ci test-g2-offline ## PR job: lint + mypy + the unit suite once (slow tests, coverage gate) + offline G2
+	@echo "✅ CI passed"
 
 # ============================================================================
 # BUILD & DEPLOY

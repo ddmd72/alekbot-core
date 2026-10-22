@@ -37,7 +37,7 @@ This document describes hexagonal architecture patterns used in Alek-Core, with 
 
 **Key Rule:** Infrastructure NEVER flows up to Domain. Services never import concrete Adapters.
 
-**Import rules (enforced by `make check`):**
+**Import rules (enforced by `make ci`):**
 
 ```
 domain/   → ONLY stdlib, pydantic

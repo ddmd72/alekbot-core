@@ -644,6 +644,7 @@ def _literal_empty(node: ast.expr) -> bool:
             and not node.args)
 
 
+@pytest.mark.slow
 def test_every_delete_site_passes_a_why():
     """Static: every `self._commit(...)` whose deletes are not a literal `set()` passes `gone=`, and the sites are exactly
     the enumerated ones (a new delete site fails here until it is given its why); `_commit_plan` always names its

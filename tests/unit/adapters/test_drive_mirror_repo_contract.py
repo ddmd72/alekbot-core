@@ -98,6 +98,7 @@ async def test_root_gone_mark_and_clear(repo):
 
 # -- ledger documents -------------------------------------------------------------------------------------------------
 
+@pytest.mark.slow
 async def test_doc_roundtrip_carries_every_field(adapter):
     repo, _ = adapter
     full = MirrorDoc(

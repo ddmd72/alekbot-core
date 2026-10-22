@@ -209,6 +209,7 @@ class TestOpenAIWebhookFailClosed:
 class TestOpenAIWebhookFailureEvents:
     """response.failed and response.cancelled reach notification_service.notify (via the worker task)."""
 
+    @pytest.mark.slow
     @pytest.mark.parametrize("event", ["response.failed", "response.cancelled"])
     async def test_failure_event_is_enqueued_for_the_worker(self, event):
         task_queue = AsyncMock()

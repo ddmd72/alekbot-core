@@ -876,6 +876,7 @@ class TestHandleReindexTaskList:
 
 class TestHandleRenewTaskSubscriptions:
 
+    @pytest.mark.slow
     async def test_missing_task_setup_returns_501(self):
         worker, ns = _make_full_worker()
         worker._task_setup = None

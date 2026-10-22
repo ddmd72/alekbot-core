@@ -1,6 +1,7 @@
 """Parent lookups and parked records (USER_DRIVE_INDEXING_RFC §3.4, §8.2, §12.3). Delta mode has no later full
 enumeration to settle a record whose parent lookup keeps failing, so it is retried at RETRY_CAP, never deleted on
 a transient failure; a record parked under an unresolved parent holds no card and does not block an upgrade."""
+import pytest
 from src.domain import drive_card
 from src.domain import drive_index_planner as planner
 from src.domain.drive_index import CARD_VERSION, CURRENT_VERSIONS, POLICY_VERSION, DriveChange, DriveIndexRecord, Priority, RecordState, Scope
@@ -108,6 +109,7 @@ async def _photos_waiting_for_their_probe(w):
 
 class TestParkedRecords:
 
+    @pytest.mark.slow
     async def test_a_record_parked_under_an_unresolved_parent_holds_no_card(self, monkeypatch):
         """A card bump re-plans the children under their unresolved parent; each is parked, and its card goes."""
         w = World(page_size=2000)
@@ -122,6 +124,7 @@ class TestParkedRecords:
         assert not any(r.has_card or r.card_hash for r in parked)
         assert not ({r.item_id for r in parked} & w.carded())
 
+    @pytest.mark.slow
     async def test_a_stale_parked_record_does_not_block_an_upgrade(self, monkeypatch):
         w = World(page_size=2000)
         f = await _photos_waiting_for_their_probe(w)

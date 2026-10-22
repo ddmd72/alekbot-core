@@ -5,6 +5,7 @@
 - the G2 set covers what §24.11 names: clauses, amounts, invoice numbers, dates, tables, two-column PDFs, a version
   family, the OCR-labelled cases, and every fixture language;
 - OCR-labelled G1 cases find a file by subject only (no name key matches), so they measure the reader."""
+import pytest
 import io
 import json
 import zipfile
@@ -67,6 +68,7 @@ def test_the_gold_files_pass_the_runners_validation():
     validate_gold(_gold("gold_g1.json") + _gold("gold_g2.json"), drive.paths())
 
 
+@pytest.mark.slow
 def test_every_expected_substring_is_in_its_files_text():
     content = _content_of()
     wrong = []

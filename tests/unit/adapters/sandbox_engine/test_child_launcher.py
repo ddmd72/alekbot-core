@@ -85,6 +85,7 @@ def _alive(pid: int) -> bool:
     return bool(state) and not state.startswith("Z")
 
 
+@pytest.mark.slow
 async def test_wall_clock_kills_the_process_group(tmp_path):
     code = (
         "import subprocess, sys, time\n"
@@ -104,6 +105,7 @@ async def test_wall_clock_kills_the_process_group(tmp_path):
     assert not _alive(grandchild)
 
 
+@pytest.mark.slow
 @pytest.mark.skipif(not _LINUX, reason="rlimit enforcement is verified on Linux only")
 async def test_cpu_limit_kills_with_sigxcpu(tmp_path):
     result, _ = await _run(_launcher(), tmp_path, "while True: pass", limits=_limits(cpu_s=1.0, wall_s=30.0))
@@ -358,6 +360,7 @@ async def test_a_failed_spawn_is_logged_before_it_propagates(tmp_path, caplog):
     assert "could not be started" in caplog.text
 
 
+@pytest.mark.slow
 async def test_the_stderr_file_is_closed_when_the_run_is_cancelled(tmp_path, monkeypatch):
     import tempfile
     opened = []

@@ -2,6 +2,7 @@
 "M xlsx"). Rows are read at most 1025 columns wide so a far-right cell cannot pad every row to 16384 values, but a
 value past column 1025 is content the index does not hold: the outcome says `truncated`. A declared dimension past it
 is not (R2 P-m3: the sheet's own cells decide, a dimension alone can be bogus)."""
+import pytest
 import re
 import zipfile
 
@@ -35,6 +36,7 @@ def _declare(path, ref, target):
     return target
 
 
+@pytest.mark.slow
 def test_a_value_in_column_2000_is_text_marked_truncated_in_bounded_memory(tmp_path):
     import tracemalloc
 

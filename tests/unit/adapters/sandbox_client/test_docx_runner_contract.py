@@ -79,6 +79,7 @@ async def test_script_throwing_yields_runner_error_with_the_script_message(runne
     assert "contract-boom-42" in text and text.startswith("exit code 1")
 
 
+@pytest.mark.slow
 @needs_node
 async def test_hanging_script_hits_the_timeout(runner):
     assert await _failure(runner, _HANG, timeout=2) == "Node.js process timed out after 2s"

@@ -73,12 +73,14 @@ async def test_real_child_reads_text_and_stamps_extracted_by(tmp_path):
     assert list(_workroot(tmp_path).iterdir()) == []          # the call's private directory is gone
 
 
+@pytest.mark.slow
 async def test_real_child_reads_a_docx(tmp_path):
     path = make_docx(tmp_path / "a.docx", ["Penalty is 0.1% per day."])
     outcome = await SubprocessContentExtractor().extract(_request(path, "docx"))
     assert "Penalty is 0.1% per day." in outcome.text
 
 
+@pytest.mark.slow
 async def test_real_child_pdf_pages_and_encryption(tmp_path):
     plain = make_pdf(tmp_path / "a.pdf", ["first", "second", "third"])
     extractor = SubprocessContentExtractor()
@@ -100,6 +102,7 @@ async def test_real_child_no_text(tmp_path):
     assert outcome.status is ExtractionStatus.NO_TEXT and outcome.pages_total == 2 and outcome.text == ""
 
 
+@pytest.mark.slow
 async def test_real_child_splits_a_pdf(tmp_path):
     source = make_pdf(tmp_path / "s.pdf", [f"page {i}" for i in range(1, 8)])
     out = tmp_path / "windows"
@@ -144,6 +147,7 @@ async def test_missing_file_is_an_error_outcome(tmp_path):
 # Kills and limits map to outcomes (§8.2: timeout and memory are per-file transient)
 # =============================================================================
 
+@pytest.mark.slow
 async def test_wall_clock_kill_is_timeout_and_the_child_is_gone(tmp_path):
     path = _file(tmp_path)
     outcome = await _stub(tmp_path, wall_timeout_s=1.5).extract(_request(path, "sleep"))
@@ -153,6 +157,7 @@ async def test_wall_clock_kill_is_timeout_and_the_child_is_gone(tmp_path):
         os.kill(pid, 0)
 
 
+@pytest.mark.slow
 async def test_cpu_limit_is_timeout(tmp_path):
     outcome = await _stub(tmp_path, cpu_limit_s=1, wall_timeout_s=30).extract(_request(_file(tmp_path), "spin"))
     assert outcome.status is ExtractionStatus.TIMEOUT
@@ -229,6 +234,7 @@ async def test_child_environment_is_allowlisted(tmp_path, monkeypatch):
     assert list(_workroot(tmp_path).iterdir()) == []
 
 
+@pytest.mark.slow
 async def test_one_child_at_a_time_by_default(tmp_path):
     marks = _file(tmp_path, "marks", b"")
     extractor = _stub(tmp_path)
@@ -278,6 +284,7 @@ async def test_split_status_from_the_child_is_raised(tmp_path):
     assert failed.value.status is ExtractionStatus.ENCRYPTED
 
 
+@pytest.mark.slow
 async def test_split_killed_by_the_wall_clock_is_timeout(tmp_path):
     with pytest.raises(PdfSplitFailed) as failed:
         await _stub(tmp_path, wall_timeout_s=1.5).pdf_page_count(str(_file(tmp_path, "sleep")))

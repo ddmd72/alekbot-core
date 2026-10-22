@@ -3,6 +3,7 @@
 Each test kills a mutant that survived the rest of the suite. The code was already right; these tests keep it
 right.
 """
+import pytest
 from src.domain import drive_card
 from src.domain import drive_index_planner as planner
 from src.domain.drive_card import card_text
@@ -72,6 +73,7 @@ class TestVersionUpgradeVerification:
 
 
 class TestMaintenanceShare:
+    @pytest.mark.slow
     async def test_maintenance_class_stops_at_its_share_of_the_tick(self, monkeypatch):
         """§7.8: classes 3-4 get MAINTENANCE_SHARE of the tick budget, not the whole of it."""
         w = World(page_size=1000)

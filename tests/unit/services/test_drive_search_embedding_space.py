@@ -1,6 +1,7 @@
 """The card stream answers only queries embedded in the space its cards are in (USER_DRIVE_INDEXING_RFC §12.3,
 §10.1 step 2). While the index moves to a new embedding space, search runs the name stream and the filters alone and
 says the index is being refreshed: a cosine across two spaces ranks noise."""
+import pytest
 from src.domain.drive_search import DriveSearchRequest, render_results
 from src.services.drive_search_service import DriveSearchService
 

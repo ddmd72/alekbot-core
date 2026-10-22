@@ -45,6 +45,7 @@ def index():
     return PlaceIndex(load_place_rows())
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("lat,lon,expected", [
     (41.3888, 2.1590, {"Barcelona", "Barcelone", "Барселона", "Spain", "España", "Испания", "Іспанія"}),
     (48.8534, 2.3488, {"Paris", "Париж", "France", "Francia", "Франция"}),
@@ -58,6 +59,7 @@ def test_bundled_place_forms(index, lat, lon, expected):
     assert place.name == index.lookup(lat, lon)
 
 
+@pytest.mark.slow
 def test_a_small_place_names_its_large_neighbour(index):
     place = index.place(41.2351, 1.8119)             # Sitges, ~30 000 people, 35 km from Barcelona's suburbs
     assert place is not None and place.name.startswith("Sitges")

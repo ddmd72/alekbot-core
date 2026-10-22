@@ -171,6 +171,7 @@ class TestByteBatches:
         assert [len(b) for b in byte_batches([0, 1], lambda _: WRITE_BATCH_BYTES * 2)] == [1, 1]   # alone, not lost
         assert byte_batches([], lambda _: 1) == []
 
+    @pytest.mark.slow
     async def test_v2_chunks_are_written_under_the_request_limit(self, mock_env_config):
         db = ChunkDb()   # the recording client: batches are MagicMocks, nothing is copied
         chunks = [big_chunk(i) for i in range(RECORD_WRITE_BATCH)]
@@ -197,6 +198,7 @@ class TestByteBatches:
             await repo.write_hints([hint(), hint(index=1)], [[1.0]])
         assert db.commits == []
 
+    @pytest.mark.slow
     async def test_records_are_batched_by_bytes_too(self, mock_env_config):
         db = ChunkDb()
         records = [DriveIndexRecord(user_id="u", item_id=f"r{i}", about_keys=tuple(f"e:k{n:04d}" * 4

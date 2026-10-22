@@ -484,6 +484,7 @@ def test_cooldown_runs_from_the_purchase_not_only_the_completion():
 
 # -- properties ---------------------------------------------------------------------------------------------------
 
+@pytest.mark.slow
 def test_plan_idempotent_property():
     base = _rec()
     hk = _hk(base)

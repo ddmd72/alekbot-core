@@ -28,6 +28,7 @@ def test_snapshot_attributes_held_memory_to_its_allocation_site(census):
     assert sites[0].size_bytes >= 5 * 1024 * 1024 and sites[0].count >= 5
 
 
+@pytest.mark.slow
 def test_snapshot_drops_memory_after_it_is_released(census):
     held = _hold_five_megabytes()
     before = census.snapshot(top_n=5).traced_bytes

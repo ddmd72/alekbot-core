@@ -64,6 +64,7 @@ def _make(tmp_path, demuxer):
     return path.read_bytes()
 
 
+@pytest.mark.slow
 @needs_ffmpeg
 @pytest.mark.parametrize("demuxer", ["avi", "asf", "aiff", "amr", "flv"])
 async def test_a_file_of_each_added_container_probes_and_yields_one_window(tmp_path, demuxer):
@@ -154,6 +155,7 @@ def test_the_last_window_is_asked_for_a_full_window_length(tmp_path, monkeypatch
     assert seen == [float(TRANSCRIBE_WINDOW_S), float(TRANSCRIBE_WINDOW_S)]
 
 
+@pytest.mark.slow
 @needs_ffmpeg
 async def test_a_header_that_understates_the_audio_does_not_cut_the_last_window_short(tmp_path):
     data = _mp3_understating(tmp_path)

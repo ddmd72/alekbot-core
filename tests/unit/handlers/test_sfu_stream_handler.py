@@ -105,6 +105,7 @@ async def test_pair_timeout_closes_a_lonely_half_without_starting_a_call():
     assert service.calls == [] and ingest.closed
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_egress_reconnect_within_window_keeps_the_same_call():
     service = FakeSessionService()

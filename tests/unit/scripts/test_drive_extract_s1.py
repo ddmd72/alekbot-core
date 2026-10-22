@@ -18,6 +18,7 @@ def script():
     return module
 
 
+@pytest.mark.slow
 def test_generated_set_gets_the_kinds_the_tick_would_derive(script, tmp_path):
     paths = {p.name: p for p in script.generate(tmp_path, scale=0.001)}
     kinds = {name: script.kind_for(path) for name, path in paths.items()}
@@ -108,6 +109,7 @@ def test_each_measured_run_records_the_cgroup_peak_before_and_after(script, tmp_
     assert "900.0" in text
 
 
+@pytest.mark.slow
 def test_generated_set_has_a_pdf_whose_pages_share_one_image(script, tmp_path):
     from pypdf import PdfReader
 

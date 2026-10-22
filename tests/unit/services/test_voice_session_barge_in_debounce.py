@@ -45,6 +45,7 @@ async def _call(events):
     return session, clear
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_a_short_noise_does_not_interrupt_and_is_not_answered():
     async def events():
@@ -66,6 +67,7 @@ async def test_a_short_noise_does_not_interrupt_and_is_not_answered():
     assert session.request_response.await_count == 2
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_sustained_speech_interrupts_after_the_threshold():
     async def events():
@@ -82,6 +84,7 @@ async def test_sustained_speech_interrupts_after_the_threshold():
     session.truncate.assert_awaited_once()
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_short_speech_while_lelik_is_silent_is_answered_normally():
     async def events():

@@ -71,6 +71,7 @@ def test_check_zip_container_rejects_inflated_size(tmp_path):
         check_zip_container(str(f))
 
 
+@pytest.mark.slow
 def test_check_zip_container_rejects_too_many_members(tmp_path):
     f = tmp_path / "many.xlsx"
     with zipfile.ZipFile(f, "w") as z:
@@ -84,6 +85,7 @@ def test_check_zip_container_rejects_too_many_members(tmp_path):
 # convert_file_to_text — end to end through the real markitdown
 # =============================================================================
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_convert_real_docx_still_works(tmp_path):
     import docx

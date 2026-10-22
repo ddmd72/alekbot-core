@@ -140,6 +140,7 @@ def test_bracket_dump_is_machine_text():
     assert measure(text).near_empty > 0.6 and is_machine_text(text)
 
 
+@pytest.mark.slow
 def test_measure_is_deterministic():
     rng = random.Random(9)
     text = "\n".join(Lexicon(rng).sentence() for _ in range(100))

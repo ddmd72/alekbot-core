@@ -166,6 +166,7 @@ class TestAdapter:
             await stub.cut_pdf_window(str(source), 0, 1, str(tmp_path / "w.pdf"))
         assert failed.value.status is ExtractionStatus.ENCRYPTED
 
+    @pytest.mark.slow
     async def test_wall_clock_kill_is_timeout(self, tmp_path):
         source = tmp_path / "sleep"
         source.write_bytes(b"x")

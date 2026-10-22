@@ -262,6 +262,7 @@ class TestJobMainRealDelivery:
                 code = e.code
         return queue, code
 
+    @pytest.mark.slow
     async def test_swallowed_report_enqueue_failure_reports_and_exits_1(self, monkeypatch):
         queue, code = await self._run_real(monkeypatch, RuntimeError("down"))
         assert code == 1

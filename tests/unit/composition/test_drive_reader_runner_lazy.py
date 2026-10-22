@@ -190,6 +190,7 @@ class _MeasuredParser(SubprocessContentExtractor):
         self.totals.append(sum(f.stat().st_size for f in self.work.rglob("*") if f.is_file()))
 
 
+@pytest.mark.slow
 async def test_window_bytes_on_disk_never_exceed_model_in_flight_windows(tmp_path):
     source = _shared_image_pdf(tmp_path / "shared.pdf", 200, 1024 * 1024)
     assert source.stat().st_size < 2 * 1024 * 1024   # one image, 200 pages

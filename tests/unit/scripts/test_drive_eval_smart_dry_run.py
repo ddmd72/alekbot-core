@@ -91,6 +91,7 @@ async def test_a_drive_search_runs_against_the_fixture_index(setup):
     assert searched(dispatcher.calls) and real_calls == []
 
 
+@pytest.mark.slow
 async def test_list_and_open_from_the_drive_run_on_the_fixture(setup):
     dispatcher, real_calls, _ = setup
     listing = await _dispatch(dispatcher, _call("list_files_in_drive", folder="Contracts"))

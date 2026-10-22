@@ -47,11 +47,13 @@ plain unauthenticated `curl http://localhost:8080/worker ...` works with no toke
 ## Commands
 
 ```bash
-make check             # CI gate: ruff lint + mypy --strict (domain/ports) + unit/architecture tests
+make check             # Local pre-commit gate: ruff lint + mypy --strict (domain/ports) + unit/architecture tests, no slow tests, no coverage
 make typecheck         # mypy --strict on src/domain + src/ports only
 make check-types       # mypy (lenient) on src/adapters — informational, prints an error count, never fails
-make test              # All tests
+make test              # All tests (the unit/architecture suite excludes `slow` tests; they run in `make ci`)
 make test-unit         # Unit tests
+make test-affected     # Inner loop: only the unit tests testmon selects for your changes (seconds on a small diff)
+make ci                # PR job (what CI runs): lint + typecheck + the unit suite once with slow tests, coverage gate + offline G2
 make test-integration  # Integration tests
 make test-e2e-all      # E2E all agents
 make deploy            # Build + deploy to Cloud Run (single live environment)
@@ -60,10 +62,13 @@ make logs-tail         # Live tail logs
 make fetch-logs [K=300] # Pull last K logs to alek_debug.log (grep locally — see Debugging below)
 ```
 
+**Which test command to run when** (while editing, before a commit, before calling work done, the mutation
+done-check): the table in `tests/CLAUDE.md` § Running is the one place that says it.
+
 Lint + format via `ruff` (`make lint` / `make format`, config in `ruff.toml`). `make check` runs
 `ruff check src/` and `mypy --strict` on `src/domain` + `src/ports` (`mypy.ini`; adapters stay
-informational, `mypy-adapters.ini`, see `decisions/mypy_scoped_rollout.md`) before the unit suite, and CI (`.github/workflows/ci.yml`) runs `make check` on
-every push/PR (posting ✅/❌ to Slack). The full unit/architecture suite (~13 300 tests) is green
+informational, `mypy-adapters.ini`, see `decisions/mypy_scoped_rollout.md`) before the unit suite (which excludes `slow` tests; they run in `make ci`); it is the local pre-commit gate. CI (`.github/workflows/ci.yml`) runs
+`make ci` (the same plus slow tests and the coverage gate) on every push/PR (posting ✅/❌ to Slack). The full unit/architecture suite (~13 300 tests) is green
 and **safe to run in full** (any historical "don't run the full suite" warning was a since-fixed
 chunker infinite loop, not a standing hazard). `make test-unit` / `make check` run it in parallel
 via pytest-xdist (`-n auto`; cap with `PYTEST_WORKERS=6`): ~1:34 on a 12-core Mac vs ~5:00
@@ -75,7 +80,15 @@ carries `@pytest.mark.timing`; `tests/conftest.py` skips it unless `RUN_TIMING_T
 `make test-unit` and a plain `pytest` never run it. They failed on a loaded machine with no code change, and
 every full run then failed and was re-run. They run only via `make test-timing`: in CI as the separate `timing`
 job after a merge to `main` (never on a PR), or by hand. A new test with a time threshold gets the marker;
-never put timing tests back into `make check`, and never re-run a suite because a timing test failed. Lint scope is `src/` only (default high-signal ruleset: pyflakes + pycodestyle
+never put timing tests back into `make check`, and never re-run a suite because a timing test failed.
+**Slow tests and the inner loop (P1, 2026-10-22).** `@pytest.mark.slow` mirrors `timing`: a test over 0.5 s with
+coverage on (setup + call + teardown) is skipped unless `RUN_SLOW_TESTS=1`, which `make ci` sets; so `make check` stays fast
+and `make ci` runs everything once. Locally `--durations=25` is an advisory report. `make test-affected` runs
+`pytest --testmon` once, seeds `.testmondata` from the main checkout in a new worktree, and never combines testmon with
+coverage; it selects by executed Python lines, so it can miss a test whose input is a data file or code run in a child
+process: **`make check` before a commit is mandatory** (`tests/CLAUDE.md`). **One full suite at a time on a
+machine:** a session with `-n` (or 2000+ tests) takes `fcntl.flock` on a file in the temp dir, prints the holder and
+waits up to `PYTEST_LOCK_TIMEOUT_S` (1800); `PYTEST_SUITE_LOCK=0` turns it off. **Test rules (P2, 2026-10-22), in `tests/CLAUDE.md`:** fakes with semantics over call assertions; `tests/unit/` is offline (a network guard refuses non-loopback `connect()`, a tripwire refuses `google.auth.default` and non-local gRPC channels); `make ci` enforces per-layer branch-coverage floors that only rise (`scripts/check_coverage_layers.py`) and a shrinking allowlist of src modules no test imports; every package is done when `python -m tests.support.semantic_mutants` leaves every mutant killed or ruled equivalent by the reviewer. Lint scope is `src/` only (default high-signal ruleset: pyflakes + pycodestyle
 errors). `ruff format` exists as a dev convenience but is not enforced in CI — the codebase is not
 mass-reformatted.
 
@@ -955,9 +968,9 @@ tool**; `_RESPONSE_SCHEMA` on Quick/Smart; and the `rich_content.data.rows` `[{c
 
 - pytest + pytest-asyncio (asyncio_mode=auto).
 - Fixtures in `tests/conftest.py`: `mock_env_config`, `mock_llm_port`, `mock_repository`.
-- Mocks via `AsyncMock(spec=PortClass)`.
+- Fakes with semantics over call assertions; mocks only for boundaries you do not own (`tests/CLAUDE.md`).
 - Markers: `@pytest.mark.requirement("REQ-XXX")`, `@pytest.mark.performance`.
-- Structure: `tests/unit/`, `tests/integration/`, `tests/performance/`.
+- Structure: `tests/unit/`, `tests/integration/`, `tests/performance/`, `tests/support/`, `tests/plugins/`, `tests/contracts/`.
 - **Adapter wire tests:** `tests/unit/adapters/` — mock at SDK boundary (not port). See `ADAPTER_WIRE_TESTING.md`.
 - **Contract repository:** `tests/contracts/adapter_contracts.py` — named `ContractRule` objects with per-provider validators. Reused by both unit and integration tests.
 - **Integration layer:** `tests/integration/adapters/` — `CapturingStub` + contract validation. Run with `pytest tests/integration/adapters/ -v`.

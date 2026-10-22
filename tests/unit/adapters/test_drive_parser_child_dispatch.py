@@ -1,6 +1,7 @@
 """The drive parser's child dispatching to the readers (USER_DRIVE_INDEXING_RFC §9, §24.3): `extract` and the lazy
 page-window ops `pdf_page_count` / `cut_pdf_window` end to end through a real child process, the result in a file,
 nothing on stdout."""
+import pytest
 import json
 import subprocess
 import sys
@@ -41,6 +42,7 @@ def test_a_parser_that_prints_cannot_corrupt_the_result(tmp_path):
     assert json.loads((tmp_path / "result.json").read_text())["text"] == "x"
 
 
+@pytest.mark.slow
 def test_split_op_end_to_end(tmp_path):
     source = make_pdf(tmp_path / "s.pdf", ["a", "b", "c"])
     windows = tmp_path / "w"

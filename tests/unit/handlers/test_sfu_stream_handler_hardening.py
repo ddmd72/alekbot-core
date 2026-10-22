@@ -101,6 +101,7 @@ async def test_abnormal_egress_close_is_not_an_error_and_the_call_ends_after_the
     assert any("not reattached" in r.getMessage() for r in caplog.records)
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_abnormal_egress_close_then_reattach_keeps_the_call(caplog):
     caplog.set_level(logging.INFO)
@@ -165,6 +166,7 @@ async def test_malformed_ticket_is_rejected_without_starting_a_call():
     assert handler._calls == {} and service.calls == []
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_unpaired_registry_is_capped_but_a_waiting_call_can_still_pair():
     service = FakeSessionService()

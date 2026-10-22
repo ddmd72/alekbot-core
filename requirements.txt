@@ -96,6 +96,13 @@ pytest-asyncio
 pytest-mock
 # Parallel unit suite (make test-unit / make check: -n auto); pinned so CI matches local
 pytest-xdist==3.8.0
+# Network guard for the unit suite (tests/unit/conftest.py, tests/support/network_guard.py): connect() to non-loopback raises
+pytest-socket==0.8.1
+# Affected-tests selection (make test-affected); needs coverage<8; never combined with --cov
+pytest-testmon==2.2.0
+# Coverage gate (make ci / make test-coverage); coverage is pinned below testmon's coverage<8 ceiling
+pytest-cov==7.1.0
+coverage==7.16.2
 
 # Linting — pinned so CI matches local; bumps are deliberate (new rules can break the gate)
 ruff==0.15.15

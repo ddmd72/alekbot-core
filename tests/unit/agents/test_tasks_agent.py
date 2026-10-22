@@ -162,6 +162,7 @@ class TestSearchTasks:
         call_kwargs = provider.batch_get_tasks.call_args.kwargs
         assert (_LIST_ID, _TASK_ID) in call_kwargs["task_refs"]
 
+    @pytest.mark.slow
     async def test_search_empty_skips_batch_get(self):
         agent, provider, indexing = _make_agent()
         indexing.search.return_value = []

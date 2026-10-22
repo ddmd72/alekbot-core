@@ -146,6 +146,7 @@ def _get_adapter_subpackage(file_path: str) -> str | None:
 # REQ-ARCH-01 — Import rules
 # ---------------------------------------------------------------------------
 
+@pytest.mark.slow
 @pytest.mark.requirement("REQ-ARCH-01")
 def test_domain_layer_isolation():
     """domain/ → stdlib + pydantic only. No src.* imports permitted."""
@@ -166,6 +167,7 @@ def test_ports_layer_isolation():
     ])
 
 
+@pytest.mark.slow
 @pytest.mark.requirement("REQ-ARCH-01")
 def test_services_layer_isolation():
     """services/ → domain/ + ports/ + utils/ only.
@@ -182,6 +184,7 @@ def test_services_layer_isolation():
     ])
 
 
+@pytest.mark.slow
 @pytest.mark.requirement("REQ-ARCH-01")
 def test_agents_layer_isolation():
     """agents/ → domain/ + ports/ + infrastructure/ + utils/ only.
@@ -227,6 +230,7 @@ _PRINT_WHITELIST = {
 }
 
 
+@pytest.mark.slow
 @pytest.mark.requirement("REQ-ARCH-02")
 def test_no_print_in_src():
     """No print() calls in src/ — use logger instead."""
@@ -339,6 +343,7 @@ _INFRA_PACKAGES = [
 ]
 
 
+@pytest.mark.slow
 @pytest.mark.requirement("REQ-ARCH-05")
 def test_no_direct_infra_imports_in_services():
     """services/ must not import infrastructure packages directly — go through ports."""
@@ -389,6 +394,7 @@ def test_ports_do_not_import_other_ports():
 _INTERFACE_SUFFIXES_IN_DOMAIN = ("Port", "Repository", "Queue", "Store")
 
 
+@pytest.mark.slow
 @pytest.mark.requirement("REQ-ARCH-07")
 def test_no_port_interfaces_in_domain():
     """*Port / *Repository / *Queue / *Store classes must not be defined in domain/."""
@@ -418,6 +424,7 @@ def test_no_port_interfaces_in_domain():
 # Known violations: see arch_tech_debt.py → CROSS_ADAPTER_WHITELIST
 # ---------------------------------------------------------------------------
 
+@pytest.mark.slow
 @pytest.mark.requirement("REQ-ARCH-08")
 def test_adapters_do_not_import_cross_subpackage():
     """adapters/ files must not import adapters from a different sub-package."""
@@ -521,6 +528,7 @@ def test_web_layer_isolation():
 # Cross-subpackage adapter imports are separately guarded by REQ-ARCH-08.
 # ---------------------------------------------------------------------------
 
+@pytest.mark.slow
 @pytest.mark.requirement("REQ-ARCH-16")
 def test_adapters_layer_isolation():
     """adapters/ must not import services, agents, handlers, infrastructure,
@@ -561,6 +569,7 @@ _MODEL_NAME_RE = re.compile(r"^(claude|gemini|gpt|grok|o1|o3)[-./]", re.IGNORECA
 _MODEL_NAME_LAYERS = ["src/agents", "src/services", "src/domain", "src/ports"]
 
 
+@pytest.mark.slow
 @pytest.mark.requirement("REQ-ARCH-12")
 def test_no_model_name_strings_in_wrong_layers():
     """Model name strings (claude-*, gemini-*, gpt-*, grok-*, o1-*, o3-*) must not appear
@@ -596,6 +605,7 @@ _PROVIDER_NAMES = {"gemini", "claude", "openai", "grok", "anthropic"}
 _PROVIDER_BRANCH_LAYERS = ["src/agents", "src/services"]
 
 
+@pytest.mark.slow
 @pytest.mark.requirement("REQ-ARCH-13")
 def test_no_provider_name_comparisons_in_agents_services():
     """Provider name string comparisons (== 'gemini', == 'claude', etc.) must not appear
@@ -662,6 +672,7 @@ def _is_os_environ_or_getenv(node: ast.AST) -> bool:
     return False
 
 
+@pytest.mark.slow
 @pytest.mark.requirement("REQ-ARCH-17")
 def test_no_env_var_access_in_core_layers():
     """os.environ / os.getenv must not appear in domain/, ports/, services/,
@@ -693,6 +704,7 @@ _HTTP_CLIENT_LAYERS = [
 ]
 
 
+@pytest.mark.slow
 @pytest.mark.requirement("REQ-ARCH-18")
 def test_no_http_client_libs_in_core_layers():
     """HTTP client libraries (aiohttp, httpx, requests) must not be imported
@@ -739,6 +751,7 @@ def _get_call_name(node: ast.Call) -> str | None:
     return None
 
 
+@pytest.mark.slow
 @pytest.mark.requirement("REQ-ARCH-19")
 def test_no_adapter_instantiation_outside_composition():
     """Adapter classes (*Adapter, Firestore*, Gcp*, Gcs*) must only be
@@ -778,6 +791,7 @@ _PLATFORM_FORMAT_RE = re.compile(
 _PLATFORM_FORMAT_LAYERS = ["src/agents", "src/services"]
 
 
+@pytest.mark.slow
 @pytest.mark.requirement("REQ-ARCH-20")
 def test_no_platform_formatting_in_agents_services():
     """Platform-specific formatting references (mrkdwn, MarkdownV2, Slack link
@@ -832,6 +846,7 @@ _COLLECTION_NAME_LAYERS = [
 ]
 
 
+@pytest.mark.slow
 @pytest.mark.requirement("REQ-ARCH-21")
 def test_no_collection_names_in_core_layers():
     """Firestore collection name literals (domain_facts_v2, sessions, etc.)
@@ -869,6 +884,7 @@ def test_no_collection_names_in_core_layers():
 # TYPE_CHECKING imports are excluded (handled by _collect_imports).
 # ---------------------------------------------------------------------------
 
+@pytest.mark.slow
 @pytest.mark.requirement("REQ-ARCH-24")
 def test_agents_do_not_import_sibling_agents():
     """Agent files must not import from other agent files at runtime.
@@ -909,6 +925,7 @@ def test_agents_do_not_import_sibling_agents():
 # TYPE_CHECKING imports are excluded (handled by _collect_imports).
 # ---------------------------------------------------------------------------
 
+@pytest.mark.slow
 @pytest.mark.requirement("REQ-ARCH-22")
 def test_services_do_not_import_other_services():
     """services/ files must not import from other services/ files.
@@ -959,6 +976,7 @@ def test_services_do_not_import_other_services():
 # are allowed.
 # ---------------------------------------------------------------------------
 
+@pytest.mark.slow
 @pytest.mark.requirement("REQ-ARCH-23")
 def test_adapters_do_not_import_sibling_adapter_implementations():
     """Adapter *_adapter.py files must not import other *_adapter.py files.
@@ -1043,6 +1061,7 @@ def test_handlers_do_not_import_ports_directly():
 # incident — background task starvation traced to blocking calls in async paths).
 # ---------------------------------------------------------------------------
 
+@pytest.mark.slow
 @pytest.mark.requirement("REQ-ARCH-26")
 def test_no_time_sleep_in_async_functions():
     """time.sleep() must not be called inside async def — use asyncio.sleep()."""
@@ -1079,6 +1098,7 @@ def test_no_time_sleep_in_async_functions():
 # tooling. Every caught exception must be at minimum logged at debug level.
 # ---------------------------------------------------------------------------
 
+@pytest.mark.slow
 @pytest.mark.requirement("REQ-ARCH-27")
 def test_no_silent_exception_swallowing():
     """except blocks must not consist solely of pass — log before swallowing."""
@@ -1116,6 +1136,7 @@ _LOGGING_GETLOGGER_LAYERS = [
 ]
 
 
+@pytest.mark.slow
 @pytest.mark.requirement("REQ-ARCH-28")
 def test_no_direct_logging_getlogger_in_core_layers():
     """domain/, ports/, services/, agents/, handlers/ must not use logging.getLogger().
@@ -1155,6 +1176,7 @@ def test_no_direct_logging_getlogger_in_core_layers():
 # only in main.py and job_main.py. Any use inside src/ is a latent runtime error.
 # ---------------------------------------------------------------------------
 
+@pytest.mark.slow
 @pytest.mark.requirement("REQ-ARCH-29")
 def test_no_asyncio_run_in_src():
     """asyncio.run() must not appear in src/ — only allowed in main.py / job_main.py."""
@@ -1194,6 +1216,7 @@ _AGENT_OUTSIDE_AGENTS_WHITELIST = {
 }
 
 
+@pytest.mark.slow
 @pytest.mark.requirement("REQ-ARCH-30")
 def test_no_agent_classes_outside_agents_layer():
     """*Agent classes must only be defined in src/agents/ — not in other layers."""
@@ -1222,6 +1245,7 @@ def test_no_agent_classes_outside_agents_layer():
 # exception instead. assert is appropriate in tests/ only.
 # ---------------------------------------------------------------------------
 
+@pytest.mark.slow
 @pytest.mark.requirement("REQ-ARCH-31")
 def test_no_assert_in_src():
     """assert statements must not appear in src/ — use explicit raise for runtime validation."""

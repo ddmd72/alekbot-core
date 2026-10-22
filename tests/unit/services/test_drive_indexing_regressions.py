@@ -185,6 +185,7 @@ async def test_resync_in_the_middle_of_the_onboarding_enumeration():
     assert {i for (_, i) in w.repo.records} == set(ids[1:])
 
 
+@pytest.mark.slow
 async def test_folder_growing_past_the_threshold_through_delta_becomes_dense():
     w = World(page_size=200)
     dump = w.drive.add("mirror", folder=True)

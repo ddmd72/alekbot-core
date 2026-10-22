@@ -54,6 +54,7 @@ def _echo_early_in_greeting():
     return events
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_sustained_speech_early_in_the_greeting_neither_interrupts_nor_is_answered():
     session, clear = await _call(_echo_early_in_greeting())
@@ -64,6 +65,7 @@ async def test_sustained_speech_early_in_the_greeting_neither_interrupts_nor_is_
     assert session.request_response.await_count == 1  # the greeting only, no second greeting
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_without_a_guard_the_same_speech_interrupts_the_greeting():
     session, _ = await _call(_echo_early_in_greeting(), greeting_guard_s=0.0)
@@ -71,6 +73,7 @@ async def test_without_a_guard_the_same_speech_interrupts_the_greeting():
     session.cancel_response.assert_awaited_once()
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_speech_after_the_guard_interrupts_the_greeting():
     async def events():
