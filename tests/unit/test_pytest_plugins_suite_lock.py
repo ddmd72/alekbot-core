@@ -157,3 +157,18 @@ def test_a_timeout_that_is_not_a_number_is_a_usage_error(pytester, monkeypatch):
     monkeypatch.setenv("PYTEST_LOCK_TIMEOUT_S", "soon")
     result = _run(pytester)
     assert result.ret == pytest.ExitCode.USAGE_ERROR
+
+
+def test_a_lock_file_the_user_cannot_open_is_reported_and_the_run_goes_on(pytester, monkeypatch, tmp_path):
+    real_open = os.open
+    lock_file = str(tmp_path / "suite.lock")
+
+    def deny(path, flags, mode=0o777):
+        if str(path) == lock_file:
+            raise PermissionError(13, "Permission denied", path)
+        return real_open(path, flags, mode)
+
+    monkeypatch.setattr(suite_lock.os, "open", deny)
+    result = _run(pytester)
+    result.assert_outcomes(passed=3)
+    assert "running without the lock" in _everything(result)

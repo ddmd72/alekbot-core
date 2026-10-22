@@ -47,13 +47,14 @@ plain unauthenticated `curl http://localhost:8080/worker ...` works with no toke
 ## Commands
 
 ```bash
-make check             # CI gate: ruff lint + mypy --strict (domain/ports) + unit/architecture tests
+make check             # Local pre-commit gate: ruff lint + mypy --strict (domain/ports) + unit/architecture tests, no slow tests, no coverage
 make typecheck         # mypy --strict on src/domain + src/ports only
 make check-types       # mypy (lenient) on src/adapters — informational, prints an error count, never fails
 make test              # All tests
 make test-unit         # Unit tests
 make test-affected     # Inner loop: testmon-selected tests + the always-run `datafile` set (seconds on a small diff)
-make ci                # PR job: lint + typecheck + the unit suite once with slow tests, data-file audit, coverage gate + offline G2
+make ci                # PR job (what CI runs): lint + typecheck + the unit suite once with slow tests, data-file audit, coverage gate + offline G2
+make test-arch         # The hexagonal layering tests (slow-marked, so not in `make check`): run after touching imports across layers
 make test-integration  # Integration tests
 make test-e2e-all      # E2E all agents
 make deploy            # Build + deploy to Cloud Run (single live environment)
@@ -64,8 +65,8 @@ make fetch-logs [K=300] # Pull last K logs to alek_debug.log (grep locally — s
 
 Lint + format via `ruff` (`make lint` / `make format`, config in `ruff.toml`). `make check` runs
 `ruff check src/` and `mypy --strict` on `src/domain` + `src/ports` (`mypy.ini`; adapters stay
-informational, `mypy-adapters.ini`, see `decisions/mypy_scoped_rollout.md`) before the unit suite, and CI (`.github/workflows/ci.yml`) runs `make check` on
-every push/PR (posting ✅/❌ to Slack). The full unit/architecture suite (~13 300 tests) is green
+informational, `mypy-adapters.ini`, see `decisions/mypy_scoped_rollout.md`) before the unit suite; it is the local pre-commit gate. CI (`.github/workflows/ci.yml`) runs
+`make ci` (the same plus slow tests and the coverage gate) on every push/PR (posting ✅/❌ to Slack). The full unit/architecture suite (~13 300 tests) is green
 and **safe to run in full** (any historical "don't run the full suite" warning was a since-fixed
 chunker infinite loop, not a standing hazard). `make test-unit` / `make check` run it in parallel
 via pytest-xdist (`-n auto`; cap with `PYTEST_WORKERS=6`): ~1:34 on a 12-core Mac vs ~5:00
@@ -79,7 +80,7 @@ every full run then failed and was re-run. They run only via `make test-timing`:
 job after a merge to `main` (never on a PR), or by hand. A new test with a time threshold gets the marker;
 never put timing tests back into `make check`, and never re-run a suite because a timing test failed.
 **Slow tests, the data-file set and the per-test budget (P1, 2026-10-22).** `@pytest.mark.slow` mirrors `timing`: a
-test over the 1 s per-test budget (setup + call + teardown, measured with coverage on) is skipped unless `RUN_SLOW_TESTS=1`,
+test over 0.5 s with coverage on (setup + call + teardown; half the 1 s CI budget, for headroom) is skipped unless `RUN_SLOW_TESTS=1`,
 which `make ci` sets; so `make check` stays fast and `make ci` runs everything once. The budget itself is enforced only
 on CI: the PR job sets `PYTEST_DURATION_BUDGET_S=1.0` and the run fails, listing the offenders slowest first, when an
 unmarked test exceeds it (a loaded laptop would give the false failures `timing` removed; locally `--durations=25` is an

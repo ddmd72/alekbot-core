@@ -7,6 +7,7 @@ xdist worker), and waits while another session holds it, printing the holder (pi
 
 Large = `-n` given, or a collection of at least LARGE_SESSION_ITEMS tests (checked at collection finish).
 Env: `PYTEST_SUITE_LOCK=0` disables it; `PYTEST_LOCK_TIMEOUT_S` (default 1800) is the longest wait.
+A lock file the user cannot open at all (owned by another user, mode 0600) is reported and the run goes on without it.
 Test knobs: `PYTEST_SUITE_LOCK_FILE` (lock path), `PYTEST_LOCK_REPORT_S` (default 30), `PYTEST_LOCK_POLL_S` (default 0.5).
 """
 
@@ -132,6 +133,9 @@ class SuiteLockPlugin:
                 _float_env("PYTEST_LOCK_POLL_S", DEFAULT_POLL_S),
                 say,
             )
+        except PermissionError as error:
+            # A lock file owned by another user with mode 0600 can be neither written nor locked: run without it.
+            say(f"[suite lock] cannot open {self.lock.path} ({error.strerror or error}); running without the lock")
         except TimeoutError as error:
             pytest.exit(str(error), returncode=int(pytest.ExitCode.INTERRUPTED))
 

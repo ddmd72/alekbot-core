@@ -60,6 +60,8 @@ def test_bundled_place_forms(index, lat, lon, expected):
     assert place.name == index.lookup(lat, lon)
 
 
+@pytest.mark.datafile
+@pytest.mark.slow
 def test_a_small_place_names_its_large_neighbour(index):
     place = index.place(41.2351, 1.8119)             # Sitges, ~30 000 people, 35 km from Barcelona's suburbs
     assert place is not None and place.name.startswith("Sitges")

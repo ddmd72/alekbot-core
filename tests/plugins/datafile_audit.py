@@ -8,8 +8,9 @@ With env `PYTEST_DATAFILE_AUDIT=1` this plugin attributes, per test phase (setup
   - every `open` of a file under the rootdir that is not made by the import machinery or by pytest itself, and
   - every process spawn (`subprocess.Popen`, `os.posix_spawn`, `os.exec*`, `os.fork`, `os.system`, `os.spawn*`),
 and at the end of the run fails when such a test lacks the `datafile` marker. Reads made while a test module is
-collected (module-level code, imports of data-reading modules) belong to every test of that module. Marked tests that
-touched nothing are listed as stale (informational). Unset: this plugin does nothing.
+collected (module-level code, imports of data-reading modules) belong to every test of that module. Marks that
+touched nothing are listed as stale (informational): per test for a test's own mark, per module ("0 of N tests")
+for a module-level mark. Unset: this plugin does nothing.
 
 Mechanics: one `sys.addaudithook` per process (it cannot be removed), a fast path for events and paths it ignores, a
 stack walk only for rootdir paths. Findings travel from xdist workers to the controller in `report.user_properties`.
@@ -29,6 +30,7 @@ import pytest
 
 ENV_AUDIT = "PYTEST_DATAFILE_AUDIT"
 PROP = "datafile_audit"
+MARK_PROP = "datafile_audit_mark"  # "own" (decorator on the test or its class) | "inherited" (module pytestmark) | ""
 MARKER = "datafile"
 MAX_ENTRIES = 40  # per owner; the report prints a few, the set is only for "is it empty"
 
@@ -43,7 +45,13 @@ _SPAWN_EVENTS = frozenset(
         "os.spawn",
     }
 )
-_IGNORED_DIRS = frozenset({"__pycache__", ".git", "node_modules", ".pytest_cache", ".mypy_cache", ".ruff_cache"})
+_IGNORED_DIRS = frozenset(
+    {
+        "__pycache__", ".git", "node_modules", ".pytest_cache", ".mypy_cache", ".ruff_cache",
+        # a virtualenv or tox env inside the checkout is not repo data
+        ".venv", "venv", "site-packages", "dist-packages", ".tox", ".nox",
+    }
+)
 _IGNORED_NAME_PREFIXES = (".testmondata", ".coverage")
 _PYTEST_FAMILY = frozenset(
     {
@@ -249,6 +257,13 @@ def _install_hook() -> None:
         _hook_installed = True
 
 
+def _mark_kind(item: pytest.Item) -> str:
+    """Decided where the item lives (a worker, under xdist): `keywords` also hold node names and parametrize ids."""
+    if item.get_closest_marker(MARKER) is None:
+        return ""
+    return "own" if any(mark.name == MARKER for mark in item.own_markers) else "inherited"
+
+
 class DataFileAudit:
     def __init__(self, root: str, is_worker: bool) -> None:
         self.recorder = Recorder(root)
@@ -257,10 +272,12 @@ class DataFileAudit:
         # controller side
         self._found: Dict[str, _Findings] = {}
         self._marked: set = set()
+        self._own_mark: set = set()
         self._skipped: set = set()
         self._seen: List[str] = []
         self.flagged: List[Tuple[str, _Findings]] = []
-        self.stale: List[str] = []
+        self.stale: List[str] = []  # own-marked tests that touched nothing
+        self.stale_modules: List[Tuple[str, int]] = []  # module-marked modules where no test touched data: (module, n)
 
     # -- both sides: recording -----------------------------------------------------------------------------------
 
@@ -287,6 +304,8 @@ class DataFileAudit:
         del outcome
 
     def _phase(self, item: pytest.Item, when: str):
+        if when == "setup":
+            item.user_properties.append((MARK_PROP, _mark_kind(item)))
         self.recorder.begin("test")
         yield
         found = self.recorder.end()
@@ -318,13 +337,15 @@ class DataFileAudit:
         if node not in self._found:
             self._found[node] = _Findings()
             self._seen.append(node)
-        if MARKER in report.keywords:
-            self._marked.add(node)
         if report.skipped:
             self._skipped.add(node)
         for key, value in report.user_properties:
             if key == PROP:
                 self._found[node].update(_Findings.load(value))
+            elif key == MARK_PROP and value:
+                self._marked.add(node)
+                if value == "own":
+                    self._own_mark.add(node)
 
     def pytest_sessionfinish(self, session: pytest.Session, exitstatus: int) -> None:
         if self.is_worker:
@@ -335,8 +356,13 @@ class DataFileAudit:
             found = self._found[node]
             if found and node not in self._marked:
                 self.flagged.append((node, found))
-            elif not found and node in self._marked:
+            elif not found and node in self._own_mark:
                 self.stale.append(node)
+        by_module: Dict[str, List[bool]] = {}
+        for node in self._seen:
+            if node in self._marked and node not in self._own_mark and node not in self._skipped:
+                by_module.setdefault(node.split("::")[0], []).append(bool(self._found[node]))
+        self.stale_modules = [(m, len(v)) for m, v in by_module.items() if not any(v)]
         if self.flagged and session.exitstatus == pytest.ExitCode.OK:
             session.exitstatus = pytest.ExitCode.TESTS_FAILED
 
@@ -362,11 +388,19 @@ class DataFileAudit:
                 "testmon cannot select these: add @pytest.mark.datafile (module-level `pytestmark` when most tests "
                 "of the module need it) -- tests/CLAUDE.md."
             )
-        if self.stale:
-            terminalreporter.section(f"datafile-marked tests that touched no repo file and spawned nothing ({len(self.stale)})")
+        if self.stale or self.stale_modules:
+            terminalreporter.section(
+                f"datafile marks that touched no repo file and spawned nothing "
+                f"({len(self.stale)} tests, {len(self.stale_modules)} modules)"
+            )
+            for module, count in self.stale_modules:
+                terminalreporter.write_line(f"module {module}: 0 of {count} marked tests touched data")
             for node in self.stale:
                 terminalreporter.write_line(node)
-            terminalreporter.write_line("Informational: the marker may be stale and the set can shrink.")
+            terminalreporter.write_line(
+                "Informational: the marker may be stale and the set can shrink. A module-level mark is listed only "
+                "when none of its tests touched anything."
+            )
 
 
 def pytest_configure(config: pytest.Config) -> None:

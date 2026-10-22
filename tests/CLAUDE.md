@@ -46,7 +46,7 @@ class TestMyService:
 
 ## Markers, budget and the machine lock (P1, `tests/plugins/`)
 
-- **`@pytest.mark.slow`** — the test takes over 1 s (setup + call + teardown, with coverage on). Skipped unless
+- **`@pytest.mark.slow`** — the test takes over 0.5 s with coverage on (setup + call + teardown; half the 1 s CI budget, so CI does not flake). Skipped unless
   `RUN_SLOW_TESTS=1`; `make ci` sets it. Put it on the test, or `pytestmark` when the cost is a module- or class-scoped
   fixture (under xdist whichever test uses the fixture first on a worker pays, so mark all its users). Do not mark a test
   slow to get a green run before asking whether it can be fast.
@@ -62,6 +62,8 @@ class TestMyService:
   Reads made when a test module is collected (module-level code, imports of modules that read data) count for every test
   of that module; import-machinery reads, pytest's own reads, source lines read to format a traceback or a warning, and
   lazy imports inside a test do not. Marked tests that touched nothing are listed as stale (informational).
+- **What the audit cannot see:** directory listings (`glob`, `iterdir`), `exists()`/`stat()` checks, and reads made by stray
+  background threads. A test whose input is such a thing needs `datafile` by hand.
 - **One full suite at a time** — a session with `-n`, or with 2000+ tests, takes a `flock` on
   `$TMPDIR/alekbot-pytest-suite.lock` (`tests/plugins/suite_lock.py`), prints the holder every 30 s while it waits and
   gives up after `PYTEST_LOCK_TIMEOUT_S` (1800). `PYTEST_SUITE_LOCK=0` disables it. Tests that run an inner pytest through

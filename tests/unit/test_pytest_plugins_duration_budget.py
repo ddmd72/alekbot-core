@@ -109,3 +109,23 @@ def test_under_xdist_the_controller_sums_the_workers_reports(pytester, monkeypat
     out = result.stdout.str()
     assert "test_inner.py::test_sleepy" in out
     assert "0.05 s budget (1)" in out
+
+
+def test_the_listing_shows_the_setup_call_teardown_split(pytester, monkeypatch):
+    monkeypatch.setenv("PYTEST_DURATION_BUDGET_S", "0.05")
+    source = (
+        "import time\nimport pytest\n\n"
+        "@pytest.fixture\ndef heavy():\n    time.sleep(0.12)\n    yield\n\n"
+        "def test_setup_heavy(heavy):\n    pass\n"
+    )
+    out = _run(pytester, source).stdout.str()
+    line = next(line for line in out.splitlines() if "test_setup_heavy" in line)
+    assert "setup 0.1" in line and "call 0.00" in line and "teardown 0.00" in line
+
+
+def test_a_parametrize_id_called_slow_is_not_the_marker(pytester, monkeypatch):
+    monkeypatch.setenv("PYTEST_DURATION_BUDGET_S", "0.05")
+    source = "import time\nimport pytest\n\n@pytest.mark.parametrize('kind', ['slow', 'timing'])\ndef test_sleepy(kind):\n    time.sleep(0.12)\n"
+    result = _run(pytester, source)
+    assert result.ret == pytest.ExitCode.TESTS_FAILED
+    assert "0.05 s budget (2)" in result.stdout.str()
