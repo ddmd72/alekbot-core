@@ -281,6 +281,7 @@ async def _run_job() -> None:
             second_pass=result.get("second_pass", False),
             channel_id_override=origin_channel_id,
             platform_override=origin_platform,
+            report_dedup_id=context.get("job_id"),
         )
         if handed_off is False:  # the report task could not be enqueued (swallowed inside)
             raise RuntimeError("report task not enqueued")
