@@ -57,6 +57,7 @@ from ..domain.drive_index_planner import month_key
 from ..domain.drive_indexing_status import DriveIndexingStatus
 from ..domain.drive_keys import fetch_batches, name_match_v2, query_concepts, query_name_keys_v2
 from ..domain.drive_match import Concept, KeyFamily, MatchTier, QueryConcepts
+from ..domain.drive_search_state import SearchLine, search_line
 from ..domain.drive_search_texts import ACCESS_NOTE_FILE, ACCESS_NOTE_FOLDER
 from ..domain.drive_search import (
     INACCESSIBLE_COUNTER, MAX_CHAIN_DEPTH, REFERENCE_REMINDER, wrap_untrusted, NOT_READ_YET_COUNTER, STATUS_AMBIGUOUS_FOLDER, STATUS_FOLDER_NOT_FOUND, STATUS_OK, UNREAD_COUNTER,
@@ -329,6 +330,14 @@ class DriveSearchService:
             f"visible={stats.visible} filtered={stats.filtered} collapsed={stats.collapsed} "
             f"returned={stats.returned} building={result.envelope.building} ms={ms}")
         return result
+
+    async def search_state(self, user_id: str) -> SearchLine:
+        """The drive specialist's `search` line (DRIVE_SPECIALIST_RFC §5.3): the same flag, sync state and connection a
+        search reads first, read now and in parallel; no stream runs."""
+        profile, state, connection = await asyncio.gather(
+            self._users.get_user(user_id), self._repo.get_sync_state(user_id), self._drive.connection(user_id))
+        enabled = bool(profile is not None and profile.config.drive_indexing_enabled)
+        return search_line(enabled, state, connection, self._clock())
 
     async def _search(self, user_id: str, request: DriveSearchRequest, stats: _Stats) -> DriveSearchResult:
         # §10.1 step 0: the flag, the sync state and the credentials, all read now, in parallel.
