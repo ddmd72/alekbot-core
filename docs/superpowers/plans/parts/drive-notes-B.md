@@ -5,10 +5,10 @@
 > feature branch `feat/drive-notes`, after part A's tasks (it reads A's composition, §2) and before part C's (C builds on
 > B's record fields, entry (a) and the tick accumulator, §2).
 
-**Status: PLAN ONLY, verified, revised after the part B review** (`.superpowers/sdd/drive-notes/review-part-B.md` and
-the arbiter's rulings). Every code block below is `git diff cef8f147 d17da803 -- <file>` on `plan/drive-notes-b`
+**Status: PLAN ONLY, verified, revised after the part B review and re-review**
+(`.superpowers/sdd/drive-notes/review-part-B.md`, `rereview-part-B.md` and the arbiter's rulings of both rounds). Every code block below is `git diff cef8f147 ff98c9e8 -- <file>` on `plan/drive-notes-b`
 (worktree `alekbot-core-npb`, base `cef8f147`, **local branch: keep it until the build has taken its files**), where it
-compiles, passes its new tests and `make check` (§7). Executing a task means `git checkout d17da803 -- <its paths>`
+compiles, passes its new tests and `make check` (§7). Executing a task means `git checkout ff98c9e8 -- <its paths>`
 (each task names them) or applying its hunks, then running its done-criteria; nothing is designed anew.
 - Agents write code and tests only: no cloud, no gcloud, no Firestore write, no paid model call, no deploy. Owner steps
   are **[OWNER]**.
@@ -58,17 +58,20 @@ Not in B: the tool, skill `drive-file-notes`, receipt, Smart wiring and the Driv
 | Invariant pins unchanged (`index_tables_digest`, `golden_digest`, capture, scene) | no key family added; note constants outside the digests; `RecordKeyInputs` note fields default empty | `tests/unit/domain/test_drive_keys_tables.py` passes unchanged |
 | Kill switch off leaves nothing half-done (RFC §3.6; review Important 2) | the tick with no store saves `notes_merge_version = 0` (also behind a closed gate); on again, the §5.5 re-read merges what was created meanwhile | `::test_the_kill_switch_off_and_on_merges_the_records_created_meanwhile`, `::test_the_kill_switch_behind_a_closed_gate_saves_the_zero_version` |
 | A code rollback needs no manual step (arbiter ruling 2) | `notes_tick_at` stamped by every notes step; `last_success_at` after it → `notes_merge_version = 0` → the §5.5 re-read | `::test_a_tick_by_code_without_notes_forces_a_full_re_read`, `::test_a_normal_tick_sequence_never_re_reads` |
-| No card vector keeps a removed note while no due loop follows (review Important 3) | `_merge_notes(inline=gated or not state.round_complete)` → `_inline_cards` | `::test_an_incomplete_round_embeds_the_changed_card_at_once[False/True]`, the closed-gate tests |
+| No card vector keeps a removed note while no due loop follows (review Important 3) | `_merge_notes(inline=gated or not state.round_complete)` → `_inline_cards` (existing cards only) | the closed-gate tests, `::test_an_erase_reaches_the_card_while_observe_uses_every_start_budget`, `::test_the_notes_first_step_never_embeds_a_first_card` |
+| The notes step never starves (re-review item 4) | `notes_first = not state.round_complete`, read before `_observe`: the one notes step runs before `_observe_nudge` / `_observe`, else after observe as before | `::test_an_erase_reaches_the_card_while_observe_uses_every_start_budget`, `::test_the_notes_step_runs_once_per_tick_on_either_path` |
 
 ### 1.2 Where the notes step sits, and the deadline arithmetic
 
-`_run_spending`: gate → lease → marks/mirror roots → nudge → **observe → notes step** → work-off (`_work_off`: the
-mirror reserve decision via `_mirror_ready`, sweep, transcript cheap steps, due loop with enrichment, extraction,
-upgrade pass, cap releases, **mirror step last**) → `_has_more` → save. The notes step:
+`_run_spending`: gate → lease → marks/mirror roots → [**notes step**, when the round was left incomplete] → nudge →
+observe → [**notes step**, otherwise] → work-off (`_work_off`: the mirror reserve decision via `_mirror_ready`, sweep,
+transcript cheap steps, due loop with enrichment, extraction, upgrade pass, cap releases, **mirror step last**) →
+`_has_more` → save. Exactly one notes step per tick (re-review item 4: a round left incomplete means the last tick's
+observe used the start budget, and the step after it — which needs `time_left()` — never ran). The notes step:
 - starts only while `budget.time_left()` (elapsed < `TICK_START_BUDGET` = 480 s);
-- starts no call later than `NOTE_STEP_S` = 60 s after it began: the count, the page read, the merge commit, every
-  stub delete, every inline card batch (`EMBED_IN_FLIGHT` cards) and every note embedding check `budget.elapsed() <
-  stop` first (review Important 1; `::test_a_slow_embedding_ends_the_window_and_no_further_call_starts`,
+- starts no stub delete, inline card batch (`EMBED_IN_FLIGHT` cards) or note embedding later than `NOTE_STEP_S` = 60 s
+  after it began (each checks `budget.elapsed() < stop` first); **a bounded number of calls may start after
+  `NOTE_STEP_S`** — the merge's record read and commit, a card drop's read and commit (re-review item 1's precision) (review Important 1; `::test_a_slow_embedding_ends_the_window_and_no_further_call_starts`,
   `::test_a_stub_past_the_window_holds_the_watermark_and_the_next_tick_finishes`). Work left over stays pending: a
   stub holds the watermark before it, a note stays `embedding_pending` or in the old space, a card is dropped to card
   work. One call in flight is covered by `FILE_START_MARGIN_S` = 60 s (an inline card batch is `EMBED_IN_FLIGHT`
@@ -84,6 +87,12 @@ TOTAL 480 + max(notes 60+60, enrichment ENRICH_FILE_BUDGET_S 300 + 60) + TRANSCR
      + MIRROR_RESERVE_S 45 + FILE_START_MARGIN_S 60
 = 480 + 360 + 120 + 360 + 45 + 60 = 1425 s < TICK_DEADLINE_S 1800 s
 ```
+
+**Notes first** (an incomplete round): the step starts at about 0 s (after the marks and mirror-roots reads) and ends
+by `NOTE_STEP_S` plus the bounded calls above, far inside the 480 s start budget; observe and every later step keep
+their limits measured from `budget.started` (observe while `time_left()`, the due loop and enrichment likewise,
+extraction capped at `last_start` = 1440 s, the mirror at 1740 s). So the early step only spends start budget the
+later steps would have spent: the sum below is unchanged, and there is still one notes step.
 
 The extraction step's and the mirror's windows are capped against the deadline itself (`extraction_stop`'s `last_start`,
 `mirror_stop`'s `TICK_DEADLINE_S − FILE_START_MARGIN_S`), so even a later start keeps them inside it. The new test
@@ -146,10 +155,10 @@ renderer: C's `drive_note_render` uses it for the deleted-files note line; label
 - `_TickNotes` (a tick-scoped `ContextVar` `_TICK_NOTES`, set in `_run` and `_notes_gated`) with `drive_id`, `count`,
   `rescan`, `more` and B's fold `onto(state)`. **Extension point for C**, named in the code: the comment
   `# -- EXTENSION POINT (part C, S3)` in `_TickNotes` (C adds `last_seen_at`, `pending`, `moved`, `dropped_logged`
-  there) and the module function `_fold_note_checks(notes, state) -> state` (B's body returns `state`; C writes its
-  single fold-on-save there, cap `NOTE_CHECKS_MAX`). `_fold_tick_notes` = `onto` then `_fold_note_checks`, applied by
-  `_notes_onto(...)` at the final save and at all three error-path saves of `_run_spending` and by `_notes_gated`
-  (RFC §3.4); C may also fold at `_observe`'s per-page saves if it collects checks there.
+  there). **One fold site per part (arbiter round 2, C's design):** C's single fold-on-save is its own
+  `_note_checks_onto` in `_save_state` (every save, cap `NOTE_CHECKS_MAX`); B's `_fold_tick_notes` is `notes.onto`
+  alone, applied by `_notes_onto(...)` at the final save and the three error-path saves of `_run_spending` and by
+  `_notes_gated`. B has no `_fold_note_checks`.
 - `_notes_count(user_id, tick)` (the per-tick count gate) and `self._notes` (`Optional[DriveNoteRepository]`, the
   constructor's new `notes=` keyword).
 - Entry (a) `_lookup_notes` and `_reactivated` (C's round end calls `self._notes.archive`; entry (a) undoes it on a
@@ -179,7 +188,27 @@ renderer: C's `drive_note_render` uses it for the deleted-files note line; label
   composition root may), only with the switch on.
 - Nothing else: B reads the note store through the frozen port and `DriveNoteService.note_for_item` only.
 
-### 2.3 B needs from C
+### 2.3 Assembly checklist (the re-review's entries 1-8, verbatim)
+
+1. Replace B's stub `src/composition/drive_note_setup.py` with A's module. B imports only `DRIVE_NOTES_ENABLED_ENV` and `drive_notes_switch_on`, which are identical in A. If A adds `build_drive_note_repository`, `indexer_main.py` uses it instead of constructing `FirestoreDriveNoteRepository` inline.
+2. C's step 5 must patch B's current indexer lines (`notes_on = drive_notes_switch_on(...)` and `notes = ... if notes_on else None`). The `build_drive_note_repository(..., enabled=...)` call it names no longer exists. Keep one store.
+3. Fold sites: keep exactly one. Either C's `_note_checks_onto` in `_save_state` stays (C's design, every save) and B's `_fold_note_checks` stub is deleted, leaving `_fold_tick_notes` = `notes.onto`. Or B's stub calls `notes.checks_onto(state)` and C's `_save_state` hook is dropped. Never both.
+4. C's step 1 is now a no-op, since the constant is already in B with the same value. C's step 2 note ("`legal_admin` as written") is stale, because B now renders "legal admin". C's tests compare through the function, and none hard-codes an underscore.
+5. C's step 6, the §7.5 hook, goes into B's `_lookup_notes` (svc:1283) and `_merge_notes` (svc:1420).
+6. Apply the reviewer's edits to the four expected-risk tests exactly as plan Task 1 and Task 10 give them. The state fixture has 9 fields, including `notes_tick_at=T - timedelta(minutes=1)`. The record fixture edit is one joint decision for A, B and C.
+7. Add to the RFC doc pass, beyond plan §6:
+   - the notes-first rule from item 4;
+   - the corrected "bounded calls after `NOTE_STEP_S`" wording;
+   - the stub residual from item 5;
+   - the kill-switch zero being carried only by the final save, unless the `_run`-start fix is taken.
+8. Keep or push `plan/drive-notes-b` until the build has taken its files. Then run `make check` on the assembled branch: the only failures before the reviewer edits should be the four, and none after.
+
+State of these entries at `ff98c9e8`: entry 3 is decided — C's design, B's `_fold_note_checks` is deleted (arbiter
+round 2); entry 7's last item is moot — the `_run`-start fix is taken (the zero is applied before `_Saved`, so the error
+saves carry it). The line numbers in entry 5 are the re-review's (at `d17da803`): `_lookup_notes` and `_merge_notes` by
+name.
+
+### 2.4 B needs from C
 
 Nothing. Until C lands, an archived note is never merged (entry (b) clears a copy whose note is archived) and nothing
 archives one; the D9 invariant holds.
@@ -190,7 +219,7 @@ archives one; the D9 invariant holds.
 
 Order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10, then the docs tasks D1-D4. Each task: TDD (write the new tests, see
 them fail, apply the hunks, see them pass), `make check` green apart from the task's expected-risk tests (handed to the
-reviewer), commit. The hunks are `git diff cef8f147 d17da803 -- <file>` of the verified worktree (each file's whole change); each task's
+reviewer), commit. The hunks are `git diff cef8f147 ff98c9e8 -- <file>` of the verified worktree (each file's whole change); each task's
 **Source** line is the `git checkout` that takes its files and tests; a new module is shown
 whole.
 
@@ -203,7 +232,7 @@ non-string fields.
 **Files.** Modify `src/domain/drive_index.py`, `src/domain/drive_index_lean.py`, `src/domain/drive_index_planner.py`,
 `src/adapters/firestore_drive_index_repo.py`. (In-memory repository: nothing; it stores the dataclasses.)
 
-**Source.** `git checkout d17da803 -- src/domain/drive_index.py src/domain/drive_index_lean.py
+**Source.** `git checkout ff98c9e8 -- src/domain/drive_index.py src/domain/drive_index_lean.py
 src/domain/drive_index_planner.py src/adapters/firestore_drive_index_repo.py
 tests/unit/adapters/test_firestore_drive_index_notes_codec.py`
 
@@ -349,7 +378,7 @@ import `drive_note`).
 **Files.** Modify `src/domain/drive_index_params.py`, `src/domain/drive_note.py` (re-export only),
 `src/domain/drive_key_sources.py`, `src/domain/drive_keys.py`.
 
-**Source.** `git checkout d17da803 -- src/domain/drive_index_params.py src/domain/drive_note.py
+**Source.** `git checkout ff98c9e8 -- src/domain/drive_index_params.py src/domain/drive_note.py
 src/domain/drive_key_sources.py src/domain/drive_keys.py tests/unit/domain/test_drive_keys_owner_note.py`
 
 ```diff
@@ -709,7 +738,7 @@ provider), the note document's keys, the watermark's next start, the constants. 
 `effective_life_areas` live in `drive_key_sources` (Task 2: the keyer needs them and must not import this module) and
 are re-exported here.
 
-**Source.** `git checkout d17da803 -- src/domain/drive_note_merge.py tests/unit/domain/test_drive_note_merge.py`
+**Source.** `git checkout ff98c9e8 -- src/domain/drive_note_merge.py tests/unit/domain/test_drive_note_merge.py`
 
 **File.** Create `src/domain/drive_note_merge.py`, verbatim:
 
@@ -740,7 +769,7 @@ Public interface:
     NOTE_STORE_KEYS_VERSION                       that version ("{KEYS_VERSION}.{NOTE_KEYS_VERSION}")
     notes_query_start(state) -> (after, after_note_id)       where the notes step's next `changed_since` starts
     NOTE_MERGE_VERSION and the tick constants (§15): NOTE_PAGE, NOTE_WATERMARK_SKEW_S, NOTE_EMBED_PER_TICK,
-    NOTE_CHECKS_MAX, NOTE_AUDIT_EVERY, NOTE_AUDIT_SKIP_DAYS, NOTE_STEP_S, NOTE_LOOKUP_BATCH
+    NOTE_CHECKS_MAX, NOTE_AUDIT_EVERY, NOTE_AUDIT_SKIP_DAYS, NOTE_STEP_S, NOTE_STUB_HOLD_MAX, NOTE_LOOKUP_BATCH
 """
 from __future__ import annotations
 
@@ -769,6 +798,9 @@ NOTE_AUDIT_SKIP_DAYS = 7                    # §7.4 (S3)
 # one call (FILE_START_MARGIN_S), below an enrichment file's (ENRICH_FILE_BUDGET_S plus the margin) that the §7.1
 # deadline sum already holds, and nothing after it starts content work past the start budget: the sum is unchanged.
 NOTE_STEP_S = 60
+# A stub whose delete keeps failing holds the watermark (the notes after it wait); past this age it is logged and passed
+# (re-review item 5): it holds no content, and the notes more than a page behind it must not wait for good.
+NOTE_STUB_HOLD_MAX = timedelta(hours=24)
 NOTE_LOOKUP_BATCH = 30                      # §5.1 a: binding keys per `array-contains-any` (the repository batches too)
 # §3.1: the layout of a note document's stored `keys` (the keyer's and the note keyer's versions): a note whose
 # `keys_version` differs has its keys recomputed with `note_store_keys` (part C's deleted-files search)
@@ -853,9 +885,9 @@ def notes_query_start(state: DriveSyncState) -> Tuple[Optional[datetime], str]:
 
 __all__ = [
     "NOTE_AUDIT_EVERY", "NOTE_AUDIT_SKIP_DAYS", "NOTE_CHECKS_MAX", "NOTE_EMBED_PER_TICK", "NOTE_LOOKUP_BATCH",
-    "NOTE_MERGE_VERSION", "NOTE_PAGE", "NOTE_STEP_S", "NOTE_STORE_KEYS_VERSION", "NOTE_WATERMARK_SKEW_S", "NoteView",
-    "effective_doc_type", "effective_life_areas", "merged", "note_store_keys", "note_view", "notes_query_start",
-    "record_binding_key", "with_owner_note",
+    "NOTE_MERGE_VERSION", "NOTE_PAGE", "NOTE_STEP_S", "NOTE_STORE_KEYS_VERSION", "NOTE_STUB_HOLD_MAX",
+    "NOTE_WATERMARK_SKEW_S", "NoteView", "effective_doc_type", "effective_life_areas", "merged", "note_store_keys",
+    "note_view", "notes_query_start", "record_binding_key", "with_owner_note",
 ]
 ```
 
@@ -876,7 +908,7 @@ plain folder keeps its exact Slice 1 text without a note), the profile's doc typ
 (also with `owner=False`), `card_text(rec, *, owner=True)`; §6.2: `owner_note_line` / `note_line`.
 
 **File.** Modify `src/domain/drive_card.py`.
-**Source.** `git checkout d17da803 -- src/domain/drive_card.py tests/unit/domain/test_drive_card_owner_note.py`
+**Source.** `git checkout ff98c9e8 -- src/domain/drive_card.py tests/unit/domain/test_drive_card_owner_note.py`
 
 ```diff
 diff --git a/src/domain/drive_card.py b/src/domain/drive_card.py
@@ -1010,7 +1042,7 @@ files (lean `owner_note_id`), else the first shown copy as before.
 **Files.** Modify `src/domain/drive_tier_explain.py`, `src/domain/drive_search.py`, `src/domain/drive_tier_render.py`,
 `src/services/drive_search_service.py`.
 
-**Source.** `git checkout d17da803 -- src/domain/drive_tier_explain.py src/domain/drive_search.py
+**Source.** `git checkout ff98c9e8 -- src/domain/drive_tier_explain.py src/domain/drive_search.py
 src/domain/drive_tier_render.py src/services/drive_search_service.py
 tests/unit/domain/test_drive_tier_explain_owner_note.py tests/unit/services/test_drive_search_owner_note.py`
 
@@ -1234,17 +1266,21 @@ every call of the step inside `NOTE_STEP_S` (stub deletes, `_inline_cards` in `E
 embedding), leftovers held (a stub's watermark, `embedding_pending`, a dropped card); a failed stub delete holds the
 watermark (retried); `_merge_notes(inline=gated or not state.round_complete)`; the pass end read before the query;
 the changed page's notes in an old space moved; the kill switch off saves `notes_merge_version = 0`; `notes_tick_at`
-and the rollback detector; the named extension point for C (`_fold_note_checks`).
+and the rollback detector; the named extension point for C. After the re-review: the one notes step runs before
+observe when the round was left incomplete (`notes_first`); `_inline_cards` embeds only existing cards; the kill-switch
+zero is applied in `_run` before `_Saved`; a gated tick writes only when the step changed more than its stamp and pass
+end; a stub whose delete fails past `NOTE_STUB_HOLD_MAX` (24 h) is logged at ERROR and passed; `_fold_tick_notes` is
+`notes.onto` (C's fold lives in `_save_state`).
 
 **File.** Modify `src/services/drive_indexing_service.py` (and Task 1's `notes_tick_at` reader).
-**Source.** `git checkout d17da803 -- src/services/drive_indexing_service.py tests/unit/services/test_drive_indexing_notes.py`
+**Source.** `git checkout ff98c9e8 -- src/services/drive_indexing_service.py tests/unit/services/test_drive_indexing_notes.py`
 
 ```diff
 diff --git a/src/services/drive_indexing_service.py b/src/services/drive_indexing_service.py
-index 7983cbaf..d39d89ac 100644
+index 7983cbaf..7a6da706 100644
 --- a/src/services/drive_indexing_service.py
 +++ b/src/services/drive_indexing_service.py
-@@ -67,6 +67,20 @@ the work-off (after a complete round), only for a user whose transcription is on
+@@ -67,6 +67,22 @@ the work-off (after a complete round), only for a user whose transcription is on
  `MirrorHost`, within its own budgets and window (`_Budget.mirror_stop`). While the user has mirror work it can do now
  (`_mirror_ready`, Δ209, Δ217) the content classes, enrichment and extraction stop MIRROR_RESERVE_S earlier. Mirror work
  never asks for a continuation; its counters join the tick line (`mirror={...}`).
@@ -1253,19 +1289,21 @@ index 7983cbaf..d39d89ac 100644
 +DRIVE_NOTES_ENABLED kill switch is off, or nothing is wired; then none of this runs). The note store is the record; each
 +index record carries a copy (`drive_note_merge.with_owner_note`), written by two entries, both through `_commit`:
 +(a) `_lookup_notes`, in `_commit` itself, for every record the planner created (`note_lookup_due`): the note found by
-+its binding key is merged in the same write, an archived one re-activated first; (b) `_notes_step`, every tick after
-+observe and before the work-off: the notes changed since the watermark (`changed_since`, paged, the pair cursor kept in
++its binding key is merged in the same write, an archived one re-activated first; (b) `_notes_step`, once every tick,
++after observe and before the work-off — or before observe when the round was left incomplete (the last tick's observe
++used its start budget, so its step never ran): the notes changed since the watermark (`changed_since`, paged, the pair cursor kept in
 +the sync state) reconcile their records, an erase stub is deleted once its record's copy is cleared, then the vector
 +repair and the space pass re-embed note vectors. One note count per tick gates both (a user without notes pays one
 +read). The notes step also runs while the access gate is closed (the access-loss grace and the D30 rebuild gate,
 +`_notes_gated`), re-embedding the changed cards at once, so a cleared or erased note never outlives its owner's
 +command in a record copy, its keys or a card vector. A note-store failure never ends the tick: the step is skipped, a
 +lookup that failed resets the watermark (`_TickNotes.rescan`). The step starts only inside the start budget and stops
-+starting calls NOTE_STEP_S after it began, so the §7.1 deadline sum is unchanged (`drive_note_merge.NOTE_STEP_S`).
++starting its stub deletes, card batches and embeddings NOTE_STEP_S after it began (a bounded number of other calls may
++still start), so the §7.1 deadline sum is unchanged (`drive_note_merge.NOTE_STEP_S`).
  """
  from __future__ import annotations
  
-@@ -132,11 +146,16 @@ from ..domain.drive_index_planner import (
+@@ -132,11 +148,16 @@ from ..domain.drive_index_planner import (
      parent_scope, plan_observation, readme_read, reembed_in_space, reextraction_due, released, schedule,
      stale_versions, structure_stale, triage_due, triaged, with_card, with_retry, without_card,
  )
@@ -1277,13 +1315,13 @@ index 7983cbaf..d39d89ac 100644
  from ..domain.drive_mirror_render import MirrorStrings
 +from ..domain.drive_note import ONEDRIVE_PROVIDER_KEY, DriveNote, NoteState, binding_parts_of, note_embedding_text
 +from ..domain.drive_note_merge import (
-+    NOTE_EMBED_PER_TICK, NOTE_MERGE_VERSION, NOTE_PAGE, NOTE_STEP_S, NoteView, note_view, notes_query_start,
++    NOTE_EMBED_PER_TICK, NOTE_MERGE_VERSION, NOTE_PAGE, NOTE_STEP_S, NOTE_STUB_HOLD_MAX, NoteView, note_view, notes_query_start,
 +    record_binding_key, with_owner_note,
 +)
  from ..domain.language import LanguageCode
  from ..domain.ui_messages import UIMessage
  from ..domain.drive_profile import (
-@@ -173,6 +192,7 @@ from ..ports.content_extractor_port import ContentExtractorPort
+@@ -173,6 +194,7 @@ from ..ports.content_extractor_port import ContentExtractorPort
  from ..ports.document_profiler_port import DocumentProfilerPort
  from ..ports.drive_index_repository import DriveIndexRepository
  from ..ports.drive_mirror_repository import DriveMirrorRepository
@@ -1291,7 +1329,7 @@ index 7983cbaf..d39d89ac 100644
  from ..ports.embedding_service import EmbeddingService
  from ..ports.image_triage_port import ImageTriagePort
  from ..ports.language_service_port import LanguageServicePort
-@@ -511,6 +531,32 @@ class _Mirror:
+@@ -511,6 +533,33 @@ class _Mirror:
  
  # Per tick: None outside a tick or with no mirror repository wired (no root ids, no marks).
  _TICK_MIRROR: ContextVar[Optional[_Mirror]] = ContextVar("drive_tick_mirror", default=None)
@@ -1309,7 +1347,8 @@ index 7983cbaf..d39d89ac 100644
 +    rescan: bool = False
 +    more: bool = False
 +    # -- EXTENSION POINT (part C, S3): the archive checks' tick fields go here (`last_seen_at`, `pending`, `moved`,
-+    # `dropped_logged`), folded into the state by `_fold_note_checks` below, the one fold-on-save beside `onto`.
++    # `dropped_logged`). C folds them with its own single fold-on-save, `_note_checks_onto`, in `_save_state` (every
++    # save); B's fold stays `onto` alone (`_fold_tick_notes`). One fold site each, never a second.
 +
 +    def onto(self, state: DriveSyncState) -> DriveSyncState:
 +        """B's part of what every sync-state save of the tick carries (the error paths' saves included): a failed
@@ -1324,7 +1363,7 @@ index 7983cbaf..d39d89ac 100644
  # What makes the tick read the marked records again for its counters: it changed a marking itself (review of S1)
  _MARK_CHANGES = ("inaccessible", "inaccessible_folders", "inaccessible_rechecked", "access_regained")
  
-@@ -570,6 +616,7 @@ class DriveIndexingService:
+@@ -570,6 +619,7 @@ class DriveIndexingService:
                   mirror: Optional["DriveTranscriptMirror"] = None,
                   localization: Optional["LocalizationService"] = None,
                   language: Optional[LanguageServicePort] = None,
@@ -1332,7 +1371,7 @@ index 7983cbaf..d39d89ac 100644
                   clock: Callable[[], datetime] = _utcnow, monotonic: Callable[[], float] = time.monotonic) -> None:
          if mirror is not None and (mirror_repo is None or localization is None or language is None):
              raise ValueError("the transcript mirror step needs the mirror repository, the localization service and "
-@@ -609,6 +656,9 @@ class DriveIndexingService:
+@@ -609,6 +659,9 @@ class DriveIndexingService:
          # the step could not start (its UI language or strings unreadable), per user: the same ladder, held off the
          # reserve only (`_note_step_unavailable`; process memory only)
          self._mirror_step_holds: Dict[str, Tuple[int, datetime]] = {}
@@ -1342,7 +1381,7 @@ index 7983cbaf..d39d89ac 100644
          self._clock = clock
          self._monotonic = monotonic
          self._gate_checked: Dict[str, float] = {}
-@@ -649,8 +699,11 @@ class DriveIndexingService:
+@@ -649,8 +702,11 @@ class DriveIndexingService:
                  return await self._purge(user_id, state, action, enabled, summary, cont)
              if action is AccessAction.RECORD_LOSS:
                  if state.access_lost_at is None:
@@ -1355,7 +1394,7 @@ index 7983cbaf..d39d89ac 100644
                  return TickResult("access_lost")
              if MIGRATION_GATE_KEY not in state.applied_versions:
                  # D30: built by v1, never upgraded. No tick work until the owner's rebuild purges it; the fan-out
-@@ -663,6 +716,8 @@ class DriveIndexingService:
+@@ -663,6 +719,8 @@ class DriveIndexingService:
                  else:
                      self._migration_warned.add(user_id)
                      logger.warning(line)
@@ -1364,7 +1403,18 @@ index 7983cbaf..d39d89ac 100644
                  return TickResult("awaiting_migration")
              if action is AccessAction.RESUME_AFTER_REGAIN:
                  state = replace(state, access_lost_at=None)
-@@ -691,6 +746,8 @@ class DriveIndexingService:
+@@ -684,6 +742,10 @@ class DriveIndexingService:
+         budget = _Budget(started=self._monotonic(), monotonic=self._monotonic)
+         self._gate_checked[user_id] = budget.started   # the gate just read the flag
+         state = replace(state, continuation_enqueued_at=None)
++        if self._notes is None and state.notes_merge_version:
++            # the kill switch is off (DRIVE_FILE_NOTES_RFC §3.6): the zero merge version, applied before `_Saved`, so the
++            # error paths' saves carry it too and the first tick with the store on again re-reads every note
++            state = replace(state, notes_merge_version=0)
+         saved = _Saved(state)
+         models = _Models(state, saved=saved)
+         spend = _Spend(now, await self._repo.get_model_usage(user_id, month_key(now)),
+@@ -691,6 +753,8 @@ class DriveIndexingService:
          spend_token = _TICK_SPEND.set(spend)
          closed_token = _TICK_CLOSED.set(None)   # read inside the tick's error handling (_run_spending)
          mirror_token = _TICK_MIRROR.set(None)   # read at the start of _run_spending, inside its error handling
@@ -1373,7 +1423,7 @@ index 7983cbaf..d39d89ac 100644
          transcription = _Transcription(on=self._transcription_on(user_id))   # as the gate read it: kept for the tick
          if transcription.on:
              transcription.host = _TickHost(self, user_id, budget, models, summary, transcription)
-@@ -699,6 +756,7 @@ class DriveIndexingService:
+@@ -699,6 +763,7 @@ class DriveIndexingService:
              return await self._run_spending(user_id, state, nudge, now, enabled, budget, summary, cont, saved,
                                              models, spend, connection)
          finally:
@@ -1381,16 +1431,25 @@ index 7983cbaf..d39d89ac 100644
              _TICK_MIRROR.reset(mirror_token)
              _TICK_TRANSCRIPTION.reset(transcription_token)
              _TICK_CLOSED.reset(closed_token)
-@@ -765,6 +823,8 @@ class DriveIndexingService:
+@@ -762,9 +827,17 @@ class DriveIndexingService:
+             # the roots first, before any observation: a read error ends the tick (systemic), never "no roots" (Δ205)
+             _TICK_MIRROR.set(await self._start_mirror(user_id, state, connection))
+             _TICK_CLOSED.set(await self._start_marks(user_id, state))
++            # entry (b) of the note merge (DRIVE_FILE_NOTES_RFC §5.1 b), once per tick: after observe, before the
++            # work-off; but first when the round was left incomplete (read before `_observe` resets it), because then
++            # the last tick's observe used the start budget and its notes step never ran (re-review item 4)
++            notes_first = not state.round_complete
++            if notes_first:
++                state = await self._notes_step(user_id, state, budget, summary)
              if nudge is not None:
                  await self._observe_nudge(user_id, state, nudge, now, budget, summary)
              state = await self._observe(user_id, state, now, budget, summary, saved)
-+            # entry (b) of the note merge (DRIVE_FILE_NOTES_RFC §5.1 b): after observe, before the work-off
-+            state = await self._notes_step(user_id, state, budget, summary)
++            if not notes_first:
++                state = await self._notes_step(user_id, state, budget, summary)
              if state.round_complete:
                  state = await self._work_off(user_id, state, now, budget, summary, models)
              more = await self._has_more(user_id, state, now, upgrade_wrote=summary.get("upgraded", 0) > 0,
-@@ -789,9 +849,9 @@ class DriveIndexingService:
+@@ -789,9 +862,9 @@ class DriveIndexingService:
                                                      if not k.startswith(("profile_", "passages_", "coverage_"))},
                                                   **job_counts})
              progressed = any(v for k, v in summary.items() if k != "pages")
@@ -1403,7 +1462,7 @@ index 7983cbaf..d39d89ac 100644
              await self._save_state(state)
              transcription = _TICK_TRANSCRIPTION.get()
              self._log(user_id, "continued" if more else "done", summary, budget, models, spend,
-@@ -811,7 +871,8 @@ class DriveIndexingService:
+@@ -811,7 +884,8 @@ class DriveIndexingService:
          except DriveReauthRequired:
              flagged = await self._drive.flag_reconnect(user_id)
              logger.warning(f"[DriveIndex] refresh rejected for {user_id[:8]} (flag set now: {flagged})")
@@ -1413,7 +1472,7 @@ index 7983cbaf..d39d89ac 100644
              return TickResult("access_lost", summary, models.cost)
          except (DriveThrottled, LLMRateLimitError, LLMUnavailableError) as exc:
              delay = _backoff_s(state.systemic_failures)
-@@ -820,9 +881,9 @@ class DriveIndexingService:
+@@ -820,9 +894,9 @@ class DriveIndexingService:
                  delay = retry_after if state.systemic_failures == 0 else max(retry_after, delay)
              logger.warning(f"[DriveIndex] throttled for {user_id[:8]}: {exc}; continuing in {delay}s")
              cont.request(delay)
@@ -1426,7 +1485,7 @@ index 7983cbaf..d39d89ac 100644
              return TickResult("throttled", summary, models.cost)
          except Exception as exc:
              category = ErrorCategory.PROVIDER_ERROR if isinstance(exc, (DriveAccessDenied, ValueError)) \
-@@ -830,9 +891,9 @@ class DriveIndexingService:
+@@ -830,9 +904,9 @@ class DriveIndexingService:
              delay = _backoff_s(state.systemic_failures)
              logger.error(f"[DriveIndex] tick failed for {user_id[:8]}: {exc}; continuing in {delay}s", exc_info=True)
              cont.request(delay)
@@ -1439,7 +1498,7 @@ index 7983cbaf..d39d89ac 100644
              return TickResult("error", summary, models.cost)
  
      async def _counters(self, user_id: str, *, marked: Optional[Sequence[DriveIndexRecord]] = None,
-@@ -922,6 +983,9 @@ class DriveIndexingService:
+@@ -922,6 +996,9 @@ class DriveIndexingService:
                  raise _DriveSwitched()
              state = self._enter_epoch(state, page)
              state = replace(state, drive_id=page.drive_id or state.drive_id, root_item_id=page.root_item_id)
@@ -1449,7 +1508,7 @@ index 7983cbaf..d39d89ac 100644
              await self._apply(user_id, self._ctx(user_id, state, now), list(page.changes), budget, summary)
              state = replace(state, cursor=page.cursor)
              if page.complete:
-@@ -1097,6 +1161,7 @@ class DriveIndexingService:
+@@ -1097,6 +1174,7 @@ class DriveIndexingService:
          await self._recheck_gate(user_id)
          for item_id in sorted(collects or ()):
              await self._collect(user_id, item_id, None)
@@ -1457,7 +1516,7 @@ index 7983cbaf..d39d89ac 100644
          ctx = self._enrich_ctx()
          tctx = self._transcript_ctx()
          # every write's plans: the transcript job's (§27.3), then the keys, enrichment jobs and queue fields (§25.4.9)
-@@ -1162,6 +1227,363 @@ class DriveIndexingService:
+@@ -1162,6 +1240,377 @@ class DriveIndexingService:
                  logger.info(f"[DriveIndex] the transcript mirror root of {user_id[:8]} is back; root-loss mark cleared")
              mirror.gone_ids.discard(root_id)
  
@@ -1554,8 +1613,10 @@ index 7983cbaf..d39d89ac 100644
 +        change resets the watermark first (§5.5); so does a tick by code without notes support since the last notes
 +        step (`notes_tick_at` older than `last_success_at`: a rolled-back revision, plan Default B12), and the kill
 +        switch off saves `notes_merge_version = 0` for the same re-read when it is on again. A full page asks for a
-+        continuation. Starts only inside the start budget; no call of the step starts NOTE_STEP_S after it began
-+        (work left over stays pending: a stub's watermark, a note's `embedding_pending`, a card dropped to card work).
++        continuation. Starts only inside the start budget; past NOTE_STEP_S after it began no stub delete, card batch
++        or note embedding starts, and only a bounded number of calls may still start (the merge's record read and
++        commit, a card drop's read and commit); work left over stays pending: a stub's watermark, a note's
++        `embedding_pending`, a card dropped to card work.
 +        `gated` (the access gate is closed) or an incomplete round (no due loop follows): the changed cards are
 +        embedded here. A note-store failure skips the rest of the step (logged); an index-store failure ends the tick
 +        like any record write."""
@@ -1631,14 +1692,16 @@ index 7983cbaf..d39d89ac 100644
 +        exist are skipped (entry a merges them when they appear). `inline`: the changed cards are embedded now
 +        (`_inline_cards`). Each erase stub is deleted after the commit, once its record's copy is cleared or it has no
 +        record on this drive, none after `stop`. Returns the page position of the first stub left (out of time, or a
-+        failed delete), else None: the caller holds the watermark before it."""
++        failed delete), else None: the caller holds the watermark before it. A stub whose delete fails and that is older
++        than NOTE_STUB_HOLD_MAX is logged at ERROR and passed (it holds no content), so it never holds the notes more
++        than a page behind it for good."""
 +        if self._notes is None:
 +            return None
 +        per_item: Dict[str, List[Tuple[str, Optional[NoteView]]]] = {}
-+        stubs: List[Tuple[int, str]] = []
++        stubs: List[Tuple[int, DriveNote]] = []
 +        for index, note in enumerate(page):
 +            if note.erase_pending:
-+                stubs.append((index, note.note_id))
++                stubs.append((index, note))
 +            parts = binding_parts_of(note)
 +            if parts is None or parts.provider_key != ONEDRIVE_PROVIDER_KEY or parts.drive_id != drive_id:
 +                continue
@@ -1663,28 +1726,35 @@ index 7983cbaf..d39d89ac 100644
 +            _inc(summary, "notes_merged", len(writes))
 +            if inline:
 +                await self._inline_cards(user_id, [w.item_id for w in writes], now, summary, budget, stop)
-+        for index, note_id in stubs:
++        for index, stub in stubs:
 +            if budget.elapsed() >= stop:
-+                return index   # NOTE_STEP_S: no call starts past the step's window
++                return index   # NOTE_STEP_S: no stub delete starts past the step's window
 +            _fence()
 +            try:
-+                if await self._notes.delete_stub(user_id, note_id):
++                if await self._notes.delete_stub(user_id, stub.note_id):
 +                    _inc(summary, "note_stubs_deleted")
 +            except Exception as exc:
-+                logger.error(f"[DriveIndex] erase stub {note_id} of {user_id[:8]} not deleted: {exc_brief(exc)}; "
++                if stub.updated_at is not None and now - stub.updated_at > NOTE_STUB_HOLD_MAX:
++                    # a stub that fails for a day would hold every later note: it is left (contentless) and passed
++                    logger.error(f"[DriveIndex] erase stub {stub.note_id} of {user_id[:8]} still not deleted after "
++                                 f"{NOTE_STUB_HOLD_MAX} ({exc_brief(exc)}); skipped, the watermark passes it")
++                    continue
++                logger.error(f"[DriveIndex] erase stub {stub.note_id} of {user_id[:8]} not deleted: {exc_brief(exc)}; "
 +                             f"the watermark stops before it")
 +                return index
 +        return None
 +
 +    async def _inline_cards(self, user_id: str, item_ids: Sequence[str], now: datetime, summary: Dict[str, int],
 +                            budget: _Budget, stop: float) -> None:
-+        """No due loop follows (the access gate is closed, or the round is not complete): the cards whose text a merge
-+        changed are embedded at once, EMBED_IN_FLIGHT at a time and none started past `stop`, so a cleared or erased
++        """No due loop follows (the access gate is closed, or the round is not complete): the existing cards whose text
++        a merge changed are embedded at once, EMBED_IN_FLIGHT at a time and none started past `stop`, so a cleared or erased
 +        note is gone from the card vector too (core review §5, review Important 3). A card the embedder cannot make
 +        now, or one left when the step's window ends, is dropped instead (it comes back as card work): no vector of the
 +        old text survives."""
 +        fresh = await self._repo.get_records(user_id, list(item_ids))
-+        due = [r for r in fresh.values() if card_eligible(r) and r.card_hash != card_hash(r)]
++        # only a stored vector can hold an old note's text: a record without a card waits for its card work in class
++        # order (an onboarding's first cards are never embedded here, ahead of it)
++        due = [r for r in fresh.values() if r.has_card and card_eligible(r) and r.card_hash != card_hash(r)]
 +        for start in range(0, len(due), EMBED_IN_FLIGHT):
 +            if budget.elapsed() >= stop:
 +                await self._drop_stale_cards(user_id, due[start:], now, "the notes step's window ended")
@@ -1789,8 +1859,9 @@ index 7983cbaf..d39d89ac 100644
 +                           cont: _Continuation) -> None:
 +        """The notes step of a tick whose access gate is closed (the access-loss grace, the D30 rebuild gate; core review
 +        §5): no other work runs, but the owner's clear, undo and erase must still reach the record copy, its keys and the
-+        card vector (`gated`: cards re-embedded here). Its own start budget; the state is saved when it moved; a full
-+        page asks for a continuation. With the kill switch off only the zero merge version is saved. Nothing here ends
++        card vector (`gated`: cards re-embedded here). Its own start budget; the state is saved only when the step
++        changed something besides its `notes_tick_at` stamp and its pass end (a gated tick never advances
++        `last_success_at`, so the rollback detector needs no stamp from it); a full page asks for a continuation. With the kill switch off only the zero merge version is saved. Nothing here ends
 +        the tick but the lease."""
 +        if self._notes is None:
 +            if state.notes_merge_version:
@@ -1802,7 +1873,9 @@ index 7983cbaf..d39d89ac 100644
 +        summary: Dict[str, int] = {}
 +        try:
 +            after = _fold_tick_notes(tick, await self._notes_step(user_id, state, budget, summary, gated=True))
-+            if after != state:
++            # the step's own bookkeeping alone (its stamp, a pass end with nothing new) is no reason to write: an older
++            # pass end only re-reads a little more next time, idempotently
++            if replace(after, notes_tick_at=state.notes_tick_at, notes_scanned_at=state.notes_scanned_at) != state:
 +                await self._save_state(after)
 +            if tick.more:
 +                cont.request()
@@ -1821,7 +1894,7 @@ index 7983cbaf..d39d89ac 100644
      # ------------------------------------------------------------------------------------------
      # Work off (only after a complete round, RFC Δ15)
      # ------------------------------------------------------------------------------------------
-@@ -3864,6 +4286,9 @@ class DriveIndexingService:
+@@ -3864,6 +4313,9 @@ class DriveIndexingService:
      async def _has_more(self, user_id: str, state: DriveSyncState, now: datetime, *,
                          upgrade_wrote: bool = False, models: Optional[_Models] = None,
                          idle: Optional[Set[str]] = None) -> bool:
@@ -1831,7 +1904,7 @@ index 7983cbaf..d39d89ac 100644
          if not state.round_complete or state.epoch_phase is EpochPhase.SWEEPING:
              return True
          if models is not None and await self._enrichment_waiting(user_id, now, models, idle):
-@@ -4198,6 +4623,35 @@ def _card_rescheduled(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
+@@ -4198,6 +4650,30 @@ def _card_rescheduled(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
      return rec
  
  
@@ -1846,15 +1919,10 @@ index 7983cbaf..d39d89ac 100644
 +    return card_eligible(rec) and rec.has_card and rec.card_hash != card_hash(rec) and rec.due_at is None
 +
 +
-+def _fold_note_checks(notes: _TickNotes, state: DriveSyncState) -> DriveSyncState:
-+    """EXTENSION POINT (part C, S3): folds the tick's archive checks (`_TickNotes`' S3 fields) into `state.note_checks`.
-+    Part B has none: the state is returned as it is."""
-+    return state
-+
-+
 +def _fold_tick_notes(notes: _TickNotes, state: DriveSyncState) -> DriveSyncState:
-+    """Every fold of the tick's notes accumulator into a save: B's (`onto`), then C's (`_fold_note_checks`)."""
-+    return _fold_note_checks(notes, notes.onto(state))
++    """B's fold of the tick's notes accumulator into a save (`onto`). Part C's archive checks are folded by C's own
++    `_note_checks_onto` in `_save_state`, not here."""
++    return notes.onto(state)
 +
 +
 +def _notes_onto(state: DriveSyncState) -> DriveSyncState:
@@ -1895,10 +1963,15 @@ in-memory index and note repositories:
 - review fixes: a slow embedding ends the window and no further call starts (the rest stays pending); a stub past the
   window holds the watermark and the next tick finishes; a failed stub delete is retried (the stub older than any
   skew window); the kill switch off then on merges the records created meanwhile, and behind a closed gate it saves
-  the zero version; an incomplete round embeds the changed card at once (a complete one leaves it to class 0); a tick
-  by code without notes forces a full re-read, a normal sequence never re-reads; the pass end is read before the
+  the zero version; a tick by code without notes forces a full re-read, a normal sequence never re-reads; the pass end is read before the
   query; an archived note is cleared and never in a default search (RFC §6.1, at B level); a page note written in the
-  old space is moved; the closed-gate test runs for clear **and erase** and checks `card_hash` and the stored vector.
+  old space is moved; the closed-gate test runs for clear **and erase** and checks `card_hash` and the stored vector;
+- re-review fixes: **an erase reaches the record copy and the card while observe uses every start budget** (a real tick:
+  `get_changes` uses the budget on every tick, the owner erases, after the next tick the copy is gone and the stored
+  vector is the new card's); the notes-first step never embeds a first card; the notes step runs once per tick on either
+  path; the kill-switch zero survives an error save; a gated tick with no note work writes no state; a stub failing for
+  a day is passed (the watermark goes past it, the later note merges). The earlier direct `_notes_step` test of an
+  incomplete round (a state a real tick cannot reach, re-review judgement 3) is replaced by these.
 
 **Expected-risk existing tests.** None beyond Task 1's (every `test_drive_indexing_*`, the mirror tick and the deadline
 sum test `test_drive_indexing_mirror_tick.py::test_deadline_sum_includes_the_reserve` passed unchanged).
@@ -1912,7 +1985,7 @@ ordering, lease and error classes are judgment; the hunks are verified, review t
 none (unchanged: `note_after_write` empties them). Core delta B2 (behaviour only; no signature changes).
 
 **File.** Modify `src/services/drive_note_service.py`.
-**Source.** `git checkout d17da803 -- src/services/drive_note_service.py tests/unit/services/test_drive_note_service_keys.py`
+**Source.** `git checkout ff98c9e8 -- src/services/drive_note_service.py tests/unit/services/test_drive_note_service_keys.py`
 
 ```diff
 diff --git a/src/services/drive_note_service.py b/src/services/drive_note_service.py
@@ -1980,7 +2053,7 @@ the link body for `original`. No line without a note, the service or a connectio
 the open goes on). Listings unchanged.
 
 **File.** Modify `src/agents/file_management_agent.py`.
-**Source.** `git checkout d17da803 -- src/agents/file_management_agent.py tests/unit/agents/test_file_management_open_note_header.py`
+**Source.** `git checkout ff98c9e8 -- src/agents/file_management_agent.py tests/unit/agents/test_file_management_open_note_header.py`
 
 ```diff
 diff --git a/src/agents/file_management_agent.py b/src/agents/file_management_agent.py
@@ -2135,7 +2208,7 @@ port).
 **Files.** Modify `indexer_main.py`, `src/composition/user_agent_factory.py`, `src/composition/service_container.py`.
 `src/composition/drive_note_setup.py` is part A's (in B's worktree a STUB with A's two names, never applied).
 
-**Source.** `git checkout d17da803 -- indexer_main.py src/composition/user_agent_factory.py
+**Source.** `git checkout ff98c9e8 -- indexer_main.py src/composition/user_agent_factory.py
 src/composition/service_container.py tests/unit/test_indexer_main_drive_notes.py` (not the STUB)
 
 ```diff
@@ -2251,7 +2324,7 @@ the factory hands the agent both readers.
 T2's and already says what §6.2 asks; unchanged.
 
 **File.** Modify `src/skills/smart/drive-search/SKILL.md`.
-**Source.** `git checkout d17da803 -- src/skills/smart/drive-search/SKILL.md tests/unit/skills/test_drive_search_skill_owner_note.py`
+**Source.** `git checkout ff98c9e8 -- src/skills/smart/drive-search/SKILL.md tests/unit/skills/test_drive_search_skill_owner_note.py`
 
 ```diff
 diff --git a/src/skills/smart/drive-search/SKILL.md b/src/skills/smart/drive-search/SKILL.md
@@ -2370,12 +2443,23 @@ under "Reading the results", once; the card-accuracy exception for the note. The
   `drive_note_setup.drive_notes_switch_on`; B has no parser or builder of its own.
 - Default B18: entry (a) with no drive id known yet (no page, no connection drive id) skips the lookup and requests the
   re-read, so the notes step merges once the id is known.
-- Default B19 (review Important 1): work the step cannot start inside `NOTE_STEP_S` stays pending: a stub left holds the
-  watermark right before it (`notes_paging`, a continuation when something was done), a note stays
-  `embedding_pending` or in the old space, a changed card is dropped to card work (`without_card`, class 0). A failed
-  stub delete holds the watermark the same way, without a continuation (the fan-out retries).
+- Default B19 (review Important 1, re-review wording): past `NOTE_STEP_S` no stub delete, card batch or note embedding
+  starts, and a bounded number of calls may start after `NOTE_STEP_S` (the merge's record read and commit, a card
+  drop's read and commit). Work left over stays pending: a stub left holds the watermark right before it
+  (`notes_paging`, a continuation when something was done), a note stays `embedding_pending` or in the old space, a
+  changed card is dropped to card work (`without_card`, class 0). A failed stub delete holds the watermark the same way,
+  without a continuation (the fan-out retries), until the stub is older than `NOTE_STUB_HOLD_MAX` (24 h): then it is
+  logged at ERROR and passed (B23).
 - Default B20 (review Important 3): cards are embedded inline whenever no due loop follows in the tick — behind a
   closed gate, or with the round incomplete.
+- Default B22 (re-review item 4): `notes_first = not state.round_complete`, read before `_observe`: the one notes step
+  of the tick runs before `_observe_nudge` / `_observe`, else after observe as before. `_inline_cards` embeds only
+  records that have a card (only a stored vector can hold an old note), so the early step never embeds an onboarding's
+  first cards ahead of class order.
+- Default B23 (re-review item 5): `NOTE_STUB_HOLD_MAX` = 24 h in `drive_note_merge`.
+- Default B24 (arbiter round 2, rulings 2-3): the kill-switch zero is applied in `_run` before `_Saved(state)`, so every
+  save of the tick carries it; a gated tick saves only when the step changed more than `notes_tick_at` and
+  `notes_scanned_at` (an older pass end only re-reads a little more, idempotently).
 - Default B21 (review Minor 6): the changed page's notes whose vector is in another space are moved by the repair, so a
   note written by a main service still on the old space after `notes_space` was stamped is never left behind.
 
@@ -2407,7 +2491,11 @@ RFC text deltas for the build's doc pass (review Minor 10, complete):
 - §5.5: the rollback sentence is replaced by B12 (the `notes_tick_at` detector; kill switch first as advice).
 - §6.1: the listing-fold residual (B16) — **added to the RFC in this part** (`d17da803`, §6.1 "Duplicates").
 - §6.2: the open header makes two reads (the connection, then `find_bound` through `note_for_item`), not one (B15).
-- §15: `NOTE_STEP_S` = 60 and `NOTE_STORE_KEYS_VERSION`.
+- §15: `NOTE_STEP_S` = 60, `NOTE_STUB_HOLD_MAX` = 24 h and `NOTE_STORE_KEYS_VERSION`.
+- §5.1 b (re-review): the notes-first rule (B22); "a bounded number of calls may start after `NOTE_STEP_S`" (B19);
+  the stub residual — **behind a permanently failing stub, notes more than one page later do not merge**, bounded by
+  `NOTE_STUB_HOLD_MAX`: a stub failing for 24 h is logged at ERROR and passed (B23); the kill-switch zero is carried by
+  every save of the tick, the error saves included (B24).
 
 ## 7. Verification
 
@@ -2420,10 +2508,11 @@ Worktree `/Users/dmytrodeleur/Github/alekbot-core-npb`, branch `plan/drive-notes
 | `65060ba1` | Task 7 note document keys; its test |
 | `98ca4eb1` | Tasks 5 (search service), 8, 9, 10; search, open-header and wiring tests |
 | `855488f8` | Task 6 fix found by `make check`: guards instead of `assert` for the optional note store (REQ-ARCH-01) |
-| `d17da803` | the part B review fixes and rulings (Tasks 1, 3, 4, 6, 9, 10 and their tests; the RFC §6.1 residual) — **the source of every task** |
+| `d17da803` | the part B review fixes and rulings (Tasks 1, 3, 4, 6, 9, 10 and their tests; the RFC §6.1 residual) |
+| `ff98c9e8` | the re-review fixes (Tasks 3 and 6 and their tests) — **the source of every task** |
 
-New tests: 139 in 11 files, all green. `mypy --strict` on `src/domain` + `src/ports`: clean. `ruff check src/`: clean.
-`PYTEST_WORKERS=4 make check` on `d17da803` (once, after the review fixes): ruff clean, `mypy --strict` clean, unit
-suite **17 612 passed, 4 failed, 70 skipped, 1 xfailed**. The four are exactly the expected-risk tests of Tasks 1 and 10,
-whose reviewer verdicts (with the exact new content) are recorded there and applied as reviewer edits at assembly.
-(The earlier run on `98ca4eb1` also caught `test_no_assert_in_src`, fixed in `855488f8`.)
+New tests: 143 in 11 files, all green. `mypy --strict` on `src/domain` + `src/ports`: clean. `ruff check src/`: clean.
+`PYTEST_WORKERS=4 make check` on `ff98c9e8` (once, after the re-review fixes): ruff clean, `mypy --strict` clean, unit
+suite **17 616 passed, 4 failed, 70 skipped, 1 xfailed**. The four are exactly the expected-risk tests of Tasks 1 and
+10, whose reviewer verdicts (with the exact new content) are recorded there and applied as reviewer edits at assembly.
+(Earlier runs: `98ca4eb1` also caught `test_no_assert_in_src`, fixed in `855488f8`; `d17da803` failed only on the four.)
