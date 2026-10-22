@@ -724,7 +724,7 @@ but the index must be rebuilt, not upgraded in place:
 
 ### Transcripts of recordings (§27)
 
-USER_DRIVE_INDEXING_RFC §27 (slice T1, live since 2026-10-21 for the owner; the T2 mirror folder is built and not deployed, see "T2 mirror folder" below; T3 summary is not built); the owner's
+USER_DRIVE_INDEXING_RFC §27 (slice T1, live since 2026-10-21 for the owner; the T2 mirror folder is live since 2026-10-21 for the owner, see "T2 mirror folder" below; T3 summary is not built); the owner's
 map is `docs/05_building_blocks/user_drive/README.md` §4.23. An **ordinary upgrade on top of §26**: no rebuild, no migration gate, no
 initial-build reset (Δ126). It reuses the shell variables and the pause/resume commands of § Search v2 above. Two switches keep it
 off until the owner turns it on: the indexer's kill switch and the user's own flag. Nothing here is a secret; the key names only.
@@ -784,7 +784,7 @@ off until the owner turns it on: the indexer's kill switch and the user's own fl
 **Also in this release:** a `google-genai` floor of 2.17.0 (`requirements.txt`; the batch surface was measured on it), the Cabinet's "transcribing
 recordings" cost line, and the disclosure sentence (shown only for a user whose flag is on).
 
-#### T2 mirror folder (§27.9; built on `feat/drive-transcripts-t2`, not deployed)
+#### T2 mirror folder (§27.9; live since 2026-10-21)
 
 An **ordinary upgrade on top of T1**: the mirror calls no model, so there is no prompt upload, no rebuild, no migration gate and no new Cloud Build substitution. It
 runs only for a user with both transcription switches on (today the owner). The owner's map is `docs/05_building_blocks/user_drive/README.md` §4.23 and §7.
@@ -810,10 +810,11 @@ then does nothing and its reads fail loudly, so do not deploy on "it is building
      missing or building that sweep keeps everything (it fails loudly), but no purge waits on them.
 4. **Wait for the indexes, then verify** (no project id in any tracked file; use your shell variable):
    ```bash
-   gcloud firestore indexes composite list --database=us-production --project=$GOOGLE_CLOUD_PROJECT \
-     --format="table(name, queryScope, state)" | grep -E "drive_transcript_mirror|drive_index_records"
+   gcloud firestore indexes composite list --database=us-production --project=$GOOGLE_CLOUD_PROJECT --format=json \
+     | python3 -c 'import json,sys,collections; print(collections.Counter((i["name"].split("/collectionGroups/")[1].split("/")[0], i.get("state")) for i in json.load(sys.stdin) if "drive_transcript_mirror" in i["name"] or "drive_index_records" in i["name"]))'
    ```
-   **Every printed row must say `READY`** (12 are new: 10 on the ledger, 2 on the records); any `CREATING` or `NEEDS_REPAIR` is a stop. `composite list` does not show field overrides, so check the
+   (The table format prints only the index ids, not the collection group, so a `grep` on the collection name matches nothing; the JSON name carries it.)
+   **Every count must be under `READY`** (12 are new: 10 on the ledger, 2 on the records); any `CREATING` or `NEEDS_REPAIR` is a stop. `composite list` does not show field overrides, so check the
    `archive_keys` exemption separately:
    ```bash
    gcloud firestore indexes fields describe archive_keys --collection-group=<PREFIX>drive_transcript_mirror \
