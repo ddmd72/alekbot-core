@@ -94,6 +94,10 @@ def normalize_fact_taxonomy(metadata: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
+# Added by the consolidator's writers, not authored by the model; a tag update keeps them.
+FACT_SYSTEM_TAGS = frozenset({"consolidated", "anchor"})
+
+
 class FactEntity(BaseModel):
     # --- Identifiers ---
     id: str = Field(default_factory=lambda: str(uuid4()))
@@ -152,6 +156,7 @@ class FactEntity(BaseModel):
     # ========================================================================
     version: int = 1
     replaces_fact_id: Optional[str] = None
+    superseded_by: Optional[str] = None
 
     # ========================================================================
     # Deliberate Fact Management: Context metadata
