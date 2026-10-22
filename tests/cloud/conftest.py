@@ -5,8 +5,8 @@ comparison) are read from the environment or the repository's dotenv file inside
 guard that fails says which rule broke, not the values. Without `RUN_CLOUD_TESTS=1` (set by `make test-cloud`), or with any setting missing, every test here skips.
 
 Guards, before any write: no emulator in the environment; the database name ends in `-test` and is not the live
-database; the credentials are impersonated credentials of the test service account (which holds datastore.user on the
-test database only); the constructed client's database and project are the configured ones.
+database; the credentials are impersonated credentials of the test service account (which holds datastore.user and
+datastore.indexAdmin on the test database only); the constructed client's database and project are the configured ones.
 """
 import os
 import time
