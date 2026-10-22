@@ -136,7 +136,7 @@ Facts that shape the design:
   for document specialists is unwrapped by an accepted deferral to Slice 3 (`decisions/drive_prefetch_wrapper_slice3.md`).
 - **Prefetch.** `AgentCoordinator` turns a `file_ref` into text before dispatch, and for ASYNC intents before enqueue,
   so the text rides in the Cloud Task body (`src/infrastructure/agent_coordinator.py:522-524`, `:544-546`,
-  `:576-613`; resolver `(ref, user_id)` wired at `main.py:309`). All three consumers (DocPlanner, PdfGenerator,
+  `:576-613`; resolver `(ref, user_id)` wired at `main.py:308`). All three consumers (DocPlanner, PdfGenerator,
   HtmlPageGenerator) are ASYNC. FileManagement opts out (`src/infrastructure/agent_manifest.py:543`; USER_DRIVE_RFC
   §4.4: waste, double fetch, a page per not-connected call).
 
@@ -254,7 +254,7 @@ another store's ref is still served through the same path, as `open_file` serves
 | `open_email_attachment` (EmailSearchAgent) | `open` | yes |
 | `send_file_to_user` (new) | `resolve_file` | yes |
 | `save_file_to_drive`, `update_file_in_drive` `source_ref` (`:632`) | `resolve_file` | yes |
-| Prefetch for specialists (`main.py:309`, moved by P18) | `open`, text only | yes |
+| Prefetch for specialists (`main.py:308`, moved by P18) | `open`, text only | yes |
 | `edit_image` (`src/agents/image_generation_agent.py:214`), video edits (`video_generation_agent.py:269`, `:324`) | `resolve_file` | yes, bytes only |
 | Skill file reads (`src/services/skill_service.py:200`) | `resolve_file` | no (skill refs only) |
 | Workspace `copy` (`src/services/workspace_service.py:480`) | `resolve_file` | no (its source allowlist is unchanged) |
@@ -269,7 +269,7 @@ is retired in U3: the upload path always stores a ref.
 `AgentWorkerHandler` opens it just before the specialist runs, under the task's own time; no reader text rides in a
 task body, which suits D3. A SYNC prefetch (none today) would use the interactive deadline. The resolver gains
 `account_id`: `open(ref, user_id, account_id, consumer=(), deadline)` replaces `resolve_content(ref, user_id)` at
-`main.py:309`. On a failure the specialist gets no `file_content` and a separate `file_note` it is told to report (never
+`main.py:308`. On a failure the specialist gets no `file_content` and a separate `file_note` it is told to report (never
 rendered into the document). A recording, folder or video ref gets a `file_note` too. Declined, prefetch keeps running
 in the caller, under the interactive deadline.
 
