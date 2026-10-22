@@ -29,6 +29,9 @@ class DriveOutcome:
     items: Tuple[DriveItem, ...] = ()
     file_data: Optional[Dict[str, Any]] = None
     facts: ReadFacts = field(default_factory=ReadFacts)
+    # The text is a file's content (opened text, a transcript, a recording link): the drive specialist's model sees a
+    # stand-in, the orchestrator the text (DRIVE_SPECIALIST_RFC §6).
+    body: bool = False
 
     @property
     def is_change(self) -> bool:
