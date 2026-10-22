@@ -72,14 +72,17 @@ def _agent(conversion, notes=None, port=None, search=None):
         drive_service=AsyncMock(spec=UserDriveService), drive_search=search, drive_notes=notes, drive_port=port)
 
 
-async def test_the_text_open_has_the_line_after_the_label_inside_the_wrapper(conversion, notes, port):
+async def test_the_text_open_has_the_file_text_after_the_label_and_the_line_in_its_own_wrapper(conversion, notes, port):
+    # final review C-I4: the note is its own wrapper after the file's, so file text cannot pass for it
     conversion.get_drive_item.return_value = DOC
     conversion.resolve_content.return_value = "Line one of the file."
     resp = await _agent(conversion, notes, port).execute(_msg(file_ref="drive:d1"))
     assert resp.status == AgentStatus.SUCCESS
-    body = resp.result.split('ref="drive:d1"', 1)[1].split("</drive_document", 1)[0]   # the file's own wrapper
+    body, after = resp.result.split('ref="drive:d1"', 1)[1].split("</drive_document", 1)   # the file's own wrapper
     lines = body.split("\n")
-    assert lines[2] == LINE and lines[3] == "Line one of the file."   # [0] the tag, [1] the label
+    assert lines[2] == "Line one of the file." and LINE not in body   # [0] the tag, [1] the label
+    note_body = after.split('ref="drive:d1"', 1)[1].split("</drive_document", 1)[0]   # the note's wrapper, next
+    assert note_body.split("\n")[2] == LINE                           # [0] the tag, [1] the label
     notes.note_for_item.assert_awaited_once_with("u1", "drv", "d1")
 
 

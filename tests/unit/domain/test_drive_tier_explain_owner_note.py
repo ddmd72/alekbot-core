@@ -1,5 +1,5 @@
-"""The owner's note in a card's `matched:` line (DRIVE_FILE_NOTES_RFC §6.1): `your note "<word>"`, `your note: type
-"<name>"`, `your note: life area "<name>"`; a note-only match is About (exact: the owner's own words); a match across
+"""The owner's note in a card's `matched:` line (DRIVE_FILE_NOTES_RFC §6.1): `owner's note "<word>"`, `owner's note: type
+"<name>"`, `owner's note: life area "<name>"` (final review C-M2); a note-only match is About (exact: the owner's own words); a match across
 scripts through the note's skeleton is By translation. Synthetic records only."""
 from __future__ import annotations
 
@@ -21,26 +21,26 @@ NOTED = RecordKeyInputs(kind="pdf", owner_note_text="Смета Пети на р
                         owner_life_areas=("home",), profile=DriveProfile("t", "w", "ru", "invoice"))
 
 
-def test_a_note_word_match_is_about_and_says_your_note():
+def test_a_note_word_match_is_about_and_says_owners_note():
     m, ex = _match(NOTED, "scan.pdf", "смета")
     assert m.tier is MatchTier.ABOUT
-    assert ex.sources == ('your note "Смета"',)
+    assert ex.sources == ('owner\'s note "Смета"',)
 
 
 def test_the_owner_type_and_area():
     _, ex = _match(NOTED, "scan.pdf", "договор")
-    assert ex.sources == ('your note: type "договор"',)
+    assert ex.sources == ('owner\'s note: type "договор"',)
     _, ex = _match(NOTED, "scan.pdf", "житло")
-    assert ex.sources == ('your note: life area "житло"',)
+    assert ex.sources == ('owner\'s note: life area "житло"',)
 
 
 def test_a_note_only_match_of_several_words_is_about():
     m, ex = _match(NOTED, "scan.pdf", "смета кухни")
     assert m.tier is MatchTier.ABOUT
-    assert ex.sources == ('your note "Смета"', 'your note "кухни"')
+    assert ex.sources == ('owner\'s note "Смета"', 'owner\'s note "кухни"')
 
 
 def test_a_match_across_scripts_is_by_translation():
     m, ex = _match(NOTED, "scan.pdf", "smeta")
     assert m is not None and m.tier is MatchTier.TRANSLATED
-    assert ex.sources[0].startswith('your note "Смета"')
+    assert ex.sources[0].startswith('owner\'s note "Смета"')

@@ -39,7 +39,7 @@ async def test_a_note_only_match_is_about_with_the_line_inside_the_wrapper(w):
     assert tier_of(result, noted) == "about"
     c = card(result, noted)
     assert c.owner_note == LINE and "noted by the owner" not in c.summary
-    assert c.sources == ('your note "estimate"', 'your note "kitchen"')
+    assert c.sources == ('owner\'s note "estimate"', 'owner\'s note "kitchen"')
     body = _wrapper_of(render_results(result), "scan001.pdf").split("\n")
     assert body[0] == c.summary and body[1] == LINE
 

@@ -56,7 +56,7 @@ class TestMatch:
         keys = search_keys(_note(), store_keys)
         names = set(name_keys_v2("estimate.pdf"))
         assert matched_line(_concepts("kitchen estimate"), keys - names, names) == \
-            'matched: your note "kitchen", name "estimate"'
+            'matched: owner\'s note "kitchen", name "estimate"'
         assert matched_line((), keys, names) == ""
 
 

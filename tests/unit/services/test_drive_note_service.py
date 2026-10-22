@@ -501,7 +501,7 @@ async def test_erase_all_lists_every_note_and_keeps_stubs_for_the_indexer(env):
     before = len(env.nudged())
     assert await env.service.erase(U, request.code) == 2
     assert await env.notes.count(U) == 2 and await env.notes.note_ids(U) == []   # stubs until the tick clears copies
-    assert sorted(sum(env.nudged()[before:], [])) == ["a", "b"]
+    assert sum(env.nudged()[before:], []) == []   # D-I2: an erase-all nudges nothing; the watermark merges the stubs
 
 
 async def test_with_indexing_off_the_stubs_go_at_once():
@@ -769,7 +769,7 @@ async def test_an_erase_all_with_a_conflicted_note_finishes_the_rest_and_says_ho
     assert "again" in str(info.value)
     assert (await env.notes.get(U, receipts[1].note_id)).text == TEXT           # the stuck note is untouched
     if indexing:
-        assert sorted(sum(env.nudged()[before:], [])) == ["a", "c"]               # every erased item nudged
+        assert sum(env.nudged()[before:], []) == []                               # D-I2: an erase-all nudges nothing
         assert [(await env.notes.get(U, r.note_id)).erase_pending for r in (receipts[0], receipts[2])] == [True, True]
     else:
         assert await env.notes.get(U, receipts[0].note_id) is None                 # stubs deleted at once

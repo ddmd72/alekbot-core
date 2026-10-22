@@ -14,7 +14,7 @@ def test_skill_names_the_transcripts_folder_as_bot_managed():
 
 def test_skill_deleted_files_line_is_explicit_only():
     assert "Search deleted files (`drive_deleted`) only when the user asks about files that were deleted or removed" in SKILL
-    assert "transcripts of deleted recordings and your notes on deleted files" in SKILL
+    assert "transcripts of deleted recordings and the owner's notes on deleted files" in SKILL
 
 
 def test_capabilities_line():

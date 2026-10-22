@@ -94,7 +94,7 @@ class TestArchived:
         w.put(_note(1), _note(2, text="Lisbon flat lease", name="lease.pdf"))
         out, items = await w.search("kitchen scan")            # one note word, one name word
         assert out.startswith("Deleted files (1):") and "scan1.pdf | Docs/scan1.pdf | gone from the drive" in out
-        assert 'matched: your note "kitchen", name "scan"' in out and items == []
+        assert 'matched: owner\'s note "kitchen", name "scan"' in out and items == []
         assert (await w.search("kitchen lisbon"))[0].startswith("Deleted files (0):")
 
     async def test_the_entry_has_the_note_line_inside_the_wrapper_and_the_ref_for_the_tool(self, w):
