@@ -465,9 +465,12 @@ from the text above:
   --testmon-forceselect -m "not datafile and not timing"`. A no-change rerun then selects 0 tests (6.8 s; testmon turns
   pytest's exit 5 into 0). A new worktree seeded from the main checkout's `.testmondata` at the same commit also selects 0.
 - **`make check` no longer runs the `slow` tests**, among them 24 of the 36 layering tests of
-  `test_req_arch_01_hexagonal_isolation.py` (each walks the whole of `src/`; 0.5-1.3 s under coverage). They run in
-  `make ci` and so on every PR, but not in the local pre-commit loop or in `make test-affected` (the `datafile` set is
-  run without `RUN_SLOW_TESTS`). Decision for the owner: keep, or make those 23 fast (one shared parse of `src/`).
+  `test_req_arch_01_hexagonal_isolation.py` (the 23 over 0.5 s in the calibration plus `test_agents_layer_isolation`).
+  Each walks the whole of `src/`: 0.5-3.2 s under coverage, 0.8-2.1 s without, and it moves with machine load. A shared
+  parse buys only ~15% (the cost is walking ~600k AST nodes per test), so the decision is to **keep them slow** and add
+  `make test-arch` (the module alone, `-n 4`, ~10-15 s) for the loop after touching imports across layers. They run in
+  `make ci`, so on every PR, but not in `make check` or `make test-affected` (the `datafile` run does not set
+  `RUN_SLOW_TESTS`).
 - **The slow threshold was calibrated at 0.5 s under coverage** (2x headroom against the 1.0 s CI budget); a test using a
   module-scoped fixture is marked in every user of that fixture, because under xdist whichever test reaches it first on a
   worker pays (`test_drive_index_hostile_tree.py`, `TestScale`). Tests that pay a lazy heavy import first (markitdown) are
@@ -477,6 +480,11 @@ from the text above:
   imports inside a test are not data reads. Reads at collection time belong to every test of the module. A read inside a
   module-scoped fixture lands on the first test that uses it on that worker, so a module whose reads sit in such a
   fixture gets a module-level marker (the "stale" list prints these as informational noise).
+- **The budget applies to the unit run only.** `PYTEST_DURATION_BUDGET_S` is a make variable that is not exported to
+  recipes; `test-ci` passes it to its pytest call, so the 14 s G2 end-to-end test never sees it. Tests that would pay a
+  heavy lazy import first (markitdown) no longer do: `tests/conftest.py` imports it once per worker at session start, so
+  which test pays does not depend on how xdist hands out tests.
+- `.testmondata` is seeded with SQLite's backup API (`scripts/seed_testmondata.py`), not `cp`: testmon uses WAL.
 - Extra knobs, for tests of the machinery only: `PYTEST_SUITE_LOCK_FILE`, `PYTEST_LOCK_REPORT_S`, `PYTEST_LOCK_POLL_S`.
 
 ## 5. Work packages

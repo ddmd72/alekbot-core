@@ -36,6 +36,21 @@ def mock_repository():
     return AsyncMock(spec=FactRepository)
 
 
+def pytest_sessionstart(session):
+    """Pay the heavy lazy imports once, before any test. Which test would pay them otherwise depends on how xdist hands
+    tests to workers, so the same test passed or broke the CI per-test budget from run to run. Runs in every worker and
+    in a plain run (not in the xdist controller, which imports no test code). Importing markitdown here changes nothing
+    the tests can see: the laziness assertions run in subprocesses."""
+    config = session.config
+    if getattr(config.option, "numprocesses", None) and not hasattr(config, "workerinput"):
+        return
+    try:
+        import markitdown  # noqa: F401
+        import markitdown.converters  # noqa: F401
+    except ImportError:  # optional dependency
+        pass
+
+
 def pytest_collection_modifyitems(config, items):
     """`timing` tests (wall-clock or CPU-time assertions) are off every everyday run by owner decision
     (2026-10-20): they fail on a loaded machine with no code change, so full runs failed and were re-run.
@@ -54,5 +69,5 @@ def pytest_collection_modifyitems(config, items):
         return
     for item in items:
         for name, skip in skips:
-            if name in item.keywords:
+            if item.get_closest_marker(name) is not None:
                 item.add_marker(skip)

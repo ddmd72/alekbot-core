@@ -184,3 +184,82 @@ def test_findings_travel_from_xdist_workers_to_the_controller(pytester, monkeypa
     out = result.stdout.str()
     assert "test_inner.py::test_one" in out
     assert "test_inner.py::test_two" in out
+
+
+def test_os_system_is_a_spawn(pytester):
+    result = _run(pytester, "import os\n\ndef test_shell():\n    os.system('true')\n")
+    assert result.ret == pytest.ExitCode.TESTS_FAILED
+    assert "test_inner.py::test_shell" in result.stdout.str()
+    assert "spawns:" in result.stdout.str()
+
+
+def test_posix_spawn_is_a_spawn(pytester):
+    source = (
+        "import os, sys\n\ndef test_spawn():\n"
+        "    pid = os.posix_spawn(sys.executable, [sys.executable, '-c', 'pass'], os.environ)\n"
+        "    os.waitpid(pid, 0)\n"
+    )
+    result = _run(pytester, source)
+    assert result.ret == pytest.ExitCode.TESTS_FAILED
+    assert "test_inner.py::test_spawn" in result.stdout.str()
+
+
+def test_a_read_in_a_fixture_teardown_is_attributed_to_the_test(pytester):
+    source = (
+        "import pytest\n\n@pytest.fixture\ndef tidy():\n    yield\n    open(__file__).read()\n\n"
+        "def test_uses(tidy):\n    pass\n\ndef test_does_not():\n    pass\n"
+    )
+    out = _run(pytester, source).stdout.str()
+    assert "test_inner.py::test_uses" in out
+    assert "test_inner.py::test_does_not" not in out
+
+
+@pytest.mark.parametrize("directory", [".git", "__pycache__", ".venv", "venv", "site-packages", ".tox", ".nox"])
+def test_files_under_these_directories_are_never_repo_data(pytester, directory):
+    pytester.mkdir(directory)
+    pytester.path.joinpath(directory, "x.txt").write_text("x")
+    source = f"def test_reads():\n    open('{directory}/x.txt').read()\n"
+    assert _run(pytester, source).ret == pytest.ExitCode.OK
+
+
+def test_a_path_that_only_contains_an_ignored_name_is_still_data(pytester):
+    pytester.mkdir("not-a-venv")
+    pytester.path.joinpath("not-a-venv", "x.txt").write_text("x")
+    result = _run(pytester, "def test_reads():\n    open('not-a-venv/x.txt').read()\n")
+    assert result.ret == pytest.ExitCode.TESTS_FAILED
+
+
+def test_a_parametrize_id_called_datafile_is_not_the_marker(pytester):
+    source = "import pytest\n\n@pytest.mark.parametrize('kind', ['datafile'])\ndef test_reads(kind):\n    open(__file__).read()\n"
+    result = _run(pytester, source)
+    assert result.ret == pytest.ExitCode.TESTS_FAILED
+    assert "test_inner.py::test_reads[datafile]" in result.stdout.str()
+
+
+def test_a_module_mark_where_no_test_touched_data_is_reported_once_per_module(pytester):
+    source = (
+        "import pytest\n\npytestmark = pytest.mark.datafile\n\n"
+        "def test_a():\n    pass\n\ndef test_b():\n    pass\n"
+    )
+    result = _run(pytester, source)
+    assert result.ret == pytest.ExitCode.OK
+    out = result.stdout.str()
+    assert "module test_inner.py: 0 of 2 marked tests touched data" in out
+    assert "test_inner.py::test_a" not in out
+
+
+def test_a_module_mark_is_not_stale_when_one_test_reads_data(pytester):
+    source = (
+        "import pytest\n\npytestmark = pytest.mark.datafile\n\n"
+        "def test_reads():\n    open(__file__).read()\n\ndef test_pure():\n    pass\n"
+    )
+    result = _run(pytester, source)
+    assert result.ret == pytest.ExitCode.OK
+    assert "marked tests touched data" not in result.stdout.str()
+
+
+def test_a_tests_own_mark_that_touched_nothing_is_listed_by_test_not_by_module(pytester):
+    source = "import pytest\n\n@pytest.mark.datafile\ndef test_pure():\n    pass\n"
+    out = _run(pytester, source).stdout.str()
+    assert "test_inner.py::test_pure" in out
+    assert "marked tests touched data" not in out
