@@ -123,8 +123,10 @@ index` (full); `codegraph status` shows index health.
   `docs/04_solution_strategy/decisions/dead_prod_collections_deletion.md`.
 - **Default branch is `main`** (renamed from `develop` 2026-06-01; the old prod-tracking `main`
   was deleted). One trunk.
-- **Branch discipline:** large or risky changes go on a feature branch off `main`, merged when
-  green. Small isolated changes can land on `main` directly — but every change keeps the
+- **Branch discipline:** every change reaches `main` through a pull request — a GitHub ruleset on
+  `main` (since 2026-10-22) refuses direct pushes, force pushes and deletion for everyone, owner
+  included, with no bypass: cloud sessions push with the owner's own token, so a bypass for him
+  would be a bypass for them. Small isolated changes get a small PR. Every change keeps the
   affected docs (this file, arc42 in `docs/`, decision records) in sync. Documentation drift is
   the thing branch discipline exists to prevent.
 - **Deploy-substitution trap:** `make deploy` does `include .env` and passes some keys as cloudbuild
