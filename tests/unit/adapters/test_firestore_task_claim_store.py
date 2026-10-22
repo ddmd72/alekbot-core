@@ -153,3 +153,13 @@ async def test_takeover_whose_doc_vanished_retries_the_create_once(monkeypatch):
     monkeypatch.setattr(EvalDocRef, "update", update)
     assert await _store(db, "proc-new").try_claim("t1", "a2")
     assert _doc(db)["attempt"] == "a2"
+
+
+async def test_doc_missing_on_the_second_pass_runs_the_task_not_a_false_duplicate(monkeypatch):
+    from google.api_core.exceptions import AlreadyExists
+
+    async def create(self, data):  # a holder released between every create and our read
+        raise AlreadyExists("exists")
+
+    monkeypatch.setattr(EvalDocRef, "create", create)
+    assert await _store(EvalDb()).try_claim("t1", "a1")
