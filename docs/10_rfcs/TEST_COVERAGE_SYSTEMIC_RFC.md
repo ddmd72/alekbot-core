@@ -598,6 +598,16 @@ emulator (31 of 34; it does not refuse a missing index) and the test database. D
 - **Run:** `make test-cloud` (sets `RUN_CLOUD_TESTS=1`; a bare pytest skips `tests/cloud`), by hand, with the owner's (or root's) credentials able to impersonate the test service account; one runner at a time.
   A run that creates indexes may fail scenarios of those collections even after READY (seen once, cause unknown): re-run.
 
+**Built (P21, 2026-10-23).** The data-audit framework and the fact checker. Files: `scripts/data_audit/facts.py` (pure: `check_fact(doc_id, doc)` and
+`check_lineages(docs)`), `scripts/data_audit/run.py` (the read-only runner; `CHECKERS` maps an entity to its collection property and its checks),
+`tests/unit/scripts/test_data_audit_facts.py` and `test_data_audit_run.py` (in `make check`). Invariants, each from the `FactRepository` docstring or
+`_LIFECYCLE`, as classes: `id_mismatch`, `missing_account_id` (a legacy `owner_id`-only document), `missing_state` / `invalid_state`,
+`is_current_mismatch` / `valid_to_mismatch` (against the state), `missing_created_at`, `reported_date_not_timestamp`, `missing_vector` /
+`missing_tags_vector` / `missing_metadata_vector` (absent or empty), `invalid_entity:<field>` (`FactEntity` validation; the fields that have their own class are
+not repeated), and across documents `lineage_no_current` / `lineage_multiple_current`. The owner runs `python -m scripts.data_audit.run facts
+[--account <id>] [--limit N]`: it only reads, writes one JSON report (counts and offending document ids, no field values) under `scripts/memory/`, and
+prints counts only. S5 adds the expiry invariants; other entities join with their kits (P6, P11).
+
 **Totals.** Tranche 1 (P1–P9) ≈ 12–16 days; tranche 2 (P10–P17) ≈ 24–33; tranche 3 (P18–P24) ≈ 9–11. **Whole plan
 ≈ 45–59 days.**
 
