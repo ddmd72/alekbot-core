@@ -146,9 +146,6 @@ async def test_legacy_null_list_raises(store, field):
         await store.repo.get_whitelist()
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
-    "known defect: entries are returned as stored, so one written in mixed case outside the port never matches — "
-    "src/adapters/firestore_whitelist_repo.py:90-91 (P6 T1 L1)"))
 async def test_entries_are_returned_lowercase_and_stripped(store):
     seed(store, emails=["Ann@Example.com "], domains=[" Company.COM"])
     entry = await store.repo.get_whitelist()

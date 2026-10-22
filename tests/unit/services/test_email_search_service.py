@@ -246,13 +246,15 @@ class TestGetDetails:
         expired_creds = _make_creds(expired=True)
         fresh_creds = _make_creds(expired=False)
         mock_oauth.get_credentials.return_value = expired_creds
+        mock_oauth.update_credentials.return_value = True        # the record still exists
         mock_gmail.refresh_token.return_value = fresh_creds
         mock_gmail.batch_get_full_content.return_value = {}
 
         await service.get_details("e1", "user123")
 
         mock_gmail.refresh_token.assert_awaited_once_with(expired_creds)
-        mock_oauth.save_credentials.assert_awaited_once_with(fresh_creds)
+        mock_oauth.update_credentials.assert_awaited_once_with(fresh_creds)
+        mock_oauth.save_credentials.assert_not_awaited()          # a refresh never creates a record
 
     async def test_no_attachments_no_attachments_line(self, service, mock_oauth, mock_gmail):
         mock_oauth.get_credentials.return_value = _make_creds()
