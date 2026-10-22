@@ -54,6 +54,23 @@ whatever the trigger.
    - `execute_reminder` needs nothing more: the fire-time claim is atomic and there is one task per
      fire, so only a redelivery overlapped, and the task claim now covers it.
 
+## Same collection, other marks (S1b)
+
+`{prefix}worker_task_dedup` also holds marks written through `FirestoreDedupStore`; liveness follows each
+doc's own `expires_at`, so TTLs differ per writer:
+- 48 h daily-review marks `daily_review:{user}:{slot_date}` (one review per local date, `start_daily_email_review`);
+- 72 h OpenAI deep-research webhook claims `openai_deep_research:<job_id>` (OpenAI's retry window).
+`try_mark_processed` treats only `AlreadyExists` as "already marked"; an expired-but-unpurged mark is
+re-claimed atomically (before S1b it returned True without rewriting the mark).
+
+## Chat intake (S1b)
+
+- Slack and Telegram Cloud Tasks have deterministic names (event id / update id); `ALREADY_EXISTS` is success
+  (already queued). The queued path no longer uses an intake mark; the inline Telegram path (no queue) still does.
+- A busy session waits in-process up to 100 s (FIFO), then re-queues under a named task (12 x 15 s at most), then
+  posts a "resend" notice. The task is no longer answered 429 for a busy session. Non-user Slack events (bot, edits,
+  other types) skip this.
+
 ## Alternatives rejected
 
 - **Dedup at enqueue (named tasks).** Prevents double *enqueue*, not double *delivery*. The job
@@ -87,5 +104,5 @@ is cancelled at the deadline (see above); its retry runs.
 
 ## Deployment
 
-One-time TTL policy on the claim collection, as for the other `expires_at` collections
-(`docs/07_deployment/README.md`).
+One-time TTL policy on the collection, as for the other `expires_at` collections
+(`docs/07_deployment/README.md`). The claim's 1 h expiry is garbage collection and the done-window, not the liveness rule.
