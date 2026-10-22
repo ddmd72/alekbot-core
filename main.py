@@ -13,6 +13,7 @@ from src.web.voice_control_plane_app import create_voice_control_plane_blueprint
 from src.web.voice_webhook_app import create_voice_webhook_blueprint
 from src.web.mcp_error_logger import McpErrorLogger
 from src.adapters.firestore_dedup_store import FirestoreDedupStore
+from src.adapters.firestore_task_claim_store import FirestoreTaskClaimStore
 from src.adapters.firestore_ephemeral_store import FirestoreEphemeralStore
 from src.adapters.firestore_user_repo import FirestoreUserRepository
 from src.adapters.firestore_account_repo import FirestoreAccountRepository
@@ -734,13 +735,13 @@ async def main():
 
         # Worker handler — dispatches Cloud Tasks to appropriate handlers
         # Cloud Tasks is at-least-once: claims keyed by task name stop a redelivered task
-        # from running twice. TTL 1800s = the longest dispatch_deadline Cloud Tasks allows,
-        # so every attempt of a task is over before its claim expires.
+        # from running twice; a claim whose attempt died is taken over by the retry.
+        # TTL 3600s is garbage collection and the done-window, not the liveness rule.
         worker_handler = WorkerHandler(
-            task_dedup=FirestoreDedupStore(
+            task_claims=FirestoreTaskClaimStore(
                 db_client=db_client,
                 collection_name=env_config.worker_task_dedup_collection,
-                ttl_seconds=1800,
+                ttl_seconds=3600,
             ),
             # One review per user per local date; 48 h outlives the 3 h window and the date edge.
             daily_review_marks=FirestoreDedupStore(

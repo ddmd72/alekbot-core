@@ -40,6 +40,7 @@ Supported task_types:
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional, Tuple
 
@@ -53,6 +54,7 @@ if TYPE_CHECKING:
     from ..ports.media_storage_port import MediaStoragePort
     from ..ports.account_repository import AccountRepository
     from ..ports.dedup_store import DedupStore
+    from ..ports.task_claim_store import TaskClaimStore
     from ..ports.prompt_content_store import PromptContentStore
     from ..ports.oauth_credentials_port import OAuthCredentialsPort
     from ..ports.video_generation_port import VideoPollResult
@@ -123,14 +125,17 @@ class WorkerHandler:
         companion_extraction: "Optional[CompanionExtractionService]" = None,
         oauth_credentials: "Optional[OAuthCredentialsPort]" = None,
         drive_sync_scheduler: "Optional[DriveSyncSchedulerService]" = None,
-        task_dedup: "Optional[DedupStore]" = None,
+        task_claims: "Optional[TaskClaimStore]" = None,
         daily_review_marks: "Optional[DedupStore]" = None,
         deep_research_fetch: "Optional[Callable[[str], Awaitable[dict]]]" = None,
         prompt_content_store: "Optional[PromptContentStore]" = None,
     ) -> None:
+        self._task_claims = task_claims
+        # Keys of attempts running in this process. Check-and-add has no await between, so
+        # asyncio's single thread makes it race-free without a lock.
+        self._running_claims: set[str] = set()
         self._deep_research_fetch = deep_research_fetch
         self._prompt_content_store = prompt_content_store
-        self._task_dedup = task_dedup
         self._daily_review_marks = daily_review_marks
         self._slack_worker: Optional[Callable[[dict, dict], Awaitable[Tuple[dict, int]]]] = None
         self._telegram_worker: Optional[Callable[[dict], Awaitable[Tuple[dict, int]]]] = None
@@ -188,48 +193,79 @@ class WorkerHandler:
 
         Always returns (body_dict, status_code).
         """
-        if not await self._claim(delivery, payload):
+        key = delivery.task_name if delivery is not None and self._task_claims is not None else None
+        if key is not None:
+            # Another attempt of this task is live in this process: a true duplicate, no store call.
+            if key in self._running_claims:
+                logger.info("[WorkerHandler] Skipping concurrent delivery: task=%s", key)
+                return {"status": "duplicate"}, 200
+            self._running_claims.add(key)  # before any await: closes the check-then-add window
+        try:
+            return await self._run_claimed(payload, delivery, headers or {}, key is not None)
+        finally:
+            # Only the attempt that added the key removes it, and only after mark_done/release finished.
+            if key is not None:
+                self._running_claims.discard(key)
+
+    async def _run_claimed(
+        self, payload: dict, delivery: Optional[CloudTaskDelivery], headers: dict, claimable: bool
+    ) -> Tuple[dict, int]:
+        attempt = uuid.uuid4().hex
+        if claimable and not await self._claim(delivery, payload, attempt):
             return {"status": "duplicate"}, 200
         try:
-            body, status = await self._dispatch(payload, headers or {})
+            body, status = await self._dispatch(payload, headers)
         except BaseException:
-            await self._release(delivery)
+            await self._release(delivery, attempt)
             raise
         # 5xx and 429 ask Cloud Tasks to retry: the retry must not be skipped as a duplicate.
         if status >= 500 or status == 429:
-            await self._release(delivery)
+            await self._release(delivery, attempt)
+        else:
+            await self._mark_done(delivery, attempt)
         return body, status
 
-    async def _claim(self, delivery: Optional[CloudTaskDelivery], payload: dict) -> bool:
-        """False only when another delivery of the same task holds the claim.
+    async def _claim(self, delivery: Optional[CloudTaskDelivery], payload: dict, attempt: str) -> bool:
+        """False only when a finished attempt, or a live one elsewhere, holds the claim; a dead
+        attempt's claim is taken over (single instance: decisions/worker_task_dedup.md).
         Fails open: a store error runs the task — a duplicate beats a lost task."""
-        if delivery is None or self._task_dedup is None:
+        if delivery is None or self._task_claims is None:
             return True
+        key = delivery.task_name
         try:
-            claimed = await self._task_dedup.try_mark_processed(delivery.task_name)
+            claimed = await self._task_claims.try_claim(key, attempt)
         except Exception as exc:
             logger.error(
                 "[WorkerHandler] task claim failed, running anyway: task=%s error=%s",
-                delivery.task_name, exc, exc_info=True,
+                key, exc, exc_info=True,
             )
             return True
         if not claimed:
             logger.info(
                 "[WorkerHandler] Skipping redelivered task: task=%s task_type=%s "
                 "retry_count=%s execution_count=%s",
-                delivery.task_name, payload.get("task_type"),
+                key, payload.get("task_type"),
                 delivery.retry_count, delivery.execution_count,
             )
         return claimed
 
-    async def _release(self, delivery: Optional[CloudTaskDelivery]) -> None:
-        if delivery is None or self._task_dedup is None:
+    async def _mark_done(self, delivery: Optional[CloudTaskDelivery], attempt: str) -> None:
+        if delivery is None or self._task_claims is None:
             return
         try:
-            await self._task_dedup.release(delivery.task_name)
+            await self._task_claims.mark_done(delivery.task_name, attempt)
+        except Exception as exc:
+            logger.error("[WorkerHandler] claim mark_done failed: task=%s error=%s",
+                         delivery.task_name, exc, exc_info=True)
+
+    async def _release(self, delivery: Optional[CloudTaskDelivery], attempt: str) -> None:
+        if delivery is None or self._task_claims is None:
+            return
+        try:
+            await self._task_claims.release(delivery.task_name, attempt)
         except Exception as exc:
             logger.error(
-                "[WorkerHandler] claim release failed — the retry will be skipped: "
+                "[WorkerHandler] claim release failed — the retry takes the claim over: "
                 "task=%s error=%s", delivery.task_name, exc, exc_info=True,
             )
 
