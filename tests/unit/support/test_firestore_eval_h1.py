@@ -18,6 +18,7 @@ from src.adapters.firestore_ephemeral_store import FirestoreEphemeralStore
 from tests.support.firestore_eval import EvalDb, eval_transactions
 
 COSINE = DistanceMeasure.COSINE
+DESC = firestore.Query.DESCENDING
 
 
 @pytest.fixture
@@ -52,6 +53,7 @@ async def test_dotted_paths_in_where_order_by_select_and_nested_reads(db):
     assert snap.to_dict() == {"identity": {"rank": 2}} and snap.get("identity.rank") == 2
     with pytest.raises(KeyError):
         snap.get("identity.slack")
+    assert (await col.document("nobody").get()).get("identity.rank") is None      # the client: None for a missing document
 
 
 # -------------------------------------------------------------------------------- WriteResult.transform_results
@@ -129,6 +131,70 @@ async def test_update_of_a_missing_document_raises_not_found_with_dotted_keys_to
     assert db.collection("c").docs == {}
 
 
+# ------------------------------------------------------------------------------------------- atomic commits
+
+async def test_a_batch_with_a_failing_write_applies_nothing(db):
+    col = db.collection("c")
+    col.docs.update({"exists": {"v": 1}, "other": {"v": 1}})
+    before_version = dict(col.versions)
+    for failing in (
+        lambda b: b.update(col.document("ghost"), {"v": 1}),                                     # NotFound
+        lambda b: b.update(col.document("other"), {"v": 2}, option=db.write_option(last_update_time=99)),   # precondition
+        lambda b: b.delete(col.document("other"), option=db.write_option(last_update_time=99)),
+    ):
+        batch = db.batch()
+        batch.set(col.document("fresh"), {"v": 1})
+        batch.update(col.document("exists"), {"v": firestore.Increment(5)})
+        batch.delete(col.document("other"))
+        failing(batch)
+        with pytest.raises((NotFound, FailedPrecondition)):
+            await batch.commit()
+        assert col.docs == {"exists": {"v": 1}, "other": {"v": 1}} and col.versions == before_version
+    assert db.commits == []
+    ok = db.batch()
+    ok.set(col.document("fresh"), {"v": 1})
+    await ok.commit()
+    assert "fresh" in col.docs and len(db.commits) == 1
+
+
+async def test_a_transaction_commit_with_a_failing_write_applies_nothing_and_is_not_retried(db):
+    col = db.collection("c")
+    col.docs["taken"] = {"v": 1}
+    runs = []
+    with eval_transactions():
+        @firestore.async_transactional
+        async def body(tx):
+            runs.append(1)
+            tx.set(col.document("fresh"), {"v": 1})
+            tx.create(col.document("taken"), {"v": 2})                                           # AlreadyExists at commit
+
+        with pytest.raises(AlreadyExists):
+            await body(db.transaction())
+    assert runs == [1] and col.docs == {"taken": {"v": 1}}
+    assert col.txn_versions == {}                                                               # nothing counted as a commit
+
+
+# --------------------------------------------------------------------------------------- value encoding
+
+async def test_values_are_stored_as_the_client_encodes_them(db):
+    col = db.collection("c")
+    naive = datetime.datetime(2026, 1, 1, 12, 0, 0)
+    plus3 = datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime.timezone(datetime.timedelta(hours=3)))
+    await col.document("a").set({"naive": naive, "aware": plus3, "tuple": (1, 2), "set": {7}, "nested": {"t": (3,)}})
+    doc = col.docs["a"]
+    assert doc["naive"] == datetime.datetime(2026, 1, 1, 12, 0, tzinfo=datetime.timezone.utc)
+    assert doc["aware"] == datetime.datetime(2026, 1, 1, 9, 0, tzinfo=datetime.timezone.utc)
+    assert doc["aware"].utcoffset() == datetime.timedelta(0)
+    assert (doc["tuple"], doc["set"], doc["nested"]) == ([1, 2], [7], {"t": [3]})
+    await col.document("a").update({"naive": datetime.datetime(2026, 2, 2)})
+    assert col.docs["a"]["naive"].tzinfo is datetime.timezone.utc
+    with pytest.raises(TypeError, match="Cannot convert to a Firestore Value"):
+        await col.document("b").set({"day": datetime.date(2026, 1, 1)})
+    with pytest.raises(TypeError):
+        await col.document("a").update({"x.y": [datetime.date(2026, 1, 1)]})
+    assert "b" not in col.docs and "x" not in col.docs["a"]
+
+
 # ------------------------------------------------------------- subcollections, auto-id, list_documents, groups
 
 async def test_subcollections_are_separate_collections_under_the_document(db):
@@ -178,22 +244,97 @@ async def test_not_equal_excludes_documents_without_the_field(db):
         "num": {"status": 3},
     })
     got = await col.where(filter=FieldFilter("status", "!=", "completed")).get()
-    # P5 verifies: null counts as present and a value of another type is "not equal"
-    assert _ids(got) == ["none", "num", "open"]
-    assert _ids(await col.where("status", "!=", None).get()) == ["done", "num", "open"]
+    # Firestore docs: a null field is excluded too; P5 verifies: a value of another type is "not equal"
+    assert _ids(got) == ["num", "open"]
+    assert _ids(await col.where("status", "!=", None).get()) == ["num", "done", "open"]       # IS_NOT_NULL, ordered by the field (number before string)
+    assert _ids(await col.where(filter=FieldFilter("status", "!=", None)).get()) == ["num", "done", "open"]
+
+
+async def test_none_is_valid_only_with_equality_or_not_equal_like_the_client(db):
+    col = db.collection("tasks")
+    with pytest.raises(ValueError, match="Only equality"):
+        col.where("status", "<", None)
+    with pytest.raises(ValueError, match="Only equality"):
+        col.where("status", "in", None)
+
+
+async def test_a_range_or_not_equal_filter_orders_by_its_field_so_a_limit_keeps_the_smallest(db):
+    col = db.collection("c")
+    col.docs.update({"a": {"n": 30}, "b": {"n": 10}, "c": {"n": 20}, "d": {"n": 5}, "e": {"x": 1}})
+    # by document id the first two over 4 would be a, b; the implicit ordering by `n` gives the two smallest
+    assert _ids(await col.where("n", ">", 4).limit(2).get()) == ["d", "b"]
+    assert _ids(await col.where("n", "!=", 10).limit(2).get()) == ["d", "c"]
+    # after an explicit descending order the implicit field follows in that direction (then __name__)
+    ties = db.collection("t")
+    ties.docs.update({"y": {"k": 1, "n": 5}, "x": {"k": 1, "n": 2}, "z": {"k": 0, "n": 3}})
+    assert _ids(await ties.order_by("k", direction=DESC).where("n", ">", 0).get()) == ["y", "x", "z"]
 
 
 # ------------------------------------------------------------------- stream(transaction=), get_all(transaction=)
 
-async def test_stream_and_get_all_accept_a_transaction_and_enlist_what_they_read(db):
+async def test_stream_and_get_all_accept_a_transaction(db):
     col = db.collection("c")
     col.docs.update({"a": {"g": 1}, "b": {"g": 1}, "c": {"g": 2}})
     tx = db.transaction()
     assert _ids([s async for s in col.where("g", "==", 1).stream(transaction=tx)]) == ["a", "b"]
     snaps = [s async for s in db.get_all([col.document("c"), col.document("nope")], field_paths=["g"], transaction=tx)]
     assert [(s.id, s.exists) for s in snaps] == [("c", True), ("nope", False)]
-    assert sorted(tx._reads) == [("c", "a"), ("c", "b"), ("c", "c"), ("c", "nope")]
     assert _ids(await col.where("g", "==", 2).get(transaction=tx)) == ["c"]
+
+
+async def _read_with_stream(tx, col):
+    return [s async for s in col.where("g", "==", 1).stream(transaction=tx)]
+
+
+async def _read_with_get_all(tx, col):
+    return [s async for s in tx.db.get_all([col.document("a")], transaction=tx)]
+
+
+async def _read_with_query_get(tx, col):
+    return await col.where("g", "==", 1).get(transaction=tx)
+
+
+@pytest.mark.parametrize("read", [_read_with_stream, _read_with_get_all, _read_with_query_get])
+async def test_a_rival_commit_to_a_document_read_through_a_query_or_get_all_re_runs_the_body(db, read):
+    col = db.collection("c")
+    col.docs.update({"a": {"g": 1}, "out": {"v": 0}})
+    runs, rival_pending = [], [True]
+    with eval_transactions():
+        @firestore.async_transactional
+        async def rival(tx):
+            tx.update(col.document("a"), {"g": 1, "by": "rival"})
+
+        @firestore.async_transactional
+        async def body(tx):
+            runs.append(1)
+            await read(tx, col)
+            if rival_pending:
+                rival_pending.pop()
+                await rival(db.transaction())
+            tx.set(col.document("out"), {"v": len(runs)})
+
+        await body(db.transaction())
+    assert len(runs) == 2 and col.docs["out"] == {"v": 2}
+
+
+async def test_a_rival_commit_to_a_document_that_was_not_read_does_not_re_run_the_body(db):
+    col = db.collection("c")
+    col.docs.update({"a": {"g": 1}, "other": {"g": 9}})
+    runs = []
+    with eval_transactions():
+        @firestore.async_transactional
+        async def rival(tx):
+            tx.update(col.document("other"), {"g": 10})
+
+        @firestore.async_transactional
+        async def body(tx):
+            runs.append(1)
+            await _read_with_stream(tx, col)
+            await rival(db.transaction())
+            tx.set(col.document("out"), {"v": 1})
+
+        await body(db.transaction())
+    assert runs == [1]
 
 
 # ---------------------------------------------------------------------------------------------- transactions
@@ -314,7 +455,9 @@ async def test_an_outside_write_during_the_body_does_not_retry(db):
             tx.set(ref, {"v": 1})
 
         await body(db.transaction())
-    assert runs == [1] and col.docs["n"] == {"v": 1}
+    # only what is true of real Firestore: the body does not run again. (Real Firestore blocks the outside write
+    # until the transaction ends, so the final value is not asserted.)
+    assert runs == [1]
 
 
 async def test_a_real_repository_transaction_serialises_two_consumers(db):
@@ -389,18 +532,22 @@ DECLARED = [
     _idx(("acc", A), ("cur", A), ("v", "VECTOR")),
     _idx(("user", A), ("seq", A), group="windows", scope="COLLECTION_GROUP"),
     _idx(("acc", A), ("other", A), group="elsewhere"),
+    _idx(("v", "VECTOR"), group="vec"),
+    _idx(("user", A), group="windows", scope="COLLECTION_GROUP"),
+    _idx(("ts", D), group="windows", scope="COLLECTION_GROUP"),
 ]
+OVERRIDES = [{"collectionGroup": "parts", "fieldPath": "user", "indexes": [{"queryScope": "COLLECTION_GROUP", "order": "ASCENDING"}]},
+             {"collectionGroup": "parts", "fieldPath": "seq", "indexes": []}]
 
 
 @pytest.fixture
 def strict():
-    db = EvalDb(indexes=DECLARED, groups={"eval_g": "g"})
+    db = EvalDb(indexes=DECLARED, groups={"eval_g": "g", "eval_vec": "vec"})
     return db, db.collection("eval_g")
 
 
 @pytest.mark.parametrize("build", [
     lambda c: c.where("acc", "==", "a").order_by("at", direction=D),                         # declared
-    lambda c: c.where("acc", "==", "a").order_by("at"),                                      # the index scanned backwards
     lambda c: c.where("acc", "in", ["a", "b"]).where("kind", "==", "k").order_by("at", direction=D),
     lambda c: c.where("acc", "==", "a").where("n", ">", 1),                                  # equality + range, no ordering
     lambda c: c.where("acc", "==", "a").where("n", "!=", 1).order_by("n"),
@@ -414,14 +561,24 @@ def strict():
     lambda c: c.where("n", ">", 1).where("n", "<", 5),
     lambda c: c.order_by("zzz"),
     lambda c: c.where("tags", "array_contains", "t"),
-    lambda c: c.find_nearest(vector_field="v", query_vector=[1.0, 0.0], distance_measure=COSINE, limit=1),
 ])
 async def test_a_query_the_declared_indexes_serve_runs(strict, build):
     await build(strict[1]).get()
 
 
+async def test_a_vector_query_with_or_without_pre_filter_needs_its_vector_index(strict):
+    db, _ = strict
+    kw = dict(vector_field="v", query_vector=[1.0, 0.0], distance_measure=COSINE, limit=1)
+    await db.collection("eval_vec").find_nearest(**kw).get()                                  # declared on `v`
+    with pytest.raises(FailedPrecondition, match="fields \\['v \\(VECTOR\\)'\\]"):
+        await db.collection("eval_g").find_nearest(**kw).get()                                # no vector index on `g`
+    with pytest.raises(FailedPrecondition):
+        await db.collection("eval_vec").find_nearest(**{**kw, "vector_field": "w"}).get()     # not on this field
+
+
 @pytest.mark.parametrize("build", [
     lambda c: c.where("acc", "==", "a").order_by("zzz"),                                     # no such index
+    lambda c: c.where("acc", "==", "a").order_by("at"),                                      # exact directions: (acc, at DESC)
     lambda c: c.where("zzz", "==", "a").where("n", ">", 1),                                  # equality + range, wrong field
     lambda c: c.where("acc", "==", "a").where("kind", ">", "k"),                             # range on a field no index has
     lambda c: c.where("acc", "in", ["a"]).where("zzz", "!=", 1),
@@ -444,13 +601,14 @@ async def test_the_refusal_names_the_fields_the_index_must_list(strict):
     assert "acc (EQ)" in str(err.value) and "zzz (DESCENDING)" in str(err.value)
 
 
-async def test_mixed_directions_are_not_served_by_the_reversed_index():
+async def test_directions_must_match_the_declared_index_exactly():
     db = EvalDb(indexes=[_idx(("acc", A), ("a", A), ("b", D))], groups={"eval_g": "g"})
     col = db.collection("eval_g")
     await col.where("acc", "==", 1).order_by("a").order_by("b", direction=D).get()
-    await col.where("acc", "==", 1).order_by("a", direction=D).order_by("b").get()
-    with pytest.raises(FailedPrecondition):
-        await col.where("acc", "==", 1).order_by("a").order_by("b").get()
+    for wrong in (lambda: col.order_by("a", direction=D).order_by("b"),         # P5 verifies: served in reverse?
+                  lambda: col.order_by("a").order_by("b")):
+        with pytest.raises(FailedPrecondition):
+            await wrong().where("acc", "==", 1).get()
 
 
 async def test_an_index_declared_for_another_group_or_scope_does_not_serve(strict):
@@ -461,6 +619,29 @@ async def test_an_index_declared_for_another_group_or_scope_does_not_serve(stric
     await db.collection_group("windows").where("user", "==", "u").order_by("seq").get()
     with pytest.raises(FailedPrecondition):                      # `g`'s indexes are COLLECTION scope
         await db.collection_group("g").where("acc", "==", "a").order_by("at", direction=D).get()
+
+
+async def test_a_collection_group_query_needs_a_collection_group_index_even_for_one_field(strict):
+    db, _ = strict
+    windows = db.collection_group("windows")
+    await windows.get()                                          # a bare stream needs none
+    await windows.select(["user"]).limit(3).get()
+    await windows.where("user", "==", "u").get()                 # single-field COLLECTION_GROUP index on `user`
+    await windows.order_by("ts", direction=D).get()
+    with pytest.raises(FailedPrecondition, match="COLLECTION_GROUP"):
+        await windows.where("zzz", "==", 1).get()                # the automatic index is COLLECTION scope only
+    with pytest.raises(FailedPrecondition, match="COLLECTION_GROUP"):
+        await db.collection_group("nowhere").order_by("seq").get()
+    with pytest.raises(FailedPrecondition, match="COLLECTION_GROUP"):
+        await windows.where("user", "array_contains", "u").get()   # an array filter needs an array index
+
+
+async def test_a_non_empty_field_override_serves_a_collection_group_query_an_exemption_does_not():
+    db = EvalDb(indexes=OVERRIDES)
+    parts = db.collection_group("parts")
+    await parts.where("user", "==", "u").get()
+    with pytest.raises(FailedPrecondition):
+        await parts.order_by("seq").get()                        # `indexes: []` declares no index (and is not applied)
 
 
 async def test_the_refusal_is_off_unless_asked_for():

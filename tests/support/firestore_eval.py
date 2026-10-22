@@ -3,14 +3,20 @@
 Standalone and collection-agnostic (the drive suite keeps its own fake in `tests/unit/adapters/firestore_drive_eval_fakes.py`;
 this module imports nothing from it). Documents are nested dicts. Evaluated, not recorded:
 
-- queries: `where` (keyword `filter=` or positional `field, op, value`) with `==`, null, `!=` (a document without the
-  field is excluded), ranges, `in`, `array_contains*`; Firestore's value-type ordering with the implicit `__name__`
-  tie-break; cursors; `limit`; `select`; aggregations; cosine `find_nearest` (any other measure is refused) whose
-  pre-filter may be a range or `!=`; dotted field paths everywhere (`where`, `order_by`, `select`, cursors, `snap.get`);
+- queries: `where` (keyword `filter=` or positional `field, op, value`, validated as the client does: `None` only with
+  `==` / `!=`, which become IS_NULL / IS_NOT_NULL) with `==`, null, `!=` (a document without the field or with a null
+  is excluded), ranges, `in`, `array_contains*`; Firestore's value-type ordering; the implicit ordering (a range or
+  `!=` filter orders by its field after the explicit orderings, in the last explicit direction, then `__name__`, so it
+  decides what a `limit` returns); cursors; `limit`; `select`; aggregations; cosine `find_nearest` (any other measure
+  is refused) whose pre-filter may be a range or `!=`; dotted field paths everywhere (`where`, `order_by`, `select`,
+  cursors, `snap.get`);
 - writes: `set` (merge or not), `create` (`AlreadyExists`), `update` (dotted keys are nested paths, `NotFound` on a
   missing document, optional `last_update_time` precondition), `delete`, batches; `Increment`, `ArrayUnion`,
   `ArrayRemove`, `SERVER_TIMESTAMP` (a tz-aware UTC `datetime`) and `DELETE_FIELD` applied; `set`/`create`/`update`
-  return a `WriteResult` whose `transform_results` follow the alphabetical order of the transformed paths;
+  return a `WriteResult` whose `transform_results` follow the alphabetical order of the transformed paths; values are
+  stored as the client encodes them (a naive `datetime` is UTC, an aware one is converted to UTC, tuples and sets come
+  back as lists, a `datetime.date` raises `TypeError`); a batch or a transaction commit is atomic: when any write
+  fails (`AlreadyExists`, `NotFound`, a failed precondition) none is applied;
 - paths: subcollections (`doc.collection(name)`, `db.collection("a/b/c")`), `list_documents()`, auto-id
   `collection.document()`, `db.collection_group(name)`;
 - transactions: `eval_transactions()` patches `google.cloud.firestore.async_transactional` with the fake's decorator.
@@ -19,12 +25,17 @@ this module imports nothing from it). Documents are nested dicts. Evaluated, not
   then the real client's `ValueError`). An outside non-transactional write during the body is NOT detected: real
   Firestore blocks such a write until the transaction ends, here it simply applies and the transaction commits over it;
 - opt-in index refusal: `EvalDb(indexes=..., groups=...)` raises `FailedPrecondition` for a query that needs a
-  composite index no declared index serves.
+  composite index no declared index serves, for a vector query without a declared vector index on its field, and for
+  a collection-group query with a filter or ordering that no COLLECTION_GROUP index (composite or non-empty field
+  override) covers; a bare collection-group stream needs none.
 
-Not a Firestore emulator: only what the repositories in this codebase use. A batch or a commit that fails half-way
-keeps its earlier writes. `list_documents()` lists stored documents only (real Firestore also lists "missing" parents
-that have subcollections). Every executed query on a collection is logged in `EvalCollection.executed`
-(`("where", field, op, value)`, `("order_by", field, direction)`, `("limit", n)`, ...).
+Not a Firestore emulator: only what the repositories in this codebase use. Known gaps, deliberately not built:
+`list_documents()` lists stored documents only (real Firestore also lists "missing" parents that have subcollections);
+transactions give no phantom protection (a query that returned nothing is not protected, so a check-then-set such as
+`firestore_user_repo.link_platform_identity` is not serialised, while real transactions are serializable); single-field
+index exemptions (`"indexes": []` overrides) in the config are ignored, so a query they would make unservable is not
+refused; a transaction used outside the decorator is not refused. Every executed query on a collection is logged in
+`EvalCollection.executed` (`("where", field, op, value)`, `("order_by", field, direction)`, `("limit", n)`, ...).
 """
 from __future__ import annotations
 
@@ -34,7 +45,7 @@ import json
 import math
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
@@ -43,6 +54,7 @@ from unittest.mock import patch
 from google.api_core.exceptions import AlreadyExists, FailedPrecondition, InvalidArgument, NotFound, Aborted
 from google.cloud.firestore_v1 import ReadAfterWriteError
 from google.cloud.firestore_v1._helpers import READ_AFTER_WRITE_ERROR
+from google.cloud.firestore_v1.base_query import _validate_opation
 from google.cloud.firestore_v1.base_vector_query import DistanceMeasure
 from google.cloud.firestore_v1.transforms import (
     DELETE_FIELD, SERVER_TIMESTAMP, ArrayRemove, ArrayUnion, Increment,
@@ -61,7 +73,7 @@ _MISSING = object()
 _DISJUNCTIONS_MAX = 30          # Firestore: values per `in` / `array_contains_any`, and the disjunction product
 _ARRAY_OPS = ("array_contains", "array_contains_any")
 _EQUALITY_OPS = ("==", "IS_NULL", "in")
-_RANGE_OPS = ("<", "<=", ">", ">=", "!=", "not-in")
+_RANGE_OPS = ("<", "<=", ">", ">=", "!=", "not-in", "IS_NOT_NULL")   # the inequality filters
 _MAX_ATTEMPTS = 5               # google.cloud.firestore_v1.base_transaction.MAX_ATTEMPTS
 
 
@@ -164,9 +176,12 @@ def _match(data: Dict[str, Any], field: str, op: str, value: Any) -> bool:
         return got is None
     if op == "==":
         return _equal(got, value)
+    if op == "IS_NOT_NULL":
+        return got is not None
     if op == "!=":
-        # P5 verifies: a null field counts as present (`!= 5` matches it); a value of another type is "not equal".
-        return not _equal(got, value)
+        # Firestore docs: the field must exist with a value other than the given one, null excluded.
+        # P5 verifies: a value of another type counts as "not equal".
+        return got is not None and not _equal(got, value)
     if op in ("<", "<=", ">", ">="):
         if got is None or _rank(got) != _rank(value):
             return False
@@ -223,6 +238,19 @@ def _resolve(value: Any, current: Any, path: str, sink: Sink) -> Any:
         return now
     if isinstance(value, dict):                      # a map replaces what was there; transforms inside it still apply
         return {k: _resolve(v, None, f"{path}.{k}", sink) for k, v in value.items()}
+    return _plain(value)
+
+
+def _plain(value: Any) -> Any:
+    """A written value as the client encodes it and a read decodes it (`_helpers.encode_value` / `decode_value`)."""
+    if isinstance(value, datetime):                  # naive means UTC; an aware value comes back as the UTC instant
+        return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+    if isinstance(value, date):
+        raise TypeError("Cannot convert to a Firestore Value", value, "Invalid type", type(value))
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [_plain(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _plain(v) for k, v in value.items()}
     return copy.deepcopy(value)
 
 
@@ -268,7 +296,9 @@ class EvalSnap:
         return copy.deepcopy(self._data) if self._data is not None else None
 
     def get(self, field_path: str) -> Any:
-        """One field by (dotted) path; `KeyError` when the document or the field is missing, as in the client."""
+        """One field by (dotted) path: `None` for a document that does not exist, `KeyError` for a missing field."""
+        if self._data is None:
+            return None
         value = _get_path(self._data, field_path)
         if value is _MISSING:
             raise KeyError(field_path)
@@ -375,7 +405,9 @@ class EvalQuery:
             op = op if isinstance(op, str) else StructuredQuery.UnaryFilter.Operator(op).name
             return self._then(("where", filter.field_path, op, filter.value))
         assert field_path is not None and op_string is not None, "where() takes a field, an operator and a value"
-        return self._then(("where", field_path, op_string, value))
+        op = _validate_opation(op_string, value)    # the client's check: None / NaN only with == and !=
+        op = op if isinstance(op, str) else StructuredQuery.UnaryFilter.Operator(op).name
+        return self._then(("where", field_path, op, value))
 
     def order_by(self, field: str, direction: str = "ASCENDING") -> "EvalQuery":
         return self._then(("order_by", field, direction))
@@ -445,9 +477,14 @@ class EvalQuery:
                 aggregate = op
         if nearest is not None:
             return self._nearest(rows, nearest, paths)
+        last = orders[-1][1] if orders else "ASCENDING"
+        ordered = {name for name, _ in orders}
+        for _, field, op, _ in (o for o in self.ops if o[0] == "where"):   # the implicit ordering of inequality filters
+            if op in _RANGE_OPS and field not in ordered:
+                orders.append((field, last))
+                ordered.add(field)
         for name, _ in orders:   # an ordering excludes documents without the field
             rows = [r for r in rows if _get_path(r[3], name) is not _MISSING]
-        last = orders[-1][1] if orders else "ASCENDING"
 
         def sort_key(row: tuple) -> tuple:
             parts = [(_Desc(_key(_get_path(row[3], n))) if d == "DESCENDING" else _key(_get_path(row[3], n)))
@@ -542,9 +579,8 @@ class EvalBatch:
 
     async def commit(self) -> None:
         assert len(self.writes) <= 500, "Firestore takes at most 500 writes per batch"
+        self.db._commit_writes(self.writes)
         self.db.commits.append(list(self.writes))
-        for kind, ref, data, extra in self.writes:
-            ref._apply(kind, data, extra)
 
 
 class EvalTransaction:
@@ -582,8 +618,7 @@ class EvalTransaction:
         for (name, doc_id), seen in self._reads.items():
             if self.db.cols[name].txn_versions.get(doc_id, 0) != seen:
                 raise Aborted(f"Document changed by another transaction: {name}/{doc_id}")
-        for kind, ref, data, extra in self._writes:
-            ref._apply(kind, data, extra, by_transaction=True)
+        self.db._commit_writes(self._writes, by_transaction=True)
         self._reset()
 
 
@@ -628,7 +663,10 @@ def _load_indexes(indexes: Union[None, str, Path, List[dict]]) -> Optional[List[
     raw = json.loads(Path(indexes).read_text()) if isinstance(indexes, (str, Path)) else indexes
     declared = []
     for idx in raw:
-        if "fields" not in idx:
+        if "fields" not in idx:     # a field override: its index entries are single-field indexes (an empty list = exemption, ignored)
+            for entry in idx.get("indexes", []):
+                declared.append((idx["collectionGroup"], entry.get("queryScope", "COLLECTION"),
+                                 [(idx["fieldPath"], entry.get("order") or ("CONTAINS" if "arrayConfig" in entry else "VECTOR"))]))
             continue
         fields = [(f["fieldPath"], f.get("order") or ("CONTAINS" if "arrayConfig" in f else "VECTOR"))
                   for f in idx["fields"]]
@@ -638,24 +676,18 @@ def _load_indexes(indexes: Union[None, str, Path, List[dict]]) -> Optional[List[
     return declared
 
 
-def _flip(direction: str) -> str:
-    return {"ASCENDING": "DESCENDING", "DESCENDING": "ASCENDING"}.get(direction, direction)
-
-
 def _required_index(ops: List[tuple]) -> Optional[Tuple[set, List[tuple]]]:
     """(head, tail) of the composite a query needs, or None when Firestore's single-field indexes serve it.
     head: the equality / `in` / array fields, in any order; tail: the orderings in order, then the range fields not
-    already ordered (a vector query: the vector field). Rules: equality-only filters on several fields and any
+    already ordered (a vector query: the vector field, with every pre-filter field in the head). Rules: equality-only filters on several fields and any
     single-field filter or ordering need no composite; a second field next to a range, an ordering, an array filter
-    or a second ordering does; so does a vector query with any pre-filter."""
+    or a second ordering does; a vector query needs its vector index, with or without a pre-filter."""
     wheres = [op for op in ops if op[0] == "where"]
     orders = [(op[1], op[2]) for op in ops if op[0] == "order_by"]
     nearest = [op[1] for op in ops if op[0] == "find_nearest"]
     head = {(f, "CONTAINS" if op in _ARRAY_OPS else "EQ") for _, f, op, _ in wheres if op in _EQUALITY_OPS + _ARRAY_OPS}
     range_fields = [f for _, f, op, _ in wheres if op in _RANGE_OPS]
-    if nearest:
-        if not wheres:
-            return None
+    if nearest:     # a vector query always needs a declared vector index on its field (never created automatically)
         return {(f, "CONTAINS" if op in _ARRAY_OPS else "EQ") for _, f, op, _ in wheres}, [(nearest[0]["vector_field"], "VECTOR")]
     fields = {f for _, f, _, _ in wheres} | {n for n, _ in orders}
     has_array = any(op in _ARRAY_OPS for _, _, op, _ in wheres)
@@ -670,8 +702,8 @@ def _serves(declared: List[tuple], head: set, tail: List[tuple]) -> bool:
     if cut < 0:
         return False
     have_head, have_tail = declared[:cut], declared[cut:]
-    flipped = [(f, _flip(d)) for f, d in tail]     # an index is scanned in either direction
-    return (have_tail in (tail, flipped)
+    # P5 verifies: whether Firestore serves a composite in reverse (every direction flipped); the fake does not
+    return (have_tail == tail
             and {(f, "CONTAINS" if m == "CONTAINS" else "EQ") for f, m in have_head} == head)
 
 
@@ -705,6 +737,26 @@ class EvalDb:
     def batch(self) -> EvalBatch:
         return EvalBatch(self)
 
+    def _commit_writes(self, writes: List[tuple], by_transaction: bool = False) -> None:
+        """Apply the writes in order, all or none: a failing write restores every document the commit touched
+        (stored documents are replaced, never changed in place, so the old objects are the backup)."""
+        backup: Dict[Tuple[str, str], tuple] = {}
+        for _, ref, _, _ in writes:
+            col = ref.col
+            backup.setdefault((col.name, ref.id), (col, col.docs.get(ref.id, _MISSING),
+                                                   col.versions.get(ref.id, _MISSING), col.txn_versions.get(ref.id, _MISSING)))
+        try:
+            for kind, ref, data, extra in writes:
+                ref._apply(kind, data, extra, by_transaction=by_transaction)
+        except BaseException:
+            for (_, doc_id), (col, doc, version, txn_version) in backup.items():
+                for store, old in ((col.docs, doc), (col.versions, version), (col.txn_versions, txn_version)):
+                    if old is _MISSING:
+                        store.pop(doc_id, None)
+                    else:
+                        store[doc_id] = old
+            raise
+
     def transaction(self) -> EvalTransaction:
         return EvalTransaction(self)
 
@@ -717,14 +769,29 @@ class EvalDb:
         """`FailedPrecondition` naming the missing composite, when the index refusal is on and no declared index serves."""
         if self.declared is None:
             return
-        required = _required_index(ops)
-        if required is None:
-            return
-        head, tail = required
         group = name if is_group else self.groups.get(name, name.rsplit("/", 1)[-1])
         scope = "COLLECTION_GROUP" if is_group else "COLLECTION"
+        required = _required_index(ops)
+        if required is None:
+            if is_group:    # automatic single-field indexes are COLLECTION scope only
+                self._check_group_single_fields(group, ops)
+            return
+        head, tail = required
         if any(g == group and s == scope and _serves(fields, head, tail) for g, s, fields in self.declared):
             return
         wanted = sorted(f"{f} ({m})" for f, m in head) + [f"{f} ({m})" for f, m in tail]
         raise FailedPrecondition(
             f"The query requires an index: collection group {group!r}, scope {scope}, fields {wanted}")
+
+    def _check_group_single_fields(self, group: str, ops: List[tuple]) -> None:
+        """A collection-group query with a filter or ordering needs a COLLECTION_GROUP single-field index (a field
+        override, or a one-field composite) on each field it uses; a bare stream needs none."""
+        needed = {(op[1], "CONTAINS" if op[2] in _ARRAY_OPS else "ORDER") for op in ops if op[0] == "where"}
+        needed |= {(op[1], "ORDER") for op in ops if op[0] == "order_by"}
+        for field, kind in sorted(needed):
+            if not any(g == group and s == "COLLECTION_GROUP" and len(fields) == 1 and fields[0][0] == field
+                       and (fields[0][1] == "CONTAINS") == (kind == "CONTAINS") and fields[0][1] != "VECTOR"
+                       for g, s, fields in self.declared or []):
+                raise FailedPrecondition(
+                    f"The query requires an index: collection group {group!r}, scope COLLECTION_GROUP, "
+                    f"single field {field!r} ({kind})")
