@@ -84,6 +84,7 @@ from ..domain.drive_index import (
     ContentClass, DocumentBrief, DriveChunk, DriveIndexRecord, DriveIndexStoreUnavailable, DriveSyncState, EpochPhase,
     ErrorCategory, LeaseLost, Priority, Reason, RecordState, Scope, TriageVerdict, record_key,
 )
+from ..domain.drive_note_check import NoteCheck
 from ..domain.drive_index_lean import (
     RECORD_LEAN_FIELDS, ChunkId, DriveChunkLean, DriveHintLean, DriveRecordLean, lean_of,
 )
@@ -224,6 +225,13 @@ def _dt_map(value: Any) -> Dict[str, datetime]:
     return {str(k): v for k, v in ((k, _dt(v)) for k, v in (value or {}).items()) if v is not None}
 
 
+def _note_checks(value: Any) -> Tuple[NoteCheck, ...]:
+    """The owner-notes archive checks (DRIVE_FILE_NOTES_RFC §3.4): a list of maps, `last_seen_at` a timestamp."""
+    return tuple(NoteCheck(note_id=str(v.get("note_id", "")), item_id=str(v.get("item_id", "")),
+                           why=str(v.get("why", "")), last_seen_at=_dt(v.get("last_seen_at")))
+                 for v in (value or ()) if v.get("note_id") and v.get("item_id"))
+
+
 _RECORD_READERS: Dict[str, Callable[[Any], Any]] = {
     "facets": lambda v: dict(v or {}),
     "content_class": ContentClass,
@@ -267,6 +275,8 @@ _STATE_READERS: Dict[str, Callable[[Any], Any]] = {
     "notes_applied_at": _dt, "notes_scanned_at": _dt, "notes_space_at": _dt, "notes_paging": bool,
     "notes_tick_at": _dt,
     "notes_merge_version": int,
+    # owner notes (DRIVE_FILE_NOTES_RFC §3.4, §7.4)
+    "note_checks": _note_checks, "notes_audited_at": _dt, "notes_audit_after_at": _dt, "notes_audit_after_id": str,
 }
 
 

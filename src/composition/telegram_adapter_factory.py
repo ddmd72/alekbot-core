@@ -57,6 +57,7 @@ class TelegramAdapterFactory:
         short_link_service=None,
         skill_service=None,
         memory_fact_service=None,
+        drive_note_service=None,
         task_queue=None,
         long_turn_service=None,
     ) -> TelegramWebhookAdapter:
@@ -112,6 +113,7 @@ class TelegramAdapterFactory:
             short_link_service=short_link_service,
             skill_service=skill_service,
             memory_fact_service=memory_fact_service,
+            drive_note_service=drive_note_service,   # `$drive-notes` (DRIVE_FILE_NOTES_RFC §4.8)
             long_turn_service=long_turn_service,
         )
 

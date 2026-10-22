@@ -29,6 +29,7 @@ from src.utils.memory_scope import memory_scope
 from src.adapters.firestore_repo import FirestoreFactRepository
 from src.services.file_upload_service import FileUploadService
 from src.composition.service_container import ServiceContainer
+from src.composition.drive_note_setup import command_drive_note_service
 from src.infrastructure.agent_coordinator import AgentCoordinator
 from src.infrastructure.agent_registry import AgentRegistry
 from src.infrastructure.agent_manifest import ALL_DESCRIPTORS
@@ -848,6 +849,8 @@ async def main():
             short_link_service=short_link_service,
             skill_service=container.skill_service,
             memory_fact_service=container.memory_fact_service,
+            drive_note_service=command_drive_note_service(container.drive_note_service,
+                                                          container.drive_notes_enabled),
             long_turn_service=long_turn_service,
         )
         notification_channel_factory.register_factory(
@@ -1145,6 +1148,8 @@ async def main():
                             short_link_service=short_link_service,
                             skill_service=container.skill_service,
                             memory_fact_service=container.memory_fact_service,
+                            drive_note_service=command_drive_note_service(container.drive_note_service,
+                                                                          container.drive_notes_enabled),
                             task_queue=agent_task_queue,
                             long_turn_service=long_turn_service,
                         )

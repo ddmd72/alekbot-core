@@ -12,6 +12,7 @@ from enum import Enum, IntEnum
 from typing import Any, Mapping, Optional, Tuple
 
 from .drive_enrichment import DriveProfile, PhotoObject
+from .drive_note_check import NoteCheck
 
 POLICY_VERSION = 3                            # 2: the Slice 2+4 kinds admitted (§24.1); 3: audio and video admitted
                                               # for transcription (§27.3); re-plans EVERY record (113/113 for the owner), not only media: structure
@@ -513,6 +514,15 @@ class DriveSyncState:
     # when code with notes support last ran the notes step: a `last_success_at` after it means a tick without that
     # support ran (a rolled-back revision), and the next notes step re-reads every note (plan Default B12)
     notes_tick_at: Optional[datetime] = None
+    # owner notes (docs/10_rfcs/DRIVE_FILE_NOTES_RFC.md §3.4, §7.1, §7.4): the archive checks of records with a note that
+    # left the index, folded in at every save and worked at the round end; and the daily audit's clock. Both die with
+    # the state on a purge, which is right: a purge archives nothing, and the audit is the backstop.
+    note_checks: Tuple[NoteCheck, ...] = ()
+    notes_audited_at: Optional[datetime] = None
+    # the audit pass cursor (§7.4): the (snapshot_at, note_id) of the last note a pass tried; "" = no pass running. A pass
+    # cut by its item-call share resumes after it, and `notes_audited_at` is stamped when the pass ends
+    notes_audit_after_at: Optional[datetime] = None
+    notes_audit_after_id: str = ""
 
     def cards_in_space(self, embedding_space: str) -> bool:
         """The card stream answers queries embedded in `embedding_space`: no card is left in another space."""

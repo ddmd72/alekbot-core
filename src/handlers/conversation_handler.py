@@ -33,8 +33,10 @@ from ..domain.exceptions import (
     SkillNameReserved,
     SkillRejected,
 )
-from ..domain.drive_note import DRIVE_NOTE_ERASE_DELIVERY, DRIVE_NOTE_RECEIPT_DELIVERY
-from ..domain.drive_note_receipt import render_drive_note_erase, render_drive_note_receipt
+from ..domain.drive_note import (
+    DRIVE_NOTE_ERASE_DELIVERY, DRIVE_NOTE_RECEIPT_DELIVERY, DriveNoteRefused, NoteRefusal,
+)
+from ..domain.drive_note_receipt import render_drive_note_erase, render_drive_note_erased, render_drive_note_receipt
 from ..domain.memory_fact import (
     MEMORY_PREVIEW_DELIVERY,
     MemoryFactDraft,
@@ -61,6 +63,7 @@ if TYPE_CHECKING:
     from ..services.skill_service import SkillService
     from ..services.long_turn_service import LongTurnService
     from ..services.memory_fact_service import MemoryFactService
+    from ..services.drive_note_service import DriveNoteService
 from ..utils.memory_scope import memory_scope
 from ..utils.file_conversion import (
     convert_file_to_text, download_alert, is_native_binary, make_history_stub,
@@ -162,6 +165,7 @@ class ConversationHandler(ConversationHandlerPort):
         skill_service: Optional["SkillService"] = None,
         long_turn_service: Optional["LongTurnService"] = None,
         memory_fact_service: Optional["MemoryFactService"] = None,
+        drive_note_service: Optional["DriveNoteService"] = None,
     ):
         self.coordinator = coordinator
         self.agent_factory = agent_factory
@@ -185,6 +189,9 @@ class ConversationHandler(ConversationHandlerPort):
         self._skill_service = skill_service
         self._long_turns = long_turn_service
         self._memory_facts = memory_fact_service
+        # owner notes on drive files (DRIVE_FILE_NOTES_RFC §4.8): the `$drive-notes` erase commands; None with the
+        # notes kill switch off (the command then answers that notes are unavailable)
+        self._drive_notes = drive_note_service
         # turn_ids whose long-turn flow runs in this process (final review C1). With one
         # instance, a RUNNING record not in here belongs to an attempt that died. Plain
         # set ops with no await between test and change, so no lock is needed.
@@ -1640,6 +1647,9 @@ class ConversationHandler(ConversationHandlerPort):
             elif command.startswith("memory"):
                 await self._handle_memory_command(command, context, response_channel)
 
+            elif command.split()[:1] == ["drive-notes"]:
+                await self._handle_drive_notes_command(command, context, response_channel)
+
             elif command == "primary":
                 await self._handle_primary_command(context, response_channel)
 
@@ -1904,6 +1914,85 @@ class ConversationHandler(ConversationHandlerPort):
         await response_channel.send_message(
             self._ui_string(context, UIMessage.MEMORY_SAVED, count=count), thread_id=context.thread_id,
         )
+
+    # ------------------------------------------------------------------
+    # Drive-notes commands (DRIVE_FILE_NOTES_RFC §4.8, D13)
+    # ------------------------------------------------------------------
+
+    async def _handle_drive_notes_command(
+        self, command: str, context: MessageContext, response_channel: ResponseChannel,
+    ) -> None:
+        """`$drive-notes erase-all` answers with the count of the owner's notes and, as its own message, the confirming
+        command `$drive-notes erase-all <code>` (part A's `render_drive_note_erase`, as the tool's per-note request);
+        nothing is erased. Pasting `$drive-notes erase <code>` (the per-note
+        code the annotate tool gave) or `$drive-notes erase-all <code>` erases the notes of that request: every version
+        deleted, a contentless stub left for the indexer. Handled before any LLM call; a code is the owner's own (it is
+        stored under his user id), works once and expires after ERASE_CODE_TTL. Anything else prints usage."""
+        if not self._drive_notes:
+            await response_channel.send_message(
+                self._ui_string(context, UIMessage.DRIVE_NOTES_UNAVAILABLE), thread_id=context.thread_id,
+            )
+            return
+        parts = command.split()
+        sub = parts[1] if len(parts) > 1 else None
+        try:
+            if sub == "erase-all" and len(parts) == 2:
+                await self._drive_notes_request_erase_all(self._drive_notes, context, response_channel)
+            elif sub in ("erase", "erase-all") and len(parts) == 3:
+                await self._drive_notes_erase(self._drive_notes, parts[2], context, response_channel)
+            else:
+                await response_channel.send_message(
+                    self._ui_string(context, UIMessage.DRIVE_NOTES_USAGE), thread_id=context.thread_id,
+                )
+        except Exception as e:
+            logger.error("❌ [ConversationHandler] drive-notes command %r failed for user %s: %s",
+                         sub, context.user_id[:8], e, exc_info=True)
+            await response_channel.send_message(
+                self._ui_string(context, UIMessage.DRIVE_NOTES_UNAVAILABLE), thread_id=context.thread_id,
+            )
+
+    async def _drive_notes_request_erase_all(
+        self, notes: "DriveNoteService", context: MessageContext, response_channel: ResponseChannel,
+    ) -> None:
+        try:
+            request = await notes.request_erase_all(context.user_id)
+        except DriveNoteRefused as e:
+            logger.info("ℹ️ [ConversationHandler] drive-notes erase-all refused for user %s: %s",
+                        context.user_id[:8], e.reason.value)
+            message = (UIMessage.DRIVE_NOTES_NONE if e.reason is NoteRefusal.NO_NOTE
+                       else UIMessage.DRIVE_NOTES_UNAVAILABLE)
+            await response_channel.send_message(self._ui_string(context, message), thread_id=context.thread_id)
+            return
+        line, command = render_drive_note_erase(request.delivery_data(), self._drive_note_strings(context))
+        await response_channel.send_message(line, thread_id=context.thread_id)
+        await response_channel.send_message(command, thread_id=context.thread_id)
+
+    async def _drive_notes_erase(
+        self, notes: "DriveNoteService", code: str, context: MessageContext, response_channel: ResponseChannel,
+    ) -> None:
+        try:
+            count = await notes.erase(context.user_id, code)
+        except DriveNoteRefused as e:
+            logger.info("ℹ️ [ConversationHandler] drive-notes erase refused for user %s: %s",
+                        context.user_id[:8], e.reason.value)
+            if e.reason is NoteRefusal.CONFLICT:
+                text = render_drive_note_erased(int(e.detail.get("erased", 0)), int(e.detail.get("left", 0)),
+                                                self._drive_note_strings(context))
+            elif e.reason is NoteRefusal.NO_SUCH_ERASE_REQUEST:
+                text = self._ui_string(context, UIMessage.DRIVE_NOTES_NO_SUCH_REQUEST)
+            else:
+                text = self._ui_string(context, UIMessage.DRIVE_NOTES_UNAVAILABLE)
+            await response_channel.send_message(text, thread_id=context.thread_id)
+            return
+        await response_channel.send_message(
+            render_drive_note_erased(count, 0, self._drive_note_strings(context)), thread_id=context.thread_id,
+        )
+
+    def _drive_note_strings(self, context: MessageContext) -> Callable[[UIMessage], str]:
+        """Part A's renderers read raw UI strings (they fill the counts themselves)."""
+        def strings(message: UIMessage) -> str:
+            return self._ui_string(context, message)
+        return strings
 
     async def _handle_skill_save(
         self, code: str, context: MessageContext, response_channel: ResponseChannel,

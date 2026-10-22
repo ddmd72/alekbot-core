@@ -13,11 +13,12 @@ Public interface:
     matches(concepts, keys) -> bool                  # strict AND over the query's concepts
     passage(stored, keys, max_chars=300) -> Optional[str]
     render_deleted(hits, *, more, connected) -> str
+    merge_hits(hits) -> List[DeletedHit]             # one entry per gone item: a transcript and a note share it
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Collection, Iterable, List, Optional, Sequence, Tuple
+from dataclasses import dataclass, replace
+from typing import Collection, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from .drive_keys import word_keys
 from .drive_match import Concept
@@ -55,6 +56,9 @@ class DeletedHit:
     nonce: str = ""
     ref: str = ""
     item: Optional[DriveItem] = None    # the drive file the entry's ref opens, so the agent can keep the ref in drive_context
+    # the gone item, `<drive id>:<item id>` ("" when unknown): hits of two sources with the same key are one entry
+    # (`merge_hits`; DRIVE_FILE_NOTES_RFC §0.3: "an item with both an archived transcript and a note shows both lines")
+    item_key: str = ""
 
 
 def transcript_line(seconds: float, speakers: int, languages: Sequence[str]) -> str:
@@ -99,6 +103,25 @@ def passage(stored: StoredTranscript, keys: Iterable[str], max_chars: int = PASS
             text = text[:max(0, max_chars - 1)].rstrip() + "…"
         return text
     return None
+
+
+def merge_hits(hits: Sequence[DeletedHit]) -> List[DeletedHit]:
+    """One entry per gone item (§0.3 of the notes RFC): a later hit whose `item_key` an earlier one holds adds its ref
+    lines and its note line to that entry (the earlier hit's head, wrapper ref and drive file stay); hits without a key
+    stay as they are. Order kept."""
+    merged: List[DeletedHit] = []
+    at: Dict[str, int] = {}
+    for hit in hits:
+        index = at.get(hit.item_key) if hit.item_key else None
+        if index is None:
+            if hit.item_key:
+                at[hit.item_key] = len(merged)
+            merged.append(hit)
+            continue
+        first = merged[index]
+        note = "\n".join(x for x in (first.note_line, hit.note_line) if x)
+        merged[index] = replace(first, refs=(*first.refs, *hit.refs), note_line=note)
+    return merged
 
 
 def _entry(hit: DeletedHit) -> str:
