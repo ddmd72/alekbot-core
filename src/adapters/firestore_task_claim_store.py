@@ -8,6 +8,7 @@ from google.cloud.firestore_v1.async_client import AsyncClient
 from ..ports.task_claim_store import TaskClaimStore
 from ..utils.logger import logger
 
+_PROCESS_ID = uuid.uuid4().hex  # one id per process, by construction
 RUNNING = "running"
 DONE = "done"
 
@@ -19,7 +20,7 @@ class FirestoreTaskClaimStore(TaskClaimStore):
         self.db_client = db_client
         self.collection_name = collection_name
         self.ttl_seconds = ttl_seconds
-        self.holder = uuid.uuid4().hex  # one id per process
+        self.holder = _PROCESS_ID
 
     def _doc(self, key: str) -> Any:
         return self.db_client.collection(self.collection_name).document(key)
@@ -69,12 +70,17 @@ class FirestoreTaskClaimStore(TaskClaimStore):
                 self._fresh(attempt),
                 option=self.db_client.write_option(last_update_time=snap.update_time),
             )
-        except FailedPrecondition:
-            return False  # another caller took it over first
-        except NotFound:
-            return await self._claim(key, attempt, running_here, False) if retry_create else False
+        except (FailedPrecondition, NotFound):
+            # Our update may have landed and been retried by the SDK: re-read before giving way.
+            return await self._after_lost_update(key, attempt, running_here, retry_create)
         logger.info("[TaskClaim] took over a dead or expired claim: task=%s", key)
         return True
+
+    async def _after_lost_update(self, key: str, attempt: str, running_here: bool, retry_create: bool) -> bool:
+        snap = await self._doc(key).get()
+        if not snap.exists:
+            return await self._claim(key, attempt, running_here, False) if retry_create else False
+        return (snap.to_dict() or {}).get("attempt") == attempt
 
     async def _own(self, key: str, attempt: str) -> Optional[Any]:
         snap = await self._doc(key).get()

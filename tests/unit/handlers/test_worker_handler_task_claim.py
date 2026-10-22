@@ -262,7 +262,7 @@ async def test_queued_event_busy_session_waits_then_requeues_and_keeps_the_claim
     store = _MemoryClaims()
     h = _handler(store)
     h.attach_slack_worker(slack_adapter.handle_queued_event)
-    payload = {"event": {"event_id": "E1", "event": {"type": "message", "text": "hi"}},
+    payload = {"event": {"event_id": "E1", "event": {"type": "message", "text": "hi", "user": "U1"}},
                "session_id": "u1:C1"}
 
     assert await h.handle(payload, delivery=_delivery(), headers={}) == (
@@ -283,7 +283,7 @@ async def test_queued_event_busy_session_waits_then_requeues_and_keeps_the_claim
 
 async def test_queued_event_success_is_200_and_processes_message(slack_adapter):
     slack_adapter._process_message_event = AsyncMock()
-    payload = {"event": {"event_id": "E1", "event": {"type": "message", "text": "hi"}},
+    payload = {"event": {"event_id": "E1", "event": {"type": "message", "text": "hi", "user": "U1"}},
                "session_id": "u1:C1"}
     assert await slack_adapter.handle_queued_event(payload, {}) == ({"ok": True}, 200)
     slack_adapter._process_message_event.assert_awaited_once()
@@ -298,7 +298,7 @@ async def test_queued_event_bot_message_is_200_without_processing(slack_adapter)
 
 async def test_queued_event_unexpected_error_is_500(slack_adapter):
     slack_adapter._process_message_event = AsyncMock(side_effect=RuntimeError("bad"))
-    payload = {"event": {"event": {"type": "message"}}, "session_id": "u1:C1"}
+    payload = {"event": {"event": {"type": "message", "user": "U1"}}, "session_id": "u1:C1"}
     assert await slack_adapter.handle_queued_event(payload, {}) == ({"error": "bad"}, 500)
 
 

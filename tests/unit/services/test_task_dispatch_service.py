@@ -40,6 +40,7 @@ class TestEnqueueAgentTask:
             query="find notes about Paris",
             context={"user_id": "u1"},
             deadline_seconds=30,
+            dedup_key="deep_research_report:job9",
         )
 
         queue.enqueue_agent_task.assert_called_once_with(
@@ -48,6 +49,7 @@ class TestEnqueueAgentTask:
             query="find notes about Paris",
             context={"user_id": "u1"},
             deadline_seconds=30,
+            dedup_key="deep_research_report:job9",
         )
         assert result == "task-agent-001"
 
@@ -57,6 +59,7 @@ class TestEnqueueAgentTask:
         )
         _, kwargs = queue.enqueue_agent_task.call_args
         assert kwargs["deadline_seconds"] is None
+        assert kwargs["dedup_key"] is None
 
 
 # ---------------------------------------------------------------------------

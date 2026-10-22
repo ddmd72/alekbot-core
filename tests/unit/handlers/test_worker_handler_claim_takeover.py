@@ -56,7 +56,8 @@ async def test_concurrent_duplicate_in_this_process_is_skipped():
     first = asyncio.create_task(h.handle(_AGENT, delivery=_delivery()))
     await asyncio.sleep(0)
     await asyncio.sleep(0)
-    assert await h.handle(_AGENT, delivery=_delivery()) == ({"status": "duplicate"}, 200)
+    dup = await asyncio.wait_for(h.handle(_AGENT, delivery=_delivery()), timeout=2)
+    assert dup == ({"status": "duplicate"}, 200)
     gate.set()
     assert (await first)[1] == 200
     assert h._agent_worker.handle_task.await_count == 1
@@ -123,3 +124,79 @@ async def test_chat_retry_after_a_crash_reaches_the_handler():
     out = await h.handle({"event": {"event": {"type": "message"}}, "session_id": "u1:C1"}, delivery=_delivery("task-2"))
     assert out == ({"ok": True}, 200)
     slack.assert_awaited_once()
+
+
+class _GatedStore(FirestoreTaskClaimStore):
+    """Pauses inside try_claim / mark_done so a second delivery can interleave."""
+
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.claim_gate = None
+        self.done_gate = None
+        self.claim_calls = 0
+
+    async def try_claim(self, key, attempt, running_here):
+        self.claim_calls += 1
+        if self.claim_gate is not None:
+            await self.claim_gate.wait()
+        return await super().try_claim(key, attempt, running_here)
+
+    async def mark_done(self, key, attempt):
+        if self.done_gate is not None:
+            await self.done_gate.wait()
+        await super().mark_done(key, attempt)
+
+
+def _gated_handler(db):
+    h = _handler(db)
+    store = _GatedStore(db_client=db, collection_name=COL)
+    h._task_claims = store
+    h._agent_worker.handle_task = AsyncMock(return_value={"status": "success"})
+    return h, store
+
+
+async def _spin():
+    for _ in range(5):
+        await asyncio.sleep(0)
+
+
+async def test_duplicate_during_the_claim_call_is_refused_without_a_store_call():
+    db = EvalDb()
+    h, store = _gated_handler(db)
+    store.claim_gate = asyncio.Event()
+    first = asyncio.create_task(h.handle(_AGENT, delivery=_delivery()))
+    await _spin()  # first is inside try_claim, key not yet claimed in the store
+    dup = await asyncio.wait_for(h.handle(_AGENT, delivery=_delivery()), timeout=2)
+    assert dup == ({"status": "duplicate"}, 200)
+    assert store.claim_calls == 1
+    store.claim_gate.set()
+    assert (await first)[1] == 200
+    assert h._agent_worker.handle_task.await_count == 1
+
+
+async def test_redelivery_during_mark_done_does_not_take_over_and_rerun():
+    db = EvalDb()
+    h, store = _gated_handler(db)
+    store.done_gate = asyncio.Event()
+    first = asyncio.create_task(h.handle(_AGENT, delivery=_delivery()))
+    await _spin()  # body finished, mark_done pending, claim still running
+    assert _doc(db)["state"] == "running"
+    dup = await asyncio.wait_for(h.handle(_AGENT, delivery=_delivery()), timeout=2)
+    assert dup == ({"status": "duplicate"}, 200)
+    store.done_gate.set()
+    await first
+    assert _doc(db)["state"] == "done"
+    assert h._agent_worker.handle_task.await_count == 1
+
+
+async def test_fail_open_duplicate_does_not_remove_the_running_key_of_the_live_attempt():
+    db = EvalDb()
+    h, store = _gated_handler(db)
+    store.done_gate = asyncio.Event()
+    first = asyncio.create_task(h.handle(_AGENT, delivery=_delivery()))
+    await _spin()
+    await h.handle(_AGENT, delivery=_delivery())  # refused duplicate
+    assert "task-1" in h._running_claims
+    store.done_gate.set()
+    await first
+    assert "task-1" not in h._running_claims

@@ -774,15 +774,13 @@ async def main():
             companion_extraction=companion_extraction_service,
             oauth_credentials=oauth_credentials_port,
             drive_sync_scheduler=_drive_sync_scheduler,
+            deep_research_fetch=_openai_dr_fetch,
+            prompt_content_store=container.prompt_content_store,
         )
 
         deep_research_webhooks_bp = create_deep_research_webhooks_blueprint(
-            notification_service=notification_service,
             webhook_secret=config.get("OPENAI_DEEP_RESEARCH_WEBHOOK_SECRET"),
-            media_storage=gcs_media_adapter,
-            task_queue=agent_task_queue,
-            prompt_content_store=container.prompt_content_store,
-            link_service=file_link_service,
+            task_queue=_task_dispatch_service,
             fetch_response=_openai_dr_fetch,
             # 72 h = OpenAI's webhook retry window; liveness follows each doc's own expires_at.
             dedup_store=FirestoreDedupStore(

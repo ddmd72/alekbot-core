@@ -2,8 +2,10 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
 
+from google.api_core.exceptions import FailedPrecondition
+
 from src.adapters.firestore_task_claim_store import FirestoreTaskClaimStore
-from tests.support.firestore_eval import EvalDb
+from tests.support.firestore_eval import EvalDb, EvalDocRef
 
 COL = "claims"
 
@@ -32,6 +34,10 @@ async def test_same_attempt_recreate_is_ours():
     s = _store(EvalDb())
     assert await s.try_claim("t1", "a1", False)
     assert await s.try_claim("t1", "a1", True)
+
+
+def test_process_id_is_shared_by_stores_of_one_process():
+    assert _store(EvalDb()).holder == _store(EvalDb()).holder
 
 
 async def test_running_claim_of_another_process_is_taken_over():
@@ -109,3 +115,49 @@ async def test_release_and_done_on_missing_claim_are_quiet():
     s = _store(EvalDb())
     await s.release("nope", "a1")
     await s.mark_done("nope", "a1")
+
+
+def _lose_response_after_landing(monkeypatch, attempt):
+    """The SDK retried a take-over that had landed: the write is applied, the caller sees a precondition failure."""
+    original = EvalDocRef.update
+
+    async def update(self, data, option=None):
+        await original(self, data, option)
+        if data.get("attempt") == attempt:
+            raise FailedPrecondition("retried after landing")
+
+    monkeypatch.setattr(EvalDocRef, "update", update)
+
+
+async def test_takeover_that_landed_then_failed_precondition_is_ours(monkeypatch):
+    db = EvalDb()
+    await _store(db, "proc-old").try_claim("t1", "a1", False)
+    _lose_response_after_landing(monkeypatch, "a2")
+    assert await _store(db, "proc-new").try_claim("t1", "a2", False)
+    assert _doc(db)["attempt"] == "a2"
+
+
+async def test_lost_takeover_to_a_different_attempt_is_a_duplicate(monkeypatch):
+    db = EvalDb()
+    await _store(db, "proc-old").try_claim("t1", "a1", False)
+    original = EvalDocRef.update
+
+    async def update(self, data, option=None):
+        await original(self, {**data, "attempt": "rival"})  # someone else won
+        raise FailedPrecondition("changed")
+
+    monkeypatch.setattr(EvalDocRef, "update", update)
+    assert not await _store(db, "proc-new").try_claim("t1", "a2", False)
+
+
+async def test_takeover_whose_doc_vanished_retries_the_create_once(monkeypatch):
+    db = EvalDb()
+    await _store(db, "proc-old").try_claim("t1", "a1", False)
+
+    async def update(self, data, option=None):
+        await EvalDocRef.delete(self)  # released by its owner in between
+        raise FailedPrecondition("changed")
+
+    monkeypatch.setattr(EvalDocRef, "update", update)
+    assert await _store(db, "proc-new").try_claim("t1", "a2", False)
+    assert _doc(db)["attempt"] == "a2"
