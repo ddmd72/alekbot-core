@@ -664,26 +664,117 @@ async def test_the_kill_switch_behind_a_closed_gate_saves_the_zero_version(w):
     assert w.state().notes_merge_version == 0
 
 
-@pytest.mark.parametrize("complete", [False, True])
-async def test_an_incomplete_round_embeds_the_changed_card_at_once(w, complete):
+async def test_an_erase_reaches_the_card_while_observe_uses_every_start_budget(w, monkeypatch):
+    """Re-review item 4: an epoch re-enumeration's observe uses the whole start budget on every tick, so the notes step
+    after it never runs; with the round left incomplete it runs first, and the existing card is embedded at once."""
+    from src.domain.drive_index import DriveChanges
     a = w.drive.add("a.pdf")
     note = await w.put_note(a, "Petya's estimate")
     await w.settle()
-    await w.clear_note(note.note_id)
+    assert w.rec(a).has_card and "Petya" in card_text(w.rec(a))
+    real = w.drive.get_changes
+
+    async def endless(user_id: str, cursor: Any) -> DriveChanges:
+        page = await real(user_id, cursor)
+        w.clock.advance(TICK_START_BUDGET.total_seconds() + 1)   # the page uses the start budget
+        return replace(page, complete=False)                    # and the round never ends
+    monkeypatch.setattr(w.drive, "get_changes", endless)
+    await w.tick()
+    assert not w.state().round_complete
+    await w.notes.erase("u", [note.note_id])
     w.clock.advance(1)
-    token = svc_mod._TICK_NOTES.set(svc_mod._TickNotes(drive_id="d1"))
-    try:
-        budget = svc_mod._Budget(started=w.clock.monotonic(), monotonic=w.clock.monotonic)
-        await w.svc._notes_step("u", replace(w.state(), round_complete=complete), budget, {})
-    finally:
-        svc_mod._TICK_NOTES.reset(token)
+    await w.tick()
     rec = w.rec(a)
-    assert rec.owner_note_id == ""
-    if complete:   # the due loop follows: the card is card work in class 0
-        assert rec.card_hash != card_hash(rec) and rec.due_at is not None
-    else:          # no due loop follows: the old note's vector is replaced now
-        assert rec.card_hash == card_hash(rec)
-        assert w.repo.vectors[("u", a)] == await FakeEmbeddings().get_embedding(card_text(rec))
+    assert rec.owner_note_id == "" and not set(note_keys("Petya's estimate")) & set(rec.about_keys)
+    assert rec.card_hash == card_hash(rec)
+    assert w.repo.vectors[("u", a)] == await FakeEmbeddings().get_embedding(card_text(rec))   # the new card's vector
+
+
+async def test_the_notes_first_step_never_embeds_a_first_card(w, monkeypatch):
+    """Only a stored vector can hold an old note: a record still waiting for its first card gets it in class order."""
+    from src.domain.drive_index import DriveChanges
+    a = w.drive.add("a.pdf")
+    await w.settle()
+    w.repo.records[("u", a)] = replace(w.rec(a), has_card=False, card_hash=None)
+    w.repo.vectors.pop(("u", a), None)
+    real = w.drive.get_changes
+
+    async def endless(user_id: str, cursor: Any) -> DriveChanges:
+        page = await real(user_id, cursor)
+        w.clock.advance(TICK_START_BUDGET.total_seconds() + 1)
+        return replace(page, complete=False)
+    monkeypatch.setattr(w.drive, "get_changes", endless)
+    await w.tick()
+    await w.put_note(a, "Petya's estimate")
+    w.emb.calls.clear()
+    await w.tick()
+    rec = w.rec(a)
+    assert rec.owner_note_text == "Petya's estimate" and not rec.has_card and ("u", a) not in w.repo.vectors
+    assert not any("noted by the owner" in t for t in w.emb.calls)
+
+
+async def test_the_notes_step_runs_once_per_tick_on_either_path(w, monkeypatch):
+    a = w.drive.add("a.pdf")
+    await w.put_note(a)
+    await w.settle()
+    calls: List[str] = []
+    real = w.svc._notes_step
+
+    async def counted(*args: Any, **kw: Any) -> Any:
+        calls.append("step")
+        return await real(*args, **kw)
+    monkeypatch.setattr(w.svc, "_notes_step", counted)
+    await w.tick()
+    w.repo.states["u"] = replace(w.state(), round_complete=False)
+    await w.tick()
+    assert calls == ["step", "step"]
+
+
+async def test_the_kill_switch_zero_survives_an_error_save(w):
+    a = w.drive.add("a.pdf")
+    await w.put_note(a)
+    await w.settle()
+    assert w.state().notes_merge_version == 1
+    w.drive.raise_next = RuntimeError("provider outage")      # the switch-off tick ends on the error path
+    result = await _service(w, None).tick("u")
+    assert result.status == "error" and w.state().notes_merge_version == 0
+
+
+async def test_a_gated_tick_with_no_note_work_writes_no_state(w, monkeypatch):
+    a = w.drive.add("a.pdf")
+    await w.put_note(a)
+    await w.settle()
+    w.drive.connection_state = DriveConnection(connected=True, needs_reconnect=True, drive_id="d1")
+    await w.tick()                                           # the loss is recorded (one save)
+    saves: List[Any] = []
+    real = w.repo.save_sync_state
+
+    async def spy(state: Any, owner: Any = None) -> None:
+        saves.append(state)
+        await real(state, owner)
+    monkeypatch.setattr(w.repo, "save_sync_state", spy)
+    w.clock.advance(600)
+    assert (await w.tick()).status == "access_lost"
+    assert saves == []
+
+
+async def test_a_stub_failing_for_a_day_is_passed(w):
+    a = w.drive.add("a.pdf")
+    b = w.drive.add("b.pdf")
+    await w.put_note(a)
+    await w.settle()
+    await w.notes.erase("u", [f"n-{a}"])
+
+    def boom(note_id: str) -> None:
+        raise RuntimeError("store outage")
+    w.notes.hooks["delete_stub"] = boom
+    w.clock.advance(25 * 3600)                               # the stub is older than NOTE_STUB_HOLD_MAX
+    await w.put_note(b, "after the stub")
+    await w.tick()
+    state = w.state()
+    assert state.notes_applied_id == f"n-{b}" and not state.notes_paging   # the watermark passed the stub
+    assert w.rec(b).owner_note_text == "after the stub"
+    assert (await w.notes.get("u", f"n-{a}")) is not None   # left, contentless
 
 
 async def test_a_tick_by_code_without_notes_forces_a_full_re_read(w):

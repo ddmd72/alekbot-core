@@ -24,7 +24,7 @@ Public interface:
     NOTE_STORE_KEYS_VERSION                       that version ("{KEYS_VERSION}.{NOTE_KEYS_VERSION}")
     notes_query_start(state) -> (after, after_note_id)       where the notes step's next `changed_since` starts
     NOTE_MERGE_VERSION and the tick constants (§15): NOTE_PAGE, NOTE_WATERMARK_SKEW_S, NOTE_EMBED_PER_TICK,
-    NOTE_CHECKS_MAX, NOTE_AUDIT_EVERY, NOTE_AUDIT_SKIP_DAYS, NOTE_STEP_S, NOTE_LOOKUP_BATCH
+    NOTE_CHECKS_MAX, NOTE_AUDIT_EVERY, NOTE_AUDIT_SKIP_DAYS, NOTE_STEP_S, NOTE_STUB_HOLD_MAX, NOTE_LOOKUP_BATCH
 """
 from __future__ import annotations
 
@@ -53,6 +53,9 @@ NOTE_AUDIT_SKIP_DAYS = 7                    # §7.4 (S3)
 # one call (FILE_START_MARGIN_S), below an enrichment file's (ENRICH_FILE_BUDGET_S plus the margin) that the §7.1
 # deadline sum already holds, and nothing after it starts content work past the start budget: the sum is unchanged.
 NOTE_STEP_S = 60
+# A stub whose delete keeps failing holds the watermark (the notes after it wait); past this age it is logged and passed
+# (re-review item 5): it holds no content, and the notes more than a page behind it must not wait for good.
+NOTE_STUB_HOLD_MAX = timedelta(hours=24)
 NOTE_LOOKUP_BATCH = 30                      # §5.1 a: binding keys per `array-contains-any` (the repository batches too)
 # §3.1: the layout of a note document's stored `keys` (the keyer's and the note keyer's versions): a note whose
 # `keys_version` differs has its keys recomputed with `note_store_keys` (part C's deleted-files search)
@@ -137,7 +140,7 @@ def notes_query_start(state: DriveSyncState) -> Tuple[Optional[datetime], str]:
 
 __all__ = [
     "NOTE_AUDIT_EVERY", "NOTE_AUDIT_SKIP_DAYS", "NOTE_CHECKS_MAX", "NOTE_EMBED_PER_TICK", "NOTE_LOOKUP_BATCH",
-    "NOTE_MERGE_VERSION", "NOTE_PAGE", "NOTE_STEP_S", "NOTE_STORE_KEYS_VERSION", "NOTE_WATERMARK_SKEW_S", "NoteView",
-    "effective_doc_type", "effective_life_areas", "merged", "note_store_keys", "note_view", "notes_query_start",
-    "record_binding_key", "with_owner_note",
+    "NOTE_MERGE_VERSION", "NOTE_PAGE", "NOTE_STEP_S", "NOTE_STORE_KEYS_VERSION", "NOTE_STUB_HOLD_MAX",
+    "NOTE_WATERMARK_SKEW_S", "NoteView", "effective_doc_type", "effective_life_areas", "merged", "note_store_keys",
+    "note_view", "notes_query_start", "record_binding_key", "with_owner_note",
 ]
