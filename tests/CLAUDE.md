@@ -2,14 +2,21 @@
 
 pytest + pytest-asyncio, `asyncio_mode=auto`. Why these rules: `docs/10_rfcs/TEST_COVERAGE_SYSTEMIC_RFC.md`.
 
-## Running
+## Running — which command when
 
-```bash
-make check             # lint + mypy + unit suite (no slow tests, no coverage) + offline G2: the pre-commit gate
-make test-affected     # inner loop: only the unit tests testmon selects for your changes
-make ci                # the PR job: check + slow tests, coverage gates (one full run)
-make test-integration  # tests/integration/ (some talk to real services); make test-e2e-all: real APIs
-```
+This table is the one place that says which test command to run when. Other docs point here.
+
+| When | Command | What it runs |
+|---|---|---|
+| While editing | `pytest <path>::<test>` or `make test-affected` | the tests you name, or the unit tests testmon selects for your diff (it can miss a test whose input is a data file or code in a child process) |
+| Before every commit | `make check`, once (not after every edit) | lint + mypy + the unit suite without `slow` tests + the offline G2 test |
+| Before you call a package done, and whenever you report coverage | `make ci` | everything in `make check` + `slow` tests + the coverage gates (per file and per layer); CI runs exactly this on every PR |
+| Package done-check (RFC §5) | `python -m tests.support.semantic_mutants --module <src.module> --tests <test paths>` | every mutant killed or ruled equivalent by the reviewer |
+| Only when the task needs them | `make test-integration`, `make test-e2e-all` | some integration tests and all e2e tests call real services |
+| Wall-clock tests | `make test-timing`, by hand (CI runs it after a merge to `main`) | `timing` tests only |
+
+Never: re-run a suite because a `timing` test failed; combine `--testmon` with `--cov`; run two full suites at once
+(the lock below makes the second wait).
 
 ```
 tests/
