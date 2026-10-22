@@ -16,7 +16,8 @@ DONE_LINE = "Done."
 ANSWER_FROM_RESULTS = "Answer from the results below."
 ONLY_PART = "Only part was done:"
 PARTIAL_NOT_DONE = "Not done: {not_done}"
-UNFINISHED_LINE = "The drive assistant could not finish; what ran is listed below."
+UNFINISHED_LINE = ("The drive assistant could not finish; what ran is listed below. Tell the user what ran and what "
+                   "did not; do not commission the same request again in this turn.")
 NOTHING_DONE = "Nothing was done: {why}"
 NOTHING_RAN = "no drive operation ran"
 NOT_ATTACHED = ("Nothing was written: the text was not attached. Commission again with context.file_contents holding "
@@ -47,6 +48,7 @@ NOT_STARTED = "not started: the time for this request ran out"
 NO_ITEM = ("No file_contents item '{value}' (items: {known}). Nothing was written: the text must come from the "
            "orchestrator in file_contents.")
 NO_ITEMS = "none"
+FIND_REF = "find it with search_drive or list_folder"
 REF_REQUIRED = "{field} is required: {what}."   # an empty ref is refused before any call (CRUD: empty is not given)
 
 # -- reading lines (§7.3), verbatim from the drive-search skill ----------------------------------------------------

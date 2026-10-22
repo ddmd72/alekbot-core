@@ -9,7 +9,10 @@ to choose its next step: search results and listings in full, a stand-in for an 
   shield and still-running stay in DriveOperations).
 - The soft deadline: a call after it is not started; a read runs under `wait_for(…, time left)`; a mutation waits
   `max(1 s, min(100 s, time left − 10 s))`, then today's still-running path. A handler cancelled mid-call (the agent
-  cancels its engine at the deadline or on still-running) records the call as not finished before re-raising.
+  cancels its engine at the deadline or on still-running) records the call before re-raising: a read as not finished,
+  a change queued behind the batch as not started, a change already started as still running (it goes on under
+  DriveOperations' shield, so it is never reported "not done"). After a still-running outcome in this run, a change
+  that wakes on the ordering lock is not started (X1, cross-cut review).
 - A `search_drive` identical to one already run in this commission is not run again (§5.4).
 - `save_text_file` / `append_to_file` name a `file_contents` item; code writes that item's text (§4.2). An unknown
   item is refused before any service call.
@@ -28,9 +31,12 @@ from ..domain.drive_outcome import DriveOutcome
 from ..domain.drive_outcome_class import OutcomeClass
 from ..domain.drive_pass_through import PassThroughCollector, search_key
 from ..domain.llm import ToolCall
-from ..domain.user_drive import MOVE_NEEDS_TARGET, drive_label
+from ..domain.skill import DELIVERED_REF_PREFIXES, SKILL_REF_PREFIX
+from ..domain.user_drive import MOVE_NEEDS_TARGET, drive_label, is_drive_ref
+from ..domain.workspace import WORKSPACE_REF_PREFIX
 from ..utils.logger import logger
 from .delegation_engine import LocalToolHandler, ToolResult
+from .drive_operations import STILL_RUNNING
 
 if TYPE_CHECKING:
     from .drive_operations import DriveOperations
@@ -58,6 +64,7 @@ class DriveToolRun:
         self._on_still_running = on_still_running
         self._clock = clock
         self._order = asyncio.Lock()
+        self._ran_on = False   # a change answered still-running: later changes of this run do not start
         self.step = 0
 
     def left(self) -> float:
@@ -86,19 +93,25 @@ class DriveToolRun:
         try:
             if change:
                 async with self._order:
-                    if self.left() <= 0:   # queued behind the batch past the deadline
+                    if self.left() <= 0 or self._ran_on:   # queued behind the batch past the deadline / a running one
                         return self._collector.add(step, kind, _not_finished(op, t.NOT_STARTED))
                     started = True
                     outcome = await call()
+                    if outcome.cls is OutcomeClass.STILL_RUNNING:
+                        self._ran_on = True
             else:
                 outcome = await asyncio.wait_for(call(), timeout=max(0.001, self.left()))
         except asyncio.TimeoutError:
             outcome = _not_finished(op, t.DID_NOT_FINISH)
         except asyncio.CancelledError:
-            # Cancelled while queued behind the batch's order lock: it never started. Cancelled once started: it may
-            # run on under DriveOperations' shield (which arms the late-failure notice), so it did not finish.
-            text = t.DID_NOT_FINISH if started or not change else t.NOT_STARTED
-            self._collector.add(step, kind, _not_finished(op, text))
+            # Cancelled while queued behind the batch's order lock: it never started. A change cancelled once started
+            # runs on under DriveOperations' shield (which arms the late-failure notice): still running, today's text,
+            # never "not done" (a re-commission would repeat an append). A read just did not finish.
+            if change and started:
+                self._collector.add(step, kind, DriveOutcome(
+                    op=op, cls=OutcomeClass.STILL_RUNNING, text=STILL_RUNNING, success=True))
+            else:
+                self._collector.add(step, kind, _not_finished(op, t.NOT_STARTED if change else t.DID_NOT_FINISH))
             raise
         result = self._collector.add(step, kind, outcome)
         if outcome.cls is OutcomeClass.STILL_RUNNING and self._on_still_running is not None:
@@ -157,6 +170,8 @@ class DriveToolRun:
         ref = str((tc.args or {}).get("file_ref") or "")
         if not ref.strip():
             return self._no_ref(tc, DriveOp.OPEN, "file_ref", "the file to open")
+        if _is_bare_path(ref):
+            return self._path_given(tc, DriveOp.OPEN, "file_ref", "the file to open")
         result = await self._run(DriveOp.OPEN, t.KIND_OPEN, lambda: self._ops.open(
             self._context, self._user_id, ref), change=False)
         return self._seen(tc, result)
@@ -192,6 +207,11 @@ class DriveToolRun:
     def _no_ref(self, tc: ToolCall, op: DriveOp, field: str, what: str) -> ToolResult:
         """An empty ref means "not given": refused before any call, correctable (§7.2)."""
         return self._refuse(tc, op, t.REF_REQUIRED.format(field=field, what=what), OutcomeClass.REQUEST_ERROR)
+
+    def _path_given(self, tc: ToolCall, op: DriveOp, field: str, what: str) -> ToolResult:
+        """A path where a `drive:` ref is needed: correctable, and not the "chat file" hint (X2, X3)."""
+        return self._refuse(tc, op, t.REF_REQUIRED.format(field=field, what=f"{what} by its drive: ref; {t.FIND_REF}"),
+                            OutcomeClass.REQUEST_ERROR)
 
     async def _copy(self, tc: ToolCall) -> ToolResult:
         args = tc.args or {}
@@ -231,6 +251,8 @@ class DriveToolRun:
             # the service's own words, before any call: a correctable request shape (§7.2)
             return self._refuse(tc, DriveOp.MOVE, MOVE_NEEDS_TARGET, OutcomeClass.REQUEST_ERROR)
         ref = str(args.get("file_ref") or "")
+        if _is_bare_path(ref):
+            return self._path_given(tc, DriveOp.MOVE, "file_ref", "the file to move")
 
         async def call() -> DriveOutcome:
             return await self._ops.move(self._context, self._user_id, ref, folder=await self._folder(folder),
@@ -243,6 +265,8 @@ class DriveToolRun:
         if item is None:
             return self._no_item(tc, DriveOp.APPEND, args.get("text_item"))
         ref = str(args.get("file_ref") or item.target or "")
+        if _is_bare_path(ref):
+            return self._path_given(tc, DriveOp.APPEND, "file_ref", "the text file to add to")
 
         async def call() -> DriveOutcome:
             return await self._ops.append(self._context, self._user_id, ref, item.text, wait_s=self._wait_s())
@@ -251,6 +275,8 @@ class DriveToolRun:
     async def _replace(self, tc: ToolCall) -> ToolResult:
         args = tc.args or {}
         target, source = str(args.get("target_ref") or ""), str(args.get("new_content_ref") or "")
+        if _is_bare_path(target):
+            return self._path_given(tc, DriveOp.REPLACE, "target_ref", "the file to replace")
 
         async def call() -> DriveOutcome:
             return await self._ops.replace(self._context, self._user_id, target, source, wait_s=self._wait_s())
@@ -258,10 +284,20 @@ class DriveToolRun:
 
     async def _delete(self, tc: ToolCall) -> ToolResult:
         ref = str((tc.args or {}).get("file_ref") or "")
+        if _is_bare_path(ref):
+            return self._path_given(tc, DriveOp.DELETE, "file_ref", "the item to delete")
 
         async def call() -> DriveOutcome:
             return await self._ops.delete(self._context, self._user_id, ref, wait_s=self._wait_s())
         return await self._change(tc, DriveOp.DELETE, call)
+
+
+def _is_bare_path(ref: str) -> bool:
+    """A path where a ref is needed: it has a `/` and no known store prefix (`drive:`, `workspace:`, `skill:`, a
+    delivered-document key). A bare name has no `/` and keeps today's text (X2, X3)."""
+    if "/" not in ref or is_drive_ref(ref):
+        return False
+    return not ref.startswith((WORKSPACE_REF_PREFIX, SKILL_REF_PREFIX) + tuple(DELIVERED_REF_PREFIXES))
 
 
 def _not_finished(op: DriveOp, text: str) -> DriveOutcome:

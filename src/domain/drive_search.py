@@ -606,6 +606,9 @@ def _render_card(card: DriveSearchCard) -> str:
 _BUILDING_LINE = "The index is still being built: some files and folders may not be in it yet."
 # Off and disconnected hold for the whole conversation: a repeated search only returns this again (F5-7).
 _NOT_AGAIN = "Do not search the drive again in this conversation."
+# The disabled-search text, one place for the search result and for the drive answer's state line (X6).
+DISABLED_TEXT = ("Drive search is off for this user: they have not turned on drive indexing in the Cabinet. "
+                 f"{_NOT_AGAIN} To find a file now, browse the folders.")
 
 
 def _envelope_lines(result: DriveSearchResult) -> List[str]:
@@ -669,8 +672,7 @@ def render_results(result: DriveSearchResult) -> str:
         from .drive_tier_render import render_tiered   # it imports this module: imported at call time
         return render_tiered(result)
     if result.status == STATUS_DISABLED:
-        return ("Drive search is off for this user: they have not turned on drive indexing in the Cabinet. "
-                f"{_NOT_AGAIN} To find a file now, browse the folders.")
+        return DISABLED_TEXT
     if result.status == STATUS_DISCONNECTED and result.other_drive:
         return ("Drive search is off for this user for now: a different drive is connected than the one that was "
                 "indexed. The old index is being removed and the connected drive will be indexed from the start. "

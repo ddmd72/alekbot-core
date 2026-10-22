@@ -28,6 +28,8 @@ from .drive_op import DriveOp
 from .drive_outcome_class import OutcomeClass
 from .drive_pass_through import PassThroughCollector
 from .drive_report import DriveReport
+from .drive_search import DISABLED_TEXT
+from .drive_search_line import SearchLine
 from .drive_search_texts import REBUILDING_LINE
 from .drive_status import DriveStatus
 
@@ -58,10 +60,12 @@ _CORRECTABLE = frozenset({OutcomeClass.REQUEST_ERROR, OutcomeClass.NOT_POSSIBLE}
 
 
 def compose_answer(collector: PassThroughCollector, report: DriveReport, *, cut: bool = False,
-                   drive_line: DriveLine = DriveLine.CONNECTED) -> DriveAnswer:
+                   drive_line: DriveLine = DriveLine.CONNECTED,
+                   search_line: SearchLine = SearchLine.ON) -> DriveAnswer:
     """`cut`: the soft deadline, an engine exception or the turn limit ended the run before its report (§7.2: the
     status is then `unfinished` whatever finished). A correctable error the model fixed is left out of the status and
-    of the read blocks, but a change's op line is never dropped (§7.2)."""
+    of the read blocks, but a change's op line is never dropped (§7.2). `search_line` is the preflight's: when it is not
+    `on`, no search ran and the answer holds reads only, today's search state text is the state line (X6)."""
     settled = _settled(collector.results)
     results = [r for r in collector.results if r.handle not in settled]
     all_changes = [r for r in collector.results if r.outcome.is_change]
@@ -73,22 +77,25 @@ def compose_answer(collector: PassThroughCollector, report: DriveReport, *, cut:
     running = next((r for r in results if r.outcome.cls is OutcomeClass.STILL_RUNNING), None)
 
     state_line = ""
+    by_change = False   # the status comes from a change: the lookup search before it gets no reading lines (X7)
     if running is not None:
         status, line = DriveStatus.STILL_RUNNING, running.outcome.text
     elif cut or any(r.outcome.cls is OutcomeClass.NOT_FINISHED for r in results):
         status, line = DriveStatus.UNFINISHED, t.UNFINISHED_LINE
     elif done and (failed or report.question or report.not_done):
+        by_change = True
         status = DriveStatus.PARTIAL
         line = " ".join(part for part in (
             t.ONLY_PART, report.question,
             t.PARTIAL_NOT_DONE.format(not_done=report.not_done) if report.not_done else "") if part)
     elif failed:
+        by_change = True
         first = failed[0].outcome
         status = _CLASS_STATUS.get(first.cls, DriveStatus.FAILED)
         line = t.NOT_ATTACHED if first.cls is OutcomeClass.NOT_POSSIBLE else first.text
     elif report.question:
         status, line = DriveStatus.AMBIGUOUS, report.question
-    elif not results and drive_line is DriveLine.NOT_CONNECTED:
+    elif not results and drive_line in (DriveLine.NOT_CONNECTED, DriveLine.RECONNECT_NEEDED):
         status, line = DriveStatus.NOT_CONNECTED, _NOT_CONNECTED_TEXT
         state_line = line
     elif not results and drive_line is DriveLine.NOT_CONFIGURED:
@@ -99,6 +106,7 @@ def compose_answer(collector: PassThroughCollector, report: DriveReport, *, cut:
     elif not results:
         status, line = DriveStatus.NOT_POSSIBLE, t.NOTHING_DONE.format(why=report.note or t.NOTHING_RAN)
     elif done:
+        by_change = True
         status, line = DriveStatus.OK, t.DONE_LINE
     elif content:
         status, line = DriveStatus.OK, t.ANSWER_FROM_RESULTS
@@ -107,8 +115,10 @@ def compose_answer(collector: PassThroughCollector, report: DriveReport, *, cut:
 
     if not state_line:
         state_line = _search_state_line(results)
+    if not state_line and reads and not changes and not any(r.outcome.op is DriveOp.SEARCH for r in results):
+        state_line = _preflight_search_text(search_line)
     blocks = _read_blocks(reads)
-    reading = reading_lines(blocks)
+    reading = reading_lines([b for b in blocks if b.outcome.op is not DriveOp.SEARCH] if by_change else blocks)
 
     out = [t.STATUS_HEAD.format(status=status.value), t.WHAT_TO_DO.format(line=line)]
     if state_line and state_line != line:
@@ -155,7 +165,9 @@ def reading_lines(blocks: Sequence[CollectedResult]) -> List[str]:
         add(t.R_PHOTOS)
     if cards >= 2:
         add(t.R_VERSIONS)
-    if any(s.cls is OutcomeClass.NOT_FOUND or s.facts.coverage_incomplete or s.facts.building for s in searches):
+    # the deleted-files search reads the ledger, not the index: its not-found gets no index lines (X7)
+    if any(b.kind == t.KIND_SEARCH and (b.outcome.cls is OutcomeClass.NOT_FOUND or b.outcome.facts.coverage_incomplete
+                                         or b.outcome.facts.building) for b in blocks if b.outcome.op is DriveOp.SEARCH):
         add(t.R_BUILDING, t.R_NOT_SEARCHED, t.R_FOLDER_CARD)
     # Only a file's content opens the "numbers / document vs memory / not read" lines: a body or a vision file, not a
     # refusal or the line that a video was sent to the chat (M2).
@@ -205,7 +217,10 @@ def _read_blocks(reads: Sequence[CollectedResult]) -> List[CollectedResult]:
 
 
 def _worst_read(reads: Sequence[CollectedResult]) -> Tuple[DriveStatus, str]:
-    statuses = [(_CLASS_STATUS.get(r.outcome.cls, DriveStatus.FAILED), r.outcome.text) for r in reads]
+    # A search that found nothing: its block carries the text; "What to do" is the pointer, not the whole text (X4).
+    statuses = [(_CLASS_STATUS.get(r.outcome.cls, DriveStatus.FAILED),
+                 t.ANSWER_FROM_RESULTS if r.outcome.op is DriveOp.SEARCH and r.outcome.cls is OutcomeClass.NOT_FOUND
+                 else r.outcome.text) for r in reads]
     for wanted in _READ_FAILURE_ORDER:
         for status, text in statuses:
             if status is wanted:
@@ -221,6 +236,15 @@ def _search_state_line(results: Sequence[CollectedResult]) -> str:
             return o.text
         if o.op is DriveOp.SEARCH and o.cls is OutcomeClass.REBUILDING:
             return REBUILDING_LINE if REBUILDING_LINE in o.text else o.text
+    return ""
+
+
+def _preflight_search_text(line: SearchLine) -> str:
+    """Today's search state text for a preflight search line that is not `on`, raised when no search ran (X6)."""
+    if line is SearchLine.OFF:
+        return DISABLED_TEXT
+    if line is SearchLine.REBUILDING:
+        return REBUILDING_LINE
     return ""
 
 
