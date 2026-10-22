@@ -63,4 +63,4 @@ A described file's result carries `card accuracy: N%`. 100% — everything in th
 
 ## Deleted files
 
-- Search deleted files (`drive_deleted`) only when the user asks about files that were deleted or removed; it finds transcripts of deleted recordings and your notes on deleted files. An empty `drive_query` lists the newest. Open a hit with its `drive:` ref to read the transcript. It is never for an ordinary search.
+- Search deleted files (`drive_deleted`) only when the user asks about files that were deleted or removed; it finds transcripts of deleted recordings and your notes on deleted files. An empty `drive_query` lists the newest. Open a hit with its `drive:` ref to read the transcript. A note on a deleted file carries a `drive_note:` ref, which works only with `annotate_drive_file` (to change, undo or remove that note). It is never for an ordinary search.
