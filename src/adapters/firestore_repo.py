@@ -500,6 +500,53 @@ class FirestoreFactRepository(FactRepository):
         sorted_facts = sorted(facts, key=lambda f: len(f.text.split()), reverse=True)
         return sorted_facts[:limit]
 
+    async def get_lineage(self, lineage_id: str) -> List[FactEntity]:
+        docs = self.facts_col.where(filter=FieldFilter("lineage_id", "==", lineage_id)).order_by("created_at", direction=firestore.Query.DESCENDING).stream()
+        results = []
+        async for doc in docs:
+            data = doc.to_dict()
+            if 'vector' in data and isinstance(data['vector'], Vector):
+                data['vector'] = list(data['vector'])
+            # SESSION 2026-02-07: Multi-vector support
+            if 'tags_vector' in data and isinstance(data['tags_vector'], Vector):
+                data['tags_vector'] = list(data['tags_vector'])
+            if 'metadata_vector' in data and isinstance(data['metadata_vector'], Vector):
+                data['metadata_vector'] = list(data['metadata_vector'])
+            results.append(FactEntity(**data))
+        return results
+
+    async def get_latest_fact_by_lineage(self, owner_id: str, lineage_id: str) -> Optional[FactEntity]:
+        """Get latest fact by lineage for an account (owner_id = account_id)."""
+        # Try new field first
+        docs = self.facts_col.where(filter=FieldFilter("account_id", "==", owner_id)).where(filter=FieldFilter("lineage_id", "==", lineage_id)).where(filter=FieldFilter("is_current", "==", True)).limit(1).stream()
+        async for doc in docs:
+            data = doc.to_dict()
+            if 'vector' in data and isinstance(data['vector'], Vector):
+                data['vector'] = list(data['vector'])
+            # SESSION 2026-02-07: Multi-vector support
+            if 'tags_vector' in data and isinstance(data['tags_vector'], Vector):
+                data['tags_vector'] = list(data['tags_vector'])
+            if 'metadata_vector' in data and isinstance(data['metadata_vector'], Vector):
+                data['metadata_vector'] = list(data['metadata_vector'])
+            data = self._migrate_ownership_fields(data)
+            return FactEntity(**data)
+
+        # Fallback to legacy field
+        docs = self.facts_col.where(filter=FieldFilter("owner_id", "==", owner_id)).where(filter=FieldFilter("lineage_id", "==", lineage_id)).where(filter=FieldFilter("is_current", "==", True)).limit(1).stream()
+        async for doc in docs:
+            data = doc.to_dict()
+            if 'vector' in data and isinstance(data['vector'], Vector):
+                data['vector'] = list(data['vector'])
+            # SESSION 2026-02-07: Multi-vector support
+            if 'tags_vector' in data and isinstance(data['tags_vector'], Vector):
+                data['tags_vector'] = list(data['tags_vector'])
+            if 'metadata_vector' in data and isinstance(data['metadata_vector'], Vector):
+                data['metadata_vector'] = list(data['metadata_vector'])
+            data = self._migrate_ownership_fields(data)
+            return FactEntity(**data)
+
+        return None
+
     async def add_fact_if_unique(
         self, 
         fact: FactEntity, 
