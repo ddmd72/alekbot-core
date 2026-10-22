@@ -577,7 +577,7 @@ semantic-mutation driver (`python -m tests.support.semantic_mutants`) and the re
 - **Branch coverage:** `firestore_repo.py` 43 to 78 %, `fact_management_adapter.py` 83 to 97 %.
 - **Four known defects are pinned by strict xfails** (they fail the suite when fixed, so the fix removes the marker): the cached biographical context swallows a backend failure; the biographical refresh ignores `facts_limit`/`principles_limit`; a failed merge leaves the sources superseded; `add_facts_batch` fills `saved_ids` only when deduplication is skipped. The fixes are outside this package.
 
-**Built (P5, 2026-10-22).** The fake-vs-real parity slice. Files: `tests/support/firestore_parity.py` (34 scenarios, one documented expected value
+**Built (P5, 2026-10-22).** The fake-vs-real parity slice. Files: `tests/support/firestore_parity.py` (38 scenarios, 34 when P5 was built and four added by P6; one documented expected value
 each, the index groups), `tests/unit/support/test_firestore_parity.py` (H1 in `make check`; the emulator when `FIRESTORE_EMULATOR_HOST` is set),
 `tests/cloud/` (`conftest.py` guards and index fixture, `test_firestore_parity_cloud.py`), `make test-cloud`. The same scenarios run on H1, the
 emulator (31 of 34; it does not refuse a missing index) and the test database. Deviations and results:
