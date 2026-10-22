@@ -1,8 +1,9 @@
 """Real fact-store objects wired on the evaluating Firestore fake, for write -> read round-trip tests."""
 import hashlib
 import random
+from pathlib import Path
 from types import SimpleNamespace
-from typing import List
+from typing import List, Optional, Union
 from unittest.mock import AsyncMock
 
 from src.adapters.fact_management_adapter import FactManagementAdapter
@@ -14,6 +15,9 @@ from tests.support.firestore_eval import EvalDb
 
 FACTS = "eval_domain_facts"
 DIM = 768
+# The declared indexes and the collection group the fake's facts collection stands for in them (`EvalDb(indexes=, groups=)`).
+INDEXES_FILE = Path(__file__).resolve().parents[2] / "config" / "firestore.indexes.json"
+FACTS_INDEX_GROUP = "development_domain_facts_v2"
 
 
 def embed(text: str) -> List[float]:
@@ -40,10 +44,15 @@ def make_env_config() -> SimpleNamespace:
 
 
 class FactStore:
-    """db + repo + write service + management adapter, all real, over one EvalDb."""
+    """db + repo + write service + management adapter, all real, over one EvalDb.
 
-    def __init__(self) -> None:
-        self.db = EvalDb()
+    `indexes` (a path to `config/firestore.indexes.json` or its parsed list) switches the fake's index refusal on, with the
+    facts collection mapped to its declared group; the default is the fake without refusal.
+    """
+
+    def __init__(self, indexes: Union[None, str, Path, list] = None) -> None:
+        groups: Optional[dict] = None if indexes is None else {FACTS: FACTS_INDEX_GROUP}
+        self.db = EvalDb(indexes=indexes, groups=groups)
         self.embedder = HashEmbedder()
         self.repo = FirestoreFactRepository(self.db, make_env_config(), embedding_service=self.embedder)
         self.write = FactWriteService(self.repo, self.embedder)

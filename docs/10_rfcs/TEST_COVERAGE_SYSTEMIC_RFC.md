@@ -562,6 +562,19 @@ semantic-mutation driver (`python -m tests.support.semantic_mutants`) and the re
 - **`doc-drop` is the dict-literal case of "drop one field"** (a key of a dict written to a store).
 - **coverage.py cannot tell MagicMock coverage apart:** the floor counts it; a reviewer does not accept it as the adapter's test (§2.7).
 
+**Built (P4, 2026-10-22).** H1 (`tests/support/firestore_eval.py`) and the fact store kit. Deviations from the text above:
+- **H1 is standalone.** It imports nothing from the drive fake. The drive suites keep `tests/unit/adapters/firestore_drive_eval_fakes.py`; moving them onto H1 is not done.
+- **The index refusal is opt-in per `EvalDb`** (`indexes=` a path or parsed list, `groups=` fake collection name to declared group), because existing users name their collections arbitrarily. The fact kit's `store` fixture turns it on against `config/firestore.indexes.json`.
+- **Documented in the module, not built:** no phantom protection in transactions (a query that returned nothing is not protected); single-field index exemptions (`"indexes": []`) in the config are ignored; a transaction used outside the decorator is not refused; `list_documents()` omits "missing" parents.
+- **`# P5 verifies`, each marked in `firestore_eval.py`:** a value of another type counts as "not equal" for `!=`; `ArrayUnion`/`ArrayRemove` report a null `transform_result`; `set()` keys are literal field names (only `update()` splits dotted keys); the order of several implicit inequality fields (sorted by field path); equality plus `array_contains(-any)` merges without a composite; a composite is not served in reverse (exact directions).
+- **The fact kit** is `tests/unit/adapters/test_fact_{repository,management,write}_kit.py` with helpers in `tests/support/fact_kit.py`. The S1 round-trip file stays in place as the kit's first file: §6's "folded in" means kept, not moved.
+- **The semantics inventory** is the docstrings of `src/ports/repository.py`, `fact_management_port.py` and `fact_write_port.py`, seven axes each (Opus-approved); the kit tests them.
+- **Mutation check (§5):**
+  - `firestore_repo.py`: 100 killed, 12 equivalent (`tests/unit/adapters/fact_store_kit_equivalent_mutants.txt`), 9 in methods with no caller in `src/` (the owner decides: delete the methods or accept the survivors).
+  - `fact_management_adapter.py`: 7 of 7 killed. `fact_write_service.py`: 2 of 2.
+- **Branch coverage:** `firestore_repo.py` 43 to 78 %, `fact_management_adapter.py` 83 to 97 %.
+- **Four known defects are pinned by strict xfails** (they fail the suite when fixed, so the fix removes the marker): the cached biographical context swallows a backend failure; the biographical refresh ignores `facts_limit`/`principles_limit`; a failed merge leaves the sources superseded; `add_facts_batch` fills `saved_ids` only when deduplication is skipped. The fixes are outside this package.
+
 **Totals.** Tranche 1 (P1–P9) ≈ 12–16 days; tranche 2 (P10–P17) ≈ 24–33; tranche 3 (P18–P24) ≈ 9–11. **Whole plan
 ≈ 45–59 days.**
 

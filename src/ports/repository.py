@@ -4,28 +4,77 @@ from ..domain.entities import FactEntity
 
 class FactRepository(ABC):
     """
-    Abstract Port for Fact storage and retrieval.
-    Follows Hexagonal Architecture principles.
+    Port for fact storage and retrieval (one document per fact, three embedding vectors).
+
+    Holds for every method unless the method says otherwise:
+    - Tenancy: `account_id` is the tenant; an `owner_id` argument is an account id. A read scoped to
+      an account returns only that account's facts. By-id methods are not scoped: the caller compares
+      `account_id`.
+    - Current: a read of "current" facts filters on `state == "current"`, never on `is_current`
+      (`is_current` means latest document of its lineage).
+    - Identity: `id` is the document id. get_fact_by_id, get_facts_by_ids, get_paginated_facts,
+      search_facts_by_domain, get_lineage, get_latest_fact_by_lineage and get_legacy_facts read it
+      from the stored `id` field, which every writer sets equal to the document id; a document
+      written outside this port with a different or missing `id` reads back with that value (or a
+      fresh uuid).
+    - Legacy documents: a document with `owner_id` and no `account_id` is absent from every
+      account-scoped read (they filter the stored `account_id`). Where one is returned (by-id reads,
+      the legacy fallback in get_latest_fact_by_lineage), `owner_id` reads as `account_id` and
+      `created_by_user_id`. invalidate_fact refuses it with PermissionError. A missing `visibility`
+      reads as account_shared, "private" as user_private. A document without `state` matches no
+      state-filtered read. A document missing a field a read orders by is absent from that read
+      (observed). A stored document that does not validate as FactEntity fails the whole call
+      (observed).
+    - Vectors are returned as lists of floats. A read with a projection leaves the omitted fields at
+      the model default (named per method).
+    - Atomicity: nothing is transactional; add_fact and update_fact replace whole documents,
+      invalidate_fact updates fields; last writer wins.
+    - Errors: backend errors propagate unless the method says it never raises.
     """
 
     @abstractmethod
     async def add_fact(self, fact: FactEntity) -> str:
-        """Adds a new fact to the repository."""
+        """Store `fact` as document `fact.id` and return `fact.id`.
+
+        Tenancy: stored as given; the caller sets account_id.
+        Idempotency: a document with that id is replaced, so one id is one document.
+        """
         pass
 
     @abstractmethod
     async def get_fact_by_id(self, fact_id: str) -> Optional[FactEntity]:
-        """Retrieves a fact by its ID."""
+        """Return the fact stored under `fact_id` in any state.
+
+        Returns every FactEntity field as stored, vectors as lists, so get_fact_by_id → update_fact
+        preserves every FactEntity field.
+        Tenancy: none; the caller compares account_id.
+        Errors: a missing id returns None.
+        """
         pass
 
     @abstractmethod
     async def get_facts_by_ids(self, fact_ids: List[str]) -> List[FactEntity]:
-        """Retrieves multiple facts by their IDs. Missing facts are omitted from results."""
+        """Return each fact as get_fact_by_id does; missing ids are omitted.
+
+        Contract (observed; no caller in src/).
+        Order: input order.
+        Tenancy: none; the caller compares account_id.
+        """
         pass
 
     @abstractmethod
     async def get_active_facts(self, owner_id: str, tags: Optional[List[str]] = None) -> List[FactEntity]:
-        """Retrieves all current (is_current=True) facts for a specific owner."""
+        """Return every `state == "current"` fact of account `owner_id`.
+
+        Args:
+            owner_id: account id ("SYSTEM" holds the system prompt components).
+            tags: when set, only facts carrying at least one of these tags.
+
+        Order: none; callers sort.
+        Limit: none.
+        Projection: no vectors; temporal_class, context, ttl_days, expires_at and replaces_fact_id
+            keep the model default (observed).
+        """
         pass
 
     @abstractmethod
@@ -35,33 +84,26 @@ class FactRepository(ABC):
         domain: Optional[str] = None,
         limit: Optional[int] = None,
     ) -> List[FactEntity]:
-        """
-        Current non-archival facts ordered by priority rank then recency.
+        """Return `state == "current"` facts of `account_id` whose context_priority is not archival.
 
         Args:
-            account_id: Account ID
-            domain: Optional domain filter (e.g. "biographical")
-            limit: Maximum number of results
+            domain: when set, only facts of that domain (e.g. "biographical").
+            limit: at most this many; None returns all.
 
-        Returns:
-            Facts sorted by context_priority_rank ASC, created_at DESC.
-            Excludes facts with ARCHIVAL priority.
+        Order: context_priority critical, high, medium, low; within one priority newest first by
+            created_at. The tail is the least essential (the directive cap backstop invalidates it).
+        Legacy: a document without a stored priority rank is absent (observed).
+        Projection: no vectors; temporal_class, context, ttl_days, expires_at and replaces_fact_id
+            keep the model default (observed).
         """
         pass
 
     @abstractmethod
     async def get_longest_facts(self, account_id: str, limit: int) -> List[FactEntity]:
-        """
-        Return top-K active (state=current) facts sorted by word count descending.
-        Used by consolidate_cluster auto-fetch to seed cluster review with
-        the longest (most compound) facts in the knowledge base.
+        """Return the `limit` `state == "current"` facts of `account_id` with the most words.
 
-        Args:
-            account_id: Account ID
-            limit: Maximum number of results
-
-        Returns:
-            Facts sorted by len(text.split()) DESC.
+        Order: len(text.split()) descending; ties unspecified.
+        Projection: as get_active_facts.
         """
         pass
 
@@ -73,18 +115,17 @@ class FactRepository(ABC):
         cursor_doc_id: Optional[str] = None,
         domain: Optional[str] = None,
     ) -> Tuple[List[FactEntity], Optional[str]]:
-        """
-        Cursor-based paginated retrieval of current facts for a specific owner.
+        """Return one page of `state == "current"` facts of account `owner_id` and the next cursor.
 
         Args:
-            owner_id: Account ID
-            limit: Page size (max results returned)
-            cursor_doc_id: Firestore document ID of the last item from the previous page
-            domain: Optional domain filter (e.g. "health", "location")
+            limit: page size.
+            cursor_doc_id: document id of the last fact of the previous page.
+            domain: when set, only facts of that domain.
 
-        Returns:
-            Tuple of (facts, next_cursor_doc_id).
-            next_cursor_doc_id is None when there are no more pages.
+        Order: newest first by created_at; pages do not overlap and together hold every matching fact.
+        Returns: (facts, next_cursor); next_cursor is None exactly when no fact follows this page.
+        Legacy: a document without created_at is absent (observed).
+        Errors: an unknown cursor id restarts at the first page (observed).
         """
         pass
 
@@ -97,30 +138,19 @@ class FactRepository(ABC):
         user_id: Optional[str] = None,
         account_id: Optional[str] = None
     ) -> List[FactEntity]:
-        """
-        Performs a vector search for facts.
-
-        Multi-tenant resolution (Session 27):
-        - If account_id/user_id are NOT passed → taken from RequestContext
-        - Default: searches facts by account_id from context
-        - Explicit parameters → override (for searching on behalf of other users)
+        """Cosine vector search over the `state == "current"` facts of one account.
 
         Args:
-            query_vector: Query embedding vector
-            vector_field: Vector field to search ("vector" | "metadata_vector" | "tags_vector").
-                Default "vector" preserves backward compatibility for callers that pass
-                only query_vector.
-            limit: Maximum results
-            user_id: Explicit user ID override (optional, from context if None)
-            account_id: Explicit account ID override (optional, from context if None)
+            vector_field: "vector" | "metadata_vector" | "tags_vector".
+            limit: at most this many results.
+            user_id, account_id: explicit overrides of the RequestContext ids.
 
-        Returns:
-            List of relevant facts sorted by similarity
-
-        Raises:
-            ValueError: If context is not set and parameters are not passed
-
-        Related: RFC REQUEST_CONTEXT_RFC.md
+        Tenancy: account_id, else the RequestContext account, else the user id (observed).
+        Order: nearest first (callers rank by position, RRF).
+        Projection: `vector` and `context` are returned; tags_vector, metadata_vector, ttl_days,
+            expires_at and replaces_fact_id are None, is_current is True and last_updated is now
+            (model defaults, observed).
+        Errors: no user id (argument or RequestContext) raises ValueError.
         """
         pass
 
@@ -132,58 +162,77 @@ class FactRepository(ABC):
         account_id: Optional[str] = None,
         user_id: Optional[str] = None
     ) -> List[FactEntity]:
-        """
-        Direct query by domain (uses domain-indexed lookup, not vector search).
+        """Return `state == "current"` facts of one account whose domain is in `domains` (no vectors searched).
 
-        Used for router enrichment — when the LLM router has already classified
-        the query into one or more knowledge domains, this surfaces facts in
-        those domains without an embedding round-trip.
-
-        Args:
-            domains: List of domain values (e.g., ["health", "possession"]).
-                Empty list → empty result. Adapter implementations may cap
-                the count based on backend constraints (Firestore: max 30
-                values in IN operator).
-            limit: Maximum number of facts to return.
-            account_id: Explicit account ID override (from RequestContext if None).
-            user_id: Explicit user ID override (from RequestContext if None).
-
-        Returns:
-            List of facts from specified domains.
-
-        Raises:
-            ValueError: If account_id cannot be resolved.
+        Tenancy: account_id, else the RequestContext account; `user_id` is unused (observed).
+        Order: newest first by created_at.
+        Limit: at most `limit`.
+        Legacy: a document without created_at is absent (observed).
+        Errors: no account raises ValueError; empty `domains` returns []; more than 30 domains
+            raises (Firestore `in` limit, observed).
         """
         pass
 
     @abstractmethod
     async def update_fact(self, fact: FactEntity) -> None:
-        """Updates an existing fact (usually for SCD2 versioning)."""
+        """Replace document `fact.id` with `fact`, every field including the three vectors.
+
+        Tenancy: none; the caller compares account_id before writing.
+        Atomicity: unconditional write, last writer wins; stored fields FactEntity lacks are dropped (observed).
+        Idempotency: writing the same entity twice leaves one identical document.
+        Errors: a missing id is created, not refused (observed).
+        """
         pass
 
     @abstractmethod
     async def get_lineage(self, lineage_id: str) -> List[FactEntity]:
-        """Retrieves the full history of a fact lineage."""
+        """Return every document of `lineage_id`, newest first by created_at.
+
+        Contract (observed; no caller in src/).
+        Tenancy: none; any account, any state.
+        Legacy: `owner_id` is not migrated, so a legacy document fails the call.
+        """
         pass
 
     @abstractmethod
     async def get_latest_fact_by_lineage(self, owner_id: str, lineage_id: str) -> Optional[FactEntity]:
-        """Retrieves the latest version of a fact lineage for a specific owner."""
+        """Return the `is_current` document of `lineage_id` in account `owner_id`, any state, or None.
+
+        Contract (observed; its one caller, UserPromptBuilder._get_component, is never called).
+        Legacy: when no account_id matches, the legacy `owner_id` field is tried.
+        Order: with several `is_current` documents, which one is returned is unspecified.
+        """
         pass
 
     @abstractmethod
     async def add_observation(self, observation: Dict[str, Any], owner_id: str) -> None:
-        """Adds a raw observation for later consolidation."""
+        """Store `observation` in the deprecated observations collection.
+
+        Contract (observed; no caller in src/).
+        Document id: observation["id"], else a timestamp id. The input dict gains account_id and
+        owner_id, both `owner_id`.
+        """
         pass
 
     @abstractmethod
     async def get_observations(self, owner_id: str, limit: int = 50) -> List[Dict[str, Any]]:
-        """Retrieves raw observations for a specific owner."""
+        """Return up to `limit` observations of account `owner_id`.
+
+        Contract (observed; no caller in src/).
+        Order: none.
+        Legacy: when no account_id matches, the legacy `owner_id` field is tried.
+        """
         pass
 
     @abstractmethod
     async def archive_observations(self, observation_ids: List[str], owner_id: str) -> None:
-        """Moves observations to an archive collection."""
+        """Move observations of `owner_id` to the archive collection (copy, then delete).
+
+        Tenancy: an observation moves only when its account_id (or legacy owner_id) equals
+            `owner_id`; foreign and missing ids are skipped. The one caller passes a user id (observed).
+        Atomicity: all moves commit in one batch.
+        Errors: in a production environment raises PermissionError (observed).
+        """
         pass
 
     @abstractmethod
@@ -192,15 +241,14 @@ class FactRepository(ABC):
         fact: FactEntity, 
         similarity_threshold: float = 0.85
     ) -> tuple[bool, Optional[str]]:
-        """
-        Add fact only if no semantic duplicate exists.
-        
-        Args:
-            fact: FactEntity to add
-            similarity_threshold: Threshold for semantic similarity
-            
-        Returns:
-            tuple (was_added, duplicate_id)
+        """Store `fact` unless a near-duplicate is already current in its account.
+
+        Tenancy: compares only `state == "current"` facts of fact.account_id.
+        Duplicate: the nearest fact by cosine within 1 - similarity_threshold that
+            SmartDeduplication judges a duplicate. A fact without a vector is stored unchecked.
+        Returns: (True, fact.id) when stored; (False, id of the existing duplicate) when skipped.
+        Atomicity: check, then write; two concurrent duplicates can both be stored (observed).
+        Defaults: the adapter's default threshold is 0.96 (observed); the caller passes it explicitly.
         """
         pass
 
@@ -210,15 +258,10 @@ class FactRepository(ABC):
         owner_id: str, 
         limit: int = 100
     ) -> List[FactEntity]:
-        """
-        Retrieves biographical context for consolidation (semantic search).
-        
-        Args:
-            owner_id: User ID
-            limit: Maximum number of context facts
-            
-        Returns:
-            List of relevant facts
+        """Return the cached biographical context of account `owner_id` as FactEntity objects.
+
+        Contract (observed; no caller in src/). Reads the cache as get_biographical_context_cached.
+        Errors: raises KeyError on a non-empty cache, whose entries carry no `type` (observed).
         """
         pass
 
@@ -229,45 +272,49 @@ class FactRepository(ABC):
         facts_limit: Optional[int] = None,
         principles_limit: Optional[int] = None
     ) -> None:
-        """
-        Refresh cached biographical context after consolidation.
-        
-        Session: 2026-02-07 Biographical Cache Optimization
-        Purpose: Support configurable limits (USER → ACCOUNT → SYSTEM resolution)
-        
-        Args:
-            owner_id: Account ID
-            facts_limit: Max biographical facts (None = use system default)
-            principles_limit: Max principles (None = use system default)
+        """Rebuild the cached biographical context of account `owner_id` from its current facts.
+
+        Content: up to facts_limit facts in get_active_facts_ordered order, biographical domain
+            first, then other non-directive domains; of these, facts tagged "mindset" become
+            principles (they count toward facts_limit; those beyond principles_limit are dropped);
+            agent_directive facts separately, up to 15 (DEFAULT_DIRECTIVES_CACHE_LIMIT).
+        Limit: facts_limit and principles_limit are what the cache holds (None = system default).
+            Known defect: the implementation ignores both and uses the service's own limits
+            (firestore_repo.py:817-818).
+        Idempotency: refreshing an unchanged account writes the same content.
+        Errors: never raises; on a failure the previous cache stays (observed). Without a context
+            service it does nothing (observed).
         """
         pass
 
     @abstractmethod
     async def get_biographical_context_cached(
-        self, 
-        owner_id: str, 
+        self,
+        owner_id: Optional[str] = None,
         limit: int = 100
     ) -> List[Dict[str, Any]]:
-        """
-        Retrieves cached biographical context (fast read).
-        
-        Args:
-            owner_id: User ID
-            limit: Maximum number of context facts
-            
-        Returns:
-            List of cached fact dictionaries
+        """Return the cached biographical context of account `owner_id` (no fact query).
+
+        Tenancy: owner_id None resolves the RequestContext's effective account; no account returns [].
+        Returns: dicts with id, text, domain, tags, context_priority and created_at (ISO string):
+            the facts, then the principles, then the directives, as of the last refresh.
+        Limit: ignored; the whole cache is returned (observed).
+        Errors: a missing or empty cache returns []; a backend failure raises (Lelik fails the call
+            closed on it). Known defect: the implementation swallows it today
+            (firestore_repo.py:914-916).
         """
         pass
 
     @abstractmethod
     async def invalidate_fact(self, fact_id: str, account_id: str) -> None:
-        """
-        Directly mark a fact as invalidated (User Cabinet write path).
+        """Mark fact `fact_id` invalidated (Cabinet write path).
 
-        Security: account_id is verified server-side against the document.
-        Raises PermissionError if account_id does not match the fact owner.
-        Raises ValueError if the fact does not exist.
+        Tenancy: the stored account_id must equal `account_id`.
+        Effect: state invalidated, is_current True, valid_to and last_updated now; version unchanged.
+        Errors: a missing id raises ValueError; a fact of another account raises PermissionError;
+            nothing is written in either case.
+        Atomicity: read, check, then update; not transactional (observed).
+        Idempotency: a repeated call succeeds and moves valid_to and last_updated (observed).
         """
         pass
 
@@ -277,17 +324,11 @@ class FactRepository(ABC):
         account_id: str,
         limit: int = 20
     ) -> List[FactEntity]:
-        """
-        Retrieves legacy facts (missing domain taxonomy) for migration.
-        
-        Session: 2026-02-17 Legacy Fact Migration
-        Purpose: Support deliberate reclassification through ConsolidationAgent v3
-        
-        Args:
-            account_id: Account ID to migrate
-            limit: Maximum number of facts to return (default: 20)
-            
-        Returns:
-            List of legacy facts ordered by created_at ASC (oldest first)
+        """Return up to `limit` facts of `account_id` without a domain (missing or null), not superseded.
+
+        Contract (observed; no caller in src/).
+        Order: document id order, not created_at.
+        Legacy: a document without `state` is included.
+        Errors: never raises; a failure returns [].
         """
         pass
