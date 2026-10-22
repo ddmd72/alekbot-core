@@ -18,7 +18,6 @@ def queue():
     q.enqueue_agent_task.return_value = "task-agent-001"
     q.enqueue_email_indexing_task.return_value = "task-email-001"
     q.enqueue_consolidation_task.return_value = "task-consolidation-001"
-    q.enqueue_deep_research_polling.return_value = "task-dr-001"
     q.enqueue_worker_task.return_value = "task-worker-001"
     return q
 
@@ -41,6 +40,7 @@ class TestEnqueueAgentTask:
             query="find notes about Paris",
             context={"user_id": "u1"},
             deadline_seconds=30,
+            dedup_key="deep_research_report:job9",
         )
 
         queue.enqueue_agent_task.assert_called_once_with(
@@ -49,6 +49,7 @@ class TestEnqueueAgentTask:
             query="find notes about Paris",
             context={"user_id": "u1"},
             deadline_seconds=30,
+            dedup_key="deep_research_report:job9",
         )
         assert result == "task-agent-001"
 
@@ -58,6 +59,7 @@ class TestEnqueueAgentTask:
         )
         _, kwargs = queue.enqueue_agent_task.call_args
         assert kwargs["deadline_seconds"] is None
+        assert kwargs["dedup_key"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -84,50 +86,6 @@ class TestEnqueueConsolidationTask:
 
         queue.enqueue_consolidation_task.assert_called_once_with(user_id="user-abc")
         assert result == "task-consolidation-001"
-
-
-# ---------------------------------------------------------------------------
-# enqueue_deep_research_polling
-# ---------------------------------------------------------------------------
-
-class TestEnqueueDeepResearchPolling:
-
-    async def test_delegates_all_params(self, service, queue):
-        result = await service.enqueue_deep_research_polling(
-            interaction_id="inter-001",
-            user_id="user-abc",
-            account_id="acc-abc",
-            query="AI trends",
-            attempt=3,
-            consecutive_errors=1,
-            delay_seconds=120,
-            provider="gemini",
-            session_id="sess-001",
-        )
-
-        queue.enqueue_deep_research_polling.assert_called_once_with(
-            interaction_id="inter-001",
-            user_id="user-abc",
-            account_id="acc-abc",
-            query="AI trends",
-            attempt=3,
-            consecutive_errors=1,
-            delay_seconds=120,
-            provider="gemini",
-            session_id="sess-001",
-        )
-        assert result == "task-dr-001"
-
-    async def test_defaults_applied(self, service, queue):
-        await service.enqueue_deep_research_polling(
-            interaction_id="i", user_id="u", account_id="a"
-        )
-        _, kwargs = queue.enqueue_deep_research_polling.call_args
-        assert kwargs["attempt"] == 0
-        assert kwargs["consecutive_errors"] == 0
-        assert kwargs["delay_seconds"] == 30
-        assert kwargs["provider"] == "gemini"
-        assert kwargs["session_id"] == ""
 
 
 # ---------------------------------------------------------------------------

@@ -123,8 +123,10 @@ index` (full); `codegraph status` shows index health.
   `docs/04_solution_strategy/decisions/dead_prod_collections_deletion.md`.
 - **Default branch is `main`** (renamed from `develop` 2026-06-01; the old prod-tracking `main`
   was deleted). One trunk.
-- **Branch discipline:** large or risky changes go on a feature branch off `main`, merged when
-  green. Small isolated changes can land on `main` directly — but every change keeps the
+- **Branch discipline:** every change reaches `main` through a pull request — a GitHub ruleset on
+  `main` (since 2026-10-22) refuses direct pushes, force pushes and deletion for everyone, owner
+  included, with no bypass: cloud sessions push with the owner's own token, so a bypass for him
+  would be a bypass for them. Small isolated changes get a small PR. Every change keeps the
   affected docs (this file, arc42 in `docs/`, decision records) in sync. Documentation drift is
   the thing branch discipline exists to prevent.
 - **Deploy-substitution trap:** `make deploy` does `include .env` and passes some keys as cloudbuild
@@ -200,7 +202,7 @@ main feed (Slack: top-level, incl. overflow) and appends a `[System: late answer
 history; a failed, cancelled or lost turn closes its question with the same pair. The wrap-up and
 chat-since notes live only in the run's own transcript, never in history. A retry of a turn that
 is `running` but not live in this process is reported lost. Telegram updates go via `/worker`
-`task_type=telegram_update` (dedup at intake), not inline; Slack's lock releases at the mark.
+`task_type=telegram_update` (a named Cloud Task: the update id is its dedup), not inline; Slack's lock releases at the mark.
 Smart sees its running jobs and can cancel one, per `PROTOCOL_LONG_TURNS`. The two-phase timeout
 path is retired. Not in scope: `ask_alek`/`tell_alek`/notifications stay unclocked (RFC §7
 deferred; see `decisions/long_running_turns.md`).
@@ -264,18 +266,34 @@ stale `running` jobs.
 - **`WorkerHandler`** dispatches `/worker` Cloud Tasks by `task_type`:
   `agent_execution`, `email_indexing`, `email_indexing_watchdog`, `start_email_indexing`,
   `consolidation`, `sweep_consolidation`, `companion_consolidation`, `sweep_companion_consolidation`,
-  `deep_research_polling`, `fire_due_reminders`,
+  `deep_research_failed`, `deep_research_webhook_event`, `fire_due_reminders`,
   `execute_reminder`, `setup_microsoft_todo`, `reindex_task_list`, `renew_task_subscriptions`,
   `renew_all_task_subscriptions`, `start_daily_email_review`, `daily_email_review`,
   `billing_daily_summary`, `repair_email_embeddings`, `start_drive_sync`. Full reference:
   `docs/07_deployment/SCHEDULERS.md`.
-  `task_type=telegram_update` is intercepted in `/worker` **before** reaching `WorkerHandler` (routed
-  straight to the Telegram adapter, main.py) — it is not in the dispatch list above. `drive_sync` is not a
-  main-service task at all: the drive queue delivers it to the indexer service's `/worker` (`indexer_main.py`).
-  **`agent_execution` is claimed by Cloud Tasks task name** (`{prefix}worker_task_dedup`, TTL 30 min):
-  Cloud Tasks is at-least-once, and a redelivered task is skipped (200 `duplicate`). A raising attempt
-  releases its claim, so the 500 retry still runs. `/worker` logs the `X-CloudTasks-*` headers. See
-  `decisions/worker_task_dedup.md`.
+  `WorkerHandler` is the only dispatcher: `telegram_update` and a queued Slack event (no `task_type`; `event` +
+  `session_id`) go to the adapters attached at wiring; any other `task_type` is a 400 (no Slack fallthrough).
+  `drive_sync` is not a main-service task at all: the drive queue delivers it to the indexer service's `/worker`
+  (`indexer_main.py`).
+  **Every Cloud Tasks delivery is claimed by task name** (`TaskClaimStore`, `{prefix}worker_task_dedup`): holder
+  process id + attempt id, `running`|`done`, 1 h expiry. Cloud Tasks is at-least-once; a delivery that finds a live
+  claim is skipped (200 `duplicate`), and the claim of a dead attempt (another process, or this one but not running)
+  is taken over by the retry (one-instance assumption, as in `LongTurnService`). A raise, a >= 500 or a 429 releases
+  the claim, so the retry runs. `/worker` logs the `X-CloudTasks-*` headers. The same collection also holds the 48 h
+  daily-review marks and the 72 h OpenAI deep-research webhook claims (liveness follows each doc's own `expires_at`).
+  See `decisions/worker_task_dedup.md`.
+- **Chat intake never loses or doubles a message.** Slack and Telegram tasks have deterministic Cloud Tasks names
+  (`ALREADY_EXISTS` = already queued; the queued path uses no intake mark, the inline Telegram path still does). A busy
+  session waits in-process up to 100 s (FIFO), then re-queues under a named task (max 12 x 15 s), then posts a
+  "resend" notice; non-user Slack events (bot, edits, other types) skip the lock and never get the notice.
+- **Deep research reaches the channel that asked.** Origin channel + platform travel on every live delivery path (Claude
+  Cloud Run Job, OpenAI webhook, in-service runner). The OpenAI webhook only verifies, filters `response.*` events,
+  retrieves the response (events carry only `data.id`), claims the job id and enqueues `deep_research_webhook_event`
+  (named by job id); delivery runs in `WorkerHandler`. A failed job enqueues `deep_research_failed` and the user is
+  told. The HTML report task has the dedup key `deep_research_report:<job_id>` (Cloud Tasks name `agent_execution-<sha256(key)[:32]>`) and its create is retried under that name;
+  `deliver_deep_research` returns whether it was handed off and notifies on failure. The `deep_research_polling` path is gone.
+- **Consolidation and companion queues take the oldest pending batch first** (`order_by created_at`, key required).
+  Their two composite indexes in `config/firestore.indexes.json` must be `READY` **before** the code is deployed.
 - **`UserNotificationService`** — background notifications to the user's last active channel
   (`user_notification_state`). `notify()` routes `system_alert` through a formatter agent (Quick by
   default; `agent_id_override` → Smart for reminders/daily-review) → formatted delivery + session history.
@@ -309,7 +327,8 @@ stale `running` jobs.
   while-over; the increment is lock-free except at a daily/monthly rotation (`decisions/billing_usage_increment_lock_free.md`). `check_quota` is dead **by decision** (alert-only; owner dropped the hard cap 2026-07-26).
   See `decisions/billing_execution_scoped_ledger.md`.
 - **Daily Email Review** (`gmail_daily_review*` in `UserBotConfig`; hourly `start_daily_email_review`
-  fan-out → per-user `daily_email_review`) — fetches last-24h emails (cap 200, full body, cleaned by
+  fan-out → per-user `daily_email_review`; once per local date, at the first hourly tick within 3 h of the configured
+  hour, wrapping midnight; mark `daily_review:{user}:{date}`, named task; invalid tz → UTC) — fetches last-24h emails (cap 200, full body, cleaned by
   adapter: BS4 + `html.unescape` + invisible-Unicode strip), passes a structured JSON array to Smart via
   `notify(save_history=False)`. Smart protocol: triage ([ACTION]/[FYI]/[DIGEST]/[NOISE]) → deep-reads
   (`get_email_details`/`get_email_attachment`) → `search_web` → `create_html_page` report (Gmail-linked

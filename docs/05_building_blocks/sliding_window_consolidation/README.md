@@ -317,8 +317,9 @@ Cloud Run throttles CPU to ~5% when no HTTP request is active. The original
 ### 9.2 Per-Session Worker Serialization
 
 `HTTPModeAdapter._session_locks` (WeakValueDictionary) in `src/adapters/slack/http_adapter.py`
-ensures only one worker per `thread_ts` runs at a time. Concurrent workers return HTTP 429 →
-Cloud Tasks retries after backoff.
+ensures only one worker per Slack thread (`thread_ts`, else the message `ts`) runs at a time; the first turn releases the lock at the 90 s long-turn mark. A busy thread waits in-process up to 100 s, then the
+event is re-queued under a named task (max 12 x 15 s), then a "resend" notice is posted; it no longer returns 429. A redelivery that finds the lock busy re-queues at once.
+The queue is read oldest batch first (`order_by created_at`); its composite index must be `READY` before deploy.
 
 ### 9.3 Startup Vector Index Warmup
 

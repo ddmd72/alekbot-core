@@ -6,10 +6,12 @@ Receives POST /webhooks/openai/deep-research from OpenAI when a background
 Responses API job completes, fails, or is cancelled.
 
 Delivery model:
-  OpenAI POSTs to this endpoint with the job result embedded in the payload.
-  Metadata (user_id, account_id, query) is embedded by OpenAIDeepResearchAdapter
-  at submit time and echoed back by OpenAI in the webhook payload — no extra
-  storage needed.
+  OpenAI POSTs an event that carries only data.id (the SDK's webhook event types define
+  no metadata or output). The handler retrieves the response; the metadata (user_id,
+  account_id, query, session_id, origin_platform) was set by OpenAIDeepResearchAdapter at
+  submit time and comes back with it — no extra storage needed. It then claims the job and
+  enqueues the worker task `deep_research_webhook_event` (named by the job id) and returns;
+  WorkerHandler delivers the report or the notice.
 
 Signature verification (Svix/OpenAI format):
   Headers: webhook-id, webhook-timestamp, webhook-signature
@@ -22,9 +24,7 @@ Signature verification (Svix/OpenAI format):
   exactly — same signed_payload format, same whsec_ decoding, same header names.
 
 Supported event types:
-  response.completed  → deliver via notification service (SmartAgent + report link)
-  response.failed     → notify user of failure
-  response.cancelled  → notify user of cancellation
+  response.completed / failed / incomplete / cancelled → enqueued for the worker
   (all other types)   → acknowledged, ignored
 """
 
@@ -34,41 +34,38 @@ import hmac
 import json
 import os
 import time
-from typing import Optional, TYPE_CHECKING
+from typing import Any, Awaitable, Callable, Dict, Optional
 
 from quart import Blueprint, request, jsonify
 
-if TYPE_CHECKING:
-    from ..services.file_link_service import FileLinkService
-
-from ..domain.notification_kind import NotificationKind
-from ..services.deep_research_delivery import NotificationPort, deliver_deep_research
-from ..ports.media_storage_port import MediaStoragePort
-from ..ports.prompt_content_store import PromptContentStore
+from ..ports.dedup_store import DedupStore
 from ..services.task_dispatch_service import TaskDispatchService
 from ..utils.logger import logger
 
 _TIMESTAMP_TOLERANCE_SECONDS = 300  # matches OpenAI SDK default
+_RESPONSE_EVENTS = frozenset({
+    "response.completed", "response.failed", "response.cancelled", "response.incomplete",
+})
 
 
 def create_deep_research_webhooks_blueprint(
-    notification_service: NotificationPort,
     webhook_secret: Optional[str] = None,
-    media_storage: Optional[MediaStoragePort] = None,
     task_queue: Optional[TaskDispatchService] = None,
-    prompt_content_store: Optional[PromptContentStore] = None,
-    link_service: Optional["FileLinkService"] = None,
+    fetch_response: Optional[Callable[[str], Awaitable[Dict[str, Any]]]] = None,
+    dedup_store: Optional[DedupStore] = None,
 ) -> Blueprint:
     """
     Create Quart Blueprint for OpenAI Deep Research webhook delivery.
 
     Args:
-        notification_service: UserNotificationService for delivering results.
         webhook_secret:       OPENAI_DEEP_RESEARCH_WEBHOOK_SECRET (whsec_<base64> format).
                               None = skip verification (local dev).
-        media_storage:        Optional GCS adapter for uploading round1/round2/meta.json
-                              artifacts. None = skip artifact uploads (HTML report still
-                              delivered via task_queue).
+        task_queue:           Enqueues the worker task that delivers the outcome.
+        fetch_response:       Retrieves the full response object by id. OpenAI webhook events
+                              carry only data.id (no metadata, no output), so the handler
+                              fetches the rest. None = read the event body as-is.
+        dedup_store:          Claims each job id before delivery, so an OpenAI redelivery is
+                              skipped. None = no dedup.
     """
     blueprint = Blueprint("deep_research_webhooks", __name__)
 
@@ -156,93 +153,71 @@ def create_deep_research_webhooks_blueprint(
         event_type   = data.get("type", "")
         response_obj = data.get("data", {})
 
+        if event_type not in _RESPONSE_EVENTS:
+            # Other event families (batch, fine_tuning, ...) share this endpoint: ack, never retrieve.
+            logger.debug("[DeepResearchWebhook] Ignoring unknown event type: %s", event_type)
+            return jsonify({"ok": True}), 200
+
+        # The event itself carries only data.id — metadata and output come from the response.
+        if fetch_response is not None and response_obj.get("id") and not response_obj.get("metadata"):
+            try:
+                response_obj = {**response_obj, **(await fetch_response(response_obj["id"]))}
+            except Exception as exc:
+                logger.error("[DeepResearchWebhook] Response retrieval failed: %s", exc, exc_info=True)
+                return jsonify({"error": "retrieval failed"}), 500  # non-2xx: OpenAI redelivers
+
         metadata   = response_obj.get("metadata") or {}
         user_id    = metadata.get("user_id", "")
         account_id = metadata.get("account_id", "")
         query      = metadata.get("query", "")
         session_id = metadata.get("session_id", "")
+        origin_platform = metadata.get("origin_platform") or None  # absent on pre-deploy jobs
         job_id     = response_obj.get("id", "unknown")
+
 
         logger.info(
             "[DeepResearchWebhook] Received event=%s job=%s user=%s",
             event_type, job_id[:16] if job_id else "?", user_id[:8] if user_id else "?",
         )
         if not user_id:
+            # Not a job this project created (or created before metadata carried the user): nothing to deliver.
             logger.warning(
-                "[DeepResearchWebhook] Empty user_id — response_obj keys=%s metadata=%s",
+                "[DeepResearchWebhook] Empty user_id — ignoring: response_obj keys=%s metadata=%s",
                 list(response_obj.keys()), metadata,
             )
-
-        if event_type == "response.completed":
-            output_text = response_obj.get("output_text") or ""
-            if not output_text:
-                # Fallback: extract from output array (Responses API format)
-                for item in response_obj.get("output", []):
-                    if item.get("type") == "message":
-                        for content in item.get("content", []):
-                            if content.get("type") == "output_text":
-                                output_text = content.get("text", "")
-                                break
-                    if output_text:
-                        break
-
-            # Durable capture BEFORE delivery — research is expensive; if delivery
-            # fails, the result is already persisted in BigQuery.
-            if prompt_content_store is not None:
-                await prompt_content_store.record_dr_result(
-                    output_text=output_text,
-                    query=query,
-                    user_id=user_id,
-                    account_id=account_id,
-                    model=response_obj.get("model", ""),
-                    provider="openai",
-                    source="openai_webhook",
-                    job_id=job_id,
-                )
-
-            # Derive invocation channel from per-channel session_id (format: "user_id:channel_id")
-            # so the report delivers to the channel that started the research, not the user's
-            # primary/last-active channel. Mirrors Gemini polling path.
-            origin_channel_id = session_id.split(":", 1)[1] if ":" in session_id else None
-
-            await deliver_deep_research(
-                result_text=output_text,
-                user_id=user_id,
-                account_id=account_id,
-                query=query,
-                task_queue=task_queue,
-                session_id=session_id,
-                media_storage=media_storage,
-                link_service=link_service,
-                channel_id_override=origin_channel_id,
-            )
-
-            logger.info("[DeepResearchWebhook] Report delivered: user=%s", user_id[:8])
             return jsonify({"ok": True}), 200
 
-        if event_type == "response.failed":
-            error = (response_obj.get("error") or {}).get("message", "unknown error")
-            logger.error("[DeepResearchWebhook] Job failed: job=%s error=%s", job_id[:16], error)
-            await notification_service.notify(
-                kind=NotificationKind.DEEP_RESEARCH,
-                user_id=user_id,
-                account_id=account_id,
-                system_alert="Deep research did not complete — the AI provider returned an error.",
-            )
-            return jsonify({"ok": True}), 200
+        # OpenAI redelivers on timeout or non-2xx: claim the job first.
+        claim_key = f"openai_deep_research:{job_id}"
+        if dedup_store is not None:
+            if not await dedup_store.try_mark_processed(claim_key):
+                logger.info("[DeepResearchWebhook] Duplicate delivery skipped: job=%s event=%s",
+                            job_id[:16], event_type)
+                return jsonify({"ok": True, "duplicate": True}), 200
 
-        if event_type == "response.cancelled":
-            logger.info("[DeepResearchWebhook] Job cancelled: job=%s", job_id[:16])
-            await notification_service.notify(
-                kind=NotificationKind.DEEP_RESEARCH,
-                user_id=user_id,
-                account_id=account_id,
-                system_alert="Deep research was cancelled before completing.",
+        # Delivery is slow; running it here let a cancelled request strand the claim. Hand it to a named worker task.
+        try:
+            if task_queue is None:
+                raise RuntimeError("no task queue configured")
+            await task_queue.enqueue_worker_task(
+                task_type="deep_research_webhook_event",
+                payload={
+                    "event_type": event_type, "job_id": job_id, "user_id": user_id, "account_id": account_id,
+                    "session_id": session_id, "origin_platform": origin_platform or "", "query": query,
+                },
+                dedup_key=job_id,
             )
-            return jsonify({"ok": True}), 200
-
-        # Unknown event type — acknowledge to prevent OpenAI retries
-        logger.debug("[DeepResearchWebhook] Ignoring unknown event type: %s", event_type)
+        except BaseException as exc:  # CancelledError included: the claim must not outlive a request that died
+            logger.error("[DeepResearchWebhook] Enqueue failed: job=%s error=%r", job_id[:16], exc,
+                         exc_info=True)
+            if dedup_store is not None:
+                try:
+                    await dedup_store.release(claim_key)
+                except Exception as rel_exc:
+                    logger.error("[DeepResearchWebhook] claim release failed: %s", rel_exc, exc_info=True)
+            if not isinstance(exc, Exception):
+                raise
+            return jsonify({"error": "enqueue failed"}), 500
         return jsonify({"ok": True}), 200
 
     return blueprint

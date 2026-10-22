@@ -22,8 +22,8 @@ Structured JSON fields allow filtering:
 - Trace IDs are injected into logs for correlation.
 
 ## 5. Slack Event Deduplication
-- `FirestoreEventDedupStore` prevents duplicate Slack events.
-- TTL is 1 hour; protects against Slack retry storms.
+- Slack intake names its Cloud Task after the event id (`ALREADY_EXISTS` = already queued), and `WorkerHandler` claims every delivery by task name (`TaskClaimStore`, 1 h expiry).
+- Protects against Slack retry storms and Cloud Tasks redelivery.
 
 ## 6. Troubleshooting Tips
 - Ensure Cloud Trace API + service account roles enabled.

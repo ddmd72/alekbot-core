@@ -16,7 +16,6 @@ from ..adapters.slack.media_adapter import SlackMediaAdapter
 from ..adapters.gcs_media_adapter import GcsMediaAdapter
 from ..adapters.gcp_task_queue import GcpTaskQueue
 from ..adapters.firestore_session_store import FirestoreSessionStore
-from ..adapters.firestore_dedup_store import FirestoreEventDedupStore
 from ..config.environment import EnvironmentConfig
 from ..handlers.conversation_handler import ConversationHandler
 from ..handlers.consolidation_handler import process_user_batches_on_overflow
@@ -138,12 +137,6 @@ class SlackAdapterFactory:
         if not db_client:
             raise ValueError("db_client is required for HTTP mode (session persistence)")
 
-        # ADR-006: Use semantic collection name
-        dedup_store = FirestoreEventDedupStore(
-            db_client=db_client,
-            collection_prefix=env_config.event_dedup_collection
-        )
-
         queue_suffix = "dev" if env_config.is_development else "prod"
 
         service_url = config.get("CLOUD_RUN_SERVICE_URL")
@@ -166,7 +159,6 @@ class SlackAdapterFactory:
             session_store=session_store,
             conversation_handler=conversation_handler,
             iam_service=iam_service,
-            dedup_store=dedup_store,
             audio_service=audio_service,
             language_service=language_service,
             localization=localization,

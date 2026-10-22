@@ -110,6 +110,7 @@ class DeepResearchAgent(BaseAgent):
                 system_prompt=system_prompt or None,
                 session_id=message.context.get("session_id"),
                 second_pass=self._second_pass,
+                origin_platform=message.context.get("origin_platform"),
             )
         except Exception as exc:
             self._on_agent_error(exc, "create_interaction")

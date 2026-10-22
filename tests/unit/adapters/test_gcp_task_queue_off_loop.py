@@ -14,7 +14,6 @@ from src.adapters.gcp_task_queue import GcpTaskQueue
 _CALLS = {
     "enqueue_slack_event": lambda q: q.enqueue_slack_event({"type": "message"}, "s"),
     "enqueue_agent_task": lambda q: q.enqueue_agent_task("a", "i", "q", {}),
-    "enqueue_deep_research_polling": lambda q: q.enqueue_deep_research_polling("i", "u", "a"),
     "enqueue_video_generation_polling": lambda q: q.enqueue_video_generation_polling("r", "u", "a"),
     "enqueue_email_indexing_task": lambda q: q.enqueue_email_indexing_task("job"),
     "enqueue_worker_task": lambda q: q.enqueue_worker_task("drive_sync", {"user_id": "u"}, dedup_key="k"),

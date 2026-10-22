@@ -28,6 +28,7 @@ class TaskDispatchService:
         query: str,
         context: Dict[str, Any],
         deadline_seconds: int | None = None,
+        dedup_key: str | None = None,
     ) -> str:
         return await self._queue.enqueue_agent_task(
             agent_id=agent_id,
@@ -35,6 +36,7 @@ class TaskDispatchService:
             query=query,
             context=context,
             deadline_seconds=deadline_seconds,
+            dedup_key=dedup_key,
         )
 
     async def enqueue_email_indexing_task(self, job_id: str) -> str:
@@ -45,30 +47,6 @@ class TaskDispatchService:
 
     async def enqueue_companion_consolidation_task(self, session_id: str) -> str:
         return await self._queue.enqueue_companion_consolidation_task(session_id=session_id)
-
-    async def enqueue_deep_research_polling(
-        self,
-        interaction_id: str,
-        user_id: str,
-        account_id: str,
-        query: str = "",
-        attempt: int = 0,
-        consecutive_errors: int = 0,
-        delay_seconds: int = 30,
-        provider: str = "gemini",
-        session_id: str = "",
-    ) -> str:
-        return await self._queue.enqueue_deep_research_polling(
-            interaction_id=interaction_id,
-            user_id=user_id,
-            account_id=account_id,
-            query=query,
-            attempt=attempt,
-            consecutive_errors=consecutive_errors,
-            delay_seconds=delay_seconds,
-            provider=provider,
-            session_id=session_id,
-        )
 
     async def enqueue_video_generation_polling(
         self,
