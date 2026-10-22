@@ -448,8 +448,8 @@ class WorkspaceService:
             )
         if "drive:" in source:
             raise WorkspaceRefused(
-                f"'{source}' is on the user's drive; drive files are not copied into the workspace — open it with "
-                "open_file_from_drive",
+                f"'{source}' is on the user's drive; drive files are not copied into the workspace — open it through "
+                "work_with_drive_files",
                 reason="wrong_store",
             )
         if source.startswith("skill:"):

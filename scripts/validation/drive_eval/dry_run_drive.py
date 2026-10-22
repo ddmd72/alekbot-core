@@ -36,8 +36,10 @@ class DriveOpLog:
     """Every DriveOperations call in a case, in call order: reads as they ran, mutations as they were stubbed."""
     entries: List[Dict[str, Any]] = field(default_factory=list)
 
-    def add(self, method: str, args: Dict[str, Any], *, outcome: str, stubbed: bool, agent: str) -> None:
-        self.entries.append({"op": method, "args": args, "outcome": outcome, "stubbed": stubbed, "agent": agent})
+    def add(self, method: str, args: Dict[str, Any], *, outcome: str, stubbed: bool, agent: str,
+            **extra: Any) -> None:
+        self.entries.append({"op": method, "args": args, "outcome": outcome, "stubbed": stubbed, "agent": agent,
+                             **extra})
 
     def clear(self) -> None:
         self.entries.clear()
@@ -59,9 +61,13 @@ def _agent(message: Any) -> str:
 class DryRunDriveOperations:
     """Install with `with DryRunDriveOperations(log):` (or install()/uninstall()); restores the class on exit."""
 
-    def __init__(self, log: DriveOpLog, cls: Type[Any] = DriveOperations) -> None:
+    def __init__(self, log: DriveOpLog, cls: Type[Any] = DriveOperations,
+                 annotate: Optional[Callable[[str, DriveOpOutcome], Dict[str, Any]]] = None) -> None:
+        """`annotate(method, outcome)` adds fields to a read's log entry (G3 marks a search whose text names a word no
+        file holds)."""
         self.log = log
         self._cls = cls
+        self._annotate = annotate
         self._saved: Dict[str, Callable[..., Any]] = {}
 
     def install(self) -> None:
@@ -98,7 +104,7 @@ class DryRunDriveOperations:
         return stubbed
 
     def _logged(self, name: str, original: Callable[..., Any]) -> Callable[..., Any]:
-        log = self.log
+        log, annotate = self.log, self._annotate
 
         async def read(ops: Any, message: AgentMessage, **kwargs: Any) -> DriveOpOutcome:
             outcome: Optional[DriveOpOutcome] = None
@@ -106,6 +112,7 @@ class DryRunDriveOperations:
                 outcome = await original(ops, message, **kwargs)
                 return outcome
             finally:
+                extra = annotate(name, outcome) if annotate is not None and outcome is not None else {}
                 log.add(name, _args(kwargs), outcome=outcome.outcome.value if outcome is not None else "raised",
-                        stubbed=False, agent=_agent(message))
+                        stubbed=False, agent=_agent(message), **extra)
         return read

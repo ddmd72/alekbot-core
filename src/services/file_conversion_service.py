@@ -122,7 +122,7 @@ class FileConversionService:
         item = await self.get_drive_item(ref, user_id)
         if item.is_folder:
             return (f"[System: '{item.path or '/'}' is a folder, not a file. "
-                    f"Use list_files_in_drive to see what is inside.]")
+                    f"List the folder to see what is inside.]")
         if item.size_bytes > MAX_FILE_BYTES:
             return (f"[System: '{item.path}' is {format_size(item.size_bytes)}; files above "
                     f"{format_size(MAX_FILE_BYTES)} cannot be read as text yet. Long audio and video "

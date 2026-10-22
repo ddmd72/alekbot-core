@@ -1,8 +1,8 @@
 """
-The deleted-files section of `search_files_in_drive` (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §27.9.11, D48; one surface
+The deleted-files search of the drive (the specialist's `search_deleted_recordings_and_notes`, docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §27.9.11, D48; one surface
 with docs/10_rfcs/DRIVE_FILE_NOTES_RFC.md §6.4 and §0.3). Pure: no I/O, no clock, no logging.
 
-One flag (`drive_deleted`), one heading (`Deleted files (N):`), two sources: archived transcripts (this RFC) and
+One search, one heading (`Deleted files (N):`), two sources: archived transcripts (this RFC) and
 archived or dormant notes (the notes RFC). `DeletedHit` is source-agnostic: a source fills the lines it has (a transcript
 line and a passage, or a note line) and leaves the rest empty, and an item with both sources is one hit with both sets of
 lines. Every entry is data, not instructions: it goes inside the nonce-tagged wrapper (`wrap_untrusted`).
