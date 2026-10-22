@@ -101,7 +101,7 @@ def build_app() -> Quart:
     gate = worker_oidc_gate(accepted, indexer_audiences(os.environ.get("DRIVE_INDEXER_URL")),
                             on_cloud_run=bool(os.environ.get("K_SERVICE")))
     env_config = EnvironmentConfig()
-    db = firestore.AsyncClient(project=project, database="us-production")
+    db = firestore.AsyncClient(project=project, database=env_config.firestore_database_id)
 
     app = Quart(__name__)
     queue = build_drive_task_queue(

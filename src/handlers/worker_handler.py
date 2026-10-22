@@ -505,9 +505,8 @@ class WorkerHandler:
     async def _handle_sweep_companion_consolidation(self) -> Tuple[dict, int]:
         """
         Fan-out cron: re-trigger extraction for every session with stuck batches.
-        Mirrors _handle_sweep_consolidation. Not yet wired to a Cloud Scheduler job
-        (that is deploy-time infra, out of this plan's scope — same as how
-        sweep_consolidation's scheduler job is provisioned by hand).
+        Mirrors _handle_sweep_consolidation. Scheduled hourly (:47) by the Cloud Scheduler
+        job alek-bot-dev-sweep-companion-consolidation.
         """
         if self._companion_extraction is None or self._task_dispatch is None:
             logger.warning("[Worker] sweep_companion_consolidation: services not configured")

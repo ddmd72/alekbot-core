@@ -23,9 +23,9 @@ async def export_facts_yaml(account_id: str, limit: int = 20):
     env_config = config["ENVIRONMENT_CONFIG"]
     
     if env_config.use_emulator:
-        db = firestore.AsyncClient(project="emulator-project")
+        db = firestore.AsyncClient(project="emulator-project", database=env_config.firestore_database_id)
     else:
-        db = firestore.AsyncClient(project=config["GOOGLE_CLOUD_PROJECT"])
+        db = firestore.AsyncClient(project=config["GOOGLE_CLOUD_PROJECT"], database=env_config.firestore_database_id)
 
     collection_name = env_config.domain_facts_collection
     logger.info(f"📂 Reading from: {collection_name}")

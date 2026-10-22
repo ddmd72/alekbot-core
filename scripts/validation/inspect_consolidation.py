@@ -9,7 +9,7 @@ async def inspect_data():
     
     config = load_settings()
     env_config = config["ENVIRONMENT_CONFIG"]
-    db = firestore.AsyncClient(project=config["GOOGLE_CLOUD_PROJECT"])
+    db = firestore.AsyncClient(project=config["GOOGLE_CLOUD_PROJECT"], database=env_config.firestore_database_id)
     
     prefix = env_config.firestore_collection_prefix
     
@@ -44,43 +44,7 @@ async def inspect_data():
         for doc in docs:
             print(f"   • Batch: {doc.id[:12]}... Status: {doc.to_dict().get('status')}")
 
-    # 2. Inspect Facts
-    print(f"\n💡 RECENT FACTS (Collection: {prefix}facts)")
-    facts_col = db.collection(f"{prefix}facts")
-    query = facts_col.order_by("created_at", direction=firestore.Query.DESCENDING).limit(5)
-    
-    try:
-        docs = await query.get()
-        if not docs:
-            print("   (Empty)")
-        for doc in docs:
-            d = doc.to_dict()
-            print(f"\n   ✨ DOCUMENT: {doc.id}")
-            import json
-            
-            # Remove vector from display to keep it clean
-            if "vector" in d:
-                from google.cloud.firestore_v1.vector import Vector
-                if isinstance(d["vector"], Vector):
-                    # Simply convert to string representation or generic placeholder
-                    d["vector"] = "<Vector>"
-                elif d["vector"] is None:
-                    d["vector"] = "<None>"
-                else:
-                    d["vector"] = f"<List len={len(d['vector'])}>"
-            
-            # Handle datetime objects for json.dumps
-            def json_serial(obj):
-                if isinstance(obj, datetime):
-                    return obj.isoformat()
-                raise TypeError ("Type %s not serializable" % type(obj))
-            
-            print(json.dumps(d, indent=6, default=json_serial, ensure_ascii=False))
-            print("-" * 20)
-    except Exception as e:
-        print(f"   ⚠️ Error fetching facts: {e}")
-
-    # 3. Inspect Sessions
+    # 2. Inspect Sessions
     print(f"\n💬 ACTIVE SESSIONS (Collection: {prefix}sessions)")
     sessions_col = db.collection(f"{prefix}sessions")
     query = sessions_col.order_by("last_activity", direction=firestore.Query.DESCENDING).limit(5)

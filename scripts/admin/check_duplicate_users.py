@@ -30,10 +30,10 @@ async def check_duplicates(email_filter: str = None):
     # Initialize Firestore
     if env_config.use_emulator:
         print(f"🏠 Using Firestore EMULATOR at {env_config.get_emulator_host()}")
-        db = firestore.AsyncClient(project="emulator-project")
+        db = firestore.AsyncClient(project="emulator-project", database=env_config.firestore_database_id)
     else:
         print(f"☁️ Using Firestore CLOUD ({env_config.env.value})")
-        db = firestore.AsyncClient(project=config["GOOGLE_CLOUD_PROJECT"])
+        db = firestore.AsyncClient(project=config["GOOGLE_CLOUD_PROJECT"], database=env_config.firestore_database_id)
     
     # Get users collection
     collection_name = env_config.domain_users_collection

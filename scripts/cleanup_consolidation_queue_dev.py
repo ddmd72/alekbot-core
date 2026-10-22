@@ -25,7 +25,7 @@ async def delete_batch(batch_id: str):
         print("❌ ERROR: This script cannot be run in a production environment.")
         return
         
-    db = firestore.AsyncClient(project=config.get("GOOGLE_CLOUD_PROJECT"))
+    db = firestore.AsyncClient(project=config.get("GOOGLE_CLOUD_PROJECT"), database=env_config.firestore_database_id)
     
     # Collection name
     collection_name = f"{env_config.firestore_collection_prefix}consolidation_queue"
