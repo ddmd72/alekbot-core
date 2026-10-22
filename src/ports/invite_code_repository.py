@@ -10,7 +10,7 @@ class InviteCodeRepository(ABC):
 
     Holds for every method:
     - Validity: never decided here. Reads return used and expired invites with used_at and expires_at as saved
-      (tz-aware UTC); the caller refuses them with InviteCode.is_valid (invite_code_service.py:90).
+      (tz-aware UTC); the caller refuses them with InviteCode.is_valid (invite_code_service.py:91).
     - Legacy documents: a missing role reads as "MEMBER"; a missing or unknown type, or another missing field,
       raises on read (observed); callers treat a raise as a refusal.
     - Errors: backend errors propagate.
@@ -22,7 +22,7 @@ class InviteCodeRepository(ABC):
 
         Idempotency: callers need a new code never to replace another. Known defect: an existing code is overwritten
             (firestore_invite_code_repo.py:71), so a collision of the 9-hex-character code
-            (invite_code_service.py:46-47) rebinds the older invite to the new creator's account.
+            (invite_code_service.py:47-48) rebinds the older invite to the new creator's account.
         """
         pass
 
@@ -41,7 +41,7 @@ class InviteCodeRepository(ABC):
         Atomicity: a blind overwrite, last writer wins; an absent code is created (observed).
         Known defect: consumption must be one-shot, but consume_team_invite reads, checks is_valid and writes here
             with no precondition, so two concurrent consumers of one code both join the account
-            (invite_code_service.py:86-152, firestore_invite_code_repo.py:89).
+            (invite_code_service.py:85-159, firestore_invite_code_repo.py:89).
         """
         pass
 
