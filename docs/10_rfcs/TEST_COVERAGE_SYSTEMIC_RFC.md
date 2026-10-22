@@ -590,8 +590,7 @@ emulator (29 of 32; it does not refuse a missing index) and the test database. D
 - **Index creation on the test database is a fixture** (Admin API, fixed collection ids `test_parity_idx_*`, created once, READY wait 15 min), not
   the render step of §4; the render step and the lease document come with P12. `make test` ignores `tests/cloud`.
 - **Run:** `make test-cloud`, by hand, with the owner's (or root's) credentials able to impersonate the test service account; one runner at a time.
-  A fresh index failed queries once after reporting READY (cause not found), so a scenario in a collection created by the run is retried up to
-  three times.
+  A run that creates indexes may fail scenarios of those collections even after READY (seen once, cause unknown): re-run.
 
 **Totals.** Tranche 1 (P1–P9) ≈ 12–16 days; tranche 2 (P10–P17) ≈ 24–33; tranche 3 (P18–P24) ≈ 9–11. **Whole plan
 ≈ 45–59 days.**
