@@ -4885,7 +4885,7 @@ async def test_a_removed_intent_gets_smarts_own_dispatch_never_a_stub():
 failed + 30 xdist collection errors, §4). **Done.** After step 2: the new tests green; every §4.1 row applied; the §4.2
 rows red and listed; nothing else red but the two environmental tests. **Model:** Sonnet for the code; **Opus** reviewer
 for §4.
-**Source:** `git checkout 94c046ab -- src/agents/file_management_agent.py src/infrastructure/agent_manifest.py src/infrastructure/drive_operations.py src/domain/drive_answer_texts.py src/domain/drive_deleted_search.py src/domain/drive_search.py src/domain/drive_search_texts.py src/domain/drive_tool_texts.py src/domain/drive_transcript_render.py src/domain/workspace.py src/services/drive_search_service.py src/services/file_conversion_service.py src/services/user_drive_service.py src/services/workspace_service.py prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy prompts_snapshot/tokens/system/PROTOCOL_DRIVE_SEARCH.groovy firestore_utils/uploads/PROTOCOL_AGENT_SELECTION.json scripts/validation/drive_eval/smart_dry_run.py tests/ && git rm -r src/skills/smart/drive-search && git checkout 89684c0d -- src/domain/drive_tool_texts.py src/infrastructure/drive_operations.py prompts_snapshot/tokens/system/PROTOCOL_DRIVE_SEARCH.groovy && git checkout 880a9524 -- scripts/validation/drive_eval/smart_dry_run.py tests/unit/scripts/test_drive_eval_g3_case_message.py && git checkout 9417d6ab -- tests/` (the `tests/` checkout carries the three new tests and the reviewer's edits; `git checkout 8c7cfe78 -- tests/unit/agents/test_file_management_own_drive_operations.py` adds the mutant-check test for FileManagement's own instance)
+**Source:** `git checkout 94c046ab -- src/agents/file_management_agent.py src/infrastructure/agent_manifest.py src/infrastructure/drive_operations.py src/domain/drive_answer_texts.py src/domain/drive_deleted_search.py src/domain/drive_search.py src/domain/drive_search_texts.py src/domain/drive_tool_texts.py src/domain/drive_transcript_render.py src/domain/workspace.py src/services/drive_search_service.py src/services/file_conversion_service.py src/services/user_drive_service.py src/services/workspace_service.py prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy prompts_snapshot/tokens/system/PROTOCOL_DRIVE_SEARCH.groovy firestore_utils/uploads/PROTOCOL_AGENT_SELECTION.json scripts/validation/drive_eval/smart_dry_run.py tests/ && git rm -r src/skills/smart/drive-search && git checkout 89684c0d -- src/domain/drive_tool_texts.py src/infrastructure/drive_operations.py prompts_snapshot/tokens/system/PROTOCOL_DRIVE_SEARCH.groovy && git checkout 880a9524 -- scripts/validation/drive_eval/smart_dry_run.py tests/unit/scripts/test_drive_eval_g3_case_message.py && git checkout 9417d6ab -- tests/` (the `tests/` checkout carries the three new tests and the reviewer's edits; `git checkout 8c7cfe78 -- tests/unit/agents/test_file_management_own_drive_operations.py` adds the mutant-check test for FileManagement's own instance; then, for the re-review fixes F1, F2, M5: `git checkout 5f25f575 -- src/domain/drive_answer.py src/domain/drive_answer_texts.py src/infrastructure/drive_tools.py scripts/validation/drive_routing_probe.py tests/unit/infrastructure/test_drive_tools_cross_cut.py tests/unit/scripts/test_drive_routing_probe_cost_stop.py`)
 
 **After review (re-review of B, `plan_rereview_B.md`, applied; the diffs above are against B6's state and already contain the fixes).**
 Two fix commits on top of the re-review's test commit `9417d6ab` carry them, and the Source line above names them:
@@ -7321,7 +7321,7 @@ index 8c4a528a..9d21463b 100644
          if intent == INTENT_SEARCH:
              out.append(Event(INTENT_SEARCH, drive_query=str(ctx.get("drive_query") or "").strip()))
 diff --git a/scripts/validation/drive_routing_probe.py b/scripts/validation/drive_routing_probe.py
-index 3cea3378..95ac9f48 100644
+index 3cea3378..a92f61c8 100644
 --- a/scripts/validation/drive_routing_probe.py
 +++ b/scripts/validation/drive_routing_probe.py
 @@ -1,12 +1,18 @@
@@ -7345,6 +7345,15 @@ index 3cea3378..95ac9f48 100644
 +parallel specialists can overshoot the cap by about one call each (about $0.1-0.3 per call). Failed calls are not metered.
  """
  from __future__ import annotations
+ 
+@@ -16,7 +22,7 @@ import json
+ import os
+ import sys
+ from pathlib import Path
+-from typing import Any, Dict, List
++from typing import Any, Dict, List, Tuple
+ 
+ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
  
 @@ -38,9 +44,11 @@ from src.infrastructure.agent_coordinator import AgentCoordinator  # noqa: E402
  from src.infrastructure.agent_manifest import ALL_DESCRIPTORS  # noqa: E402
@@ -7381,7 +7390,7 @@ index 3cea3378..95ac9f48 100644
  ]
  _STUB = {"open_file": "[File: lease_2026.pdf]\nLease agreement…\n[/File: lease_2026.pdf]"}
  CALLS: List[Dict[str, Any]] = []
-@@ -77,12 +86,35 @@ CALLS: List[Dict[str, Any]] = []
+@@ -77,12 +86,85 @@ CALLS: List[Dict[str, Any]] = []
  def _install_capture() -> None:
      async def capture(self, tool_call, context, *args, **kwargs):
          a = tool_call.args or {}
@@ -7415,35 +7424,87 @@ index 3cea3378..95ac9f48 100644
 +    return ap
 +
 +
++async def run_scenarios(smart: Any, meter: Any, user_id: str, account_id: str, runs: int,
++                        max_usd: float) -> Tuple[str, int, Dict[str, int]]:
++    """Run every scenario; the patched context loader and the cost meter are restored even when a run raises."""
++    original_load = smart._load_conversation_context
++    _install_capture()
++    uninstall = meter.install()
++    try:
++        stopped = ""
++        failures = 0
++        passes: Dict[str, int] = {}
++        for sc in SCENARIOS:
++            seed = sc.get("seed", [])
++
++            async def seeded(*args, _seed=seed, **kwargs):
++                return list(_seed) + await original_load(*args, **kwargs)
++
++            smart._load_conversation_context = seeded
++            for run in range(runs):
++                CALLS.clear()
++                msg = AgentMessage.create(
++                    sender="drive_routing_probe", recipient=smart.agent_id, intent=AgentIntent.QUERY,
++                    payload={"text": sc["text"]},
++                    context={"user_id": user_id, "account_id": account_id,
++                             "session_id": f"{user_id}:drive_routing_probe",
++                             "current_message_parts": [MessagePart(text=sc["text"])]},
++                )
++                try:
++                    async with RequestContext(user_id=user_id, account_id=account_id):
++                        await smart.execute(msg)
++                except CostCapReached as exc:
++                    stopped = str(exc)
++                    break
++                if meter.spent >= max_usd or meter.capped:
++                    stopped = f"spent ${meter.spent:.4f} of --max-usd {max_usd}"
++                intents = [c["intent"] for c in CALLS]
++                ok = judge_run(sc, CALLS)
++                failures += 0 if ok else 1
++                passes[sc["text"][:50]] = passes.get(sc["text"][:50], 0) + (1 if ok else 0)
++                queries = [c["query"][:120] for c in CALLS if c["intent"] == DRIVE]
++                print(f"{'OK ' if ok else 'BAD'} [{run + 1}] {sc['text'][:50]!r} → {intents} queries={queries}")
++                if stopped:
++                    break
++            if stopped:
++                break
++    finally:
++        smart._load_conversation_context = original_load
++        uninstall()
++    return stopped, failures, passes
++
++
 +async def main(runs: int, max_usd: float) -> int:
      user_id, account_id = os.environ["DEV_USER_ID"], os.environ["DEV_ACCOUNT_ID"]
      db = firestore.AsyncClient(database=os.getenv("FIRESTORE_DATABASE", "us-production"))
      settings = load_settings()
-@@ -98,6 +130,9 @@ async def main(runs: int) -> int:
+@@ -96,49 +178,17 @@ async def main(runs: int) -> int:
+     factory = UserAgentFactory(config=settings, env_config=env_config, coordinator=AgentCoordinator(registry=registry),
+                                user_repo=user_repo, account_repo=account_repo, **container.agent_services())
      smart = (await factory.ensure_agents_for_user(user_id))["smart_agent"]
-     original_load = smart._load_conversation_context
-     _install_capture()
-+    meter = Meter(max_usd=max_usd)
-+    uninstall = meter.install()
-+    stopped = ""
-     failures = 0
-     passes: Dict[str, int] = {}
-     for sc in SCENARIOS:
-@@ -116,29 +151,35 @@ async def main(runs: int) -> int:
-                          "session_id": f"{user_id}:drive_routing_probe",
-                          "current_message_parts": [MessagePart(text=sc["text"])]},
-             )
+-    original_load = smart._load_conversation_context
+-    _install_capture()
+-    failures = 0
+-    passes: Dict[str, int] = {}
+-    for sc in SCENARIOS:
+-        seed = sc.get("seed", [])
+-
+-        async def seeded(*args, _seed=seed, **kwargs):
+-            return list(_seed) + await original_load(*args, **kwargs)
+-
+-        smart._load_conversation_context = seeded
+-        for run in range(runs):
+-            CALLS.clear()
+-            msg = AgentMessage.create(
+-                sender="drive_routing_probe", recipient=smart.agent_id, intent=AgentIntent.QUERY,
+-                payload={"text": sc["text"]},
+-                context={"user_id": user_id, "account_id": account_id,
+-                         "session_id": f"{user_id}:drive_routing_probe",
+-                         "current_message_parts": [MessagePart(text=sc["text"])]},
+-            )
 -            async with RequestContext(user_id=user_id, account_id=account_id):
 -                await smart.execute(msg)
-+            try:
-+                async with RequestContext(user_id=user_id, account_id=account_id):
-+                    await smart.execute(msg)
-+            except CostCapReached as exc:
-+                stopped = str(exc)
-+                break
-+            if meter.spent >= max_usd or meter.capped:
-+                stopped = f"spent ${meter.spent:.4f} of --max-usd {max_usd}"
-             intents = [c["intent"] for c in CALLS]
+-            intents = [c["intent"] for c in CALLS]
 -            unknown = [i for i in intents if "drive" in i and i not in DRIVE_INTENTS]
 -            ok = (sc["expect"] is None or sc["expect"] in intents) and sc.get("forbid") not in intents and not unknown
 -            hit = next((c for c in CALLS if c["intent"] == sc["expect"]), None)
@@ -7452,19 +7513,13 @@ index 3cea3378..95ac9f48 100644
 -                ok = (got is None) if sc["folder"] is None else (got or "").casefold() == sc["folder"].casefold()
 -            if ok and "ref" in sc:
 -                ok = sc["ref"] in str(hit["context"].get("file_ref", ""))
-+            ok = judge_run(sc, CALLS)
-             failures += 0 if ok else 1
-             passes[sc["text"][:50]] = passes.get(sc["text"][:50], 0) + (1 if ok else 0)
+-            failures += 0 if ok else 1
+-            passes[sc["text"][:50]] = passes.get(sc["text"][:50], 0) + (1 if ok else 0)
 -            keys = [{k: (v if k == "folder" else "…") for k, v in c["context"].items()} for c in CALLS]
 -            print(f"{'OK ' if ok else 'BAD'} [{run + 1}] {sc['text'][:50]!r} → {intents} ctx={keys}")
-+            queries = [c["query"][:120] for c in CALLS if c["intent"] == DRIVE]
-+            print(f"{'OK ' if ok else 'BAD'} [{run + 1}] {sc['text'][:50]!r} → {intents} queries={queries}")
-+            if stopped:
-+                break
-+        if stopped:
-+            break
-     smart._load_conversation_context = original_load
-+    uninstall()
+-    smart._load_conversation_context = original_load
++    meter = Meter(max_usd=max_usd)
++    stopped, failures, passes = await run_scenarios(smart, meter, user_id, account_id, runs, max_usd)
      for text, n in passes.items():
          print(f"PASS {n}/{runs}  {text!r}")
 +    print(f"spent ${meter.spent:.4f} of --max-usd {max_usd}")
@@ -7612,9 +7667,36 @@ def test_max_usd_is_required():
 def test_max_usd_and_runs_are_parsed():
     args = probe.build_parser().parse_args(["--runs", "2", "--max-usd", "3"])
     assert (args.runs, args.max_usd) == (2, 3.0)
+
+
+async def test_the_patched_loader_and_the_meter_are_restored_when_a_run_raises(monkeypatch):
+    """M5: a raising run must not leave the loader patched or the meter installed."""
+    from types import SimpleNamespace
+
+    from src.infrastructure.delegation_engine import DelegationEngine
+
+    monkeypatch.setattr(DelegationEngine, "dispatch", DelegationEngine.dispatch)  # restored after the test
+
+    async def original(*a, **k):
+        return []
+
+    async def boom(msg):
+        raise RuntimeError("provider down")
+
+    smart = SimpleNamespace(agent_id="smart", _load_conversation_context=original, execute=boom)
+    uninstalled = []
+    meter = SimpleNamespace(spent=0.0, capped=False, install=lambda: lambda: uninstalled.append(True))
+
+    with pytest.raises(RuntimeError):
+        await probe.run_scenarios(smart, meter, "u", "a", 1, 1.0)
+
+    assert smart._load_conversation_context is original
+    assert uninstalled == [True]
 ````
 
-**Final-state files:** `git checkout c53b613b -- scripts/validation/drive_routing_probe.py tests/unit/scripts/test_drive_routing_probe_cost_stop.py`.
+**After the re-review (M5):** the run loop moved into `run_scenarios(smart, meter, user_id, account_id, runs, max_usd)`, which restores the patched `_load_conversation_context` and uninstalls the meter in a `finally`, also when a run raises; new test `test_the_patched_loader_and_the_meter_are_restored_when_a_run_raises`.
+
+**Final-state files:** `git checkout 5f25f575 -- scripts/validation/drive_routing_probe.py tests/unit/scripts/test_drive_routing_probe_cost_stop.py`.
 
 ---
 
@@ -8179,7 +8261,7 @@ diff --git a/docs/07_deployment/README.md b/docs/07_deployment/README.md
 index cedd8eb4..5dcd0818 100644
 --- a/docs/07_deployment/README.md
 +++ b/docs/07_deployment/README.md
-@@ -347,6 +347,126 @@ Local runs read `ONEDRIVE_REDIRECT_URI` from `.env` (a separate key from the dep
+@@ -347,6 +347,130 @@ Local runs read `ONEDRIVE_REDIRECT_URI` from `.env` (a separate key from the dep
  localhost value never reaches the deployed revision). With it unset, `/auth/connect-onedrive` answers 501;
  the Cabinet hides the drive card only when the adapter itself is absent (To Do keys unset).
  
@@ -8286,7 +8368,7 @@ index cedd8eb4..5dcd0818 100644
 +   names a removed intent) for every drive turn until the revert ships.
 +5. Open the PR of the revert branch (the `main` ruleset refuses a direct push; CI runs on it), then `snapshot_pull.py`
 +   and commit the mirror in a PR.
-+6. Texts written after the deploy: `drive_intent_text_scan --include-new` finds `work_with_drive_files` in reminders,
++6. Texts written after the deploy: `$PY -m scripts.validation.drive_intent_text_scan --include-new` finds `work_with_drive_files` in reminders,
 +   the workspace, skills and directives; back up and rewrite each intent-free (a stale one costs one self-corrected
 +   rejected call). The drive, the index and the receipts are written by the same code in both versions; the new drive
 +   tokens can stay. If the drive notes change was built on top, revert it first.
@@ -8295,7 +8377,11 @@ index cedd8eb4..5dcd0818 100644
 +instance that cold-started since step 7 keeps a template built on the new protocol for up to 24 h. Restore the protocol
 +as in rollback step 2 (from the mirror file of the commit before the merge:
 +`git show <merge>^1:prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy > prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy`,
-+dry run, `--apply`), then redeploy the **current** image as a new revision (fresh instances), or retry the deploy.
++dry run, `--apply`), then redeploy the **current** image as a new revision (fresh instances):
++`gcloud run services update <SERVICE> --region=us-central1 --project=<PROJECT_ID> --update-env-vars=REDEPLOY_AT=$(date +%s)`
++(a new revision of the same image; names from `.env`). To retry the deploy instead, first
++`git checkout -- prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy`, then rerun step 7's second
++`--apply` immediately before `make deploy`: the restored old protocol must not meet the new code.
 +
 +Two windows are accepted, each costing at most **two** self-corrected calls per drive turn: between step 7 and the new
 +revision serving, a cold instance of the old revision builds Smart's prompt with the new protocol
@@ -8677,6 +8763,18 @@ reviewer.
 The two environmental `test_network_guard` tests (`test_a_loopback_proxy_variable_cannot_tunnel_out`,
 `test_connect_to_a_unix_socket_works`) are red on `main` too.
 
+**After the re-review** (`xcut_rereview.md`; test edits committed as `e8a15e61`, code fixes F1, F2, M5 as `5f25f575`, F3 in the runbook text). The reviewer's verdict table, as applied:
+
+| # | Test | Verdict | Edit / reason |
+|---|---|---|---|
+| 1 | `test_drive_tools.py::test_a_cancelled_call_is_recorded_as_not_finished` | (a) spec changes it | X1: a change cancelled once started is `STILL_RUNNING` with today's text, not `NOT_FINISHED`. The invariant ("a cancelled call is recorded before the cancel goes through") is kept and split: renamed `test_a_cancelled_call_is_recorded_before_the_cancel_goes_through`, parametrized: a started move gives `(STILL_RUNNING, STILL_RUNNING)`; a started search (a read, no shield) gives `(NOT_FINISHED, DID_NOT_FINISH)`; plus `len(results) == 1`. Stronger than before (exact class and text, a read case added) |
+| 2 | `test_drive_tools.py::test_a_mutation_cancelled_once_started_is_recorded_as_not_finished` | (a) spec changes it | X1 again, for a delete. Renamed `..._recorded_as_still_running`; asserts `(op, cls, text) == (DELETE, STILL_RUNNING, drive_operations.STILL_RUNNING)` (before: text only) |
+| 3 | `test_drive_intent_text_scan.py::test_collect_reads_every_store_read_only` | (a) spec changes it | R2 adds `scratch/`, `files/` and `preference` facts. The fake gets `"scratch/": [], "files/": []`; the exact item list gains `("preference", "f1")`; `assert_awaited_once_with(AGENT_DIRECTIVE)` becomes the exact two-call list `[call(a1, AGENT_DIRECTIVE), call(a1, PREFERENCE)]`; new assertion that `workspace.list` is called for the four folders in order. Every old assertion kept |
+| 4 | `test_drive_intent_text_scan.py::test_outputs_land_in_one_folder_with_report_backup_and_skill_exports` | (a) spec changes it | Same fake (shared `_sources()`); no assertion touched, `n == 6` still holds |
+| 5 | `test_drive_specialist_removed_names.py::test_no_model_facing_src_string_names_a_smart_era_drive_field` | (a) spec changes it, guard narrowed by a named, pinned allowlist | The `_STRAY_FIELDS` names reach the specialist only as labels of values the caller sent (`Also given with the commission:`); no src text offers them to any model, and Smart never sees them. X12 stays. The guard allows exactly the bare-name string elements of the one module-level `_STRAY_FIELDS` tuple in `src/agents/drive_agent.py`, located by AST position and value; any other string anywhere still fails (mutation check: `_PROBE = "set drive_query here"` in `drive_agent.py` turns it red). New test `test_the_stray_field_exception_holds_exactly_the_smart_era_fields` pins the six fields |
+
+The re-review's code findings, applied: **F1** op line `still running` for a `STILL_RUNNING` change (`OP_RUNNING`; RFC delta, third op-line verdict); **F2** `NOT_STARTED_BEHIND` for a change queued behind a still-running sibling; **F3** the failed-deploy branch and rollback step 6 executable (placeholders `<SERVICE>`, `<PROJECT_ID>`); **M5** the routing probe restores the loader and the meter in a `finally`.
+
 ## 5. Owner steps (in order)
 
 Every eval command runs with `NO_PROXY='*'` on a machine with the local proxy (127.0.0.1:8888), or the provider SDKs fail
@@ -8752,7 +8850,11 @@ the `main` ruleset refuses direct pushes).
 `$admin_cache_reset` is process-local: it resets the instance that serves the command (`router_agent.py`, "this worker
 process"); a deploy starts fresh instances anyway, so a reset meant to undo a protocol upload **without** a deploy
 reaches one instance only (M4). **If the deploy fails after O4.6:** restore `PROTOCOL_AGENT_SELECTION` (the commands
-below) and redeploy the **current** image as a new revision (fresh instances), or retry the deploy; do not rely on a
+below) and redeploy the **current** image as a new revision (fresh instances):
+`gcloud run services update <SERVICE> --region=us-central1 --project=<PROJECT_ID> --update-env-vars=REDEPLOY_AT=$(date +%s)`
+(a new revision of the same image; names from `.env`). To retry the deploy instead, first
+`git checkout -- prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy`, then rerun the second `--apply` of
+O4.6 immediately before `make deploy`: the restored old protocol must not meet the new code. Do not rely on a
 reset: an old-revision instance that cold-started since O4.6 keeps a template built on the new protocol for up to 24 h
 (`prompt_assembly_service.py:48`) and the reset reaches one instance.
 
@@ -8798,7 +8900,7 @@ first; the protocol goes back right before the deploy of the revert, never earli
    ships.
 5. Open the PR of the revert branch (the ruleset refuses direct pushes), then `snapshot_pull.py` and commit the mirror
    in a PR.
-6. [OWNER] `drive_intent_text_scan --include-new`: texts written after the deploy that name `work_with_drive_files`
+6. [OWNER] `$PY -m scripts.validation.drive_intent_text_scan --include-new`: texts written after the deploy that name `work_with_drive_files`
    (reminders, workspace, skills and drafts, directives); back up and rewrite each intent-free (residual: one
    self-corrected rejected call per stale text). The rewritten texts of O3 work with the reverted code; the new drive
    tokens can stay. If the notes change was built on top, revert it first.

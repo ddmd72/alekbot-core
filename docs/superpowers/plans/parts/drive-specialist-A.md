@@ -3221,7 +3221,7 @@ def test_x11_unfinished_tells_smart_not_to_commission_again():
     assert "do not commission the same request again in this turn" in what_to_do(answer)
 ````
 
-New tests: 10. **Final-state files:** `git checkout 9500d677 -- src/domain/drive_answer.py src/domain/drive_answer_texts.py src/domain/drive_search.py tests/unit/domain/test_drive_answer_cross_cut.py` (valid on the assembled branch, after B7). `compose_answer` gained the keyword `search_line` (A5's `DriveAgent` passes `preflight.search`).
+New tests: 10. **Final-state files:** `git checkout 9500d677 -- src/domain/drive_search.py tests/unit/domain/test_drive_answer_cross_cut.py && git checkout 5f25f575 -- src/domain/drive_answer.py src/domain/drive_answer_texts.py` (valid on the assembled branch, after B7). **After the re-review (F1):** the op line of a still-running change says `still running` (`OP_RUNNING`), not `not done`; the hunks are in A4. `compose_answer` gained the keyword `search_line` (A5's `DriveAgent` passes `preflight.search`).
 
 **Steps (A2):**
 - [ ] Re-read the RFC sections named in the task title and the Goal; confirm the previous task's state (`git log` shows its `fix(...)` commit).
@@ -4514,7 +4514,9 @@ class DriveToolRun:
         try:
             if change:
                 async with self._order:
-                    if self.left() <= 0 or self._ran_on:   # queued behind the batch past the deadline / a running one
+                    if self._ran_on:   # queued behind a change that is still running
+                        return self._collector.add(step, kind, _not_finished(op, t.NOT_STARTED_BEHIND))
+                    if self.left() <= 0:   # queued behind the batch past the deadline
                         return self._collector.add(step, kind, _not_finished(op, t.NOT_STARTED))
                     started = True
                     outcome = await call()
@@ -4532,7 +4534,8 @@ class DriveToolRun:
                 self._collector.add(step, kind, DriveOutcome(
                     op=op, cls=OutcomeClass.STILL_RUNNING, text=STILL_RUNNING, success=True))
             else:
-                self._collector.add(step, kind, _not_finished(op, t.NOT_STARTED if change else t.DID_NOT_FINISH))
+                self._collector.add(step, kind, _not_finished(
+                    op, (t.NOT_STARTED_BEHIND if self._ran_on else t.NOT_STARTED) if change else t.DID_NOT_FINISH))
             raise
         result = self._collector.add(step, kind, outcome)
         if outcome.cls is OutcomeClass.STILL_RUNNING and self._on_still_running is not None:
@@ -5425,6 +5428,47 @@ The final-state file: `git checkout 89684c0d -- src/domain/drive_tool_texts.py` 
 
 **After the cross-cut review** (`plan_arbiter_xcut.md`, on the assembled branch `plan/drive-specialist`; X1–X3).** `src/infrastructure/drive_tools.py` above is the final state. **(X1)** a change cancelled after it started is recorded `still_running` with today's `STILL_RUNNING` text (it runs on under `DriveOperations`' shield and arms the late notice), never `did not finish`; a change that wakes on the ordering lock after a still-running outcome in the same run is `not started`, so a batch whose first change is still running reports "still running" and the second "not started", and a non-idempotent append is never reported as not done while it runs. **(X2)** the specialist's `open_drive_file` refuses a path (a `/`, no known prefix: `drive:`, `workspace:`, `skill:`, a delivered-document key) with `file_ref is required … by its drive: ref; find it with search_drive or list_folder` (correctable, class `REQUEST_ERROR`), not a storage lookup that ends in "ask the user to re-upload". **(X3)** the same for the target of `append_to_file`, `move_file`, `delete_drive_item` and `replace_file_content`; a bare name keeps today's `wrong_store_text`. `drive_answer_texts.FIND_REF` is the one new string.
 
+**After the re-review** (`xcut_rereview.md` §2, F1, F2; commit `5f25f575`). `src/infrastructure/drive_tools.py` and the test file below are the final state. **(F1)** the op line of a change whose outcome is `STILL_RUNNING` says `still running` (`OP_RUNNING`), not `not done`: a third op-line verdict, an RFC delta. **(F2)** a change that wakes behind a still-running sibling reports `NOT_STARTED_BEHIND` ("not started: an earlier change in this request is still running"), because time did not run out; the deadline case keeps `NOT_STARTED`. The two new X1 tests gained the assertion that the line says `still running`; the two-move test pins `t.NOT_STARTED_BEHIND` (its own second move is step 1 too, so it is a "not done" line by design and the test asserts the first move's `still running` line instead of the absence of `1. not done:`).
+
+`src/domain/drive_answer_texts.py` and `src/domain/drive_answer.py` (edit, exact hunks):
+
+````diff
+diff --git a/src/domain/drive_answer.py b/src/domain/drive_answer.py
+index f177b41a..7e8392c7 100644
+--- a/src/domain/drive_answer.py
++++ b/src/domain/drive_answer.py
+@@ -124,7 +124,8 @@ def compose_answer(collector: PassThroughCollector, report: DriveReport, *, cut:
+     if state_line and state_line != line:
+         out.append(state_line)
+     for r in all_changes:
+-        verdict = t.OP_DONE if r.outcome.cls in _DONE else t.OP_NOT_DONE
++        verdict = (t.OP_DONE if r.outcome.cls in _DONE
++                   else t.OP_RUNNING if r.outcome.cls is OutcomeClass.STILL_RUNNING else t.OP_NOT_DONE)
+         out.append(t.OP_LINE.format(step=r.step, verdict=verdict, text=r.outcome.text))
+     out.extend(t.READING_PREFIX + line for line in reading)
+     if report.note:
+diff --git a/src/domain/drive_answer_texts.py b/src/domain/drive_answer_texts.py
+index b7a1f22b..fff7ed6b 100644
+--- a/src/domain/drive_answer_texts.py
++++ b/src/domain/drive_answer_texts.py
+@@ -25,6 +25,7 @@ NOT_ATTACHED = ("Nothing was written: the text was not attached. Commission agai
+ OP_LINE = "{step}. {verdict}: {text}"
+ OP_DONE = "done"
+ OP_NOT_DONE = "not done"
++OP_RUNNING = "still running"
+ READING_PREFIX = "Reading: "
+ NOTE_PREFIX = "Specialist note: "
+ NOTE_MAX_CHARS = 300
+@@ -45,6 +46,7 @@ STAND_IN_FILE = "[{handle}: {label} ({mime}) attached for the orchestrator]"
+ SAME_SEARCH = "[same as {handle}: this exact search already ran in this request; its result is above. Not run again.]"
+ DID_NOT_FINISH = "did not finish in time"
+ NOT_STARTED = "not started: the time for this request ran out"
++NOT_STARTED_BEHIND = "not started: an earlier change in this request is still running"
+ NO_ITEM = ("No file_contents item '{value}' (items: {known}). Nothing was written: the text must come from the "
+            "orchestrator in file_contents.")
+ NO_ITEMS = "none"
+````
+
 `tests/unit/infrastructure/test_drive_tools_cross_cut.py` (new, complete):
 
 ````python
@@ -5491,11 +5535,13 @@ async def test_a_two_move_batch_whose_first_is_still_running_never_reports_did_n
     second = asyncio.ensure_future(_call(run, tt.MOVE_FILE, file_ref="drive:b", folder="X"))
     await asyncio.gather(first, second)
     assert [r.outcome.cls for r in collector.results] == [OutcomeClass.STILL_RUNNING, OutcomeClass.NOT_FINISHED]
-    assert collector.results[1].outcome.text == t.NOT_STARTED
+    assert collector.results[1].outcome.text == t.NOT_STARTED_BEHIND
     assert ops.move.await_count == 1   # the second move never reached the service
     answer = compose_answer(collector, DriveReport())
     assert answer.status is DriveStatus.STILL_RUNNING
     assert t.DID_NOT_FINISH not in answer.text
+    # both moves share step 1: the first's line says running; the second's own "not done" is its true verdict
+    assert "1. " + t.OP_RUNNING + ":" in answer.text
     assert fired == [True]
 
 
@@ -5517,6 +5563,7 @@ async def test_a_started_append_cut_by_the_deadline_is_still_running_never_not_d
     answer = compose_answer(collector, DriveReport(), cut=True)
     assert answer.status is DriveStatus.STILL_RUNNING
     assert t.DID_NOT_FINISH not in answer.text and "may complete" in answer.text
+    assert "1. " + t.OP_NOT_DONE + ":" not in answer.text and "1. " + t.OP_RUNNING + ":" in answer.text
 
 
 async def test_a_change_cancelled_while_queued_is_still_not_started(ops):
@@ -5586,7 +5633,7 @@ async def test_a_bare_name_keeps_the_services_own_text(ops):
     ops.delete.assert_awaited_once()
 ````
 
-New tests: 16. **Final-state files:** `git checkout 9500d677 -- src/infrastructure/drive_tools.py src/domain/drive_answer_texts.py tests/unit/infrastructure/test_drive_tools_cross_cut.py`. **For the reviewer:** two existing tests of this task's `test_drive_tools.py` encode the behaviour X1 intentionally changes (`test_a_cancelled_call_is_recorded_as_not_finished`, `test_a_mutation_cancelled_once_started_is_recorded_as_not_finished`); the list is in part B §4.4.
+New tests: 16. **Final-state files:** `git checkout 5f25f575 -- src/infrastructure/drive_tools.py src/domain/drive_answer_texts.py src/domain/drive_answer.py tests/unit/infrastructure/test_drive_tools_cross_cut.py`. **For the reviewer:** two existing tests of this task's `test_drive_tools.py` encode the behaviour X1 intentionally changes (`test_a_cancelled_call_is_recorded_as_not_finished`, `test_a_mutation_cancelled_once_started_is_recorded_as_not_finished`); the list is in part B §4.4.
 
 **What the new tests assert:** each tool → one call with mapped arguments and its result kind; every source kind of
 `copy_file_to_drive` and `replace_file_content` passes through in its direction; one `move_file` with both fields is
