@@ -11,11 +11,11 @@ def lease_until(now: datetime, run_timeout_s: float) -> datetime:
     return now + timedelta(seconds=run_timeout_s) + LEASE_MARGIN
 
 
-def agent_timeout_s(lease_until: datetime, now: datetime) -> float:
+def agent_timeout_s(until: datetime, now: datetime) -> float:
     """Seconds an agent run may use before the margin starts; zero or less means no time is left."""
-    return (lease_until - LEASE_MARGIN - now).total_seconds()
+    return (until - LEASE_MARGIN - now).total_seconds()
 
 
 def defer_bucket(now: datetime) -> int:
-    """The retry-delay-wide bucket `now` falls in; losers of one bucket share one deferral task."""
+    """The retry-delay-wide bucket an aware `now` falls in; losers of one bucket share one deferral task."""
     return int(now.timestamp()) // LEASE_BUSY_RETRY_DELAY_S
