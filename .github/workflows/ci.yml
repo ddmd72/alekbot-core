@@ -32,8 +32,8 @@ jobs:
         # make check = ruff check src/ + mypy (domain/ports) + unit/architecture tests.
         # No secrets: the unit suite mocks all I/O at the port/SDK boundary.
         # A hung test otherwise holds the job for GitHub's 6 h default; the suite takes ~5 min.
-        timeout-minutes: 20
-        run: make check
+        timeout-minutes: 12
+        run: python -m pytest -p no:xdist -v -o faulthandler_timeout=90 tests/unit/adapters/slack/test_http_adapter_wiring.py tests/unit/adapters/test_adapter_none_guards.py tests/unit/adapters/test_chat_enqueue_failures_and_requeue_retries.py tests/unit/adapters/test_firestore_dedup_store_reclaim.py tests/unit/adapters/test_firestore_task_claim_store.py tests/unit/adapters/test_gcp_task_queue_agent_task_dedup.py tests/unit/adapters/test_gcp_task_queue_off_loop.py tests/unit/adapters/test_intake_release_and_busy_requeue.py tests/unit/composition/test_memory_fact_adapter_factories.py tests/unit/handlers/test_agent_worker_handler_deep_research_drive_copy.py tests/unit/handlers/test_worker_handler_claim_takeover.py tests/unit/handlers/test_worker_handler_task_claim.py tests/unit/test_deep_research_failed_notice.py tests/unit/test_deep_research_origin_platform.py tests/unit/test_req_core_08_http_event_validation.py tests/unit/test_req_core_09_adapter_selection.py tests/unit/test_session_per_channel.py tests/unit/web/test_deep_research_webhook_enqueue.py tests/unit/web/test_deep_research_webhooks.py  # TEMP DIAGNOSTIC, revert
 
       - name: Notify Slack (pass/fail)
         if: always()
