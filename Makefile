@@ -255,7 +255,7 @@ COVERAGE_FLAGS = --cov --cov-report=term-missing:skip-covered --cov-report=json 
 test-coverage: ## Unit tests + global + per-file coverage gate (RFC § 8.4)
 	@echo "🧪 Running unit tests with coverage..."
 	@$(XDIST_WARNING)
-	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/unit/ $(PYTEST_UNIT_FLAGS) \
+	RUN_SLOW_TESTS=1 DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/unit/ $(PYTEST_UNIT_FLAGS) \
 	    --asyncio-mode=auto -m "not timing" $(COVERAGE_FLAGS)
 	@echo "🚦 Enforcing per-file coverage thresholds..."
 	@$(PYTHON) scripts/check_coverage_thresholds.py

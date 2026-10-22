@@ -259,7 +259,7 @@ Two independent language axes:
 make install-dev    # dependencies + test/lint tools
 
 # Tests & lint (the CI gate)
-make check          # ruff lint + unit/architecture tests
+make ci             # ruff lint + unit/architecture tests + coverage gates
 make test           # full suite
 make test-unit      # unit only
 make test-e2e-all   # E2E all agents (real API)

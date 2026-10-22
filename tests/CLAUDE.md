@@ -14,9 +14,10 @@ make test-integration  # tests/integration/ (some talk to real services); make t
 ```
 tests/
   conftest.py     — fixtures + the plugin in tests/plugins/ (suite lock)
+  plugins/        — pytest plugins: the suite lock, `network_guard.py` (the offline G2 run)
   unit/           — offline, no real service. Fakes and in-memory repositories. conftest.py = the network guard
   integration/    — mocked or scripted services; the offline G2 end-to-end test runs in `make check`
-  support/        — shared fakes (fact_store.py, firestore_eval.py), network_guard.py, semantic_mutants/
+  support/        — shared fakes (fact_store.py, firestore_eval.py), network_guard.py, plugin_runs.py, semantic_mutants/
   contracts/      — adapter contract rules (adapter_contracts.py)
 ```
 
@@ -48,7 +49,8 @@ async def test_update_content_reembeds_and_bumps_version(store):   # store = Fac
 
 ## The network guard and the gRPC tripwire (H3)
 
-Every test under `tests/unit/` (autouse fixture in `tests/unit/conftest.py`, `tests/support/network_guard.py`) runs with
+Every test under `tests/unit/` (autouse fixture in `tests/unit/conftest.py`, `tests/support/network_guard.py`; it covers test bodies and
+function-scoped fixtures, while module/session fixture setup and import-time code are not guarded — keep them fake-only) runs with
 `connect()` to anything but `127.0.0.1`/`::1`/a unix socket refused (`pytest-socket`; creating and binding sockets
 stays allowed, so asyncio loops and loopback servers work) and with a tripwire on `google.auth.default`,
 `grpc.secure_channel` and `grpc.aio.secure_channel` unless the target is localhost (Firestore talks through gRPC's
@@ -61,11 +63,12 @@ children (drive parser, sandbox engine, ffmpeg).
 
 - `.coveragerc` has `branch = True` and measures `src/` plus the root `*_main.py`; `make ci` fails under the global
   `--cov-fail-under`, the per-file table (`scripts/check_coverage_thresholds.py`) and the **per-layer floors**
-  (`scripts/check_coverage_layers.py`, branch-aware percent per layer). Floors only rise and sit 0.3 pp below the lowest observed value (noise margin): the script
+  (`scripts/check_coverage_layers.py`, branch-aware percent per layer). Floors only rise: raise a floor only to min(local `make ci`, the CI 'Coverage per layer' notice) − 0.3. The script
   prints "floor can rise to X" when that would be 0.5 above the floor; raise it in the same change. Never lower one without the owner's per-layer OK.
 - `tests/unit/test_every_src_module_is_imported_by_a_test.py`: every module under `src/` and every root `*_main.py` is
   imported by some test, or listed with a reason in `tests/unit/untested_modules_allowlist.txt`. A new module needs a
-  test, not an allowlist line. The list only shrinks: the test fails when a listed module is now imported.
+  test, not an allowlist line. The list only shrinks: the test fails when a listed module is now imported. The check is `slow`,
+  so it fails only in `make ci`.
 
 ## Mutation check: the done-criterion for a package
 
@@ -77,6 +80,10 @@ written document/write/forwarded keyword, a flipped sort direction, an `except` 
 python -m tests.support.semantic_mutants --module src.adapters.firestore_repo \
     --tests tests/unit/adapters/test_fact_store_roundtrip.py [--equivalent FILE]   # one child pytest per mutant; exit 1 if any survives
 ```
+
+Statuses: killed, survived, equivalent, and `error` (the selected tests never loaded the module, or the run could not tell; exit 2;
+not a pass). `except-success` skips handlers that only log and already return the success value. Slow tests run in the mutant
+children (`RUN_SLOW_TESTS=1`).
 
 A survivor means the tests do not notice that defect: write the assertion that does. `--equivalent` takes
 `key  # reason` lines (the 8-hex key in the report) and is the reviewer's tool, never the implementer's.
@@ -92,7 +99,8 @@ A survivor means the tests do not notice that defect: write the assertion that d
   `SANDBOX_TEST_IMAGE` is set. `requirement("REQ-XXX")`: ties a test to a business requirement. `performance`: manual
   benchmarks against real Firestore.
 - **`make test-affected` selects by executed Python lines**, so it can miss a test whose input is a data file or code run
-  in a child process; `make check` before a commit is mandatory.
+  in a child process; `make check` before a commit is mandatory. It passes `-n`, so it takes the one-suite lock and waits behind another session's
+  full run.
 - **One full suite at a time** — a session with `-n`, or with 2000+ tests, takes a `flock` on
   `$TMPDIR/alekbot-pytest-suite.lock` (`tests/plugins/suite_lock.py`), prints the holder every 30 s while it waits and
   gives up after `PYTEST_LOCK_TIMEOUT_S` (1800). `PYTEST_SUITE_LOCK=0` disables it. Tests that run an inner pytest through

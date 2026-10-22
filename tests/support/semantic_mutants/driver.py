@@ -69,6 +69,7 @@ def _child_env(cwd: Path, extra: Dict[str, str]) -> Dict[str, str]:
     for name in ("SEMANTIC_MUTANT_MODULE", "SEMANTIC_MUTANT_NUMBER", "SEMANTIC_MUTANT_REPORT",
                  "COVERAGE_PROCESS_CONFIG", "COVERAGE_PROCESS_START"):
         env.pop(name, None)
+    env.setdefault("RUN_SLOW_TESTS", "1")  # a slow-marked test in --tests must run in the child, else false survivors
     env.update(extra)
     return env
 

@@ -50,7 +50,7 @@ plain unauthenticated `curl http://localhost:8080/worker ...` works with no toke
 make check             # Local pre-commit gate: ruff lint + mypy --strict (domain/ports) + unit/architecture tests, no slow tests, no coverage
 make typecheck         # mypy --strict on src/domain + src/ports only
 make check-types       # mypy (lenient) on src/adapters — informational, prints an error count, never fails
-make test              # All tests
+make test              # All tests (the unit/architecture suite excludes `slow` tests; they run in `make ci`)
 make test-unit         # Unit tests
 make test-affected     # Inner loop: only the unit tests testmon selects for your changes (seconds on a small diff)
 make ci                # PR job (what CI runs): lint + typecheck + the unit suite once with slow tests, coverage gate + offline G2
@@ -64,7 +64,7 @@ make fetch-logs [K=300] # Pull last K logs to alek_debug.log (grep locally — s
 
 Lint + format via `ruff` (`make lint` / `make format`, config in `ruff.toml`). `make check` runs
 `ruff check src/` and `mypy --strict` on `src/domain` + `src/ports` (`mypy.ini`; adapters stay
-informational, `mypy-adapters.ini`, see `decisions/mypy_scoped_rollout.md`) before the unit suite; it is the local pre-commit gate. CI (`.github/workflows/ci.yml`) runs
+informational, `mypy-adapters.ini`, see `decisions/mypy_scoped_rollout.md`) before the unit suite (which excludes `slow` tests; they run in `make ci`); it is the local pre-commit gate. CI (`.github/workflows/ci.yml`) runs
 `make ci` (the same plus slow tests and the coverage gate) on every push/PR (posting ✅/❌ to Slack). The full unit/architecture suite (~13 300 tests) is green
 and **safe to run in full** (any historical "don't run the full suite" warning was a since-fixed
 chunker infinite loop, not a standing hazard). `make test-unit` / `make check` run it in parallel
@@ -965,9 +965,9 @@ tool**; `_RESPONSE_SCHEMA` on Quick/Smart; and the `rich_content.data.rows` `[{c
 
 - pytest + pytest-asyncio (asyncio_mode=auto).
 - Fixtures in `tests/conftest.py`: `mock_env_config`, `mock_llm_port`, `mock_repository`.
-- Mocks via `AsyncMock(spec=PortClass)`.
+- Fakes with semantics over call assertions; mocks only for boundaries you do not own (`tests/CLAUDE.md`).
 - Markers: `@pytest.mark.requirement("REQ-XXX")`, `@pytest.mark.performance`.
-- Structure: `tests/unit/`, `tests/integration/`, `tests/performance/`.
+- Structure: `tests/unit/`, `tests/integration/`, `tests/performance/`, `tests/support/`, `tests/plugins/`, `tests/contracts/`.
 - **Adapter wire tests:** `tests/unit/adapters/` — mock at SDK boundary (not port). See `ADAPTER_WIRE_TESTING.md`.
 - **Contract repository:** `tests/contracts/adapter_contracts.py` — named `ContractRule` objects with per-provider validators. Reused by both unit and integration tests.
 - **Integration layer:** `tests/integration/adapters/` — `CapturingStub` + contract validation. Run with `pytest tests/integration/adapters/ -v`.
