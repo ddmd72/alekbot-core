@@ -1021,9 +1021,12 @@ class TestTaskQueueContract:
     def test_enqueue_slack_event_signature(self):
         sig = inspect.signature(TaskQueue.enqueue_slack_event)
         params = list(sig.parameters.keys())
-        assert params == ["self", "event_data", "session_id", "delay_seconds", "trace_headers"]
+        assert params == ["self", "event_data", "session_id", "delay_seconds", "trace_headers",
+                          "busy_requeues", "task_name"]
         assert sig.parameters["delay_seconds"].default == 0
         assert sig.parameters["trace_headers"].default is None
+        assert sig.parameters["busy_requeues"].default == 0
+        assert sig.parameters["task_name"].default is None
 
 
 class TestTaskQueueMockImplementation:

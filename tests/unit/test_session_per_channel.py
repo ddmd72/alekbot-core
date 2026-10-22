@@ -590,39 +590,32 @@ class TestWorkerHandlerSessionExtraction:
         )
         return worker, notification
 
-    async def test_deep_research_polling_extracts_channel_from_session_id(self):
-        worker, notification = self._make_worker()
-
-        session_id = f"{_USER}:{_SLACK_CHANNEL}"
-
-        # Set up job_registry and task_dispatch for polling
-        mock_job_port = AsyncMock()
-        # Return "completed" status
-        mock_job_port.get_status = AsyncMock(return_value=("completed", "Research result text"))
-
+    def _arm_video_polling(self, worker, poll_result):
+        """Wire the video-polling dependencies the bare worker lacks."""
+        mock_video_port = AsyncMock()
+        mock_video_port.get_status = AsyncMock(return_value=poll_result)
         mock_registry = MagicMock()
-        mock_registry.get.return_value = mock_job_port
-        worker._job_registry = mock_registry
+        mock_registry.get.return_value = mock_video_port
+        worker._video_registry = mock_registry
+        worker._task_dispatch = AsyncMock()
 
-        mock_task_dispatch = AsyncMock()
-        worker._task_dispatch = mock_task_dispatch
+    async def test_video_generation_polling_extracts_channel_from_session_id(self):
+        from src.ports.video_generation_port import VideoPollResult
 
-        mock_agent_factory = AsyncMock()
-        worker._agent_factory = mock_agent_factory
+        worker, notification = self._make_worker()
+        self._arm_video_polling(worker, VideoPollResult(status="done", data=b"video-bytes"))
 
         payload = {
-            "task_type": "deep_research_polling",
-            "interaction_id": "int-001",
+            "task_type": "video_generation_polling",
+            "request_id": "req-001",
             "user_id": _USER,
             "account_id": _ACCOUNT,
-            "session_id": session_id,
+            "session_id": f"{_USER}:{_SLACK_CHANNEL}",
             "attempt": 1,
-            "consecutive_errors": 0,
-            "provider": "gemini",
-            "query": "AI research",
+            "provider": "grok",
         }
 
-        with patch("src.handlers.worker_handler.deliver_deep_research", new_callable=AsyncMock) as mock_deliver:
+        with patch("src.handlers.worker_handler.deliver_video", new_callable=AsyncMock) as mock_deliver:
             await worker.handle(payload)
 
             mock_deliver.assert_called_once()
@@ -631,30 +624,20 @@ class TestWorkerHandlerSessionExtraction:
 
     async def test_session_id_without_colon_yields_no_channel(self):
         """Legacy session_id (no colon) yields origin_channel_id=None."""
+        from src.handlers.worker_handler import WorkerHandler
+        from src.ports.video_generation_port import VideoPollResult
+
         worker, notification = self._make_worker()
-
-        mock_job_port = AsyncMock()
-        mock_job_port.get_status = AsyncMock(return_value=("timeout", None))
-
-        mock_registry = MagicMock()
-        mock_registry.get.return_value = mock_job_port
-        worker._job_registry = mock_registry
-
-        mock_task_dispatch = AsyncMock()
-        worker._task_dispatch = mock_task_dispatch
-
-        mock_agent_factory = AsyncMock()
-        worker._agent_factory = mock_agent_factory
+        self._arm_video_polling(worker, VideoPollResult(status="pending"))
 
         payload = {
-            "task_type": "deep_research_polling",
-            "interaction_id": "int-002",
+            "task_type": "video_generation_polling",
+            "request_id": "req-002",
             "user_id": _USER,
             "account_id": _ACCOUNT,
             "session_id": _USER,  # legacy: no colon
-            "attempt": 100,
-            "consecutive_errors": 0,
-            "provider": "gemini",
+            "attempt": WorkerHandler._MAX_VIDEO_POLL_ATTEMPTS,
+            "provider": "grok",
         }
 
         await worker.handle(payload)
@@ -663,36 +646,29 @@ class TestWorkerHandlerSessionExtraction:
         call_kwargs = notification.notify.call_args[1]
         assert call_kwargs.get("channel_id_override") is None
 
-    async def test_deep_research_polling_forwards_media_storage(self):
-        """Gemini DR completion must forward self._media_storage to deliver_deep_research
-        so round1.md / round2.md / meta.json land in GCS (R12.3 — DR artifact symmetry)."""
+    async def test_video_generation_polling_forwards_media_storage(self):
+        """Video completion must forward self._media_storage to deliver_video so the
+        rendered file lands in GCS."""
+        from src.ports.video_generation_port import VideoPollResult
+
         worker, _notification = self._make_worker()
 
         mock_media_storage = MagicMock()
         worker._media_storage = mock_media_storage
-
-        mock_job_port = AsyncMock()
-        mock_job_port.get_status = AsyncMock(return_value=("completed", "Research result text"))
-        mock_registry = MagicMock()
-        mock_registry.get.return_value = mock_job_port
-        worker._job_registry = mock_registry
-        worker._task_dispatch = AsyncMock()
-        worker._agent_factory = AsyncMock()
+        self._arm_video_polling(worker, VideoPollResult(status="done", data=b"video-bytes"))
 
         payload = {
-            "task_type": "deep_research_polling",
-            "interaction_id": "int-003",
+            "task_type": "video_generation_polling",
+            "request_id": "req-003",
             "user_id": _USER,
             "account_id": _ACCOUNT,
             "session_id": f"{_USER}:{_SLACK_CHANNEL}",
             "attempt": 1,
-            "consecutive_errors": 0,
-            "provider": "gemini",
-            "query": "AI research",
+            "provider": "grok",
         }
 
         with patch(
-            "src.handlers.worker_handler.deliver_deep_research", new_callable=AsyncMock
+            "src.handlers.worker_handler.deliver_video", new_callable=AsyncMock
         ) as mock_deliver:
             await worker.handle(payload)
 

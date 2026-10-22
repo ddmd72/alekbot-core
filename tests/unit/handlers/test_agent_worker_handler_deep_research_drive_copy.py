@@ -1,20 +1,21 @@
 """The deep research report's drive copy at delivery (decisions/deep_research_drive_copy.md).
 
 Every deep research entry point (the Claude runner via agent_execution or the Cloud Run Job, OpenAI's
-webhook, the polling path) funnels into `deliver_deep_research`, which marks the HtmlPageGenerator task's
+webhook via its worker task, the polling path) funnels into `deliver_deep_research`, which marks the HtmlPageGenerator task's
 context with the research question. When that task's HTML is delivered, AgentWorkerHandler sends the link
 first and then asks the copy service for the drive copy; its one line follows the link. The copy never
 fails the delivery.
 """
 import base64
 import json
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 from quart import Quart
 
 from src.domain.agent import AgentResponse, DeliveryItem
 from src.domain.deep_research_drive_copy import DEEP_RESEARCH_REPORT_CONTEXT_KEY
 from src.handlers.agent_worker_handler import AgentWorkerHandler
+from src.handlers.worker_handler import WorkerHandler
 from src.infrastructure.agent_manifest import Intent
 from src.services.deep_research_delivery import deliver_deep_research
 from src.services.deep_research_drive_copy_service import DeepResearchDriveCopyService
@@ -192,10 +193,11 @@ class TestEveryDeliveryPathCopies:
         copy.copy_report.assert_awaited_once_with(USER, HTML, "Heat pumps?")
 
     async def test_openai_webhook_path(self):
-        queue = AsyncMock()
+        """OpenAI webhook → its `deep_research_webhook_event` worker task (S1b W) → deliver_deep_research
+        → HtmlPageGenerator task → copy."""
+        webhook_queue = AsyncMock()
         app = Quart("t")
-        app.register_blueprint(create_deep_research_webhooks_blueprint(
-            notification_service=AsyncMock(), webhook_secret=None, media_storage=None, task_queue=queue))
+        app.register_blueprint(create_deep_research_webhooks_blueprint(webhook_secret=None, task_queue=webhook_queue))
         payload = {"type": "response.completed", "data": {
             "id": "resp_1", "output_text": "findings",
             "metadata": {"user_id": USER, "account_id": ACCOUNT, "query": "What is X?",
@@ -204,5 +206,17 @@ class TestEveryDeliveryPathCopies:
             resp = await client.post("/webhooks/openai/deep-research", data=json.dumps(payload),
                                      headers={"Content-Type": "application/json"})
         assert resp.status_code == 200
+        task = webhook_queue.enqueue_worker_task.await_args.kwargs
+
+        queue = AsyncMock()
+        worker = WorkerHandler(
+            agent_worker_handler=AsyncMock(), email_indexing_service=MagicMock(),
+            notification_service=AsyncMock(), consolidation_service=None,
+            coordinator=MagicMock(), agent_factory=AsyncMock(),
+            indexed_email_repo=None, user_repo=MagicMock(), task_dispatch=queue, media_storage=None,
+            deep_research_fetch=AsyncMock(return_value={"output_text": "findings", "model": "m"}),
+        )
+        _, status = await worker._dispatch({"task_type": task["task_type"], **task["payload"]}, {})
+        assert status == 200
         copy = await _replay_html_task(queue.enqueue_agent_task.call_args.kwargs)
         copy.copy_report.assert_awaited_once_with(USER, HTML, "What is X?")

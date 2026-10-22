@@ -60,12 +60,15 @@ class GcpTaskQueue(TaskQueue):
         event_data: Dict[str, Any],
         session_id: str,
         delay_seconds: int = 0,
-        trace_headers: Optional[Dict[str, str]] = None
+        trace_headers: Optional[Dict[str, str]] = None,
+        busy_requeues: int = 0,
+        task_name: Optional[str] = None,
     ) -> str:
         try:
             payload = {
                 "event": event_data,
                 "session_id": session_id,
+                "busy_requeues": busy_requeues,
                 "enqueued_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
             }
 
@@ -87,6 +90,9 @@ class GcpTaskQueue(TaskQueue):
                 }
             }
 
+            if task_name:
+                task["name"] = self.client.task_path(self.project_id, self.location, self.queue_name, task_name)
+
             if self.service_account_email:
                 task["http_request"]["oidc_token"] = {
                     "service_account_email": self.service_account_email
@@ -99,12 +105,17 @@ class GcpTaskQueue(TaskQueue):
                 )
                 task["schedule_time"] = timestamp
 
-            response = await self._create_task(
-                request={
-                    "parent": self.queue_path,
-                    "task": task
-                }
-            )
+            try:
+                response = await self._create_task(
+                    request={
+                        "parent": self.queue_path,
+                        "task": task
+                    }
+                )
+            except AlreadyExists:
+                # A timed-out earlier attempt (or the platform's retry) already queued this exact event.
+                logger.info(f"📬 Slack task {task_name} already queued, treating as enqueued")
+                return task_name or ""
 
             return response.name
 
@@ -178,6 +189,7 @@ class GcpTaskQueue(TaskQueue):
         query: str,
         context: Dict[str, Any],
         deadline_seconds: Optional[int] = None,
+        dedup_key: Optional[str] = None,
     ) -> str:
         """Enqueue async agent task for background execution via Cloud Tasks."""
         try:
@@ -201,81 +213,31 @@ class GcpTaskQueue(TaskQueue):
             if deadline_seconds is not None:
                 task["dispatch_deadline"] = duration_pb2.Duration(seconds=deadline_seconds)
 
+            if dedup_key:
+                digest = hashlib.sha256(dedup_key.encode()).hexdigest()[:32]
+                task["name"] = self.client.task_path(
+                    self.project_id, self.location, self.queue_name, f"agent_execution-{digest}"
+                )
+
             if self.service_account_email:
                 task["http_request"]["oidc_token"] = {
                     "service_account_email": self.service_account_email
                 }
 
-            response = await self._create_task(
-                request={"parent": self.queue_path, "task": task}
-            )
+            try:
+                response = await self._create_task(
+                    request={"parent": self.queue_path, "task": task}
+                )
+            except AlreadyExists:
+                # The earlier create did land: the caller wants this task to exist, and it does.
+                logger.info("📬 Agent task already exists (key=%s): agent=%s intent=%s", dedup_key, agent_id, intent)
+                return str(task["name"])
 
             logger.info(f"Enqueued agent task: agent={agent_id}, intent={intent}, task={response.name}")
             return response.name
 
         except Exception as e:
             logger.error(f"❌ Failed to enqueue agent task: {e}", exc_info=True)
-            raise
-
-    async def enqueue_deep_research_polling(
-        self,
-        interaction_id: str,
-        user_id: str,
-        account_id: str,
-        query: str = "",
-        attempt: int = 0,
-        consecutive_errors: int = 0,
-        delay_seconds: int = 30,
-        provider: str = "gemini",
-        session_id: str = "",
-    ) -> str:
-        """Enqueue deep_research_polling Cloud Task with optional schedule delay."""
-        try:
-            payload = {
-                "task_type": "deep_research_polling",
-                "interaction_id": interaction_id,
-                "user_id": user_id,
-                "account_id": account_id,
-                "query": query,
-                "attempt": attempt,
-                "consecutive_errors": consecutive_errors,
-                "provider": provider,
-                "session_id": session_id,
-            }
-
-            task = {
-                "http_request": {
-                    "http_method": tasks_v2.HttpMethod.POST,
-                    "url": f"{self.service_url}/worker",
-                    "headers": {"Content-Type": "application/json"},
-                    "body": json.dumps(payload, cls=_DomainEncoder).encode(),
-                }
-            }
-
-            if self.service_account_email:
-                task["http_request"]["oidc_token"] = {
-                    "service_account_email": self.service_account_email
-                }
-
-            if delay_seconds > 0:
-                timestamp = timestamp_pb2.Timestamp()
-                timestamp.FromDatetime(
-                    datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=delay_seconds)
-                )
-                task["schedule_time"] = timestamp
-
-            response = await self._create_task(
-                request={"parent": self.queue_path, "task": task}
-            )
-
-            logger.info(
-                f"📬 [DeepResearch] Enqueued polling task: "
-                f"interaction={interaction_id[:16]}, attempt={attempt}, delay={delay_seconds}s"
-            )
-            return response.name
-
-        except Exception as exc:
-            logger.error(f"❌ Failed to enqueue deep_research_polling task: {exc}", exc_info=True)
             raise
 
     async def enqueue_video_generation_polling(
