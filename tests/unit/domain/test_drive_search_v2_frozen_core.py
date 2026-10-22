@@ -243,7 +243,8 @@ class TestTypes:
                            "transcribe_usd", "transcribe_initial_usd", "transcribe_reserved_usd"]),
         (InitialBuild, ["allowance_usd", "spent_usd", "opened_at", "closed_at"]),
         (DriveRecordLean, ["item_id", "parent_id", "name", "kind", "effective_date", "about_keys", "name_tokens", "state",
-                           "scope", "has_card", "indexed_generation", "content_hash", "valid_until"]),
+                           "scope", "has_card", "indexed_generation", "content_hash", "valid_until",
+                           "owner_note_id"]),   # DRIVE_FILE_NOTES_RFC §3.3 (review I7)
         (DriveChunkLean, ["user_id", "item_id", "generation", "index", "kind"]),
         (DriveHintLean, ["user_id", "item_id", "generation", "index", "kind", "hint_keys"]),
         (QueryConcepts, ["concepts", "ignored", "cut"]),

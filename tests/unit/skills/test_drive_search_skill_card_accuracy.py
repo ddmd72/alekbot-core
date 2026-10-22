@@ -21,8 +21,9 @@ def test_the_section_is_there_with_its_rule_lines():
     body = _flat(_body())
     for line in (
         "## Card accuracy",
-        "A described file's result carries `card accuracy: N%`. 100% — everything in this card is confirmed by the "
-        "file's own text; you can trust the card fully. The lower, the more likely the card's values contain errors.",
+        "A described file's result carries `card accuracy: N%`. 100% — everything in this card *except the owner's "
+        "note* is confirmed by the file's own text; you can trust the card fully. The lower, the more likely the "
+        "card's values contain errors.",
         "\"Find\", \"which files\", \"do I have\": answer from the cards at any accuracy. Never open files for this.",
         "A question about a value in a file — a number, a date, an amount, an expiry: answer from the card when its "
         "accuracy is 90% or more. Below that, open the file and check the value before answering.",
