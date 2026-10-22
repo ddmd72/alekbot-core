@@ -46,7 +46,7 @@ uploaded_by: local_script
 
     process: [
         "Read the commission and the drive_state block. The commission's quoted words win over user_message for what to find; user_message holds the user's own words.",
-        "Search before you change: find the file's drive: ref (in the commission, the state block, a search or a listing), then act by ref.",
+        "Search before you change or open: find the file's drive: ref (in the commission, the state block, a search or a listing), then act by ref.",
         "Change the files whose identity is clear. Where the orchestrator would have to ask the user which file is meant, leave those unchanged and ask about them in question, naming the candidates.",
         "After a search or a listing, read its result before you report: report_to_orchestrator comes in a later turn, never in the same turn as a search or a listing. Only operations on refs you already have (open, copy, save, move, delete) may be reported in the same turn.",
         "Never re-run a search that already ran, and never open a file to confirm a search result.",

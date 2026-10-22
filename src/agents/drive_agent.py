@@ -289,8 +289,9 @@ class DriveAgent(BaseAgent):
                 turns: int, delivery_items: List[DeliveryItem]) -> AgentResponse:
         """One log line per commission, no file names (§5.1), and the success that carries the answer (§7)."""
         ops = ",".join(f"{r.outcome.op.value}:{r.outcome.cls.value}" for r in collector.results)
-        logger.info("[DriveAgent] user=%s status=%s ops=%s turns=%s ms=%s", str(message.context.get("user_id"))[:8],
-                    answer.status.value, ops, turns, int((self._monotonic() - started) * 1000))
+        logger.info("[DriveAgent] user=%s status=%s model=%s ops=%s turns=%s ms=%s",
+                    str(message.context.get("user_id"))[:8], answer.status.value, self.model_name, ops, turns,
+                    int((self._monotonic() - started) * 1000))
         metadata: Dict[str, Any] = {"drive_status": answer.status.value}
         if answer.files:
             metadata["file_data"] = answer.files
