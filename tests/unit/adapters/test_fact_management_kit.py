@@ -5,7 +5,6 @@ documents and on the returned dicts. `discard_candidate` has no caller in `src/`
 
 `store` is the one fixture that selects the backend.
 """
-import asyncio
 import copy
 import json
 from datetime import datetime, timedelta, timezone
@@ -339,7 +338,7 @@ async def test_merge_reports_only_the_sources_it_superseded(store, monkeypatch):
     assert store.docs[b] == b_before and store.docs[a]["state"] == "superseded"
 
 
-@pytest.mark.xfail(strict=True, reason=(
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
     "known defect: merge_facts supersedes the sources before the merged fact is created, so a failed creation leaves "
     "them superseded — src/adapters/fact_management_adapter.py:376-430 (facts S2; P4 T2 arbiter defect 1)"))
 async def test_a_failed_merge_leaves_every_source_unchanged(store):
@@ -441,12 +440,17 @@ async def test_search_keeps_facts_with_the_same_content_but_different_ids(store)
 
 
 async def test_search_alternative_query_defaults_to_the_primary(store):
-    await create(store, "likes green tea")
+    names = ("alpha", "beta", "gamma", "delta", "epsilon")
+    for name in names:
+        await create(store, f"{name} fact", tags=[name], metadata={})
     adapter = _searching(store)
     with RequestContext(user_id=USER, account_id=ACC):
-        plain_ = await adapter.search_existing_facts(["tea"], "likes green tea")
-        explicit = await adapter.search_existing_facts(["tea"], "likes green tea", alternative_query="likes green tea")
-    assert plain_ == explicit
+        plain_ = await adapter.search_existing_facts(["x"], "alpha fact", limit=2)
+        explicit = await adapter.search_existing_facts(["x"], "alpha fact", alternative_query="alpha fact", limit=2)
+        assert plain_ == explicit
+        others = [await adapter.search_existing_facts(["x"], "alpha fact", alternative_query=f"{n} fact", limit=2)
+                  for n in names[1:]]
+    assert any(other != plain_ for other in others)
 
 
 async def test_search_failure_or_no_account_returns_an_empty_list(store):

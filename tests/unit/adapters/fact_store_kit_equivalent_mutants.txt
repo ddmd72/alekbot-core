@@ -1,0 +1,12 @@
+ad575d1e  # select-drop 'source' (get_active_facts): not a FactEntity field, extras ignored; result identical
+531440aa  # select-drop 'language' (get_active_facts): not a FactEntity field, extras ignored; result identical
+7b7dec0c  # select-drop 'source' (search_facts): not a FactEntity field, extras ignored; result identical
+acb84de7  # select-drop 'source' (get_active_facts_ordered): not a FactEntity field, extras ignored; result identical
+75aa0b97  # select-drop 'language' (get_active_facts_ordered): not a FactEntity field, extras ignored; result identical
+114317e4  # select-drop 'state' (get_active_facts): query filters state=="current" and FactEntity.state defaults to CURRENT
+eb7258cc  # select-drop 'state' (search_facts): query filters state=="current" and FactEntity.state defaults to CURRENT
+8ae9752d  # select-drop 'state' (get_active_facts_ordered): query filters state=="current" and FactEntity.state defaults to CURRENT
+ae01e040  # select-drop 'owner_id' (get_active_facts): differs only for a doc with account_id+owner_id and no created_by_user_id; none exist in live data (2026-10-22: 0 of 1110) and no writer produces one
+f34776dd  # select-drop 'owner_id' (search_facts): same as ae01e040
+d46bfab7  # select-drop 'owner_id' (get_active_facts_ordered): same as ae01e040
+a39d02eb  # except-success L838 refresh_biographical_context_cache: handler only logs and falls through to None; identical observable behaviour
