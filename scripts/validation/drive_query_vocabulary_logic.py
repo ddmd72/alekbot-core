@@ -1,12 +1,15 @@
 """
 Vocabulary-miss measurement, the pure half (USER_DRIVE_INDEXING_RFC §26.6, Δ66): no I/O, no clock, no logging.
 
-`scripts/validation/drive_query_vocabulary.py` reads Smart's recorded tool calls and the user's index; everything it
+`scripts/validation/drive_query_vocabulary.py` reads the recorded drive tool calls (Smart's before the drive
+specialist, the specialist's after it: DRIVE_SPECIALIST_RFC §10 step 5) and the user's index; everything it
 decides is decided here, so it is unit-testable on a synthetic sample. Several small public dataclasses live in this
 one module, by decision: one vocabulary, read together (the same waiver as `src/domain/drive_match.py`).
 
 Public interface:
-    extract_events(rows) -> [(trace_id, Event)]     Smart's `search_files_in_drive` / `open_file_from_drive` calls
+    extract_events(rows) -> [(trace_id, Event)]     the searches and opens: Smart's `search_files_in_drive` /
+                                                    `open_file_from_drive` delegations, the specialist's
+                                                    `search_drive` / `open_drive_file` tool calls
     pair_searches(rows) -> [SearchRecord]           each search with the files opened after it in the same trace
     concepts_of(drive_query) -> (concepts, name_only, ignored_count, cut_count)
     probe_plan(concept, name_only) -> [ProbeGroup]  which keys to ask the index for, per stream and key family
@@ -30,9 +33,11 @@ from src.domain.drive_match import Concept, SourceClass
 from src.domain.drive_tiers import CLASS_RANK, Cover, FileKeys, chunk_cover, record_cover
 from src.domain.user_drive import parse_drive_ref
 
-INTENT_SEARCH = "search_files_in_drive"
+INTENT_SEARCH = "search_files_in_drive"   # Smart's delegations, recorded before the drive specialist
 INTENT_OPEN = "open_file_from_drive"
 DELEGATE_TOOL = "delegate_to_specialist"
+TOOL_SEARCH = "search_drive"              # the drive specialist's own tools (DRIVE_SPECIALIST_RFC §8.1)
+TOOL_OPEN = "open_drive_file"
 
 STREAM_ABOUT = "about"
 STREAM_NAME = "name"
@@ -81,10 +86,20 @@ def _events_of_row(tool_calls: Any) -> List[Event]:
         return []
     out: List[Event] = []
     for call in calls if isinstance(calls, list) else []:
-        if not isinstance(call, dict) or call.get("name") != DELEGATE_TOOL:
+        if not isinstance(call, dict):
             continue
         args = call.get("args")
         if not isinstance(args, dict):
+            continue
+        if call.get("name") == TOOL_SEARCH:
+            out.append(Event(INTENT_SEARCH, drive_query=str(args.get("query") or "").strip()))
+            continue
+        if call.get("name") == TOOL_OPEN:
+            item_id = parse_drive_ref(str(args.get("file_ref") or ""))
+            if item_id:
+                out.append(Event(INTENT_OPEN, item_id=item_id))
+            continue
+        if call.get("name") != DELEGATE_TOOL:
             continue
         intent, ctx = args.get("intent"), _context_of(args)
         if intent == INTENT_SEARCH:
