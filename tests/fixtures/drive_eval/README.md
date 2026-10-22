@@ -32,7 +32,7 @@ first owner-reviewed run records `bars.json`, and later changes must not fall be
 
 An item's `content` names a file in `files/` (its size becomes that file's length); `thumbnail` names the provider
 rendition the drive serves for every size (an image item's own bytes when it has none). A generate entry's
-`content_template` (`vault_note`, `invoice_2024`; `g3_injected_note` on the G3 overlay only) renders each bulk file from `fixture_texts.py` when the drive serves
+`content_template` (`vault_note`, `invoice_2024`; `g3_injected_note` and the four `lead_*` templates of the drive specialist eval, DRIVE_SPECIALIST_RFC §15, on the G3 overlay only) renders each bulk file from `fixture_texts.py` when the drive serves
 it (a one-page PDF with a text layer for `.pdf` names), so the 600 invoices and 800 notes are never committed. Every
 file the indexer would read has bytes (`test_drive_eval_fixture_files.py`).
 
