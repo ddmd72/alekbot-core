@@ -44,10 +44,12 @@ def forward_step(
     origin_lineage_id: str,
     start_id: str,
     origin_account_id: str,
+    hops: int,
 ) -> Optional[str]:
     """One step of following `start_id` to the fact a caller may write: None = `fact` is it, a str = read that id next.
 
-    Raises FactResolutionError when the chain cannot end in `accepted`. The state is read before `superseded_by`.
+    `hops` is the number of hops already made. Raises FactResolutionError when the chain cannot end in `accepted`
+    or would need more than MAX_FORWARD_HOPS hops. The state is read before `superseded_by`.
     """
     if fact.account_id != origin_account_id:
         raise FactResolutionError(f"fact {start_id} cannot be resolved; search again")
@@ -58,6 +60,8 @@ def forward_step(
     if fact.state is FactState.SUPERSEDED:
         if fact.superseded_by is None:
             raise FactResolutionError(f"fact {start_id} was superseded and its successor is unknown; search again")
+        if hops >= MAX_FORWARD_HOPS:
+            raise FactResolutionError(f"fact {start_id} has more than {MAX_FORWARD_HOPS} forward hops; search again")
         return fact.superseded_by
     if fact.id == start_id:
         raise FactResolutionError(f"fact {start_id} is {fact.state.value}", current_id=fact.id)

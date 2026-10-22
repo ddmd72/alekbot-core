@@ -281,9 +281,10 @@ class WorkspaceConflict(Exception):
 
 class FactResolutionError(Exception):
     """A fact id could not be followed to a fact the caller may write. The message is the fix the model reads;
-    `current_id` names the fact the chain ended at, when there is one. Not a ValueError: web handlers map that to 404."""
+    `current_id` names the document the walk stopped at, when there is one; it may itself have successors. Not a
+    ValueError: web handlers map that to 404."""
 
-    def __init__(self, message: str, current_id: Optional[str] = None) -> None:
+    def __init__(self, message: str, *, current_id: Optional[str] = None) -> None:
         super().__init__(message)
         self.current_id = current_id
 
