@@ -1,0 +1,14 @@
+agent_id: drive
+blueprint_id: drive_agent_v1
+source_file: firestore_utils/uploads/drive.json
+tokens:
+  COGNITIVE_PROCESS_DRIVE:
+    non_overridable: true
+    order: 10
+  PROTOCOL_DRIVE_SEARCH:
+    non_overridable: true
+    order: 20
+  OUTPUT_FORMAT_DRIVE:
+    non_overridable: true
+    order: 30
+uploaded_by: local_script
