@@ -387,8 +387,13 @@ class FirestoreDriveNoteRepository(DriveNoteRepository):
             except DriveNoteConflict:
                 left.append(note_id)            # logged where it was raised; the rest are still erased
                 continue
-            except (*_TRANSIENT, *_MISSING_INDEX) as exc:
+            except _TRANSIENT as exc:
                 logger.warning(f"[DriveNote] erase of {note_id} failed: {type(exc).__name__}: {exc}")
+                left.append(note_id)
+                continue
+            except _MISSING_INDEX as exc:   # the same level `_store_errors` gives it: an operator must act
+                logger.error(f"[DriveNote] erase of {note_id} failed, an index is missing or building: "
+                             f"{type(exc).__name__}: {exc}")
                 left.append(note_id)
                 continue
             erased += int(done)

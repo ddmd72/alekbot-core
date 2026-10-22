@@ -29,6 +29,12 @@ from ...domain.messaging import SmartResponse
 from ...domain.exceptions import TranscriptLockedError
 from ...domain.turn_clock import CURRENT_TURN_CLOCK
 from ...domain.memory_fact import PROPOSE_MEMORY_FACTS_TOOL
+from ...domain.drive_note import ANNOTATE_DRIVE_FILE_TOOL, DRIVE_FILE_NOTES_SKILL, is_owner_turn
+from ...infrastructure.drive_note_tools import (
+    build_annotate_drive_file_tool_declaration,
+    make_annotate_drive_file_handler,
+    note_provenance,
+)
 from ...domain.workspace import WORKSPACE_TOOL, WorkspaceReferences
 from ...infrastructure.workspace_tools import build_workspace_tool_declaration, make_workspace_handler
 from ...domain.skill import DRAFT_SKILL_TOOL, USE_SKILL_TOOL, Skill, render_catalog, visible_skill_names
@@ -52,6 +58,7 @@ from ...infrastructure.task_execution_resolver import ExecutionOverride
 from ...utils.logger import logger
 from ...utils.llm_response_parser import extract_structured_response
 from ...infrastructure.skill_tools import (
+    LoadedSkills,
     build_draft_skill_tool_declaration,
     build_use_skill_tool_declaration,
     make_draft_skill_handler,
@@ -64,6 +71,7 @@ from ...infrastructure.memory_fact_tools import (
 
 if TYPE_CHECKING:
     from ...services.history_summary_service import HistorySummaryService
+    from ...services.drive_note_service import DriveNoteService
     from ...services.memory_fact_service import MemoryFactService
     from ...services.skill_service import SkillService
     from ...services.workspace_service import WorkspaceService
@@ -232,6 +240,8 @@ class SmartResponseAgent(BaseAgent):
         long_turn_registry: Optional[LongTurnRegistry] = None,
         memory_fact_service: Optional["MemoryFactService"] = None,
         workspace_service: Optional["WorkspaceService"] = None,
+        drive_note_service: Optional["DriveNoteService"] = None,
+        drive_notes_enabled: bool = True,
     ):
         super().__init__(config)
         self.execution_context = execution_context
@@ -253,6 +263,9 @@ class SmartResponseAgent(BaseAgent):
         self.long_turn_registry = long_turn_registry
         self.memory_fact_service = memory_fact_service
         self.workspace_service = workspace_service
+        self.drive_note_service = drive_note_service
+        # DRIVE_NOTES_ENABLED (DRIVE_FILE_NOTES_RFC §3.6), read in composition: off, no note tool is declared.
+        self.drive_notes_enabled = drive_notes_enabled
 
         # NOTE: ``self.llm``, ``self.model_name``, ``self.execution_context``,
         # and ``self._agent_execution_context`` (set by _set_execution_context
@@ -493,11 +506,13 @@ class SmartResponseAgent(BaseAgent):
 
             tools = self._get_tool_declarations()
             local_tools = None
+            # Built per execution attempt (provider rotation re-enters _run with a fresh transcript): the skills whose
+            # body this execution has in context, shared by use_skill and the drive-note tool's gate.
+            loaded = LoadedSkills(visible_skill_names(clean_history))
             if skills:
                 tools.append(build_use_skill_tool_declaration())
-                # Built per execution attempt: provider rotation re-enters _run with a fresh transcript.
                 local_tools = {
-                    USE_SKILL_TOOL: make_use_skill_handler(skills, visible_skill_names(clean_history)),
+                    USE_SKILL_TOOL: make_use_skill_handler(skills, loaded.visible, loaded),
                 }
                 if self.skill_service and message.context.get("interactive_delivery"):
                     tools.append(build_draft_skill_tool_declaration())
@@ -514,6 +529,17 @@ class SmartResponseAgent(BaseAgent):
                     lambda d: self.memory_fact_service.propose(
                         prompt_user_id, message.context.get("session_id"), d,
                     )
+                )
+
+            # Owner turns only (DRIVE_FILE_NOTES_RFC §4.2, D5 as amended by D18): a chat message or a call with
+            # Lelik, never a background run. Outside `if skills:` — with no skills the handler fails closed (§4.2).
+            if (self.drive_note_service and self.drive_notes_enabled and prompt_user_id
+                    and self.owner_turn(message.context)):
+                tools.append(build_annotate_drive_file_tool_declaration())
+                local_tools = dict(local_tools or {})
+                local_tools[ANNOTATE_DRIVE_FILE_TOOL] = make_annotate_drive_file_handler(
+                    self.drive_note_service, prompt_user_id, account_id or "", note_provenance(message.context),
+                    loaded, any(s.name == DRIVE_FILE_NOTES_SKILL for s in skills),
                 )
 
             # Every path, interactive or not (D2, D5): background writes are labelled with their origin, not
@@ -667,6 +693,12 @@ class SmartResponseAgent(BaseAgent):
             logger.warning("⏳ [SmartResponseAgent] running jobs unavailable: %s", e)
             return []
         return [r for r in running if r.turn_id != own]
+
+    @staticmethod
+    def owner_turn(context: Dict[str, Any]) -> bool:
+        """A run the owner started and is in (DRIVE_FILE_NOTES_RFC §4.2, N8): a chat message, or a call with Lelik
+        through the Alek gateway. An explicit allowlist, never a prefix match."""
+        return is_owner_turn(context)
 
     @staticmethod
     def _run_origin(message: AgentMessage) -> str:
@@ -839,6 +871,8 @@ def create_smart_response_agent(
     long_turn_registry: Optional[LongTurnRegistry] = None,
     memory_fact_service: Optional["MemoryFactService"] = None,
     workspace_service: Optional["WorkspaceService"] = None,
+    drive_note_service: Optional["DriveNoteService"] = None,
+    drive_notes_enabled: bool = True,
 ) -> SmartResponseAgent:
     """Factory function to create SmartResponseAgent."""
     agent_id = f"smart_response_agent_{user_id}" if user_id else "smart_response_agent"
@@ -874,5 +908,7 @@ def create_smart_response_agent(
         long_turn_registry=long_turn_registry,
         memory_fact_service=memory_fact_service,
         workspace_service=workspace_service,
+        drive_note_service=drive_note_service,
+        drive_notes_enabled=drive_notes_enabled,
     )
 
