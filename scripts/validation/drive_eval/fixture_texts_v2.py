@@ -262,7 +262,62 @@ def _g3_injected_note_profile(n: int) -> DriveProfile:
         domain_words=("home", "hogar", "дім", "дом"))
 
 
-BULK_PROFILES = {"invoice_2024": _invoice_2024_profile, "g3_injected_note": _g3_injected_note_profile}
+# -- G3 only (tree_g3.json): the drive specialist eval's lead files (DRIVE_SPECIALIST_RFC §15). Hand-written,
+# synthetic, never recorded.
+
+def _lead_locksmith_note_profile(n: int) -> DriveProfile:
+    """The card names the invoice number (a key value), so a search for the locksmith shows the lead."""
+    return DriveProfile(
+        title="Locksmith contacts", what_it_is="Contact note for the household locksmith at the hardware shop in town",
+        language="en", doc_type="notes", life_domains=("home",),
+        key_values=(KeyValue(label="invoice_number", printed="Factura FA-0137", canonical="FA-0137"),),
+        topics=("locksmith",), topic_words=("locksmith", "cerrajero", "слюсар", "слесарь"),
+        label_words=("notes", "note", "notas", "нотатки", "заметки"),
+        domain_words=("home", "hogar", "дім", "дом"))
+
+
+def _lead_factura_fk_profile(n: int) -> DriveProfile:
+    """Spanish invoice; no English 'locksmith' in its words, so the first search does not reach it."""
+    return DriveProfile(
+        title="Factura FA-0137", what_it_is="Factura de Ferretería El Tornillo Feliz por el cambio de bombin",
+        language="es", doc_type="invoice", life_domains=("home", "finance"),
+        dates=(ProfileDate(label="issued", iso=date(2026, 9, 15), printed="15/09/2026"),),
+        entities=(ProfileEntity(name="Ferretería El Tornillo Feliz", type="organization",
+                                printed="Ferretería El Tornillo Feliz"),),
+        key_values=(KeyValue(label="invoice_number", printed="FA-0137", canonical="FA-0137"),
+                    KeyValue(label="amount_total", printed="249,00 EUR", canonical="249.00")),
+        topics=("cambio de bombin",), topic_words=("cambio de bombin", "заміна циліндра", "замена цилиндра"),
+        label_words=("factura", "facturas", "рахунок", "счёт"),
+        domain_words=("hogar", "finanzas", "дім", "дом"))
+
+
+def _lead_garage_rental_profile(n: int) -> DriveProfile:
+    """The annex is named only in the file's last clause: the card never shows it."""
+    return DriveProfile(
+        title="Garage rental agreement 2026",
+        what_it_is="Rental agreement for garage space 14 behind 12 Oak Street, Springfield",
+        language="en", doc_type="contract", life_domains=("home", "vehicle"),
+        dates=(ProfileDate(label="valid_from", iso=date(2026, 10, 1), printed="1 October 2026"),),
+        topics=("garage rental",), topic_words=("garage rental", "alquiler de garaje", "оренда гаража",
+                                                "аренда гаража"),
+        label_words=("contract", "contracts", "contrato", "договір", "договор"),
+        domain_words=("home", "vehicle", "hogar", "vehículo", "дім", "дом"))
+
+
+def _lead_normas_profile(n: int) -> DriveProfile:
+    """Spanish only: no English garage, rules or visitors words."""
+    return DriveProfile(
+        title="Normas de uso del aparcamiento - Oak Street",
+        what_it_is="Normas internas del aparcamiento de Oak Street",
+        language="es", doc_type="other", life_domains=("home",),
+        topics=("normas de uso",), topic_words=("normas de uso", "норми користування", "нормы пользования"),
+        label_words=("normas", "норми"),
+        domain_words=("hogar", "дім", "дом"))
+
+
+BULK_PROFILES = {"invoice_2024": _invoice_2024_profile, "g3_injected_note": _g3_injected_note_profile,
+                 "lead_locksmith_note": _lead_locksmith_note_profile, "lead_factura_fk": _lead_factura_fk_profile,
+                 "lead_garage_rental": _lead_garage_rental_profile, "lead_normas": _lead_normas_profile}
 
 
 def bulk_profile(template: str, n: int) -> Optional[DriveProfile]:

@@ -531,6 +531,8 @@ def _args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
     parser.add_argument("--bars", type=Path, default=_FIXTURES / "bars_g3.json")
     parser.add_argument("--repeats", type=int, default=1)
     parser.add_argument("--record", action="store_true")
+    parser.add_argument("--rebuild-index", action="store_true",
+                        help="build the fixture index even when scripts/memory/drive_g3/cache/ holds a matching one")
     args = parser.parse_args(argv)
     if not args.gold:
         args.gold = [_FIXTURES / "gold_g3.json", _FIXTURES / "gold_g3_v2.json"]
@@ -569,12 +571,20 @@ async def _run(args: argparse.Namespace) -> int:
     from src.adapters.subprocess_content_extractor import SubprocessContentExtractor
 
     from .enrichment_snapshot import EnrichmentSnapshot
+    from .index_cache import load_or_build
     from .parse_cache import ParseCache
     from .search_v2_eval import index_v2
-    repo, facts = await index_v2(drive, EnrichmentSnapshot.load(args.snapshot), embeddings,
-                                 GeminiEmbeddingAdapter.EMBEDDING_SPACE, build_place_lookup(),
-                                 ParseCache(SubprocessContentExtractor(), _REPO / "scripts" / "memory"
-                                            / "drive_eval_parse_cache"), clock)
+
+    async def build_index() -> Any:
+        return await index_v2(drive, EnrichmentSnapshot.load(args.snapshot), embeddings,
+                              GeminiEmbeddingAdapter.EMBEDDING_SPACE, build_place_lookup(),
+                              ParseCache(SubprocessContentExtractor(), _REPO / "scripts" / "memory"
+                                         / "drive_eval_parse_cache"), clock)
+
+    repo, facts = await load_or_build(build_index, trees=(args.tree, args.tree_g3, args.tree_v2),
+                                      snapshot=args.snapshot, drive=drive,
+                                      embedding_space=GeminiEmbeddingAdapter.EMBEDDING_SPACE, clock=clock,
+                                      rebuild=args.rebuild_index)
     if facts["misses"]:
         raise G3Error(f"the enrichment snapshot misses {facts['misses']}: re-record it (dump_enrichment.py)")
     search = DriveSearchService(repo, embeddings, _EnabledUsers(), drive, clock=clock,

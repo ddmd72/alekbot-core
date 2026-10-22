@@ -56,6 +56,11 @@ TEMPLATES: Mapping[str, str] = {
     "vault_note": fixture_texts.VAULT_NOTE_TEMPLATE,
     "invoice_2024": fixture_texts.INVOICE_2024_TEMPLATE,
     "g3_injected_note": fixture_texts.G3_INJECTED_NOTE_TEMPLATE,   # tree_g3.json only (final review F3-2)
+    # tree_g3.json only (DRIVE_SPECIALIST_RFC §15): the lead scenarios of the drive specialist eval
+    "lead_locksmith_note": fixture_texts.LEAD_LOCKSMITH_NOTE_TEMPLATE,
+    "lead_factura_fk": fixture_texts.LEAD_FACTURA_FK_TEMPLATE,
+    "lead_garage_rental": fixture_texts.LEAD_GARAGE_RENTAL_TEMPLATE,
+    "lead_normas": fixture_texts.LEAD_NORMAS_TEMPLATE,
 }
 
 
