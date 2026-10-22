@@ -37,7 +37,21 @@ jobs:
         timeout-minutes: 30
         env:
           PYTEST_DURATION_BUDGET_S: "1.0"
-        run: make ci
+        run: |
+          set -o pipefail
+          make ci 2>&1 | tee ci-output.log
+
+      - name: Failure summary as an annotation
+        # Job logs are served from blob storage that a cloud session cannot reach; check-run annotations are read
+        # through the API. One annotation carries the failure lines and the tail of the output.
+        if: failure()
+        run: |
+          {
+            grep -E "FAILED|ERROR|Error:|over the|budget|datafile|threshold|Required test coverage|make(\[[0-9]+\])?: \*\*\*" ci-output.log | tail -60
+            echo "----- tail -----"
+            tail -40 ci-output.log
+          } | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"} {print}' > summary.txt
+          echo "::error title=make ci failed::$(cat summary.txt)"
 
       - name: Notify Slack (pass/fail)
         if: always()
