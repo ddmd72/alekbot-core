@@ -8,7 +8,7 @@ the limits it is given to the context service instead of dropping them.
 import pytest
 
 from src.adapters.firestore_repo import FirestoreFactRepository
-from src.domain.entities import FactDomain
+from src.domain.entities import ContextPriority, FactDomain
 from src.services.biographical_context_service import BiographicalContextService
 from tests.support.fact_kit import ACC, make_fact
 from tests.support.fact_store import INDEXES_FILE, FactStore, make_env_config
@@ -77,3 +77,15 @@ async def test_refresh_without_limits_keeps_the_service_resolution(store):
     await _repo_with_cache_service(store).refresh_biographical_context_cache(ACC)
     cache = _cache(store)
     assert (cache["facts_count"], cache["principles_count"]) == (4, 3)
+
+
+async def test_refresh_keeps_exactly_principles_limit_principles_highest_priority_first(store):
+    for i, priority in enumerate((ContextPriority.LOW, ContextPriority.CRITICAL, ContextPriority.MEDIUM,
+                                  ContextPriority.HIGH)):
+        await store.repo.add_fact(make_fact(f"mindset {i}", domain=FactDomain.BIOGRAPHICAL, tags=["mindset"],
+                                            context_priority=priority, age_days=i))
+    await store.repo.add_fact(make_fact("plain", domain=FactDomain.BIOGRAPHICAL, age_days=9))
+    await _repo_with_cache_service(store).refresh_biographical_context_cache(ACC, principles_limit=2)
+    cache = _cache(store)
+    assert [p["text"] for p in cache["principles"]] == ["mindset 1", "mindset 3"]
+    assert (cache["principles_count"], cache["facts_count"]) == (2, 1)
