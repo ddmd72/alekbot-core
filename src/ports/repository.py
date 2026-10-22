@@ -13,13 +13,13 @@ class FactRepository(ABC):
     - Current: a read of "current" facts filters on `state == "current"`, never on `is_current`
       (`is_current` means latest document of its lineage).
     - Identity: `id` is the document id. get_fact_by_id, get_paginated_facts,
-      search_facts_by_domain and get_legacy_facts read it
+      search_facts_by_domain, get_lineage, get_latest_fact_by_lineage and get_legacy_facts read it
       from the stored `id` field, which every writer sets equal to the document id; a document
       written outside this port with a different or missing `id` reads back with that value (or a
       fresh uuid).
     - Legacy documents: a document with `owner_id` and no `account_id` is absent from every
-      account-scoped read (they filter the stored `account_id`). Where one is returned (by-id reads),
-      `owner_id` reads as `account_id` and
+      account-scoped read (they filter the stored `account_id`). Where one is returned (by-id reads,
+      the legacy fallback in get_latest_fact_by_lineage), `owner_id` reads as `account_id` and
       `created_by_user_id`. invalidate_fact refuses it with PermissionError. A missing `visibility`
       reads as account_shared, "private" as user_private. A document without `state` matches no
       state-filtered read. A document missing a field a read orders by is absent from that read
@@ -171,6 +171,26 @@ class FactRepository(ABC):
         Atomicity: unconditional write, last writer wins; stored fields FactEntity lacks are dropped (observed).
         Idempotency: writing the same entity twice leaves one identical document.
         Errors: a missing id is created, not refused (observed).
+        """
+        pass
+
+    @abstractmethod
+    async def get_lineage(self, lineage_id: str) -> List[FactEntity]:
+        """Return every document of `lineage_id`, newest first by created_at.
+
+        Contract (observed; no caller in src/).
+        Tenancy: none; any account, any state.
+        Legacy: `owner_id` is not migrated, so a legacy document fails the call.
+        """
+        pass
+
+    @abstractmethod
+    async def get_latest_fact_by_lineage(self, owner_id: str, lineage_id: str) -> Optional[FactEntity]:
+        """Return the `is_current` document of `lineage_id` in account `owner_id`, any state, or None.
+
+        Contract (observed; its one caller, UserPromptBuilder._get_component, is never called).
+        Legacy: when no account_id matches, the legacy `owner_id` field is tried.
+        Order: with several `is_current` documents, which one is returned is unspecified.
         """
         pass
 
