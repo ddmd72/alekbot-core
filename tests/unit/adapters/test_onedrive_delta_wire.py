@@ -427,19 +427,23 @@ class TestConnection:
 
     async def test_flag_reconnect_true_only_on_transition(self):
         adapter, oauth = _adapter(creds=_creds(drive_id="D1"))
+        oauth.update_credentials.return_value = True                          # the record still exists
         assert await adapter.flag_reconnect("u1") is True
-        saved = oauth.save_credentials.call_args.args[0]
+        oauth.save_credentials.assert_not_called()                            # a flag write never creates a record
+        saved = oauth.update_credentials.call_args.args[0]
         assert saved.needs_reconnect is True and saved.drive_id == "D1" and saved.refresh_token == "r"
 
     async def test_flag_reconnect_already_flagged_writes_nothing(self):
         adapter, oauth = _adapter(creds=_creds(needs_reconnect=True))
         assert await adapter.flag_reconnect("u1") is False
         oauth.save_credentials.assert_not_called()
+        oauth.update_credentials.assert_not_called()
 
     async def test_flag_reconnect_without_credentials(self):
         adapter, oauth = _adapter(creds=None)
         assert await adapter.flag_reconnect("u1") is False
         oauth.save_credentials.assert_not_called()
+        oauth.update_credentials.assert_not_called()
 
 
 class TestDriveIdSource:

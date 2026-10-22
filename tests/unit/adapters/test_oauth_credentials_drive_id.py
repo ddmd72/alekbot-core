@@ -61,11 +61,13 @@ class TestRefresh:
         oauth.get_credentials.return_value = _creds(
             drive_id="D1", needs_reconnect=True,
             token_expiry=datetime.now(timezone.utc) + timedelta(minutes=1))
+        oauth.update_credentials.return_value = True                          # the record still exists
         provider = MicrosoftGraphTokenProvider(oauth, "cid", "csecret", "microsoft_onedrive",
                                                "Files.ReadWrite.AppFolder offline_access")
         session = _session(_resp({"access_token": "new", "expires_in": 3600}))
         with patch("aiohttp.ClientSession", return_value=session):
             assert await provider.headers("u1") == {"Authorization": "Bearer new"}
-        saved = oauth.save_credentials.call_args.args[0]
+        oauth.save_credentials.assert_not_called()                            # a refresh never creates a record
+        saved = oauth.update_credentials.call_args.args[0]
         assert saved.drive_id == "D1"
         assert saved.needs_reconnect is False      # a successful refresh is the proof

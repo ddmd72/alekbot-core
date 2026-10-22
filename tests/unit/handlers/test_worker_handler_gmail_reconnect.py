@@ -66,6 +66,7 @@ def _worker(*, stored_creds, oauth_configured: bool = True):
 
     oauth = AsyncMock(spec=OAuthCredentialsPort)
     oauth.get_credentials.return_value = stored_creds
+    oauth.update_credentials.return_value = stored_creds is not None   # writes only while the record exists
 
     notification = AsyncMock()
     notification.notify = AsyncMock()
@@ -97,7 +98,8 @@ class TestDailyReviewGrantRevoked:
 
         assert status == 200
         assert result == {"error": "gmail_reconnect_required"}
-        saved = oauth.save_credentials.await_args.args[0]
+        oauth.save_credentials.assert_not_awaited()          # a flag write never creates a record
+        saved = oauth.update_credentials.await_args.args[0]
         assert saved.needs_reconnect is True
         assert saved.refresh_token == "rtok"  # the rest of the record is kept
         notification.notify.assert_awaited_once()
@@ -116,6 +118,7 @@ class TestDailyReviewGrantRevoked:
 
         assert status == 200
         oauth.save_credentials.assert_not_awaited()
+        oauth.update_credentials.assert_not_awaited()
         notification.notify.assert_not_awaited()
 
     async def test_credentials_gone_does_nothing(self):
@@ -127,6 +130,7 @@ class TestDailyReviewGrantRevoked:
 
         assert status == 200
         oauth.save_credentials.assert_not_awaited()
+        oauth.update_credentials.assert_not_awaited()
         notification.notify.assert_not_awaited()
 
     async def test_notify_failure_is_not_raised(self):
@@ -160,7 +164,8 @@ class TestEmailIndexingGrantRevoked:
 
         assert status == 200
         assert result == {"status": "failed", "error": "gmail_reconnect_required"}
-        assert oauth.save_credentials.await_args.args[0].needs_reconnect is True
+        oauth.save_credentials.assert_not_awaited()          # a flag write never creates a record
+        assert oauth.update_credentials.await_args.args[0].needs_reconnect is True
         notification.notify.assert_awaited_once()
         assert notification.notify.await_args.kwargs["account_id"] == _ACC
 
@@ -184,4 +189,5 @@ class TestEmailIndexingGrantRevoked:
         assert result["status"] == "failed"
         assert result["error"] != "gmail_reconnect_required"
         oauth.save_credentials.assert_not_awaited()
+        oauth.update_credentials.assert_not_awaited()
         notification.notify.assert_not_awaited()

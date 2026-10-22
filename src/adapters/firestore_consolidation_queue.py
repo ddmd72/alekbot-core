@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 from google.cloud import firestore
 from google.cloud.firestore import FieldFilter
 from src.ports.consolidation_queue import ConsolidationQueue
-from src.domain.consolidation import ConsolidationBatch, BatchStatus
+from src.domain.consolidation import ConsolidationBatch, BatchStatus, MAX_FAILED_REVIVALS
 from src.config.environment import EnvironmentConfig
 
 logger = logging.getLogger(__name__)
@@ -97,26 +97,27 @@ class FirestoreConsolidationQueue(ConsolidationQueue):
         await doc_ref.delete()
         logger.debug(f"🗑️ Deleted batch {batch_id}")
     
-    async def reset_recoverable_batches(self, user_id: str) -> int:
-        """Reset stale PROCESSING (zombies) + FAILED (retry after fix) → RETRY_PENDING.
+    async def reset_recoverable_batches(self, user_id: str, revive_failed: bool = False) -> int:
+        """Reset stale PROCESSING (zombies) → RETRY_PENDING; with `revive_failed` also FAILED.
 
-        FAILED batches are always reset. PROCESSING batches are reset only when their
-        `processing_started_at` is older than _ZOMBIE_THRESHOLD_SECONDS — a recent
-        PROCESSING batch is a LIVE run (its Cloud Task is still executing) and must be
-        left untouched, otherwise the hourly sweep would reset a running consolidation
-        and double-process the batch.
+        PROCESSING batches are reset only when their `processing_started_at` is older than
+        _ZOMBIE_THRESHOLD_SECONDS — a recent PROCESSING batch is a LIVE run (its Cloud Task is
+        still executing) and must be left untouched, otherwise the hourly sweep would reset a
+        running consolidation and double-process the batch.
+
+        FAILED batches are revived only when `revive_failed` is set (the hourly sweep) and the
+        batch has `revivals < MAX_FAILED_REVIVALS`; each revival adds 1 to `revivals`, which no
+        reset clears. A FAILED batch past the cap is left as it is.
 
         Resets `attempts` to 0 and clears `last_error` + `processing_started_at`.
-        Logs separate counts so dashboard / alerting can distinguish zombie recovery
-        from intentional FAILED retry.
         Returns the number of batches actually reset.
         """
+        statuses = [BatchStatus.PROCESSING.value]
+        if revive_failed:
+            statuses.append(BatchStatus.FAILED.value)
         query = (
             self.collection
-            .where(filter=FieldFilter(
-                "status", "in",
-                [BatchStatus.PROCESSING.value, BatchStatus.FAILED.value],
-            ))
+            .where(filter=FieldFilter("status", "in", statuses))
             .where(filter=FieldFilter("user_id", "==", user_id))
         )
         docs = await query.get()
@@ -124,9 +125,16 @@ class FirestoreConsolidationQueue(ConsolidationQueue):
         zombies = 0
         failures = 0
         live = 0
+        exhausted = 0
         for doc in docs:
             data = doc.to_dict() or {}
             prev = data.get("status")
+            update: Dict[str, Any] = {
+                "status": BatchStatus.RETRY_PENDING.value,
+                "attempts": 0,
+                "last_error": None,
+                "processing_started_at": None,
+            }
             if prev == BatchStatus.PROCESSING.value:
                 started = data.get("processing_started_at")
                 # Missing timestamp (legacy batch) is treated as a zombie — safe, since
@@ -134,15 +142,16 @@ class FirestoreConsolidationQueue(ConsolidationQueue):
                 if started is not None and (now - started) < _ZOMBIE_THRESHOLD_SECONDS:
                     live += 1
                     continue
-            await doc.reference.update({
-                "status": BatchStatus.RETRY_PENDING.value,
-                "attempts": 0,
-                "last_error": None,
-                "processing_started_at": None,
-            })
+            else:
+                revivals = data.get("revivals", 0)
+                if revivals >= MAX_FAILED_REVIVALS:
+                    exhausted += 1
+                    continue
+                update["revivals"] = revivals + 1
+            await doc.reference.update(update)
             if prev == BatchStatus.PROCESSING.value:
                 zombies += 1
-            elif prev == BatchStatus.FAILED.value:
+            else:
                 failures += 1
         if zombies:
             logger.info(
@@ -151,12 +160,17 @@ class FirestoreConsolidationQueue(ConsolidationQueue):
             )
         if failures:
             logger.info(
-                f"♻️ Reset {failures} FAILED batches → RETRY_PENDING (attempts=0) "
+                f"♻️ Revived {failures} FAILED batches → RETRY_PENDING (attempts=0) "
                 f"for user {user_id[:8]}"
             )
         if live:
             logger.debug(
                 f"⏳ Skipped {live} live PROCESSING batches (< {_ZOMBIE_THRESHOLD_SECONDS}s) "
+                f"for user {user_id[:8]}"
+            )
+        if exhausted:
+            logger.debug(
+                f"⏹️ Left {exhausted} FAILED batches (revivals >= {MAX_FAILED_REVIVALS}) "
                 f"for user {user_id[:8]}"
             )
         return zombies + failures

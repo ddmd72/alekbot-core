@@ -3,6 +3,7 @@ from typing import Optional
 from datetime import datetime, timezone, timedelta
 
 from ..domain.invite_code import InviteCode, InviteType
+from ..ports.iam_port import Role
 from ..ports.invite_code_repository import InviteCodeRepository
 from ..ports.user_repository import UserRepository
 from ..ports.account_repository import AccountRepository
@@ -134,6 +135,10 @@ class InviteCodeService:
         if not account:
             raise ValueError(f"Target account {invite.account_id} not found")
 
+        # The invite keeps its role uppercase ("OWNER"/"MEMBER"/"VIEWER"); iam_policy holds the Role value
+        # (lowercase), which every access check compares. Resolved before anything is written.
+        iam_role = Role(invite.role.lower()).value
+
         # 3. Update User's Account ID
         # Note: In MVP we overwrite the user's account.
         # If user had their own account with data, that data becomes "orphaned" or inaccessible
@@ -144,7 +149,7 @@ class InviteCodeService:
         await self.user_repo.update_user(new_member)
 
         # 4. Update Account IAM Policy
-        account.iam_policy[new_member_user_id] = invite.role
+        account.iam_policy[new_member_user_id] = iam_role
         await self.account_repo.update_account(account)
 
         # 5. Mark code as used
