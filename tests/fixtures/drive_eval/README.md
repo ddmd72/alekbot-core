@@ -107,6 +107,18 @@ tree_v2): the incident-shaped "everything about Rome" (at most 2 searches, 2 ope
 the photos and the booking), time spans that belong in the date fields, D29 cases (at most one search after a "No file
 holds" line), and set queries; `answer_must_include` lists the words a right answer holds (one of each group).
 
+## The drive specialist eval (DRIVE_SPECIALIST_RFC §12, §15)
+
+`gold_specialist_ab.json` drives `specialist_ab.py` (Smart and the drive specialist end to end) and its replay
+(`--replay-commissions`, the specialist alone on a report's commissions): 26 cases over tree + tree_g3 + tree_v2, one
+or more turns each (`turns`; "find, then open the second" is two). A case's `gold` checks the answer
+(`answer_must_include`), the drive operation log of the run — `must_open` / `must_not_open` / `opened_any`,
+`ops_must_include` and `ops_forbidden` name DriveOperations methods and their keyword parameters (`move` with
+`folder`, `save_text`, `search_deleted`, `open` with `original`; writes are stubbed, so their arguments are what is
+checked) — and Smart's delegations (`intents_must_include`, `drive`). The validator refuses an operation or a parameter
+DriveOperations does not have, and a removed drive intent. The four `lead_*` files of the G3 overlay serve the lead
+cases.
+
 ## §26, D39 and D40 additions (RFC §26.8 Eval)
 
 The Search v2 overlay (`tree_v2.json`, `files_v2/`) gains, from `fixture_texts_s26.py` and `fixture_images_s26.py`

@@ -1,0 +1,532 @@
+[
+  {
+    "id": "ab-content-marketing",
+    "kind": "content",
+    "lang": "en",
+    "isolate": true,
+    "turns": [
+      "What do my files say about the Q4 marketing budget?"
+    ],
+    "gold": {
+      "drive": true,
+      "answer_must_include": [
+        [
+          "6,500",
+          "6 500",
+          "6500",
+          "6.500"
+        ]
+      ]
+    },
+    "note": "Inbox/Quarterly Planning Review.docx: approved at EUR 6,500 (newsletter and two local events)."
+  },
+  {
+    "id": "ab-content-rome-budget",
+    "kind": "content",
+    "lang": "en",
+    "isolate": true,
+    "turns": [
+      "What budget did I plan for the Rome trip?"
+    ],
+    "gold": {
+      "drive": true,
+      "answer_must_include": [
+        [
+          "1.150",
+          "1,150",
+          "1150",
+          "1 150"
+        ]
+      ]
+    },
+    "note": "Notes/Plan de viaje Roma.md (Spanish): presupuesto total 1.150 €; an English question on a Spanish note."
+  },
+  {
+    "id": "ab-value-deposit-porto",
+    "kind": "value_file_word",
+    "lang": "en",
+    "isolate": true,
+    "turns": [
+      "How big is the deposit on my Porto lease?"
+    ],
+    "gold": {
+      "drive": true,
+      "answer_must_include": [
+        [
+          "2,500",
+          "2 500",
+          "2500",
+          "2.500"
+        ]
+      ]
+    },
+    "note": "Contracts/Lease agreement — Porto.pdf (copy in Inbox): deposit EUR 2,500.00."
+  },
+  {
+    "id": "ab-value-notice-porto",
+    "kind": "value_file_word",
+    "lang": "en",
+    "isolate": true,
+    "turns": [
+      "How much notice do I have to give to end my Porto lease?"
+    ],
+    "gold": {
+      "drive": true,
+      "answer_must_include": [
+        [
+          "60",
+          "sixty"
+        ]
+      ]
+    },
+    "note": "Same lease: sixty (60) days' written notice."
+  },
+  {
+    "id": "ab-value-car-insurance",
+    "kind": "value_no_file_word",
+    "lang": "en",
+    "isolate": true,
+    "turns": [
+      "When does my car insurance end?"
+    ],
+    "gold": {
+      "drive": true,
+      "answer_must_include": [
+        [
+          "31 March 2027",
+          "March 31, 2027",
+          "31 Mar 2027",
+          "31 березня 2027",
+          "31 марта 2027",
+          "31 de marzo de 2027",
+          "31/03/2027",
+          "31.03.2027",
+          "31-03-2027",
+          "2027-03-31",
+          "03/31/2027",
+          "31/03/27",
+          "31.03.27",
+          "31.03",
+          "31/03"
+        ]
+      ]
+    },
+    "note": "Vehicle/Motor policy MP-2026-118204.pdf never says 'car': valid until 31 March 2027. No file word in the question."
+  },
+  {
+    "id": "ab-value-boiler-warranty",
+    "kind": "value_no_file_word",
+    "lang": "en",
+    "isolate": true,
+    "turns": [
+      "What's my boiler warranty number?"
+    ],
+    "gold": {
+      "drive": true,
+      "answer_must_include": [
+        [
+          "WB-55-1093"
+        ]
+      ]
+    },
+    "note": "Notes/notes (2).md holds it; memory is isolated (empty)."
+  },
+  {
+    "id": "ab-find-nda",
+    "kind": "find",
+    "lang": "en",
+    "isolate": true,
+    "turns": [
+      "Do I have an NDA with Example Robotics somewhere?"
+    ],
+    "gold": {
+      "drive": true,
+      "must_not_open": true,
+      "answer_must_include": [
+        [
+          "Super important agreement"
+        ]
+      ]
+    },
+    "note": "A find: answered from the cards, nothing opened."
+  },
+  {
+    "id": "ab-find-idcard",
+    "kind": "find",
+    "lang": "en",
+    "isolate": true,
+    "turns": [
+      "Is there a scan of an identity card? Which file is it?"
+    ],
+    "gold": {
+      "drive": true,
+      "must_not_open": true,
+      "answer_must_include": [
+        [
+          "DOC_20260610_0042"
+        ]
+      ]
+    },
+    "note": "Card accuracy under 90 %, but a find never opens (§26.4, D36)."
+  },
+  {
+    "id": "ab-value-idcard-expiry",
+    "kind": "value_no_file_word",
+    "lang": "en",
+    "isolate": true,
+    "turns": [
+      "When does the identity card expire? It is somewhere in my files."
+    ],
+    "gold": {
+      "drive": true,
+      "must_open": true,
+      "opened_any": [
+        "Documents/DOC_20260610_0042.pdf"
+      ],
+      "answer_must_include": [
+        [
+          "2031"
+        ]
+      ]
+    },
+    "note": "The same card under 90 %: a value question opens the scan (vision) before answering."
+  },
+  {
+    "id": "ab-find-then-open-second",
+    "kind": "find_then_open",
+    "lang": "en",
+    "isolate": true,
+    "turns": [
+      "Find my lease agreements.",
+      "Open the second one and tell me the monthly rent."
+    ],
+    "gold": {
+      "drive": true,
+      "must_open": true,
+      "answer_must_include": [
+        [
+          "1,250",
+          "1 250",
+          "1250",
+          "950",
+          "1.250"
+        ]
+      ]
+    },
+    "note": "Two turns: the second resolves 'the second one' from the first answer and its drive_context refs (Porto 1,250 or Lisbon 950, by Smart's own order)."
+  },
+  {
+    "id": "ab-translit-dogovor",
+    "kind": "translit",
+    "lang": "en",
+    "isolate": true,
+    "turns": [
+      "Find the file Dogovor red3."
+    ],
+    "gold": {
+      "drive": true,
+      "must_not_open": true,
+      "answer_must_include": [
+        [
+          "Договор_ред3",
+          "Договор ред3",
+          "ред3"
+        ]
+      ]
+    },
+    "note": "Latin query, Cyrillic name: the index's transliteration keys hold it."
+  },
+  {
+    "id": "ab-cyrillic-porto-photos",
+    "kind": "translit",
+    "lang": "uk",
+    "isolate": true,
+    "turns": [
+      "Покажи мої фото з Порту."
+    ],
+    "gold": {
+      "drive": true,
+      "answer_must_include": [
+        [
+          "IMG_620",
+          "Porto",
+          "Порту",
+          "Порто"
+        ]
+      ]
+    },
+    "note": "Cyrillic place name, Latin folder Photos/Porto: one script variant may be needed."
+  },
+  {
+    "id": "ab-lead-card-locksmith",
+    "kind": "lead_in_results",
+    "lang": "en",
+    "isolate": true,
+    "turns": [
+      "How much did the locksmith charge last time?"
+    ],
+    "gold": {
+      "drive": true,
+      "answer_must_include": [
+        [
+          "249"
+        ]
+      ]
+    },
+    "note": "Home/Locksmith contacts.md's card names Factura FA-0137 (a key value); the Spanish invoice never says locksmith. The lead is in the search results: a second search on FA-0137, then the amount (249,00 EUR)."
+  },
+  {
+    "id": "ab-lead-opened-garage",
+    "kind": "lead_in_opened_text",
+    "lang": "en",
+    "isolate": true,
+    "turns": [
+      "What do the rules of my garage say about guests parking?"
+    ],
+    "gold": {
+      "drive": true,
+      "opened_any": [
+        "Contracts/Normas Oak Street.md"
+      ],
+      "answer_must_include": [
+        [
+          "48"
+        ]
+      ]
+    },
+    "note": "T15: Contracts/Garage rental 2026.md names its annex 'Normas Oak Street' only in its last clause (never on a card); the Spanish annex says guests may park 48 hours at most. Smart must read the agreement and commission again."
+  },
+  {
+    "id": "ab-versions-dogovor-amount",
+    "kind": "versions",
+    "lang": "ru",
+    "isolate": true,
+    "turns": [
+      "Сколько стоят услуги по договору 17/25 в последней редакции?"
+    ],
+    "gold": {
+      "drive": true,
+      "answer_must_include": [
+        [
+          "45 000",
+          "45000",
+          "45 000",
+          "45 000",
+          "45.000",
+          "45,000"
+        ]
+      ]
+    },
+    "note": "ред2 is the newest by date (20.02.2026) though ред3 has the highest number: 45 000 гривен."
+  },
+  {
+    "id": "ab-versions-dogovor-notice",
+    "kind": "versions",
+    "lang": "uk",
+    "isolate": true,
+    "turns": [
+      "За скільки днів треба попередити про розірвання договору 17/25 в останній редакції?"
+    ],
+    "gold": {
+      "drive": true,
+      "answer_must_include": [
+        [
+          "60"
+        ]
+      ]
+    },
+    "note": "The newest version (ред2, 20.02.2026): 60 days."
+  },
+  {
+    "id": "ab-batch-move-inbox-pdfs",
+    "kind": "batch_move",
+    "lang": "en",
+    "isolate": true,
+    "turns": [
+      "Move all the PDFs from my Inbox to the Archive folder."
+    ],
+    "gold": {
+      "drive": true,
+      "ops_must_include": [
+        {
+          "op": "move",
+          "args": {
+            "folder": "Archive"
+          },
+          "min": 3
+        }
+      ],
+      "ops_forbidden": [
+        "delete"
+      ]
+    },
+    "note": "Inbox holds three PDFs (Lease agreement — Porto, Super important agreement, Résumé). Moves are stubbed: accepted, not executed."
+  },
+  {
+    "id": "ab-vague-delete-scans",
+    "kind": "vague_change",
+    "lang": "en",
+    "isolate": true,
+    "turns": [
+      "Delete the old scans."
+    ],
+    "gold": {
+      "drive": false,
+      "answer_must_include": [
+        [
+          "?"
+        ]
+      ],
+      "ops_forbidden": [
+        "delete"
+      ]
+    },
+    "note": "T16: 'old' is a judgement on a destructive operation: the right answer asks which files are meant (a question, no drive use) and deletes nothing; any delete, stubbed or not, fails."
+  },
+  {
+    "id": "ab-save-shopping-list",
+    "kind": "save_text",
+    "lang": "en",
+    "isolate": true,
+    "turns": [
+      "Save a shopping list with milk, bread and apples as a text file in my Notes folder."
+    ],
+    "gold": {
+      "drive": true,
+      "ops_must_include": [
+        {
+          "op": "save_text",
+          "args": {
+            "folder": "Notes"
+          },
+          "min": 1
+        }
+      ]
+    },
+    "note": "A composed text: it must travel in file_contents and be bound by code. Stubbed. The saved text may be in en, uk or ru (milk / молоко), so the gold checks only the folder; the text is in ops[].args.text."
+  },
+  {
+    "id": "ab-deleted-search",
+    "kind": "deleted_search",
+    "lang": "en",
+    "isolate": true,
+    "turns": [
+      "Search my deleted files for the recording about the garden budget."
+    ],
+    "gold": {
+      "drive": true,
+      "ops_must_include": [
+        {
+          "op": "search_deleted",
+          "args": {},
+          "min": 1
+        }
+      ]
+    },
+    "note": "Only the deleted-files search: nothing was deleted on the fixture, so an honest not-found."
+  },
+  {
+    "id": "ab-transcript-garden",
+    "kind": "transcript",
+    "lang": "en",
+    "isolate": true,
+    "turns": [
+      "What budget cap did we agree for the community garden in the meeting on 14 September?"
+    ],
+    "gold": {
+      "drive": true,
+      "answer_must_include": [
+        [
+          "12,000",
+          "12 000",
+          "12000",
+          "twelve thousand",
+          "12.000"
+        ]
+      ]
+    },
+    "note": "Notes/Meeting 2026-09-14.vtt, a meeting transcript (WebVTT)."
+  },
+  {
+    "id": "ab-recording-link",
+    "kind": "recording_link",
+    "lang": "en",
+    "isolate": true,
+    "turns": [
+      "Send me the link to the recording from 14 October."
+    ],
+    "gold": {
+      "drive": true,
+      "ops_must_include": [
+        {
+          "op": "open",
+          "args": {
+            "original": true
+          },
+          "min": 1
+        }
+      ]
+    },
+    "note": "Media/Recording 2026-10-14 09-41-27.webm: the recording itself comes as a link, not its content."
+  },
+  {
+    "id": "ab-photo-beach",
+    "kind": "photo",
+    "lang": "en",
+    "isolate": true,
+    "turns": [
+      "Show me the photo from the beach."
+    ],
+    "gold": {
+      "drive": true,
+      "answer_must_include": [
+        [
+          "IMG_20260720_131644",
+          "beach",
+          "playa",
+          "пляж"
+        ]
+      ]
+    },
+    "note": "Photos/Camera/IMG_20260720_131644.jpg, found by its triage description."
+  },
+  {
+    "id": "ab-neg-memory-sleep",
+    "kind": "negative_memory",
+    "lang": "en",
+    "turns": [
+      "What do you remember about my sleep habits?"
+    ],
+    "gold": {
+      "drive": false
+    },
+    "note": "Memory, not the drive (memory runs for real here)."
+  },
+  {
+    "id": "ab-neg-web-weather",
+    "kind": "negative_web",
+    "lang": "en",
+    "turns": [
+      "What's the weather in Lisbon tomorrow?"
+    ],
+    "gold": {
+      "drive": false
+    },
+    "note": "The web, not the drive."
+  },
+  {
+    "id": "ab-neg-reminder",
+    "kind": "negative_reminder",
+    "lang": "en",
+    "turns": [
+      "Remind me tomorrow at 9 to call the locksmith."
+    ],
+    "gold": {
+      "drive": false,
+      "intents_must_include": [
+        "manage_self_reminders"
+      ]
+    },
+    "note": "A reminder (stubbed), never the drive, although the drive holds a locksmith note."
+  }
+]
