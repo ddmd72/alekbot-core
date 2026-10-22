@@ -61,11 +61,13 @@ async def test_a_two_move_batch_whose_first_is_still_running_never_reports_did_n
     second = asyncio.ensure_future(_call(run, tt.MOVE_FILE, file_ref="drive:b", folder="X"))
     await asyncio.gather(first, second)
     assert [r.outcome.cls for r in collector.results] == [OutcomeClass.STILL_RUNNING, OutcomeClass.NOT_FINISHED]
-    assert collector.results[1].outcome.text == t.NOT_STARTED
+    assert collector.results[1].outcome.text == t.NOT_STARTED_BEHIND
     assert ops.move.await_count == 1   # the second move never reached the service
     answer = compose_answer(collector, DriveReport())
     assert answer.status is DriveStatus.STILL_RUNNING
     assert t.DID_NOT_FINISH not in answer.text
+    # both moves share step 1: the first's line says running; the second's own "not done" is its true verdict
+    assert "1. " + t.OP_RUNNING + ":" in answer.text
     assert fired == [True]
 
 
@@ -87,6 +89,7 @@ async def test_a_started_append_cut_by_the_deadline_is_still_running_never_not_d
     answer = compose_answer(collector, DriveReport(), cut=True)
     assert answer.status is DriveStatus.STILL_RUNNING
     assert t.DID_NOT_FINISH not in answer.text and "may complete" in answer.text
+    assert "1. " + t.OP_NOT_DONE + ":" not in answer.text and "1. " + t.OP_RUNNING + ":" in answer.text
 
 
 async def test_a_change_cancelled_while_queued_is_still_not_started(ops):

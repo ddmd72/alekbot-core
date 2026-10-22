@@ -22,7 +22,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -114,6 +114,56 @@ def build_parser() -> argparse.ArgumentParser:
     return ap
 
 
+async def run_scenarios(smart: Any, meter: Any, user_id: str, account_id: str, runs: int,
+                        max_usd: float) -> Tuple[str, int, Dict[str, int]]:
+    """Run every scenario; the patched context loader and the cost meter are restored even when a run raises."""
+    original_load = smart._load_conversation_context
+    _install_capture()
+    uninstall = meter.install()
+    try:
+        stopped = ""
+        failures = 0
+        passes: Dict[str, int] = {}
+        for sc in SCENARIOS:
+            seed = sc.get("seed", [])
+
+            async def seeded(*args, _seed=seed, **kwargs):
+                return list(_seed) + await original_load(*args, **kwargs)
+
+            smart._load_conversation_context = seeded
+            for run in range(runs):
+                CALLS.clear()
+                msg = AgentMessage.create(
+                    sender="drive_routing_probe", recipient=smart.agent_id, intent=AgentIntent.QUERY,
+                    payload={"text": sc["text"]},
+                    context={"user_id": user_id, "account_id": account_id,
+                             "session_id": f"{user_id}:drive_routing_probe",
+                             "current_message_parts": [MessagePart(text=sc["text"])]},
+                )
+                try:
+                    async with RequestContext(user_id=user_id, account_id=account_id):
+                        await smart.execute(msg)
+                except CostCapReached as exc:
+                    stopped = str(exc)
+                    break
+                if meter.spent >= max_usd or meter.capped:
+                    stopped = f"spent ${meter.spent:.4f} of --max-usd {max_usd}"
+                intents = [c["intent"] for c in CALLS]
+                ok = judge_run(sc, CALLS)
+                failures += 0 if ok else 1
+                passes[sc["text"][:50]] = passes.get(sc["text"][:50], 0) + (1 if ok else 0)
+                queries = [c["query"][:120] for c in CALLS if c["intent"] == DRIVE]
+                print(f"{'OK ' if ok else 'BAD'} [{run + 1}] {sc['text'][:50]!r} → {intents} queries={queries}")
+                if stopped:
+                    break
+            if stopped:
+                break
+    finally:
+        smart._load_conversation_context = original_load
+        uninstall()
+    return stopped, failures, passes
+
+
 async def main(runs: int, max_usd: float) -> int:
     user_id, account_id = os.environ["DEV_USER_ID"], os.environ["DEV_ACCOUNT_ID"]
     db = firestore.AsyncClient(database=os.getenv("FIRESTORE_DATABASE", "us-production"))
@@ -128,49 +178,8 @@ async def main(runs: int, max_usd: float) -> int:
     factory = UserAgentFactory(config=settings, env_config=env_config, coordinator=AgentCoordinator(registry=registry),
                                user_repo=user_repo, account_repo=account_repo, **container.agent_services())
     smart = (await factory.ensure_agents_for_user(user_id))["smart_agent"]
-    original_load = smart._load_conversation_context
-    _install_capture()
     meter = Meter(max_usd=max_usd)
-    uninstall = meter.install()
-    stopped = ""
-    failures = 0
-    passes: Dict[str, int] = {}
-    for sc in SCENARIOS:
-        seed = sc.get("seed", [])
-
-        async def seeded(*args, _seed=seed, **kwargs):
-            return list(_seed) + await original_load(*args, **kwargs)
-
-        smart._load_conversation_context = seeded
-        for run in range(runs):
-            CALLS.clear()
-            msg = AgentMessage.create(
-                sender="drive_routing_probe", recipient=smart.agent_id, intent=AgentIntent.QUERY,
-                payload={"text": sc["text"]},
-                context={"user_id": user_id, "account_id": account_id,
-                         "session_id": f"{user_id}:drive_routing_probe",
-                         "current_message_parts": [MessagePart(text=sc["text"])]},
-            )
-            try:
-                async with RequestContext(user_id=user_id, account_id=account_id):
-                    await smart.execute(msg)
-            except CostCapReached as exc:
-                stopped = str(exc)
-                break
-            if meter.spent >= max_usd or meter.capped:
-                stopped = f"spent ${meter.spent:.4f} of --max-usd {max_usd}"
-            intents = [c["intent"] for c in CALLS]
-            ok = judge_run(sc, CALLS)
-            failures += 0 if ok else 1
-            passes[sc["text"][:50]] = passes.get(sc["text"][:50], 0) + (1 if ok else 0)
-            queries = [c["query"][:120] for c in CALLS if c["intent"] == DRIVE]
-            print(f"{'OK ' if ok else 'BAD'} [{run + 1}] {sc['text'][:50]!r} → {intents} queries={queries}")
-            if stopped:
-                break
-        if stopped:
-            break
-    smart._load_conversation_context = original_load
-    uninstall()
+    stopped, failures, passes = await run_scenarios(smart, meter, user_id, account_id, runs, max_usd)
     for text, n in passes.items():
         print(f"PASS {n}/{runs}  {text!r}")
     print(f"spent ${meter.spent:.4f} of --max-usd {max_usd}")

@@ -25,6 +25,7 @@ NOT_ATTACHED = ("Nothing was written: the text was not attached. Commission agai
 OP_LINE = "{step}. {verdict}: {text}"
 OP_DONE = "done"
 OP_NOT_DONE = "not done"
+OP_RUNNING = "still running"
 READING_PREFIX = "Reading: "
 NOTE_PREFIX = "Specialist note: "
 NOTE_MAX_CHARS = 300
@@ -45,6 +46,7 @@ STAND_IN_FILE = "[{handle}: {label} ({mime}) attached for the orchestrator]"
 SAME_SEARCH = "[same as {handle}: this exact search already ran in this request; its result is above. Not run again.]"
 DID_NOT_FINISH = "did not finish in time"
 NOT_STARTED = "not started: the time for this request ran out"
+NOT_STARTED_BEHIND = "not started: an earlier change in this request is still running"
 NO_ITEM = ("No file_contents item '{value}' (items: {known}). Nothing was written: the text must come from the "
            "orchestrator in file_contents.")
 NO_ITEMS = "none"

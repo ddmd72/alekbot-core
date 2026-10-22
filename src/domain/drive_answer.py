@@ -124,7 +124,8 @@ def compose_answer(collector: PassThroughCollector, report: DriveReport, *, cut:
     if state_line and state_line != line:
         out.append(state_line)
     for r in all_changes:
-        verdict = t.OP_DONE if r.outcome.cls in _DONE else t.OP_NOT_DONE
+        verdict = (t.OP_DONE if r.outcome.cls in _DONE
+                   else t.OP_RUNNING if r.outcome.cls is OutcomeClass.STILL_RUNNING else t.OP_NOT_DONE)
         out.append(t.OP_LINE.format(step=r.step, verdict=verdict, text=r.outcome.text))
     out.extend(t.READING_PREFIX + line for line in reading)
     if report.note:
