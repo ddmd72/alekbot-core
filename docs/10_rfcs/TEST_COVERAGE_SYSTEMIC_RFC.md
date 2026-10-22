@@ -589,8 +589,8 @@ emulator (31 of 34; it does not refuse a missing index) and the test database. D
   `NotFound`). P3's open points are settled: `!=` excludes a field set to null, and a precondition on a deleted document is `FailedPrecondition`.
   Every `# P5 verifies` comment now carries its verdict. Review round 1 added two scenarios (filters on two range fields added in reverse order;
   equality plus `array_contains_any`), a reference and a vector in the type order, document ids that run against the value order, and an
-  observable distance-field check; H1's index requirement now sorts the range fields as its implicit ordering does. These pass on H1 and the
-  emulator and are still to be confirmed on the test database.
+  observable distance-field check; H1's index requirement now sorts the range fields as its implicit ordering does. All 34 scenarios are
+  confirmed on the test database (2026-10-22, 34 of 34 in 59 s), the vector `order_by` in the type order included.
 - **Transactions.** The conflict scenario runs two transactions with staggered starts, not three in lock step: the emulator's lock timeouts
   exhausted the SDK's five attempts in 3 of 8 runs (three) and 4 of 15 (two in lock step), and none in 20 staggered runs.
 - **Index creation on the test database is a fixture** (Admin API, fixed collection ids `test_parity_idx_*`, created once, READY wait 15 min), not
