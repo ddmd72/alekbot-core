@@ -27,6 +27,7 @@ def _listener(family=socket.AF_INET, host="127.0.0.1"):
 class TestSocketGuard:
     def test_connect_to_a_public_address_raises(self):
         client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        client.settimeout(1)
         try:
             with pytest.raises(SocketConnectBlockedError, match=PUBLIC_IP):
                 client.connect((PUBLIC_IP, 443))
@@ -43,6 +44,34 @@ class TestSocketGuard:
                 client.connect(("2001:db8::1", 443, 0, 0))
         finally:
             client.close()
+
+    def test_connect_ex_to_a_public_address_raises_too(self):
+        client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            with pytest.raises(SocketConnectBlockedError, match=PUBLIC_IP):
+                client.connect_ex((PUBLIC_IP, 443))
+        finally:
+            client.close()
+
+    def test_connect_ex_to_loopback_works(self):
+        server = _listener()
+        client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        client.settimeout(2)
+        try:
+            assert client.connect_ex(server.getsockname()) == 0
+        finally:
+            client.close()
+            server.close()
+
+    def test_a_loopback_proxy_variable_cannot_tunnel_out(self, monkeypatch):
+        """Cloud sessions set HTTPS_PROXY to a loopback port; honoured, it would carry requests past the socket guard."""
+        import requests
+
+        monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:9")
+        monkeypatch.setenv("https_proxy", "http://127.0.0.1:9")
+        network_guard.install(monkeypatch)
+        with pytest.raises(SocketConnectBlockedError, match=PUBLIC_IP):
+            requests.get(f"https://{PUBLIC_IP}/", timeout=2)
 
     def test_create_connection_to_a_public_address_raises(self):
         with pytest.raises(SocketConnectBlockedError):

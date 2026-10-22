@@ -77,14 +77,20 @@ class TestFloors:
         violations, rises, unfloored = layers.check(totals, floors)
         assert [v.split(":")[0] for v in violations] == ["src/web"] and unfloored == []
 
-    def test_at_the_floor_passes_and_half_a_point_above_prints_the_rise(self):
+    def test_at_the_floor_passes_and_the_rise_is_suggested_only_past_the_noise_margin(self):
         floors = {name: 100.0 for name, _ in layers.LAYERS}
         floors["src/web"] = 63.0
         floors["src/adapters"] = 60.0
-        totals = self.totals(src_web=63.4, src_adapters=60.5)
+        floors["src/domain"] = 60.0
+        # web: 63.4 - 0.3 = 63.1, 0.1 above its floor: quiet. adapters: 60.7 gives 60.4 (still < 0.5 above): quiet.
+        # domain: 61.0 gives 60.7, 0.7 above: suggested.
+        totals = self.totals(src_web=63.4, src_adapters=60.7, src_domain=61.0)
         violations, rises, _ = layers.check(totals, floors)
         assert violations == []
-        assert len(rises) == 1 and "src/adapters" in rises[0] and "floor can rise to 60.5" in rises[0]
+        assert len(rises) == 1 and "src/domain" in rises[0] and "floor can rise to 60.7" in rises[0]
+
+    def test_the_noise_margin_is_0_3_pp(self):
+        assert layers.NOISE_PP == 0.3
 
     def test_a_layer_without_a_floor_fails_the_gate(self):
         _, _, unfloored = layers.check(self.totals(), {})
@@ -111,6 +117,23 @@ class TestEntryPointsNoTestImports:
             (tmp_path / name).write_text("x = 1\n")
         files = {"relay_main.py": summary(1, 1)}
         assert layers.missing_entry_points(files) == ["main.py"]
+
+
+class TestMainCountsAnUnimportedEntryPoint:
+    def test_a_root_entry_point_absent_from_the_json_is_added_as_zero_percent(self, monkeypatch, tmp_path, capsys):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "main.py").write_text("x = 1\n")
+        (tmp_path / "relay_main.py").write_text("y = 1\n")
+        report = tmp_path / "coverage.json"
+        report.write_text(json.dumps({"files": {"relay_main.py": summary(9, 9)}}))
+        monkeypatch.setattr(layers, "COVERAGE_JSON", str(report))
+        monkeypatch.setattr(layers, "COVERAGERC", str(tmp_path / "none"))
+        layers.main()
+        out = capsys.readouterr().out
+        assert "main.py is imported by no test: counted as 0 %" in out
+        assert "relay_main.py is imported" not in out
+        root = next(line for line in out.splitlines() if line.startswith("root entry points"))
+        assert root.split()[3:6] == ["10", "0", "90.0"]  # relay_main's 9 covered statements + main.py's 1 missed one
 
 
 class TestScript:

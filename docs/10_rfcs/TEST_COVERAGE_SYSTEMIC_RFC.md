@@ -542,6 +542,7 @@ semantic-mutation driver (`python -m tests.support.semantic_mutants`) and the re
   (100 % of lines, 4 untaken branches) would fall below its 100.0 entry. `check_coverage_thresholds.py` now reads
   `percent_statements_covered`, so every entry means what it meant when written; raising entries to the branch-aware value is the
   owner's call (the per-layer floors hold the branches).
+- **Floors carry a 0.3 pp noise margin** below the measured value (owner decision 2026-10-22; deviates from §7 decision 3 'at today's values').
 - **The global `--cov-fail-under=70` stays.** Line coverage under the old config was 90.6 %; branch-aware under the new one 87.9 %
   (never-imported files now count at 0 %). Both are far above 70, so the number is unchanged.
 - **The module check is `slow`** (parsing ~1 300 test files takes ~3 s), so it runs in `make ci`, not in `make check`.
