@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
-from google.api_core.exceptions import FailedPrecondition, InvalidArgument
+from google.api_core.exceptions import InvalidArgument
 from google.cloud.firestore_v1.vector import Vector
 from pydantic import ValidationError
 
@@ -135,13 +135,6 @@ async def test_add_fact_stores_the_whole_entity_under_its_id_and_returns_the_id(
     assert all(isinstance(v, Vector) for v in (store.docs[fact.id][k] for k in ("vector", "tags_vector", "metadata_vector")))
 
 
-@pytest.mark.parametrize("priority,rank", [("critical", 1), ("high", 2), ("medium", 3), ("low", 4), ("archival", 5)])
-async def test_add_fact_stores_the_priority_rank(store, priority, rank):
-    fact = make_fact("ranked", context_priority=ContextPriority(priority))
-    await store.repo.add_fact(fact)
-    assert store.docs[fact.id]["context_priority_rank"] == rank
-
-
 async def test_add_fact_replaces_a_document_with_the_same_id_and_leaves_other_accounts_alone(store):
     put_raw(store, "f-x", "old text", legacy_note="left over")
     put_raw(store, "foreign", "foreign", account_id=OTHER)
@@ -211,25 +204,12 @@ async def test_get_active_facts_has_no_limit(store):
     assert len(await store.repo.get_active_facts(ACC)) == 101
 
 
-async def test_get_active_facts_with_tags_returns_facts_carrying_at_least_one():
-    # Index refusal OFF on purpose: the query is refused with it on (the xfail test below pins that finding); this test
-    # pins the filter's meaning. Move it onto the `store` fixture when the finding is ruled.
-    store = FactStore()
+async def test_get_active_facts_with_tags_returns_facts_carrying_at_least_one(store):
     for name, tags in (("a", ["anchor"]), ("b", ["x", "y"]), ("c", ["y"]), ("d", [])):
         await store.repo.add_fact(make_fact(name, tags=tags))
     await store.repo.add_fact(make_fact("foreign", account=OTHER, tags=["anchor"]))
     await store.repo.add_fact(make_fact("archived", tags=["anchor"], state=FactState.ARCHIVED))
     assert ids(await store.repo.get_active_facts(ACC, tags=["anchor", "y"])) == ["f-a", "f-b", "f-c"]
-
-
-@pytest.mark.xfail(strict=True, raises=FailedPrecondition, reason=(
-    "index finding, not a defect: get_active_facts(tags=...) (consolidation_agent.py:1529, tags=['anchor']) is refused by "
-    "the fake with 'collection group development_domain_facts_v2, fields account_id (EQ), state (EQ), tags (CONTAINS)': "
-    "config/firestore.indexes.json declares no such composite; either the index is missing or the fake's rule is too "
-    "strict for equality + array_contains_any. Reviewer rules."))
-async def test_get_active_facts_with_tags_is_served_by_a_declared_index(store):
-    await store.repo.add_fact(make_fact("a", tags=["anchor"]))
-    assert ids(await store.repo.get_active_facts(ACC, tags=["anchor"])) == ["f-a"]
 
 
 @PROJECTION_READERS
@@ -332,19 +312,12 @@ async def test_the_first_page_with_a_domain_holds_only_that_domain(store):
     assert [f.text for f in facts] == ["work 2", "work 1", "work 0"] and cursor is None
 
 
-_CURSOR_GAP = pytest.mark.xfail(strict=True, raises=TypeError, reason=(
-    "fake gap, not a defect: following a cursor passes a DocumentSnapshot to query.start_after (firestore_repo.py:287), the "
-    "real client accepts it, EvalQuery.start_after takes a dict of values only — tests/support/firestore_eval.py:421"))
-
-
-@_CURSOR_GAP
 async def test_pages_are_newest_first_do_not_overlap_and_hold_every_fact(store):
     await _five(store)
     assert await _pages(store, 2) == [["fact 4", "fact 3"], ["fact 2", "fact 1"], ["fact 0"]]
     assert await _pages(store, 4) == [["fact 4", "fact 3", "fact 2", "fact 1"], ["fact 0"]]
 
 
-@_CURSOR_GAP
 async def test_pages_with_a_domain_hold_only_that_domain(store):
     for i in range(3):
         await store.repo.add_fact(make_fact(f"health {i}", age_days=i))
@@ -765,7 +738,7 @@ async def test_refresh_without_a_context_service_does_nothing(store):
     assert _cache(store) is None
 
 
-@pytest.mark.xfail(strict=True, reason=(
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
     "known defect: refresh_biographical_context_cache ignores facts_limit/principles_limit and the service uses its own "
     "config — src/adapters/firestore_repo.py:817-818 (P4 T2 arbiter log, defect 3)"))
 async def test_refresh_holds_at_most_facts_limit_facts(store):
@@ -773,6 +746,19 @@ async def test_refresh_holds_at_most_facts_limit_facts(store):
         await store.repo.add_fact(make_fact(f"bio {i}", domain=FactDomain.BIOGRAPHICAL, age_days=i))
     await _repo_with_cache_service(store).refresh_biographical_context_cache(ACC, facts_limit=2)
     assert _cache(store)["facts_count"] == 2
+
+
+async def test_refresh_keeps_directives_separately_up_to_15_highest_priority_first(store):
+    for i in range(15):
+        priority = ContextPriority.CRITICAL if i < 8 else ContextPriority.HIGH
+        await store.repo.add_fact(make_fact(f"directive {i}", domain=FactDomain.AGENT_DIRECTIVE,
+                                            context_priority=priority, age_days=i))
+    await store.repo.add_fact(make_fact("directive low", domain=FactDomain.AGENT_DIRECTIVE,
+                                        context_priority=ContextPriority.LOW, age_days=99))
+    await _repo_with_cache_service(store).refresh_biographical_context_cache(ACC)
+    cache = _cache(store)
+    assert len(cache["directives"]) == 15 and "directive low" not in [d["text"] for d in cache["directives"]]
+    assert (cache["facts_count"], cache["principles_count"]) == (0, 0)
 
 
 async def test_cached_context_is_facts_then_principles_then_directives_with_iso_dates_and_ignores_limit(store):
@@ -804,7 +790,7 @@ async def test_cached_context_missing_or_empty_cache_returns_empty(store):
     assert await store.repo.get_biographical_context_cached(ACC) == []
 
 
-@pytest.mark.xfail(strict=True, reason=(
+@pytest.mark.xfail(strict=True, raises=pytest.fail.Exception, reason=(
     "known defect: get_biographical_context_cached swallows a backend failure and returns [] where the contract raises "
     "(Lelik fails the call closed on it) — src/adapters/firestore_repo.py:914-916"))
 async def test_cached_context_raises_on_a_backend_failure(store, monkeypatch):

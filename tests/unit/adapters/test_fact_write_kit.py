@@ -163,7 +163,7 @@ async def test_returns_saved_count_skipped_count_and_the_ids_in_input_order_when
     assert (saved, skipped) == (3, 0) and len(ids) == saved and texts_of(store, ids) == ["a fact", "b fact", "c fact"]
 
 
-@pytest.mark.xfail(strict=True, reason=(
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
     "known defect: add_facts_batch appends to saved_ids only when deduplication is skipped, so with dedup len(saved_ids) != "
     "saved_count — src/services/fact_write_service.py:188-199 (P4 T2 arbiter defect 4)"))
 async def test_saved_ids_hold_every_stored_fact_in_input_order_with_deduplication(store):
