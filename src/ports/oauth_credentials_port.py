@@ -22,7 +22,8 @@ class OAuthCredentialsPort(ABC):
     - Legacy documents: a missing needs_reconnect reads as False, a missing or null drive_id as "". A document
       missing any other field raises in get_credentials (observed).
     - Atomicity: one document per write, no compare-and-set, last writer wins. Callers set needs_reconnect by get
-      + save and accept that race (decisions/gmail_grant_revoked_reconnect.md).
+      + save and accept the race between saves (decisions/gmail_grant_revoked_reconnect.md); that save, like a
+      refresh, also re-creates a record revoked meanwhile (worker_handler.py:1019-1025; see save_credentials).
     - Errors: backend errors propagate; no method turns an error into "connected" or "not connected".
     """
 
@@ -52,7 +53,10 @@ class OAuthCredentialsPort(ABC):
     @abstractmethod
     async def revoke_credentials(self, user_id: str, provider: str) -> None:
         """Delete the record of (user_id, provider): get_credentials then returns None, is_connected False, and
-        list_users_by_provider omits the user. Revoking the grant at the provider is the caller's job, done first.
+        list_users_by_provider omits the user.
+
+        Provider-side revocation is not part of this method; Gmail and Google Tasks disconnects revoke first, OneDrive
+            and To Do do not (onedrive_adapter.py:247, task_setup_service.py:233).
 
         Idempotency: an absent record is a no-op, no error.
         Tenancy: the user's records for other providers stay.
@@ -60,7 +64,8 @@ class OAuthCredentialsPort(ABC):
 
     @abstractmethod
     async def is_connected(self, user_id: str, provider: str) -> bool:
-        """True exactly when get_credentials returns a record; needs_reconnect and token_expiry are not considered."""
+        """True exactly when a record of (user_id, provider) exists, including one get_credentials raises on;
+        needs_reconnect and token_expiry are not considered."""
 
     @abstractmethod
     async def list_connected_providers(self, user_id: str) -> List[str]:
