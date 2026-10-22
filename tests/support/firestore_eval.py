@@ -39,7 +39,8 @@ this module imports nothing from it). Documents are nested dicts. Evaluated, not
 Not a Firestore emulator: only what the repositories in this codebase use. Known gaps, deliberately not built:
 a write that changes nothing bumps `update_time` here while real Firestore keeps it (harmless where every write sets a
 timestamp field of its own); a read-time `Aborted` is modelled only through `raise_on_txn_read`; an `update_time` token
-is an int here and a `DatetimeWithNanoseconds` on the real client, so compare it for equality only, never order it;
+is an int here (one DB-wide stamp per commit, shared by every write of a batch or transaction commit) and a
+`DatetimeWithNanoseconds` on the real client, so compare it for equality only, never order it;
 `list_documents()` lists stored documents only (real Firestore also lists "missing" parents that have subcollections);
 transactions give no phantom protection (a query that returned nothing is not protected, so a check-then-set such as
 `firestore_user_repo.link_platform_identity` is not serialised, while real transactions are serializable); single-field
@@ -347,6 +348,7 @@ class EvalDocRef:
     async def get(self, transaction: Any = None, field_paths: Optional[List[str]] = None) -> EvalSnap:
         interference = None
         if transaction is not None:
+            transaction._check_read_allowed()
             self.col.db._raise_if_queued(self)
             interference = self.col.db._next_interference(self)
             if interference is not None and not interference[1]:
@@ -380,9 +382,12 @@ class EvalDocRef:
             raise FailedPrecondition(f"Document changed: {self.col.name}/{self.id}")
 
     def _apply(self, kind: str, data: Optional[Dict[str, Any]] = None, extra: Any = None,
-               by_transaction: bool = False) -> WriteResult:
-        """The one place a document changes: single writes, batches and transaction commits all end here."""
+               by_transaction: bool = False, stamp: Optional[int] = None) -> WriteResult:
+        """The one place a document changes: single writes, batches and transaction commits all end here. `stamp` is the
+        commit's token (one per batch or transaction commit); a single write takes a new one."""
         col = self.col
+        if stamp is None:
+            stamp = col.db._tick()
         sink: Sink = []
         if kind == "create":
             if self.id in col.docs:
@@ -420,7 +425,7 @@ class EvalDocRef:
             raise AssertionError(f"unknown write {kind}")
         if kind != "delete":
             col.docs[self.id] = stored
-        col.versions[self.id] = col.versions.get(self.id, 0) + 1
+        col.versions[self.id] = stamp
         if by_transaction:
             col.txn_versions[self.id] = col.txn_versions.get(self.id, 0) + 1
         return _result(sink)
@@ -596,7 +601,7 @@ class EvalCollection(EvalQuery):
         super().__init__(db, [self], [])
         self.name = name
         self.docs: Dict[str, Dict[str, Any]] = {}
-        self.versions: Dict[str, int] = {}        # bumped by every write: the snapshot's `update_time`
+        self.versions: Dict[str, int] = {}        # the DB-wide commit stamp of the last write: the snapshot's `update_time`
         self.txn_versions: Dict[str, int] = {}    # bumped by transaction commits only: what aborts a transaction
         self.executed: List[List[tuple]] = []
         self.fail: Optional[Exception] = None
@@ -797,6 +802,7 @@ class EvalDb:
         collection is looked up under its own last path segment)."""
         self.cols: Dict[str, EvalCollection] = {}
         self.commits: List[List[tuple]] = []
+        self._clock = 0
         self._interference: Dict[Tuple[str, str], List[Tuple[Dict[str, Any], bool]]] = {}
         self._raises: Dict[Tuple[str, str], List[BaseException]] = {}
         self.declared = _load_indexes(indexes)
@@ -819,9 +825,16 @@ class EvalDb:
     def batch(self) -> EvalBatch:
         return EvalBatch(self)
 
+    def _tick(self) -> int:
+        """The next commit stamp: DB-wide and increasing, so two documents written in different commits never share a
+        snapshot token (compare for equality only)."""
+        self._clock += 1
+        return self._clock
+
     def _commit_writes(self, writes: List[tuple], by_transaction: bool = False) -> None:
         """Apply the writes in order, all or none: a failing write restores every document the commit touched
         (stored documents are replaced, never changed in place, so the old objects are the backup)."""
+        stamp = self._tick()
         backup: Dict[Tuple[str, str], tuple] = {}
         for _, ref, _, _ in writes:
             col = ref.col
@@ -829,7 +842,7 @@ class EvalDb:
                                                    col.versions.get(ref.id, _MISSING), col.txn_versions.get(ref.id, _MISSING)))
         try:
             for kind, ref, data, extra in writes:
-                ref._apply(kind, data, extra, by_transaction=by_transaction)
+                ref._apply(kind, data, extra, by_transaction=by_transaction, stamp=stamp)
         except BaseException:
             for (_, doc_id), (col, doc, version, txn_version) in backup.items():
                 for store, old in ((col.docs, doc), (col.versions, version), (col.txn_versions, txn_version)):
@@ -844,7 +857,8 @@ class EvalDb:
 
     def interfere_on_txn_read(self, collection: str, doc_id: str, fields: Dict[str, Any], after_read: bool = False) -> None:
         """Queue one update of `fields` (an `update`: dotted keys are paths) that another transaction commits when the
-        next transactional `get` of the document happens. By default it lands before the snapshot is taken, so the
+        next transactional `get` of the document happens (`EvalDocRef.get(transaction=)` and `get_all`; a query is not
+        hooked). On a missing document the update raises `NotFound` from the reader's `get`. By default it lands before the snapshot is taken, so the
         reader sees the new data and `update_time`; with `after_read=True` it lands after, so the reader holds the old
         snapshot and its commit aborts and re-runs the body. Each call queues one conflict, consumed by one read."""
         self._interference.setdefault((collection, doc_id), []).append((fields, after_read))

@@ -4,6 +4,7 @@ decorated with the plain `firestore.async_transactional`."""
 import pytest
 from google.api_core.exceptions import Aborted
 from google.cloud import firestore
+from unittest.mock import patch
 
 from tests.support.firestore_eval import EvalDb, dispatching_transactions, eval_transactions
 
@@ -14,10 +15,9 @@ def db():
 
 
 @pytest.fixture
-def col(db):
+async def col(db):
     c = db.collection("c")
-    c.docs["a"] = {"v": 1}
-    c.versions["a"] = 1
+    await c.document("a").set({"v": 1})
     return c
 
 
@@ -110,9 +110,6 @@ async def test_dispatching_decorator_runs_the_original_for_a_non_eval_transactio
     class Plain:
         pass
 
-    with eval_transactions():       # stands for whatever was installed before the dispatcher
-        pass
-    from unittest.mock import patch
     with patch("google.cloud.firestore.async_transactional", new=original), dispatching_transactions():
         @firestore.async_transactional
         async def body(tx, arg):
@@ -134,3 +131,52 @@ async def test_eval_transactions_installs_a_distinct_object():
         second = firestore.async_transactional
     assert first is not before and second is not before and first is not second
     assert firestore.async_transactional is before
+
+
+async def test_separately_written_documents_carry_different_tokens(db):
+    c = db.collection("c")
+    await c.document("a").set({"v": 1})
+    await c.document("b").set({"v": 1})
+    snaps = {s.id: s async for s in db.get_all([c.document("a"), c.document("b")])}
+    assert snaps["a"].update_time != snaps["b"].update_time
+
+
+async def test_one_commit_gives_every_write_the_same_token_and_a_later_commit_a_larger_one(db):
+    c = db.collection("c")
+    batch = db.batch()
+    batch.set(c.document("a"), {"v": 1})
+    batch.set(c.document("b"), {"v": 1})
+    await batch.commit()
+    first = {i: (await c.document(i).get()).update_time for i in ("a", "b")}
+    await c.document("a").update({"v": 2})
+    later = (await c.document("a").get()).update_time
+    assert first["a"] == first["b"] and later > first["a"]
+
+
+async def test_positional_pairing_against_reversed_get_all_is_detected(db):
+    c = db.collection("c")
+    refs = [c.document("a"), c.document("b")]
+    await refs[0].set({"v": 1})
+    await refs[1].set({"v": 1})
+    expected = {i: (await c.document(i).get()).update_time for i in ("a", "b")}
+    got = [snap async for snap in db.get_all(refs, transaction=db.transaction())]
+    by_position = {ref.id: snap.update_time for ref, snap in zip(refs, got)}
+    by_id = {snap.id: snap.update_time for snap in got}
+    assert by_position != expected      # a positional pairing mismatches every source
+    assert by_id == expected
+
+
+async def test_a_read_after_a_write_in_the_body_still_raises_before_a_queued_error(db, col):
+    from google.cloud.firestore_v1 import ReadAfterWriteError
+
+    db.raise_on_txn_read("c", "a", Aborted("queued"))
+
+    @firestore.async_transactional
+    async def body(tx):
+        tx.set(col.document("x"), {"v": 0})
+        await col.document("a").get(transaction=tx)
+
+    with pytest.raises(ReadAfterWriteError):
+        await body(db.transaction())
+    with pytest.raises(Aborted):                 # the queued error was not consumed by the refused read
+        await _reader(col, [])(db.transaction())
