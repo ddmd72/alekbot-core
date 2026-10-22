@@ -560,6 +560,7 @@ class TestSaveVersionWithFiles:
 
 # --- delete_skill -------------------------------------------------------------------------
 
+@pytest.mark.slow
 async def test_delete_skill_removes_files_via_list_documents(repo, db, col):
     batches = []
 
