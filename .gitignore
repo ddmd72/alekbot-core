@@ -193,6 +193,7 @@ cython_debug/
 .cursorindexingignore
 # Local memory and sensitive data
 memory/
+!docs/05_building_blocks/memory/
 docs/facts_dif.md
 backups/
 
