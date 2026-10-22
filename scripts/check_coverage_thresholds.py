@@ -67,7 +67,7 @@ THRESHOLDS: Dict[str, float] = {
 
     # Floor reflecting current state (post-RFC actual ≈ 91%). Pre-existing
     # uncovered branches: dispatch lines unexercised by direct method-call
-    # tests, deep_research_polling retry path, daily_email_review failure
+    # tests, deep_research_webhook_event retry path, daily_email_review failure
     # path. Lifting this floor requires its own RFC.
     "src/handlers/worker_handler.py": 90.0,
 }

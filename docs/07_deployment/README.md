@@ -1021,13 +1021,22 @@ working implementation).
 
 **Last Updated:** 2026-03-14
 
+## S1b deploy order
+
+The consolidation and companion queues now read the oldest pending batch first (`order_by created_at`). Their two
+composite indexes in `config/firestore.indexes.json` (`development_consolidation_queue`: `user_id`, `status`,
+`created_at`; `development_companion_extraction_queue`: `session_id`, `status`, `created_at`) must be `READY`
+**before** the code is deployed, otherwise those queries fail. Issue them with the `deploy-indexes` Make target
+(`PROJECT_ID=<PROJECT_ID>`), wait until both are `READY`, then deploy the code.
+
 ## Cloud Tasks redelivery dedup
 
 `docs/04_solution_strategy/decisions/worker_task_dedup.md`. Two one-time owner steps, neither blocks
 a deploy:
 
-1. **TTL policy on the task-claim collection** (per database). Each `agent_execution` delivery
-   creates a claim document with `expires_at` 30 min after creation; without the policy they are
+1. **TTL policy on the task-claim collection** (per database). Every Cloud Tasks delivery to `/worker`
+   creates a claim document with `expires_at` 1 h after creation; the same collection holds 48 h
+   daily-review marks and 72 h OpenAI deep-research webhook claims. Without the policy they are
    never deleted:
    ```bash
    gcloud firestore fields ttls update expires_at --collection-group=<prefix>worker_task_dedup \
