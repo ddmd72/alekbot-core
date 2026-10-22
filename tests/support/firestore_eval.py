@@ -62,7 +62,10 @@ class EvalDocRef(_base.EvalDocRef):
         await super().set(data, merge)
         self._bump()
 
-    async def delete(self) -> None:
+    async def delete(self, option: Optional[WriteOption] = None) -> None:
+        wanted = None if option is None else option.last_update_time
+        if wanted is not None and self.col.__dict__.get("versions", {}).get(self.id, 0) != wanted:
+            raise FailedPrecondition(f"Document changed: {self.col.name}/{self.id}")
         await super().delete()
         self._bump()
 

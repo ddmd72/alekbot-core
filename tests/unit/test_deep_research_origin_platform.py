@@ -18,6 +18,7 @@ from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentRespon
 from src.domain.user import PerformanceTier
 from src.ports.deep_research_port import DeepResearchPort
 from src.ports.job_runner_port import JobRunnerPort
+from src.ports.task_claim_store import TaskClaimStore
 from src.handlers.worker_handler import WorkerHandler
 from src.web.deep_research_webhooks import create_deep_research_webhooks_blueprint
 
@@ -144,7 +145,7 @@ async def _post_webhook(app, event_type, data):
                             headers={"Content-Type": "application/json"})
 
 
-def _dr_worker(response=None, notification=None, task_dedup=None):
+def _dr_worker(response=None, notification=None, task_claims=None):
     notification = notification or AsyncMock()
     if notification.notify.side_effect is None:
         notification.notify.return_value = MagicMock(delivered=True, sent=True, error=None)
@@ -153,7 +154,7 @@ def _dr_worker(response=None, notification=None, task_dedup=None):
         notification_service=notification, consolidation_service=None,
         coordinator=MagicMock(), agent_factory=AsyncMock(),
         indexed_email_repo=None, user_repo=MagicMock(), task_dispatch=AsyncMock(),
-        media_storage=MagicMock(), task_dedup=task_dedup,
+        media_storage=MagicMock(), task_claims=task_claims,
         deep_research_fetch=AsyncMock(return_value=response or {"output_text": "text", "model": "m"}),
     )
     return worker, notification
@@ -305,6 +306,27 @@ class _FakeDedup:
         self.released.append(key)
 
 
+class _FakeClaims(TaskClaimStore):
+    """The worker's task claim (TaskClaimStore, two-argument try_claim); one process, no expiry."""
+
+    def __init__(self):
+        self.claims, self.released = {}, []
+
+    async def try_claim(self, key, attempt):
+        held = self.claims.get(key)
+        if held is not None and held["attempt"] != attempt and held["state"] == "done":
+            return False
+        self.claims[key] = {"attempt": attempt, "state": "running"}
+        return True
+
+    async def mark_done(self, key, attempt):
+        if self.claims.get(key, {}).get("attempt") == attempt:
+            self.claims[key]["state"] = "done"
+
+    async def release(self, key, attempt):
+        if self.claims.get(key, {}).get("attempt") == attempt:
+            del self.claims[key]
+            self.released.append(key)
 
 
 _MD2 = {"user_id": "u", "account_id": "a", "query": "q",
@@ -350,8 +372,8 @@ class TestDedup:
     async def test_delivery_raise_releases_claim_and_fails_the_attempt(self):
         """The delivery now runs in the worker task: a raise releases the task claim (Cloud Tasks
         retries the attempt); the webhook's job mark stays, the task already holds the work."""
-        dedup = _FakeDedup()
-        worker, _ = _dr_worker(task_dedup=dedup)
+        dedup = _FakeClaims()
+        worker, _ = _dr_worker(task_claims=dedup)
         delivery = MagicMock(spec=CloudTaskDelivery)
         delivery.task_name = "projects/p/tasks/deep_research_webhook_event-r1"
         with patch("src.handlers.worker_handler.deliver_deep_research",
@@ -359,13 +381,13 @@ class TestDedup:
             with pytest.raises(RuntimeError):
                 await worker.handle(_dr_event(), delivery)
         assert dedup.released == [delivery.task_name]
-        assert delivery.task_name not in dedup.claimed
+        assert delivery.task_name not in dedup.claims
 
     async def test_notify_raise_releases_claim_and_fails_the_attempt(self):
-        dedup = _FakeDedup()
+        dedup = _FakeClaims()
         notification = AsyncMock()
         notification.notify.side_effect = RuntimeError("boom")
-        worker, _ = _dr_worker(notification=notification, task_dedup=dedup)
+        worker, _ = _dr_worker(notification=notification, task_claims=dedup)
         delivery = MagicMock(spec=CloudTaskDelivery)
         delivery.task_name = "projects/p/tasks/deep_research_webhook_event-r2"
         with pytest.raises(RuntimeError):
