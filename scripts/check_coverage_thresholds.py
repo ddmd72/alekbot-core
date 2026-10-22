@@ -70,6 +70,27 @@ THRESHOLDS: Dict[str, float] = {
     # tests, deep_research_webhook_event retry path, daily_email_review failure
     # path. Lifting this floor requires its own RFC.
     "src/handlers/worker_handler.py": 90.0,
+
+    # P7 (C1, owner-approved 2026-10-22): the files that decide who may call or whose data is touched. Every
+    # refusal site is its own line here, so a line that no test runs is a gate no test holds. Strict 100 %.
+    "src/web/worker_oidc_verifier.py":              100.0,
+    "src/web/twilio_signature_verifier.py":         100.0,
+    "src/web/cabinet_auth.py":                      100.0,
+    "src/web/sandbox_caller_gate.py":               100.0,
+    "src/services/session_service.py":              100.0,
+    "src/services/file_access_token_service.py":    100.0,
+    "src/services/iam_service.py":                  100.0,
+    "src/services/authentication_service.py":       100.0,
+    "src/services/mcp_authorization_service.py":    100.0,
+    "src/composition/mcp_sdk_oauth_provider.py":    100.0,
+    "src/web/deep_research_webhooks.py":            100.0,
+    "src/web/microsoft_tasks_webhook.py":           100.0,
+    "src/web/voice_webhook_app.py":                 100.0,
+    "src/web/voice_control_plane_app.py":           100.0,
+    "src/web/indexer_worker_app.py":                100.0,
+    "src/web/mcp_consent_app.py":                   100.0,
+    "src/web/file_access_app.py":                   100.0,
+    "src/web/short_link_app.py":                    100.0,
 }
 
 
