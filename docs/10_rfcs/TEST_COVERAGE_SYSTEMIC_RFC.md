@@ -457,6 +457,28 @@ when the process dies, and the hook covers make, direct `pytest` calls and subag
 `main`: the cloud gate, timing tests, the skip-ledger job (P22). Weekly: spec drift, mutation metric. Monthly: contract
 review. Manual: probes.
 
+**Built (P1, 2026-10-22).** `make test-affected`, `make ci`, the `slow` / `datafile` markers, the CI duration budget, the
+data-file audit and the `fcntl` lock are in `tests/plugins/` (+ `tests/conftest.py`, `Makefile`, `ci.yml`). Deviations
+from the text above:
+- **testmon needs `--testmon-forceselect`.** testmon 2.2.0 switches selection off whenever `-m` is given ("selection
+  automatically deactivated because -m was used"), so run 1 of `make test-affected` passes `--testmon
+  --testmon-forceselect -m "not datafile and not timing"`. A no-change rerun then selects 0 tests (6.8 s; testmon turns
+  pytest's exit 5 into 0). A new worktree seeded from the main checkout's `.testmondata` at the same commit also selects 0.
+- **`make check` no longer runs the `slow` tests**, among them 24 of the 36 layering tests of
+  `test_req_arch_01_hexagonal_isolation.py` (each walks the whole of `src/`; 0.5-1.3 s under coverage). They run in
+  `make ci` and so on every PR, but not in the local pre-commit loop or in `make test-affected` (the `datafile` set is
+  run without `RUN_SLOW_TESTS`). Decision for the owner: keep, or make those 23 fast (one shared parse of `src/`).
+- **The slow threshold was calibrated at 0.5 s under coverage** (2x headroom against the 1.0 s CI budget); a test using a
+  module-scoped fixture is marked in every user of that fixture, because under xdist whichever test reaches it first on a
+  worker pays (`test_drive_index_hostile_tree.py`, `TestScale`). Tests that pay a lazy heavy import first (markitdown) are
+  marked too.
+- **Audit attribution.** The nearest caller outside the stdlib decides: import machinery, pytest-family packages (not for
+  spawns: a child started through `pytester` is the test's), source lines read to format a traceback or a warning, and lazy
+  imports inside a test are not data reads. Reads at collection time belong to every test of the module. A read inside a
+  module-scoped fixture lands on the first test that uses it on that worker, so a module whose reads sit in such a
+  fixture gets a module-level marker (the "stale" list prints these as informational noise).
+- Extra knobs, for tests of the machinery only: `PYTEST_SUITE_LOCK_FILE`, `PYTEST_LOCK_REPORT_S`, `PYTEST_LOCK_POLL_S`.
+
 ## 5. Work packages
 
 ### Done criterion: semantic mutants
