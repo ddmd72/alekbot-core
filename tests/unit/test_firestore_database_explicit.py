@@ -18,39 +18,7 @@ HELPER = "scripts/_firestore.py"
 # Files queued for deletion by the integrator; remove an entry when its file is deleted
 # (test_pending_deletion_entries_still_exist fails on a stale one). Paths are built in parts
 # because the owner-run dirs are guarded against being named in commands.
-PENDING_DELETION: set[str] = {
-    "scripts/" + d + "/" + n
-    for d, n in (
-        # index scripts deleted by another task
-        ("infrastructure", "create_prod_vector_indexes.py"),
-        ("infrastructure", "create_prod_multi_vector_indexes.sh"),
-        ("infrastructure", "create_hnsw_indexes.py"),
-        ("infrastructure", "migrate_to_hnsw_indexes.sh"),
-        ("infrastructure", "trigger_vector_index_creation.py"),
-        ("infrastructure", "create_missing_vector_index.sh"),
-        ("infrastructure", "create_vector_indexes_gcloud.sh"),
-        ("infrastructure", "create_approximate_index.py"),
-        ("infrastructure", "create_firestore_indexes.sh"),
-        ("infrastructure", "setup-email-watchdog-scheduler.sh"),
-        # F4: legacy-collection one-offs
-        ("infrastructure", "delete_collections.py"),
-        ("infrastructure", "export_facts_yaml.py"),
-        ("infrastructure", "warmup_production_cache.py"),
-        ("migration", "add_state_field_to_legacy_facts.py"),
-        ("migration", "cleanup_old_collections.py"),
-        ("migration", "create_blueprints.py"),
-        ("migration", "create_default_profiles.py"),
-        ("migration", "create_token_library.py"),
-        ("migration", "migrate_account_id_prefix.py"),
-        ("migration", "migrate_profiles_split.py"),
-        ("migration", "migrate_to_firestore.py"),
-        ("migration", "migrate_to_semantic_naming.py"),
-        ("migration", "migrate_tokens_split.py"),
-        ("migration", "migrate_visibility_v3.py"),
-        ("migration", "test_prompt_assembly.py"),
-        ("migration", "update_universal_blueprint_slots.py"),
-    )
-}
+PENDING_DELETION: set[str] = set()  # the S1b list was deleted on 2026-10-22
 
 
 def _dotted(node: ast.AST) -> str:
