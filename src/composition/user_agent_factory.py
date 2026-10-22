@@ -92,6 +92,7 @@ from ..agents.pdf_generator_agent import PdfGeneratorAgent
 from ..agents.html_page_generator_agent import HtmlPageGeneratorAgent
 from ..agents.help_agent import HelpAgent
 from ..agents.file_management_agent import FileManagementAgent
+from ..infrastructure.drive_operations import DriveOperations
 from ..agents.domain_researcher_agent import DomainResearcherAgent
 from ..agents.image_generation_agent import ImageGenerationAgent
 from ..agents.video_generation_agent import VideoGenerationAgent
@@ -138,6 +139,9 @@ class _UserContext:
     user_profile: UserProfile
     prompt_builder: UserPromptBuilder
     history_summary_service: Optional[HistorySummaryService] = None
+    # The user's one DriveOperations (DRIVE_SPECIALIST_RFC §5.5): FileManagement and the drive specialist share its
+    # per-user mutation lock, shielded tasks and late-failure notices. Built on first use by _drive_operations().
+    drive_operations: Optional[DriveOperations] = None
 
 
 class UserAgentFactory(AgentFactoryPort):
@@ -859,6 +863,21 @@ class UserAgentFactory(AgentFactoryPort):
             user_id=user_id,
         )
 
+    def _drive_operations(self, ctx: _UserContext) -> Optional[DriveOperations]:
+        """The user's one DriveOperations, built on first use and memoised in the user's context (§5.5). Every builder
+        that touches the drive reads it here; builders run under the user's creation lock, so it is built once. None
+        when the deployment has no file conversion (no chat files, no drive)."""
+        if ctx.drive_operations is None and self.file_conversion_service is not None:
+            ctx.drive_operations = DriveOperations(
+                conversion_service=self.file_conversion_service,
+                drive_service=self.user_drive_service,
+                drive_search=self.drive_search_service,
+                notification=self.notification_service,
+                localization=self.localization,
+                language_service=self.language_service,
+            )
+        return ctx.drive_operations
+
     def _build_file_management(
         self, user_id: str, ctx: _UserContext,
     ) -> Optional[FileManagementAgent]:
@@ -878,6 +897,7 @@ class UserAgentFactory(AgentFactoryPort):
             localization=self.localization,
             language_service=self.language_service,
             drive_search=self.drive_search_service,
+            drive_operations=self._drive_operations(ctx),
         )
 
     def _build_domain_researcher(self, user_id: str, ctx: _UserContext) -> DomainResearcherAgent:
