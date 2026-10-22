@@ -44,14 +44,14 @@ rule Taxonomy_Enforcement() {
 
     constraints: [
         "Domain: MUST be from predefined list (BIOGRAPHICAL, POSSESSION, HEALTH, MEDICAL_RECORDS, LOCATION, WORK, NETWORK, PREFERENCE, AGENT_DIRECTIVE, SKILL, PROJECT, FINANCE, EDUCATION, LEGAL, ENTERTAINMENT, COMMUNICATION)",
-        "Temporal Class: MUST be PERMANENT/STABLE/DYNAMIC/EPHEMERAL (NOT HISTORICAL!)",
+        "Temporal Class: MUST be PERMANENT/STABLE/DYNAMIC/EPHEMERAL (NOT ARCHIVAL!)",
         "State: MUST be CURRENT/STALE/ARCHIVED/SUPERSEDED/INVALIDATED",
-        "Context Priority: MUST be CRITICAL/HIGH/MEDIUM/LOW/HISTORICAL (NOT ARCHIVED!)"
+        "Context Priority: MUST be CRITICAL/HIGH/MEDIUM/LOW/ARCHIVAL (NOT ARCHIVED!)"
     ]
 
     fallback: "If classification unclear, use conservative defaults (STABLE, CURRENT, MEDIUM)"
 
-    important_note: "Do NOT confuse: HISTORICAL is context_priority (obsolete facts), ARCHIVED is state (inactive facts)"
+    important_note: "Do NOT confuse: ARCHIVAL is context_priority (obsolete facts), ARCHIVED is state (inactive facts)"
 }
 
 @critical

@@ -21,7 +21,7 @@ uploaded_by: local_script
         limit: "Max results to return (default: 20)"
     }
 
-    returns: "List[Dict] with structure: {fact_id: UUID (REQUIRED for update_fact/merge_facts), content: str, domain: str, temporal: str, state: str, tags: List[str], similarity: float}"
+    returns: "List[Dict] with structure: {fact_id: UUID (REQUIRED for update_fact/merge_facts), content: str, domain: str, temporal_class: str, state: str, tags: List[str], similarity: float}"
 
     usage_example: '''
     results = search_existing_facts(
@@ -41,7 +41,7 @@ uploaded_by: local_script
             domain: "FactDomain (BIOGRAPHICAL, POSSESSION, etc.)"
             temporal_class: "TemporalClass (PERMANENT, STABLE, DYNAMIC, EPHEMERAL)"
             state: "FactState (default: CURRENT)"
-            context_priority: "ContextPriority (CRITICAL, HIGH, MEDIUM, LOW, HISTORICAL)"
+            context_priority: "ContextPriority (CRITICAL, HIGH, MEDIUM, LOW, ARCHIVAL)"
             ttl_days: "Auto-calculated from temporal_class (can override)"
             tags: "List[str] - General classifications (domain keywords, dates)"
             metadata: "Dict - Structured data (numeric values, specific dates, details)"

@@ -349,9 +349,6 @@ class TestFactManagementPortContract:
     def test_has_merge_facts(self):
         assert getattr(FactManagementPort.merge_facts, "__isabstractmethod__", False)
 
-    def test_has_discard_candidate(self):
-        assert getattr(FactManagementPort.discard_candidate, "__isabstractmethod__", False)
-
     def test_has_create_fact(self):
         assert getattr(FactManagementPort.create_fact, "__isabstractmethod__", False)
 
@@ -363,7 +360,7 @@ class TestFactManagementPortContract:
             name for name, method in inspect.getmembers(FactManagementPort)
             if getattr(method, "__isabstractmethod__", False)
         }
-        assert len(abstract_methods) == 5, f"Expected 5 abstract methods, got {abstract_methods}"
+        assert len(abstract_methods) == 4, f"Expected 4 abstract methods, got {abstract_methods}"
 
     def test_search_existing_facts_signature(self):
         sig = inspect.signature(FactManagementPort.search_existing_facts)
@@ -386,11 +383,6 @@ class TestFactManagementPortMockImplementation:
     async def test_merge_facts(self, mock_port):
         mock_port.merge_facts.return_value = {"fact_id": "new", "content": "merged"}
         result = await mock_port.merge_facts(["f1", "f2"], "merged content", {})
-        assert isinstance(result, dict)
-
-    async def test_discard_candidate(self, mock_port):
-        mock_port.discard_candidate.return_value = {"status": "discarded"}
-        result = await mock_port.discard_candidate("duplicate")
         assert isinstance(result, dict)
 
     async def test_create_fact(self, mock_port):
@@ -474,9 +466,6 @@ class TestFactRepositoryContract:
     def test_has_get_fact_by_id(self):
         assert getattr(FactRepository.get_fact_by_id, "__isabstractmethod__", False)
 
-    def test_has_get_facts_by_ids(self):
-        assert getattr(FactRepository.get_facts_by_ids, "__isabstractmethod__", False)
-
     def test_has_get_active_facts(self):
         assert getattr(FactRepository.get_active_facts, "__isabstractmethod__", False)
 
@@ -498,20 +487,8 @@ class TestFactRepositoryContract:
     def test_has_get_latest_fact_by_lineage(self):
         assert getattr(FactRepository.get_latest_fact_by_lineage, "__isabstractmethod__", False)
 
-    def test_has_add_observation(self):
-        assert getattr(FactRepository.add_observation, "__isabstractmethod__", False)
-
-    def test_has_get_observations(self):
-        assert getattr(FactRepository.get_observations, "__isabstractmethod__", False)
-
-    def test_has_archive_observations(self):
-        assert getattr(FactRepository.archive_observations, "__isabstractmethod__", False)
-
     def test_has_add_fact_if_unique(self):
         assert getattr(FactRepository.add_fact_if_unique, "__isabstractmethod__", False)
-
-    def test_has_get_biographical_context(self):
-        assert getattr(FactRepository.get_biographical_context, "__isabstractmethod__", False)
 
     def test_has_refresh_biographical_context_cache(self):
         assert getattr(FactRepository.refresh_biographical_context_cache, "__isabstractmethod__", False)
@@ -530,17 +507,19 @@ class TestFactRepositoryContract:
         assert getattr(FactRepository.search_facts_by_domain, "__isabstractmethod__", False)
 
     def test_all_abstract_methods_count(self):
-        """Port should have exactly 21 abstract methods.
+        """Port should have exactly 16 abstract methods.
 
         F7.2 (2026-05-18): added search_facts_by_domain to close the
         port/adapter contract gap — search_facts_by_domain was called via
         the port type in SearchEnrichmentService but missing from the ABC.
+        2026-10-22: get_facts_by_ids, add_observation, get_observations,
+        archive_observations and get_biographical_context deleted (no caller).
         """
         abstract_methods = {
             name for name, method in inspect.getmembers(FactRepository)
             if getattr(method, "__isabstractmethod__", False)
         }
-        assert len(abstract_methods) == 21, f"Expected 21 abstract methods, got {abstract_methods}"
+        assert len(abstract_methods) == 16, f"Expected 16 abstract methods, got {abstract_methods}"
 
     def test_add_fact_signature(self):
         sig = inspect.signature(FactRepository.add_fact)
