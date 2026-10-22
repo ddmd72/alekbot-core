@@ -59,7 +59,7 @@ rule, and "ports are abstract" all run in the suite and fail the build on violat
   regressions a port-level mock would hide.
 - **LLMPort mocking** isolates the model in unit and e2e tests, so multi-turn reasoning and
   forced tool-call sequences run deterministically: no API tokens, no flakiness.
-- **CI:** `make check` (ruff lint + 6,500+ unit/architecture tests) runs on every push and PR
+- **CI:** `make ci` (ruff lint + 6,500+ unit/architecture tests) runs on every push and PR
   via GitHub Actions.
 - **Deployment is manual by choice** — solo dev, a single live environment, and LLM behavior
   that tests can't fully verify make a deliberate `make deploy` saner than auto-deploy
