@@ -1,11 +1,9 @@
 """The relay ships the chosen thinking cue (owner pick B2, 2026-09-24): one 2 s loop of μ-law 8 kHz."""
-import pytest
 from relay_main import _load_thinking_cue
 
 _MULAW_SILENCE = {0xFF, 0x7F}
 
 
-@pytest.mark.datafile
 def test_thinking_cue_is_one_two_second_mulaw_loop_in_whole_20ms_frames():
     clip = _load_thinking_cue()
 

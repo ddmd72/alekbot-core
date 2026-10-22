@@ -63,7 +63,6 @@ def test_both_switches_run_everything(pytester, monkeypatch):
     _run(pytester).assert_outcomes(passed=4)
 
 
-@pytest.mark.datafile
 def test_the_markers_are_registered_in_pytest_ini(pytester):
     import configparser
 
@@ -72,7 +71,7 @@ def test_the_markers_are_registered_in_pytest_ini(pytester):
     parser = configparser.ConfigParser()
     parser.read(REPO_ROOT / "pytest.ini")
     markers = parser["pytest"]["markers"]
-    for name in ("slow:", "datafile:", "timing:"):
+    for name in ("slow:", "timing:"):
         assert name in markers
 
 

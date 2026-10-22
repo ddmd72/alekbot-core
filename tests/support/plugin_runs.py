@@ -7,8 +7,6 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 SWITCHES = (
-    "PYTEST_DURATION_BUDGET_S",
-    "PYTEST_DATAFILE_AUDIT",
     "PYTEST_SUITE_LOCK",
     "PYTEST_SUITE_LOCK_FILE",
     "PYTEST_LOCK_TIMEOUT_S",

@@ -155,7 +155,6 @@ class TestFactoryWiring:
         bp = create_deep_research_webhooks_blueprint()
         assert bp.name == "deep_research_webhooks"
 
-    @pytest.mark.datafile
     def test_main_py_wires_media_storage_to_the_delivering_worker(self):
         """R12.3 (round files lost for the OpenAI DR path): media_storage must reach the OpenAI
         delivery. Delivery now runs in WorkerHandler, so main.py must pass media_storage= (and the

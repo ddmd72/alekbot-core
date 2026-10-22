@@ -1,11 +1,8 @@
 """The sandbox server and its clients import no document, image or archive library, open no outbound connection and never
 decode a reply body (UNTRUSTED_CONTENT_SANDBOX_RFC §4.6, §4.10; plan G21)."""
-import pytest
 import ast
 from pathlib import Path
 from typing import Dict, Iterator, Set, Tuple
-
-pytestmark = pytest.mark.datafile
 
 _ROOT = Path(__file__).resolve().parents[2]
 

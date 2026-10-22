@@ -6,8 +6,6 @@ import pytest
 
 from src.domain.drive_index import ErrorCategory
 
-pytestmark = pytest.mark.datafile
-
 _HTML = Path(__file__).resolve().parents[3] / "src" / "web" / "static" / "cabinet.html"
 LANGS = ("en", "uk", "fr", "es")
 NEW_KEYS = (

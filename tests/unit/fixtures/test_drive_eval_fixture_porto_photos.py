@@ -10,7 +10,6 @@ from src.domain.place_lookup import PlaceIndex
 _TREE = Path(__file__).resolve().parents[2] / "fixtures" / "drive_eval" / "tree.json"
 
 
-@pytest.mark.datafile
 @pytest.mark.slow
 def test_every_porto_photo_resolves_to_porto():
     items = json.loads(_TREE.read_text(encoding="utf-8"))["items"]

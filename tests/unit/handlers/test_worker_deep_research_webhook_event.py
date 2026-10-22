@@ -225,7 +225,6 @@ class TestThroughHandle:
         claims.release.assert_not_awaited()
 
 
-@pytest.mark.datafile
 def test_main_py_wires_fetch_and_store_into_worker_handler():
     import ast
     from pathlib import Path

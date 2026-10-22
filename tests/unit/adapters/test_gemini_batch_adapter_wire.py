@@ -465,7 +465,6 @@ async def test_contract_rule_fails_for_json_schema_on_a_request():
         rule.validate("gemini_batch", {"src": [bad2]})
 
 
-@pytest.mark.datafile
 def test_adapter_imports_no_other_adapter():
     import src.adapters.gemini_batch_adapter as mod
     text = open(mod.__file__).read()

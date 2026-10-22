@@ -2,13 +2,10 @@
 a skill loaded before the first drive search. The protocol keeps only the trigger (when to search the drive), the
 pointer to the skill and the safety line. The skill adds the owner's strategy: "find" is answered from the results,
 files are opened only when their contents are needed, many results are counted and grouped, never opened one by one."""
-import pytest
 import json
 from pathlib import Path
 
 from src.adapters.filesystem_skill_loader import load_system_skills
-
-pytestmark = pytest.mark.datafile
 
 ROOT = Path(__file__).resolve().parents[3]
 SKILLS = ROOT / "src" / "skills" / "smart"

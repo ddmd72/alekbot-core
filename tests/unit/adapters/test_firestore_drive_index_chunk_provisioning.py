@@ -12,8 +12,6 @@ from tests.unit.adapters.firestore_drive_chunk_fakes import CHUNKS, ChunkDb, mak
 from tests.unit.adapters.firestore_drive_fakes import RECS, executed
 from tests.unit.adapters.test_firestore_drive_index_provisioning import _deploy_commands
 
-pytestmark = pytest.mark.datafile
-
 _ROOT = Path(__file__).resolve().parents[3]
 
 

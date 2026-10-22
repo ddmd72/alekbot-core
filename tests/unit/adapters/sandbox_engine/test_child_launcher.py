@@ -16,8 +16,6 @@ from src.adapters.sandbox_engine import child_launcher
 from src.adapters.sandbox_engine.child_launcher import ChildLaunchError, ChildLauncher
 from src.domain.sandbox_contract import SandboxLimits
 
-pytestmark = pytest.mark.datafile
-
 _LINUX = sys.platform == "linux"
 _PY = sys.executable
 _ROOT = os.geteuid() == 0

@@ -13,8 +13,6 @@ from src.domain.drive_extraction import ExtractionOutcome, ExtractionRequest, Ex
 
 from ..services.drive_content_fakes import FakeExtractor
 
-pytestmark = pytest.mark.datafile
-
 _DIR = Path(__file__).resolve().parents[2] / "fixtures" / "drive_eval"
 SCAN = "Documents/DOC_20260610_0042.pdf"
 PHOTO = "Photos/Camera/IMG_20260814_204712.jpg"

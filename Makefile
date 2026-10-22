@@ -138,9 +138,8 @@ help: ## Show this help message
 	@echo "  make check           Local pre-commit gate: ruff lint + mypy + unit/architecture tests (no slow tests, no coverage)"
 	@echo "  make test            Run all tests"
 	@echo "  make test-unit       Run unit tests"
-	@echo "  make test-affected   Inner loop: testmon-selected tests + the always-run datafile set"
-	@echo "  make test-arch       Layering tests (slow-marked): run after touching imports across layers"
-	@echo "  make ci              PR job: lint + mypy + unit suite once (slow tests, data-file audit, coverage gate) + G2"
+	@echo "  make test-affected   Inner loop: only the unit tests testmon selects for your changes"
+	@echo "  make ci              PR job: lint + mypy + unit suite once (slow tests, coverage gate) + G2"
 	@echo "  make test-coverage   Unit tests + per-file coverage gate"
 	@echo "  make test-integration Run integration tests"
 	@echo "  make lint            Lint src/ with ruff"
@@ -224,18 +223,14 @@ auth: ## Authenticate with Google Cloud
 # The flag lives here, not in pytest.ini addopts, so a targeted `pytest path::test` stays a single
 # fast process. Integration/e2e stay serial — they touch live services.
 # Without xdist installed the suite falls back to a serial run, with a warning.
-# `slow` tests (over 0.5 s with coverage on, half the 1 s CI per-test budget) are skipped the same way unless RUN_SLOW_TESTS=1; `make ci` sets it.
+# `slow` tests (over 0.5 s with coverage on) are skipped the same way unless RUN_SLOW_TESTS=1; `make ci` sets it.
 # Only one full suite runs at a time on a machine (tests/plugins/suite_lock.py: flock on a file in the temp dir).
 # Tests marked `timing` assert on wall-clock/CPU time and fail on a loaded machine with no code change. By owner
 # decision (2026-10-20) they are off every everyday run (check, test-unit, plain pytest — tests/conftest.py skips
 # them) and run only via `make test-timing`: in CI after a merge to main (job `timing`), or by hand.
 PYTEST_WORKERS ?= auto
 PYTEST_XDIST = $(shell $(PYTHON) -c "import xdist" 2>/dev/null && echo yes)
-# --durations=25 is an advisory report of the slowest tests; the 1 s per-test budget is a CI warning, never a gate
-# (tests/plugins/duration_budget.py). The PR job sets PYTEST_DURATION_BUDGET_S for `make ci`; it is not exported to
-# recipes, and only the unit run in `test-ci` receives it (the G2 end-to-end test runs a whole indexer tick, ~14 s).
-PYTEST_DURATION_BUDGET_S ?=
-unexport PYTEST_DURATION_BUDGET_S
+# --durations=25 is an advisory report of the slowest tests.
 PYTEST_UNIT_FLAGS = $(if $(PYTEST_XDIST),-n $(PYTEST_WORKERS) -q,-v) --durations=25
 XDIST_WARNING = $(if $(PYTEST_XDIST),,echo "⚠️  pytest-xdist not installed — running serially (pip install -r requirements.txt)")
 
@@ -268,18 +263,18 @@ test-coverage: ## Unit tests + global + per-file coverage gate (RFC § 8.4)
 	@$(PYTHON) scripts/check_coverage_layers.py
 
 # testmon never runs together with coverage. A fresh worktree gets the main checkout's .testmondata (the first
-# entry of `git worktree list`; copied with SQLite's backup API, testmon uses WAL), so its first run is not a cold suite. Run 1 selects by executed lines; run 2
-# is the fixed always-run set (tests whose input is a data file or a child process: the `datafile` marker).
+# entry of `git worktree list`; copied with SQLite's backup API, testmon uses WAL), so its first run is not a cold suite.
+# testmon selects by executed Python lines: it can miss a test whose input is a data file or code run in a child
+# process, so `make check` before a commit is mandatory.
 # --testmon-forceselect: without it testmon switches selection off whenever -m is given (testmon 2.2.0).
 TESTMON_SEED = $(shell git -c safe.directory='*' worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p' | head -n 1)
 
-test-affected: ## Inner loop: only tests touched by your changes (testmon) + the always-run `datafile` set
+test-affected: ## Inner loop: only the unit tests testmon selects for your changes
 	@echo "🎯 Running affected tests..."
 	@$(XDIST_WARNING)
 	@if [ ! -f .testmondata ] && [ -n "$(TESTMON_SEED)" ] && [ "$(TESTMON_SEED)" != "$(CURDIR)" ] && [ -f "$(TESTMON_SEED)/.testmondata" ]; then \
 		echo "🌱 Seeding .testmondata from $(TESTMON_SEED)"; $(PYTHON) scripts/seed_testmondata.py "$(TESTMON_SEED)/.testmondata" .testmondata; fi
-	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/unit/ -n $(PYTEST_WORKERS) -q --asyncio-mode=auto --testmon --testmon-forceselect -m "not datafile and not timing"
-	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/unit/ -n $(PYTEST_WORKERS) -q --asyncio-mode=auto -m "datafile and not timing"
+	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/unit/ -n $(PYTEST_WORKERS) -q --asyncio-mode=auto --testmon --testmon-forceselect -m "not timing"
 
 test-integration: ## Run integration tests
 	@echo "🧪 Running integration tests..."
@@ -305,14 +300,10 @@ test-g2-offline: ## G2 end to end on the fixture folder (real parser, scripted m
 	@echo "🧪 Running the offline G2 end-to-end test..."
 	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/integration/test_drive_g2_end_to_end.py -q --asyncio-mode=auto -p tests.plugins.network_guard
 
-test-arch: ## The hexagonal layering tests (slow-marked, so not in `make check`): run after touching imports across layers
-	@echo "🏛  Running the layering tests..."
-	RUN_SLOW_TESTS=1 DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/unit/test_req_arch_01_hexagonal_isolation.py -n 4 -q --asyncio-mode=auto
-
-test-ci: ## Unit suite once: slow tests, data-file audit and the coverage gate (part of `make ci`)
-	@echo "🧪 Running the full unit suite (slow tests, data-file audit, coverage)..."
+test-ci: ## Unit suite once: slow tests and the coverage gate (part of `make ci`)
+	@echo "🧪 Running the full unit suite (slow tests, coverage)..."
 	@$(XDIST_WARNING)
-	RUN_SLOW_TESTS=1 PYTEST_DATAFILE_AUDIT=1 PYTEST_DURATION_BUDGET_S=$(PYTEST_DURATION_BUDGET_S) DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/unit/ $(PYTEST_UNIT_FLAGS) \
+	RUN_SLOW_TESTS=1 DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/unit/ $(PYTEST_UNIT_FLAGS) \
 	    --asyncio-mode=auto -m "not timing" $(COVERAGE_FLAGS)
 	@echo "🚦 Enforcing per-file coverage thresholds..."
 	@$(PYTHON) scripts/check_coverage_thresholds.py
@@ -322,7 +313,7 @@ test-ci: ## Unit suite once: slow tests, data-file audit and the coverage gate (
 check: lint typecheck test-unit test-g2-offline ## Local pre-commit gate: ruff lint + mypy (domain/ports) + unit/architecture tests + offline G2 (CI runs `make ci`)
 	@echo "✅ All checks passed"
 
-ci: lint typecheck test-ci test-g2-offline ## PR job: lint + mypy + the unit suite once (slow tests, data-file audit, coverage gate) + offline G2
+ci: lint typecheck test-ci test-g2-offline ## PR job: lint + mypy + the unit suite once (slow tests, coverage gate) + offline G2
 	@echo "✅ CI passed"
 
 # ============================================================================

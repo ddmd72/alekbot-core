@@ -26,8 +26,6 @@ ROOT_ENTRY_POINTS = ("main", "relay_main", "indexer_main", "sandbox_main", "job_
 STRING_TARGET_CALLS = {"patch", "import_module", "importorskip", "setattr", "delattr", "__import__", "reload", "run_module"}
 _DOTTED = re.compile(r"^[A-Za-z_]\w*(\.[A-Za-z_]\w*)*$")
 
-pytestmark = pytest.mark.datafile  # reads every file under src/ and tests/
-
 
 def source_modules(repo: Path = REPO) -> set[str]:
     modules = set()

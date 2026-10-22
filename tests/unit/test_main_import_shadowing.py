@@ -5,7 +5,6 @@ of it earlier in that function raises UnboundLocalError at startup. That took do
 on 2026-10-09 (revision failed to start: "cannot access local variable
 'FirestoreDedupStore'"). main.py's startup has no unit coverage, so check it statically.
 """
-import pytest
 import ast
 from pathlib import Path
 
@@ -20,7 +19,6 @@ def _module_level_imports(tree: ast.Module) -> set:
     return names
 
 
-@pytest.mark.datafile
 def test_no_function_local_import_shadows_a_module_import():
     tree = ast.parse(MAIN.read_text())
     module_names = _module_level_imports(tree)

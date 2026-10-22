@@ -469,7 +469,6 @@ def test_bad_recycle_policy_is_a_construction_error(tmp_path):
             {"work_root": str(tmp_path), "engine_user": None, "recycle": "abnormal"})
 
 
-@pytest.mark.datafile
 def test_module_imports_no_document_library():
     src = open(sandbox_app.__file__).read()
     for lib in ("docx", "PIL", "zipfile", "fitz", "pypdf", "openpyxl"):

@@ -1,11 +1,8 @@
 """The drive-search skill's `_Transcripts` clause and shared "Deleted files" line, and the capabilities line
 (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §27.11)."""
-import pytest
 from pathlib import Path
 
 from src.utils.capabilities import CAPABILITIES_TEXT
-
-pytestmark = pytest.mark.datafile
 
 SKILL = (Path(__file__).resolve().parents[3] / "src" / "skills" / "smart" / "drive-search" / "SKILL.md").read_text(
     encoding="utf-8")

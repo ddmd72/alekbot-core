@@ -1,12 +1,9 @@
 """T-R34: `make deploy` refuses unless DRIVE_TRANSCRIBE_ENABLED_DEV is explicitly on/off, echoes the effective switch and
 cap, and the switch reaches the main service so the Cabinet disclosure follows it."""
-import pytest
 import subprocess
 from pathlib import Path
 
 import yaml
-
-pytestmark = pytest.mark.datafile
 
 _ROOT = Path(__file__).resolve().parents[2]
 _BUILD = yaml.safe_load((_ROOT / "cloudbuild-dev.yaml").read_text())

@@ -6,15 +6,14 @@ pytest + pytest-asyncio, `asyncio_mode=auto`. Why these rules: `docs/10_rfcs/TES
 
 ```bash
 make check             # lint + mypy + unit suite (no slow tests, no coverage) + offline G2: the pre-commit gate
-make test-affected     # inner loop: testmon-selected tests + the always-run `datafile` set
-make ci                # the PR job: check + slow tests, data-file audit, coverage gates (one full run)
-make test-arch         # the layering tests (slow-marked): after touching imports across layers
+make test-affected     # inner loop: only the unit tests testmon selects for your changes
+make ci                # the PR job: check + slow tests, coverage gates (one full run)
 make test-integration  # tests/integration/ (some talk to real services); make test-e2e-all: real APIs
 ```
 
 ```
 tests/
-  conftest.py     — fixtures + the plugins in tests/plugins/ (budget, audit, lock)
+  conftest.py     — fixtures + the plugin in tests/plugins/ (suite lock)
   unit/           — offline, no real service. Fakes and in-memory repositories. conftest.py = the network guard
   integration/    — mocked or scripted services; the offline G2 end-to-end test runs in `make check`
   support/        — shared fakes (fact_store.py, firestore_eval.py), network_guard.py, semantic_mutants/
@@ -82,10 +81,9 @@ python -m tests.support.semantic_mutants --module src.adapters.firestore_repo \
 A survivor means the tests do not notice that defect: write the assertion that does. `--equivalent` takes
 `key  # reason` lines (the 8-hex key in the report) and is the reviewer's tool, never the implementer's.
 
-## Markers, budget and the machine lock (P1, `tests/plugins/`)
+## Markers and the machine lock (P1, `tests/plugins/`)
 
-
-- **`@pytest.mark.slow`** — the test takes over 0.5 s with coverage on (setup + call + teardown; half the 1 s budget, as headroom). Skipped unless
+- **`@pytest.mark.slow`** — the test takes over 0.5 s with coverage on (setup + call + teardown). Skipped unless
   `RUN_SLOW_TESTS=1`; `make ci` sets it. Put it on the test, or `pytestmark` when the cost is a module- or class-scoped
   fixture (under xdist whichever test uses the fixture first on a worker pays, so mark all its users). Do not mark a test
   slow to get a green run before asking whether it can be fast.
@@ -93,22 +91,8 @@ A survivor means the tests do not notice that defect: write the assertion that d
   CI after a merge to main); never in `make check`. `docker`: needs the built sandbox image and a daemon; skipped unless
   `SANDBOX_TEST_IMAGE` is set. `requirement("REQ-XXX")`: ties a test to a business requirement. `performance`: manual
   benchmarks against real Firestore.
-- **Per-test budget** — a CI warning, never a gate (owner decision 2026-10-22: wall-clock limits flake on the shared
-  runner). The PR job sets `PYTEST_DURATION_BUDGET_S=1.0`; the run lists every unmarked test over it, slowest first with
-  the setup/call/teardown split, and emits a GitHub `::warning` annotation, without changing the exit status
-  (`tests/plugins/duration_budget.py`). `slow` and `timing` tests are exempt. An offender that keeps showing up gets
-  `@pytest.mark.slow`. Locally it is off; `make check` prints `--durations=25`.
-- **`@pytest.mark.datafile`** — the test's input is a file (a prompt snapshot, an RFC, `config/firestore.indexes.json`, a
-  cloudbuild yaml, a skill, a fixture, a `.py` read as text or via `inspect.getsource`) or its code runs in a child
-  process. testmon cannot select such a test, so `make test-affected` always runs the marked set. Use `pytestmark` when
-  most tests of a module need it.
-- **The audit keeps the marker honest** — `PYTEST_DATAFILE_AUDIT=1` (set by `make ci`, usable by hand) records which
-  tests open a file under the repo or spawn a process, and fails the run for the unmarked ones, printing the files.
-  Reads made when a test module is collected (module-level code, imports of modules that read data) count for every test
-  of that module; import-machinery reads, pytest's own reads, source lines read to format a traceback or a warning, and
-  lazy imports inside a test do not. Marked tests that touched nothing are listed as stale (informational).
-- **What the audit cannot see:** directory listings (`glob`, `iterdir`), `exists()`/`stat()` checks, and reads made by stray
-  background threads. A test whose input is such a thing needs `datafile` by hand.
+- **`make test-affected` selects by executed Python lines**, so it can miss a test whose input is a data file or code run
+  in a child process; `make check` before a commit is mandatory.
 - **One full suite at a time** — a session with `-n`, or with 2000+ tests, takes a `flock` on
   `$TMPDIR/alekbot-pytest-suite.lock` (`tests/plugins/suite_lock.py`), prints the holder every 30 s while it waits and
   gives up after `PYTEST_LOCK_TIMEOUT_S` (1800). `PYTEST_SUITE_LOCK=0` disables it. Tests that run an inner pytest through

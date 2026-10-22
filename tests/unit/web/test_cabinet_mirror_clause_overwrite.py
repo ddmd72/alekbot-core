@@ -5,8 +5,6 @@ import pytest
 
 from .test_cabinet_drive_index_strings import LANGS, _dicts
 
-pytestmark = pytest.mark.datafile
-
 PHRASES = {
     "en": ("overwritten", "copy it elsewhere", "Deleting an archived file makes the bot forget it"),
     "uk": ("перезаписуються", "скопіюй файл", "Якщо ти видалиш файл з архіву, бот про нього забуде"),

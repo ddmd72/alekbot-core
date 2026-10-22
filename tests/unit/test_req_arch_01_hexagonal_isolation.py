@@ -14,8 +14,6 @@ from tests.unit.arch_tech_debt import (
     HANDLER_IMPLEMENTS_PORT_WHITELIST,
 )
 
-pytestmark = pytest.mark.datafile
-
 
 # ===========================================================================
 # ██████████████████████████████████████████████████████████████████████████

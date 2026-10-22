@@ -125,7 +125,6 @@ def test_the_sources_record_names_hashes_and_refuses_another_snapshot(tmp_path):
     assert build.snapshot_differs(record, paths) == ["cities5000.zip"]
 
 
-@pytest.mark.datafile
 def test_the_bundled_table_records_its_snapshot():
     record = json.loads((_ASSETS / build.SOURCES_FILE).read_text(encoding="utf-8"))
     assert set(record["inputs"]) == set(build.INPUTS)

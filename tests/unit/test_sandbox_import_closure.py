@@ -1,12 +1,9 @@
 """The sandbox image holds nothing (RFC §4.3, I1): the static import closure of `sandbox_main.py` reaches no agent
 stack, no credential-holding cloud client and no model SDK. Runs in CI without docker (plan G15)."""
-import pytest
 import sys
 from pathlib import Path
 
 from tests.unit.sandbox_closure import ROOT, closure
-
-pytestmark = pytest.mark.datafile
 
 _FORBIDDEN_SRC_PREFIXES = ("src/agents/", "src/handlers/", "src/services/", "src/infrastructure/")
 # RFC §4.3 set + the plan's additions (model SDKs, chat SDK, BigQuery).

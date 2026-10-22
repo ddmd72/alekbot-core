@@ -1,7 +1,6 @@
 """Disconnecting the drive turns the deep research copy off, and the switch is offered only while a drive is
 linked (owner, 2026-10-14). Before, a switch left on stayed visible after a disconnect so it could be turned off;
 now the disconnect itself resets it, so a hidden switch is never left on."""
-import pytest
 import re
 from pathlib import Path
 from types import SimpleNamespace
@@ -68,7 +67,6 @@ async def test_a_failed_reset_does_not_fail_the_disconnect():
     drive.disconnect.assert_awaited_once_with("u1")
 
 
-@pytest.mark.datafile
 def test_the_switch_is_offered_only_while_a_drive_is_linked():
     html = _HTML.read_text(encoding="utf-8")
     line = re.search(r"const drCopyHtml = (.*?)\n", html).group(1)

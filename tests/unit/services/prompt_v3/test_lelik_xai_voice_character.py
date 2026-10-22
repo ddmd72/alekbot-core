@@ -16,8 +16,6 @@ from src.ports.security_port import RiskLevel, SecurityPort, TrustZone, Validati
 from src.services.prompt_v3.context_formatter import ContextFormatter
 from src.services.prompt_v3.prompt_assembly_service import PromptAssemblyService
 
-pytestmark = pytest.mark.datafile
-
 _UPLOADS = Path(__file__).resolve().parents[4] / "firestore_utils" / "uploads"
 _PROFILE = "lelik_xai"
 _SYSTEM_VOICE = ["VOICE_PERSONA_LELIK", "VOICE_CARE_LELIK", "VOICE_HUMOR_LELIK", "VOICE_TEMPERAMENT_LELIK",

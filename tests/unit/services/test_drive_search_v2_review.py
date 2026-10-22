@@ -1,7 +1,6 @@
 """DriveSearchService, Search v2 — the review fixes of rv_sv2_p6 (USER_DRIVE_INDEXING_RFC §25.5, D29, D30): a full
 page never yields a flat negative in scope (M1), validity queries filter the expiry date and time words are not
 concepts (M2), no migration mode (M3), the name stream fetches per word (M4), and the minors."""
-import pytest
 from dataclasses import replace
 from datetime import datetime, timezone
 
@@ -205,7 +204,6 @@ def test_name_keys_v2_still_keys_digit_folders():
     assert "n:2026" in name_keys_v2("2026")
 
 
-@pytest.mark.datafile
 def test_m10_minor_the_cabinet_names_which_provider_reads_scans():
     from tests.unit.web.test_cabinet_drive_index_strings import _dicts
     _, dicts = _dicts()

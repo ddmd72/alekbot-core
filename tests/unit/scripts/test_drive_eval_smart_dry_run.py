@@ -33,7 +33,6 @@ def _valid():
     return [_case(i) for i in range(10)] + [_case(i + 10, "negative", "web") for i in range(10)]
 
 
-@pytest.mark.datafile
 def test_the_committed_gold_is_valid():
     gold = json.loads(_GOLD.read_text(encoding="utf-8"))
     validate_g3(gold)

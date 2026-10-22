@@ -1,13 +1,10 @@
 """G3 harness pins for owner-confirmed memory facts: Smart is run as an interactive turn so propose_memory_facts and
 draft_skill are declared, both are logged and neither writes anything (source-shape checks, no model call)."""
-import pytest
 import inspect
 
 from scripts.validation.drive_eval import smart_dry_run as g3
 from src.domain.memory_fact import PROPOSE_MEMORY_FACTS_TOOL
 from src.domain.skill import DRAFT_SKILL_TOOL, Skill
-
-pytestmark = pytest.mark.datafile
 
 _SRC = inspect.getsource(g3)
 

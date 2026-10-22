@@ -3,10 +3,7 @@
 E-M2: no intent takes a file ref and computes, so sums are "open the file, then compute from the opened text".
 E-M3: which date goes where is one distinction stated in the manifest's field descriptions; the token keeps only the
 retry rule. A content match marked "(shortened)" is opened before it is quoted."""
-import pytest
 from tests.unit.firestore_utils.test_protocol_drive_guidance import _drive_block, _text, ser
-
-pytestmark = pytest.mark.datafile
 
 
 def _block():

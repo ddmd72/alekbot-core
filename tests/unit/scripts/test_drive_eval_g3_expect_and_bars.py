@@ -25,7 +25,6 @@ def _valid():
     return [_case(i) for i in range(10)] + [_case(i + 10, "negative", "web") for i in range(10)]
 
 
-@pytest.mark.datafile
 def test_every_committed_case_says_where_its_date_belongs():
     gold = {c["id"]: c for c in json.loads(_GOLD.read_text(encoding="utf-8"))}
     validate_g3(list(gold.values()))

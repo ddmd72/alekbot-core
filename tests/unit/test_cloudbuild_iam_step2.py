@@ -1,12 +1,9 @@
 """IAM least-privilege Step 2a: the identity secrets the OIDC gates read are mounted where they are read —
 main: drive invoker, relay identity and the transition list; indexer: drive invoker and the transition list.
 `OIDC_TRANSITION_SA_EMAILS` is read with os.getenv, so without the mount it is silently absent."""
-import pytest
 from pathlib import Path
 
 import yaml
-
-pytestmark = pytest.mark.datafile
 
 _BUILD = Path(__file__).resolve().parents[2] / "cloudbuild-dev.yaml"
 

@@ -67,7 +67,6 @@ def _used_keys() -> dict[str, set[str]]:
 
 class TestConfigKeyRegistration:
 
-    @pytest.mark.datafile
     def test_settings_declares_some_keys(self):
         """Guard the guard: a regex that matches nothing would make this suite vacuous."""
         declared = _declared_keys()
@@ -79,7 +78,6 @@ class TestConfigKeyRegistration:
         assert any(f.name == "main.py" for f in files)
         assert sum(1 for f in files if f.suffix == ".py") > 50
 
-    @pytest.mark.datafile
     def test_no_config_key_is_read_without_being_declared(self):
         declared = _declared_keys()
         undeclared = {k: v for k, v in _used_keys().items() if k not in declared}

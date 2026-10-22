@@ -55,7 +55,6 @@ def test_matched_files_never_count_as_related():
     assert out["floor"] == 0.5
 
 
-@pytest.mark.datafile
 @pytest.mark.slow
 async def test_a_small_corpus_runs_end_to_end():
     row = await run_size(60, seed=2)

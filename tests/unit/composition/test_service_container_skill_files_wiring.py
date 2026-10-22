@@ -16,8 +16,6 @@ from tests.unit.composition.test_service_container_wiring import (  # noqa: F401
     fake_config,
 )
 
-pytestmark = pytest.mark.datafile
-
 
 @pytest.fixture
 def with_bucket(fake_config):  # noqa: F811 — the imported fixture, by name

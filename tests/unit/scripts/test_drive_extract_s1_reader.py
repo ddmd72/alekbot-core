@@ -13,8 +13,6 @@ import pytest
 from src.domain.drive_index_params import MODEL_IN_FLIGHT, MODEL_PAGES_PER_CALL
 from tests.unit.adapters.drive_extraction_fixtures import make_pdf
 
-pytestmark = pytest.mark.datafile
-
 _SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "infrastructure" / "drive_extract_s1.py"
 
 

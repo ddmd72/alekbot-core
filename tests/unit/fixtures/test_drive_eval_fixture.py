@@ -1,11 +1,8 @@
 """The eval fixture is well-formed and PII-free (USER_DRIVE_INDEXING_RFC §17.8). Pure JSON checks: this
 test was written before any Slice 1 code (§18)."""
-import pytest
 import json
 import re
 from pathlib import Path
-
-pytestmark = pytest.mark.datafile
 
 _DIR = Path(__file__).resolve().parents[2] / "fixtures" / "drive_eval"
 _CASE_TYPES = {"exact", "partial", "translit", "misspelled", "kind", "date", "place", "folder", "filter_only",

@@ -36,7 +36,6 @@ def test_only_transcribe_has_reservations():
         reserved_field("profile")
 
 
-@pytest.mark.datafile
 def test_cabinet_lists_transcribe():
     from tests.unit.web.test_cabinet_drive_index_strings import LANGS, _dicts
     html, dicts = _dicts()

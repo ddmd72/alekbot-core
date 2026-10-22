@@ -253,7 +253,6 @@ def _static_imports(path: Path):
     return names
 
 
-@pytest.mark.datafile
 def test_supervisor_imports_no_payload_code():
     forbidden = ("adapters", "sandbox_engine", "sandbox_app", "sandbox_setup", "docx", "parser", "quart",
                  "hypercorn", "infrastructure", "agents", "services", "handlers", "firestore")
@@ -263,7 +262,6 @@ def test_supervisor_imports_no_payload_code():
         assert bad == [], (module, bad)
 
 
-@pytest.mark.datafile
 def test_supervisor_process_loads_no_payload_code_at_runtime():
     code = ("import sys; import src.web.sandbox_supervisor, src.web.sandbox_recycler;"
             "bad=[m for m in sys.modules if m.startswith(('src.adapters','src.agents','src.services','src.handlers',"
@@ -366,7 +364,6 @@ SERVER_SCRIPT = textwrap.dedent("""
 """)
 
 
-@pytest.mark.datafile
 @pytest.mark.slow
 @pytest.mark.parametrize("protocol", ["http1", "h2c"])
 def test_supervisor_ends_the_process_group_after_one_request(tmp_path, protocol):

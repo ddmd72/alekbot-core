@@ -9,8 +9,6 @@ from src.domain.drive_index import RecordState
 from src.domain.drive_search import INACCESSIBLE_COUNTER, INACCESSIBLE_UNNOTIFIED_COUNTER, UNREAD_COUNTER
 from tests.unit.web.test_cabinet_drive_index_strings import LANGS, _dicts
 
-pytestmark = pytest.mark.datafile
-
 NEW_KEYS = ("drive.reconnect_hint_neutral", "drive.index_indexed", "drive.index_metadata_only",
             "drive.index_unresolved", "drive.index_deleting", "drive.index_unread")
 

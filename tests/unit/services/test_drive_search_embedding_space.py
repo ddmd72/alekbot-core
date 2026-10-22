@@ -66,7 +66,6 @@ async def test_onboarding_is_building_not_refreshing():
     assert result.envelope.building and not result.envelope.refreshing
 
 
-@pytest.mark.datafile
 def test_production_and_the_eval_pin_the_query_space(monkeypatch):
     """The main service embeds queries with GeminiEmbeddingAdapter: it checks the cards against that space."""
     from unittest.mock import MagicMock
