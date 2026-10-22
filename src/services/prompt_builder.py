@@ -222,64 +222,6 @@ class PromptBuilder(PromptBuilderPort):
             skills_catalog=skills_catalog,
         )
 
-    async def _get_biographical_component(self, user_id: str) -> str:
-        """
-        Get biographical context component (cached until explicit invalidation).
-
-        Uses SAME cache mechanism as other components.
-        Difference: invalidated by ConsolidationAgent, not by TTL.
-
-        Args:
-            user_id: User identifier
-
-        Returns:
-            Formatted biographical context string
-        """
-        cache_key = f"prompt_component:biographical_context_{user_id}"
-        current_time = time.time()
-
-        # Check cache validity (No TTL check for biographical context, stays fresh until consolidation)
-        if cache_key in self._component_cache:
-            content, timestamp = self._component_cache[cache_key]
-            logger.debug(f"📋 [PromptBuilder] Cache hit for biographical_context (user={user_id[:8]})")
-            return content
-
-        # Cache miss - fetch from repository
-        logger.debug(f"📋 [PromptBuilder] Fetching biographical_context for user {user_id[:8]}")
-
-        try:
-            bio_facts = await self.repo.get_biographical_context_cached(
-                owner_id=user_id,
-                limit=100
-            )
-
-            # Format for Groovy-style prompt
-            content = self._format_biographical_facts(bio_facts)
-
-            # Store in cache
-            self._component_cache[cache_key] = (content, current_time)
-
-            return content
-
-        except Exception as e:
-            logger.warning(f"⚠️ Failed to load biographical context: {e}")
-            return "// Biographical context unavailable"
-
-    def _format_biographical_facts(self, bio_facts: List[dict]) -> str:
-        """
-        Format biographical facts for Groovy prompt injection.
-        """
-        if not bio_facts:
-            return "// No biographical data available yet."
-
-        lines = []
-        for fact in bio_facts:
-            text = fact.get('text', '')
-            if text:
-                lines.append(f"- {text}")
-
-        return "\n".join(lines)
-
     def _get_static_rules(self) -> str:
         """
         Get static Slack formatting rules (doesn't change, so no caching needed).
@@ -398,29 +340,3 @@ class UserPromptBuilder(PromptBuilder):
         super().__init__(repo, cache_ttl, assembly_service)
         self.user_id = user_id
         self.config = config
-
-    async def _get_component(self, lineage_id: str) -> str:
-        """
-        Override to check for user-specific components first.
-        """
-        # Map default lineage_id to custom override (if exists)
-        custom_id_map = {
-            'kernel': self.config.prompt_preferences.custom_kernel_id,
-            'kernel_light': self.config.prompt_preferences.custom_kernel_light_id,
-            'examples': self.config.prompt_preferences.custom_examples_id
-        }
-
-        custom_id = custom_id_map.get(lineage_id)
-
-        if custom_id:
-            # Try to load custom component (owner_id = user_id)
-            logger.debug(f"Loading custom {lineage_id} for user {self.user_id}: {custom_id}")
-            custom_fact = await self.repo.get_latest_fact_by_lineage(self.user_id, custom_id)
-            if custom_fact:
-                return custom_fact.text
-            else:
-                logger.warning(f"Custom component {custom_id} not found for user {self.user_id}, falling back to SYSTEM")
-
-        # Fallback to SYSTEM component (original behavior)
-        return await super()._get_component(lineage_id)
-
