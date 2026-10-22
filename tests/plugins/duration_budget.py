@@ -52,6 +52,9 @@ class DurationBudget:
 
     def pytest_terminal_summary(self, terminalreporter) -> None:
         if not self.over:
+            terminalreporter.write_line(
+                f"duration budget {self.budget_s:g} s: 0 over ({len(self._phases)} tests)"
+            )
             return
         terminalreporter.section(f"tests over the {self.budget_s:g} s budget ({len(self.over)})", red=True)
         for nodeid, total, phases in self.over:

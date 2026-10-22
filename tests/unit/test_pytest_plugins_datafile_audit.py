@@ -263,3 +263,13 @@ def test_a_tests_own_mark_that_touched_nothing_is_listed_by_test_not_by_module(p
     out = _run(pytester, source).stdout.str()
     assert "test_inner.py::test_pure" in out
     assert "marked tests touched data" not in out
+
+
+def test_a_class_level_mark_that_touched_nothing_is_reported_per_module_not_per_test(pytester):
+    source = (
+        "import pytest\n\n@pytest.mark.datafile\nclass TestGroup:\n"
+        "    def test_a(self):\n        pass\n\n    def test_b(self):\n        pass\n"
+    )
+    out = _run(pytester, source).stdout.str()
+    assert "module test_inner.py: 0 of 2 marked tests touched data" in out
+    assert "TestGroup::test_a" not in out

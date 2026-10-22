@@ -30,7 +30,8 @@ import pytest
 
 ENV_AUDIT = "PYTEST_DATAFILE_AUDIT"
 PROP = "datafile_audit"
-MARK_PROP = "datafile_audit_mark"  # "own" (decorator on the test or its class) | "inherited" (module pytestmark) | ""
+# "own" (decorator on the test function itself) | "inherited" (class decorator or module pytestmark) | ""
+MARK_PROP = "datafile_audit_mark"
 MARKER = "datafile"
 MAX_ENTRIES = 40  # per owner; the report prints a few, the set is only for "is it empty"
 
@@ -261,7 +262,7 @@ def _mark_kind(item: pytest.Item) -> str:
     """Decided where the item lives (a worker, under xdist): `keywords` also hold node names and parametrize ids."""
     if item.get_closest_marker(MARKER) is None:
         return ""
-    return "own" if any(mark.name == MARKER for mark in item.own_markers) else "inherited"
+    return "own" if any(mark.name == MARKER for mark in item.own_markers) else "inherited"  # own_markers: the function's
 
 
 class DataFileAudit:

@@ -74,3 +74,11 @@ def test_the_markers_are_registered_in_pytest_ini(pytester):
     markers = parser["pytest"]["markers"]
     for name in ("slow:", "datafile:", "timing:"):
         assert name in markers
+
+
+def test_a_parametrize_id_called_slow_or_timing_is_not_skipped(pytester):
+    pytester.makeconftest("from tests.conftest import pytest_collection_modifyitems  # noqa: F401\n")
+    pytester.makepyfile(
+        test_inner="import pytest\n\n@pytest.mark.parametrize('kind', ['slow', 'timing'])\ndef test_case(kind):\n    pass\n"
+    )
+    pytester.runpytest("-p", "no:cacheprovider").assert_outcomes(passed=2)
