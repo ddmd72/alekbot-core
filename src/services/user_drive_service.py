@@ -22,6 +22,7 @@ from ..domain.user_drive import (
     MAX_DRIVE_APPEND_FILE_BYTES,
     MAX_DRIVE_DOWNLOAD_BYTES,
     DeleteOutcome,
+    DriveConnection,
     DriveItem,
     DriveItemNotFoundError,
     DriveMirrorWriteRefused,
@@ -73,6 +74,10 @@ class UserDriveService:
     @property
     def display_name(self) -> str:
         return self._drive.display_name
+
+    async def connection(self, user_id: str) -> DriveConnection:
+        """The user's connection as the gate reads it (the drive specialist's preflight, DRIVE_SPECIALIST_RFC §5.3)."""
+        return await self._drive.connection(user_id)
 
     async def resolve_folder(self, user_id: str, path: Optional[str], *, create: bool) -> FolderResolution:
         resolution, _ = await self._resolve(user_id, path, create=create)

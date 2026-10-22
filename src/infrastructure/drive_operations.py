@@ -20,6 +20,7 @@ Public interface (one call = one operation; `context` is the caller's message co
     async append(context, user_id, ref, text, *, wait_s) -> DriveOutcome
     async replace(context, user_id, ref, source_ref, *, wait_s) -> DriveOutcome
     async delete(context, user_id, ref, *, wait_s) -> DriveOutcome
+    async preflight(user_id) -> DrivePreflight           the specialist's state block (§5.3)
 
 The `_Transcripts` guard, root protection, never-overwrite, append-only and the move rules stay in UserDriveService.
 This module imports no UserDrivePort and no adapter; services are constructor-injected (REQ-ARCH-14: type-only
@@ -49,6 +50,7 @@ from ..domain.drive_search import (
     wrap_untrusted,
 )
 from ..domain.drive_capture import Capture
+from ..domain.drive_search_state import DriveLine, DrivePreflight, SearchLine
 from ..domain.drive_tier_result import CoverageFacts
 from ..domain.exceptions import WorkspaceRefused
 from ..domain.language import LanguageCode
@@ -340,6 +342,38 @@ class DriveOperations:
             await self._receipt(context, user_id, UIMessage.DRIVE_DELETED_FILE, path=out.item.path)
             return _ok(DriveOp.DELETE, f"Deleted {out.item.path}.", [])
         return await self._call(DriveOp.DELETE, context, user_id, run, label=ref or "", ref=ref or "", wait_s=wait_s)
+
+    # ------------------------------------------------------------------
+    # The specialist's preflight (§5.3)
+    # ------------------------------------------------------------------
+
+    async def preflight(self, user_id: str) -> DrivePreflight:
+        """The state block's `drive` and `search` lines, read in parallel. A failed read is logged and leaves its line
+        at the optimistic value: the operations then carry today's text for the real state."""
+        if self._drive is None:
+            return DrivePreflight(drive=DriveLine.NOT_CONFIGURED, search=SearchLine.OFF)
+
+        drive_service = self._drive
+
+        async def drive_line() -> DriveLine:
+            try:
+                connection = await drive_service.connection(user_id)
+            except Exception as exc:
+                logger.warning("[DriveOperations] connection read failed for %s: %s", user_id[:8], exc_brief(exc))
+                return DriveLine.CONNECTED
+            return DriveLine.of(connection)
+
+        async def search_line() -> SearchLine:
+            if self._drive_search is None:
+                return SearchLine.OFF
+            try:
+                return await self._drive_search.search_state(user_id)
+            except Exception as exc:
+                logger.warning("[DriveOperations] search state read failed for %s: %s", user_id[:8], exc_brief(exc))
+                return SearchLine.ON
+
+        drive, search = await asyncio.gather(drive_line(), search_line())
+        return DrivePreflight(drive=drive, search=search)
 
     # ------------------------------------------------------------------
     # Stored files: chat uploads, delivered documents, skill: and workspace: refs (GCS)
