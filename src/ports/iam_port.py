@@ -79,15 +79,17 @@ ROLE_PERMISSIONS: Dict[Role, Dict[ResourceType, List[Action]]] = {
 
 class IAMPort(ABC):
     """
-    IAM (Identity and Access Management) Port.
+    Port for account roles: BillingAccount.iam_policy maps user_id to a Role value.
 
-    Role-based access control for multi-tenant architecture.
-    MVP uses simple role enum (owner, member, viewer).
+    No caller in src/: nothing wires FirestoreIAMAdapter (the Cabinet reads iam_policy in session_service.py:92; the
+    chat gate is IAMService, a PlatformAuthPort). Every line below is the observed contract of FirestoreIAMAdapter.
 
-    Future phases may add:
-    - Fine-grained permissions (custom roles)
-    - Resource-level policies (per-fact permissions)
-    - External IAM integration (Okta, Auth0)
+    Holds for every method:
+    - Tenancy: a role is read from the named account only; a role in one account grants nothing in another.
+    - Legacy documents: a stored role that is not a Role value (case-sensitive, e.g. "MEMBER" as written by
+      invite_code_service.py:147) reads as no role.
+    - Atomicity: writes read the account, change iam_policy and replace the whole account document
+      (AccountRepository.update_account); not transactional, so a concurrent write to the account is lost.
     """
 
     @abstractmethod
@@ -99,56 +101,19 @@ class IAMPort(ABC):
         action: Action,
         account_id: Optional[str] = None
     ) -> bool:
-        """
-        Check if user has permission to perform action on resource.
+        """True when the user's role in `account_id` allows `action` on `resource_type` (ROLE_PERMISSIONS).
 
-        Args:
-            user_id: User attempting the action
-            resource_type: Type of resource (ACCOUNT, USER, FACT, etc.)
-            resource_id: Specific resource identifier
-            action: Action to perform (READ, WRITE, DELETE, ADMIN)
-            account_id: Optional account context (if resource belongs to account)
-
-        Returns:
-            True if user has permission, False otherwise
-
-        Logic (MVP):
-        1. Get user's role in account (via iam_policy)
-        2. Check if role has permission for action on resource_type
-        3. For USER_PRIVATE facts: also check if user is creator
-
-        Examples:
-            can_access_resource(
-                user_id="user-1",
-                resource_type=ResourceType.FACT,
-                resource_id="fact-123",
-                action=Action.READ,
-                account_id="acc-1"
-            ) → True if user is member of acc-1
-
-            can_access_resource(
-                user_id="user-2",
-                resource_type=ResourceType.ACCOUNT,
-                resource_id="acc-1",
-                action=Action.ADMIN
-            ) → True only if user-2 is owner of acc-1
+        Refusals: no account_id, no or unknown role, a missing account and any backend error return False; never
+            raises (fails closed).
+        resource_id is ignored: no per-resource or creator check (observed).
         """
         pass
 
     @abstractmethod
     async def get_user_role(self, user_id: str, account_id: str) -> Optional[Role]:
-        """
-        Get user's role in specific account.
+        """Return the user's Role in `account_id`, or None when not a member.
 
-        Args:
-            user_id: User identifier
-            account_id: Account identifier
-
-        Returns:
-            Role enum (OWNER, MEMBER, VIEWER) or None if not a member
-
-        Note:
-            Reads from BillingAccount.iam_policy[user_id]
+        Errors: a missing account raises ValueError; backend errors propagate.
         """
         pass
 
@@ -160,24 +125,12 @@ class IAMPort(ABC):
         role: Role,
         assigned_by: str
     ) -> bool:
-        """
-        Assign or update user's role in account.
+        """Set the user's role in `account_id` to `role` and return True; never returns False.
 
-        Args:
-            user_id: User to assign role to
-            account_id: Account identifier
-            role: Role to assign (OWNER, MEMBER, VIEWER)
-            assigned_by: User performing the assignment (must be OWNER)
-
-        Returns:
-            True if successful, False otherwise
-
-        Raises:
-            PermissionError: If assigned_by is not OWNER
-            ValueError: If user_id or account_id not found
-
-        Note:
-            Updates BillingAccount.iam_policy[user_id] = role
+        Refusals: `assigned_by` not OWNER of the account raises PermissionError.
+        Errors: a missing account or a backend error raises ValueError. The user's existence is not checked, and an
+            owner may change their own role, also as sole owner (observed).
+        Idempotency: assigning the current role rewrites it.
         """
         pass
 
@@ -188,47 +141,18 @@ class IAMPort(ABC):
         account_id: str,
         revoked_by: str
     ) -> bool:
-        """
-        Revoke user's access to account (remove from IAM policy).
+        """Remove the user from `account_id`'s iam_policy and return True; never returns False.
 
-        Args:
-            user_id: User to revoke access from
-            account_id: Account identifier
-            revoked_by: User performing the revocation (must be OWNER)
-
-        Returns:
-            True if successful, False otherwise
-
-        Raises:
-            PermissionError: If revoked_by is not OWNER or trying to revoke owner
-            ValueError: If user_id or account_id not found
-
-        Note:
-            Removes user_id from BillingAccount.iam_policy
-            Cannot revoke access if user is the only OWNER
+        Refusals: `revoked_by` not OWNER, or the user the sole OWNER, raises PermissionError.
+        Errors: a user not in iam_policy (not idempotent), a missing account or a backend error raises ValueError.
         """
         pass
 
     @abstractmethod
     async def get_account_members(self, account_id: str) -> Dict[str, Role]:
-        """
-        Get all members of an account with their roles.
+        """Return {user_id: Role} for `account_id`; an entry whose role is not a Role value is omitted.
 
-        Args:
-            account_id: Account identifier
-
-        Returns:
-            Dictionary mapping user_id → Role
-
-        Example:
-            {
-                "user-1": Role.OWNER,
-                "user-2": Role.MEMBER,
-                "user-3": Role.VIEWER
-            }
-
-        Note:
-            Returns BillingAccount.iam_policy directly
+        Order: none. Errors: a missing account or a backend error raises ValueError.
         """
         pass
 
