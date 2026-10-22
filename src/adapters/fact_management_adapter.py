@@ -453,7 +453,3 @@ class FactManagementAdapter(FactManagementPort):
                 "status": "failed",
                 "message": f"Error merging facts: {str(e)}"
             }
-
-    async def discard_candidate(self, reason: str) -> Dict[str, Any]:
-        logger.info(f"🗑️  [FactManagement] Discarded candidate: {reason}")
-        return {"status": "discarded", "reason": reason}
