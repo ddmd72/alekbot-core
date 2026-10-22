@@ -49,7 +49,7 @@ protected the same way.
 The fix is **not** "move secrets into Secret Manager." Secret Manager is the wrong fit for OAuth
 credentials specifically, on three axes:
 
-- **Write frequency.** `save_credentials` runs after *every* token refresh — roughly hourly per active
+- **Write frequency.** `update_credentials` (the refresh and flag writes; `save_credentials` is the consent write) runs after *every* token refresh — roughly hourly per active
   Gmail user (see the port docstring). Secret-Manager-per-secret would mint a new secret version every
   hour per user → version churn, cost, and write-quota pressure.
 - **Queryability.** The port must answer `list_users_by_provider` / `list_connected_providers`
@@ -128,7 +128,7 @@ project/KMS is configured — never silently active in prod.
 
 ### 3.3 OAuth adapter migration (`FirestoreOAuthCredentialsAdapter`)
 
-Inject `CipherPort`. Consumers do **not** change — `get_credentials` / `save_credentials` keep their
+Inject `CipherPort`. Consumers do **not** change — `get_credentials` / `save_credentials` / `update_credentials` keep their
 signatures; encryption is entirely internal to the adapter (the hexagonal payoff: the port already
 isolates every caller from storage details).
 

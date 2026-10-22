@@ -1,0 +1,87 @@
+"""OAuthCredentialsPort.update_credentials on FirestoreOAuthCredentialsAdapter (access fix 1): a refresh or a flag
+write replaces an existing record and never creates one, so a disconnect stands. Assertions are on the raw stored
+documents and on what readers return."""
+import asyncio
+import uuid
+
+import pytest
+
+from tests.support.oauth_credentials_store import CredentialsStore, creds
+
+U1, U2 = str(uuid.uuid4()), str(uuid.uuid4())
+
+
+@pytest.fixture
+def store():
+    return CredentialsStore()
+
+
+async def test_update_of_a_deleted_record_writes_nothing_and_returns_false(store):
+    await store.repo.save_credentials(creds(U1, "microsoft_onedrive"))
+    await store.repo.revoke_credentials(U1, "microsoft_onedrive")
+    assert await store.repo.update_credentials(creds(U1, "microsoft_onedrive", access_token="refreshed")) is False
+    assert store.docs == {}
+    assert await store.repo.get_credentials(U1, "microsoft_onedrive") is None
+    assert await store.repo.is_connected(U1, "microsoft_onedrive") is False
+    assert await store.repo.list_users_by_provider("microsoft_onedrive") == []
+
+
+async def test_update_of_a_record_never_saved_writes_nothing(store):
+    assert await store.repo.update_credentials(creds(U1, "gmail")) is False
+    assert store.docs == {}
+
+
+async def test_update_replaces_every_field_of_an_existing_record_and_returns_true(store):
+    await store.repo.save_credentials(creds(U1, "gmail", needs_reconnect=True, drive_id="D1"))
+    new = creds(U1, "gmail", access_token="at-new", refresh_token="rt-new", scopes=["a", "b"],
+                email_address="other@example.com", needs_reconnect=False, drive_id="D2")
+    assert await store.repo.update_credentials(new) is True
+    assert await store.repo.get_credentials(U1, "gmail") == new
+    assert store.docs[f"{U1}_gmail"]["needs_reconnect"] is False       # a refresh clears the flag, as a save does
+
+
+async def test_update_can_raise_the_needs_reconnect_flag(store):
+    await store.repo.save_credentials(creds(U1, "gmail"))
+    assert await store.repo.update_credentials(creds(U1, "gmail", needs_reconnect=True)) is True
+    assert (await store.repo.get_credentials(U1, "gmail")).needs_reconnect is True
+
+
+async def test_update_touches_only_its_own_user_and_provider(store):
+    await store.repo.save_credentials(creds(U1, "gmail"))
+    await store.repo.save_credentials(creds(U1, "google_tasks"))
+    await store.repo.save_credentials(creds(U2, "gmail"))
+    assert await store.repo.update_credentials(creds(U1, "gmail", access_token="at-new")) is True
+    assert (await store.repo.get_credentials(U1, "gmail")).access_token == "at-new"
+    assert (await store.repo.get_credentials(U1, "google_tasks")).access_token == "at-old"
+    assert (await store.repo.get_credentials(U2, "gmail")).access_token == "at-old"
+    assert await store.repo.update_credentials(creds(U2, "google_tasks")) is False     # no record of that provider
+    assert sorted(store.docs) == sorted([f"{U1}_gmail", f"{U1}_google_tasks", f"{U2}_gmail"])
+
+
+async def test_a_disconnect_stands_against_an_update_in_flight(store):
+    await store.repo.save_credentials(creds(U1, "microsoft_onedrive", drive_id="D1"))
+    read = await store.repo.get_credentials(U1, "microsoft_onedrive")
+    refreshed = asyncio.Event()
+    results = []
+
+    async def refresh():
+        await refreshed.wait()
+        results.append(await store.repo.update_credentials(
+            creds(U1, "microsoft_onedrive", access_token="refreshed", drive_id=read.drive_id)))
+
+    async def disconnect():
+        await store.repo.revoke_credentials(U1, "microsoft_onedrive")
+        refreshed.set()
+
+    await asyncio.gather(refresh(), disconnect())
+    assert results == [False]
+    assert await store.repo.get_credentials(U1, "microsoft_onedrive") is None
+    assert await store.repo.is_connected(U1, "microsoft_onedrive") is False
+
+
+async def test_a_new_consent_after_a_disconnect_still_connects(store):
+    await store.repo.save_credentials(creds(U1, "microsoft_onedrive"))
+    await store.repo.revoke_credentials(U1, "microsoft_onedrive")
+    await store.repo.save_credentials(creds(U1, "microsoft_onedrive", access_token="consent"))
+    assert await store.repo.update_credentials(creds(U1, "microsoft_onedrive", access_token="refreshed")) is True
+    assert (await store.repo.get_credentials(U1, "microsoft_onedrive")).access_token == "refreshed"

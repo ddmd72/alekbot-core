@@ -232,11 +232,6 @@ async def test_a_new_consent_saved_after_a_revoke_connects_again(store):
     assert await store.repo.list_users_by_provider("microsoft_onedrive") == [U1]
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
-    "known defect: save is an upsert, so a token refresh in flight during a disconnect writes the grant back — "
-    "src/adapters/firestore_oauth_credentials_adapter.py:77 (graph_auth.py:123 against onedrive_adapter.py:247; P6 T1 H4). "
-    "The refresh below is today's save_credentials, the same call a new consent makes; the fix gives the refresh path its "
-    "own call (a save that only updates an existing record), and this test's refresh call changes with it"))
 async def test_a_disconnect_stands_against_a_refresh_in_flight(store):
     await store.repo.save_credentials(creds(U1, "microsoft_onedrive", drive_id="D1"))
     read = await store.repo.get_credentials(U1, "microsoft_onedrive")      # the refresh starts from this read
@@ -244,8 +239,8 @@ async def test_a_disconnect_stands_against_a_refresh_in_flight(store):
 
     async def refresh():
         await refreshed.wait()                                                # the token endpoint answers after the disconnect
-        await store.repo.save_credentials(creds(U1, "microsoft_onedrive", access_token="refreshed",
-                                                drive_id=read.drive_id))
+        await store.repo.update_credentials(creds(U1, "microsoft_onedrive", access_token="refreshed",
+                                                  drive_id=read.drive_id))
 
     async def disconnect():
         await store.repo.revoke_credentials(U1, "microsoft_onedrive")

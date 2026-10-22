@@ -88,6 +88,7 @@ def _make_adapter(creds=_VALID_CREDS):
     oauth = AsyncMock(spec=OAuthCredentialsPort)
     oauth.get_credentials.return_value = creds
     oauth.save_credentials.return_value = None
+    oauth.update_credentials.return_value = True         # the record exists: a refresh replaces it
 
     task_config = AsyncMock(spec=TaskConfigPort)
     task_config.get_config.return_value = TaskUserConfig()
@@ -178,12 +179,13 @@ class TestTokenRefresh:
         with _patch_session(session):
             await adapter.list_task_lists(_USER_ID)
 
-        oauth.save_credentials.assert_called_once()
-        saved: OAuthCredentials = oauth.save_credentials.call_args.args[0]
+        oauth.save_credentials.assert_not_called()           # a refresh never creates a record
+        oauth.update_credentials.assert_called_once()
+        saved: OAuthCredentials = oauth.update_credentials.call_args.args[0]
         assert saved.access_token == "new-token"
 
     async def test_no_refresh_when_token_valid(self):
-        """Valid credentials → save_credentials never called."""
+        """Valid credentials → nothing written (neither save_credentials nor update_credentials)."""
         adapter, oauth, _ = _make_adapter(creds=_VALID_CREDS)
         list_resp = _mock_response({"value": [_MS_LIST]})
 
@@ -192,6 +194,7 @@ class TestTokenRefresh:
             await adapter.list_task_lists(_USER_ID)
 
         oauth.save_credentials.assert_not_called()
+        oauth.update_credentials.assert_not_called()
 
 
 # =============================================================================

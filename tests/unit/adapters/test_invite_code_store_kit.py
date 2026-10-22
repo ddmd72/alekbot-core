@@ -247,9 +247,6 @@ async def test_consuming_marks_the_stored_invite_used_and_a_second_use_is_refuse
     assert await store.account_of("usr-late") == "acc-usr-late"
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
-    "known defect: invite roles written uppercase — invite_code_service.py:147 (readers compare lowercase, e.g. "
-    "session_service.py:92; P6 T1 Q2)"))
 async def test_a_consumed_invite_grants_its_role_in_lowercase(store):
     await store.team("usr-new")
     await store.repo.create(invite(role="VIEWER"))

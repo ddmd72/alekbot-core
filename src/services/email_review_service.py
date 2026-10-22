@@ -202,7 +202,9 @@ class EmailReviewService:
         if creds.token_expiry and creds.token_expiry <= now_utc + timedelta(minutes=5):
             try:
                 creds = await self._email_provider.refresh_token(creds)
-                await self._oauth.save_credentials(creds)
+                if not await self._oauth.update_credentials(creds):
+                    logger.warning(f"[EmailReview] Gmail disconnected during refresh for {creds.user_id[:8]}")
+                    return None
             except OAuthGrantRevokedError:
                 logger.warning(
                     f"[EmailReview] Gmail grant revoked for {creds.user_id[:8]} — reconnect required"

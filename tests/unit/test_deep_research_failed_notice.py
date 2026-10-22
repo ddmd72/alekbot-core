@@ -280,9 +280,11 @@ class TestGmailReconnectEnsureFailure:
         creds = MagicMock(needs_reconnect=False)
         oauth = AsyncMock()
         oauth.get_credentials.return_value = creds
+        oauth.update_credentials.return_value = True        # the record still exists
         worker, log = _ordered_worker(oauth_credentials=oauth)
         worker._agent_factory.ensure_agents_for_user.side_effect = RuntimeError("cold")
         await worker._flag_gmail_reconnect("u1", "a1")
+        oauth.update_credentials.assert_not_awaited()
         oauth.save_credentials.assert_not_awaited()
         assert creds.needs_reconnect is False
         worker._notification.notify.assert_not_awaited()
@@ -292,6 +294,7 @@ class TestGmailReconnectEnsureFailure:
 
         worker._agent_factory.ensure_agents_for_user.side_effect = _ok
         await worker._flag_gmail_reconnect("u1", "a1")
-        oauth.save_credentials.assert_awaited_once()
+        oauth.update_credentials.assert_awaited_once_with(creds)
+        oauth.save_credentials.assert_not_awaited()          # a flag write never creates a record
         assert creds.needs_reconnect is True
         assert log == ["ensure", "notify"]
