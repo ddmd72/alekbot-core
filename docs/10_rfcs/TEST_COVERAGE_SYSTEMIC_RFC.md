@@ -314,6 +314,15 @@ in `make check`. Cost: named databases have no free quota; reads and writes stay
 `main.py:108-112`) run our queries, including vector search? If it covers the non-vector part, the parity slice (P5)
 runs the non-vector probes there, offline; vector probes still need the test database.
 
+**Result (P3, 2026-10-22).** Emulator v1.22.0 with `google-cloud-firestore` 2.34.1 ran all 30 probes: every H1 write and
+query shape and every P5 shape, **vector search included** (COSINE order and distances, `distance_threshold`, equality,
+range, `!=` and `in` pre-filters, projection with `distance_result_field`). Two differences, both index refusals: it does
+not refuse a composite query or a kNN query without an index. Transactions lock pessimistically, so a conflicting write
+cannot be placed inside the body (the outside write waits 2 s, then `Aborted`); the conflict case is concurrent
+transactions. So P5 runs offline on the emulator in full, and the test database is needed only for the index refusals,
+three points the docs do not pin (null under `!=`, the error class for a precondition on a deleted document, the lock wait)
+and one confirming run. Probe: owner's ops journal.
+
 ## 4a. Third-party contracts (owner, 2026-10-21)
 
 **Today.** Every third-party adapter is tested by mocking at its boundary, at three depths:
