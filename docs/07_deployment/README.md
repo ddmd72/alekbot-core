@@ -430,9 +430,10 @@ provider SDKs fail TLS; every paid eval passes `--max-usd` (a hard stop).
 
 **Before the build — the pre-build check (RFC §12).** The spike's stage 1 rerun with the Sonnet specialist (`--max-usd
 3`). If it misses the bar (correctness at parity, p50 case wall time ≤ today's × 1.25), the build stops and the owner
-decides; changing the specialist's effort (`low` is the first lever) is his call. The same run verifies prompt caching:
-the second turn of a commission shows `cache_read_tokens > 0` (`drive` is in `PromptCacheStrategy.CACHEABLE_AGENTS`
-and `MULTI_TURN_AGENTS`; before that change the spike showed `cached: 0` on every specialist call).
+decides; changing the specialist's effort (`low` is the first lever) is his call. Prompt caching is not checked here:
+the spike prototype is not cached. It is checked after the deploy (below): the second turn of a commission shows
+`cache_read_tokens > 0` (`drive` is in `PromptCacheStrategy.CACHEABLE_AGENTS` and `MULTI_TURN_AGENTS`; before that
+change the spike showed `cached: 0` on every specialist call).
 
 **O0 — which model serves the specialist (before O1).** The model is not only the tier default: the per-user
 `agent_providers["drive"]`, then the **global** `provider_preference`, then the strategy default (`claude`) decide the
