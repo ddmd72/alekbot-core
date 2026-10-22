@@ -88,8 +88,8 @@ class IAMPort(ABC):
     - Tenancy: a role is read from the named account only; a role in one account grants nothing in another.
     - Roles: a stored role that is not a Role value (case-sensitive): get_user_role and can_access_resource read it
       as no role, get_account_members omits it, revoke_access of that user raises ValueError, and it does not count
-      as an OWNER (observed). Known defect: invite_code_service.py:147 writes "MEMBER"/"OWNER" in uppercase;
-      session_service.py:92, user_cabinet_app.py:385 and worker_handler.py:1214 compare lowercase.
+      as an OWNER (observed). session_service.py:92, user_cabinet_app.py:385 and worker_handler.py:1214 compare
+      lowercase, and invite_code_service.py (team invite) writes the lowercase Role value.
     - Atomicity: writes read the account, change iam_policy and replace the whole account document
       (AccountRepository.update_account); not transactional, so a concurrent write to the account is lost.
     """
