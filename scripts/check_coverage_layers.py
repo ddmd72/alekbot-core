@@ -59,8 +59,8 @@ FLOORS: Dict[str, float] = {
     "src/services": 91.3,
     "src/handlers": 91.6,
     "src/adapters": 81.8,
-    "src/web": 74.4,
-    "src/composition": 89.9,
+    "src/web": 75.2,
+    "src/composition": 90.4,
     "src (other)": 70.1,
     "root entry points": 33.9,
 }
