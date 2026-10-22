@@ -77,4 +77,4 @@ def test_fallback_tier_is_the_primary_tier_when_the_strategy_names_none(monkeypa
 
 def test_only_the_drive_agents_name_a_fallback_tier():
     named = {name for name, s in AgentProviderStrategy.STRATEGIES.items() if "fallback_tier" in s}
-    assert named == set(AGENTS)
+    assert named == set(AGENTS) | {"drive"}

@@ -407,6 +407,7 @@ _FACTORY_AGENT_TYPES = [
     "image_generation",
     "video_generation",
     "web_search_light",
+    "drive",
 ]
 
 
