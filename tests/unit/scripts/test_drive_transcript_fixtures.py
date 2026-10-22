@@ -92,11 +92,13 @@ def test_the_gold_json_matches_the_specs_and_carries_text_and_intended_starts():
     json.dumps(gold, ensure_ascii=False)
 
 
+@pytest.mark.datafile
 def test_the_committed_gold_is_what_the_script_generates():
     committed = json.loads(fx.GOLD_PATH.read_text(encoding="utf-8"))
     assert committed == json.loads(json.dumps(fx.gold(fx.build_specs())))
 
 
+@pytest.mark.datafile
 def test_the_committed_gold_holds_no_media_and_no_path():
     text = fx.GOLD_PATH.read_text(encoding="utf-8")
     assert "scripts/memory" not in text and "/Users/" not in text and ".m4a" not in text
@@ -137,6 +139,7 @@ def test_tone_clip_is_tone_and_silence(tmp_path):
     assert _first_loud_sample_s(out) == 0.0 or _first_loud_sample_s(out) < 0.01
 
 
+@pytest.mark.slow
 def test_music_clip_has_energy_and_no_tts_call(tmp_path):
     spec = next(s for s in fx.build_specs() if s.family == "no_speech_music")
 

@@ -1,9 +1,12 @@
 """IAM least-privilege Step 1: every build runs as the deployer identity, named through the build's own
 `$PROJECT_ID` substitution (no `.env` dependency, so a second checkout cannot silently build as the default compute
 identity)."""
+import pytest
 from pathlib import Path
 
 import yaml
+
+pytestmark = pytest.mark.datafile
 
 _BUILD = Path(__file__).resolve().parents[2] / "cloudbuild-dev.yaml"
 

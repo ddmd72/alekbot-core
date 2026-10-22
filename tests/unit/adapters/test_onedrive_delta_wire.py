@@ -18,6 +18,8 @@ from src.domain.email import OAuthCredentials
 from src.domain.user_drive import DriveConnection, DriveItemNotFoundError, DriveResyncRequired
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
 
+pytestmark = pytest.mark.datafile
+
 _FIX = Path(__file__).resolve().parents[2] / "fixtures" / "onedrive_delta"
 _GRAPH = "https://graph.microsoft.com/v1.0"
 # Observed 2026-10-12 after the owner moved the App Folder to the drive root (RFC Δ46).

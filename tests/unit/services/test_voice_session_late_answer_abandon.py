@@ -173,6 +173,7 @@ async def test_a_failing_abandon_never_breaks_teardown():
     control.submit_transcript.assert_awaited_once()
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_a_hanging_abandon_holds_teardown_only_for_its_bound(monkeypatch):
     monkeypatch.setattr(voice_session_service, "_ABANDON_TIMEOUT_S", 0.5)

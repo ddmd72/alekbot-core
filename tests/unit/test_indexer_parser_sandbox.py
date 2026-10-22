@@ -59,6 +59,7 @@ def test_a_named_user_missing_from_the_container_fails_the_start(wired, monkeypa
         indexer_main.build_app()
 
 
+@pytest.mark.datafile
 def test_the_image_creates_the_user_it_names():
     text = DOCKERFILE.read_text()
     named = re.findall(rf"^ENV {PARSER_USER_ENV}=(\S+)\s*$", text, re.MULTILINE)
@@ -71,6 +72,7 @@ def test_the_image_creates_the_user_it_names():
     assert not re.search(r"^USER\s", text, re.MULTILINE)
 
 
+@pytest.mark.datafile
 def test_the_image_build_refuses_world_writable_app_or_library_files():
     text = DOCKERFILE.read_text()
     copy_all = text.index("COPY . .")

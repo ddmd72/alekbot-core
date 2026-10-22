@@ -63,6 +63,7 @@ def test_nothing_loaded_raises(tmp_path):
         load_system_skills(tmp_path)
 
 
+@pytest.mark.datafile
 def test_every_repo_system_skill_parses():
     names = {s.name for s in load_system_skills(SYSTEM_SKILLS_ROOT)}
     assert {"skill-creator", "domain-competency-research"} <= names

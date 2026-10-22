@@ -6,6 +6,7 @@
 - bars_v2.json holds §25.7's numbers;
 - the long book mentions each tempting word once, far apart; nothing in the overlay's text is an e-mail address
   outside example.org."""
+import pytest
 import json
 import re
 from pathlib import Path
@@ -14,6 +15,8 @@ from scripts.validation.drive_eval import fixture_texts_v2
 from scripts.validation.drive_eval.make_fixtures_v2 import FIXTURES_V2
 from scripts.validation.drive_eval.search_v2_eval import v2_drive
 from scripts.validation.drive_eval.v2_metrics import BOOK, FAMILIES, validate_gold_v2
+
+pytestmark = pytest.mark.datafile
 
 _DIR = Path(__file__).resolve().parents[2] / "fixtures" / "drive_eval"
 

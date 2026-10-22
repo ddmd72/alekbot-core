@@ -14,6 +14,8 @@ from src.domain.docx_script_prelude import SAFE_ENV_KEYS
 from src.domain.sandbox_docx_frame import frame_body
 from src.domain.sandbox_contract import ERROR_TEXT_CAP_BYTES, SandboxEngine, SandboxLimits, SandboxStatus
 
+pytestmark = pytest.mark.datafile
+
 _ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
 _HAS_NODE = shutil.which("node") is not None and os.path.isdir(
     os.path.join(_ROOT_DIR, "docx_generator", "node_modules", "docx"))
@@ -82,6 +84,7 @@ async def test_no_stderr_placeholder(tmp_path):
     assert result.detail == "exit code 3\n(no stderr)"
 
 
+@pytest.mark.slow
 @needs_node
 async def test_timeout_maps_to_timeout_text(tmp_path):
     result = await _run(tmp_path, b"setInterval(() => {}, 1000);", wall_s=2.0)

@@ -1,6 +1,7 @@
 """The indexer's model registry registers Gemini when GEMINI_API_KEY is set (USER_DRIVE_INDEXING_RFC §24.2 D7 rev
 3.17): it serves only the drive agents' fallback. Without the key the agents run on their primary alone, and the
 indexer says so at start."""
+import pytest
 from unittest.mock import MagicMock
 
 from src.adapters.gemini_adapter import GeminiAdapter
@@ -30,6 +31,7 @@ def test_all_keys_set_warns_nothing(monkeypatch):
     log.warning.assert_not_called()
 
 
+@pytest.mark.datafile
 def test_the_indexer_passes_the_gemini_key_to_the_model_wiring():
     """indexer_main mounts GEMINI_API_KEY for embeddings; the model wiring must receive it too."""
     from pathlib import Path

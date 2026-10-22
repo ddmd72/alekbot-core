@@ -131,6 +131,7 @@ async def test_the_unread_counters_are_refreshed_on_a_tick_that_does_not_settle(
     assert seen and all(counted == truth for counted, truth in seen)
 
 
+@pytest.mark.datafile
 async def test_the_not_read_yet_count_has_its_declared_composite(mock_env_config):
     from tests.unit.adapters.test_firestore_drive_index_chunk_provisioning import _declared
     db = ChunkDb()

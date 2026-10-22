@@ -156,11 +156,13 @@ async def test_mirror_flag_without_a_deleter_is_refused(sweep):
     assert code == 1 and "--mirror" in message and len(mirror.docs) == 4 and _kept(index) == ["a", "b", "c"]
 
 
+@pytest.mark.datafile
 def test_the_sweep_has_no_drive_port():
     src = (_DIR / "drive_transcript_sweep.py").read_text()
     assert "UserDrivePort" not in src and "user_drive" not in src
 
 
+@pytest.mark.datafile
 async def test_the_module_defaults_to_a_dry_run(sweep):
     src = (_DIR / "drive_transcript_sweep.py").read_text()
     assert 'parser.add_argument("--apply", action="store_true"' in src and "--mirror" in src
@@ -188,6 +190,7 @@ async def test_mirror_apply_with_after_rollback_runs(sweep):
     assert code == 0 and not mirror.docs and not mirror.root_docs and _kept(index) == []
 
 
+@pytest.mark.datafile
 def test_help_and_docstring_state_the_precondition(sweep):
     assert "BEFORE any T2 revision" in sweep.__doc__
     src = (_DIR / "drive_transcript_sweep.py").read_text()

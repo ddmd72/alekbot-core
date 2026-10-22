@@ -241,6 +241,7 @@ def test_outage_writes_no_record_state():
     assert transcript_plan(rec, _ctx()) == rec and rec.transcript_state == "ready"
 
 
+@pytest.mark.datafile
 def test_plan_reads_no_store():
     assert list(inspect.signature(transcript_plan).parameters) == ["rec", "ctx"]
     src = inspect.getsource(pm)
@@ -484,6 +485,7 @@ def test_cooldown_runs_from_the_purchase_not_only_the_completion():
 
 # -- properties ---------------------------------------------------------------------------------------------------
 
+@pytest.mark.slow
 def test_plan_idempotent_property():
     base = _rec()
     hk = _hk(base)

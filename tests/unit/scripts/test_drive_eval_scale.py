@@ -2,6 +2,7 @@
 scale_calibrate.py): the corpus is deterministic and PII-free in shape, a near-miss shares no key with its words,
 the procedure picks the smallest floor meeting the negatives' bar and judges it by the near-miss recall, and a small
 corpus runs end to end through the real tick and search."""
+import pytest
 import random
 
 from scripts.validation.drive_eval.scale_calibrate import calibrate, run_size
@@ -54,6 +55,8 @@ def test_matched_files_never_count_as_related():
     assert out["floor"] == 0.5
 
 
+@pytest.mark.datafile
+@pytest.mark.slow
 async def test_a_small_corpus_runs_end_to_end():
     row = await run_size(60, seed=2)
     assert row["records"].get("carded", 0) >= 60 and row["negatives_lost_to_common"] == []

@@ -15,6 +15,8 @@ from src.domain.drive_extraction import PARSER, ExtractionStatus
 
 from tests.unit.adapters.drive_extraction_fixtures import make_pdf
 
+pytestmark = pytest.mark.datafile
+
 _ROOT = Path(__file__).resolve().parents[3]
 FIXTURES = _ROOT / "tests" / "fixtures" / "drive_capture"
 

@@ -127,6 +127,8 @@ def _has_literal_email(text: str) -> bool:
 
 import pytest  # noqa: E402
 
+pytestmark = pytest.mark.datafile
+
 
 @pytest.mark.parametrize("literal", [
     "sa@$PROJECT_ID.iam.gserviceaccount.com", "sa@${PROJECT_ID}.iam.gserviceaccount.com",

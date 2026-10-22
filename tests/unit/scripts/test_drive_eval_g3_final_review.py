@@ -40,6 +40,7 @@ def test_date_in_query_needs_the_cases_date_among_the_query_terms(calls, met):
     assert expectation_met("date_in_query", calls, "2026-02-15") is met
 
 
+@pytest.mark.datafile
 def test_every_committed_dated_case_names_its_date():
     gold = json.loads(_GOLD.read_text(encoding="utf-8"))
     validate_g3(gold)

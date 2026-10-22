@@ -99,6 +99,7 @@ class TestRepositories:
         # silent stub (`no_text`) is in none of them
         assert await mem.count_unread("u", frozenset(), frozenset(), transcribed=MEDIA) == 3
 
+    @pytest.mark.datafile
     async def test_no_new_index_for_media_unread_classes(self, mock_env_config):
         from tests.unit.adapters.test_firestore_drive_index_chunk_provisioning import _declared
         db = ChunkDb()

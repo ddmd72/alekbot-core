@@ -22,6 +22,8 @@ from tests.unit.adapters.drive_media_fixtures import (
     tone_hz_at,
 )
 
+pytestmark = pytest.mark.datafile
+
 needs_ffmpeg = pytest.mark.skipif(not HAVE_FFMPEG, reason="needs ffmpeg and ffprobe")
 WEBM = "matroska,webm"
 STUB = "tests.unit.adapters.drive_media_child_stub"
@@ -124,6 +126,7 @@ async def test_wall_kills_group(tmp_path):
     assert time.monotonic() - started < 15
 
 
+@pytest.mark.slow
 async def test_wall_kill_reaches_the_grandchild(tmp_path, monkeypatch):
     seen = []
     real = launch.kill_group
@@ -177,6 +180,7 @@ async def test_a_reported_window_outside_the_request_is_refused(tmp_path):
 # Real ffprobe / ffmpeg
 # =============================================================================
 
+@pytest.mark.slow
 @needs_ffmpeg
 async def test_probe_and_windows_over_https(tmp_path):
     mp4 = make_audio_mp4(tmp_path / "a.mp4", 100)
@@ -200,6 +204,7 @@ async def test_probe_and_windows_over_https(tmp_path):
         assert any(r[2] for r in server.requests)                # input-side -ss read through Range requests
 
 
+@pytest.mark.slow
 @needs_ffmpeg
 async def test_audio_less_file_probes_without_audio(tmp_path):
     import subprocess
@@ -212,6 +217,7 @@ async def test_audio_less_file_probes_without_audio(tmp_path):
     assert outcome.probe.has_audio is False
 
 
+@pytest.mark.slow
 @needs_ffmpeg
 async def test_probe_without_duration_takes_one_pass_segment(tmp_path):
     """A browser-recorded webm (written to a pipe) has no Duration and no Cues: not an error (G35). The design is the
@@ -235,6 +241,7 @@ async def test_probe_without_duration_takes_one_pass_segment(tmp_path):
         "window_0.opus"]                                          # pass.opus is gone
 
 
+@pytest.mark.slow
 @needs_ffmpeg
 async def test_a_pass_cuts_overlapping_windows_whose_content_matches_the_clock(tmp_path):
     """Windows cut from one pass keep the plan's overlap and each holds the media time it claims (pitch = f(time))."""
@@ -254,6 +261,7 @@ async def test_a_pass_cuts_overlapping_windows_whose_content_matches_the_clock(t
                 assert tone_hz_at(path, rel) == pytest.approx(expected, abs=25), (spec, abs_t)
 
 
+@pytest.mark.slow
 @needs_ffmpeg
 async def test_a_resumed_pass_starts_at_the_slice_and_keeps_the_clock(tmp_path):
     webm = make_stepped_tone_webm(100)
@@ -269,6 +277,7 @@ async def test_a_resumed_pass_starts_at_the_slice_and_keeps_the_clock(tmp_path):
     assert not result.eof and spec2.duration_s == pytest.approx(40.0, abs=0.5)
 
 
+@pytest.mark.slow
 @needs_ffmpeg
 def test_a_pass_that_reaches_the_bound_says_so(tmp_path, monkeypatch):
     """The file goes on past the last planned window and that window ends at TRANSCRIBE_MAX_SECONDS: the `too_long`
@@ -303,6 +312,7 @@ async def test_a_pass_cut_by_the_cpu_limit_returns_the_windows_inside_the_prefix
     assert all(Path(p).read_bytes()[:4] == b"OggS" for _, p in result.windows)
 
 
+@pytest.mark.slow
 @needs_ffmpeg
 async def test_a_pass_cut_by_the_file_size_limit_returns_the_windows_inside_the_prefix(tmp_path):
     """RLIMIT_FSIZE ends pass 1 the same way (the write fails): the prefix is cut, not discarded."""
@@ -317,6 +327,7 @@ async def test_a_pass_cut_by_the_file_size_limit_returns_the_windows_inside_the_
     assert 0 < len(result.windows) < 3 and result.windows[0][0].index == 0
 
 
+@pytest.mark.slow
 @needs_ffmpeg
 async def test_a_dropped_connection_is_retried_and_the_duration_is_the_whole_files(tmp_path):
     """The first connection dies at 30 %: ffmpeg reconnects with a Range read, so the pass sees the real end (N1)."""
@@ -331,6 +342,7 @@ async def test_a_dropped_connection_is_retried_and_the_duration_is_the_whole_fil
     assert result.duration_s == pytest.approx(300.0, abs=2.0)
 
 
+@pytest.mark.slow
 @needs_ffmpeg
 async def test_a_connection_that_keeps_dropping_is_an_error_never_an_eof(tmp_path):
     webm = make_cueless_webm(300)
@@ -344,6 +356,7 @@ async def test_a_connection_that_keeps_dropping_is_an_error_never_an_eof(tmp_pat
     assert not list((tmp_path / "o").glob("window_*"))
 
 
+@pytest.mark.slow
 @needs_ffmpeg
 async def test_a_known_duration_window_cut_short_by_a_drop_is_not_reported_at_its_planned_length(tmp_path):
     """Per-window runs rely on `-xerror` and also measure the produced window against the plan (N1)."""
@@ -369,6 +382,7 @@ async def test_a_limit_before_the_first_window_is_an_error_not_a_loop(tmp_path):
                                             wall_s=170, container=WEBM, duration_known=False)
 
 
+@pytest.mark.slow
 @needs_ffmpeg
 async def test_video_longer_than_the_audio_ends_at_the_audio(tmp_path):
     """The header says 100 s, the audio is 60 s (T-R16): the window keeps its measured length and the file's end is
@@ -386,6 +400,7 @@ async def test_video_longer_than_the_audio_ends_at_the_audio(tmp_path):
     assert result.windows[1][0].duration_s == pytest.approx(30.0, abs=1.0)
 
 
+@pytest.mark.slow
 @needs_ffmpeg
 async def test_an_mp3_whose_header_overstates_the_duration_ends_at_the_audio(tmp_path):
     mp3 = make_overstated_mp3(tmp_path / "a.mp3", 120)
@@ -400,6 +415,7 @@ async def test_an_mp3_whose_header_overstates_the_duration_ends_at_the_audio(tmp
     assert len(result.windows) == 1
 
 
+@pytest.mark.slow
 @needs_ffmpeg
 async def test_one_corrupt_packet_does_not_fail_the_file(tmp_path):
     """`-xerror` makes the glitch fatal (rc 183 on ffmpeg 7.1 / 8.0; exit 0 with a short output on 6.1); the re-run
@@ -429,6 +445,7 @@ async def test_a_corrupt_packet_late_in_a_long_file_is_re_run_after_earlier_wind
     assert [w.index for w, _ in result.windows] == [w.index for w in plan]
 
 
+@pytest.mark.slow
 @needs_ffmpeg
 async def test_a_corrupt_cluster_in_a_pass_is_re_run_and_yields_its_windows(tmp_path, monkeypatch):
     """The pass path: `-xerror` makes the corrupt cluster fatal; the re-run without it conceals it and the pass still
@@ -629,6 +646,7 @@ async def test_a_pass_takes_a_short_contiguous_slice(tmp_path):
                                               str(tmp_path / "o"), wall_s=30, container=WEBM, duration_known=False)
 
 
+@pytest.mark.slow
 @needs_ffmpeg
 async def test_tls_verify_refuses_an_untrusted_server(tmp_path):
     """ffmpeg verifies nothing by default; the argv makes it. A server whose CA is not the one given is refused."""

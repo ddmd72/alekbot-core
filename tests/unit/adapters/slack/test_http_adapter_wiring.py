@@ -16,6 +16,7 @@ from src.ports.session_store import SessionStore
 
 
 class TestHTTPAdapterWiring:
+    @pytest.mark.datafile
     def test_no_firestore_session_store_import(self):
         """http_adapter must not import FirestoreSessionStore directly."""
         source = inspect.getsource(http_adapter_module)

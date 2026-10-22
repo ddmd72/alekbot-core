@@ -1,10 +1,13 @@
 """The indexer's emergency switch DRIVE_UPGRADE_PASS survives a deploy (USER_DRIVE_INDEXING_RFC §25.8; review XC-7):
 the deploy step replaces every variable (`--set-env-vars`), so the switch rides as the `_DRIVE_UPGRADE_PASS`
 substitution, default "on", fed by the deploy-only .env key DRIVE_UPGRADE_PASS_DEV (never the local key)."""
+import pytest
 import re
 from pathlib import Path
 
 import yaml
+
+pytestmark = pytest.mark.datafile
 
 _ROOT = Path(__file__).resolve().parents[2]
 _BUILD = yaml.safe_load((_ROOT / "cloudbuild-dev.yaml").read_text())

@@ -104,22 +104,26 @@ def _dicts():
 
 
 class TestCabinetPage:
+    @pytest.mark.datafile
     @pytest.mark.parametrize("lang", LANGS)
     def test_every_string_in_every_language(self, lang):
         _, dicts = _dicts()
         assert [k for k in KEYS if not dicts[lang].get(k)] == []
 
+    @pytest.mark.datafile
     def test_translations_are_not_copies_of_english(self):
         _, dicts = _dicts()
         for lang in ("uk", "fr", "es"):
             assert [k for k in KEYS if dicts[lang][k] == dicts["en"][k]] == [], lang
 
+    @pytest.mark.datafile
     def test_the_page_calls_the_endpoint_and_uses_the_strings(self):
         html, _ = _dicts()
         assert "/api/drive/deep-research-copy" in html
         for key in ("drive.dr_copy_title", "drive.dr_copy_disclosure", "drive.index_disclosure_dr_copy"):
             assert f't("{key}")' in html, key
 
+    @pytest.mark.datafile
     @pytest.mark.parametrize("lang, folder", [("en", "Deep research"), ("uk", "Глибокі дослідження"),
                                               ("fr", "Recherches approfondies"), ("es", "Investigaciones")])
     def test_disclosure_names_the_folder(self, lang, folder):

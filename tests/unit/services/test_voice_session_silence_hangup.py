@@ -59,6 +59,7 @@ async def _call(hangup_after_s):
     return session, control, loop.time() - started
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_silence_after_the_check_ends_the_call_and_still_submits_the_transcript():
     session, control, elapsed = await _call(hangup_after_s=0.5)
@@ -68,6 +69,7 @@ async def test_silence_after_the_check_ends_the_call_and_still_submits_the_trans
     control.submit_transcript.assert_awaited_once()
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_without_a_hangup_setting_the_call_waits_for_the_line():
     _, _, elapsed = await _call(hangup_after_s=None)

@@ -40,6 +40,7 @@ async def test_records_in_one_transcript_state_by_item(adapter):
     assert await repo.transcript_records("u", "parked", 10) == []
 
 
+@pytest.mark.datafile
 async def test_the_firestore_read_is_equality_only(adapter):
     repo, db = adapter
     if db is None:

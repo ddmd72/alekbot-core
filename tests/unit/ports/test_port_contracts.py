@@ -64,6 +64,7 @@ class TestConsolidationQueueContract:
         assert hasattr(ConsolidationQueue, "get_stuck_batch_user_ids")
         assert getattr(ConsolidationQueue.get_stuck_batch_user_ids, "__isabstractmethod__", False)
 
+    @pytest.mark.datafile
     def test_no_duplicate_methods(self):
         """Ensure no method is defined more than once (regression test for duplicate bug)."""
         source = inspect.getsource(ConsolidationQueue)

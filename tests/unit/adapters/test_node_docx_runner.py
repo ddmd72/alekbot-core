@@ -179,16 +179,19 @@ class TestNodeDocxRunnerFsSandboxRealNode:
     """End-to-end against real `node` — proves the fs block is enforced AND that
     a normal docx build still succeeds without fs (Packer.toBuffer → stdout)."""
 
+    @pytest.mark.datafile
     @pytest.mark.asyncio
     async def test_require_fs_is_blocked(self, runner):
         with pytest.raises(DocxRunnerError, match="Blocked module for security"):
             await runner.run("require('fs');", _SPEC, timeout=30)
 
+    @pytest.mark.datafile
     @pytest.mark.asyncio
     async def test_require_fs_promises_is_blocked(self, runner):
         with pytest.raises(DocxRunnerError, match="Blocked module for security"):
             await runner.run("require('fs/promises');", _SPEC, timeout=30)
 
+    @pytest.mark.datafile
     @pytest.mark.asyncio
     async def test_normal_docx_build_still_succeeds(self, runner):
         js = (

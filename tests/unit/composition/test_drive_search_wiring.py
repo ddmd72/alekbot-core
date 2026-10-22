@@ -1,5 +1,6 @@
 """Drive search reaches FileManagementAgent and the Cabinet only through composition
 (USER_DRIVE_INDEXING_RFC §10, §13)."""
+import pytest
 import inspect
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -12,6 +13,8 @@ from src.domain.settings import ConsolidationSettings
 from src.ports.account_repository import AccountRepository
 from src.ports.user_drive_port import UserDrivePort
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
+
+pytestmark = pytest.mark.datafile
 
 _MAIN = Path(__file__).resolve().parents[3] / "main.py"
 

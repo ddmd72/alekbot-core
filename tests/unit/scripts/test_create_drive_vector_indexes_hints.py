@@ -1,9 +1,12 @@
 """create_drive_vector_indexes.sh creates the Search v2 hint vector indexes too (USER_DRIVE_INDEXING_RFC §25.2.5): the
 `hint_vector` field of the hint collection under user_id and user_id + kind, after the card and chunk indexes, with
 the collection prefix applied."""
+import pytest
 import os
 import subprocess
 from pathlib import Path
+
+pytestmark = pytest.mark.datafile
 
 _SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "infrastructure" / "create_drive_vector_indexes.sh"
 _STUB = '#!/bin/bash\necho "$*" >> "$STUB_DIR/calls"\necho "Create request issued"\n'

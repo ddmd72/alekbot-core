@@ -30,6 +30,8 @@ from src.domain.drive_labels import (
 from src.domain.drive_match import FAMILY_SOURCE_CLASS, Concept, KeyFamily, MatchTier, QueryConcepts, SourceClass
 from src.domain.drive_search import KIND_NAMES
 
+pytestmark = pytest.mark.datafile
+
 NOW = datetime(2026, 10, 13, tzinfo=timezone.utc)
 
 

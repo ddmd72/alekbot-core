@@ -53,6 +53,7 @@ async def test_an_inaccessible_item_is_listed_by_delta_but_404s_on_every_id_call
     assert (await drive.get_change(USER, opened)).item_id == opened   # an ordinary item answers
 
 
+@pytest.mark.datafile
 def test_the_overlay_has_one_inaccessible_item_with_bytes():
     drive = v2_drive(_DIR / "tree.json", _DIR / "tree_v2.json")
     assert [p for p in drive.paths() if drive.is_inaccessible(p)] == [CLOSED]
@@ -79,6 +80,7 @@ def test_validate_refuses_expect_inaccessible_that_is_not_true_or_is_on_a_negati
             validate_gold_v2([bad], [CLOSED])
 
 
+@pytest.mark.datafile
 def test_the_new_gold_cases_name_files_of_the_overlay_and_set_the_inaccessible_one():
     gold = json.loads((_DIR / "gold_v2.json").read_text(encoding="utf-8"))
     validate_gold_v2(gold, v2_drive(_DIR / "tree.json", _DIR / "tree_v2.json").paths())
@@ -142,6 +144,7 @@ async def test_replayed_triage_gives_a_text_image_the_capture_the_model_said(tmp
         "s": (TriageVerdict.TEXT, "screenshot"), "p": (TriageVerdict.TEXT, "")}
 
 
+@pytest.mark.datafile
 def test_the_synthetic_entries_are_in_the_snapshot_marked_and_cover_every_new_file():
     snapshot = EnrichmentSnapshot.load(_DIR / "enrichment.json")
     marked = {name: [v for v in getattr(snapshot, name).values() if v.get("synthetic")]
@@ -171,12 +174,14 @@ def _gold():
     return base + json.loads((_DIR / "gold_g3_v2.json").read_text(encoding="utf-8"))
 
 
+@pytest.mark.datafile
 def test_the_g3_gold_carries_one_must_open_and_one_must_not_open_case_on_the_scan():
     gold = _gold()
     validate_g3(gold)
     assert any(c.get("must_open") for c in gold) and any(c.get("must_not_open") for c in gold)
 
 
+@pytest.mark.datafile
 def test_validate_g3_refuses_a_contradiction_and_a_flag_that_is_not_true():
     base = [c for c in _gold() if not c.get("must_open") and not c.get("must_not_open")]
     for bad, word in ((_g3(must_open=True, must_not_open=True), "contradict"), (_g3(must_open=False), "must_open"),
@@ -218,6 +223,7 @@ def test_validate_refuses_an_empty_known_hard_reason():
         validate_gold_v2([_case(known_hard="  ")], [CLOSED])
 
 
+@pytest.mark.datafile
 def test_the_unspaced_id_number_case_is_the_one_known_hard_case_of_the_gold():
     gold = json.loads((_DIR / "gold_v2.json").read_text(encoding="utf-8"))
     assert [c["id"] for c in gold if c.get("known_hard")] == ["ex-value-id-number"]

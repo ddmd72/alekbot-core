@@ -28,12 +28,16 @@ jobs:
         # The media extractor tests run the real ffmpeg/ffprobe (they skip without them).
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
-      - name: make check
-        # make check = ruff check src/ + mypy (domain/ports) + unit/architecture tests.
+      - name: make ci
+        # make ci = ruff check src/ + mypy (domain/ports) + the unit suite once (slow tests, data-file audit,
+        # coverage gate) + the offline G2 end to end. The 1 s per-test budget is enforced here and nowhere else:
+        # a test over it that is not `slow` fails the run (tests/plugins/duration_budget.py).
         # No secrets: the unit suite mocks all I/O at the port/SDK boundary.
-        # A hung test otherwise holds the job for GitHub's 6 h default; the suite takes ~5 min.
-        timeout-minutes: 20
-        run: make check
+        # A hung test otherwise holds the job for GitHub's 6 h default.
+        timeout-minutes: 30
+        env:
+          PYTEST_DURATION_BUDGET_S: "1.0"
+        run: make ci
 
       - name: Notify Slack (pass/fail)
         if: always()

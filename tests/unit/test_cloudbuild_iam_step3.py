@@ -1,8 +1,11 @@
 """IAM least-privilege Step 3: the deep-research job runs as its own identity, named through the build's
 `$PROJECT_ID` substitution; the other runtimes have not moved yet (Steps 4-6)."""
+import pytest
 from pathlib import Path
 
 import yaml
+
+pytestmark = pytest.mark.datafile
 
 _BUILD = Path(__file__).resolve().parents[2] / "cloudbuild-dev.yaml"
 

@@ -100,6 +100,8 @@ def _files() -> list[Path]:
     return [p for p in out if p.exists()]
 
 
+@pytest.mark.datafile
+@pytest.mark.slow
 def test_every_firestore_client_names_its_database():
     offenders = []
     for p in _files():
@@ -124,6 +126,7 @@ def test_scan_covers_every_folder_and_entry_point():
         assert name in rels, name
 
 
+@pytest.mark.datafile
 def test_firestore_utils_defaults_match_environment_config(monkeypatch):
     from src.config.environment import EnvironmentConfig
 

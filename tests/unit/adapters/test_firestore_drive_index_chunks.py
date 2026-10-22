@@ -66,6 +66,7 @@ class TestCodec:
 
 
 class TestWrite:
+    @pytest.mark.slow
     async def test_writes_in_batches_with_vectors(self, repo, db):
         chunks = [chunk(index=i, terms=("1250",)) for i in range(RECORD_WRITE_BATCH + 1)]
         await repo.write_chunks(chunks, [[float(i), 1.0] for i in range(len(chunks))])

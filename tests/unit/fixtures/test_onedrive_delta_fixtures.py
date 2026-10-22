@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.datafile
+
 _DIR = Path(__file__).resolve().parents[2] / "fixtures" / "onedrive_delta"
 _FILES = ("approot.json", "initial_enumeration.json", "folder_delete.json", "delete_restore.json",
           "move_out_in.json", "reemitted.json", "facets.json", "resync_410.json")

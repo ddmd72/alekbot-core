@@ -1,5 +1,6 @@
 """Per-item steps of the due loop (USER_DRIVE_INDEXING_RFC §3.4, §5.2, §7.6, §8.2): attempts per step, re-listing
 only walkable folders, parked orphans, and the cascade budget."""
+import pytest
 from dataclasses import replace
 from datetime import timedelta
 
@@ -101,6 +102,7 @@ class TestParentLookupExhaustionKeepsTheSubtree:
 
 class TestRelistingOnlyWalkableFolders:
 
+    @pytest.mark.slow
     async def test_policy_bump_over_a_repository_lists_no_opaque_folder(self, monkeypatch):
         w = World(page_size=200)
         w.drive.add("Notes.pdf")

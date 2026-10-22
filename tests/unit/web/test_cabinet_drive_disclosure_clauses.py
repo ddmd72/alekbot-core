@@ -9,6 +9,8 @@ import pytest
 
 from .test_cabinet_drive_index_strings import LANGS, _dicts
 
+pytestmark = pytest.mark.datafile
+
 # (telemetry: excerpts stay in operational logs for up to 30 days, excerpts reach the model)
 CLAUSE_ONLY_FRAGMENTS = {
     "en": ("operational logs for up to 30 days", "Excerpts reach the AI model"),

@@ -33,6 +33,7 @@ async def test_a_job_queue_holds_only_that_jobs_ready_records_in_queue_order(pai
     assert [r.item_id for r in await both.both("enrich_queue", "u", 1, job="passages")] == ["c"]
 
 
+@pytest.mark.datafile
 async def test_every_job_queue_has_a_declared_index(pair):
     db, both = pair
     for job in ("profile", "passages"):

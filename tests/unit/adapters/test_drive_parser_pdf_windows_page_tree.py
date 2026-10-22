@@ -54,6 +54,7 @@ def test_a_window_past_the_real_last_page_is_outside_the_document(tmp_path):
     assert failed.value.status is ExtractionStatus.ERROR
 
 
+@pytest.mark.datafile
 async def test_the_sandboxed_child_counts_the_page_tree(tmp_path):
     root = tmp_path / "work"
     root.mkdir()

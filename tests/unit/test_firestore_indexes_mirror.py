@@ -17,6 +17,8 @@ from src.ports.drive_mirror_repository import ARCHIVE_FAMILY, NAME_FAMILY
 from tests.unit.adapters.firestore_drive_eval_fakes import RECS, eval_transactions, make_eval_repo
 from tests.unit.adapters.firestore_drive_mirror_fakes import LEDGER, ROOTS, NameAwareDb
 
+pytestmark = pytest.mark.datafile
+
 _ROOT = Path(__file__).resolve().parents[2]
 LIVE_LEDGER = "development_drive_transcript_mirror"
 LIVE_RECS = "development_drive_index_records"

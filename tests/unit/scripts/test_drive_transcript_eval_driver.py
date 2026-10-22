@@ -145,6 +145,7 @@ def test_the_estimate_is_the_stage_reservation_with_an_allowance():
     assert ev.estimate_usd([_clip(3600.0)]) == pytest.approx(file_estimate_usd(3600.0) * 1.25)
 
 
+@pytest.mark.datafile
 def test_without_yes_it_prints_the_estimate_and_never_builds_the_live_ports(monkeypatch, capsys, tmp_path):
     monkeypatch.setattr(ev, "build_live", lambda: (_ for _ in ()).throw(AssertionError("live call without --yes")))
     code = ev.main(["--media-dir", str(tmp_path)])
@@ -152,11 +153,13 @@ def test_without_yes_it_prints_the_estimate_and_never_builds_the_live_ports(monk
     assert code == 0 and "estimated cost" in out and "--yes" in out
 
 
+@pytest.mark.datafile
 def test_the_committed_gold_is_estimable():
     gold = ev.load_gold()
     assert 0 < ev.estimate_usd(gold["clips"]) < 100
 
 
+@pytest.mark.datafile
 def test_main_exits_two_without_a_verdict_when_media_is_missing(monkeypatch, capsys, tmp_path):
     monkeypatch.setattr(ev, "build_live", lambda: (FakePort(), FakeRunner({}), "m"))
     code = ev.main(["--yes", "--only", "dialogue_en_audio", "--media-dir", str(tmp_path), "--report", str(tmp_path / "r.json")])

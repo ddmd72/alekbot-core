@@ -46,6 +46,7 @@ async def test_disclosure_needs_both_the_flag_and_the_switch(flag, switch, expec
     assert await _shown(flag, switch) is expected
 
 
+@pytest.mark.datafile
 @pytest.mark.parametrize("raw,expected", [("on", True), ("1", True), ("TRUE", True), ("off", False), ("", False), (None, False)])
 def test_the_container_reads_the_switch_like_the_indexer(raw, expected, monkeypatch):
     import inspect

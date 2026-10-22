@@ -133,6 +133,7 @@ def test_an_image_item_without_b64_is_an_explicit_error():
         _decode_image(item)
 
 
+@pytest.mark.slow
 async def test_generate_with_no_image_data_returns_empty_per_the_port_contract():
     adapter = GrokImageAdapter(api_key="fake")
     adapter._client.images.generate = AsyncMock(return_value=MagicMock(data=None))

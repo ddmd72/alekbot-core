@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.datafile
+
 _HTML = Path(__file__).resolve().parents[3] / "src" / "web" / "static" / "cabinet.html"
 _ATTACK = """<img src=x onerror="alert('&amp;')">"""
 

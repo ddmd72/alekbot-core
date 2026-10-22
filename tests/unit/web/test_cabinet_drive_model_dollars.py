@@ -11,6 +11,8 @@ from src.domain.drive_indexing_status import DriveIndexingStatus
 from tests.unit.web.test_cabinet_drive_index_strings import LANGS, _dicts
 from tests.unit.web.test_user_cabinet_drive_index_card import _indexing
 
+pytestmark = pytest.mark.datafile
+
 KEYS = ("drive.index_model_usage", "drive.index_initial_build", "drive.index_initial_build_done",
         *(f"drive.index_usd_{c.value}" for c in UsageClass))
 

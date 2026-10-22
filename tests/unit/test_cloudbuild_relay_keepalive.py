@@ -1,5 +1,6 @@
 """The build-managed relay keep-alive reproduces the hand-made live job: a 180 s attempt deadline (main's warmup
 handler waits up to 120 s for the relay) and a description, on both the update and the create path."""
+import pytest
 from pathlib import Path
 
 import yaml
@@ -22,6 +23,7 @@ def _relay_calls():
                                               "create http alek-voice-relay-dev-keep-alive"))]
 
 
+@pytest.mark.datafile
 def test_both_paths_use_the_live_jobs_deadline_and_description():
     calls = _relay_calls()
     assert len(calls) == 2

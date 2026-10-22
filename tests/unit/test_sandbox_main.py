@@ -278,6 +278,7 @@ def test_work_root_that_is_a_symlink_refuses_start(env, tmp_path, monkeypatch):
     assert sandbox_main.supervise(env, install_signals=False) != 0
 
 
+@pytest.mark.datafile
 def test_server_child_inherits_cloud_run_marker_url_and_caller_sets(tmp_path):
     """A scrubbed child environment would build an OPEN gate on Cloud Run (T6): the child must see all of these."""
     out = tmp_path / "seen.json"
@@ -299,6 +300,7 @@ def test_server_child_inherits_cloud_run_marker_url_and_caller_sets(tmp_path):
     os.close(write_fd)
 
 
+@pytest.mark.datafile
 def test_spawn_starts_the_server_in_its_own_group(tmp_path):
     out = tmp_path / "pg.txt"
     probe = "import os,sys;open(sys.argv[1],'w').write(f'{os.getpgrp()} {os.getpid()}')"
@@ -312,6 +314,8 @@ def test_spawn_starts_the_server_in_its_own_group(tmp_path):
     os.close(write_fd)
 
 
+@pytest.mark.datafile
+@pytest.mark.slow
 def test_sandbox_main_import_closure_excludes_the_main_service_stack():
     code = ("import sys, sandbox_main;"
             "bad=[m for m in sys.modules if m.startswith(('src.infrastructure','src.agents','src.services',"

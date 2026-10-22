@@ -54,6 +54,8 @@ async def test_hostile_files_end_as_a_defined_outcome(served, tmp_path, path):
     assert list(tmp_path.glob("drive-media-*")) == []            # the child's directory is gone
 
 
+@pytest.mark.datafile
+@pytest.mark.slow
 async def test_a_playlist_is_refused_and_nothing_it_names_is_requested(served, tmp_path):
     """The format whitelist refuses `hls`, so the playlist is read as no allowed demuxer and the only request is for the
     playlist itself. (HLS also refuses `file:` segments on its own, so this is not a pure whitelist control.)"""
@@ -62,12 +64,16 @@ async def test_a_playlist_is_refused_and_nothing_it_names_is_requested(served, t
     assert {r[1] for r in served.requests} == {"/list.m3u8"}
 
 
+@pytest.mark.datafile
+@pytest.mark.slow
 async def test_a_demuxer_outside_the_allowlist_cannot_be_pinned(served, tmp_path):
     with pytest.raises(MediaUnreadable):
         await _extractor(served, tmp_path).extract_windows(
             served.url("/list.m3u8"), [WindowSpec(0, 0.0, 10.0)], str(tmp_path / "o"), wall_s=60, container="hls")
 
 
+@pytest.mark.datafile
+@pytest.mark.slow
 async def test_the_good_file_still_works_beside_them(served, tmp_path):
     extractor = _extractor(served, tmp_path)
     probe = (await extractor.probe(served.url("/good.mp4"))).probe

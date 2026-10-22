@@ -5,6 +5,8 @@ import pytest
 
 from tests.unit.web.test_cabinet_drive_index_strings import LANGS, _dicts
 
+pytestmark = pytest.mark.datafile
+
 _SENTENCE = {
     "en": "Google (Gemini) turns the file names and the text into these search vectors.",
     "uk": "Ці пошукові вектори з назв файлів і тексту обчислює Google (Gemini).",

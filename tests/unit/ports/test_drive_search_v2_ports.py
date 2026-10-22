@@ -145,6 +145,7 @@ class TestRepositoryV2Methods:
         """An adapter that forgets one cannot be instantiated (review MINOR 13)."""
         assert set(_V2_METHODS) <= set(DriveIndexRepository.__abstractmethods__)
 
+    @pytest.mark.datafile
     async def test_both_adapters_implement_them_since_p2(self, mock_env_config):
         """The Part 0 scaffold flipped by P2 (§25.13.8): each adapter defines every v2 method itself, none of them a
         stub, and the in-memory one answers an empty index."""

@@ -1,6 +1,9 @@
 """Smart's drive guidance after the final review (USER_DRIVE_INDEXING_RFC §10.4, §24.10; final review F5-1, F5-4,
 F5-8). One line per rule, short, consistent with the per-result facts `render_results` shows."""
+import pytest
 from tests.unit.firestore_utils.test_protocol_drive_guidance import _drive_block, _text, ser
+
+pytestmark = pytest.mark.datafile
 
 
 def _block():

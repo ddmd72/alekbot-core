@@ -11,6 +11,8 @@ from src.config.environment import EnvironmentConfig
 from src.domain.settings import ConsolidationSettings
 from src.ports.account_repository import AccountRepository
 
+pytestmark = pytest.mark.datafile
+
 
 def test_factory_wires_drive_and_timeout():
     src = inspect.getsource(user_agent_factory.UserAgentFactory._build_file_management)

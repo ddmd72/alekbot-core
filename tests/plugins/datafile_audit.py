@@ -185,7 +185,7 @@ class Recorder:
             self.current.add_file(rel)
 
     def _on_spawn(self, event: str, args: tuple, caller) -> None:
-        if not self.window or not self._attributable(caller):
+        if not self.window or not self._attributable(caller, spawn=True):
             return
         target = args[0] if args else ""
         if event == "subprocess.Popen" and len(args) > 1 and not target:
@@ -196,7 +196,7 @@ class Recorder:
             label = str(target)
         self.current.add_proc(f"{os.path.basename(label) or event}")
 
-    def _attributable(self, frame) -> bool:
+    def _attributable(self, frame, spawn: bool = False) -> bool:
         """True when the nearest caller that is not stdlib plumbing is test or library code reading data on its own."""
         formatting_a_trace = False
         owner_seen = False
@@ -207,8 +207,8 @@ class Recorder:
                     pass
                 elif kind == "trace":
                     formatting_a_trace = True
-                elif kind in ("import", "pytest"):
-                    return False
+                elif kind == "import" or (kind == "pytest" and not spawn):
+                    return False  # a child started by pytester or xdist inside a test is the test's own child
                 else:
                     if formatting_a_trace:
                         return False

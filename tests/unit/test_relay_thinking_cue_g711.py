@@ -1,6 +1,7 @@
 """The thinking cue must be real G.711 μ-law — Twilio decodes it that way. A home-made
 companding curve once shipped: its "silence" bytes (0x7F/0x80) are near full scale in G.711,
 so the caller heard a pulsing whistle instead of a breath (live, 2026-09-24)."""
+import pytest
 from relay_main import _load_thinking_cue
 
 
@@ -12,6 +13,7 @@ def _g711_mulaw_decode(byte: int) -> int:
     return -magnitude if byte & 0x80 else magnitude
 
 
+@pytest.mark.datafile
 def test_cue_gap_decodes_to_silence_and_puffs_stay_well_below_full_scale():
     samples = [_g711_mulaw_decode(b) for b in _load_thinking_cue()]
 

@@ -1,6 +1,7 @@
 """The card stream answers only queries embedded in the space its cards are in (USER_DRIVE_INDEXING_RFC §12.3,
 §10.1 step 2). While the index moves to a new embedding space, search runs the name stream and the filters alone and
 says the index is being refreshed: a cosine across two spaces ranks noise."""
+import pytest
 from src.domain.drive_search import DriveSearchRequest, render_results
 from src.services.drive_search_service import DriveSearchService
 
@@ -65,6 +66,7 @@ async def test_onboarding_is_building_not_refreshing():
     assert result.envelope.building and not result.envelope.refreshing
 
 
+@pytest.mark.datafile
 def test_production_and_the_eval_pin_the_query_space(monkeypatch):
     """The main service embeds queries with GeminiEmbeddingAdapter: it checks the cards against that space."""
     from unittest.mock import MagicMock

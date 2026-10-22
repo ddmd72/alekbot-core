@@ -8,6 +8,8 @@ from src.domain.drive_indexing_status import DriveIndexingStatus
 from tests.unit.web.test_cabinet_drive_index_strings import LANGS, _dicts
 from tests.unit.web.test_user_cabinet_drive_index_card import _indexing
 
+pytestmark = pytest.mark.datafile
+
 NEW_KEYS = ("drive.index_chunks", "drive.index_model_usage")
 _PLACEHOLDERS = ("{classes}",)   # §25.4.5: the per-class dollars line (was pages and images against their budgets)
 # The providers named in every language, and the preview clause (§6: every image is triaged, §24.5).

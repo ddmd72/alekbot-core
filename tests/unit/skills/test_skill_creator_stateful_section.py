@@ -1,7 +1,10 @@
 """skill-creator teaches skills that keep state in a workspace file they describe themselves (AGENT_WORKSPACE_RFC
 §11.2, D14, D16), and the user help names working files and reminders that carry one (§13)."""
+import pytest
 from src.adapters.filesystem_skill_loader import SYSTEM_SKILLS_ROOT, load_system_skill_bundle
 from src.utils.capabilities import CAPABILITIES_TEXT
+
+pytestmark = pytest.mark.datafile
 
 _SKILL_MD = SYSTEM_SKILLS_ROOT / "skill-creator" / "SKILL.md"
 

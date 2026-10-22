@@ -139,6 +139,7 @@ class TestDryRunWorkspace:
         assert store.live_text(USER, "projects/n.md") is None
         assert store.live_text(USER, "projects/a.md") == "hello"
 
+    @pytest.mark.datafile
     def test_both_dry_run_scripts_install_the_wrapper(self):
         from pathlib import Path
         root = Path(__file__).resolve().parents[3] / "scripts" / "validation"

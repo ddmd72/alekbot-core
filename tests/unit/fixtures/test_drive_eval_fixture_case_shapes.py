@@ -4,12 +4,15 @@
 - a semantic case is out of the name stream's reach: no key of the query matches its target's name;
 - a place case calls as the manifest says (the place in drive_query, drive_kind=photo, no min_hits); its
   type-word twin is known-hard and accepts min_hits; the "photos" date variant is labelled known-hard."""
+import pytest
 import json
 from pathlib import Path
 
 from src.domain.drive_keys import name_keys_v2, name_match_v2, name_word_concepts, query_concepts
 from src.domain.drive_tier_pool import concept_trigrams
 from src.domain.drive_tiers import name_query_keys
+
+pytestmark = pytest.mark.datafile
 
 _DIR = Path(__file__).resolve().parents[2] / "fixtures" / "drive_eval"
 

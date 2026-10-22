@@ -1,4 +1,5 @@
 """save_to_memory is gone (MEMORY_FACT_CONFIRMATION_RFC §6): no intent, no descriptor, no writer."""
+import pytest
 import re
 from pathlib import Path
 from unittest.mock import AsyncMock
@@ -48,6 +49,7 @@ async def test_memory_agent_rejects_a_stale_save_payload():
     assert not hasattr(agent, "_handle_save")
 
 
+@pytest.mark.datafile
 def test_only_pass_through_sites_assign_consolidation_text():
     pattern = re.compile(r"\bconsolidation_text\s*=")
     found = set()

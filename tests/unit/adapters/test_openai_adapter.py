@@ -248,6 +248,7 @@ async def test_convert_input_vision_base64():
     assert "data:image/jpeg;base64,abc123" in result[0]["content"][0]["image_url"]
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_convert_input_pdf_upload():
     """PDF files go inline as input_file with a filename and base64 data — no Files API upload
@@ -298,6 +299,7 @@ async def test_convert_input_gcs_ref_no_error():
 # generate_content — Responses API call path (mocked)
 # ============================================================================
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_cache_boundary_stripped_from_system_instruction():
     """PROMPT_CACHE_BOUNDARY must not reach the OpenAI API."""
