@@ -21,12 +21,13 @@ PROSE = {t: body for t, (_, body) in TOKENS.items()}
 CODE_TOOLS = {t["name"]: t["parameters"] for t in _TOOL_DECLARATIONS}
 
 # Tools the tokens may name: a name matching this pattern must be a declared tool.
-TOOL_NAME = r"\b(?:list|search|create|update|delete|get|complete)_tasks?\b"
+TOOL_NAME = r"\b[a-z]+_tasks?\b"
 
 # Result fields the tokens tell the model to read or return (token -> fields); each is a key of a serialized task.
 RESULT_FIELDS = {
     "COGNITIVE_PROCESS_TASKS": {"ref"},   # search/list results carry the short id as `ref`; update/delete take it as `task_ref`
-    "OUTPUT_FORMAT_TASKS": {"ref"},
+    "OUTPUT_FORMAT_TASKS": {"ref", "title", "status", "importance", "tags", "due_datetime", "reminder_datetime", "body",
+                            "checklist_items", "linked_resources", "recurrence", "attachments"},   # the list the token states
 }
 
 # Enum row: the status values the prose lists == the update_task schema's enum == TaskStatus.
@@ -116,6 +117,17 @@ def test_sub_fields_the_prose_names_in_parentheses_are_keys_of_that_result_field
                 missing = set(words.split(" + ")) - set(entry)
                 assert not missing, f"{token}: {name} ({words}) names {sorted(missing)}; the result has {sorted(entry)}"
     assert checked >= 3   # linked_resources, recurrence, attachments
+
+
+def test_every_tool_call_the_prose_writes_uses_a_declared_argument_and_value():
+    """`update_task(status=completed)`: the tool is declared, the argument is one of its properties, an enum holds the value."""
+    calls = [(tool, arg, val) for body in PROSE.values() for tool, arg, val in re.findall(r"\b(\w+)\((\w+)=(\w+)\)", body)]
+    assert calls, "the tokens no longer show a call with an argument"
+    for tool, arg, val in calls:
+        assert tool in CODE_TOOLS, f"{tool}({arg}={val}): no such tool"
+        props = CODE_TOOLS[tool].get("properties", {})
+        assert arg in props, f"{tool}({arg}={val}): {arg} is not an argument ({sorted(props)})"
+        assert "enum" not in props[arg] or val in props[arg]["enum"], f"{tool}({arg}={val}): {val} is not in {props[arg]['enum']}"
 
 
 def test_status_values_the_prose_lists_are_the_schema_enum():

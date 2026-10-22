@@ -21,7 +21,7 @@ uploaded_by: local_script
         limit: "Max results to return (default: 20)"
     }
 
-    returns: "List[Dict] with structure: {fact_id: UUID (REQUIRED for update_fact/merge_facts), content: str, domain: str, temporal: str, state: str, tags: List[str], similarity: float}"
+    returns: "List[Dict] with structure: {fact_id: UUID (REQUIRED for update_fact/merge_facts), content: str, domain: str, temporal_class: str, state: str, tags: List[str], similarity: float}"
 
     usage_example: '''
     results = search_existing_facts(
