@@ -7,7 +7,7 @@ Public interface:
     render_body(transcript) -> str                             # one paragraph per segment, a stamp at every head
     card_segment(rec) -> Optional[str]                         # `transcript: 47 min, 2 speakers, uk/en` or a stub line
     open_needs_cut(stored, *, max_chars) -> bool               # whether open_text would cut
-    open_text(stored, *, max_chars) -> str                     # what `open_file_from_drive` returns, capped (G19)
+    open_text(stored, *, max_chars) -> str                     # what opening a recording returns, capped (G19)
     cap_plain_text(text, *, max_chars, path) -> str            # a transcript file read as text, cut the same way
 
 The labels are language-neutral (G17): `Speaker N`, `[MM:SS]`, `[~MM:SS]`. The localized header, stubs, gap sentence

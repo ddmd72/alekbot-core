@@ -2,17 +2,15 @@
 
 The chat store (GcsFileStorageAdapter) renames the second upload `a (1).md`; `save_file_to_drive`
 used to name the drive file from that storage key, so UserDriveService.save's duplicate check
-(same name -> same bytes -> existing) never ran. See USER_DRIVE_RFC §4.7.
+(same name -> same bytes -> existing) never ran. See USER_DRIVE_RFC §4.7. The copy is DriveOperations.copy since the
+cut (DRIVE_SPECIALIST_RFC §5.5; the specialist's `copy_file_to_drive`).
 """
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.agents.file_management_agent import FileManagementAgent
-from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus
 from src.domain.user_drive import DriveItem
-from src.infrastructure.agent_manifest import Intent
-from src.ports.file_storage_port import FileStoragePort
+from src.infrastructure.drive_operations import DriveOperations
 from src.ports.user_drive_port import UserDrivePort
 from src.services.file_conversion_service import FileConversionService
 from src.services.user_drive_service import UserDriveService
@@ -57,13 +55,8 @@ class _MemoryDrive:
                          size_bytes=len(data))
 
 
-def _msg(**payload):
-    msg = MagicMock(spec=AgentMessage)
-    msg.task_id = "t1"
-    msg.intent = AgentIntent.QUERY
-    msg.payload = {"intent": Intent.SAVE_FILE_TO_DRIVE, "folder": "Notes", **payload}
-    msg.context = {"user_id": "u1", "account_id": "a1"}
-    return msg
+def _copy(ops, file_ref):
+    return ops.copy({"user_id": "u1", "account_id": "a1"}, "u1", file_ref, folder="Notes", wait_s=100.0)
 
 
 @pytest.fixture
@@ -76,13 +69,9 @@ def setup():
         return chat_files[ref]
 
     conversion.resolve_bytes.side_effect = resolve_bytes
-    agent = FileManagementAgent(
-        config=AgentConfig(agent_id="file_management_agent_u1", agent_type="file_management",
-                           capabilities={}, metadata={}),
-        conversion_service=conversion, storage=AsyncMock(spec=FileStoragePort),
-        notification=AsyncMock(), drive_service=UserDriveService(memory.port()),
-        localization=MagicMock(), language_service=AsyncMock(),
-    )
+    agent = DriveOperations(conversion_service=conversion, notification=AsyncMock(),
+                            drive_service=UserDriveService(memory.port()), localization=MagicMock(),
+                            language_service=AsyncMock())
     return agent, memory, chat_files
 
 
@@ -90,26 +79,26 @@ class TestResentChatFile:
     async def test_identical_resend_is_already_there(self, setup):
         agent, memory, chat = setup
         chat["adr.md"] = b"same bytes"
-        first = await agent.execute(_msg(file_ref="adr.md"))
-        assert first.status == AgentStatus.SUCCESS
+        first = await _copy(agent, "adr.md")
+        assert first.success
         chat["adr (1).md"] = b"same bytes"  # the chat store's dedup name for the second upload
 
-        second = await agent.execute(_msg(file_ref="adr (1).md"))
+        second = await _copy(agent, "adr (1).md")
 
-        assert second.status == AgentStatus.SUCCESS
-        assert "Already on the drive" in second.result
+        assert second.success
+        assert "Already on the drive" in second.text
         assert memory.uploads == ["adr.md"]
         assert list(memory.files) == ["adr.md"]
 
     async def test_different_bytes_get_provider_suffix_not_chat_suffix(self, setup):
         agent, memory, chat = setup
         chat["adr.md"] = b"version one"
-        await agent.execute(_msg(file_ref="adr.md"))
+        await _copy(agent, "adr.md")
         chat["adr (1).md"] = b"version two, longer"
 
-        second = await agent.execute(_msg(file_ref="adr (1).md"))
+        second = await _copy(agent, "adr (1).md")
 
-        assert second.status == AgentStatus.SUCCESS
+        assert second.success
         assert memory.uploads == ["adr.md", "adr.md"]  # asked for the original name both times
         assert sorted(memory.files) == ["adr 1.md", "adr.md"]
         assert "(1)" not in "".join(memory.files)

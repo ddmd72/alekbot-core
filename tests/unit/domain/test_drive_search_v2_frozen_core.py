@@ -454,13 +454,6 @@ class TestTexts:
         footers = (T.FOOTER_EXACT, T.FOOTER_NO_CONJUNCTION, T.ABSENT_LINE, T.WITHOUT_LINE, T.WITHOUT_AT_LEAST_LINE)
         assert not any("final" in text.lower() for text in footers)
 
-    def test_manifest_texts_equal_the_rfc(self):
-        """Character-equal to §25.13.6 (review MINOR 15): guards code and RFC against drifting apart."""
-        assert T.DRIVE_QUERY_DESCRIPTION == rfc_quote('Manifest (D25), `drive_query`: "', '" `drive_date_from`')
-        assert T.DRIVE_DATE_FROM_DESCRIPTION == rfc_quote('`drive_date_from`: "', '" `drive_date_to`')
-        assert T.DRIVE_DATE_TO_DESCRIPTION == rfc_quote('`drive_date_to`: "', '" `drive_kind`')
-        assert "document (docx, doc, odt, rtf, pdf, markdown, text)" in T.DRIVE_KIND_DESCRIPTION
-
     def test_protocol_tiers_line_equals_the_rfc(self):
         assert T.PROTOCOL_TIERS_LINE == rfc_quote('Protocol `tiers` line: "', '"\n')
 

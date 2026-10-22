@@ -41,7 +41,9 @@ def test_the_inaccessible_file_bullet_is_the_sections_last_and_stands_once():
 
 
 def test_each_rule_sentence_has_one_copy():
-    body = _flat(_body())
+    """Retargeted at the cut: the section's sentences reach Smart as reading lines (DRIVE_SPECIALIST_RFC §5.7, §7.3)."""
+    from src.domain import drive_answer_texts as t
+    body = _flat("\n".join(v for k, v in vars(t).items() if k.startswith("R_") and isinstance(v, str)))
     for sentence in ("answer from the cards at any accuracy", "open the file and check the value before answering",
                      "say where you read it"):
         assert body.count(sentence) == 1, sentence

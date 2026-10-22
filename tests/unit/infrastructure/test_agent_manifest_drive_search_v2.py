@@ -1,32 +1,33 @@
 """search_files_in_drive's Search v2 contract text (USER_DRIVE_INDEXING_RFC §25.5.7, verbatim §25.13.6, D25): the
 manifest field descriptions are the frozen `drive_search_texts` strings, and the capability description names the
 document-type queries and the tiers without adding a field (D19: no new Smart field, no mode)."""
-from src.domain.drive_search_texts import (
-    DRIVE_DATE_FROM_DESCRIPTION, DRIVE_DATE_TO_DESCRIPTION, DRIVE_KIND_DESCRIPTION, DRIVE_QUERY_DESCRIPTION,
-)
+from src.domain import drive_tool_texts as tt
+from src.domain.drive_tool_texts import drive_tool_declarations
 from src.infrastructure.agent_manifest import FILE_MANAGEMENT, Intent
 
-_SCHEMA = FILE_MANAGEMENT.context_schemas[Intent.SEARCH_FILES_IN_DRIVE]
+# Retargeted at the cut (DRIVE_SPECIALIST_RFC §7.6, §8.1): the search fields are `search_drive`'s parameters, their
+# texts the specialist-owned constants of drive_tool_texts.py.
+_SCHEMA = {name: spec["description"] for name, spec in next(
+    t for t in drive_tool_declarations() if t["name"] == tt.SEARCH_DRIVE)["parameters"]["properties"].items()}
 
 
 def test_the_field_texts_are_the_frozen_ones():
-    assert _SCHEMA["drive_query"] == DRIVE_QUERY_DESCRIPTION
-    assert _SCHEMA["drive_kind"] == DRIVE_KIND_DESCRIPTION
-    assert _SCHEMA["drive_date_from"] == DRIVE_DATE_FROM_DESCRIPTION
-    assert _SCHEMA["drive_date_to"] == DRIVE_DATE_TO_DESCRIPTION
+    assert _SCHEMA["query"] == tt.QUERY
+    assert _SCHEMA["kind"] == tt.KIND
+    assert _SCHEMA["date_from"] == tt.DATE_FROM
+    assert _SCHEMA["date_to"] == tt.DATE_TO
 
 
 def test_time_spans_go_to_the_date_fields_and_types_to_the_query():
-    assert "goes in drive_date_from / drive_date_to, not in the words" in _SCHEMA["drive_query"]
-    assert "'tickets', 'receipts', 'contracts', 'what expires'" in _SCHEMA["drive_query"]
-    assert "document (docx, doc, odt, rtf, pdf, markdown, text)" in _SCHEMA["drive_kind"]
+    assert "goes in date_from / date_to, not in the words" in _SCHEMA["query"]
+    assert "'tickets', 'receipts', 'contracts', 'what expires'" in _SCHEMA["query"]
+    assert "document (docx, doc, odt, rtf, pdf, markdown, text)" in _SCHEMA["kind"]
 
 
 def test_no_new_field_and_no_mode():
-    # D19 held for Search v2: no v2 field, no mode. `drive_deleted` is the later, owner-decided deleted-files flag
-    # (D48, Δ195, §27.9.11; DRIVE_FILE_NOTES_RFC §6.4), not a Search v2 field.
-    assert set(_SCHEMA) == {"drive_query", "drive_folder", "drive_kind", "drive_date_from", "drive_date_to",
-                            "drive_deleted"}
+    # D19 held for Search v2: no v2 field, no mode. The deleted-files search is its own tool now
+    # (search_deleted_recordings_and_notes, DRIVE_SPECIALIST_RFC §8.1), not a field.
+    assert set(_SCHEMA) == {"query", "folder", "kind", "date_from", "date_to"}
 
 
 def test_the_capability_names_document_types_and_the_tiers():

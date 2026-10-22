@@ -98,7 +98,7 @@ class TestFilterOnlyHonesty:
         assert result.cards == () and result.matched_at_least
         text = render_results(result)
         assert "No matching files or folders" not in text
-        assert "does not mean there are none" in text and "list_files_in_drive" in text
+        assert "does not mean there are none" in text and "Browse the folder, or narrow the dates." in text
 
 
 # --- One folder from a full name page is a guess (§10.1 "instead of guessing") ------------------

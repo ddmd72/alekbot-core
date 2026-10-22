@@ -34,10 +34,13 @@ def _drive_block(body):
 
 
 def _skill_body():
-    # the drive rules now live in the drive-search system skill, not in the protocol token (owner decision 2026-10-14)
+    # the drive-search system skill is gone (DRIVE_SPECIALIST_RFC §5.7): its rules are the specialist's
+    # PROTOCOL_DRIVE_SEARCH token and Smart's reading lines (src/domain/drive_answer_texts.py)
     from pathlib import Path
-    from src.adapters.filesystem_skill_loader import load_system_skills
-    return next(s for s in load_system_skills(Path(_ROOT) / "src" / "skills" / "smart") if s.name == "drive-search").body
+    from src.domain import drive_answer_texts as t
+    token = (Path(_ROOT) / "prompts_snapshot" / "tokens" / "system" / "PROTOCOL_DRIVE_SEARCH.groovy").read_text(
+        encoding="utf-8").split("\n---\n", 1)[1]
+    return "\n".join([token] + [v for k, v in vars(t).items() if k.startswith("R_") and isinstance(v, str)])
 
 
 def test_smarts_profile_assigns_this_token():
@@ -74,7 +77,7 @@ _LINES = {
 
 
 def test_every_protocol_line_is_said_once():
-    # only the search trigger stays in the protocol block; every other line is said once in the skill body
+    # only the search trigger stays in the protocol block; every other line is said once in its new home
     block = _drive_block(ser.token_from_file(_text())["content"])
     body = _skill_body()
     trigger = "search when the answer may be in the user's documents"

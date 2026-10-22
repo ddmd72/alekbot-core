@@ -1,8 +1,9 @@
 """Every new string of the drive specialist's answer to the orchestrator (DRIVE_SPECIALIST_RFC §6, §7.3, §7.5).
 
-The reading lines are the `drive-search` skill's orchestrator-side rules, verbatim from
-src/skills/smart/drive-search/SKILL.md (markdown emphasis dropped; a field name the orchestrator no longer has becomes
-plain words, §7.6), plus the one line A′ adds for opened files. Everything else the answer carries is today's text.
+The reading lines are the former `drive-search` system skill's orchestrator-side rules, verbatim from its SKILL.md
+(deleted at the cut, DRIVE_SPECIALIST_RFC §10 step 4; markdown emphasis dropped; a field name the orchestrator no
+longer has becomes plain words, §7.6), plus the one line A′ adds for opened files. Everything else the answer carries
+is today's text.
 """
 from __future__ import annotations
 

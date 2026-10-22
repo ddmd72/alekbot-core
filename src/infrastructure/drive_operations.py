@@ -97,7 +97,7 @@ GONE = "That item is no longer on the drive (deleted or moved out). List again."
 NAME_TAKEN = "A file with that name already exists there."
 NOT_CONFIGURED = "The drive is not configured."
 STILL_RUNNING = ("The drive operation is still running and may complete. Check with a listing "
-                 "(list_files_in_drive) before retrying; a notice follows for deletes and replaces.")
+                 "before retrying; a notice follows for deletes and replaces.")
 # Safety margin under Telegram's 50MB bot-API document cap (Slack's own limit is far higher). video_generation/ files
 # are duration-capped (VIDEO_GENERATION_RFC.md §3.11 decision #10, 10s hard cap), so a real file almost never
 # approaches this; it only makes an anomalous file degrade to a message instead of a failed upload.
@@ -111,7 +111,7 @@ def wrong_store_text(ref: str) -> str:
     """A mutation given a ref that is not on the drive (or none)."""
     if not ref:
         return "file_ref is required: the drive:<id> ref from a [Drive: ...] label."
-    return f"'{ref}' is a chat file, not on the user's drive. To put it there use save_file_to_drive."
+    return f"'{ref}' is a chat file, not on the user's drive. To put it there, copy it with copy_file_to_drive."
 
 
 @dataclass(frozen=True)
@@ -270,7 +270,7 @@ class DriveOperations:
             ref = source_ref or ""
             # Refuse before naming: drive_filename() on a drive ref would produce "drive_<id>" (§4.4).
             if is_drive_ref(ref):
-                return _fail(DriveOp.COPY, f"'{ref}' is already on the drive; use move_file_in_drive.",
+                return _fail(DriveOp.COPY, f"'{ref}' is already on the drive; use move_file.",
                              OutcomeClass.REQUEST_ERROR)
             data = await self._source_bytes(ref, user_id, DriveOp.COPY)
             filename = drive_filename(file_name, ref)
@@ -320,7 +320,7 @@ class DriveOperations:
             if item_id is None:
                 return _fail(DriveOp.APPEND, wrong_store_text(ref or ""), OutcomeClass.REQUEST_ERROR)
             if not text:
-                return _fail(DriveOp.APPEND, 'Give exactly one of "append_text" or "source_ref".',
+                return _fail(DriveOp.APPEND, "Give the text to add: a file_contents item with text.",
                              OutcomeClass.REQUEST_ERROR)
             out = await self._svc().append_text(user_id, item_id, text)
             return _ok(DriveOp.APPEND, f"Appended to {drive_label(out.item)}.", [out.item])
@@ -333,7 +333,7 @@ class DriveOperations:
             if item_id is None:
                 return _fail(DriveOp.REPLACE, wrong_store_text(ref or ""), OutcomeClass.REQUEST_ERROR)
             if not source_ref:
-                return _fail(DriveOp.REPLACE, 'Give exactly one of "append_text" or "source_ref".',
+                return _fail(DriveOp.REPLACE, "Give new_content_ref: the file whose content goes in.",
                              OutcomeClass.REQUEST_ERROR)
             data = await self._source_bytes(source_ref, user_id, DriveOp.REPLACE)
             target = await self._svc().get_item(user_id, item_id)
@@ -729,7 +729,7 @@ class DriveOperations:
                                original: bool) -> DriveOutcome:
         item = await self._conversion_service.get_drive_item(ref, user_id)
         if item.is_folder:
-            return _fail(DriveOp.OPEN, f"'{item.path or '/'}' is a folder; use list_files_in_drive.",
+            return _fail(DriveOp.OPEN, f"'{item.path or '/'}' is a folder; list it instead.",
                          OutcomeClass.REQUEST_ERROR)
         archived = await self._archived_transcript_of(user_id, ref, item)
         if archived is not None:

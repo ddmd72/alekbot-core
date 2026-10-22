@@ -19,22 +19,23 @@ from src.domain.drive_search import STATUS_DISABLED, DriveSearchRequest
 _GOLD = Path(__file__).resolve().parents[2] / "fixtures" / "drive_eval" / "gold_g3.json"
 
 
-def _search(failed=False, **context):
-    return {"intent": "search_files_in_drive", "context": context, "route": "fixture", "failed": failed}
+def _search(failed=False, **args):
+    """A drive search in the drive operation log; a refused one (no words, a bad filter) is A's `request_error`."""
+    return {"op": "search", "args": args, "outcome": "request_error" if failed else "ok", "stubbed": False}
 
 
 def test_a_refused_search_is_not_a_search():
-    assert not searched([_search(failed=True, drive_query="")])
-    assert searched([_search(failed=True), _search(drive_query="lease")])
+    assert not searched([_search(failed=True, query="")])
+    assert searched([_search(failed=True), _search(query="lease")])
 
 
 @pytest.mark.parametrize("calls, met", [
-    ([_search(drive_query="счёт 15.02.2026")], True),
-    ([_search(drive_query="счёт до 2026-02-15")], True),
-    ([_search(drive_query="счёт")], False),                                   # the date was dropped
-    ([_search(drive_query="счёт 16.02.2026")], False),                        # another date
-    ([_search(failed=True, drive_query="счёт 15.02.2026")], False),           # refused: never ran
-    ([_search(drive_query="счёт 15.02.2026"), _search(drive_query="счёт", drive_date_to="2026-02-15")], False),
+    ([_search(query="счёт 15.02.2026")], True),
+    ([_search(query="счёт до 2026-02-15")], True),
+    ([_search(query="счёт")], False),                                   # the date was dropped
+    ([_search(query="счёт 16.02.2026")], False),                        # another date
+    ([_search(failed=True, query="счёт 15.02.2026")], False),           # refused: never ran
+    ([_search(query="счёт 15.02.2026"), _search(query="счёт", date_to="2026-02-15")], False),
 ])
 def test_date_in_query_needs_the_cases_date_among_the_query_terms(calls, met):
     assert expectation_met("date_in_query", calls, "2026-02-15") is met
@@ -87,18 +88,18 @@ def test_bars_without_the_negative_bar_are_refused():
         judge(_table(1), bars, "g", "m", repeats=3)
 
 
-def _row(calls, **kw):
-    return {"id": "c1", "repeat": 0, "calls": calls, **kw}
+def _row(ops, **kw):
+    return {"id": "c1", "repeat": 0, "calls": [], "ops": ops, **kw}
 
 
 def test_more_search_calls_than_the_ceiling_is_a_hard_failure():
-    assert hard_failures([_row([_search(drive_query="a")] * SEARCH_CALL_CEILING)]) == []
-    assert hard_failures([_row([_search(drive_query="a")] * (SEARCH_CALL_CEILING + 1))])
+    assert hard_failures([_row([_search(query="a")] * SEARCH_CALL_CEILING)]) == []
+    assert hard_failures([_row([_search(query="a")] * (SEARCH_CALL_CEILING + 1))])
 
 
 def test_a_repeated_search_after_drive_search_was_off_is_a_hard_failure():
-    assert hard_failures([_row([_search(drive_query="a")], drive_off=True)]) == []
-    assert hard_failures([_row([_search(drive_query="a"), _search(drive_query="b")], drive_off=True)])
+    assert hard_failures([_row([_search(query="a")], drive_off=True)]) == []
+    assert hard_failures([_row([_search(query="a"), _search(query="b")], drive_off=True)])
 
 
 async def test_the_eval_user_can_be_switched_off():

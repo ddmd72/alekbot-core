@@ -150,7 +150,7 @@ class UserDriveService:
         ref is refused; a folder the provider does not find raises DriveItemNotFoundError."""
         folder = await self._drive.get_item(user_id, folder_id)
         if not folder.is_folder:
-            raise DrivePathError(f"'{folder.path}' is a file, not a folder; open it with open_file_from_drive")
+            raise DrivePathError(f"'{folder.path}' is a file, not a folder; open it instead.")
         children = await self._drive.list_children(user_id, folder.item_id)
         ordered = sorted(children, key=lambda i: (not i.is_folder, i.name.casefold()))
         return ListOutcome(folder=folder, items=ordered[:LIST_LIMIT], truncated=len(ordered) > LIST_LIMIT)

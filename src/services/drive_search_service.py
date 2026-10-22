@@ -23,7 +23,7 @@ Public interface:
     await search(user_id, request) -> DriveSearchResult
     await indexing_status(user_id) -> DriveIndexingStatus     # Cabinet (§6)
     await access_note(user_id, *, item_id=None, path=None) -> Optional[str]   # list/open on a 404 (§26.2, Δ55)
-    await search_deleted(user_id, drive_query) -> str          # `drive_deleted`: archived transcripts (§27.9.11)
+    await search_deleted(user_id, drive_query) -> str          # the deleted-files search: archived transcripts (§27.9.11)
     await archived_text(user_id, mirror_item_id, ...) -> Optional[str]   # opening a file of the bot's `_Transcripts`
 
 Files the bot cannot open (§26.2, D33): their cards say so in the `index:` line (drive_search.index_line), the coverage
@@ -1391,8 +1391,8 @@ class DriveSearchService:
         self._deleted_sources.append(source)
 
     async def search_deleted(self, user_id: str, drive_query: str) -> Tuple[str, List[DriveItem]]:
-        """`search_files_in_drive` with `drive_deleted`: the heading `Deleted files (N):` and one wrapped entry per hit,
-        for Smart, and the drive files the shown refs open (so "open the second one" works next turn). Runs before (and
+        """The deleted-files search: the heading `Deleted files (N):` and one wrapped entry per hit,
+        for the orchestrator, and the drive files the shown refs open (so "open the second one" works next turn). Runs before (and
         without) the index gate: with drive search off it still answers from the ledger. An empty query lists the
         newest. Speech is other people's: entries go inside the nonce wrapper, never logged."""
         concepts = query_concepts(drive_query or "").concepts

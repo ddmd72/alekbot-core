@@ -28,6 +28,6 @@ def test_other_plurals_are_still_refused(raw):
 
 
 def test_the_kind_field_description_names_what_each_family_covers():
-    from src.infrastructure.agent_manifest import FILE_MANAGEMENT, Intent
-    text = FILE_MANAGEMENT.context_schemas[Intent.SEARCH_FILES_IN_DRIVE]["drive_kind"]
+    from src.domain.drive_tool_texts import KIND
+    text = KIND   # the drive specialist's `search_drive.kind` (DRIVE_SPECIALIST_RFC §7.6, §8.1)
     assert "document (docx, doc, odt, rtf, pdf, markdown, text)" in text and "word (docx, doc)" in text   # D23
