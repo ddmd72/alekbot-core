@@ -1,8 +1,8 @@
 # RFC: One way to open external files — refs, native reading, shared security pieces
 
-**Status:** Proposed (rev 4). Not built. *D* items are owner decisions (2026-10-22); *P* items are author proposals the
+**Status:** Proposed (rev 5). Not built. *D* items are owner decisions (2026-10-22); *P* items are author proposals the
 owner has not ruled on, each separable.
-**Date:** 2026-10-22 (rev 2: 2026-10-23, after four reviews; rev 3: owner decisions D7–D11; rev 4: 2026-10-23, re-review)
+**Date:** 2026-10-22 (rev 2: 2026-10-23, after four reviews; rev 3: owner decisions D7–D11; rev 4: re-review; rev 5: 2026-10-23, owner decisions D12–D13)
 **Owner decisions (2026-10-22):**
 - **D1. Placement.** The document service is a component inside each runtime (main service, drive indexer). Its
   contract is designed as if it were remote: serializable input, closed-schema outcome, an explicit deadline and
@@ -38,7 +38,14 @@ owner has not ruled on, each separable.
   is removed: attachment refs come from `search_emails` results and `get_email_details` …; `open_email_attachment`
   takes the ref and opens it through the shared open path. Email intents stay three: search, details, open attachment.
   Save/send act on the same ref." Recorded correction (2026-10-23): the email index stores attachment names only, so
-  search results show names, not refs. P20 realises the same flow.
+  search results show names, not refs.
+- **D12 (2026-10-23). Open an email attachment by email id + attachment name.** `open_email_attachment` takes an
+  `email:` ref or an email id + attachment name (the part resolved at open time); duplicate names → no guess, the refs
+  are listed.
+- **D13. `send_file_to_user` does not forward "active" kinds from email attachments.** For email attachments only, by
+  kind sniffed from the bytes (not the name): HTML/HTM, SVG, HTA, Office with macros, shortcuts (lnk), disk images
+  (iso/img), executables and scripts. The bot says what kind it is and that it does not forward such files; the owner
+  can open it in Gmail. Drive and chat files are sent without this restriction.
 - **Contract (owner, 2026-10-22):** the sandboxes are not all built; they come later and they are the isolation layer.
   This design works today (in-process engines, the drive parser child) and names the adapter each sandbox slice swaps
   in, with no second migration of callers.
@@ -57,6 +64,9 @@ interactive admission table; email listing rule and notes; sandbox deltas comple
 
 **Changes in rev 3** (owner decisions D7–D11): D7 truncation by pages; D8 `send_file_to_user`; D9 no file contents in
 Logfire; D10 shared caps for email; D11 one open verb per store; OQ1–OQ5 closed.
+
+**Changes in rev 5:** P20 accepted as D12; OQ6 closed by D13 (email-only active-kind block on `send_file_to_user`,
+§4.2, in U4); no owner questions remain.
 
 **Changes in rev 4** (re-review of rev 3, all items arbitrated):
 - D7 realised exactly: with a text budget the reader reads window 1 alone, then one window at a time, stopping at the
@@ -196,7 +206,7 @@ never read by the service or marked.
 
 **Who does what.** `FileConversionService.open(ref, user, account, consumer, deadline)` does only the generic steps:
 1. **Classify** the ref (P9) and **resolve** it in its store (the ownership check on delivered keys; for email one part
-   listing per open, from a ref or, with P20, an email id plus name, §4.7).
+   listing per open, from a ref or an email id plus name (D12), §4.7).
 2. **Size check on metadata, before download**, against the caps table (§4.5).
 3. **Download** the bytes into a per-call staging directory, removed in `finally`.
 4. **Read** them through the document service (§4.4), passing the consumer's declaration (§4.3) and the deadline.
@@ -216,7 +226,7 @@ hint), recordings opened as transcripts, archived transcripts, the drive access 
 |---|---|---|
 | `open_file` | FileManagement | chat uploads, delivered documents, workspace `files/` copies, skill files |
 | `open_file_from_drive` | FileManagement | `drive:` refs |
-| `open_email_attachment` (new; replaces `get_email_attachment`) | EmailSearch | `email:` refs in `file_ref`; with P20 also an email id plus attachment name (§4.7) |
+| `open_email_attachment` (new; replaces `get_email_attachment`) | EmailSearch | `email:` refs in `file_ref`, or an email id plus attachment name (D12, §4.7) |
 
 All three call the same `FileConversionService.open`. Each verb's description names only its own store. A read given
 another store's ref is still served through the same path, as `open_file` serves a `drive:` ref today
@@ -226,7 +236,25 @@ another store's ref is still served through the same path, as `open_file` serves
 - It takes `file_ref` (any ref kind) and an optional `name`, and resolves the bytes with `resolve_file(ref,
   action="send")` under the action cap (§4.5). A drive folder ref is refused with the list hint.
 - The kind is sniffed with the shared piece. The delivery title names the store and the sniffed kind, so a renamed
-  file is not sent under a false kind in the bot's voice. Whether some kinds should be refused is OQ6.
+  file is not sent under a false kind in the bot's voice.
+- **Active kinds from email are not sent (D13).** For an `email:` ref only, these kinds are refused before upload:
+
+| Kind | How the bytes show it |
+|---|---|
+| HTML / HTM, HTA | markup head (`<!doctype html`, `<html`, `<hta:application`), as the sniffer's HTML rule |
+| SVG | `<svg` in a markup head |
+| Office with macros (docm, xlsm, pptm) | an OOXML ZIP with a `vbaProject.bin` part or a macro-enabled content type |
+| Shortcut (lnk) | the shell-link header magic |
+| Disk image (iso, img) | `CD001` at offset 32 769 (ISO); a raw image has no magic, so only its name shows it |
+| Executable | the sniffer's existing `executable` kind (ELF, Mach-O, MZ; `src/domain/drive_sniff.py:46`, `:51`) |
+| Script | a `#!` first line; scripts without one (js, vbs, ps1, bat, cmd) only by name |
+
+  The bytes decide. A name or part mime naming one of these kinds also blocks, never unblocks; this is stricter than
+  the bytes alone and covers the kinds without magic. The check reads up to 64 KiB of the head, enough for the ISO
+  marker.
+- The answer is a refusal note, not a failure of the turn: "This attachment is a <kind> file from an email; such
+  files are not forwarded to the chat. The user can open it in Gmail." Drive and chat refs are sent without this
+  check; an HTML report on the drive is sent as any file.
 - Delivery goes through `UserNotificationService.notify_file_bytes` (`src/services/user_notification_service.py:558-567`),
   with `origin_channel_id` and `origin_platform` from the message context as overrides, as the video branch does today
   (`file_management_agent.py:745-750`).
@@ -570,8 +598,7 @@ look-alike check covers both words. Drive output, the `drive-search` skill and t
   bytes decide. Without a `FileConversionService` (no file storage, `src/composition/service_container.py:368-377`)
   the intent answers "attachment opening is not configured", as FileManagement is not built then
   (`user_agent_factory.py:858-859`).
-- **P20. An email id plus attachment name as a second input** (realises D11's flow; for the owner to confirm in one
-  line). The index stores attachment names only, so `search_emails` results and the `email_search_context` kept in
+- **An email id plus attachment name as a second input (D12).** The index stores attachment names only, so `search_emails` results and the `email_search_context` kept in
   history (`src/agents/email_search_agent.py:313-340`) carry names, never part ids. `open_email_attachment` therefore
   also takes `email_id` + `name`. The email branch resolves the part from the same single listing. A name matching
   several parts opens none, and the answer lists their refs. Rejected: `search_emails` calling `list_parts` for every
@@ -604,7 +631,7 @@ look-alike check covers both words. Drive output, the `drive-search` skill and t
 - **Intent and tool texts** (D11, in U4):
   - The manifest drops `GET_EMAIL_ATTACHMENT` and adds `OPEN_EMAIL_ATTACHMENT` (`agent_manifest.py:49`, the
     capability `:201`, the description `:215-219`, the context schema `:225-228`). The new context is `{"file_ref"}`,
-    or with P20 `{"email_id", "name"}`; the descriptor sets `prefetch_file_ref=False`.
+    or `{"email_id", "name"}` (D12); the descriptor sets `prefetch_file_ref=False`.
   - `EmailSearchAgent` routes the new intent instead of `_handle_get_attachment` (`email_search_agent.py:85`, `:110`).
   - The hint under search results (`delegation_engine.py:147-148`) and the two daily-review lines
     (`src/services/email_review_service.py:169-170`, `:186`) name `open_email_attachment`.
@@ -693,6 +720,8 @@ Rejected: *keep parsing in a thread of the main service* (contradicts D6); *move
 | D9 | no file contents in Logfire from any model call (§4.3) | owner, 2026-10-23 |
 | D10 | email uses the shared caps (§4.5, §4.7) | owner, 2026-10-23 |
 | D11 | one open verb per store; `open_email_attachment` replaces `get_email_attachment`; refs from `get_email_details` (§4.2, §4.7) | owner, 2026-10-23 |
+| D12 | `open_email_attachment` also takes an email id + attachment name; duplicates list the refs (§4.7) | owner, 2026-10-23 |
+| D13 | `send_file_to_user` refuses active kinds from email attachments, by kind from bytes; drive and chat unrestricted (§4.2) | owner, 2026-10-23 |
 | P1 | `DocumentReadPort` + `DocumentService`, one implementation today (§4.4) | author |
 | P2 | bytes in; the service never fetches (§4.4) | author |
 | P4 | one parse engine, the child's readers; markitdown retired in U5 (§4.8) | author; gated on U0-b |
@@ -709,9 +738,8 @@ Rejected: *keep parsing in a thread of the main service* (contradicts D6); *move
 | P17 | normalise images in the child (§4.3) | author, optional follow-up |
 | P18 | prefetch reads in the async worker from the ref (§4.2) | author; moves a caller in U3 |
 | P19 | 30 000-character cut on parser text of non-email interactive opens (§4.5) | author, limit change |
-| P20 | `open_email_attachment` also takes an email id + attachment name (§4.7) | author, realises D11's flow; owner to confirm |
 
-Withdrawn: P7 (now D7), P8c (required by D11), P8d (now D10), P12 (replaced by D11).
+Withdrawn: P7 (now D7), P8c (required by D11), P8d (now D10), P12 (replaced by D11), P20 (now D12).
 
 ## 6. Deltas to other specs
 
@@ -745,17 +773,15 @@ Each slice: tests first, the reviewer rule for any existing test, `make check` g
 | **U1 pieces** | P9; P10 moves; caps table; `PdfSplitterPort`; the marking function with a tag per store (drive unchanged) | no behaviour change; drive output byte-identical; indexer tests change import lines only | before S3 |
 | **U2 declaration** | P5 on four adapters (wire tests), the proxies forward, the four engine runners set the key per attempt, the coordinator drops it; FileManagement decides native from it (still through today's converter) | a PDF opened under Grok arrives as text, not dropped; the key never reaches a specialist or a Cloud Task body; DomainResearcher and Quick keep native reading | after U1 |
 | **U3 service** | `DocumentReadPort`, `DocumentService`, `build_document_service` (child parser, reader, audio); `open` for chat, delivered, workspace and drive opens; the two request limits; D7's cut; statuses and presentation; D9 per U0-a's result; P13; the build-check fix; the legacy branch retired; with P18, prefetch in the worker | parsing on every interactive path runs in the child (either engine); a scan opened by a text-only consumer returns reader text within the budget, with nothing read past it, and a note that says what is shown; with both new fields unset, the reader's existing tests pass unchanged; the `PARSER_UNAVAILABLE` and `STILL_WORKING` notes tested (the second with a fake adapter); no open exceeds its agent's timeout in tests; no file part in a captured span (D9); chat text marked after the owner's prompt upload | gated on U0-a, U0-c; before S4 |
-| **U4 email and send** | P8a, P8b; `open_email_attachment` replacing `get_email_attachment` (with P20, also by id plus name); refs from `get_email_details`; the notes; the two service methods; the tool texts and the full removal list; the old attachment path removed; save from an `email:` ref; `send_file_to_user` (D8) with its kind check and `capabilities.py` entry | the incident's three steps (read, save, send) pass on a synthetic multipart fixture (nested, inline, scan), opened by ref; a failed upload answers as a failure; no caller of the old attachment path remains; email text marked and the email workflow line updated after the owner's prompt upload; the owner's live check | after U3; native email opens wait for U0-a |
+| **U4 email and send** | P8a, P8b; `open_email_attachment` replacing `get_email_attachment` (by ref, or id plus name, D12); refs from `get_email_details`; the notes; the two service methods; the tool texts and the full removal list; the old attachment path removed; save from an `email:` ref; `send_file_to_user` (D8) with its kind check, the D13 active-kind block and `capabilities.py` entry | the incident's three steps (read, save, send) pass on a synthetic multipart fixture (nested, inline, scan), opened by ref; a failed upload answers as a failure; one test per D13 kind from an email ref is refused with the note (including a renamed file and a name-only kind), and an HTML file from a drive ref is still sent; no caller of the old attachment path remains; email text marked and the email workflow line updated after the owner's prompt upload; the owner's live check | after U3; native email opens wait for U0-a |
 | **U5 one engine** | P4: markitdown's auto-detect path retired | U0-b differences accepted by the owner | only if P4 is accepted |
 | **Optional** | P11 rename; P14 email bodies and lines; P17 image normalisation; P19 parser-text cut | each its own PR | any time after U1 |
 | **S3 / S4** (sandbox RFC) | adapter swaps per §4.9 | no caller diff in the PR | as the sandbox RFC orders them |
 
 ## 8. Open questions and spikes
 
-**Open questions (owner).** OQ1–OQ5 were closed by D7–D11 (2026-10-23). Two items remain:
-- **P20 confirmation** (one line): may `open_email_attachment` also take an email id + attachment name?
-- **OQ6** (low priority): should `send_file_to_user` refuse some sniffed kinds (for example executables)? No refusal
-  is added until the owner says so.
+**Open questions (owner).** None remain: OQ1–OQ5 were closed by D7–D11, P20 became D12 and OQ6 was closed by D13
+(2026-10-23).
 
 **Spikes**
 - **U0-a (D1's check, D9). How to keep file contents out of Logfire.** D9 requires it for every model call; the
