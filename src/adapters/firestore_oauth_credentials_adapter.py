@@ -9,6 +9,7 @@ Collection: {env}_oauth_credentials
 from datetime import datetime, timezone
 from typing import List, Optional
 
+from google.api_core.exceptions import NotFound
 from google.cloud.firestore import FieldFilter
 
 from ..config.environment import EnvironmentConfig
@@ -79,6 +80,23 @@ class FirestoreOAuthCredentialsAdapter(OAuthCredentialsPort):
             f"💾 OAuth credentials saved: user={credentials.user_id[:8]} "
             f"provider={credentials.provider}"
         )
+
+    async def update_credentials(self, credentials: OAuthCredentials) -> bool:
+        # Firestore `update` carries the "document exists" precondition: one atomic write, no read before it.
+        doc_id = self._doc_id(credentials.user_id, credentials.provider)
+        try:
+            await self.collection.document(doc_id).update(self._to_firestore(credentials))
+        except NotFound:
+            logger.info(
+                f"OAuth credentials not updated, record gone: user={credentials.user_id[:8]} "
+                f"provider={credentials.provider}"
+            )
+            return False
+        logger.debug(
+            f"💾 OAuth credentials updated: user={credentials.user_id[:8]} "
+            f"provider={credentials.provider}"
+        )
+        return True
 
     async def revoke_credentials(self, user_id: str, provider: str) -> None:
         doc_id = self._doc_id(user_id, provider)

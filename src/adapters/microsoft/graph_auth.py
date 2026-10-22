@@ -83,12 +83,17 @@ class MicrosoftGraphTokenProvider:
                 self._cache.pop(user_id, None)
                 return None
             if force_refresh or creds.token_expiry <= datetime.now(timezone.utc) + _REFRESH_MARGIN:
-                creds = await self.refresh(creds)
+                refreshed = await self.refresh(creds)
+                if refreshed is None:        # disconnected while the token endpoint answered: not connected
+                    self._cache.pop(user_id, None)
+                    return None
+                creds = refreshed
             self._cache[user_id] = (creds.access_token, creds.token_expiry, datetime.now(timezone.utc))
             return {"Authorization": f"Bearer {creds.access_token}"}
 
-    async def refresh(self, creds: OAuthCredentials) -> OAuthCredentials:
-        """Exchange the refresh token for a new access token and persist it."""
+    async def refresh(self, creds: OAuthCredentials) -> Optional[OAuthCredentials]:
+        """Exchange the refresh token for a new access token and persist it. None when the record was
+        deleted meanwhile (a disconnect): nothing is stored, the grant stays gone."""
         data = {
             "client_id": self._client_id,
             "client_secret": self._client_secret,
@@ -120,6 +125,8 @@ class MicrosoftGraphTokenProvider:
             # succeeded is the proof it no longer holds.
             drive_id=creds.drive_id,
         )
-        await self._oauth.save_credentials(new_creds)
+        if not await self._oauth.update_credentials(new_creds):
+            logger.info(f"MS token refreshed but the grant is gone ({self._provider}) for user {creds.user_id[:8]}")
+            return None
         logger.info(f"🔄 MS token refreshed ({self._provider}) for user {creds.user_id[:8]}")
         return new_creds

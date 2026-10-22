@@ -123,8 +123,8 @@ class MicrosoftToDoAdapter(TasksProviderPort, TaskLifecyclePort):
             raise ValueError(f"No MS To Do credentials for user {user_id[:8]}")
         return headers
 
-    async def _refresh_token(self, creds: OAuthCredentials) -> OAuthCredentials:
-        """Exchange refresh_token → new access_token and persist."""
+    async def _refresh_token(self, creds: OAuthCredentials) -> Optional[OAuthCredentials]:
+        """Exchange refresh_token → new access_token and persist (None when the grant was disconnected meanwhile)."""
         return await self._tokens.refresh(creds)
 
     # ------------------------------------------------------------------
