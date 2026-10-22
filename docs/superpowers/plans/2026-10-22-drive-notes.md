@@ -20,7 +20,7 @@
   every path outside `docs/` (the replay's counts are in each task's **Done** line).
 - **The feature deploys ON** (`DRIVE_NOTES_ENABLED_DEV` unset = on, one deploy substitution for both services) after
   the owner's index steps; the switch is the rollback lever and survives a release (D-I1).
-- **Not mergeable until the reviewer decides the 14 pending tests** (§ Task D2).
+- **The reviewer decided the 14 pending tests** (caa6f889, § Task D2): 13 edited; one is a code fix still pending (`PROTOCOL_TIERS_LINE`, Task B10). Not mergeable until it lands.
 
 **Goal:** The owner can tell the bot what a drive file or folder is, and the bot keeps it as a note bound to that item:
 bot-side (`{prefix}drive_notes`, SCD2 versions), never on the drive and never in memory. Smart writes it through one local
@@ -2702,7 +2702,7 @@ __all__ = [
 - `src/domain/drive_deleted_search.py` — also carries C5.
 - `src/domain/drive_search_texts.py` — also carries the final fix (C-M2: the shared `drive_deleted` description).
 
-**Source.** `git checkout ce314e50 -- src/domain/drive_tier_explain.py src/domain/drive_search.py src/domain/drive_tier_render.py src/services/drive_search_service.py src/domain/drive_deleted_search.py src/domain/drive_search_texts.py tests/unit/domain/test_drive_tier_explain_owner_note.py tests/unit/services/test_drive_search_owner_note.py`
+**Source.** `git checkout ce314e50 -- src/domain/drive_tier_explain.py src/domain/drive_search.py src/domain/drive_tier_render.py src/services/drive_search_service.py src/domain/drive_deleted_search.py src/domain/drive_search_texts.py` and `git checkout caa6f889 -- tests/unit/domain/test_drive_tier_explain_owner_note.py tests/unit/services/test_drive_search_owner_note.py` (the reviewer's C-M2 edits, caa6f889)
 
 **`src/domain/drive_tier_explain.py` as the source line checks it out** (already in the checkout, nothing to apply) — `git diff cef8f147 ce314e50 -- src/domain/drive_tier_explain.py`; hunks by owner: B5, final fix:
 
@@ -3032,12 +3032,12 @@ __all__ = [
 ```
 
 **New tests** (`git show ce314e50:<path>`):
-- `tests/unit/domain/test_drive_tier_explain_owner_note.py` — 4: `test_a_note_word_match_is_about_and_says_your_note`, `test_the_owner_type_and_area`, `test_a_note_only_match_of_several_words_is_about`, `test_a_match_across_scripts_is_by_translation`
+- `tests/unit/domain/test_drive_tier_explain_owner_note.py` — 4: `test_a_note_word_match_is_about_and_says_owners_note`, `test_the_owner_type_and_area`, `test_a_note_only_match_of_several_words_is_about`, `test_a_match_across_scripts_is_by_translation`
 - `tests/unit/services/test_drive_search_owner_note.py` — 10: `test_a_note_only_match_is_about_with_the_line_inside_the_wrapper`, `test_the_owner_type_finds_the_file_and_the_profile_type_is_not_shown_twice`, `test_a_tag_look_alike_in_a_note_is_neutralised`, `test_the_summary_cut_never_spends_on_the_note`, `test_the_filter_only_listing_renders_the_line`, `test_ambiguous_folder_candidates_render_the_line`, `test_a_related_card_shows_the_first_120_characters_of_the_line`, `test_the_accuracy_line_is_unchanged`, `test_the_noted_copy_is_the_collapse_representative`, `test_without_a_note_the_first_copy_stays_the_representative`
 
 **Expected-risk existing tests:** 
-- `tests/unit/domain/test_drive_tier_explain_owner_note.py` (4 tests) and `tests/unit/services/test_drive_search_owner_note.py::test_a_note_only_match_is_about_with_the_line_inside_the_wrapper` — they pin `your note "…"`; ruling C-M2 makes it `owner's note "…"` and sends them to the reviewer. **Pending reviewer.**
-- `tests/unit/infrastructure/test_agent_manifest_drive_deleted.py` (2 tests, T2, pre-existing) — they pin the shared `drive_deleted` description's "your notes on deleted files" (C-M2). **Pending reviewer.**
+- `tests/unit/domain/test_drive_tier_explain_owner_note.py` (4 tests) and `tests/unit/services/test_drive_search_owner_note.py::test_a_note_only_match_is_about_with_the_line_inside_the_wrapper` — they pin `your note "…"`; ruling C-M2 makes it `owner's note "…"`. **Decided** (reviewer, caa6f889): edited to the new wording, taken here at caa6f889.
+- `tests/unit/infrastructure/test_agent_manifest_drive_deleted.py` (2 tests, T2, pre-existing) — they pin the shared `drive_deleted` description's "your notes on deleted files" (C-M2). **Decided** (reviewer, caa6f889): edited to "the owner's notes", applied in Task D2.
 
 **Done.** The task's tests green (replayed from `cef8f147` in task order: 9 passed, 5 deselected); `git diff ce314e50 -- <the files it takes whole>` empty; `ruff check src` and `make typecheck` clean; `make check` fails only on the expected-risk tests of this and the earlier tasks (the B1/B10 ones until Task D2; the pending-reviewer ones until the reviewer decides).
 
@@ -4517,7 +4517,7 @@ def snapshot_from_record(old: Optional[NoteSnapshot], rec: DriveIndexRecord, *, 
 - `tests/unit/services/test_drive_note_service_keys.py` — 3: `test_set_stores_the_note_keys_and_the_name_keys`, `test_an_edit_by_the_note_ref_re_keys`, `test_clear_and_undo_keep_the_keys_in_step`
 
 **Expected-risk existing tests:** 
-- `tests/unit/services/test_drive_note_service.py::test_erase_all_lists_every_note_and_keeps_stubs_for_the_indexer` and `::test_an_erase_all_with_a_conflicted_note_finishes_the_rest_and_says_how_many_are_left[True]` (core tests, pre-existing) — they pin that an erase-all nudges every item; ruling D-I2 drops that nudge. **Pending reviewer** (final-fix-report.md).
+- `tests/unit/services/test_drive_note_service.py::test_erase_all_lists_every_note_and_keeps_stubs_for_the_indexer` and `::test_an_erase_all_with_a_conflicted_note_finishes_the_rest_and_says_how_many_are_left[True]` (core tests, pre-existing) — they pin that an erase-all nudges every item; ruling D-I2 drops that nudge. **Decided** (reviewer, caa6f889): they assert no nudge, applied in Task D2.
 
 **Done.** The task's tests green (replayed from `cef8f147` in task order: 3 passed); `git diff ce314e50 -- <the files it takes whole>` empty; `ruff check src` and `make typecheck` clean; `make check` fails only on the expected-risk tests of this and the earlier tasks (the B1/B10 ones until Task D2; the pending-reviewer ones until the reviewer decides).
 
@@ -4527,7 +4527,7 @@ def snapshot_from_record(old: Optional[NoteSnapshot], rec: DriveIndexRecord, *, 
 
 **Files:** `src/agents/file_management_agent.py`.
 
-**Source.** `git checkout ce314e50 -- src/agents/file_management_agent.py tests/unit/agents/test_file_management_open_note_header.py tests/unit/agents/test_file_management_open_note_block.py`
+**Source.** `git checkout ce314e50 -- src/agents/file_management_agent.py tests/unit/agents/test_file_management_open_note_block.py` and `git checkout caa6f889 -- tests/unit/agents/test_file_management_open_note_header.py` (the reviewer's C-I4 edit, caa6f889)
 
 **`src/agents/file_management_agent.py` as the source line checks it out** (already in the checkout, nothing to apply) — `git diff cef8f147 ce314e50 -- src/agents/file_management_agent.py`; hunks by owner: B8, final fix:
 
@@ -4675,11 +4675,11 @@ def snapshot_from_record(old: Optional[NoteSnapshot], rec: DriveIndexRecord, *, 
 ```
 
 **New tests** (`git show ce314e50:<path>`):
-- `tests/unit/agents/test_file_management_open_note_header.py` — 6: `test_the_text_open_has_the_line_after_the_label_inside_the_wrapper`, `test_the_transcript_open_has_a_wrapped_note_block`, `test_the_original_link_carries_the_line`, `test_no_line_and_the_open_goes_on`, `test_a_tag_look_alike_in_the_note_is_neutralised`, `test_a_listing_never_shows_the_note`
+- `tests/unit/agents/test_file_management_open_note_header.py` — 6: `test_the_text_open_has_the_file_text_after_the_label_and_the_line_in_its_own_wrapper`, `test_the_transcript_open_has_a_wrapped_note_block`, `test_the_original_link_carries_the_line`, `test_no_line_and_the_open_goes_on`, `test_a_tag_look_alike_in_the_note_is_neutralised`, `test_a_listing_never_shows_the_note`
 - `tests/unit/agents/test_file_management_open_note_block.py` — 3: `test_the_text_open_puts_the_note_in_its_own_block_after_the_file`, `test_a_file_whose_text_starts_like_a_note_stays_inside_the_files_block`, `test_the_link_to_the_recording_has_the_note_in_its_own_block`
 
 **Expected-risk existing tests:** 
-- `tests/unit/agents/test_file_management_open_note_header.py::test_the_text_open_has_the_line_after_the_label_inside_the_wrapper` — pins the note inside the file's wrapper; ruling C-I4 moves it to its own block and sends this test to the reviewer. **Pending reviewer.**
+- `tests/unit/agents/test_file_management_open_note_header.py::test_the_text_open_has_the_line_after_the_label_inside_the_wrapper` — pins the note inside the file's wrapper; ruling C-I4 moves it to its own block. **Decided** (reviewer, caa6f889): renamed `test_the_text_open_has_the_file_text_after_the_label_and_the_line_in_its_own_wrapper`, asserts the new layout, taken here at caa6f889.
 
 **Done.** The task's tests green (replayed from `cef8f147` in task order: 11 passed, 1 deselected); `git diff ce314e50 -- <the files it takes whole>` empty; `ruff check src` and `make typecheck` clean; `make check` fails only on the expected-risk tests of this and the earlier tasks (the B1/B10 ones until Task D2; the pending-reviewer ones until the reviewer decides).
 
@@ -4731,7 +4731,7 @@ def snapshot_from_record(old: Optional[NoteSnapshot], rec: DriveIndexRecord, *, 
 
 **Expected-risk existing tests:** 
 - `tests/unit/skills/test_drive_search_skill_card_accuracy.py::test_the_section_is_there_with_its_rule_lines` — RFC §6.2 changes the pinned sentence on purpose. **Verdict given** (review-part-B test 4): Task D2.
-- `tests/unit/skills/test_drive_search_skill_deleted_files.py::test_skill_deleted_files_line_is_explicit_only` and `tests/unit/firestore_utils/test_protocol_drive_tiers_draft.py::test_the_tiers_line_is_verbatim_once_in_the_drive_block` (pre-existing) — they pin the skill's old "your notes" and About-tier sentences (C-M2). **Pending reviewer.**
+- `tests/unit/skills/test_drive_search_skill_deleted_files.py::test_skill_deleted_files_line_is_explicit_only` and `tests/unit/firestore_utils/test_protocol_drive_tiers_draft.py::test_the_tiers_line_is_verbatim_once_in_the_drive_block` (pre-existing) — they pin the skill's old "your notes" and About-tier sentences (C-M2). **Decided** (reviewer, caa6f889): the first is edited to "the owner's notes", applied in Task D2; the second is **not a test edit** — it pins that the skill holds `PROTOCOL_TIERS_LINE` verbatim, and the code is wrong: `src/domain/drive_search_texts.py` `PROTOCOL_TIERS_LINE` and its quote in `docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md` §25.13.6 (pinned by `test_drive_search_v2_frozen_core.py::test_protocol_tiers_line_equals_the_rfc`) must take the skill's new sentence ("…place, text or the owner's note holds the words…"). **Code fix pending.**
 
 **Done.** The task's tests green (replayed from `cef8f147` in task order: 2 passed); `git diff ce314e50 -- <the files it takes whole>` empty; `ruff check src` and `make typecheck` clean; `make check` fails only on the expected-risk tests of this and the earlier tasks (the B1/B10 ones until Task D2; the pending-reviewer ones until the reviewer decides).
 
@@ -5166,7 +5166,7 @@ def _inc(counts: Dict[str, int], key: str, by: int = 1) -> None:
 - `src/domain/drive_deleted_search.py` — Task B5.
 - `src/services/drive_search_service.py` — Task B5.
 
-**Source.** `git checkout ce314e50 -- src/domain/drive_note_render.py src/services/drive_note_deleted_search.py tests/unit/domain/test_drive_note_render.py tests/unit/services/test_drive_note_search_deleted.py`
+**Source.** `git checkout ce314e50 -- src/domain/drive_note_render.py src/services/drive_note_deleted_search.py` and `git checkout caa6f889 -- tests/unit/domain/test_drive_note_render.py tests/unit/services/test_drive_note_search_deleted.py` (the reviewer's C-M2 edits, caa6f889)
 
 **Create `src/domain/drive_note_render.py`** (verbatim, `git show ce314e50:src/domain/drive_note_render.py`):
 
@@ -5414,7 +5414,7 @@ def _gone_day(note: DriveNote) -> str:
 - `tests/unit/services/test_drive_note_search_deleted.py` — 19: `TestArchived.test_strict_and_over_note_and_name_keys`, `TestArchived.test_the_entry_has_the_note_line_inside_the_wrapper_and_the_ref_for_the_tool`, `TestArchived.test_a_tag_look_alike_in_a_note_is_neutralised`, `TestArchived.test_stored_keys_of_the_current_layout_are_used_as_stored`, `TestArchived.test_another_layout_is_recomputed_in_memory`, `TestArchived.test_an_empty_query_lists_the_newest_and_counts_the_rest`, `TestArchived.test_shown_at_most_five_the_rest_counted`, `TestArchived.test_the_scan_cap_line`, `TestArchived.test_cleared_notes_and_erase_stubs_are_not_shown`, `TestMeaningFallback.test_labelled_and_only_when_nothing_matched_exactly`, `TestMeaningFallback.test_prefiltered_on_the_current_space`, `TestMeaningFallback.test_a_failure_costs_only_the_fallback`, `TestDormant.test_labelled_and_keys_only`, `TestDormant.test_disconnected_shows_archived_only_with_the_line`, `TestDormant.test_a_store_failure_says_so_and_the_transcripts_still_answer`, `TestOneSurfaceWithTranscripts.test_one_list_and_a_shared_item_is_one_entry_with_both_lines`, `TestFlagParsing.test_true`, `TestFlagParsing.test_anything_else_is_false`, `test_the_agent_routes_drive_deleted_to_the_deleted_search`
 
 **Expected-risk existing tests:** 
-- `tests/unit/domain/test_drive_note_render.py::TestMatch::test_matched_line_names_where` and `tests/unit/services/test_drive_note_search_deleted.py::TestArchived::test_strict_and_over_note_and_name_keys` — the `your note` wording (C-M2). **Pending reviewer.**
+- `tests/unit/domain/test_drive_note_render.py::TestMatch::test_matched_line_names_where` and `tests/unit/services/test_drive_note_search_deleted.py::TestArchived::test_strict_and_over_note_and_name_keys` — the `your note` wording (C-M2). **Decided** (reviewer, caa6f889): edited to `owner's note`, taken here at caa6f889.
 
 **Done.** The task's tests green (replayed from `cef8f147` in task order: 35 passed, 2 deselected); `git diff ce314e50 -- <the files it takes whole>` empty; `ruff check src` and `make typecheck` clean; `make check` fails only on the expected-risk tests of this and the earlier tasks (the B1/B10 ones until Task D2; the pending-reviewer ones until the reviewer decides).
 
@@ -6027,7 +6027,7 @@ __all__ = [
 
 **Part:** assembly. **Model:** Opus.
 
-**Source.** `git checkout ce314e50 -- tests/unit/skills/test_drive_search_skill_note_ref.py tests/unit/services/test_drive_note_invariants.py tests/unit/services/test_drive_note_restore_fallback.py tests/unit/services/test_drive_note_final_fixes.py tests/unit/domain/test_drive_search_v2_frozen_core.py tests/unit/adapters/test_firestore_drive_index_repo_serialization.py tests/unit/skills/test_drive_search_skill_card_accuracy.py`
+**Source.** `git checkout ce314e50 -- tests/unit/skills/test_drive_search_skill_note_ref.py tests/unit/services/test_drive_note_invariants.py tests/unit/services/test_drive_note_restore_fallback.py tests/unit/services/test_drive_note_final_fixes.py tests/unit/domain/test_drive_search_v2_frozen_core.py tests/unit/adapters/test_firestore_drive_index_repo_serialization.py tests/unit/skills/test_drive_search_skill_card_accuracy.py`, then `git checkout caa6f889 -- tests/unit/services/test_drive_note_service.py tests/unit/infrastructure/test_agent_manifest_drive_deleted.py tests/unit/skills/test_drive_search_skill_deleted_files.py` (the final fix's reviewer edits of pre-existing tests, caa6f889)
 
 **Reviewer-decided edits of existing tests** (verdicts already given; applied with exactly this content, the
 commit message names the verdict source):
@@ -6073,11 +6073,7 @@ C-M4, C-M5, C-M7, L-M1, L-M2, L-M3, L-M5, C-M11, D-M1, D-M2, D-M3, D-M5 and the 
 with their task: `test_delegation_engine_terminal_note_history.py` (A4), `test_drive_note_call_path_history.py` (A8),
 `test_file_management_open_note_block.py` (B8), `test_cloudbuild_drive_notes_switch.py` (D1).
 
-**Pending reviewer — 14 existing tests left unedited** (rulings C-I4, C-M2, and pre-existing tests D-I2 changes):
-the two core erase-all nudge tests, the open-header layout test, the four tier-explain tests and three more that pin
-`your note`, the two T2 manifest tests and two pre-existing skill tests that pin the old wording. Each with its
-assertion is in `.superpowers/sdd/drive-notes/final-fix-report.md`. The task is done when the reviewer has decided
-each one.
+**The final fix's 14 pending tests, decided by the reviewer (caa6f889).** 13 pinned behaviour a ruling changes on purpose and are edited, no assertion removed: the two core erase-all tests assert no nudge (D-I2; applied here); the open-header text test asserts the note in its own wrapper (C-I4; taken at Task B8); the four tier-explain tests, `test_drive_search_owner_note.py`, `test_drive_note_render.py`, `test_drive_note_search_deleted.py` (`owner's note`, C-M2; taken at Tasks B5 and C5), the two T2 manifest tests and the skill's deleted-files test ("the owner's notes", C-M2; applied here). One is a **code bug, not a test edit**: `test_protocol_drive_tiers_draft.py::test_the_tiers_line_is_verbatim_once_in_the_drive_block` — `PROTOCOL_TIERS_LINE` and its RFC §25.13.6 quote must take the skill's new About-tier sentence (see Task B10). **Not done until that fix lands.**
 
 `git diff cef8f147 ce314e50 -- tests/unit/domain/test_drive_search_v2_frozen_core.py`:
 
@@ -6172,7 +6168,7 @@ index add3832f..9ac05834 100644
 
 **Expected-risk existing tests:** none.
 
-**Done.** The task's tests green (replayed from `cef8f147` in task order: 156 passed); `ruff check src` and `make typecheck` clean; `make check` fails only on the 14 pending-reviewer tests (listed under Tasks B5, B7, B8, B10, C5).
+**Done.** The task's tests green (replayed from `cef8f147` in task order: 156 passed); `ruff check src` and `make typecheck` clean; `make check` fails only on `test_the_tiers_line_is_verbatim_once_in_the_drive_block` until its code fix lands (Task B10).
 
 # Docs
 
@@ -6337,7 +6333,7 @@ Each is chosen and stated, not blocking; the reasoning is in the part file named
   text so it can restore it — one extra call rather than note words that an erase could never scrub from chat history.
 - An unknown check dropped by age (FIX-2) leaves archiving to the audit, up to a day later.
 - A refused note embedding (FIX-3) leaves that note out of the deleted-files meaning fallback until its text changes.
-- 14 existing tests are pending a reviewer (§ Task D2).
+- The 14 pending tests are decided (caa6f889, § Task D2); one of them needs a code fix (`PROTOCOL_TIERS_LINE`, Task B10).
 
 ## RFC deltas (one list)
 
@@ -6451,3 +6447,5 @@ The order follows the final deploy review's checklist (final-review-cost-deploy.
 | Final fix batch | `ce314e50` | every "Fix now" item of final-fix-rulings.md; matrix 14 rows |
 | `PYTEST_WORKERS=4 make check` | `ce314e50` | 17 950 passed, **14 failed (all pending reviewer)**, 70 skipped, 1 xfailed; G2 offline run separately: 1 passed |
 | Task-order replay from `cef8f147` | `ce314e50` | every task's tests green at its step (the 14 pending deselected); final tree equals `ce314e50` outside `docs/` |
+| Reviewer decides the 14 pending tests | `caa6f889` | 13 edited (D-I2, C-I4, C-M2); `test_the_tiers_line_is_verbatim_once_in_the_drive_block` is a code bug (`PROTOCOL_TIERS_LINE`, Task B10) |
+| `PYTEST_WORKERS=4 make check` | `caa6f889` | ruff, mypy clean; 17 963 passed, **1 failed** (the tiers-line code bug), 70 skipped, 1 xfailed; G2 offline: 1 passed |
