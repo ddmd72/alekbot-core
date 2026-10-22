@@ -160,18 +160,31 @@ async def test_a_batch_with_a_failing_write_applies_nothing(db):
 async def test_a_transaction_commit_with_a_failing_write_applies_nothing_and_is_not_retried(db):
     col = db.collection("c")
     col.docs["taken"] = {"v": 1}
-    runs = []
+    runs, reader_runs = [], []
     with eval_transactions():
         @firestore.async_transactional
         async def body(tx):
             runs.append(1)
             tx.set(col.document("fresh"), {"v": 1})
-            tx.create(col.document("taken"), {"v": 2})                                           # AlreadyExists at commit
+            tx.set(col.document("taken"), {"v": 2})
+            tx.update(col.document("ghost"), {"v": 3})                                           # NotFound at commit
 
-        with pytest.raises(AlreadyExists):
+        with pytest.raises(NotFound):
             await body(db.transaction())
-    assert runs == [1] and col.docs == {"taken": {"v": 1}}
-    assert col.txn_versions == {}                                                               # nothing counted as a commit
+        assert runs == [1] and col.docs == {"taken": {"v": 1}}
+
+        # the failed commit counts as no commit: a transaction that read `taken` before it still commits, no re-run
+        @firestore.async_transactional
+        async def reader(tx):
+            reader_runs.append(1)
+            await col.document("taken").get(transaction=tx)
+            if len(reader_runs) == 1:
+                with pytest.raises(NotFound):
+                    await body(db.transaction())
+            tx.set(col.document("out"), {"v": 1})
+
+        await reader(db.transaction())
+    assert reader_runs == [1] and col.docs["out"] == {"v": 1} and col.docs["taken"] == {"v": 1}
 
 
 # --------------------------------------------------------------------------------------- value encoding
@@ -264,6 +277,10 @@ async def test_a_range_or_not_equal_filter_orders_by_its_field_so_a_limit_keeps_
     # by document id the first two over 4 would be a, b; the implicit ordering by `n` gives the two smallest
     assert _ids(await col.where("n", ">", 4).limit(2).get()) == ["d", "b"]
     assert _ids(await col.where("n", "!=", 10).limit(2).get()) == ["d", "c"]
+    # several implicit inequality fields follow the explicit ones sorted by field path, whatever the filters' order
+    many = db.collection("m")
+    many.docs.update({"p": {"a": 2, "b": 1}, "q": {"a": 1, "b": 2}, "r": {"a": 1, "b": 1}})
+    assert _ids(await many.where("b", ">", 0).where("a", ">", 0).get()) == ["r", "q", "p"]      # by a, then b
     # after an explicit descending order the implicit field follows in that direction (then __name__)
     ties = db.collection("t")
     ties.docs.update({"y": {"k": 1, "n": 5}, "x": {"k": 1, "n": 2}, "z": {"k": 0, "n": 3}})
@@ -634,6 +651,16 @@ async def test_a_collection_group_query_needs_a_collection_group_index_even_for_
         await db.collection_group("nowhere").order_by("seq").get()
     with pytest.raises(FailedPrecondition, match="COLLECTION_GROUP"):
         await windows.where("user", "array_contains", "u").get()   # an array filter needs an array index
+
+
+async def test_a_collection_group_ordering_needs_its_exact_direction():
+    db = EvalDb(indexes=[_idx(("ts", D), group="windows", scope="COLLECTION_GROUP"),
+                         _idx(("user", D), group="windows", scope="COLLECTION_GROUP")])
+    windows = db.collection_group("windows")
+    await windows.order_by("ts", direction=D).get()
+    await windows.where("user", "==", "u").get()                  # a filter is served by either direction
+    with pytest.raises(FailedPrecondition, match="ASCENDING"):
+        await windows.order_by("ts").get()                        # a DESC-only index does not serve an ascending order
 
 
 async def test_a_non_empty_field_override_serves_a_collection_group_query_an_exemption_does_not():

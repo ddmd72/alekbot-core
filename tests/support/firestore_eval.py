@@ -479,10 +479,10 @@ class EvalQuery:
             return self._nearest(rows, nearest, paths)
         last = orders[-1][1] if orders else "ASCENDING"
         ordered = {name for name, _ in orders}
-        for _, field, op, _ in (o for o in self.ops if o[0] == "where"):   # the implicit ordering of inequality filters
-            if op in _RANGE_OPS and field not in ordered:
-                orders.append((field, last))
-                ordered.add(field)
+        # the implicit ordering of inequality filters; P5 verifies: order of several implicit inequality fields
+        # (the Firebase SDKs sort them lexicographically by field path)
+        implicit = {f for _, f, op, _ in (o for o in self.ops if o[0] == "where") if op in _RANGE_OPS and f not in ordered}
+        orders.extend((field, last) for field in sorted(implicit))
         for name, _ in orders:   # an ordering excludes documents without the field
             rows = [r for r in rows if _get_path(r[3], name) is not _MISSING]
 
@@ -786,12 +786,12 @@ class EvalDb:
     def _check_group_single_fields(self, group: str, ops: List[tuple]) -> None:
         """A collection-group query with a filter or ordering needs a COLLECTION_GROUP single-field index (a field
         override, or a one-field composite) on each field it uses; a bare stream needs none."""
-        needed = {(op[1], "CONTAINS" if op[2] in _ARRAY_OPS else "ORDER") for op in ops if op[0] == "where"}
-        needed |= {(op[1], "ORDER") for op in ops if op[0] == "order_by"}
+        needed = {(op[1], "CONTAINS" if op[2] in _ARRAY_OPS else "FILTER") for op in ops if op[0] == "where"}
+        needed |= {(op[1], op[2]) for op in ops if op[0] == "order_by"}   # an ordering needs its exact direction
         for field, kind in sorted(needed):
+            wanted = {"CONTAINS": ("CONTAINS",), "FILTER": ("ASCENDING", "DESCENDING")}.get(kind, (kind,))
             if not any(g == group and s == "COLLECTION_GROUP" and len(fields) == 1 and fields[0][0] == field
-                       and (fields[0][1] == "CONTAINS") == (kind == "CONTAINS") and fields[0][1] != "VECTOR"
-                       for g, s, fields in self.declared or []):
+                       and fields[0][1] in wanted for g, s, fields in self.declared or []):
                 raise FailedPrecondition(
                     f"The query requires an index: collection group {group!r}, scope COLLECTION_GROUP, "
                     f"single field {field!r} ({kind})")
