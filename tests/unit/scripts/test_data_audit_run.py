@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
+from google.cloud.firestore_v1.vector import Vector
 
 from scripts.data_audit import run as runner
 from src.config.environment import EnvironmentConfig
@@ -21,7 +22,7 @@ def fact(doc_id, account="acc-1", lineage=None, **over):
     doc = {
         "id": doc_id, "account_id": account, "created_by_user_id": "usr-1", "lineage_id": lineage or f"L-{doc_id}",
         "text": SECRET, "type": "event", "state": "current", "is_current": True, "valid_to": None,
-        "vector": [0.1], "tags_vector": [0.2], "metadata_vector": [0.3],
+        "vector": Vector([0.1]), "tags_vector": Vector([0.2]), "metadata_vector": Vector([0.3]),
         "created_at": NOW, "reported_date": NOW, "valid_from": NOW, "last_updated": NOW,
     }
     doc.update(over)
