@@ -40,7 +40,8 @@ class FactWritePort(ABC):
         Order: facts are written in input order; with dedup each is compared with the facts already
             stored, including earlier ones of the same batch.
         Returns: (saved_count, skipped_count, saved_ids); saved_ids holds the id of every stored fact
-            in input order, so len(saved_ids) == saved_count.
+            in input order, so len(saved_ids) == saved_count. Known defect: the dedup path returns []
+            (fact_write_service.py:188-199).
         Idempotency: with skip_deduplication none, a re-run stores new facts; without it a fact
             identical to a current one is skipped.
         Atomicity: every embedding is computed before the first write, so an embedding failure
