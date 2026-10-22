@@ -1,7 +1,8 @@
 # RFC: The user drive through one specialist (`work_with_drive_files`)
 
-**Status:** Proposed, rev 4 (2026-10-22): rev 2 applied the rulings on the three rev 1 reviews, rev 3 the scoped
-re-review of rev 2, rev 4 the live A/B of a spike and the owner's decisions on it (§0, §15). Nothing is built.
+**Status:** Proposed, rev 4.3 (2026-10-22): rev 2 applied the rulings on the three rev 1 reviews, rev 3 the scoped
+re-review of rev 2, rev 4 the live A/B of a spike and the owner's decisions on it, rev 4.3 the deltas that the
+implementation plan recorded against the real code (§0, §15). Nothing is merged.
 **Related:** `USER_DRIVE_RFC.md` (Step 1 operations, `drive:` refs, the mutation lock and shield §4.13, receipts §4.10),
 `USER_DRIVE_INDEXING_RFC.md` (Search v2 §25, the `drive-search` skill D32, inaccessible files §26.2, transcripts §27),
 `DRIVE_FILE_NOTES_RFC.md` rev 3.2 (notes; the notes change amends D4, D12 and N2 there, §9), `AGENT_SKILLS_RFC.md`,
@@ -19,6 +20,29 @@ report, the owner's ruling of 2026-10-22 or the arbiter decided it.
 ---
 
 ## 0. Changes
+
+### 0.0.0 rev 4.2 → rev 4.3 (deltas from the implementation plan, verified against the real code)
+
+Sources: plan A = `drive-specialist-A.md` §7; plan B = `drive-specialist-B.md` §7; arbiter A and B =
+`plan_arbiter_A.md`, `plan_arbiter_B.md`; re-review B = `plan_rereview_B.md`. Only accepted deltas are written in.
+
+| # | Change | Source |
+|---|---|---|
+| 1 | §7.2 row 2: a run that ended without the specialist's report (deadline, engine exception, turn limit) is `unfinished`, whatever finished; a reported run keeps rows 3-9 | plan A RFC text changes; arbiter A I1 |
+| 2 | §7.2: a change's op line is never dropped; a settled correctable error is left out of the status only | plan A RFC text changes; arbiter A I2 |
+| 3 | §5.1: the sol fallback covers provider errors on the first call only; the Sonnet stall is bounded by 6 turns and 150 s | plan A RFC text changes; arbiter A I3 |
+| 4 | §5.4: a turn-cap exit without a report logs ERROR and posts one ops alert; `DriveAgent(alert_sink=…)` | plan A RFC text changes; arbiter A I3, arbiter B (New from A) |
+| 5 | §5.4 "No delegation" also covers a delegate call co-emitted with the terminal tool | plan A §7 |
+| 6 | §5.3 sources: `UserDriveService.connection`, a `SearchLine` enum from a pure `search_line()`, an injected clock for `now` | plan A §7 |
+| 7 | §5.5: hooks stay on FileManagement; `DriveOperations` logs through `logger`; it gains `READ_METHODS`, `MUTATION_METHODS`, `OP_OF` | plan A §7 |
+| 8 | §5.6 LLM calls: `min(120 s, time left)`, not the adapter default | plan A §7 |
+| 9 | §6, §7.3 triggers come from `ReadFacts` set by `DriveOperations` from the typed result, plus `DriveOutcome.body` for stand-ins, not from rendered text | plan A §7 |
+| 10 | §7.2 table: gate `rebuilding` (a purge) is `not_found`; an ambiguous folder is `ok`; a deleted search without hits is `not_found` | plan A §7 |
+| 11 | §7.5 and §8.1: more new strings (partial, no-operation, extra-commission lines, unknown-item refusal, `{field} is required: {what}.`); `report_to_orchestrator` description; `move_file` checks "at least one of them" in the tool; the move sentence is one domain constant | plan A §7; arbiter A M3, M7 |
+| 12 | §7.6: model-facing texts move verbatim; only references to removed intents and fields are renamed; the rule also covers docstrings and the result strings of `FileConversionService` and `UserDriveService` | re-review B §0; plan B §7 item 7 |
+| 13 | §10 steps 1-2 are one task; step 1 "green unedited" holds for all but three FileManagement tests that patch module names of the moved code; step 3 scan script is tracked in `scripts/validation/` (outputs only in `scripts/memory/`) | plan A §7; plan B §7 item 6 |
+| 14 | §11.1 Chain test starts at Smart's engine, not at the Router; §11.2 two strategy and tier tests need `"drive"` in their lists | plan B §7 item 8; plan A §7 |
+| 15 | §12 and §4.1: the harness write stub is at the `DriveOperations` class, in `scripts/`; `ab_agent_models.py` gets no drive stub; eval metrics read the `DriveOperations` log; G3 counts a call to a removed intent as a hard failure; descriptor name `DRIVE_SPECIALIST` | plan B §7 items 1-5 |
 
 ### 0.0 rev 3 → rev 4 (what changed, and why)
 
@@ -214,7 +238,7 @@ that the dry-run harnesses stub writes at `DelegationEngine.dispatch`, is paid o
 
 ## 4. What Smart sees
 
-### 4.1 The intent (`src/infrastructure/agent_manifest.py`, new descriptor `DRIVE`)
+### 4.1 The intent (`src/infrastructure/agent_manifest.py`, new descriptor `DRIVE_SPECIALIST`; part A's config instance is `DRIVE`)
 
 ```python
 Intent.WORK_WITH_DRIVE_FILES: (
@@ -319,8 +343,8 @@ drive_specialist {
 | Class, file | `DriveAgent(BaseAgent)`, `src/agents/drive_agent.py` |
 | Descriptor | `agent_id="drive_agent"`, `agent_type="drive"`, `capabilities={WORK_WITH_DRIVE_FILES: SYNC}`, `allowed_intents=frozenset()`, `prefetch_file_ref=False` (the coordinator must not download a `file_ref` first, as for FileManagement), `internal=False` |
 | Tier, model | **`claude-sonnet-5-5` (Claude BALANCED), adaptive thinking, effort `medium`** (`_DEFAULT_AGENT_TIERS["drive"] = BALANCED`, `agent_thinking["drive"] = "medium"`; owner decision 2026-10-22). Fastest specialist in the final probe (§15.5) |
-| Strategy | `STRATEGIES["drive"]`: default `claude`, allowed `claude`/`openai`, `native_tools` required, fallback `openai` with `fallback_tier=PERFORMANCE` (→ `gpt-6.1-sol`; OpenAI's BALANCED is luna). The fallback is the guard against Sonnet 5.5's filler-tool stall (below) |
-| Sonnet 5.5 stall | The known filler-tool stall (`decisions/sonnet55_adaptive_thinking_stall.md`) did **not** appear in the specialist role. The owner's explanation: it needs Smart's complex structured answer plus many intents; the specialist has a few tools and a plain answer. The sol fallback stays as the guard |
+| Strategy | `STRATEGIES["drive"]`: default `claude`, allowed `claude`/`openai`, `native_tools` required, fallback `openai` with `fallback_tier=PERFORMANCE` (→ `gpt-6.1-sol`; OpenAI's BALANCED is luna). The fallback covers provider errors on the first call only: after a tool turn the transcript is provider-locked and `BaseAgent` raises instead of failing over. It is not a guard against the filler-tool stall (below) |
+| Sonnet 5.5 stall | The known filler-tool stall (`decisions/sonnet55_adaptive_thinking_stall.md`) did **not** appear in the specialist role. The owner's explanation: it needs Smart's complex structured answer plus many intents; the specialist has a few tools and a plain answer. The stall is bounded by 6 turns and 150 s, and a turn-cap exit without a report is logged at ERROR and alerted (`decisions/sonnet55_adaptive_thinking_stall.md`: no workaround, loud monitoring) |
 | Rejected (§15.3, §15.5) | `gpt-6-luna`: too weak (owner) and slower in the final probe (91 s of specialist time against Sonnet's 38 s for 5 cases). `grok-4.7`: slowest (151 s+), most expensive, hit the cost cap. `gemini-3.8-flash`: ≈ 15–20× luna's price and ≈ 3× slower in the replay |
 | Retry | `RETRY_POLICY = NO_RETRY_POLICY` (the `AlekGatewayAgent` precedent): a whole-execution retry after a write repeats the write. The same-provider retry inside `_call_llm` stays |
 | Config | `DriveAgentConfig(max_tokens=4096, max_turns=6, timeout_ms=180_000)` in `agent_config.py` |
@@ -361,8 +385,8 @@ drive_state {
 
 | Line | Source | Why |
 |---|---|---|
-| `drive`, `search` | `UserDrivePort.connection`, `UserBotConfig.drive_indexing_enabled`, and a new public read `DriveSearchService.search_state(user_id)` over the same sync-state gate a search reads today | The model knows up front what can work; code delivers today's text for these states anyway (§7.2) |
-| `now` | the coordinator's `[Mon DD, HH:MM UTC]` prefix and `UserBotConfig.timezone` | Date filters in the user's timezone |
+| `drive`, `search` | `drive`: a new `UserDriveService.connection` (`DriveOperations` imports no `UserDrivePort`, §5.5). `search`: a `SearchLine` enum from a pure `search_line()` in `src/domain/drive_search_line.py`, fed by `UserBotConfig.drive_indexing_enabled` and a new public read `DriveSearchService.search_state(user_id)` over the same sync-state gate a search reads today | The model knows up front what can work; code delivers today's text for these states anyway (§7.2) |
+| `now` | an injected clock (not the coordinator's `[Mon DD, HH:MM UTC]` prefix) and `UserBotConfig.timezone` | Date filters in the user's timezone |
 | `user_message (<origin>)` | text parts of `context["current_message_parts"]` without `file_data` parts (`[File: …]` labels are filtered). The origin label is `chat`, `call (Lelik's words)` on `ask_alek`/`tell_alek` (`alek_gateway_agent.py:101`), `background: <task type>` on notify paths, `fallback` on the Quick fallback (`agent_fallback_service.py:126`) | **The user's own words** on chat turns, required by strict-AND search keys (§2.3.5). Off chat the label says whose words they are; on a call they are not the owner's spoken words |
 | `attached_now` | `MessagePart.file_data` of the same parts | "Save this" without Smart copying the ref |
 | `file_contents` | the commission's field (§4.2) | The model picks the tool and the item; it never types the content |
@@ -378,14 +402,14 @@ execution (the `workspace_tools.py` pattern) and write every outcome into the pe
 
 | Rule | Mechanism |
 |---|---|
-| No delegation | `allowed_intents=frozenset()`, no `delegate_to_specialist` declared. **Engine delta:** `execute(..., allow_delegation: bool = True)`; `False` drops `DELEGATE_TOOL_NAME` from `declared` (`delegation_engine.py:595`), so a stray call gets the existing unknown-tool answer |
+| No delegation | `allowed_intents=frozenset()`, no `delegate_to_specialist` declared. **Engine delta:** `execute(..., allow_delegation: bool = True)`; `False` drops `DELEGATE_TOOL_NAME` from `declared` (`delegation_engine.py:595`), so a stray call gets the existing unknown-tool answer. It also covers a delegate call co-emitted with the terminal tool: the sibling dispatch uses the same declared set |
 | Read before you report | `report_to_orchestrator` may arrive in the same turn only with operations on given refs (open, copy, save, move, delete); the engine runs siblings first (`:339`). After a search it comes in a later turn, so the specialist sees "Without X", folder cards and coverage, and follows their leads (A′) |
 | Identical search skipped | A `search_drive` call identical to one already run in this commission (same normalised query, folder, kind and dates) is not re-executed; its tool result points at the earlier block (`same as r1`). The replay showed up to 9 searches in one commission (§15.3) |
 | Batch order | Every mutating handler first awaits a per-execution ordering lock: `gather` creates the tasks in emission order and `asyncio.Lock` is FIFO (the `drive_note_tools.py` pattern) |
 | Per-user mutation lock, shield, still-running, late-failure notices | Unchanged, on the per-user `DriveOperations` (§5.5): a shielded task outlives a cancelled run |
 | `still_running` ends the commission | The collector sets an `asyncio.Event`; `DriveAgent` waits on `{engine task, event}` with `FIRST_COMPLETED`, cancels the engine task and builds the answer. No engine stop flag |
 | Calls emitted on the last turn | They run (mutations included); the model never sees their results, the ledger reports them |
-| Deadline, engine exception, turns exhausted | Code builds the answer from the collector; status `unfinished` if an operation was cut or none could finish (§7.2) |
+| Deadline, engine exception, turns exhausted | Code builds the answer from the collector; the status is `unfinished` whatever finished, because the run has no report (§7.2), with the blocks and op lines kept. A turn-cap exit without a report is also logged at ERROR (the per-turn tool-name sequence and the first 8 characters of the user id, never arguments or file names) and posts one 🚨 line through the ops alert sink (`DriveAgent(alert_sink=…)`, best-effort) |
 | Any exit | `AgentResponse.success` with the code-built answer (§7), so the suffix never applies and receipts and refs always ride; exceptions in §2.3.3 |
 
 ### 5.5 `DriveOperations` (`src/infrastructure/drive_operations.py`)
@@ -400,7 +424,7 @@ execution (the `workspace_tools.py` pattern) and write every outcome into the pe
 | Typed outcomes | Each public method returns today's text (success or error), the drive items touched, any `file_data`, and an outcome class (§7.2). The exception chain of `_drive_call` maps to the class and keeps today's text |
 | Operation enum | `DriveOp` (`search`, `list`, `open`, `copy`, `save_text`, `create_folder`, `move`, `append`, `replace`, `delete`). Late-failure notices are keyed on it (`delete`, `replace`), not on `Intent` constants (`file_management_agent.py:563-578`), so they keep firing after the cut |
 | Mutation wait per call | `wait_s` is a call argument (today's class constant `MUTATION_WAIT_S`, `:125`); callers pass it |
-| Hooks | `_on_agent_start` / `_on_agent_success` / `_on_agent_error` become logger calls with the same content |
+| Hooks | FileManagement's `_on_agent_success` / `_on_agent_error` stay on FileManagement, where its own code calls them; `DriveOperations` logs through `logger` directly, with the same content. It exposes `READ_METHODS`, `MUTATION_METHODS` and `OP_OF` (method to `DriveOp`), with a completeness test; `DriveAgent` has an `operations` property |
 | Why here | REQ-ARCH-24 forbids one agent importing a sibling agent module; precedent `workspace_tools.py`, `drive_note_tools.py`. Services are constructor-injected; REQ-ARCH-14 allows `TYPE_CHECKING` imports |
 | One instance per user | The factory memoises it in the per-user context (`_UserContext`); `_build_drive` and `_build_file_management` (`user_agent_factory.py:855-873`) both read that slot. The lock, `_shielded`, `_armed`, `_targets`, `_notices` live on it |
 | Unchanged guarantees | The `_Transcripts` guard, root protection, never-overwrite, append-only and the move rules stay in `UserDriveService`; `DriveOperations` imports no `UserDrivePort` and no adapter (architecture test) |
@@ -414,7 +438,7 @@ execution (the `workspace_tools.py` pattern) and write every outcome into the pe
 | Soft deadline (absolute, monotonic) | `min(start + 150 s, now + clock.call_timeout() − 15 s if CURRENT_TURN_CLOCK is set, CURRENT_RUN_DEADLINE − 20 s if set)` | The run ends with its collector before any outer limit, so Smart learns what was done |
 | `CURRENT_RUN_DEADLINE` | **New:** a process-local `ContextVar` (monotonic), the `CURRENT_TURN_CLOCK` precedent. `BaseAgent._execute_with_timeout` sets it for orchestrators from their own timeout and **clears** it when an orchestrator runs without one (`base_agent.py:684`); each orchestrator overwrites the outer value. It is never put in `message.context`, so it never rides into a Cloud Task payload (`agent_coordinator.py:429`), where a monotonic value means nothing; `gather` copies it into the specialist's task | Background SLAs: an ECO reminder fire gives Smart 180 s (`notification_sla.py:84-89`), interactive notify and deep-research delivery 300 s, none with a turn clock. Today FileManagement stops at 120 s (`user_agent_factory.py:864`) |
 | Engine task | `asyncio.wait_for` until the soft deadline; on timeout it is cancelled, shielded mutations keep running | Every exit returns the answer from the collector |
-| LLM calls | `DriveAgent`'s `call_llm` closure passes `timeout = min(adapter default, soft deadline left)` | An overrunning call cannot cross the deadline |
+| LLM calls | `DriveAgent`'s `call_llm` closure passes `timeout = min(120 s, soft deadline left)` | An overrunning call cannot cross the deadline |
 | Reads | each read handler runs under `wait_for(…, soft deadline left)`; on timeout its op line is `not done: did not finish in time` | A read started late cannot cross the deadline |
 | Mutation wait | `max(1 s, min(100 s, soft deadline left − 10 s))` | Today's 100 s inside a 120 s timeout (USER_DRIVE_RFC §4.13), clamped; past the wait, today's still-running path, text and late notice |
 | A tool call after the soft deadline | not started; its op line says so | Required by a loop inside one deadline |
@@ -482,6 +506,8 @@ costs 20–40 s of output to retype). It does read search cards in full, passage
 today's risk class (Smart holds the delete intents and reads cards today), controlled by the `untrusted` line and the
 G3 injection bar. Vision bytes go to Smart only: the specialist picks photos from their triage cards.
 
+**Triggers.** The reading lines (§7.3) and the state lines (§7.2) are decided from `ReadFacts`, which `DriveOperations` sets from the typed result, plus `DriveOutcome.body` for stand-ins. They are never decided by parsing the rendered text.
+
 **Mechanism.** A per-execution `PassThroughCollector` (`src/domain/drive_pass_through.py`, pure) receives every
 outcome from the handlers: handle, step, kind, label, verbatim body, files, drive items. After the run, code emits
 **every** read block in run order, dropping only byte-identical repeats of the same read, each headed with its step
@@ -528,12 +554,12 @@ engine folded (receipts of the notes change).
 
 ### 7.2 Statuses, precedence, and today's messages
 
-The status is the first that applies:
+The status is the first that applies. A run that reported keeps the precedence of rows 3-9. A cut run keeps its blocks and its op lines (`done` and `not done`).
 
 | # | Status | When | "What to do" |
 |---|---|---|---|
 | 1 | `still_running` | a mutation passed its wait | today's `STILL_RUNNING`; the late notice as today |
-| 2 | `unfinished` | the soft deadline, an engine exception or the turn limit cut an operation, or none could finish | `The drive assistant could not finish; what ran is listed below.` |
+| 2 | `unfinished` | the run ended without the specialist's report (the soft deadline, an engine exception or the turn limit), whatever finished; or an operation was cut by the soft deadline or not started after it | `The drive assistant could not finish; what ran is listed below.` |
 | 3 | `partial` | some changes done, some not (or a `question` or `not_done` after some changes) | `Only part was done:` + the op lines |
 | 4 | the first failed change's status (`refused`, `failed`, `not_found`, `not_connected`, `not_possible`) | changes attempted, none done; a text tool refused for a missing or unknown item counts as a failed change of class `not_possible` | today's text of that op; for a missing item: `Nothing was written: the text was not attached. Commission again with context.file_contents holding the full text.` |
 | 5 | `ambiguous` | the model's `question`, no change done | the question, with the candidates' cards among the blocks |
@@ -553,21 +579,21 @@ The status is the first that applies:
 
 | Status | Today's outcomes (`file_management_agent.py`, `drive_search.py`; research 05 §1 has the full list) |
 |---|---|
-| `ok` | every success today: saved, already there, saved as a suffixed name, listed, opened, transcript, link, folder created or existed, moved, appended, replaced, deleted, search with cards, deleted search with hits; the success-shaped refusals (HEIC, image > 5 MB, PDF > 20 MB) |
+| `ok` | every success today: saved, already there, saved as a suffixed name, listed, opened, transcript, link, folder created or existed, moved, appended, replaced, deleted, search with cards, deleted search with hits; an ambiguous folder; the success-shaped refusals (HEIC, image > 5 MB, PDF > 20 MB) |
 | `not_connected` | `_NOT_CONNECTED`; search `disconnected` |
 | `indexing_off` | search `disabled` |
-| `rebuilding` | D30 `REBUILDING_LINE`; gate rebuilding; `other_drive` |
-| `not_found` | `_GONE`; chat file not found; `No matching files or folders.`; D29 lines; no conjunction; folder not found |
+| `rebuilding` | D30 `REBUILDING_LINE`; `other_drive` |
+| `not_found` | the gate `rebuilding` (a purge); a deleted search without hits; `_GONE`; chat file not found; `No matching files or folders.`; D29 lines; no conjunction; folder not found |
 | `refused` | `ACCESS_NOTE_FILE`/`_FOLDER`; `_NAME_TAKEN`; too large; root protected; `DrivePathError` texts; `DRIVE_MIRROR_WRITE_REFUSED`; request-shape errors the specialist could not fix in its turns |
 | `failed` | `Drive operation failed: <Type>.` (including the provider `TimeoutError` inside a mutation, pinned by `test_provider_timeout_inside_a_mutation_is_a_failure`); `The drive is not configured.` |
 
 Request-shape errors (both or neither source, an empty field, a bad date or kind, `NOTHING_TO_SEARCH`, a folder ref
 given as a file) go back to the specialist's model as tool results in today's words (§7.6) and are corrected in its
-loop.
+loop. A correctable error the specialist fixed in a later step (a later call of the same operation that is not itself correctable) is left out of the status, and for a read out of the blocks. A change's op line is never dropped: a settled change error stays as its `N. not done: <today's text>` line, so the orchestrator sees every failed call, as it does today.
 
 ### 7.3 Reading lines for Smart (the skill's Smart-side rules, verbatim, with triggers)
 
-| Trigger (decided by code from the blocks) | Line(s) from `drive-search` SKILL.md |
+| Trigger (decided by code from `ReadFacts` and `DriveOutcome.body`, not from the rendered text; §6) | Line(s) from `drive-search` SKILL.md |
 |---|---|
 | a search block with cards | the tiers paragraph (`PROTOCOL_TIERS_LINE`) and its three bullets; "Find … answer from the search results alone"; "Many results: …"; "'All', 'every', 'everything about' is still a find: … do not … compute totals unless the user asked for a total or a value" |
 | a card with a passage | "A passage is a window cut from the file … If the file cannot be opened …, quote the passage and say it is an excerpt." |
@@ -600,7 +626,7 @@ blocks, where today the whole skill body rode in history.
 `done:` / `not done:`, `Reading:`, `Specialist note:`, `[Result rN, step N: <kind>]` and its "before the changes in
 steps …" suffix, the two stand-in lines (§6), `did not finish in time`, `not started: the time for this request ran
 out`, the `unfinished` line, the two `not_possible` lines, the A′ opened-file reading line (§7.3) and the `same as rN`
-result of a skipped identical search (§5.4). Every
+result of a skipped identical search (§5.4); and, from the build: `Not done: {not_done}` (partial), `no drive operation ran`, `Also given with the commission:`, the unknown-item refusal (`No file_contents item '…' (items: …). Nothing was written …`, which §7.2 names but does not spell) and `{field} is required: {what}.` (an empty `file_ref` or `source_ref` is refused in the tool before any call). Every
 other line Smart or the specialist reads is today's text (after §7.6).
 
 ### 7.6 Strings that name intents or fields Smart no longer has
@@ -608,7 +634,7 @@ other line Smart or the specialist reads is today's text (after §7.6).
 About 30 strings name old intents or fields (`list_files_in_drive`, `open_file_from_drive`, `drive_folder`,
 `drive_query`, `drive_kind`, `drive_date_*`, `save_file_to_drive`, `move_file_in_drive`, `delete_file_from_drive`) in
 `drive_search.py`, `drive_search_texts.py`, `drive_search_service.py`, `drive_deleted_search.py`,
-`drive_transcript_render.py`, `file_conversion_service.py`, `user_drive_service.py` and FileManagement. Two rules:
+`drive_transcript_render.py`, `file_conversion_service.py`, `user_drive_service.py` and FileManagement. The guard also covers docstrings that name a removed intent, and the result strings of `FileConversionService` and `UserDriveService`. **Model-facing texts move verbatim (a move, not a rewrite):** today's descriptions, protocol lines and skill sentences are carried over word for word; only references to removed intents and fields are renamed, and the sentences the rules below name are dropped. Two rules:
 
 | Text | Read by | Rule |
 |---|---|---|
@@ -639,11 +665,11 @@ descriptions are specialist-owned constants in `src/domain/drive_tool_texts.py`.
 | `copy_file_to_drive` | Keep a copy of a file on the drive; never overwrites, the result states the name used. | `source_ref`: a chat file name from `[File: …]`, a delivered document key, a `workspace:<path>` file or a `skill:` file; never a `drive:` ref. `folder` (opt, only if the user named one; default Inbox; created if missing). `file_name` (opt; the source's extension is kept if omitted) | `copy` |
 | `save_text_file` | Save one attached text as a new text file; never overwrites. | `text_item`: `t1`… from `file_contents` (a value that names no item is refused and nothing is written). `file_name` (opt: defaults to the item's name; ends in .md .txt .csv .json .yaml .yml .html .svg or .xml). `folder` (opt; created if missing) | `save_text`; content = the item's text |
 | `create_folder` | Create a folder and any missing parents. | `folder` | `create_folder` |
-| `move_file` | Move and/or rename a file or folder in one step. | `file_ref`; `folder` (opt: destination; created if missing); `new_name` (opt: extension included for files); at least one of them | `move` (one `svc.move(folder, new_name)`, as today) |
+| `move_file` | Move and/or rename a file or folder in one step. | `file_ref`; `folder` (opt: destination; created if missing); `new_name` (opt: extension included for files); at least one of them, checked in the tool with the service's own refusal text before any call (correctable, not a `refused` change); the sentence is one domain constant | `move` (one `svc.move(folder, new_name)`, as today) |
 | `append_to_file` | Add one attached text at the end of a text file. | `text_item`: `t1`… (a value that names no item is refused and nothing is written); `file_ref` (opt: defaults to the item's target) | `append`; text = the item's text |
 | `replace_file_content` | Replace a drive file's whole content with another file's; the user gets a notice with old and new size. | `target_ref`: the `drive:` file whose content is replaced. `new_content_ref`: the file whose content goes in: a chat file, a delivered document, a `workspace:<path>` file, a `skill:` file, or another `drive:` file | `replace` + receipt |
 | `delete_drive_item` | Delete a file or a whole folder (recoverable from the recycle bin); the user gets a notice. | `file_ref` | `delete` + receipt |
-| `report_to_orchestrator` (terminal) | Finish: what you did, in one or two sentences. | `note`: at most two sentences, never a file's content. `question` (opt): only when the orchestrator must ask the user which file is meant; name the candidates. `not_done` (opt): what was asked that no tool can do; empty otherwise | — (code builds the answer; **every** read block is delivered, §6) |
+| `report_to_orchestrator` (terminal) | Finish: what you did, in one or two sentences. | `note`: at most two sentences, never a file's content (the description adds: "The system delivers every result to the orchestrator."). `question` (opt): only when the orchestrator must ask the user which file is meant; name the candidates. `not_done` (opt): what was asked that no tool can do; empty otherwise | — (code builds the answer; **every** read block is delivered, §6) |
 
 `save_text_file` and `append_to_file` are always declared; without a matching item the handler refuses with no service
 call, and the refusal is classed `not_possible` (§7.2). `OUTPUT_FORMAT_DRIVE` describes `not_done` next to `question`.
@@ -764,9 +790,9 @@ One feature branch, one PR, merged when fully green. Every step is a commit that
 | Step | What | Existing tests |
 |---|---|---|
 | 0 | **[OWNER]** G3 "before" on current code, with drive-turn wall times (§12), after a 1-repeat cost probe | — |
-| 1 | `DriveOperations` takes FileManagement's drive code **behind FileManagement's unchanged surface**: FileManagement keeps `MUTATION_WAIT_S` and passes it per call; read-only properties forward `_shielded`, `_notices`, `_armed`, `_targets`, `_localization`, `_conversion_service`; the BaseAgent hooks become logger calls; one `DriveOperations` per user in the factory slot (§5.5). Not a pure move, said so | green unedited (they touch only the kept surface) |
-| 2 | Typed outcomes and `DriveOp` in `DriveOperations` (late-failure notices re-keyed; FileManagement maps outcomes back to today's `AgentResponse`); `drive_pass_through.py`, the answer composer (`drive_answer.py`), `drive_tool_texts.py`; `build_tool_turn` list + adapter wire tests; engine `allow_delegation`; `CURRENT_RUN_DEADLINE` in `BaseAgent._execute_with_timeout`; `DriveSearchService.search_state` | green; new tests for each |
-| 3 | `DriveAgent`, `drive_tools.py`, `DRIVE` descriptor, tier, strategy, config, factory wiring (lazy builder, `preload_cache`); prompt files under `prompts_snapshot/` (§10.1); `DryRunDriveOperations` for G3 and `ab_agent_models.py` and its test; the owner-text scan script (`scripts/memory/`, read-only) | green (the default-tier and prose-schema tests cover the new agent) |
+| 1-2 (one task) | `DriveOperations` takes FileManagement's drive code **behind FileManagement's unchanged surface**: FileManagement keeps `MUTATION_WAIT_S` and passes it per call; read-only properties forward `_shielded`, `_notices`, `_armed`, `_targets`, `_localization`, `_conversion_service`; the BaseAgent hooks become logger calls; one `DriveOperations` per user in the factory slot (§5.5). Not a pure move, said so | green unedited, except three FileManagement tests that patch module names of the moved code (two `_fetch` binary tests, one save-naming test); they go to the reviewer with a proposed re-target and unchanged assertions |
+|  | Typed outcomes and `DriveOp` in `DriveOperations` (late-failure notices re-keyed; FileManagement maps outcomes back to today's `AgentResponse`); `drive_pass_through.py`, the answer composer (`drive_answer.py`), `drive_tool_texts.py`; `build_tool_turn` list + adapter wire tests; engine `allow_delegation`; `CURRENT_RUN_DEADLINE` in `BaseAgent._execute_with_timeout`; `DriveSearchService.search_state` | green; new tests for each |
+| 3 | `DriveAgent`, `drive_tools.py`, `DRIVE_SPECIALIST` descriptor, tier, strategy, config, factory wiring (lazy builder, `preload_cache`); prompt files under `prompts_snapshot/` (§10.1); the class-level `DriveOperations` write stub for G3 and its test (§12); the owner-text scan script (`scripts/validation/drive_intent_text_scan.py`, tracked and read-only; its outputs go only to `scripts/memory/`; it gains `--check-rewrites` and the drafts store) | green (the default-tier and prose-schema tests cover the new agent) |
 | 4 | **The cut**, one commit: remove the 8 intents from `FILE_MANAGEMENT` and `Intent`; delete `src/skills/smart/drive-search/`; the protocol edit (mirror + `firestore_utils/uploads/PROTOCOL_AGENT_SELECTION.json`, pinned equal); §4.4 and §7.6 wording; `smart_dry_run.py`'s intent reads (`:101-108, 304-383`) and its metrics (`drive_status` instead of `failed`, `:331,345,383`) rewritten together with its 9 importing test files; FileManagement drive tests re-targeted to `DriveOperations` / the tools | reviewer verdicts applied in this commit (§11.2) |
 | 5 | `drive_routing_probe.py` and `drive_query_vocabulary.py` read the specialist's tool calls; docs: root `CLAUDE.md` roster (new row, FileManagement row), `src/agents/CLAUDE.md`, `docs/05_building_blocks/user_drive/README.md`, `NEW_AGENT_PLAYBOOK.md` stale token name, decision record `decisions/drive_specialist.md`, which records the residual "for a few turns after the deploy, a stale skill copy in history can cause one rejected call to a removed intent, which Smart self-corrects from today's unknown-intent error" | green |
 | 6 | **[OWNER], before the deploy:** run the scan over the owner's custom skills (`drive-workspace`, `drive-inbox`, `document-facts-batches` and any other), stored reminder instructions, standing directives, workspace files (`projects/`, `references/`) and user/account prompt overrides; **back up** every hit to `scripts/memory/` (skills with their version numbers); rewrite each hit so it names **no intent** ("find it on the drive", "save it to the drive"), as a new skill version where the store is versioned. **Patterns:** the 8 intent names; the 13 field names (`drive_query`, `drive_folder`, `drive_kind`, `drive_date_from`, `drive_date_to`, `drive_deleted`, `original`, `append_text`, `source_ref`, `new_name`, `folder`, `text`, `file_ref` next to a drive intent); `drive-search` (a skill that says "load drive-search first" fails after the cut); and `work_with_drive_files` (used again for §13). Intent-free text works with the old code and the new, so it can land first and survives a revert | — |
@@ -802,7 +828,7 @@ DocPlanner, PdfGenerator and HtmlPageGenerator still resolves `drive:` refs copi
 
 | Area | Tests |
 |---|---|
-| Step 1 | every existing FileManagement test runs unedited; both agents of one user hold the same `DriveOperations` |
+| Step 1 | every existing FileManagement test runs unedited, except the three of §10 step 1; both agents of one user hold the same `DriveOperations` |
 | Outcomes | each exception class → its outcome class with today's text byte for byte; a delete whose provider call fails after the wait still posts the late-failure notice, keyed on `DriveOp` |
 | Answer | each status and the precedence table; "What to do" is today's text byte for byte; one op line per mutating call, in step order ("Already on the drive" and "It already existed" included); a connection-state line only when no operation ran; a search-state line only on an answer that ran a search (a save during a rebuild carries no `REBUILDING_LINE`); `not_possible` for a no-op run, for a text tool without its item, and for deleted search + `not_done`; an unknown `text_item` is refused and nothing is written; `question` cannot override a failure or a done change |
 | Reading lines | each trigger of §7.3 adds exactly its lines, and none without its trigger |
@@ -814,7 +840,7 @@ DocPlanner, PdfGenerator and HtmlPageGenerator still resolves `drive:` refs copi
 | Engine, domain | `allow_delegation`; `build_tool_turn` with a dict, a list, none; wire tests: two files after one `tool_response` (Claude nested, OpenAI one content item, Gemini parts, Grok images only) |
 | Manifest, Smart | the descriptor (SYNC, `prefetch_file_ref=False`, empty allowlist); description anchors (find, the FILE rule, delivered document key, `file_contents`) and **no notes sentence**; Smart's and Quick's declarations hold no old drive intent; `drive-search` absent from the catalogue; the protocol exception and block |
 | State block | `user_message` labelled by origin; `file_data` parts filtered |
-| Chain | chat context → Router → Smart's engine → coordinator → `DriveAgent` → handler sees `interactive_delivery`, `session_id`, `turn_id`; vision reaches Smart; a delete receipt is posted; a `drive:` ref from a card reaches `create_pdf` through the prefetch |
+| Chain | chat context at Smart's engine (the Router routes every chat turn to Smart; its own tests cover that hop) → coordinator → coordinator → `DriveAgent` → handler sees `interactive_delivery`, `session_id`, `turn_id`; vision reaches Smart; a delete receipt is posted; a `drive:` ref from a card reaches `create_pdf` through the prefetch |
 | Architecture | `drive_operations.py` / `drive_tools.py` import no `UserDrivePort` and no adapter |
 | Harness | a drive write inside the specialist is stubbed in the G3 dry run (lands before any dry run) |
 | Notes (notes change) | the plan's tests, ported; each of the eleven tools → its one core call; `replace_note_text` refused without an earlier `get_note` and after a version change; `get_note` + `replace_note_text` in one batch run in order; `set_note_type` / `add_life_areas` / `add_to_note` on a file with no note create it; `add_to_note` and `add_life_areas` keep what was there; a conflict re-merge re-embeds; a re-run with the same change is a no-op receipt; a forged `params` gate refused; erase code never in `result_str`; a `partial` commission still delivers a note receipt |
@@ -833,6 +859,8 @@ field-name pins are counted).
 | workspace tests (`test_workspace_paths.py`, `test_workspace_service_copy.py`, `test_workspace_service_view.py`) | 3 | §4.4 wording |
 | `tests/unit/scripts/test_drive_eval_g3_*.py`, `test_drive_eval_smart_dry_run.py`, `test_drive_eval_s26_additions.py`, `test_drive_query_vocabulary.py` | 10 | the harness reads the specialist's calls and `drive_status`; decided in the step 4 commit |
 
+Two more: `test_strategies_has_no_orphans` needs `"drive"` in its factory list, and `test_only_the_drive_agents_name_a_fallback_tier` needs `"drive"` in its expected set.
+
 The reviewer decides each test against this RFC: an edit where the spec changed it on purpose, otherwise a code fix.
 
 ---
@@ -847,9 +875,7 @@ The reviewer decides each test against this RFC: an edit where the spec changed 
 | Logs (free) | research 01 is the production baseline | Smart input tokens per call; Smart calls per drive turn; re-searches; specialist turns, p50/p95 latency and cost per commission (the `[DriveAgent]` line) | reported, not gating |
 
 **Harness safety first.** G3 and `ab_agent_models.py` stub writes per intent at `DelegationEngine.dispatch`, and the
-specialist's tools do not go through it. Both get a `DryRunDriveOperations` wrapper on the user's shared
-`DriveOperations` (the `DryRunWorkspace` precedent, `smart_dry_run.py:596`): reads go to the fixture drive and search,
-writes are recorded and never executed, and every tool call is logged under its own name for the metrics. The test
+specialist's tools do not go through it. G3 gets a class-level write stub on `DriveOperations`, in `scripts/` (not an instance wrapper in `src/services/`): a class patch covers every instance, the factory's included, and the install refuses an unclassified public method (`READ_METHODS` / `MUTATION_METHODS`, §5.5). Reads go to the fixture drive and search (the `DryRunWorkspace` precedent, `smart_dry_run.py:596`), writes are recorded and never executed. `ab_agent_models.py` gets no drive stub: it stubs every intent outside its read-only set at Smart's dispatch, and the specialist is never reached there (pinned by a test). The eval metrics read the `DriveOperations` log, the one choke point, which records the outcome class and also catches Smart's own `open_file` on a `drive:` ref. In G3 a call to a removed intent goes to Smart's own engine and counts as a hard failure. The test
 that a write is stubbed lands before any dry run.
 
 **Cost.** One G3 run with `--repeats 3` is about 105 Smart turns plus specialist calls (research 07 guesses $1–4).
