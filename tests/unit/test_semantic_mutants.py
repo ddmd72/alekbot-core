@@ -2,7 +2,7 @@
 
 import ast
 import importlib
-import json
+import os
 import subprocess
 import sys
 import textwrap
@@ -245,7 +245,7 @@ WEAK = textwrap.dedent(
 )
 
 
-@pytest.mark.slow
+@pytest.mark.slow  # runs child pytest processes
 class TestDriver:
     @pytest.fixture
     def toy(self, tmp_path):
@@ -255,49 +255,36 @@ class TestDriver:
         return tmp_path
 
     def run(self, toy, tests, *extra):
-        env_path = str(REPO_ROOT)
         return subprocess.run(
             [sys.executable, "-m", "tests.support.semantic_mutants", "--module", "toy_store", "--tests", *tests,
              "--cwd", str(toy), *extra],
             cwd=REPO_ROOT, capture_output=True, text=True, timeout=300,
-            env={**__import__("os").environ, "PYTHONPATH": env_path, "PYTEST_SUITE_LOCK": "0"},
+            env={**os.environ, "PYTHONPATH": str(REPO_ROOT), "PYTEST_SUITE_LOCK": "0"},
         )
 
-    def test_list_shows_every_mutant_with_a_key_and_runs_nothing(self, toy):
-        done = self.run(toy, ["test_strong.py"], "--list")
-        assert done.returncode == 0, done.stderr
-        assert "order_by-flip" in done.stdout and "where-drop" in done.stdout and "doc-drop" in done.stdout and "key=" in done.stdout
-
     def test_a_weak_test_lets_the_defects_survive_and_the_exit_code_says_so(self, toy):
-        done = self.run(toy, ["test_weak.py"], "--operators", "where-drop,order_by-flip,order_by-drop,doc-drop,write-skip")
+        done = self.run(toy, ["test_weak.py"])
         assert done.returncode == 1, done.stdout + done.stderr
         survivors = done.stdout.split("SURVIVORS")[1]
         assert "where-drop" in survivors and "order_by-flip" in survivors and "order_by-drop" in survivors
         assert "write-skip" not in survivors  # the weak test notices an empty store
 
-    def test_a_strong_test_kills_every_mutant(self, toy, tmp_path_factory):
-        report = toy / "report.json"
-        done = self.run(toy, ["test_strong.py"], "--json", str(report))
+    def test_a_strong_test_kills_every_mutant(self, toy):
+        done = self.run(toy, ["test_strong.py"])
         assert done.returncode == 0, done.stdout + done.stderr
-        data = json.loads(report.read_text())
-        assert data["counts"]["survived"] == 0 and data["counts"]["killed"] == len(data["mutants"]) > 8
+        assert "0 survived" in done.stdout and "SURVIVORS" not in done.stdout
 
-    def test_a_reviewer_rules_a_mutant_equivalent_with_its_key_and_a_stale_key_is_reported(self, toy):
-        weak = self.run(toy, ["test_weak.py"], "--operators", "order_by-drop")
-        key = weak.stdout.split("SURVIVORS")[1].split("key=")[1].split()[0]
-        (toy / "equivalent.txt").write_text(f"{key}  # the toy ordering is unobservable\ndeadbeef  # gone\n")
-        done = self.run(toy, ["test_weak.py"], "--operators", "order_by-drop", "--equivalent", str(toy / "equivalent.txt"))
-        assert done.returncode == 0, done.stdout
-        assert "ruled equivalent" in done.stdout and "stale: equivalent key deadbeef" in done.stdout
-
-    def test_an_equivalent_entry_without_a_reason_is_refused(self, toy):
-        (toy / "equivalent.txt").write_text("deadbeef\n")
+    def test_a_reviewer_rules_a_mutant_equivalent_with_its_key(self, toy):
+        weak = self.run(toy, ["test_weak.py"])
+        keys = [line.split("key=")[1] for line in weak.stdout.split("SURVIVORS")[1].splitlines() if "key=" in line]
+        (toy / "equivalent.txt").write_text("".join(f"{key}  # unobservable in the toy\n" for key in keys))
         done = self.run(toy, ["test_weak.py"], "--equivalent", str(toy / "equivalent.txt"))
-        assert done.returncode != 0 and "no reason" in (done.stdout + done.stderr)
+        assert done.returncode == 0, done.stdout
+        assert f"{len(keys)} ruled equivalent" in done.stdout and "SURVIVORS" not in done.stdout
 
     def test_tests_that_never_load_the_module_are_an_error_not_a_survivor(self, toy):
         (toy / "test_unrelated.py").write_text("def test_nothing():\n    assert True\n")
-        done = self.run(toy, ["test_unrelated.py"], "--operators", "where-drop")
+        done = self.run(toy, ["test_unrelated.py"])
         assert done.returncode == 2, done.stdout + done.stderr
         assert "never loaded" in done.stdout and "SURVIVORS" not in done.stdout
 

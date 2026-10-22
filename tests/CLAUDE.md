@@ -74,8 +74,7 @@ written document/write/forwarded keyword, a flipped sort direction, an `except` 
 
 ```bash
 python -m tests.support.semantic_mutants --module src.adapters.firestore_repo \
-    --tests tests/unit/adapters/test_fact_store_roundtrip.py          # one child pytest per mutant; exit 1 if any survives
-#   --list  --only 3,7  --operators where-drop,write-skip  --jobs 4  --json out.json  --equivalent FILE
+    --tests tests/unit/adapters/test_fact_store_roundtrip.py [--equivalent FILE]   # one child pytest per mutant; exit 1 if any survives
 ```
 
 A survivor means the tests do not notice that defect: write the assertion that does. `--equivalent` takes
