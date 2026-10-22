@@ -69,9 +69,9 @@ def test_save_says_chat_files_are_temporary():
 
 def test_only_file_management_opts_out_of_prefetch():
     """Default True everywhere else: no other agent silently loses its pre-fetched file_content."""
-    from src.infrastructure.agent_manifest import ALL_DESCRIPTORS
+    from src.infrastructure.agent_manifest import ALL_DESCRIPTORS, DRIVE_SPECIALIST
     opted_out = {d.agent_id for d in ALL_DESCRIPTORS if not d.prefetch_file_ref}
-    assert opted_out == {FILE_MANAGEMENT.agent_id}
+    assert opted_out == {FILE_MANAGEMENT.agent_id, DRIVE_SPECIALIST.agent_id}
 
 
 def test_descriptions_disambiguate_the_routing_cases():
