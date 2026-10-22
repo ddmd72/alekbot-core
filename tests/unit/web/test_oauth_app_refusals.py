@@ -140,10 +140,6 @@ class TestCallback:
         assert _no_session_cookies(resp)
         assert w.user_docs() == before
 
-    @pytest.mark.xfail(strict=True, raises=AssertionError,
-                       reason="known defect, open redirect: /auth/login stores `next` unvalidated "
-                              "(src/web/oauth_app.py:95, :119-120) and /auth/callback redirects to it "
-                              "(src/web/oauth_app.py:201-204)")
     async def test_sign_in_never_redirects_off_site(self):
         w = World()
         await w.seed()
@@ -151,7 +147,6 @@ class TestCallback:
         login = await w.client.get("/auth/login?next=https://evil.example/phish")
         assert login.status_code == 302
         stored = {c.name: c.value for c in w.client.cookie_jar}  # what login set; the browser replays it
-        assert stored["auth_next"] == "https://evil.example/phish"
         resp = await w.client.get(f"/auth/callback?code=c&state={stored['oauth_state']}")
 
         assert resp.status_code == 302 and "access_token=" in _set_cookies(resp)  # the sign-in itself succeeded

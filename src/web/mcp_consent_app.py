@@ -56,12 +56,12 @@ def build_mcp_consent_blueprint(
         """
         token = request.cookies.get("access_token")
         if not token:
-            return redirect(f"/auth/login?next={quote(request.url, safe='')}")
+            return redirect(f"/auth/login?next={quote(request.full_path.rstrip('?'), safe='')}")
         try:
             payload = session_service.verify_access_token(token)
         except Exception as e:  # noqa: BLE001
             logger.warning(f"MCP consent: invalid Cabinet token — {e}")
-            return redirect(f"/auth/login?next={quote(request.url, safe='')}")
+            return redirect(f"/auth/login?next={quote(request.full_path.rstrip('?'), safe='')}")
         return payload["sub"], payload["account_id"]
 
     def _render_consent_html(
