@@ -136,6 +136,16 @@ class AgentProviderStrategy:
             "required_capabilities": ["native_tools"],
             "fallback": "gemini"
         },
+        # The drive specialist (DRIVE_SPECIALIST_RFC §5.1): Claude BALANCED (claude-sonnet-5-5), adaptive thinking at
+        # medium. The fallback is OpenAI at PERFORMANCE (gpt-6.1-sol; OpenAI's BALANCED is luna), the guard against
+        # Sonnet 5.5's filler-tool stall (decisions/sonnet55_adaptive_thinking_stall.md).
+        "drive": {
+            "default_provider": "claude",
+            "allowed_providers": ["claude", "openai"],
+            "required_capabilities": ["native_tools"],
+            "fallback": "openai",
+            "fallback_tier": PerformanceTier.PERFORMANCE,
+        },
         "notes": {
             "default_provider": "openai",
             "allowed_providers": ["openai", "gemini", "claude"],
