@@ -264,7 +264,8 @@ table** and an **exemption list** (older RFCs citing since-renamed paths). Draft
    `FIRESTORE_DATABASE`.
 2. **`APP_ENV=test`**, which maps to the `test_` collection prefix (`environment.py:52-59`), so even a misrouted client
    cannot land in `development_*` collections.
-3. **A dedicated test service account** with `roles/datastore.user` under an IAM condition on the test database only.
+3. **A dedicated test service account** with `roles/datastore.user` and `roles/datastore.indexAdmin` under an IAM condition on the test database only
+   (`setup_test_gate.sh`, 2026-10-21).
    Client libraries and REST enforce database-level conditions; the Console does not.
    - **Local runs impersonate it** (`gcloud auth application-default login --impersonate-service-account=…`); the
      fixture asserts `credentials.service_account_email` equals the test SA before any write. Without this, local runs
@@ -296,7 +297,8 @@ deleted id is reusable only after minutes).
   definitions are added to git (§1.4 item 11).
 - **Source of truth:** `gcloud firestore indexes composite list` on the live database, diffed against git; a
   difference is a finding.
-- Index creation is an **owner step**: `datastore.user` cannot create indexes.
+- Index creation is **not an owner step** since the test service account also holds `datastore.indexAdmin` on the test database (2026-10-21):
+  the P5 fixture creates the test-database indexes through the Admin API (the live database's indexes stay an owner step).
 
 **GCS.** A test bucket with object versioning (workspace `history`/`restore` need it), a 1-day lifecycle delete and a
 noncurrent-version rule, same guards. **Cloud Tasks:** a paused test queue, so enqueue is real and nothing is
@@ -574,6 +576,27 @@ semantic-mutation driver (`python -m tests.support.semantic_mutants`) and the re
   - `fact_management_adapter.py`: 7 of 7 killed. `fact_write_service.py`: 2 of 2.
 - **Branch coverage:** `firestore_repo.py` 43 to 78 %, `fact_management_adapter.py` 83 to 97 %.
 - **Four known defects are pinned by strict xfails** (they fail the suite when fixed, so the fix removes the marker): the cached biographical context swallows a backend failure; the biographical refresh ignores `facts_limit`/`principles_limit`; a failed merge leaves the sources superseded; `add_facts_batch` fills `saved_ids` only when deduplication is skipped. The fixes are outside this package.
+
+**Built (P5, 2026-10-22).** The fake-vs-real parity slice. Files: `tests/support/firestore_parity.py` (34 scenarios, one documented expected value
+each, the index groups), `tests/unit/support/test_firestore_parity.py` (H1 in `make check`; the emulator when `FIRESTORE_EMULATOR_HOST` is set),
+`tests/cloud/` (`conftest.py` guards and index fixture, `test_firestore_parity_cloud.py`), `make test-cloud`. The same scenarios run on H1, the
+emulator (31 of 34; it does not refuse a missing index) and the test database. Deviations and results:
+- **Results.** The emulator agreed with every expected value. The test database confirmed every expected value of the first 32 scenarios,
+  the documentation-silent ones included, except one: the guess that a composite index is scanned in reverse was **refuted** (exactly flipped
+  directions give `FailedPrecondition`), so the expected value was corrected, and H1, which refused it, had been right. H1 differed from Firestore
+  on two scenarios, both fixed in `firestore_eval.py`: the type order (NaN before numbers; bytes < reference < geo point < array < vector < map)
+  and a `last_update_time` precondition on a missing document (`FailedPrecondition`, before the existence check; a plain `update` is still
+  `NotFound`). P3's open points are settled: `!=` excludes a field set to null, and a precondition on a deleted document is `FailedPrecondition`.
+  Every `# P5 verifies` comment now carries its verdict. Review round 1 added two scenarios (filters on two range fields added in reverse order;
+  equality plus `array_contains_any`), a reference and a vector in the type order, document ids that run against the value order, and an
+  observable distance-field check; H1's index requirement now sorts the range fields as its implicit ordering does. All 34 scenarios are
+  confirmed on the test database (2026-10-22, 34 of 34 in 59 s), the vector `order_by` in the type order included.
+- **Transactions.** The conflict scenario runs two transactions with staggered starts, not three in lock step: the emulator's lock timeouts
+  exhausted the SDK's five attempts in 3 of 8 runs (three) and 4 of 15 (two in lock step), and none in 20 staggered runs.
+- **Index creation on the test database is a fixture** (Admin API, fixed collection ids `test_parity_idx_*`, created once, READY wait 15 min), not
+  the render step of §4; the render step and the lease document come with P12. `make test` ignores `tests/cloud`.
+- **Run:** `make test-cloud` (sets `RUN_CLOUD_TESTS=1`; a bare pytest skips `tests/cloud`), by hand, with the owner's (or root's) credentials able to impersonate the test service account; one runner at a time.
+  A run that creates indexes may fail scenarios of those collections even after READY (seen once, cause unknown): re-run.
 
 **Totals.** Tranche 1 (P1–P9) ≈ 12–16 days; tranche 2 (P10–P17) ≈ 24–33; tranche 3 (P18–P24) ≈ 9–11. **Whole plan
 ≈ 45–59 days.**

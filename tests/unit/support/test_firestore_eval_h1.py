@@ -289,7 +289,7 @@ async def test_not_equal_excludes_documents_without_the_field(db):
         "num": {"status": 3},
     })
     got = await col.where(filter=FieldFilter("status", "!=", "completed")).get()
-    # Firestore docs: a null field is excluded too; P5 verifies: a value of another type is "not equal"
+    # Firestore docs: a null field is excluded too; a value of another type is "not equal" (verified on the test database 2026-10-22)
     assert _ids(got) == ["num", "open"]
     assert _ids(await col.where("status", "!=", None).get()) == ["num", "done", "open"]       # IS_NOT_NULL, ordered by the field (number before string)
     assert _ids(await col.where(filter=FieldFilter("status", "!=", None)).get()) == ["num", "done", "open"]
@@ -610,7 +610,7 @@ def strict():
     lambda c: c.where("n", ">", 1).where("n", "<", 5),
     lambda c: c.order_by("zzz"),
     lambda c: c.where("tags", "array_contains", "t"),
-    # P5 verifies: equality + array-contains(-any) merge without a composite
+    # equality + array-contains(-any) merge without a composite (verified on the test database 2026-10-22)
     lambda c: c.where("acc", "==", "a").where("tags", "array_contains", "t"),
     lambda c: c.where("acc", "==", "a").where("kind", "==", "k").where("tags", "array_contains_any", ["t", "u"]),
 ])
@@ -657,7 +657,7 @@ async def test_directions_must_match_the_declared_index_exactly():
     db = EvalDb(indexes=[_idx(("acc", A), ("a", A), ("b", D))], groups={"eval_g": "g"})
     col = db.collection("eval_g")
     await col.where("acc", "==", 1).order_by("a").order_by("b", direction=D).get()
-    for wrong in (lambda: col.order_by("a", direction=D).order_by("b"),         # P5 verifies: served in reverse?
+    for wrong in (lambda: col.order_by("a", direction=D).order_by("b"),         # Firestore does not serve a composite in reverse (verified on the test database 2026-10-22)
                   lambda: col.order_by("a").order_by("b")):
         with pytest.raises(FailedPrecondition):
             await wrong().where("acc", "==", 1).get()

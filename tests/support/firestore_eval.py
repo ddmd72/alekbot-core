@@ -53,7 +53,8 @@ from unittest.mock import patch
 
 from google.api_core.exceptions import AlreadyExists, FailedPrecondition, InvalidArgument, NotFound, Aborted
 from google.cloud.firestore_v1 import ReadAfterWriteError
-from google.cloud.firestore_v1._helpers import READ_AFTER_WRITE_ERROR
+from google.cloud.firestore_v1._helpers import READ_AFTER_WRITE_ERROR, GeoPoint
+from google.cloud.firestore_v1.base_document import BaseDocumentReference
 from google.cloud.firestore_v1.base_query import _validate_opation
 from google.cloud.firestore_v1.base_vector_query import DistanceMeasure
 from google.cloud.firestore_v1.transforms import (
@@ -127,28 +128,42 @@ def _project(data: Dict[str, Any], paths: Optional[List[str]]) -> Dict[str, Any]
 # ---------------------------------------------------------------------------------- ordering and matching
 
 def _rank(value: Any) -> int:
-    """Firestore's order of value types (null < bool < number < timestamp < string < ... < array < vector < map)."""
+    """Firestore's order of value types: null < bool < NaN < number < timestamp < string < bytes < reference < geo point
+    < array < vector < map (verified on the test database 2026-10-22)."""
     if value is None:
         return 0
     if isinstance(value, bool):
         return 1
-    if isinstance(value, (int, float)):
+    if isinstance(value, float) and math.isnan(value):
         return 2
-    if isinstance(value, datetime):
+    if isinstance(value, (int, float)):
         return 3
-    if isinstance(value, str):
+    if isinstance(value, datetime):
         return 4
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, str):
+        return 5
+    if isinstance(value, bytes):
+        return 6
+    if isinstance(value, (BaseDocumentReference, EvalDocRef)):
+        return 7
+    if isinstance(value, GeoPoint):
         return 8
-    if isinstance(value, Vector):
+    if isinstance(value, (list, tuple)):
         return 9
-    return 10
+    if isinstance(value, Vector):
+        return 10
+    return 11
 
 
 def _key(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
-        return (8, tuple(_key(v) for v in value))
-    return (_rank(value), value if _rank(value) in (1, 2, 3, 4) else 0)
+        return (9, tuple(_key(v) for v in value))
+    rank = _rank(value)
+    if rank == 7:
+        return (rank, value.path if isinstance(value, BaseDocumentReference) else f"{value.col.name}/{value.id}")
+    if rank == 8:
+        return (rank, (value.latitude, value.longitude))
+    return (rank, value if rank in (1, 3, 4, 5, 6) else 0)
 
 
 class _Desc:
@@ -180,7 +195,7 @@ def _match(data: Dict[str, Any], field: str, op: str, value: Any) -> bool:
         return got is not None
     if op == "!=":
         # Firestore docs: the field must exist with a value other than the given one, null excluded.
-        # P5 verifies: a value of another type counts as "not equal".
+        # a value of another type counts as "not equal" (verified on the test database 2026-10-22)
         return got is not None and not _equal(got, value)
     if op in ("<", "<=", ">", ">="):
         if got is None or _rank(got) != _rank(value):
@@ -226,11 +241,11 @@ def _resolve(value: Any, current: Any, path: str, sink: Sink) -> Any:
     if isinstance(value, ArrayUnion):
         merged = list(current) if isinstance(current, list) else []
         merged += [v for v in value.values if v not in merged]
-        sink.append((path, Value(null_value=0)))     # P5 verifies: array transforms report a null result
+        sink.append((path, Value(null_value=0)))     # array transforms report a null result (verified on the test database 2026-10-22)
         return merged
     if isinstance(value, ArrayRemove):
         kept = [v for v in current if v not in value.values] if isinstance(current, list) else []
-        sink.append((path, Value(null_value=0)))     # P5 verifies: array transforms report a null result
+        sink.append((path, Value(null_value=0)))     # array transforms report a null result (verified on the test database 2026-10-22)
         return kept
     if value is SERVER_TIMESTAMP:
         now = datetime.now(timezone.utc)
@@ -309,6 +324,9 @@ class EvalDocRef:
     def __init__(self, col: "EvalCollection", doc_id: str) -> None:
         self.col, self.id = col, doc_id
 
+    def __deepcopy__(self, memo: Any) -> "EvalDocRef":
+        return self     # a reference is a handle: stored and read back as the same one, never a copy of the database
+
     @property
     def doc_id(self) -> str:
         return self.id
@@ -339,7 +357,9 @@ class EvalDocRef:
 
     def _check_precondition(self, option: Optional[WriteOption]) -> None:
         wanted = None if option is None else option.last_update_time
-        if wanted is not None and self.col.versions.get(self.id, 0) != wanted:
+        # a `last_update_time` precondition on a missing document fails as FailedPrecondition, before any existence check
+        # (verified on the test database 2026-10-22)
+        if wanted is not None and (self.id not in self.col.docs or self.col.versions.get(self.id, 0) != wanted):
             raise FailedPrecondition(f"Document changed: {self.col.name}/{self.id}")
 
     def _apply(self, kind: str, data: Optional[Dict[str, Any]] = None, extra: Any = None,
@@ -352,7 +372,7 @@ class EvalDocRef:
                 raise AlreadyExists(f"Document exists: {col.name}/{self.id}")
             stored: Dict[str, Any] = {k: _resolve(v, None, k, sink) for k, v in data.items()}   # type: ignore[union-attr]
         elif kind == "set":
-            # P5 verifies: `set` keys are literal field names (a dotted key is NOT a nested path, unlike `update`)
+            # `set` keys are literal field names, a dotted key is NOT a nested path, unlike `update` (verified on the test database 2026-10-22)
             if extra is True:
                 stored = copy.deepcopy(col.docs.get(self.id, {}))
                 _merge(stored, data, "", sink)               # type: ignore[arg-type]
@@ -367,9 +387,9 @@ class EvalDocRef:
             else:
                 stored = {k: _resolve(v, None, k, sink) for k, v in data.items()}   # type: ignore[union-attr]
         elif kind == "update":
+            self._check_precondition(extra)
             if self.id not in col.docs:
                 raise NotFound(f"No document to update: {col.name}/{self.id}")
-            self._check_precondition(extra)
             stored = copy.deepcopy(col.docs[self.id])
             for path, value in data.items():                  # type: ignore[union-attr]
                 if value is DELETE_FIELD:
@@ -480,8 +500,8 @@ class EvalQuery:
             return self._nearest(rows, nearest, paths)
         last = orders[-1][1] if orders else "ASCENDING"
         ordered = {name for name, _ in orders}
-        # the implicit ordering of inequality filters; P5 verifies: order of several implicit inequality fields
-        # (the Firebase SDKs sort them lexicographically by field path)
+        # the implicit ordering of inequality filters; several fields sort lexicographically by field path
+        # (verified on the test database 2026-10-22)
         implicit = {f for _, f, op, _ in (o for o in self.ops if o[0] == "where") if op in _RANGE_OPS and f not in ordered}
         orders.extend((field, last) for field in sorted(implicit))
         for name, _ in orders:   # an ordering excludes documents without the field
@@ -703,10 +723,12 @@ def _required_index(ops: List[tuple]) -> Optional[Tuple[set, List[tuple]]]:
     if nearest:     # a vector query always needs a declared vector index on its field (never created automatically)
         return {(f, "CONTAINS" if op in _ARRAY_OPS else "EQ") for _, f, op, _ in wheres}, [(nearest[0]["vector_field"], "VECTOR")]
     fields = {f for _, f, _, _ in wheres} | {n for n, _ in orders}
-    # P5 verifies: equality + array-contains(-any) merge without a composite
+    # equality + array-contains(-any) merge without a composite (verified on the test database 2026-10-22)
     if len(fields) < 2 or not (orders or range_fields):
         return None
-    tail = list(orders) + [(f, "ASCENDING") for f in dict.fromkeys(range_fields) if f not in {n for n, _ in orders}]
+    ordered = {n for n, _ in orders}
+    # the range fields follow in lexicographic field-path order, as the implicit ordering does, whatever order the filters were added in
+    tail = list(orders) + [(f, "ASCENDING") for f in sorted(set(range_fields) - ordered)]
     return head, tail
 
 
@@ -715,7 +737,7 @@ def _serves(declared: List[tuple], head: set, tail: List[tuple]) -> bool:
     if cut < 0:
         return False
     have_head, have_tail = declared[:cut], declared[cut:]
-    # P5 verifies: whether Firestore serves a composite in reverse (every direction flipped); the fake does not
+    # Firestore does not serve a composite in reverse either: exact directions only (verified on the test database 2026-10-22)
     return (have_tail == tail
             and {(f, "CONTAINS" if m == "CONTAINS" else "EQ") for f, m in have_head} == head)
 
