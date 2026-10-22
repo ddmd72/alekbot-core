@@ -5,7 +5,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from src.domain.drive_index import MIGRATION_GATE_KEY, DriveSyncState
-from src.domain.drive_search_state import DriveLine, DrivePreflight, SearchLine
+from src.domain.drive_line import DriveLine
+from src.domain.drive_preflight import DrivePreflight
+from src.domain.drive_search_line import SearchLine
 from src.domain.user_drive import DriveConnection
 from src.infrastructure.drive_operations import DriveOperations
 from src.ports.drive_index_repository import DriveIndexRepository
