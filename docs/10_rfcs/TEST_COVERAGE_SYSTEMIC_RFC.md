@@ -603,7 +603,7 @@ emulator (31 of 34; it does not refuse a missing index) and the test database. D
 `tests/unit/scripts/test_data_audit_facts.py` and `test_data_audit_run.py` (in `make check`). Invariants, each from the `FactRepository` docstring or
 `_LIFECYCLE`, as classes: `id_mismatch`, `missing_account_id` (a legacy `owner_id`-only document), `missing_state` / `invalid_state`,
 `is_current_mismatch` / `valid_to_mismatch` (against the state), `missing_created_at`, `reported_date_not_timestamp`, `missing_vector` /
-`missing_tags_vector` / `missing_metadata_vector` (absent or empty), `invalid_entity:<field>` (`FactEntity` validation; the fields that have their own class are
+`missing_tags_vector` / `missing_metadata_vector` (absent, empty, or stored as a plain array instead of a `Vector`), `invalid_entity:<field>` (`FactEntity` validation; the fields that have their own class are
 not repeated), and across documents `lineage_multiple_current` (at most one `is_current=True` per lineage; a lineage with none is legitimate, because a merge gives the merged fact a new lineage and supersedes its sources in theirs). The owner runs `python -m scripts.data_audit.run facts
 [--account <id>] [--limit N]`: it only reads, writes one JSON report (counts and offending document ids, no field values) under `scripts/memory/`, and
 prints counts only. S5 adds the expiry invariants; other entities join with their kits (P6, P11).

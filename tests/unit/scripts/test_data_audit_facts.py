@@ -20,7 +20,7 @@ def raw(**over):
     doc = {
         "id": "f1", "account_id": ACC, "created_by_user_id": "usr-1", "lineage_id": "L1",
         "text": "mother is Valentina", "type": "event", "state": "current", "is_current": True, "valid_to": None,
-        "vector": [0.1, 0.2], "tags_vector": [0.3], "metadata_vector": [0.4],
+        "vector": Vector([0.1, 0.2]), "tags_vector": Vector([0.3]), "metadata_vector": Vector([0.4]),
         "created_at": NOW, "reported_date": NOW, "valid_from": NOW, "last_updated": NOW,
     }
     doc.update(over)
@@ -42,11 +42,6 @@ def test_a_clean_document_has_no_violation():
 def test_each_state_with_its_lifecycle_flags_is_clean(state):
     is_current, closes = _LIFECYCLE[FactState(state)]
     doc = raw(state=state, is_current=is_current, valid_to=NOW if closes else None)
-    assert check_fact("f1", doc) == []
-
-
-def test_stored_vector_type_counts_as_present():
-    doc = raw(vector=Vector([0.1, 0.2]), tags_vector=Vector([0.3]), metadata_vector=Vector([0.4]))
     assert check_fact("f1", doc) == []
 
 
@@ -83,6 +78,20 @@ def test_missing_id_field():
 def test_legacy_owner_id_only_document_has_no_account():
     doc = without("account_id", "created_by_user_id", owner_id=ACC)
     assert check_fact("f1", doc) == ["missing_account_id"]
+
+
+def test_account_and_owner_without_creator_reads_as_migrated_and_is_clean():
+    assert check_fact("f1", without("created_by_user_id", owner_id=ACC)) == []
+
+
+def test_owner_id_beside_both_new_fields_is_not_migrated_and_is_clean():
+    assert check_fact("f1", raw(owner_id="usr-0")) == []
+
+
+def test_legacy_private_visibility_is_migrated_only_on_the_legacy_branch():
+    legacy = without("account_id", "created_by_user_id", owner_id=ACC, visibility="private")
+    assert check_fact("f1", legacy) == ["missing_account_id"]
+    assert check_fact("f1", raw(visibility="private")) == ["invalid_entity:visibility"]
 
 
 def test_document_with_no_account_and_no_owner():
@@ -144,6 +153,11 @@ def test_missing_vector(name):
 @pytest.mark.parametrize("empty", [[], Vector([])])
 def test_empty_vector_counts_as_missing(name, empty):
     assert check_fact("f1", raw(**{name: empty})) == [f"missing_{name}"]
+
+
+@pytest.mark.parametrize("name", ["vector", "tags_vector", "metadata_vector"])
+def test_plain_array_vector_is_reported_because_find_nearest_cannot_see_it(name):
+    assert check_fact("f1", raw(**{name: [0.1, 0.2]})) == [f"missing_{name}"]
 
 
 def test_null_vector_counts_as_missing():

@@ -7,6 +7,7 @@ from collections import defaultdict
 from datetime import datetime
 from typing import Any, Iterable
 
+from google.cloud.firestore_v1.vector import Vector
 from pydantic import ValidationError
 
 from src.domain.entities import FactEntity, FactState
@@ -45,9 +46,9 @@ def check_fact(doc_id: str, doc: dict[str, Any]) -> list[str]:
     reported = doc.get("reported_date")
     if reported is not None and not isinstance(reported, datetime):
         found.append("reported_date_not_timestamp")
-    # A document without a vector is invisible to that search channel.
+    # A vector missing, empty or stored as a plain array (the repo writers wrap it in Vector) is invisible to find_nearest.
     for name in VECTOR_FIELDS:
-        if not _has_items(doc.get(name)):
+        if not _is_vector(doc.get(name)):
             found.append(f"missing_{name}")
     found.extend(_entity_errors(doc))
     return found
@@ -76,20 +77,21 @@ def _state(doc: dict[str, Any]) -> FactState | None:
         return None
 
 
-def _has_items(value: Any) -> bool:
-    try:
-        return value is not None and len(value) > 0
-    except TypeError:
-        return False
+def _is_vector(value: Any) -> bool:
+    return isinstance(value, Vector) and len(value) > 0
 
 
 def _entity_errors(doc: dict[str, Any]) -> list[str]:
     """`invalid_entity:<field>` per failing field: the call that reads this document would fail."""
     view = dict(doc)
-    # Contract: a legacy owner_id reads as account_id and created_by_user_id.
-    if "account_id" not in view and "owner_id" in view:
-        view.setdefault("created_by_user_id", view["owner_id"])
-        view["account_id"] = view["owner_id"]
+    # The repo's read-time migration (FirestoreFactRepository._migrate_ownership_fields), only on its own condition.
+    if not ("account_id" in view and "created_by_user_id" in view):
+        if "owner_id" in view:
+            view["account_id"] = view["created_by_user_id"] = view.pop("owner_id")
+        if "visibility" not in view:
+            view["visibility"] = "account_shared"
+        elif view["visibility"] == "private":
+            view["visibility"] = "user_private"
     try:
         FactEntity.model_validate(view)
     except ValidationError as exc:
