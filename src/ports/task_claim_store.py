@@ -16,7 +16,7 @@ class TaskClaimStore(ABC):
         Duplicate: the task is done, or a live attempt of this process (``running_here``) holds it.
         Taken over: an expired claim, or a running claim of another process or of this process
         but not running here (a dead attempt). The same ``attempt`` finding its own claim
-        (SDK retry of a landed create) is True. Store errors raise.
+        (SDK retry of a landed write) is True. Store errors raise.
         """
 
     @abstractmethod

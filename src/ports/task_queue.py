@@ -43,6 +43,7 @@ class TaskQueue(Protocol):
         query: str,
         context: Dict[str, Any],
         deadline_seconds: Optional[int] = None,
+        dedup_key: Optional[str] = None,
     ) -> str:
         """
         Enqueue an async agent task for background execution.
@@ -51,6 +52,8 @@ class TaskQueue(Protocol):
         Worker receives payload with task_type="agent_execution".
         deadline_seconds: Cloud Tasks dispatch_deadline override (default = Cloud Tasks default ~10 min).
                           Set to 1800 for long-running research tasks (Claude deep research).
+        dedup_key: names the task, so a second enqueue with the same key (a retried create whose
+                   first attempt succeeded) returns the existing task's name instead of a second task.
         """
         ...
 

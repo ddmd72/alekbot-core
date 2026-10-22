@@ -1,24 +1,24 @@
 """
-Unit tests for the OpenAI Deep Research webhook blueprint.
+Unit tests for the OpenAI Deep Research webhook and the worker task that delivers its outcome.
 
-Covers the production-class regression fixed in R11.1 (channel propagation)
-and the symmetry gap closed by R12.3 (media_storage wiring).
-
-Tests assert that handle_openai_deep_research:
-  - extracts channel_id from per-channel session_id ("user:channel" format)
-  - forwards channel_id_override + media_storage to deliver_deep_research
-  - falls back to channel_id_override=None on legacy session_ids without colon
-  - delegates failure / cancellation events to notification_service.notify
+Covers the production-class regression fixed in R11.1 (channel propagation) and the symmetry gap
+closed by R12.3 (media_storage wiring). Since S1b task W the webhook only verifies, filters,
+retrieves, claims and enqueues `deep_research_webhook_event`; WorkerHandler delivers. So:
+  - webhook side: signature fail-closed, failure events enqueued, factory/main.py wiring
+  - worker side: channel_id from a per-channel session_id ("user:channel"), media_storage and
+    task_queue reaching deliver_deep_research, failure / cancellation events notifying the user
 """
 
 import ast
 import json
+import os
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from quart import Quart
 
+from src.handlers.worker_handler import WorkerHandler
 from src.web.deep_research_webhooks import create_deep_research_webhooks_blueprint
 
 
@@ -27,13 +27,11 @@ _ACCOUNT = "acc-xyz"
 _CHANNEL = "C09SLACK"
 
 
-def _make_app(notification_service, media_storage=None, task_queue=None):
+def _make_app(task_queue=None):
     app = Quart("test_app")
     app.register_blueprint(
         create_deep_research_webhooks_blueprint(
-            notification_service=notification_service,
             webhook_secret=None,  # disables signature verification in dev mode
-            media_storage=media_storage,
             task_queue=task_queue,
         )
     )
@@ -56,262 +54,188 @@ def _completed_payload(session_id: str) -> dict:
     }
 
 
+def _worker(media_storage=None, task_dispatch=None, notification=None):
+    notification = notification or AsyncMock()
+    notification.notify.return_value = MagicMock(delivered=True, sent=True, error=None)
+    worker = WorkerHandler(
+        agent_worker_handler=AsyncMock(), email_indexing_service=MagicMock(),
+        notification_service=notification, consolidation_service=None,
+        coordinator=MagicMock(), agent_factory=AsyncMock(),
+        indexed_email_repo=None, user_repo=MagicMock(),
+        task_dispatch=task_dispatch or AsyncMock(), media_storage=media_storage,
+        deep_research_fetch=AsyncMock(return_value={"output_text": "Research findings text.", "model": "m"}),
+    )
+    return worker, notification
+
+
+def _event(event_type="response.completed", session_id=f"{_USER}:{_CHANNEL}") -> dict:
+    return {"task_type": "deep_research_webhook_event", "event_type": event_type, "job_id": "resp_123",
+            "user_id": _USER, "account_id": _ACCOUNT, "session_id": session_id,
+            "origin_platform": "", "query": "What is X?"}
+
+
 class TestOpenAIWebhookChannelPropagation:
-    """R11.1 — channel_id_override must be derived from session_id."""
+    """R11.1 — channel_id_override must be derived from session_id (now in the worker task)."""
 
     async def test_per_channel_session_id_extracts_channel(self):
-        notification = AsyncMock()
         media_storage = MagicMock()
+        task_dispatch = AsyncMock()
+        worker, _ = _worker(media_storage=media_storage, task_dispatch=task_dispatch)
+
+        with patch("src.handlers.worker_handler.deliver_deep_research",
+                   new_callable=AsyncMock, return_value=True) as mock_deliver:
+            _, status = await worker._dispatch(_event(), {})
+
+        assert status == 200
+        mock_deliver.assert_called_once()
+        kwargs = mock_deliver.call_args.kwargs
+        assert kwargs["channel_id_override"] == _CHANNEL
+        assert kwargs["media_storage"] is media_storage
+        assert kwargs["task_queue"] is task_dispatch
+        assert kwargs["user_id"] == _USER
+        assert kwargs["account_id"] == _ACCOUNT
+        assert kwargs["session_id"] == f"{_USER}:{_CHANNEL}"
+
+    async def test_webhook_forwards_session_id_to_the_worker_task(self):
         task_queue = AsyncMock()
-
-        app = _make_app(notification, media_storage=media_storage, task_queue=task_queue)
-        payload = _completed_payload(session_id=f"{_USER}:{_CHANNEL}")
-
-        with patch(
-            "src.web.deep_research_webhooks.deliver_deep_research",
-            new_callable=AsyncMock,
-        ) as mock_deliver:
-            async with app.test_client() as client:
-                resp = await client.post(
-                    "/webhooks/openai/deep-research",
-                    data=json.dumps(payload),
-                    headers={"Content-Type": "application/json"},
-                )
-
-            assert resp.status_code == 200
-            mock_deliver.assert_called_once()
-            kwargs = mock_deliver.call_args.kwargs
-            assert kwargs["channel_id_override"] == _CHANNEL
-            assert kwargs["media_storage"] is media_storage
-            assert kwargs["task_queue"] is task_queue
-            assert kwargs["user_id"] == _USER
-            assert kwargs["account_id"] == _ACCOUNT
-            assert kwargs["session_id"] == f"{_USER}:{_CHANNEL}"
+        app = _make_app(task_queue=task_queue)
+        async with app.test_client() as client:
+            resp = await client.post(
+                "/webhooks/openai/deep-research",
+                data=json.dumps(_completed_payload(session_id=f"{_USER}:{_CHANNEL}")),
+                headers={"Content-Type": "application/json"},
+            )
+        assert resp.status_code == 200
+        payload = task_queue.enqueue_worker_task.await_args.kwargs["payload"]
+        assert payload["session_id"] == f"{_USER}:{_CHANNEL}"
+        assert payload["user_id"] == _USER and payload["account_id"] == _ACCOUNT
 
     async def test_legacy_session_id_without_colon_yields_none(self):
         """Legacy session_id (pre-per-channel-sessions) must not crash; channel=None."""
-        notification = AsyncMock()
-        app = _make_app(notification)
-        payload = _completed_payload(session_id=_USER)  # no colon
-
-        with patch(
-            "src.web.deep_research_webhooks.deliver_deep_research",
-            new_callable=AsyncMock,
-        ) as mock_deliver:
-            async with app.test_client() as client:
-                resp = await client.post(
-                    "/webhooks/openai/deep-research",
-                    data=json.dumps(payload),
-                    headers={"Content-Type": "application/json"},
-                )
-
-            assert resp.status_code == 200
-            mock_deliver.assert_called_once()
-            assert mock_deliver.call_args.kwargs["channel_id_override"] is None
+        worker, _ = _worker()
+        with patch("src.handlers.worker_handler.deliver_deep_research",
+                   new_callable=AsyncMock, return_value=True) as mock_deliver:
+            _, status = await worker._dispatch(_event(session_id=_USER), {})  # no colon
+        assert status == 200
+        mock_deliver.assert_called_once()
+        assert mock_deliver.call_args.kwargs["channel_id_override"] is None
 
     async def test_empty_session_id_yields_none(self):
         """Empty session_id (no metadata) must not crash; channel=None."""
-        notification = AsyncMock()
-        app = _make_app(notification)
-        payload = _completed_payload(session_id="")
+        worker, _ = _worker()
+        with patch("src.handlers.worker_handler.deliver_deep_research",
+                   new_callable=AsyncMock, return_value=True) as mock_deliver:
+            _, status = await worker._dispatch(_event(session_id=""), {})
+        assert status == 200
+        mock_deliver.assert_called_once()
+        assert mock_deliver.call_args.kwargs["channel_id_override"] is None
 
-        with patch(
-            "src.web.deep_research_webhooks.deliver_deep_research",
-            new_callable=AsyncMock,
-        ) as mock_deliver:
-            async with app.test_client() as client:
-                resp = await client.post(
-                    "/webhooks/openai/deep-research",
-                    data=json.dumps(payload),
-                    headers={"Content-Type": "application/json"},
-                )
+    # test_output_text_fallback_to_output_array removed (S1b W): the worker re-retrieves by job id and
+    # OpenAIDeepResearchAdapter.fetch_response returns the SDK's Response.output_text, which itself
+    # aggregates output[].content[] output_text items; no `output` array reaches the delivery any more.
 
-            assert resp.status_code == 200
-            mock_deliver.assert_called_once()
-            assert mock_deliver.call_args.kwargs["channel_id_override"] is None
 
-    async def test_output_text_fallback_to_output_array(self):
-        """When response_obj.output_text is empty, extract from output[].content[] (Responses API format)."""
-        notification = AsyncMock()
-        app = _make_app(notification)
-        payload = {
-            "type": "response.completed",
-            "data": {
-                "id": "resp_123",
-                "output_text": "",
-                "output": [
-                    {
-                        "type": "message",
-                        "content": [
-                            {"type": "output_text", "text": "Fallback extracted text."}
-                        ],
-                    }
-                ],
-                "metadata": {
-                    "user_id": _USER,
-                    "account_id": _ACCOUNT,
-                    "query": "Q",
-                    "session_id": f"{_USER}:{_CHANNEL}",
-                },
-            },
-        }
-
-        with patch(
-            "src.web.deep_research_webhooks.deliver_deep_research",
-            new_callable=AsyncMock,
-        ) as mock_deliver:
-            async with app.test_client() as client:
-                resp = await client.post(
-                    "/webhooks/openai/deep-research",
-                    data=json.dumps(payload),
-                    headers={"Content-Type": "application/json"},
-                )
-
-            assert resp.status_code == 200
-            mock_deliver.assert_called_once()
-            assert mock_deliver.call_args.kwargs["result_text"] == "Fallback extracted text."
+def _call_kwargs(func_name: str) -> list:
+    tree = ast.parse((Path(__file__).resolve().parents[3] / "main.py").read_text())
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            func = node.func
+            name = (func.id if isinstance(func, ast.Name)
+                    else func.attr if isinstance(func, ast.Attribute) else None)
+            if name == func_name:
+                return [kw.arg for kw in node.keywords]
+    return []
 
 
 class TestFactoryWiring:
-    """Factory contract — main.py:572 wiring guarantees."""
-
-    def test_factory_accepts_media_storage_kwarg(self):
-        """main.py passes media_storage=gcs_media_adapter; factory must accept it without TypeError."""
-        notification = AsyncMock()
-        media_storage = MagicMock()
-        bp = create_deep_research_webhooks_blueprint(
-            notification_service=notification,
-            webhook_secret=None,
-            media_storage=media_storage,
-            task_queue=None,
-        )
-        assert bp.name == "deep_research_webhooks"
+    """Factory contract and main.py wiring guarantees."""
 
     def test_factory_accepts_all_none_optionals(self):
         """All optional kwargs default to None — must not raise during construction."""
-        bp = create_deep_research_webhooks_blueprint(notification_service=AsyncMock())
+        bp = create_deep_research_webhooks_blueprint()
         assert bp.name == "deep_research_webhooks"
 
-    def test_main_py_wires_media_storage_to_factory(self):
-        """main.py:572 must pass media_storage= to create_deep_research_webhooks_blueprint.
+    def test_main_py_wires_media_storage_to_the_delivering_worker(self):
+        """R12.3 (round files lost for the OpenAI DR path): media_storage must reach the OpenAI
+        delivery. Delivery now runs in WorkerHandler, so main.py must pass media_storage= (and the
+        link service, task queue and notification service delivery uses) to WorkerHandler, and the
+        webhook factory must still get its task queue and retrieval callable."""
+        worker_kwargs = _call_kwargs("WorkerHandler")
+        assert worker_kwargs, "WorkerHandler(...) call not found in main.py"
+        for kw in ("media_storage", "link_service", "task_dispatch", "notification_service",
+                   "deep_research_fetch"):
+            assert kw in worker_kwargs, f"main.py must pass {kw}= to WorkerHandler; got {worker_kwargs}"
 
-        Catches regression where someone refactors the call site and silently
-        drops the media_storage kwarg, re-introducing R12.3 (round files lost
-        for OpenAI DR path)."""
-        repo_root = Path(__file__).resolve().parents[3]
-        main_py = repo_root / "main.py"
-        tree = ast.parse(main_py.read_text())
-
-        kwargs_names = []
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Call):
-                func = node.func
-                func_name = (
-                    func.id if isinstance(func, ast.Name)
-                    else func.attr if isinstance(func, ast.Attribute)
-                    else None
-                )
-                if func_name == "create_deep_research_webhooks_blueprint":
-                    kwargs_names = [kw.arg for kw in node.keywords]
-                    break
-
-        assert kwargs_names, (
-            "create_deep_research_webhooks_blueprint(...) call not found in main.py"
-        )
-        assert "media_storage" in kwargs_names, (
-            f"main.py must pass media_storage= to create_deep_research_webhooks_blueprint; "
-            f"got kwargs={kwargs_names}"
-        )
-        assert "notification_service" in kwargs_names
-        assert "task_queue" in kwargs_names
+        factory_kwargs = _call_kwargs("create_deep_research_webhooks_blueprint")
+        assert factory_kwargs, "create_deep_research_webhooks_blueprint(...) call not found in main.py"
+        for kw in ("task_queue", "fetch_response", "dedup_store", "webhook_secret"):
+            assert kw in factory_kwargs, f"main.py must pass {kw}= to the webhook factory; got {factory_kwargs}"
 
 
 class TestOpenAIWebhookFailClosed:
     """Hardening: a missing webhook_secret must reject in deployed environments."""
 
     async def test_no_secret_fails_closed_when_deployed(self):
-        import os
-        notification = AsyncMock()
-        app = _make_app(notification)  # webhook_secret=None
+        task_queue = AsyncMock()
+        app = _make_app(task_queue=task_queue)  # webhook_secret=None
         payload = _completed_payload(session_id=f"{_USER}:{_CHANNEL}")
         with patch.dict(os.environ, {"K_SERVICE": "alek-bot-dev"}):
-            with patch(
-                "src.web.deep_research_webhooks.deliver_deep_research",
-                new_callable=AsyncMock,
-            ) as mock_deliver:
-                async with app.test_client() as client:
-                    resp = await client.post(
-                        "/webhooks/openai/deep-research",
-                        data=json.dumps(payload),
-                        headers={"Content-Type": "application/json"},
-                    )
-                assert resp.status_code == 401
-                mock_deliver.assert_not_called()
+            async with app.test_client() as client:
+                resp = await client.post(
+                    "/webhooks/openai/deep-research",
+                    data=json.dumps(payload),
+                    headers={"Content-Type": "application/json"},
+                )
+            assert resp.status_code == 401
+            task_queue.enqueue_worker_task.assert_not_called()
 
     async def test_no_secret_allows_processing_locally(self):
-        import os
-        notification = AsyncMock()
-        app = _make_app(notification)  # webhook_secret=None
+        task_queue = AsyncMock()
+        app = _make_app(task_queue=task_queue)  # webhook_secret=None
         payload = _completed_payload(session_id=f"{_USER}:{_CHANNEL}")
         env = dict(os.environ)
         env.pop("K_SERVICE", None)
         with patch.dict(os.environ, env, clear=True):
-            with patch(
-                "src.web.deep_research_webhooks.deliver_deep_research",
-                new_callable=AsyncMock,
-            ) as mock_deliver:
-                async with app.test_client() as client:
-                    resp = await client.post(
-                        "/webhooks/openai/deep-research",
-                        data=json.dumps(payload),
-                        headers={"Content-Type": "application/json"},
-                    )
-                assert resp.status_code == 200
-                mock_deliver.assert_called_once()
+            async with app.test_client() as client:
+                resp = await client.post(
+                    "/webhooks/openai/deep-research",
+                    data=json.dumps(payload),
+                    headers={"Content-Type": "application/json"},
+                )
+            assert resp.status_code == 200
+            task_queue.enqueue_worker_task.assert_called_once()
 
 
 class TestOpenAIWebhookFailureEvents:
-    """response.failed and response.cancelled delegate to notification_service.notify."""
+    """response.failed and response.cancelled reach notification_service.notify (via the worker task)."""
 
-    async def test_response_failed_notifies_user(self):
-        notification = AsyncMock()
-        app = _make_app(notification)
-        payload = {
-            "type": "response.failed",
-            "data": {
-                "id": "resp_123",
-                "error": {"message": "boom"},
-                "metadata": {"user_id": _USER, "account_id": _ACCOUNT},
-            },
-        }
-
+    @pytest.mark.parametrize("event", ["response.failed", "response.cancelled"])
+    async def test_failure_event_is_enqueued_for_the_worker(self, event):
+        task_queue = AsyncMock()
+        app = _make_app(task_queue=task_queue)
+        payload = {"type": event, "data": {
+            "id": "resp_123", "error": {"message": "boom"},
+            "metadata": {"user_id": _USER, "account_id": _ACCOUNT}}}
         async with app.test_client() as client:
             resp = await client.post(
                 "/webhooks/openai/deep-research",
                 data=json.dumps(payload),
                 headers={"Content-Type": "application/json"},
             )
-
         assert resp.status_code == 200
+        task_queue.enqueue_worker_task.assert_awaited_once()
+        kw = task_queue.enqueue_worker_task.await_args.kwargs
+        assert kw["task_type"] == "deep_research_webhook_event"
+        assert kw["payload"]["event_type"] == event
+
+    async def test_response_failed_notifies_user(self):
+        worker, notification = _worker()
+        _, status = await worker._dispatch(_event("response.failed"), {})
+        assert status == 200
         notification.notify.assert_called_once()
 
     async def test_response_cancelled_notifies_user(self):
-        notification = AsyncMock()
-        app = _make_app(notification)
-        payload = {
-            "type": "response.cancelled",
-            "data": {
-                "id": "resp_123",
-                "metadata": {"user_id": _USER, "account_id": _ACCOUNT},
-            },
-        }
-
-        async with app.test_client() as client:
-            resp = await client.post(
-                "/webhooks/openai/deep-research",
-                data=json.dumps(payload),
-                headers={"Content-Type": "application/json"},
-            )
-
-        assert resp.status_code == 200
+        worker, notification = _worker()
+        _, status = await worker._dispatch(_event("response.cancelled"), {})
+        assert status == 200
         notification.notify.assert_called_once()
