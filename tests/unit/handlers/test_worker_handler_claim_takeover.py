@@ -39,7 +39,7 @@ async def test_retry_after_a_crash_of_another_process_runs_the_task():
     db = EvalDb()
     dead = FirestoreTaskClaimStore(db_client=db, collection_name=COL)
     dead.holder = "proc-dead"
-    await dead.try_claim("task-1", "dead-attempt", False)  # the OOM-killed attempt left this running
+    await dead.try_claim("task-1", "dead-attempt")  # the OOM-killed attempt left this running
     assert _doc(db)["state"] == "running"
 
     live = _handler(db, "proc-new")
@@ -111,7 +111,7 @@ async def test_chat_retry_after_a_crash_reaches_the_handler():
     db = EvalDb()
     dead = FirestoreTaskClaimStore(db_client=db, collection_name=COL)
     dead.holder = "proc-dead"
-    await dead.try_claim("task-1", "dead-attempt", False)  # telegram_update crashed mid-turn
+    await dead.try_claim("task-1", "dead-attempt")  # telegram_update crashed mid-turn
     h = _handler(db, "proc-new")
     tg = AsyncMock(return_value=({"ok": True}, 200))
     h.attach_telegram_worker(tg)
@@ -120,7 +120,7 @@ async def test_chat_retry_after_a_crash_reaches_the_handler():
     assert await h.handle({"task_type": "telegram_update"}, delivery=_delivery()) == ({"ok": True}, 200)
     tg.assert_awaited_once()
     # and the queued Slack event path, after another crash
-    await dead.try_claim("task-2", "dead-2", False)
+    await dead.try_claim("task-2", "dead-2")
     out = await h.handle({"event": {"event": {"type": "message"}}, "session_id": "u1:C1"}, delivery=_delivery("task-2"))
     assert out == ({"ok": True}, 200)
     slack.assert_awaited_once()
@@ -135,11 +135,11 @@ class _GatedStore(FirestoreTaskClaimStore):
         self.done_gate = None
         self.claim_calls = 0
 
-    async def try_claim(self, key, attempt, running_here):
+    async def try_claim(self, key, attempt):
         self.claim_calls += 1
         if self.claim_gate is not None:
             await self.claim_gate.wait()
-        return await super().try_claim(key, attempt, running_here)
+        return await super().try_claim(key, attempt)
 
     async def mark_done(self, key, attempt):
         if self.done_gate is not None:

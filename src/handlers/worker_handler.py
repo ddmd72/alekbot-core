@@ -233,7 +233,7 @@ class WorkerHandler:
             return True
         key = delivery.task_name
         try:
-            claimed = await self._task_claims.try_claim(key, attempt, False)  # a live sibling attempt was already refused in handle()
+            claimed = await self._task_claims.try_claim(key, attempt)
         except Exception as exc:
             logger.error(
                 "[WorkerHandler] task claim failed, running anyway: task=%s error=%s",

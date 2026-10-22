@@ -10,12 +10,12 @@ from abc import ABC, abstractmethod
 
 class TaskClaimStore(ABC):
     @abstractmethod
-    async def try_claim(self, key: str, attempt: str, running_here: bool) -> bool:
+    async def try_claim(self, key: str, attempt: str) -> bool:
         """True when this attempt now holds the claim, False when it is a true duplicate.
 
-        Duplicate: the task is done, or a live attempt of this process (``running_here``) holds it.
-        Taken over: an expired claim, or a running claim of another process or of this process
-        but not running here (a dead attempt). The same ``attempt`` finding its own claim
+        The caller guarantees no other attempt of this key is live in its own process.
+        Duplicate: the task is done. Taken over: an expired claim, or any running claim
+        (its holder is another process or a dead attempt). The same ``attempt`` finding its own claim
         (SDK retry of a landed write) is True. Store errors raise.
         """
 
