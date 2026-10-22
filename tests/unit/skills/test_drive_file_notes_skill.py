@@ -36,8 +36,10 @@ def test_the_owner_says_or_confirms_and_content_never_confirms():
 def test_replace_classifiers_and_the_three_operations():
     body = _skill().body
     assert "Every call replaces the whole note" in body
-    assert "write the old text and the addition together" in body
-    assert "`doc_type: contract` with an empty `note`" in body
+    # final review C-I1 / C-I2: the current text comes with every change; a type correction keeps it
+    assert "write its current text with the change" in body
+    assert "your call's result shows the previous text" in body
+    assert "`doc_type: contract`, keeping the note's current text and life areas" in body
     assert "Set them only when the user names or confirms them." in body
     for line in ("**Delete** (all three fields empty)", "**Undo** (`undo: true`)", "**Erase** (`erase: true`)",
                  "Nothing is erased by that call"):
@@ -47,7 +49,8 @@ def test_replace_classifiers_and_the_three_operations():
 def test_calls_receipts_memory_reminders_and_deleted_files():
     body = _skill().body
     assert "never Lelik's wording alone" in body
-    assert "Do not repeat it; say one short line." in body
+    assert "The system posts the stored note word for word; do not repeat it." in body   # final review C-M1
     assert "Do not call `propose_memory_facts`" in body
     assert "`manage_self_reminders`" in body
     assert "use the `drive_note:` ref the deleted-files result shows" in body
+    assert "erase its history, use the `drive_note:` ref" in body                    # final review C-M3

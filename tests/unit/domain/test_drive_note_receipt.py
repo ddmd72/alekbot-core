@@ -120,7 +120,10 @@ def test_the_erase_request_is_the_line_and_the_command_alone():
 def test_the_erase_reply_names_the_counts_left():
     assert render_drive_note_erased(3, 0, strings()) == "🗑️ Notes erased for good, with their history: 3."
     partial = render_drive_note_erased(2, 1, strings())
-    assert partial == "🗑️ Notes erased for good: 2. Not erased right now: 1; ask me to erase them again."
+    # final review C-I3: the one-note case in the singular; an erase-all's partial names the command
+    assert partial == "🗑️ Notes erased for good: 2. Not erased right now: 1; ask me to erase it again."
+    assert render_drive_note_erased(2, 1, strings(), "all") == (
+        "🗑️ Notes erased for good: 2. Not erased right now: 1; send `$drive-notes erase-all` again to erase them.")
 
 
 @pytest.mark.parametrize("module", [uk, en, fr, es], ids=["uk", "en", "fr", "es"])

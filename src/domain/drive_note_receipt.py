@@ -122,11 +122,13 @@ def render_drive_note_erase(data: Mapping[str, Any], strings: Strings) -> Tuple[
     return line, f"`{data.get('command') or ''}`"
 
 
-def render_drive_note_erased(erased: int, left: int, strings: Strings) -> str:
-    """The reply to a pasted erase code: the count erased, or — a partial erase — how many are left to ask again for
-    (the core's CONFLICT refusal detail `erased` / `left`)."""
+def render_drive_note_erased(erased: int, left: int, strings: Strings, scope: str = "") -> str:
+    """The reply to a pasted erase code: the count erased, or — a partial erase — how many are left (the core's
+    CONFLICT refusal detail `erased` / `left` / `scope`): after an erase-all the owner sends the command again (Smart
+    cannot erase every note), after one note's erase he asks for it again."""
     if left:
-        return strings(UIMessage.DRIVE_NOTE_ERASE_PARTIAL).format(erased=erased, left=left)
+        message = UIMessage.DRIVE_NOTE_ERASE_ALL_PARTIAL if scope == ERASE_SCOPE_ALL else UIMessage.DRIVE_NOTE_ERASE_PARTIAL
+        return strings(message).format(erased=erased, left=left)
     return strings(UIMessage.DRIVE_NOTE_ERASED).format(count=erased)
 
 
@@ -143,7 +145,16 @@ def drive_note_call_event(item_type: str, data: Mapping[str, Any]) -> str:
             f"ref={ref} v{data.get('version') or 0}]")
 
 
+def drive_note_call_posted(item_type: str, data: Mapping[str, Any]) -> str:
+    """The model turn of that history pair: a neutral line saying what was posted, never the receipt (final review
+    L-I2, C-I1): the consolidator reads a model message's `text`, and an erase cannot scrub chat history, so the note's
+    words never enter session history at all."""
+    if item_type == DRIVE_NOTE_ERASE_DELIVERY:
+        return "[drive note erase request posted to the chat]"
+    return f"[drive note receipt posted to the chat: {_place(data)} v{data.get('version') or 0}]"
+
+
 __all__ = [
-    "RECEIPT_QUOTE_CLOSE", "RECEIPT_QUOTE_OPEN", "Strings", "drive_note_call_event", "render_drive_note_erase",
-    "render_drive_note_erased", "render_drive_note_receipt",
+    "RECEIPT_QUOTE_CLOSE", "RECEIPT_QUOTE_OPEN", "Strings", "drive_note_call_event", "drive_note_call_posted",
+    "render_drive_note_erase", "render_drive_note_erased", "render_drive_note_receipt",
 ]

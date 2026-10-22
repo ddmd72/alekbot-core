@@ -36,7 +36,7 @@ from ..domain.drive_index_lean import DriveRecordLean
 from ..domain.drive_note import NOTES_PER_USER_MAX, ONEDRIVE_PROVIDER_KEY, DriveNote, NoteState, binding_parts_of
 from ..domain.drive_note_check import WHY_GONE
 from ..domain.drive_note_lifecycle import (
-    audit_candidates, audit_cursor, audit_due, audit_key, chain_path, moved_snapshot, refreshed_snapshot,
+    NOTE_CHECK_UNKNOWN_MAX_AGE, audit_candidates, audit_cursor, audit_due, audit_key, chain_path, moved_snapshot, refreshed_snapshot,
     snapshot_from_record, snapshot_stale,
 )
 from ..domain.drive_note_merge import NOTE_CHECKS_MAX
@@ -84,6 +84,7 @@ class DriveNoteLifecycle:
         if not checks:
             return state, frozenset(), {}
         counts: Dict[str, int] = {}
+        now = self._clock()
         try:
             notes = await self._notes.get_many(user_id, list(dict.fromkeys(c.note_id for c in checks)))
         except DriveIndexStoreUnavailable as exc:
@@ -108,6 +109,10 @@ class DriveNoteLifecycle:
                 continue                         # past the item-call budget: the next round end
             verdict, change = await self._observe(user_id, check.item_id)
             if verdict == _UNKNOWN:
+                if check.last_seen_at is not None and now - check.last_seen_at > NOTE_CHECK_UNKNOWN_MAX_AGE:
+                    done.add(check.note_id)      # D-M1: aged out; the daily audit is the backstop
+                    _inc(counts, "note_checks_aged_out")
+                    continue
                 rotated.add(check.note_id)
                 _inc(counts, "note_checks_unknown")
                 continue

@@ -25,6 +25,7 @@ from typing import Callable, Collection, FrozenSet, List, Sequence, Tuple
 
 from .drive_card import owner_note_line
 from .drive_deleted_search import DeletedHit
+from .drive_keys import name_keys_v2
 from .drive_match import Concept
 from .drive_note import DriveNote, NoteContent, binding_parts_of, note_ref
 from .drive_note_merge import NOTE_STORE_KEYS_VERSION, note_store_keys
@@ -33,10 +34,10 @@ from .drive_note_merge import NOTE_STORE_KEYS_VERSION, note_store_keys
 StoreKeys = Callable[[NoteContent, str], Tuple[List[str], str]]
 
 MEANING_LINE = "closest by meaning, unverified"
-REF_LINE = ("{ref} — the file is gone: this ref works only for annotate_drive_file (to change, undo or remove the "
-            "note)")
+REF_LINE = ("{ref} — the file is gone: this ref works only for annotate_drive_file (to change, undo, remove the "
+            "note or erase its history)")
 DORMANT_REF_LINE = ("{ref} — the file is on a drive that is not connected: this ref works only for annotate_drive_file "
-                    "(to change, undo or remove the note)")
+                    "(to change, undo, remove the note or erase its history)")
 ARCHIVE_SCAN_CUT_LINE = "Only the newest {limit} notes on deleted files were searched; older ones were not."
 MORE_NOTES_LINE = "{count} more notes on deleted files matched."
 DORMANT_HIDDEN_LINE = "The drive is not connected, so notes on files of other drives are not shown."
@@ -45,10 +46,12 @@ DORMANT_HIDDEN_LINE = "The drive is not connected, so notes on files of other dr
 def search_keys(note: DriveNote, store_keys: StoreKeys = note_store_keys) -> FrozenSet[str]:
     """The keys the deleted-files search matches a note on: the stored ones under the current layout, otherwise
     recomputed in memory with the store's own function (§3.1 `keys_version`), so a note written before its keys existed
-    still matches. `store_keys` is injectable for tests only."""
-    if note.keys_version == NOTE_STORE_KEYS_VERSION and note.keys:
-        return frozenset(note.keys)
+    still matches. The stored keys carry the name from write time, so the current snapshot's name keys are added too
+    (final review L-M2: a file renamed and then deleted is found by its last known name). `store_keys` is injectable
+    for tests only."""
     name = note.snapshot.name if note.snapshot is not None else ""
+    if note.keys_version == NOTE_STORE_KEYS_VERSION and note.keys:
+        return frozenset((*note.keys, *(name_keys_v2(name) if name and note.keys else ())))
     return frozenset(store_keys(note.content, name)[0])
 
 
@@ -60,12 +63,12 @@ def note_matches(concepts: Sequence[Concept], keys: Collection[str]) -> bool:
 
 
 def matched_line(concepts: Sequence[Concept], own_keys: Collection[str], name_keys: Collection[str]) -> str:
-    """`matched: your note "kitchen", name "estimate"`: per concept, where it met (the note first). "" with no
+    """`matched: owner's note "kitchen", name "estimate"`: per concept, where it met (the note first). "" with no
     concept (a listing of the newest)."""
     found: List[str] = []
     for c in concepts:
         if any(k in own_keys for k in c.about_keys):
-            found.append(f'your note "{c.word}"')
+            found.append(f'owner\'s note "{c.word}"')
         elif any(k in name_keys for k in c.word_keys):
             found.append(f'name "{c.word}"')
     return "matched: " + ", ".join(found) if found else ""

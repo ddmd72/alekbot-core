@@ -34,7 +34,8 @@ class TestKeys:
 
     def test_search_keys_stored_or_recomputed_with_the_stores_function(self):
         stored = _note(keys=["e:x"], keys_version=NOTE_STORE_KEYS_VERSION)
-        assert search_keys(stored, store_keys) == {"e:x"}
+        # final review L-M2: the stored keys plus the current snapshot name's keys (a renamed file's last known name)
+        assert search_keys(stored, store_keys) == {"e:x", *name_keys_v2(stored.snapshot.name)}
         assert "e:kitchen" in search_keys(_note(keys=["e:x"], keys_version="old"), store_keys)
         assert "e:kitchen" in search_keys(_note(), store_keys)          # S1 wrote no keys
 

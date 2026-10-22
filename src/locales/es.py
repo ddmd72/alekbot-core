@@ -175,7 +175,7 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.DRIVE_INACCESSIBLE_LIST_TITLE.value: "Archivos que el bot no puede abrir",
     UIMessage.DRIVE_NOTE_SAVED.value: "📝 Nota guardada para {path} (versión {version}):",
     UIMessage.DRIVE_NOTE_UNCHANGED.value: "📝 La nota de {path} ya dice exactamente esto (versión {version}); no ha cambiado nada:",
-    UIMessage.DRIVE_NOTE_CLEARED.value: "🗑️ Nota eliminada de {path}. Su historial se conserva, así que se puede deshacer; di «borra el historial» para eliminarla para siempre.",
+    UIMessage.DRIVE_NOTE_CLEARED.value: "🗑️ Nota eliminada de {path}. Su historial se conserva, así que se puede deshacer; di «borra el historial» para borrarla para siempre.",
     UIMessage.DRIVE_NOTE_NOTHING_TO_CLEAR.value: "No había ninguna nota para {path}; no ha cambiado nada.",
     UIMessage.DRIVE_NOTE_RESTORED.value: "↩️ Nota anterior restaurada para {path} (versión {version}):",
     UIMessage.DRIVE_NOTE_REDONE.value: "↪️ El cambio deshecho vuelve a estar en {path} (versión {version}):",
@@ -193,5 +193,6 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.DRIVE_NOTE_ERASE_REQUEST.value: "🗑️ Para borrar para siempre la nota de {path} y todo su historial (versiones: {versions}), pega el comando de abajo en los próximos {minutes} minutos. No se borra nada hasta que lo hagas.",
     UIMessage.DRIVE_NOTE_ERASE_ALL_REQUEST.value: "🗑️ Para borrar para siempre todas tus notas de archivos (notas: {count}) y su historial, pega el comando de abajo en los próximos {minutes} minutos. No se borra nada hasta que lo hagas.",
     UIMessage.DRIVE_NOTE_ERASED.value: "🗑️ Notas borradas para siempre, con su historial: {count}.",
-    UIMessage.DRIVE_NOTE_ERASE_PARTIAL.value: "🗑️ Notas borradas para siempre: {erased}. No borradas por ahora: {left}; pídeme que las borre de nuevo.",
+    UIMessage.DRIVE_NOTE_ERASE_PARTIAL.value: "🗑️ Notas borradas para siempre: {erased}. No borradas por ahora: {left}; pídeme que la borre de nuevo.",
+    UIMessage.DRIVE_NOTE_ERASE_ALL_PARTIAL.value: "🗑️ Notas borradas para siempre: {erased}. No borradas por ahora: {left}; envía `$drive-notes erase-all` otra vez para borrarlas.",
 }

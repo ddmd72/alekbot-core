@@ -112,7 +112,7 @@ DRIVE_QUERY_DESCRIPTION = (
 # description per field name, so both features must read the same text (USER_DRIVE_INDEXING_RFC §27.9.11).
 DRIVE_DELETED_DESCRIPTION = (
     "search_files_in_drive: true only when the user explicitly asks about deleted or removed files: searches transcripts of deleted "
-    "recordings and your notes on deleted files. Never for an ordinary search."
+    "recordings and the owner's notes on deleted files. Never for an ordinary search."
 )
 DRIVE_KIND_DESCRIPTION = (
     "search_files_in_drive: optional file type. A family covers every format of its kind: "

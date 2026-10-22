@@ -8,7 +8,7 @@ from src.adapters.filesystem_skill_loader import load_system_skills
 ROOT = Path(__file__).resolve().parents[3]
 SKILLS = ROOT / "src" / "skills" / "smart"
 REF_LINE = ("A note on a deleted file carries a `drive_note:` ref, which works only with `annotate_drive_file` "
-            "(to change, undo or remove that note).")
+            "(to change, undo, remove that note or erase its history).")   # final review C-M3
 
 
 def _body() -> str:

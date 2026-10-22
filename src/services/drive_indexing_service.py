@@ -225,6 +225,7 @@ if TYPE_CHECKING:   # REQ-ARCH-22: a service never imports another at run time; 
     from .localization_service import LocalizationService
 
 _DUE_PAGE = 100
+NOTE_EMBED_REFUSED_HOLD = timedelta(hours=24)   # final review D-M3: how long a refused note version is skipped
 def _last_months(now: datetime, count: int) -> List[str]:
     """`count` month keys, this month first, stepping through month starts (never `now - 31 days`, which skips a month)."""
     first = now.astimezone(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
@@ -706,6 +707,9 @@ class DriveIndexingService:
         self._notes = notes
         # owner notes' round-end checks and daily audit (DRIVE_FILE_NOTES_RFC §7); None: the kill switch is off
         self._note_lifecycle = note_lifecycle
+        # a note version the embedder refused (HTTP 400): skipped by the vector repair and the space pass until the
+        # hold ends (process memory only; a restart tries it once more), keyed (user, note id, version)
+        self._note_embed_holds: Dict[Tuple[str, str, int], datetime] = {}
         self._clock = clock
         self._monotonic = monotonic
         self._gate_checked: Dict[str, float] = {}
@@ -1494,6 +1498,7 @@ class DriveIndexingService:
                 snapshots[note.note_id] = note
             per_item.setdefault(parts.item_id, []).append((note.note_id, view))
         recs = await self._repo.get_records(user_id, sorted(per_item)) if per_item else {}
+        await self._revive_page(user_id, page, recs, drive_id, per_item, snapshots)
         now = self._clock()
         writes: List[DriveIndexRecord] = []
         for item_id, entries in per_item.items():
@@ -1533,6 +1538,34 @@ class DriveIndexingService:
                              f"the watermark stops before it")
                 return index
         return None
+
+    async def _revive_page(self, user_id: str, page: Sequence[DriveNote], recs: Mapping[str, DriveIndexRecord],
+                           drive_id: str, per_item: Dict[str, List[Tuple[str, Optional[NoteView]]]],
+                           snapshots: Dict[str, DriveNote]) -> None:
+        """§7.2 on the notes step's re-read (final review L-I1): an archived note, or a cleared one stamped
+        `archived_at`, bound to this drive whose record exists and is not deleting has its file back — the same item
+        id on the same drive — but entry (a) never re-activated it (the lookup failed, the kill switch was off, or a
+        rolled-back revision created the record). It is re-activated here and its view merged with the page. A
+        failed write leaves it as it was (`_reactivated` logs it and asks for the re-read)."""
+        tick = _TICK_NOTES.get()
+        if tick is None:
+            return
+        for note in page:
+            if note.erase_pending or not (note.state == NoteState.ARCHIVED.value or (
+                    note.state == NoteState.CLEARED.value and note.archived_at is not None)):
+                continue
+            parts = binding_parts_of(note)
+            if parts is None or parts.provider_key != ONEDRIVE_PROVIDER_KEY or parts.drive_id != drive_id:
+                continue
+            rec = recs.get(parts.item_id)
+            if rec is None or rec.state == RecordState.DELETING:
+                continue
+            revived = await self._reactivated(user_id, note, tick)
+            view = note_view(revived, drive_id=drive_id)
+            per_item[parts.item_id] = [(nid, view if nid == note.note_id else v)
+                                       for nid, v in per_item.get(parts.item_id, [])]
+            if view is not None:
+                snapshots[note.note_id] = revived
 
     async def _inline_cards(self, user_id: str, item_ids: Sequence[str], now: datetime, summary: Dict[str, int],
                             budget: _Budget, stop: float) -> None:
@@ -1631,9 +1664,27 @@ class DriveIndexingService:
             if budget.elapsed() >= stop:
                 return handled
             name = note.snapshot.name if note.snapshot is not None else ""
+            hold = self._note_embed_holds.get((user_id, note.note_id, note.current_version))
+            if hold is not None and hold > self._clock():
+                handled += 1                     # D-M3: refused before; it waits out its hold, the rest go on
+                continue
             try:
                 vector = await self._embeddings.get_embedding(note_embedding_text(note.content, name),
                                                               "RETRIEVAL_DOCUMENT")
+            except LLMClientError as exc:
+                if exc.http_status != 400:
+                    logger.warning(f"[DriveIndex] note embedding failed for {user_id[:8]} note={note.note_id}: "
+                                   f"{exc_brief(exc)}; tried again next tick")
+                    return handled
+                # a definite refusal of this note's text (as for cards, §8.2): this version backs off alone, so one
+                # note the embedder always refuses never blocks the repair and the space pass (final review D-M3)
+                self._note_embed_holds[(user_id, note.note_id, note.current_version)] = (
+                    self._clock() + NOTE_EMBED_REFUSED_HOLD)
+                logger.warning(f"[DriveIndex] note embedding refused for {user_id[:8]} note={note.note_id} "
+                               f"v{note.current_version}: {exc_brief(exc)}; held for {NOTE_EMBED_REFUSED_HOLD}")
+                _inc(summary, "note_vectors_refused")
+                handled += 1
+                continue
             except Exception as exc:
                 logger.warning(f"[DriveIndex] note embedding failed for {user_id[:8]} note={note.note_id}: "
                                f"{exc_brief(exc)}; tried again next tick")
@@ -1730,6 +1781,12 @@ class DriveIndexingService:
         lifecycle = self._note_lifecycle
         acc = _TICK_NOTES.get()
         if lifecycle is None or acc is None:
+            return state
+        if not budget.item_call_allowed():
+            # final review D-M2: no item call is left (the work-off began past the start budget, or the calls are
+            # spent), so neither step could read anything: skip both rather than read up to 1 000 / 10 000 documents
+            # for nothing. The pending checks stay in the accumulator and every save folds them.
+            _inc(summary, "note_round_end_skipped")
             return state
         state = replace(state, note_checks=fold_checks(state.note_checks, list(acc.pending.values()))[0])
 

@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Mapping,
 
 from ..domain.agent import AgentStatus, DeliveryItem
 from ..domain.messaging import SmartResponse
+from ..domain.skill import USE_SKILL_TOOL
 from ..ports.llm_port import LLMRequest, LLMResponse, Message, ToolCall
 from ..domain.llm import MessagePart, build_tool_turn
 from ..domain.turn_clock import CURRENT_TURN_CLOCK, WRAP_UP_NOTE, render_chat_since
@@ -357,9 +358,11 @@ class DelegationEngine:
                             terminal_tool=terminal_tool,
                         )
                         # Nobody reads a sibling's result: the answer is already written.
-                        # A local tool (use_skill) must not leave a body in history that was never followed.
+                        # use_skill must not leave a body in history that was never followed. Only it: another
+                        # local tool's history line records what it did (a drive note's ref, which "undo that" next
+                        # turn needs; final review C-M6 / L-M6).
                         sibling_results = [
-                            replace(r, history_context=None) if r.name in local else r
+                            replace(r, history_context=None) if r.name == USE_SKILL_TOOL else r
                             for r in sibling_results
                         ]
                         accumulated_structured = self._accumulate_tool_metadata(

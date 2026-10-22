@@ -100,8 +100,7 @@ class DriveNoteDeletedSearch:
         shown = found[:DELETED_SHOW_MAX]
         if len(found) > len(shown):
             coverage.append(MORE_NOTES_LINE.format(count=len(found) - len(shown)))
-        hits = [note_hit(n, dormant=d, nonce=self._nonce(), matched=m,
-                         day=n.archived_at.date().isoformat() if not d and n.archived_at else "")
+        hits = [note_hit(n, dormant=d, nonce=self._nonce(), matched=m, day=_gone_day(n) if not d else "")
                 for n, d, m in shown]
         logger.info(f"[DriveNote] deleted-files search user={user_id[:8]} archived={len(archived)} "
                     f"dormant={len(dormant)} matched={len(found)} meaning={meaning} shown={len(hits)} "
@@ -127,3 +126,9 @@ class DriveNoteDeletedSearch:
             logger.warning(f"[DriveNote] deleted-files meaning fallback for {user_id[:8]} failed: {exc_brief(exc)}")
             return []
         return [n for n, _ in near]
+
+
+def _gone_day(note: DriveNote) -> str:
+    """The date a deleted entry shows (§6.4): when the file was last seen, else (an older note) when it was archived."""
+    when = note.last_seen_at or note.archived_at
+    return when.date().isoformat() if when else ""

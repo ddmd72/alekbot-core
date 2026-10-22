@@ -181,7 +181,8 @@ async def test_a_save_delivers_the_receipt_and_the_history_context():
     result = await handler(service(set=rec))(call(note="Petya's estimate"))
     assert not result.failed
     assert result.result_str.startswith("SYSTEM: Note saved on Docs/estimate.pdf (version 3). Its note ref: "
-                                        "drive_note:n1. The owner sees the stored note in a receipt: do not repeat it")
+                                        "drive_note:n1. The system posts the stored note word for word: do not repeat "
+                                        "it")   # final review C-M1 (was "The owner sees … in a receipt")
     [item] = result.delivery_items
     assert item.type == DRIVE_NOTE_RECEIPT_DELIVERY and item.data == rec.delivery_data()
     assert result.history_context == {DRIVE_NOTE_CONTEXT_KEY: "[Drive note: Docs/estimate.pdf ref=drive:abc v3]"}

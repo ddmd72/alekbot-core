@@ -757,10 +757,10 @@ class FileManagementAgent(BaseAgent):
         if recording and (payload or {}).get("original") is True:
             # The recording itself comes as a drive link, never as bytes into chat (§27.11, Δ121).
             link = item.web_url or "(no link available)"
-            noted = f"\n{note}" if note else ""
-            body = wrap_untrusted(f"{drive_label(item)}{noted}\nLink to the original recording: {link}",
+            body = wrap_untrusted(f"{drive_label(item)}\nLink to the original recording: {link}",
                                   nonce=secrets.token_hex(8), ref=item.ref, path=item.path)
-            return self._ok(message, f"{REFERENCE_REMINDER}\n{body}", [item])
+            # the owner's note in its own block (§6.2): nothing inside a file's wrapper can pass for it
+            return self._ok(message, self._with_note(f"{REFERENCE_REMINDER}\n{body}", item, note), [item])
         if recording and self._drive_search is not None:
             transcript = await self._transcript_of(user_id, item)
             if transcript is not None:
@@ -794,11 +794,11 @@ class FileManagementAgent(BaseAgent):
             return self._ok(message, f"'{item.path}' is {format_size(item.size_bytes)}; files above "
                                      f"{format_size(e.limit_bytes)} cannot be opened yet.", [item])
         content = await self._conversion_service.resolve_content(ref, user_id)
-        # File text is untrusted: it reaches the model only inside the wrapper (RFC §10.4, RFC Δ11).
-        noted = f"\n{note}" if note else ""   # the header: label, the owner's note (§6.2), then the file's text
-        wrapped = wrap_untrusted(f"{drive_label(item)}{noted}\n{content}", nonce=secrets.token_hex(8),
+        # File text is untrusted: it reaches the model only inside the wrapper (RFC §10.4, RFC Δ11). The owner's note
+        # (§6.2) is its own block after it, so a file whose text starts with `noted by the owner:` cannot pass for it.
+        wrapped = wrap_untrusted(f"{drive_label(item)}\n{content}", nonce=secrets.token_hex(8),
                                  ref=item.ref, path=item.path)
-        return self._ok(message, f"{REFERENCE_REMINDER}\n{wrapped}", [item])
+        return self._ok(message, self._with_note(f"{REFERENCE_REMINDER}\n{wrapped}", item, note), [item])
 
     async def _search_drive(self, message: AgentMessage, payload: dict, user_id: str) -> AgentResponse:
         """search_files_in_drive (USER_DRIVE_INDEXING_RFC §10). Returned refs go into drive_context, so

@@ -1,6 +1,13 @@
 """The drive-notes invariant matrix (DRIVE_FILE_NOTES_RFC §6.1, §8; plan part C, Task C9 "Invariant tests"): the
 default drive search never returns a note that is not active on a live record of the connected drive, and no index
-record carries such a note's id — over every §8 row, with restore as the one inverse row.
+record carries such a note's id.
+
+What it covers, through the rendered default search: the §8 rows that end with the note archived, dormant or gone
+(delete, move out, folder cascade, D21 edit and undo of an archived note, clear then undo of an archived note, another
+drive, re-upload, copy, erase of an archived note), the clear and the erase of an ACTIVE note on its live record, the
+transcript-and-note row, and restore as the one inverse row. What it does not cover here: the `unstored` rows, opt-out
+and opt-in, the kill switch and the rollback detector, which `test_drive_indexing_notes.py`,
+`test_drive_note_lifecycle.py` and `test_drive_note_restore_fallback.py` test at the record and vector level.
 
 Everything is real except the ports' edges: the tick (`DriveIndexingService` with part B's `notes=` and part C's
 `note_lifecycle=`), the write path (`DriveNoteService`: `set`, `clear`, `undo`, `request_erase` + `erase`, refs as the
@@ -8,7 +15,8 @@ Everything is real except the ports' edges: the tick (`DriveIndexingService` wit
 the composition function), over the in-memory index and note repositories and the scripted drive. Each row checks:
 
 - **A1** — `DriveSearchService.search(<a note word>)` renders neither the note's text nor its `drive_note:` ref;
-- **A2** — no index record carries the note's id (`owner_note_id`);
+- **A2** — no index record carries the note's id (`owner_note_id`); for an archived note this holds by construction
+  (its record is gone), for the active-note rows it is the real check;
 
 and a positive control first: while the note is active on its live record, the same search does find it (so A1 can
 never pass on an empty or gated search). Synthetic items and notes only."""
@@ -330,6 +338,33 @@ class TestArchivedRows:
         await w.a1(nid)
         w.a2(nid)
         assert (await w.deleted()).startswith("Deleted files (0):")
+
+
+class TestActiveNoteRows:
+    """Clear and erase of an ACTIVE note whose record is live: the record holds the copy, so A2 is a real check."""
+
+    async def test_clear_of_an_active_note(self, w):
+        item = await w.file()
+        nid = await w.note(f"drive:{item}")
+        await w.control(nid)
+        await w.note_svc.clear(U, ACC, f"drive:{item}", provenance=CHAT)
+        w.clock.advance(1)
+        await w.settle()
+        assert w.repo.records.get((U, item)) is not None
+        await w.a1(nid)
+        w.a2(nid)
+
+    async def test_erase_of_an_active_note(self, w):
+        item = await w.file()
+        nid = await w.note(f"drive:{item}")
+        await w.control(nid)
+        request = await w.note_svc.request_erase(U, f"drive:{item}")
+        assert await w.note_svc.erase(U, request.code) == 1
+        w.clock.advance(1)
+        await w.settle()
+        assert w.repo.records.get((U, item)) is not None and await w.stored(nid) is None
+        await w.a1(nid)
+        w.a2(nid)
 
 
 class TestCopy:

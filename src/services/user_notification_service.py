@@ -19,7 +19,9 @@ from typing import Dict, Mapping, Optional, Protocol, TYPE_CHECKING
 
 from ..domain.agent import AgentMessage, AgentIntent, AgentResponse, AgentStatus, DeliveryItem
 from ..domain.drive_note import DRIVE_NOTE_ERASE_DELIVERY
-from ..domain.drive_note_receipt import drive_note_call_event, render_drive_note_erase, render_drive_note_receipt
+from ..domain.drive_note_receipt import (
+    drive_note_call_event, drive_note_call_posted, render_drive_note_erase, render_drive_note_receipt,
+)
 from ..domain.language import LanguageCode
 from ..domain.llm import Message, MessagePart
 from ..domain.messaging import SmartResponse
@@ -263,8 +265,9 @@ class UserNotificationService:
     async def notify_drive_note_receipt(self, user_id: str, account_id: str, item: DeliveryItem) -> None:
         """Post a drive-note receipt or erase request that Alek produced during a call with Lelik (DRIVE_FILE_NOTES_RFC
         §4.9, D18) to the owner's chat, rendered by the same renderer ConversationHandler uses, and append a history
-        pair — `[System: drive note saved during a call with Lelik: <path> ref=… v<n>]`, then the posted text — so
-        "undo that" later in the chat resolves the ref. An erase request posts its line and then the command alone;
+        pair — `[System: drive note saved during a call with Lelik: <path> ref=… v<n>]`, then a neutral
+        `[drive note receipt posted to the chat: <path> v<n>]` (never the note's words: the consolidator reads a model
+        turn's text and an erase cannot scrub history) — so "undo that" later in the chat resolves the ref. An erase request posts its line and then the command alone;
         the command never enters history. Resolves the primary / last-active channel, like notify_call_summary.
         Every failure is logged and swallowed: the note is stored whatever happens here."""
         if self._localization is None:
@@ -279,17 +282,18 @@ class UserNotificationService:
         try:
             if item.type == DRIVE_NOTE_ERASE_DELIVERY:
                 line, command = render_drive_note_erase(item.data, strings)
-                posts, kept = [line, command], line
+                posts = [line, command]
             else:
-                kept = render_drive_note_receipt(item.data, strings)
-                posts = [kept]
+                posts = [render_drive_note_receipt(item.data, strings)]
+            kept = drive_note_call_posted(item.type, item.data)
         except Exception as exc:
             logger.error(f"[Notification] drive note {item.type} could not be rendered for {user_id[:8]}: {exc}",
                          exc_info=True)
             return
         channel_info = await self.resolve_channel(user_id)
         if not channel_info:
-            logger.info(f"[Notification] No channel for {user_id[:8]}, drive note {item.type} skipped")
+            # RFC §4.9: the owner then never sees what was stored, so an operator must hear of it
+            logger.error(f"[Notification] No channel for {user_id[:8]}: drive note {item.type} not posted")
             return
         response_channel = self._channel_factory.create(platform=channel_info.platform,
                                                         channel_id=channel_info.channel_id)

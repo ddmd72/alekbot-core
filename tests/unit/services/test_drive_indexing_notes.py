@@ -828,7 +828,10 @@ async def test_the_pass_end_is_read_before_the_notes_query(w, monkeypatch):
     assert w.state().notes_scanned_at == asked[0]
 
 
-async def test_an_archived_note_is_cleared_and_never_in_a_default_search(w):
+async def test_an_archived_note_whose_record_is_live_is_reactivated_by_the_notes_step(w):
+    # final review L-I1 (arbiter ruling; was "…_is_cleared_and_never_in_a_default_search"): §7.2 — an archived note
+    # bound to this drive whose record exists has its file back, so the notes step re-activates it and merges it, the
+    # same as entry (a) would have; the default search then finds it as the owner's note (it is active, not archived)
     from src.services.drive_search_service import DriveSearchService
     from src.domain.drive_search import DriveSearchRequest
     a = w.drive.add("a.pdf")
@@ -837,11 +840,12 @@ async def test_an_archived_note_is_cleared_and_never_in_a_default_search(w):
     await w.notes.archive("u", note.note_id, archived_at=w.clock(), last_seen_at=w.clock())
     w.clock.advance(1)
     await w.tick()
-    assert w.rec(a) is not None and w.rec(a).owner_note_id == ""
+    stored = await w.notes.get("u", note.note_id)
+    assert stored.state == "active" and stored.archived_at is None
+    assert w.rec(a) is not None and w.rec(a).owner_note_id == note.note_id
     search = DriveSearchService(w.repo, w.emb, w.users, w.drive, embedding_space=SPACE, clock=w.clock)
     result = await search.search("u", DriveSearchRequest(query="zanzibar"))
-    assert not [c for c in result.cards if c.tier in ("about", "mentioned", "translated", "labelled")]
-    assert all(not c.owner_note for c in result.cards)
+    assert [c.owner_note for c in result.cards if c.tier == "about"]
 
 
 async def test_a_page_note_written_in_the_old_space_is_moved(w):

@@ -1977,7 +1977,7 @@ class ConversationHandler(ConversationHandlerPort):
                         context.user_id[:8], e.reason.value)
             if e.reason is NoteRefusal.CONFLICT:
                 text = render_drive_note_erased(int(e.detail.get("erased", 0)), int(e.detail.get("left", 0)),
-                                                self._drive_note_strings(context))
+                                                self._drive_note_strings(context), str(e.detail.get("scope") or ""))
             elif e.reason is NoteRefusal.NO_SUCH_ERASE_REQUEST:
                 text = self._ui_string(context, UIMessage.DRIVE_NOTES_NO_SUCH_REQUEST)
             else:

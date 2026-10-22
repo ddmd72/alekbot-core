@@ -205,24 +205,24 @@ def make_annotate_drive_file_handler(
         refs = f" Its note ref: {receipt.note_ref}." if receipt.note_ref else ""
         if receipt.action == "clear":
             text = (f"There was no note on {place}; nothing was changed." if receipt.noop else
-                    f"Note removed from {place}; its history is kept and undo can bring it back.{refs} The owner "
-                    "sees a receipt: say one short line.")
+                    f"Note removed from {place}; its history is kept and undo can bring it back.{refs} The system "
+                    "posts a receipt to the owner.")
         elif receipt.action == "restore":
             if receipt.noop:
                 text = f"The last change of the note on {place} was already undone in this turn; nothing was written."
             elif not (receipt.text or receipt.doc_type or receipt.life_areas):
                 text = (f"Undone: there was no note on {place} before, so the note is removed (version "
-                        f"{receipt.version}).{refs} The owner sees a receipt: say one short line.")
+                        f"{receipt.version}).{refs} The system posts a receipt to the owner.")
             else:
                 done = "Redone: the undone change is back" if receipt.redo else "Undone: the previous note is back"
-                text = (f"{done} on {place} (version {receipt.version}).{refs} The owner sees the note in a receipt: "
-                        "do not repeat it; say one short line.")
+                text = (f"{done} on {place} (version {receipt.version}).{refs} The system posts the note word for word: "
+                        "do not repeat it.")
         elif receipt.noop:
             text = (f"The note on {place} already says exactly this (version {receipt.version}); nothing was "
-                    f"written.{refs} The owner sees it in a receipt: say one short line.")
+                    f"written.{refs} The system posts it word for word: do not repeat it.")
         else:
-            text = (f"Note saved on {place} (version {receipt.version}).{refs} The owner sees the stored note in a "
-                    "receipt: do not repeat it; say one short line. "
+            text = (f"Note saved on {place} (version {receipt.version}).{refs} The system posts the stored note word for "
+                    "word: do not repeat it. "
                     f"{_STATUS_SENTENCES.get(receipt.status, '')}").rstrip()
         parts = [f"SYSTEM: {text}"]
         if receipt.action == "restore" and not receipt.noop and receipt.text:
@@ -242,7 +242,7 @@ def make_annotate_drive_file_handler(
             name=tool_call.name,
             result_str=(f"SYSTEM: The owner got a code to erase the history of the note on {place} "
                         f"({request.version_count} versions) for good; nothing is erased until he pastes it in the "
-                        "chat. Your part is done: say one short line; you do not know the code."),
+                        "chat. Your part is done; you do not know the code."),
             delivery_items=[DeliveryItem(type=DRIVE_NOTE_ERASE_DELIVERY, data=request.delivery_data())],
         )
 
@@ -266,7 +266,8 @@ def make_annotate_drive_file_handler(
             return _fail(tool_call, "the note store is unavailable right now; nothing was changed. Try again in a "
                                     "moment.")
         except Exception as exc:
-            logger.error(f"❌ [DriveNote] tool user={user_id[:8]} failed: {type(exc).__name__}: {exc}", exc_info=True)
+            # the type only: a validation error from a stored document carries its values, the note's text among them
+            logger.error(f"❌ [DriveNote] tool user={user_id[:8]} failed: {type(exc).__name__}")
             return _fail(tool_call, "the note could not be stored right now. Try again later.")
         finally:
             state.lock.release()

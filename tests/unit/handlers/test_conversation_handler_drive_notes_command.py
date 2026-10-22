@@ -222,7 +222,8 @@ class TestPartialAndFailures:
         env.notes._erase_one = flaky
         await _run(env, "drive-notes erase-all")
         sent = await _run(env, "drive-notes erase-all c0ffe0")
-        assert sent == [_ui(UIMessage.DRIVE_NOTE_ERASE_PARTIAL, erased=1, left=1)]
+        # final review C-I3: after an erase-all the owner sends the command again (its own variant)
+        assert sent == [_ui(UIMessage.DRIVE_NOTE_ERASE_ALL_PARTIAL, erased=1, left=1)]
 
     async def test_an_unexpected_error_answers_unavailable(self, env):
         env.put(1)

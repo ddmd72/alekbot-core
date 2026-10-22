@@ -45,6 +45,10 @@ NOTE_AUDIT_CALL_SHARE = 0.65
 # §7.1, D-C20: the round end, which runs first, takes at most this share of the item calls left, and the audit then takes
 # NOTE_AUDIT_CALL_SHARE of what remains: with the default 20 calls, 13 for the round end, then 4 for the audit, 3 kept
 NOTE_ROUND_END_CALL_SHARE = 0.65
+# final review D-M1: a check whose read keeps saying nothing (unknown) is dropped once the delete it reports is this old
+# (its `last_seen_at`): it no longer costs an item call on every complete round, and the daily audit — which reads an
+# active, record-less note once it is NOTE_AUDIT_SKIP_DAYS unseen — is the backstop that archives it
+NOTE_CHECK_UNKNOWN_MAX_AGE = timedelta(days=NOTE_AUDIT_SKIP_DAYS)
 
 AuditKey = Tuple[datetime, str]      # (snapshot_at, note_id); a note never snapshotted sorts first
 _NEVER = datetime.min.replace(tzinfo=timezone.utc)

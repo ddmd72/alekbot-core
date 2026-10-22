@@ -51,9 +51,9 @@ _MATCH_KIND = 'kind "{word}"'
 _MATCH_CAPTURE = 'capture "{word}"'          # §26.3: detected by code (`cp:`); a model's (`cpa:`) is "(automatic)"
 _MATCH_AUTOMATIC = '{field} "{word}" (automatic)'
 # the owner's note (DRIVE_FILE_NOTES_RFC §6.1): his own words, exact; a skeleton match adds the script note
-_MATCH_NOTE_WORD = 'your note "{word}"'
-_MATCH_NOTE_TYPE = 'your note: type "{word}"'
-_MATCH_NOTE_AREA = 'your note: life area "{word}"'
+_MATCH_NOTE_WORD = 'owner\'s note "{word}"'
+_MATCH_NOTE_TYPE = 'owner\'s note: type "{word}"'
+_MATCH_NOTE_AREA = 'owner\'s note: life area "{word}"'
 _NOT_MATCHED = "not matched"
 _AUTOMATIC_FIELD = {
     AboutField.TOPIC_WORD: "topic", AboutField.DOMAIN_WORD: "life area", AboutField.VALIDITY_WORD: "validity",

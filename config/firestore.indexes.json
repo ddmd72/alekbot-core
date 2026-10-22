@@ -1279,5 +1279,10 @@
     "collectionGroup": "development_drive_notes",
     "fieldPath": "snapshot",
     "indexes": []
+  },
+  {
+    "collectionGroup": "development_drive_sync_state",
+    "fieldPath": "note_checks",
+    "indexes": []
   }
 ]

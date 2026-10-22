@@ -132,7 +132,7 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.DRIVE_NOTES_USAGE.value: "Notes de fichiers : `$drive-notes erase-all` — effacer définitivement toutes tes notes de fichiers et leur historique (je t'envoie un code de confirmation) ; colle `$drive-notes erase CODE` ou `$drive-notes erase-all CODE` pour confirmer",
     UIMessage.DRIVE_NOTES_UNAVAILABLE.value: 'Les notes de fichiers ne sont pas disponibles pour le moment.',
     UIMessage.DRIVE_NOTES_NONE.value: "Tu n'as aucune note de fichier.",
-    UIMessage.DRIVE_NOTES_NO_SUCH_REQUEST.value: "❌ Aucune demande d'effacement de ce type : le code est erroné, expiré ou déjà utilisé. Rien n'a été effacé.",
+    UIMessage.DRIVE_NOTES_NO_SUCH_REQUEST.value: "❌ Cette demande d'effacement n'existe pas : le code est erroné, expiré ou déjà utilisé. Rien n'a été effacé.",
     UIMessage.LONG_TURN_NOTICE.value: "⏳ J'y travaille — c'est plus long. Je réponds dès que c'est fini ; vous pouvez continuer à écrire.",
     UIMessage.LATE_ANSWER_PREFIX.value: "[réponse différée]",
     UIMessage.LONG_TURN_FAILED.value: "Je n'ai pas pu terminer — quelque chose a cassé en route.",
@@ -193,5 +193,6 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.DRIVE_NOTE_ERASE_REQUEST.value: "🗑️ Pour effacer définitivement la note de {path} et tout son historique (versions : {versions}), colle la commande ci-dessous dans les {minutes} minutes. Rien n'est effacé tant que tu ne l'as pas fait.",
     UIMessage.DRIVE_NOTE_ERASE_ALL_REQUEST.value: "🗑️ Pour effacer définitivement toutes tes notes de fichiers (notes : {count}) et leur historique, colle la commande ci-dessous dans les {minutes} minutes. Rien n'est effacé tant que tu ne l'as pas fait.",
     UIMessage.DRIVE_NOTE_ERASED.value: "🗑️ Notes effacées définitivement, avec leur historique : {count}.",
-    UIMessage.DRIVE_NOTE_ERASE_PARTIAL.value: "🗑️ Notes effacées définitivement : {erased}. Non effacées pour l'instant : {left} ; demande-moi de les effacer à nouveau.",
+    UIMessage.DRIVE_NOTE_ERASE_PARTIAL.value: "🗑️ Notes effacées définitivement : {erased}. Non effacées pour l'instant : {left} ; demande-moi de l'effacer à nouveau.",
+    UIMessage.DRIVE_NOTE_ERASE_ALL_PARTIAL.value: "🗑️ Notes effacées définitivement : {erased}. Non effacées pour l'instant : {left} ; renvoie `$drive-notes erase-all` pour les effacer.",
 }

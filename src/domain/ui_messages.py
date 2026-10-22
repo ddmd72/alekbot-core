@@ -129,3 +129,4 @@ class UIMessage(Enum):
     DRIVE_NOTE_ERASE_ALL_REQUEST = "drive_note_erase_all_request"
     DRIVE_NOTE_ERASED = "drive_note_erased"
     DRIVE_NOTE_ERASE_PARTIAL = "drive_note_erase_partial"
+    DRIVE_NOTE_ERASE_ALL_PARTIAL = "drive_note_erase_all_partial"

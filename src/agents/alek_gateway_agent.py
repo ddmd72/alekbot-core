@@ -149,17 +149,26 @@ class AlekGatewayAgent(BaseAgent):
 
     async def _post_drive_note_items(self, user_id: Optional[str], account_id: Optional[str],
                                      items: Sequence[DeliveryItem], timeout_s: float) -> None:
-        """Each drive-note receipt and erase request goes to chat (§4.9): the owner sees what was stored at once."""
-        for item in items or ():
-            if item.type not in (DRIVE_NOTE_RECEIPT_DELIVERY, DRIVE_NOTE_ERASE_DELIVERY):
-                continue
-            try:
-                await asyncio.wait_for(
-                    self._notifications.notify_drive_note_receipt(user_id or "", account_id or "", item),
-                    timeout=timeout_s,
-                )
-            except asyncio.TimeoutError:
-                logger.error(f"[AlekGateway] drive note {item.type} post timed out for {(user_id or '')[:8]}")
-            except Exception as exc:
-                logger.error(f"[AlekGateway] drive note {item.type} post failed for {(user_id or '')[:8]}: {exc}",
-                             exc_info=True)
+        """Each drive-note receipt and erase request goes to chat (§4.9): the owner sees what was stored at once. The
+        posts run in order under ONE `timeout_s` for all of them (final review C-M10): on `ask_alek` they hold the
+        caller's answer, so several notes never add one wait each. An item not posted in time is logged at ERROR."""
+        notes = [item for item in items or () if item.type in (DRIVE_NOTE_RECEIPT_DELIVERY, DRIVE_NOTE_ERASE_DELIVERY)]
+        if not notes:
+            return
+        posted = 0
+
+        async def post_all() -> None:
+            nonlocal posted
+            for item in notes:
+                try:
+                    await self._notifications.notify_drive_note_receipt(user_id or "", account_id or "", item)
+                except Exception as exc:
+                    logger.error(f"[AlekGateway] drive note {item.type} post failed for {(user_id or '')[:8]}: "
+                                 f"{exc}", exc_info=True)
+                posted += 1
+
+        try:
+            await asyncio.wait_for(post_all(), timeout=timeout_s)
+        except asyncio.TimeoutError:
+            logger.error(f"[AlekGateway] drive note posts timed out for {(user_id or '')[:8]}: "
+                         f"{len(notes) - posted} of {len(notes)} not posted")

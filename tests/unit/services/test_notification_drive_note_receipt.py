@@ -65,7 +65,9 @@ async def test_the_receipt_goes_to_the_primary_channel_in_the_owner_language_wit
     assert kwargs["session_id"] == "u1:777" and kwargs["owner_id"] == "u1"
     user, model = kwargs["messages"]
     assert user.parts[0].text == "[System: drive note saved during a call with Lelik: Docs/a.pdf ref=drive:a v2]"
-    assert model.parts[0].text == text and model.parts[0].full_text == text
+    # final review L-I2 / C-I1: the model turn is a neutral line, never the receipt (no note words in history)
+    neutral = "[drive note receipt posted to the chat: Docs/a.pdf v2]"
+    assert model.parts[0].text == neutral and model.parts[0].full_text in (None, "", neutral)
 
 
 async def test_an_erase_request_posts_line_and_command_and_keeps_the_code_out_of_history():
