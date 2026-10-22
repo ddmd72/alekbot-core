@@ -324,6 +324,9 @@ class EvalDocRef:
     def __init__(self, col: "EvalCollection", doc_id: str) -> None:
         self.col, self.id = col, doc_id
 
+    def __deepcopy__(self, memo: Any) -> "EvalDocRef":
+        return self     # a reference is a handle: stored and read back as the same one, never a copy of the database
+
     @property
     def doc_id(self) -> str:
         return self.id
@@ -723,7 +726,9 @@ def _required_index(ops: List[tuple]) -> Optional[Tuple[set, List[tuple]]]:
     # equality + array-contains(-any) merge without a composite (verified on the test database 2026-10-22)
     if len(fields) < 2 or not (orders or range_fields):
         return None
-    tail = list(orders) + [(f, "ASCENDING") for f in dict.fromkeys(range_fields) if f not in {n for n, _ in orders}]
+    ordered = {n for n, _ in orders}
+    # the range fields follow in lexicographic field-path order, as the implicit ordering does, whatever order the filters were added in
+    tail = list(orders) + [(f, "ASCENDING") for f in sorted(set(range_fields) - ordered)]
     return head, tail
 
 

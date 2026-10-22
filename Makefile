@@ -285,7 +285,7 @@ test-integration: ## Run integration tests
 # `make check` / `make ci` / `make test`. Serial. One manual runner at a time: the lease document comes with P12.
 test-cloud: ## Cloud gate: the parity scenarios on the Firestore test database (serial)
 	@echo "☁️  Running the cloud gate on the test database..."
-	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/cloud -q -p no:randomly --asyncio-mode=auto
+	RUN_CLOUD_TESTS=1 DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/cloud -q -p no:randomly --asyncio-mode=auto
 
 lint: ## Lint src/ with ruff (pyflakes + pycodestyle errors)
 	@echo "🔍 Running ruff linter on src/..."

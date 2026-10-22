@@ -75,18 +75,23 @@ async def _seed(col: Any, docs: Dict[str, Dict[str, Any]]) -> None:
 
 # ---------------------------------------------------------------------------------------------- ordering
 
+# Values in Firestore's order; the document ids run the other way, so the name order never agrees with the value order.
+_MIXED_IDS = [f"n{i:02d}" for i in range(11, 0, -1)]
+_RARE_IDS = [f"r{i:02d}" for i in range(11, 0, -1)]
+
+
 async def order_mixed_types(db: Any, col: str) -> Any:
     c = db.collection(col)
-    await _seed(c, {f"n{i:02d}": {"v": v} for i, v in enumerate(
-        [None, False, True, -5, 2.5, 3, datetime(2020, 1, 1, tzinfo=UTC), "B", "a", [1], {"k": 1}], start=1)})
+    values = [None, False, True, -5, 2.5, 3, datetime(2020, 1, 1, tzinfo=UTC), "B", "a", [1], {"k": 1}]
+    await _seed(c, {doc_id: {"v": v} for doc_id, v in zip(_MIXED_IDS, values)})
     return {"asc": await _ids(c.order_by("v")), "desc": await _ids(c.order_by("v", direction=DESC))}
 
 
 async def order_rare_types(db: Any, col: str) -> Any:
     c = db.collection(col)
-    await _seed(c, {f"r{i:02d}": {"v": v} for i, v in enumerate(
-        [None, float("nan"), 5, datetime(2020, 1, 1, tzinfo=UTC), "s", b"\x01", firestore.GeoPoint(1, 2), [1], {"k": 1}],
-        start=1)})
+    values = [None, float("nan"), 5, datetime(2020, 1, 1, tzinfo=UTC), "s", b"\x01", c.document("zz"), firestore.GeoPoint(1, 2),
+              [1], Vector([1.0, 2.0]), {"k": 1}]
+    await _seed(c, {doc_id: {"v": v} for doc_id, v in zip(_RARE_IDS, values)})
     return {"asc": await _ids(c.order_by("v")), "desc": await _ids(c.order_by("v", direction=DESC))}
 
 
@@ -102,11 +107,19 @@ async def range_implicit_order_limit(db: Any, col: str) -> Any:
     return await _ids(_where(c, "x", ">", 0).limit(3))
 
 
-async def two_range_fields_implicit_order(db: Any, col: str) -> Any:
+async def _two_range_fields(db: Any, col: str, first: str, second: str) -> Any:
     c = db.collection(col)
     await _seed(c, {"a": {"x": 2, "y": 1}, "b": {"x": 1, "y": 2}, "c": {"x": 1, "y": 1}, "d": {"x": 2, "y": 2},
                     "e": {"x": 0, "y": 5}, "f": {"x": 5}})
-    return await _ids(_where(_where(c, "x", ">", 0), "y", ">", 0))
+    return await _ids(_where(_where(c, first, ">", 0), second, ">", 0))
+
+
+async def two_range_fields_implicit_order(db: Any, col: str) -> Any:
+    return await _two_range_fields(db, col, "x", "y")
+
+
+async def two_range_fields_added_in_reverse(db: Any, col: str) -> Any:
+    return await _two_range_fields(db, col, "y", "x")
 
 
 # ---------------------------------------------------------------------------------------------- filters
@@ -140,6 +153,13 @@ async def equality_array_contains(db: Any, col: str) -> Any:
     c = db.collection(col)
     await _seed(c, {"a": {"k": "x", "tags": ["p", "q"]}, "b": {"k": "x", "tags": ["r"]}, "c": {"k": "y", "tags": ["p"]}})
     return await _ids(_where(_where(c, "k", "==", "x"), "tags", "array_contains", "p"))
+
+
+async def equality_array_contains_any(db: Any, col: str) -> Any:
+    c = db.collection(col)
+    await _seed(c, {"a": {"k": "x", "tags": ["p", "q"]}, "b": {"k": "x", "tags": ["r"]}, "c": {"k": "y", "tags": ["p"]},
+                    "d": {"k": "x", "tags": ["z"]}})
+    return await _ids(_where(_where(c, "k", "==", "x"), "tags", "array_contains_any", ["p", "r"]))
 
 
 async def equality_order_by_missing_field(db: Any, col: str) -> Any:
@@ -271,8 +291,10 @@ async def knn_cosine(db: Any, col: str) -> Any:
 async def knn_distance_threshold(db: Any, col: str) -> Any:
     c = db.collection(col)
     await _seed_vectors(c)
-    within = await _nearest(c, distance_threshold=0.1)
-    return {"threshold_0.1": [s.id for s in within], "no_distance_field": all("dist" not in s.to_dict() for s in within),
+    asked = await _nearest(c, distance_threshold=0.1, distance_result_field="dist")
+    not_asked = await _nearest(c, distance_threshold=0.1)
+    return {"threshold_0.1": [s.id for s in asked], "dist_present_when_asked": all("dist" in s.to_dict() for s in asked),
+            "dist_present_when_not_asked": any("dist" in s.to_dict() for s in not_asked),
             "threshold_1.0": await _nearest_ids(c, distance_threshold=1.0)}
 
 
@@ -374,22 +396,22 @@ class Scenario:
     refuses: bool = False           # judges an index refusal: runs only where indexes are enforced
 
 
-_NAMES = [f"n{i:02d}" for i in range(1, 12)]
-_RARE = [f"r{i:02d}" for i in range(1, 10)]
 _ALL_VECTORS = ["d1", "d4", "d2", "d6", "d3"]       # by cosine distance; d5 has no vector
 
 SCENARIOS: List[Scenario] = [
-    Scenario("order_mixed_types", order_mixed_types, {"asc": _NAMES, "desc": _NAMES[::-1]}),
-    Scenario("order_rare_types", order_rare_types, {"asc": _RARE, "desc": _RARE[::-1]}),
+    Scenario("order_mixed_types", order_mixed_types, {"asc": _MIXED_IDS, "desc": _MIXED_IDS[::-1]}),
+    Scenario("order_rare_types", order_rare_types, {"asc": _RARE_IDS, "desc": _RARE_IDS[::-1]}),
     Scenario("order_ties_by_name", order_ties_by_name, {"asc": ["t1", "t2", "t3"], "desc": ["t3", "t2", "t1"]}),
     Scenario("range_implicit_order_limit", range_implicit_order_limit, ["b", "d", "c"]),
     Scenario("two_range_fields_implicit_order", two_range_fields_implicit_order, ["c", "b", "a", "d"], group="composite"),
+    Scenario("two_range_fields_added_in_reverse", two_range_fields_added_in_reverse, ["c", "b", "a", "d"], group="composite"),
     Scenario("missing_field_filters_orderings", missing_field_filters_orderings,
              {"order_by": ["b", "a", "d"], "range": ["a", "d"], "is_null": ["b"], "in": ["a", "d"]}),
     Scenario("not_equal_missing_field", not_equal_missing_field, ["d"]),
     Scenario("not_equal_null_field", not_equal_null_field, ["d"]),
     Scenario("not_equal_other_type", not_equal_other_type, ["d", "s"]),
     Scenario("equality_array_contains", equality_array_contains, ["a"]),
+    Scenario("equality_array_contains_any", equality_array_contains_any, ["a", "b"]),
     Scenario("equality_order_by_missing_field", equality_order_by_missing_field, ["c", "a"], group="composite"),
     Scenario("dotted_paths", dotted_paths, {
         "doc": {"ids": {"slack": "U1", "tg": "T1"}, "usage": {"n": 2}}, "get": 2, "where": ["a"], "order_by": ["b", "a"],
@@ -412,7 +434,8 @@ SCENARIOS: List[Scenario] = [
         "all": [["d1", 0.0], ["d4", 0.0012], ["d2", 0.0061], ["d6", 0.2929], ["d3", 1.0]], "limit_2": ["d1", "d4"]},
         group="knn"),
     Scenario("knn_distance_threshold", knn_distance_threshold, {
-        "threshold_0.1": ["d1", "d4", "d2"], "no_distance_field": True, "threshold_1.0": _ALL_VECTORS}, group="knn"),
+        "threshold_0.1": ["d1", "d4", "d2"], "dist_present_when_asked": True, "dist_present_when_not_asked": False,
+        "threshold_1.0": _ALL_VECTORS}, group="knn"),
     Scenario("knn_prefilter_equality", knn_prefilter_equality, ["d1", "d2", "d6", "d3"], group="knn"),
     Scenario("knn_prefilter_range", knn_prefilter_range, ["d4", "d6", "d3"], group="knn"),
     Scenario("knn_prefilter_not_equal", knn_prefilter_not_equal, ["d1", "d4", "d3"], group="knn"),
