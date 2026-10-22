@@ -301,3 +301,13 @@ class TestDriver:
         (toy / "test_red.py").write_text("def test_red():\n    assert False\n")
         done = self.run(toy, ["test_red.py"])
         assert done.returncode == 2 and "baseline" in done.stdout
+
+
+class TestChildEnv:
+    def test_a_mutant_child_runs_slow_tests_unless_the_caller_chose_otherwise(self, monkeypatch, tmp_path):
+        from tests.support.semantic_mutants.driver import _child_env
+
+        monkeypatch.delenv("RUN_SLOW_TESTS", raising=False)
+        assert _child_env(tmp_path, {})["RUN_SLOW_TESTS"] == "1"
+        monkeypatch.setenv("RUN_SLOW_TESTS", "0")
+        assert _child_env(tmp_path, {})["RUN_SLOW_TESTS"] == "0"
