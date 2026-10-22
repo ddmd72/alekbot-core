@@ -6,7 +6,8 @@
 > brief. Spec: `docs/10_rfcs/DRIVE_FILE_NOTES_RFC.md` rev 3.2 (`§n`, `Dn`, `Nn` below refer to it). Frozen core:
 > `.superpowers/sdd/drive-notes/core-contract.md` (no signature of it is changed here; no Core delta).
 
-**Status: revised after the part-C review ("fixes needed", I1–I5 and the minors) and the arbiter's rulings.** Every code
+**Status: revised after the part-C review (I1–I5, the minors) and the re-review (its "Assembly checklist" items 1–14 are
+binding and are Task C9; the round-end livelock is fixed, D-C20).** Every code
 block below is verbatim from the part-C worktree (`plan/drive-notes-c` off `cef8f147`, commits in §7), built and tested
 there. New modules of C are given whole; edits as `git diff cef8f147` hunks.
 
@@ -28,8 +29,9 @@ the owner's signatures and (where the owner's code exists) the owner's bodies. *
 implementer working on the assembled branch skips every hunk line marked STUB and uses the owner's code. The STUBs:
 `src/domain/drive_note_merge.py` (B's five names), `src/domain/drive_note_receipt.py` (A's two renderers),
 `drive_card.owner_note_line` (B), `drive_keys.note_keys` (B; returns `()`), `DriveIndexRecord.owner_note_id` (B), B's four
-fields of `_TickNotes` and its creation line, the first block of `drive_note_setup.py` (A), the three `ServiceContainer`
-attributes (A), A's four erase keys in `ui_messages.py` and their four locale lines per language. `git grep -n "STUB (part
+fields of `_TickNotes` and B's `drive_id=` argument at its creation, B's `self._notes` attribute (always None here), the
+first block of `drive_note_setup.py` (A), the three `ServiceContainer` attributes and the repository line (A), A's four
+erase keys in `ui_messages.py` and their four locale lines per language. `git grep -n "STUB (part
 C" -- src` lists every one.
 
 ---
@@ -49,7 +51,8 @@ lifecycle:
 - **Folded at every save** (§3.4): `_save_state` folds the pending checks into the saved state — the error paths' saves
   of `saved.state` included — and never into a purging state.
 - **Round end** (§5.1 c): at the start of `_work_off`, the stored and new checks (first `NOTE_CHECKS_MAX`) are worked
-  within the tick's item-call budget: record present again → dropped; absent and `gone` → one `get_change`, archive
+  within `NOTE_ROUND_END_CALL_SHARE` (65 %) of the item calls left, an unknown check moving to the back of the list
+  (D-C20): record present again → dropped; absent and `gone` → one `get_change`, archive
   only on not-found; found → snapshot refreshed, note stays active; a per-item error, or a port answering with a
   deletion (D-C17), → kept for the next round end. `unstored` never archives (review C1).
 - **C1 cases stay active**: a noted file moved into a repository folder, a folder that gains `.git`, a folder that
@@ -62,7 +65,7 @@ lifecycle:
   find differing from the note's snapshot (`note_snapshot_due`), refresh the snapshot from the record at the round end —
   no item call.
 - **Daily audit** (§7.4) with the 7-day skip, a **pass cursor** in the sync state so a cut pass resumes and is stamped
-  at its end, and **at most `NOTE_AUDIT_CALL_SHARE` of the item calls left** (review I3, D-C7 as amended).
+  at its end, and **at most `NOTE_AUDIT_CALL_SHARE` of the item calls the round end left** (review I3, D-C7 as amended).
 - **Deleted-files search for notes** (§6.4): `drive_note_render.py` and a `DeletedSource` added to T2's existing
   `search_deleted` (`add_deleted_source`) — one result list with the transcripts; an item with both is one entry; strict
   AND over note and name keys; the labelled meaning fallback prefiltered on the current space; dormant notes labelled
@@ -97,8 +100,9 @@ notes_audit_after_at: Optional[datetime] = None       # the audit pass cursor: (
 notes_audit_after_id: str = ""                        #   a pass tried; "" = no pass running
 
 # src/domain/drive_note_lifecycle.py (pure)
-NOTE_CHECKS_STORED_MAX = 2_000; NOTE_AUDIT_CALL_SHARE = 0.65
+NOTE_CHECKS_STORED_MAX = 2_000; NOTE_ROUND_END_CALL_SHARE = 0.65; NOTE_AUDIT_CALL_SHARE = 0.65
 AuditKey = Tuple[datetime, str]
+def call_share(calls_left, share) -> int                                 # at least 1 while any is left
 def checks_of(records, why, last_seen_at) -> Tuple[NoteCheck, ...]
 def fold_checks(stored, new, cap=NOTE_CHECKS_STORED_MAX) -> Tuple[Tuple[NoteCheck, ...], int]
 def without_checks(checks, done) -> Tuple[NoteCheck, ...]
@@ -160,13 +164,13 @@ SlackAdapterFactory.create_adapter(..., drive_note_service=None); TelegramAdapte
 | `DriveIndexRecord.owner_note_id` (and the other six copy fields), carried by `_build`, written by B's merge | present | STUB: the one field |
 | `drive_keys.note_keys(text, doc_type="", life_areas=()) -> Tuple[str, ...]` | present (`drive_keys.py:583`) | STUB returning `()` |
 | `drive_note_merge.note_store_keys(content, name) -> Tuple[List[str], str]` | present (`drive_note_merge.py:107`) | STUB, B's body |
-| `drive_note_merge.NOTE_STORE_KEYS_VERSION` | **to add**: B builds the string inline; add the constant and use it inside `note_store_keys` (return value unchanged) | STUB constant |
+| `drive_note_merge.NOTE_STORE_KEYS_VERSION` | present (`drive_note_merge.py:59`, returned at :119, in `__all__`) | STUB constant |
 | `NOTE_CHECKS_MAX`, `NOTE_AUDIT_EVERY`, `NOTE_AUDIT_SKIP_DAYS` | present (`drive_note_merge.py:47-49`) | STUB, B's values |
 | `drive_card.owner_note_line(text, doc_type, life_areas)` | present (`drive_card.py:183`) | STUB, B's body |
-| `_TickNotes` / `_TICK_NOTES`, set when the note store is wired | present (`drive_indexing_service.py:537-556`, set at `:746`) | STUB: B's four fields, a C-only creation line |
+| `_TickNotes` / `_TICK_NOTES`; B's extension point `_fold_note_checks` | present (`drive_indexing_service.py:537-556`, created at :749 and the closed-gate one at :1566; `_fold_note_checks` :4637) | STUB: B's four fields and `self._notes`; the creation condition is the assembled one (store OR lifecycle) |
 | Entry (a) re-activation; entry (b) clears archived, cleared and erased copies and deletes stubs, also while the access gate is closed (core §5) | present | not needed by C's code; C9 tests it end to end |
 | §7.5 hook: when entry (a) or (b) merges a note into a record and `drive_note_lifecycle.snapshot_stale(note.snapshot, rec)`, call `note_snapshot_due(note.note_id, rec.item_id)` | **to add** (C9 step 6) | — |
-| B drops `drive_indexing_setup.drive_notes_enabled` / `build_drive_note_repository` and imports A's | **to change** (C9 step 6) | — |
+| B's kill-switch parser | already A's (`drive_notes_switch_on`, via B's own STUB `src/composition/drive_note_setup.py`); B's `indexer_main.py:164` builds the store inline | — (C9 items 4, 7) |
 
 ### 2.3 Part C needs from part A (S1 rest)
 
@@ -393,7 +397,8 @@ The round end's and the audit's period constants are part B's (`drive_note_merge
 NOTE_AUDIT_SKIP_DAYS, RFC §15); the two caps below are this module's.
 
 Public interface:
-    NOTE_CHECKS_STORED_MAX, NOTE_AUDIT_CALL_SHARE
+    NOTE_CHECKS_STORED_MAX, NOTE_ROUND_END_CALL_SHARE, NOTE_AUDIT_CALL_SHARE
+    call_share(calls_left, share) -> int                               # the item calls a step may take
     checks_of(records, why, last_seen_at) -> Tuple[NoteCheck, ...]     # the deleted records that carried a note
     fold_checks(stored, new, cap=NOTE_CHECKS_STORED_MAX) -> Tuple[Tuple[NoteCheck, ...], int]
     without_checks(checks, done) -> Tuple[NoteCheck, ...]
@@ -426,6 +431,9 @@ NOTE_CHECKS_STORED_MAX = 2_000
 # probes, parent lookups, re-listings and access re-checks of the same tick always keep the rest; with the default 20
 # calls it reads 13, so a pass over 25 notes that all fail ends in two ticks
 NOTE_AUDIT_CALL_SHARE = 0.65
+# §7.1, D-C20: the round end, which runs first, takes at most this share of the item calls left, and the audit then takes
+# NOTE_AUDIT_CALL_SHARE of what remains: with the default 20 calls, 13 for the round end, then 4 for the audit, 3 kept
+NOTE_ROUND_END_CALL_SHARE = 0.65
 
 AuditKey = Tuple[datetime, str]      # (snapshot_at, note_id); a note never snapshotted sorts first
 _NEVER = datetime.min.replace(tzinfo=timezone.utc)
@@ -456,6 +464,14 @@ def fold_checks(stored: Sequence[NoteCheck], new: Sequence[NoteCheck],
 def without_checks(checks: Sequence[NoteCheck], done: Collection[str]) -> Tuple[NoteCheck, ...]:
     """The checks still to do: those whose note is not in `done`."""
     return tuple(c for c in checks if c.note_id not in done)
+
+
+def call_share(calls_left: int, share: float) -> int:
+    """The item calls a notes step may take of `calls_left` (D-C18, D-C20): `share` of them, at least one while any is
+    left (a tick with a single call still makes progress), none when none is left."""
+    if calls_left <= 0:
+        return 0
+    return max(1, int(calls_left * share))
 
 
 def audit_due(audited_at: Optional[datetime], now: datetime) -> bool:
@@ -573,7 +589,7 @@ def snapshot_from_record(old: Optional[NoteSnapshot], rec: DriveIndexRecord, *, 
 ```
 
 **New tests.** `tests/unit/domain/test_drive_note_lifecycle_rules.py`: the why words equal the mirror's; C's two caps
-(and 13 of 20 calls) and B's imported values; `checks_of`; `fold_checks` (one per note, later why in place, tail cut with
+(and 13 of 20 calls) and B's imported values; `call_share` (13 of 20, 4 of 7, at least one, none of none); `checks_of`; `fold_checks` (one per note, later why in place, tail cut with
 the count); `without_checks`; `audit_due`; `audit_candidates` (active, drive and provider, 7-day skip, never-seen first;
 dormant / other provider / archived / cleared / stub out); a resumed pass starts after the cursor; `audit_cursor` from
 the state; `chain_path`; `refreshed_snapshot`; `moved_snapshot`; `record_moved`; `snapshot_stale`;
@@ -596,7 +612,7 @@ from src.domain.drive_note import (
 from src.domain.drive_note_check import WHY_GONE, WHY_UNSTORED, NoteCheck
 from src.domain.drive_index import DriveSyncState
 from src.domain.drive_note_lifecycle import (
-    NOTE_AUDIT_CALL_SHARE, NOTE_CHECKS_STORED_MAX, audit_candidates, audit_cursor, audit_due, audit_key, chain_path,
+    NOTE_AUDIT_CALL_SHARE, NOTE_CHECKS_STORED_MAX, NOTE_ROUND_END_CALL_SHARE, audit_candidates, call_share, audit_cursor, audit_due, audit_key, chain_path,
     checks_of, fold_checks, moved_snapshot, record_moved, refreshed_snapshot, snapshot_from_record, snapshot_stale,
     without_checks,
 )
@@ -625,6 +641,13 @@ def test_the_parameters():
     """C's two caps; the period constants are part B's (drive_note_merge, RFC §15), imported."""
     assert NOTE_CHECKS_STORED_MAX == 2000 and NOTE_AUDIT_CALL_SHARE == 0.65
     assert int(20 * NOTE_AUDIT_CALL_SHARE) == 13          # of the default ITEM_CALLS_PER_TICK: 7 stay for the tick
+    assert NOTE_ROUND_END_CALL_SHARE == 0.65
+
+
+def test_call_share():
+    """D-C18, D-C20: the share of the calls left, at least one while any is left, none when none is."""
+    assert call_share(20, 0.65) == 13 and call_share(7, 0.65) == 4 and call_share(1, 0.65) == 1
+    assert call_share(0, 0.65) == 0 and call_share(-1, 0.65) == 0
     assert NOTE_CHECKS_MAX == 500 and NOTE_AUDIT_EVERY == timedelta(hours=24) and NOTE_AUDIT_SKIP_DAYS == 7
 
 
@@ -762,7 +785,8 @@ class TestRecordSnapshots:
 
 **Goal.** The indexer's note-store side of §7.1, §7.4, §7.5 and §10, injected into the tick (REQ-ARCH-22). A per-item
 drive error, or a port answering with a deletion, keeps the check; a systemic one (not connected, throttled)
-propagates; a note-store failure is logged at ERROR and keeps the check (§10). The audit moves its pass cursor over every
+propagates; a note-store failure is logged at ERROR and keeps the check (§10). An unknown check moves to the back of
+the kept list (D-C20). The audit moves its pass cursor over every
 note it tries, whatever the outcome, and stamps `notes_audited_at` (clearing the cursor) when the pass ends.
 
 ```python
@@ -846,7 +870,9 @@ class DriveNoteLifecycle:
         """Work the first NOTE_CHECKS_MAX of `state.note_checks` (the caller folds the tick's new checks in first).
         Returns the state without the checks that are done, their note ids (the caller drops them from its
         accumulator too) and counters for the tick line. `take_item_call` spends one item call of the tick's budget
-        (False: none left, the check waits); `fence` raises LeaseLost once the lease is ending."""
+        (False: none left, the check waits; the tick gives the round end NOTE_ROUND_END_CALL_SHARE of its calls left);
+        `fence` raises LeaseLost once the lease is ending. A check whose read says nothing (unknown) moves to the back
+        of the list, so a run of checks that keep failing rotates instead of starving the rest (D-C20)."""
         checks = state.note_checks[:NOTE_CHECKS_MAX]
         if not checks:
             return state, frozenset(), {}
@@ -860,6 +886,7 @@ class DriveNoteLifecycle:
         cache: Dict[str, Optional[DriveRecordLean]] = dict(
             await self._index.get_records_lean(user_id, [c.item_id for c in checks]))
         done: Set[str] = set()
+        rotated: Set[str] = set()                # unknown this round end: to the back of the list (D-C20)
         for check in checks:
             note = notes.get(check.note_id)
             if note is None or cache.get(check.item_id) is not None or not self._bound_to(note, check.item_id,
@@ -874,6 +901,7 @@ class DriveNoteLifecycle:
                 continue                         # past the item-call budget: the next round end
             verdict, change = await self._observe(user_id, check.item_id)
             if verdict == _UNKNOWN:
+                rotated.add(check.note_id)
                 _inc(counts, "note_checks_unknown")
                 continue
             if change is not None:                # found
@@ -888,7 +916,10 @@ class DriveNoteLifecycle:
             if await self._archive(user_id, note, check.last_seen_at, state.root_item_id, cache, fence):
                 done.add(check.note_id)
                 _inc(counts, "notes_archived")
-        kept = tuple(c for c in state.note_checks if c.note_id not in done)
+        # D-C20: a check whose read said nothing goes to the back, so checks that keep failing cannot hold the front of
+        # the list (and every item call of the round end) for ever; the others keep their order
+        kept = (tuple(c for c in state.note_checks if c.note_id not in done and c.note_id not in rotated)
+                + tuple(c for c in state.note_checks if c.note_id in rotated))
         if counts:
             logger.info(f"[DriveNote] round end for {user_id[:8]}: checks={len(checks)} done={len(done)} "
                         f"kept={len(kept)} " + " ".join(f"{k}={v}" for k, v in sorted(counts.items())))
@@ -1102,12 +1133,14 @@ is unknown and keeps the check**.
 **Goal.** Wire C3 into `DriveIndexingService` with no change for a tick without the lifecycle: C's fields on B's
 `_TickNotes` (the four B fields and the creation line are STUBs here — see C9 step 4), the notice hook in
 `_mirror_notices`, the delete-only check in `_commit` (`_take_noticed` before the early return, `_note_deleted` after
-`delete_records`), the §7.5 hook in `_apply`, the fold in `_save_state`, the round end + audit (within
-`NOTE_AUDIT_CALL_SHARE` of the calls left) + refresh at the start of `_work_off`, the constructor parameter.
+`delete_records`), the §7.5 hook in `_apply`, the fold in `_save_state`, the round end (within
+`NOTE_ROUND_END_CALL_SHARE` of the calls left, `call_share`) + audit (within `NOTE_AUDIT_CALL_SHARE` of what the round
+end left) + refresh at the start of `_work_off`, the constructor parameter. `_TickNotes` is created when the note store
+(B) **or** the lifecycle (C) is wired.
 
 ```diff
 diff --git a/src/services/drive_indexing_service.py b/src/services/drive_indexing_service.py
-index 7983cbaf..5f539681 100644
+index 7983cbaf..5640bbe9 100644
 --- a/src/services/drive_indexing_service.py
 +++ b/src/services/drive_indexing_service.py
 @@ -11,7 +11,7 @@ Public interface:
@@ -1136,16 +1169,26 @@ index 7983cbaf..5f539681 100644
  """
  from __future__ import annotations
  
-@@ -137,6 +147,8 @@ from ..domain import drive_mirror_plan as mirror_versions
+@@ -137,6 +147,10 @@ from ..domain import drive_mirror_plan as mirror_versions
  from ..domain.drive_mirror import GONE, UNKNOWN, UNSTORED, DeletionNotice, MirrorRoot
  from ..domain.drive_mirror_plan import local_day, mirror_plan
  from ..domain.drive_mirror_render import MirrorStrings
 +from ..domain.drive_note_check import NoteCheck
-+from ..domain.drive_note_lifecycle import NOTE_AUDIT_CALL_SHARE, checks_of, fold_checks, record_moved
++from ..domain.drive_note_lifecycle import (
++    NOTE_AUDIT_CALL_SHARE, NOTE_ROUND_END_CALL_SHARE, call_share, checks_of, fold_checks, record_moved,
++)
  from ..domain.language import LanguageCode
  from ..domain.ui_messages import UIMessage
  from ..domain.drive_profile import (
-@@ -183,6 +195,7 @@ from ..ports.user_repository import UserRepository
+@@ -172,6 +186,7 @@ from ..domain.user_drive import (
+ from ..ports.content_extractor_port import ContentExtractorPort
+ from ..ports.document_profiler_port import DocumentProfilerPort
+ from ..ports.drive_index_repository import DriveIndexRepository
++from ..ports.drive_note_repository import DriveNoteRepository
+ from ..ports.drive_mirror_repository import DriveMirrorRepository
+ from ..ports.embedding_service import EmbeddingService
+ from ..ports.image_triage_port import ImageTriagePort
+@@ -183,6 +198,7 @@ from ..ports.user_repository import UserRepository
  from ..utils.logger import exc_brief, logger
  
  if TYPE_CHECKING:   # REQ-ARCH-22: a service never imports another at run time; the stage is injected
@@ -1153,7 +1196,7 @@ index 7983cbaf..5f539681 100644
      from .drive_transcript_mirror import DriveTranscriptMirror
      from .drive_transcript_stage import DriveTranscriptStage
      from .localization_service import LocalizationService
-@@ -511,6 +524,48 @@ class _Mirror:
+@@ -511,6 +527,48 @@ class _Mirror:
  
  # Per tick: None outside a tick or with no mirror repository wired (no root ids, no marks).
  _TICK_MIRROR: ContextVar[Optional[_Mirror]] = ContextVar("drive_tick_mirror", default=None)
@@ -1202,7 +1245,7 @@ index 7983cbaf..5f539681 100644
  # What makes the tick read the marked records again for its counters: it changed a marking itself (review of S1)
  _MARK_CHANGES = ("inaccessible", "inaccessible_folders", "inaccessible_rechecked", "access_regained")
  
-@@ -570,6 +625,7 @@ class DriveIndexingService:
+@@ -570,6 +628,7 @@ class DriveIndexingService:
                   mirror: Optional["DriveTranscriptMirror"] = None,
                   localization: Optional["LocalizationService"] = None,
                   language: Optional[LanguageServicePort] = None,
@@ -1210,23 +1253,27 @@ index 7983cbaf..5f539681 100644
                   clock: Callable[[], datetime] = _utcnow, monotonic: Callable[[], float] = time.monotonic) -> None:
          if mirror is not None and (mirror_repo is None or localization is None or language is None):
              raise ValueError("the transcript mirror step needs the mirror repository, the localization service and "
-@@ -609,6 +665,8 @@ class DriveIndexingService:
+@@ -609,6 +668,10 @@ class DriveIndexingService:
          # the step could not start (its UI language or strings unreadable), per user: the same ladder, held off the
          # reserve only (`_note_step_unavailable`; process memory only)
          self._mirror_step_holds: Dict[str, Tuple[int, datetime]] = {}
 +        # owner notes' round-end checks and daily audit (DRIVE_FILE_NOTES_RFC §7); None: the kill switch is off
 +        self._note_lifecycle = note_lifecycle
++        # STUB (part C's worktree only): part B's note store (its `notes=` parameter); always None here
++        self._notes: Optional[DriveNoteRepository] = None
          self._clock = clock
          self._monotonic = monotonic
          self._gate_checked: Dict[str, float] = {}
-@@ -695,10 +753,15 @@ class DriveIndexingService:
+@@ -695,10 +758,17 @@ class DriveIndexingService:
          if transcription.on:
              transcription.host = _TickHost(self, user_id, budget, models, summary, transcription)
          transcription_token = _TICK_TRANSCRIPTION.set(transcription)
-+        # STUB condition (part C's worktree only): the assembly keeps part B's line — `_TickNotes(drive_id=…)` when the
-+        # note store is wired — and adds `lifecycle=self._note_lifecycle is not None, last_seen_at=state.observed_as_of`
-+        notes_token = _TICK_NOTES.set(_TickNotes(lifecycle=True, last_seen_at=state.observed_as_of)
-+                                      if self._note_lifecycle is not None else None)
++        # The tick's note context: when the note store (part B) OR the lifecycle (part C) is wired — B's own code checks
++        # `self._notes` itself. STUB (part C's worktree only): B's `drive_id=…` argument; the assembly keeps B's
++        # argument and this condition and these two C arguments
++        notes_token = _TICK_NOTES.set(
++            _TickNotes(lifecycle=self._note_lifecycle is not None, last_seen_at=state.observed_as_of)
++            if self._notes is not None or self._note_lifecycle is not None else None)
          try:
              return await self._run_spending(user_id, state, nudge, now, enabled, budget, summary, cont, saved,
                                              models, spend, connection)
@@ -1235,7 +1282,7 @@ index 7983cbaf..5f539681 100644
              _TICK_MIRROR.reset(mirror_token)
              _TICK_TRANSCRIPTION.reset(transcription_token)
              _TICK_CLOSED.reset(closed_token)
-@@ -988,6 +1051,9 @@ class DriveIndexingService:
+@@ -988,6 +1058,9 @@ class DriveIndexingService:
                  plan = replace(plan, upsert=schedule(plan.upsert, ctx.now, first_seen=False))
              if plan.delete_item_id is not None and existing is not None:
                  gone.update(self._mirror_notices([existing], GONE if change.deleted else UNSTORED))
@@ -1245,7 +1292,7 @@ index 7983cbaf..5f539681 100644
              self._fold(plan, cache, writes, deletes, collects)
          await self._observe_closed_children(user_id, ctx, changes, cache, writes, deletes)
          # a delete re-upserted later in the page left `deletes` (`_fold`): `_commit` drops its notice with it
-@@ -1091,6 +1157,7 @@ class DriveIndexingService:
+@@ -1091,6 +1164,7 @@ class DriveIndexingService:
          if before:
              dropped = {w.item_id for w in writes if drops_readable(before.get(w.item_id), w)}
              collects = (collects or set()) | dropped if dropped else collects
@@ -1253,7 +1300,7 @@ index 7983cbaf..5f539681 100644
          if not writes and not deletes and not collects:
              return
          _fence()
-@@ -1112,10 +1179,18 @@ class DriveIndexingService:
+@@ -1112,10 +1186,18 @@ class DriveIndexingService:
              await self._clear_root_marks(user_id, mirror, writes)
          if deletes:
              await self._repo.delete_records(user_id, sorted(deletes))
@@ -1273,7 +1320,7 @@ index 7983cbaf..5f539681 100644
          mirror = _TICK_MIRROR.get()
          roots = mirror.root_ids if mirror is not None else frozenset()
          return {r.item_id: why for r in records if r.mirrored_digest or r.item_id in roots}
-@@ -1174,6 +1249,8 @@ class DriveIndexingService:
+@@ -1174,6 +1256,8 @@ class DriveIndexingService:
          cheap steps right after the sweep, and its extraction step right after the due loop. With the mirror step
          wired as well (§27.9.5): it runs last, whatever class the due loop stopped at, and while the user has mirror
          work it can do now the steps before it leave it MIRROR_RESERVE_S (Δ209, `_mirror_ready`, decided here once)."""
@@ -1282,7 +1329,7 @@ index 7983cbaf..5f539681 100644
          if _transcribing() and await self._mirror_ready(user_id):
              budget.mirror_reserve = MIRROR_RESERVE_S
          if state.epoch_phase is EpochPhase.SWEEPING:
-@@ -1200,6 +1277,44 @@ class DriveIndexingService:
+@@ -1200,6 +1284,46 @@ class DriveIndexingService:
  
      # -- the transcript mirror's step (§27.9.5; plan Task 21C) ---------------------------------------------------
  
@@ -1298,26 +1345,28 @@ index 7983cbaf..5f539681 100644
 +            return state
 +        state = replace(state, note_checks=fold_checks(state.note_checks, list(acc.pending.values()))[0])
 +
-+        def take_item_call() -> bool:
-+            if not budget.item_call_allowed():
-+                return False
-+            budget.item_calls -= 1
-+            return True
++        def taker(share: float) -> Callable[[], bool]:
++            """One step's item calls: at most `share` of those left now (`call_share`), each also within the budget.
++            The rest stays for the tick's own probes, parent lookups, re-listings and access re-checks."""
++            left = [call_share(budget.item_calls, share)]
 +
-+        state, done, counts = await lifecycle.round_end(user_id, state, take_item_call=take_item_call, fence=_fence)
++            def take() -> bool:
++                if left[0] <= 0 or not budget.item_call_allowed():
++                    return False
++                budget.item_calls -= 1
++                left[0] -= 1
++                return True
++
++            return take
++
++        # §7.1 and D-C20: the round end first, within NOTE_ROUND_END_CALL_SHARE of the calls left; then §7.4 the audit,
++        # within NOTE_AUDIT_CALL_SHARE of what the round end left
++        state, done, counts = await lifecycle.round_end(user_id, state, take_item_call=taker(NOTE_ROUND_END_CALL_SHARE),
++                                                        fence=_fence)
 +        for note_id in done:
 +            acc.pending.pop(note_id, None)
-+        # §7.4: the audit takes at most NOTE_AUDIT_CALL_SHARE of the item calls left, the rest stays for the tick's own
-+        # probes, parent lookups, re-listings and access re-checks
-+        audit_left = [int(max(budget.item_calls, 0) * NOTE_AUDIT_CALL_SHARE)]
-+
-+        def take_audit_call() -> bool:
-+            if audit_left[0] <= 0 or not take_item_call():
-+                return False
-+            audit_left[0] -= 1
-+            return True
-+
-+        state, audited = await lifecycle.audit(user_id, state, take_item_call=take_audit_call, fence=_fence)
++        state, audited = await lifecycle.audit(user_id, state, take_item_call=taker(NOTE_AUDIT_CALL_SHARE),
++                                               fence=_fence)
 +        moved, acc.moved = dict(acc.moved), {}
 +        refreshed = await lifecycle.refresh_moved(user_id, state, moved, fence=_fence)
 +        for key, value in (*counts.items(), *audited.items(), *refreshed.items()):
@@ -1327,7 +1376,7 @@ index 7983cbaf..5f539681 100644
      def _mirror_wired(self) -> bool:
          return self._mirror is not None and _TICK_MIRROR.get() is not None
  
-@@ -3879,7 +3994,7 @@ class DriveIndexingService:
+@@ -3879,7 +4003,7 @@ class DriveIndexingService:
  
      async def _save_state(self, state: DriveSyncState) -> None:
          _fence()
@@ -1336,7 +1385,7 @@ index 7983cbaf..5f539681 100644
  
      def _upgrade_due(self, state: DriveSyncState) -> bool:
          """The version constants or the embedding space differ from what the index was last verified under."""
-@@ -4198,6 +4313,52 @@ def _card_rescheduled(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
+@@ -4198,6 +4322,52 @@ def _card_rescheduled(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
      return rec
  
  
@@ -1409,7 +1458,10 @@ throttled round end, carry-over past `NOTE_CHECKS_MAX` and the item-call budget,
 `TestPurgeNeverArchives` (opt-out, rebuild, access loss past the grace, another drive); `TestWithoutTheLifecycle`;
 `test_the_why_follows_the_delete_site`; `TestSnapshotRefresh` (rename and move, unchanged observation, folder rename
 residual, the hook outside a tick); **`TestOnlyRecordsThatLeft`** (a rescope that keeps its children and an upgrade page
-report no check). Plus `test_drive_note_audit.py` (C3).
+report no check); **`TestTheTickHasItsNoteContext`** (guard: a deleted noted record yields a non-empty `note_checks` —
+fails if `_TickNotes` is None); **`TestRoundEndRotation`** (D-C20: 25 checks that keep failing, 20 calls: 13 read per
+tick, the unknown ones moved to the back in order, a full rotation in two ticks, 7 calls kept each tick, nothing lost).
+Plus `test_drive_note_audit.py` (C3).
 
 <details><summary>tests/unit/services/drive_note_world.py</summary>
 
@@ -1930,6 +1982,63 @@ class TestOnlyRecordsThatLeft:
         await w.settle()
         assert w.rec(a) is not None and (await w.state()).note_checks == ()
         assert w.note(nid).state == NoteState.ACTIVE.value
+
+
+class TestTheTickHasItsNoteContext:
+
+    async def test_a_deleted_noted_record_yields_a_check(self, w):
+        """Re-review item 9 guard: the tick's `_TickNotes` exists whenever the lifecycle is wired (this world wires no
+        note store), so a deleted noted record is collected. Fails if the context is None."""
+        a, nid = await _noted(w)
+        w.drive.delete(a)
+
+        async def broken(*args, **kwargs):
+            raise RuntimeError("round end broke")
+
+        w.lifecycle.round_end = broken
+        await w.tick()
+        checks = (await w.state()).note_checks
+        assert checks and checks[0].note_id == nid and checks[0].item_id == a
+
+
+class TestRoundEndRotation:
+    """D-C20: 25 checks whose reads keep failing, the default 20 item calls a tick. The round end takes 13 per tick
+    (NOTE_ROUND_END_CALL_SHARE), moves every unknown check to the back, so it completes a rotation over all 25 in two
+    ticks, and each tick keeps the rest of its calls."""
+
+    async def test_failing_checks_rotate_and_never_starve_the_tick(self, w, monkeypatch):
+        budgets = []
+        real_budget = svc_mod._Budget
+
+        def budget(*args, **kwargs):
+            made = real_budget(*args, **kwargs)
+            budgets.append(made)
+            return made
+
+        monkeypatch.setattr(svc_mod, "_Budget", budget)
+        items = [w.drive.add(f"f{i:02d}.pdf") for i in range(25)]
+        await w.settle()
+        for i in items:
+            w.note_on(i)
+        reads = []
+
+        async def failing(user_id, item_id):
+            reads.append(item_id)
+            raise TimeoutError("slow")
+
+        for i in items:
+            w.drive.delete(i)
+        w.drive.get_change = failing
+        await w.tick()
+        assert len(reads) == 13 and budgets[-1].item_calls == 7
+        first = list(reads)
+        order = [c.item_id for c in (await w.state()).note_checks]
+        assert order[-13:] == first                          # the unknown ones went to the back, in order
+        await w.tick()
+        assert set(reads) == set(items) and len(reads) == 26  # a full rotation (and the first one again)
+        assert budgets[-1].item_calls == 7
+        assert all(w.note(f"n-{i}").state == NoteState.ACTIVE.value for i in items)
+        assert len((await w.state()).note_checks) == 25        # nothing lost
 ```
 
 </details>
@@ -3588,7 +3697,7 @@ index 2f4a52cc..13d598a7 100644
 
 ```diff
 diff --git a/src/composition/service_container.py b/src/composition/service_container.py
-index 873f374c..45d18c7b 100644
+index 873f374c..30b5ba21 100644
 --- a/src/composition/service_container.py
 +++ b/src/composition/service_container.py
 @@ -57,12 +57,17 @@ from ..adapters.microsoft import OneDriveAdapter
@@ -3625,7 +3734,7 @@ index 873f374c..45d18c7b 100644
                  transcribe_cap_usd=effective_monthly_cap(os.getenv("DRIVE_TRANSCRIBE_USD_CAP")),
                  mirror=self.drive_mirror_repo,
              )
-+            self.drive_note_repo = build_drive_note_repository(db_client, env_config)   # STUB: part A builds it
++            self.drive_note_repo = build_drive_note_repository(db_client, env_config)   # STUB (part C's worktree only): part A builds it
 +            # Owner notes on deleted files join the same deleted-files section (DRIVE_FILE_NOTES_RFC §6.4, §0.3); a
 +            # read, so added whatever DRIVE_NOTES_ENABLED says (§3.6), over part A's store.
 +            add_drive_note_deleted_source(self.drive_search_service, self.drive_note_repo, self.embedding_service,
@@ -3968,59 +4077,87 @@ def test_both_main_sites_pass_the_gated_service():
 ### Task C9 — assembly with parts A and B (Opus; after A and B are in the branch)
 
 **Goal.** One definition per symbol (the ownership table), C's code on the owners' names, and the end-to-end invariants
-that need B's merge. Steps, in order; each ends with `ruff check src` and the C test files green.
+that need B's merge. The re-review's assembly checklist, items 1–14, in order; each step ends with `ruff check src` and
+the C test files green.
 
-1. **Drop C's STUB files**: `src/domain/drive_note_merge.py` and `src/domain/drive_note_receipt.py` (keep B's and A's
-   modules). In B's `drive_note_merge.py` add `NOTE_STORE_KEYS_VERSION = f"{KEYS_VERSION}.{NOTE_KEYS_VERSION}"` and
-   return it from `note_store_keys` (the value is unchanged); export it in `__all__`.
-2. **Drop C's STUB lines** in `drive_card.py` (`owner_note_line`, B's stays), `drive_keys.py` (`note_keys`, B's stays),
-   `drive_index.py` (`owner_note_id`, B's fields stay), `ui_messages.py` (A's four erase keys, A's stay) and the four
-   locale files (A's erase lines, A's stay). Note: B's `owner_note_line` keeps `legal_admin` as written; C's tests compare
-   through the function, so they pass.
-3. **`drive_note_setup.py`**: A's module; append C's part (C7) and its imports; drop C's STUB block. A adds
-   `build_drive_note_repository(db_client, env_config)` and builds `DriveNoteService` on the container's repository;
-   `ServiceContainer` exposes `drive_note_repo` (A). Drop C's three STUB attributes; move C's
-   `add_drive_note_deleted_source(self.drive_search_service, self.drive_note_repo, …)` below A's block (same condition:
-   the drive pair exists). In `drive_indexing_setup.py` B drops `drive_notes_enabled` and `build_drive_note_repository`
-   and its callers use A's `drive_notes_switch_on` / `build_drive_note_repository`.
-4. **`_TickNotes`**: keep B's class; add C's six fields (`lifecycle`, `last_seen_at`, `noticed`, `pending`,
-   `dropped_logged`, `moved`) and `checks_onto` to it; drop C's STUB field block. B's creation line becomes
-   `_TickNotes(drive_id=…, lifecycle=self._note_lifecycle is not None, last_seen_at=state.observed_as_of) if self._notes
-   is not None else None`; drop C's STUB creation line. `_save_state` keeps `_note_checks_onto` (every save); B's
-   `_notes_onto` calls stay at B's sites (they set B's rescan fields; both read the one `_TickNotes`).
-5. **Indexer**: one store — C's `notes_on` / `note_repo` lines replace B's `notes = build_drive_note_repository(…,
-   enabled=…)`; pass `notes=note_repo` (B) and `note_lifecycle=note_lifecycle` (C).
-6. **B's §7.5 hook**: where entry (a) merges (`_commit`'s lookup) and entry (b) reconciles (the notes step), after a merge
-   of an `active` note, `if snapshot_stale(note.snapshot, rec): note_snapshot_due(note.note_id, rec.item_id)`.
-7. **`ConversationHandler`**: both hunk sets apply (A's `_deliver_drive_note_receipt`, C's kwarg and command); one import
-   line `from ..domain.drive_note_receipt import render_drive_note_erase, render_drive_note_erased,
-   render_drive_note_receipt`.
-8. **Fixture tests**: the reviewer's one edit (C1's expected-risk list) for A's, B's and C's fields.
-9. **Skill nit (D-C16)**: B's `drive-search` deleted-files line gains "a `drive_note:` ref works only with
-   annotate_drive_file".
-10. **Check**: `git grep -n "STUB (part C" -- src` is empty.
-11. **Invariant tests**, new file `tests/unit/services/test_drive_note_invariants.py`, over the real tick (B's entries,
-    C's lifecycle), the real `DriveNoteService` (writes by `set`, `clear`, `undo`, `request_erase` + `erase`, refs as A's
-    tool passes them) and the real `DriveSearchService` (with C's source added). One parametrised case per row; every row
-    checks **A1**: `DriveSearchService.search(<a note word>)` renders neither the note's text nor its `drive_note:` ref,
-    and **A2**: no index record carries the note's id (`owner_note_id`) — except where the row says otherwise.
+**Part A**
+1. Add `build_drive_note_repository(db_client, env_config) -> DriveNoteRepository` to A's `drive_note_setup.py` (body
+   `return FirestoreDriveNoteRepository(db_client, env_config)`) and to its `__all__`.
+2. `build_drive_note_service` takes the repository: a keyword `notes: DriveNoteRepository`, used in place of the
+   `FirestoreDriveNoteRepository(db_client, env_config)` it builds today; the erase store stays inside A's builder.
+3. `ServiceContainer`: in A's block (`if self.user_drive is not None and self.drive_index_repo is not None`), set
+   `self.drive_note_repo = build_drive_note_repository(db_client, env_config)` and build the service with
+   `notes=self.drive_note_repo`; under the same condition call C's
+   `add_drive_note_deleted_source(self.drive_search_service, self.drive_note_repo, self.embedding_service,
+   embedding_space=GeminiEmbeddingAdapter.EMBEDDING_SPACE)`. Delete C's three STUB attributes and C's STUB repository
+   line (both marked "STUB (part C").
+4. `src/composition/drive_note_setup.py`: A's module is the one kept. Append C's part (C7: from `# -- part C` to the end,
+   with its imports). Delete C's STUB block **and B's STUB copy of the file** (B's worktree has one: A's replaces both).
+5. Delete C's `src/domain/drive_note_receipt.py`, C's four STUB erase keys in `ui_messages.py` and the four STUB locale
+   lines in each language (A's lines are byte-identical to them in all four languages).
 
-    | Row (§8, D-ref) | Setup → event | A1 / A2 | And |
-    |---|---|---|---|
-    | delete in OneDrive | note a file; tombstone; next tick | A1, A2 | `search_deleted` shows it, `drive_note:` ref |
-    | move out of the App Folder | the feed's tombstone; `get_change` 404 | A1, A2 | archived |
-    | folder cascade | note the folder and a child; delete the folder; two ticks | A1, A2 for both | both archived |
-    | D21 edit of an archived note | archived; `set` by `drive_note:` ref, new text; tick | A1 on the new and the old text, A2 | still archived; `search_deleted` finds the new text |
-    | D21 undo of an archived note | archived; `undo` by ref | A1, A2 | still archived |
-    | clear then undo of an archived note | archived; `clear`; `undo` | A1, A2 after each | cleared with `archived_at`, then archived again |
-    | another drive connected (D16) | note on d1; purge to d2; onboard; same-content file on d2 | A1, A2 (the d2 record) | dormant in `search_deleted`, labelled |
-    | re-upload (D15) | archived; a new item, same name and content | A1, A2 (the new record) | the old note stays archived |
-    | copy (D8) | a copy of a noted live file | A2 for the copy's record; A1 shows only the original | the original keeps the note |
-    | erase of an archived note | archived; `request_erase` + `erase` | A1, A2 | stub deleted by the next tick; `search_deleted` empty |
-    | restore (§7.2) | archived; the same item id reappears | **inverse**: A1 finds the note on the record's card, A2 the record carries the id | `active`, `bound_by = restore` |
-    | transcript + note on one gone item | a transcribed recording with a note; delete | A1, A2 | `search_deleted`: one entry with both lines |
+**Part B**
+6. `NOTE_STORE_KEYS_VERSION` already exists in B (`drive_note_merge.py:59`, returned at :119, exported): add nothing.
+   Delete C's STUB `src/domain/drive_note_merge.py` (B's module stays).
+7. B's kill-switch parser is already A's, and B's `drive_indexing_setup.py` has no notes code. In `indexer_main.py`
+   replace B's line 164 (`notes = FirestoreDriveNoteRepository(db, env_config) if notes_on else None`) with C's
+   `note_repo = build_drive_note_repository(db, env_config) if notes_on else None` (import it from A's module), keep B's
+   `notes_on` line, add C's `note_lifecycle = build_drive_note_lifecycle(enabled=notes_on, notes=note_repo,
+   index=index_repo, drive=drive)`, and pass `notes=note_repo, note_lifecycle=note_lifecycle` to `DriveIndexingService`.
+8. Delete C's STUB lines in `drive_card.py` (`owner_note_line`), `drive_keys.py` (`note_keys`) and `drive_index.py`
+   (`owner_note_id`); B's definitions stay (B's `owner_note_line` takes a tuple; C passes a tuple).
+9. `_TickNotes`: keep B's class (`drive_id` stays required there); add C's six fields (`lifecycle`, `last_seen_at`,
+   `noticed`, `pending`, `dropped_logged`, `moved`) and `checks_onto`; delete C's STUB field block and C's STUB
+   `self._notes = None` line. The creation in `_run` is
+   `_TickNotes(drive_id=(connection.drive_id if connection is not None else "") or state.drive_id,
+   lifecycle=self._note_lifecycle is not None, last_seen_at=state.observed_as_of) if self._notes is not None or
+   self._note_lifecycle is not None else None` — **the store OR the lifecycle**: C's test world wires the lifecycle
+   without `notes=`, and B's code checks `self._notes is None` itself (`_lookup_notes`, `_notes_step`). B's closed-gate
+   `_TickNotes(drive_id=…)` (B :1566) stays as it is, with `lifecycle=False` (no delete happens behind a closed gate).
+   C's guard test `TestTheTickHasItsNoteContext` fails if this is wrong.
+10. Fold paths. In the `_save_state` conflict take C's: `_note_checks_onto(state)` on **every** save. B's `_notes_onto`
+    calls stay at B's final and error sites. B's extension point `_fold_note_checks` (B :4637) stays a no-op **or** is
+    deleted (then `_fold_tick_notes` is `notes.onto`). Rewrite B's `_TickNotes` docstring (drop "Part C folds its archive
+    checks in `onto` too") and B's EXTENSION POINT comment (drop "the one fold-on-save beside `onto`") to say: C's
+    checks are folded by `_TickNotes.checks_onto` through `_note_checks_onto` in `_save_state`, at every save. Never
+    drop the `_save_state` fold: mid-tick page saves would lose checks.
+11. `_commit` conflict: keep B's entry (a) (`_lookup_notes`), C's `noticed = _take_noticed()` before the early return —
+    and before the first `await` —, and C's `_note_deleted(noticed, deletes)` after `delete_records`.
+12. The §7.5 hook in B's entries: in `_lookup_notes` (entry a) and in `_merge_notes` (entry b, from `_notes_step`), after
+    an `active` note is merged into `rec`: `if snapshot_stale(note.snapshot, rec): note_snapshot_due(note.note_id,
+    rec.item_id)` (imports from `drive_note_lifecycle` and the tick module's own function). Order is right: observe, the
+    notes step, then the work-off's round end. With no work-off, or behind a closed gate, the refresh is dropped (D-C8).
+13. Fixture tests, one reviewer edit: `full_state()` gets C's four fields (`note_checks`, `notes_audited_at`,
+    `notes_audit_after_at`, `notes_audit_after_id`) and B's eight; `full_record()` gets B's seven.
+14. Check: `git grep -n "STUB" -- src` shows no part-C worktree marker (`git grep -n "STUB (part C" -- src` is empty);
+    the remaining hits are the transcript stubs and `STUB_FIELDS`.
 
-**Done.** Steps 1-10 done; the new invariant file green; `make check` green except reviewer-decided fixture tests.
+**Then** the D-C16 skill nit (B's `drive-search` deleted-files line gains "a `drive_note:` ref works only with
+annotate_drive_file"), one `ConversationHandler` import line for A's three renderers
+(`render_drive_note_erase, render_drive_note_erased, render_drive_note_receipt`), and the invariant tests.
+
+**Invariant tests**, new file `tests/unit/services/test_drive_note_invariants.py`, over the real tick (B's entries and
+`notes=`, C's lifecycle), the real `DriveNoteService` (writes by `set`, `clear`, `undo`, `request_erase` + `erase`, refs
+as A's tool passes them) and the real `DriveSearchService` (with C's source added). One parametrised case per row; every
+row checks **A1**: `DriveSearchService.search(<a note word>)` renders neither the note's text nor its `drive_note:` ref,
+and **A2**: no index record carries the note's id (`owner_note_id`) — except where the row says otherwise.
+
+| Row (§8, D-ref) | Setup → event | A1 / A2 | And |
+|---|---|---|---|
+| delete in OneDrive | note a file; tombstone; next tick | A1, A2 | `search_deleted` shows it, `drive_note:` ref |
+| move out of the App Folder | the feed's tombstone; `get_change` 404 | A1, A2 | archived |
+| folder cascade | note the folder and a child; delete the folder; two ticks | A1, A2 for both | both archived |
+| D21 edit of an archived note | archived; `set` by `drive_note:` ref, new text; tick | A1 on the new and the old text, A2 | still archived; `search_deleted` finds the new text |
+| D21 undo of an archived note | archived; `undo` by ref | A1, A2 | still archived |
+| clear then undo of an archived note | archived; `clear`; `undo` | A1, A2 after each | cleared with `archived_at`, then archived again |
+| another drive connected (D16) | note on d1; purge to d2; onboard; same-content file on d2 | A1, A2 (the d2 record) | dormant in `search_deleted`, labelled |
+| re-upload (D15) | archived; a new item, same name and content | A1, A2 (the new record) | the old note stays archived |
+| copy (D8) | a copy of a noted live file | A2 for the copy's record; A1 shows only the original | the original keeps the note |
+| erase of an archived note | archived; `request_erase` + `erase` | A1, A2 | stub deleted by the next tick; `search_deleted` empty |
+| restore (§7.2) | archived; the same item id reappears | **inverse**: A1 finds the note on the record's card, A2 the record carries the id | `active`, `bound_by = restore` |
+| transcript + note on one gone item | a transcribed recording with a note; delete | A1, A2 | `search_deleted`: one entry with both lines |
+
+**Done.** Items 1–14 done; the invariant file green; `make check` green except the reviewer-decided fixture tests.
 
 ### Task C10 — documentation (Sonnet)
 
@@ -4030,13 +4167,13 @@ Each change in English, keeping the docs in sync.
    subsections):
    - **Lifecycle in the indexer.** "A delete site names the noted records it may delete; the commit that really deletes
      one makes a check (note id, item id, why, last seen), folded into the sync state at every save (`note_checks`, at
-     most 2 000 stored). At the start of the work-off the round end works up to 500 checks within the tick's 20 item
-     calls: a record back again drops its check; a `gone` delete (tombstone, cascade under a deleted folder, epoch
+     most 2 000 stored). At the start of the work-off the round end works up to 500 checks within 65% of the tick's
+     item calls left, a check whose read said nothing moving to the back: a record back again drops its check; a `gone` delete (tombstone, cascade under a deleted folder, epoch
      sweep, orphan) is confirmed by one `get_change` and archives only on not-found; a found item refreshes the note's
      snapshot and the note stays active; any other answer keeps the check. An `unstored` delete (a repository, `.git`, a
      dense tree) never archives. A purge archives nothing. A delete decided in the work-off is confirmed at the next
      tick. Once a day the audit reads by id the active notes on the index's drive that have no record and were not seen
-     for 7 days — at most 65% of the item calls left, resuming after its cursor (`notes_audit_after_*`) and stamped
+     for 7 days — at most 65% of the item calls the round end left, resuming after its cursor (`notes_audit_after_*`) and stamped
      (`notes_audited_at`) when the pass ends: not found archives, found refreshes. A noted record renamed, moved or
      edited refreshes the note's snapshot from the record. Kill switch `DRIVE_NOTES_ENABLED` off: none of this runs.
      Residual: with indexing off no tick runs, so a note whose file is deleted stays active, neither archived nor
@@ -4057,7 +4194,7 @@ Each change in English, keeping the docs in sync.
    confirms a `gone` delete at the round end (`unstored` never archives), daily audit with a pass cursor, found only by
    `drive_deleted` (with dormant notes), erased by `$drive-notes erase[-all] <code>`".
 3. `docs/04_solution_strategy/decisions/drive_file_notes.md` (part A creates it): a "Lifecycle and deleted files"
-   section with the defaults in force (D-C2 … D-C19, §4) and R1–R3; **D-C4 as a delta from the RFC**: an `unstored`
+   section with the defaults in force (D-C2 … D-C20, §4) and R1–R3; **D-C4 as a delta from the RFC**: an `unstored`
    check spends one item call to refresh the snapshot (the RFC refreshes it from the planner's change, which the delete
    hook does not see).
 4. `docs/07_deployment/README.md`, the drive-notes section (with A's indexes 1–5): the two owner steps of C11 (the vector
@@ -4069,9 +4206,10 @@ Each change in English, keeping the docs in sync.
      and active; not searchable" (R1);
    - §7.1 "its projection gains `owner_note_id`": the sweep reads full records (R2);
    - §7.1: a `get_change` answering a deletion is "unknown", the check stays (D-C17);
-   - §7.4: the audit's pass cursor and its 65% share of the item calls (D-C7);
-   - §15: the period constants stay in `drive_note_merge.py` (B); add `NOTE_CHECKS_STORED_MAX` 2 000 and
-     `NOTE_AUDIT_CALL_SHARE` 0.65 (`drive_note_lifecycle.py`, C);
+   - §7.1: the round end's 65% share of the item calls and the rotation of unknown checks (D-C20);
+   - §7.4: the audit's pass cursor and its 65% share of the calls the round end left (D-C7, D-C18);
+   - §15: the period constants stay in `drive_note_merge.py` (B); add `NOTE_CHECKS_STORED_MAX` 2 000,
+     `NOTE_ROUND_END_CALL_SHARE` 0.65 and `NOTE_AUDIT_CALL_SHARE` 0.65 (`drive_note_lifecycle.py`, C);
    - §3.5 item 6: the vector index by the script only, not in `firestore.indexes.json` (D-C12);
    - a named residual: notes on deleted files while indexing is off (§1 lifecycle subsection above).
 
@@ -4094,7 +4232,7 @@ Each change in English, keeping the docs in sync.
 
 ## 4. Defaults and owner questions
 
-Defaults (chosen, stated, not blocking). 18 in force: D-C2 … D-C19 (D-C1 withdrawn).
+Defaults (chosen, stated, not blocking). 19 in force: D-C2 … D-C20 (D-C1 withdrawn).
 
 - **D-C1 — withdrawn** (review): the period constants are B's, imported from `drive_note_merge`; only
   `NOTE_CHECKS_STORED_MAX` and `NOTE_AUDIT_CALL_SHARE` are C's.
@@ -4132,8 +4270,15 @@ Defaults (chosen, stated, not blocking). 18 in force: D-C2 … D-C19 (D-C1 withd
   it (delta decides existence); §7.1 archives on a not-found only.
 - **D-C18** — the audit's share is 65% of the item calls left (`NOTE_AUDIT_CALL_SHARE`), not exactly half: with the
   default 20 calls it reads 13 and keeps 7, which lets the review's case (25 failing notes) finish in two ticks; exactly
-  half (10) would need three.
+  half (10) would need three. Accepted by the re-review. A large re-listing (it needs its page calls up front) waits
+  while an audit pass runs, usually one or two ticks: accepted.
 - **D-C19** — a check is made in `_commit`, for a noticed record it really deletes, in feed order.
+- **D-C20 (re-review)** — the round end takes at most `NOTE_ROUND_END_CALL_SHARE` (65 %) of the item calls left
+  (`call_share`: at least one while any is left), and the audit then takes 65 % of what remains (with 20 calls: 13, then
+  4, 3 kept). A check whose read says nothing (a per-item error, or a port answering a deletion) moves to the back of
+  `note_checks`, the others keeping their order, so 20 or more checks that keep failing rotate (25 of them: a full
+  rotation in two ticks, 7 calls kept each tick) instead of holding every item call of every tick. Without it the round
+  end would livelock the tick exactly as the audit did (review I3).
 
 Residual (named): with indexing off no tick runs, so a note whose file is deleted is neither archived nor dormant: it
 stays active and neither search finds it until indexing is back on, when the audit archives it.
@@ -4158,6 +4303,8 @@ Task C10.
 
 Worktree `plan/drive-notes-c` off `cef8f147`:
 
+- `f4111f03` fix(drive-notes): part C re-review — round-end rotation and call share (D-C20), the tick's note context with the store OR the lifecycle, exact STUB markers
+- `464323cb` docs(plan): drive notes part C after the review — ownership table, STUB policy, C8 wiring task, C9 assembly steps and invariant matrix, amended defaults
 - `9fbbbebb` fix(drive-notes): part C review — ownership, audit cursor and share, delete-only checks, command wiring, register
 - `11dc3bc5` docs(plan): drive notes part C (S3) — archive, dormant notes, deleted-files search, erase, audit
 - `81fb9a66` style(drive-notes): blank lines around the tick's note accumulator; the docstring names the §7.5 refresh
@@ -4168,4 +4315,4 @@ Worktree `plan/drive-notes-c` off `cef8f147`:
 - `ef9eeee5` feat(drive-notes): S3 archive checks — note checks in the sync state, the round-end lifecycle, the tick hooks
 - (this plan part's own commit follows these)
 
-Final `PYTEST_WORKERS=4 make check`: lint and `mypy --strict` (domain, ports) green; unit suite **17 620 passed, 2 failed, 70 skipped, 1 xfailed** (12 min, 4 workers) on `9fbbbebb`. The two failures are the C1 expected-risk fixture tests (`test_firestore_drive_index_repo_serialization.py::TestStateSerialization::test_fixture_sets_every_field`, `::TestRecordSerialization::test_fixture_sets_every_field`), verdict "extend the fixtures"; `test-g2-offline` did not run because `test-unit` stopped the target. Targeted before it: the ten C test files and their neighbours, 757 passed, 1 skipped.
+Final `PYTEST_WORKERS=4 make check`: lint and `mypy --strict` (domain, ports) green; unit suite **17 623 passed, 2 failed, 70 skipped, 1 xfailed** (6 min, 4 workers) on `f4111f03`. The two failures are the C1 expected-risk fixture tests (`test_firestore_drive_index_repo_serialization.py::TestStateSerialization::test_fixture_sets_every_field`, `::TestRecordSerialization::test_fixture_sets_every_field`), verdict "extend the fixtures" (C9 item 13); `test-g2-offline` did not run because `test-unit` stopped the target. Targeted before it: the C lifecycle, audit and rules files, 73 passed.
