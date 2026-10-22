@@ -62,7 +62,7 @@ class TestCopyFromChat:
 
     async def test_drive_and_skill_sources_are_refused(self):
         svc, _ = _svc(_conversion())
-        for source, tool in (("drive:01ABC", "open_file_from_drive"), ("skill:x/r.md", "open_file")):
+        for source, tool in (("drive:01ABC", "work_with_drive_files"), ("skill:x/r.md", "open_file")):
             r = await svc.run(_call(), "copy", {"source": source, "path": "files/x.pdf"})
             assert r.failed and tool in r.text
 

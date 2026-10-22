@@ -4,8 +4,8 @@
 CRUD-shaped, one operation each. Flat schemas, no `enum` / `pattern` / `maxItems`: limits are stated in the
 descriptions and enforced in code; `""` and an omitted field both mean "not given" and never remove or change
 anything; no parameter is named `name`. `folder` takes a folder path or a `drive:` folder ref in every tool.
-Today's search-field texts are re-voiced for the specialist (§7.6): field names become parameter names, the
-`search_files_in_drive:` prefix and the "query is not read" clause go.
+Today's search-field texts are re-voiced for the specialist (§7.6): field names become parameter names, the old
+search intent's name prefix and the "query is not read" clause go.
 """
 from __future__ import annotations
 

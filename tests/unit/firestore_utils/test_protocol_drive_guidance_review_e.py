@@ -7,11 +7,10 @@ from tests.unit.firestore_utils.test_protocol_drive_guidance import _drive_block
 
 
 def _block():
-    # the rules these tests pin now live in the drive-search system skill (owner decision 2026-10-14)
-    from pathlib import Path
-    from src.adapters.filesystem_skill_loader import load_system_skills
-    root = Path(__file__).resolve().parents[3]
-    return next(s for s in load_system_skills(root / "src" / "skills" / "smart") if s.name == "drive-search").body
+    # the rules these tests pin are the specialist's PROTOCOL_DRIVE_SEARCH token and Smart's reading lines now
+    # (DRIVE_SPECIALIST_RFC §5.7)
+    from tests.unit.firestore_utils.test_protocol_drive_guidance import _skill_body
+    return _skill_body()
 
 
 def test_sums_open_the_file_then_compute_from_the_opened_text():

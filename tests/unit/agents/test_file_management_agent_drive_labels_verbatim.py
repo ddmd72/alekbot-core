@@ -1,16 +1,13 @@
 """An attached or sent drive file is named by its real path (USER_DRIVE_INDEXING_RFC §10.4, D2): the label sits
 outside any wrapper, next to the reference-material reminder, and is not entity-escaped, so the path the model
-copies back resolves."""
-from unittest.mock import AsyncMock, MagicMock
+copies back resolves. The open is DriveOperations.open since the cut (DRIVE_SPECIALIST_RFC §5.5)."""
+from unittest.mock import AsyncMock
 
 import pytest
 
-from src.agents.file_management_agent import FileManagementAgent
-from src.domain.agent import AgentConfig, AgentIntent, AgentMessage
 from src.domain.drive_search import REFERENCE_REMINDER_ATTACHED
 from src.domain.user_drive import DriveItem
-from src.infrastructure.agent_manifest import Intent
-from src.ports.file_storage_port import FileStoragePort
+from src.infrastructure.drive_operations import DriveOperations
 from src.services.drive_search_service import DriveSearchService
 from src.services.file_conversion_service import FileConversionService
 from src.services.user_drive_service import UserDriveService
@@ -21,14 +18,6 @@ CLIP = DriveItem(item_id="v1", name="Q&A.mp4", path="R&D/Q&A.mp4", is_folder=Fal
                  mime_type="video/mp4")
 
 
-def _msg(**payload):
-    msg = MagicMock(spec=AgentMessage)
-    msg.task_id, msg.intent = "t1", AgentIntent.QUERY
-    msg.payload = {"intent": Intent.OPEN_FILE_FROM_DRIVE, **payload}
-    msg.context = {"user_id": "u1", "account_id": "a1"}
-    return msg
-
-
 @pytest.mark.parametrize("item", [PDF, CLIP], ids=["attached", "sent"])
 async def test_the_label_keeps_the_real_path(item):
     conversion = AsyncMock(spec=FileConversionService)
@@ -37,11 +26,8 @@ async def test_the_label_keeps_the_real_path(item):
     search = AsyncMock(spec=DriveSearchService)
     search.transcript_text.return_value = None   # §27.11: an untranscribed recording keeps the file branch
     search.archived_text.return_value = None   # §27.9.11: not a file of the bot's _Transcripts folder
-    agent = FileManagementAgent(
-        config=AgentConfig(agent_id="file_management_agent_u1", agent_type="file_management", capabilities={},
-                           metadata={}),
-        conversion_service=conversion, storage=AsyncMock(spec=FileStoragePort), notification=AsyncMock(),
-        drive_service=AsyncMock(spec=UserDriveService), drive_search=search)
-    resp = await agent.execute(_msg(file_ref=item.ref))
-    assert resp.result.startswith(REFERENCE_REMINDER_ATTACHED + "\n")
-    assert f"[Drive: {item.path} (" in resp.result and "&amp;" not in resp.result and "&#x27;" not in resp.result
+    agent = DriveOperations(conversion_service=conversion, notification=AsyncMock(),
+                            drive_service=AsyncMock(spec=UserDriveService), drive_search=search)
+    resp = await agent.open({"user_id": "u1", "account_id": "a1"}, "u1", item.ref)
+    assert resp.text.startswith(REFERENCE_REMINDER_ATTACHED + "\n")
+    assert f"[Drive: {item.path} (" in resp.text and "&amp;" not in resp.text and "&#x27;" not in resp.text

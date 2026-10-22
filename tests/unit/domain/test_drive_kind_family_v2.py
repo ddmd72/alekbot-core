@@ -5,7 +5,7 @@ import re
 import pytest
 
 from src.domain.drive_search import KIND_FAMILIES, kinds_for
-from src.domain.drive_search_texts import DRIVE_KIND_DESCRIPTION
+from src.domain.drive_tool_texts import KIND
 
 _DOCUMENT = frozenset({"docx", "doc", "odt", "rtf", "pdf", "markdown", "text"})
 
@@ -25,7 +25,7 @@ def test_a_document_request_covers_markdown_and_text(word):
 
 
 def test_the_manifest_text_lists_the_family_as_built():
-    listed = re.search(r"document \(([^)]*)\)", DRIVE_KIND_DESCRIPTION)
+    listed = re.search(r"document \(([^)]*)\)", KIND)
     assert listed is not None
     assert frozenset(k.strip() for k in listed.group(1).split(",")) == KIND_FAMILIES["document"]
 

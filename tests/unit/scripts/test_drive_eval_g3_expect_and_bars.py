@@ -44,28 +44,29 @@ def test_a_case_without_a_known_expectation_is_refused(mutate, message):
         validate_g3(mutate(_valid()))
 
 
-def _search(**context):
-    return {"intent": "search_files_in_drive", "context": context, "route": "fixture", "failed": False}
+def _search(**args):
+    """A drive search in the drive operation log (dry_run_drive.DriveOpLog): the specialist's `search_drive` call."""
+    return {"op": "search", "args": args, "outcome": "ok", "stubbed": False}
 
 
-_OTHER = {"intent": "search_memory", "context": {}, "route": "real", "failed": False}
+_OTHER = {"op": "list_folder", "args": {"folder": "Inbox"}, "outcome": "ok", "stubbed": False}   # a drive read, not a search
 
 
 @pytest.mark.parametrize("expect, calls, met", [
-    ("date_filter", [_search(drive_query="contract", drive_date_from="2026-01-01")], True),
-    ("date_filter", [_search(drive_date_to="2026-01-31")], True),
-    ("date_filter", [_search(drive_query="contract January 2026")], False),
+    ("date_filter", [_search(query="contract", date_from="2026-01-01")], True),
+    ("date_filter", [_search(date_to="2026-01-31")], True),
+    ("date_filter", [_search(query="contract January 2026")], False),
     ("date_filter", [_OTHER], False),
-    ("date_in_query", [_search(drive_query="счёт 15.02.2026")], True),
-    ("date_in_query", [_search(drive_query="счёт", drive_date_from="2026-02-15", drive_date_to="2026-02-15")], False),
-    ("date_in_query", [_search(drive_query="счёт 15.02.2026"), _search(drive_query="счёт", drive_date_to="2026-02-15")],
+    ("date_in_query", [_search(query="счёт 15.02.2026")], True),
+    ("date_in_query", [_search(query="счёт", date_from="2026-02-15", date_to="2026-02-15")], False),
+    ("date_in_query", [_search(query="счёт 15.02.2026"), _search(query="счёт", date_to="2026-02-15")],
      False),
-    ("date_in_query", [_search(drive_query=" ")], False),
+    ("date_in_query", [_search(query=" ")], False),
     ("date_in_query", [_OTHER], False),
     ("none", [_OTHER], True),
     ("none", [], True),
-    ("none", [_search(drive_query="Porto", drive_date_from="")], True),
-    ("none", [_search(drive_query="Porto", drive_date_to="2026-03-01")], False),
+    ("none", [_search(query="Porto", date_from="")], True),
+    ("none", [_search(query="Porto", date_to="2026-03-01")], False),
 ])
 def test_expectations_are_read_from_the_search_calls_fields(expect, calls, met):
     assert expectation_met(expect, calls) is met

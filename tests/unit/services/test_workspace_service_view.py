@@ -57,7 +57,7 @@ class TestViewFile:
     async def test_wrong_store(self):
         svc, _ = _svc()
         r = await svc.run(_call(), "view", {"path": "drive:01ABC"})
-        assert r.failed and "open_file_from_drive" in r.text
+        assert r.failed and "work_with_drive_files" in r.text
 
 
 class TestViewVersion:

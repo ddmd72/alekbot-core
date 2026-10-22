@@ -330,7 +330,7 @@ def request_from_fields(query: Optional[str], folder: Optional[str], kind: Optio
     start = _parse_date(date_from, end_of_day=False)
     end = _parse_date(date_to, end_of_day=True)
     if start is not None and end is not None and start > end:
-        raise ValueError("drive_date_from is after drive_date_to")
+        raise ValueError("date_from is after date_to")
     scope = (folder or "").strip()
     if not scope.strip("/\\ "):
         scope = ""   # "/" is the whole drive: no folder scope
@@ -339,9 +339,8 @@ def request_from_fields(query: Optional[str], folder: Optional[str], kind: Optio
 
 
 NOTHING_TO_SEARCH = (
-    "Nothing to search for: put the name words, place or subject in drive_query (the `query` field is not read "
-    "for search), or set a filter (drive_kind, drive_date_from / drive_date_to, drive_folder). For the newest "
-    "files set drive_date_from."
+    "Nothing to search for: put the name words, place or subject in query, or set a filter (kind, date_from / "
+    "date_to, folder). For the newest files set date_from."
 )
 
 
@@ -671,11 +670,11 @@ def render_results(result: DriveSearchResult) -> str:
         return render_tiered(result)
     if result.status == STATUS_DISABLED:
         return ("Drive search is off for this user: they have not turned on drive indexing in the Cabinet. "
-                f"{_NOT_AGAIN} To find a file now, browse folders with list_files_in_drive.")
+                f"{_NOT_AGAIN} To find a file now, browse the folders.")
     if result.status == STATUS_DISCONNECTED and result.other_drive:
         return ("Drive search is off for this user for now: a different drive is connected than the one that was "
                 "indexed. The old index is being removed and the connected drive will be indexed from the start. "
-                f"{_NOT_AGAIN} Browse it with list_files_in_drive.")
+                f"{_NOT_AGAIN} Browse it.")
     if result.status == STATUS_DISCONNECTED:
         return ("Drive search is off for this user: their drive is not connected. Ask them to connect it in the "
                 f"Cabinet. {_NOT_AGAIN}")
@@ -685,15 +684,15 @@ def render_results(result: DriveSearchResult) -> str:
     if result.status == STATUS_FOLDER_NOT_FOUND and result.folder_lookup_truncated:
         return "\n".join(building + [
             f"Could not resolve the folder '{wanted}': too many folders share its name. Pass the "
-            f"folder's drive:<id> ref (from list_files_in_drive) or a longer path from the top level."])
+            f"folder's drive:<id> ref or a longer path from the top level."])
     if result.status == STATUS_FOLDER_NOT_FOUND:
         return "\n".join(building + [
             f"No folder matching '{wanted}' is in the index. Search without a folder, or list the "
-            f"drive with list_files_in_drive."])
+            f"drive."])
     out: List[str] = [REFERENCE_REMINDER]
     if result.status == STATUS_AMBIGUOUS_FOLDER:
         out.append(f"Several folders match '{wanted}'. Ask the user which one, or search again with "
-                   f"drive_folder set to one of these refs:")
+                   f"within one of these folders:")
         out.extend(_render_card(c) for c in result.cards)
         return "\n".join(out)
     out.extend(_envelope_lines(result))
@@ -702,14 +701,13 @@ def render_results(result: DriveSearchResult) -> str:
         out.append(scope)
     if result.folder_not_indexed:
         out.append("The files inside this folder are not indexed (it is a code repository, generated files, a "
-                   "folder too large to index, or it is being removed), so this search cannot see them. Browse it "
-                   "with list_files_in_drive.")
+                   "folder too large to index, or it is being removed), so this search cannot see them. Browse it.")
         return "\n".join(out)
     request = result.request
     if request.filter_only and result.matched_at_least and not result.cards:
         # The fetch cap, not the data, emptied the page: never "no matching files" (§10.2).
         out.append("None of the newest files this search could read passed the filters here; that does not "
-                   "mean there are none. Browse the folder with list_files_in_drive, or narrow the dates.")
+                   "mean there are none. Browse the folder, or narrow the dates.")
         return "\n".join(out)
     # While building, a zero count would state a non-existence the envelope forbids (§10.4).
     zero_while_building = result.envelope.building and result.matched_total == 0

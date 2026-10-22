@@ -24,7 +24,7 @@ async def test_a_repository_scope_says_its_files_are_not_indexed(query):
     result = await w.search(query, folder="Projects/alek-site")
     text = render_results(result)
     assert result.status == STATUS_OK and result.cards == () and result.folder_not_indexed
-    assert "not indexed" in text and "list_files_in_drive" in text
+    assert "not indexed" in text and "so this search cannot see them. Browse it." in text
     assert "No matching files or folders." not in text and "match the filters" not in text
 
 
@@ -61,7 +61,7 @@ async def test_a_path_through_a_hiding_folder_says_not_indexed(folder):
     result = await w.search("main", folder=folder)
     text = render_results(result)
     assert result.status == STATUS_OK and result.folder_not_indexed and result.cards == ()
-    assert "not indexed" in text and "list_files_in_drive" in text and "No folder matching" not in text
+    assert "not indexed" in text and "so this search cannot see them. Browse it." in text and "No folder matching" not in text
 
 
 async def test_a_ref_to_a_folder_inside_a_hiding_folder_says_not_indexed():

@@ -1,13 +1,12 @@
-"""open_file_from_drive on a recording (USER_DRIVE_INDEXING_RFC §27.11, Δ121)."""
-from unittest.mock import AsyncMock, MagicMock
+"""Opening a recording (USER_DRIVE_INDEXING_RFC §27.11, Δ121): open_file_from_drive until the cut, DriveOperations.open
+since (DRIVE_SPECIALIST_RFC §5.5, §8.1: `open_drive_file`, and `get_recording_link` for `original`)."""
+from unittest.mock import AsyncMock
 
 import pytest
 
-from src.agents.file_management_agent import FileManagementAgent
-from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus
 from src.domain.user_drive import DriveItem, drive_label
 from src.infrastructure.agent_manifest import Intent
-from src.ports.file_storage_port import FileStoragePort
+from src.infrastructure.drive_operations import DriveOperations
 from src.services.drive_search_service import DriveSearchService
 from src.services.file_conversion_service import FileConversionService
 from src.services.user_drive_service import UserDriveService
@@ -18,13 +17,7 @@ AUDIO = DriveItem(item_id="s1", name="call.m4a", path="Rec/call.m4a", is_folder=
                   mime_type="audio/mp4", web_url="https://drive.example/call")
 
 
-def _msg(**payload):
-    msg = MagicMock(spec=AgentMessage)
-    msg.task_id = "t1"
-    msg.intent = AgentIntent.QUERY
-    msg.payload = {"intent": Intent.OPEN_FILE_FROM_DRIVE, **payload}
-    msg.context = {"user_id": "u1", "account_id": "a1"}
-    return msg
+CTX = {"user_id": "u1", "account_id": "a1"}
 
 
 @pytest.fixture
@@ -46,19 +39,15 @@ def notifier():
 
 @pytest.fixture
 def agent(conversion, search, notifier):
-    return FileManagementAgent(
-        config=AgentConfig(agent_id="file_management_agent_u1", agent_type="file_management",
-                           capabilities={}, metadata={}),
-        conversion_service=conversion, storage=AsyncMock(spec=FileStoragePort), notification=notifier,
-        drive_service=AsyncMock(spec=UserDriveService), drive_search=search,
-    )
+    return DriveOperations(conversion_service=conversion, notification=notifier,
+                           drive_service=AsyncMock(spec=UserDriveService), drive_search=search)
 
 
 async def test_open_transcribed_audio_returns_wrapped_transcript(agent, conversion, search):
     conversion.get_drive_item.return_value = AUDIO
     search.transcript_text.return_value = "REMINDER\n<drive_document>[00:00] hi</drive_document>"
-    resp = await agent.execute(_msg(file_ref="drive:s1"))
-    assert resp.status == AgentStatus.SUCCESS and resp.result == search.transcript_text.return_value
+    resp = await agent.open(CTX, "u1", "drive:s1")
+    assert resp.success and resp.text == search.transcript_text.return_value
     search.transcript_text.assert_awaited_once_with("u1", "s1", path="Rec/call.m4a",
                                                    label=drive_label(AUDIO))
     conversion.resolve_bytes.assert_not_called()
@@ -68,8 +57,8 @@ async def test_open_transcribed_audio_returns_wrapped_transcript(agent, conversi
 async def test_open_transcribed_video_never_sends_bytes(agent, conversion, search, notifier):
     conversion.get_drive_item.return_value = VIDEO
     search.transcript_text.return_value = "wrapped transcript"
-    resp = await agent.execute(_msg(file_ref="drive:v1"))
-    assert resp.result == "wrapped transcript"
+    resp = await agent.open(CTX, "u1", "drive:v1")
+    assert resp.text == "wrapped transcript"
     conversion.resolve_bytes.assert_not_called()
     notifier.notify_file_bytes.assert_not_called()
 
@@ -77,8 +66,8 @@ async def test_open_transcribed_video_never_sends_bytes(agent, conversion, searc
 @pytest.mark.parametrize("item", [AUDIO, VIDEO])
 async def test_original_true_returns_link_only(agent, conversion, search, notifier, item):
     conversion.get_drive_item.return_value = item
-    resp = await agent.execute(_msg(file_ref=item.ref, original=True))
-    assert resp.status == AgentStatus.SUCCESS and item.web_url in resp.result
+    resp = await agent.open(CTX, "u1", item.ref, original=True)
+    assert resp.success and item.web_url in resp.text
     conversion.resolve_bytes.assert_not_called()
     conversion.resolve_content.assert_not_called()
     notifier.notify_file_bytes.assert_not_called()
@@ -90,19 +79,19 @@ async def test_generic_mime_ogg_opens_as_transcript_and_honours_original(agent, 
                     mime_type="application/octet-stream", web_url="https://drive.example/memo")
     conversion.get_drive_item.return_value = ogg
     search.transcript_text.return_value = "wrapped ogg transcript"
-    resp = await agent.execute(_msg(file_ref=ogg.ref))
-    assert resp.status == AgentStatus.SUCCESS and resp.result == "wrapped ogg transcript"
+    resp = await agent.open(CTX, "u1", ogg.ref)
+    assert resp.success and resp.text == "wrapped ogg transcript"
     conversion.resolve_bytes.assert_not_called()
-    resp = await agent.execute(_msg(file_ref=ogg.ref, original=True))
-    assert ogg.web_url in resp.result
+    resp = await agent.open(CTX, "u1", ogg.ref, original=True)
+    assert ogg.web_url in resp.text
 
 
 async def test_untranscribed_video_keeps_file_branch(agent, conversion, search, notifier):
     conversion.get_drive_item.return_value = VIDEO
     conversion.resolve_bytes.return_value = b"video"
     search.transcript_text.return_value = None
-    resp = await agent.execute(_msg(file_ref="drive:v1"))
-    assert resp.result.endswith("has been sent to the user as a file.")
+    resp = await agent.open(CTX, "u1", "drive:v1")
+    assert resp.text.endswith("has been sent to the user as a file.")
     notifier.notify_file_bytes.assert_awaited_once()
 
 
@@ -110,8 +99,8 @@ async def test_a_lookup_failure_keeps_the_file_branch(agent, conversion, search,
     conversion.get_drive_item.return_value = VIDEO
     conversion.resolve_bytes.return_value = b"video"
     search.transcript_text.side_effect = RuntimeError("boom")
-    resp = await agent.execute(_msg(file_ref="drive:v1"))
-    assert resp.result.endswith("has been sent to the user as a file.")
+    resp = await agent.open(CTX, "u1", "drive:v1")
+    assert resp.text.endswith("has been sent to the user as a file.")
 
 
 def test_manifest_original_param_described():

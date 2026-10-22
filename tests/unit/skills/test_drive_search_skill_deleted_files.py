@@ -4,12 +4,14 @@ from pathlib import Path
 
 from src.utils.capabilities import CAPABILITIES_TEXT
 
-SKILL = (Path(__file__).resolve().parents[3] / "src" / "skills" / "smart" / "drive-search" / "SKILL.md").read_text(
-    encoding="utf-8")
+# Retargeted at the cut: the skill's recordings and deleted-files rules are the specialist's PROTOCOL_DRIVE_SEARCH token
+# now (DRIVE_SPECIALIST_RFC §5.7: "Recordings, _Transcripts, deleted files — all" to the specialist).
+SKILL = (Path(__file__).resolve().parents[3] / "prompts_snapshot" / "tokens" / "system"
+         / "PROTOCOL_DRIVE_SEARCH.groovy").read_text(encoding="utf-8").split("\n---\n", 1)[1]
 
 
 def test_skill_names_the_transcripts_folder_as_bot_managed():
-    assert "`_Transcripts`" in SKILL and "never write to it" in SKILL
+    assert "_Transcripts" in SKILL and "never write to it" in SKILL   # the token drops markdown emphasis
 
 
 def test_skill_deleted_files_line_is_explicit_only():

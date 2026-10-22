@@ -57,7 +57,7 @@ class TestPathRule:
         assert e.value.reason == "path"
 
     @pytest.mark.parametrize("raw,tool", [
-        ("drive:01ABC", "open_file_from_drive"),
+        ("drive:01ABC", "work_with_drive_files"),
         ("skill:flight-status/references/airlines.md", "open_file"),
         ("report (1).pdf", "copy"),
     ])

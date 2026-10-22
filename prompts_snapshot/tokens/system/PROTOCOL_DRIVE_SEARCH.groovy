@@ -3,7 +3,7 @@ category: protocol
 class: protocols
 metadata:
   description: DriveAgent — how to search the drive, read the results, open, and change
-    files; the drive-search skill's specialist sections and the Step 1 rules (DRIVE_SPECIALIST_RFC
+    files; the former drive search skill's specialist sections and the Step 1 rules (DRIVE_SPECIALIST_RFC
     §5.2, §5.7)
   override_by:
   - SYSTEM

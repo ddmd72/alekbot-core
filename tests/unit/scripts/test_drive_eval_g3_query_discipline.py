@@ -8,13 +8,16 @@ from types import SimpleNamespace
 import pytest
 
 from scripts.validation.drive_eval import smart_dry_run as g3
-from src.adapters.filesystem_skill_loader import load_system_skills
+from src.domain import drive_answer_texts as t
 from src.domain import drive_search_texts as T
+from src.domain.drive_op import DriveOp
+from src.domain.drive_outcome import DriveOutcome
+from src.domain.drive_outcome_class import OutcomeClass
 from src.infrastructure.agent_manifest import Intent
 from src.infrastructure.delegation_engine import ToolResult
 
 _DIR = Path(__file__).resolve().parents[2] / "fixtures" / "drive_eval"
-_SKILLS = Path(__file__).resolve().parents[3] / "src" / "skills" / "smart"
+_TOKENS = Path(__file__).resolve().parents[3] / "prompts_snapshot" / "tokens" / "system"
 
 
 def _tc(intent, context=None):
@@ -71,9 +74,9 @@ async def test_isolation_leaves_other_reads_and_other_cases_alone():
 async def test_every_rendering_of_the_absent_word_line_is_a_d29(line):
     text = "Results.\n" + line.format(word="vaccination") + "\nWithout ..."
     assert g3.is_d29(text)
-    d = _dispatch(_Real(text), False)
-    await d(object(), _tc(Intent.SEARCH_FILES_IN_DRIVE, {"drive_query": "x"}), {})
-    assert d.calls[0].get("d29") is True
+    # the mark moved from Smart's dispatch to the drive operation log (DryRunDriveOperations' annotate hook)
+    outcome = DriveOutcome(op=DriveOp.SEARCH, cls=OutcomeClass.OK, text=text, success=True)
+    assert g3.annotate_drive_read("search", outcome) == {"d29": True}
 
 
 def test_other_lines_are_not_a_d29():
@@ -97,22 +100,25 @@ def test_a_turn_cap_run_is_its_own_category_and_a_hard_failure():
 # -- the skill's query discipline -----------------------------------------------------------------------------------
 
 def _skill() -> str:
-    body = next(s for s in load_system_skills(_SKILLS) if s.name == "drive-search").body
+    """The specialist's half of the former skill: the PROTOCOL_DRIVE_SEARCH token (DRIVE_SPECIALIST_RFC §5.2, §5.7)."""
+    body = (_TOKENS / "PROTOCOL_DRIVE_SEARCH.groovy").read_text(encoding="utf-8").split("\n---\n", 1)[1]
     return re.sub(r"\s+", " ", body)
 
 
 def test_the_skill_states_the_query_discipline():
     body = _skill()
     for line in (
-        "Every word in `drive_query` must match a file (all words, strict).",
+        "Every word in query must match a file (all words, strict).",   # the field is the tool's parameter now
         "in ONE language, as the user wrote them. No synonym lists, no translations, no extra words, not the user's own name.",
         "run at most ONE more search (dropping that word); then answer from what you have.",
-        '"All", "every", "everything about" is still a find: answer from the cards; do not open files or compute '
-        "totals unless the user asked for a total or a value.",
         "A value question opens the file (when the card is under 90%) even if the card looks unrelated to the user; "
         "a find question never opens it.",
     ):
         assert body.count(line) == 1, line
+    # Smart's half of the "all is still a find" rule reaches Smart as a reading line (§5.7, §7.3)
+    assert re.sub(r"\s+", " ", t.R_ALL).count(
+        '"All", "every", "everything about" is still a find: answer from the cards; do not open files or compute '
+        "totals unless the user asked for a total or a value.") == 1
 
 
 def test_the_manifest_query_text_ends_with_the_discipline_sentence():

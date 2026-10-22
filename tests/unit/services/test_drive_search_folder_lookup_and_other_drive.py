@@ -42,7 +42,7 @@ async def test_a_different_drive_is_not_called_not_connected():
     result = await w.search("lease")
     text = render_results(result)
     assert result.status == STATUS_DISCONNECTED and result.other_drive
-    assert "different drive" in text and "not connected" not in text and "list_files_in_drive" in text
+    assert "different drive" in text and "not connected" not in text and text.endswith("Browse it.")
 
 
 async def test_a_missing_connection_still_says_not_connected():
