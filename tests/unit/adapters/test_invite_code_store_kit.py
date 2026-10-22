@@ -128,8 +128,8 @@ async def test_create_never_replaces_another_invite(store):
     await store.repo.create(invite())
     try:
         await store.repo.create(invite(user_id="usr-intruder", account_id="acc-intruder"))
-    except Exception:       # refusing the second create is one way to keep the first
-        pass
+    except Exception:       # refusing the second create is one way to keep the first; the docstring names no
+        pass                # refusal type, so the fix PR picks it and narrows this
     assert (store.docs["ABC-DEF-123"]["user_id"], store.docs["ABC-DEF-123"]["account_id"]) == (OWNER, OWNER_ACC)
 
 
@@ -241,10 +241,20 @@ async def test_consuming_marks_the_stored_invite_used_and_a_second_use_is_refuse
     assert doc["used_by_user_id"] == "usr-new"
     assert NOW <= doc["used_at"] <= datetime.now(timezone.utc)
     assert await store.account_of("usr-new") == OWNER_ACC
-    assert (await store.accounts.get_account(OWNER_ACC)).iam_policy["usr-new"] == "VIEWER"
+    assert "usr-new" in (await store.accounts.get_account(OWNER_ACC)).iam_policy
     with pytest.raises(ValueError, match="expired or already used"):
         await store.service.consume_team_invite("ABC-DEF-123", "usr-late")
     assert await store.account_of("usr-late") == "acc-usr-late"
+
+
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
+    "known defect: invite roles written uppercase — invite_code_service.py:147 (readers compare lowercase, e.g. "
+    "session_service.py:92; P6 T1 Q2)"))
+async def test_a_consumed_invite_grants_its_role_in_lowercase(store):
+    await store.team("usr-new")
+    await store.repo.create(invite(role="VIEWER"))
+    await store.service.consume_team_invite("ABC-DEF-123", "usr-new")
+    assert (await store.accounts.get_account(OWNER_ACC)).iam_policy["usr-new"] == "viewer"
 
 
 async def test_update_replaces_the_stored_invite_and_returns_it(store):

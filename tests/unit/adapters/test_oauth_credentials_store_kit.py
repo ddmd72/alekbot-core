@@ -222,9 +222,21 @@ async def test_revoke_of_an_absent_record_is_a_no_op(store):
     assert store.docs == before
 
 
+async def test_a_new_consent_saved_after_a_revoke_connects_again(store):
+    await store.repo.save_credentials(creds(U1, "microsoft_onedrive", drive_id="D1"))
+    await store.repo.revoke_credentials(U1, "microsoft_onedrive")
+    await store.repo.save_credentials(creds(U1, "microsoft_onedrive", access_token="consent-2", drive_id="D2"))
+    got = await store.repo.get_credentials(U1, "microsoft_onedrive")
+    assert (got.access_token, got.drive_id, got.needs_reconnect) == ("consent-2", "D2", False)
+    assert await store.repo.is_connected(U1, "microsoft_onedrive") is True
+    assert await store.repo.list_users_by_provider("microsoft_onedrive") == [U1]
+
+
 @pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
     "known defect: save is an upsert, so a token refresh in flight during a disconnect writes the grant back — "
-    "src/adapters/firestore_oauth_credentials_adapter.py:77 (graph_auth.py:123 against onedrive_adapter.py:247; P6 T1 H4)"))
+    "src/adapters/firestore_oauth_credentials_adapter.py:77 (graph_auth.py:123 against onedrive_adapter.py:247; P6 T1 H4). "
+    "The refresh below is today's save_credentials, the same call a new consent makes; the fix gives the refresh path its "
+    "own call (a save that only updates an existing record), and this test's refresh call changes with it"))
 async def test_a_disconnect_stands_against_a_refresh_in_flight(store):
     await store.repo.save_credentials(creds(U1, "microsoft_onedrive", drive_id="D1"))
     read = await store.repo.get_credentials(U1, "microsoft_onedrive")      # the refresh starts from this read
