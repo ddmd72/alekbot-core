@@ -19,11 +19,11 @@ FILES = [{"base64": JPEG, "mime_type": "image/jpeg"}, {"base64": PNG, "mime_type
          {"base64": PDF, "mime_type": "application/pdf"}]
 
 
-def _history():
+def _history(files=FILES):
     drive = ToolCall(name="delegate_to_specialist", args={"intent": "work_with_drive_files"}, thought_signature="call_A")
     web = ToolCall(name="delegate_to_specialist", args={"intent": "search_web"}, thought_signature="call_B")
     turn = build_tool_turn(LLMResponse(tool_calls=[drive, web]),
-                           [(drive, "Drive result: ok", FILES), (web, "web result")])
+                           [(drive, "Drive result: ok", files), (web, "web result")])
     return [Message(role="user", parts=[MessagePart(text="show me")]), *turn]
 
 
@@ -62,3 +62,42 @@ def test_grok_sends_the_images_and_drops_the_pdf():
     files = [i for i in items if i.get("role") == "user" and isinstance(i.get("content"), list)]
     assert len(files) == 1
     assert [p["type"] for p in files[0]["content"]] == ["input_image", "input_image"]
+
+
+# -- the production file shape: a path on disk, not base64 (what DriveOperations returns today) ------------------------
+
+def _path_files(tmp_path):
+    jpeg, pdf = tmp_path / "photo.jpg", tmp_path / "doc.pdf"
+    jpeg.write_bytes(b"\xff\xd8\xff\xe0 a jpeg")
+    pdf.write_bytes(b"%PDF-1.4 a pdf")
+    return [{"path": str(jpeg), "mime_type": "image/jpeg"}, {"path": str(pdf), "mime_type": "application/pdf"}]
+
+
+async def test_claude_reads_path_files_into_the_tool_result(tmp_path):
+    result = await ClaudeAdapter(api_key="k")._convert_messages(_history(_path_files(tmp_path)))
+    first = result[-1]["content"][0]
+    assert [b["type"] for b in first["content"]] == ["text", "image", "document"]
+    assert first["content"][1]["source"]["data"] == base64.b64encode(b"\xff\xd8\xff\xe0 a jpeg").decode()
+
+
+async def test_openai_reads_path_files_after_the_function_outputs(tmp_path):
+    items = await OpenAIAdapter(api_key="k")._convert_input(_history(_path_files(tmp_path)))
+    files = [i for i in items if i.get("role") == "user" and isinstance(i.get("content"), list)]
+    assert len(files) == 1 and [p["type"] for p in files[0]["content"]] == ["input_image", "input_file"]
+
+
+async def test_gemini_uploads_each_path_file_once_and_keeps_the_order(tmp_path):
+    adapter = GeminiAdapter(api_key="k")
+    adapter.client = MagicMock()
+    adapter.client.files.upload.side_effect = lambda file, config: MagicMock(uri=f"files/{file[-3:]}",
+                                                                              mime_type=config["mime_type"])
+    contents = await adapter._convert_messages(_history(_path_files(tmp_path)))
+    parts = contents[-1].parts
+    assert [p.file_data.mime_type for p in parts[1:3]] == ["image/jpeg", "application/pdf"]
+    assert adapter.client.files.upload.call_count == 2
+
+
+def test_grok_reads_path_images_and_drops_the_pdf(tmp_path):
+    items = GrokAdapter(api_key="k")._convert_input(_history(_path_files(tmp_path)))
+    files = [i for i in items if i.get("role") == "user" and isinstance(i.get("content"), list)]
+    assert len(files) == 1 and [p["type"] for p in files[0]["content"]] == ["input_image"]

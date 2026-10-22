@@ -87,3 +87,28 @@ def test_smart_and_quick_publish_it():
     from src.agents.core.smart_response_agent import SmartResponseAgent
     assert SmartResponseAgent.SETS_RUN_DEADLINE and QuickResponseAgent.SETS_RUN_DEADLINE
     assert not BaseAgent.SETS_RUN_DEADLINE
+
+
+async def test_the_run_deadline_is_absent_from_an_enqueued_cloud_task_payload():
+    """§5.6/§11.1: a monotonic value means nothing in another process, so it never rides in the task's context."""
+    import json
+    from unittest.mock import AsyncMock, MagicMock
+
+    from src.infrastructure.agent_coordinator import AgentCoordinator
+    from src.infrastructure.agent_registry import AgentDescriptor, AgentRegistry, ExecutionMode
+
+    registry = MagicMock(spec=AgentRegistry)
+    registry.get_agent_for_intent = MagicMock(return_value=AgentDescriptor(
+        agent_id="research_agent", capabilities={"search_memory": ExecutionMode.ASYNC}, dispatch_deadline_s=300))
+    registry.get_available_intents = MagicMock(return_value=[{"name": "search_memory"}])
+    queue = AsyncMock()
+    queue.enqueue_agent_task = AsyncMock(return_value="task-1")
+    coordinator = AgentCoordinator(registry=registry, task_queue=queue, alert_sink=AsyncMock())
+    token = CURRENT_RUN_DEADLINE.set(time.monotonic() + 180)
+    try:
+        await coordinator.handle_delegation(intent="search_memory", query="q", context={"user_id": "u1"},
+                                            calling_agent_id="smart_agent")
+    finally:
+        CURRENT_RUN_DEADLINE.reset(token)
+    enqueued = queue.enqueue_agent_task.await_args.kwargs["context"]
+    assert "deadline" not in json.dumps(enqueued) and set(enqueued) == {"user_id", "_call_chain"}
