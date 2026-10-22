@@ -37,6 +37,7 @@ async def test_refuses_a_synthetic_user_that_already_has_chunks(s3):
     assert len(repo.chunks) == 1   # left as found
 
 
+@pytest.mark.slow
 async def test_grows_measures_every_configuration_and_purges(s3):
     repo = InMemoryDriveIndexRepository()
     sizes_seen = []
@@ -54,6 +55,7 @@ async def test_grows_measures_every_configuration_and_purges(s3):
     assert repo.chunks == {}
 
 
+@pytest.mark.slow
 async def test_synthetic_chunks_are_unit_vectors_of_both_kinds(s3):
     repo = InMemoryDriveIndexRepository()
     await s3.run(repo, "zz-synthetic-s3", [500], 1, keep=True)

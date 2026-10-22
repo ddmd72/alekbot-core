@@ -32,6 +32,7 @@ def _copy_sources():
     return sources
 
 
+@pytest.mark.datafile
 def test_copy_sources_are_an_allowlist_and_never_dot():
     sources = _copy_sources()
     assert sources, "no COPY at all"
@@ -42,6 +43,7 @@ def test_copy_sources_are_an_allowlist_and_never_dot():
     assert not any(i.upper().startswith("ADD ") for i in _instructions())
 
 
+@pytest.mark.datafile
 def test_no_env_or_key_file_is_copied():
     for src in _copy_sources():
         name = Path(src).name.lower()
@@ -50,17 +52,20 @@ def test_no_env_or_key_file_is_copied():
         assert not (name.endswith(".json") and src not in _NON_CODE_COPIES), src
 
 
+@pytest.mark.datafile
 def test_copy_covers_the_import_closure_and_nothing_else():
     files, _ = closure()
     copied = set(_copy_sources()) - _NON_CODE_COPIES
     assert copied == files, {"missing": sorted(files - copied), "extra": sorted(copied - files)}
 
 
+@pytest.mark.datafile
 def test_every_copied_file_exists():
     for src in _copy_sources():
         assert (ROOT / src).is_file(), src
 
 
+@pytest.mark.datafile
 def test_render_target_exists_and_has_no_chromium_or_puppeteer():
     text = _text()
     assert re.search(r"^FROM .* AS render\s*$", text, re.M | re.I)
@@ -69,11 +74,13 @@ def test_render_target_exists_and_has_no_chromium_or_puppeteer():
         assert banned not in lowered, banned
 
 
+@pytest.mark.datafile
 def test_installs_from_requirements_sandbox_not_the_main_file():
     ins = " ".join(_instructions())
     assert "requirements-sandbox.txt" in ins and "requirements.txt " not in ins.replace("requirements-sandbox.txt", "")
 
 
+@pytest.mark.datafile
 def test_engine_user_is_the_one_the_service_expects():
     from src.composition.sandbox_setup import DEFAULT_ENGINE_USER
 
@@ -83,12 +90,14 @@ def test_engine_user_is_the_one_the_service_expects():
         assert flag in useradd, flag
 
 
+@pytest.mark.datafile
 def test_exec_form_entrypoint_makes_sandbox_main_pid_1():
     cmds = [i for i in _instructions() if i.upper().startswith(("ENTRYPOINT ", "CMD "))]
     assert cmds, "no CMD/ENTRYPOINT"
     assert cmds[-1].split(None, 1)[1] == '["python", "sandbox_main.py"]'
 
 
+@pytest.mark.datafile
 def test_app_is_not_writable_by_the_engine_uid_and_bytecode_is_not_written():
     text = _text()
     assert re.search(r"PYTHONDONTWRITEBYTECODE=1", text)
@@ -97,6 +106,7 @@ def test_app_is_not_writable_by_the_engine_uid_and_bytecode_is_not_written():
     assert "__pycache__" in text
 
 
+@pytest.mark.datafile
 def test_work_root_exists_and_tmp_is_closed_to_the_engine_user():
     """Final review: a 1777 /tmp let the engine write unbounded data to instance memory outside RLIMIT_AS (was
     `..._server_tmp_stays_usable`, pinning chmod 1777; branch-added by T1). The server runs as root."""

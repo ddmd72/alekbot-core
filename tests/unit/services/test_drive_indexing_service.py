@@ -247,6 +247,7 @@ async def test_git_after_siblings_same_round_one_card(w):
     assert w.emb.calls == ["site | repository"]
 
 
+@pytest.mark.slow
 async def test_dense_folder_one_card_and_pdfs_stay_normal(w):
     dump = w.drive.add("mirror", folder=True)
     pdfs = w.drive.add("Invoices", folder=True)

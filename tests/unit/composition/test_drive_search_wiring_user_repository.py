@@ -2,6 +2,7 @@
 
 The search service reads the opt-in flag uncached through its user repository on every search (§10.1 step 0).
 Without one, every search raises in production."""
+import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from src.adapters.firestore_user_repo import FirestoreUserRepository
@@ -26,6 +27,7 @@ def _container(monkeypatch, **extra):
 
 
 class TestSearchUserRepository:
+    @pytest.mark.datafile
     def test_search_gets_a_firestore_user_repository(self, monkeypatch):
         monkeypatch.setattr(service_container, "OneDriveAdapter", lambda **kw: MagicMock(spec=UserDrivePort))
         c = _container(monkeypatch, MICROSOFT_TODO_CLIENT_ID="cid", MICROSOFT_TODO_CLIENT_SECRET="sec")

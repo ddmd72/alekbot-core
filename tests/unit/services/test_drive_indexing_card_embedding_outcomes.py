@@ -1,5 +1,6 @@
 """Card embedding outcomes in the tick (USER_DRIVE_INDEXING_RFC §8.2, §12.3): a card the provider keeps refusing
 becomes terminal, and a systemic failure mid-batch keeps the vectors already obtained."""
+import pytest
 from src.domain import drive_card
 from src.domain import drive_index_planner as planner
 from src.domain.drive_index import CURRENT_VERSIONS, RecordState
@@ -48,6 +49,7 @@ def _count_upgrade_pages(w):
 
 class TestRefusedCardBecomesTerminal:
 
+    @pytest.mark.slow
     async def test_upgrade_passes_stop_once_the_refused_card_is_terminal(self, monkeypatch):
         """After a CARD_VERSION bump one card is refused on every attempt. It is refused for good after MAX_ATTEMPTS,
         the bump applies, and the fan-out's quiet ticks read no upgrade page any more."""
@@ -75,6 +77,7 @@ class TestRefusedCardBecomesTerminal:
         assert bad not in w.carded()
         assert rec.card_version == drive_card.CARD_VERSION and not planner.stale_versions(rec) and rec.due_at is None
 
+    @pytest.mark.slow
     async def test_a_backed_off_stale_record_costs_no_pass_per_quiet_tick(self, monkeypatch):
         """While the refused card waits for its retry, a quiet tick does not re-read the index in a new pass."""
         w = World(page_size=500)

@@ -64,6 +64,7 @@ def test_bars_recorded_before_the_date_bar_give_no_verdict():
         judge(score(_gold_shaped()), old, "g", "m", repeats=3)
 
 
+@pytest.mark.datafile
 def test_the_committed_gold_has_at_least_six_date_cases_over_both_kinds():
     gold = json.loads(_GOLD.read_text(encoding="utf-8"))
     validate_g3(gold)

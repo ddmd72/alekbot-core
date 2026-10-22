@@ -1,9 +1,12 @@
 """The drive-search skill's "Card accuracy" section (USER_DRIVE_INDEXING_RFC §26.4, D36): verbatim from the RFC (line
 wraps aside), one copy of each sentence, the 90% bar only in the skill text."""
+import pytest
 import re
 from pathlib import Path
 
 from src.adapters.filesystem_skill_loader import load_system_skills
+
+pytestmark = pytest.mark.datafile
 
 ROOT = Path(__file__).resolve().parents[3]
 SKILLS = ROOT / "src" / "skills" / "smart"

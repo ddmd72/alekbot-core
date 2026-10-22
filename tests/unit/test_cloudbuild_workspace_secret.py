@@ -1,8 +1,11 @@
 """The workspace bucket name reaches the main service only as a Secret Manager secret — never an env var or a Cloud
 Build substitution (AGENT_WORKSPACE_RFC §5.5; CLAUDE.md deploy-substitution trap). Only the main service gets it."""
+import pytest
 from pathlib import Path
 
 import yaml
+
+pytestmark = pytest.mark.datafile
 
 _BUILD = Path(__file__).resolve().parents[2] / "cloudbuild-dev.yaml"
 

@@ -133,6 +133,7 @@ class TestInstrumentLlmSdks:
         fake_logfire.instrument_google_genai.assert_not_called()
         assert fake_instrumentor.instrument.call_count == 1
 
+    @pytest.mark.slow
     def test_opts_google_genai_into_content_capture(self, monkeypatch, fake_logfire):
         monkeypatch.delenv("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", raising=False)
 

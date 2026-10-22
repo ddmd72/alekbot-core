@@ -45,6 +45,8 @@ def index():
     return PlaceIndex(load_place_rows())
 
 
+@pytest.mark.datafile
+@pytest.mark.slow
 @pytest.mark.parametrize("lat,lon,expected", [
     (41.3888, 2.1590, {"Barcelona", "Barcelone", "Барселона", "Spain", "España", "Испания", "Іспанія"}),
     (48.8534, 2.3488, {"Paris", "Париж", "France", "Francia", "Франция"}),

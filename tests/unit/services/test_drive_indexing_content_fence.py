@@ -122,6 +122,7 @@ def check_fence(w, crash):
             assert len(w.readable(item_id)) == rec.chunk_count   # a readable generation is always whole
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("seed", SEEDS)
 async def test_fence_properties(seed):
     rng = random.Random(seed)

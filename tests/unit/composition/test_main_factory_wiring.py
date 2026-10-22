@@ -1,9 +1,11 @@
 """main.py must hand UserNotificationService to UserAgentFactory. Without it NotesAgent's
 confirmations were silently dead from 2026-03-22, and Lelik cannot resolve the channel."""
+import pytest
 import ast
 from pathlib import Path
 
 
+@pytest.mark.datafile
 def test_main_passes_notification_service_to_the_agent_factory():
     tree = ast.parse(Path("main.py").read_text())
     calls = [n for n in ast.walk(tree)

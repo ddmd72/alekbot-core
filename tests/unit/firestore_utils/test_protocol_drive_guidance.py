@@ -3,9 +3,12 @@
 `render_results` keeps per-result facts; the standing guidance lives in PROTOCOL_AGENT_SELECTION (the token Smart's
 profile `smart` assigns). The file is the mirror the owner uploads (`snapshot_upload.py --apply`), so it must
 round-trip through the serializer, keep its braces balanced, and carry every §10.4 line once."""
+import pytest
 import importlib.util
 import os
 import re
+
+pytestmark = pytest.mark.datafile
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(_HERE)))

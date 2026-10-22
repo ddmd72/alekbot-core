@@ -1,8 +1,11 @@
 """create_drive_vector_indexes.sh creates the chunk vector indexes too (USER_DRIVE_INDEXING_RFC §12.5, §24.6): the
 `vector` field of the chunk collection under user_id and user_id + kind, after the two card indexes."""
+import pytest
 import os
 import subprocess
 from pathlib import Path
+
+pytestmark = pytest.mark.datafile
 
 _SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "infrastructure" / "create_drive_vector_indexes.sh"
 _STUB = '#!/bin/bash\necho "$*" >> "$STUB_DIR/calls"\necho "Create request issued"\n'

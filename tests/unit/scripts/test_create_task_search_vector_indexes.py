@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.datafile
+
 _SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "infrastructure" / "create_task_search_vector_indexes.sh"
 
 _STUB = """#!/bin/bash

@@ -1,5 +1,6 @@
 """The drive-search skill: the cannot-open line overrides the stale and accuracy rules (card answer, flagged as
 possibly out of date, never an open)."""
+import pytest
 import re
 from pathlib import Path
 
@@ -13,6 +14,7 @@ def _flat() -> str:
     return re.sub(r"\s+", " ", body)
 
 
+@pytest.mark.datafile
 def test_the_access_line_overrides_the_stale_and_accuracy_rules():
     body = _flat()
     sentence = ("This line overrides the stale and accuracy rules: answer from the card and say it may be out "

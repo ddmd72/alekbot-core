@@ -81,6 +81,7 @@ class TestFirestore:
         await repo.count_unread("u", {"pdf", "image"}, {"image"})
         assert len(executed(db, RECS)) == 6
 
+    @pytest.mark.datafile
     async def test_every_triaged_count_has_its_composite_index(self, db, mock_env_config):
         repo = make_chunk_repo(db, mock_env_config)
         await repo.count_unread("u", {"pdf"}, {"image"})

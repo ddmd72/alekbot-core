@@ -1,5 +1,6 @@
 """Parser@2 across the sandbox boundary (USER_DRIVE_INDEXING_RFC §25.3, §25.4.8): the version is 2 (3 since §26.3), the child reports
 `script_rendered` only when set, and the parent passes it on a `text` outcome after checking its type."""
+import pytest
 import json
 import subprocess
 import sys
@@ -32,6 +33,7 @@ def _child(tmp_path, source: Path, kind: str) -> dict:
     return json.loads((tmp_path / "result.json").read_text(encoding="utf-8"))
 
 
+@pytest.mark.datafile
 def test_the_child_reports_a_script_rendered_page(tmp_path):
     source = tmp_path / "app.html"
     source.write_text(_SCRIPT_PAGE, encoding="utf-8")
@@ -40,6 +42,7 @@ def test_the_child_reports_a_script_rendered_page(tmp_path):
     assert result["text"].startswith("Title: Planner")
 
 
+@pytest.mark.datafile
 def test_the_child_omits_the_flag_when_unset(tmp_path):
     source = tmp_path / "a.html"
     source.write_text("<html><body><p>Ordinary page text.</p></body></html>", encoding="utf-8")
@@ -68,6 +71,7 @@ def test_the_flag_never_rides_on_a_non_text_outcome():
     assert outcome.status is ExtractionStatus.NO_TEXT and outcome.script_rendered is False
 
 
+@pytest.mark.datafile
 async def test_real_child_end_to_end(tmp_path):
     source = tmp_path / "app.html"
     source.write_text(_SCRIPT_PAGE, encoding="utf-8")

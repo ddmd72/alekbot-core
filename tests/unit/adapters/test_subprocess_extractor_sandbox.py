@@ -68,6 +68,7 @@ def recorded_spawns(monkeypatch):
 # Spawn arguments and the per-run directory
 # =============================================================================
 
+@pytest.mark.datafile
 async def test_sandboxed_child_runs_as_the_parser_user_without_supplementary_groups(
         tmp_path, as_root_with_parser_user, recorded_spawns):
     source = tmp_path / "note.txt"
@@ -88,6 +89,7 @@ async def test_sandboxed_child_runs_as_the_parser_user_without_supplementary_gro
     assert list(_workroot(tmp_path).iterdir()) == []             # removed afterwards
 
 
+@pytest.mark.datafile
 async def test_sandboxed_cut_is_written_in_the_child_directory_and_collected(
         tmp_path, as_root_with_parser_user, recorded_spawns):
     source = make_pdf(tmp_path / "s.pdf", [f"page {i}" for i in range(1, 6)])
@@ -101,6 +103,7 @@ async def test_sandboxed_cut_is_written_in_the_child_directory_and_collected(
     assert list(_workroot(tmp_path).iterdir()) == []
 
 
+@pytest.mark.datafile
 async def test_unsandboxed_child_gets_no_user_arguments(tmp_path, recorded_spawns, caplog):
     source = tmp_path / "note.txt"
     source.write_text("hello")

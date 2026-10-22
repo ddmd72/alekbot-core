@@ -51,6 +51,7 @@ async def test_a_timeout_is_unavailable_and_retried_like_a_503(timeout_cls):
     assert len(sent) == 4                          # initial try + DEFAULT_RETRY_POLICY's 3 retries
 
 
+@pytest.mark.slow
 async def test_batch_surfaces_the_timeout_as_unavailable():
     adapter = GeminiEmbeddingAdapter(api_key="test-key")
     with patch.object(httpx.Client, "send", _hanging_send([])), \

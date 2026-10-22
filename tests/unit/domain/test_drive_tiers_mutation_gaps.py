@@ -140,6 +140,7 @@ def test_the_subset_search_cap_is_ten_optional_words():
     assert _SUBSET_SEARCH_MAX == 10
 
 
+@pytest.mark.slow
 def test_up_to_the_cap_the_best_subset_of_words_is_put_in_the_chunk():
     file, cs, texts = _spread_file(10)
     match = classify(file, cs, allowances(cs, {c.word: 1 for c in cs}, 100), texts, {})

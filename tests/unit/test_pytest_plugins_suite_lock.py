@@ -46,6 +46,7 @@ def _everything(result):
     return result.stdout.str() + result.stderr.str()
 
 
+@pytest.mark.slow
 def test_a_large_session_waits_then_gives_up_naming_the_holder(pytester, holder):
     result = _run(pytester)
     assert result.ret == pytest.ExitCode.INTERRUPTED

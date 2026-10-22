@@ -2,12 +2,15 @@
 in §25.13.6). The draft lives in firestore_utils/uploads (the owner backs up and uploads it at rollout, §25.8 step 2);
 the prompts_snapshot mirror stays what is live until then. It carries the tiers line once, inside `drive_specialist`,
 keeps the §10.4 lines, round-trips through the serializer and keeps its braces balanced."""
+import pytest
 import importlib.util
 import json
 import os
 import re
 
 from src.domain.drive_search_texts import PROTOCOL_TIERS_LINE
+
+pytestmark = pytest.mark.datafile
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(_HERE)))

@@ -380,7 +380,9 @@ def camera_roll():
     return w
 
 
+@pytest.mark.slow
 class TestScale:
+    @pytest.mark.slow
     @pytest.mark.parametrize("query", ["IMG_4912", "4912", "img 4912", "IMG-4912 jpg"])
     async def test_exact_name_among_1200_same_prefix_files_is_first(self, camera_roll, query):
         assert names(await camera_roll.search(query))[0] == "IMG_4912.jpg"
@@ -404,6 +406,7 @@ class TestScale:
 
 
 class TestFolderResolution:
+    @pytest.mark.slow
     async def test_root_anchored_path_wins_among_150_same_named_folders(self, w):
         for i in range(150):
             w.drive.add("2025", parent=w.drive.add(f"Project {i}", folder=True), folder=True)

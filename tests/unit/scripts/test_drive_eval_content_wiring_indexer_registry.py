@@ -90,6 +90,8 @@ async def test_run_eval_records_the_reader_provider_and_refuses_another(tmp_path
                        reader_provider="openai", **common, **fake_content())
 
 
+@pytest.mark.datafile
+@pytest.mark.slow
 def test_the_cli_passes_the_runs_reader_provider(monkeypatch):
     from scripts.validation.drive_eval import __main__ as cli
 

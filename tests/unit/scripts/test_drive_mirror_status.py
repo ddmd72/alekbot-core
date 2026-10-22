@@ -107,12 +107,14 @@ async def test_a_missing_index_is_recorded_and_exits_1(status, tmp_path):
     assert code == 1 and "store unavailable" in json.loads(path.read_text())["users"][0]["error"]
 
 
+@pytest.mark.datafile
 def test_the_default_output_is_scripts_memory_and_is_ignored_by_git(status):
     assert status.OUT_DIR == Path(__file__).resolve().parents[3] / "scripts" / "memory"
     gitignore = (Path(__file__).resolve().parents[3] / ".gitignore").read_text()
     assert "scripts/memory" in gitignore
 
 
+@pytest.mark.datafile
 def test_the_script_has_no_write_calls():
     src = (_DIR / "drive_mirror_status.py").read_text()
     for call in ("save_doc", "save_root", "delete_doc", "mark_gone", "clear_mark", "hold_mark", "mark_root_gone", ".delete("):

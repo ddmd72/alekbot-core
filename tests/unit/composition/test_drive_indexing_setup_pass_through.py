@@ -1,4 +1,5 @@
 """Drive indexing composition passes every collaborator through and uses the real repository (RFC §13)."""
+import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from src.adapters.firestore_drive_index_repo import FirestoreDriveIndexRepository
@@ -28,6 +29,7 @@ class TestSchedulerBuilderPassThrough:
 
 
 class TestContainerDriveIndexRepositoryConcrete:
+    @pytest.mark.datafile
     def test_configured_container_uses_the_firestore_repository(self, monkeypatch):
         """The main service reads the real index, never an in-memory stand-in."""
         monkeypatch.setenv("APP_ENV", "test")

@@ -48,6 +48,7 @@ def test_a_page_window_failure_detail_carries_no_message():
     assert SECRET not in failed.value.detail and failed.value.detail.startswith("ValueError at ")
 
 
+@pytest.mark.datafile
 async def test_child_stderr_reaches_logs_and_detail_only_as_length_and_hash(tmp_path, caplog):
     path = tmp_path / "input.bin"
     path.write_bytes(b"x")

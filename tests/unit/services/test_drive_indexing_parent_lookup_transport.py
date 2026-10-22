@@ -25,6 +25,8 @@ from src.services.drive_indexing_service import DriveIndexingService
 
 from .drive_index_fakes import Clock, FakeEmbeddings, FakeQueue, FakeUsers
 
+pytestmark = pytest.mark.datafile
+
 _FIX = Path(__file__).resolve().parents[2] / "fixtures" / "onedrive_delta"
 APPROOT = json.loads((_FIX / "approot.json").read_text(encoding="utf-8"))
 ROOT_ID = APPROOT["id"]

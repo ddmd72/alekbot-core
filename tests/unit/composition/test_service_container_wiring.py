@@ -20,6 +20,8 @@ from src.config.environment import EnvironmentConfig
 from src.domain.settings import ConsolidationSettings
 from src.ports.account_repository import AccountRepository
 
+pytestmark = pytest.mark.datafile
+
 
 @pytest.fixture
 def fake_config():

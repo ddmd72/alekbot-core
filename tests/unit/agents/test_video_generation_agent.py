@@ -312,6 +312,7 @@ async def test_crafting_call_includes_image_presence_marker_with_image_ref(
     assert text.startswith(_QUERY)
 
 
+@pytest.mark.datafile
 async def test_crafting_call_includes_edit_mode_marker_for_edit_video(
     mock_llm, mock_prompt_builder, mock_video_port,
 ):

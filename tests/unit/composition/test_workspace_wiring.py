@@ -15,6 +15,8 @@ from tests.unit.services.test_user_agent_factory import (  # noqa: F401 — fixt
     mock_dependencies,
 )
 
+pytestmark = pytest.mark.datafile
+
 
 class TestContainer:
     def test_absent_without_the_bucket(self, monkeypatch):

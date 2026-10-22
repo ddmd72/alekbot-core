@@ -99,6 +99,7 @@ def test_the_answer_rate_is_scored_over_the_cases_that_set_a_check():
     assert table["answer"]["runs"] == 2 and table["answer"]["rate"] == 0.5
 
 
+@pytest.mark.datafile
 def test_the_v2_gold_is_valid_and_carries_the_hard_check_cases():
     gold = json.loads((_DIR / "gold_g3.json").read_text(encoding="utf-8"))
     v2 = json.loads((_DIR / "gold_g3_v2.json").read_text(encoding="utf-8"))
@@ -109,6 +110,7 @@ def test_the_v2_gold_is_valid_and_carries_the_hard_check_cases():
     assert all(c.get("answer_must_include") for c in v2 if c.get("incident"))
 
 
+@pytest.mark.datafile
 def test_validate_refuses_malformed_v2_fields():
     base = json.loads((_DIR / "gold_g3.json").read_text(encoding="utf-8"))
     bad = {"id": "x", "set": "negative", "category": "web", "lang": "en", "text": "hi", "expect": "none",

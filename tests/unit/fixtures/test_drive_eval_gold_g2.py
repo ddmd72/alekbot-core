@@ -5,6 +5,7 @@
 - the G2 set covers what §24.11 names: clauses, amounts, invoice numbers, dates, tables, two-column PDFs, a version
   family, the OCR-labelled cases, and every fixture language;
 - OCR-labelled G1 cases find a file by subject only (no name key matches), so they measure the reader."""
+import pytest
 import io
 import json
 import zipfile
@@ -20,6 +21,8 @@ from scripts.validation.drive_eval.runner import validate_gold
 from src.domain.drive_keys import name_keys_v2, name_match_v2, name_word_concepts, query_concepts
 from src.domain.drive_tier_pool import concept_trigrams
 from src.domain.drive_tiers import name_query_keys
+
+pytestmark = pytest.mark.datafile
 
 _DIR = Path(__file__).resolve().parents[2] / "fixtures" / "drive_eval"
 
@@ -67,6 +70,7 @@ def test_the_gold_files_pass_the_runners_validation():
     validate_gold(_gold("gold_g1.json") + _gold("gold_g2.json"), drive.paths())
 
 
+@pytest.mark.slow
 def test_every_expected_substring_is_in_its_files_text():
     content = _content_of()
     wrong = []

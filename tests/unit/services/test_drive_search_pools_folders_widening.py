@@ -46,6 +46,7 @@ def _limit_calls(w, method, most):
 # --- Every trigram key gets its own capped call (RFC Δ17) -----------------------------------------
 
 class TestTrigramPool:
+    @pytest.mark.slow
     @pytest.mark.parametrize("query,target,filler,word", [
         ("leese agrement", "Lease agreement.pdf", "parent_{i:03d}.txt", "Lease"),   # every token misspelled
         ("Догов", "Договор аренды.docx", "Подогрев {i:03d}.txt", "Договор"),        # a prefix
@@ -159,6 +160,7 @@ class TestFolderLookupNeverGuesses:
 # --- The subtree walk stops after FOLDER_INMEM_CARDS records (§10.1 Folder) ---------------------
 
 class TestWalkBudget:
+    @pytest.mark.slow
     async def test_walk_reads_at_most_the_budget_plus_one_page_per_parallel_listing(self, monkeypatch):
         w = World(page_size=10_000)
         photos = w.drive.add("Photos", folder=True)

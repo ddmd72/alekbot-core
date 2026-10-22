@@ -1,5 +1,6 @@
 """A terminally refused card is a flag on the record, not a record state (USER_DRIVE_INDEXING_RFC §3.4, §8.2): the
 state and reason stay what the structure says, and the refusal binds the refused card text only."""
+import pytest
 from src.domain import drive_card
 from src.domain import drive_index_planner as planner
 from src.domain.drive_index import Reason, RecordState
@@ -43,6 +44,7 @@ async def test_the_flag_holds_on_re_emission_and_lifts_on_a_new_text():
     assert not rec.card_refused and rec.has_card and rec.state is RecordState.METADATA_ONLY
 
 
+@pytest.mark.slow
 async def test_a_card_builder_bump_retries_and_converges(monkeypatch):
     w = World(page_size=500)
     for i in range(150):

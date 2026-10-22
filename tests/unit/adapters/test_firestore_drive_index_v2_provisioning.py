@@ -14,6 +14,8 @@ from tests.unit.adapters.firestore_drive_eval_fakes import (
     CHUNKS, HINTS, RECS, EvalDb, eval_transactions, make_eval_repo,
 )
 
+pytestmark = pytest.mark.datafile
+
 _ROOT = Path(__file__).resolve().parents[3]
 LIVE = {RECS: "development_drive_index_records", CHUNKS: "development_drive_index_chunks",
         HINTS: "development_drive_index_hints"}

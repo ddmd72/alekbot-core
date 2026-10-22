@@ -24,6 +24,7 @@ def repo(mock_env_config):
     return make_repo(db, mock_env_config), db
 
 
+@pytest.mark.datafile
 async def test_the_query_and_its_index(repo):
     store, db = repo
     await store.inaccessible_records("u", 7)

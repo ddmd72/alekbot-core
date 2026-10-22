@@ -212,6 +212,7 @@ class TestPromptComponentService:
         stats = service.get_cache_stats()
         assert stats['total_entries'] >= 0
 
+    @pytest.mark.slow
     @pytest.mark.asyncio
     async def test_cache_expiration(self, service):
         """Test that cache expires after TTL."""

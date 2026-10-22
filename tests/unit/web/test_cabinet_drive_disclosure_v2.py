@@ -5,6 +5,8 @@ import pytest
 
 from .test_cabinet_drive_index_strings import LANGS, _dicts
 
+pytestmark = pytest.mark.datafile
+
 _SENTENCE = {
     "en": ("To describe your files for search, the beginning and end of every readable file, the text of your "
            "documents passage by passage, and a preview of every picture go to an AI model provider: OpenAI by "

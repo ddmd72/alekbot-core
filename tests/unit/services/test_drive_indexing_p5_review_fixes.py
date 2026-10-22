@@ -197,6 +197,7 @@ async def test_passage_only_progress_is_not_a_stall(w):
 
 # -- MINOR 5: what was spent is recorded; a fatal error stops the siblings ------------------------------------
 
+@pytest.mark.slow
 async def test_a_paid_reply_is_recorded_when_the_file_budget_cuts_the_run(w, monkeypatch):
     monkeypatch.setattr(svc_mod, "ENRICH_FILE_BUDGET_S", 0.05)
     w.profiler.usd = 0.5

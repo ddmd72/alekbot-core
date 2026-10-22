@@ -91,6 +91,8 @@ def indexed():
     return asyncio.run(run())
 
 
+@pytest.mark.datafile
+@pytest.mark.slow
 @pytest.mark.parametrize("path", sorted(EXPECTED))
 def test_scope_and_reason(indexed, path):
     repo, _ = indexed
@@ -103,6 +105,7 @@ def test_scope_and_reason(indexed, path):
         assert rec.has_card is (rec.scope is not Scope.INSIDE_OPAQUE and rec.reason is not Reason.OS_ARTIFACT)
 
 
+@pytest.mark.slow
 def test_a_voice_memo_waits_unread_for_the_transcript_stage(indexed):
     """Policy 3 (§27.3): the memo is pending with its card, and nothing was read from it — no readable generation,
     no chunks, no extractor link (the transcript stage, not wired here, is media's only reader)."""
@@ -113,12 +116,14 @@ def test_a_voice_memo_waits_unread_for_the_transcript_stage(indexed):
     assert (rec.due_at, rec.priority) == (None, None)
 
 
+@pytest.mark.slow
 def test_a_docx_is_indexed(indexed):
     repo, _ = indexed
     rec = repo.records[(EVAL_USER, item_id_for("Contracts/" + _DOCX))]
     assert rec.state is RecordState.INDEXED and rec.indexed_generation is not None and rec.chunk_count > 0
 
 
+@pytest.mark.slow
 def test_nothing_inside_an_opaque_root_is_carded_and_nothing_failed(indexed):
     repo, out = indexed
     assert out.statuses.get("error", 0) == 0

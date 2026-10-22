@@ -8,6 +8,8 @@ from src.domain.drive_indexing_status import DriveIndexingStatus
 from tests.unit.web.test_cabinet_drive_index_strings import LANGS, _dicts
 from tests.unit.web.test_user_cabinet_drive_index_card import _indexing
 
+pytestmark = pytest.mark.datafile
+
 
 @pytest.mark.parametrize("waiting", [True, False])
 async def test_the_api_returns_awaiting_rebuild(waiting):

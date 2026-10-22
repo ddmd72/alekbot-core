@@ -38,6 +38,7 @@ async def test_transcript_key_in_use_in_any_state_per_user(adapter):
     assert not await repo.transcript_key_in_use("u", "k3") and not await repo.transcript_key_in_use("u", "nope")
 
 
+@pytest.mark.datafile
 async def test_the_firestore_read_is_equality_only(adapter):
     repo, db = adapter
     if db is None:

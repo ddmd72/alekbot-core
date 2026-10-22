@@ -18,6 +18,8 @@ from src.domain.email import OAuthCredentials
 from src.domain.user_drive import DriveItemNotFoundError, DriveResyncRequired
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
 
+pytestmark = pytest.mark.datafile
+
 _FIX = Path(__file__).resolve().parents[2] / "fixtures" / "onedrive_delta"
 _GRAPH = "https://graph.microsoft.com/v1.0"
 _DELTA_START = "/me/drive/special/approot/delta?$top=200"

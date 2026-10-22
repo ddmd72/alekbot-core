@@ -1,8 +1,11 @@
 """IAM least-privilege Step 6: the main service runs as its own identity, named through `$PROJECT_ID`.
 After this step no runtime runs as the default compute identity."""
+import pytest
 from pathlib import Path
 
 import yaml
+
+pytestmark = pytest.mark.datafile
 
 _BUILD = Path(__file__).resolve().parents[2] / "cloudbuild-dev.yaml"
 

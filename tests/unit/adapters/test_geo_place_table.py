@@ -1,3 +1,5 @@
+import pytest
+
 from src.adapters.geo_place_table import load_place_rows
 
 
@@ -8,6 +10,8 @@ def test_loads_tsv(tmp_path):
     assert rows[0].name_local == "Roma" and rows[0].lat == 41.89
 
 
+@pytest.mark.datafile
+@pytest.mark.slow
 def test_bundled_table_loads_and_knows_rome():
     rows = load_place_rows()
     assert len(rows) > 20_000

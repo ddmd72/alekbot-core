@@ -37,6 +37,7 @@ def _dispatch(real, isolate):
 
 # -- isolation ----------------------------------------------------------------------------------------------------
 
+@pytest.mark.datafile
 def test_every_v2_case_is_isolated_and_the_flag_validates():
     gold = json.loads((_DIR / "gold_g3.json").read_text(encoding="utf-8"))
     v2 = json.loads((_DIR / "gold_g3_v2.json").read_text(encoding="utf-8"))
@@ -101,6 +102,7 @@ def _skill() -> str:
     return re.sub(r"\s+", " ", body)
 
 
+@pytest.mark.datafile
 def test_the_skill_states_the_query_discipline():
     body = _skill()
     for line in (

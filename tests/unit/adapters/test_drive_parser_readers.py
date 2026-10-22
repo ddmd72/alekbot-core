@@ -33,6 +33,7 @@ def test_every_slice2_content_kind_has_a_reader():
     assert SLICE2_CONTENT_KINDS <= set(readers._READERS)
 
 
+@pytest.mark.slow
 def test_markitdown_converters_are_all_in_the_phase0_allowlist():
     registered = {type(reg.converter).__name__ for reg in build_markitdown()._converters}
     assert {name for name, _, _ in MARKITDOWN_CONVERTERS.values()} <= registered
@@ -505,6 +506,7 @@ def test_odf_with_a_dtd_entity_is_refused_for_good(tmp_path):
 # Containers: Phase 0 ZIP caps and encrypted OOXML
 # =============================================================================
 
+@pytest.mark.slow
 @pytest.mark.parametrize("kind", ["docx", "xlsx", "pptx", "epub", "odt"])
 def test_member_bomb_is_too_large_before_any_parser(tmp_path, kind):
     assert _read(make_member_bomb(tmp_path / f"bomb.{kind}"), kind).status is ExtractionStatus.TOO_LARGE
@@ -715,6 +717,7 @@ def _wide_xlsx(path, rows):
     return path
 
 
+@pytest.mark.slow
 def test_xlsx_with_a_far_right_cell_reads_in_bounded_memory(tmp_path):
     import tracemalloc
 

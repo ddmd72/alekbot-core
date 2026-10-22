@@ -1,5 +1,6 @@
 """The Cabinet shows a reminder's workspace file on one read-only line; it is edited through chat
 (AGENT_WORKSPACE_RFC §8.3, §21 item 5)."""
+import pytest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -45,6 +46,7 @@ async def test_get_returns_the_field():
     assert plain["workspace_file"] is None
 
 
+@pytest.mark.datafile
 def test_the_list_shows_it_escaped_on_one_read_only_line():
     page = _HTML.read_text(encoding="utf-8")
     assert "workspace file: workspace:${esc(r.workspace_file)}" in page

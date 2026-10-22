@@ -84,6 +84,7 @@ async def test_companion_filters_other_session_and_completed(comp):
     assert [b.batch_id for b in got] == ["p"]
 
 
+@pytest.mark.datafile
 @pytest.mark.parametrize("collection,key", [
     ("development_consolidation_queue", "user_id"),
     ("development_companion_extraction_queue", "session_id"),

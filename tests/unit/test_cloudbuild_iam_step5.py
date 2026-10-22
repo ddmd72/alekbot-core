@@ -1,5 +1,6 @@
 """IAM least-privilege Step 5: the voice relay runs as its own identity, named through `$PROJECT_ID`.
 The main service already admits it on /voice/* through VOICE_RELAY_SA_EMAIL."""
+import pytest
 from pathlib import Path
 
 import yaml
@@ -15,5 +16,6 @@ def _deploy_args(service):
     raise AssertionError(f"no deploy step for {service}")
 
 
+@pytest.mark.datafile
 def test_the_relay_runs_as_its_own_identity():
     assert "--service-account=alek-relay@$PROJECT_ID.iam.gserviceaccount.com" in _deploy_args("alek-voice-relay-dev")

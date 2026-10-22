@@ -1,8 +1,11 @@
 """The indexer's model keys are Secret Manager secrets on its own deploy step, never env vars or Cloud Build
 substitutions (USER_DRIVE_INDEXING_RFC §24.2; CLAUDE.md deploy-substitution trap)."""
+import pytest
 from pathlib import Path
 
 import yaml
+
+pytestmark = pytest.mark.datafile
 
 _BUILD = Path(__file__).resolve().parents[2] / "cloudbuild-dev.yaml"
 
