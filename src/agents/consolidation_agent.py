@@ -1286,9 +1286,9 @@ class ConsolidationAgent(BaseAgent):
                             "type": "object",
                             "description": "Fact attributes (MUST include: domain, temporal_class, state, context_priority, tags). Separate: tags (general keywords) vs metadata (structured data)",
                             "properties": {
-                                "domain": {"type": "string", "description": "FactDomain (BIOGRAPHICAL, HEALTH, SKILL, etc.)"},
+                                "domain": {"type": "string", "description": "BIOGRAPHICAL/POSSESSION/HEALTH/MEDICAL_RECORDS/LOCATION/WORK/NETWORK/PREFERENCE/AGENT_DIRECTIVE/SKILL/PROJECT/FINANCE/EDUCATION/LEGAL/ENTERTAINMENT/COMMUNICATION"},
                                 "temporal_class": {"type": "string", "description": "PERMANENT/STABLE/DYNAMIC/EPHEMERAL"},
-                                "state": {"type": "string", "description": "CURRENT/ARCHIVED/SUPERSEDED/INVALIDATED"},
+                                "state": {"type": "string", "description": "CURRENT/STALE/ARCHIVED/SUPERSEDED/INVALIDATED"},
                                 "context_priority": {"type": "string", "description": "CRITICAL/HIGH/MEDIUM/LOW/ARCHIVAL"},
                                 "ttl_days": {"type": "integer", "description": "Lifecycle TTL (auto-calculated from temporal_class)"},
                                 "tags": {"type": "array", "items": {"type": "string"}, "description": "General classifications (domain keywords, dates)"},
