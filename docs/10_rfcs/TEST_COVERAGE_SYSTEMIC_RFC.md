@@ -575,6 +575,24 @@ semantic-mutation driver (`python -m tests.support.semantic_mutants`) and the re
 - **Branch coverage:** `firestore_repo.py` 43 to 78 %, `fact_management_adapter.py` 83 to 97 %.
 - **Four known defects are pinned by strict xfails** (they fail the suite when fixed, so the fix removes the marker): the cached biographical context swallows a backend failure; the biographical refresh ignores `facts_limit`/`principles_limit`; a failed merge leaves the sources superseded; `add_facts_batch` fills `saved_ids` only when deduplication is skipped. The fixes are outside this package.
 
+**Built (P5, 2026-10-22).** The fake-vs-real parity slice. Files: `tests/support/firestore_parity.py` (32 scenarios, one documented expected value
+each, the index groups), `tests/unit/support/test_firestore_parity.py` (H1 in `make check`; the emulator when `FIRESTORE_EMULATOR_HOST` is set),
+`tests/cloud/` (`conftest.py` guards and index fixture, `test_firestore_parity_cloud.py`), `make test-cloud`. The same scenarios run on H1, the
+emulator (29 of 32; it does not refuse a missing index) and the test database. Deviations and results:
+- **Results.** The emulator agreed with every expected value. The test database confirmed every expected value, the documentation-silent ones
+  included, except one: a composite index is **not** served in reverse (exactly flipped directions give `FailedPrecondition`), which H1 already
+  did. H1 differed from Firestore on two scenarios, both fixed in `firestore_eval.py`: the type order (NaN before numbers; bytes < reference <
+  geo point < array < vector < map) and a `last_update_time` precondition on a missing document (`FailedPrecondition`, before the existence
+  check; a plain `update` is still `NotFound`). P3's open points are settled: `!=` excludes a field set to null, and a precondition on a deleted
+  document is `FailedPrecondition`. Every `# P5 verifies` comment in `firestore_eval.py` now carries its verdict.
+- **Transactions.** The conflict scenario runs two transactions with staggered starts, not three in lock step: the emulator's lock timeouts
+  exhausted the SDK's five attempts in 3 of 8 runs (three) and 4 of 15 (two in lock step), and none in 20 staggered runs.
+- **Index creation on the test database is a fixture** (Admin API, fixed collection ids `test_parity_idx_*`, created once, READY wait 15 min), not
+  the render step of §4; the render step and the lease document come with P12. `make test` ignores `tests/cloud`.
+- **Run:** `make test-cloud`, by hand, with the owner's (or root's) credentials able to impersonate the test service account; one runner at a time.
+  A fresh index failed queries once after reporting READY (cause not found), so a scenario in a collection created by the run is retried up to
+  three times.
+
 **Totals.** Tranche 1 (P1–P9) ≈ 12–16 days; tranche 2 (P10–P17) ≈ 24–33; tranche 3 (P18–P24) ≈ 9–11. **Whole plan
 ≈ 45–59 days.**
 

@@ -3,8 +3,9 @@
 Each scenario is `async def scenario(db, col) -> result`: it writes into the collection `col`, reads back through `db`
 (a `firestore.AsyncClient` or the H1 fake `EvalDb`) and returns ONE observable value (ids in order, field values, an
 error class name). `SCENARIOS` pairs every function with its expected value: Firestore's documented behaviour, never
-what a backend happens to answer. A scenario with `unpinned` set is one the documentation does not settle: its expected
-value is a hypothesis and the test database is the arbiter.
+what a backend happens to answer. Every expected value was confirmed on the test database on 2026-10-22; where the
+documentation is silent (`!=` and null or another type, equality plus array-contains, the error class of a precondition on
+a deleted document, the order of several implicit inequality fields) that run is the source.
 
 Backends: H1 (`tests/unit/support/test_firestore_parity.py`), the Firestore emulator (same file, when
 `FIRESTORE_EMULATOR_HOST` is set), the test database (`tests/cloud/`). Index refusals are judged only where indexes are
@@ -332,10 +333,11 @@ async def composite_refused_without_index(db: Any, col: str) -> Any:
             "fields_swapped": await _ids_or_error(_where(c, "t", "==", 1).order_by("u"))}
 
 
-async def composite_served_in_reverse(db: Any, col: str) -> Any:
+async def composite_not_served_in_reverse(db: Any, col: str) -> Any:
     c = db.collection(col)
     await _seed(c, {"a": {"x": 1, "y": 1}, "b": {"x": 1, "y": 2}, "c": {"x": 2, "y": 1}})
-    return {"every_direction_flipped": await _ids_or_error(c.order_by("x", direction=DESC).order_by("y", direction=DESC)),
+    return {"declared_directions": await _ids_or_error(c.order_by("x").order_by("y")),
+            "every_direction_flipped": await _ids_or_error(c.order_by("x", direction=DESC).order_by("y", direction=DESC)),
             "mixed_directions": await _ids_or_error(c.order_by("x").order_by("y", direction=DESC))}
 
 
@@ -370,7 +372,6 @@ class Scenario:
     expected: Any
     group: Optional[str] = None     # index group: the scenario runs in that group's fixed collection on the test database
     refuses: bool = False           # judges an index refusal: runs only where indexes are enforced
-    unpinned: str = ""              # why the documentation does not settle `expected` (a hypothesis; the test database decides)
 
 
 _NAMES = [f"n{i:02d}" for i in range(1, 12)]
@@ -382,17 +383,13 @@ SCENARIOS: List[Scenario] = [
     Scenario("order_rare_types", order_rare_types, {"asc": _RARE, "desc": _RARE[::-1]}),
     Scenario("order_ties_by_name", order_ties_by_name, {"asc": ["t1", "t2", "t3"], "desc": ["t3", "t2", "t1"]}),
     Scenario("range_implicit_order_limit", range_implicit_order_limit, ["b", "d", "c"]),
-    Scenario("two_range_fields_implicit_order", two_range_fields_implicit_order, ["c", "b", "a", "d"], group="composite",
-             unpinned="the order of several implicit inequality fields (by field path) is H1's reading of the SDK"),
+    Scenario("two_range_fields_implicit_order", two_range_fields_implicit_order, ["c", "b", "a", "d"], group="composite"),
     Scenario("missing_field_filters_orderings", missing_field_filters_orderings,
              {"order_by": ["b", "a", "d"], "range": ["a", "d"], "is_null": ["b"], "in": ["a", "d"]}),
     Scenario("not_equal_missing_field", not_equal_missing_field, ["d"]),
-    Scenario("not_equal_null_field", not_equal_null_field, ["d"],
-             unpinned="the documentation does not say whether != matches a field set to null"),
-    Scenario("not_equal_other_type", not_equal_other_type, ["d", "s"],
-             unpinned="the documentation does not say whether != matches a value of another type"),
-    Scenario("equality_array_contains", equality_array_contains, ["a"],
-             unpinned="whether equality plus array-contains is served by index merging, with no composite"),
+    Scenario("not_equal_null_field", not_equal_null_field, ["d"]),
+    Scenario("not_equal_other_type", not_equal_other_type, ["d", "s"]),
+    Scenario("equality_array_contains", equality_array_contains, ["a"]),
     Scenario("equality_order_by_missing_field", equality_order_by_missing_field, ["c", "a"], group="composite"),
     Scenario("dotted_paths", dotted_paths, {
         "doc": {"ids": {"slack": "U1", "tg": "T1"}, "usage": {"n": 2}}, "get": 2, "where": ["a"], "order_by": ["b", "a"],
@@ -410,8 +407,7 @@ SCENARIOS: List[Scenario] = [
     Scenario("update_missing_document", update_missing_document, "NotFound"),
     Scenario("update_precondition_stale_fresh", update_precondition_stale_fresh,
              {"stale": "FailedPrecondition", "fresh": "ok", "v": 4}),
-    Scenario("update_precondition_deleted", update_precondition_deleted, "FailedPrecondition",
-             unpinned="the error class for a last_update_time precondition on a deleted document (NotFound or FailedPrecondition)"),
+    Scenario("update_precondition_deleted", update_precondition_deleted, "FailedPrecondition"),
     Scenario("knn_cosine", knn_cosine, {
         "all": [["d1", 0.0], ["d4", 0.0012], ["d2", 0.0061], ["d6", 0.2929], ["d3", 1.0]], "limit_2": ["d1", "d4"]},
         group="knn"),
@@ -430,10 +426,10 @@ SCENARIOS: List[Scenario] = [
     Scenario("composite_refused_without_index", composite_refused_without_index, {
         "indexed": ["b", "a"], "order_by_field_without_index": "FailedPrecondition", "fields_swapped": "FailedPrecondition"},
         group="composite", refuses=True),
-    Scenario("composite_served_in_reverse", composite_served_in_reverse,
-             {"every_direction_flipped": ["c", "b", "a"], "mixed_directions": "FailedPrecondition"},
-             group="composite", refuses=True,
-             unpinned="whether a composite index is scanned backwards for the exactly reversed directions"),
+    Scenario("composite_not_served_in_reverse", composite_not_served_in_reverse,
+             {"declared_directions": ["a", "b", "c"], "every_direction_flipped": "FailedPrecondition",
+              "mixed_directions": "FailedPrecondition"},
+             group="composite", refuses=True),
     Scenario("transactions_concurrent", transactions_concurrent, {"final": 2, "body_ran_again": True}),
 ]
 
