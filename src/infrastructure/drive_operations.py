@@ -111,7 +111,7 @@ def wrong_store_text(ref: str) -> str:
     """A mutation given a ref that is not on the drive (or none)."""
     if not ref:
         return "file_ref is required: the drive:<id> ref from a [Drive: ...] label."
-    return f"'{ref}' is a chat file, not on the user's drive. To put it there, copy it with copy_file_to_drive."
+    return f"'{ref}' is a chat file, not on the user's drive. To put it there use copy_file_to_drive."
 
 
 @dataclass(frozen=True)

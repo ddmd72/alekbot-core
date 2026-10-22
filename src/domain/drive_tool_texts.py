@@ -28,11 +28,12 @@ REPORT_TOOL = "report_to_orchestrator"
 _FOLDER = "a folder path such as 'Contracts/2026', or a folder's drive: ref"
 
 QUERY = (
-    "The user's own key words to find, as the user wrote them, in one language: the words of a file or folder name, a "
-    "place, a person, a topic, a document type or purpose ('tickets', 'receipts', 'contracts', 'what expires'), or "
-    "what to find inside (a phrase, a number, an amount, an id). For 'everything about X' put X. Every word must "
-    "match. A file format goes in kind; a time span goes in date_from / date_to, not in the words. Empty only for a "
-    "filter-only search."
+    "REQUIRED unless the request is filter-only. The subject in the user's words (any language): the words of a file "
+    "or folder name, a place, a person, a topic, a document type or purpose ('tickets', 'receipts', 'contracts', "
+    "'what expires'), or what to find inside (a phrase, a number, an amount, an id). For 'everything about X' put X. "
+    "A file format goes in kind ('photos', 'PDF', 'spreadsheet'); a time span ('last year', '2023–2024') goes in "
+    "date_from / date_to, not in the words. Leave EMPTY only for filter-only requests. All words must match: use the "
+    "user's few key words in one language."
 )
 SEARCH_FOLDER = f"Optional: search within this folder and its subfolders: {_FOLDER}. Empty searches the whole drive."
 KIND = (
@@ -43,19 +44,21 @@ KIND = (
 )
 DATE_FROM = (
     "Optional earliest date, YYYY-MM-DD, inclusive, in the user's timezone: a photo's taken date, otherwise the date "
-    "written in the document when the index found one, otherwise the file's date. A time span the user gives goes "
-    "here. For what expires, it bounds the expiry date."
+    "written in the document when the index found one, otherwise the file's date. Use it for a time span the user "
+    "gives. For what expires, it bounds the expiry date."
 )
 DATE_TO = (
-    "Optional latest date, YYYY-MM-DD, inclusive (the whole day counts), in the user's timezone; the same dates as "
-    "date_from."
+    "Optional latest date, YYYY-MM-DD, inclusive (the whole day counts), in the user's timezone: a photo's taken "
+    "date, otherwise the date written in the document when the index found one, otherwise the file's date. Use it "
+    "for a time span the user gives. For what expires, it bounds the expiry date."
 )
 DELETED_QUERY = "Optional: words to find. Empty lists the newest."
 LIST_FOLDER_PARAM = f"Optional: {_FOLDER}. Empty lists the top level."
 FILE_REF = ("The drive: ref of the file or folder, from a card, a [Drive: …] label, the commission or the state "
             "block.")
-OPEN_REF = ("The file's drive: ref. A chat file name from a [File: …] label, a delivered document key, a "
-            "workspace:<path> file or a skill: file is opened from storage.")
+OPEN_REF = ("The file's drive: ref, from a card, a [Drive: …] label, the commission or the state block. A chat file "
+            "name from a [File: …] label, a delivered document key, a workspace:<path> file or a skill: file is "
+            "opened from storage.")
 RECORDING_REF = "The recording's drive: ref."
 SOURCE_REF = ("The file to keep: a chat file name from a [File: …] label, a delivered document key, a workspace:<path> "
               "file or a skill: file. Never a drive: ref (a file already on the drive is moved, not copied).")
@@ -99,8 +102,8 @@ def drive_tool_declarations() -> List[Dict[str, Any]]:
               "is written in them.", [], query=QUERY, folder=SEARCH_FOLDER, kind=KIND, date_from=DATE_FROM,
               date_to=DATE_TO),
         _tool(SEARCH_DELETED, "Search the transcripts of deleted recordings and the notes on deleted files; deleted "
-              "files themselves are not searchable. Only when the user asks about deleted files.", [],
-              query=DELETED_QUERY),
+              "files themselves are not searchable. Only when the user explicitly asks about deleted or removed "
+              "files. Never for an ordinary search.", [], query=DELETED_QUERY),
         _tool(LIST_FOLDER, "List one folder, folders first.", [], folder=LIST_FOLDER_PARAM),
         _tool(OPEN_DRIVE_FILE, "Open a drive file for the orchestrator: its text, the image or PDF itself, or a "
               "recording's transcript; a video is sent to the user's chat instead. You do not see what is opened.",
