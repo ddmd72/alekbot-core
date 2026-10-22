@@ -326,7 +326,6 @@ async def deliver_deep_research(
                     system_alert=report_not_prepared_notice(query),
                     channel_id_override=channel_id_override,
                     platform_override=platform_override,
-                    suppress_transient_retry=True,
                 )
                 if not result.delivered and not result.sent:
                     logger.error("[DeepResearch] Failure notice not sent: %s", result.error)

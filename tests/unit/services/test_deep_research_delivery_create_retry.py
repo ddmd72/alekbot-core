@@ -26,7 +26,7 @@ async def test_timeout_then_success_is_handed_off_without_notice():
     assert keys == {"deep_research_report:j1"}
 
 
-async def test_all_attempts_failing_notifies_once_with_retry_suppressed():
+async def test_all_attempts_failing_notifies_once_keeping_the_agent_retry():
     queue = AsyncMock()
     queue.enqueue_agent_task.side_effect = TimeoutError("t")
     ok, notifier, sleep = await _run(queue)
@@ -34,7 +34,7 @@ async def test_all_attempts_failing_notifies_once_with_retry_suppressed():
     assert queue.enqueue_agent_task.await_count == 3
     assert [c.args[0] for c in sleep.await_args_list] == [0.5, 1.0]
     notifier.notify.assert_awaited_once()
-    assert notifier.notify.await_args.kwargs["suppress_transient_retry"] is True
+    assert "suppress_transient_retry" not in notifier.notify.await_args.kwargs
 
 
 async def test_unnamed_task_is_not_retried():
