@@ -62,6 +62,9 @@ make logs-tail         # Live tail logs
 make fetch-logs [K=300] # Pull last K logs to alek_debug.log (grep locally — see Debugging below)
 ```
 
+**Which test command to run when** (while editing, before a commit, before calling work done, the mutation
+done-check): the table in `tests/CLAUDE.md` § Running is the one place that says it.
+
 Lint + format via `ruff` (`make lint` / `make format`, config in `ruff.toml`). `make check` runs
 `ruff check src/` and `mypy --strict` on `src/domain` + `src/ports` (`mypy.ini`; adapters stay
 informational, `mypy-adapters.ini`, see `decisions/mypy_scoped_rollout.md`) before the unit suite (which excludes `slow` tests; they run in `make ci`); it is the local pre-commit gate. CI (`.github/workflows/ci.yml`) runs
