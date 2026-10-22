@@ -275,6 +275,16 @@ class TestRegister:
         assert resp.status_code >= 400
         assert w.docs(CLIENTS) == {}
 
+    @pytest.mark.xfail(strict=True, raises=AssertionError,
+                       reason="known defect: redirect_uris null is a client error answered 500; the SDK model accepts "
+                              "null and mcp_sdk_oauth_provider.py:98 iterates None (TypeError)")
+    async def test_null_redirect_uris_is_400_invalid_client_metadata(self):
+        w = World()
+        async with w.http() as http:
+            resp = await http.post("/register", json={"redirect_uris": None})
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "invalid_client_metadata"
+
     async def test_service_refuses_a_client_without_redirect_uris(self):
         # mcp_authorization_service.py:166-167, unreachable through the SDK route (above).
         w = World()
