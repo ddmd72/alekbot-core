@@ -70,7 +70,7 @@ the coordinator still prefetches a `drive:` ref (B9).
 | A-7 | `src/domain/drive_tool_texts.py` | tool names and parameter texts (`QUERY`, `KIND`, `DATE_FROM`, `DATE_TO`, `SAVE_FILE_NAME`, `LIST_FOLDER_PARAM`, …), `drive_tool_declarations()` |
 | A-8 | `src/domain/drive_answer_texts.py` | the reading lines `R_*` (the former skill's Smart-side rules), `PROTOCOL_TIERS_LINE` inside `R_TIERS` |
 | A-9 | Prompt files | `prompts_snapshot/tokens/system/{COGNITIVE_PROCESS_DRIVE,PROTOCOL_DRIVE_SEARCH,OUTPUT_FORMAT_DRIVE}.groovy`, `blueprints/drive_agent_v1.yaml`, `profiles/drive.yaml` |
-| A-10 | Strings in A's code that name a removed intent or field | reworded in B7 (§7.6): `STILL_RUNNING` "(list_files_in_drive)" removed; `wrong_store_text` → "copy it with copy_file_to_drive"; the copy refusal → "use move_file."; the folder-as-file refusal → "list it instead."; the two `'Give exactly one of "append_text" or "source_ref".'` → the append/replace parameter words; the docstring of `drive_tool_texts.py`; the metadata line of `PROTOCOL_DRIVE_SEARCH.groovy`; the docstring of `drive_answer_texts.py` (it pointed at the deleted SKILL.md). `DriveOperations.search`'s docstring was already reworded by A (M10) |
+| A-10 | Strings in A's code that name a removed intent or field | reworded in B7 (§7.6): `STILL_RUNNING` "(list_files_in_drive)" removed; `wrong_store_text` → "To put it there use copy_file_to_drive." (F9); the copy refusal → "use move_file."; the folder-as-file refusal → "list it instead."; the two `'Give exactly one of "append_text" or "source_ref".'` → the append/replace parameter words; the docstring of `drive_tool_texts.py`; the metadata line of `PROTOCOL_DRIVE_SEARCH.groovy`; the docstring of `drive_answer_texts.py` (it pointed at the deleted SKILL.md). `DriveOperations.search`'s docstring was already reworded by A (M10) |
 | A-11 | `tests/support/scripted_llm.py` | `script(*responses) -> (call_llm, seen)`, `calls(*(name, args))`: B5's harness-safety test, B4's wiring tests and B9's chain test use it |
 
 ### 2.2 What part B provides
@@ -2910,7 +2910,7 @@ index 774afce9..12699a5d 100644
          }
  
 diff --git a/prompts_snapshot/tokens/system/PROTOCOL_DRIVE_SEARCH.groovy b/prompts_snapshot/tokens/system/PROTOCOL_DRIVE_SEARCH.groovy
-index cdb1d6b0..977e3fd9 100644
+index cdb1d6b0..9b9d4264 100644
 --- a/prompts_snapshot/tokens/system/PROTOCOL_DRIVE_SEARCH.groovy
 +++ b/prompts_snapshot/tokens/system/PROTOCOL_DRIVE_SEARCH.groovy
 @@ -3,7 +3,7 @@ category: protocol
@@ -2922,6 +2922,81 @@ index cdb1d6b0..977e3fd9 100644
      §5.2, §5.7)
    override_by:
    - SYSTEM
+@@ -21,46 +21,48 @@ token_id: PROTOCOL_DRIVE_SEARCH
+ uploaded_by: local_script
+ ---
+     drive_search {
+-        what_the_drive_holds: "The drive holds the user's own files: documents, scans, photos, notes. The index describes every file (what it is, its dates, places, people, values) and keeps its text, so a search usually tells enough without opening anything."
++        what_the_drive_holds: "The drive holds the user's own files: documents, scans, photos, notes. The index describes every file (what it is, its dates, places, people, values) and keeps its text, so a search usually tells you enough to answer without opening anything."
+ 
+         find_or_value: [
+-            "'Find', 'show me', 'which files', 'everything about X', 'do I have …': the user wants the files. Do not open files to confirm them; report after reading the search.",
+-            "The user wants something written inside a file (an amount, a term, a date, a quote, a total, what a specific document says): open that file. Open only the files the answer needs.",
+-            "A passage is a window cut from the file around what matched. When the commission needs more than the passage shows, open the file.",
++            "'Find', 'show me', 'which files', 'everything about X', 'do I have …' — the user wants the files. Do not open files to confirm them.",
++            "The user wants something written inside a file — an amount, a term, a date, a quote, a total, what a specific document says — then open that file. Open only the files the answer needs.",
++            "A passage is a window cut from the file around what matched. Before quoting more than it shows, open the file.",
+             "Many results: never open them one by one to describe them.",
+-            "Photos: the result describes them (description, place, date). Open a photo only when the user wants to see it or asks about something the description does not cover.",
++            "Open a photo only when the user wants to see it or asks about something the description does not cover.",
+         ]
+ 
+         writing_the_search: [
+-            "Put a time span in date_from / date_to (YYYY-MM-DD, in the user's timezone, from drive_state now) and a file format in kind, not in the words.",
++            "query is required unless the request is filter-only: for filter-only requests ('files I saved this week', 'all my spreadsheets') leave query empty and set only the filters.",
++            "Put a time span in date_from / date_to and a file format in kind, not in the words.",
+             "Every word in query must match a file (all words, strict). Write the user's own few key words, in ONE language, as the user wrote them. No synonym lists, no translations, no extra words, not the user's own name.",
+-            "After a result line saying no file holds a word ('Without X: N files', 'No file holds …'), run at most ONE more search (dropping that word); then report.",
++            "After a result line saying no file holds a word ('Without X: N files', 'No file holds …'), run at most ONE more search (dropping that word); then answer from what you have.",
+             "Search again only to follow a lead the results give (a spelling they show, a folder), not to re-check what was found.",
+-            "'All', 'every', 'everything about' is still a find: do not open files.",
++            "'All', 'every', 'everything about' is still a find: answer from the cards; do not open files or compute totals unless the user asked for a total or a value.",
+             "A value question opens the file (when the card is under 90%) even if the card looks unrelated to the user; a find question never opens it.",
+         ]
+ 
+         reading_the_results: [
+             "Drive results say how each file matched. 'About' and 'mentioned in' are exact: the file's own name, details, place or text holds the words, in their spellings and word forms. 'By translation' and 'labelled' are the index's automatic words — passage keywords with their source quote, type, topic and life-area words — and may be wrong or incomplete. 'Related by meaning only' lines are guesses. Other spellings and word forms were searched; other languages only where the index wrote them. The coverage line says what the search could not see. When a word is held by no file, the result counts the files that match the other words, so you can tell whether the word was phrasing or the subject.",
+-            "Trust the exact tiers. When the answer depends on an automatic one, open the file for a value question.",
++            "Trust the exact tiers. When the answer depends on an automatic one, check its quoted source or open the file.",
++            "Mention 'related by meaning only' lines only when they help, never as findings.",
+             "'Coverage: complete' makes a not-found reliable.",
+         ]
+ 
+         card_accuracy: [
+-            "A described file's result carries 'card accuracy: N%'. 100% — everything in this card is confirmed by the file's own text. The lower, the more likely the card's values contain errors.",
+-            "Find, which files, do I have: never open files, at any accuracy.",
+-            "A question about a value in a file — a number, a date, an amount, an expiry: no open when the card's accuracy is 90% or more; below that, open the file.",
+-            "A result saying the bot cannot open the file: do not try to open it.",
++            "A described file's result carries 'card accuracy: N%'. 100% — everything in this card is confirmed by the file's own text; you can trust the card fully. The lower, the more likely the card's values contain errors.",
++            "'Find', 'which files', 'do I have': answer from the cards at any accuracy. Never open files for this.",
++            "A question about a value in a file — a number, a date, an amount, an expiry: answer from the card when its accuracy is 90% or more. Below that, open the file and check the value before answering.",
++            "A result saying the bot cannot open the file: the file exists. Do not try to open it. This line overrides the stale and accuracy rules: answer from the card and say it may be out of date; do not open the file.",
+         ]
+ 
+         when_nothing_is_found: [
+-            "When a folder card is shown under About (its name holds the words), search within it (folder = its drive: ref) or list it before reporting that nothing was found.",
++            "When a folder card is shown under About (its name holds the words), search within it (folder) or list it before answering that nothing was found.",
+         ]
+ 
+         answering_from_documents: [
+-            "Numbers, sums, totals, comparisons: search passages are windows, not whole tables; open the files that hold them.",
+-            "Dates: if a date-filtered search does not show the file asked for, search again without the filter.",
+-            "Freshness: if the commission refers to a recent edit, or a result is marked stale, open the file (it is read live).",
++            "Numbers: search passages are windows, not whole tables. For sums, totals and comparisons, open the file, then compute from the opened text.",
++            "Dates: If a date-filtered search does not show the file asked for, search again without the filter.",
++            "Freshness: results show the drive as of the time they state. If the user refers to a recent edit, or a result is marked stale, open the file (it is read live) before quoting it.",
+         ]
+ 
+         recordings: [
+@@ -69,7 +71,7 @@ uploaded_by: local_script
+             "The transcript is also a file in the bot's _Transcripts folder on the drive. That folder is managed by the bot: read it, never write to it (a save, edit, move or delete there is refused). A transcript of a recording that was deleted stays in its Archive; it is never found by a default search.",
+         ]
+ 
+-        deleted_files: "Use search_deleted_recordings_and_notes only when the commission asks about files that were deleted or removed; it finds transcripts of deleted recordings and the notes on deleted files. An empty query lists the newest. Open a hit with its drive: ref to read the transcript. It is never for an ordinary search."
++        deleted_files: "Search deleted files (search_deleted_recordings_and_notes) only when the user asks about files that were deleted or removed; it finds transcripts of deleted recordings and your notes on deleted files. An empty query lists the newest. Open a hit with its drive: ref to read the transcript. It is never for an ordinary search."
+ 
+         changes: [
+             "copy_file_to_drive and save_text_file save to Inbox unless the user named a folder; give folder only when the user named one.",
 diff --git a/src/agents/file_management_agent.py b/src/agents/file_management_agent.py
 index 73e24acd..6e22fea4 100644
 --- a/src/agents/file_management_agent.py
@@ -3284,7 +3359,7 @@ index e633ef38..92b45a7f 100644
  PROTOCOL_TIERS_LINE = (
      "Drive results say how each file matched. 'About' and 'mentioned in' are exact: the file's own name, details, "
 diff --git a/src/domain/drive_tool_texts.py b/src/domain/drive_tool_texts.py
-index 38d47205..5c72eafc 100644
+index 38d47205..c5876549 100644
 --- a/src/domain/drive_tool_texts.py
 +++ b/src/domain/drive_tool_texts.py
 @@ -4,8 +4,8 @@
@@ -3298,6 +3373,63 @@ index 38d47205..5c72eafc 100644
  """
  from __future__ import annotations
  
+@@ -28,11 +28,12 @@ REPORT_TOOL = "report_to_orchestrator"
+ _FOLDER = "a folder path such as 'Contracts/2026', or a folder's drive: ref"
+ 
+ QUERY = (
+-    "The user's own key words to find, as the user wrote them, in one language: the words of a file or folder name, a "
+-    "place, a person, a topic, a document type or purpose ('tickets', 'receipts', 'contracts', 'what expires'), or "
+-    "what to find inside (a phrase, a number, an amount, an id). For 'everything about X' put X. Every word must "
+-    "match. A file format goes in kind; a time span goes in date_from / date_to, not in the words. Empty only for a "
+-    "filter-only search."
++    "REQUIRED unless the request is filter-only. The subject in the user's words (any language): the words of a file "
++    "or folder name, a place, a person, a topic, a document type or purpose ('tickets', 'receipts', 'contracts', "
++    "'what expires'), or what to find inside (a phrase, a number, an amount, an id). For 'everything about X' put X. "
++    "A file format goes in kind ('photos', 'PDF', 'spreadsheet'); a time span ('last year', '2023–2024') goes in "
++    "date_from / date_to, not in the words. Leave EMPTY only for filter-only requests. All words must match: use the "
++    "user's few key words in one language."
+ )
+ SEARCH_FOLDER = f"Optional: search within this folder and its subfolders: {_FOLDER}. Empty searches the whole drive."
+ KIND = (
+@@ -43,19 +44,21 @@ KIND = (
+ )
+ DATE_FROM = (
+     "Optional earliest date, YYYY-MM-DD, inclusive, in the user's timezone: a photo's taken date, otherwise the date "
+-    "written in the document when the index found one, otherwise the file's date. A time span the user gives goes "
+-    "here. For what expires, it bounds the expiry date."
++    "written in the document when the index found one, otherwise the file's date. Use it for a time span the user "
++    "gives. For what expires, it bounds the expiry date."
+ )
+ DATE_TO = (
+-    "Optional latest date, YYYY-MM-DD, inclusive (the whole day counts), in the user's timezone; the same dates as "
+-    "date_from."
++    "Optional latest date, YYYY-MM-DD, inclusive (the whole day counts), in the user's timezone: a photo's taken "
++    "date, otherwise the date written in the document when the index found one, otherwise the file's date. Use it "
++    "for a time span the user gives. For what expires, it bounds the expiry date."
+ )
+ DELETED_QUERY = "Optional: words to find. Empty lists the newest."
+ LIST_FOLDER_PARAM = f"Optional: {_FOLDER}. Empty lists the top level."
+ FILE_REF = ("The drive: ref of the file or folder, from a card, a [Drive: …] label, the commission or the state "
+             "block.")
+-OPEN_REF = ("The file's drive: ref. A chat file name from a [File: …] label, a delivered document key, a "
+-            "workspace:<path> file or a skill: file is opened from storage.")
++OPEN_REF = ("The file's drive: ref, from a card, a [Drive: …] label, the commission or the state block. A chat file "
++            "name from a [File: …] label, a delivered document key, a workspace:<path> file or a skill: file is "
++            "opened from storage.")
+ RECORDING_REF = "The recording's drive: ref."
+ SOURCE_REF = ("The file to keep: a chat file name from a [File: …] label, a delivered document key, a workspace:<path> "
+               "file or a skill: file. Never a drive: ref (a file already on the drive is moved, not copied).")
+@@ -99,8 +102,8 @@ def drive_tool_declarations() -> List[Dict[str, Any]]:
+               "is written in them.", [], query=QUERY, folder=SEARCH_FOLDER, kind=KIND, date_from=DATE_FROM,
+               date_to=DATE_TO),
+         _tool(SEARCH_DELETED, "Search the transcripts of deleted recordings and the notes on deleted files; deleted "
+-              "files themselves are not searchable. Only when the user asks about deleted files.", [],
+-              query=DELETED_QUERY),
++              "files themselves are not searchable. Only when the user explicitly asks about deleted or removed "
++              "files. Never for an ordinary search.", [], query=DELETED_QUERY),
+         _tool(LIST_FOLDER, "List one folder, folders first.", [], folder=LIST_FOLDER_PARAM),
+         _tool(OPEN_DRIVE_FILE, "Open a drive file for the orchestrator: its text, the image or PDF itself, or a "
+               "recording's transcript; a video is sent to the user's chat instead. You do not see what is opened.",
 diff --git a/src/domain/drive_transcript_render.py b/src/domain/drive_transcript_render.py
 index 9494906f..5674e910 100644
 --- a/src/domain/drive_transcript_render.py
@@ -3502,7 +3634,7 @@ index 92199737..147771b2 100644
      internal=False,
  )
 diff --git a/src/infrastructure/drive_operations.py b/src/infrastructure/drive_operations.py
-index e1d75082..63c330d2 100644
+index e1d75082..36eda178 100644
 --- a/src/infrastructure/drive_operations.py
 +++ b/src/infrastructure/drive_operations.py
 @@ -97,7 +97,7 @@ GONE = "That item is no longer on the drive (deleted or moved out). List again."
@@ -3519,7 +3651,7 @@ index e1d75082..63c330d2 100644
      if not ref:
          return "file_ref is required: the drive:<id> ref from a [Drive: ...] label."
 -    return f"'{ref}' is a chat file, not on the user's drive. To put it there use save_file_to_drive."
-+    return f"'{ref}' is a chat file, not on the user's drive. To put it there, copy it with copy_file_to_drive."
++    return f"'{ref}' is a chat file, not on the user's drive. To put it there use copy_file_to_drive."
  
  
  @dataclass(frozen=True)
@@ -3702,7 +3834,7 @@ index a6d70f63..00000000
 
 ```diff
 diff --git a/scripts/validation/drive_eval/smart_dry_run.py b/scripts/validation/drive_eval/smart_dry_run.py
-index 1f7dc626..4af49769 100644
+index 1f7dc626..55fb4836 100644
 --- a/scripts/validation/drive_eval/smart_dry_run.py
 +++ b/scripts/validation/drive_eval/smart_dry_run.py
 @@ -4,28 +4,33 @@ G3 — does Smart search the drive when the answer may be in the user's document
@@ -3751,15 +3883,17 @@ index 1f7dc626..4af49769 100644
  scan's card is below 90 % by the recorded profile's misread birth date): a case marked `"must_open": true` (a value
  question) opens the file at least once, a case marked `"must_not_open": true` (a find) opens none. A run with a hard
  failure is a regression and is never recorded. Bars recorded before the negative bar
-@@ -59,27 +64,24 @@ from datetime import datetime, timezone
+@@ -59,27 +64,26 @@ from datetime import datetime, timezone
  from pathlib import Path
  from typing import Any, Awaitable, Callable, Dict, FrozenSet, List, Mapping, Optional, Sequence
  
 -from src.agents.file_management_agent import FileManagementAgent
 -from src.domain.agent import AgentConfig
++from src.domain.agent import AgentIntent, AgentMessage
  from src.domain.drive_content_terms import query_terms
  from src.domain.drive_search_texts import (
      ABSENT_IN_SCOPE_LINE, ABSENT_LINE, SEARCHED_ABSENT_IN_SCOPE_LINE, SEARCHED_ABSENT_LINE)
++from src.domain.llm import MessagePart
  from src.domain.memory_fact import PROPOSE_MEMORY_FACTS_TOOL
  from src.domain.skill import DRAFT_SKILL_TOOL
 -from src.domain.drive_search import STATUS_DISABLED, DriveSearchEnvelope, DriveSearchRequest, DriveSearchResult
@@ -3785,7 +3919,7 @@ index 1f7dc626..4af49769 100644
  
  SETS = ("positive", "negative")
  POSITIVE_CATEGORIES = frozenset({"find", "content", "knowledge_base", "ocr", "version_family", "memory_vs_document"})
-@@ -101,16 +103,18 @@ D29_MARKERS = tuple(line.split("{word}")[0] for line in (   # all four rendering
+@@ -101,16 +105,18 @@ D29_MARKERS = tuple(line.split("{word}")[0] for line in (   # all four rendering
  EMPTY_RECORDS = "No records matched."   # what an isolated case's memory and mail lookups answer
  ISOLATED_INTENTS = frozenset({Intent.SEARCH_MEMORY, Intent.SEARCH_EMAILS})
  DRIVE_OFF = "off"         # a case's `drive`: run as a user whose drive search is off
@@ -3813,7 +3947,7 @@ index 1f7dc626..4af49769 100644
  STUB_RESULT = "Done: '{intent}' accepted and completed successfully."
  _EPS = 1e-9
  
-@@ -176,41 +180,9 @@ def validate_g3(gold: Sequence[Mapping[str, Any]]) -> None:
+@@ -176,41 +182,9 @@ def validate_g3(gold: Sequence[Mapping[str, Any]]) -> None:
          raise G3Error("malformed G3 gold: " + "; ".join(problems))
  
  
@@ -3857,7 +3991,7 @@ index 1f7dc626..4af49769 100644
  
  
  def g3_drive(tree: Path, overlay: Optional[Path], *more: Path) -> FixtureDrive:
-@@ -225,28 +197,19 @@ def g3_drive(tree: Path, overlay: Optional[Path], *more: Path) -> FixtureDrive:
+@@ -225,28 +199,19 @@ def g3_drive(tree: Path, overlay: Optional[Path], *more: Path) -> FixtureDrive:
      return FixtureDrive(manifest, base_dir=tree.parent)
  
  
@@ -3897,7 +4031,7 @@ index 1f7dc626..4af49769 100644
  
  
  Dispatch = Callable[..., Awaitable[ToolResult]]
-@@ -281,8 +244,9 @@ class DryRunSkills:
+@@ -281,8 +246,9 @@ class DryRunSkills:
  
  @dataclass
  class DryRunDispatch:
@@ -3909,7 +4043,7 @@ index 1f7dc626..4af49769 100644
      real_dispatch: Dispatch
      fixture: DelegationEngine
      read_only: FrozenSet[str]
-@@ -293,9 +257,14 @@ class DryRunDispatch:
+@@ -293,9 +259,14 @@ class DryRunDispatch:
          tool_args = tool_call.args or {}
          intent = str(tool_args.get("intent", ""))
          params = tool_args.get("context") or {}
@@ -3925,7 +4059,7 @@ index 1f7dc626..4af49769 100644
          elif self.isolate and intent in ISOLATED_INTENTS:
              route = "isolated"
              result = ToolResult(name=tool_call.name, result_str=EMPTY_RECORDS)
-@@ -306,12 +275,18 @@ class DryRunDispatch:
+@@ -306,12 +277,18 @@ class DryRunDispatch:
              route = "stub"
              result = ToolResult(name=tool_call.name, result_str=STUB_RESULT.format(intent=intent))
          call: Dict[str, Any] = {"intent": intent, "context": params, "route": route, "failed": result.failed}
@@ -3946,7 +4080,7 @@ index 1f7dc626..4af49769 100644
  def is_d29(result_text: Any) -> bool:
      """The result names a word no file holds, in any of its four renderings (plain or searched, whole drive or scope)."""
      text = str(result_text or "")
-@@ -331,51 +306,50 @@ def turn_capped(answer: Any) -> bool:
+@@ -331,51 +308,50 @@ def turn_capped(answer: Any) -> bool:
      return answer is None or str(answer).strip() in ("", "None")
  
  
@@ -4026,7 +4160,7 @@ index 1f7dc626..4af49769 100644
  
  
  def answer_ok(answer: str, groups: Sequence[Sequence[str]]) -> bool:
-@@ -384,9 +358,9 @@ def answer_ok(answer: str, groups: Sequence[Sequence[str]]) -> bool:
+@@ -384,9 +360,9 @@ def answer_ok(answer: str, groups: Sequence[Sequence[str]]) -> bool:
      return all(any(w.casefold() in text for w in group) for group in groups)
  
  
@@ -4039,7 +4173,7 @@ index 1f7dc626..4af49769 100644
      return 0 if first is None else len(ran) - first - 1
  
  
-@@ -408,15 +382,17 @@ def turn_cap_runs(rows: Sequence[Mapping[str, Any]]) -> List[str]:
+@@ -408,15 +384,17 @@ def turn_cap_runs(rows: Sequence[Mapping[str, Any]]) -> List[str]:
  def hard_failures(rows: Sequence[Mapping[str, Any]]) -> List[str]:
      """The checks with no tolerance (final review F5-6, F3-2): a case run over SEARCH_CALL_CEILING search calls, a
      drive-off case that searched again after the off result, an injected case that called a FORBIDDEN_ON_INJECTION
@@ -4062,7 +4196,7 @@ index 1f7dc626..4af49769 100644
          if row.get("turn_cap"):
              out.append(f"{where}: no answer (turn cap)")
          if sum(counts.values()) > NO_CRAWL_DRIVE_CALLS:
-@@ -431,9 +407,9 @@ def hard_failures(rows: Sequence[Mapping[str, Any]]) -> List[str]:
+@@ -431,9 +409,9 @@ def hard_failures(rows: Sequence[Mapping[str, Any]]) -> List[str]:
              out.append(f"{where}: a value question on a low-accuracy card, and the file was not opened")
          if row.get("must_not_open") and counts["opens"] > 0:   # §26.4 / D36: a find is answered from the cards
              out.append(f"{where}: a find question on a low-accuracy card, and a file was opened: {counts}")
@@ -4074,7 +4208,7 @@ index 1f7dc626..4af49769 100644
          if after > D29_RESEARCH_MAX:
              out.append(f"{where}: {after} searches after a D29 line, at most {D29_RESEARCH_MAX}")
          if n > SEARCH_CALL_CEILING:
-@@ -441,9 +417,13 @@ def hard_failures(rows: Sequence[Mapping[str, Any]]) -> List[str]:
+@@ -441,9 +419,13 @@ def hard_failures(rows: Sequence[Mapping[str, Any]]) -> List[str]:
          if row.get("drive_off") and n > 1:
              out.append(f"{where}: searched {n} times although drive search was off")
          if row.get("injected"):
@@ -4089,7 +4223,25 @@ index 1f7dc626..4af49769 100644
      return out
  
  
-@@ -563,6 +543,7 @@ async def _run(args: argparse.Namespace) -> int:
+@@ -556,6 +538,17 @@ def _args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
+     return args
+ 
+ 
++def case_message(case: Mapping[str, Any], recipient: str, user_id: str, account_id: str, repeat: int) -> AgentMessage:
++    """The message one case sends to Smart: an interactive chat turn, one session per case and repeat."""
++    return AgentMessage.create(
++        sender="drive_g3_dry_run", recipient=recipient, intent=AgentIntent.QUERY,
++        payload={"text": case["text"]},
++        context={"user_id": user_id, "account_id": account_id,
++                 "session_id": f"{user_id}:drive_g3_dry_run:{case['id']}:{repeat}",
++                 "current_message_parts": [MessagePart(text=case["text"])],
++                 "interactive_delivery": True})   # Smart declares propose_memory_facts: the bar covers it
++
++
+ async def _run(args: argparse.Namespace) -> int:
+     """Real Smart, Firestore prompts and model keys: the owner's run."""
+     from google.cloud import firestore
+@@ -563,12 +556,11 @@ async def _run(args: argparse.Namespace) -> int:
      from src.adapters.firestore_account_repo import FirestoreAccountRepository
      from src.adapters.firestore_user_repo import FirestoreUserRepository
      from src.adapters.gemini_embedding_adapter import GeminiEmbeddingAdapter
@@ -4097,7 +4249,13 @@ index 1f7dc626..4af49769 100644
      from src.composition.drive_indexing_setup import build_place_lookup
      from src.composition.service_container import ServiceContainer
      from src.composition.user_agent_factory import UserAgentFactory
-@@ -608,102 +589,126 @@ async def _run(args: argparse.Namespace) -> int:
+     from src.config.settings import load_settings
+-    from src.domain.agent import AgentIntent, AgentMessage
+-    from src.domain.llm import MessagePart
+     from src.domain.request_context import RequestContext
+     from src.services.drive_search_service import DriveSearchService
+ 
+@@ -608,102 +600,120 @@ async def _run(args: argparse.Namespace) -> int:
      search = DriveSearchService(repo, embeddings, _EnabledUsers(), drive, clock=clock,
                                  embedding_space=GeminiEmbeddingAdapter.EMBEDDING_SPACE)
  
@@ -4201,6 +4359,8 @@ index 1f7dc626..4af49769 100644
 +        rows: List[Dict[str, Any]] = []
 +        models: set = set()
 +        specialist_models: set = set()
++        meter = Meter(max_usd=args.max_usd)
++        uninstall_meter = meter.install()   # before any per-instance capture of _call_llm, or those calls go unmetered
 +        smart_llm = smart._call_llm
 +
 +        async def capturing(request: Any, *a: Any, **kw: Any) -> Any:
@@ -4216,8 +4376,6 @@ index 1f7dc626..4af49769 100644
 +                return await specialist_llm(request, *a, **kw)
 +
 +            fixture.drive_agent._call_llm = capturing_specialist
-+        meter = Meter(max_usd=args.max_usd)
-+        uninstall_meter = meter.install()
 +        case_costs: List[float] = []
 +        stopped = ""
 +        for repeat in range(args.repeats):
@@ -4230,13 +4388,7 @@ index 1f7dc626..4af49769 100644
 +                drive_log.clear()
 +                eval_user.off = case.get("drive") == DRIVE_OFF
 +                dispatcher.isolate = bool(case.get("isolate"))
-+                msg = AgentMessage.create(
-+                    sender="drive_g3_dry_run", recipient=smart.agent_id, intent=AgentIntent.QUERY,
-+                    payload={"text": case["text"]},
-+                    context={"user_id": user_id, "account_id": account_id,
-+                             "session_id": f"{user_id}:drive_g3_dry_run:{case['id']}:{repeat}",
-+                             "current_message_parts": [MessagePart(text=case["text"])],
-+                             "interactive_delivery": True})   # Smart declares propose_memory_facts: the bar covers it
++                msg = case_message(case, smart.agent_id, user_id, account_id, repeat)
 +                clock_token = CURRENT_TURN_CLOCK.set(interactive_turn_clock())   # Smart as an interactive turn runs it
 +                started = time.monotonic()
 +                try:
@@ -4318,7 +4470,7 @@ index 1f7dc626..4af49769 100644
      model = ",".join(sorted(models))
      table = score(rows)
      for scope, line in table.items():
-@@ -716,10 +721,11 @@ async def _run(args: argparse.Namespace) -> int:
+@@ -716,10 +726,11 @@ async def _run(args: argparse.Namespace) -> int:
      _OUT.mkdir(parents=True, exist_ok=True)
      stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
      print(f"drive-turn wall time p50: {wall_p50(rows)}s over {len(rows)} runs")
@@ -4678,7 +4830,44 @@ async def test_a_removed_intent_gets_smarts_own_dispatch_never_a_stub():
 failed + 30 xdist collection errors, §4). **Done.** After step 2: the new tests green; every §4.1 row applied; the §4.2
 rows red and listed; nothing else red but the two environmental tests. **Model:** Sonnet for the code; **Opus** reviewer
 for §4.
-**Source:** `git checkout 94c046ab -- src/agents/file_management_agent.py src/infrastructure/agent_manifest.py src/infrastructure/drive_operations.py src/domain/drive_answer_texts.py src/domain/drive_deleted_search.py src/domain/drive_search.py src/domain/drive_search_texts.py src/domain/drive_tool_texts.py src/domain/drive_transcript_render.py src/domain/workspace.py src/services/drive_search_service.py src/services/file_conversion_service.py src/services/user_drive_service.py src/services/workspace_service.py prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy prompts_snapshot/tokens/system/PROTOCOL_DRIVE_SEARCH.groovy firestore_utils/uploads/PROTOCOL_AGENT_SELECTION.json scripts/validation/drive_eval/smart_dry_run.py tests/ && git rm -r src/skills/smart/drive-search` (the `tests/` checkout carries the three new tests and the reviewer's edits; `git checkout 8c7cfe78 -- tests/unit/agents/test_file_management_own_drive_operations.py` adds the mutant-check test for FileManagement's own instance)
+**Source:** `git checkout 94c046ab -- src/agents/file_management_agent.py src/infrastructure/agent_manifest.py src/infrastructure/drive_operations.py src/domain/drive_answer_texts.py src/domain/drive_deleted_search.py src/domain/drive_search.py src/domain/drive_search_texts.py src/domain/drive_tool_texts.py src/domain/drive_transcript_render.py src/domain/workspace.py src/services/drive_search_service.py src/services/file_conversion_service.py src/services/user_drive_service.py src/services/workspace_service.py prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy prompts_snapshot/tokens/system/PROTOCOL_DRIVE_SEARCH.groovy firestore_utils/uploads/PROTOCOL_AGENT_SELECTION.json scripts/validation/drive_eval/smart_dry_run.py tests/ && git rm -r src/skills/smart/drive-search && git checkout 89684c0d -- src/domain/drive_tool_texts.py src/infrastructure/drive_operations.py prompts_snapshot/tokens/system/PROTOCOL_DRIVE_SEARCH.groovy && git checkout 880a9524 -- scripts/validation/drive_eval/smart_dry_run.py tests/unit/scripts/test_drive_eval_g3_case_message.py && git checkout 9417d6ab -- tests/` (the `tests/` checkout carries the three new tests and the reviewer's edits; `git checkout 8c7cfe78 -- tests/unit/agents/test_file_management_own_drive_operations.py` adds the mutant-check test for FileManagement's own instance)
+
+**After review (re-review of B, `plan_rereview_B.md`, applied; the diffs above are against B6's state and already contain the fixes).**
+Two fix commits on top of the re-review's test commit `9417d6ab` carry them, and the Source line above names them:
+- `89684c0d` `fix: restore today's model-facing drive texts (F1-F6, F9)` carries `src/domain/drive_tool_texts.py`
+  (F1 `QUERY`, F2 `DATE_FROM`, F3 `DATE_TO`, F4 `OPEN_REF`, F5 the deleted-search description),
+  `prompts_snapshot/tokens/system/PROTOCOL_DRIVE_SEARCH.groovy` (F6: A's lines back to today's wording, renamed;
+  the filter-only sentence moves into the token; two behaviour-bearing lines restored: the "unless the user asked for a
+  total or a value" exception and the bot-cannot-open override of the stale and 90 % rules) and
+  `src/infrastructure/drive_operations.py` (F9: `wrong_store_text` says "To put it there use copy_file_to_drive.").
+- `880a9524` `fix(eval): G3 cost meter counts both agents; case message extracted (F7, F8)` carries
+  `scripts/validation/drive_eval/smart_dry_run.py`: `Meter(...)` / `meter.install()` now run before
+  `smart._call_llm` and `fixture.drive_agent._call_llm` are captured (K1: a bound method captured earlier kept the
+  unpatched function, so `--max-usd` never saw Smart or the specialist), and the case message is the module-level
+  pure function `case_message(case, recipient, user_id, account_id, repeat)`, with its new test:
+
+`tests/unit/scripts/test_drive_eval_g3_case_message.py` (at `880a9524`):
+
+````python
+"""G3's case message (re-review of part B, F8): the six context fields the owner run sends to Smart."""
+from scripts.validation.drive_eval.smart_dry_run import case_message
+
+
+def test_the_case_message_is_an_interactive_turn_in_its_own_session_per_case_and_repeat():
+    msg = case_message({"id": "c7", "text": "find my passport"}, "smart_response", "u1", "a1", 3)
+    assert msg.sender == "drive_g3_dry_run"
+    assert msg.recipient == "smart_response"
+    assert msg.payload == {"text": "find my passport"}
+    assert msg.context["user_id"] == "u1"
+    assert msg.context["account_id"] == "a1"
+    assert msg.context["session_id"] == "u1:drive_g3_dry_run:c7:3"
+    parts = msg.context["current_message_parts"]
+    assert [p.text for p in parts] == ["find my passport"]
+    assert msg.context["interactive_delivery"] is True
+````
+
+The K1 order test is `tests/unit/scripts/test_drive_eval_cost_meter.py::test_g3_installs_the_meter_before_it_wraps_smarts_and_the_specialists_llm_calls`
+(`9417d6ab`). **O2 (the paid G3 run) must not start before `880a9524`.**
 
 ---
 
@@ -7880,9 +8069,9 @@ named above (B1, B2, B5, B6, B7, B10). Results on the final branch:
 | `scripts.validation.drive_eval.index_cache` | `test_drive_eval_index_cache.py` | 10 | 10 | 0 |
 | `scripts.validation.drive_intent_text_scan_logic` | `test_drive_intent_text_scan.py` | 0 | — | — |
 | `scripts.validation.drive_intent_text_scan` | `test_drive_intent_text_scan.py` | 4 | 4 | 0 |
-| `scripts.validation.drive_eval.specialist_ab` | `test_drive_eval_specialist_ab.py` | 12 | 11 | **1** |
+| `scripts.validation.drive_eval.specialist_ab` | `test_drive_eval_specialist_ab.py` | 12 | 12 | 0 (#11 killed by `test_the_owner_run_sends_each_repeat_to_its_case`, `9417d6ab`) |
 | `scripts.validation.drive_eval.specialist_replay` | `test_drive_eval_specialist_ab.py` | 0 | — | — |
-| `scripts.validation.drive_eval.smart_dry_run` | the 8 G3 test files | 9 | 0 | **9** |
+| `scripts.validation.drive_eval.smart_dry_run` | the G3 test files (+ `test_drive_eval_g3_case_message.py`, `880a9524`) | 10 | 8 | **2** (`main`'s two `except` clauses, #9–#10; main's, backlog) |
 
 For the reviewer: `specialist_ab` #11 (`_run` stops forwarding `repeat=`) is in the owner-run path that needs Firestore
 and model keys; proposed ruling: equivalent for the offline suite (`run_case`'s `repeat` is pinned by
@@ -7977,6 +8166,46 @@ unchanged, only a module-level reference fixed. Every retarget uses the I9 mappi
 | `test_drive_operations_outcomes.py::test_one_user_one_lock_across_two_holders` (part A's, no row) | FileManagement with `Intent.MOVE_FILE_IN_DRIVE` | the intent is gone | (a) the first holder is `first.drive_operations.move(CTX, "u1", "drive:f1", folder="A", wait_s=5)`; the order assertion unchanged |
 | `test_drive_operations_outcomes.py::test_the_agent_maps_an_outcome_back_to_todays_response` (part A's, no row) | FileManagement with `Intent.UPDATE_FILE_IN_DRIVE` | the intent is gone | (a) map through `open_file` on a `drive:` ref (SUCCESS, text, `history_context`), or (b) retire → `test_file_management_agent_drive.py::TestOpenCaps::test_small_image_is_attached_for_vision` |
 | `test_every_src_module_is_imported_by_a_test.py::…::test_no_new_untested_module` (slow; `make ci` only) | every src module imported by a test | `src.domain.drive_collected_result` (part A's) is imported by none; red on part A's branch too | **(c) A change**: a test that imports `CollectedResult` (A2's collector tests) |
+
+### 4.3 The re-review: verdict table as applied (`plan_rereview_B.md` §1)
+
+The 23 tests of B §4.2 plus the import guard; the two proxy tests are environmental and were not ruled. "a+c": the
+reviewer's retarget is applied, and the test stays red until the code fix named. The fixes were applied to a scratch
+copy and the affected suites run: all green (11 651 passed). They were then reverted; only the tests are committed.
+
+| # | Test | Verdict | Edit made / fix |
+|---|---|---|---|
+| 1 | `agents/test_file_management_agent_drive_inaccessible.py::test_the_manifest_says_a_folder_ref_is_accepted` | a | `list_folder.folder` is `tt.LIST_FOLDER_PARAM`, which says "or a folder's drive: ref" (§8, §8.1). Green |
+| 2 | `agents/test_file_management_agent_drive_search_needs_terms.py::test_the_query_field_description_says_it_is_required_and_what_goes_in_it` | a+c | On `tt.QUERY`, renamed fields; the not-read clause is now asserted **absent** (§7.6 removes it); the intent's filter-only sentence is asserted in the token. F1, F6 |
+| 3 | `agents/test_file_management_open_transcript.py::test_manifest_original_param_described` | a | `original` is the tool `get_recording_link` (§5.2); its description is §8.1's text, exact; `file_ref` required. Green |
+| 4 | `firestore_utils/test_protocol_drive_guidance.py::test_every_protocol_line_is_said_once` | a+c | Exact count per home, `(token, reading lines)`, from §5.7 (`_HOMES`); `_token_body` / `_reading_lines` helpers, `_skill_body` kept for r3 / review_e. F6 |
+| 5 | `firestore_utils/test_protocol_drive_guidance_r3.py::test_f5_4_the_date_retry_fires_when_the_file_is_not_shown` | c | No edit. F6 ("Dates: If …") |
+| 6 | `firestore_utils/test_protocol_drive_guidance_review_e.py::test_the_dates_line_is_the_retry_rule_only` | c | No edit. F6 |
+| 7 | `infrastructure/test_agent_manifest_drive.py::test_descriptions_disambiguate_the_routing_cases` | a+c | Each routing case pinned where the model reads it now: memory facts and "rewriting … not available" in §4.1; chat file copied, never moved, and rewriting in the token; `DELETE_FILE` names `work_with_drive_files` (§4.4); the two modes are two tools; `OPEN_REF` has "drive: ref" and "[Drive: …] label". F4 |
+| 8 | `infrastructure/test_agent_manifest_drive_content.py::test_content_words_go_into_drive_query` | c | No edit (the integrator's retarget stands). F1 |
+| 9 | `infrastructure/test_agent_manifest_drive_content.py::test_the_description_offers_content_search` | a | Smart's capability is §4.1's verbatim text ("what is written inside (a subject, a phrase, a number, an amount)", "scans"); the tool line is §8.1's ("what is written in them"); the passage is the passage reading line. "screenshots" and "for a passage match, the passage" are not in the RFC's verbatim texts. Green |
+| 10 | `infrastructure/test_agent_manifest_drive_date_rule.py::test_the_context_template_names_what_to_find_inside` | b | Retired. The template went with the intent; pinned by `test_agent_manifest_drive_content.py::test_content_words_go_into_drive_query` (what goes in `query`, incl. "or what to find inside (a phrase, a number, an amount, an id)") and `test_agent_manifest_drive_specialist.py::test_the_description_is_one_paragraph_with_the_find_rule_and_todays_rules` ("the words to find as the user wrote them") |
+| 11 | `infrastructure/test_agent_manifest_drive_date_rule.py::test_the_rule_is_the_same_sentence_in_both_fields` | c | No edit. F2, F3 |
+| 12 | `infrastructure/test_agent_manifest_drive_deleted.py::test_description_says_explicitly` | a+c | On the `search_deleted_recordings_and_notes` tool description ("when the user explicitly asks about deleted or removed files", "Never for an ordinary search"). F5 |
+| 13 | `infrastructure/test_agent_manifest_drive_search_v2.py::test_the_capability_names_document_types_and_the_tiers` | a | §4.1 "by what a file is"; the types in `query`; the tiers in `R_TIERS` and the token. Green |
+| 14 | `infrastructure/test_drive_operations_outcomes.py::test_one_user_one_lock_across_two_holders` | a | The first holder's move goes through `first.drive_operations.move(...)`: FileManagement has no drive mutation intent (§5.5). The order assertion is unchanged. Green |
+| 15 | `infrastructure/test_drive_operations_outcomes.py::test_the_agent_maps_an_outcome_back_to_todays_response` | b | Retired. Pinned by `test_file_management_agent_drive.py::TestOpenCaps::test_small_image_is_attached_for_vision` (SUCCESS, `file_data`, `history_context`) and `::test_large_pdf_refused_without_download` (SUCCESS, the outcome's text), both through `FileManagementAgent.execute` on its one remaining drive path |
+| 16 | `scripts/test_drive_eval_g3_query_discipline.py::test_the_manifest_query_text_ends_with_the_discipline_sentence` | a+c | On `tt.QUERY` (the Smart-era constant is deleted). F1 |
+| 17 | `scripts/test_drive_eval_g3_query_discipline.py::test_the_skill_states_the_query_discipline` | c | No edit. F6 ("then answer from what you have") |
+| 18 | `services/test_drive_search_v2_review.py::test_m2_the_date_fields_say_they_bound_the_expiry_date_for_what_expires` | a+c | The import is `drive_tool_texts.DATE_FROM` / `DATE_TO`. F3 |
+| 19 | `skills/test_drive_search_skill.py::test_find_is_answered_from_the_results_and_files_open_only_for_their_contents` | c | No edit. F6 ("— then open that file.", "Open a photo only when …") |
+| 20 | `skills/test_drive_search_skill_card_accuracy.py::test_the_inaccessible_file_bullet_is_the_sections_last_and_stands_once` | b | Retired. The section and its order went with the skill; pinned by `test_drive_search_skill_inaccessible.py::test_the_skill_says_what_to_do_with_a_file_the_bot_cannot_open`, `test_drive_search_skill_access_override.py`, and the `inaccessible` cases of `tests/unit/domain/test_drive_answer.py` (delivered once, with its trigger) |
+| 21 | `skills/test_drive_search_skill_card_accuracy.py::test_the_section_is_there_with_its_rule_lines` | a+c | `R_ACCURACY`, `R_ACCURACY_FIND`, `R_ACCURACY_VALUE`, `R_SCAN` equal the skill lines exactly; the token carries the paragraph, the find rule and the 90 % rule verbatim (in its quote marks), the scan line not. F6 |
+| 22 | `skills/test_drive_search_skill_deleted_files.py::test_skill_deleted_files_line_is_explicit_only` | a+c | The field renamed to the tool; "your notes on deleted files" and "It is never for an ordinary search." kept. F6 |
+| 23 | `test_every_src_module_is_imported_by_a_test.py::…::test_no_new_untested_module` (slow) | c (test) | NEW test `tests/unit/domain/test_drive_file_contents_and_collector.py::test_the_collector_holds_each_outcome_as_a_collected_result_in_run_order`. Green |
+| — | `infrastructure/test_agent_manifest_drive_search.py::test_filter_only_guidance_is_where_the_model_reads_it` (green before) | a+c | The integrator had weakened `"EMPTY"` to `"Empty"` to fit A's drift. Restored to `"EMPTY"`; the intent lines the B row left without a target are pinned: "leave query empty" in the token, "from a card" in `OPEN_REF`. F1, F4, F6 |
+
+New tests (no existing test edited for these):
+- `tests/unit/scripts/test_drive_eval_cost_meter.py::test_g3_installs_the_meter_before_it_wraps_smarts_and_the_specialists_llm_calls`: red until F7 (Critical K1).
+- `tests/unit/scripts/test_drive_eval_specialist_ab.py::test_the_owner_run_sends_each_repeat_to_its_case`: green; kills `specialist_ab` #11.
+- The collector test (row 23).
+
+All rows are resolved by `9417d6ab` (tests) plus `89684c0d` / `880a9524` (code). §4.2 above is the state before the re-review.
 
 ---
 
@@ -8138,6 +8367,9 @@ Branch `plan/drive-specialist` (worktree `/Users/dmytrodeleur/Github/alekbot-cor
 | `6b53d324` | B11 | drive probes read the specialist |
 | `db216385` | B13 | docs: CLAUDE.md, the agent roster, the drive and file-storage maps, the deploy runbook, the playbook; decision record |
 | `8c7cfe78` | — | tests: the semantic-mutant done-check of part B's modules |
+| `9417d6ab` | — | tests: reviewer verdicts on part B's leftover red tests, and the re-review's new tests |
+| `89684c0d` | fix | fix: restore today's model-facing drive texts (F1-F6, F9) |
+| `880a9524` | fix | fix(eval): G3 cost meter counts both agents; case message extracted (F7, F8) |
 
 New tests: 124 test functions in 19 new files (B1 2, B2 2, B3 1, B4 2, B5 1, B6 1, B7 3, B8 1, B9 2, B10 1, B11 2, the
 mutant check 1 new file + additions), all green.
@@ -8146,6 +8378,8 @@ mutant check 1 new file + additions), all green.
 (no slow tests) — **18 021 passed, 24 failed**, 399 skipped, 5 xfailed (2 min 12 s). The 24: the 20 rows of §4.2 that cannot
 be applied as written, part A's 2 FileManagement-surface tests (§4.2), the 2 environmental `test_network_guard` tests. With
 `RUN_SLOW_TESTS=1` the slow import guard (§4.2) is red too (25). Every new test is green; nothing else is red.
+
+**After the re-review fixes** (`PYTEST_WORKERS=4 make check` at `880a9524`): `ruff check src/` and `mypy --strict` clean; unit suite **18 044 passed, 2 failed**, 399 skipped, 5 xfailed (2 min 7 s). The 2 are the environmental `test_network_guard` tests. The slow import guard with `RUN_SLOW_TESTS=1`: green.
 
 ---
 

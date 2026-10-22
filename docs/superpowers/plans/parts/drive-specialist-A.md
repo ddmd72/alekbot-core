@@ -5048,6 +5048,77 @@ def test_drive_operations_and_drive_tools_import_no_port_and_no_adapter():
 
 **Source line:** `git checkout 123de26f -- src/domain/drive_outcome.py src/domain/drive_tool_texts.py src/infrastructure/drive_operations.py src/infrastructure/drive_tools.py tests/unit/infrastructure/test_drive_tools.py src/domain/drive_answer.py src/domain/drive_answer_texts.py src/domain/user_drive.py src/services/user_drive_service.py tests/unit/domain/test_drive_answer.py tests/unit/infrastructure/test_drive_operations_contract.py`
 
+**After review (re-review of B, `plan_rereview_B.md` F1–F5).** The task state above is the plan's A-state; the model-facing
+texts in `src/domain/drive_tool_texts.py` were put back to today's wording by the fix commit `89684c0d` (`QUERY`,
+`DATE_FROM`, `DATE_TO`, `OPEN_REF`, the deleted-search description). Its hunks, generated from the code (the surrounding
+context lines carry part B7's renames):
+
+````diff
+diff --git a/src/domain/drive_tool_texts.py b/src/domain/drive_tool_texts.py
+index 5c72eafc..c5876549 100644
+--- a/src/domain/drive_tool_texts.py
++++ b/src/domain/drive_tool_texts.py
+@@ -28,11 +28,12 @@ REPORT_TOOL = "report_to_orchestrator"
+ _FOLDER = "a folder path such as 'Contracts/2026', or a folder's drive: ref"
+ 
+ QUERY = (
+-    "The user's own key words to find, as the user wrote them, in one language: the words of a file or folder name, a "
+-    "place, a person, a topic, a document type or purpose ('tickets', 'receipts', 'contracts', 'what expires'), or "
+-    "what to find inside (a phrase, a number, an amount, an id). For 'everything about X' put X. Every word must "
+-    "match. A file format goes in kind; a time span goes in date_from / date_to, not in the words. Empty only for a "
+-    "filter-only search."
++    "REQUIRED unless the request is filter-only. The subject in the user's words (any language): the words of a file "
++    "or folder name, a place, a person, a topic, a document type or purpose ('tickets', 'receipts', 'contracts', "
++    "'what expires'), or what to find inside (a phrase, a number, an amount, an id). For 'everything about X' put X. "
++    "A file format goes in kind ('photos', 'PDF', 'spreadsheet'); a time span ('last year', '2023–2024') goes in "
++    "date_from / date_to, not in the words. Leave EMPTY only for filter-only requests. All words must match: use the "
++    "user's few key words in one language."
+ )
+ SEARCH_FOLDER = f"Optional: search within this folder and its subfolders: {_FOLDER}. Empty searches the whole drive."
+ KIND = (
+@@ -43,19 +44,21 @@ KIND = (
+ )
+ DATE_FROM = (
+     "Optional earliest date, YYYY-MM-DD, inclusive, in the user's timezone: a photo's taken date, otherwise the date "
+-    "written in the document when the index found one, otherwise the file's date. A time span the user gives goes "
+-    "here. For what expires, it bounds the expiry date."
++    "written in the document when the index found one, otherwise the file's date. Use it for a time span the user "
++    "gives. For what expires, it bounds the expiry date."
+ )
+ DATE_TO = (
+-    "Optional latest date, YYYY-MM-DD, inclusive (the whole day counts), in the user's timezone; the same dates as "
+-    "date_from."
++    "Optional latest date, YYYY-MM-DD, inclusive (the whole day counts), in the user's timezone: a photo's taken "
++    "date, otherwise the date written in the document when the index found one, otherwise the file's date. Use it "
++    "for a time span the user gives. For what expires, it bounds the expiry date."
+ )
+ DELETED_QUERY = "Optional: words to find. Empty lists the newest."
+ LIST_FOLDER_PARAM = f"Optional: {_FOLDER}. Empty lists the top level."
+ FILE_REF = ("The drive: ref of the file or folder, from a card, a [Drive: …] label, the commission or the state "
+             "block.")
+-OPEN_REF = ("The file's drive: ref. A chat file name from a [File: …] label, a delivered document key, a "
+-            "workspace:<path> file or a skill: file is opened from storage.")
++OPEN_REF = ("The file's drive: ref, from a card, a [Drive: …] label, the commission or the state block. A chat file "
++            "name from a [File: …] label, a delivered document key, a workspace:<path> file or a skill: file is "
++            "opened from storage.")
+ RECORDING_REF = "The recording's drive: ref."
+ SOURCE_REF = ("The file to keep: a chat file name from a [File: …] label, a delivered document key, a workspace:<path> "
+               "file or a skill: file. Never a drive: ref (a file already on the drive is moved, not copied).")
+@@ -99,8 +102,8 @@ def drive_tool_declarations() -> List[Dict[str, Any]]:
+               "is written in them.", [], query=QUERY, folder=SEARCH_FOLDER, kind=KIND, date_from=DATE_FROM,
+               date_to=DATE_TO),
+         _tool(SEARCH_DELETED, "Search the transcripts of deleted recordings and the notes on deleted files; deleted "
+-              "files themselves are not searchable. Only when the user asks about deleted files.", [],
+-              query=DELETED_QUERY),
++              "files themselves are not searchable. Only when the user explicitly asks about deleted or removed "
++              "files. Never for an ordinary search.", [], query=DELETED_QUERY),
+         _tool(LIST_FOLDER, "List one folder, folders first.", [], folder=LIST_FOLDER_PARAM),
+         _tool(OPEN_DRIVE_FILE, "Open a drive file for the orchestrator: its text, the image or PDF itself, or a "
+               "recording's transcript; a video is sent to the user's chat instead. You do not see what is opened.",
+````
+
+The final-state file: `git checkout 89684c0d -- src/domain/drive_tool_texts.py` (valid on the assembled branch, after B7).
+
 **What the new tests assert:** each tool → one call with mapped arguments and its result kind; every source kind of
 `copy_file_to_drive` and `replace_file_content` passes through in its direction; one `move_file` with both fields is
 one call; a move with neither changes nothing; a folder ref and its path give the same `svc.move`; empty or omitted
@@ -6585,6 +6656,94 @@ async def test_save_without_an_item_tells_the_orchestrator_how_to_attach_the_tex
 
 **Source line:** `git checkout 5cc17ea3 -- prompts_snapshot/blueprints/drive_agent_v1.yaml prompts_snapshot/profiles/drive.yaml prompts_snapshot/tokens/system/COGNITIVE_PROCESS_DRIVE.groovy prompts_snapshot/tokens/system/OUTPUT_FORMAT_DRIVE.groovy prompts_snapshot/tokens/system/PROTOCOL_DRIVE_SEARCH.groovy tests/unit/firestore_utils/test_drive_specialist_prompt_files.py tests/unit/services/prompt_v3/test_drive_specialist_prompt_assembly.py tests/unit/agents/test_drive_agent_missing_item.py`
 
+**After review (re-review of B, `plan_rereview_B.md` F6).** `PROTOCOL_DRIVE_SEARCH.groovy` above is the plan's A-state; its
+lines were put back to the `drive-search` skill's wording (renamed to the specialist's tool names), with the filter-only
+sentence added, by the fix commit `89684c0d`. Its hunks, generated from the code:
+
+````diff
+diff --git a/prompts_snapshot/tokens/system/PROTOCOL_DRIVE_SEARCH.groovy b/prompts_snapshot/tokens/system/PROTOCOL_DRIVE_SEARCH.groovy
+index 977e3fd9..9b9d4264 100644
+--- a/prompts_snapshot/tokens/system/PROTOCOL_DRIVE_SEARCH.groovy
++++ b/prompts_snapshot/tokens/system/PROTOCOL_DRIVE_SEARCH.groovy
+@@ -21,46 +21,48 @@ token_id: PROTOCOL_DRIVE_SEARCH
+ uploaded_by: local_script
+ ---
+     drive_search {
+-        what_the_drive_holds: "The drive holds the user's own files: documents, scans, photos, notes. The index describes every file (what it is, its dates, places, people, values) and keeps its text, so a search usually tells enough without opening anything."
++        what_the_drive_holds: "The drive holds the user's own files: documents, scans, photos, notes. The index describes every file (what it is, its dates, places, people, values) and keeps its text, so a search usually tells you enough to answer without opening anything."
+ 
+         find_or_value: [
+-            "'Find', 'show me', 'which files', 'everything about X', 'do I have …': the user wants the files. Do not open files to confirm them; report after reading the search.",
+-            "The user wants something written inside a file (an amount, a term, a date, a quote, a total, what a specific document says): open that file. Open only the files the answer needs.",
+-            "A passage is a window cut from the file around what matched. When the commission needs more than the passage shows, open the file.",
++            "'Find', 'show me', 'which files', 'everything about X', 'do I have …' — the user wants the files. Do not open files to confirm them.",
++            "The user wants something written inside a file — an amount, a term, a date, a quote, a total, what a specific document says — then open that file. Open only the files the answer needs.",
++            "A passage is a window cut from the file around what matched. Before quoting more than it shows, open the file.",
+             "Many results: never open them one by one to describe them.",
+-            "Photos: the result describes them (description, place, date). Open a photo only when the user wants to see it or asks about something the description does not cover.",
++            "Open a photo only when the user wants to see it or asks about something the description does not cover.",
+         ]
+ 
+         writing_the_search: [
+-            "Put a time span in date_from / date_to (YYYY-MM-DD, in the user's timezone, from drive_state now) and a file format in kind, not in the words.",
++            "query is required unless the request is filter-only: for filter-only requests ('files I saved this week', 'all my spreadsheets') leave query empty and set only the filters.",
++            "Put a time span in date_from / date_to and a file format in kind, not in the words.",
+             "Every word in query must match a file (all words, strict). Write the user's own few key words, in ONE language, as the user wrote them. No synonym lists, no translations, no extra words, not the user's own name.",
+-            "After a result line saying no file holds a word ('Without X: N files', 'No file holds …'), run at most ONE more search (dropping that word); then report.",
++            "After a result line saying no file holds a word ('Without X: N files', 'No file holds …'), run at most ONE more search (dropping that word); then answer from what you have.",
+             "Search again only to follow a lead the results give (a spelling they show, a folder), not to re-check what was found.",
+-            "'All', 'every', 'everything about' is still a find: do not open files.",
++            "'All', 'every', 'everything about' is still a find: answer from the cards; do not open files or compute totals unless the user asked for a total or a value.",
+             "A value question opens the file (when the card is under 90%) even if the card looks unrelated to the user; a find question never opens it.",
+         ]
+ 
+         reading_the_results: [
+             "Drive results say how each file matched. 'About' and 'mentioned in' are exact: the file's own name, details, place or text holds the words, in their spellings and word forms. 'By translation' and 'labelled' are the index's automatic words — passage keywords with their source quote, type, topic and life-area words — and may be wrong or incomplete. 'Related by meaning only' lines are guesses. Other spellings and word forms were searched; other languages only where the index wrote them. The coverage line says what the search could not see. When a word is held by no file, the result counts the files that match the other words, so you can tell whether the word was phrasing or the subject.",
+-            "Trust the exact tiers. When the answer depends on an automatic one, open the file for a value question.",
++            "Trust the exact tiers. When the answer depends on an automatic one, check its quoted source or open the file.",
++            "Mention 'related by meaning only' lines only when they help, never as findings.",
+             "'Coverage: complete' makes a not-found reliable.",
+         ]
+ 
+         card_accuracy: [
+-            "A described file's result carries 'card accuracy: N%'. 100% — everything in this card is confirmed by the file's own text. The lower, the more likely the card's values contain errors.",
+-            "Find, which files, do I have: never open files, at any accuracy.",
+-            "A question about a value in a file — a number, a date, an amount, an expiry: no open when the card's accuracy is 90% or more; below that, open the file.",
+-            "A result saying the bot cannot open the file: do not try to open it.",
++            "A described file's result carries 'card accuracy: N%'. 100% — everything in this card is confirmed by the file's own text; you can trust the card fully. The lower, the more likely the card's values contain errors.",
++            "'Find', 'which files', 'do I have': answer from the cards at any accuracy. Never open files for this.",
++            "A question about a value in a file — a number, a date, an amount, an expiry: answer from the card when its accuracy is 90% or more. Below that, open the file and check the value before answering.",
++            "A result saying the bot cannot open the file: the file exists. Do not try to open it. This line overrides the stale and accuracy rules: answer from the card and say it may be out of date; do not open the file.",
+         ]
+ 
+         when_nothing_is_found: [
+-            "When a folder card is shown under About (its name holds the words), search within it (folder = its drive: ref) or list it before reporting that nothing was found.",
++            "When a folder card is shown under About (its name holds the words), search within it (folder) or list it before answering that nothing was found.",
+         ]
+ 
+         answering_from_documents: [
+-            "Numbers, sums, totals, comparisons: search passages are windows, not whole tables; open the files that hold them.",
+-            "Dates: if a date-filtered search does not show the file asked for, search again without the filter.",
+-            "Freshness: if the commission refers to a recent edit, or a result is marked stale, open the file (it is read live).",
++            "Numbers: search passages are windows, not whole tables. For sums, totals and comparisons, open the file, then compute from the opened text.",
++            "Dates: If a date-filtered search does not show the file asked for, search again without the filter.",
++            "Freshness: results show the drive as of the time they state. If the user refers to a recent edit, or a result is marked stale, open the file (it is read live) before quoting it.",
+         ]
+ 
+         recordings: [
+@@ -69,7 +71,7 @@ uploaded_by: local_script
+             "The transcript is also a file in the bot's _Transcripts folder on the drive. That folder is managed by the bot: read it, never write to it (a save, edit, move or delete there is refused). A transcript of a recording that was deleted stays in its Archive; it is never found by a default search.",
+         ]
+ 
+-        deleted_files: "Use search_deleted_recordings_and_notes only when the commission asks about files that were deleted or removed; it finds transcripts of deleted recordings and the notes on deleted files. An empty query lists the newest. Open a hit with its drive: ref to read the transcript. It is never for an ordinary search."
++        deleted_files: "Search deleted files (search_deleted_recordings_and_notes) only when the user asks about files that were deleted or removed; it finds transcripts of deleted recordings and your notes on deleted files. An empty query lists the newest. Open a hit with its drive: ref to read the transcript. It is never for an ordinary search."
+ 
+         changes: [
+             "copy_file_to_drive and save_text_file save to Inbox unless the user named a folder; give folder only when the user named one.",
+````
+
+The final-state file: `git checkout 89684c0d -- prompts_snapshot/tokens/system/PROTOCOL_DRIVE_SEARCH.groovy` (on the assembled branch, after B7).
+
 **What the new tests assert:** each token parses the way `snapshot_upload.py` reads it, with the mirror's frontmatter;
 profile and blueprint fit (ids, outer class, token set, non-overridable, classes in `class_order`); no token names a
 Smart-era intent, field, the `drive-search` skill or `work_with_drive_files`; every snake_case identifier in the tokens
@@ -6774,3 +6933,7 @@ Final `PYTEST_WORKERS=4 make check` at `5cc17ea3` (ruff, `mypy --strict` on doma
 `::test_connect_to_a_unix_socket_works` — environmental: they fail identically on `main` (`308a9e10`) in this sandbox,
 untouched by this part. No other test is red; the five reviewer verdicts (A1: three patch targets, A5: two strategy
 lists) are applied in their tasks, so every task state is green.
+
+**After the re-review of part B** (on the assembled branch `plan/drive-specialist`): `89684c0d` restores today's wording of the
+model-facing texts in A4's `drive_tool_texts.py` and A6's `PROTOCOL_DRIVE_SEARCH.groovy` (and `wrong_store_text`, B-state);
+the notes under A4 and A6 show the hunks.
