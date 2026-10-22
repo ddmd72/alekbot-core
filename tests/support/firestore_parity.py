@@ -385,6 +385,36 @@ async def transactions_concurrent(db: Any, col: str) -> Any:
     return {"final": (await d.get()).to_dict()["n"], "body_ran_again": runs["n"] > 2}
 
 
+async def transaction_read_missing_document(db: Any, col: str) -> Any:
+    d = db.collection(col).document("nobody")
+
+    @firestore.async_transactional
+    async def read_only(tx: Any) -> bool:
+        return (await d.get(transaction=tx)).exists
+
+    seen = await read_only(db.transaction())
+    return {"exists_in_transaction": seen, "created": (await d.get()).exists}
+
+
+async def transaction_delete_after_read(db: Any, col: str) -> Any:
+    d = db.collection(col).document("a")
+    await d.set({"v": 1})
+
+    @firestore.async_transactional
+    async def consume(tx: Any) -> Any:
+        snap = await d.get(transaction=tx)
+        tx.delete(d)
+        return snap.to_dict()
+
+    @firestore.async_transactional
+    async def read_again(tx: Any) -> bool:
+        return (await d.get(transaction=tx)).exists
+
+    first = await consume(db.transaction())
+    return {"first_read": first, "exists_after": (await d.get()).exists,
+            "second_transaction_sees": await read_again(db.transaction())}
+
+
 # ------------------------------------------------------------------------------------ the table, indexes
 
 @dataclass(frozen=True)
@@ -454,6 +484,10 @@ SCENARIOS: List[Scenario] = [
               "mixed_directions": "FailedPrecondition"},
              group="composite", refuses=True),
     Scenario("transactions_concurrent", transactions_concurrent, {"final": 2, "body_ran_again": True}),
+    Scenario("transaction_read_missing_document", transaction_read_missing_document,
+             {"exists_in_transaction": False, "created": False}),
+    Scenario("transaction_delete_after_read", transaction_delete_after_read,
+             {"first_read": {"v": 1}, "exists_after": False, "second_transaction_sees": False}),
 ]
 
 # Fields of each group's composite and vector indexes, in index order: (field, "ASC" | "VECTOR").
