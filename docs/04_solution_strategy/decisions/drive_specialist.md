@@ -46,19 +46,32 @@ specialist".
   (custom skills, reminders, directives, workspace files, prompt overrides) are scanned and rewritten intent-free before
   the deploy (`scripts/validation/drive_intent_text_scan.py`, output in `scripts/memory/`), so they work before and
   after a revert.
+- **Cross-cut review (2026-10-22).** A batch cut by `still_running` reports its change as still running ("may complete"),
+  not as "did not finish"; a change after a still-running outcome is "not started". A path where a `drive:` ref is needed
+  is a correctable `file_ref is required` error, not a "chat file" hint. The model that serves the specialist is logged
+  (`model=`) and checked before the deploy (the global `provider_preference` can override the tier default). The drive
+  agent type is prompt-cached. The turn-cap alert is bounded to 5 s. An `unfinished` answer tells Smart not to
+  commission the same request again in this turn; there is no hard third-call refusal.
 - **Latency.** Each drive commission adds the specialist's turns; the bar is p50 of the drive-turn wall time after ≤
   p50 before + 25 % (G3 and the specialist eval record it). Effort `low` is the first lever if Sonnet misses it.
 - **The Sonnet 5.5 filler-tool stall** (`decisions/sonnet55_adaptive_thinking_stall.md`) did not appear in the
   specialist role. It is bounded by 6 turns and the 150 s soft deadline; a turn-cap exit without a report is logged at
   ERROR and posts one 🚨 line to the ops alert sink. The sol fallback covers provider errors on the first call only.
-- **Grok as Smart** made one commission per file on "find then open the second" (RFC §14); a G3 case pins it.
+- **Grok as Smart** took 9 round trips on "find then open the second" (RFC §14). It was not one commission per file:
+  the run was one search and 8 re-opens of the same PDF. `GrokAdapter._convert_messages` drops every non-image file with
+  a warning (`grok_adapter.py:640`), so the PDF never reaches Grok, while the answer says the file is attached; the
+  specialist is blind to bodies by design (A′), so re-commissioning cannot help. It is an existing adapter gap (the same
+  with today's Grok Smart) and goes to RFC Appendix A as backlog (a PDF text fallback or adapter work, a behaviour
+  change); a G3 case on a Grok Smart bounds the round trips.
 - **The specialist reads search cards in full**, passages included: the same risk class as Smart reading them before,
   held by the `untrusted` line and G3's injected case.
 
 ## Rollback
 
-Restore `PROTOCOL_AGENT_SELECTION` from the mirror file of the commit before the merge (`git show
-<merge>^1:prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy` into the mirror path, `snapshot_upload.py`
-dry run, then `--apply` of that one file; the pre-upload backup is the cross-check), deploy the revert of the merge commit,
-`$admin_cache_reset`, `snapshot_pull.py`; then scan for `work_with_drive_files` in texts written after the deploy
+In the forward order: `git revert -m 1 <merge>` on a branch (it restores the mirror file of `PROTOCOL_AGENT_SELECTION`), then
+`snapshot_upload.py` dry run and `--apply` of that one file just before `make deploy` from that tree (the pre-upload
+backup is the cross-check), `$admin_cache_reset`, a PR of the revert, `snapshot_pull.py`. The reset never runs before the
+revert is live. The window between the restored protocol and the revert going live costs up to two self-corrected calls
+per drive turn. After a failed deploy, redeploy the current image as a new revision rather than resetting one
+instance. Then scan for `work_with_drive_files` in texts written after the deploy
 (`drive_intent_text_scan.py --include-new`) and rewrite each intent-free (RFC §13). The new drive tokens can stay.

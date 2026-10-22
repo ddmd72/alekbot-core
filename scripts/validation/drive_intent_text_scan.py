@@ -2,8 +2,12 @@
 Read-only scan of the owner's stored texts for the drive's old intents (DRIVE_SPECIALIST_RFC §10 step 6) — or, with
 `--include-new`, for `work_with_drive_files` too (the rollback scan, §13 step 5). OWNER-run: it reads personal data
 (Firestore: custom skills and their files, unexpired skill drafts not yet saved, reminders, standing directives,
-prompt overrides; GCS: the workspace's `projects/` and `references/`), and writes only under the gitignored
-scripts/memory/.
+prompt overrides; GCS: the workspace's `projects/`, `references/`, `scratch/` and `files/` text files), and writes
+only under the gitignored scripts/memory/. Standing directives are read from the `agent_directive` domain and from
+`preference` (the SUBJECT x SCOPE rule demotes situational agent rules there). **Only the owner (DEV_USER_ID) is
+scanned**; another whitelisted user with custom skills, reminders or workspace files is not
+covered. A `skill_file` hit is redrafted in chat (`draft_skill`, `$skill save`): `seed_custom_skill.py` keeps the current
+files, and `--check-rewrites` does not read them.
 
 Writes into `--out-dir` (default scripts/memory/drive_intent_scan_<stamp>/):
     report.md      every hit, by store and item (paths, skill names and lines: personal)
@@ -39,7 +43,8 @@ from src.domain.workspace import workspace_kind
 
 _REPO = Path(__file__).resolve().parents[2]
 _MEMORY = _REPO / "scripts" / "memory"
-WORKSPACE_FOLDERS = ("projects/", "references/")
+WORKSPACE_FOLDERS = ("projects/", "references/", "scratch/", "files/")
+DIRECTIVE_DOMAINS = ((FactDomain.AGENT_DIRECTIVE, "directive"), (FactDomain.PREFERENCE, "preference"))
 
 
 @dataclass
@@ -87,10 +92,11 @@ async def collect(src: ScanSources, user_id: str, account_id: str, now: datetime
     else:
         skipped.append("reminder")
     if src.facts is not None:
-        for fact in await src.facts.get_active_facts_ordered(account_id, domain=FactDomain.AGENT_DIRECTIVE.value):
-            items.append(ScanItem("directive", fact.id, fact.text))
+        for domain, store in DIRECTIVE_DOMAINS:
+            for fact in await src.facts.get_active_facts_ordered(account_id, domain=domain.value):
+                items.append(ScanItem(store, fact.id, fact.text))
     else:
-        skipped.append("directive")
+        skipped += ["directive", "preference"]
     if src.workspace is not None:
         for folder in WORKSPACE_FOLDERS:
             for entry in await src.workspace.list(user_id, folder):

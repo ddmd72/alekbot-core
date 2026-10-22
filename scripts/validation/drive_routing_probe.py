@@ -8,7 +8,11 @@ Smart reaches the drive through one intent, `work_with_drive_files`, whose query
 needs (the [File: …] label, the folder the user named, the ref from history). A call to one of the 8 removed drive
 intents counts as a miss.
 
-    NO_PROXY='*' python scripts/validation/drive_routing_probe.py --runs 3   # NO_PROXY: a local proxy breaks SDK TLS
+    NO_PROXY='*' python scripts/validation/drive_routing_probe.py --runs 3 --max-usd 3   # NO_PROXY: a local proxy breaks SDK TLS
+
+`--max-usd` is required: every LLM call of the real Smart is metered (`drive_eval/cost_meter.py`) and a call that would
+start once the spend has reached the cap is refused, the run stops and exits 1. The meter checks before each call, so
+parallel specialists can overshoot the cap by about one call each (about $0.1-0.3 per call). Failed calls are not metered.
 """
 from __future__ import annotations
 
@@ -40,6 +44,7 @@ from src.infrastructure.agent_coordinator import AgentCoordinator  # noqa: E402
 from src.infrastructure.agent_manifest import ALL_DESCRIPTORS  # noqa: E402
 from src.infrastructure.agent_registry import AgentRegistry  # noqa: E402
 from src.infrastructure.delegation_engine import DelegationEngine, ToolResult  # noqa: E402
+from scripts.validation.drive_eval.cost_meter import CostCapReached, Meter  # noqa: E402
 
 LEASE = '[File: "lease_2026.pdf" (1.2MB)]'
 DRIVE = "work_with_drive_files"
@@ -100,7 +105,16 @@ def judge_run(scenario: Dict[str, Any], calls: List[Dict[str, Any]]) -> bool:
     return not any(w.casefold() in queries for w in scenario.get("query_lacks", []))
 
 
-async def main(runs: int) -> int:
+def build_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--runs", type=int, default=3)
+    ap.add_argument("--max-usd", type=float, required=True,
+                    help="hard stop on the estimated spend of every LLM call in the run (cost_meter.py); the meter "
+                         "checks before each call, so parallel calls can overshoot by about one call each")
+    return ap
+
+
+async def main(runs: int, max_usd: float) -> int:
     user_id, account_id = os.environ["DEV_USER_ID"], os.environ["DEV_ACCOUNT_ID"]
     db = firestore.AsyncClient(database=os.getenv("FIRESTORE_DATABASE", "us-production"))
     settings = load_settings()
@@ -116,6 +130,9 @@ async def main(runs: int) -> int:
     smart = (await factory.ensure_agents_for_user(user_id))["smart_agent"]
     original_load = smart._load_conversation_context
     _install_capture()
+    meter = Meter(max_usd=max_usd)
+    uninstall = meter.install()
+    stopped = ""
     failures = 0
     passes: Dict[str, int] = {}
     for sc in SCENARIOS:
@@ -134,22 +151,35 @@ async def main(runs: int) -> int:
                          "session_id": f"{user_id}:drive_routing_probe",
                          "current_message_parts": [MessagePart(text=sc["text"])]},
             )
-            async with RequestContext(user_id=user_id, account_id=account_id):
-                await smart.execute(msg)
+            try:
+                async with RequestContext(user_id=user_id, account_id=account_id):
+                    await smart.execute(msg)
+            except CostCapReached as exc:
+                stopped = str(exc)
+                break
+            if meter.spent >= max_usd or meter.capped:
+                stopped = f"spent ${meter.spent:.4f} of --max-usd {max_usd}"
             intents = [c["intent"] for c in CALLS]
             ok = judge_run(sc, CALLS)
             failures += 0 if ok else 1
             passes[sc["text"][:50]] = passes.get(sc["text"][:50], 0) + (1 if ok else 0)
             queries = [c["query"][:120] for c in CALLS if c["intent"] == DRIVE]
             print(f"{'OK ' if ok else 'BAD'} [{run + 1}] {sc['text'][:50]!r} → {intents} queries={queries}")
+            if stopped:
+                break
+        if stopped:
+            break
     smart._load_conversation_context = original_load
+    uninstall()
     for text, n in passes.items():
         print(f"PASS {n}/{runs}  {text!r}")
+    print(f"spent ${meter.spent:.4f} of --max-usd {max_usd}")
+    if stopped:
+        print(f"STOPPED: {stopped}")
     print(f"\n{failures} failing run(s)")
-    return 1 if failures else 0
+    return 1 if failures or stopped else 0
 
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--runs", type=int, default=3)
-    sys.exit(asyncio.run(main(ap.parse_args().runs)))
+    args = build_parser().parse_args()
+    sys.exit(asyncio.run(main(args.runs, args.max_usd)))
