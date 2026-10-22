@@ -18,7 +18,7 @@ uploaded_by: local_script
             Include when present:
               tags, due_datetime, reminder_datetime, body/notes,
               checklist_items (each with title and completion state),
-              linked_resources (display_name + url),
+              linked_resources (display_name + web_url),
               recurrence (type + interval),
               attachments (filename).
             Do not summarise or paraphrase task content — reproduce it exactly.
