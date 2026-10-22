@@ -27,7 +27,6 @@ from src.utils.telemetry import init_telemetry
 from src.composition.memory_telemetry_setup import build_memory_telemetry
 from src.domain.memory_telemetry import SCOPE_WORKER_TASK
 from src.utils.memory_scope import memory_scope
-from src.adapters.firestore_repo import FirestoreFactRepository
 from src.services.file_upload_service import FileUploadService
 from src.composition.service_container import ServiceContainer
 from src.infrastructure.agent_coordinator import AgentCoordinator
