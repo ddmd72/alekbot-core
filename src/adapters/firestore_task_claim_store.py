@@ -44,10 +44,10 @@ class FirestoreTaskClaimStore(TaskClaimStore):
             expires_at = expires_at.replace(tzinfo=timezone.utc)
         return datetime.now(timezone.utc) >= expires_at
 
-    async def try_claim(self, key: str, attempt: str, running_here: bool) -> bool:
-        return await self._claim(key, attempt, running_here, retry_create=True)
+    async def try_claim(self, key: str, attempt: str) -> bool:
+        return await self._claim(key, attempt, retry_create=True)
 
-    async def _claim(self, key: str, attempt: str, running_here: bool, retry_create: bool) -> bool:
+    async def _claim(self, key: str, attempt: str, retry_create: bool) -> bool:
         ref = self._doc(key)
         try:
             await ref.create(self._fresh(attempt))
@@ -56,15 +56,13 @@ class FirestoreTaskClaimStore(TaskClaimStore):
             logger.debug("[TaskClaim] claim exists, checking holder: task=%s", key)
         snap = await ref.get()
         if not snap.exists:  # released between our create and get
-            return await self._claim(key, attempt, running_here, False) if retry_create else False
+            return await self._claim(key, attempt, False) if retry_create else False
         data = snap.to_dict() or {}
         if not self._expired(data):
             if data.get("attempt") == attempt:
                 return True  # our own create, retried by the SDK after it landed
             if data.get("state") == DONE:
                 return False
-            if data.get("holder") == self.holder and running_here:
-                return False  # a live concurrent attempt
         try:
             await ref.update(
                 self._fresh(attempt),
@@ -72,14 +70,14 @@ class FirestoreTaskClaimStore(TaskClaimStore):
             )
         except (FailedPrecondition, NotFound):
             # Our update may have landed and been retried by the SDK: re-read before giving way.
-            return await self._after_lost_update(key, attempt, running_here, retry_create)
+            return await self._after_lost_update(key, attempt, retry_create)
         logger.info("[TaskClaim] took over a dead or expired claim: task=%s", key)
         return True
 
-    async def _after_lost_update(self, key: str, attempt: str, running_here: bool, retry_create: bool) -> bool:
+    async def _after_lost_update(self, key: str, attempt: str, retry_create: bool) -> bool:
         snap = await self._doc(key).get()
         if not snap.exists:
-            return await self._claim(key, attempt, running_here, False) if retry_create else False
+            return await self._claim(key, attempt, False) if retry_create else False
         return (snap.to_dict() or {}).get("attempt") == attempt
 
     async def _own(self, key: str, attempt: str) -> Optional[Any]:
