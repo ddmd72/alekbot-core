@@ -138,6 +138,8 @@ help: ## Show this help message
 	@echo "  make check           CI gate: ruff lint + unit/architecture tests"
 	@echo "  make test            Run all tests"
 	@echo "  make test-unit       Run unit tests"
+	@echo "  make test-affected   Inner loop: testmon-selected tests + the always-run datafile set"
+	@echo "  make ci              PR job: lint + mypy + unit suite once (slow tests, data-file audit, coverage gate) + G2"
 	@echo "  make test-coverage   Unit tests + per-file coverage gate"
 	@echo "  make test-integration Run integration tests"
 	@echo "  make lint            Lint src/ with ruff"
