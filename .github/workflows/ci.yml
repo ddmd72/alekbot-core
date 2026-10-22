@@ -44,11 +44,18 @@ jobs:
         if: failure()
         run: |
           {
-            grep -E "FAILED|ERROR|Error:|over the|budget|datafile|threshold|Required test coverage|make(\[[0-9]+\])?: \*\*\*" ci-output.log | tail -60
+            grep -E "FAILED|ERROR|Error:|threshold|floor|Required test coverage|make(\[[0-9]+\])?: \*\*\*" ci-output.log | tail -60
             echo "----- tail -----"
             tail -40 ci-output.log
           } | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"} {print}' > summary.txt
           echo "::error title=make ci failed::$(cat summary.txt)"
+
+      - name: Coverage per layer as a notice
+        # The runner's per-layer table, on green runs too: the floors are calibrated on it (scripts/check_coverage_layers.py).
+        if: always()
+        run: |
+          awk '/^layer +statements/{f=1} f&&/^$/{exit} f' ci-output.log | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"} {print}' > layers.txt
+          [ -s layers.txt ] && echo "::notice title=Coverage per layer::$(cat layers.txt)" || true
 
       - name: Notify Slack (pass/fail)
         if: always()
