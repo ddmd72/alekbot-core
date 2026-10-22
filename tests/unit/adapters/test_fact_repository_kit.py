@@ -1,7 +1,7 @@
 """FactRepository kit (P4 · T3): the docstrings of `src/ports/repository.py` checked against `FirestoreFactRepository` on the
 evaluating Firestore fake, with the index refusal ON (`config/firestore.indexes.json`): a query no declared index serves fails
-here. Assertions are on the raw stored documents and on what readers return. Methods the port marks as having no caller in
-`src/` (get_facts_by_ids, get_lineage, add/get_observations, get_biographical_context, get_legacy_facts) are not tested.
+here. Assertions are on the raw stored documents and on what readers return. get_lineage (no caller in `src/`) is not
+tested; get_legacy_facts has its own file (test_fact_repository_legacy_facts.py).
 
 `store` is the one fixture that selects the backend.
 """
@@ -26,8 +26,6 @@ from tests.support.fact_store import FACTS, INDEXES_FILE, FactStore, embed, make
 from tests.support.firestore_eval import stored_vector
 
 CONTEXT_COLLECTION = "eval_user_context"
-OBSERVATIONS = "eval_observations_deprecated"
-OBSERVATIONS_ARCHIVE = "eval_observations_archive_deprecated"
 
 
 @pytest.fixture
@@ -624,50 +622,6 @@ async def test_invalidate_twice_succeeds_and_moves_valid_to_and_last_updated(sto
     second = store.docs["f-x"]
     assert second["valid_to"] > first["valid_to"] and second["last_updated"] > first["last_updated"]
     assert second["state"] == "invalidated"
-
-
-# --------------------------------------------------------------------------------------- archive_observations
-
-def _obs(store, obs_id, **fields):
-    store.db.collection(OBSERVATIONS).docs[obs_id] = {"id": obs_id, "text": f"observation {obs_id}", **fields}
-
-
-def _repo_in_production(store):
-    config = make_env_config()
-    config.is_production = True
-    return FirestoreFactRepository(store.db, config, embedding_service=store.embedder)
-
-
-async def test_archive_moves_the_accounts_observations_to_the_archive_in_one_batch(store):
-    _obs(store, "o1", account_id=ACC)
-    _obs(store, "o2", owner_id=ACC)                    # legacy: no account_id
-    _obs(store, "foreign", account_id=OTHER)
-    live, archive = store.db.collection(OBSERVATIONS), store.db.collection(OBSERVATIONS_ARCHIVE)
-    before = {k: copy.deepcopy(v) for k, v in live.docs.items()}
-    started = datetime.now(timezone.utc)
-    await store.repo.archive_observations(["o1", "o2", "foreign", "missing"], ACC)
-    assert sorted(live.docs) == ["foreign"] and sorted(archive.docs) == ["o1", "o2"]
-    assert live.docs["foreign"] == before["foreign"]
-    for obs_id in ("o1", "o2"):
-        copied = dict(archive.docs[obs_id])
-        archived_at = datetime.fromisoformat(copied.pop("archived_at"))
-        assert started <= archived_at <= datetime.now(timezone.utc)
-        assert copied == before[obs_id]
-    assert len(store.db.commits) == 1 and len(store.db.commits[0]) == 4
-
-
-async def test_archive_with_nothing_to_move_commits_nothing(store):
-    _obs(store, "foreign", account_id=OTHER)
-    await store.repo.archive_observations(["foreign", "missing"], ACC)
-    assert store.db.commits == [] and sorted(store.db.collection(OBSERVATIONS).docs) == ["foreign"]
-
-
-async def test_archive_in_production_raises_permission_error_and_moves_nothing(store):
-    _obs(store, "o1", account_id=ACC)
-    with pytest.raises(PermissionError):
-        await _repo_in_production(store).archive_observations(["o1"], ACC)
-    assert sorted(store.db.collection(OBSERVATIONS).docs) == ["o1"]
-    assert store.db.collection(OBSERVATIONS_ARCHIVE).docs == {}
 
 
 # ------------------------------------------------------------------------ the biographical context cache
