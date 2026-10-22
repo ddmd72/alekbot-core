@@ -263,7 +263,64 @@ def _g3_injected_note_profile(n: int) -> DriveProfile:
         domain_words=("home", "hogar", "дім", "дом"))
 
 
-BULK_PROFILES = {"invoice_2024": _invoice_2024_profile, "g3_injected_note": _g3_injected_note_profile}
+# -- G3 only (tree_g3.json): the drive specialist eval's lead files (DRIVE_SPECIALIST_RFC §15). Hand-written,
+# synthetic, never recorded.
+
+def _lead_locksmith_note_profile(n: int) -> DriveProfile:
+    """The card names the invoice number (a key value), so a search for the locksmith shows the lead."""
+    return DriveProfile(
+        title="Locksmith contacts", what_it_is="Contact note for the household locksmith, Example Keys",
+        language="en", doc_type="notes", life_domains=("home",),
+        entities=(ProfileEntity(name="Example Keys", type="organization", printed="Example Keys"),),
+        key_values=(KeyValue(label="invoice_number", printed="Factura FK-3307", canonical="FK-3307"),),
+        topics=("locksmith",), topic_words=("locksmith", "cerrajero", "слюсар", "слесарь"),
+        label_words=("notes", "note", "notas", "нотатки", "заметки"),
+        domain_words=("home", "hogar", "дім", "дом"))
+
+
+def _lead_factura_fk_profile(n: int) -> DriveProfile:
+    """Spanish invoice; no English 'locksmith' in its words, so the first search does not reach it."""
+    return DriveProfile(
+        title="Factura FK-3307", what_it_is="Factura de Cerrajeria Ejemplo por el cambio de bombin",
+        language="es", doc_type="invoice", life_domains=("home", "finance"),
+        dates=(ProfileDate(label="issued", iso=date(2026, 6, 12), printed="12/06/2026"),),
+        entities=(ProfileEntity(name="Cerrajeria Ejemplo S.L.", type="organization",
+                                printed="Cerrajeria Ejemplo S.L."),),
+        key_values=(KeyValue(label="invoice_number", printed="FK-3307", canonical="FK-3307"),
+                    KeyValue(label="amount_total", printed="135,00 EUR", canonical="135.00")),
+        topics=("cambio de bombin",), topic_words=("cambio de bombin", "заміна циліндра", "замена цилиндра"),
+        label_words=("factura", "facturas", "рахунок", "счёт"),
+        domain_words=("hogar", "finanzas", "дім", "дом"))
+
+
+def _lead_garage_rental_profile(n: int) -> DriveProfile:
+    """The annex is named only in the file's last clause: the card never shows it."""
+    return DriveProfile(
+        title="Garage rental agreement 2026", what_it_is="Rental agreement for garage space 14 at Calle Ficticia 30",
+        language="en", doc_type="contract", life_domains=("home", "vehicle"),
+        dates=(ProfileDate(label="valid_from", iso=date(2026, 1, 1), printed="1 January 2026"),),
+        key_values=(KeyValue(label="price", printed="85 EUR per month", canonical="85"),),
+        topics=("garage rental",), topic_words=("garage rental", "alquiler de garaje", "оренда гаража",
+                                                "аренда гаража"),
+        label_words=("contract", "contracts", "contrato", "договір", "договор"),
+        domain_words=("home", "vehicle", "hogar", "vehículo", "дім", "дом"))
+
+
+def _lead_reglamento_profile(n: int) -> DriveProfile:
+    """Spanish only: no English garage, rules or visitors words."""
+    return DriveProfile(
+        title="Reglamento interno del aparcamiento - Bloque C",
+        what_it_is="Reglamento interno de la comunidad, Bloque C",
+        language="es", doc_type="other", life_domains=("home",),
+        topics=("reglamento interno",), topic_words=("reglamento interno", "внутрішній регламент",
+                                                     "внутренний регламент"),
+        label_words=("reglamento", "регламент"),
+        domain_words=("hogar", "дім", "дом"))
+
+
+BULK_PROFILES = {"invoice_2024": _invoice_2024_profile, "g3_injected_note": _g3_injected_note_profile,
+                 "lead_locksmith_note": _lead_locksmith_note_profile, "lead_factura_fk": _lead_factura_fk_profile,
+                 "lead_garage_rental": _lead_garage_rental_profile, "lead_reglamento": _lead_reglamento_profile}
 
 
 def bulk_profile(template: str, n: int) -> Optional[DriveProfile]:
