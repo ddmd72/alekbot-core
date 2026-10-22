@@ -2955,6 +2955,274 @@ state; the answer's state texts equal DriveOperations' constants.
 
 **Done when:** 65 new tests pass (44 + 20 + 1); `mypy --strict` clean; `make check` green.
 
+**After the cross-cut review** (`plan_arbiter_xcut.md`, on the assembled branch `plan/drive-specialist`; X4–X7, X11).** The consumer-view and deploy/runaway reviews changed the answer: a not-found search says "Answer from the results below." as "What to do" (X4); `reconnect needed` with no operation is today's not-connected text (X5); a reads-only answer with a preflight search line that is not `on` carries today's search state text (X6, `DISABLED_TEXT` is now one constant in `drive_search.py`, used by `render_results` and by the answer); the not-found reading trio fires only for `search` blocks, and a lookup search before a change that decides the status adds no search reading lines (X7); `UNFINISHED_LINE` ends with the do-not-recommission sentence (X11, a new line, so it is not bound by the verbatim rule). Hunks, generated from the code:
+
+````diff
+diff --git a/src/domain/drive_answer.py b/src/domain/drive_answer.py
+index 83c678fa..f177b41a 100644
+--- a/src/domain/drive_answer.py
++++ b/src/domain/drive_answer.py
+@@ -28,6 +28,8 @@ from .drive_op import DriveOp
+ from .drive_outcome_class import OutcomeClass
+ from .drive_pass_through import PassThroughCollector
+ from .drive_report import DriveReport
++from .drive_search import DISABLED_TEXT
++from .drive_search_line import SearchLine
+ from .drive_search_texts import REBUILDING_LINE
+ from .drive_status import DriveStatus
+ 
+@@ -58,10 +60,12 @@ _CORRECTABLE = frozenset({OutcomeClass.REQUEST_ERROR, OutcomeClass.NOT_POSSIBLE}
+ 
+ 
+ def compose_answer(collector: PassThroughCollector, report: DriveReport, *, cut: bool = False,
+-                   drive_line: DriveLine = DriveLine.CONNECTED) -> DriveAnswer:
++                   drive_line: DriveLine = DriveLine.CONNECTED,
++                   search_line: SearchLine = SearchLine.ON) -> DriveAnswer:
+     """`cut`: the soft deadline, an engine exception or the turn limit ended the run before its report (§7.2: the
+     status is then `unfinished` whatever finished). A correctable error the model fixed is left out of the status and
+-    of the read blocks, but a change's op line is never dropped (§7.2)."""
++    of the read blocks, but a change's op line is never dropped (§7.2). `search_line` is the preflight's: when it is not
++    `on`, no search ran and the answer holds reads only, today's search state text is the state line (X6)."""
+     settled = _settled(collector.results)
+     results = [r for r in collector.results if r.handle not in settled]
+     all_changes = [r for r in collector.results if r.outcome.is_change]
+@@ -73,22 +77,25 @@ def compose_answer(collector: PassThroughCollector, report: DriveReport, *, cut:
+     running = next((r for r in results if r.outcome.cls is OutcomeClass.STILL_RUNNING), None)
+ 
+     state_line = ""
++    by_change = False   # the status comes from a change: the lookup search before it gets no reading lines (X7)
+     if running is not None:
+         status, line = DriveStatus.STILL_RUNNING, running.outcome.text
+     elif cut or any(r.outcome.cls is OutcomeClass.NOT_FINISHED for r in results):
+         status, line = DriveStatus.UNFINISHED, t.UNFINISHED_LINE
+     elif done and (failed or report.question or report.not_done):
++        by_change = True
+         status = DriveStatus.PARTIAL
+         line = " ".join(part for part in (
+             t.ONLY_PART, report.question,
+             t.PARTIAL_NOT_DONE.format(not_done=report.not_done) if report.not_done else "") if part)
+     elif failed:
++        by_change = True
+         first = failed[0].outcome
+         status = _CLASS_STATUS.get(first.cls, DriveStatus.FAILED)
+         line = t.NOT_ATTACHED if first.cls is OutcomeClass.NOT_POSSIBLE else first.text
+     elif report.question:
+         status, line = DriveStatus.AMBIGUOUS, report.question
+-    elif not results and drive_line is DriveLine.NOT_CONNECTED:
++    elif not results and drive_line in (DriveLine.NOT_CONNECTED, DriveLine.RECONNECT_NEEDED):
+         status, line = DriveStatus.NOT_CONNECTED, _NOT_CONNECTED_TEXT
+         state_line = line
+     elif not results and drive_line is DriveLine.NOT_CONFIGURED:
+@@ -99,6 +106,7 @@ def compose_answer(collector: PassThroughCollector, report: DriveReport, *, cut:
+     elif not results:
+         status, line = DriveStatus.NOT_POSSIBLE, t.NOTHING_DONE.format(why=report.note or t.NOTHING_RAN)
+     elif done:
++        by_change = True
+         status, line = DriveStatus.OK, t.DONE_LINE
+     elif content:
+         status, line = DriveStatus.OK, t.ANSWER_FROM_RESULTS
+@@ -107,8 +115,10 @@ def compose_answer(collector: PassThroughCollector, report: DriveReport, *, cut:
+ 
+     if not state_line:
+         state_line = _search_state_line(results)
++    if not state_line and reads and not changes and not any(r.outcome.op is DriveOp.SEARCH for r in results):
++        state_line = _preflight_search_text(search_line)
+     blocks = _read_blocks(reads)
+-    reading = reading_lines(blocks)
++    reading = reading_lines([b for b in blocks if b.outcome.op is not DriveOp.SEARCH] if by_change else blocks)
+ 
+     out = [t.STATUS_HEAD.format(status=status.value), t.WHAT_TO_DO.format(line=line)]
+     if state_line and state_line != line:
+@@ -155,7 +165,9 @@ def reading_lines(blocks: Sequence[CollectedResult]) -> List[str]:
+         add(t.R_PHOTOS)
+     if cards >= 2:
+         add(t.R_VERSIONS)
+-    if any(s.cls is OutcomeClass.NOT_FOUND or s.facts.coverage_incomplete or s.facts.building for s in searches):
++    # the deleted-files search reads the ledger, not the index: its not-found gets no index lines (X7)
++    if any(b.kind == t.KIND_SEARCH and (b.outcome.cls is OutcomeClass.NOT_FOUND or b.outcome.facts.coverage_incomplete
++                                         or b.outcome.facts.building) for b in blocks if b.outcome.op is DriveOp.SEARCH):
+         add(t.R_BUILDING, t.R_NOT_SEARCHED, t.R_FOLDER_CARD)
+     # Only a file's content opens the "numbers / document vs memory / not read" lines: a body or a vision file, not a
+     # refusal or the line that a video was sent to the chat (M2).
+@@ -205,7 +217,10 @@ def _read_blocks(reads: Sequence[CollectedResult]) -> List[CollectedResult]:
+ 
+ 
+ def _worst_read(reads: Sequence[CollectedResult]) -> Tuple[DriveStatus, str]:
+-    statuses = [(_CLASS_STATUS.get(r.outcome.cls, DriveStatus.FAILED), r.outcome.text) for r in reads]
++    # A search that found nothing: its block carries the text; "What to do" is the pointer, not the whole text (X4).
++    statuses = [(_CLASS_STATUS.get(r.outcome.cls, DriveStatus.FAILED),
++                 t.ANSWER_FROM_RESULTS if r.outcome.op is DriveOp.SEARCH and r.outcome.cls is OutcomeClass.NOT_FOUND
++                 else r.outcome.text) for r in reads]
+     for wanted in _READ_FAILURE_ORDER:
+         for status, text in statuses:
+             if status is wanted:
+@@ -224,6 +239,15 @@ def _search_state_line(results: Sequence[CollectedResult]) -> str:
+     return ""
+ 
+ 
++def _preflight_search_text(line: SearchLine) -> str:
++    """Today's search state text for a preflight search line that is not `on`, raised when no search ran (X6)."""
++    if line is SearchLine.OFF:
++        return DISABLED_TEXT
++    if line is SearchLine.REBUILDING:
++        return REBUILDING_LINE
++    return ""
++
++
+ def _steps(steps: Sequence[int]) -> str:
+     """`step 3`, `steps 3–5`, `steps 2, 4`."""
+     if len(steps) == 1:
+diff --git a/src/domain/drive_answer_texts.py b/src/domain/drive_answer_texts.py
+index e9578a6c..b7a1f22b 100644
+--- a/src/domain/drive_answer_texts.py
++++ b/src/domain/drive_answer_texts.py
+@@ -16,7 +16,8 @@ DONE_LINE = "Done."
+ ANSWER_FROM_RESULTS = "Answer from the results below."
+ ONLY_PART = "Only part was done:"
+ PARTIAL_NOT_DONE = "Not done: {not_done}"
+-UNFINISHED_LINE = "The drive assistant could not finish; what ran is listed below."
++UNFINISHED_LINE = ("The drive assistant could not finish; what ran is listed below. Tell the user what ran and what "
++                   "did not; do not commission the same request again in this turn.")
+ NOTHING_DONE = "Nothing was done: {why}"
+ NOTHING_RAN = "no drive operation ran"
+ NOT_ATTACHED = ("Nothing was written: the text was not attached. Commission again with context.file_contents holding "
+@@ -47,6 +48,7 @@ NOT_STARTED = "not started: the time for this request ran out"
+ NO_ITEM = ("No file_contents item '{value}' (items: {known}). Nothing was written: the text must come from the "
+            "orchestrator in file_contents.")
+ NO_ITEMS = "none"
++FIND_REF = "find it with search_drive or list_folder"
+ REF_REQUIRED = "{field} is required: {what}."   # an empty ref is refused before any call (CRUD: empty is not given)
+ 
+ # -- reading lines (§7.3), verbatim from the drive-search skill ----------------------------------------------------
+diff --git a/src/domain/drive_search.py b/src/domain/drive_search.py
+index 6d0b1d12..d217d733 100644
+--- a/src/domain/drive_search.py
++++ b/src/domain/drive_search.py
+@@ -606,6 +606,9 @@ def _render_card(card: DriveSearchCard) -> str:
+ _BUILDING_LINE = "The index is still being built: some files and folders may not be in it yet."
+ # Off and disconnected hold for the whole conversation: a repeated search only returns this again (F5-7).
+ _NOT_AGAIN = "Do not search the drive again in this conversation."
++# The disabled-search text, one place for the search result and for the drive answer's state line (X6).
++DISABLED_TEXT = ("Drive search is off for this user: they have not turned on drive indexing in the Cabinet. "
++                 f"{_NOT_AGAIN} To find a file now, browse the folders.")
+ 
+ 
+ def _envelope_lines(result: DriveSearchResult) -> List[str]:
+@@ -669,8 +672,7 @@ def render_results(result: DriveSearchResult) -> str:
+         from .drive_tier_render import render_tiered   # it imports this module: imported at call time
+         return render_tiered(result)
+     if result.status == STATUS_DISABLED:
+-        return ("Drive search is off for this user: they have not turned on drive indexing in the Cabinet. "
+-                f"{_NOT_AGAIN} To find a file now, browse the folders.")
++        return DISABLED_TEXT
+     if result.status == STATUS_DISCONNECTED and result.other_drive:
+         return ("Drive search is off for this user for now: a different drive is connected than the one that was "
+                 "indexed. The old index is being removed and the connected drive will be indexed from the start. "
+````
+
+`tests/unit/domain/test_drive_answer_cross_cut.py` (new, complete):
+
+````python
+"""Cross-cut review fixes X4-X7 and X11 on the drive specialist's answer."""
+from src.domain import drive_answer_texts as t
+from src.domain.drive_answer import compose_answer
+from src.domain.drive_line import DriveLine
+from src.domain.drive_op import DriveOp
+from src.domain.drive_outcome import DriveOutcome
+from src.domain.drive_outcome_class import OutcomeClass
+from src.domain.drive_pass_through import PassThroughCollector
+from src.domain.drive_read_facts import ReadFacts
+from src.domain.drive_report import DriveReport
+from src.domain.drive_search import DISABLED_TEXT
+from src.domain.drive_search_line import SearchLine
+from src.domain.drive_search_texts import REBUILDING_LINE
+from src.domain.drive_status import DriveStatus
+from src.domain.user_drive import DriveItem
+
+A = DriveItem(item_id="a", name="a.pdf", path="Inbox/a.pdf", is_folder=False)
+
+
+def run(*entries, report=DriveReport(), **kw):
+    c = PassThroughCollector()
+    for step, kind, outcome in entries:
+        c.add(step, kind, outcome)
+    return compose_answer(c, report, **kw)
+
+
+def out(op, cls, text, success=True, **kw):
+    return DriveOutcome(op=op, cls=cls, text=text, success=success, **kw)
+
+
+NOT_FOUND_SEARCH = out(DriveOp.SEARCH, OutcomeClass.NOT_FOUND, "REMINDER\nNo file holds it.", success=False,
+                       facts=ReadFacts())
+CARDS = out(DriveOp.SEARCH, OutcomeClass.OK, "REMINDER\n<card>", items=(A,), facts=ReadFacts(cards=1))
+MOVED = out(DriveOp.MOVE, OutcomeClass.OK, "Moved: Inbox/a.pdf → Archive/a.pdf.", items=(A,))
+
+
+def what_to_do(answer):
+    return answer.text.splitlines()[1]
+
+
+def test_x4_a_not_found_search_says_answer_from_the_results_not_the_whole_read_text():
+    answer = run((1, t.KIND_SEARCH, NOT_FOUND_SEARCH))
+    assert answer.status is DriveStatus.NOT_FOUND
+    assert what_to_do(answer) == "What to do: " + t.ANSWER_FROM_RESULTS
+    assert answer.text.count("No file holds it.") == 1   # the block only, not the head too
+
+
+def test_x4_other_read_failures_keep_their_text():
+    failed = out(DriveOp.OPEN, OutcomeClass.FAILED, "Could not read it.", success=False)
+    assert what_to_do(run((1, t.KIND_OPEN, failed))) == "What to do: Could not read it."
+
+
+def test_x5_reconnect_needed_with_no_operation_is_todays_not_connected():
+    answer = run(drive_line=DriveLine.RECONNECT_NEEDED)
+    assert answer.status is DriveStatus.NOT_CONNECTED
+    assert what_to_do(answer) == "What to do: The user's drive is not connected or its access expired. " \
+                                 "Ask them to connect it in the Cabinet."
+
+
+def test_x6_a_listing_alone_with_search_off_carries_the_disabled_text():
+    listing = out(DriveOp.LIST, OutcomeClass.OK, "[Drive: Inbox ref=drive:i]")
+    answer = run((1, t.KIND_LISTING, listing), search_line=SearchLine.OFF)
+    assert DISABLED_TEXT in answer.text.splitlines()
+
+
+def test_x6_a_listing_alone_while_rebuilding_carries_the_rebuilding_line():
+    listing = out(DriveOp.LIST, OutcomeClass.OK, "[Drive: Inbox ref=drive:i]")
+    assert REBUILDING_LINE in run((1, t.KIND_LISTING, listing), search_line=SearchLine.REBUILDING).text
+
+
+def test_x6_no_state_line_when_search_is_on_a_search_ran_or_a_change_ran():
+    listing = out(DriveOp.LIST, OutcomeClass.OK, "[Drive: Inbox ref=drive:i]")
+    assert DISABLED_TEXT not in run((1, t.KIND_LISTING, listing), search_line=SearchLine.ON).text
+    assert DISABLED_TEXT not in run((1, t.KIND_LISTING, listing), (2, "move", MOVED),
+                                    search_line=SearchLine.OFF).text
+    indexing_off = out(DriveOp.SEARCH, OutcomeClass.INDEXING_OFF, DISABLED_TEXT, success=False)
+    assert run((1, t.KIND_SEARCH, indexing_off), search_line=SearchLine.OFF).text.count(DISABLED_TEXT) >= 1
+
+
+def test_x7_the_not_found_trio_fires_for_a_search_but_not_for_the_deleted_search():
+    assert t.R_BUILDING in run((1, t.KIND_SEARCH, NOT_FOUND_SEARCH)).reading
+    deleted = run((1, t.KIND_DELETED_SEARCH, NOT_FOUND_SEARCH))
+    assert not set(deleted.reading) & {t.R_BUILDING, t.R_NOT_SEARCHED, t.R_FOLDER_CARD}
+
+
+def test_x7_a_lookup_search_before_a_successful_change_adds_no_search_reading_lines():
+    answer = run((1, t.KIND_SEARCH, CARDS), (2, "move", MOVED))
+    assert answer.status is DriveStatus.OK and answer.reading == ()
+    assert "[Result r1, step 1: search]" in answer.text   # the block itself stays
+    assert run((1, t.KIND_SEARCH, CARDS)).reading   # a find keeps them
+
+
+def test_x11_unfinished_tells_smart_not_to_commission_again():
+    answer = run((1, t.KIND_SEARCH, CARDS), cut=True)
+    assert answer.status is DriveStatus.UNFINISHED
+    assert "do not commission the same request again in this turn" in what_to_do(answer)
+````
+
+New tests: 10. **Final-state files:** `git checkout 9500d677 -- src/domain/drive_answer.py src/domain/drive_answer_texts.py src/domain/drive_search.py tests/unit/domain/test_drive_answer_cross_cut.py` (valid on the assembled branch, after B7). `compose_answer` gained the keyword `search_line` (A5's `DriveAgent` passes `preflight.search`).
+
 **Steps (A2):**
 - [ ] Re-read the RFC sections named in the task title and the Goal; confirm the previous task's state (`git log` shows its `fix(...)` commit).
 - [ ] Create the task's new test files from the blocks above; run them red: `pytest tests/unit/domain/test_drive_answer.py tests/unit/domain/test_drive_file_contents_and_collector.py tests/unit/infrastructure/test_drive_answer_texts_pinned.py -q -n 4`.
@@ -4162,7 +4430,10 @@ to choose its next step: search results and listings in full, a stand-in for an 
   shield and still-running stay in DriveOperations).
 - The soft deadline: a call after it is not started; a read runs under `wait_for(…, time left)`; a mutation waits
   `max(1 s, min(100 s, time left − 10 s))`, then today's still-running path. A handler cancelled mid-call (the agent
-  cancels its engine at the deadline or on still-running) records the call as not finished before re-raising.
+  cancels its engine at the deadline or on still-running) records the call before re-raising: a read as not finished,
+  a change queued behind the batch as not started, a change already started as still running (it goes on under
+  DriveOperations' shield, so it is never reported "not done"). After a still-running outcome in this run, a change
+  that wakes on the ordering lock is not started (X1, cross-cut review).
 - A `search_drive` identical to one already run in this commission is not run again (§5.4).
 - `save_text_file` / `append_to_file` name a `file_contents` item; code writes that item's text (§4.2). An unknown
   item is refused before any service call.
@@ -4181,9 +4452,12 @@ from ..domain.drive_outcome import DriveOutcome
 from ..domain.drive_outcome_class import OutcomeClass
 from ..domain.drive_pass_through import PassThroughCollector, search_key
 from ..domain.llm import ToolCall
-from ..domain.user_drive import MOVE_NEEDS_TARGET, drive_label
+from ..domain.skill import DELIVERED_REF_PREFIXES, SKILL_REF_PREFIX
+from ..domain.user_drive import MOVE_NEEDS_TARGET, drive_label, is_drive_ref
+from ..domain.workspace import WORKSPACE_REF_PREFIX
 from ..utils.logger import logger
 from .delegation_engine import LocalToolHandler, ToolResult
+from .drive_operations import STILL_RUNNING
 
 if TYPE_CHECKING:
     from .drive_operations import DriveOperations
@@ -4211,6 +4485,7 @@ class DriveToolRun:
         self._on_still_running = on_still_running
         self._clock = clock
         self._order = asyncio.Lock()
+        self._ran_on = False   # a change answered still-running: later changes of this run do not start
         self.step = 0
 
     def left(self) -> float:
@@ -4239,19 +4514,25 @@ class DriveToolRun:
         try:
             if change:
                 async with self._order:
-                    if self.left() <= 0:   # queued behind the batch past the deadline
+                    if self.left() <= 0 or self._ran_on:   # queued behind the batch past the deadline / a running one
                         return self._collector.add(step, kind, _not_finished(op, t.NOT_STARTED))
                     started = True
                     outcome = await call()
+                    if outcome.cls is OutcomeClass.STILL_RUNNING:
+                        self._ran_on = True
             else:
                 outcome = await asyncio.wait_for(call(), timeout=max(0.001, self.left()))
         except asyncio.TimeoutError:
             outcome = _not_finished(op, t.DID_NOT_FINISH)
         except asyncio.CancelledError:
-            # Cancelled while queued behind the batch's order lock: it never started. Cancelled once started: it may
-            # run on under DriveOperations' shield (which arms the late-failure notice), so it did not finish.
-            text = t.DID_NOT_FINISH if started or not change else t.NOT_STARTED
-            self._collector.add(step, kind, _not_finished(op, text))
+            # Cancelled while queued behind the batch's order lock: it never started. A change cancelled once started
+            # runs on under DriveOperations' shield (which arms the late-failure notice): still running, today's text,
+            # never "not done" (a re-commission would repeat an append). A read just did not finish.
+            if change and started:
+                self._collector.add(step, kind, DriveOutcome(
+                    op=op, cls=OutcomeClass.STILL_RUNNING, text=STILL_RUNNING, success=True))
+            else:
+                self._collector.add(step, kind, _not_finished(op, t.NOT_STARTED if change else t.DID_NOT_FINISH))
             raise
         result = self._collector.add(step, kind, outcome)
         if outcome.cls is OutcomeClass.STILL_RUNNING and self._on_still_running is not None:
@@ -4310,6 +4591,8 @@ class DriveToolRun:
         ref = str((tc.args or {}).get("file_ref") or "")
         if not ref.strip():
             return self._no_ref(tc, DriveOp.OPEN, "file_ref", "the file to open")
+        if _is_bare_path(ref):
+            return self._path_given(tc, DriveOp.OPEN, "file_ref", "the file to open")
         result = await self._run(DriveOp.OPEN, t.KIND_OPEN, lambda: self._ops.open(
             self._context, self._user_id, ref), change=False)
         return self._seen(tc, result)
@@ -4345,6 +4628,11 @@ class DriveToolRun:
     def _no_ref(self, tc: ToolCall, op: DriveOp, field: str, what: str) -> ToolResult:
         """An empty ref means "not given": refused before any call, correctable (§7.2)."""
         return self._refuse(tc, op, t.REF_REQUIRED.format(field=field, what=what), OutcomeClass.REQUEST_ERROR)
+
+    def _path_given(self, tc: ToolCall, op: DriveOp, field: str, what: str) -> ToolResult:
+        """A path where a `drive:` ref is needed: correctable, and not the "chat file" hint (X2, X3)."""
+        return self._refuse(tc, op, t.REF_REQUIRED.format(field=field, what=f"{what} by its drive: ref; {t.FIND_REF}"),
+                            OutcomeClass.REQUEST_ERROR)
 
     async def _copy(self, tc: ToolCall) -> ToolResult:
         args = tc.args or {}
@@ -4384,6 +4672,8 @@ class DriveToolRun:
             # the service's own words, before any call: a correctable request shape (§7.2)
             return self._refuse(tc, DriveOp.MOVE, MOVE_NEEDS_TARGET, OutcomeClass.REQUEST_ERROR)
         ref = str(args.get("file_ref") or "")
+        if _is_bare_path(ref):
+            return self._path_given(tc, DriveOp.MOVE, "file_ref", "the file to move")
 
         async def call() -> DriveOutcome:
             return await self._ops.move(self._context, self._user_id, ref, folder=await self._folder(folder),
@@ -4396,6 +4686,8 @@ class DriveToolRun:
         if item is None:
             return self._no_item(tc, DriveOp.APPEND, args.get("text_item"))
         ref = str(args.get("file_ref") or item.target or "")
+        if _is_bare_path(ref):
+            return self._path_given(tc, DriveOp.APPEND, "file_ref", "the text file to add to")
 
         async def call() -> DriveOutcome:
             return await self._ops.append(self._context, self._user_id, ref, item.text, wait_s=self._wait_s())
@@ -4404,6 +4696,8 @@ class DriveToolRun:
     async def _replace(self, tc: ToolCall) -> ToolResult:
         args = tc.args or {}
         target, source = str(args.get("target_ref") or ""), str(args.get("new_content_ref") or "")
+        if _is_bare_path(target):
+            return self._path_given(tc, DriveOp.REPLACE, "target_ref", "the file to replace")
 
         async def call() -> DriveOutcome:
             return await self._ops.replace(self._context, self._user_id, target, source, wait_s=self._wait_s())
@@ -4411,10 +4705,20 @@ class DriveToolRun:
 
     async def _delete(self, tc: ToolCall) -> ToolResult:
         ref = str((tc.args or {}).get("file_ref") or "")
+        if _is_bare_path(ref):
+            return self._path_given(tc, DriveOp.DELETE, "file_ref", "the item to delete")
 
         async def call() -> DriveOutcome:
             return await self._ops.delete(self._context, self._user_id, ref, wait_s=self._wait_s())
         return await self._change(tc, DriveOp.DELETE, call)
+
+
+def _is_bare_path(ref: str) -> bool:
+    """A path where a ref is needed: it has a `/` and no known store prefix (`drive:`, `workspace:`, `skill:`, a
+    delivered-document key). A bare name has no `/` and keeps today's text (X2, X3)."""
+    if "/" not in ref or is_drive_ref(ref):
+        return False
+    return not ref.startswith((WORKSPACE_REF_PREFIX, SKILL_REF_PREFIX) + tuple(DELIVERED_REF_PREFIXES))
 
 
 def _not_finished(op: DriveOp, text: str) -> DriveOutcome:
@@ -5119,6 +5423,171 @@ index 5c72eafc..c5876549 100644
 
 The final-state file: `git checkout 89684c0d -- src/domain/drive_tool_texts.py` (valid on the assembled branch, after B7).
 
+**After the cross-cut review** (`plan_arbiter_xcut.md`, on the assembled branch `plan/drive-specialist`; X1–X3).** `src/infrastructure/drive_tools.py` above is the final state. **(X1)** a change cancelled after it started is recorded `still_running` with today's `STILL_RUNNING` text (it runs on under `DriveOperations`' shield and arms the late notice), never `did not finish`; a change that wakes on the ordering lock after a still-running outcome in the same run is `not started`, so a batch whose first change is still running reports "still running" and the second "not started", and a non-idempotent append is never reported as not done while it runs. **(X2)** the specialist's `open_drive_file` refuses a path (a `/`, no known prefix: `drive:`, `workspace:`, `skill:`, a delivered-document key) with `file_ref is required … by its drive: ref; find it with search_drive or list_folder` (correctable, class `REQUEST_ERROR`), not a storage lookup that ends in "ask the user to re-upload". **(X3)** the same for the target of `append_to_file`, `move_file`, `delete_drive_item` and `replace_file_content`; a bare name keeps today's `wrong_store_text`. `drive_answer_texts.FIND_REF` is the one new string.
+
+`tests/unit/infrastructure/test_drive_tools_cross_cut.py` (new, complete):
+
+````python
+"""Cross-cut review fixes X1-X3 on the drive specialist's tools (docs: plan_arbiter_xcut rulings)."""
+import asyncio
+from unittest.mock import AsyncMock
+
+import pytest
+
+from src.domain import drive_answer_texts as t
+from src.domain import drive_tool_texts as tt
+from src.domain.drive_answer import compose_answer
+from src.domain.drive_file_content_item import FileContentItem
+from src.domain.drive_op import DriveOp
+from src.domain.drive_outcome import DriveOutcome
+from src.domain.drive_outcome_class import OutcomeClass
+from src.domain.drive_pass_through import PassThroughCollector
+from src.domain.drive_report import DriveReport
+from src.domain.drive_status import DriveStatus
+from src.domain.llm import ToolCall
+from src.infrastructure.drive_operations import STILL_RUNNING, DriveOperations
+from src.infrastructure.drive_tools import DriveToolRun
+
+CTX = {"user_id": "u1", "account_id": "a1"}
+ITEMS = (FileContentItem("t1", "- call the bank", target="Inbox/todo.md"),)
+
+
+def _ok(op, text="done"):
+    return DriveOutcome(op=op, cls=OutcomeClass.OK, text=text, success=True)
+
+
+def _still(op):
+    return DriveOutcome(op=op, cls=OutcomeClass.STILL_RUNNING, text=STILL_RUNNING, success=True)
+
+
+@pytest.fixture
+def ops():
+    o = AsyncMock(spec=DriveOperations)
+    o.folder_path.side_effect = lambda user_id, folder: folder
+    for name, op in (("open", DriveOp.OPEN), ("move", DriveOp.MOVE), ("append", DriveOp.APPEND),
+                     ("replace", DriveOp.REPLACE), ("delete", DriveOp.DELETE)):
+        getattr(o, name).return_value = _ok(op)
+    return o
+
+
+def _run(ops, **kw):
+    collector = PassThroughCollector()
+    run = DriveToolRun(ops, collector, ITEMS, CTX, "u1", deadline=150.0, clock=lambda: 0.0, **kw)
+    run.step = 1
+    return run, collector
+
+
+async def _call(run, name, **args):
+    return await run.handlers[name](ToolCall(name=name, args=args))
+
+
+# -- X1 ---------------------------------------------------------------------------------------------------------------
+
+async def test_a_two_move_batch_whose_first_is_still_running_never_reports_did_not_finish(ops):
+    fired = []
+    run, collector = _run(ops, on_still_running=lambda: fired.append(True))
+    ops.move.side_effect = [_still(DriveOp.MOVE), _ok(DriveOp.MOVE)]
+    first = asyncio.ensure_future(_call(run, tt.MOVE_FILE, file_ref="drive:a", folder="X"))
+    second = asyncio.ensure_future(_call(run, tt.MOVE_FILE, file_ref="drive:b", folder="X"))
+    await asyncio.gather(first, second)
+    assert [r.outcome.cls for r in collector.results] == [OutcomeClass.STILL_RUNNING, OutcomeClass.NOT_FINISHED]
+    assert collector.results[1].outcome.text == t.NOT_STARTED
+    assert ops.move.await_count == 1   # the second move never reached the service
+    answer = compose_answer(collector, DriveReport())
+    assert answer.status is DriveStatus.STILL_RUNNING
+    assert t.DID_NOT_FINISH not in answer.text
+    assert fired == [True]
+
+
+async def test_a_started_append_cut_by_the_deadline_is_still_running_never_not_done(ops):
+    started = asyncio.Event()
+
+    async def hang(*a, **k):
+        started.set()
+        await asyncio.sleep(10)
+    ops.append.side_effect = hang
+    run, collector = _run(ops)
+    task = asyncio.ensure_future(_call(run, tt.APPEND_TO_FILE, text_item="t1", file_ref="drive:f1"))
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    outcome = collector.results[0].outcome
+    assert outcome.cls is OutcomeClass.STILL_RUNNING and outcome.text == STILL_RUNNING
+    answer = compose_answer(collector, DriveReport(), cut=True)
+    assert answer.status is DriveStatus.STILL_RUNNING
+    assert t.DID_NOT_FINISH not in answer.text and "may complete" in answer.text
+
+
+async def test_a_change_cancelled_while_queued_is_still_not_started(ops):
+    release = asyncio.Event()
+
+    async def slow(*a, **k):
+        await release.wait()
+        return _ok(DriveOp.MOVE)
+    ops.move.side_effect = slow
+    run, collector = _run(ops)
+    first = asyncio.ensure_future(_call(run, tt.MOVE_FILE, file_ref="drive:a", folder="X"))
+    await asyncio.sleep(0)
+    second = asyncio.ensure_future(_call(run, tt.MOVE_FILE, file_ref="drive:b", folder="X"))
+    await asyncio.sleep(0)
+    second.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await second
+    assert collector.results[0].outcome.text == t.NOT_STARTED
+    release.set()
+    await first
+
+
+# -- X2 / X3 ----------------------------------------------------------------------------------------------------------
+
+async def test_opening_a_path_is_a_correctable_ref_error_not_a_storage_lookup(ops):
+    run, collector = _run(ops)
+    res = await _call(run, tt.OPEN_DRIVE_FILE, file_ref="Contracts/Lease 2025.pdf")
+    ops.open.assert_not_called()
+    assert collector.results[0].outcome.cls is OutcomeClass.REQUEST_ERROR
+    assert "file_ref is required" in res.result_str and "drive: ref" in res.result_str
+
+
+@pytest.mark.parametrize("ref", ["drive:abc", "lease.pdf", "workspace:files/a.pdf", "skill:x/y.md",
+                                 "docs/report.docx", "email_review/2026-10-22.html"])
+async def test_opening_other_refs_still_goes_to_the_service(ops, ref):
+    run, _ = _run(ops)
+    await _call(run, tt.OPEN_DRIVE_FILE, file_ref=ref)
+    ops.open.assert_awaited_once()
+
+
+@pytest.mark.parametrize("tool,args,op,field", [
+    (tt.APPEND_TO_FILE, {"text_item": "t1", "file_ref": "Inbox/todo.md"}, DriveOp.APPEND, "file_ref"),
+    (tt.MOVE_FILE, {"file_ref": "Inbox/a.pdf", "folder": "X"}, DriveOp.MOVE, "file_ref"),
+    (tt.DELETE_DRIVE_ITEM, {"file_ref": "Inbox/a.pdf"}, DriveOp.DELETE, "file_ref"),
+    (tt.REPLACE_FILE_CONTENT, {"target_ref": "Inbox/a.txt", "new_content_ref": "b.txt"}, DriveOp.REPLACE,
+     "target_ref"),
+])
+async def test_a_path_as_a_target_ref_is_correctable_not_a_chat_file_hint(ops, tool, args, op, field):
+    run, collector = _run(ops)
+    res = await _call(run, tool, **args)
+    getattr(ops, op.value).assert_not_called()
+    assert collector.results[0].outcome.cls is OutcomeClass.REQUEST_ERROR
+    assert f"{field} is required" in res.result_str
+    assert "chat file" not in res.result_str and "copy_file_to_drive" not in res.result_str
+
+
+async def test_an_append_target_path_in_file_contents_is_refused_the_same_way(ops):
+    run, collector = _run(ops)
+    res = await _call(run, tt.APPEND_TO_FILE, text_item="t1")   # item.target = "Inbox/todo.md"
+    ops.append.assert_not_called()
+    assert "file_ref is required" in res.result_str
+
+
+async def test_a_bare_name_keeps_the_services_own_text(ops):
+    run, _ = _run(ops)
+    await _call(run, tt.DELETE_DRIVE_ITEM, file_ref="lease.pdf")
+    ops.delete.assert_awaited_once()
+````
+
+New tests: 16. **Final-state files:** `git checkout 9500d677 -- src/infrastructure/drive_tools.py src/domain/drive_answer_texts.py tests/unit/infrastructure/test_drive_tools_cross_cut.py`. **For the reviewer:** two existing tests of this task's `test_drive_tools.py` encode the behaviour X1 intentionally changes (`test_a_cancelled_call_is_recorded_as_not_finished`, `test_a_mutation_cancelled_once_started_is_recorded_as_not_finished`); the list is in part B §4.4.
+
 **What the new tests assert:** each tool → one call with mapped arguments and its result kind; every source kind of
 `copy_file_to_drive` and `replace_file_content` passes through in its direction; one `move_file` with both fields is
 one call; a move with neither changes nothing; a folder ref and its path give the same `svc.move`; empty or omitted
@@ -5250,9 +5719,12 @@ if TYPE_CHECKING:
     from ..ports.prompt_builder_port import PromptBuilderPort
 
 AGENT_TYPE = "drive"
+ALERT_TIMEOUT_S = 5.0   # the turn-cap alert never holds the answer back: a hanging sink must not turn it into a timeout (X9)
 # Payload keys the commission may carry besides `query` and `file_contents` (accept liberally, §4.2): shown to the
 # model as part of the commission, never rejected.
-_STRAY_FIELDS = ("file_ref", "folder")
+# The Smart-era drive fields are here too: a stale skill, reminder or history block can still tell Smart to set them (X12).
+_STRAY_FIELDS = ("file_ref", "folder", "drive_query", "drive_folder", "drive_kind", "drive_date_from", "drive_date_to",
+                 "drive_deleted", "new_name", "source_ref", "original", "name")
 _STRAY_HEADER = "Also given with the commission:"
 
 
@@ -5451,7 +5923,8 @@ class DriveAgent(BaseAgent):
         if turn_cap:
             await self._report_turn_cap(user_id, tools_per_turn)
         report = DriveReport.of(outcome.terminal_tool_args if outcome else None, outcome.text if outcome else "")
-        answer = compose_answer(collector, report, cut=cut, drive_line=preflight.drive)
+        answer = compose_answer(collector, report, cut=cut, drive_line=preflight.drive,
+                                search_line=preflight.search)
         return self._answer(message, answer, collector, started, turns=run.step,
                             delivery_items=list(outcome.delivery_items) if outcome else [])
 
@@ -5463,9 +5936,10 @@ class DriveAgent(BaseAgent):
         if self._alert_sink is None:
             return
         try:
-            await self._alert_sink.post(
+            await asyncio.wait_for(self._alert_sink.post(
                 f"🚨 Drive specialist hit the turn limit without a report | model {self.model_name} | "
-                f"turns {len(tools_per_turn)}/{DRIVE.max_turns} | user {user_id[:8]}\n{sequence}")
+                f"turns {len(tools_per_turn)}/{DRIVE.max_turns} | user {user_id[:8]}\n{sequence}"),
+                timeout=ALERT_TIMEOUT_S)
         except Exception as exc:
             logger.warning("[DriveAgent] ops alert delivery failed: %s", exc)
 
@@ -5474,15 +5948,16 @@ class DriveAgent(BaseAgent):
         """The commission as the model reads it; stray fields are part of it, never rejected (§4.2)."""
         text = str(payload.get("query") or "")
         stray = [f"{name}: {payload[name]}" for name in _STRAY_FIELDS
-                 if isinstance(payload.get(name), str) and payload[name]]
+                 if isinstance(payload.get(name), (str, bool)) and payload[name] not in ("", False)]
         return "\n\n".join([text, _STRAY_HEADER + "\n" + "\n".join(stray)]) if stray else text
 
     def _answer(self, message: AgentMessage, answer: DriveAnswer, collector: PassThroughCollector, started: float, *,
                 turns: int, delivery_items: List[DeliveryItem]) -> AgentResponse:
         """One log line per commission, no file names (§5.1), and the success that carries the answer (§7)."""
         ops = ",".join(f"{r.outcome.op.value}:{r.outcome.cls.value}" for r in collector.results)
-        logger.info("[DriveAgent] user=%s status=%s ops=%s turns=%s ms=%s", str(message.context.get("user_id"))[:8],
-                    answer.status.value, ops, turns, int((self._monotonic() - started) * 1000))
+        logger.info("[DriveAgent] user=%s status=%s model=%s ops=%s turns=%s ms=%s",
+                    str(message.context.get("user_id"))[:8], answer.status.value, self.model_name, ops, turns,
+                    int((self._monotonic() - started) * 1000))
         metadata: Dict[str, Any] = {"drive_status": answer.status.value}
         if answer.files:
             metadata["file_data"] = answer.files
@@ -6186,6 +6661,151 @@ the lever.
 
 **Done when:** 36 new tests pass (32 + 4); `make check` green.
 
+**After the cross-cut review** (`plan_arbiter_xcut.md`, on the assembled branch `plan/drive-specialist`; X6, X8, X9, X10, X12).** `src/agents/drive_agent.py` above is the final state. **(X6)** `compose_answer(..., search_line=preflight.search)`. **(X8)** the `[DriveAgent]` line carries `model=<served model>`, so a global `provider_preference` that puts the specialist on another model is visible (owner step O0 checks it before the deploy). **(X9)** the turn-cap alert is posted under `asyncio.wait_for(..., timeout=ALERT_TIMEOUT_S)` (5 s) inside the existing try: a hanging sink still returns the answer. **(X10)** `"drive"` joins `PromptCacheStrategy.CACHEABLE_AGENTS` and `MULTI_TURN_AGENTS` (the spike showed `cached: 0` on every specialist call). **(X12)** `_STRAY_FIELDS` gains the Smart-era drive fields, so a stale skill's `drive_query` and the like reach the commission under "Also given with the commission:" instead of vanishing. Hunk of the cache strategy, generated from the code:
+
+````diff
+diff --git a/src/services/prompt_cache_strategy.py b/src/services/prompt_cache_strategy.py
+index a54d5aca..ad755562 100644
+--- a/src/services/prompt_cache_strategy.py
++++ b/src/services/prompt_cache_strategy.py
+@@ -35,10 +35,12 @@ class PromptCacheStrategy(PromptCacheStrategyPort):
+       response when no delegation needed). Cache write would not be
+       amortized → pay the +25% surcharge for nothing. Skipped.
+     - WebSearch: single LLM call with native grounding, no follow-up.
++    - Drive specialist: multi-turn (search, then report); the prefix is ~8 k tokens and the cache holds across the
++      several commissions of one Smart turn (DRIVE_SPECIALIST_RFC §5.1 cost check).
+     """
+ 
+-    CACHEABLE_AGENTS: frozenset = frozenset({"consolidation", "smart", "quick", "websearch"})
+-    MULTI_TURN_AGENTS: frozenset = frozenset({"consolidation", "smart"})
++    CACHEABLE_AGENTS: frozenset = frozenset({"consolidation", "smart", "quick", "websearch", "drive"})
++    MULTI_TURN_AGENTS: frozenset = frozenset({"consolidation", "smart", "drive"})
+ 
+     def resolve(
+         self, agent_type: str, capabilities: ProviderCapabilities
+````
+
+`tests/unit/agents/test_drive_agent_cross_cut.py` (new, complete):
+
+````python
+"""Cross-cut review fixes X1, X6, X9, X12 on the DriveAgent."""
+import asyncio
+from unittest.mock import AsyncMock
+
+from src.agents import drive_agent as module
+from src.domain import drive_answer_texts as t
+from src.domain import drive_tool_texts as tt
+from src.domain.agent import AgentStatus
+from src.domain.drive_line import DriveLine
+from src.domain.drive_op import DriveOp
+from src.domain.drive_outcome import DriveOutcome
+from src.domain.drive_outcome_class import OutcomeClass
+from src.domain.drive_preflight import DrivePreflight
+from src.domain.drive_search_line import SearchLine
+from src.domain.drive_search import DISABLED_TEXT
+from src.infrastructure.drive_operations import STILL_RUNNING
+from tests.support.scripted_llm import calls, script
+from tests.unit.agents.test_drive_agent import REPORT, _agent, _msg, _ok, _stalled, ops, prompts  # noqa: F401
+
+
+async def test_x9_a_hanging_alert_sink_still_returns_the_answer(ops, prompts, monkeypatch):
+    monkeypatch.setattr(module, "ALERT_TIMEOUT_S", 0.05)
+
+    async def hang(text):
+        await asyncio.sleep(30)
+    sink = AsyncMock()
+    sink.post.side_effect = hang
+    agent = _agent(ops, prompts, alert_sink=sink)
+    agent._call_llm, _ = script(*_stalled())
+    resp = await asyncio.wait_for(agent.execute(_msg()), timeout=5)
+    assert resp.status == AgentStatus.SUCCESS and resp.metadata["drive_status"] == "unfinished"
+
+
+async def test_x12_smart_era_fields_reach_the_commission_as_stray_fields(ops, prompts):
+    agent = _agent(ops, prompts)
+    agent._call_llm, seen = script(calls(REPORT))
+    await agent.execute(_msg("find it", drive_query="lease", drive_folder="Contracts", drive_kind="pdf",
+                             drive_date_from="2026-01-01", drive_date_to="2026-02-01", drive_deleted=True,
+                             new_name="x.pdf", source_ref="drive:a", original=True, name="n"))
+    text = seen[0].messages[0].parts[0].text
+    assert text.startswith("find it\n\nAlso given with the commission:\n")
+    for line in ("drive_query: lease", "drive_folder: Contracts", "drive_kind: pdf", "drive_date_from: 2026-01-01",
+                 "drive_date_to: 2026-02-01", "drive_deleted: True", "new_name: x.pdf", "source_ref: drive:a",
+                 "original: True", "name: n"):
+        assert line in text
+
+
+async def test_x12_empty_and_false_stray_fields_are_left_out(ops, prompts):
+    agent = _agent(ops, prompts)
+    agent._call_llm, seen = script(calls(REPORT))
+    await agent.execute(_msg("find it", drive_deleted=False, drive_query=""))
+    assert seen[0].messages[0].parts[0].text == "find it"
+
+
+async def test_x6_a_listing_only_answer_with_search_off_carries_the_disabled_text(ops, prompts):
+    ops.preflight.return_value = DrivePreflight(DriveLine.CONNECTED, SearchLine.OFF)
+    agent = _agent(ops, prompts)
+    agent._call_llm, _ = script(calls((tt.LIST_FOLDER, {"folder": "Inbox"})), calls(REPORT))
+    resp = await agent.execute(_msg("what is in Inbox"))
+    assert DISABLED_TEXT in resp.result.splitlines()
+
+
+async def test_x1_a_batch_of_two_moves_with_the_first_still_running_is_never_did_not_finish(ops, prompts):
+    gate = asyncio.Event()
+
+    async def first_then_second(context, user_id, ref, **kw):
+        if ref == "drive:a":
+            return DriveOutcome(op=DriveOp.MOVE, cls=OutcomeClass.STILL_RUNNING, text=STILL_RUNNING, success=True)
+        gate.set()
+        return _ok(DriveOp.MOVE, "Moved.")
+    ops.move.side_effect = first_then_second
+    agent = _agent(ops, prompts)
+    agent._call_llm, _ = script(calls((tt.MOVE_FILE, {"file_ref": "drive:a", "folder": "X"}),
+                                      (tt.MOVE_FILE, {"file_ref": "drive:b", "folder": "X"})), calls(REPORT))
+    resp = await agent.execute(_msg("move both"))
+    assert resp.metadata["drive_status"] == "still_running"
+    assert t.DID_NOT_FINISH not in resp.result
+    assert not gate.is_set()   # the second move never reached the service
+````
+
+`tests/unit/agents/test_drive_agent_log_model.py` (new, complete):
+
+````python
+"""Cross-cut review X8: the [DriveAgent] log line names the model that served the commission."""
+import logging
+
+from tests.support.scripted_llm import calls, script
+from tests.unit.agents.test_drive_agent import REPORT, _agent, _msg, ops, prompts  # noqa: F401
+
+
+async def test_x8_the_log_line_names_the_served_model(ops, prompts, caplog):
+    agent = _agent(ops, prompts)
+    agent._call_llm, _ = script(calls(REPORT))
+    with caplog.at_level(logging.INFO):
+        await agent.execute(_msg())
+    line = next(r.getMessage() for r in caplog.records if r.getMessage().startswith("[DriveAgent] user="))
+    assert "model=claude-sonnet-5-5" in line and "status=" in line
+````
+
+`tests/unit/services/test_prompt_cache_strategy_drive.py` (new, complete):
+
+````python
+"""The drive specialist caches its prefix and its rolling transcript (cross-cut review X10)."""
+from src.ports.llm_port import ProviderCapabilities
+from src.services.prompt_cache_strategy import PromptCacheStrategy
+
+
+def test_drive_is_cacheable_and_multi_turn():
+    config = PromptCacheStrategy().resolve("drive", ProviderCapabilities(context_caching=True))
+    assert config is not None and config.enabled is True and config.cache_last_message is True
+
+
+def test_drive_is_not_cached_on_a_provider_without_caching():
+    assert PromptCacheStrategy().resolve("drive", ProviderCapabilities(context_caching=False)) is None
+````
+
+New tests: 9. **Final-state files:** `git checkout e4882643 -- src/agents/drive_agent.py src/services/prompt_cache_strategy.py tests/unit/agents/test_drive_agent_cross_cut.py tests/unit/agents/test_drive_agent_log_model.py tests/unit/services/test_prompt_cache_strategy_drive.py`. **For the reviewer:** X12 turns `tests/unit/test_drive_specialist_removed_names.py::test_no_model_facing_src_string_names_a_smart_era_drive_field` red (part B §4.4).
+
 **Steps (A5):**
 - [ ] Re-read the RFC sections named in the task title and the Goal; confirm the previous task's state (`git log` shows its `fix(...)` commit).
 - [ ] Create the task's new test files from the blocks above; run them red: `pytest tests/unit/agents/test_drive_agent.py tests/unit/services/test_drive_specialist_provider_strategy.py -q -n 4`.
@@ -6318,7 +6938,7 @@ uploaded_by: local_script
 
     process: [
         "Read the commission and the drive_state block. The commission's quoted words win over user_message for what to find; user_message holds the user's own words.",
-        "Search before you change: find the file's drive: ref (in the commission, the state block, a search or a listing), then act by ref.",
+        "Search before you change or open: find the file's drive: ref (in the commission, the state block, a search or a listing), then act by ref.",
         "Change the files whose identity is clear. Where the orchestrator would have to ask the user which file is meant, leave those unchanged and ask about them in question, naming the candidates.",
         "After a search or a listing, read its result before you report: report_to_orchestrator comes in a later turn, never in the same turn as a search or a listing. Only operations on refs you already have (open, copy, save, move, delete) may be reported in the same turn.",
         "Never re-run a search that already ran, and never open a file to confirm a search result.",
@@ -6761,6 +7381,24 @@ blueprint and profile first (additive, harmless to the running revision).
 
 **Done when:** 12 new tests pass (10 + 1 + 1); `make check` green.
 
+**After the cross-cut review** (`plan_arbiter_xcut.md`, on the assembled branch `plan/drive-specialist`; X2).** `COGNITIVE_PROCESS_DRIVE.groovy` above is the final state: the process line reads "Search before you change or open: find the file's drive: ref …" (the open of a drive file by its path was the same trap as the change of one).
+
+`tests/unit/firestore_utils/test_drive_specialist_prompt_cross_cut.py` (new, complete):
+
+````python
+"""Cross-cut review X2: the specialist's process line covers opening a file by its path as well as changing one."""
+from pathlib import Path
+
+TOKEN = Path(__file__).resolve().parents[3] / "prompts_snapshot/tokens/system/COGNITIVE_PROCESS_DRIVE.groovy"
+
+
+def test_the_process_line_says_search_before_you_change_or_open():
+    text = TOKEN.read_text(encoding="utf-8")
+    assert "Search before you change or open: find the file's drive: ref" in text
+````
+
+**Final-state files:** `git checkout e4882643 -- prompts_snapshot/tokens/system/COGNITIVE_PROCESS_DRIVE.groovy tests/unit/firestore_utils/test_drive_specialist_prompt_cross_cut.py`. The upload draft under `firestore_utils/uploads/` is produced by `snapshot_upload.py` at owner step O4; nothing is hand-edited there.
+
 **Steps (A6):**
 - [ ] Re-read the RFC sections named in the task title and the Goal; confirm the previous task's state (`git log` shows its `fix(...)` commit).
 - [ ] Create the task's new test files from the blocks above; run them red: `pytest tests/unit/firestore_utils/test_drive_specialist_prompt_files.py tests/unit/services/prompt_v3/test_drive_specialist_prompt_assembly.py tests/unit/agents/test_drive_agent_missing_item.py -q -n 4`.
@@ -6937,3 +7575,9 @@ lists) are applied in their tasks, so every task state is green.
 **After the re-review of part B** (on the assembled branch `plan/drive-specialist`): `89684c0d` restores today's wording of the
 model-facing texts in A4's `drive_tool_texts.py` and A6's `PROTOCOL_DRIVE_SEARCH.groovy` (and `wrong_store_text`, B-state);
 the notes under A4 and A6 show the hunks.
+
+**After the cross-cut review** (`plan_arbiter_xcut.md`, rulings X1–X12): `9500d677` (answer and tool fixes: A2, A4, A5's agent
+file), `e4882643` (prompt caching, the `model=` log field, the process line) and `c53b613b` (runbook and scripts, part B).
+The notes "After the cross-cut review" under A2, A4, A5 and A6 show the hunks and the new tests, and each names its
+final-state `git checkout <sha> -- <paths>` line. Five existing tests go red on the rulings and wait for the reviewer
+(part B §4.4); no existing test was edited.

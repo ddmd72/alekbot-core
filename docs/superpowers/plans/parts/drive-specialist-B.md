@@ -2216,7 +2216,7 @@ account prompt overrides — back up every hit, export every custom skill as SKI
 
 - [ ] Create the modules:
 
-`scripts/validation/drive_intent_text_scan_logic.py` (at `9d78ddad`):
+`scripts/validation/drive_intent_text_scan_logic.py` (at `c53b613b`):
 
 ```python
 """
@@ -2341,7 +2341,7 @@ def skill_markdown(name: str, description: str, body: str) -> str:
     return f"---\n{front}\n---\n{body}"
 ```
 
-`scripts/validation/drive_intent_text_scan.py` (at `9d78ddad`):
+`scripts/validation/drive_intent_text_scan.py` (at `c53b613b`):
 
 ```python
 """
@@ -2829,6 +2829,61 @@ async def test_the_rollback_scan_writes_its_hits_on_the_new_intent(tmp_path, mon
 
 **Expected-risk existing tests.** None. **Done.** Green. **Model:** Sonnet.
 **Source:** `git checkout 9d78ddad -- scripts/validation/drive_intent_text_scan.py scripts/validation/drive_intent_text_scan_logic.py && git checkout 8c7cfe78 -- tests/unit/scripts/test_drive_intent_text_scan.py`
+
+**After the cross-cut review (R2).** The two script blocks above are the final state (`c53b613b`). The scan reads the `preference` facts beside `agent_directive` (the SUBJECT × SCOPE rule demotes situational agent rules there; the report has a `preference` row), and the workspace's `scratch/` and the text files of `files/` beside `projects/` and `references/`. The module docstring states that only the owner (`DEV_USER_ID`) is scanned, and that a `skill_file` hit is redrafted in chat (`seed_custom_skill.py` keeps the current files, `--check-rewrites` does not read them). New tests (`c53b613b`):
+
+`tests/unit/scripts/test_drive_intent_text_scan_cross_cut.py` (new, complete):
+
+````python
+"""The owner-text scan after the cross-cut review (R2): preference facts, the workspace's scratch/ and files/, and the
+owner-only scope are stated."""
+from datetime import datetime, timezone
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+from scripts.validation import drive_intent_text_scan as script
+from scripts.validation.drive_intent_text_scan_logic import STORES, scan
+from src.domain.entities import FactDomain
+
+NOW = datetime(2026, 10, 22, tzinfo=timezone.utc)
+
+
+def _facts():
+    by_domain = {FactDomain.AGENT_DIRECTIVE.value: [SimpleNamespace(id="d1", text="Be brief")],
+                 FactDomain.PREFERENCE.value: [SimpleNamespace(id="p1", text="When filing scans call save_file_to_drive")]}
+    return SimpleNamespace(get_active_facts_ordered=AsyncMock(side_effect=lambda account, domain: by_domain[domain]))
+
+
+async def test_preference_facts_are_scanned_beside_the_directives():
+    items, _, skipped = await script.collect(script.ScanSources(facts=_facts()), "u1", "a1", NOW)
+    assert [(i.store, i.key) for i in items if i.store in ("directive", "preference")] == [
+        ("directive", "d1"), ("preference", "p1")]
+    assert {(h.store, h.pattern) for h in scan(items)} == {("preference", "save_file_to_drive")}
+    assert "preference" in STORES and "directive" not in skipped
+
+
+async def test_a_missing_fact_reader_reports_both_stores_as_not_scanned():
+    _, _, skipped = await script.collect(script.ScanSources(), "u1", "a1", NOW)
+    assert {"directive", "preference"} <= set(skipped)
+
+
+async def test_the_workspace_scan_reads_scratch_and_the_text_files_of_files():
+    entries = {"projects/": [], "references/": [],
+               "scratch/": [SimpleNamespace(path="scratch/tmp.md", generation=1)],
+               "files/": [SimpleNamespace(path="files/notes.md", generation=2),
+                          SimpleNamespace(path="files/scan.pdf", generation=3)]}
+    workspace = SimpleNamespace(list=AsyncMock(side_effect=lambda user, folder: entries[folder]),
+                                read=AsyncMock(return_value=SimpleNamespace(data=b"call move_file_in_drive")))
+    items, _, _ = await script.collect(script.ScanSources(workspace=workspace), "u1", "a1", NOW)
+    assert [(i.store, i.key) for i in items] == [("workspace", "scratch/tmp.md"), ("workspace", "files/notes.md")]
+
+
+def test_the_scan_states_that_only_the_owner_is_scanned_and_skill_files_are_redrafted_in_chat():
+    doc = script.__doc__
+    assert "Only the owner" in doc and "redrafted in chat" in doc
+````
+
+**For the reviewer:** `test_collect_reads_every_store_read_only` and `test_outputs_land_in_one_folder_with_report_backup_and_skill_exports` (part B §4.4). **Final-state files:** `git checkout c53b613b -- scripts/validation/drive_intent_text_scan.py scripts/validation/drive_intent_text_scan_logic.py tests/unit/scripts/test_drive_intent_text_scan_cross_cut.py`.
 
 ---
 
@@ -4849,21 +4904,276 @@ Two fix commits on top of the re-review's test commit `9417d6ab` carry them, and
 `tests/unit/scripts/test_drive_eval_g3_case_message.py` (at `880a9524`):
 
 ````python
-"""G3's case message (re-review of part B, F8): the six context fields the owner run sends to Smart."""
-from scripts.validation.drive_eval.smart_dry_run import case_message
+"""
+Read-only scan of the owner's stored texts for the drive's old intents (DRIVE_SPECIALIST_RFC §10 step 6) — or, with
+`--include-new`, for `work_with_drive_files` too (the rollback scan, §13 step 5). OWNER-run: it reads personal data
+(Firestore: custom skills and their files, unexpired skill drafts not yet saved, reminders, standing directives,
+prompt overrides; GCS: the workspace's `projects/`, `references/`, `scratch/` and `files/` text files), and writes
+only under the gitignored scripts/memory/. Standing directives are read from the `agent_directive` domain and from
+`preference` (the SUBJECT x SCOPE rule demotes situational agent rules there). **Only the owner (DEV_USER_ID) is
+scanned**: the only user with custom skills, reminders and workspace files; another whitelisted user who has any is not
+covered. A `skill_file` hit is redrafted in chat (`draft_skill`, `$skill save`): `seed_custom_skill.py` keeps the current
+files, and `--check-rewrites` does not read them.
+
+Writes into `--out-dir` (default scripts/memory/drive_intent_scan_<stamp>/):
+    report.md      every hit, by store and item (paths, skill names and lines: personal)
+    backup.json    each item that hit, full text and version — the restore point of the rewrite
+    skills/        every custom skill as `<name>.v<version>.md` (SKILL.md format, `seed_custom_skill.py` reads it)
+                   and its files under `<name>.v<version>.files/` — the bodies the rewrite starts from
+
+    venv/bin/python -m scripts.validation.drive_intent_text_scan [--include-new] [--out-dir scripts/memory/...]
+    venv/bin/python -m scripts.validation.drive_intent_text_scan --check-rewrites scripts/memory/<scan>/rewrite
+        (no Firestore: each rewritten `<name>.md` must parse as a SKILL.md, and it and each `others/*.txt` — the new
+        text of a hit in another store — must name no old intent, drive-only field or drive-search; DIFF.md, the
+        owner's side-by-side, is not checked)
+Env: DEV_USER_ID, DEV_ACCOUNT_ID (.env), FIRESTORE_DATABASE (default us-production), the workspace bucket from
+load_settings (GCS_WORKSPACE_BUCKET; without it the workspace is reported as not scanned).
+"""
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import os
+import sys
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+from scripts.validation.drive_intent_text_scan_logic import (
+    ScanItem, backup_payload, render_report, scan, skill_markdown)
+from src.domain.entities import FactDomain
+from src.domain.prompt_v3.slot import OwnerType
+from src.domain.workspace import workspace_kind
+
+_REPO = Path(__file__).resolve().parents[2]
+_MEMORY = _REPO / "scripts" / "memory"
+WORKSPACE_FOLDERS = ("projects/", "references/", "scratch/", "files/")
+DIRECTIVE_DOMAINS = ((FactDomain.AGENT_DIRECTIVE, "directive"), (FactDomain.PREFERENCE, "preference"))
 
 
-def test_the_case_message_is_an_interactive_turn_in_its_own_session_per_case_and_repeat():
-    msg = case_message({"id": "c7", "text": "find my passport"}, "smart_response", "u1", "a1", 3)
-    assert msg.sender == "drive_g3_dry_run"
-    assert msg.recipient == "smart_response"
-    assert msg.payload == {"text": "find my passport"}
-    assert msg.context["user_id"] == "u1"
-    assert msg.context["account_id"] == "a1"
-    assert msg.context["session_id"] == "u1:drive_g3_dry_run:c7:3"
-    parts = msg.context["current_message_parts"]
-    assert [p.text for p in parts] == ["find my passport"]
-    assert msg.context["interactive_delivery"] is True
+@dataclass
+class ScanSources:
+    """The read ports the scan needs; any of them may be None (that store is reported as not scanned)."""
+    skills: Any = None          # SkillRepository: list_current, get_file
+    drafts: Any = None          # DraftReader: list_drafts(user_id, now) -> [(code, Skill, {path: text})]
+    notes: Any = None           # AgentNotePort: list_active_notes
+    facts: Any = None           # FactRepository: get_active_facts_ordered
+    workspace: Any = None       # WorkspaceStorePort: list, read
+    profiles: Any = None        # AgentProfileRepository: get_override_tokens
+    tokens: Any = None          # TokenRepository: get
+
+
+async def collect(src: ScanSources, user_id: str, account_id: str, now: datetime
+                  ) -> Tuple[List[ScanItem], Dict[str, Tuple[str, str, str]], List[str]]:
+    """(items, skill exports {file stem: (name, description, body)}, stores not scanned)."""
+    items: List[ScanItem] = []
+    exports: Dict[str, Tuple[str, str, str]] = {}
+    skipped: List[str] = []
+    if src.skills is not None:
+        for skill in await src.skills.list_current(user_id):
+            key = f"{skill.name} v{skill.version}"
+            items.append(ScanItem("skill", key, f"{skill.description}\n{skill.body}", skill.version))
+            exports[f"{skill.name}.v{skill.version}"] = (skill.name, skill.description, skill.body)
+            for f in skill.files:
+                text = await src.skills.get_file(user_id, skill.name, f.sha256)
+                if text is not None:
+                    items.append(ScanItem("skill_file", f"{key}:{f.path}", text, skill.version))
+                    exports[f"{skill.name}.v{skill.version}.files/{f.path}"] = ("", "", text)
+    else:
+        skipped += ["skill", "skill_file"]
+    if src.drafts is not None:
+        # A draft the owner has not saved yet holds a model-written skill: after `$skill save` it is a skill (§13 step 5).
+        for code, draft, files in await src.drafts.list_drafts(user_id, now):
+            key = f"{draft.name} draft {code}"
+            items.append(ScanItem("skill_draft", key, f"{draft.description}\n{draft.body}"))
+            items += [ScanItem("skill_draft", f"{key}:{path}", text) for path, text in sorted(files.items())]
+    else:
+        skipped.append("skill_draft")
+    if src.notes is not None:
+        for note in await src.notes.list_active_notes(user_id, now):
+            text = "\n".join(t for t in (note.text, note.instruction, note.workspace_file or "") if t)
+            items.append(ScanItem("reminder", note.note_id, text))
+    else:
+        skipped.append("reminder")
+    if src.facts is not None:
+        for domain, store in DIRECTIVE_DOMAINS:
+            for fact in await src.facts.get_active_facts_ordered(account_id, domain=domain.value):
+                items.append(ScanItem(store, fact.id, fact.text))
+    else:
+        skipped += ["directive", "preference"]
+    if src.workspace is not None:
+        for folder in WORKSPACE_FOLDERS:
+            for entry in await src.workspace.list(user_id, folder):
+                if workspace_kind(entry.path) != "text":
+                    continue
+                blob = await src.workspace.read(user_id, entry.path)
+                items.append(ScanItem("workspace", entry.path, blob.data.decode("utf-8", errors="replace"),
+                                      entry.generation))
+    else:
+        skipped.append("workspace")
+    if src.profiles is not None and src.tokens is not None:
+        for owner, owner_id in ((OwnerType.USER, user_id), (OwnerType.ACCOUNT, account_id)):
+            for token_id in sorted(await src.profiles.get_override_tokens(owner, owner_id)):
+                try:
+                    token = await src.tokens.get(token_id)
+                except KeyError:   # an override naming a token that no longer exists: reported, not scanned
+                    skipped.append(f"prompt_override {owner.value}:{token_id} (token missing)")
+                    continue
+                items.append(ScanItem("prompt_override", f"{owner.value}:{token_id}", str(token.content)))
+    else:
+        skipped.append("prompt_override")
+    return items, exports, skipped
+
+
+REVIEW_FILE = "DIFF.md"   # the owner's side-by-side of old and new: it quotes the old lines, so it is never checked
+OTHERS_DIR = "others"     # the new text of each hit outside the skills, one `<store>__<key>.txt` per stored item
+
+
+def check_rewrites(folder: Path) -> List[str]:
+    """Problems of the rewrites in `folder`: a `<name>.md` (SKILL.md format) unreadable or still naming what the scan
+    looks for, or an `others/*.txt` still naming it. Empty = every rewrite is intent-free. Reads only local files."""
+    from src.utils.skill_md import parse_skill_md
+
+    problems: List[str] = []
+    files = sorted(p for p in folder.glob("*.md") if p.name != REVIEW_FILE)
+    others = sorted((folder / OTHERS_DIR).glob("*.txt"))
+    if not files and not others:
+        return [f"no rewritten skill (*.md) or other text ({OTHERS_DIR}/*.txt) in {folder}"]
+    for path in others:
+        for hit in scan([ScanItem("other", path.name, path.read_text(encoding="utf-8"))]):
+            problems.append(f"{OTHERS_DIR}/{path.name}: line {hit.line_no} names `{hit.pattern}`: {hit.line}")
+    for path in files:
+        try:
+            skill = parse_skill_md(path.read_text(encoding="utf-8"))
+        except Exception as exc:   # noqa: BLE001 — any parse failure is the problem being reported
+            problems.append(f"{path.name}: not a valid SKILL.md ({exc})")
+            continue
+        for hit in scan([ScanItem("skill", skill.name, f"{skill.description}\n{skill.body}")]):
+            problems.append(f"{path.name}: line {hit.line_no} names `{hit.pattern}`: {hit.line}")
+    return problems
+
+
+def resolve_out(out: Optional[Path], stamp: str) -> Path:
+    path = (out or _MEMORY / f"drive_intent_scan_{stamp}").resolve()
+    if _MEMORY.resolve() not in path.parents:
+        raise SystemExit(f"--out-dir must be under scripts/memory/ (gitignored): {path}")
+    return path
+
+
+def write_outputs(out_dir: Path, items: Sequence[ScanItem], exports: Dict[str, Tuple[str, str, str]],
+                  skipped: Sequence[str], include_new: bool) -> Tuple[Path, int]:
+    hits = scan(items, include_new=include_new)
+    scanned: Dict[str, int] = {}
+    for item in items:
+        scanned[item.store] = scanned.get(item.store, 0) + 1
+    out_dir.mkdir(parents=True, exist_ok=True)
+    report = render_report(scanned, hits, include_new)
+    if skipped:
+        report += "\nNot scanned (no reader configured): " + ", ".join(skipped) + "\n"
+    (out_dir / "report.md").write_text(report, encoding="utf-8")
+    (out_dir / "backup.json").write_text(json.dumps(backup_payload(items, hits), ensure_ascii=False, indent=1),
+                                         encoding="utf-8")
+    for stem, (name, description, body) in exports.items():
+        path = out_dir / "skills" / (stem if ".files/" in stem else f"{stem}.md")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body if ".files/" in stem else skill_markdown(name, description, body), encoding="utf-8")
+    return out_dir / "report.md", len(hits)
+
+
+class _DraftReader:
+    """The user's unexpired skill drafts (read-only): the draft collection has no list method on SkillRepository, so
+    the codes come from one `user_id` query and each draft is read through the repository."""
+
+    def __init__(self, collection: Any, skills: Any) -> None:
+        self._collection = collection
+        self._skills = skills
+
+    async def list_drafts(self, user_id: str, now: datetime) -> List[Tuple[str, Any, Dict[str, str]]]:
+        from google.cloud.firestore import FieldFilter
+
+        out: List[Tuple[str, Any, Dict[str, str]]] = []
+        async for snap in self._collection.where(filter=FieldFilter("user_id", "==", user_id)).stream():
+            expires = (snap.to_dict() or {}).get("expires_at")
+            if expires is not None and expires <= now:
+                continue
+            code = snap.id.split(":", 1)[1] if ":" in snap.id else snap.id
+            draft = await self._skills.get_draft(user_id, code)
+            if draft is not None:
+                out.append((code, draft, await self._skills.get_draft_files(user_id, code)))
+        return out
+
+
+async def _sources() -> ScanSources:
+    from google.cloud import firestore
+
+    from src.adapters.firestore_account_repo import FirestoreAccountRepository
+    from src.adapters.firestore_agent_note_adapter import FirestoreAgentNoteAdapter
+    from src.adapters.firestore_skill_repository import FirestoreSkillRepository
+    from src.adapters.gcs_workspace_adapter import GcsWorkspaceAdapter
+    from src.adapters.prompt_v3.firestore_agent_profile_repository import FirestoreAgentProfileRepository
+    from src.adapters.prompt_v3.firestore_token_repository import FirestoreTokenRepository
+    from src.adapters.security.composite_adapter import CompositeAdapter
+    from src.adapters.security.regex_adapter import RegexSecurityAdapter
+    from src.composition.service_container import ServiceContainer   # the fact repository's own wiring
+    from src.config.settings import load_settings
+
+    settings = load_settings()
+    env = settings["ENVIRONMENT_CONFIG"]
+    db = firestore.AsyncClient(database=os.getenv("FIRESTORE_DATABASE", "us-production"))
+    account_repo = FirestoreAccountRepository(db_client=db, collection_name=env.account_collection_name)
+    container = ServiceContainer(config=settings, db_client=db, env_config=env, account_repo=account_repo)
+    bucket = settings.get("GCS_WORKSPACE_BUCKET") or ""
+    skills = FirestoreSkillRepository(db, env)
+    return ScanSources(
+        skills=skills, drafts=_DraftReader(db.collection(env.skill_drafts_collection), skills),
+        notes=FirestoreAgentNoteAdapter(db, env), facts=container.repository,
+        workspace=GcsWorkspaceAdapter(bucket) if bucket else None,
+        profiles=FirestoreAgentProfileRepository(db=db, profiles_collection=env.domain_prompt_profiles_collection,
+                                                 overrides_collection=env.domain_prompt_overrides_collection),
+        tokens=FirestoreTokenRepository(db=db, system_collection=f"{env.domain_prompt_tokens_collection}_system",
+                                        user_collection=f"{env.domain_prompt_tokens_collection}_user",
+                                        security_port=CompositeAdapter(adapters=[RegexSecurityAdapter()],
+                                                                       strategy="worst_case")))
+
+
+def _args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="python -m scripts.validation.drive_intent_text_scan")
+    parser.add_argument("--include-new", action="store_true",
+                        help="also find work_with_drive_files (the rollback scan, DRIVE_SPECIALIST_RFC §13 step 5)")
+    parser.add_argument("--out-dir", type=Path, default=None, help="under scripts/memory/ only")
+    parser.add_argument("--check-rewrites", type=Path, default=None,
+                        help="a folder of rewritten SKILL.md files to check (no Firestore read)")
+    return parser.parse_args(argv)
+
+
+async def _main(args: argparse.Namespace) -> int:
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    out_dir = resolve_out(args.out_dir, stamp)
+    items, exports, skipped = await collect(await _sources(), os.environ["DEV_USER_ID"], os.environ["DEV_ACCOUNT_ID"],
+                                            datetime.now(timezone.utc))
+    report, n = write_outputs(out_dir, items, exports, skipped, args.include_new)
+    print(f"{len(items)} texts scanned, {n} hits; report: {report}")
+    return 0
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    from dotenv import load_dotenv
+
+    args = _args(argv)
+    if args.check_rewrites is not None:
+        problems = check_rewrites(args.check_rewrites)
+        for problem in problems:
+            print(problem)
+        print("rewrites: intent-free" if not problems else f"rewrites: {len(problems)} problem(s)")
+        return 1 if problems else 0
+    load_dotenv(_REPO / ".env")
+    return asyncio.run(_main(args))
+
+
+if __name__ == "__main__":
+    sys.exit(main())
 ````
 
 The K1 order test is `tests/unit/scripts/test_drive_eval_cost_meter.py::test_g3_installs_the_meter_before_it_wraps_smarts_and_the_specialists_llm_calls`
@@ -7011,10 +7321,10 @@ index 8c4a528a..9d21463b 100644
          if intent == INTENT_SEARCH:
              out.append(Event(INTENT_SEARCH, drive_query=str(ctx.get("drive_query") or "").strip()))
 diff --git a/scripts/validation/drive_routing_probe.py b/scripts/validation/drive_routing_probe.py
-index 3cea3378..43577771 100644
+index 3cea3378..95ac9f48 100644
 --- a/scripts/validation/drive_routing_probe.py
 +++ b/scripts/validation/drive_routing_probe.py
-@@ -1,12 +1,14 @@
+@@ -1,12 +1,18 @@
  #!/usr/bin/env python3
  """
 -Routing probe for the drive intents (docs/10_rfcs/USER_DRIVE_RFC.md §7).
@@ -7028,12 +7338,19 @@ index 3cea3378..43577771 100644
 +intents counts as a miss.
  
 -    python scripts/validation/drive_routing_probe.py --runs 3
-+    NO_PROXY='*' python scripts/validation/drive_routing_probe.py --runs 3   # NO_PROXY: a local proxy breaks SDK TLS
++    NO_PROXY='*' python scripts/validation/drive_routing_probe.py --runs 3 --max-usd 3   # NO_PROXY: a local proxy breaks SDK TLS
++
++`--max-usd` is required: every LLM call of the real Smart is metered (`drive_eval/cost_meter.py`) and a call that would
++start once the spend has reached the cap is refused, the run stops and exits 1. The meter checks before each call, so
++parallel specialists can overshoot the cap by about one call each (about $0.1-0.3 per call). Failed calls are not metered.
  """
  from __future__ import annotations
  
-@@ -40,7 +42,8 @@ from src.infrastructure.agent_registry import AgentRegistry  # noqa: E402
+@@ -38,9 +44,11 @@ from src.infrastructure.agent_coordinator import AgentCoordinator  # noqa: E402
+ from src.infrastructure.agent_manifest import ALL_DESCRIPTORS  # noqa: E402
+ from src.infrastructure.agent_registry import AgentRegistry  # noqa: E402
  from src.infrastructure.delegation_engine import DelegationEngine, ToolResult  # noqa: E402
++from scripts.validation.drive_eval.cost_meter import CostCapReached, Meter  # noqa: E402
  
  LEASE = '[File: "lease_2026.pdf" (1.2MB)]'
 -DRIVE_INTENTS = {
@@ -7042,7 +7359,7 @@ index 3cea3378..43577771 100644
      "save_file_to_drive", "list_files_in_drive", "open_file_from_drive", "move_file_in_drive",
      "create_folder_in_drive", "update_file_in_drive", "delete_file_from_drive", "search_files_in_drive",
  }
-@@ -60,15 +63,16 @@ def _pair(user: str, model: str, drive_context: Any = None) -> List[Message]:
+@@ -60,15 +68,16 @@ def _pair(user: str, model: str, drive_context: Any = None) -> List[Message]:
  _LISTED = [[{"path": "Договоры/lease_2026.pdf", "ref": "drive:AAA"},
             {"path": "Договоры/lease_2025.pdf", "ref": "drive:BBB"}]]
  
@@ -7064,7 +7381,7 @@ index 3cea3378..43577771 100644
  ]
  _STUB = {"open_file": "[File: lease_2026.pdf]\nLease agreement…\n[/File: lease_2026.pdf]"}
  CALLS: List[Dict[str, Any]] = []
-@@ -77,11 +81,25 @@ CALLS: List[Dict[str, Any]] = []
+@@ -77,12 +86,35 @@ CALLS: List[Dict[str, Any]] = []
  def _install_capture() -> None:
      async def capture(self, tool_call, context, *args, **kwargs):
          a = tool_call.args or {}
@@ -7074,6 +7391,7 @@ index 3cea3378..43577771 100644
      DelegationEngine.dispatch = capture
  
  
+-async def main(runs: int) -> int:
 +def judge_run(scenario: Dict[str, Any], calls: List[Dict[str, Any]]) -> bool:
 +    """One run's verdict: the expected intent was called (or none was expected), the forbidden one was not, no removed
 +    drive intent was called, and the drive commission's query carries the scenario's words and not its wrong ones."""
@@ -7088,12 +7406,43 @@ index 3cea3378..43577771 100644
 +    return not any(w.casefold() in queries for w in scenario.get("query_lacks", []))
 +
 +
- async def main(runs: int) -> int:
++def build_parser() -> argparse.ArgumentParser:
++    ap = argparse.ArgumentParser()
++    ap.add_argument("--runs", type=int, default=3)
++    ap.add_argument("--max-usd", type=float, required=True,
++                    help="hard stop on the estimated spend of every LLM call in the run (cost_meter.py); the meter "
++                         "checks before each call, so parallel calls can overshoot by about one call each")
++    return ap
++
++
++async def main(runs: int, max_usd: float) -> int:
      user_id, account_id = os.environ["DEV_USER_ID"], os.environ["DEV_ACCOUNT_ID"]
      db = firestore.AsyncClient(database=os.getenv("FIRESTORE_DATABASE", "us-production"))
-@@ -119,18 +137,11 @@ async def main(runs: int) -> int:
-             async with RequestContext(user_id=user_id, account_id=account_id):
-                 await smart.execute(msg)
+     settings = load_settings()
+@@ -98,6 +130,9 @@ async def main(runs: int) -> int:
+     smart = (await factory.ensure_agents_for_user(user_id))["smart_agent"]
+     original_load = smart._load_conversation_context
+     _install_capture()
++    meter = Meter(max_usd=max_usd)
++    uninstall = meter.install()
++    stopped = ""
+     failures = 0
+     passes: Dict[str, int] = {}
+     for sc in SCENARIOS:
+@@ -116,29 +151,35 @@ async def main(runs: int) -> int:
+                          "session_id": f"{user_id}:drive_routing_probe",
+                          "current_message_parts": [MessagePart(text=sc["text"])]},
+             )
+-            async with RequestContext(user_id=user_id, account_id=account_id):
+-                await smart.execute(msg)
++            try:
++                async with RequestContext(user_id=user_id, account_id=account_id):
++                    await smart.execute(msg)
++            except CostCapReached as exc:
++                stopped = str(exc)
++                break
++            if meter.spent >= max_usd or meter.capped:
++                stopped = f"spent ${meter.spent:.4f} of --max-usd {max_usd}"
              intents = [c["intent"] for c in CALLS]
 -            unknown = [i for i in intents if "drive" in i and i not in DRIVE_INTENTS]
 -            ok = (sc["expect"] is None or sc["expect"] in intents) and sc.get("forbid") not in intents and not unknown
@@ -7110,9 +7459,28 @@ index 3cea3378..43577771 100644
 -            print(f"{'OK ' if ok else 'BAD'} [{run + 1}] {sc['text'][:50]!r} → {intents} ctx={keys}")
 +            queries = [c["query"][:120] for c in CALLS if c["intent"] == DRIVE]
 +            print(f"{'OK ' if ok else 'BAD'} [{run + 1}] {sc['text'][:50]!r} → {intents} queries={queries}")
++            if stopped:
++                break
++        if stopped:
++            break
      smart._load_conversation_context = original_load
++    uninstall()
      for text, n in passes.items():
          print(f"PASS {n}/{runs}  {text!r}")
++    print(f"spent ${meter.spent:.4f} of --max-usd {max_usd}")
++    if stopped:
++        print(f"STOPPED: {stopped}")
+     print(f"\n{failures} failing run(s)")
+-    return 1 if failures else 0
++    return 1 if failures or stopped else 0
+ 
+ 
+ if __name__ == "__main__":
+-    ap = argparse.ArgumentParser()
+-    ap.add_argument("--runs", type=int, default=3)
+-    sys.exit(asyncio.run(main(ap.parse_args().runs)))
++    args = build_parser().parse_args()
++    sys.exit(asyncio.run(main(args.runs, args.max_usd)))
 ```
 
 
@@ -7220,6 +7588,34 @@ def test_the_query_reads_smarts_and_the_specialists_rows():
 **Expected-risk existing tests.** None (`test_drive_query_vocabulary.py` green: the change is additive). **Done.** Green. **Model:** Sonnet.
 **Source:** `git checkout 6b53d324 -- scripts/validation/drive_routing_probe.py scripts/validation/drive_query_vocabulary.py scripts/validation/drive_query_vocabulary_logic.py tests/unit/scripts/test_drive_routing_probe.py tests/unit/scripts/test_drive_query_vocabulary_specialist.py`
 
+**After the cross-cut review (R3).** The probe diff above is the final state (`c53b613b`): `--max-usd` is required, every LLM call of the real Smart is metered through `drive_eval/cost_meter.py`, a call that would start past the cap is refused, the run stops and exits 1. The meter checks before each call, so parallel specialists can overshoot the cap by about one call each (about $0.1–0.3 per call); failed calls are not metered. New test:
+
+`tests/unit/scripts/test_drive_routing_probe_cost_stop.py` (new, complete):
+
+````python
+"""The routing probe has a hard cost stop (cross-cut review R3): `--max-usd` is required, like every paid eval."""
+import sys
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+
+from scripts.validation import drive_routing_probe as probe  # noqa: E402
+
+
+def test_max_usd_is_required():
+    with pytest.raises(SystemExit):
+        probe.build_parser().parse_args(["--runs", "1"])
+
+
+def test_max_usd_and_runs_are_parsed():
+    args = probe.build_parser().parse_args(["--runs", "2", "--max-usd", "3"])
+    assert (args.runs, args.max_usd) == (2, 3.0)
+````
+
+**Final-state files:** `git checkout c53b613b -- scripts/validation/drive_routing_probe.py tests/unit/scripts/test_drive_routing_probe_cost_stop.py`.
+
 ---
 
 ### Task B12 (Opus, after O3.1): The owner's custom drive skills and other stored texts, rewritten intent-free
@@ -7258,7 +7654,7 @@ the turn-cap ERROR log and 🚨 alert through `alert_sink`; the sol fallback on 
 
 - [ ] Create the decision record:
 
-`docs/04_solution_strategy/decisions/drive_specialist.md` (at `db216385`):
+`docs/04_solution_strategy/decisions/drive_specialist.md` (at `c53b613b`):
 
 ```markdown
 # Decision: Smart reaches the user's drive through one LLM specialist, `work_with_drive_files`
@@ -7309,21 +7705,34 @@ specialist".
   (custom skills, reminders, directives, workspace files, prompt overrides) are scanned and rewritten intent-free before
   the deploy (`scripts/validation/drive_intent_text_scan.py`, output in `scripts/memory/`), so they work before and
   after a revert.
+- **Cross-cut review (2026-10-22).** A batch cut by `still_running` reports its change as still running ("may complete"),
+  not as "did not finish"; a change after a still-running outcome is "not started". A path where a `drive:` ref is needed
+  is a correctable `file_ref is required` error, not a "chat file" hint. The model that serves the specialist is logged
+  (`model=`) and checked before the deploy (the global `provider_preference` can override the tier default). The drive
+  agent type is prompt-cached. The turn-cap alert is bounded to 5 s. An `unfinished` answer tells Smart not to
+  commission the same request again in this turn; there is no hard third-call refusal.
 - **Latency.** Each drive commission adds the specialist's turns; the bar is p50 of the drive-turn wall time after ≤
   p50 before + 25 % (G3 and the specialist eval record it). Effort `low` is the first lever if Sonnet misses it.
 - **The Sonnet 5.5 filler-tool stall** (`decisions/sonnet55_adaptive_thinking_stall.md`) did not appear in the
   specialist role. It is bounded by 6 turns and the 150 s soft deadline; a turn-cap exit without a report is logged at
   ERROR and posts one 🚨 line to the ops alert sink. The sol fallback covers provider errors on the first call only.
-- **Grok as Smart** made one commission per file on "find then open the second" (RFC §14); a G3 case pins it.
+- **Grok as Smart** took 9 round trips on "find then open the second" (RFC §14). It was not one commission per file:
+  the run was one search and 8 re-opens of the same PDF. `GrokAdapter._convert_messages` drops every non-image file with
+  a warning (`grok_adapter.py:640`), so the PDF never reaches Grok, while the answer says the file is attached; the
+  specialist is blind to bodies by design (A′), so re-commissioning cannot help. It is an existing adapter gap (the same
+  with today's Grok Smart) and goes to RFC Appendix A as backlog (a PDF text fallback or adapter work, a behaviour
+  change); a G3 case on a Grok Smart bounds the round trips.
 - **The specialist reads search cards in full**, passages included: the same risk class as Smart reading them before,
   held by the `untrusted` line and G3's injected case.
 
 ## Rollback
 
-Restore `PROTOCOL_AGENT_SELECTION` from the mirror file of the commit before the merge (`git show
-<merge>^1:prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy` into the mirror path, `snapshot_upload.py`
-dry run, then `--apply` of that one file; the pre-upload backup is the cross-check), deploy the revert of the merge commit,
-`$admin_cache_reset`, `snapshot_pull.py`; then scan for `work_with_drive_files` in texts written after the deploy
+In the forward order: `git revert -m 1 <merge>` on a branch (it restores the mirror file of `PROTOCOL_AGENT_SELECTION`), then
+`snapshot_upload.py` dry run and `--apply` of that one file just before `make deploy` from that tree (the pre-upload
+backup is the cross-check), `$admin_cache_reset`, a PR of the revert, `snapshot_pull.py`. The reset never runs before the
+revert is live. The window between the restored protocol and the revert going live costs up to two self-corrected calls
+per drive turn. After a failed deploy, redeploy the current image as a new revision rather than resetting one
+instance. Then scan for `work_with_drive_files` in texts written after the deploy
 (`drive_intent_text_scan.py --include-new`) and rewrite each intent-free (RFC §13). The new drive tokens can stay.
 ```
 
@@ -7767,10 +8176,10 @@ index cf9e39a8..d5d923dc 100644
  | Search result, wrapper, render; Cabinet status | `src/domain/drive_search.py`, `src/domain/drive_indexing_status.py` |
  | Ports | `src/ports/user_drive_port.py`, `src/ports/drive_index_repository.py` |
 diff --git a/docs/07_deployment/README.md b/docs/07_deployment/README.md
-index cedd8eb4..761ebb91 100644
+index cedd8eb4..5dcd0818 100644
 --- a/docs/07_deployment/README.md
 +++ b/docs/07_deployment/README.md
-@@ -347,6 +347,86 @@ Local runs read `ONEDRIVE_REDIRECT_URI` from `.env` (a separate key from the dep
+@@ -347,6 +347,126 @@ Local runs read `ONEDRIVE_REDIRECT_URI` from `.env` (a separate key from the dep
  localhost value never reaches the deployed revision). With it unset, `/auth/connect-onedrive` answers 501;
  the Cabinet hides the drive card only when the adapter itself is absent (To Do keys unset).
  
@@ -7785,27 +8194,43 @@ index cedd8eb4..761ebb91 100644
 +
 +**Before the build — the pre-build check (RFC §12).** The spike's stage 1 rerun with the Sonnet specialist (`--max-usd
 +3`). If it misses the bar (correctness at parity, p50 case wall time ≤ today's × 1.25), the build stops and the owner
-+decides; changing the specialist's effort (`low` is the first lever) is his call.
++decides; changing the specialist's effort (`low` is the first lever) is his call. The same run verifies prompt caching:
++the second turn of a commission shows `cache_read_tokens > 0` (`drive` is in `PromptCacheStrategy.CACHEABLE_AGENTS`
++and `MULTI_TURN_AGENTS`; before that change the spike showed `cached: 0` on every specialist call).
++
++**O0 — which model serves the specialist (before O1).** The model is not only the tier default: the per-user
++`agent_providers["drive"]`, then the **global** `provider_preference`, then the strategy default (`claude`) decide the
++provider (`AgentContextBuilder.resolve_provider_name`). A `provider_preference` of `openai` puts the specialist on
++`gpt-6-luna`, the model the RFC (§15.3, §15.5) rejected as too weak, and its fallback is then also `openai`. Read the
++owner's `provider_preference`, `agent_providers` and `agent_tiers` (read-only). If the preference is `openai` and
++`agent_providers` has no `drive` entry, set `agent_providers["drive"]="claude"` before the deploy. On 2026-10-22 the
++read showed an empty preference and no `drive` entry, so the strategy default `claude` applies and nothing is needed
++today; the step stays as a check, because the setting can change. The `[DriveAgent]` log line carries `model=<served
++model>` so the answer is visible after the deploy (step 11).
 +
 +**Before the deploy — the owner's stored texts (RFC §10 step 6).** Texts that name a removed intent cost a rejected
 +call after the cut; rewritten intent-free ("find it on the drive", "save it to the drive") they work with the old
 +code and the new, so this step can land days early and survives a revert.
 +1. `venv/bin/python -m scripts.validation.drive_intent_text_scan` — read-only; writes `report.md`, `backup.json`
 +   (each hit's full text and version) and every custom skill as `skills/<name>.v<n>.md` under
-+   `scripts/memory/drive_intent_scan_<stamp>/`.
++   `scripts/memory/drive_intent_scan_<stamp>/`. It scans **only the owner** (the only user with custom skills,
++   reminders and workspace files) and reads the `agent_directive` and `preference` facts and the workspace's
++   `projects/`, `references/`, `scratch/` and the text files of `files/`.
 +2. Rewrite each hit intent-free: the custom skills (`drive-workspace`, `drive-inbox`, `document-facts-batches`, any
 +   other, and any unsaved draft the scan found) as new versions — prepare
 +   `scripts/memory/drive_intent_scan_<stamp>/rewrite/<name>.md`, and the new text of every other hit as
 +   `rewrite/others/<store>__<key>.txt`; check them with `--check-rewrites` (no old intent, drive-only field or
 +   `drive-search` left; the owner's side-by-side `rewrite/DIFF.md` is not checked), then
 +   `python scripts/skills/seed_custom_skill.py --user <USER_ID> --account <ACCOUNT_ID> --file <rewrite>.md`; a skill
-+   that also carries files is redrafted in chat (`draft_skill`, `$skill save`). Reminders, directives, workspace files
++   that also carries files, and every `skill_file` hit, is redrafted in chat (`draft_skill`, `$skill save`:
++   `seed_custom_skill.py` keeps the current files and `--check-rewrites` does not read them; only the step-3 rescan
++   catches a file). Reminders, directives, workspace files
 +   and overrides: edit each in place through its own surface (Smart's reminder and workspace tools, the Cabinet).
 +3. Rerun the scan: no hit left.
 +
 +**The prompts (RFC §10.1).**
-+4. Back up the prompt layer: `$PY firestore_utils/backup_prompt_layer.py` (into `scripts/memory/`). This is the restore
-+   point of the rollback.
++4. Back up the prompt layer: `PY=venv/bin/python; $PY firestore_utils/backup_prompt_layer.py` (into `scripts/memory/`).
++   This is the restore point of the rollback. (`$PY` is the repo's interpreter, defined here once for the commands below.)
 +5. Drift check: `python firestore_utils/snapshot_pull.py --check`. A `snapshot_pull.py` run by another session before
 +   the upload overwrites the branch's mirror files; re-apply them from the branch if it happened.
 +6. Dry run (an agent may run it): `python firestore_utils/snapshot_upload.py <files>` for
@@ -7814,14 +8239,23 @@ index cedd8eb4..761ebb91 100644
 +   `prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy`.
 +7. Apply, in this order: the specialist's five files first (additive: the running revision never reads them), then
 +   `PROTOCOL_AGENT_SELECTION` **right before the deploy** (it names `work_with_drive_files`, which the running revision
-+   does not have). `python firestore_utils/snapshot_upload.py --apply <files>`.
++   does not have). Two commands, each with its own dry run first (the step-6 dry run lists six files, so adding
++   `--apply` to it would apply the protocol early; the per-document typed confirmation is the only other guard):
++   ```bash
++   $PY firestore_utils/snapshot_upload.py --apply \
++     prompts_snapshot/tokens/system/COGNITIVE_PROCESS_DRIVE.groovy prompts_snapshot/tokens/system/PROTOCOL_DRIVE_SEARCH.groovy \
++     prompts_snapshot/tokens/system/OUTPUT_FORMAT_DRIVE.groovy prompts_snapshot/blueprints/drive_agent_v1.yaml \
++     prompts_snapshot/profiles/drive.yaml                                  # the five new documents; every line is (new)
++   # ... then, immediately before step 8:
++   $PY firestore_utils/snapshot_upload.py --apply prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy
++   ```
 +
 +**The deploy.**
 +8. `make deploy`, then `$admin_cache_reset`. The prompt template is cached for 24 h per instance and the reset is
 +   process-local (it resets the instance that serves the command); a deploy starts fresh instances anyway, so after a
 +   deploy the reset is a belt for the instance it lands on, and a reset meant to undo a protocol upload without a
 +   deploy reaches only that one instance.
-+9. `snapshot_pull.py`, commit the mirror.
++9. `snapshot_pull.py`, commit the mirror on a branch and open a PR (the `main` ruleset refuses direct pushes).
 +10. G3 "after" (`NO_PROXY='*' venv/bin/python -m scripts.validation.drive_eval.smart_dry_run --repeats N --max-usd 3`,
 +    the same `N` as the step-0 "before"), and the specialist eval against the spike's stage-1 report
 +    (`NO_PROXY='*' venv/bin/python -m scripts.validation.drive_eval.specialist_ab --smart-model gpt-6.1-sol --max-usd 3
@@ -7829,30 +8263,45 @@ index cedd8eb4..761ebb91 100644
 +    turn-limit 🚨 ops alert for a few days. The agent-level harness test
 +    (`tests/unit/scripts/test_drive_eval_dry_run_drive.py::test_every_write_tool_of_the_specialist_is_stubbed_in_the_dry_run`)
 +    is green on the branch before either eval runs.
++11. **O6 live smoke (once, after the deploy).** Send one real message that needs the drive (for example "list my drive
++    Inbox"). Then check the `[DriveAgent] ... status= model=` line in the logs (`make fetch-logs`, grep locally):
++    the status is `ok` and the model is the Claude specialist model, not `gpt-6-luna`. Then `prompt_content` in
++    BigQuery for `agent_type=drive`: the model, and `cache_read_tokens > 0` on the second turn. A missing profile upload
++    shows here too: with no `drive` profile `preload_cache("drive")` only warns and every commission then fails
++    "PromptBuilder failed".
 +
-+**Restoring `PROTOCOL_AGENT_SELECTION`** (the deploy fails after step 7, or a rollback). The mirror file of the
-+commit before the merge is the restore text; the step-4 backup JSON is the cross-check:
-+```bash
-+git show <merge>^1:prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy \
-+  > prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy
-+python firestore_utils/snapshot_upload.py prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy   # dry run: the diff must undo the drive block and the exception
-+python firestore_utils/snapshot_upload.py --apply prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy   # owner
-+```
-+then `$admin_cache_reset`.
++**Rollback (RFC §13), in the forward order.** The revert of the merge restores the mirror file itself, so it comes
++first; the protocol is restored right before the deploy of the revert, never earlier. `PY=venv/bin/python`.
++1. On a branch, `git revert -m 1 <merge>` (a merge commit needs `-m 1`). This brings back the old
++   `prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy`; the step-4 backup JSON is the cross-check.
++2. Dry run, then apply, from that working tree, **just before step 3**:
++   ```bash
++   $PY firestore_utils/snapshot_upload.py prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy          # the diff must undo the drive block and the exception
++   $PY firestore_utils/snapshot_upload.py --apply prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy  # owner
++   ```
++3. `make deploy` from the revert tree (the deploy reads the working tree, not git).
++4. `$admin_cache_reset`. It is process-local, so after a deploy it is a belt for the instance it lands on; it is never run
++   before the revert is live: it would make the warm instance of the new revision rebuild every user's prompt from the
++   old protocol while it runs the new code (`use_skill drive-search` is unknown, `applies_to: search_files_in_drive`
++   names a removed intent) for every drive turn until the revert ships.
++5. Open the PR of the revert branch (the `main` ruleset refuses a direct push; CI runs on it), then `snapshot_pull.py`
++   and commit the mirror in a PR.
++6. Texts written after the deploy: `drive_intent_text_scan --include-new` finds `work_with_drive_files` in reminders,
++   the workspace, skills and directives; back up and rewrite each intent-free (a stale one costs one self-corrected
++   rejected call). The drive, the index and the receipts are written by the same code in both versions; the new drive
++   tokens can stay. If the drive notes change was built on top, revert it first.
 +
-+**If the deploy fails after step 7:** restore `PROTOCOL_AGENT_SELECTION` as above, then `$admin_cache_reset`.
++**If the deploy fails after step 7:** do not rely on a reset: the reset reaches one instance, and any old-revision
++instance that cold-started since step 7 keeps a template built on the new protocol for up to 24 h. Restore the protocol
++as in rollback step 2 (from the mirror file of the commit before the merge:
++`git show <merge>^1:prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy > prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy`,
++dry run, `--apply`), then redeploy the **current** image as a new revision (fresh instances), or retry the deploy.
 +
-+Two windows are accepted, each costing at most one self-corrected call: between step 7 and the new revision serving, a
-+cold instance of the old revision builds Smart's prompt with the new protocol (`work_with_drive_files`, which it does
-+not have); in a rollback, between restoring the protocol and the revert going live, the new code runs with the old
-+protocol (a `use_skill drive-search` that finds no skill).
-+
-+**Rollback (RFC §13).** 1. Restore `PROTOCOL_AGENT_SELECTION` as above. 2. Deploy the `git revert` of the merge commit.
-+3. `$admin_cache_reset`. 4. `snapshot_pull.py`, commit the mirror. 5. Texts written after the deploy:
-+`drive_intent_text_scan --include-new` finds `work_with_drive_files` in reminders, the workspace, skills and
-+directives; back up and rewrite each intent-free (a stale one costs one self-corrected rejected call). The drive, the
-+index and the receipts are written by the same code in both versions; the new drive tokens can stay. If the drive notes
-+change was built on top, revert it first.
++Two windows are accepted, each costing at most **two** self-corrected calls per drive turn: between step 7 and the new
++revision serving, a cold instance of the old revision builds Smart's prompt with the new protocol
++(`work_with_drive_files`, which it does not have); in a rollback, between restoring the protocol and the revert going
++live (deploy the revert from its branch to keep it short), the new code runs with the old protocol: `use_skill
++drive-search` finds no skill, and `applies_to: search_files_in_drive` invites a removed intent.
 +
  ## Firestore index definitions
  
@@ -8051,6 +8500,8 @@ finds only the historical mentions (the `drive-search-v1` tag, "Smart's `search_
 in the vocabulary line). RFCs, plans and older decision records are history and stay. **Model:** Sonnet.
 **Source:** `git checkout db216385 -- CLAUDE.md src/agents/CLAUDE.md docs/05_building_blocks/user_drive/README.md docs/05_building_blocks/file_storage/README.md docs/05_building_blocks/memory_telemetry/README.md docs/07_deployment/README.md docs/how_to/NEW_AGENT_PLAYBOOK.md docs/04_solution_strategy/decisions/drive_specialist.md`
 
+**After the cross-cut review (R1, R2, R4, R5, X8).** The decision record and the README diff above are the final state (`c53b613b`): O0 (which model serves the specialist, read before O1) and the cache check in the pre-build run; the two literal `--apply` commands of the prompt step; the O6 live smoke; the rollback in the forward order (`git revert -m 1` on a branch, the protocol upload just before `make deploy` from that tree, `$admin_cache_reset` after the deploy and never before the revert is live, a PR of the revert), a failed deploy redeployed as a new revision, the window stated as up to two self-corrected calls, `$PY` defined; the Grok diagnosis in the decision record (8 re-opens of one PDF that `GrokAdapter` drops, `grok_adapter.py:640`; an existing adapter gap, backlog for RFC Appendix A). **Final-state files:** `git checkout c53b613b -- docs/07_deployment/README.md docs/04_solution_strategy/decisions/drive_specialist.md`.
+
 ---
 
 ### The mutant done-check (tests only, commit `8c7cfe78`)
@@ -8209,10 +8660,37 @@ All rows are resolved by `9417d6ab` (tests) plus `89684c0d` / `880a9524` (code).
 
 ---
 
+### 4.4 For the reviewer: red tests after the cross-cut review (`plan_arbiter_xcut.md`)
+
+Five existing tests go red on the cross-cut fixes. The implementer did not touch them (reviewer rule); each encodes the
+behaviour a ruling intentionally changes, or conflicts with it. The code of the ruling is kept, the tests wait for the
+reviewer.
+
+| Test id | Assertion | Actual vs expected | Ruling | Proposed verdict |
+|---|---|---|---|---|
+| `tests/unit/infrastructure/test_drive_tools.py::test_a_cancelled_call_is_recorded_as_not_finished` | a `move_file` cancelled once its service call started has `outcome.cls is OutcomeClass.NOT_FINISHED` | `STILL_RUNNING` with today's `STILL_RUNNING` text | X1 | (a) retarget: a change cancelled after it started is `STILL_RUNNING`; a read cancelled is still `NOT_FINISHED` |
+| `tests/unit/infrastructure/test_drive_tools.py::test_a_mutation_cancelled_once_started_is_recorded_as_not_finished` | the cancelled `delete_drive_item`'s text `== t.DID_NOT_FINISH` | `DriveOperations.STILL_RUNNING` text ("may complete. Check with a listing before retrying …") | X1 | (a) retarget to the `STILL_RUNNING` text and class |
+| `tests/unit/scripts/test_drive_intent_text_scan.py::test_collect_reads_every_store_read_only` | `collect` yields exactly the listed items, `get_active_facts_ordered` awaited once with `AGENT_DIRECTIVE`, workspace entries for `projects/` and `references/` only | the facts reader is awaited twice (`agent_directive`, then `preference`); the fake workspace has no `scratch/` or `files/` keys (`KeyError`) | R2 | (a) extend the fake with the two folders and the `preference` call; the expected item list gains the `preference` fact |
+| `tests/unit/scripts/test_drive_intent_text_scan.py::test_outputs_land_in_one_folder_with_report_backup_and_skill_exports` | the same fake workspace | `KeyError: 'scratch/'` from the fake's `entries[folder]` | R2 | (a) the same fake extension |
+| `tests/unit/test_drive_specialist_removed_names.py::test_no_model_facing_src_string_names_a_smart_era_drive_field` | no non-docstring string in `src/` names `drive_query`, `drive_folder`, `drive_kind`, `drive_date_from`, `drive_date_to`, `drive_deleted` | `src/agents/drive_agent.py:60-61` (`_STRAY_FIELDS`): the ruling X12 puts exactly these names in the tuple, so a stale instruction's field reaches the commission | X12 | the reviewer rules: either (a) allow the one tuple in `drive_agent.py` (the names are payload keys the agent accepts, not text a model reads as an instruction), or (c) the arbiter reconsiders X12 (build the names from a list in a non-`src` data file is not an option: it hides the names from the guard) |
+
+The two environmental `test_network_guard` tests (`test_a_loopback_proxy_variable_cannot_tunnel_out`,
+`test_connect_to_a_unix_socket_works`) are red on `main` too.
+
 ## 5. Owner steps (in order)
 
 Every eval command runs with `NO_PROXY='*'` on a machine with the local proxy (127.0.0.1:8888), or the provider SDKs fail
 TLS (I4). Every paid eval passes `--max-usd` (I3).
+
+**O0 [OWNER, a check] — which model serves the specialist (before O1; cross-cut X8).** The provider is not only the
+tier default: `agent_providers["drive"]`, then the **global** `provider_preference`, then the strategy default `claude`
+(`AgentContextBuilder.resolve_provider_name`); `"drive"` allows `claude` and `openai`. A `provider_preference` of
+`openai` puts the specialist on `gpt-6-luna` (rejected as too weak, RFC §15.3/§15.5), and its fallback is then also
+`openai`. Read the owner's `provider_preference`, `agent_providers` and `agent_tiers` (read-only). If the preference is
+`openai` and `agent_providers` has no `drive` entry, set `agent_providers["drive"]="claude"`. Read on 2026-10-22: the
+preference is empty, `agent_providers` has no `drive` entry and the stored `agent_tiers` has no `drive` (A's
+predate test covers it), so the strategy default `claude` applies and no action is needed today; the step stays as a
+check. The `[DriveAgent]` line carries `model=` so O6 shows the answer.
 
 **O1 [OWNER] — pre-build check (RFC §12, owner-approved).** Stage 1 of §15 rerun with the Sonnet specialist, on the
 spike (today's design numbers exist: stage-1 report `…_144534`). Estimate ≈ $2–2.5; hard stop $3:
@@ -8223,7 +8701,8 @@ NO_PROXY='*' ../alekbot-core/venv/bin/python -m scripts.validation.drive_eval.sp
   --specialist-model claude-sonnet-5-5 --specialist-thinking medium --max-usd 3
 ```
 Bar: correctness at parity with stage 1's `today` rows; p50 case wall time ≤ today's × 1.25; Sonnet's specialist time
-and cost per commission recorded. **If the check misses the bar, the build stops and the owner is asked (ruling M8);
+and cost per commission recorded; and `cache_read_tokens > 0` on the second turn of a commission (X10: `drive` is now
+prompt-cached; the spike showed `cached: 0`). **If the check misses the bar, the build stops and the owner is asked (ruling M8);
 changing the effort (`low`, RFC §12's first lever) is his call.** Keep both reports: the production eval compares with
 the stage-1 `today` rows later.
 
@@ -8243,54 +8722,86 @@ It writes `tests/fixtures/drive_eval/bars_g3.json` (commit it) and the report wi
    → `rewrites: intent-free`.
 4. For each rewritten skill: `python scripts/skills/seed_custom_skill.py --user <USER_ID> --account <ACCOUNT_ID>
    --file scripts/memory/drive_intent_scan_<stamp>/rewrite/<name>.md` (a new version; the old one stays in history). A
-   draft hit: redraft in chat (`draft_skill`, `$skill save`) from the rewrite.
+   draft hit, and every `skill_file` hit (a hit inside a skill's file: `seed_custom_skill.py` keeps the current files and
+   `--check-rewrites` does not read them): redraft in chat (`draft_skill`, `$skill save`) from the rewrite. Only the
+   owner is scanned (the only user with custom skills); the scan also reads `preference` facts and the workspace's
+   `scratch/` and `files/` text.
 5. Reminders, directives, workspace files, overrides: paste each `rewrite/others/<store>__<key>.txt` through its own
    surface.
 6. Rerun step 1: no hit.
 
-**O4 [OWNER] — prompts (RFC §10.1).** 1. `$PY firestore_utils/backup_prompt_layer.py` (into `scripts/memory/`; the
-cross-check of the restore). 2. `python firestore_utils/snapshot_pull.py --check`. 3. Dry run (an agent may run it):
+**O4 [OWNER] — prompts (RFC §10.1).** `PY=venv/bin/python`. 1. `$PY firestore_utils/backup_prompt_layer.py` (into
+`scripts/memory/`; the cross-check of the restore). 2. `python firestore_utils/snapshot_pull.py --check`. 3. Dry run (an agent may run it):
 `python firestore_utils/snapshot_upload.py prompts_snapshot/tokens/system/COGNITIVE_PROCESS_DRIVE.groovy
 prompts_snapshot/tokens/system/PROTOCOL_DRIVE_SEARCH.groovy prompts_snapshot/tokens/system/OUTPUT_FORMAT_DRIVE.groovy
 prompts_snapshot/blueprints/drive_agent_v1.yaml prompts_snapshot/profiles/drive.yaml
-prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy`. 4. `--apply` the five specialist files (additive).
-5. Merge the PR. 6. `--apply` `PROTOCOL_AGENT_SELECTION.groovy` **right before** O5.
+prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy`. 4. `--apply` the five specialist files (additive; the dry run of step 3 lists six, so do not add `--apply` to it):
+```bash
+$PY firestore_utils/snapshot_upload.py --apply \
+  prompts_snapshot/tokens/system/COGNITIVE_PROCESS_DRIVE.groovy prompts_snapshot/tokens/system/PROTOCOL_DRIVE_SEARCH.groovy \
+  prompts_snapshot/tokens/system/OUTPUT_FORMAT_DRIVE.groovy prompts_snapshot/blueprints/drive_agent_v1.yaml \
+  prompts_snapshot/profiles/drive.yaml          # every line is (new)
+```
+5. Merge the PR. 6. **Right before** O5:
+```bash
+$PY firestore_utils/snapshot_upload.py --apply prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy
+```
 
-**O5 [OWNER] — deploy.** `make deploy`; `$admin_cache_reset`; `snapshot_pull.py` and commit the mirror.
+**O5 [OWNER] — deploy.** `make deploy`; `$admin_cache_reset`; `snapshot_pull.py` and commit the mirror on a branch (a PR:
+the `main` ruleset refuses direct pushes).
 `$admin_cache_reset` is process-local: it resets the instance that serves the command (`router_agent.py`, "this worker
 process"); a deploy starts fresh instances anyway, so a reset meant to undo a protocol upload **without** a deploy
-reaches one instance only (M4). **If the deploy fails after O4.6:** restore `PROTOCOL_AGENT_SELECTION` (the command
-below), then `$admin_cache_reset`.
+reaches one instance only (M4). **If the deploy fails after O4.6:** restore `PROTOCOL_AGENT_SELECTION` (the commands
+below) and redeploy the **current** image as a new revision (fresh instances), or retry the deploy; do not rely on a
+reset: an old-revision instance that cold-started since O4.6 keeps a template built on the new protocol for up to 24 h
+(`prompt_assembly_service.py:48`) and the reset reaches one instance.
 
-**Accepted windows (M5), each costing at most one self-corrected call:** between O4.6 and the new revision serving, a
+**Accepted windows (M5), each costing at most two self-corrected calls per drive turn (the cross-cut review):** between O4.6 and the new revision serving, a
 cold instance of the old revision builds Smart's prompt with the new protocol; in a rollback, between restoring the
-protocol and the revert going live, the new code runs with the old protocol (`use_skill drive-search` → unknown skill).
+protocol and the revert going live, the new code runs with the old protocol (`use_skill drive-search` → unknown skill,
+and `applies_to: search_files_in_drive` invites a removed intent: two calls).
 
 **O6 [OWNER] — after (only once B5's gate test is green on the integrated branch, I1).**
 ```bash
 NO_PROXY='*' venv/bin/python -m scripts.validation.drive_eval.smart_dry_run --repeats 3 --max-usd 3
 NO_PROXY='*' venv/bin/python -m scripts.validation.drive_eval.specialist_ab --smart-model gpt-6.1-sol --max-usd 3 \
   --compare <O1's stage-1 report> --compare-design today
-NO_PROXY='*' python scripts/validation/drive_routing_probe.py --runs 3
+NO_PROXY='*' python scripts/validation/drive_routing_probe.py --runs 3 --max-usd 3
 ```
+The probe's meter checks before each call, so its parallel specialists can overshoot the cap by about one call each
+(about $0.1–0.3).
 G3 is judged against O2's bars (hard checks include "no call to a removed drive intent"; p50 wall after ≤ before ×
-1.25); then a few days of the `[DriveAgent]` log line and the turn-limit 🚨 ops alert.
+1.25); then **one live smoke message** (for example "list my drive Inbox") and a check of the `[DriveAgent] status=
+model=` line (status `ok`, the Claude specialist model, not `gpt-6-luna`) and of BigQuery `prompt_content` for
+`agent_type=drive` (the model, `cache_read_tokens > 0` on the second turn); a missing `drive` profile shows here as
+"PromptBuilder failed" on every commission; then a few days of the `[DriveAgent]` log line and the turn-limit 🚨 ops
+alert.
 
 **Restoring `PROTOCOL_AGENT_SELECTION` (I8; also O5's failure path).** The mirror file of the commit before the merge
-is the restore text; the O4.1 backup JSON is the cross-check:
+is the restore text; the O4.1 backup JSON is the cross-check. The reset is **not** part of the restore:
 ```bash
+PY=venv/bin/python
 git show <merge>^1:prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy \
   > prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy
-python firestore_utils/snapshot_upload.py prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy          # dry run: the diff undoes the drive block and the exception
-python firestore_utils/snapshot_upload.py --apply prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy  # owner
+$PY firestore_utils/snapshot_upload.py prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy          # dry run: the diff undoes the drive block and the exception
+$PY firestore_utils/snapshot_upload.py --apply prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy  # owner
 ```
 
-**Rollback (RFC §13), in this order.** 1. [OWNER] restore `PROTOCOL_AGENT_SELECTION` (the command above). 2. Deploy the
-`git revert` of the merge commit. 3. `$admin_cache_reset`. 4. `snapshot_pull.py`, commit the mirror. 5. [OWNER]
-`drive_intent_text_scan --include-new`: texts written after the deploy that name `work_with_drive_files` (reminders,
-workspace, skills and drafts, directives); back up and rewrite each intent-free (residual: one self-corrected rejected
-call per stale text). The rewritten texts of O3 work with the reverted code; the new drive tokens can stay. If the notes
-change was built on top, revert it first.
+**Rollback (RFC §13), in the forward order (cross-cut R1).** The revert restores the mirror file itself, so it comes
+first; the protocol goes back right before the deploy of the revert, never earlier:
+1. On a branch, `git revert -m 1 <merge>` (a merge commit needs `-m 1`).
+2. [OWNER] from that working tree, the dry run and then `--apply` of `PROTOCOL_AGENT_SELECTION.groovy` (the two
+   `$PY firestore_utils/snapshot_upload.py` lines above, without the `git show`), **just before step 3**.
+3. [OWNER] `make deploy` from the revert tree (the deploy reads the working tree).
+4. [OWNER] `$admin_cache_reset`. Never before the revert is live: it would make the warm instance of the new revision
+   rebuild every user's prompt from the old protocol while it runs the new code, for every drive turn until the revert
+   ships.
+5. Open the PR of the revert branch (the ruleset refuses direct pushes), then `snapshot_pull.py` and commit the mirror
+   in a PR.
+6. [OWNER] `drive_intent_text_scan --include-new`: texts written after the deploy that name `work_with_drive_files`
+   (reminders, workspace, skills and drafts, directives); back up and rewrite each intent-free (residual: one
+   self-corrected rejected call per stale text). The rewritten texts of O3 work with the reverted code; the new drive
+   tokens can stay. If the notes change was built on top, revert it first.
 
 ---
 
@@ -8370,6 +8881,9 @@ Branch `plan/drive-specialist` (worktree `/Users/dmytrodeleur/Github/alekbot-cor
 | `9417d6ab` | — | tests: reviewer verdicts on part B's leftover red tests, and the re-review's new tests |
 | `89684c0d` | fix | fix: restore today's model-facing drive texts (F1-F6, F9) |
 | `880a9524` | fix | fix(eval): G3 cost meter counts both agents; case message extracted (F7, F8) |
+| `9500d677` | fix | fix: answer and tool fixes from the cross-cut review (X1-X7, X9, X11, X12) |
+| `e4882643` | fix | fix: drive specialist prompt caching and model in the log line (X8, X10) (+ the X2 prompt mirror) |
+| `c53b613b` | fix | docs+scripts: runbook and scan fixes (R1-R5) |
 
 New tests: 124 test functions in 19 new files (B1 2, B2 2, B3 1, B4 2, B5 1, B6 1, B7 3, B8 1, B9 2, B10 1, B11 2, the
 mutant check 1 new file + additions), all green.
@@ -8380,6 +8894,8 @@ be applied as written, part A's 2 FileManagement-surface tests (§4.2), the 2 en
 `RUN_SLOW_TESTS=1` the slow import guard (§4.2) is red too (25). Every new test is green; nothing else is red.
 
 **After the re-review fixes** (`PYTEST_WORKERS=4 make check` at `880a9524`): `ruff check src/` and `mypy --strict` clean; unit suite **18 044 passed, 2 failed**, 399 skipped, 5 xfailed (2 min 7 s). The 2 are the environmental `test_network_guard` tests. The slow import guard with `RUN_SLOW_TESTS=1`: green.
+
+**After the cross-cut review** (`PYTEST_WORKERS=4 make check` at `c53b613b`): `ruff check src/` and `mypy --strict` clean; unit suite **18 079 passed, 7 failed**, 399 skipped, 5 xfailed (1 min 54 s). The 7: the 2 environmental `test_network_guard` tests (red on `main` too) and the 5 of §4.4 (for the reviewer). Semantic mutants (`python -m tests.support.semantic_mutants`): `src.infrastructure.drive_tools` 11 killed, 0 survived (with the two red tests left out of the selection); `src.domain.drive_answer` has no mutable pattern (0 mutants).
 
 ---
 
@@ -8408,6 +8924,7 @@ be applied as written, part A's 2 FileManagement-surface tests (§4.2), the 2 en
 | M8 | §5 O1 (the build stops; the effort is the owner's call) |
 | M9 | B4 (`_build_drive` builds the specialist with conversion but no drive service; it answers "The drive is not configured."; A's text aligned in A §2.1) |
 | M10 | A-10 (A reworded the `search` docstring in A4) |
+| X1–X12, R1–R5 (`plan_arbiter_xcut.md`) | A2 (X4–X7, X11), A4 (X1–X3), A5 (X6, X8–X10, X12), A6 (X2), B6 (R2), B11 (R3), B13 (R1, R4, R5, X8), §4.4 (the reviewer's list), §5 (O0, O1, O3.4, O4, O5, O6, restore, rollback), §8 |
 | New from A | B4 (`alert_sink=self.alert_sink`), B4 test `test_a_turn_cap_exit_alerts_the_ops_sink_the_factory_holds` |
 
 **Edits to part A's files made by part B tasks** (each needed by the cut's guard or the verdicts; none changes A's
