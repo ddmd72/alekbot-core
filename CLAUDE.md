@@ -52,6 +52,8 @@ make typecheck         # mypy --strict on src/domain + src/ports only
 make check-types       # mypy (lenient) on src/adapters — informational, prints an error count, never fails
 make test              # All tests
 make test-unit         # Unit tests
+make test-affected     # Inner loop: testmon-selected tests + the always-run `datafile` set (seconds on a small diff)
+make ci                # PR job: lint + typecheck + the unit suite once with slow tests, data-file audit, coverage gate + offline G2
 make test-integration  # Integration tests
 make test-e2e-all      # E2E all agents
 make deploy            # Build + deploy to Cloud Run (single live environment)
@@ -75,7 +77,19 @@ carries `@pytest.mark.timing`; `tests/conftest.py` skips it unless `RUN_TIMING_T
 `make test-unit` and a plain `pytest` never run it. They failed on a loaded machine with no code change, and
 every full run then failed and was re-run. They run only via `make test-timing`: in CI as the separate `timing`
 job after a merge to `main` (never on a PR), or by hand. A new test with a time threshold gets the marker;
-never put timing tests back into `make check`, and never re-run a suite because a timing test failed. Lint scope is `src/` only (default high-signal ruleset: pyflakes + pycodestyle
+never put timing tests back into `make check`, and never re-run a suite because a timing test failed.
+**Slow tests, the data-file set and the per-test budget (P1, 2026-10-22).** `@pytest.mark.slow` mirrors `timing`: a
+test over the 1 s per-test budget (setup + call + teardown, measured with coverage on) is skipped unless `RUN_SLOW_TESTS=1`,
+which `make ci` sets; so `make check` stays fast and `make ci` runs everything once. The budget itself is enforced only
+on CI: the PR job sets `PYTEST_DURATION_BUDGET_S=1.0` and the run fails, listing the offenders slowest first, when an
+unmarked test exceeds it (a loaded laptop would give the false failures `timing` removed; locally `--durations=25` is an
+advisory report). `@pytest.mark.datafile` marks a test testmon cannot select (its input is a data file, a `.py` read as
+text, or code in a child process); `make test-affected` runs `--testmon -m "not datafile"` then `-m datafile` (the
+always-run set), seeds `.testmondata` from the main checkout in a new worktree, and never combines testmon with
+coverage. `make ci` runs with `PYTEST_DATAFILE_AUDIT=1`: an audit hook fails the run when an unmarked test reads a file
+under the repo or spawns a process, so the marker set cannot rot (`tests/CLAUDE.md`). **One full suite at a time on a
+machine:** a session with `-n` (or 2000+ tests) takes `fcntl.flock` on a file in the temp dir, prints the holder and
+waits up to `PYTEST_LOCK_TIMEOUT_S` (1800); `PYTEST_SUITE_LOCK=0` turns it off. Lint scope is `src/` only (default high-signal ruleset: pyflakes + pycodestyle
 errors). `ruff format` exists as a dev convenience but is not enforced in CI — the codebase is not
 mass-reformatted.
 

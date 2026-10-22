@@ -197,7 +197,7 @@ install: ## Install dependencies
 
 install-dev: install ## Install dependencies + test/lint tools
 	@echo "📦 Installing dev tools..."
-	$(PYTHON) -m pip install pytest pytest-asyncio pytest-mock pytest-xdist ruff
+	$(PYTHON) -m pip install pytest pytest-asyncio pytest-mock pytest-xdist pytest-testmon pytest-cov ruff
 
 clean: ## Clean up temporary files and caches
 	@echo "🧹 Cleaning up temporary files..."
@@ -221,12 +221,16 @@ auth: ## Authenticate with Google Cloud
 # The flag lives here, not in pytest.ini addopts, so a targeted `pytest path::test` stays a single
 # fast process. Integration/e2e stay serial — they touch live services.
 # Without xdist installed the suite falls back to a serial run, with a warning.
+# `slow` tests (over the 1 s per-test budget) are skipped the same way unless RUN_SLOW_TESTS=1; `make ci` sets it.
+# Only one full suite runs at a time on a machine (tests/plugins/suite_lock.py: flock on a file in the temp dir).
 # Tests marked `timing` assert on wall-clock/CPU time and fail on a loaded machine with no code change. By owner
 # decision (2026-10-20) they are off every everyday run (check, test-unit, plain pytest — tests/conftest.py skips
 # them) and run only via `make test-timing`: in CI after a merge to main (job `timing`), or by hand.
 PYTEST_WORKERS ?= auto
 PYTEST_XDIST = $(shell $(PYTHON) -c "import xdist" 2>/dev/null && echo yes)
-PYTEST_UNIT_FLAGS = $(if $(PYTEST_XDIST),-n $(PYTEST_WORKERS) -q,-v)
+# --durations=25 is an advisory report of the slowest tests; the 1 s per-test budget is enforced on CI only
+# (PYTEST_DURATION_BUDGET_S, set by the PR job for `make ci`; tests/plugins/duration_budget.py).
+PYTEST_UNIT_FLAGS = $(if $(PYTEST_XDIST),-n $(PYTEST_WORKERS) -q,-v) --durations=25
 XDIST_WARNING = $(if $(PYTEST_XDIST),,echo "⚠️  pytest-xdist not installed — running serially (pip install -r requirements.txt)")
 
 test: ## Run all tests
@@ -242,17 +246,29 @@ test-timing: ## Wall-clock/CPU-time tests only, serial (CI runs it after a merge
 	@echo "⏱  Running timing tests..."
 	RUN_TIMING_TESTS=1 DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/unit/ -q --asyncio-mode=auto -m timing
 
+# Coverage flags shared by test-coverage and ci (thresholds belong to the RFC §8.4 gate; P2 replaces it).
+COVERAGE_FLAGS = --cov=src --cov-report=term-missing:skip-covered --cov-report=json --cov-fail-under=70
+
 test-coverage: ## Unit tests + global + per-file coverage gate (RFC § 8.4)
 	@echo "🧪 Running unit tests with coverage..."
 	@$(XDIST_WARNING)
 	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/unit/ $(PYTEST_UNIT_FLAGS) \
-	    --asyncio-mode=auto -m "not timing" \
-	    --cov=src \
-	    --cov-report=term-missing:skip-covered \
-	    --cov-report=json \
-	    --cov-fail-under=70
+	    --asyncio-mode=auto -m "not timing" $(COVERAGE_FLAGS)
 	@echo "🚦 Enforcing per-file coverage thresholds..."
 	@$(PYTHON) scripts/check_coverage_thresholds.py
+
+# testmon never runs together with coverage. A fresh worktree gets the main checkout's .testmondata (the first
+# entry of `git worktree list`), so its first run is not a cold full suite. Run 1 selects by executed lines; run 2
+# is the fixed always-run set (tests whose input is a data file or a child process: the `datafile` marker).
+TESTMON_SEED = $(shell git worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p' | head -n 1)
+
+test-affected: ## Inner loop: only tests touched by your changes (testmon) + the always-run `datafile` set
+	@echo "🎯 Running affected tests..."
+	@$(XDIST_WARNING)
+	@if [ ! -f .testmondata ] && [ -n "$(TESTMON_SEED)" ] && [ "$(TESTMON_SEED)" != "$(CURDIR)" ] && [ -f "$(TESTMON_SEED)/.testmondata" ]; then \
+		echo "🌱 Seeding .testmondata from $(TESTMON_SEED)"; cp "$(TESTMON_SEED)/.testmondata" .testmondata; fi
+	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/unit/ -n $(PYTEST_WORKERS) -q --asyncio-mode=auto --testmon -m "not datafile and not timing"
+	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/unit/ -n $(PYTEST_WORKERS) -q --asyncio-mode=auto -m "datafile and not timing"
 
 test-integration: ## Run integration tests
 	@echo "🧪 Running integration tests..."
@@ -278,8 +294,19 @@ test-g2-offline: ## G2 end to end on the fixture folder (real parser, scripted m
 	@echo "🧪 Running the offline G2 end-to-end test..."
 	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/integration/test_drive_g2_end_to_end.py -q --asyncio-mode=auto
 
+test-ci: ## Unit suite once: slow tests, data-file audit and the coverage gate (part of `make ci`)
+	@echo "🧪 Running the full unit suite (slow tests, data-file audit, coverage)..."
+	@$(XDIST_WARNING)
+	RUN_SLOW_TESTS=1 PYTEST_DATAFILE_AUDIT=1 DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/unit/ $(PYTEST_UNIT_FLAGS) \
+	    --asyncio-mode=auto -m "not timing" $(COVERAGE_FLAGS)
+	@echo "🚦 Enforcing per-file coverage thresholds..."
+	@$(PYTHON) scripts/check_coverage_thresholds.py
+
 check: lint typecheck test-unit test-g2-offline ## CI gate: ruff lint + mypy (domain/ports) + unit/architecture tests + offline G2 end to end
 	@echo "✅ All checks passed"
+
+ci: lint typecheck test-ci test-g2-offline ## PR job: lint + mypy + the unit suite once (slow tests, data-file audit, coverage gate) + offline G2
+	@echo "✅ CI passed"
 
 # ============================================================================
 # BUILD & DEPLOY

@@ -1,6 +1,14 @@
 import os
 
 import pytest
+
+# Test-infrastructure plugins (tests/plugins/): per-test CI duration budget, data-file audit, one-suite-at-a-time lock.
+# Each is inert unless its env switch is set (see the module docstrings and tests/CLAUDE.md).
+pytest_plugins = [
+    "tests.plugins.duration_budget",
+    "tests.plugins.datafile_audit",
+    "tests.plugins.suite_lock",
+]
 from unittest.mock import AsyncMock, MagicMock
 from src.ports.llm_port import LLMPort
 from src.ports.repository import FactRepository
@@ -31,10 +39,20 @@ def mock_repository():
 def pytest_collection_modifyitems(config, items):
     """`timing` tests (wall-clock or CPU-time assertions) are off every everyday run by owner decision
     (2026-10-20): they fail on a loaded machine with no code change, so full runs failed and were re-run.
-    They run only via `make test-timing` (RUN_TIMING_TESTS=1) — in CI after a merge to main, or by hand."""
-    if os.getenv("RUN_TIMING_TESTS") == "1":
+    They run only via `make test-timing` (RUN_TIMING_TESTS=1) — in CI after a merge to main, or by hand.
+
+    `slow` tests (over the 1 s per-test CI budget) are off the everyday run the same way and run in `make ci`
+    (RUN_SLOW_TESTS=1), which sets the switch."""
+    skips = []
+    if os.getenv("RUN_TIMING_TESTS") != "1":
+        skips.append(
+            ("timing", pytest.mark.skip(reason="timing test: run with `make test-timing` (RUN_TIMING_TESTS=1)"))
+        )
+    if os.getenv("RUN_SLOW_TESTS") != "1":
+        skips.append(("slow", pytest.mark.skip(reason="slow test: run with `make ci` (RUN_SLOW_TESTS=1)")))
+    if not skips:
         return
-    skip = pytest.mark.skip(reason="timing test: run with `make test-timing` (RUN_TIMING_TESTS=1)")
     for item in items:
-        if "timing" in item.keywords:
-            item.add_marker(skip)
+        for name, skip in skips:
+            if name in item.keywords:
+                item.add_marker(skip)
