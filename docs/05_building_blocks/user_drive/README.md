@@ -84,7 +84,7 @@ The user's long-term file area: their OneDrive App Folder, behind the provider-n
   A user's audio and video are transcribed in the background by Gemini Flash on the Batch API, under a hard monthly dollar cap,
   and the transcript is indexed like any text file, so a recording is found by what was said and Smart opens its transcript.
   Two switches must both be on: the indexer's kill switch (`DRIVE_TRANSCRIBE_ENABLED`, off by default) and the user's own flag
-  (`drive_transcribe_enabled`, off by default, set by the owner's script). The T2 mirror folder (built, not deployed) writes the
+  (`drive_transcribe_enabled`, off by default, set by the owner's script). The T2 mirror folder (live since 2026-10-21, owner) writes the
   transcripts to `_Transcripts` on the drive (§4.23); there is no summary yet (T3).
 - **T2 read side (built on the T2 branch, not deployed; RFC §27.9.8, §27.9.11).** Chat drive writes are refused under, into
   or over the bot's `_Transcripts` folder (the Step 1 guard in `UserDriveService`; the agent answers one localized line).
@@ -1264,7 +1264,7 @@ ref. Coverage counts closed files only in scope, as their own sentence, never as
   fixtures: `fixture_texts_s26.py`, `fixture_images_s26.py`, `synthetic_s26.py` (an ID-card-like scan, a phone photo of a
   document, a screenshot, a landmark photo, a closed item in the fake drive).
 
-### 4.23 Transcripts of recordings (RFC §27, T1 live since 2026-10-21, owner only; T2 built, not deployed)
+### 4.23 Transcripts of recordings (RFC §27, T1 and T2 live since 2026-10-21, owner only)
 
 **In plain English.** The owner has voice memos, meetings and videos on the drive. Today the index knows only their name, date and
 length. With transcription on, the bot listens to them in the background and writes down what was said, with who said it and when
@@ -1957,7 +1957,7 @@ and index-time descriptions instead of query-time ranking. The full delta table 
   index still there and keep it.
 - **Smoke.** `scripts/infrastructure/drive_index_smoke.py <user_id>` runs every repository read once against live
   Firestore (record and chunk queries) and names any missing index; it writes nothing.
-- **Mirror operations (T2, built, not deployed).**
+- **Mirror operations (T2, live since 2026-10-21).**
   - *Logs.* The tick line carries `mirror={...}` (non-zero `mirror_created`, `_replaced`, `_moved`, `_archived`, `_restored`, `_detached`, `_pruned`, `_foreign`, `_failed`,
     `_errors`, `_quota_full`, `_no_drive_id`, `_ops`); the step logs its other counters on one `[DriveMirror]` line. No line carries a recording name, a path or a URL.
     `make fetch-logs-indexer K=300 && grep -E 'DriveMirror|mirror=' alek_debug_indexer.log`.
@@ -2065,7 +2065,7 @@ transcripts); the kill switch off and a redeploy (the stage is not even built; o
 switched on again or the user opts out of indexing); the previous image (every new field is plain, no enum value was added). No rebuild, no migration
 gate, no initial-build reset. The money: open reservations are released or booked at a purge, never lost (§4.23).
 
-**The T2 mirror (RFC §27.9; built, not deployed)** is an upgrade on top of T1 with no prompt upload, no rebuild and no migration gate: the mirror calls no model. Owner steps
+**The T2 mirror (RFC §27.9; live since 2026-10-21)** is an upgrade on top of T1 with no prompt upload, no rebuild and no migration gate: the mirror calls no model. Owner steps
 (RFC §27.15 step 8, plan S3–S6): the Δ217 composite indexes `READY` (a hard gate, Δ230: `docs/07_deployment/README.md` → "T2 mirror folder"); deploy main and the indexer together
 in the paused window; the live check on the phone (`_Transcripts` with the right tree and its read-me, a deleted test recording under `_Transcripts/Archive/<today>/`, "search in
 deleted files" finds it and a plain search does not, a restored recording's file moves back, a chat save into `_Transcripts` is refused); review the Cabinet texts in four languages.
