@@ -64,3 +64,17 @@ class TestExplicitLimits:
 
         assert mock_repo.get_active_facts_ordered.call_args_list[0] == call("acc-123", domain="biographical", limit=50)
         assert len(result["principles"]) == 1
+
+
+class TestAccountLoadFailure:
+    async def test_a_failed_account_load_falls_back_to_the_default_limits_and_still_refreshes(self):
+        repo = AsyncMock()
+        repo.get_active_facts_ordered.return_value = [make_fact("biog fact")]
+        account_repo = AsyncMock()
+        account_repo.get_account.side_effect = RuntimeError("account store down")
+        service = BiographicalContextService(repository=repo, config_service=None, account_repo=account_repo)
+
+        result = await service.refresh_context("acc-123")
+
+        assert [f["text"] for f in result["facts"]] == ["biog fact"]
+        assert repo.get_active_facts_ordered.call_args_list[0] == call("acc-123", domain="biographical", limit=65)
