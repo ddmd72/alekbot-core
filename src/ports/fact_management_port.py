@@ -114,11 +114,3 @@ class FactManagementPort(ABC):
         Errors: no eligible source is "failed" with nothing written.
         """
         pass
-
-    @abstractmethod
-    async def discard_candidate(self, reason: str) -> Dict[str, Any]:
-        """Write nothing; return {"status": "discarded", "reason": reason}.
-
-        Contract (observed; no caller in src/ besides the consolidator's pass-through wrapper).
-        """
-        pass

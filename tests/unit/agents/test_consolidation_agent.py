@@ -154,14 +154,6 @@ class TestTrackingFactManagement:
         await tracker.merge_facts(fact_ids=["a"], merged_content="m", metadata={})
         assert tracker.changed == []
 
-    async def test_discard_candidate_passthrough(self):
-        tracker, real = self._make_tracking()
-        real.discard_candidate = AsyncMock(return_value={"status": "discarded"})
-        result = await tracker.discard_candidate(reason="irrelevant")
-        assert result == {"status": "discarded"}
-        real.discard_candidate.assert_awaited_once_with(reason="irrelevant")
-        assert tracker.changed == []
-
 
 # ==============================================================================
 # TestCanHandle
@@ -331,23 +323,6 @@ class TestHandleConsolidate:
 
         assert response.status == AgentStatus.SUCCESS
         assert response.result["message"] == "No data"
-
-    async def test_v2_observations_deprecated_path(self):
-        agent, repo, fact_write, _ = _make_agent()
-        agent.prompt_version = "v2"
-        fact_write.add_facts_batch = AsyncMock(return_value=(0, 0, []))
-
-        msg = _make_message(
-            "consolidate",
-            payload_extra={"messages": [], "observations": [{"id": "obs1"}]}
-        )
-        with RequestContext(user_id=_USER_ID, account_id=_ACCOUNT_ID):
-            response = await agent.execute(msg)
-
-        # deprecated path sets results = {"new_facts": [], "new_anchors": []}
-        # → sanitized items are empty → observations branch logs error and returns FAILED
-        assert response.status == AgentStatus.FAILED
-        assert "invalid format" in response.error.lower()
 
     async def test_v2_with_messages_calls_synthesize(self):
         agent, repo, fact_write, _ = _make_agent()
@@ -813,41 +788,11 @@ class TestBuildClusterMessage:
 
 
 # ==============================================================================
-# TestHandleConsolidateZeroFacts  (lines 356, 378-379)
+# TestHandleConsolidateZeroFacts
 # ==============================================================================
 
 class TestHandleConsolidateZeroFacts:
-    """v2 path: messages + observations both provided, synthesize returns empty facts.
-    Covers line 356 (log zero facts) and lines 378-379 (archive observations)."""
-
-    async def test_zero_facts_with_messages_and_observations_archives_observations(self):
-        # v2 path requires prompt_version != "v3" OR no fact_management
-        agent, repo, fact_write, pb = _make_agent(fact_management=None)
-        # Force v2 path by ensuring prompt_version is not "v3"
-        agent.prompt_version = "v2"
-
-        # _synthesize_session_facts_v2 returns empty facts
-        empty_result = {"new_facts": [], "new_anchors": []}
-        agent._synthesize_session_facts_v2 = AsyncMock(return_value=empty_result)
-
-        messages = [{"role": "user", "text": "hello"}]
-        observations = [{"id": "obs-1", "text": "some observation"}]
-
-        msg = _make_message(
-            "consolidate",
-            payload_extra={"messages": messages, "observations": observations},
-        )
-
-        import time
-        with RequestContext(user_id=_USER_ID, account_id=_ACCOUNT_ID):
-            response = await agent._handle_consolidate(msg, _USER_ID, _ACCOUNT_ID, [], time.time())
-
-        # Should succeed (zero facts is valid for messages path)
-        assert response.status == AgentStatus.SUCCESS
-        # Observations should have been archived (lines 378-379)
-        repo.archive_observations.assert_called_once()
-        call_args = repo.archive_observations.call_args
-        assert call_args[0][0] == ["obs-1"]
+    """v2 path: messages provided, synthesize returns empty facts (log zero facts, success)."""
 
     async def test_zero_facts_with_messages_only_does_not_archive(self):
         agent, repo, fact_write, pb = _make_agent(fact_management=None)
@@ -1453,30 +1398,7 @@ class TestParseOperationsReportJsonDecodeError:
 # ==============================================================================
 
 class TestLegacyMethods:
-    """_format_existing_anchors, _get_existing_anchors_list, _synthesize_session_facts_v2."""
-
-    async def test_format_existing_anchors_returns_comma_joined(self):
-        agent, repo, fact_write, pb = _make_agent()
-
-        anchor1 = MagicMock()
-        anchor1.text = "I am a software engineer"
-        anchor2 = MagicMock()
-        anchor2.text = "I live in Springfield"
-        repo.get_active_facts = AsyncMock(return_value=[anchor1, anchor2])
-
-        result = await agent._format_existing_anchors(_USER_ID)
-
-        repo.get_active_facts.assert_called_once_with(_USER_ID, tags=["anchor"])
-        assert '"I am a software engineer"' in result
-        assert '"I live in Springfield"' in result
-        assert ",\n" in result
-
-    async def test_format_existing_anchors_empty_list(self):
-        agent, repo, fact_write, pb = _make_agent()
-        repo.get_active_facts = AsyncMock(return_value=[])
-
-        result = await agent._format_existing_anchors(_USER_ID)
-        assert result == ""
+    """_get_existing_anchors_list, _synthesize_session_facts_v2."""
 
     async def test_get_existing_anchors_list_filters_anchors(self):
         agent, repo, fact_write, pb = _make_agent()

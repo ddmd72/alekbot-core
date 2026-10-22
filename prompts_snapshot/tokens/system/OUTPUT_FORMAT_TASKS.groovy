@@ -14,11 +14,11 @@ uploaded_by: local_script
 
         tasks: """
             Return every non-empty field the tool provided. Mandatory fields in every entry:
-              task_id, list_id, title, status, importance.
+              ref, title, status, importance.
             Include when present:
               tags, due_datetime, reminder_datetime, body/notes,
               checklist_items (each with title and completion state),
-              linked_resources (display_name + url),
+              linked_resources (display_name + web_url),
               recurrence (type + interval),
               attachments (filename).
             Do not summarise or paraphrase task content — reproduce it exactly.
@@ -29,7 +29,7 @@ uploaded_by: local_script
         not_found: "State that no matching task was found. Do not invent alternatives."
 
         ambiguous: """
-            List all candidates. For each: title + task_id + list_id.
+            List all candidates. For each: title + ref.
             Ask which one to act on. Do not proceed with the mutation.
         """
 
