@@ -34,6 +34,8 @@ not built), decisions `docs/04_solution_strategy/decisions/{fact_s1_defects,stan
 | Which model consolidates; what a batch costs; where cost is recorded | §8 |
 | How to see what consolidation did in a given batch; which log lines, BigQuery, Logfire | §9.1, §9.4 |
 | Why the bot did not remember X | §9.2 |
+| Why a reminder's or a system note's text became a fact | §9.3 |
+| Which batch wrote a given fact | §9.4 (step 0) |
 | Owner scripts, dry-run benches, the data audit, the prompt snapshot and its vocabulary tests | §9.5–§9.7 |
 | Expiry, janitor, review pass, owner questions, real versions | §10 (not built) |
 | Where a piece of code lives | §11 |
@@ -194,8 +196,8 @@ until it is back under the threshold (`firestore_session_store.py:223-231`):
 
 - **Threshold 70, batch 50** in the live environment (`src/domain/settings.py:18-24`; the `is_production` branch sets
   50/30 and is not live, `src/config/settings.py:160-170`). Wired at `src/composition/service_container.py:329-337`.
-  The values are global: `UserBotConfig.consolidation_threshold` / `consolidation_batch_size` are read only by
-  `$consolidate` (§5.4).
+  The values are global: `UserBotConfig.consolidation_threshold` has no effect anywhere, and
+  `consolidation_batch_size` only sizes the `$consolidate` cut (§5.4).
 - A channel bound to a companion uses that binding's own window and routes elsewhere (§1.4).
 - **No time trigger.** A channel that never passes 70 messages is never consolidated on its own. A session idle for
   90 days is deleted on its next load, unconsolidated messages included (`firestore_session_store.py:58,93-98`).
@@ -227,6 +229,11 @@ The cut batch goes to `OverflowRoutingService.route_overflow` as a background ta
 
 An hourly sweep (`sweep_consolidation`, Cloud Scheduler at minute 17, `docs/07_deployment/SCHEDULERS.md`) enqueues a
 task for every user with any batch left in the queue (`worker_handler.py:462-482`).
+
+**Runs of one user are not serialised.** Consolidation tasks go to the shared tasks queue (`gcp_task_queue.py:434-436`)
+with no per-user lock: an overflow during a live run enqueues another task, which takes the next pending batch (the
+live one is `processing`) and runs beside it. How many tasks the queue dispatches at once is set on the queue itself,
+not in the repo; it is not verified here.
 
 ### Step 4 — the consolidation run
 
@@ -288,7 +295,9 @@ The tracker `_TrackingFactManagement` records every fact Stage 1 created, update
 
 ### Step 6 — Stage 2a: cluster review (only if Stage 1 wrote)
 
-Skipped when Stage 1 wrote nothing (`consolidation_agent.py:766-768`). For each written fact it searches the store (words longer than 3
+Skipped when Stage 1 wrote nothing (`consolidation_agent.py:766-768`). "Wrote" means created, merged, or updated with
+new `content`: the tracker ignores an update without `content` (`consolidation_agent.py:78-86`), so a Stage 1 that only
+archives or invalidates facts skips Stage 2a. For each written fact it searches the store (words longer than 3
 characters among the first 10 as keywords, the text as phrase, limit 20), unions the hits by id, sorts by length and keeps 30
 (`_build_review_cluster`, `:972-1018`). A fresh loop gets the "FACT CLUSTER REVIEW" message: merge repeats, decompose
 compounds, fix inconsistencies, no fact over 40 words, keep numbers and dates (`:1111-1138`). It sees no conversation.
@@ -342,7 +351,9 @@ Why: `decisions/sonnet55_adaptive_thinking_stall.md`.
 
 **Who gets it.** Every agent whose prompt is built with the biographical cache: Smart and Quick (merged with the
 Router's prefetch), Notes, Tasks, EmailSearch, PdfGenerator, the consolidator. Lelik gets a filtered copy (§4.6). The
-Router, MemorySearch, web, compute, document and drive agents build without it (`include_biographical=False`).
+Router, MemorySearch, web, compute, DocPlanner/DocGenerator, HtmlPageGenerator and the drive agents build without it
+(`include_biographical=False`); DeepResearch builds with no account id, so it gets none either
+(`deep_research_agent.py:91-93`).
 
 **How it is chosen** (`BiographicalContextService.refresh_context`, `biographical_context_service.py:72-208`):
 1. Limits: `biographical_cache_limit` (default **65**) and `principles_cache_limit` (default **20**)
@@ -353,9 +364,13 @@ Router, MemorySearch, web, compute, document and drive agents build without it (
 3. If fewer than 65, fill from the 65 top facts of all domains in the same order, minus those already taken and minus
    directives (`biographical_context_service.py:150-159`). So other domains enter only when biographical facts leave room.
 4. Facts tagged `mindset` become **principles** (up to 20; extras are dropped, not moved to facts); the rest are facts
-   (`biographical_context_service.py:188-194`).
+   (`biographical_context_service.py:188-194`). Principles are carved out of the 65, not added to them
+   (`biographical_context_service.py:150-194`).
 5. Directives are fetched separately: up to 15 current non-archival `agent_directive` facts (`biographical_context_service.py:144-148`).
 6. Each cached item carries only id, text, domain, tags, priority, created_at (`biographical_context_service.py:178-186`).
+
+**At most**, an orchestrator prompt carries 65 facts and principles (of which ≤ 20 principles) + ≤ 15 directives + the
+Router's prefetch of ≤ 30 facts minus those already in the baseline.
 
 **How it is rendered.** `PromptBuilder.build_for_agent` splits the list (`src/services/prompt_builder.py:183-202`):
 directives → `standing_directives {}` (§4.2); items tagged `semantic_lens` (the Router's prefetch) → `query_specific_context`
@@ -378,8 +393,12 @@ by Stage 2b and its backstop; the cache holds at most 15 (`DEFAULT_DIRECTIVES_CA
 **Why a directive disappeared**, in order of likelihood: Stage 2b demoted it to `preference` (a new fact exists, the
 directive is `invalidated`); Stage 2b invalidated it (reminder duplicate, unusable, superseded); Stage 2b merged it (a
 new fact with a new id; the sources are `superseded`); the backstop cut it (over 15, lowest priority, then oldest);
-its priority is `archival`; the owner invalidated it in the Cabinet. The 📊 `stage2b` line of that run shows the
-writes; BigQuery shows the checklist (§9.4).
+its priority is `archival`; Stage 1 archived or invalidated it after the owner said to stop (a negation, §3 step 5);
+the owner invalidated it in the Cabinet. The 📊 `stage2b` line of that run shows the writes; BigQuery shows the
+checklist (§9.4).
+
+A directive invalidated in the Cabinet stays in `standing_directives` until the next consolidation run rebuilds the
+cache (§5.2).
 
 ### 4.3 The search engine: `enrich_context`
 
@@ -495,7 +514,8 @@ uses its own copy of the serializer (same rules as §3 step 3).
 | Where | What happens | Facts | Batch | Retried? |
 |---|---|---|---|---|
 | tool call ok | result JSON back to the model | written at once | — | — |
-| tool raises (Firestore, embedding) | `{"error": …}` returned to the model (`consolidation_agent.py:1244-1249`) | nothing of that call | — | the model may retry in a later turn |
+| `search_existing_facts` fails (embedding, Firestore) | the adapter catches everything and returns `[]` (`fact_management_adapter.py:138-142`), which the model reads as "no match" | a duplicate of an existing fact may be created | — | no |
+| a tool raises past the adapter | `{"error": …}` returned to the model (`consolidation_agent.py:1244-1249`); rarely reached, since create, update and merge catch their own errors and return `status: failed` | nothing of that call | — | the model may retry in a later turn |
 | `create_fact` missing a required attribute | `status: failed`, message names the fields (`fact_management_adapter.py:165-173`) | none | — | the model may retry |
 | bad enum (`domain`, `state`, `temporal_class`, `context_priority`, e.g. `HISTORICAL`) | `ValueError` caught → `status: failed` with the message (`fact_management_adapter.py:210-216,250-256`; `fact_write_service.py:156-163`) | none for that call | — | the model may retry |
 | `update_fact` on an unknown or foreign id | `status: not_found` (`fact_management_adapter.py:263-281`) | none | — | — |
@@ -505,11 +525,12 @@ uses its own copy of the serializer (same rules as §3 step 3).
 | a pass hits 15 turns | 🚨, pass returns `[]` (`consolidation_agent.py:958-961`) | writes so far stand; candidates not yet written are lost | **succeeds and is deleted** | no |
 | Stage 1/2a/2b raises (provider down after retries, prompt build fails, timeout of 15 min) | `AgentResponse.failure` | writes so far stand | attempts +1 → `retry_pending`; the worker re-enqueues at once; at 3 → `failed` + `CONSOLIDATION_FAILED` log (`consolidation_service.py:129-153`) | yes, the whole batch; Stage 1 runs again over facts it already wrote (the model should find and discard them) |
 | Stage 3 raises | not caught inside the email stage, so the run fails (`consolidation_agent.py:524-632`) | Stage 1–2b writes stand | as above | yes, Stage 1 again |
-| batch `failed` | revived by the next task for the user or the hourly sweep: attempts back to 0 (`firestore_consolidation_queue.py:100-162`) | — | 3 more attempts each hour, without end | yes |
+| batch `failed` (3 attempts) | if a newer batch of the user is pending, `has_more` is true and the worker enqueues the next task at once (`worker_handler.py:457-459`); that task's `reset_recoverable_batches` turns `failed` back to `retry_pending` with attempts 0 (`firestore_consolidation_queue.py:100-162`), and oldest-first picks the same batch again. Only when nothing else is pending does it wait for the hourly sweep | each attempt pays for the stages that ran before the failure | retried back to back without end; newer batches starve behind it | yes |
 | worker crashes mid-batch | batch stays `processing`; after 1800 s it is a zombie and is reset | partial writes stand | retried | yes |
 | baseline refresh fails | logged, swallowed (`firestore_repo.py:838-842`) | stored | succeeds | old baseline until the next run |
 | enqueue of the batch fails at overflow | logged `Error in overflow routing` (`overflow_routing_service.py:64-69`) | — | **lost**: the messages were already cut from the session | no |
 | batch stored but the Cloud Task enqueue fails | logged | — | waits in the queue | the hourly sweep |
+| two runs of one user at once | not prevented (§3 step 3): both may search before either writes | duplicates or conflicting updates possible | each batch runs once | — |
 | provider failover | `_call_llm` fails over to Gemini only before the first tool call; after it the transcript is locked to one provider (`src/agents/CLAUDE.md` → Transcript integrity) | — | — | same-provider retries |
 
 ---
@@ -517,9 +538,12 @@ uses its own copy of the serializer (same rules as §3 step 3).
 ## 7. Timelines
 
 **A fact told today.**
-1. *Seconds:* it is in the session. Smart sees it while it is among the channel's **last 30 messages**
-   (`agent_config.py:104`), and Lelik if it is the primary channel.
-2. *Gap:* once 30 newer messages exist it is out of Smart's history but not yet in memory; nothing finds it.
+1. *Seconds:* it is in the session. Smart sees it while it is among the last 30 messages **the session still holds**
+   (`agent_config.py:104`), and Lelik if it is the primary channel. The session holds 21–70 messages: an overflow cuts
+   the oldest 50 of 71 (`firestore_session_store.py:223-231`), so a recent message can leave Smart's history minutes
+   before its batch is consolidated.
+2. *Gap:* once it is out of Smart's history (30 newer messages, or cut by an overflow) and not yet in memory, nothing
+   finds it.
 3. *Consolidated:* at the channel's next overflow after which it is among the oldest 50 messages. With threshold 70 /
    batch 50, a message waits for roughly 20–70 more messages in the same channel (10–35 exchanges; notifications
    count). A quiet channel may wait days; one that stays under 70 never consolidates on its own (`$consolidate`).
@@ -552,8 +576,11 @@ consolidation run of the account rebuilds the cache.
 
 **Which model.** Claude PERFORMANCE: `claude-opus-5-5` by code default, or the model pinned by the live
 `CLAUDE_PERFORMANCE_MODEL` (`make claude-model`; `make claude-forward` pins `claude-sonnet-5-5`, `make claude-rollback`
-`claude-sonnet-5`). The decision of 2026-10-20 records consolidation on Sonnet 5.5
-(`decisions/sonnet55_adaptive_thinking_stall.md`); whether that pin is live is not in the repo.
+`claude-sonnet-5`). The records conflict: `src/adapters/CLAUDE.md` says `cloudbuild-dev.yaml` carries no pin since
+2026-10-15, so a new revision returns to Opus 5.5; `decisions/sonnet55_adaptive_thinking_stall.md` (2026-10-20) says
+consolidation stays on Sonnet 5.5. Live `prompt_content`, read 2026-10-22 for the last 7 days: consolidation ran on
+Opus 5.5 (71 calls, 2026-10-15 to 10-21) and on Sonnet 5.5 (22 calls, 2026-10-20 to 10-22). Check `make claude-model`
+before reasoning about cost or behaviour.
 
 **What one batch costs.** Measured only on the A/B harness (`scripts/consolidation/ab_cross_provider.py`, one real
 window, 2 runs each): Sonnet 5.5 $0.17–0.26, Sonnet 5 $0.27–0.39 (`decisions/model_refresh_2026_10.md`). An earlier
@@ -623,10 +650,19 @@ Log lines, in pipeline order:
 - A stale value: no expiry exists (§10); `temporal_class` TTLs are not enforced. An update overwrote the text in place
   and the earlier wording is gone (§2.4).
 - From an email: Stage 3 writes facts from indexed emails (§3 step 8).
+- From a system note (a known gap, current behaviour): notes the system writes into history are stored as
+  `role="user"` messages — every `notify()` alert with the default `save_history=True`
+  (`user_notification_service.py:287`, stored as user at `:448`), the call-event line (`:240`),
+  `[System: async document ready …]` (`:547`) and the `$memory save` note. The consolidator reads them as
+  `User (…): …` (`context_formatter.py:52-63`), and `Domain_Scope` bars only ASSISTANT statements, so a reminder's
+  alert text sits in the owner's slot.
 - Fix: invalidate it in the Cabinet (then the baseline catches up at the next run), or tell the bot the correction.
 
 ### 9.4 What did consolidation do in a given batch?
 
+0. Starting from a fact: a fact carries no batch id. Take its `created_at` (`last_updated` for an update), find the
+   nearest earlier `📦 [Librarian] Processing batch` line, then search that run's `tool_calls` in `prompt_content` for
+   the fact text. Logs and `prompt_content` (30-day TTL) are the only trail.
 1. Find the run: the `📦 [Librarian] Processing batch <batch_id>` line and its time.
 2. BigQuery, one row per model turn, in order:
    `SELECT turn, request_text, response_text, tool_calls FROM … prompt_content WHERE agent_type = "consolidation" AND
@@ -729,3 +765,8 @@ Until then: nothing expires, `stale` is never set, updates overwrite in place.
 | `src/web/user_cabinet_app.py` | Cabinet fact routes |
 | `prompts_snapshot/{profiles/consolidation.yaml,blueprints/consolidation_agent_v1.yaml,tokens/system/CONSOLIDATION_*.groovy}` | the consolidation prompt (mirror) |
 | `scripts/consolidation/`, `scripts/data_audit/` (PR) | benches, audit |
+
+Stale code comments, out of scope for this document (`src/`): `ConsolidationAgent._review_directives` says "hard cap of
+10" and `biographical_context_service.py:143` says "soft cap ~12" (the code uses 15); the `BiographicalContextService`
+docstring says CRITICAL facts are always included (the code does not); `refresh_biographical_context_cache` ignores its
+`facts_limit` / `principles_limit` arguments.
