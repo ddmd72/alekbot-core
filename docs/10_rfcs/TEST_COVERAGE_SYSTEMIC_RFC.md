@@ -610,7 +610,8 @@ status values equal the `update_task` enum. Both files check that every profile 
 Two drifts were live and are fixed **in the snapshot only**: the `context_priority` value `HISTORICAL` (the enum's is `ARCHIVAL`) in `CONSOLIDATION_TAXONOMY`/`_POLICIES`/`_TOOLS`,
 and `task_id`/`list_id` where the Tasks tools take `task_ref` and return `ref` (`COGNITIVE_PROCESS_TASKS`, `OUTPUT_FORMAT_TASKS`), plus `url` -> `web_url` for linked resources and `attachments (filenames)` -> `(filename)`. **The Firestore upload is the owner's step**
 (`snapshot_upload.py --apply`); until then production still renders the old text. Not covered: `COGNITIVE_PROCESS_CONSOLIDATION` and the universal profile (production renders
-neither; they still say `HISTORICAL`), prose that names a value outside a line naming its field, the `TAXONOMY` keys outside the four definition blocks (e.g. `decision_logic`), USER/ACCOUNT overrides.
+neither; they still say `HISTORICAL`), prose that names a value outside a line naming its field, the `TAXONOMY` keys outside the four definition blocks (e.g. `decision_logic`) and its singular `domain:` lines (`Directive_Maintenance`),
+the `returns:` lines of the Consolidation tools other than `search_existing_facts`, a field added to the Tasks output list that the result does not carry, USER/ACCOUNT overrides.
 
 **Totals.** Tranche 1 (P1–P9) ≈ 12–16 days; tranche 2 (P10–P17) ≈ 24–33; tranche 3 (P18–P24) ≈ 9–11. **Whole plan
 ≈ 45–59 days.**
