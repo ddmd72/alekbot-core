@@ -4868,7 +4868,7 @@ already covers one, the reviewer may retire the duplicate.
 | File | Test | Verdict |
 |---|---|---|
 | `tests/unit/infrastructure/test_agent_manifest_drive.py` | `test_only_file_management_opts_out_of_prefetch` | **edit** to `{FILE_MANAGEMENT.agent_id, DRIVE_SPECIALIST.agent_id}` (§5.1: the specialist reads `file_ref` itself) — the file is retired/retargeted in B7, so this pin moves with it |
-| `tests/unit/services/test_drive_model_fallback_strategy.py` | `test_only_the_drive_agents_name_a_fallback_tier` | **edit** to `set(AGENTS) | {"drive"}` (§5.1: the OpenAI fallback at PERFORMANCE) |
+| `tests/unit/services/test_drive_model_fallback_strategy.py` | `test_only_the_drive_agents_name_a_fallback_tier` | **edit** to `set(AGENTS).union({"drive"})` (§5.1: the OpenAI fallback at PERFORMANCE) |
 | `tests/unit/services/test_agent_context_builder_per_agent_provider.py` | `test_strategies_has_no_orphans` | **edit**: add `"drive"` to `_FACTORY_AGENT_TYPES` (the factory builds it through `build_drive_specialist`) |
 
 ---
@@ -4959,6 +4959,7 @@ reverted code; the new drive tokens can stay. If the notes change was built on t
 - Default: the eval gold keeps its case ids, so `--compare` matches the spike's stage-1 rows.
 - Default: the owner-text scan lives under `scripts/validation/` (tracked, tested; precedent `workspace_review.py`);
   everything it writes is under `scripts/memory/`.
+- Default: `ServiceContainer` is unchanged: `agent_services()` already hands the factory every service `_drive_operations` and `build_drive_specialist` read (file conversion, file storage, drive service, drive search, notification, localization, language service); verified by B3's and B4's tests.
 - Default: `capabilities.py` is unchanged (user-visible capability does not change; it names no intent; the guard
   test reads it as part of `src/`).
 - Default: `test_manifest_prose_matches_tool_schema.py` needs no edit: it is parametrised over `ALL_DESCRIPTORS`
