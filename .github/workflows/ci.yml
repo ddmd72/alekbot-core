@@ -24,9 +24,26 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Cache ffmpeg
+        # The media extractor tests run the real ffmpeg/ffprobe (they skip without them). A pinned static
+        # build from the Actions cache, not apt: `apt-get update` took 31-39 min on 2026-10-22 (normally 16 s).
+        id: ffmpeg-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ffmpeg
+          key: ffmpeg-autobuild-2026-10-22-13-06-n8.1.3-gpl
+
       - name: Install ffmpeg
-        # The media extractor tests run the real ffmpeg/ffprobe (they skip without them).
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        timeout-minutes: 5
+        run: |
+          T=autobuild-2026-10-22-13-06; A=ffmpeg-n8.1.3-23-g5c4f5744cd-linux64-gpl-8.1.tar.xz
+          curl -fsSL --retry 5 --retry-all-errors -o "$RUNNER_TEMP/$A" "https://github.com/BtbN/FFmpeg-Builds/releases/download/$T/$A"
+          echo "1aa0c5526768bf4db3e62cba954169e3e0be38327c9cbbb6c5675794df6c03df  $RUNNER_TEMP/$A" | sha256sum -c -
+          mkdir -p ~/.cache/ffmpeg && tar -xJf "$RUNNER_TEMP/$A" -C ~/.cache/ffmpeg --strip-components=1
+
+      - name: Put ffmpeg on PATH
+        run: echo "$HOME/.cache/ffmpeg/bin" >> "$GITHUB_PATH"
 
       - name: make ci
         # make ci = ruff check src/ + mypy (domain/ports) + the unit suite once (slow tests, coverage gate)
