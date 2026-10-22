@@ -12,7 +12,11 @@ class FactRepository(ABC):
       `account_id`.
     - Current: a read of "current" facts filters on `state == "current"`, never on `is_current`
       (`is_current` means latest document of its lineage).
-    - Identity: a returned fact's `id` is its document id.
+    - Identity: `id` is the document id. get_fact_by_id, get_facts_by_ids, get_paginated_facts,
+      search_facts_by_domain, get_lineage, get_latest_fact_by_lineage and get_legacy_facts read it
+      from the stored `id` field, which every writer sets equal to the document id; a document
+      written outside this port with a different or missing `id` reads back with that value (or a
+      fresh uuid).
     - Legacy documents: a document with `owner_id` and no `account_id` is absent from every
       account-scoped read (they filter the stored `account_id`). Where one is returned (by-id reads,
       the legacy fallback in get_latest_fact_by_lineage), `owner_id` reads as `account_id` and
@@ -275,6 +279,8 @@ class FactRepository(ABC):
             principles (they count toward facts_limit; those beyond principles_limit are dropped);
             agent_directive facts separately, up to 15 (DEFAULT_DIRECTIVES_CACHE_LIMIT).
         Limit: facts_limit and principles_limit are what the cache holds (None = system default).
+            Known defect: the implementation ignores both and uses the service's own limits
+            (firestore_repo.py:817-818).
         Idempotency: refreshing an unchanged account writes the same content.
         Errors: never raises; on a failure the previous cache stays (observed). Without a context
             service it does nothing (observed).

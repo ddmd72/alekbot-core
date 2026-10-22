@@ -107,7 +107,8 @@ class FactManagementPort(ABC):
             "status": "merged" | "failed", "message"}.
         Lifecycle: each superseded source gets lifecycle_fields(SUPERSEDED).
         Atomicity: sources are superseded only when the merged fact is created; a failed merge leaves
-            every source unchanged.
+            every source unchanged. Known defect: the implementation supersedes the sources before the
+            merged fact exists (fact_management_adapter.py:376-430).
         Idempotency: none; an already superseded source is superseded again and another merged fact
             is created (observed).
         Errors: no eligible source is "failed" with nothing written.
