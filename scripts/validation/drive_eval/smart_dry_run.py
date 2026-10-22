@@ -49,6 +49,7 @@ import math
 import os
 import re
 import sys
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -385,6 +386,16 @@ def _searches_after_d29(calls: Sequence[Mapping[str, Any]]) -> int:
     return 0 if first is None else len(ran) - first - 1
 
 
+def wall_p50(rows: Sequence[Mapping[str, Any]]) -> float:
+    """The median drive-turn wall time over the rows that recorded one (DRIVE_SPECIALIST_RFC §12: p50 after ≤ p50
+    before + 25 %); 0.0 with none."""
+    walls = sorted(float(r["wall_s"]) for r in rows if "wall_s" in r)
+    if not walls:
+        return 0.0
+    mid = len(walls) // 2
+    return walls[mid] if len(walls) % 2 else round((walls[mid - 1] + walls[mid]) / 2, 2)
+
+
 def turn_cap_runs(rows: Sequence[Mapping[str, Any]]) -> List[str]:
     """The runs that ended at the turn cap, as `id (run n)`: their own category, not a search-behaviour regression."""
     return [f"{r.get('id')} (run {r.get('repeat', 0)})" for r in rows if r.get("turn_cap")]
@@ -647,11 +658,13 @@ async def _run(args: argparse.Namespace) -> int:
                          "current_message_parts": [MessagePart(text=case["text"])],
                          "interactive_delivery": True})   # Smart declares propose_memory_facts, so the bar covers it
             clock_token = CURRENT_TURN_CLOCK.set(interactive_turn_clock())   # Smart as an interactive turn runs it
+            started = time.monotonic()
             try:
                 async with RequestContext(user_id=user_id, account_id=account_id):
                     response = await smart.execute(msg)
             finally:
                 CURRENT_TURN_CLOCK.reset(clock_token)
+            wall_s = round(time.monotonic() - started, 2)
             answer = None if response.result is None else str(response.result)[:4000]
             row = {"id": case["id"], "set": case["set"], "category": case["category"], "repeat": repeat,
                    "searched": searched(dispatcher.calls), "expect": case["expect"],
@@ -659,7 +672,7 @@ async def _run(args: argparse.Namespace) -> int:
                    "drive_off": eval_user.off, "injected": bool(case.get("injected")),
                    "calls": list(dispatcher.calls), "answer": str(answer),
                    "turn_cap": turn_capped(answer), "isolated": dispatcher.isolate,
-                   "counts": drive_counts(dispatcher.calls)}
+                   "counts": drive_counts(dispatcher.calls), "wall_s": wall_s}
             for flag in ("incident", "time_span", "d29", "must_open", "must_not_open"):
                 row[flag] = bool(case.get(flag))
             if case.get("answer_must_include"):
@@ -667,7 +680,7 @@ async def _run(args: argparse.Namespace) -> int:
                 row["answer_hit"] = answer_ok(row["answer"], case["answer_must_include"])
             rows.append(row)
             print(f"{'S' if row['searched'] else '-'}{'+' if row['expect_hit'] else '!'} [{case['set'][:3]}] "
-                  f"{case['id']} ({case['expect']}): {[c['intent'] for c in row['calls']]}")
+                  f"{case['id']} ({case['expect']}) {wall_s}s: {[c['intent'] for c in row['calls']]}")
     model = ",".join(sorted(models))
     table = score(rows)
     for scope, line in table.items():
@@ -679,7 +692,9 @@ async def _run(args: argparse.Namespace) -> int:
         print(f"hard failure: {failure}")
     _OUT.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    (_OUT / f"g3_{stamp}.json").write_text(json.dumps({"model": model, "scores": table, "turn_cap_runs": capped, "rows": rows},
+    print(f"drive-turn wall time p50: {wall_p50(rows)}s over {len(rows)} runs")
+    (_OUT / f"g3_{stamp}.json").write_text(json.dumps({"model": model, "wall_p50_s": wall_p50(rows), "scores": table,
+                                                       "turn_cap_runs": capped, "rows": rows},
                                                       ensure_ascii=False, indent=1), encoding="utf-8")
     if failures:
         print("verdict: regression (hard checks; nothing recorded)")
