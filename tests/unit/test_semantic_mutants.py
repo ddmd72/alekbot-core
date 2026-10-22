@@ -98,6 +98,15 @@ class TestOperators:
         assert "except-success" not in operators_in("def f() -> bool:\n    try:\n        pass\n    except Exception:\n        return True\n")
         assert "except-success" not in operators_in("try:\n    import x\nexcept ImportError:\n    x = None\n")
 
+    def test_a_handler_that_only_logs_and_returns_success_is_equivalent_but_any_other_effect_keeps_the_mutant(self):
+        logs = "def f(x) -> bool:\n    try:\n        return x.go()\n    except Exception as e:\n        logger.warning('x %s', e)\n        log.error('y')\n        return True\n"
+        assert "except-success" not in operators_in(logs)
+        for effect in ("x.cleanup()", "counter += 1", "self.logger_state = 1", "print('x')"):
+            source = f"def f(x) -> bool:\n    try:\n        return x.go()\n    except Exception:\n        {effect}\n        return True\n"
+            assert operators_in(source).count("except-success") == 1, effect
+        other_value = "def f(x) -> bool:\n    try:\n        return x.go()\n    except Exception:\n        logger.warning('x')\n        return False\n"
+        assert "except-success" in operators_in(other_value)
+
     def test_except_in_an_async_generator_is_not_mutated(self):
         assert "except-success" not in operators_in("async def g():\n    try:\n        yield 1\n    except Exception:\n        raise\n")
 

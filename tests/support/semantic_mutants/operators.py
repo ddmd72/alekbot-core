@@ -12,7 +12,8 @@ Operators (one mutant per site, or per element where a site has several):
   doc-drop        one key removed from a dict literal passed to a write call (`.set/.update/.create/.add`), or assigned
                   to a name that is passed to one in the same function
   except-success  an `except` body replaced by `return <success value>` (rule below); handlers outside a function and
-                  handlers that already only return that value are not mutated
+                  handlers whose last statement already returns that value after nothing but logger calls (an equivalent
+                  mutant) are not mutated; any other side effect in the handler keeps the mutant
   write-skip      one statement-level `.set/.update/.create/.delete(...)` call (awaited or not) replaced by `pass`
   kwarg-drop      one keyword removed from a call when its value is a bare name equal to a parameter of the enclosing
                   function (a forwarded argument)
@@ -236,12 +237,35 @@ def _assign_variants(node: ast.AST, fn: Optional[ast.AST], written: Callable[[],
     return out
 
 
+_LOG_METHODS = {"debug", "info", "warning", "warn", "error", "exception", "critical", "log"}
+
+
+def _is_log_call(stmt: ast.stmt) -> bool:
+    """`logger.warning(...)` as a statement: the receiver is a name containing "log"."""
+    if not (isinstance(stmt, ast.Expr) and _attr_call(stmt.value, _LOG_METHODS)):
+        return False
+    root = stmt.value.func.value  # type: ignore[attr-defined]
+    while isinstance(root, ast.Attribute):
+        root = root.value
+    return isinstance(root, ast.Name) and "log" in root.id.lower()
+
+
+def _already_returns(body: List[ast.stmt], success: ast.expr) -> bool:
+    """The handler's last statement returns the success value and every other statement is a logger call."""
+    last = body[-1]
+    return (
+        isinstance(last, ast.Return)
+        and ast.dump(last.value or ast.Constant(None)) == ast.dump(success)
+        and all(_is_log_call(stmt) for stmt in body[:-1])
+    )
+
+
 def _except_variants(node: ast.ExceptHandler, fn: Optional[ast.AST]) -> List[_Variant]:
     if fn is None or _is_async_generator(fn):
         return []  # an async generator cannot `return value`
     success = _annotation_success(getattr(fn, "returns", None))
-    if len(node.body) == 1 and isinstance(node.body[0], ast.Return) and ast.dump(node.body[0].value or ast.Constant(None)) == ast.dump(success):
-        return []  # already "return success"
+    if _already_returns(node.body, success):
+        return []  # equivalent: the handler already returns the success value and does nothing else observable
 
     def replace(node=node, success=success):
         clone = copy.deepcopy(node)

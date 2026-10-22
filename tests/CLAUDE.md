@@ -31,7 +31,8 @@ tests/
   internal service without a spec.
 - **An adapter needs a behind-port test at its boundary** (SDK, HTTP or database), per
   `docs/how_to/ADAPTER_WIRE_TESTING.md`: mock the SDK object, not the port, and pin the wire format. Line coverage
-  produced by a `MagicMock` SDK does not count toward the adapter floor; the floor is a number about behaviour.
+  produced by a `MagicMock` SDK is not evidence of behaviour: a reviewer does not accept it as the adapter's test, although the
+  floor still counts it.
 - **No test calls a real LLM**, and no unit test touches the network (below). A test that needs the real service is an
   integration test and lives in `tests/integration/`.
 - One test class per service or agent. `@pytest.mark.requirement("REQ-XXX")` for business requirements.
@@ -60,15 +61,15 @@ children (drive parser, sandbox engine, ffmpeg).
 
 - `.coveragerc` has `branch = True` and measures `src/` plus the root `*_main.py`; `make ci` fails under the global
   `--cov-fail-under`, the per-file table (`scripts/check_coverage_thresholds.py`) and the **per-layer floors**
-  (`scripts/check_coverage_layers.py`, branch-aware percent per layer). Floors only rise: the script prints "floor can
-  rise to X" when a layer is 0.5 above; raise it in the same change. Never lower one without the owner's per-layer OK.
+  (`scripts/check_coverage_layers.py`, branch-aware percent per layer). Floors only rise and sit 0.3 pp below the lowest observed value (noise margin): the script
+  prints "floor can rise to X" when that would be 0.5 above the floor; raise it in the same change. Never lower one without the owner's per-layer OK.
 - `tests/unit/test_every_src_module_is_imported_by_a_test.py`: every module under `src/` and every root `*_main.py` is
   imported by some test, or listed with a reason in `tests/unit/untested_modules_allowlist.txt`. A new module needs a
   test, not an allowlist line. The list only shrinks: the test fails when a listed module is now imported.
 
 ## Mutation check: the done-criterion for a package
 
-A package that touches stores, queries or writes is done when every mutant of its modules is killed by its tests or
+Every package ends with this check: it is done when every mutant of its modules is killed by its tests or
 ruled equivalent by the reviewer. Mutants: a dropped `order_by`/`where`/`select` field/`model_dump` field/dict key of a
 written document/write/forwarded keyword, a flipped sort direction, an `except` that returns success.
 

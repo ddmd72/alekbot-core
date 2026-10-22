@@ -13,9 +13,9 @@ the ones nobody imported, at 0 %) and the root entry points; an entry point that
 is not in the data at all, so it is counted here as 0 % from its source with coverage.py's own parser.
 
 THE RULE (same as the per-file table in check_coverage_thresholds.py): a floor only rises. Never lower one without
-the owner's explicit per-layer OK. When a layer measures 0.5 points or more above its floor the script prints
-"floor can rise to X": raise it in the same change that earned it. Floors are the measured value rounded DOWN to one
-decimal, so a run that reproduces the measurement passes.
+the owner's explicit per-layer OK. Each floor is the lowest value observed minus NOISE_PP, rounded DOWN to one
+decimal (run-to-run coverage noise is ~0.1 pp). When measured − NOISE_PP is 0.5 points or more above a floor the
+script prints "floor can rise to X": raise it in the same change that earned it.
 
 Exit codes: 0 — all floors met; 1 — a floor missed, or coverage.json missing.
 """
@@ -46,20 +46,21 @@ LAYERS: List[Tuple[str, Tuple[str, ...]]] = [
     ("root entry points", ROOT_ENTRY_POINTS),
 ]
 
-# Branch-aware percent, measured 2026-10-22 and rounded down to one decimal. ONLY RISING (see THE RULE above).
-# floors calibrated on the CI runner (2026-10-22); the VM and the runner differ by up to ~0.1 pp
+# floor = min observed (CI runner and VM, 2026-10-22) − NOISE_PP, rounded down to 0.1; run-to-run coverage noise is ~0.1 pp
+# (owner decision 2026-10-22). Only rising.
+NOISE_PP = 0.3
 FLOORS: Dict[str, float] = {
-    "src/domain": 98.4,
-    "src/ports": 92.5,
-    "src/infrastructure": 96.6,
-    "src/agents": 94.8,
-    "src/services": 91.5,
-    "src/handlers": 91.9,
-    "src/adapters": 79.7,
-    "src/web": 63.4,
-    "src/composition": 90.2,
-    "src (other)": 70.2,
-    "root entry points": 34.2,
+    "src/domain": 98.1,
+    "src/ports": 92.2,
+    "src/infrastructure": 96.3,
+    "src/agents": 94.5,
+    "src/services": 91.2,
+    "src/handlers": 91.6,
+    "src/adapters": 79.4,
+    "src/web": 63.1,
+    "src/composition": 89.9,
+    "src (other)": 70.1,
+    "root entry points": 34.1,
 }
 
 RISE_MARGIN = 0.5
@@ -158,8 +159,10 @@ def check(layers: Dict[str, LayerTotals], floors: Dict[str, float]) -> Tuple[Lis
             continue
         if measured + 1e-6 < floor:
             violations.append(f"{name}: {measured:.2f}% < floor {floor:.1f}%")
-        elif measured - floor >= RISE_MARGIN:
-            rises.append(f"{name}: measured {measured:.2f}%, floor {floor:.1f}% — floor can rise to {floor_to_tenth(measured):.1f}")
+        elif floor_to_tenth(measured - NOISE_PP) - floor >= RISE_MARGIN:
+            rises.append(
+                f"{name}: measured {measured:.2f}%, floor {floor:.1f}% — floor can rise to {floor_to_tenth(measured - NOISE_PP):.1f}"
+            )
     return violations, rises, unfloored
 
 

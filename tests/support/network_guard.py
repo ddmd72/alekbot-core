@@ -17,6 +17,8 @@ tests/plugins/network_guard.py to the offline G2 run. The socket half is undone 
 import re
 from typing import Any
 
+import socket
+
 import grpc
 import grpc.aio
 import pytest_socket
@@ -67,11 +69,33 @@ def _no_default_credentials(*_args, **_kwargs):
     raise NetworkGuardError(f"google.auth.default() looks for real credentials (and then the metadata server). {HOW_TO_FIX}")
 
 
+PROXY_VARIABLES = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy")
+
+
+def _guard_connect_ex(monkeypatch) -> None:
+    """pytest-socket patches `connect` only; `connect_ex` reaches the same place and gets the same host rule."""
+    original = socket.socket.connect_ex
+
+    def guarded(self, address):
+        host = pytest_socket.host_from_connect_args((address,))
+        if self.family == getattr(socket, "AF_UNIX", None) or host in LOOPBACK_HOSTS:
+            return original(self, address)
+        self.close()
+        raise pytest_socket.SocketConnectBlockedError(LOOPBACK_HOSTS, host)
+
+    monkeypatch.setattr(socket.socket, "connect_ex", guarded)
+
+
 def install(monkeypatch) -> None:
-    """Block non-loopback `connect()` and arm the gRPC / credentials tripwire for the current test."""
+    """Block non-loopback `connect()`/`connect_ex()` and arm the gRPC / credentials tripwire for the current test."""
     import google.auth
 
+    # A proxy variable (cloud sessions set HTTPS_PROXY to a loopback port) would let requests/httpx tunnel out
+    # through the one address the socket guard allows.
+    for name in PROXY_VARIABLES:
+        monkeypatch.delenv(name, raising=False)
     pytest_socket.socket_allow_hosts(LOOPBACK_HOSTS, allow_unix_socket=True)
+    _guard_connect_ex(monkeypatch)
     monkeypatch.setattr(google.auth, "default", _no_default_credentials)
     monkeypatch.setattr(grpc, "secure_channel", _tripwire("grpc.secure_channel", grpc.secure_channel))
     monkeypatch.setattr(grpc.aio, "secure_channel", _tripwire("grpc.aio.secure_channel", grpc.aio.secure_channel))
