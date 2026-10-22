@@ -1,8 +1,8 @@
 # RFC: One way to open external files — refs, native reading, shared security pieces
 
-**Status:** Proposed (rev 2). Not built. *D* items are owner decisions (2026-10-22); *P* items are author proposals the
+**Status:** Proposed (rev 3). Not built. *D* items are owner decisions (2026-10-22); *P* items are author proposals the
 owner has not ruled on, each separable.
-**Date:** 2026-10-22 (rev 2: 2026-10-23, after four reviews)
+**Date:** 2026-10-22 (rev 2: 2026-10-23, after four reviews; rev 3: 2026-10-23, owner decisions D7–D11)
 **Owner decisions (2026-10-22):**
 - **D1. Placement.** The document service is a component inside each runtime (main service, drive indexer). Its
   contract is designed as if it were remote: serializable input, closed-schema outcome, an explicit deadline and
@@ -24,6 +24,19 @@ owner has not ruled on, each separable.
   reader, untrusted marking: each exists once, as shared pieces, used by every path. The indexer keeps its own loop and
   its money and record decisions and calls the same pieces. The document service is those pieces assembled behind
   "open a ref".
+- **D7 (2026-10-23). Long scans: a simple cut, no async.** No "still working" mechanism. An interactive open reads
+  only as many pages as can be shown (the presentation cap) within today's open timeout, and tells the model "first N
+  of M pages".
+- **D8. A separate intent sends a file to the user in chat.** It takes any ref kind, resolves the bytes through the
+  shared resolver and delivers them through `UserNotificationService.notify_file_bytes` with the origin channel as
+  override; a failed upload is reported as a failure. Other agents may reuse it later (not now).
+- **D9. No file contents in Logfire, from any model call** (orchestrator, reader, any agent). Calls, tokens and text
+  stay; file parts are dropped from captured spans.
+- **D10. Email has no cap of its own:** email attachments use the shared caps.
+- **D11. One open verb per store.** `open_file` (chat, delivered, workspace, skill), `open_file_from_drive` (drive),
+  `open_email_attachment` (email). `get_email_attachment` is removed; attachment refs come from `get_email_details`
+  (and names from `search_emails`). Email intents stay three: search, details, open attachment. Save and send act on
+  the same ref.
 - **Contract (owner, 2026-10-22):** the sandboxes are not all built; they come later and they are the isolation layer.
   This design works today (in-process engines, the drive parser child) and names the adapter each sandbox slice swaps
   in, with no second migration of callers.
@@ -64,6 +77,15 @@ decision records `drive_prefetch_wrapper_slice3.md`, `drive_parser_sandbox_resou
 - V. Sandbox deltas completed; `STILL_WORKING` presentation defined; staging and the main service's execution
   environment stated; the 32 MiB bound noted.
 
+**Changes in rev 3** (owner decisions D7–D11, 2026-10-23):
+- D7: P7 and P19 become D7. Opens are cut by pages that fit the presentation cap ("first N of M pages"), within the
+  existing timeout; `STILL_WORKING` stays in the schema for D1 only, with no presentation; OQ5 closed.
+- D8: new intent `send_file_to_user` on FileManagement (§4.2), in U4; OQ1 closed.
+- D9: file parts are dropped from every captured model call; U0-a asks how, not whether; OQ2 closed.
+- D10: P8d becomes D10; OQ4 closed.
+- D11: P12 dropped and OQ3 gone; `open_email_attachment` replaces `get_email_attachment` and takes a ref or an email
+  id plus attachment name; P8c becomes required; the store-in-the-name rule now covers reading; tool texts updated.
+
 ## 0. In one paragraph
 
 Three kinds of external file reach the bot: chat uploads, drive files, email attachments. Each is read a different
@@ -71,7 +93,7 @@ way today. Chat uploads and drive files are refs that `open_file` resolves; emai
 `get_email_attachment` returns their text directly. Only the drive indexer checks a file's kind from its bytes, parses
 in an isolated child process, notices a scan and sends it to a no-tool reader model. Every other read parses in a
 thread of the main service and returns whatever text comes out. This RFC makes every external file a ref and gives
-opening one path: resolve the ref to bytes, hand them to one **document service**. If the consuming model reads that
+opening one path in code, behind one open verb per store: resolve the ref to bytes, hand them to one **document service**. If the consuming model reads that
 kind natively (its adapter says so, within today's caps), it gets the bytes; otherwise the indexer's own pieces run:
 sniff, parse in the child, text-or-scan check, reader. Text that reaches a model is marked untrusted by one function.
 The indexer keeps its loop and calls the same pieces. The sandbox slices later replace one adapter behind the parse
@@ -89,7 +111,7 @@ without a text layer. All three steps failed:
 2. **Save.** `save_file_to_drive` got the attachment's file name as `file_ref`. The resolver knows delivered documents,
    workspace, skill and chat refs (`src/services/file_conversion_service.py:185-210`) and drive refs (`:279-280`,
    `:311-312`); an email attachment is none of these, so the answer was "not found, ask the user to re-upload".
-3. **Forward.** No capability returns an existing file's bytes to the user, except video (§8, OQ1).
+3. **Forward.** No capability returns an existing file's bytes to the user, except video (D8 adds one).
 
 The bot retried three times. Failure 1 is about reading, failure 2 about refs, failure 3 about delivery.
 
@@ -136,7 +158,7 @@ Facts that shape the design:
 ## 2. Goals and non-goals
 
 **Goals**
-- Every external file is a ref; opening has one path; acting on a file (save, prefetch) resolves the same ref.
+- Every external file is a ref; opening has one path; acting on a file (save, send, prefetch) resolves the same ref.
 - A scan is read wherever it is opened: natively when the consuming model reads it well, by the reader otherwise.
 - Each security piece exists once and every path uses it: kind from bytes, caps, isolated parsing, text-or-scan
   routing, the no-tool reader, untrusted marking.
@@ -149,12 +171,12 @@ Facts that shape the design:
 - Voice messages (they are the user's own words) and generator inputs (`edit_image`, video edits).
 - Redesign of the daily email review (payload placement, tool surface); prompt-layer defences beyond the marking
   function. Its tool texts change only where D4 forces it (§4.7).
-- The surface for sending a file's original bytes to the owner (D4 names the action; the surface is OQ1).
 - Small defects found during the study (§10 follow-ups). Implementation; a plan follows acceptance.
 
 ## 3. Principles (D1–D6 in plain words)
 
-1. **The model sees refs** and opens a file only when it asks; every ref kind opens through the same code (D3).
+1. **The model sees refs** and opens a file only when it asks, through the verb of its store; every verb runs the
+   same code (D3, D11).
 2. **The consumer decides native, by declaration.** The adapter of the model that will read the file says which kinds
    it reads natively and up to what size; the open path passes that on and acts on the answer (D2, D3).
 3. **Otherwise the pipeline:** kind from bytes → isolated parse → text-or-scan check → no-tool reader → text (D2, D6).
@@ -198,15 +220,31 @@ never read by the service or marked.
 6. **Return refs that outlive the turn** via the existing `*_context` mechanism
    (`conversation_handler.py:1383-1395`): `drive_context` as today, `email_file_context` for email (P8b).
 
-The store-specific branches stay in `FileManagementAgent`, before it calls `open`: folders (the list hint), recordings
-opened as transcripts, archived transcripts, the drive access note, and video sent to the user (`_fetch_video`; drive
-branch `file_management_agent.py:741-752`). They use `DriveSearchService` and `UserNotificationService`, which the
-conversion service should not depend on.
+The store-specific branches stay in the agents, before they call `open`: in `FileManagementAgent`, folders (the list
+hint), recordings opened as transcripts, archived transcripts, the drive access note, and video sent to the user
+(`_fetch_video`; drive branch `file_management_agent.py:741-752`); in `EmailSearchAgent`, the name-to-part lookup
+(§4.7). They use `DriveSearchService` and `UserNotificationService`, which the conversion service should not depend on.
 
-**P12. Intents.** `open_file` accepts every ref kind. `open_file_from_drive` stays as a drive-named alias over the
-same path. Drive mutations keep the store in the intent name (USER_DRIVE_RFC §4.4): the rule was written against
-mutations called on the wrong store, and reading is already lenient there. Email has no mutation intents (the grant is
-read-only), so it needs no intent of its own.
+**Intents: one open verb per store (D11).** The store stays in the intent name for reading as well as for mutations
+(USER_DRIVE_RFC §4.4):
+
+| Intent | Agent | Opens |
+|---|---|---|
+| `open_file` | FileManagement | chat uploads, delivered documents, workspace `files/` copies, skill files |
+| `open_file_from_drive` | FileManagement | `drive:` refs |
+| `open_email_attachment` (new; replaces `get_email_attachment`) | EmailSearch | `email:` refs, or an email id plus an attachment name (§4.7) |
+
+All three call the same `FileConversionService.open`. Each verb's description names only its own store. A read given
+another store's ref is still served through the same path, as `open_file` serves a `drive:` ref today
+(`file_management_agent.py:169-171`; USER_DRIVE_RFC §4.4, "reading is lenient").
+
+**`send_file_to_user` (D8).** A new SYNC intent on FileManagement. It takes `file_ref` (any ref kind) and an optional
+`name`, resolves the bytes with `resolve_file`, and delivers them with `UserNotificationService.notify_file_bytes`
+(`src/services/user_notification_service.py:558-567`), with `origin_channel_id` and `origin_platform` from the message
+context as overrides, as the video branch does today (`file_management_agent.py:745-750`). That method returns
+whether the file was uploaded. `False` is answered as a failure ("the file could not be delivered"), never as success:
+today's video branch ignores the result (`:751-752`). The size bound is today's re-send cap (45 MiB, the platform
+margin). No model reads the bytes, so nothing is marked. Other agents may reuse the intent later; none does in this RFC.
 
 **Interactive admission** (by the declared kind from name and declared mime, §4.5; today's behaviour kept):
 
@@ -215,15 +253,17 @@ read-only), so it needs no intent of its own.
 | Document kinds the parser reads; plain text, CSV, JSON, Markdown, code | parse (plain text read in-process, sandbox S-Δ2) | parse |
 | PDF, the four image formats | native or pipeline (§4.3, §4.4) | native or pipeline |
 | Audio | transcribed inline, as today (`file_conversion.py:236-248`) | not transcribed, as today (`audio_service=None`, `email_search_service.py:244-249`): a note |
-| Video | sent to the user, as today | sent to the user (the video branch, after resolve) |
+| Video | sent to the user, as today | a note, as today (the model can use `send_file_to_user`) |
 | Anything else (archives, executables, other images) | refused with a note | refused with a note |
 
-**Resolver callers** (U-m7). Every caller resolves through `open` (content for a model) or `resolve_file(ref) →
+**Resolver callers.** Every caller resolves through `open` (content for a model) or `resolve_file(ref) →
 (bytes, name, mime)` (steps 1–3, bytes for an action):
 
 | Caller | Goes through | Accepts `email:` |
 |---|---|---|
-| `open_file`, `open_file_from_drive` (`file_management_agent.py:308`, `:326`, `:689`, `:732`, `:742`, `:756`) | `open` / `resolve_file` | yes |
+| `open_file`, `open_file_from_drive` (`file_management_agent.py:308`, `:326`, `:689`, `:732`, `:742`, `:756`) | `open` / `resolve_file` | served if given one (leniency) |
+| `open_email_attachment` (EmailSearchAgent) | `open` | yes |
+| `send_file_to_user` (new) | `resolve_file` | yes |
 | `save_file_to_drive`, `update_file_in_drive` `source_ref` (`:632`) | `resolve_file` | yes |
 | Prefetch for specialists (`main.py:309`, moved by P18) | `open`, text only | yes |
 | `edit_image` (`src/agents/image_generation_agent.py:214`), video edits (`video_generation_agent.py:269`, `:324`) | `resolve_file` | yes, bytes only |
@@ -270,7 +310,8 @@ These same values now apply to chat, workspace, delivered and email opens, which
 - The value is JSON-plain (a list of dicts), so the Cloud Task encoder, which handles only pydantic models
   (`src/adapters/gcp_task_queue.py:22-28`), never meets a dataclass.
 - The coordinator drops the key before it builds a specialist's message (`agent_coordinator.py:531`) and before it
-  enqueues (`:557-562`). The only reader is FileManagement's SYNC `open_file`.
+  enqueues (`:557-562`), except for the three SYNC open verbs (`open_file`, `open_file_from_drive`,
+  `open_email_attachment`), the only readers of the key.
 
 | Engine runner | Engine call | Adapter it declares from | Opens files today |
 |---|---|---|---|
@@ -293,6 +334,12 @@ that is a parser op in the isolated child (later in the sandbox). The cost is th
 open ships the file to the unit and back. Declined, the open path decides images itself, and for PDFs calls a
 page-count op first.
 
+**No file contents in Logfire (D9).** File parts (native bytes, the reader's windows, triage thumbnails) are dropped
+from the captured spans of every model call: the orchestrator's, the reader's, any agent's. Calls, tokens and text
+stay. Today content capture is on in the main service (`LOGFIRE_CAPTURE_CONTENT=true`, `cloudbuild-dev.yaml:23`), and
+the provider SDKs are instrumented globally (`src/utils/telemetry.py:51-104`); the indexer has no Logfire. U0-a finds
+how; U3 and native email opens wait for it.
+
 **Known limitation: totals per request.** Each file is checked against its own caps. Several native files in one loop
 add up in every later call of that loop. That is today's behaviour, not introduced here. U0-e measures it; no tracking
 mechanism is built now.
@@ -313,7 +360,7 @@ class ReadStatus(str, Enum):        # ExtractionStatus's per-file values, plus f
     NATIVE                           # attach the bytes you sent, as `native_mime`
     MODEL_UNAVAILABLE                # the reader cannot run now (429, 5xx, open breaker); spend so far reported
     PARSER_UNAVAILABLE               # detail: unavailable | misconfigured | busy; systemic, not charged to the file
-    STILL_WORKING                    # reserved for an asynchronous adapter (D1); the in-process service never returns it
+    STILL_WORKING                    # reserved in the schema for D1 only; the in-process service never returns it (D7)
 
 @dataclass(frozen=True)
 class ReadRequest:
@@ -359,20 +406,30 @@ the reader (both `ContentExtractorPort`) and `AudioTranscriptionPort`. `PdfSplit
    injected `AudioTranscriptionPort` only where §4.2's table says so.
 5. **Return** the outcome, mapped per the status map (§4.5), with `links` and the spend.
 
-**One deadline (C).** `deadline_at` is absolute. `ExtractionRequest` gains an optional deadline that may only **lower**
-an adapter's own ceilings: the parser child's wall becomes min(120 s ceiling, remaining) and the reader's budget
-min(its constructor value, remaining). The indexer passes none and keeps today's values. The sandbox adapter maps the
-same field onto the request's `limits`, which may only lower the sandbox's own (sandbox §4.8), so S3/S4 need no second
-port change. This is a change to `ContentExtractorPort`'s request; §6 declares it.
+**Two request limits, both only lowering (C, D7).** `ExtractionRequest` gains two optional fields, and neither may
+raise an adapter's own ceilings:
+- a **deadline**: the parser child's wall becomes min(120 s ceiling, remaining), the reader's budget min(its
+  constructor value, remaining);
+- a **text budget** in characters: the reader reads windows in page order and starts no new window once the finished
+  prefix of pages 1..N holds that much text.
 
-**P7. Interactive deadline: 90 s for an open**, so download + parse + reader + presentation stay inside FileManagement's
-120 s timeout (`src/composition/user_agent_factory.py:864`) with a margin; FileManagement reads are not shielded (USER_DRIVE_RFC
-§4.13). At the deadline the reader **cancels** windows in flight (`drive_reader_runner.py:213-217`); the finished
-windows come back as `truncated` text and the note says "N of M pages read, not necessarily the first N". With no
-window finished the outcome is an error (`:372`). Email attachment reads move from the email intent's 300 s to
-`open_file`'s 120 s. The measured reader time on the owner's drive (30 days, at most 17 pages per file) is 12.6 s at
-p50, 23 s at p90, 62 s at most. Whether a long scan should instead answer "still working" and post the rest later is
-owner question OQ5.
+The indexer passes neither and keeps today's behaviour. The sandbox adapter maps the deadline onto the request's
+`limits`, which may only lower the sandbox's own (sandbox §4.8), so S3/S4 need no second port change. This is a change
+to `ContentExtractorPort`'s request; §6 declares it.
+
+**Long scans: a simple cut (D7).** An interactive open reads only as many pages as can be shown, and has no "still
+working" path.
+- **Text budget.** It equals the presentation cap (30 000 characters, §4.5).
+- **Deadline.** A backstop of 90 s, so download, parse, reader and presentation stay inside FileManagement's 120 s
+  timeout (`src/composition/user_agent_factory.py:864`) with a margin. FileManagement reads are not shielded
+  (USER_DRIVE_RFC §4.13). The same 90 s applies to `open_email_attachment`, whose agent allows 300 s
+  (`src/infrastructure/agent_config.py:201`).
+- **At the deadline** the reader cancels windows in flight (`drive_reader_runner.py:213-217`). Only the contiguous
+  finished prefix is returned, so the note always says "first N of M pages". With no first window finished, the
+  outcome is an error (`:372`).
+- **Parser text** (a DOCX, a PDF with a text layer) is cut at the cap with a note naming the cut.
+- **Measured reader time** on the owner's drive (30 days, at most 17 pages per file): 12.6 s at p50, 23 s at p90,
+  62 s at most.
 
 **P13. `allowance()`, the place D5 left open.** One method, `allowance(user, account, store) -> pages`, called before
 the reader. It returns the reader's existing per-file ceiling `MODEL_EXTRACT_MAX_PAGES` (200,
@@ -399,10 +456,8 @@ main service is sized from U0-c.
 | `TOO_LARGE`, `UNSUPPORTED`, `ENCRYPTED`, `NO_TEXT`, `TIMEOUT`, `MEMORY`, `ERROR` | the existing `[System: …]` note contract, worded for the store |
 | `MODEL_UNAVAILABLE` | "the document reader is temporarily unavailable; try again later" |
 | `PARSER_UNAVAILABLE` | "the file converter is temporarily unavailable; ask the user to send it again later" (sandbox §4.9) |
-| `STILL_WORKING` | "still reading; the result will be posted to this chat", the result delivered later through the notification path |
-
-`PARSER_UNAVAILABLE` and `STILL_WORKING` are defined and tested in U3 (the second with a fake adapter), so S4 and a
-later remote unit only swap an adapter.
+`PARSER_UNAVAILABLE` and its note are defined and tested in U3, so S4 only swaps an adapter. `STILL_WORKING` has no
+presentation in this RFC (D7): no adapter returns it, and a later asynchronous adapter (D1) would bring its own.
 
 **P1. A port with one implementation today.** The repo asks for a port at a boundary with two implementations. D1
 names the second (a remote adapter), and the port gives test substitution now. Precedent:
@@ -416,7 +471,7 @@ its second adapter exists.
 | D1 requirement | How it is met |
 |---|---|
 | Serializable input, closed-schema outcome | bytes and plain values; no paths, callbacks or ContextVars; outages are statuses, not exceptions |
-| Explicit deadline, "still working" state | `deadline_at` in the request; `STILL_WORKING` in the schema with a defined presentation |
+| Explicit deadline, "still working" state | `deadline_at` in the request; `STILL_WORKING` reserved in the schema (D7: no async path now) |
 | Billing inside, no shared caller state | the reader runner bills the account per call, as on the indexer; the service keeps nothing between calls |
 
 ### 4.5 Shared pieces and where each lives
@@ -454,19 +509,17 @@ slot wait past the deadline map to `PARSER_UNAVAILABLE`.
 
 | Cap | Value | Note |
 |---|---|---|
-| Input to text parsing, interactive | 5 MiB (`file_conversion.py:30`) | every store; email: 3 MB today, P8d proposes 5 MiB (OQ4) |
+| Input to text parsing, interactive | 5 MiB (`file_conversion.py:30`) | every store; email too (D10; 3 MB today) |
 | Native, per file | the consumer's declaration, never above 5 MiB image / 20 MiB PDF | §4.3 |
 | Drive download, any | 45 MiB (`user_drive.py:22`) | the S4-era bound is 32 MiB if sandbox S0-a fails (sandbox O6) |
-| Presentation, email | 30 000 characters (`file_conversion.py:31`, today's `truncate_with_alert`) | kept |
-| Presentation, chat / workspace / delivered / drive opens | none today beyond the 5 MiB input | **P19:** 30 000 characters with a note, the same as email |
-| Presentation, reader text | none today on the interactive path | covered by P19 |
+| Presentation, every interactive open | 30 000 characters (`file_conversion.py:31`; today only email, through `truncate_with_alert`) | **D7**: also the reader's text budget; the note names the cut ("first N of M pages" for scans) |
 
 **The indexer's use (D6), at the seams that exist today:**
 - `DriveIndexingService(…, extractors=…)` (`drive_indexing_service.py:563`, `:584-586`): unchanged.
 - `build_drive_models(parser=…)` (`src/composition/drive_model_setup.py:115-126`, called at `indexer_main.py:124-131`):
   unchanged; the main service gets its own `build_document_service(parser=…)` beside it.
-- `ContentExtractorPort` (`src/ports/content_extractor_port.py`): one change, the optional deadline (§4.4); the
-  indexer passes none.
+- `ContentExtractorPort` (`src/ports/content_extractor_port.py`): one change, the two optional request limits (§4.4);
+  the indexer passes neither.
 - `_fetch`, `_extract`, `_model_hold`, `_affordable`, `_spend_usd`, record states, versions, the upgrade pass:
   untouched; the indexer imports the moved pure pieces. Whether the indexer goes through the service or through the
   pieces is settled by D6 as "the pieces".
@@ -499,8 +552,12 @@ look-alike check covers both words. Drive output, the `drive-search` skill and t
 - **One listing rule** in the adapter, checked by U0-d: a part with a filename is an attachment; inline images with a
   `Content-ID` are listed as attachments, as today; a forwarded `message/rfc822` is listed as one part, and its
   children are not listed.
-- **Open** = `list_parts` → find `part_id` → size check → `get_part` → the document service. The part's own
-  `mimeType` is the declared hint; the bytes decide.
+- **`open_email_attachment` (D11)** takes either an `email:` ref or an `email_id` plus an attachment `name`. The
+  index stores attachment names only, so `search_emails` results and the `email_search_context` kept in history
+  (`src/agents/email_search_agent.py:313-340`) carry names, never part ids. With a name, the agent resolves the part at
+  open time from `list_parts`. A name matching several parts opens none; the answer lists their refs, so the model
+  picks one. Then: size check → `get_part` → `FileConversionService.open`. The part's own `mimeType` is the declared
+  hint; the bytes decide.
 - **Notes** (the same wording for `open` and `resolve_file`):
 
 | Case | Note |
@@ -512,23 +569,32 @@ look-alike check covers both words. Drive output, the `drive-search` skill and t
 | Not connected, needs reconnect | today's notes |
 
   A reconnect to a different mailbox makes old refs read as "no longer in the mailbox"; that is accepted.
-- **P8b. `email_file_context`** (realises D4's "the ref in history stays valid"). `get_email_attachment` returns
-  labels with refs (the D3 note): the part or parts whose name matches, with no content. It also returns
-  `history_context["email_file_context"] = [{name, ref}]`, so "open the second attachment" works on the next turn.
-- **P8c (addition).** `get_email_details` also lists its attachments as labels with refs. That costs one `list_parts`
-  call, because `deep=False` holds names only (`src/domain/email.py:62-74`).
-- **P8d (limit change, OQ4).** Email uses the shared 5 MiB parse cap instead of 3 MB. The 3 MB guarded a download of
-  every attachment of the message into memory at once (`email_search_service.py:40-41`, `:212`); per-part fetching
-  removes that. The 10 MB "total" guard is unreachable today (`:229-233`).
-- **Credentials.** The open path gets Gmail by constructor injection of `EmailSearchService`, under a TYPE_CHECKING
+- **Refs from `get_email_details` (D11).** It lists the message's attachments as labels with refs. That costs one
+  `list_parts` call, because `deep=False` holds names only (`src/domain/email.py:62-74`). This was P8c in rev 2; D11
+  makes it required.
+- **P8b. `email_file_context`** (realises D4's "the ref in history stays valid"). `get_email_details` and
+  `open_email_attachment` return `history_context["email_file_context"] = [{name, ref}]`, so "open the second
+  attachment" works on the next turn.
+- **Caps (D10).** Email uses the shared caps (§4.5). The 3 MB guarded a download of every attachment of the message
+  into memory at once (`email_search_service.py:40-41`, `:212`); per-part fetching removes that. The 10 MB "total"
+  guard is unreachable today (`:229-233`).
+- **Wiring.** `EmailSearchAgent` gets `FileConversionService` by constructor injection (built at
+  `src/composition/user_agent_factory.py:500`). The open path gets Gmail by constructor injection of `EmailSearchService`, under a TYPE_CHECKING
   import (as `DeepResearchDriveCopyService` injects `UserDriveService`). Two public methods are new on it:
   `list_attachment_parts(user_id, message_id)` and `get_attachment_part(user_id, message_id, part_id, max_bytes)`.
   Each wraps today's private refresh (`email_search_service.py:283`) around the port call.
-- **Tool texts** (required by D4, in U4): the `get_email_attachment` description (`agent_manifest.py:215-219`) becomes
-  "returns the attachment's ref; open it with `open_file`"; the same change goes into the hint under search results
-  (`delegation_engine.py:147-148`) and the two daily-review lines (`src/services/email_review_service.py:169-170`,
-  `:186`). `open_file`'s `file_ref` description (`agent_manifest.py:622-626`) names `email:` refs.
-- **Save to drive** with an `email:` ref: `resolve_file` → the part's name → the existing save rules.
+- **Intent and tool texts** (D11, in U4):
+  - The manifest drops `GET_EMAIL_ATTACHMENT` and adds `OPEN_EMAIL_ATTACHMENT` (`agent_manifest.py:49`, the
+    capability `:201`, the description `:215-219`, the context schema `:225-228`). The new context is `{"ref"}` or
+    `{"email_id", "name"}`.
+  - `EmailSearchAgent` routes the new intent instead of `_handle_get_attachment` (`email_search_agent.py:85`, `:110`).
+  - The hint under search results (`delegation_engine.py:147-148`) and the two daily-review lines
+    (`src/services/email_review_service.py:169-170`, `:186`) name `open_email_attachment`.
+  - The email workflow in `PROTOCOL_AGENT_SELECTION` names `get_email_attachment`; changing it is an owner prompt
+    upload (mirror `prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy:60`, `:72-74`).
+  - The descriptions of `save_file_to_drive` and `send_file_to_user` name `email:` refs.
+- **Save to drive and send** with an `email:` ref: `resolve_file` → the part's name → the existing save rules, or
+  `send_file_to_user` (§4.2).
 - **Daily review.** It reaches attachments through the same tools, so it gains scan reading; nothing else in it
   changes.
 
@@ -589,26 +655,28 @@ Rejected: *keep parsing in a thread of the main service* (contradicts D6); *move
 | # | Proposal | Status |
 |---|---|---|
 | D1–D6 | as in the header | owner, 2026-10-22 |
+| D7 | long scans: a simple cut by pages that fit the 30 000-character presentation cap, within the existing timeout; no "still working" path (§4.4, §4.5) | owner, 2026-10-23 |
+| D8 | `send_file_to_user`: any ref → `resolve_file` → `notify_file_bytes`, origin channel as override; a failed upload is a failure (§4.2) | owner, 2026-10-23 |
+| D9 | no file contents in Logfire from any model call (§4.3) | owner, 2026-10-23 |
+| D10 | email uses the shared caps (§4.5, §4.7) | owner, 2026-10-23 |
+| D11 | one open verb per store; `open_email_attachment` replaces `get_email_attachment`; refs from `get_email_details` (§4.2, §4.7) | owner, 2026-10-23 |
 | P1 | `DocumentReadPort` + `DocumentService`, one implementation today (§4.4) | author |
 | P2 | bytes in; the service never fetches (§4.4) | author |
 | P4 | one parse engine, the child's readers; markitdown retired in U5 (§4.8) | author; gated on U0-b |
 | P5 | `LLMPort.native_formats(model_name)` with a text-only default; per-attempt key on a context copy (§4.3) | author, realises D3 |
-| P7 | interactive deadline 90 s; truncate and name the pages (§4.4) | author; OQ5 open |
 | P8a | email part-level fetch incl. nested and inline parts (§4.7) | author, realises D4 |
 | P8b | `email_file_context` (§4.7) | author, realises D4 |
-| P8c | refs from `get_email_details` too (§4.7) | author, addition |
-| P8d | email uses the shared 5 MiB cap instead of 3 MB (§4.7) | author, limit change; OQ4 |
 | P9 | one ref classifier (§4.1) | author |
 | P10 | pure pieces move to neutral modules; reader names kept (§4.5) | author |
 | P11 | rename the drive tag to the neutral one (§4.6) | author, optional, own slice |
-| P12 | `open_file` takes every ref; `open_file_from_drive` an alias (§4.2) | author |
 | P13 | `allowance()` = the existing 200-page ceiling for every store (§4.4) | author, realises D5 |
 | P14 | mark email bodies and search lines (§4.6) | author, separate |
 | P15 | workspace and delivered files count as external (§4.1) | author |
 | P16 | the native decision sits inside the service (§4.3) | author |
 | P17 | normalise images in the child (§4.3) | author, optional follow-up |
 | P18 | prefetch reads in the async worker from the ref (§4.2) | author; moves a caller in U3 |
-| P19 | 30 000-character presentation cap on every interactive open (§4.5) | author, limit change |
+
+Withdrawn in rev 3: P7 and P19 (now D7), P8c (required by D11), P8d (now D10), P12 (replaced by D11).
 
 ## 6. Deltas to other specs
 
@@ -616,18 +684,19 @@ Rejected: *keep parsing in a thread of the main service* (contradicts D6); *move
 |---|---|---|
 | USER_DRIVE_INDEXING_RFC §9, last bullet | No `/extract` on the indexer. Each runtime runs the same pieces; a remote unit may come later under D1 | D1 |
 | USER_DRIVE_INDEXING_RFC §16 "Slice 3 — one extraction path" | Realised by U1–U4 (isolation and routing) and U5 (one engine, if P4). Done-criterion "same text as the current path" becomes the U0-b report with accepted differences | D6, P4 |
-| USER_DRIVE_INDEXING_RFC §24.3; `ContentExtractorPort` | `ExtractionRequest` gains an optional deadline that only lowers the adapter's ceilings; the indexer passes none | §4.4 |
+| USER_DRIVE_INDEXING_RFC §24.3; `ContentExtractorPort` | `ExtractionRequest` gains an optional deadline and an optional text budget, both only lowering the adapter's ceilings; the reader returns the contiguous finished prefix when a budget or deadline is set; the indexer passes neither | §4.4, D7 |
 | USER_DRIVE_INDEXING_RFC Δ35; `decisions/drive_prefetch_wrapper_slice3.md` | Closed in U3: prefetch goes through `open` and is marked | D6 |
 | `decisions/drive_extract_ingress_slice3.md` | Obsolete: no main → indexer call | D1 |
 | `decisions/drive_parser_sandbox_resource_isolation.md` | A status line: the child also runs in the main runtime; the trigger applies there | §4.8 |
-| USER_DRIVE_RFC §4.4 | The store stays in the name for mutations; reading converges (`open_file` takes every ref, `open_file_from_drive` an alias); prefetch stays off for FileManagement | D3, P12 |
+| USER_DRIVE_RFC §4.4 | The store-in-the-name rule now covers reading too: `open_file`, `open_file_from_drive`, `open_email_attachment`, one shared open path behind them. Reads stay lenient. Prefetch stays off for FileManagement | D11 |
+| USER_DRIVE_RFC §4.6, `_fetch_video` | Sending bytes to the user becomes the general `send_file_to_user`; the video branches stay as they are | D8 |
 | USER_DRIVE_RFC §4.6 | Native caps come from the consuming adapter, never above today's 5/20 MiB; formats from the bytes; PDFs page-checked | D3, P5 |
 | FILE_STORAGE_RFC §2.4 step 3, §2.8, §5; file_storage README §2.1 diagram | Record that the upload turn is label-only (README §1.1 holds) and that the legacy branch is retired | §1.2 |
 | UNTRUSTED_CONTENT_SANDBOX_RFC §1 C2, §4.7 `chat.convert`, §4.10, §7 S4, §12.10 | One parse op family for both runtimes; with P4 no `DocumentConverterPort`; S4 = identity + knob. Five converter call sites today, not four | P4 |
 | UNTRUSTED_CONTENT_SANDBOX_RFC §4.4 | The main service calls the parse op family (today listed as `chat.*` only). Optional: rename the family `parse.*` before S3 builds it | P4 |
 | UNTRUSTED_CONTENT_SANDBOX_RFC §4.8, §4.10, §4.12 | The chat cap is the caps table's; the main service also swaps the splitter; one knob governs the main service's parser and splitter | §4.5, §4.9 |
-| UNTRUSTED_CONTENT_SANDBOX_RFC §7 S4 acceptance | Adds a scan opened in chat end to end under the P7 deadline; prefer the batched `drive.pdf_windows` op for the main service | P7 |
-| GMAIL_EMAIL_INDEXING_RFC §2.4 | `get_email_attachment` returns refs; content comes through `open_file`; the download of every attachment per call ends | D3, D4 |
+| UNTRUSTED_CONTENT_SANDBOX_RFC §7 S4 acceptance | Adds a scan opened in chat end to end within D7's deadline; prefer the batched `drive.pdf_windows` op for the main service | D7 |
+| GMAIL_EMAIL_INDEXING_RFC §2.4 | `get_email_attachment` is removed; `open_email_attachment` opens a ref or an id plus name; `get_email_details` lists refs; the download of every attachment per call ends | D3, D4, D11 |
 | `DRIVE_FILE_NOTES_RFC`, `SYSTEM_TURN_FINGERPRINT_RFC` | Only if P11 is accepted: they name `<drive_document>` / `wrap_untrusted` and follow the rename | P11 |
 | `decisions/grok_revival_2026_08.md` ("upstream converts non-images to text") | Becomes true: Grok declares no PDF, so PDFs reach it as text | D2 |
 
@@ -640,34 +709,27 @@ Each slice: tests first, the reviewer rule for any existing test, `make check` g
 | **U0 spikes** | §8 U0-a … U0-e | each result written down | first |
 | **U1 pieces** | P9; P10 moves; caps table; `PdfSplitterPort`; the marking function with a tag per store (drive unchanged) | no behaviour change; drive output byte-identical; indexer tests change import lines only | before S3 |
 | **U2 declaration** | P5 on four adapters (wire tests), the proxies forward, the four engine runners set the key per attempt, the coordinator drops it; FileManagement decides native from it (still through today's converter) | a PDF opened under Grok arrives as text, not dropped; the key never reaches a specialist or a Cloud Task body; DomainResearcher and Quick keep native reading | after U1 |
-| **U3 service** | `DocumentReadPort`, `DocumentService`, `build_document_service` (child parser, reader, audio); `open` for chat, delivered, workspace and drive opens; the deadline field; statuses and presentation; P13; the build-check fix; the legacy branch retired; with P18, prefetch in the worker | parsing on every interactive path runs in the child (either engine); a scan opened by a text-only consumer returns reader text; `PARSER_UNAVAILABLE` and `STILL_WORKING` presentations tested; no open exceeds FileManagement's timeout in tests; chat text marked after the owner's prompt upload | gated on U0-a, U0-c; before S4 |
-| **U4 email** | P8a, P8b, the `email:` branch, notes, the two service methods, the tool texts, save from an `email:` ref | the incident's first two steps pass on a synthetic multipart fixture (nested, inline, scan); email text marked after the owner's prompt upload; the owner's live check | after U3; native email opens wait for U0-a |
+| **U3 service** | `DocumentReadPort`, `DocumentService`, `build_document_service` (child parser, reader, audio); `open` for chat, delivered, workspace and drive opens; the two request limits; D7's cut; statuses and presentation; D9's span filter; P13; the build-check fix; the legacy branch retired; with P18, prefetch in the worker | parsing on every interactive path runs in the child (either engine); a scan opened by a text-only consumer returns reader text, at most the cap, noted "first N of M pages"; the `PARSER_UNAVAILABLE` note tested; no open exceeds its agent's timeout in tests; no file part in a captured span (D9); chat text marked after the owner's prompt upload | gated on U0-a, U0-c; before S4 |
+| **U4 email and send** | P8a, P8b; `open_email_attachment` (ref, or id plus name) replacing `get_email_attachment`; refs from `get_email_details`; the notes; the two service methods; the tool texts; save from an `email:` ref; `send_file_to_user` (D8) | the incident's three steps (read, save, send) pass on a synthetic multipart fixture (nested, inline, scan); a failed upload answers as a failure; email text marked and the email workflow line updated after the owner's prompt upload; the owner's live check | after U3; native email opens wait for U0-a |
 | **U5 one engine** | P4: markitdown's auto-detect path retired | U0-b differences accepted by the owner | only if P4 is accepted |
-| **Optional** | P11 rename; P14 email bodies and lines; P17 image normalisation; P8c; P8d; P19 | each its own PR | any time after U1 |
+| **Optional** | P11 rename; P14 email bodies and lines; P17 image normalisation | each its own PR | any time after U1 |
 | **S3 / S4** (sandbox RFC) | adapter swaps per §4.9 | no caller diff in the PR | as the sandbox RFC orders them |
 
 ## 8. Open questions and spikes
 
-**Open questions (owner)**
-- **OQ1. The surface for sending the original file to the owner.** D4 names the action ("send to the owner resolves
-  the same ref to bytes at action time"). Should it be an option on `open_file` or its own intent? It would build on
-  `UserNotificationService.notify_file_bytes` and `resolve_file(ref)` (§4.2), within platform caps (45 MiB, today's
-  video re-send cap).
-- **OQ2. File contents in captured orchestrator calls.** Native reading keeps file bytes inside the orchestrator's
-  calls, which Logfire captures with content on; the same mechanism ran the main service out of memory on 2026-10-15.
-  Should captured spans drop file contents (less debug detail, less memory)? U0-a tests whether that is possible.
-- **OQ3.** Retire `open_file_from_drive` after P12 has run for a while, or keep the alias for good? (low priority)
-- **OQ4.** The email cap: the shared 5 MiB (P8d), or keep 3 MB? (low priority)
-- **OQ5. A long scan opened in a conversation:** cut at the deadline and say which pages were read (P7), or answer
-  "still working" and post the rest to the chat later, as drive mutations do (`file_management_agent.py:125-127`,
-  USER_DRIVE_RFC §4.13)?
+**Open questions (owner):** none open. OQ1–OQ5 were closed by D7–D11 (2026-10-23).
 
 **Spikes**
-- **U0-a (D1's check). Logfire in the main service.** The pinned Logfire (4.40.0) exposes `suppress_instrumentation()`.
-  Check that the Anthropic, OpenAI and Google GenAI instrumentors honour it around one reader call, that the
-  orchestrator's spans in the same turn stay, and that a suppressed call's failure stays visible as a structured log
-  line (provider, error type, window). Also test dropping file-part contents from captured orchestrator spans (OQ2).
-  If suppression does not work, D1 reopens, as the owner stated.
+- **U0-a (D1's check, D9). How to keep file contents out of Logfire.** D9 requires it for every model call; the
+  spike finds how. Candidates:
+  - the pinned Logfire (4.40.0) `suppress_instrumentation()` around reader calls, checked against the Anthropic,
+    OpenAI and Google GenAI instrumentors;
+  - a filter that drops file parts from captured spans while calls, tokens and text stay, needed for the
+    orchestrator's own calls.
+
+  A suppressed call's failure must stay visible as a structured log line (provider, error type, window). If no way
+  keeps the reader's file contents out, D1 reopens, as the owner stated. U3 and native email opens wait for the
+  result.
 - **U0-b. Text equivalence of the two engines** on real chat and email files and on the drive evaluation corpus:
   differences listed per kind, then accepted or fixed before U5.
 - **U0-c. The child in the main service:** the uid switch in its execution environment; peak memory of one turn with
