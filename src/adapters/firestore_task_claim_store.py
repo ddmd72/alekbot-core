@@ -56,7 +56,7 @@ class FirestoreTaskClaimStore(TaskClaimStore):
             logger.debug("[TaskClaim] claim exists, checking holder: task=%s", key)
         snap = await ref.get()
         if not snap.exists:  # released between our create and get
-            return await self._claim(key, attempt, False) if retry_create else False
+            return await self._claim(key, attempt, False) if retry_create else True  # fail open: no holder to defer to
         data = snap.to_dict() or {}
         if not self._expired(data):
             if data.get("attempt") == attempt:
@@ -77,7 +77,7 @@ class FirestoreTaskClaimStore(TaskClaimStore):
     async def _after_lost_update(self, key: str, attempt: str, retry_create: bool) -> bool:
         snap = await self._doc(key).get()
         if not snap.exists:
-            return await self._claim(key, attempt, False) if retry_create else False
+            return await self._claim(key, attempt, False) if retry_create else True  # fail open: no holder to defer to
         return (snap.to_dict() or {}).get("attempt") == attempt
 
     async def _own(self, key: str, attempt: str) -> Optional[Any]:
