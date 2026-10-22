@@ -116,8 +116,9 @@ meta-tests below.
 ### 1.4 Defects found by this review
 
 > **Fixed in S1b (2026-10-22), pending deploy:** #1 (expired dedup mark), #2 and #3 (consolidation queue order; cleanup
-> removed), #4 (claim covers every delivery; daily review once per local date), #6 (deep-research origin platform),
-> #7 (DST: one review per local date), #8 (unknown `task_type` is a 400). Open: #5, #9-#13.
+> removed), #4 (claim covers every delivery; daily review once per local date), #5 (`execute_reminder`: one task per
+> fire, and its redelivery is now claimed), #6 (deep-research origin platform), #7 (DST: one review per local date),
+> #8 (unknown `task_type` is a 400). #9-#13: fixed on the infra branch of S1b (`fix/s1b-infra-in-git`).
 
 The two reviews found live defects while checking this plan. They are **fixed in a separate urgent session**, not in
 this RFC's packages; the packages below add the tests that would have caught each class.
