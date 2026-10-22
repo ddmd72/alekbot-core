@@ -1,26 +1,45 @@
 # RFC: The user drive through one specialist (`work_with_drive_files`)
 
-**Status:** Proposed, rev 2 (2026-10-22): the rulings on the three rev 1 reviews applied (§0). Nothing is built.
+**Status:** Proposed, rev 3 (2026-10-22): rev 2 applied the rulings on the three rev 1 reviews, rev 3 the scoped
+re-review of rev 2 (§0). Nothing is built.
 **Related:** `USER_DRIVE_RFC.md` (Step 1 operations, `drive:` refs, the mutation lock and shield §4.13, receipts §4.10),
 `USER_DRIVE_INDEXING_RFC.md` (Search v2 §25, the `drive-search` skill D32, inaccessible files §26.2, transcripts §27),
 `DRIVE_FILE_NOTES_RFC.md` rev 3.2 (notes; the notes change amends D4, D12 and N2 there, §9), `AGENT_SKILLS_RFC.md`,
 `TASKS_AGENT_RFC.md`, `PROACTIVE_SELF_REMINDERS_RFC.md` (the two specialists this one copies).
 **Research behind it** (private, gitignored, not quoted for owner data): `scripts/memory/drive_specialist_sketch.md`,
 `scripts/memory/drive_specialist_research/01`–`08`, the reviews `rfc_review_1_parity.md` (R1), `rfc_review_2_tool_shape.md`
-(R2), `rfc_review_3_feasibility.md` (R3) and the binding rulings `rfc_rev1_rulings.md`. Where this RFC differs from a
+(R2), `rfc_review_3_feasibility.md` (R3), the binding rulings `rfc_rev1_rulings.md`, and the re-review of rev 2
+`rfc_rev2_rereview.md` (RR) with its arbiter rulings. Where this RFC differs from a
 report, the owner's ruling of 2026-10-22 or the arbiter decided it.
 **Branch base:** `main` at `1e553d83` (after PR #132). Line references are to that commit; re-check them when building.
 **Where the code and this text differ once it is built, the code is the truth.**
 
 ---
 
-## 0. Changes: rev 1 → rev 2 (what changed, which review asked)
+## 0. Changes
+
+### 0.1 rev 2 → rev 3 (what changed, which review asked)
+
+| # | Change | Asked by |
+|---|---|---|
+| 1 | The coordinator's removed-intent line is dropped; today's generic unknown-intent error stays (residual in the decision record) | RR §4, M10, M11; arbiter |
+| 2 | Search-state lines appear only on answers that ran a search; a connection-state line only when no operation ran (§7.2) | RR I2; arbiter |
+| 3 | `report_to_orchestrator.not_done`: `not_possible` also after reads; a preflight state ranks above `not_possible`; the missing-item refusal is classed `not_possible`; an unknown `text_item` is refused and never written (§7.2, §8.1) | RR I1, M1, M2; arbiter |
+| 4 | Rollback also scans for texts written after the deploy (§13); the scan patterns are listed (§10 step 6) | RR I3, M5; arbiter |
+| 5 | `include_directives=False` declared in §2.3 | RR M6; arbiter |
+| 6 | `run_deadline` becomes `CURRENT_RUN_DEADLINE`, a process-local `ContextVar`, never in the context or a Cloud Task payload; cleared when an orchestrator runs without a timeout (§5.6) | RR M4; arbiter |
+| 7 | Sources: `workspace:<path>`; `copy_file_to_drive.file_name` keeps the source's extension when omitted, as today (§8.1) | RR M3 |
+| 8 | Notes: `add_to_note`, `set_note_type`, `add_life_areas` create the note when none exists; `get_note` takes the ordering lock; `replace_note_text` refused if the note changed since that read; a specialist-side line for note words found in a file item (§9.2) | RR M7, M8; arbiter |
+| 9 | `file_texts` → `file_contents`, described as file content only (§4.2) | RR M7.3; arbiter |
+| 10 | R2 I4's zero-hit half added to the "Not applied" table | RR M9; arbiter |
+
+### 0.2 rev 1 → rev 2 (what changed, which review asked)
 
 | # | Change | Asked by |
 |---|---|---|
 | 1 | Note tools: one tool per edit kind (`add_to_note`, `replace_note_text` only after `get_note`, `set_note_type` / `clear_note_type`, `add_life_areas` / `remove_life_areas`); classifier rules in the parameter descriptions; `item_ref`; `create_note.text` optional (§8.2, §9.2) | R2 C1, C2, I3, M6, M10 |
 | 2 | Drive tool parameters described for the specialist (no Smart-era texts); `folder` takes a path or a `drive:` ref everywhere, "created if missing" named; `search_deleted_recordings_and_notes`; `replace_file_content(target_ref, new_content_ref)`; `report_to_orchestrator` in the tool list; tools renamed `open_drive_file` / `delete_drive_item`; video side effect named (§8.1) | R2 I1, I2, I4, I8, I10, M1, M5; R1 F9, F14; R3 M8 |
-| 3 | `text_to_write` → `file_texts`, a list of items bound by code; batches of composed texts work as today; status `not_possible` (§4.2, §7.2) | R1 F1; R2 I5, I7; R3 M5 |
+| 3 | `text_to_write` → `file_texts` (rev 3: `file_contents`), a list of items bound by code; batches of composed texts work as today; status `not_possible` (§4.2, §7.2) | R1 F1; R2 I5, I7; R3 M5 |
 | 4 | Every read block reaches Smart verbatim, in run order; no `attach`, no default selection (§6) | R1 F2; R2 M2 |
 | 5 | Move and rename: one tool, one `svc.move` (§8.1) | R1 F3 |
 | 6 | Tool descriptions name today's accepted sources (`workspace:`, `skill:`, `drive:`, chat files, delivered keys); Smart's description asks for delivered document keys (§4.1, §8.1) | R1 F4; R2 I6 |
@@ -28,13 +47,13 @@ report, the owner's ruling of 2026-10-22 or the arbiter decided it.
 | 8 | No notes sentence on Smart until notes ship (§4.1, §9.5) | R1 F7 |
 | 9 | Smart-side skill rules (excerpt, 90 % value rule, "may be out of date", scan, versions, document vs memory, all/every) reach Smart as code-rendered reading lines with stated triggers (§7.3) | R1 F6 |
 | 10 | Deadlines: the engine runs as a task under the soft deadline, cancelled on timeout or `still_running`; reads and LLM calls clamped; the caller's budget respected on background runs (`run_deadline`); status `unfinished`; 6 turns / 150 s declared (§5.6) | R3 I1, I2, I6, M9; R1 F10, F12 |
-| 11 | Rollback: the owner's Firestore texts are rewritten intent-free (work before and after a revert), backed up first; workspace and prompt overrides scanned; §13 order restore → deploy → cache reset; a removed-intent line in the coordinator for one release (§10, §13) | R3 C1, I7; R1 F8, F11 |
+| 11 | Rollback: the owner's Firestore texts are rewritten intent-free (work before and after a revert), backed up first; workspace and prompt overrides scanned; §13 order restore → deploy → cache reset (§10, §13) | R3 C1, I7; R1 F8, F11 |
 | 12 | Migration green at every step: FileManagement keeps the internals tests touch; late-failure notices re-keyed on an operation enum; `smart_dry_run.py` and its 9 tests fixed in the cut (§10) | R3 I3, I4, I5 |
 | 13 | Notes core: `update` re-embeds on a re-merge, a same-content re-run is a no-op; one shared `DriveOperations` per user in a factory slot (§5.5, §9.2) | R3 I9, I10 |
 | 14 | A latency bar on drive-turn time, before vs after (§12) | R3 I8 |
 | 15 | Minors applied: status precedence (R1 F12); `user_message` labelled by origin, `file_data` parts filtered (R1 F13, R3 M4); partial ambiguity (R1 F15); full list of new strings, blocks keep their own reminder (R1 F16, R3 M2); prefetch caller named (R1 F17); safety wording (R1 F18, R3 M3); no dedup of `drive_context`, `ToolResult.failed` named (R1 F19); one op line per mutating call (R1 F20); success exceptions named (R3 M1); `include_directives=False` (R3 M6); the gate read and the notes switch injected (R3 M7); cost wording (R3 M10); the notes branch is already wired (R3 M11); token frontmatter (R3 M12); plain-text final reply (R3 M13); note listing out of scope (R2 M9); the per-op log line kept (R1 §4) | as named |
 
-**Not applied, with the reason:**
+**Not applied, with the reason (rev 2 and rev 3):**
 
 | Item | Reason |
 |---|---|
@@ -44,6 +63,7 @@ report, the owner's ruling of 2026-10-22 or the arbiter decided it.
 | R2 M8: rename `erase_note` | Ruling 1 names `erase_note`; its description says nothing is erased now |
 | R2 I9: "put a FILE anywhere" vs the workspace | Not ruled; today's wording is kept verbatim |
 | R2 I6, second half: "an email attachment cannot be saved" | Not ruled; stays a backlog item (Appendix A) |
+| R2 I4, second half: a zero-hit line for the deleted search | A new string; the tool's description and Smart's already name what that search covers |
 | R3 M14: the base is behind `main` | `1e553d83` is `main` after PR #132, newer than `4439d181` |
 
 ---
@@ -122,13 +142,15 @@ Items found on the way that are real but separate are listed in Appendix A as ba
    Smart gets today's still-running text at once (§5.4).
 9. Who asks "which file?": the specialist cannot ask the user, so it returns a question to Smart where Smart would
    have asked (`ambiguous`, §7.2).
+10. The specialist's prompt has no standing directives (`include_directives=False`, §5.2): they are written for the
+    orchestrator (the Lelik precedent). Smart still applies them in its reply and can carry one into the commission.
 
 ---
 
 ## 3. Design in one screen
 
 ```
-Smart ──delegate_to_specialist(work_with_drive_files, query, {file_texts?})──▶ DriveAgent (BALANCED, gpt-6-luna)
+Smart ──delegate_to_specialist(work_with_drive_files, query, {file_contents?})──▶ DriveAgent (BALANCED, gpt-6-luna)
                                                                                │ DelegationEngine task, local tools only,
                                                                                │ under the soft deadline
                                                                                ▼
@@ -151,7 +173,7 @@ Smart ──delegate_to_specialist(work_with_drive_files, query, {file_texts?})�
 | Search before mutate, then act by ref | `TasksAgent` | The ref is today's `drive:<id>`, shown in every card and label. Smart copied 123 of 123 correctly, so no second short-ref scheme (it would need a second rendering of every card) |
 | Multi-step loop: read, read, write, answer | `TasksAgent` | The drive needs "find, then move" and "open these five" in one commission |
 | Receipts written by code | `NotesAgent`, today's FileManagement | Unchanged: delete and replace post `notify_raw` receipts |
-| Strict code validation with correctable tool errors; content bound by code, never retyped | `NotesAgent` (`workspace_file`) | `file_texts` items are bound by code like `workspace_file` |
+| Strict code validation with correctable tool errors; content bound by code, never retyped | `NotesAgent` (`workspace_file`) | `file_contents` items are bound by code like `workspace_file` |
 | Fail fast on a missing prompt | `NotesAgent` (not `TasksAgent`, which degrades to an empty prompt) | Root `CLAUDE.md`: no fallback prompts |
 | Loop engine | `DelegationEngine` with local tools (not a hand-rolled loop like either) | It already folds `history_context`, `delivery_items` and `file_data`, keeps the 1:1 tool-result guard and the spans (`src/agents/CLAUDE.md`: do not hand-roll) |
 
@@ -189,7 +211,7 @@ Intent.WORK_WITH_DRIVE_FILES: (
     "Write query as a natural-language instruction with the full picture: what the user wants, the words to find as "
     "the user wrote them, every drive: ref, [File: …] label and delivered document key it points at, and the facts "
     "from this conversation it needs. "
-    'Texts to save or append: context={"file_texts": [<one item per file>]}. '
+    'File contents to save or append: context={"file_contents": [<one item per file>]}. '
     "Returns a status and a 'What to do:' line (follow it), then every result verbatim; images and PDFs come attached."
 ),
 ```
@@ -204,13 +226,14 @@ notes sentence:** the notes change adds it (§9.5).
 
 ```python
 context_schemas={Intent.WORK_WITH_DRIVE_FILES: {
-    "file_texts": {
+    "file_contents": {
         "type": "array",
         "description": (
-            "work_with_drive_files only: one item per text to write, each exactly as it is to be written (text you "
-            "composed or the user gave): a new text file as {\"name\": \"<file name with extension>\", \"text\": "
-            "\"<full content>\"}, or text to add at the end of a text file as {\"target\": \"<drive: ref of that "
-            "file>\", \"text\": \"<text to add>\"}. Leave it out when nothing is written."
+            "work_with_drive_files only: the content of text files, one item per file, each exactly as it goes into "
+            "the file (text you composed or the user gave): a new text file as {\"name\": \"<file name with "
+            "extension>\", \"text\": \"<full content>\"}, or text to add at the end of a text file as {\"target\": "
+            "\"<drive: ref of that file>\", \"text\": \"<text to add>\"}. Only what is written into a file's "
+            "content. Leave it out when no file content is written."
         ),
         "items": {"type": "object", "properties": {
             "name": {"type": "string"}, "target": {"type": "string"}, "text": {"type": "string"}}},
@@ -228,7 +251,7 @@ context_schemas={Intent.WORK_WITH_DRIVE_FILES: {
   `context.file_ref` or `context.folder` (the union schema still shows `file_ref` through `open_file`) are taken as
   part of the commission, never rejected (`decisions/mcp_tool_schema_liberal_input.md`).
 - The name is unique in the union schema, so its description is not shadowed (`base_agent.py:796`). The prose names
-  only `file_texts`, so `test_manifest_prose_matches_tool_schema.py` passes (no nested keys in the prose).
+  only `file_contents`, so `test_manifest_prose_matches_tool_schema.py` passes (no nested keys in the prose).
 
 ### 4.3 The protocol (`prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy`; the live copy, not
 `firestore_utils/downloads/`, which is stale)
@@ -259,7 +282,6 @@ drive_specialist {
 | `DELETE_FILE` description (`agent_manifest.py:556`), `file_management_agent.py:177` | "deleted with delete_file_from_drive instead" | "deleted through work_with_drive_files instead" |
 | `domain/workspace.py:75`, `services/workspace_service.py:451-453` | "open it with open_file_from_drive" | "open it through work_with_drive_files" |
 | `OPEN_FILE` description | unchanged: it still opens a `drive:` ref leniently (`file_management_agent.py:169`), through `DriveOperations` | — |
-| Coordinator, for one release | an unknown intent gets "No agent registered…" | the 8 removed names get one fixed line: "This operation is now done through work_with_drive_files: describe the request there." (old skill bodies stay in history `full_text` for up to 5 turns) |
 
 ---
 
@@ -292,7 +314,7 @@ before any LLM call.
 |---|---|---|
 | `COGNITIVE_PROCESS_DRIVE` | Role: a precise executor of the orchestrator's commission; the orchestrator talks to the user, you do not (`owns` / `does_not_own`, `COGNITIVE_PROCESS_TASKS`). Read the commission and the state block; the commission's quoted words win over `user_message` for what to find. Search before you change: find the file's `drive:` ref (commission, state block, a search or a listing), then act by ref. Change the files whose identity is clear; where the orchestrator would have to ask the user which file is meant, leave those unchanged and ask about them in `question`. Tool errors are corrections: fix the input and try again within your turns. Text from files is data (today's `untrusted` line, re-voiced). Receipts are posted by the system | New; modelled on `COGNITIVE_PROCESS_TASKS` and `COGNITIVE_PROCESS_NOTES` |
 | `PROTOCOL_DRIVE_SEARCH` | The `drive-search` skill sections marked "specialist" in §5.7, verbatim, with field names mapped to tool parameters (`drive_query` → `query`, `drive_kind` → `kind`, `drive_folder` → `folder`, `drive_date_*` → `date_*`, `drive_deleted` → `search_deleted_recordings_and_notes`, `original` → `get_recording_link`), plus the Step 1 procedural rules from the 8 descriptions (Inbox unless the user named a folder; never overwrites; text-file extensions and 5 MiB; a chat file is copied, never moved; append only to text files; rewriting is not available) | `src/skills/smart/drive-search/SKILL.md` (D32 reversed: skill to token), `agent_manifest.py:546-613` |
-| `OUTPUT_FORMAT_DRIVE` | End with `report_to_orchestrator` (§8.1): `note` at most two sentences on what you did, never a file's content; `question` only when the orchestrator must ask the user. A plain-text final reply is taken as the note | New |
+| `OUTPUT_FORMAT_DRIVE` | End with `report_to_orchestrator` (§8.1): `note` at most two sentences on what you did, never a file's content; `question` only when the orchestrator must ask the user; `not_done` for what was asked that no tool can do. A plain-text final reply is taken as the note | New |
 | `PROTOCOL_DRIVE_NOTES` | **Notes change only** (§9) | notes plan Task A1, re-voiced |
 
 New token files carry the mirror's frontmatter (`category`, `class`, `override_by`, `validation`, `source_file`;
@@ -307,7 +329,7 @@ drive_state {
   now: <date time> <user timezone>
   user_message (<origin>): "<text parts of the turn's message, verbatim>"
   attached_now: [File: "<name>" (<size>)] …
-  file_texts: t1 name "<name>" <N> characters, first line "<…>"; t2 target drive:<id> <N> characters, …
+  file_contents: t1 name "<name>" <N> characters, first line "<…>"; t2 target drive:<id> <N> characters, …
 }
 ```
 
@@ -317,7 +339,7 @@ drive_state {
 | `now` | the coordinator's `[Mon DD, HH:MM UTC]` prefix and `UserBotConfig.timezone` | Date filters in the user's timezone |
 | `user_message (<origin>)` | text parts of `context["current_message_parts"]` without `file_data` parts (`[File: …]` labels are filtered). The origin label is `chat`, `call (Lelik's words)` on `ask_alek`/`tell_alek` (`alek_gateway_agent.py:101`), `background: <task type>` on notify paths, `fallback` on the Quick fallback (`agent_fallback_service.py:126`) | **The user's own words** on chat turns, required by strict-AND search keys (§2.3.5). Off chat the label says whose words they are; on a call they are not the owner's spoken words |
 | `attached_now` | `MessagePart.file_data` of the same parts | "Save this" without Smart copying the ref |
-| `file_texts` | the commission's field (§4.2) | The model picks the tool and the item; it never types the content |
+| `file_contents` | the commission's field (§4.2) | The model picks the tool and the item; it never types the content |
 
 The specialist does not read session history. Smart holds `drive_context` and passes refs in the commission
 (research 04 §5): no new plumbing.
@@ -362,8 +384,8 @@ execution (the `workspace_tools.py` pattern) and write every outcome into the pe
 | Budget | Value | Reason |
 |---|---|---|
 | Hard timeout | 180 s (`BaseAgent._execute_with_timeout`) | A backstop only; the soft deadline is meant to end every run first |
-| Soft deadline (absolute, monotonic) | `min(start + 150 s, now + clock.call_timeout() − 15 s if CURRENT_TURN_CLOCK is set, run_deadline − 20 s if set)` | The run ends with its collector before any outer limit, so Smart learns what was done |
-| `run_deadline` | **New:** `BaseAgent._execute_with_timeout` sets `context["run_deadline"]` (monotonic) for orchestrators; it spreads to the specialist with the rest of the context | Background SLAs: an ECO reminder fire gives Smart 180 s (`notification_sla.py:84-89`), interactive notify and deep-research delivery 300 s, none with a turn clock. Today FileManagement stops at 120 s (`user_agent_factory.py:864`) |
+| Soft deadline (absolute, monotonic) | `min(start + 150 s, now + clock.call_timeout() − 15 s if CURRENT_TURN_CLOCK is set, CURRENT_RUN_DEADLINE − 20 s if set)` | The run ends with its collector before any outer limit, so Smart learns what was done |
+| `CURRENT_RUN_DEADLINE` | **New:** a process-local `ContextVar` (monotonic), the `CURRENT_TURN_CLOCK` precedent. `BaseAgent._execute_with_timeout` sets it for orchestrators from their own timeout and **clears** it when an orchestrator runs without one (`base_agent.py:684`); each orchestrator overwrites the outer value. It is never put in `message.context`, so it never rides into a Cloud Task payload (`agent_coordinator.py:429`), where a monotonic value means nothing; `gather` copies it into the specialist's task | Background SLAs: an ECO reminder fire gives Smart 180 s (`notification_sla.py:84-89`), interactive notify and deep-research delivery 300 s, none with a turn clock. Today FileManagement stops at 120 s (`user_agent_factory.py:864`) |
 | Engine task | `asyncio.wait_for` until the soft deadline; on timeout it is cancelled, shielded mutations keep running | Every exit returns the answer from the collector |
 | LLM calls | `DriveAgent`'s `call_llm` closure passes `timeout = min(adapter default, soft deadline left)` | An overrunning call cannot cross the deadline |
 | Reads | each read handler runs under `wait_for(…, soft deadline left)`; on timeout its op line is `not done: did not finish in time` | A read started late cannot cross the deadline |
@@ -432,7 +454,7 @@ Gemini takes parts, Grok takes images and drops PDFs (today's behaviour). Wire t
 ```
 Drive result: <status>
 What to do: <line>
-<state line>                     (today's text for not connected / not configured / indexing off / rebuilding, §7.2)
+<state line>                     (today's text for a drive or search state, §7.2)
 1. done: <today's text>          (one op line per mutating call, numbered by step, in order)
 2. not done: <today's text>
 Reading: <line>                  (zero or more, selected by code, §7.3)
@@ -447,8 +469,9 @@ engine folded (receipts of the notes change).
 - **"What to do"** is today's message of the operation that decided the status, verbatim (after §7.6). For an `ok`
   with changes it is `Done.`; for an `ok` read, `Answer from the results below.`
 - **The status is set by code** from the outcome classes, never by the model. The model adds only `question`
-  (→ `ambiguous` when no change succeeded, else `partial` with the question as the line) and its note, rendered
-  after the status lines.
+  (→ `ambiguous` when no change succeeded, else `partial` with the question as the line), `not_done` (→
+  `not_possible` when no change succeeded, else `partial`) and its note, rendered after the status lines. Both can
+  only lower a status, never raise one to `ok`.
 - `ToolResult.failed` is never set on a drive answer; nothing reads it outside fan-out (`delegation_engine.py:807-855`),
   and FileManagement's returned failures counted as successes for the circuit breaker anyway.
 
@@ -460,18 +483,22 @@ The status is the first that applies:
 |---|---|---|---|
 | 1 | `still_running` | a mutation passed its wait | today's `STILL_RUNNING`; the late notice as today |
 | 2 | `unfinished` | the soft deadline, an engine exception or the turn limit cut an operation, or none could finish | `The drive assistant could not finish; what ran is listed below.` |
-| 3 | `partial` | some changes done, some not (or a `question` after some changes) | `Only part was done:` + the op lines |
-| 4 | the first failed change's status (`refused`, `failed`, `not_found`, `not_connected`) | changes attempted, none done | today's text of that op |
+| 3 | `partial` | some changes done, some not (or a `question` or `not_done` after some changes) | `Only part was done:` + the op lines |
+| 4 | the first failed change's status (`refused`, `failed`, `not_found`, `not_connected`, `not_possible`) | changes attempted, none done; a text tool refused for a missing or unknown item counts as a failed change of class `not_possible` | today's text of that op; for a missing item: `Nothing was written: the text was not attached. Commission again with context.file_contents holding the full text.` |
 | 5 | `ambiguous` | the model's `question`, no change done | the question, with the candidates' cards among the blocks |
-| 6 | `not_possible` | no operation ran and no question; or a text tool without its `file_texts` item (handler refuses with no service call) | `Nothing was done: <specialist note>`; for a missing item: `Nothing was written: the text was not attached. Commission again with context.file_texts holding the full text.` |
-| 7 | `ok` | at least one change done and none failed, or a read produced content | `Done.` / `Answer from the results below.` |
-| 8 | the most informative read failure: `not_connected`, `rebuilding`, `indexing_off`, `refused`, `failed`, `not_found` | reads only, none produced content | today's text of that read |
+| 6 | the preflight's connection state (`not_connected`; `failed` for not configured) | no operation ran at all | today's text: `_NOT_CONNECTED` ("…Ask them to connect it in the Cabinet.") / `The drive is not configured.` |
+| 7 | `not_possible` | `not_done` given and no change done, **reads included**; or no operation ran and no question | `Nothing was done: <not_done or specialist note>` |
+| 8 | `ok` | at least one change done and none failed, or a read produced content | `Done.` / `Answer from the results below.` |
+| 9 | the most informative read failure: `not_connected`, `rebuilding`, `indexing_off`, `refused`, `failed`, `not_found` | reads only, none produced content | today's text of that read |
 
-**State lines, delivered by code.** When the preflight (§5.3) shows `not connected`, `not configured`, `indexing off`
-or `rebuilding`, and no operation of the run returned that state's own text, code adds today's text for it as the state
-line (and status 8 takes that state when nothing else applies). The texts: `_NOT_CONNECTED` ("…Ask them to connect it
-in the Cabinet."), `The drive is not configured.`, the search `disabled` text, `REBUILDING_LINE`. So the model cannot
-skip them. A missing drive service (`not configured`) answers at once, with no LLM call.
+**State lines, delivered by code.**
+- **Connection state** (`not connected`, `not configured`): when the preflight (§5.3) shows it and **no operation ran**
+  (the model skipped the tools), code renders today's text as the state line (row 6). Where an operation ran, its own
+  result carries today's text, as now.
+- **Search state** (`indexing off`, `rebuilding`): only on an answer that **ran a search**; that search's own text
+  (the `disabled` text, `REBUILDING_LINE`) is raised into the state line. A save, listing or open carries no indexing
+  text, as today.
+- A missing drive service (`not configured`) answers at once, with no LLM call.
 
 | Status | Today's outcomes (`file_management_agent.py`, `drive_search.py`; research 05 §1 has the full list) |
 |---|---|
@@ -521,7 +548,7 @@ blocks, where today the whole skill body rode in history.
 `Drive result: <status>`, `What to do:`, `Done.`, `Answer from the results below.`, `Only part was done:`,
 `done:` / `not done:`, `Reading:`, `Specialist note:`, `[Result rN, step N: <kind>]` and its "before the changes in
 steps …" suffix, the two stand-in lines (§6), `did not finish in time`, `not started: the time for this request ran
-out`, the `unfinished` line, the two `not_possible` lines, and the coordinator's removed-intent line (§4.4). Every
+out`, the `unfinished` line and the two `not_possible` lines. Every
 other line Smart or the specialist reads is today's text (after §7.6).
 
 ### 7.6 Strings that name intents or fields Smart no longer has
@@ -557,16 +584,17 @@ descriptions are specialist-owned constants in `src/domain/drive_tool_texts.py`.
 | `list_folder` | List one folder, folders first. | `folder` (opt; empty = top level) | `list` |
 | `open_drive_file` | Open a drive file for the orchestrator: its text, the image or PDF itself, or a recording's transcript; a video is sent to the user's chat instead. | `file_ref` (a `drive:` ref; a chat file, `workspace:` or `skill:` ref is opened from storage, as today) | `open` |
 | `get_recording_link` | A link to a recording itself, only when the user asks for the recording, not its content. | `file_ref` | `open` with `original` |
-| `copy_file_to_drive` | Keep a copy of a file on the drive; never overwrites, the result states the name used. | `source_ref`: a chat file name from `[File: …]`, a delivered document key, a `workspace:files/…` copy or a `skill:` file; never a `drive:` ref. `folder` (opt, only if the user named one; default Inbox; created if missing). `file_name` (opt) | `copy` |
-| `save_text_file` | Save one attached text as a new text file; never overwrites. | `text_item`: `t1`… from `file_texts`. `file_name` (opt: defaults to the item's name; ends in .md .txt .csv .json .yaml .yml .html .svg or .xml). `folder` (opt; created if missing) | `save_text`; content = the item's text |
+| `copy_file_to_drive` | Keep a copy of a file on the drive; never overwrites, the result states the name used. | `source_ref`: a chat file name from `[File: …]`, a delivered document key, a `workspace:<path>` file or a `skill:` file; never a `drive:` ref. `folder` (opt, only if the user named one; default Inbox; created if missing). `file_name` (opt; the source's extension is kept if omitted) | `copy` |
+| `save_text_file` | Save one attached text as a new text file; never overwrites. | `text_item`: `t1`… from `file_contents` (a value that names no item is refused and nothing is written). `file_name` (opt: defaults to the item's name; ends in .md .txt .csv .json .yaml .yml .html .svg or .xml). `folder` (opt; created if missing) | `save_text`; content = the item's text |
 | `create_folder` | Create a folder and any missing parents. | `folder` | `create_folder` |
 | `move_file` | Move and/or rename a file or folder in one step. | `file_ref`; `folder` (opt: destination; created if missing); `new_name` (opt: extension included for files); at least one of them | `move` (one `svc.move(folder, new_name)`, as today) |
-| `append_to_file` | Add one attached text at the end of a text file. | `text_item`: `t1`…; `file_ref` (opt: defaults to the item's target) | `append`; text = the item's text |
-| `replace_file_content` | Replace a drive file's whole content with another file's; the user gets a notice with old and new size. | `target_ref`: the `drive:` file whose content is replaced. `new_content_ref`: the file whose content goes in: a chat file, a delivered document, a `workspace:files/…` copy, a `skill:` file, or another `drive:` file | `replace` + receipt |
+| `append_to_file` | Add one attached text at the end of a text file. | `text_item`: `t1`… (a value that names no item is refused and nothing is written); `file_ref` (opt: defaults to the item's target) | `append`; text = the item's text |
+| `replace_file_content` | Replace a drive file's whole content with another file's; the user gets a notice with old and new size. | `target_ref`: the `drive:` file whose content is replaced. `new_content_ref`: the file whose content goes in: a chat file, a delivered document, a `workspace:<path>` file, a `skill:` file, or another `drive:` file | `replace` + receipt |
 | `delete_drive_item` | Delete a file or a whole folder (recoverable from the recycle bin); the user gets a notice. | `file_ref` | `delete` + receipt |
-| `report_to_orchestrator` (terminal) | Finish: what you did, in one or two sentences. | `note`: at most two sentences, never a file's content. `question` (opt): only when the orchestrator must ask the user which file is meant; name the candidates | — (code builds the answer; **every** read block is delivered, §6) |
+| `report_to_orchestrator` (terminal) | Finish: what you did, in one or two sentences. | `note`: at most two sentences, never a file's content. `question` (opt): only when the orchestrator must ask the user which file is meant; name the candidates. `not_done` (opt): what was asked that no tool can do; empty otherwise | — (code builds the answer; **every** read block is delivered, §6) |
 
-`save_text_file` and `append_to_file` are always declared; without an item the handler answers `not_possible` (§7.2).
+`save_text_file` and `append_to_file` are always declared; without a matching item the handler refuses with no service
+call, and the refusal is classed `not_possible` (§7.2). `OUTPUT_FORMAT_DRIVE` describes `not_done` next to `question`.
 
 ### 8.2 Shape check (`feedback_llm_tool_shape_crud`; common requests, read from names and parameters alone)
 
@@ -580,7 +608,7 @@ descriptions are specialist-owned constants in `src/domain/drive_tool_texts.py`.
 | "Move it to Archive as report-2025.pdf" | one `move_file(ref, folder, new_name)` | one provider call, as today |
 | "Replace the lease with the new version I sent" | `replace_file_content(target_ref, new_content_ref)` | direction in the names |
 | "Delete the old scans" | `search_drive` → `delete_drive_item` × the ones clearly meant; `question` for the rest | the judgement Smart makes today |
-| "Restore the file I deleted" | none fits → `not_possible` with the note | no false `ok` |
+| "Restore the file I deleted" | perhaps a search first, then `report_to_orchestrator(not_done="restoring a deleted file")` → `not_possible` | no false `ok`, also after reads |
 
 ---
 
@@ -602,7 +630,7 @@ RFC ships first. The notes change then **removes the Smart-wired commits** and r
 | Erase needs a code | `erase_note` → `request_erase`; the code rides only in `DeliveryItem.data`, never in a `result_str`; `$drive-notes erase <code>` runs in `ConversationHandler` before any LLM call (plan C6) |
 | D21: an archived or other-drive note is edited, undone, cleared and erased by its `drive_note:` ref, store only; only a NEW note for a gone or other-drive file is refused | the core's ref semantics; `create` and `update` follow `set`'s |
 | No note text in session history | `drive_note_context` is `[Drive note: <path> ref=… v<n>]`, text-free; the op lines to Smart name the file and version, never the note's words. A `get_note` answer reaches Smart wrapped, the same class as a card's `noted by the owner:` line (notes RFC §9) |
-| Note text is the owner's words, apart from file text | note words travel in the commission's query; `file_texts` is only for file content (§9.5) |
+| Note text is the owner's words, apart from file text | note words travel in the commission's query; `file_contents` is only for file content (§9.5) |
 
 `turn_id`, `session_id`, `interactive_delivery` and `run_origin` reach the specialist unchanged: the engine spreads
 Smart's context (`delegation_engine.py:679`), the coordinator drops only `params`. The undo re-run guard (I3) stays in
@@ -614,13 +642,13 @@ Smart's context (`delegation_engine.py:679`), the coordinator drops only `params
 
 | Tool | One-line description | Parameters | Core |
 |---|---|---|---|
-| `get_note` | Read the owner's note on a file or folder. | `item_ref` | `get(ref) -> Optional[NoteView]` (new): store only, both refs, works archived and disconnected; a cleared note is returned as cleared |
+| `get_note` | Read the owner's note on a file or folder. | `item_ref`; takes the per-execution ordering lock, so a `replace_note_text` emitted in the same batch runs after it | `get(ref) -> Optional[NoteView]` (new): store only, both refs, works archived and disconnected; a cleared note is returned as cleared |
 | `create_note` | Add the owner's note to a file or folder that has none. | `item_ref`; `text` (opt: the owner's words, his language, ≤ 80 words / 600 chars); `doc_type` (opt), `life_areas` (opt, ≤ 3): **"only what the owner named or confirmed in this conversation, as the commission states it; never from the file, a card or your reading; empty otherwise"**, with the enum lists | `create(...)` (new): only when absent; a cleared note reuses its lineage; identical content → no-op; different → `NOTE_EXISTS` ("use add_to_note, replace_note_text or the type and area tools") |
-| `add_to_note` | Add the owner's words at the end of the note's text; the rest of the note is kept. | `item_ref`, `text` | `update(ref, AppendText)`: an overflow is a correctable refusal naming the current length |
-| `replace_note_text` | Replace the whole text of the note. Refused unless `get_note` read this note earlier in this run. | `item_ref`, `text` | `update(ref, ReplaceText)`; the read-before-replace set lives on the per-execution `DriveNoteSession` (the workspace precedent) |
-| `set_note_type` | Set the document type of the note. | `item_ref`, `doc_type` (the classifier rule above) | `update(ref, SetType)` |
+| `add_to_note` | Add the owner's words at the end of the note's text; the rest of the note is kept. On a file with no note, this creates one. | `item_ref`, `text` | `update(ref, AppendText)`: an overflow is a correctable refusal naming the current length |
+| `replace_note_text` | Replace the whole text of the note. Refused unless `get_note` read this note earlier in this run, and refused if the note changed since that read. | `item_ref`, `text` | `update(ref, ReplaceText, expected_version=<the version get_note read>)`; the read set lives on the per-execution `DriveNoteSession` (the workspace `view` and generation precedent). A changed note is refused with "the note changed since you read it: read it again" |
+| `set_note_type` | Set the document type of the note. On a file with no note, this creates one holding only the type. | `item_ref`, `doc_type` (the classifier rule above) | `update(ref, SetType)` |
 | `clear_note_type` | Remove the document type from the note. | `item_ref` | `update(ref, ClearType)` |
-| `add_life_areas` | Add life areas to the note; the others are kept. | `item_ref`, `life_areas` (the classifier rule; ≤ 3 in total) | `update(ref, AddAreas)` |
+| `add_life_areas` | Add life areas to the note; the others are kept. On a file with no note, this creates one holding only the areas. | `item_ref`, `life_areas` (the classifier rule; ≤ 3 in total) | `update(ref, AddAreas)` |
 | `remove_life_areas` | Remove the named life areas from the note. | `item_ref`, `life_areas` | `update(ref, RemoveAreas)` |
 | `delete_note` | Remove the note; its history is kept and undo brings it back. | `item_ref` | `clear(ref)` |
 | `undo_note` | Put the note back as it was before its last change. | `item_ref` | `undo(ref, provenance)` |
@@ -630,8 +658,11 @@ Core additions, all additive; existing core tests stay green unedited:
 - `NoteChange` (pure, `drive_note.py`): one change kind per value (`AppendText`, `ReplaceText`, `SetType`,
   `ClearType`, `AddAreas`, `RemoveAreas`), each validated by the existing checks; `NoteView`; refusals
   `NOTE_EXISTS`, `EMPTY_CHANGE`.
-- `update(ref, change)`: only when the note has content (none or cleared → `NO_NOTE`, "use create_note"); `drive:`
-  ref follows `set`'s live path (D17), `drive_note:` store only (D21).
+- `update(ref, change, expected_version=None)`: on a note with content it applies the change. With no note, or a
+  cleared one, the additive kinds (`AppendText`, `SetType`, `AddAreas`) create the note holding only that change, under
+  `create`'s rules (a cleared note reuses its lineage; D17 and D21: no NEW note for a gone or other-drive file); the
+  other kinds answer `NO_NOTE` ("use create_note"). `drive:` ref follows `set`'s live path (D17), `drive_note:` store
+  only (D21). `expected_version` (from `get_note`) refuses when the current version differs.
 - private `_write(compose)` shared by `set`, `create`, `update`: `compose(current)` runs **inside** the conflict-retry
   loop on each attempt, so a concurrent write is re-merged, never overwritten; the content is **re-embedded whenever
   it differs from the content last embedded**; a composed triple equal to the current one is a **no-op receipt, never
@@ -643,10 +674,10 @@ Core additions, all additive; existing core tests stay green unedited:
 | Task | Verdict | What |
 |---|---|---|
 | 0 | = | core cleanup |
-| A1 `drive-file-notes` skill | **replaced** | its text becomes `PROTOCOL_DRIVE_NOTES`, re-voiced, with one tool per edit kind; "replace, never append" retired |
+| A1 `drive-file-notes` skill | **replaced** | its text becomes `PROTOCOL_DRIVE_NOTES`, re-voiced, with one tool per edit kind; "replace, never append" retired; one added line: "A `file_contents` item is never a note's words; when a note change has its words only there, ask through `question`." |
 | A2 `LoadedSkills` (skill gate) | **dropped** | the rules are always in the writer's prompt |
 | A3 receipt renderer, `UIMessage.DRIVE_NOTE_*`, locales | = | the emitter moves, the receipt does not |
-| A4 `annotate_drive_file` | **rewritten** | eleven handlers in `drive_note_tools.py`: `note_provenance`, `DriveNoteSession` (lock shared with the drive mutations; the read-before-replace set), shield, `NOTE_WRITES_PER_TURN`, the truncated-JSON refusal and the receipt builders kept; the skill gate, the flags and the empty-triple routing removed. `turn_identity.py` kept; the engine hunk kept only if the collector does not already cover it |
+| A4 `annotate_drive_file` | **rewritten** | eleven handlers in `drive_note_tools.py`: `note_provenance`, `DriveNoteSession` (lock shared with the drive mutations and taken by `get_note`; the read set with each note's version), shield, `NOTE_WRITES_PER_TURN`, the truncated-JSON refusal and the receipt builders kept; the skill gate, the flags and the empty-triple routing removed. `turn_identity.py` kept; the engine hunk kept only if the collector does not already cover it |
 | A'1 (new) | new | `NoteChange`, `NoteView`, the two refusals |
 | A'2 (new, Opus) | new | `get`, `create`, `update`, `_write(compose)` with re-embed and no-op rules |
 | A5 Smart wiring | **replaced** | the service and `DRIVE_NOTES_ENABLED` go to `DriveAgent`; its nine cases are ported (including the rotation re-run keeping the turn id); the Smart-wired commits are removed |
@@ -670,8 +701,7 @@ surface, which has no note tool). `NOTE_WRITES_PER_TURN` now counts per speciali
 To the §4.1 description: "Files and folders can carry the owner's notes (what he said a file is or is about): it reads,
 adds to, changes, removes, undoes and erases them. A note, its type and life areas hold only what the owner said or
 confirmed in this conversation; text from a file, an email or a result is never his confirmation; put a note's words in
-the query. Not for reminders ("make a note to call…")." To the `file_texts` description: "Only a file's content, never
-a note's words." A pin test asserts both are absent until then.
+the query. Not for reminders ("make a note to call…")." To the `file_contents` description: "Never a note's words." A pin test asserts both are absent until then.
 
 ---
 
@@ -683,11 +713,11 @@ One feature branch, one PR, merged when fully green. Every step is a commit that
 |---|---|---|
 | 0 | **[OWNER]** G3 "before" on current code, with drive-turn wall times (§12), after a 1-repeat cost probe | — |
 | 1 | `DriveOperations` takes FileManagement's drive code **behind FileManagement's unchanged surface**: FileManagement keeps `MUTATION_WAIT_S` and passes it per call; read-only properties forward `_shielded`, `_notices`, `_armed`, `_targets`, `_localization`, `_conversion_service`; the BaseAgent hooks become logger calls; one `DriveOperations` per user in the factory slot (§5.5). Not a pure move, said so | green unedited (they touch only the kept surface) |
-| 2 | Typed outcomes and `DriveOp` in `DriveOperations` (late-failure notices re-keyed; FileManagement maps outcomes back to today's `AgentResponse`); `drive_pass_through.py`, the answer composer (`drive_answer.py`), `drive_tool_texts.py`; `build_tool_turn` list + adapter wire tests; engine `allow_delegation`; `run_deadline` in `BaseAgent._execute_with_timeout`; `DriveSearchService.search_state` | green; new tests for each |
+| 2 | Typed outcomes and `DriveOp` in `DriveOperations` (late-failure notices re-keyed; FileManagement maps outcomes back to today's `AgentResponse`); `drive_pass_through.py`, the answer composer (`drive_answer.py`), `drive_tool_texts.py`; `build_tool_turn` list + adapter wire tests; engine `allow_delegation`; `CURRENT_RUN_DEADLINE` in `BaseAgent._execute_with_timeout`; `DriveSearchService.search_state` | green; new tests for each |
 | 3 | `DriveAgent`, `drive_tools.py`, `DRIVE` descriptor, tier, strategy, config, factory wiring (lazy builder, `preload_cache`); prompt files under `prompts_snapshot/` (§10.1); `DryRunDriveOperations` for G3 and `ab_agent_models.py` and its test; the owner-text scan script (`scripts/memory/`, read-only) | green (the default-tier and prose-schema tests cover the new agent) |
-| 4 | **The cut**, one commit: remove the 8 intents from `FILE_MANAGEMENT` and `Intent`; delete `src/skills/smart/drive-search/`; the protocol edit (mirror + `firestore_utils/uploads/PROTOCOL_AGENT_SELECTION.json`, pinned equal); §4.4 and §7.6 wording; the coordinator's removed-intent line; `smart_dry_run.py`'s intent reads (`:101-108, 304-383`) and its metrics (`drive_status` instead of `failed`, `:331,345,383`) rewritten together with its 9 importing test files; FileManagement drive tests re-targeted to `DriveOperations` / the tools | reviewer verdicts applied in this commit (§11.2) |
-| 5 | `drive_routing_probe.py` and `drive_query_vocabulary.py` read the specialist's tool calls; docs: root `CLAUDE.md` roster (new row, FileManagement row), `src/agents/CLAUDE.md`, `docs/05_building_blocks/user_drive/README.md`, `NEW_AGENT_PLAYBOOK.md` stale token name, decision record `decisions/drive_specialist.md` | green |
-| 6 | **[OWNER], before the deploy:** run the scan over the owner's custom skills (`drive-workspace`, `drive-inbox`, `document-facts-batches` and any other), stored reminder instructions, standing directives, workspace files (`projects/`, `references/`) and user/account prompt overrides; **back up** every hit to `scripts/memory/` (skills with their version numbers); rewrite each hit so it names **no intent** ("find it on the drive", "save it to the drive"), as a new skill version where the store is versioned. Intent-free text works with the old code and the new, so it can land first and survives a revert | — |
+| 4 | **The cut**, one commit: remove the 8 intents from `FILE_MANAGEMENT` and `Intent`; delete `src/skills/smart/drive-search/`; the protocol edit (mirror + `firestore_utils/uploads/PROTOCOL_AGENT_SELECTION.json`, pinned equal); §4.4 and §7.6 wording; `smart_dry_run.py`'s intent reads (`:101-108, 304-383`) and its metrics (`drive_status` instead of `failed`, `:331,345,383`) rewritten together with its 9 importing test files; FileManagement drive tests re-targeted to `DriveOperations` / the tools | reviewer verdicts applied in this commit (§11.2) |
+| 5 | `drive_routing_probe.py` and `drive_query_vocabulary.py` read the specialist's tool calls; docs: root `CLAUDE.md` roster (new row, FileManagement row), `src/agents/CLAUDE.md`, `docs/05_building_blocks/user_drive/README.md`, `NEW_AGENT_PLAYBOOK.md` stale token name, decision record `decisions/drive_specialist.md`, which records the residual "for a few turns after the deploy, a stale skill copy in history can cause one rejected call to a removed intent, which Smart self-corrects from today's unknown-intent error" | green |
+| 6 | **[OWNER], before the deploy:** run the scan over the owner's custom skills (`drive-workspace`, `drive-inbox`, `document-facts-batches` and any other), stored reminder instructions, standing directives, workspace files (`projects/`, `references/`) and user/account prompt overrides; **back up** every hit to `scripts/memory/` (skills with their version numbers); rewrite each hit so it names **no intent** ("find it on the drive", "save it to the drive"), as a new skill version where the store is versioned. **Patterns:** the 8 intent names; the 13 field names (`drive_query`, `drive_folder`, `drive_kind`, `drive_date_from`, `drive_date_to`, `drive_deleted`, `original`, `append_text`, `source_ref`, `new_name`, `folder`, `text`, `file_ref` next to a drive intent); `drive-search` (a skill that says "load drive-search first" fails after the cut); and `work_with_drive_files` (used again for §13). Intent-free text works with the old code and the new, so it can land first and survives a revert | — |
 | 7 | **[OWNER]** prompt upload (§10.1), deploy, `$admin_cache_reset`, G3 "after" | — |
 | 8 | The notes change (§9), separate | per the plan |
 
@@ -722,20 +752,20 @@ DocPlanner, PdfGenerator and HtmlPageGenerator still resolves `drive:` refs copi
 |---|---|
 | Step 1 | every existing FileManagement test runs unedited; both agents of one user hold the same `DriveOperations` |
 | Outcomes | each exception class → its outcome class with today's text byte for byte; a delete whose provider call fails after the wait still posts the late-failure notice, keyed on `DriveOp` |
-| Answer | each status and the precedence table; "What to do" is today's text byte for byte; one op line per mutating call, in step order ("Already on the drive" and "It already existed" included); the state line appears when the preflight shows the state and no op met it, also when the model called no tool; `not_possible` for a no-op run and for a text tool without its item; `question` cannot override a failure or a done change |
+| Answer | each status and the precedence table; "What to do" is today's text byte for byte; one op line per mutating call, in step order ("Already on the drive" and "It already existed" included); a connection-state line only when no operation ran; a search-state line only on an answer that ran a search (a save during a rebuild carries no `REBUILDING_LINE`); `not_possible` for a no-op run, for a text tool without its item, and for deleted search + `not_done`; an unknown `text_item` is refused and nothing is written; `question` cannot override a failure or a done change |
 | Reading lines | each trigger of §7.3 adds exactly its lines, and none without its trigger |
 | Pass-through | blocks byte-identical to today's renders, each with its own reminder; **search + open → both blocks reach Smart**; two searches → both; a listing before moves is labelled; the stand-in of an open holds no body; several vision files reach Smart's transcript in order |
 | `drive_context` | equals the concatenation of today's per-op entries, no dedup; one level after Smart's fold |
 | Tools | each tool → one `DriveOperations` call with mapped arguments; an empty or omitted field never mutates; `folder` as a path and as a `drive:` ref give the same call; one `move_file` with both fields makes one `svc.move`; each source kind of `copy_file_to_drive` and `replace_file_content` (chat, delivered key, `workspace:`, `skill:`, `drive:` for replace only); two `save_text_file` with two items in one commission are written in order with their own texts; no parameter named `name`; parameter descriptions name no Smart-era field and no "not read" clause |
 | Agent | `AgentResponse.success` on every status, and no "Correct your input" in Smart's tool result; `delivery_items` forwarded; `NO_RETRY_POLICY`; missing prompt → failure, no LLM call; `include_directives=False`; `_on_agent_start` logs no commission text; `allow_delegation=False` → unknown-tool answer; one per-user lock across two concurrent executions; batch order |
-| Time | a read still running at the soft deadline ends the run with the earlier mutation's op line intact; an LLM call is clamped; `still_running` cancels the engine and keeps the shielded mutation; `run_deadline` from a 180 s reminder run lowers the soft deadline; the mutation wait floor |
+| Time | a read still running at the soft deadline ends the run with the earlier mutation's op line intact; an LLM call is clamped; `still_running` cancels the engine and keeps the shielded mutation; `CURRENT_RUN_DEADLINE` from a 180 s reminder run lowers the soft deadline, is cleared under an orchestrator without a timeout, and is absent from an enqueued Cloud Task payload; the mutation wait floor |
 | Engine, domain | `allow_delegation`; `build_tool_turn` with a dict, a list, none; wire tests: two files after one `tool_response` (Claude nested, OpenAI one content item, Gemini parts, Grok images only) |
-| Manifest, Smart | the descriptor (SYNC, `prefetch_file_ref=False`, empty allowlist); description anchors (find, the FILE rule, delivered document key, `file_texts`) and **no notes sentence**; Smart's and Quick's declarations hold no old drive intent; `drive-search` absent from the catalogue; the protocol exception and block; the coordinator's removed-intent line |
+| Manifest, Smart | the descriptor (SYNC, `prefetch_file_ref=False`, empty allowlist); description anchors (find, the FILE rule, delivered document key, `file_contents`) and **no notes sentence**; Smart's and Quick's declarations hold no old drive intent; `drive-search` absent from the catalogue; the protocol exception and block |
 | State block | `user_message` labelled by origin; `file_data` parts filtered |
 | Chain | chat context → Router → Smart's engine → coordinator → `DriveAgent` → handler sees `interactive_delivery`, `session_id`, `turn_id`; vision reaches Smart; a delete receipt is posted; a `drive:` ref from a card reaches `create_pdf` through the prefetch |
 | Architecture | `drive_operations.py` / `drive_tools.py` import no `UserDrivePort` and no adapter |
 | Harness | a drive write inside the specialist is stubbed in the G3 dry run (lands before any dry run) |
-| Notes (notes change) | the plan's tests, ported; each of the eleven tools → its one core call; `replace_note_text` refused without an earlier `get_note`; `add_to_note` and `add_life_areas` keep what was there; a conflict re-merge re-embeds; a re-run with the same change is a no-op receipt; a forged `params` gate refused; erase code never in `result_str`; a `partial` commission still delivers a note receipt |
+| Notes (notes change) | the plan's tests, ported; each of the eleven tools → its one core call; `replace_note_text` refused without an earlier `get_note` and after a version change; `get_note` + `replace_note_text` in one batch run in order; `set_note_type` / `add_life_areas` / `add_to_note` on a file with no note create it; `add_to_note` and `add_life_areas` keep what was there; a conflict re-merge re-embeds; a re-run with the same change is a no-op receipt; a forged `params` gate refused; erase code never in `result_str`; a `partial` commission still delivers a note receipt |
 
 ### 11.2 Existing tests that go to a reviewer (reviewer rule; the implementer never edits them)
 
@@ -781,9 +811,14 @@ A 1-repeat probe gives the real number first; anything above $3 needs the owner'
 2. Deploy the `git revert` of the merge commit.
 3. `$admin_cache_reset`, so no instance keeps a template built from the new protocol.
 4. `snapshot_pull.py`, commit the mirror.
+5. **[OWNER]** Texts written **after** the deploy: Smart may have written `work_with_drive_files` into reminder
+   instructions, its workspace (`projects/`, `references/`), skill drafts it saved, or text the consolidator turned into
+   directives. Run the step 6 scan for `work_with_drive_files` over the same stores, back up the hits, and rewrite each
+   intent-free, before or right after the revert deploy. Residual: one self-corrected rejected call per stale text not
+   yet rewritten.
 
-Not covered by git, and why nothing else is needed: the owner's texts rewritten in step 6 name no intent, so they work
-with the reverted code; their originals are in `scripts/memory/` if wanted. The new drive tokens are unused after a
+Not covered by git otherwise: the owner's texts rewritten in step 6 name no intent, so they work with the reverted
+code; their originals are in `scripts/memory/` if wanted. The new drive tokens are unused after a
 revert and can stay. The drive, the index and the receipts are written by the same code in both versions. If the notes
 change was built on top, it is reverted first.
 
