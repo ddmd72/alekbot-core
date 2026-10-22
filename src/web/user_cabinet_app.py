@@ -853,6 +853,15 @@ def create_user_cabinet_blueprint(
         try:
             await fact_repo.invalidate_fact(fact_id=fact_id, account_id=g.account_id)
             logger.info(f"🗑️ Fact {fact_id} invalidated by user {g.user_id}")
+            # The baseline (user_context cache, read on every request) is rebuilt only by consolidation;
+            # refresh it now so the fact leaves the prompt. A failure must not undo the invalidation.
+            try:
+                await fact_repo.refresh_biographical_context_cache(owner_id=g.account_id)
+            except Exception as e:
+                logger.error(
+                    f"Fact {fact_id} invalidated but the biographical cache refresh failed: {e}",
+                    exc_info=True,
+                )
             return jsonify({"status": "invalidated"}), 200
         except PermissionError:
             return jsonify({"error": "Not authorized"}), 403

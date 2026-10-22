@@ -86,9 +86,11 @@ class FirestoreWhitelistRepository(WhitelistRepository):
         
         data = doc.to_dict()
         
-        # Convert lists to sets (domain model uses sets)
-        allowed_emails = set(data.get("allowed_emails", []))
-        allowed_domains = set(data.get("allowed_domains", []))
+        # Convert lists to sets (domain model uses sets). Entries are lowercased and stripped on read, as the
+        # writers do, because WhitelistEntry.is_allowed compares a lowercased email: an entry written in mixed
+        # case outside this repository must still match.
+        allowed_emails = {e.lower().strip() for e in data.get("allowed_emails", []) if e.strip()}
+        allowed_domains = {d.lower().strip() for d in data.get("allowed_domains", []) if d.strip()}
         
         logger.debug(
             f"📋 Whitelist loaded: "

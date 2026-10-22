@@ -23,7 +23,7 @@ Coverage:
 
   _refresh_if_needed()
     - token not expiring → returns creds unchanged, no refresh call
-    - token expiring soon → calls refresh_token + save_credentials
+    - token expiring soon → calls refresh_token + update_credentials
     - token expiry is None → no refresh attempted
     - refresh raises exception → returns None
 """
@@ -51,6 +51,7 @@ def _make_service():
     oauth.get_credentials = AsyncMock()
     oauth.list_users_by_provider = AsyncMock()
     oauth.save_credentials = AsyncMock()
+    oauth.update_credentials = AsyncMock(return_value=True)   # the record exists: a refresh replaces it
 
     svc = EmailReviewService(email_provider=email_provider, oauth_credentials=oauth)
     return svc, email_provider, oauth
@@ -321,7 +322,8 @@ class TestRefreshIfNeeded:
 
         assert result is new_creds
         email_provider.refresh_token.assert_called_once_with(creds)
-        oauth.save_credentials.assert_called_once_with(new_creds)
+        oauth.update_credentials.assert_called_once_with(new_creds)
+        oauth.save_credentials.assert_not_called()                # a refresh never creates a record
 
     async def test_no_token_expiry_no_refresh(self):
         svc, email_provider, _ = _make_service()

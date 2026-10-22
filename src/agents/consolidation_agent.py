@@ -96,6 +96,12 @@ class _TrackingFactManagement(FactManagementPort):
         return result
 
 
+# Stage 3 (email) runs under what is left of the agent's budget minus this margin, so the agent's own
+# timeout never fires inside it; with less than _STAGE3_MIN_S left it is skipped.
+_STAGE3_MARGIN_S = 30.0
+_STAGE3_MIN_S = 30.0
+
+
 class ConsolidationAgent(BaseAgent):
     """
     Agent responsible for deliberate fact curation with 4D taxonomy.
@@ -623,21 +629,48 @@ class ConsolidationAgent(BaseAgent):
         if stage1_response.status != AgentStatus.SUCCESS:
             return stage1_response
 
-        email_start = time.time()
-        email_message = AgentMessage(
-            task_id=message.task_id,
-            sender=message.sender,
-            recipient=message.recipient,
-            intent=message.intent,
-            payload={"task": "consolidate_email"},
-            context=message.context,
-        )
-        email_response = await self._handle_consolidate_email(
-            email_message, user_id, account_id, bio_context_raw, email_start
-        )
+        # Stage 3 is best-effort. Stage 1 has already written its facts, so a Stage 3 error or a slow
+        # Stage 3 must not fail the batch: the whole batch would re-run Stage 1 over the same messages.
+        # The unconsolidated emails stay in the repo and the next run picks them up.
+        email_budget_s = self._stage3_budget_s(message, start_time)
+        if email_budget_s is not None and email_budget_s < _STAGE3_MIN_S:
+            logger.info(
+                f"📧 [ConsolidationAgent] Stage 3 skipped: only {max(email_budget_s, 0):.0f}s of the "
+                f"agent budget left after Stage 1/2 (batch {message.task_id})"
+            )
+            email_response = None
+        else:
+            email_message = AgentMessage(
+                task_id=message.task_id,
+                sender=message.sender,
+                recipient=message.recipient,
+                intent=message.intent,
+                payload={"task": "consolidate_email"},
+                context=message.context,
+            )
+            try:
+                email_response = await asyncio.wait_for(
+                    self._handle_consolidate_email(
+                        email_message, user_id, account_id, bio_context_raw, time.time()
+                    ),
+                    timeout=email_budget_s,
+                )
+            except asyncio.TimeoutError:
+                logger.error(
+                    f"❌ [ConsolidationAgent] Stage 3 (email) timed out (budget {email_budget_s}s); "
+                    f"batch {message.task_id} still succeeds, "
+                    f"emails stay for the next run"
+                )
+                email_response = None
+            except Exception as e:
+                logger.error(
+                    f"❌ [ConsolidationAgent] Stage 3 (email) failed: {type(e).__name__}: {e}; "
+                    f"batch {message.task_id} still succeeds, emails stay for the next run"
+                )
+                email_response = None
 
         stage1_result = stage1_response.result or {}
-        email_result = email_response.result or {}
+        email_result = (email_response.result if email_response else None) or {}
         total_duration = time.time() - start_time
         return AgentResponse.success(
             task_id=message.task_id,
@@ -651,6 +684,17 @@ class ConsolidationAgent(BaseAgent):
             confidence=1.0,
             metadata={"total_duration_ms": int(total_duration * 1000)},
         )
+
+    def _stage3_budget_s(self, message: AgentMessage, start_time: float) -> Optional[float]:
+        """Seconds Stage 3 may run: what is left of this execution's budget minus a margin.
+
+        Same budget resolution as BaseAgent._execute_with_timeout (message override, else agent
+        config); None means the agent runs without a deadline.
+        """
+        timeout_ms = message.timeout_ms if message.timeout_ms is not None else self.config.timeout_ms
+        if timeout_ms is None:
+            return None
+        return timeout_ms / 1000 - (time.time() - start_time) - _STAGE3_MARGIN_S
 
     @staticmethod
     def _format_email_candidates(emails) -> str:

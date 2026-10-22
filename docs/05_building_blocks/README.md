@@ -14,9 +14,11 @@
 
 ### Memory & Context
 
-- Sliding Window Consolidation: [sliding_window_consolidation/README.md](./sliding_window_consolidation/README.md)
-- Biographical Context Cache: [biographical_context_cache/README.md](./biographical_context_cache/README.md)
-- Search Enrichment: [search_enrichment/README.md](./search_enrichment/README.md)
+- Memory (owner's map: facts, consolidation, baseline, directives, search): [memory/README.md](./memory/README.md)
+- Sliding Window Consolidation (pointer to the map): [sliding_window_consolidation/README.md](./sliding_window_consolidation/README.md)
+- Fact Write Service (pointer to the map): [fact_write_service/README.md](./fact_write_service/README.md)
+- Biographical Context Cache (pointer to the map): [biographical_context_cache/README.md](./biographical_context_cache/README.md)
+- Search Enrichment (pointer to the map): [search_enrichment/README.md](./search_enrichment/README.md)
 - Embedding System: [embedding_system/README.md](./embedding_system/README.md)
 
 ### Platform Integration & External Services

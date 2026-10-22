@@ -5,7 +5,8 @@ Mock boundary: Firestore SDK (db_client). Never mock at ConsolidationQueue level
 
 Covers the sweep-scheduler additions:
 - update_batch_status: PROCESSING stamps processing_started_at; other statuses don't
-- reset_recoverable_batches: FAILED always reset; zombie PROCESSING reset; LIVE PROCESSING skipped
+- reset_recoverable_batches: FAILED reset only by the sweep (revive_failed=True, counted in `revivals`);
+  zombie PROCESSING reset; LIVE PROCESSING skipped
 - get_stuck_batch_user_ids: distinct user_ids via projection
 """
 
@@ -106,17 +107,22 @@ class TestUpdateBatchStatusStamping:
 
 class TestResetRecoverableBatches:
     @pytest.mark.asyncio
-    async def test_failed_batch_always_reset(self):
+    async def test_failed_batch_reset_by_sweep(self):
+        # Only the sweep (revive_failed=True) asks for FAILED batches; the per-task call does not.
         doc = _make_doc({"status": BatchStatus.FAILED.value})
-        queue, _coll, _q, _ref = _make_queue(docs=[doc])
+        queue, coll, _q, _ref = _make_queue(docs=[doc])
         with patch("src.adapters.firestore_consolidation_queue.time.time", return_value=_NOW):
-            count = await queue.reset_recoverable_batches("user-1")
+            count = await queue.reset_recoverable_batches("user-1", revive_failed=True)
         assert count == 1
+        status_filter = coll.where.call_args.kwargs["filter"]
+        assert (status_filter.field_path, status_filter.op_string) == ("status", "in")
+        assert set(status_filter.value) == {BatchStatus.PROCESSING.value, BatchStatus.FAILED.value}
         update_arg = doc.reference.update.call_args[0][0]
         assert update_arg["status"] == BatchStatus.RETRY_PENDING.value
         assert update_arg["attempts"] == 0
         assert update_arg["last_error"] is None
         assert update_arg["processing_started_at"] is None
+        assert update_arg["revivals"] == 1
 
     @pytest.mark.asyncio
     async def test_live_processing_batch_skipped(self):
@@ -163,7 +169,7 @@ class TestResetRecoverableBatches:
         })
         queue, _coll, _q, _ref = _make_queue(docs=[failed, live])
         with patch("src.adapters.firestore_consolidation_queue.time.time", return_value=_NOW):
-            count = await queue.reset_recoverable_batches("user-1")
+            count = await queue.reset_recoverable_batches("user-1", revive_failed=True)
         assert count == 1
         failed.reference.update.assert_called_once()
         live.reference.update.assert_not_called()

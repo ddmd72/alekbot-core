@@ -577,10 +577,10 @@ semantic-mutation driver (`python -m tests.support.semantic_mutants`) and the re
 - **Branch coverage:** `firestore_repo.py` 43 to 78 %, `fact_management_adapter.py` 83 to 97 %.
 - **Four known defects are pinned by strict xfails** (they fail the suite when fixed, so the fix removes the marker): the cached biographical context swallows a backend failure; the biographical refresh ignores `facts_limit`/`principles_limit`; a failed merge leaves the sources superseded; `add_facts_batch` fills `saved_ids` only when deduplication is skipped. The fixes are outside this package.
 
-**Built (P5, 2026-10-22).** The fake-vs-real parity slice. Files: `tests/support/firestore_parity.py` (34 scenarios, one documented expected value
+**Built (P5, 2026-10-22).** The fake-vs-real parity slice. Files: `tests/support/firestore_parity.py` (40 scenarios, 34 when P5 was built, four added by P6 and two by P7; one documented expected value
 each, the index groups), `tests/unit/support/test_firestore_parity.py` (H1 in `make check`; the emulator when `FIRESTORE_EMULATOR_HOST` is set),
 `tests/cloud/` (`conftest.py` guards and index fixture, `test_firestore_parity_cloud.py`), `make test-cloud`. The same scenarios run on H1, the
-emulator (31 of 34; it does not refuse a missing index) and the test database. Deviations and results:
+emulator (35 of 38; it does not refuse a missing index) and the test database. Deviations and results:
 - **Results.** The emulator agreed with every expected value. The test database confirmed every expected value of the first 32 scenarios,
   the documentation-silent ones included, except one: the guess that a composite index is scanned in reverse was **refuted** (exactly flipped
   directions give `FailedPrecondition`), so the expected value was corrected, and H1, which refused it, had been right. H1 differed from Firestore
@@ -589,14 +589,30 @@ emulator (31 of 34; it does not refuse a missing index) and the test database. D
   `NotFound`). P3's open points are settled: `!=` excludes a field set to null, and a precondition on a deleted document is `FailedPrecondition`.
   Every `# P5 verifies` comment now carries its verdict. Review round 1 added two scenarios (filters on two range fields added in reverse order;
   equality plus `array_contains_any`), a reference and a vector in the type order, document ids that run against the value order, and an
-  observable distance-field check; H1's index requirement now sorts the range fields as its implicit ordering does. All 34 scenarios are
-  confirmed on the test database (2026-10-22, 34 of 34 in 59 s), the vector `order_by` in the type order included.
+  observable distance-field check; H1's index requirement now sorts the range fields as its implicit ordering does. All 34 scenarios were
+  confirmed on the test database (2026-10-22, 34 of 34 in 59 s), the vector `order_by` in the type order included; with P6's four, the
+  test database ran all 38 (2026-10-22, 38 of 38 in 65 s).
 - **Transactions.** The conflict scenario runs two transactions with staggered starts, not three in lock step: the emulator's lock timeouts
   exhausted the SDK's five attempts in 3 of 8 runs (three) and 4 of 15 (two in lock step), and none in 20 staggered runs.
 - **Index creation on the test database is a fixture** (Admin API, fixed collection ids `test_parity_idx_*`, created once, READY wait 15 min), not
   the render step of §4; the render step and the lease document come with P12. `make test` ignores `tests/cloud`.
 - **Run:** `make test-cloud` (sets `RUN_CLOUD_TESTS=1`; a bare pytest skips `tests/cloud`), by hand, with the owner's (or root's) credentials able to impersonate the test service account; one runner at a time.
   A run that creates indexes may fail scenarios of those collections even after READY (seen once, cause unknown): re-run.
+
+**Built (P6, 2026-10-22).** The access-control stores on H1. Deviations and results:
+- **Semantics inventory** = the docstrings of the four access ports with callers (`whitelist_repository`, `mcp_client_repository`,
+  `oauth_credentials_port`, `invite_code_repository`). `IAMPort` / `FirestoreIAMAdapter` have no caller in `src/`, so no kit; deleting
+  them is an open owner discussion.
+- **Kits:** `tests/unit/adapters/test_{whitelist,mcp_client,oauth_credentials,invite_code}_store_kit.py`, the real adapters on H1 with the
+  index refusal on. The negatives run through the real callers: the `mcp` SDK's `TokenHandler` -> `MCPAuthorizationService` for the MCP
+  refusals, `InviteCodeService` over the real user, account and whitelist repositories for the invite ones.
+- **Results:** 140 passed and 7 strict xfails, each a known defect: L1 whitelist case, L2 invite code collision, H1/H2 MCP double exchange
+  (auth code, refresh token), H3 invite double consume, H4 OAuth grant recreated after a disconnect, invite roles written uppercase. The
+  owner chose to fix whitelist case, role case and H4 in a follow-up PR and to leave the races pinned.
+- **Mutation:** invite 3/3, mcp 6/7, oauth 3/4, whitelist 0/12 killed. The 14 survivors are all in methods with no caller (the reviewer
+  accepted them as dead; deleting those methods is an owner discussion).
+- **Branch coverage:** whitelist 0 -> 71 %, mcp 0 -> 99 %, oauth 38 -> 88 %, invite 85 -> 100 %.
+- **Parity:** four scenarios added for the H1 behaviours the kits rely on (see the P5 note: 38 of 38 on the test database).
 
 **Built (P8, 2026-10-22).** H4 for Consolidation and Tasks. Files: `tests/support/prompt_vocabulary.py` (readers: profile, blueprint, tokens,
 `block_keys`, `field_line_words`, `pattern_words`, `returns_keys`, `groovy_tools`), `tests/unit/prompts/test_consolidation_vocabulary.py`, `tests/unit/prompts/test_tasks_vocabulary.py`.
@@ -612,6 +628,36 @@ and `task_id`/`list_id` where the Tasks tools take `task_ref` and return `ref` (
 (`snapshot_upload.py --apply`); until then production still renders the old text. Not covered: `COGNITIVE_PROCESS_CONSOLIDATION` and the universal profile (production renders
 neither; they still say `HISTORICAL`), prose that names a value outside a line naming its field, the `TAXONOMY` keys outside the four definition blocks (e.g. `decision_logic`) and its singular `domain:` lines (`Directive_Maintenance`),
 the `returns:` lines of the Consolidation tools other than `search_existing_facts`, a field added to the Tasks output list that the result does not carry, USER/ACCOUNT overrides.
+
+**Built (P7, 2026-10-22).** Inbound gates. Deviations and results:
+- **Inventory first:** ≈120 routes over the main service, the MCP SDK app, the relay, the indexer and the sandbox, each with its caller,
+  its gate and its refusal test (or none), and the refusal sites of every auth-path file with the lines no test ran.
+- **The route probe** (`tests/unit/web/test_every_route_refuses_anonymous.py`) builds the 16 blueprint factories with their real gates and
+  tripwires behind them, and sends every one of their 99 routes, plus every route of the MCP SDK app, an anonymous request: refused, nothing
+  touched or written. A `PUBLIC` list holds the routes public by design, one reason each. An AST companion ties every `register_blueprint` in
+  `main.py`, `indexer_main.py` and `sandbox_main.py`, and `_is_mcp_path`'s literals, to what the probe builds.
+- **`/worker` is held by an AST check** (`tests/unit/test_main_worker_route_gate.py`: the gate is awaited first, its 401 returned unchanged),
+  the owner's choice over moving `/worker` out of `main.py`; tidying `main.py` is an open owner topic.
+- **The inventory's negative tests**, route-level on real repositories over H1: deep-research Svix HMAC, Slack signature, Graph webhook, voice
+  OIDC, Cabinet owner and foreign tenant, every `/auth/*` refusal, MCP consent and the SDK app, the relay's ticket.
+- **Known defects as strict xfails:** the open redirect after sign-in (a fix PR follows); the Graph webhook trusting the URL's user id (owner:
+  not fixed); two client errors answered 500 instead of 401/400 (`/auth/refresh` with an access token, `/register` with null `redirect_uris`).
+- **F1:** `.coveragerc`'s `\.\.\.` exclude matched a `def` whose signature holds `...` and hid the whole function (1 686 statements in 142
+  files). Anchored to a line that is only `...`. Floors re-set to the honest values with the owner's OK (local run; the CI runner's numbers
+  re-adjust them): domain 98.1 → 98.0, ports 92.2 → 92.0, services 91.2 → 91.3, adapters 80.6 → 81.8, web 63.1 → 75.2, composition
+  89.9 → 90.4, root entry points 34.1 → 33.9; infrastructure, agents, handlers and src (other) unchanged.
+- **C1:** the 18 auth files are in the per-file table at 100 % lines; the lines no test ran are closed with behaviour tests.
+- **The "Telegram intercept in `main.py`" in the P7 row no longer exists:** `telegram_update` is dispatched by `WorkerHandler`.
+
+**Built (P21, 2026-10-23).** The data-audit framework and the fact checker. Files: `scripts/data_audit/facts.py` (pure: `check_fact(doc_id, doc)` and
+`check_lineages(docs)`), `scripts/data_audit/run.py` (the read-only runner; `CHECKERS` maps an entity to its collection property and its checks),
+`tests/unit/scripts/test_data_audit_facts.py` and `test_data_audit_run.py` (in `make check`). Invariants, each from the `FactRepository` docstring or
+`_LIFECYCLE`, as classes: `id_mismatch`, `missing_account_id` (a legacy `owner_id`-only document), `missing_state` / `invalid_state`,
+`is_current_mismatch` / `valid_to_mismatch` (against the state), `missing_created_at`, `reported_date_not_timestamp`, `missing_vector` /
+`missing_tags_vector` / `missing_metadata_vector` (absent, empty, or stored as a plain array instead of a `Vector`), `invalid_entity:<field>` (`FactEntity` validation; the fields that have their own class are
+not repeated), and across documents `lineage_multiple_current` (at most one `is_current=True` per lineage; a lineage with none is legitimate, because a merge gives the merged fact a new lineage and supersedes its sources in theirs). The owner runs `python -m scripts.data_audit.run facts
+[--account <id>] [--limit N]`: it only reads, writes one JSON report (counts and offending document ids, no field values) under `scripts/memory/`, and
+prints counts only. S5 adds the expiry invariants; other entities join with their kits (P6, P11).
 
 **Totals.** Tranche 1 (P1–P9) ≈ 12–16 days; tranche 2 (P10–P17) ≈ 24–33; tranche 3 (P18–P24) ≈ 9–11. **Whole plan
 ≈ 45–59 days.**

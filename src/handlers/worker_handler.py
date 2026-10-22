@@ -467,7 +467,7 @@ class WorkerHandler:
         re-enqueue chain stopped — its data was extracted from session history but never
         written to memory, and without this sweep it would wait for the next session
         overflow (potentially days). Called by Cloud Scheduler hourly. Per stuck user we
-        enqueue the normal consolidation task, which resets recoverable batches and retries.
+        revive its FAILED batches (bounded) and enqueue the normal consolidation task.
         """
         if self._consolidation is None or self._task_dispatch is None:
             logger.warning("[Worker] sweep_consolidation: services not configured")
@@ -475,6 +475,8 @@ class WorkerHandler:
 
         user_ids = await self._consolidation.find_stuck_users()
         for user_id in user_ids:
+            # The only place a FAILED batch is revived (bounded by its lifetime `revivals`).
+            await self._consolidation.revive_failed_batches(user_id)
             await self._task_dispatch.enqueue_consolidation_task(user_id=user_id)
             logger.info(f"[Worker] sweep_consolidation: enqueued for {user_id[:8]}")
 
@@ -1022,7 +1024,9 @@ class WorkerHandler:
             # Before the save: a failure here must leave the flag down so the next run retries the notice.
             await self._agent_factory.ensure_agents_for_user(user_id)
             creds.needs_reconnect = True
-            await self._oauth_credentials.save_credentials(creds)
+            if not await self._oauth_credentials.update_credentials(creds):
+                logger.info(f"[Worker] Gmail disconnected meanwhile for {user_id[:8]}, nothing to flag")
+                return
             logger.warning(f"[Worker] Gmail marked needs_reconnect for {user_id[:8]}")
             await self._notification.notify(
                 kind=NotificationKind.DOCUMENT_DELIVERY,
