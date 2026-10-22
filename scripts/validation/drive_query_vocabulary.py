@@ -1,6 +1,7 @@
 """
-Vocabulary misses of drive search (USER_DRIVE_INDEXING_RFC §26.6, Δ66). Owner-run and read-only: it reads Smart's
-recorded `search_files_in_drive` calls from BigQuery `prompt_content` and asks the user's drive index (Firestore,
+Vocabulary misses of drive search (USER_DRIVE_INDEXING_RFC §26.6, Δ66). Owner-run and read-only: it reads the
+recorded drive searches (Smart's `search_files_in_drive` delegations, the drive specialist's `search_drive` tool calls)
+from BigQuery `prompt_content` and asks the user's drive index (Firestore,
 `limit 1` reads) whether each query word is held, and in which class of key. It writes nothing but its report.
 
 For every `drive_query` in the window: the query goes through `query_concepts`; per concept the index is asked, per
@@ -60,18 +61,21 @@ def _table_fqn() -> str:
 
 
 def build_query(fqn: str, with_until: bool) -> str:
-    """Smart's rows of the user in the window, for the traces that hold a drive search: only the calls that matter."""
+    """Smart's and the drive specialist's rows of the user in the window, for the traces that hold a drive search: only
+    the calls that matter (Smart's drive intents before the specialist, the specialist's tools after it)."""
     until = "AND timestamp < TIMESTAMP(@until)" if with_until else ""
-    base = f"user_id = @user AND agent_type LIKE '%smart%' AND timestamp >= TIMESTAMP(@since) {until}"
+    base = (f"user_id = @user AND (agent_type LIKE '%smart%' OR agent_type = 'drive') "
+            f"AND timestamp >= TIMESTAMP(@since) {until}")
     return f"""
 WITH hits AS (
   SELECT DISTINCT trace_id FROM `{fqn}`
-  WHERE {base} AND tool_calls LIKE '%search_files_in_drive%'
+  WHERE {base} AND (tool_calls LIKE '%search_files_in_drive%' OR tool_calls LIKE '%search_drive%')
 )
 SELECT trace_id, FORMAT_TIMESTAMP('%Y-%m-%dT%H:%M:%E6SZ', timestamp) AS timestamp, tool_calls
 FROM `{fqn}`
 WHERE {base} AND trace_id IN (SELECT trace_id FROM hits)
-  AND (tool_calls LIKE '%search_files_in_drive%' OR tool_calls LIKE '%open_file_from_drive%')
+  AND (tool_calls LIKE '%search_files_in_drive%' OR tool_calls LIKE '%open_file_from_drive%'
+       OR tool_calls LIKE '%search_drive%' OR tool_calls LIKE '%open_drive_file%')
 ORDER BY trace_id, timestamp
 """
 
