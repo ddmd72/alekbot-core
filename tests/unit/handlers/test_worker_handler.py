@@ -789,6 +789,26 @@ class TestHandleSweepConsolidation:
         assert result == {"swept": 0}
         ns.task_dispatch.enqueue_consolidation_task.assert_not_called()
 
+    async def test_sweep_revives_failed_batches_before_enqueueing_each_user(self):
+        worker, ns = _make_full_worker()
+        ns.consolidation.find_stuck_users = AsyncMock(return_value=[_USER_A, "user-b"])
+        order = []
+        ns.consolidation.revive_failed_batches = AsyncMock(side_effect=lambda uid: order.append(("revive", uid)))
+        ns.task_dispatch.enqueue_consolidation_task = AsyncMock(
+            side_effect=lambda user_id: order.append(("enqueue", user_id)))
+
+        await worker._handle_sweep_consolidation()
+
+        assert order == [("revive", _USER_A), ("enqueue", _USER_A), ("revive", "user-b"), ("enqueue", "user-b")]
+
+    async def test_per_task_consolidation_never_revives_failed_batches(self):
+        worker, ns = _make_full_worker()
+        ns.consolidation.revive_failed_batches = AsyncMock()
+
+        await worker._handle_consolidation({"user_id": _USER_A})
+
+        ns.consolidation.revive_failed_batches.assert_not_called()
+
     async def test_dispatch_via_handle_routes_to_sweep(self):
         worker, ns = _make_full_worker()
         ns.consolidation.find_stuck_users = AsyncMock(return_value=[])

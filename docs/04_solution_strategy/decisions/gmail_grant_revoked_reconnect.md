@@ -53,3 +53,10 @@ in the account settings. That side is not visible to us.
 - **Flag from interactive email search too** (`EmailSearchService._maybe_refresh`). Not done: the
   user is in the chat at that moment and sees the failure. Flagging there would also suppress the
   background notice, which is the only one that tells them what to do.
+
+## Update 2026-10-22
+
+The flag write (and every token refresh write) now goes through `OAuthCredentialsPort.update_credentials`, which
+writes only if the record still exists, so it cannot bring back a grant the user disconnected meanwhile;
+`save_credentials` stays the consent write. The method set pinned by `tests/unit/ports/test_email_ports.py` includes
+`update_credentials`. The get-then-write shape and its accepted race described above are unchanged.

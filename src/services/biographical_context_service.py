@@ -19,6 +19,7 @@ from typing import List, Dict, Optional, Any
 from ..ports.repository import FactRepository
 from ..domain.entities import FactDomain
 from ..domain.settings import SearchConfig
+from ..domain.user import UserBotConfig
 from ..utils.logger import logger
 
 
@@ -113,7 +114,8 @@ class BiographicalContextService:
                 logger.warning(f"⚠️ Failed to load account {account_id[:8]}: {e}")
         
         account_defaults = account.account_defaults if account else None
-        user_config = account_defaults or SearchConfig()
+        # ConfigurationService reads UserBotConfig fields (SearchConfig has none of them).
+        user_config = account_defaults or UserBotConfig()
         
         if self._config_service:
             resolved_facts_limit = self._config_service.get_biographical_cache_limit(

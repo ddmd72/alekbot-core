@@ -52,14 +52,17 @@ class TestTokenProvider:
         await provider.headers("u1")
         assert oauth.get_credentials.await_count == 1
         oauth.save_credentials.assert_not_called()
+        oauth.update_credentials.assert_not_called()
 
     async def test_expiring_token_refreshed_with_own_scope_and_provider(self):
         provider, oauth = _provider(_creds(timedelta(minutes=1)))
+        oauth.update_credentials.return_value = True                          # the record still exists
         session = _session(_resp({"access_token": "new", "expires_in": 3600, "refresh_token": "r2"}))
         with patch("aiohttp.ClientSession", return_value=session):
             assert await provider.headers("u1") == {"Authorization": "Bearer new"}
         assert session.post.call_args.kwargs["data"]["scope"] == "Files.ReadWrite.AppFolder offline_access"
-        saved = oauth.save_credentials.call_args.args[0]
+        oauth.save_credentials.assert_not_called()                            # a refresh never creates a record
+        saved = oauth.update_credentials.call_args.args[0]
         assert saved.provider == "microsoft_onedrive" and saved.refresh_token == "r2"
 
     async def test_cache_expires_after_ttl(self):
@@ -122,6 +125,7 @@ class TestCacheIsolationAndInvalidation:
             await provider.headers("u1")
         assert not isinstance(exc_info.value, GraphReauthRequired)
         oauth.save_credentials.assert_not_called()
+        oauth.update_credentials.assert_not_called()
         assert "u1" not in provider._cache
 
 
