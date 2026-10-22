@@ -84,6 +84,7 @@ if TYPE_CHECKING:
     from ..services.user_drive_service import UserDriveService
     from ..services.file_conversion_service import FileConversionService
     from ..services.user_notification_service import UserNotificationService
+    from ..infrastructure.drive_operations import DriveOperations
 
 
 def _flag(value: Any) -> bool:
@@ -136,8 +137,15 @@ class FileManagementAgent(BaseAgent):
         localization: Optional["LocalizationService"] = None,
         language_service: Optional["LanguageServicePort"] = None,
         drive_search: Optional["DriveSearchService"] = None,
+        drive_operations: Optional["DriveOperations"] = None,   # STUB (part A): the user's shared instance (§5.5)
     ) -> None:
         super().__init__(config)
+        # STUB (part A): FileManagement runs its drive intents through DriveOperations; built here when not given,
+        # so a test that constructs the agent directly keeps working.
+        from ..infrastructure.drive_operations import DriveOperations
+        self.drive_operations = drive_operations or DriveOperations(
+            conversion_service=conversion_service, drive_service=drive_service, drive_search=drive_search,
+            notification=notification, localization=localization, language_service=language_service)
         self._drive = drive_service
         self._drive_search = drive_search
         self._localization = localization

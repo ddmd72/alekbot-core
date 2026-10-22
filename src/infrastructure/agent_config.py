@@ -417,6 +417,21 @@ NOTES = NotesAgentConfig()
 
 
 # ---------------------------------------------------------------------------
+# DriveAgent (src/agents/drive_agent.py) — STUB (part A): part A owns this config (DRIVE_SPECIALIST_RFC §5.1)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class DriveAgentConfig:
+    max_tokens: int = 4096
+    max_turns: int = 6              # §2.3.7
+    timeout_ms: int = 180_000       # the hard backstop (§5.6); the soft deadline is 150 s
+    thinking_effort: Optional[str] = "medium"   # Claude adaptive thinking (§5.1); a user's agent_thinking wins
+
+
+DRIVE_SPECIALIST = DriveAgentConfig()
+
+
+# ---------------------------------------------------------------------------
 # TasksAgent (src/agents/tasks_agent.py)
 # ---------------------------------------------------------------------------
 
