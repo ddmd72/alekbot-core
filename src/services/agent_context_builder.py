@@ -231,6 +231,16 @@ class AgentProviderStrategy:
             "fallback": "gemini",
             "fallback_tier": PerformanceTier.BALANCED,
         },
+        # The drive specialist (DRIVE_SPECIALIST_RFC §5.1): claude-sonnet-5-5 at BALANCED, a multi-turn tool loop. The
+        # fallback is the guard against Sonnet 5.5's filler-tool stall (decisions/sonnet55_adaptive_thinking_stall.md):
+        # OpenAI resolved at PERFORMANCE = gpt-6.1-sol (OpenAI's BALANCED is luna, rejected as too weak, §15.5).
+        "drive": {
+            "default_provider": "claude",
+            "allowed_providers": ["claude", "openai"],
+            "required_capabilities": ["native_tools"],
+            "fallback": "openai",
+            "fallback_tier": PerformanceTier.PERFORMANCE,
+        },
         # Image generation: text-LLM axis (prompt-crafting call) — see
         # resolve_image_generation_context() below for the image-rendering axis,
         # which uses the SAME resolved provider name against a separate registry.
