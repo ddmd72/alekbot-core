@@ -4,7 +4,6 @@ import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from quart import Quart
 
 import job_main
 from src.domain.exceptions import OAuthGrantRevokedError
@@ -12,14 +11,14 @@ from src.domain.agent import AgentResponse, AgentStatus
 from src.domain.notification_kind import NotificationKind
 from src.handlers.worker_handler import WorkerHandler
 from src.services.deep_research_delivery import deliver_deep_research
-from src.web.deep_research_webhooks import create_deep_research_webhooks_blueprint
 
 
 # --- WorkerHandler ---------------------------------------------------------
 
 def _worker(delivered=True):
     notification = AsyncMock()
-    notification.notify.return_value = MagicMock(delivered=delivered, error=None if delivered else "boom")
+    notification.notify.return_value = MagicMock(delivered=delivered, sent=delivered,
+                                                     error=None if delivered else "boom")
     worker = WorkerHandler(
         agent_worker_handler=AsyncMock(), email_indexing_service=MagicMock(),
         notification_service=notification, consolidation_service=None,
@@ -139,7 +138,7 @@ class TestJobMainFailureNotice:
         queue.enqueue_worker_task.assert_not_awaited()
 
 
-# --- deliver_deep_research / webhook (carried over from task E review) -----
+# --- deliver_deep_research / webhook worker task (carried over from task E review)
 
 class TestDeliveryFailureNotifier:
     async def _deliver(self, **kw):
@@ -164,17 +163,20 @@ class TestDeliveryFailureNotifier:
         notification.notify.assert_not_awaited()
 
     async def test_openai_webhook_passes_failure_notification(self):
+        """The OpenAI delivery now runs in the webhook's worker task (S1b W): its notifier is passed on."""
         service = AsyncMock()
-        app = Quart("t")
-        app.register_blueprint(create_deep_research_webhooks_blueprint(
-            notification_service=service, webhook_secret=None,
-            media_storage=MagicMock(), task_queue=AsyncMock()))
-        payload = {"type": "response.completed", "data": {"id": "r1", "output_text": "t", "metadata": {
-            "user_id": "u", "account_id": "a", "query": "q", "session_id": "u:C1"}}}
-        with patch("src.web.deep_research_webhooks.deliver_deep_research", new_callable=AsyncMock) as d:
-            async with app.test_client() as c:
-                await c.post("/webhooks/openai/deep-research", data=json.dumps(payload),
-                             headers={"Content-Type": "application/json"})
+        worker = WorkerHandler(
+            agent_worker_handler=AsyncMock(), email_indexing_service=MagicMock(),
+            notification_service=service, consolidation_service=None,
+            coordinator=MagicMock(), agent_factory=AsyncMock(),
+            indexed_email_repo=None, user_repo=MagicMock(), task_dispatch=AsyncMock(),
+            media_storage=MagicMock(), deep_research_fetch=AsyncMock(return_value={"output_text": "t"}),
+        )
+        payload = {"task_type": "deep_research_webhook_event", "event_type": "response.completed",
+                   "job_id": "r1", "user_id": "u", "account_id": "a", "query": "q", "session_id": "u:C1",
+                   "origin_platform": ""}
+        with patch("src.handlers.worker_handler.deliver_deep_research", new_callable=AsyncMock) as d:
+            await worker._dispatch(payload, {})
         assert d.call_args.kwargs["failure_notification"] is service
 
 

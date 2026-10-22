@@ -1,7 +1,7 @@
 """Deep research reports return to the platform+channel the request came from (S1b task E).
 
 Covers the agent -> port hand-off, both live adapters (Claude job context, OpenAI metadata),
-job_main and the OpenAI webhook; context/metadata without the field behave as before.
+job_main, the OpenAI webhook and the worker task it enqueues; context/metadata without the field behave as before.
 """
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -13,10 +13,12 @@ import job_main
 from src.adapters.claude_deep_research_adapter import ClaudeDeepResearchAdapter
 from src.adapters.openai_deep_research_adapter import OpenAIDeepResearchAdapter
 from src.agents.deep_research_agent import DeepResearchAgent
+from src.domain.cloud_task_delivery import CloudTaskDelivery
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse, AgentStatus
 from src.domain.user import PerformanceTier
 from src.ports.deep_research_port import DeepResearchPort
 from src.ports.job_runner_port import JobRunnerPort
+from src.handlers.worker_handler import WorkerHandler
 from src.web.deep_research_webhooks import create_deep_research_webhooks_blueprint
 
 
@@ -124,87 +126,126 @@ class TestOpenAIMetadata:
         assert (await self._metadata())["origin_platform"] == ""
 
 
-class TestWebhookPlatform:
-    async def _post(self, metadata):
-        app = Quart("t")
-        app.register_blueprint(create_deep_research_webhooks_blueprint(
-            notification_service=AsyncMock(), webhook_secret=None,
-            media_storage=MagicMock(), task_queue=AsyncMock()))
-        payload = {"type": "response.completed",
-                   "data": {"id": "resp_1", "output_text": "text", "metadata": metadata}}
-        with patch("src.web.deep_research_webhooks.deliver_deep_research",
-                   new_callable=AsyncMock) as deliver:
-            async with app.test_client() as c:
-                resp = await c.post("/webhooks/openai/deep-research", data=json.dumps(payload),
-                                    headers={"Content-Type": "application/json"})
-            assert resp.status_code == 200
-            return deliver.call_args.kwargs
 
+# Since S1b task W the webhook only verifies, filters, retrieves, claims and enqueues the named
+# worker task `deep_research_webhook_event`; WorkerHandler delivers the report or the notice.
+
+def _webhook_app(task_queue=None, fetch=None, dedup=None):
+    app = Quart("t")
+    app.register_blueprint(create_deep_research_webhooks_blueprint(
+        webhook_secret=None, task_queue=task_queue, fetch_response=fetch, dedup_store=dedup))
+    return app
+
+
+async def _post_webhook(app, event_type, data):
+    async with app.test_client() as c:
+        return await c.post("/webhooks/openai/deep-research",
+                            data=json.dumps({"type": event_type, "data": data}),
+                            headers={"Content-Type": "application/json"})
+
+
+def _dr_worker(response=None, notification=None, task_dedup=None):
+    notification = notification or AsyncMock()
+    if notification.notify.side_effect is None:
+        notification.notify.return_value = MagicMock(delivered=True, sent=True, error=None)
+    worker = WorkerHandler(
+        agent_worker_handler=AsyncMock(), email_indexing_service=MagicMock(),
+        notification_service=notification, consolidation_service=None,
+        coordinator=MagicMock(), agent_factory=AsyncMock(),
+        indexed_email_repo=None, user_repo=MagicMock(), task_dispatch=AsyncMock(),
+        media_storage=MagicMock(), task_dedup=task_dedup,
+        deep_research_fetch=AsyncMock(return_value=response or {"output_text": "text", "model": "m"}),
+    )
+    return worker, notification
+
+
+def _dr_event(event_type="response.completed", **kw):
+    return {"task_type": "deep_research_webhook_event", "event_type": event_type, "job_id": "r1",
+            "user_id": "u", "account_id": "a", "query": "q", "session_id": "u:C1",
+            "origin_platform": "telegram", **kw}
+
+
+class TestWebhookPlatform:
     async def test_platform_override_from_metadata(self):
-        kw = await self._post({"user_id": "u", "account_id": "a", "query": "q",
-                               "session_id": "u:C1", "origin_platform": "telegram"})
+        """Webhook: metadata's platform travels in the task payload; worker: it becomes the override."""
+        queue = AsyncMock()
+        resp = await _post_webhook(_webhook_app(queue), "response.completed", {
+            "id": "resp_1", "output_text": "text", "metadata": {
+                "user_id": "u", "account_id": "a", "query": "q",
+                "session_id": "u:C1", "origin_platform": "telegram"}})
+        assert resp.status_code == 200
+        payload = queue.enqueue_worker_task.await_args.kwargs["payload"]
+        assert payload["origin_platform"] == "telegram" and payload["session_id"] == "u:C1"
+
+        worker, _ = _dr_worker()
+        with patch("src.handlers.worker_handler.deliver_deep_research",
+                   new_callable=AsyncMock, return_value=True) as deliver:
+            _, status = await worker._dispatch({"task_type": "deep_research_webhook_event", **payload}, {})
+        assert status == 200
+        kw = deliver.call_args.kwargs
         assert kw["platform_override"] == "telegram"
         assert kw["channel_id_override"] == "C1"
 
     @pytest.mark.parametrize("md_extra", [{}, {"origin_platform": ""}])
     async def test_missing_platform_is_no_override(self, md_extra):
-        kw = await self._post({"user_id": "u", "account_id": "a", "query": "q",
-                               "session_id": "u:C1", **md_extra})
-        assert kw["platform_override"] is None
+        queue = AsyncMock()
+        resp = await _post_webhook(_webhook_app(queue), "response.completed", {
+            "id": "resp_1", "output_text": "text", "metadata": {
+                "user_id": "u", "account_id": "a", "query": "q", "session_id": "u:C1", **md_extra}})
+        assert resp.status_code == 200
+        payload = queue.enqueue_worker_task.await_args.kwargs["payload"]
+
+        worker, _ = _dr_worker()
+        with patch("src.handlers.worker_handler.deliver_deep_research",
+                   new_callable=AsyncMock, return_value=True) as deliver:
+            _, status = await worker._dispatch({"task_type": "deep_research_webhook_event", **payload}, {})
+        assert status == 200
+        assert deliver.call_args.kwargs["platform_override"] is None
+
+    async def test_absent_platform_in_an_old_payload_is_no_override(self):
+        worker, _ = _dr_worker()
+        event = {k: v for k, v in _dr_event().items() if k != "origin_platform"}
+        with patch("src.handlers.worker_handler.deliver_deep_research",
+                   new_callable=AsyncMock, return_value=True) as deliver:
+            await worker._dispatch(event, {})
+        assert deliver.call_args.kwargs["platform_override"] is None
 
 
-# --- failure / cancellation events and event-carries-only-id ---------------
+# --- failure events and event-carries-only-id --------------------------------
+# test_failure_and_cancel_notify_origin_channel: covered by test_worker_deep_research_webhook_event.py
+#   TestNotices.test_one_notice_with_query_origin_and_no_retry_wording (failed/incomplete/cancelled →
+#   one notice, channel_id_override + platform_override) and tests/unit/web/test_deep_research_webhooks.py
+#   TestOpenAIWebhookFailureEvents.test_failure_event_is_enqueued_for_the_worker.
+# test_event_with_only_id_retrieves_response: covered by test_deep_research_webhook_enqueue.py
+#   test_retrieval_when_event_has_no_metadata (fetch by id, user from the retrieved metadata) and
+#   TestCompleted.test_delivers_once_to_origin_channel_and_platform (worker re-retrieves by job id;
+#   result_text, channel, platform).
 
 class TestWebhookFailureAndRetrieval:
-    async def _post_event(self, event_type, data, fetch_response=None):
-        notification = AsyncMock()
-        app = Quart("t")
-        app.register_blueprint(create_deep_research_webhooks_blueprint(
-            notification_service=notification, webhook_secret=None,
-            media_storage=MagicMock(), task_queue=AsyncMock(), fetch_response=fetch_response))
-        with patch("src.web.deep_research_webhooks.deliver_deep_research",
-                   new_callable=AsyncMock) as deliver:
-            async with app.test_client() as c:
-                resp = await c.post("/webhooks/openai/deep-research",
-                                    data=json.dumps({"type": event_type, "data": data}),
-                                    headers={"Content-Type": "application/json"})
-        return resp, notification, deliver
-
     _MD = {"user_id": "u", "account_id": "a", "query": "q",
            "session_id": "u:C1", "origin_platform": "telegram"}
 
-    @pytest.mark.parametrize("event", ["response.failed", "response.cancelled"])
-    async def test_failure_and_cancel_notify_origin_channel(self, event):
-        resp, notification, _ = await self._post_event(event, {"id": "r1", "metadata": self._MD})
-        assert resp.status_code == 200
-        kw = notification.notify.await_args.kwargs
-        assert kw["channel_id_override"] == "C1"
-        assert kw["platform_override"] == "telegram"
-
-    async def test_event_with_only_id_retrieves_response(self):
-        fetch = AsyncMock(return_value={"metadata": self._MD, "output_text": "report", "model": "m"})
-        resp, _, deliver = await self._post_event("response.completed", {"id": "r1"}, fetch)
-        assert resp.status_code == 200
-        fetch.assert_awaited_once_with("r1")
-        kw = deliver.call_args.kwargs
-        assert kw["result_text"] == "report"
-        assert kw["user_id"] == "u"
-        assert kw["channel_id_override"] == "C1"
-        assert kw["platform_override"] == "telegram"
-
     async def test_failed_event_with_only_id_notifies_origin_channel(self):
         fetch = AsyncMock(return_value={"metadata": self._MD})
-        resp, notification, _ = await self._post_event("response.failed", {"id": "r1"}, fetch)
+        queue = AsyncMock()
+        resp = await _post_webhook(_webhook_app(queue, fetch=fetch), "response.failed", {"id": "r1"})
         assert resp.status_code == 200
+        fetch.assert_awaited_once_with("r1")
+        payload = queue.enqueue_worker_task.await_args.kwargs["payload"]
+        assert payload["event_type"] == "response.failed" and payload["user_id"] == "u"
+
+        worker, notification = _dr_worker(response={"metadata": self._MD})
+        _, status = await worker._dispatch({"task_type": "deep_research_webhook_event", **payload}, {})
+        assert status == 200
         assert notification.notify.await_args.kwargs["user_id"] == "u"
         assert notification.notify.await_args.kwargs["channel_id_override"] == "C1"
 
     async def test_retrieval_failure_is_non_2xx_so_openai_redelivers(self):
         fetch = AsyncMock(side_effect=RuntimeError("boom"))
-        resp, _, deliver = await self._post_event("response.completed", {"id": "r1"}, fetch)
+        queue = AsyncMock()
+        resp = await _post_webhook(_webhook_app(queue, fetch=fetch), "response.completed", {"id": "r1"})
         assert resp.status_code == 500
-        deliver.assert_not_called()
-
+        queue.enqueue_worker_task.assert_not_called()
 
 class TestOpenAIFetchResponse:
     async def test_returns_metadata_and_output(self):
@@ -264,38 +305,25 @@ class _FakeDedup:
         self.released.append(key)
 
 
+
+
 _MD2 = {"user_id": "u", "account_id": "a", "query": "q",
         "session_id": "u:C1", "origin_platform": "telegram"}
-
-
-async def _post2(event_type, data, *, fetch=None, dedup=None, notification=None, deliver_side=None):
-    notification = notification or AsyncMock()
-    app = Quart("t")
-    app.register_blueprint(create_deep_research_webhooks_blueprint(
-        notification_service=notification, webhook_secret=None, media_storage=MagicMock(),
-        task_queue=AsyncMock(), fetch_response=fetch, dedup_store=dedup))
-    with patch("src.web.deep_research_webhooks.deliver_deep_research",
-               new_callable=AsyncMock, side_effect=deliver_side) as deliver:
-        async with app.test_client() as c:
-            resp = await c.post("/webhooks/openai/deep-research",
-                                data=json.dumps({"type": event_type, "data": data}),
-                                headers={"Content-Type": "application/json"})
-    return resp, notification, deliver
 
 
 class TestEventFilter:
     @pytest.mark.parametrize("event", ["batch.completed", "fine_tuning.job.succeeded", "realtime.call.incoming"])
     async def test_other_families_are_acked_without_retrieval(self, event):
-        fetch = AsyncMock()
-        resp, notification, deliver = await _post2(event, {"id": "x1"}, fetch=fetch)
+        fetch, queue, dedup = AsyncMock(), AsyncMock(), _FakeDedup()
+        resp = await _post_webhook(_webhook_app(queue, fetch=fetch, dedup=dedup), event, {"id": "x1"})
         assert resp.status_code == 200
         fetch.assert_not_called()
-        notification.notify.assert_not_called()
-        deliver.assert_not_called()
+        queue.enqueue_worker_task.assert_not_called()
+        assert not dedup.claimed
 
 
 class TestDedup:
-    async def test_claim_is_recorded_before_delivery(self):
+    async def test_claim_is_recorded_before_enqueue(self):
         dedup = _FakeDedup()
         log = []
         orig = dedup.try_mark_processed
@@ -304,61 +332,63 @@ class TestDedup:
             log.append("claim")
             return await orig(key)
 
-        async def deliver(**_):
-            log.append("deliver")
+        async def enqueue(**_):
+            log.append("enqueue")
 
         dedup.try_mark_processed = claim
-        resp, _, _ = await _post2(
-            "response.completed", {"id": "r1", "metadata": _MD2, "output_text": "t"},
-            dedup=dedup, deliver_side=deliver)
+        queue = AsyncMock()
+        queue.enqueue_worker_task.side_effect = enqueue
+        resp = await _post_webhook(_webhook_app(queue, dedup=dedup), "response.completed",
+                                   {"id": "r1", "metadata": _MD2, "output_text": "t"})
         assert resp.status_code == 200
-        assert log == ["claim", "deliver"]
+        assert log == ["claim", "enqueue"]
         assert "openai_deep_research:r1" in dedup.claimed
 
-    async def test_duplicate_is_skipped_with_200(self):
-        dedup = _FakeDedup()
-        dedup.claimed.add("openai_deep_research:r1")
-        resp, notification, deliver = await _post2(
-            "response.completed", {"id": "r1", "metadata": _MD2, "output_text": "t"}, dedup=dedup)
-        assert resp.status_code == 200
-        deliver.assert_not_called()
-        notification.notify.assert_not_called()
+    # test_duplicate_is_skipped_with_200: covered by test_deep_research_webhook_enqueue.py
+    #   test_duplicate_job_is_acked_without_enqueue (200, duplicate=True, nothing enqueued).
 
-    async def test_delivery_raise_releases_claim_and_returns_500(self):
+    async def test_delivery_raise_releases_claim_and_fails_the_attempt(self):
+        """The delivery now runs in the worker task: a raise releases the task claim (Cloud Tasks
+        retries the attempt); the webhook's job mark stays, the task already holds the work."""
         dedup = _FakeDedup()
-        resp, _, _ = await _post2(
-            "response.completed", {"id": "r1", "metadata": _MD2, "output_text": "t"},
-            dedup=dedup, deliver_side=RuntimeError("boom"))
-        assert resp.status_code == 500
-        assert dedup.released == ["openai_deep_research:r1"]
-        assert "openai_deep_research:r1" not in dedup.claimed
+        worker, _ = _dr_worker(task_dedup=dedup)
+        delivery = MagicMock(spec=CloudTaskDelivery)
+        delivery.task_name = "projects/p/tasks/deep_research_webhook_event-r1"
+        with patch("src.handlers.worker_handler.deliver_deep_research",
+                   new_callable=AsyncMock, side_effect=RuntimeError("boom")):
+            with pytest.raises(RuntimeError):
+                await worker.handle(_dr_event(), delivery)
+        assert dedup.released == [delivery.task_name]
+        assert delivery.task_name not in dedup.claimed
 
-    async def test_notify_raise_releases_claim_and_returns_500(self):
+    async def test_notify_raise_releases_claim_and_fails_the_attempt(self):
         dedup = _FakeDedup()
         notification = AsyncMock()
         notification.notify.side_effect = RuntimeError("boom")
-        resp, _, _ = await _post2(
-            "response.failed", {"id": "r2", "metadata": _MD2}, dedup=dedup, notification=notification)
-        assert resp.status_code == 500
-        assert dedup.released == ["openai_deep_research:r2"]
+        worker, _ = _dr_worker(notification=notification, task_dedup=dedup)
+        delivery = MagicMock(spec=CloudTaskDelivery)
+        delivery.task_name = "projects/p/tasks/deep_research_webhook_event-r2"
+        with pytest.raises(RuntimeError):
+            await worker.handle(_dr_event("response.failed", job_id="r2"), delivery)
+        assert dedup.released == [delivery.task_name]
 
 
 class TestEmptyUserAndIncomplete:
     async def test_empty_user_acked_without_delivery(self):
         fetch = AsyncMock(return_value={"metadata": {}, "output_text": "t"})
-        dedup = _FakeDedup()
-        resp, notification, deliver = await _post2(
-            "response.completed", {"id": "r3"}, fetch=fetch, dedup=dedup)
+        dedup, queue = _FakeDedup(), AsyncMock()
+        resp = await _post_webhook(_webhook_app(queue, fetch=fetch, dedup=dedup), "response.completed",
+                                   {"id": "r3"})
         assert resp.status_code == 200
-        deliver.assert_not_called()
-        notification.notify.assert_not_called()
+        queue.enqueue_worker_task.assert_not_called()
         assert not dedup.claimed
 
     async def test_incomplete_notifies_origin_channel(self):
-        fetch = AsyncMock(return_value={"metadata": _MD2,
-                                        "incomplete_details": {"reason": "max_output_tokens"}})
-        resp, notification, deliver = await _post2("response.incomplete", {"id": "r4"}, fetch=fetch)
-        assert resp.status_code == 200
+        worker, notification = _dr_worker(response={
+            "metadata": _MD2, "incomplete_details": {"reason": "max_output_tokens"}})
+        with patch("src.handlers.worker_handler.deliver_deep_research", new_callable=AsyncMock) as deliver:
+            _, status = await worker._dispatch(_dr_event("response.incomplete", job_id="r4"), {})
+        assert status == 200
         kw = notification.notify.await_args.kwargs
         assert kw["channel_id_override"] == "C1" and kw["platform_override"] == "telegram"
         assert "incomplete" in kw["system_alert"]
