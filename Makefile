@@ -263,7 +263,7 @@ test-coverage: ## Unit tests + global + per-file coverage gate (RFC § 8.4)
 # entry of `git worktree list`), so its first run is not a cold full suite. Run 1 selects by executed lines; run 2
 # is the fixed always-run set (tests whose input is a data file or a child process: the `datafile` marker).
 # --testmon-forceselect: without it testmon switches selection off whenever -m is given (testmon 2.2.0).
-TESTMON_SEED = $(shell git worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p' | head -n 1)
+TESTMON_SEED = $(shell git -c safe.directory='*' worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p' | head -n 1)
 
 test-affected: ## Inner loop: only tests touched by your changes (testmon) + the always-run `datafile` set
 	@echo "🎯 Running affected tests..."
