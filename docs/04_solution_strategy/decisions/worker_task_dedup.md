@@ -40,7 +40,7 @@ whatever the trigger.
    - The next duplicate will therefore show whether it was a retry or a redelivery.
 2. **Claim by task name, in `WorkerHandler.handle`, for every Cloud Tasks delivery.**
    - `WorkerHandler` atomically creates a claim document named after the task
-     (`{prefix}worker_task_dedup`, `TaskClaimStore`, fields `holder` = process id, `attempt` = uuid per
+     (`{prefix}worker_task_dedup`, `TaskClaimStore`, fields `holder` = process id (written for diagnosis, never read), `attempt` = uuid per
      delivery, `state` = `running`|`done`, `expires_at` = now + 3600 s, garbage collection only) before dispatching.
    - A delivery that finds a claim returns 200 `{"status": "duplicate"}` and runs nothing.
    - **The claim is released when the attempt raises, returns >= 500, or returns 429** (queued Slack
@@ -87,9 +87,9 @@ re-claimed atomically (before S1b it returned True without rewriting the mark).
 instance (`--max-instances=1`), and `LongTurnService.check_retry` already reads "running but not live in
 this process" as a dead attempt. `try_claim` therefore decides:
 - same `attempt` (the SDK retried a create that landed) -> ours; `state=done` -> duplicate;
-- `running` and held by this process while the key is in its in-memory running set -> a true concurrent
-  duplicate; any other `running` claim (another process, or this one but not running here) -> dead
-  attempt, taken over with a `last_update_time` precondition (one winner); an expired claim likewise.
+- `running` while the key is in this process's in-memory running set -> a true concurrent duplicate (the
+  `holder` field is not compared); any other `running` claim (another process, or this one but not running
+  here) -> dead attempt (one-instance assumption), taken over with a `last_update_time` precondition (one winner); an expired claim likewise.
 - A 2xx/4xx result marks the claim `done` (a redelivery within 1 h is a duplicate); release (raise, >= 500, 429)
   and `done` act only when the doc still carries our `attempt`.
 - An OOM mid-task no longer loses the task: the retry takes over and runs, and chat turns reach

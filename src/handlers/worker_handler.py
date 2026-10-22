@@ -226,8 +226,8 @@ class WorkerHandler:
         return body, status
 
     async def _claim(self, delivery: Optional[CloudTaskDelivery], payload: dict, attempt: str) -> bool:
-        """False only when a finished attempt, or a live one elsewhere, holds the claim; a dead
-        attempt's claim is taken over (single instance: decisions/worker_task_dedup.md).
+        """False only when a finished attempt holds the claim; any other running claim is taken over
+        as a dead attempt (single instance: decisions/worker_task_dedup.md).
         Fails open: a store error runs the task — a duplicate beats a lost task."""
         if delivery is None or self._task_claims is None:
             return True

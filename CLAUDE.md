@@ -288,7 +288,7 @@ stale `running` jobs.
   Cloud Run Job, OpenAI webhook, in-service runner). The OpenAI webhook only verifies, filters `response.*` events,
   retrieves the response (events carry only `data.id`), claims the job id and enqueues `deep_research_webhook_event`
   (named by job id); delivery runs in `WorkerHandler`. A failed job enqueues `deep_research_failed` and the user is
-  told. The HTML report task is named `deep_research_report:<job_id>` and its create is retried under that name;
+  told. The HTML report task has the dedup key `deep_research_report:<job_id>` (Cloud Tasks name `agent_execution-<sha256(key)[:32]>`) and its create is retried under that name;
   `deliver_deep_research` returns whether it was handed off and notifies on failure. The `deep_research_polling` path is gone.
 - **Consolidation and companion queues take the oldest pending batch first** (`order_by created_at`, key required).
   Their two composite indexes in `config/firestore.indexes.json` must be `READY` **before** the code is deployed.
