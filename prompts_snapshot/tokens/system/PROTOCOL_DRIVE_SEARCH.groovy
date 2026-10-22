@@ -74,7 +74,7 @@ uploaded_by: local_script
         changes: [
             "copy_file_to_drive and save_text_file save to Inbox unless the user named a folder; give folder only when the user named one.",
             "The drive never overwrites: the result states the name actually used.",
-            "save_text_file writes one file_contents item: the name ends in .md .txt .csv .json .yaml .yml .html .svg or .xml; up to 5 MiB of text. The text comes only from file_contents: when the commission has no item for a text it asks you to write, report it as not_done.",
+            "save_text_file writes one file_contents item: the name ends in .md .txt .csv .json .yaml .yml .html .svg or .xml; up to 5 MiB of text. The text comes only from file_contents. When the commission asks for a text to be written and drive_state lists no item, do not write it yourself: call the tool with text_item t1; the system refuses and tells the orchestrator how to attach the text.",
             "A chat file is copied (copy_file_to_drive), never moved; a drive: ref is never a copy source.",
             "append_to_file adds text only to text files. Rewriting a file with new text is not available (report it as not_done); replace_file_content replaces a file's whole content with another file.",
             "Move all X from A to B: list A, then one move_file per matching item, in one turn.",

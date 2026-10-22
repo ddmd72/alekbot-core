@@ -82,3 +82,12 @@ def test_the_decided_rules_are_word_for_word():
     assert "execute_as_given" in process and "report_to_orchestrator comes in a later turn" in process
     output = _token("OUTPUT_FORMAT_DRIVE")["content"]
     assert "never that something is complete or that nothing else exists" in output
+
+
+def test_a_missing_file_contents_item_is_not_reported_as_not_done():
+    """I4: the designed recovery is the code's refusal (NOT_ATTACHED), so the model must call the tool, not report."""
+    search = _token("PROTOCOL_DRIVE_SEARCH")["content"]
+    assert ("When the commission asks for a text to be written and drive_state lists no item, do not write it "
+            "yourself: call the tool with text_item t1; the system refuses and tells the orchestrator how to attach "
+            "the text.") in search
+    assert "has no item for a text it asks you to write, report it as not_done" not in search
