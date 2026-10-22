@@ -599,7 +599,7 @@ S1 steps are done: flags (182 documents) and vectors (354 documents), §1.1.
 **Audit after migration** (owner-run, read-only script): no current fact past `expires_at`; no superseded document
 with `is_current=True` or without `superseded_by` (except pre-S2 ones, counted); every current non-`SYSTEM` fact has
 `expiry_kind`; directives and principles have `none`; the `reported_date` distribution is unchanged from before
-classify.
+classify. The framework is `scripts/data_audit/` (`TEST_COVERAGE_SYSTEMIC_RFC.md` P21); S5 adds the expiry invariants to its fact checker.
 
 **Cost** (Opus 5.5: $4 / $20 per Mtok, cache read 0.05×, write 1.25×, `billing.py:206`; consolidation system prompt
 ≈12k tokens plus ≈3k of baseline facts = 15k static):

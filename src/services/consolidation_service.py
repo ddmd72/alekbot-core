@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from ..domain.agent import AgentMessage, AgentIntent, AgentStatus
-from ..domain.consolidation import BatchStatus
+from ..domain.consolidation import MAX_FAILED_REVIVALS, BatchStatus
 from ..ports.consolidation_queue import ConsolidationQueue
 from ..utils.logger import logger
 
@@ -51,6 +51,15 @@ class ConsolidationService:
         next session overflow. Delegates straight to the queue — no per-user work here.
         """
         return await self._queue.get_stuck_batch_user_ids()
+
+    async def revive_failed_batches(self, user_id: str) -> int:
+        """Sweep only: turn this user's FAILED batches back into RETRY_PENDING (bounded).
+
+        Each batch is revived at most MAX_FAILED_REVIVALS times in its life. The per-task path in
+        `process_user_batches` never does this: it re-enqueues itself, so reviving there would retry
+        a failing batch back to back without end.
+        """
+        return await self._queue.reset_recoverable_batches(user_id, revive_failed=True)
 
     async def process_user_batches(
         self,
@@ -142,6 +151,16 @@ class ConsolidationService:
                                 batch.batch_id, batch.user_id, attempts,
                                 len(batch.messages), error_str,
                             )
+                            if batch.revivals >= MAX_FAILED_REVIVALS:
+                                # Last allowed round failed: the sweep will not revive it again.
+                                # Messages stay in the queue document. Grep target:
+                                # "[Librarian] CONSOLIDATION_GAVE_UP".
+                                logger.error(
+                                    "❌ [Librarian] CONSOLIDATION_GAVE_UP batch_id=%s user_id=%s "
+                                    "revivals=%d messages=%d (kept in the queue, not revived again)",
+                                    batch.batch_id, batch.user_id[:8], batch.revivals,
+                                    len(batch.messages),
+                                )
                         else:
                             await self._queue.update_batch_status(
                                 batch.batch_id, BatchStatus.RETRY_PENDING, error=error_str

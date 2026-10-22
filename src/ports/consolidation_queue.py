@@ -44,21 +44,24 @@ class ConsolidationQueue(ABC):
         pass
 
     @abstractmethod
-    async def reset_recoverable_batches(self, user_id: str) -> int:
-        """Reset stale PROCESSING (zombies) + FAILED batches → RETRY_PENDING for this user.
+    async def reset_recoverable_batches(self, user_id: str, revive_failed: bool = False) -> int:
+        """Reset stale PROCESSING (zombies) → RETRY_PENDING for this user; with
+        `revive_failed=True` also FAILED batches that still have revivals left.
 
-        Called at the start of each consolidation run. Two recovery paths:
+        Called at the start of each consolidation run (zombies only) and by the hourly
+        sweep (`revive_failed=True`).
           - PROCESSING zombies: workers crashed / Cloud Run CPU-throttled mid-batch.
             Only batches whose `processing_started_at` is older than the consolidation
             Cloud Task deadline are reset — a recent PROCESSING batch is a LIVE run and
             must be left alone (otherwise the periodic sweep would race a running
             consolidation and double-process the batch).
-          - FAILED batches: marked failed after 3 attempts on prior runs. Most failures
-            are transient (LLM 5xx, rate limits, billing exhaustion); user prefers
-            automatic retry to avoid silent data loss. Periodic Firestore cron purges
-            truly stuck FAILED rows by age (manual external cleanup).
+          - FAILED batches (only with `revive_failed=True`): marked failed after 3 attempts.
+            Most failures are transient (LLM 5xx, rate limits, billing exhaustion), so the
+            sweep retries them — but each batch is revived at most MAX_FAILED_REVIVALS times
+            in its life (`revivals`, never reset); past that it stays FAILED with its messages.
+            The per-task path must not revive FAILED: it re-enqueues itself back to back.
 
-        Resets `attempts` to 0 and clears `last_error` so the retry starts clean.
+        Resets `attempts` to 0 and clears `last_error`; `revivals` is kept (+1 for a FAILED revival).
         Returns count of batches reset."""
         pass
 
