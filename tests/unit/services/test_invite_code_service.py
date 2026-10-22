@@ -107,7 +107,7 @@ async def test_consume_team_invite_success(service, mock_invite_repo, mock_user_
     # Verify Account IAM Updated
     mock_account_repo.update_account.assert_called_once()
     updated_account = mock_account_repo.update_account.call_args[0][0]
-    assert updated_account.iam_policy["new-member"] == "MEMBER"
+    assert updated_account.iam_policy["new-member"] == "member"     # the Role value every access check compares
     
     # Verify Invite Marked Used
     mock_invite_repo.update.assert_called_once()

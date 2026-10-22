@@ -537,12 +537,13 @@ class OneDriveAdapter(UserDrivePort):
         return DriveConnection(connected=True, needs_reconnect=creds.needs_reconnect, drive_id=creds.drive_id)
 
     async def flag_reconnect(self, user_id: str) -> bool:
-        """Get, then save with the flag set (Gmail precedent, decisions/gmail_grant_revoked_reconnect.md:
+        """Get, then update with the flag set (Gmail precedent, decisions/gmail_grant_revoked_reconnect.md:
         no port change for an atomic set). A reconnect saves fresh credentials, which clears it."""
         creds = await self._oauth.get_credentials(user_id, ONEDRIVE_PROVIDER)
         if creds is None or creds.needs_reconnect:
             return False
-        await self._oauth.save_credentials(replace(creds, needs_reconnect=True))
+        if not await self._oauth.update_credentials(replace(creds, needs_reconnect=True)):
+            return False                     # disconnected meanwhile: nothing to flag, and none is brought back
         logger.warning(f"Drive marked needs_reconnect for user {user_id[:8]}")
         return True
 
