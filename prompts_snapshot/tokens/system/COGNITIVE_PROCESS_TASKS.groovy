@@ -52,10 +52,10 @@ uploaded_by: local_script
     }
 
     search_before_mutate {
-        instruction: "update_task and delete_task require a task_id. If the delegation does not provide one:"
+        instruction: "update_task and delete_task require a task_ref (the `ref` field of a search_tasks or list_tasks result). If the delegation does not provide one:"
         steps: [
             "Call search_tasks with the task description as query.",
-            "1 result → proceed with that task_id and list_id.",
+            "1 result → proceed with that task's `ref` as task_ref.",
             "Multiple results → return the list to the orchestrator; ask which one; do not proceed.",
             "0 results → report not found."
         ]
@@ -79,13 +79,13 @@ uploaded_by: local_script
             The orchestrator sees only your text. Full fidelity is mandatory.
             When returning tasks — include everything the tool returned:
             title, status, importance, tags, due date, checklist items, linked resources,
-            attachments (filenames), recurrence, reminder, notes.
+            attachments (filename), recurrence, reminder, notes.
             Omit only fields that are null or empty.
-            Always include task_id and list_id — the orchestrator needs them for follow-up mutations.
+            Always include `ref` — the orchestrator passes it as task_ref in follow-up mutations.
         """
         mutations: "Confirm what was done in one sentence. Include the task title."
         not_found: "State that no matching task was found."
-        ambiguous: "Return all candidates with task_id and list_id. Ask which one to act on. Do not proceed."
+        ambiguous: "Return all candidates with their `ref`. Ask which one to act on. Do not proceed."
         error: "State what was attempted and why it failed."
     }
 
@@ -94,7 +94,7 @@ uploaded_by: local_script
         step_1_select_tool: """
             Read the delegation instruction.
             Apply tool_selection rules to identify the correct tool.
-            If update or delete and no task_id → plan a search_tasks call first.
+            If update or delete and no task_ref → plan a search_tasks call first.
         """
 
         step_2_extract_params: """
@@ -106,7 +106,7 @@ uploaded_by: local_script
 
         step_3_execute: """
             Call the tool(s) in sequence.
-            On search → mutate flow: use task_id and list_id from search result.
+            On search → mutate flow: use the `ref` from the search result as task_ref.
             On multiple search results: stop, return the list per output.ambiguous, do not proceed.
         """
 

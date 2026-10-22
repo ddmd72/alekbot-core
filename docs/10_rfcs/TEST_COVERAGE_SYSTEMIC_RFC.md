@@ -598,6 +598,21 @@ emulator (31 of 34; it does not refuse a missing index) and the test database. D
 - **Run:** `make test-cloud` (sets `RUN_CLOUD_TESTS=1`; a bare pytest skips `tests/cloud`), by hand, with the owner's (or root's) credentials able to impersonate the test service account; one runner at a time.
   A run that creates indexes may fail scenarios of those collections even after READY (seen once, cause unknown): re-run.
 
+**Built (P8, 2026-10-22).** H4 for Consolidation and Tasks. Files: `tests/support/prompt_vocabulary.py` (readers: profile, blueprint, tokens,
+`block_keys`, `field_line_words`, `pattern_words`, `returns_keys`, `groovy_tools`), `tests/unit/prompts/test_consolidation_vocabulary.py`, `tests/unit/prompts/test_tasks_vocabulary.py`.
+Each file opens with its declared table. Consolidation: `(token, field, enum, mode, allowed_other)` rows against `FactDomain`/`TemporalClass`/`FactState`/`ContextPriority`
+(the taxonomy blocks must equal the enum's members exactly; every other token's lines naming a field may carry only members plus the row's contrast words; the closed lists — the four Taxonomy_Enforcement constraint lines and the `create_fact` `temporal_class`/`context_priority` descriptions — are `exact:` rows, equal to the enum's members, so a dropped member fails too), the
+`@tool` blocks of `CONSOLIDATION_TOOLS` against `ConsolidationAgent._get_tool_declarations()` (names, parameters, nested `fact_attributes`/`updates` keys, code `required`
+present in the prompt; `update_fact.metadata`, already in the schema, is guarded here), the keys `search_existing_facts` says it `returns:` against a real `FactManagementAdapter.search_existing_facts` result (it said `temporal`; the key is `temporal_class`, fixed), and every declared tool named by a token (`count_words` is declared in code and named by
+no rendered token: listed as the one exception). Tasks: tools the tokens name are declared and the reverse, every required argument is named, every `*_id`/`*_ref` identifier is
+an argument or a result key (the result keys come from a real `_format_task_list` call), every result field `OUTPUT_FORMAT_TASKS` lists is a real result key and `ref` is named where the tokens tell the model what a search returns, every `tool(arg=value)` the prose writes uses a declared tool, argument and enum value, each sub-field a token names in parentheses (`linked_resources (display_name + web_url)`) is a key of that result field's entries, and the listed
+status values equal the `update_task` enum. Both files check that every profile token exists and the blueprint's `class_order` equals the profile tokens' classes, one each.
+Two drifts were live and are fixed **in the snapshot only**: the `context_priority` value `HISTORICAL` (the enum's is `ARCHIVAL`) in `CONSOLIDATION_TAXONOMY`/`_POLICIES`/`_TOOLS`,
+and `task_id`/`list_id` where the Tasks tools take `task_ref` and return `ref` (`COGNITIVE_PROCESS_TASKS`, `OUTPUT_FORMAT_TASKS`), plus `url` -> `web_url` for linked resources and `attachments (filenames)` -> `(filename)`. **The Firestore upload is the owner's step**
+(`snapshot_upload.py --apply`); until then production still renders the old text. Not covered: `COGNITIVE_PROCESS_CONSOLIDATION` and the universal profile (production renders
+neither; they still say `HISTORICAL`), prose that names a value outside a line naming its field, the `TAXONOMY` keys outside the four definition blocks (e.g. `decision_logic`) and its singular `domain:` lines (`Directive_Maintenance`),
+the `returns:` lines of the Consolidation tools other than `search_existing_facts`, a field added to the Tasks output list that the result does not carry, USER/ACCOUNT overrides.
+
 **Totals.** Tranche 1 (P1–P9) ≈ 12–16 days; tranche 2 (P10–P17) ≈ 24–33; tranche 3 (P18–P24) ≈ 9–11. **Whole plan
 ≈ 45–59 days.**
 
