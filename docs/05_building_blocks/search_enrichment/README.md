@@ -364,7 +364,7 @@ class EnrichedFact:
     relevance_score: Optional[float] # Can be None
     vector: Optional[List[float]]    # Included for dedup!
     # Taxonomy fields — populated by SearchEnrichmentService directly from Firestore.
-    # Eliminates the need for a secondary get_facts_by_ids batch fetch in callers.
+    # Eliminates the need for a secondary batch fetch of facts by id in callers.
     fact_type: Optional[str]         # e.g. "FACT", "ANCHOR", "EVENT"
     domain: Optional[str]            # e.g. "health", "possession", "professional"
     temporal_class: Optional[str]    # e.g. "PERMANENT", "PERIODIC", "POINT_IN_TIME"
