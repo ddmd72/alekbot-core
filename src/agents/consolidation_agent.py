@@ -936,7 +936,10 @@ class ConsolidationAgent(BaseAgent):
 
             # Mirror RouterAgent pattern: touch Firestore between LLM and find_nearest
             # to keep Cloud Run CPU active and unblock gRPC calls.
-            await self._repo.get_biographical_context_cached(owner_id=account_id, limit=100)
+            try:
+                await self._repo.get_biographical_context_cached(owner_id=account_id, limit=100)
+            except Exception as e:
+                logger.warning(f"⚠️ Keep-alive biographical cache read failed (ignored): {e}")
 
             tool_responses = await self._execute_fact_management_tools(
                 tool_calls=response.tool_calls,
@@ -1536,7 +1539,11 @@ class ConsolidationAgent(BaseAgent):
         Optimized: uses cached biographical facts instead of Firestore query.
         """
         # Get ALL facts from cache (faster than Firestore query)
-        all_facts = await self._repo.get_biographical_context_cached(owner_id=account_id, limit=100)
+        try:
+            all_facts = await self._repo.get_biographical_context_cached(owner_id=account_id, limit=100)
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to load existing anchors from cache: {e}")
+            return []
         # Filter anchors locally
         return [f.get("text") for f in all_facts if "anchor" in f.get("tags", [])]
 

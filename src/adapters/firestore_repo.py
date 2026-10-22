@@ -798,8 +798,8 @@ class FirestoreFactRepository(FactRepository):
         
         Args:
             owner_id: Account ID
-            facts_limit: Max biographical facts (None = use system default from service)
-            principles_limit: Max principles (None = use system default from service)
+            facts_limit: Max biographical facts (None = the service's own resolution)
+            principles_limit: Max principles (None = the service's own resolution)
         """
         # SESSION 2026-02-07: Check if service is injected
         if not self._biographical_context_service:
@@ -812,10 +812,13 @@ class FirestoreFactRepository(FactRepository):
         try:
             logger.info(f"🔄 [FirestoreRepo] Refreshing biographical cache for {owner_id[:8]}...")
 
-            # DELEGATE to injected Application Service
-            # Service already has configured limits from its constructor
-            # Note: facts_limit/principles_limit parameters ignored - service uses its own config
-            context = await self._biographical_context_service.refresh_context(owner_id)
+            # DELEGATE to injected Application Service. Explicit limits win over the
+            # service's own resolution; None keeps it (account/system defaults).
+            context = await self._biographical_context_service.refresh_context(
+                owner_id,
+                facts_limit=facts_limit,
+                principles_limit=principles_limit,
+            )
 
             # Save to cache with version marker (Infrastructure responsibility)
             cache_doc = {
@@ -913,7 +916,7 @@ class FirestoreFactRepository(FactRepository):
 
         except Exception as e:
             logger.error(f"❌ [Cache] Error reading biographical context: {e}", exc_info=True)
-            return []
+            raise
 
     @log_execution_time
     async def search_facts_by_domain(
