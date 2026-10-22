@@ -9,7 +9,9 @@ import pytest
 
 from src.agents.file_management_agent import FileManagementAgent
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus
-from src.domain.drive_outcome import DriveOp, OutcomeClass, ReadFacts
+from src.domain.drive_op import DriveOp
+from src.domain.drive_outcome_class import OutcomeClass
+from src.domain.drive_read_facts import ReadFacts
 from src.domain.drive_search import (
     STATUS_DISABLED, STATUS_DISCONNECTED, STATUS_FOLDER_NOT_FOUND, STATUS_OK, DriveSearchCard, DriveSearchEnvelope,
     DriveSearchResult,

@@ -39,7 +39,10 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, Mapping, Optio
 import aiofiles
 
 from ..domain.drive_index_policy import TRANSCRIBED_KINDS, kind_of
-from ..domain.drive_outcome import DriveOp, DriveOutcome, OutcomeClass, ReadFacts
+from ..domain.drive_op import DriveOp
+from ..domain.drive_outcome import DriveOutcome
+from ..domain.drive_outcome_class import OutcomeClass
+from ..domain.drive_read_facts import ReadFacts
 from ..domain.drive_search import (
     REFERENCE_REMINDER, REFERENCE_REMINDER_ATTACHED, STATUS_AMBIGUOUS_FOLDER, STATUS_DISABLED, STATUS_DISCONNECTED,
     STATUS_FOLDER_NOT_FOUND, DriveSearchResult, render_results, request_from_fields, require_search_terms,

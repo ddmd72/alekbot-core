@@ -95,7 +95,7 @@ class TestStoreGuards:
             assert resp.status == AgentStatus.FAILED and "save_file_to_drive" in resp.error
 
     async def test_save_refuses_drive_ref_before_naming_or_download(self, agent, conversion, drive):
-        with patch("src.agents.file_management_agent.drive_filename") as naming:
+        with patch("src.infrastructure.drive_operations.drive_filename") as naming:
             resp = await agent.execute(_msg(Intent.SAVE_FILE_TO_DRIVE, file_ref="drive:f1"))
         assert resp.status == AgentStatus.FAILED and "move_file_in_drive" in resp.error
         naming.assert_not_called()
