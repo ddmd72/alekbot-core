@@ -146,3 +146,37 @@ def test_cognitive_process_decides_expiry_from_the_content_and_decomposition_nam
     text = body("CONSOLIDATION_COGNITIVE_PROCESS")
     assert "Decide expiry from the content" in text
     assert "superseded_by=<id of the first new fact>" in text
+
+
+def test_taxonomy_date_rules_say_before_today_a_horizon_counts_from_reported_date_and_must_clear_two_days():
+    text = body("CONSOLIDATION_TAXONOMY")
+    assert "whose date is before Today is past" in text and "on or before Today is past" not in text
+    assert "A plan for today is not over yet: give a short horizon" in text
+    assert "A horizon counts from reported_date, not from Today: reported_date + N days must end at least two days after Today" in text
+
+
+def test_taxonomy_be_dated_asks_for_the_message_time_in_iso_form_with_its_offset():
+    text = body("CONSOLIDATION_TAXONOMY")
+    assert "in ISO form with its offset, e.g. 2026-10-22T12:00:00+02:00" in text
+
+
+def test_a_date_view_copied_back_is_history_once_its_date_is_today_or_past():
+    assert "unless its date is on or before Today: then the fact is history ({kind: none})" in body("CONSOLIDATION_TOOLS")
+
+
+@pytest.mark.parametrize("token", ["CONSOLIDATION_TAXONOMY", "CONSOLIDATION_COGNITIVE_PROCESS"])
+def test_an_echo_of_what_the_assistant_said_stays_discard_in_both_extension_rule_tokens(token):
+    text = body(token)
+    assert "RAG echo" in text and "stays DISCARD" in text
+
+
+def test_mindset_facts_are_pinned_to_none_in_tools_and_temporal_class_needs_expiry_in_step_six():
+    assert "Directives, principles and mindset facts: none" in body("CONSOLIDATION_TOOLS")
+    step6 = body("CONSOLIDATION_COGNITIVE_PROCESS")
+    assert "a change of the temporal class carries expiry too" in step6
+
+
+@pytest.mark.parametrize("token", FIVE)
+def test_each_of_the_five_edited_tokens_round_trips_through_the_serializer(token):
+    text = pv.token_path(token).read_text(encoding="utf-8")
+    assert pv.ser.token_to_file(pv.ser.token_from_file(text)) == text

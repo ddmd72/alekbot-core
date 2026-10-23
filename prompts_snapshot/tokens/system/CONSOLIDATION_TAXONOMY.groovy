@@ -117,7 +117,8 @@ uploaded_by: local_script
             ]
 
             date_rules: [
-                "Compare every date with Today, not with the message time. A plan or validity whose date is on or before Today is past: DISCARD it if it no longer matters, or rewrite it as history (past tense, the outcome if known) with {kind: none}. A plan for today is not over yet: give a short horizon",
+                "Compare every date with Today, not with the message time. A plan or validity whose date is before Today is past: DISCARD it if it no longer matters, or rewrite it as history (past tense, the outcome if known) with {kind: none}. A plan for today is not over yet: give a short horizon",
+                "A horizon counts from reported_date, not from Today: reported_date + N days must end at least two days after Today. If it would not, the fact is history ({kind: none}) or noise (DISCARD)",
                 "A range -> its last day. Only a month -> its last day. Only a year -> none, unless a deadline or validity end in that year is stated: then Dec 31 of that year",
                 "A content update decides expiry again from the new text: a rewrite can turn a plan into history ({kind: none})",
                 "The system marks a fact stale when its expiry has passed; you never do. A fact closed by its state (ARCHIVED, INVALIDATED, or SUPERSEDED with superseded_by) carries no expiry"
@@ -406,7 +407,7 @@ uploaded_by: local_script
             "Candidate adds zero new information"
         ]
 
-        extension_rule: "When you consolidate a conversation or emails (not in a cluster or rulebook review) and the owner says an existing fact again: if the conversation confirms it held all along, extend it with update_fact(fact_id, updates={reported_date: <the message's time>}) instead of discarding the candidate (no expiry needed); if the link is unclear (a break is possible), create a new fact and leave the old one as it is. Cluster and rulebook reviews never extend a fact."
+        extension_rule: "When you consolidate a conversation or emails (not in a cluster or rulebook review) and the owner says an existing fact again: if the conversation confirms it held all along, extend it with update_fact(fact_id, updates={reported_date: <the message's time>}) instead of discarding the candidate (no expiry needed); if the link is unclear (a break is possible), create a new fact and leave the old one as it is. A RAG echo (the assistant recalled the fact and the owner only agreed) stays DISCARD: the extension rule applies only when the owner says it himself. Cluster and rulebook reviews never extend a fact."
     }
 
     /**
@@ -415,7 +416,7 @@ uploaded_by: local_script
     quality_rules: [
         "Be SPECIFIC: 'User's weight is 80.5 kg' not 'User is losing weight'",
         "Be ATOMIC: One subject entity per fact. Co-located attributes of the same entity are permitted only when always retrieved together (see Size_Triggers_Review co-location test). Parts that are independently queryable MUST be stored as separate facts.",
-        "Be DATED: reported_date is when the owner said it: the timestamp of his message, as shown in the conversation (an email's date for an email)",
+        "Be DATED: reported_date is when the owner said it: the timestamp of his message, as shown in the conversation, in ISO form with its offset, e.g. 2026-10-22T12:00:00+02:00 (an email's date for an email)",
         "Be CONTEXTUAL: Add temporal context for EPHEMERAL/DYNAMIC facts",
         "Be CONSERVATIVE: When unsure, CREATE (not UPDATE). Better separate than corrupted.",
         "Be RUTHLESS: Discard vague/redundant facts without hesitation",

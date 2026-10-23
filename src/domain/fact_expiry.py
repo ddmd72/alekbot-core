@@ -112,6 +112,8 @@ def _parse_day(raw: Any) -> date:
 def _parse_days(raw: Any) -> int:
     if isinstance(raw, float) and raw.is_integer():  # a tool-call transport may hand 14 over as 14.0
         raw = int(raw)
+    elif isinstance(raw, str) and raw.strip().isascii() and raw.strip().isdigit():  # "90": accept liberally
+        raw = int(raw.strip())
     if isinstance(raw, int) and not isinstance(raw, bool) and 1 <= raw <= MAX_HORIZON_DAYS:
         return raw
     raise _malformed(f"kind horizon needs `days` as a whole number from 1 to {MAX_HORIZON_DAYS}, got {raw!r}")

@@ -29,7 +29,7 @@ def parse_reported_date(raw: Any) -> Optional[datetime]:
     try:
         return _aware(datetime.fromisoformat(raw.replace("Z", "+00:00")))
     except ValueError:
-        raise ValueError(f"Invalid reported_date {raw!r}; use an ISO-8601 date such as 2026-03-04T10:00:00Z") from None
+        raise ValueError(f"Invalid reported_date {raw!r}; use an ISO-8601 timestamp with its offset, such as 2026-03-04T10:00:00+01:00") from None
 
 
 def _aware(value: datetime) -> datetime:
