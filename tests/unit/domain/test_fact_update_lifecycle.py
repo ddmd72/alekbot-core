@@ -47,7 +47,7 @@ def test_a_version_stores_the_decision_computed_from_the_resolved_reported_date(
     got = finish({"content": "meeting with Ana moved", "expiry": horizon(14), "reported_date": SPAN[0].isoformat()})
     version = got.plan.version_fact
     assert got.plan.kind == "version" and got.notes == ()
-    assert version.reported_date == SPAN[0] + timedelta(0) if SPAN[0] > STORED_REPORTED else STORED_REPORTED
+    assert version.reported_date == SPAN[0]
     assert (version.expiry_kind, version.ttl_days) == (ExpiryKind.HORIZON, 14)
     assert version.expires_at == version.reported_date + timedelta(days=14)
 
