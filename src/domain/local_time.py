@@ -1,10 +1,12 @@
 """One timestamp format, in the owner's calendar: Smart's message stamps and the consolidator's both come from here."""
 
+import re
 from datetime import date, datetime
-from typing import Union
+from typing import Optional, Union
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 _UTC = ZoneInfo("UTC")
+_STAMP = re.compile(r"(\d{4}-\d{2}-\d{2}) ([A-Za-z]{3}) (\d{2}:\d{2}) (\S+)")
 
 
 def zone_or_utc(timezone: str) -> ZoneInfo:
@@ -40,3 +42,27 @@ def local_day(moment: Union[float, datetime], timezone: str) -> str:
 def local_date(moment: Union[float, datetime], timezone: str) -> date:
     """The calendar date of `moment` in the zone."""
     return local_moment(moment, timezone).date()
+
+
+def parse_local_stamp(text: str, timezone: str) -> Optional[datetime]:
+    """The moment a `local_stamp` in this zone names, or None.
+
+    Only the exact stamp the zone would render is read: the weekday and the abbreviation must match that local time
+    (the abbreviation also picks between the two readings of a repeated autumn hour).
+    """
+    found = _STAMP.fullmatch(text.strip())
+    if found is None:
+        return None
+    day, weekday, clock, abbreviation = found.groups()
+    try:
+        naive = datetime.fromisoformat(f"{day}T{clock}")
+    except ValueError:
+        return None
+    zone = zone_or_utc(timezone)
+    for fold in (0, 1):
+        candidate = naive.replace(tzinfo=zone, fold=fold)
+        rendered = candidate.strftime("%Z") or timezone or "UTC"
+        exists = candidate.astimezone(_UTC).astimezone(zone).replace(tzinfo=None) == naive  # not a skipped spring hour
+        if exists and rendered == abbreviation and candidate.strftime("%a") == weekday:
+            return candidate
+    return None

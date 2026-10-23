@@ -207,7 +207,7 @@ class FactManagementAdapter(FactManagementPort):
             # Domain-level normalization (was duplicated here — now in domain/entities.py)
             metadata = normalize_fact_taxonomy(metadata)
 
-            attrs = parse_new_fact(self._new_fact_data(content, metadata))
+            attrs = parse_new_fact(self._new_fact_data(content, metadata), context.timezone)
             decision = _required_decision(attrs, "create_fact")
             now = datetime.now(timezone.utc)
             derived = await self._derived_from_dates(attrs, metadata["account_id"], context)
@@ -326,7 +326,7 @@ class FactManagementAdapter(FactManagementPort):
                 logger.warning(f"⚠️  [FactManagement] Fact not found: {fact_id[:8]}")
                 return {"fact_id": fact_id, "status": "not_found", "message": "Fact not found"}
             if parsed is None:
-                parsed = parse_fact_update(updates)
+                parsed = parse_fact_update(updates, context.timezone)
             if first_resolved_id is None:
                 first_resolved_id = stored.fact.id
             elif stored.fact.id != first_resolved_id and (parsed.content is not None or parsed.tags is not None):
@@ -459,7 +459,7 @@ class FactManagementAdapter(FactManagementPort):
         logger.info(f"🔀 [FactManagement] Merging {len(fact_ids)} facts...")
         account_id = metadata.get("account_id")
         metadata = normalize_fact_taxonomy(metadata)
-        attrs = parse_new_fact(self._new_fact_data(merged_content, metadata))
+        attrs = parse_new_fact(self._new_fact_data(merged_content, metadata), context.timezone)
         decision = _required_decision(attrs, "merge_facts")
 
         notes: List[str] = []
