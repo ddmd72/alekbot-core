@@ -2,8 +2,9 @@
 
 Triggers come from two places the deploy owns: the Cloud Scheduler jobs `scripts/infrastructure/cloudbuild_scheduler_jobs.sh`
 creates, and the enqueue sites in `src/` and the root `*_main.py` (an `enqueue_worker_task(...)` call, or a dict literal
-keyed `"task_type"`). The extractor reads the sources and fails on a form it does not understand, so a new way to
-enqueue cannot hide from the check.
+keyed `"task_type"`). The extractor reads the sources and fails on a form it does not understand: a task type it cannot
+resolve, `dict(task_type=...)` and `payload["task_type"] = ...`. A payload built any other way (`update(...)`,
+`setdefault(...)`) is not seen.
 """
 import ast
 import functools
@@ -153,6 +154,8 @@ class _Visitor(ast.NodeVisitor):
     def visit_Call(self, node: ast.Call) -> None:
         func = node.func
         name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+        if name == "dict" and any(k.arg == "task_type" for k in node.keywords):
+            raise ExtractorError(f"{self.path.relative_to(ROOT)}:{node.lineno}: dict(task_type=...) builds a payload")
         if name == "enqueue_worker_task":
             keyword = [k.value for k in node.keywords if k.arg == "task_type"]
             if keyword:
@@ -163,6 +166,11 @@ class _Visitor(ast.NodeVisitor):
                 raise ExtractorError(f"{self.path.relative_to(ROOT)}:{node.lineno}: enqueue_worker_task without a task type")
         self.generic_visit(node)
 
+    def visit_Subscript(self, node: ast.Subscript) -> None:
+        if isinstance(node.ctx, ast.Store) and isinstance(node.slice, ast.Constant) and node.slice.value == "task_type":
+            raise ExtractorError(f"{self.path.relative_to(ROOT)}:{node.lineno}: a payload gets its task_type by item assignment")
+        self.generic_visit(node)
+
     def visit_Dict(self, node: ast.Dict) -> None:
         for key, value in zip(node.keys, node.values):
             if isinstance(key, ast.Constant) and key.value == "task_type":
@@ -170,15 +178,8 @@ class _Visitor(ast.NodeVisitor):
         self.generic_visit(node)
 
 
-def enqueue_sites(files: Optional[List[Path]] = None) -> List[Site]:
-    if files is None:
-        return list(_all_sites())
-    sites: List[Site] = []
-    for path in files:
-        visitor = _Visitor(path)
-        visitor.visit(ast.parse(path.read_text()))
-        sites.extend(visitor.sites)
-    return sites
+def enqueue_sites() -> List[Site]:
+    return list(_all_sites())
 
 
 @functools.lru_cache(maxsize=None)
