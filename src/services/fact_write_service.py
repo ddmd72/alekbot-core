@@ -169,12 +169,12 @@ class FactWriteService(FactWritePort):
                 temporal_class=attrs.temporal_class,
                 state=attrs.state,
                 context_priority=attrs.context_priority,
-                ttl_days=attrs.ttl_days,
                 context=attrs.context,
                 reported_date=attrs.reported_date or datetime.now(timezone.utc),
                 vector=vectors[0],
                 tags_vector=vectors[1],
                 metadata_vector=vectors[2],
+                **(attrs.expiry_fields or {}),
             ))
         return entities
 

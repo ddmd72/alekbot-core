@@ -9,6 +9,7 @@ from .exceptions import FactExpiryError
 from .local_time import local_date, local_moment
 
 NOTHING_WRITTEN: Final[str] = "Nothing was written. Resend this call with a valid expiry before retiring any fact it replaces."
+EXPIRY_IGNORED_ON_CLOSE: Final[str] = "expiry is not used when a fact is closed; ignored"
 EXPIRY_SHAPES: Final[str] = "{kind: date, date: YYYY-MM-DD}, {kind: horizon, days: N} or {kind: none}"
 MAX_HORIZON_DAYS: Final[int] = 36500
 MIN_YEAR, MAX_YEAR = 1900, 9998  # keeps the end-of-day and horizon arithmetic inside datetime's range

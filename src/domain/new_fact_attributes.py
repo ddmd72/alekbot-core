@@ -2,22 +2,29 @@
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Mapping, Optional
+from typing import Any, Dict, Mapping, Optional, Tuple
 
 from pydantic import TypeAdapter, ValidationError
 
 from .entities import ContextPriority, FactDomain, FactState, FactType, TemporalClass
 from .fact_argument_parsing import parse_enum, parse_reported_date
+from .fact_expiry import EXPIRY_IGNORED_ON_CLOSE, Expiry, parse_expiry
+from .fact_lifecycle import CLOSING_STATES
 
 # Unknown type names fall back to EVENT, as the write service always did.
 _TYPE_BY_NAME = {member.value: member for member in FactType}
-_OPTIONAL_INT = TypeAdapter(Optional[int])
 _OPTIONAL_STR = TypeAdapter(Optional[str])
 
 
 @dataclass(frozen=True)
 class NewFactAttributes:
-    """`reported_date` None means "now", decided where the fact is built. `tags` is the caller's own list."""
+    """`reported_date` None means "now", decided where the fact is built. `tags` is the caller's own list.
+
+    `expiry`: the parsed decision, None when not sent or dropped because the fact is born closed (see `notes`). The model's
+    `ttl_days` is not read. `derived_from`: ids of the facts this one is made from; a code argument, never stored.
+    `expiry_fields`: the computed `expiry_kind`/`ttl_days`/`expires_at`, set by the caller once it knows the date (with
+    `dataclasses.replace`); None writes no decision.
+    """
 
     content: str
     tags: list[str]
@@ -27,16 +34,20 @@ class NewFactAttributes:
     temporal_class: Optional[TemporalClass]
     state: FactState
     context_priority: ContextPriority
-    ttl_days: Optional[int]
     context: Optional[str]
     reported_date: Optional[datetime]
+    expiry: Optional[Expiry] = None
+    derived_from: Tuple[str, ...] = ()
+    expiry_fields: Optional[Dict[str, Any]] = None
+    notes: Tuple[str, ...] = ()
 
 
 def parse_new_fact(fact_data: Mapping[str, Any]) -> NewFactAttributes:
     """Validate one fact dict before any embedding or write. Raises ValueError with a message the model can act on.
 
     `content` wins over `text`. State SUPERSEDED is refused: a document must not be born closed with no successor.
-    A non-dict `metadata` is ignored.
+    State STALE is refused: only the system marks a fact stale. An `expiry` is optional here (the caller decides when
+    it is required); one sent with a state that closes the fact is dropped, with a note. A non-dict `metadata` is ignored.
     """
     content = fact_data.get("content") or fact_data.get("text")
     if not isinstance(content, str) or not content.strip():
@@ -54,6 +65,16 @@ def parse_new_fact(fact_data: Mapping[str, Any]) -> NewFactAttributes:
     state = parse_enum(FactState, "state", fact_data["state"]) if fact_data.get("state") else FactState.CURRENT
     if state is FactState.SUPERSEDED:
         raise ValueError("A new fact cannot have state SUPERSEDED; supersede an existing fact through an update or a merge")
+    if state is FactState.STALE:
+        raise ValueError("A new fact cannot have state STALE: only the system marks a fact stale")
+
+    expiry: Optional[Expiry] = None
+    notes: Tuple[str, ...] = ()
+    if "expiry" in fact_data:
+        if state in CLOSING_STATES:
+            notes = (EXPIRY_IGNORED_ON_CLOSE,) if fact_data["expiry"] is not None else ()
+        else:
+            expiry = parse_expiry(fact_data["expiry"])
 
     return NewFactAttributes(
         content=content,
@@ -72,10 +93,21 @@ def parse_new_fact(fact_data: Mapping[str, Any]) -> NewFactAttributes:
             if fact_data.get("context_priority")
             else ContextPriority.MEDIUM
         ),
-        ttl_days=_validated("ttl_days", _OPTIONAL_INT, fact_data.get("ttl_days")),
         context=_validated("context", _OPTIONAL_STR, fact_data.get("context")),
         reported_date=parse_reported_date(fact_data.get("reported_date")),
+        expiry=expiry,
+        derived_from=_parse_derived_from(fact_data.get("derived_from")),
+        notes=notes,
     )
+
+
+def _parse_derived_from(raw: Any) -> Tuple[str, ...]:
+    if raw is None:
+        return ()
+    items = [raw] if isinstance(raw, str) else raw
+    if not isinstance(items, (list, tuple)) or not all(isinstance(i, str) and i.strip() for i in items):
+        raise ValueError("derived_from must be a fact id or a list of fact ids")
+    return tuple(dict.fromkeys(i.strip() for i in items))
 
 
 def _validated(name: str, adapter: TypeAdapter[Any], value: Any) -> Any:

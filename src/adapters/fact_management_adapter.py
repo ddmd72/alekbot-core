@@ -201,7 +201,7 @@ class FactManagementAdapter(FactManagementPort):
 
     @staticmethod
     def _new_fact_data(content: str, metadata: Dict[str, Any]) -> Dict[str, Any]:
-        return {
+        data: Dict[str, Any] = {
             "content": content,
             "tags": metadata.get("tags", []),
             "type": metadata.get("type", "event"),
@@ -210,10 +210,12 @@ class FactManagementAdapter(FactManagementPort):
             "temporal_class": metadata.get("temporal_class"),
             "state": metadata.get("state"),
             "context_priority": metadata.get("context_priority"),
-            "ttl_days": metadata.get("ttl_days"),
             "context": metadata.get("context"),
             "reported_date": metadata.get("reported_date") or datetime.now(timezone.utc).isoformat(),
         }
+        # Present only when sent: an absent expiry and a null one are different answers to the parser.
+        data.update({key: metadata[key] for key in ("expiry", "derived_from") if key in metadata})
+        return data
 
     async def update_fact(
         self, fact_id: str, updates: Dict[str, Any], account_id: str

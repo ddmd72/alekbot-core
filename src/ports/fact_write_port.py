@@ -29,8 +29,8 @@ class FactWritePort(ABC):
 
         Args:
             facts_data: dicts with text or content, tags, type, metadata, and optionally domain,
-                temporal_class, state, context_priority (lowercase enum values), ttl_days, context,
-                reported_date.
+                temporal_class, state, context_priority (lowercase enum values), context,
+                reported_date, expiry (the decision) and derived_from. A model `ttl_days` is not read.
             skip_deduplication: True stores every fact; False skips a fact SmartDeduplication judges a
                 duplicate (similarity threshold 0.96).
 

@@ -52,8 +52,8 @@ class FactManagementPort(ABC):
         Args:
             content: fact text.
             metadata: must hold account_id, user_id, domain, temporal_class, context_priority; may
-                hold type, state, tags, metadata, context, ttl_days, reported_date. Enum values are
-                case-insensitive.
+                hold type, state, tags, metadata, context, expiry, derived_from, reported_date. Enum
+                values are case-insensitive. A model `ttl_days` is not read.
 
         Tenancy: the fact belongs to metadata["account_id"], created by metadata["user_id"].
         Returns: {"fact_id", "status": "created" | "failed", "message"}; fact_id is None unless created.

@@ -33,6 +33,8 @@ def lifecycle_fields(state: FactState, now: datetime) -> dict[str, Any]:
 
 
 CONSOLIDATION_ACCEPTS: frozenset[FactState] = frozenset({FactState.CURRENT})
+# A fact in one of these states carries no expiry decision of its own: a decision sent with it is ignored.
+CLOSING_STATES: frozenset[FactState] = frozenset({FactState.ARCHIVED, FactState.INVALIDATED, FactState.SUPERSEDED})
 # The owner may invalidate a fact the consolidator archived meanwhile.
 CABINET_ACCEPTS: frozenset[FactState] = frozenset(FactState) - {FactState.SUPERSEDED}
 

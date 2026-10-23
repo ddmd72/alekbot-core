@@ -63,7 +63,7 @@ def plan_fact_update(current: FactEntity, update: ParsedFactUpdate, now: datetim
         # An order-only tag difference is not a change, so the tags of the new version follow the update's order.
         "tags": new_tags,
         "metadata": dict(new_metadata),
-        "reported_date": update.reported_date if update.reported_date is not None else now,
+        "reported_date": update.reported_date if update.reported_date is not None else current.reported_date,
     }
     if update.temporal_class is not None:
         changes["temporal_class"] = update.temporal_class
