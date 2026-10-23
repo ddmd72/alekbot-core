@@ -51,6 +51,8 @@ OPERATOR_SETS = (DEFAULT_OPERATORS, WIRING_OPERATORS)
 _CAMEL_CASE = re.compile(r"^[A-Z][A-Za-z0-9]*[a-z][A-Za-z0-9]*$")  # at least one lower-case letter: not a CONSTANT
 _BUILDER = re.compile(r"^(create|build)_")
 _SKIPPABLE_CALL = re.compile(r"^(attach_|register_|set_)|^register$")
+_EXCEPTION_NAME = re.compile(r"(Error|Exception)$")
+_LOGGER_NAME = re.compile(r"^_?(logger|logging|log)$|_logger$")
 _DIRECTIONS = {"ASCENDING": "DESCENDING", "DESCENDING": "ASCENDING", "asc": "desc", "desc": "asc"}
 
 
@@ -306,6 +308,10 @@ def _is_constant(node: ast.expr) -> bool:
         return _is_constant(node.operand)
     if isinstance(node, ast.JoinedStr):
         return not any(isinstance(v, ast.FormattedValue) for v in node.values)
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        return all(_is_constant(e) for e in node.elts)  # an empty display too
+    if isinstance(node, ast.Dict):
+        return all(k is not None and _is_constant(k) and _is_constant(v) for k, v in zip(node.keys, node.values))
     return False
 
 
@@ -316,7 +322,9 @@ def _callee_name(node: ast.Call) -> str:
 
 
 def _is_wiring_call(node: ast.Call) -> bool:
-    name = _callee_name(node)
+    name = _callee_name(node).lstrip("_")  # `_UserContext`, `_build_x`
+    if name == "create_task" or _EXCEPTION_NAME.search(name):
+        return False  # a task spawn and an exception message are not wiring
     return bool(_CAMEL_CASE.match(name) or _BUILDER.match(name))
 
 
@@ -366,13 +374,38 @@ def _wire_drop_dict_variants(node: ast.Dict) -> List[_Variant]:
     return out
 
 
+def _wire_drop_attribute_variants(node: ast.Assign) -> List[_Variant]:
+    """`agent.coordinator = value` (post-construction injection) -> `agent.coordinator = None`; `self.x = ...` is state."""
+    if len(node.targets) != 1 or not isinstance(node.targets[0], ast.Attribute) or _is_constant(node.value):
+        return []
+    root = node.targets[0]
+    while isinstance(root, ast.Attribute):
+        root = root.value
+    if not isinstance(root, ast.Name) or root.id in ("self", "cls"):
+        return []
+
+    def drop(node=node):
+        clone = copy.deepcopy(node)
+        clone.value = _none()
+        return clone
+
+    return [_Variant("wire-drop", f"assign None to `{ast.unparse(node.targets[0])}` instead of {_src(node.value)}", drop)]
+
+
+def _is_logger(receiver: ast.expr) -> bool:
+    """The receiver itself is a logger: `logger`, `self._logger`, `logging`, `logging.getLogger(..)`, `getLogger(..)`."""
+    if isinstance(receiver, ast.Call):
+        return _callee_name(receiver) == "getLogger"
+    name = receiver.id if isinstance(receiver, ast.Name) else receiver.attr if isinstance(receiver, ast.Attribute) else ""
+    return bool(_LOGGER_NAME.search(name))
+
+
 def _call_skip_variants(node: ast.Expr) -> List[_Variant]:
     call = node.value.value if isinstance(node.value, ast.Await) else node.value
-    if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute) and _SKIPPABLE_CALL.match(call.func.attr)):
+    if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute) and _SKIPPABLE_CALL.match(call.func.attr.lstrip("_"))):
         return []
-    receiver = [n.id if isinstance(n, ast.Name) else n.attr for n in ast.walk(call.func.value) if isinstance(n, (ast.Name, ast.Attribute))]
-    if any("log" in name.lower() for name in receiver):
-        return []  # a logger's own setter (`logger.set_x`, `self.logger.set_x`, `logging.getLogger(..).set_x`) is not wiring
+    if _is_logger(call.func.value):
+        return []  # a logger's own setter is not wiring
     return [_Variant("call-skip", f"skip the call `{_src(call)}`", lambda: ast.Pass())]
 
 
@@ -383,6 +416,8 @@ def _wiring_variants(node: ast.AST) -> List[_Variant]:
         return _wire_drop_dict_variants(node)
     if isinstance(node, ast.Expr):
         return _call_skip_variants(node)
+    if isinstance(node, ast.Assign):
+        return _wire_drop_attribute_variants(node)
     return []
 
 
