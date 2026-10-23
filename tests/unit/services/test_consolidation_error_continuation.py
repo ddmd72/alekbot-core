@@ -142,7 +142,7 @@ async def test_a_batch_that_broke_before_its_mark_is_not_its_own_continuation(
     assert await _status(queue, "b1") == BatchStatus.PENDING.value and coordinator.routed == []
 
 
-async def test_another_batch_still_continues_when_the_broken_one_is_left_pending(
+async def test_a_broken_batch_left_pending_stops_the_chain_even_with_another_batch_waiting(
     service, queue, continuations, monkeypatch,
 ):
     await _put(queue, "b1", "b2")
@@ -157,7 +157,28 @@ async def test_another_batch_still_continues_when_the_broken_one_is_left_pending
 
     run = await service.consolidate_now(USER)
 
-    assert run.has_more and continuations.users == [USER]
+    assert not run.has_more and continuations.users == []
+
+
+async def test_runs_that_keep_breaking_before_the_mark_never_chain_and_leave_the_sweep_to_retry(
+    service, queue, coordinator, continuations, monkeypatch,
+):
+    await _put(queue, "b1", "b2")
+    original = queue.update_batch_status
+
+    async def refuse_the_mark_of_b1(batch_id, status, **kwargs):
+        if batch_id == "b1" and status is BatchStatus.PROCESSING:
+            raise RuntimeError("store down")
+        return await original(batch_id, status, **kwargs)
+
+    monkeypatch.setattr(queue, "update_batch_status", refuse_the_mark_of_b1)
+
+    runs = [await service.consolidate_now(USER) for _ in range(6)]
+    worker_results = [await service.process_user_batches(USER) for _ in range(3)]
+
+    assert [r.has_more for r in runs] == [False] * 6 and worker_results == [False] * 3
+    assert continuations.users == [] and coordinator.routed == []
+    assert [await _status(queue, b) for b in ("b1", "b2")] == [BatchStatus.PENDING.value] * 2
 
 
 async def test_an_error_before_any_batch_was_read_continues_nothing(service, queue, continuations, monkeypatch):

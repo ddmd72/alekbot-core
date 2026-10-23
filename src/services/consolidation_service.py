@@ -188,9 +188,10 @@ class ConsolidationService:
             return None
 
     async def _has_other_pending(self, user_id: str, touched: list[str]) -> bool:
-        """After an internal error: whether batches other than the one that broke are waiting, so the chain goes on
-        without retrying that batch. An error before any batch was read names none, and then nothing continues (a
-        failing store would loop hot)."""
+        """After an internal error: whether the chain can go on. It can when a batch other than the one that broke is
+        waiting and the broken one is no longer pending (marked PROCESSING, so the zombie reset bounds it). A broken
+        batch still pending would be the next run's oldest again: no progress, an endless chain of immediate tasks,
+        so the hourly sweep retries it instead. An error before any batch was read names none, and nothing continues."""
         if not touched:
             return False
         try:
@@ -198,7 +199,8 @@ class ConsolidationService:
         except Exception as exc:
             self._log_unhandled(user_id, exc)
             return False
-        return any(batch.batch_id not in touched for batch in pending)
+        pending_ids = {batch.batch_id for batch in pending}
+        return not pending_ids.intersection(touched) and bool(pending_ids)
 
     async def _has_pending(self, user_id: str) -> bool:
         """A failing read answers True: a spare continuation finds nothing and stops, a lost one waits for the sweep."""
