@@ -15,6 +15,7 @@ def _agent(fm):
 
 async def test_directive_cap_backstop_passes_account_id():
     fm = AsyncMock(spec=FactManagementPort)
+    fm.update_fact.return_value = {"status": "updated"}  # the port's success shape (Facts S3 plan §3.20)
     agent = _agent(fm)
     agent.DIRECTIVE_HARD_CAP = 1
     facts = [MagicMock(id=f"f{i}") for i in range(3)]
