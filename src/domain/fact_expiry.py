@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from typing import Any, Dict, Final, Optional, Tuple
+from typing import Any, Dict, Final, Optional, Tuple, Union
 
 from .entities import ExpiryKind
 from .exceptions import FactExpiryError
@@ -10,6 +10,8 @@ from .local_time import local_date, local_moment
 
 NOTHING_WRITTEN: Final[str] = "Nothing was written. Resend this call with a valid expiry before retiring any fact it replaces."
 EXPIRY_SHAPES: Final[str] = "{kind: date, date: YYYY-MM-DD}, {kind: horizon, days: N} or {kind: none}"
+MAX_HORIZON_DAYS: Final[int] = 36500
+MIN_YEAR, MAX_YEAR = 1900, 9998  # keeps the end-of-day and horizon arithmetic inside datetime's range
 
 
 @dataclass(frozen=True)
@@ -17,6 +19,13 @@ class Expiry:
     kind: ExpiryKind
     on: Optional[date] = None      # kind date: the last day the fact holds
     days: Optional[int] = None     # kind horizon: days counted from when the owner said it
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "kind", ExpiryKind(self.kind))
+        if self.kind is ExpiryKind.DATE and self.on is None:
+            raise ValueError("an Expiry of kind date needs `on`")
+        if self.kind is ExpiryKind.HORIZON and self.days is None:
+            raise ValueError("an Expiry of kind horizon needs `days`")
 
 
 EXPIRY_NONE: Final[Expiry] = Expiry(ExpiryKind.NONE)
@@ -43,14 +52,27 @@ def parse_expiry(raw: object) -> Expiry:
     raise _malformed(f"kind {kind_raw!r} is unknown")
 
 
+def as_expiry_kind(value: object) -> Optional[ExpiryKind]:
+    """`value` as an ExpiryKind: a member stays itself, a known string (a stored or projected kind) becomes the member,
+    anything else is None. Callers compare the result with `is`, which a plain string would fail."""
+    if isinstance(value, ExpiryKind):
+        return value
+    try:
+        return ExpiryKind(value)
+    except ValueError:
+        return None
+
+
 def expiry_view(
-    kind: Optional[ExpiryKind], ttl_days: Optional[int], expires_at: Optional[datetime], timezone: str
+    kind: Union[ExpiryKind, str, None], ttl_days: Optional[int], expires_at: Optional[datetime], timezone: str
 ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
     """A stored decision as the model sends it, plus `due` (a local ISO date) for a horizon.
 
-    Sending the view back unchanged keeps the same `expires_at`. No kind, or a kind without its data, is no view: the
-    model is not shown a decision it could not resend.
+    Sending a date or none view back unchanged keeps the same `expires_at`, and so does a horizon, unless a cleanup pass
+    floored it (then a resend is floored again from the new now). No kind, or a kind without its data, is no view: the
+    model is not shown a decision it could not resend. `kind` may be the stored string.
     """
+    kind = as_expiry_kind(kind)
     if kind is ExpiryKind.NONE:
         return {"kind": "none"}, None
     if kind is ExpiryKind.DATE and expires_at is not None:
@@ -68,22 +90,27 @@ def _malformed(why: str) -> FactExpiryError:
 
 
 def _parse_day(raw: Any) -> date:
+    day: Optional[date] = None
     if isinstance(raw, datetime):
-        return raw.date()
-    if isinstance(raw, date):
-        return raw
-    if isinstance(raw, str):
+        day = raw.date()
+    elif isinstance(raw, date):
+        day = raw
+    elif isinstance(raw, str):
         text = raw.strip()
         try:
-            return date.fromisoformat(text) if len(text) == 10 else datetime.fromisoformat(text.replace("Z", "+00:00")).date()
+            day = date.fromisoformat(text) if len(text) == 10 else datetime.fromisoformat(text.replace("Z", "+00:00")).date()
         except ValueError:
             pass
-    raise _malformed(f"kind date needs `date` as YYYY-MM-DD, got {raw!r}")
+    if day is None:
+        raise _malformed(f"kind date needs `date` as YYYY-MM-DD, got {raw!r}")
+    if not MIN_YEAR <= day.year <= MAX_YEAR:
+        raise _malformed(f"the year of `date` must be between {MIN_YEAR} and {MAX_YEAR}, got {day.isoformat()}")
+    return day
 
 
 def _parse_days(raw: Any) -> int:
     if isinstance(raw, float) and raw.is_integer():  # a tool-call transport may hand 14 over as 14.0
         raw = int(raw)
-    if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 1:
+    if isinstance(raw, int) and not isinstance(raw, bool) and 1 <= raw <= MAX_HORIZON_DAYS:
         return raw
-    raise _malformed(f"kind horizon needs `days` as a whole number of at least 1, got {raw!r}")
+    raise _malformed(f"kind horizon needs `days` as a whole number from 1 to {MAX_HORIZON_DAYS}, got {raw!r}")
