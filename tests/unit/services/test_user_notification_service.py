@@ -928,3 +928,32 @@ class TestNotifyCallSummary:
 
         msg = coordinator.route_message.call_args[0][0]
         assert "suppress_transient_retry" not in msg.context
+
+
+class TestNotifyEmptyAnswerResult:
+    """The agent's `empty_answer` failure reaches the caller as a NotifyResult that `is_empty_answer` recognises."""
+
+    async def test_empty_answer_failure_is_recognised_and_nothing_sent(self, service, coordinator, response_channel):
+        from src.domain.notify_result import is_empty_answer
+        coordinator.route_message.return_value = AgentResponse.failure(
+            task_id="t", agent_id="smart", error="empty_answer",
+        )
+
+        result = await service.notify(_USER_ID, _ACCOUNT_ID, "alert", kind=NotificationKind.INTERACTIVE)
+
+        assert (result.delivered, result.sent, result.error) == (False, False, "empty_answer")
+        assert is_empty_answer(result) is True
+        response_channel.send_message.assert_not_awaited()
+        response_channel.send_rich_content.assert_not_awaited()
+
+    async def test_other_failure_is_not_an_empty_answer(self, service, coordinator, response_channel):
+        from src.domain.notify_result import is_empty_answer
+        coordinator.route_message.return_value = AgentResponse.failure(
+            task_id="t", agent_id="smart", error="provider exploded",
+        )
+
+        result = await service.notify(_USER_ID, _ACCOUNT_ID, "alert", kind=NotificationKind.INTERACTIVE)
+
+        assert result.error == "provider exploded"
+        assert is_empty_answer(result) is False
+        response_channel.send_message.assert_not_awaited()

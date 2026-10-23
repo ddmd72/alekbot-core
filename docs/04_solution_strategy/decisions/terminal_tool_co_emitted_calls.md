@@ -4,6 +4,8 @@
 **Status:** Accepted
 **Scope:** `src/infrastructure/delegation_engine.py` (terminal-tool branch)
 
+**Update 2026-10-23:** the mechanism now also runs on Claude (a string `deliver_response` for schema + client-tool requests, `claude_deliver_response_string_tool.md`). A SYNC sibling co-emitted with the terminal call is logged as `terminal_sync_sibling`; behaviour is unchanged.
+
 ## Context
 
 `DelegationEngine.execute()` terminates when the model calls `terminal_tool` (Smart passes

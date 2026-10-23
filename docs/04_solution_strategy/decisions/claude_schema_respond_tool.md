@@ -5,6 +5,11 @@
 reverted the 2026-04-23 `output_config.format` migration `772beb8`). Net: back to native
 `output_config.format`, now that the model that broke it (see History) is understood.
 
+> **2026-10-23 — partly superseded** by `claude_deliver_response_string_tool.md`: a request with a
+> `response_schema` **and** client tools (not grounded) no longer sends `output_config.format`; it gets a
+> synthesized `deliver_response` tool with one string parameter (no answer fields, so nothing for the
+> `<parameter>` leak below to use). Schema requests without client tools keep `output_config.format`.
+
 > Filename kept (`claude_schema_respond_tool.md`) because CLAUDE.md files link to it; the `respond`
 > tool it was named for no longer exists.
 
