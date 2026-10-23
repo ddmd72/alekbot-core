@@ -1,13 +1,20 @@
 import asyncio
-from typing import List, Dict, Optional, Union
+from typing import Any, List, Dict, Optional, Union
 
 from ..domain.entities import FactEntity
+from ..domain.local_time import local_moment
 from ..domain.search import EnrichedContext, EnrichedFact, SearchLimits
 from ..domain.vector_math import cosine_similarity
 from ..ports.repository import FactRepository
 from ..ports.embedding_service import EmbeddingService
 from ..ports.search_enrichment_port import SearchEnrichmentPort
 from ..utils.logger import logger
+
+
+def _expiry_fields(fact: FactEntity) -> Dict[str, Any]:
+    """The stored expiry decision as EnrichedFact carries it: `expires_at` an aware-UTC ISO string."""
+    expires_at = local_moment(fact.expires_at, "UTC").isoformat() if fact.expires_at is not None else None
+    return {"expiry_kind": fact.expiry_kind, "ttl_days": fact.ttl_days, "expires_at": expires_at}
 
 
 class SearchEnrichmentService(SearchEnrichmentPort):
@@ -404,6 +411,7 @@ class SearchEnrichmentService(SearchEnrichmentPort):
                     reported_date=fact.reported_date.isoformat() if fact.reported_date else None,
                     context=fact.context,
                     version=fact.version,
+                    **_expiry_fields(fact),
                 )
                 for fact in facts
             ]
@@ -460,6 +468,7 @@ class SearchEnrichmentService(SearchEnrichmentPort):
                     reported_date=fact.reported_date.isoformat() if fact.reported_date else None,
                     context=fact.context,
                     version=fact.version,
+                    **_expiry_fields(fact),
                 )
                 for fact in facts
             ]
