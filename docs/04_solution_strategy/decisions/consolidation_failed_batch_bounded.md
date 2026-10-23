@@ -41,3 +41,10 @@ pending the hourly sweep did the same, 3 paid attempts every hour forever.
 A transient outage longer than ~3 hours (3 sweeps) is common enough that batches are given up while the cause is fixed:
 raise the cap or add a manual "revive" lever.
 The companion queue has the same pre-fix revive-on-every-task code and is not changed here.
+
+## Update 2026-10-23 (Facts S2)
+
+A zombie reset (a `processing` batch whose run was lost) now counts as a run: `attempts` + 1, `failed` at
+`MAX_BATCH_ATTEMPTS` (3), on the lease path (60 s threshold) and on the sweep path (1800 s). Before, it set `attempts` to 0, so
+a batch that kills its worker looped for ever. The bound is unchanged in size: 4 rounds x 3 runs = 12 runs in a batch's life,
+where a run is an agent failure or a lost run. A FAILED revival still resets `attempts` to 0. See `fact_versions_one_writer.md`.
