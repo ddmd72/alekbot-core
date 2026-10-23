@@ -146,10 +146,11 @@ class ConsolidationService:
 
         account_id = await self._account_to_lease(user_id)
         if account_id is None:
-            return ConsolidationRun()
+            return ConsolidationRun(failed=1)
 
         processed = 0
         touched: list[str] = []
+        failed = 0
         step = _Step.NOTHING_PENDING
         while max_batches is None or processed < max_batches:
             step = await self._consolidate_one(user_id, account_id, touched)
@@ -158,6 +159,8 @@ class ConsolidationService:
             elif step is _Step.DEFERRED:
                 return ConsolidationRun(processed=processed, deferred=True)
             else:
+                if step in (_Step.FAILED, _Step.ERROR):
+                    failed = 1
                 break
 
         if step is _Step.ERROR:
@@ -166,7 +169,7 @@ class ConsolidationService:
             has_more = await self._has_pending(user_id)
         if has_more:
             logger.info("📬 [Librarian] More pending batches remain for user %s", user_id[:8])
-        return ConsolidationRun(processed=processed, has_more=has_more)
+        return ConsolidationRun(processed=processed, has_more=has_more, failed=failed)
 
     async def _account_to_lease(self, user_id: str) -> Optional[str]:
         """The user's account, or None when the run stops here. A setup error is logged and swallowed, as it

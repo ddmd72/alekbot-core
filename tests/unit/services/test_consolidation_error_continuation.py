@@ -12,6 +12,7 @@ from src.adapters.firestore_memory_write_lease import FirestoreMemoryWriteLease
 from src.config.environment import EnvironmentConfig
 from src.domain.agent import AgentResponse
 from src.domain.consolidation import BatchStatus, ConsolidationBatch
+from src.domain.consolidation_run import ConsolidationRun
 from src.services.consolidation_service import ConsolidationService
 from tests.support.firestore_eval import EvalDb
 
@@ -170,3 +171,45 @@ async def test_an_error_before_any_batch_was_read_continues_nothing(service, que
     run = await service.consolidate_now(USER)
 
     assert not run.has_more and continuations.users == []
+
+
+async def test_the_run_counts_a_crashed_batch_as_failed(service, queue, coordinator):
+    await _put(queue, "b1")
+    coordinator.raising = {"b1"}
+
+    assert (await service.consolidate_now(USER)).failed == 1
+
+
+async def test_the_run_counts_an_agent_failure_as_failed_and_a_clean_run_as_not(service, queue, coordinator):
+    await _put(queue, "b1", "b2")
+    original = coordinator.route_message
+
+    calls = []
+
+    async def failing_first(message):
+        response = await original(message)
+        calls.append(message.payload["batch_id"])
+        if len(calls) == 1:
+            return AgentResponse.failure(error="LLM 529", agent_id="c", task_id="b1")
+        return response
+
+    coordinator.route_message = failing_first
+
+    failed_run = await service.consolidate_now(USER)
+    clean_run = await service.consolidate_now(USER)
+
+    assert failed_run.failed == 1 and failed_run.processed == 0
+    assert (clean_run.failed, clean_run.processed) == (0, 1)
+
+
+async def test_a_setup_error_is_a_failed_run(queue, coordinator, db):
+    class BrokenFactory:
+        async def ensure_agents_for_user(self, user_id):
+            raise RuntimeError("agents down")
+
+    service = ConsolidationService(
+        queue=queue, coordinator=coordinator, agent_factory=BrokenFactory(),
+        lease=FirestoreMemoryWriteLease(db, EnvironmentConfig()), run_timeout_s=900.0, clock=lambda: NOW,
+    )
+
+    assert await service.consolidate_now(USER) == ConsolidationRun(failed=1)
