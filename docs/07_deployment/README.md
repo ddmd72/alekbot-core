@@ -1050,6 +1050,58 @@ deep-research delivery is broken again on the old code (it reads metadata from i
 fails open on the new claim docs (it runs the task). Do not deploy between H:12 and H+2:12 local for any
 daily-review user (H = review hour): the old code left no marks, so a rollback in that span can run a second review.
 
+## Facts S2 — versions and one writer (S2–S5 ship together)
+
+`docs/04_solution_strategy/decisions/fact_versions_one_writer.md`, owner's map `docs/05_building_blocks/memory/README.md`.
+The code creates nothing live by itself: the owner steps are the index, the switch procedure and the audit.
+
+1. **Index (before the code).** `config/firestore.indexes.json` declares the composite
+   `development_domain_facts_v2 (account_id ASC, lineage_id ASC, version ASC)`, which serves `get_lineage`. Issue it with
+   the `deploy-indexes` Make target together with the S3/S4 indexes and wait until it is `READY`; no S2 production path
+   queries it until S4's prefetch, but the code must not meet it missing. The old `(lineage_id, created_at DESC)` index
+   becomes unused and stays; deleting it is optional.
+2. **Collection `{prefix}memory_write_leases`** (the lease, one document per account): created by the first run. It needs
+   no index and **no TTL policy**: its expiry field is `lease_until`, never `expires_at`, and a TTL must not be added.
+3. **Switch procedure (owner step).** The old revision has no lease and writes a fact with a blind full-document `set()`
+   that would re-open a closed version and drop its `superseded_by`; no S2 precondition can catch a write that lands
+   after its commit. So the old and the new revision must never consolidate at the same time:
+   1. Pause the queue that carries `consolidation` tasks, deferrals included:
+      `gcloud tasks queues pause agent-tasks-dev --location=us-central1 --project=<PROJECT_ID>`.
+   2. **Wait until no batch is `processing` and no consolidation request is in flight. This is mandatory, not advice.**
+      Under the lease a `processing` batch older than 60 s counts as a zombie, so a batch still running on the old
+      revision would be reset and run a second time by the new one. **Send no `$consolidate` from this step until step 5:**
+      it runs inside the chat request (Slack/Telegram queues), so the queue pause does not stop it. Re-check that no
+      batch is `processing` immediately before the traffic switch.
+   3. Switch traffic to the new revision (the normal deploy).
+   4. Resume the queue:
+      `gcloud tasks queues resume agent-tasks-dev --location=us-central1 --project=<PROJECT_ID>`.
+   5. After the first day, run `python -m scripts.data_audit.run facts --s2-cutoff <time>` and require
+      `lineage_multiple_current` = 0 and no version-chain violation (memory map §9.6). The cutoff is the time the **last
+      old-revision consolidation request ended** (step 2), not the time of the deploy command: a later value hides real
+      post-S2 violations, an earlier one reports the old revision's closes as violations.
+4. **Rollback.** The same procedure: pause, drain, roll back, resume. It is data-safe for S2's own fields; the old code
+   ignores `superseded_by` and the lease documents. Limits:
+   - an old-revision Cabinet invalidate on a stale page can set `is_current=True` on a closed document; it stays
+     invisible (`state` decides), and after the roll-forward it is an end state for the Cabinet and an error for
+     consolidation;
+   - old code that edits a version document in place bumps its `version` and keeps `replaces_fact_id`: the audit reports
+     `replaces_version_mismatch`, which means a text was lost;
+   - with S3 in the bundle, every document the old revision updates loses the S3 fields (`expiry_kind`, `stale_since`,
+     `lifecycle_events`), because the old code writes a full `set()` of the old model; those documents need the
+     re-classify step after the roll-forward.
+5. **Live data (read 2026-10-23).** 1112 fact documents: current 563, superseded 442, archived 53, invalidated 52, stale 2.
+   All 442 superseded documents lack `superseded_by` (a stale Cabinet id that reaches one gets "successor unknown"), every
+   lineage has one document, versions continue from the stored `version`. No migration step: history starts at the
+   switch. Growth: 72 content updates a month at about 20 KB a document, about 1.4 MB a month.
+6. **Prompts are S3's.** The live consolidation tokens still tell the model to retire a split fact with `SUPERSEDED` alone,
+   which S2 refuses without `superseded_by`: `CONSOLIDATION_COGNITIVE_PROCESS.groovy:97`, `CONSOLIDATION_TAXONOMY.groovy:246,358`,
+   `CONSOLIDATION_OUTPUT_SPEC.groovy:32`, and the code-built Stage 2a message (`consolidation_agent.py:1176-1178`, "decomposed,
+   with the original superseded"). S3 names the successor in all of them (create the parts first, then supersede with
+   `superseded_by`), with the same-day token upload of RFC §7.1. S2–S5 ship together, so live prompts never meet S2 code
+   alone; measured cost if they ever did: about 2 tool errors a month.
+7. **Cloud gate.** Run `make test-cloud` once on the branch before calling S2 done: two parity scenarios
+   (`transaction_read_update_time`, `get_all_order_not_assumed`) cover what the fake assumes about transactions.
+
 ## Cloud Tasks redelivery dedup
 
 `docs/04_solution_strategy/decisions/worker_task_dedup.md`. Two one-time owner steps, neither blocks

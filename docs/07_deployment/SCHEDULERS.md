@@ -275,6 +275,14 @@ Current active jobs: 4 (prod) / 5 (dev with keep-alive).
 | **Fan-out** | One distinct query (`FirestoreConsolidationQueue.get_stuck_batch_user_ids`, `user_id` projection) → one `consolidation` Cloud Task per stuck user. No-op when the queue is empty. |
 | **Env** | dev + prod |
 
+**The `consolidation` task may defer itself (Facts S2).** Every batch runs under the account's memory-write lease. A task
+that finds the lease taken, while the user has an open batch (`pending`, `retry_pending` or `processing`), enqueues one
+more `consolidation` task with a 120 s delay and a 1800 s deadline through `enqueue_worker_task`, named from the key
+`consolidation-defer:<user>:<120 s bucket>` (Cloud Tasks name `consolidation-<sha256(key)[:32]>`), and answers 200
+without enqueueing the next batch itself. Tasks that lose in the same bucket collapse into one task. The name is never
+fixed, because Cloud Tasks keeps a name for about an hour. The sweep takes no lease: it revives `failed` batches and
+zombies older than 1800 s (under the lease the zombie threshold is 60 s). See memory map §3 step 3.
+
 ---
 
 ### Companion Extraction (RFC `docs/10_rfcs/COMPANION_AGENTS_RFC.md` §6)
