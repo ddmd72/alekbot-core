@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Sequence, Tuple
 
 from scripts.consolidation import s3_dry_run_kit as kit_module
-from scripts.consolidation.s3_dry_run_kit import DryRunKit, add_kit_arguments, inside_memory_dir
+from scripts.consolidation.s3_dry_run_kit import DryRunKit, add_kit_arguments, check_budget_flag, inside_memory_dir
 from src.domain.agent import AgentIntent, AgentMessage, AgentResponse, AgentStatus
 from src.domain.entities import FactState
 
@@ -35,7 +35,7 @@ class KitRunFailed(RuntimeError):
 
 
 def add_s3_arguments(parser: Any) -> None:
-    """`--s3-kit` and the kit's own flags (`--budget-usd`, `--timezone`); the flags do nothing without `--s3-kit`."""
+    """`--s3-kit` and the kit's own flags (`--budget-usd`, `--allow-over-owner-cap`, `--timezone`); the flags do nothing without `--s3-kit`."""
     parser.add_argument("--s3-kit", action="store_true",
                         help="run the pass the S3 gate reads on the dry-run kit (no write reaches the live store)")
     add_kit_arguments(parser)
@@ -141,7 +141,8 @@ async def kit_session(
 
     One kit per process: the spend ledger is locked for the kit's life. The body adds what is bench-specific to the
     `extra` dict; the report goes to `scripts/memory/` even when the run stopped on a failed response or the cap."""
-    kit = DryRunKit(ledger_path=kit_module.SPEND_LEDGER, budget_usd=args.budget_usd)
+    budget = check_budget_flag(args.budget_usd, getattr(args, "allow_over_owner_cap", False))
+    kit = DryRunKit(ledger_path=kit_module.SPEND_LEDGER, budget_usd=budget)
     try:
         await kit.resolve_timezone(handles.account_repo, handles.user_repo, account_id, args.timezone)
         kit.install(handles.agent)
@@ -240,6 +241,12 @@ def gate_summary(report: Dict[str, Any]) -> List[str]:
     abandoned = sum(p["abandoned_refusals"] for p in passes)
     lines.append(f"G2 {'FAIL' if abandoned else 'ok'}: {abandoned} abandoned refusal(s) in {len(passes)} pass(es)")
     lines.append("G3: read the write rows (expiry sent, decision stored) in the report")
+    undated = report.get("cleanup_creates_without_derived_from", {"per_pass": {}, "total": 0})
+    by_pass = ", ".join(f"{label} {count}" for label, count in sorted(undated["per_pass"].items())) or "none"
+    lines.append(
+        f"cleanup creates without derived_from: {undated['total']} ({by_pass}); their dates restart from the batch "
+        "end, or from now on a cluster pass"
+    )
     if report.get("spend", {}).get("aborted"):
         lines.append("RUN STOPPED by the spend meter (cap or unpriced model): the passes above are incomplete")
     return lines

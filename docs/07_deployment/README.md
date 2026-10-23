@@ -1129,14 +1129,14 @@ among the hits as a fact finds itself in production: a short new fact is cut whe
 
 **Cost and the cap.** The kit's meter prices every call by the model the request names, keeps one ledger across all
 runs in `scripts/memory/s3_dry_run_spend.json` and refuses the next call when the cumulative spend would pass **$30**
-(`--budget-usd` lowers or raises that cumulative cap; a model with no price is refused before the call). The meter sees
+(`--budget-usd` lowers that cumulative cap; a value above $30 is refused unless `--allow-over-owner-cap` is also given, which is the owner's call alone; a model with no price is refused before the call). The meter sees
 the requested model only: a provider failover, a retry or a timed-out attempt that the provider still bills is not seen,
 so the real bill can be somewhat higher; the estimates below leave room. A run stopped by the cap still writes its report.
 Expected total about $6-12 on Sonnet 5.5 (about $12-24 on Opus 5.5).
 
 **Flags.** `--s3-kit` turns the kit on; without it each bench behaves as it always did. `--timezone <IANA zone>`
 overrides the owner's zone, which is otherwise resolved as the consolidation service resolves it (UTC with a warning when
-it cannot be). `--budget-usd` as above. A failed response from the agent (including a refused snapshot token) stops the
+it cannot be; the rule is `resolve_owner_timezone` in `domain/owner_timezone.py`, the one function the service and the kit both call). `--budget-usd` and `--allow-over-owner-cap` as above. A failed response from the agent (including a refused snapshot token) stops the
 bench with the failure printed; the report is still written.
 
 **Run in this order** (the estimate is per run, Sonnet 5.5 / Opus 5.5):
@@ -1157,7 +1157,11 @@ it holds fact ids, the 📊/🚨 alert lines and your zone, so keep it local) an
   would hide a still-true fact within weeks or keep a dead plan current for ever. A debatable horizon length is not a
   failure.
 Also reported, not gated: expiry refusals per pass, floored horizons, `derived_from` use, the share of naive
-`reported_date`s. The report also lists the five served tokens with the hash of their snapshot body.
+`reported_date`s. A fourth line is printed next to G3: **cleanup creates without `derived_from`: N** (per pass and in
+total; `cleanup_creates_without_derived_from` in the report). A create on a cleanup pass (`stage2a`, `stage2b`, `cluster`)
+that names no source is dated to the end of its batch, or to now on a `cluster` pass, so its expiry horizon restarts from
+there although the content is old. The owner accepted that fallback (Q5); the count is how you see how often step M hit
+it, and you decide whether a high number is a prompt problem. It is not gated. The report also lists the five served tokens with the hash of their snapshot body.
 
 **What step M does not cover.** Bench 1 reads the newest turns of your latest session, so its batches are fresh. A late
 batch (plan risk 1: a horizon said in a batch days or weeks old is refused unless it ends after today) is not exercised;
@@ -1228,7 +1232,10 @@ what is left of the $30. The fix is on the branch before the pause.
    `stale_since` = now and one `lifecycle_events` entry (`migration`, "legacy stale, stamped at S3") and prints `stamped`,
    `skipped_changed` and `failed`; `last_updated`, state, text and vectors are untouched; a document changed since the scan is
    skipped and counted (run it again); a second `--apply` stamps nothing. Until S4's first successful review the
-   breaker is tripped for an account with a stale fact, which is harmless while the janitor is log-only.
+   breaker is tripped for an account with a stale fact, which is harmless while the janitor is log-only. **Expect
+   "oldest 0d" in the daily 🧹 line:** the two stamped facts have been stale for months by their `last_updated`, but the
+   backlog age counts from the stamp, so the line shows `backlog 2 (oldest 0d)` on the day you stamp and counts up from
+   there. It is not a new problem.
 7. **Audit after the first day:** `python -m scripts.data_audit.run facts --s2-cutoff <time from step 3>`; require
    `lineage_multiple_current` = 0 and no version-chain violation (memory map §9.6, which also gives the healthy shape:
    `superseded_without_successor_pre_s2` stays at 442). A later cutoff hides real post-S2 violations, an earlier one
