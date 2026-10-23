@@ -79,13 +79,6 @@ def platform_problems(graph: ProdGraph) -> List[str]:
         check(handler is not None and handler._doc_delivery_service is not None, f"{platform} ConversationHandler has no doc_delivery_service")
         check(handler is not None and handler._doc_delivery_service is app.agent_worker_handler._doc_delivery_service,
               f"{platform} ConversationHandler does not share the async path's doc_delivery_service")
-    # D3: one audio transcriber serves the platform adapters and the container's FileConversionService (open_file).
-    audio = app.slack_adapter.conversation_handler.audio_service
-    check(audio is not None, "the Slack ConversationHandler has no audio service (OPENAI_API_KEY is in the deploy)")
-    check(app.container.file_conversion_service is not None and app.container.file_conversion_service._audio_service is audio,
-          "FileConversionService does not hold the audio service the Slack handler holds")
-    check(app.telegram_adapter is not None and app.telegram_adapter.conversation_handler.audio_service is audio,
-          "the Telegram ConversationHandler does not hold the same audio service")
     return problems
 
 
@@ -156,7 +149,6 @@ async def test_a_broken_platform_seam_is_reported(prod_graph):
     app = prod_graph.app
     app.worker_handler._telegram_worker = None
     app.slack_adapter.conversation_handler._doc_delivery_service = None
-    app.container.file_conversion_service._audio_service = None
     app.agent_factory._sweep_task.cancel()
     await asyncio.gather(app.agent_factory._sweep_task, return_exceptions=True)
     prod_graph.lazy["lelik"] = False
@@ -165,25 +157,8 @@ async def test_a_broken_platform_seam_is_reported(prod_graph):
 
     assert any("Telegram worker" in p for p in problems), problems
     assert any("slack ConversationHandler has no doc_delivery_service" in p for p in problems), problems
-    assert any("FileConversionService does not hold the audio service" in p for p in problems), problems
     assert any("agent_factory._sweep_task is not running" in p for p in problems), problems
     assert any("['lelik']" in p for p in problems), problems
-
-
-@pytest.mark.slow
-async def test_without_an_openai_key_no_audio_service_is_built_anywhere(monkeypatch):
-    from src.composition.application_graph import build_application_graph
-    from src.config.settings import load_settings
-    from tests.support import prod_env
-
-    offline = prod_env.install_offline_services(monkeypatch)
-    config = {**load_settings(), "OPENAI_API_KEY": ""}
-
-    app = build_application_graph(config, offline.db)
-
-    assert app.container.file_conversion_service._audio_service is None
-    assert app.slack_adapter.conversation_handler.audio_service is None
-    assert app.telegram_adapter.conversation_handler.audio_service is None
 
 
 @pytest.mark.slow

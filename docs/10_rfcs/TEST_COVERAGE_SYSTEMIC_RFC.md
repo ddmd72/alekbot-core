@@ -691,7 +691,6 @@ prints counts only. S5 adds the expiry invariants; other entities join with thei
   `PlatformAdapterFactory.register("telegram", …)` has already run (that registry has no reader, P9-D5); Telegram is built in the dead Socket-mode branch too.
 - **Defects found and fixed in this package:**
   - P9-D1: sync `document` delivery was dropped, `doc_delivery_service` was never given to the two `ConversationHandler`s;
-  - P9-D3: `open_file` on an audio file had no transcription, `FileConversionService` now gets the transcriber production builds (owner OK);
   - P9-D8: cross-provider failover was dead for `web_search`, `tasks`, `domain_researcher`, `tutor` and `lelik_summarizer` (the execution context was
     never stored), now wired (real only when the user picks claude, for `tasks`); `consolidation` and `tutor_extractor` get `fallback: None` (owner
     ruling 2026-10-23: a memory write never moves to another model on an outage; no live change today, they never stored a context). Two
@@ -701,6 +700,10 @@ prints counts only. S5 adds the expiry invariants; other entities join with thei
   - P9-D2: the email classifier's usage is neither billed nor captured. A roadmap item (the owner's quality roadmap, 14b), an owner decision;
   - P9-D6: `ConversationHandler.security_port` is never passed, and P9-D5: the `PlatformAdapterFactory` "telegram" registration has no reader
     (both on the owner discussion agenda);
+  - P9-D3: `open_file` on an audio file answers "transcription unavailable" because `FileConversionService` has no audio service. Not fixed:
+    deferred by the owner (2026-10-23) to the External Files RFC's U3 stage. Wired into the shared converter, the transcriber would run on every
+    text path (chat, workspace, drive files up to 5 MB, coordinator prefetch), unmetered and uncached, and would bypass the drive transcription cap.
+    The ledger line is `defect:D3`; the converter's audio branch is tested with an injected fake (`test_file_conversion_service_audio.py`);
   - P9-D4: `AgentWorkerHandler.task_queue` is annotated `TaskDispatchService` (`agent_worker_handler.py:65`) and gets the raw queue
     (`application_graph.py`); harmless, move as is;
   - P9-D7: a duplicate `/health` rule, the Cabinet's shadows `main()`'s (harmless; pinned in the `url_map`).

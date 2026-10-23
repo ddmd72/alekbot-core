@@ -219,11 +219,11 @@ Text output — the lowest common denominator, works everywhere.
 
 ---
 
-## AudioTranscriptionPort (connected: `OpenAITranscriptionAdapter`)
+## AudioTranscriptionPort (not connected to `FileConversionService`)
 
 Audio files (`audio/mpeg`, `audio/wav`, `audio/mp4`, `audio/x-m4a`, `audio/ogg`) are detected in `convert_file_to_text()` in a dedicated branch. Transcription is delegated behind a port — `AudioTranscriptionPort` (`src/ports/audio_transcription_port.py`).
 
-**Current state:** `build_application_graph` builds one `OpenAITranscriptionAdapter` when `OPENAI_API_KEY` is set and passes the same instance to both platform `ConversationHandler`s and, through `ServiceContainer(audio_service=…)`, to `FileConversionService`, so `open_file` on an uploaded audio file transcribes it (P9 D3, 2026-10-23). Without the key `audio_service` is `None` everywhere and the user receives an alert "transcription unavailable, please send text".
+**Current state:** in production `FileConversionService` has no audio service (`audio_service=None`): an audio file answers "transcription unavailable, please send text". Voice messages are transcribed separately: `build_application_graph` builds one `OpenAITranscriptionAdapter` (when `OPENAI_API_KEY` is set) for the two platform `ConversationHandler`s, which transcribe a voice memo before the file path. Wiring a transcriber into the shared converter is deferred to the External Files RFC's U3 stage (`docs/10_rfcs/EXTERNAL_FILES_RFC.md`), by owner decision 2026-10-23: through the shared converter it would transcribe on every text path (chat, workspace, drive files up to 5 MB, coordinator prefetch), unmetered and uncached, and would bypass the drive transcription cap (RFC §27). The converter's own audio branch works with an injected transcriber (`tests/unit/services/test_file_conversion_service_audio.py`).
 
 **What was tried and why disabled:**
 - `SpeechRecognitionAdapter` (markitdown → Google Web Speech API, free): English-only, `UnknownValueError` on Russian/Ukrainian, ~50 requests/day

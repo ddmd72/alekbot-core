@@ -102,7 +102,6 @@ class ServiceContainer:
         overflow_callback: Optional[Callable] = None,
         threshold_resolver: Optional[Callable] = None,
         alert_webhook: Optional[Any] = None,
-        audio_service: Optional[Any] = None,
     ) -> None:
         # ------------------------------------------------------------------
         # LLM adapters
@@ -369,7 +368,6 @@ class ServiceContainer:
         self.file_conversion_service = (
             FileConversionService(
                 storage=self.file_storage,
-                audio_service=audio_service,
                 media_storage=self.media_storage,
                 skill_files=skill_file_resolver,
                 drive=self.user_drive,
