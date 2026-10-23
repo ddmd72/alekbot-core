@@ -152,9 +152,20 @@ retry) lives with each agent (see `src/agents/CLAUDE.md`).
   mechanism since 2026-08-14 — `text.format={"type":"json_schema","strict":false}` with
   `GrokAdapter._to_json_schema` (a deliberate duplicate of the OpenAI helper; REQ-ARCH-23
   forbids adapter→adapter imports), also suppressed under grounding.
-  Claude: `response_schema` is forwarded natively via **`output_config.format`**
-  (`{"type":"json_schema","schema":…}`) — the model emits schema-valid JSON as **text**, mirroring
-  Gemini's `response_json_schema`. There is **no** synthesized `respond` tool. The schema is shaped
+  Claude has **two paths** (2026-10-23, `decisions/claude_deliver_response_string_tool.md`):
+  - *Schema, no client tools* (and any grounded request): `response_schema` is forwarded natively via
+    **`output_config.format`** (`{"type":"json_schema","schema":…}`) — the model emits schema-valid JSON as
+    **text**, mirroring Gemini's `response_json_schema`.
+  - *Schema + client tools, not under grounding* (Smart, Quick, Tutor): `output_config.format` is **not**
+    sent; the adapter appends a synthesized `deliver_response` tool with one required string parameter
+    `response`, returns `ToolCall("deliver_response", {"response": <string>})` unparsed, and
+    `extract_structured_response` parses it with the shared `parse_llm_response`. Why: on Sonnet 5.x the
+    grammar + adaptive thinking + tools triple (anthropic-sdk-python#1204) ended tool turns in filler calls
+    instead of the answer; a legitimate tool to end the turn removed them (probes in the decision record).
+    `_drop_document_citations` runs only when `output_config.format` is sent, so PDF citations are kept on
+    this path. A same-provider fallback request keeps no format.
+
+  The native path has no synthesized `respond` tool. Its schema is shaped
   for Anthropic's grammar compiler first: `_nullable_to_union` (`nullable:True` → `["<type>","null"]`
   union) then `_make_strict` (`additionalProperties:false` on every object; drop unsupported keywords
   like `maxLength`; NO `required` injection so optional/variant keys stay optional).
@@ -169,12 +180,13 @@ retry) lives with each agent (see `src/agents/CLAUDE.md`).
   complex" — `rich_content` is therefore a discriminated `anyOf` (null | widget | table | file), not a
   flat bag of optional keys. See `docs/04_solution_strategy/decisions/claude_schema_respond_tool.md`.
 
-  > **Note — `deliver_response` IS this mechanism on Grok, and only there.** Smart passes
-  > `terminal_tool="deliver_response"` to the DelegationEngine. On Claude/Gemini/OpenAI the branch
-  > stays cold and structured output arrives via `output_config.format` → JSON-text (Claude) or
-  > native JSON (Gemini/OpenAI). On **Grok** constrained JSON and function calling compete, so
+  > **Note — `deliver_response` IS this mechanism on Grok and on Claude (with tools).** Smart, Quick
+  > and Tutor pass `terminal_tool="deliver_response"` to the DelegationEngine. On Gemini/OpenAI the
+  > branch stays cold (native JSON). On **Grok** constrained JSON and function calling compete, so
   > `GrokAdapter` synthesizes `deliver_response` as a real function whose parameters are the
-  > response schema — the terminal-tool branch is then Smart's only reply path. The earlier
+  > response schema — its args are the answer fields. On **Claude** with tools the schema is not in
+  > the tool at all: the parameter is one `response` string and the schema reaches the model only
+  > through the prompt. In both cases the terminal-tool branch is the reply path. The earlier
   > "vestigial" note is retracted and TD-3 is closed as invalid: **do not delete this machinery.**
   > A terminal tool may also arrive in the same batch as real work (`create_html_page` +
   > `deliver_response`); the engine dispatches the siblings before returning — see
@@ -191,7 +203,9 @@ retry) lives with each agent (see `src/agents/CLAUDE.md`).
     Grok enforces `response_schema` the same way. Claude: `response_mime_type` is silently ignored;
     `response_schema` is forwarded via `output_config.format` (see above).
   - JSON agents WITH tools: `response_schema` only (no `response_mime_type`).
-    Gemini cannot combine mime_type + tools. Schema works with tools on all providers.
+    Gemini cannot combine mime_type + tools. On Claude with tools the schema is **not enforced on
+    the wire** (it triggers the string `deliver_response` tool instead); the OUTPUT_FORMAT token is
+    the schema's only carrier there.
   - Non-JSON agents: neither. OUTPUT_FORMAT token handles everything.
 
   **Guard:** agents requiring JSON output must be locked to providers that support it
@@ -208,9 +222,11 @@ retry) lives with each agent (see `src/agents/CLAUDE.md`).
   optional keys) is mandatory on two fronts: a flat `{"type":"object"}` data field comes back as
   `{}` on Gemini Flash (widget dropped), AND on Claude the flat bag's `2^N` optional-key grammar
   400s with "Schema is too complex" under `output_config.format`. `link_list` is required
-  `array<object{anchor,title,url}>`. Structure is enforced from code (Gemini responseJsonSchema,
-  Claude output_config.format, OpenAI json_schema); the OUTPUT_FORMAT_JSON token no longer
-  duplicates the schema.
+  `array<object{anchor,title,url}>`. Structure is enforced from code where the provider allows
+  (Gemini responseJsonSchema, Claude output_config.format without tools, OpenAI json_schema, Grok's
+  `deliver_response` parameters). The OUTPUT_FORMAT_JSON token also carries the schema
+  (`prompts_snapshot/tokens/system/OUTPUT_FORMAT_JSON.groovy`), and on Claude with tools it is the only
+  carrier.
 
 - **`rich_content.data.rows` format: `[{"cells": [...]}, ...]`.** Each table row is an object with
   a `cells` key (array of strings). Never use `[[...], [...]]` (Gemini hangs on
