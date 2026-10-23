@@ -52,6 +52,13 @@ class FactState(str, Enum):
     INVALIDATED = "invalidated"
 
 
+class ExpiryKind(str, Enum):
+    """The decision the model took from a fact's content: when it stops being current."""
+    DATE = "date"          # the last day it holds (end of that day in the owner's timezone)
+    HORIZON = "horizon"    # review if the owner has not said it again within N days
+    NONE = "none"          # history, stable or permanent
+
+
 class ContextPriority(str, Enum):
     """HOW IMPORTANT is this fact for baseline context?"""
     CRITICAL = "critical"
@@ -78,6 +85,7 @@ class FactVisibility(str, Enum):
 # not an adapter concern. Previously duplicated 6 times across 2 adapters.
 # ========================================================================
 _FACT_TAXONOMY_FIELDS = ("domain", "temporal_class", "state", "context_priority")
+_RETIRED_PRIORITY = "historical"  # the old name of ARCHIVAL (RFC D11); a model still sends it
 
 
 def normalize_fact_taxonomy(metadata: Dict[str, Any]) -> Dict[str, Any]:
@@ -91,6 +99,8 @@ def normalize_fact_taxonomy(metadata: Dict[str, Any]) -> Dict[str, Any]:
         value = result.get(field)
         if value and isinstance(value, str):
             result[field] = value.lower()
+    if result.get("context_priority") == _RETIRED_PRIORITY:
+        result["context_priority"] = ContextPriority.ARCHIVAL.value
     return result
 
 
@@ -150,6 +160,9 @@ class FactEntity(BaseModel):
     ttl_days: Optional[int] = None
     last_updated: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     expires_at: Optional[datetime] = None
+    expiry_kind: Optional[ExpiryKind] = None
+    stale_since: Optional[datetime] = None
+    lifecycle_events: List[Dict[str, Any]] = []  # newest LIFECYCLE_EVENTS_CAP of {at, from, to, actor, reason}
 
     # ========================================================================
     # Deliberate Fact Management: Explicit version tracking
