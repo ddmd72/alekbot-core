@@ -94,7 +94,7 @@ def _finish_in_place(
         fields["reported_date"] = reported
     note: Optional[str] = None
     if update.state is not None and update.state != current.state:
-        reason = f"superseded by {update.superseded_by}" if update.superseded_by is not None else "model"
+        reason = _closing_reason(update, context)
         entry = lifecycle_event(now, current.state, update.state, context.actor, reason)
         fields["lifecycle_events"] = with_event(current.lifecycle_events, entry)
     elif update.expiry is not None:
@@ -108,6 +108,13 @@ def _finish_in_place(
         if later is not None:
             fields["expires_at"] = later
     return dataclasses.replace(plan, fields=fields), note
+
+
+def _closing_reason(update: ParsedFactUpdate, context: FactWriteContext) -> str:
+    """The code-built reason of an in-place state change: never model text."""
+    if update.superseded_by is not None:
+        return f"superseded by {update.superseded_by}"
+    return "directive cap" if context.actor == "backstop" else "model"
 
 
 def _later_horizon(current: FactEntity, reported: datetime) -> Optional[datetime]:

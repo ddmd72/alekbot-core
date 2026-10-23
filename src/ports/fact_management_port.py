@@ -113,7 +113,8 @@ class FactManagementPort(ABC):
             version + 1, `replaces_fact_id`, `created_at` copied, `valid_from` now) and closes the old one
             (superseded, `superseded_by` = the new id) in one transaction. The new version needs `expiry` (decided again
             from the new text; a pinned fact gets `none`). reported_date follows the pass: a conversation pass takes the
-            later of the stored value and the model's clamped one, a cleanup pass keeps the stored one. A change that
+            later of the stored value and the model's clamped one (none sent: the later of the stored value and the
+            end of the batch's span), a cleanup pass keeps the stored one. A change that
             leaves the three embedding texts alone (temporal_class only) keeps the vectors; otherwise all three are
             recomputed.
         In place: a state-only, reported_date-only or empty update writes only those fields (and last_updated) onto
