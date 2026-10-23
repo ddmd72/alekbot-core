@@ -9,7 +9,8 @@
 [run]
 # `source` is read when the Makefile passes a bare `--cov` (a `--cov=src` on the command line would replace it).
 # src is a directory; the root entry points are importable modules, measured when a test imports them. One no test
-# imports (today: main) is not in the data at all: scripts/check_coverage_layers.py counts it as 0 % from its source.
+# imports (none today; main was one until P9) is not in the data at all: scripts/check_coverage_layers.py counts it as 0 %
+# from its source.
 # Branch coverage is on (P2): the layer floors and the global --cov-fail-under use the branch-aware percentage.
 source =
     src

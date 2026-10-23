@@ -66,7 +66,7 @@ make fetch-logs [K=300] # Pull last K logs to alek_debug.log (grep locally — s
 done-check): the table in `tests/CLAUDE.md` § Running is the one place that says it.
 
 Lint + format via `ruff` (`make lint` / `make format`, config in `ruff.toml`). `make check` runs
-`ruff check src/` and `mypy --strict` on `src/domain` + `src/ports` (`mypy.ini`; adapters stay
+`ruff check src/ main.py indexer_main.py job_main.py relay_main.py sandbox_main.py` and `mypy --strict` on `src/domain` + `src/ports` (`mypy.ini`; adapters stay
 informational, `mypy-adapters.ini`, see `decisions/mypy_scoped_rollout.md`) before the unit suite (which excludes `slow` tests; they run in `make ci`); it is the local pre-commit gate. CI (`.github/workflows/ci.yml`) runs
 `make ci` (the same plus slow tests and the coverage gate) on every push/PR (posting ✅/❌ to Slack). The full unit/architecture suite (~13 300 tests) is green
 and **safe to run in full** (any historical "don't run the full suite" warning was a since-fixed
@@ -88,7 +88,7 @@ and `make ci` runs everything once. Locally `--durations=25` is an advisory repo
 coverage; it selects by executed Python lines, so it can miss a test whose input is a data file or code run in a child
 process: **`make check` before a commit is mandatory** (`tests/CLAUDE.md`). **One full suite at a time on a
 machine:** a session with `-n` (or 2000+ tests) takes `fcntl.flock` on a file in the temp dir, prints the holder and
-waits up to `PYTEST_LOCK_TIMEOUT_S` (1800); `PYTEST_SUITE_LOCK=0` turns it off. **Test rules (P2, 2026-10-22), in `tests/CLAUDE.md`:** fakes with semantics over call assertions; `tests/unit/` is offline (a network guard refuses non-loopback `connect()`, a tripwire refuses `google.auth.default` and non-local gRPC channels); `make ci` enforces per-layer branch-coverage floors that only rise (`scripts/check_coverage_layers.py`) and a shrinking allowlist of src modules no test imports; every package is done when `python -m tests.support.semantic_mutants` leaves every mutant killed or ruled equivalent by the reviewer. Lint scope is `src/` only (default high-signal ruleset: pyflakes + pycodestyle
+waits up to `PYTEST_LOCK_TIMEOUT_S` (1800); `PYTEST_SUITE_LOCK=0` turns it off. **Test rules (P2, 2026-10-22), in `tests/CLAUDE.md`:** fakes with semantics over call assertions; `tests/unit/` is offline (a network guard refuses non-loopback `connect()`, a tripwire refuses `google.auth.default` and non-local gRPC channels); `make ci` enforces per-layer branch-coverage floors that only rise (`scripts/check_coverage_layers.py`) and a shrinking allowlist of src modules no test imports; every package is done when `python -m tests.support.semantic_mutants` leaves every mutant killed or ruled equivalent by the reviewer. Lint scope is `src/` and the root entry points (default high-signal ruleset: pyflakes + pycodestyle
 errors). `ruff format` exists as a dev convenience but is not enforced in CI — the codebase is not
 mass-reformatted.
 
@@ -285,7 +285,8 @@ stale `running` jobs.
   `billing_daily_summary`, `repair_email_embeddings`, `start_drive_sync`. Full reference:
   `docs/07_deployment/SCHEDULERS.md`.
   `WorkerHandler` is the only dispatcher: `telegram_update` and a queued Slack event (no `task_type`; `event` +
-  `session_id`) go to the adapters attached at wiring; any other `task_type` is a 400 (no Slack fallthrough).
+  `session_id`) go to the adapters attached by the builder (`build_application_graph`);
+  any other `task_type` is a 400 (no Slack fallthrough).
   `drive_sync` is not a main-service task at all: the drive queue delivers it to the indexer service's `/worker`
   (`indexer_main.py`).
   **Every Cloud Tasks delivery is claimed by task name** (`TaskClaimStore`, `{prefix}worker_task_dedup`): holder
@@ -860,16 +861,18 @@ src/
                   agent_manifest.py (Intent constants + all agent declarations — single source of truth),
                   delegation_engine.py (reusable multi-turn tool loop).
   composition/  — ServiceContainer + UserAgentFactory (AgentFactoryPort; lives HERE, not services/) +
-                  adapter factories + MCP wiring (mcp_setup.py, mcp_sdk_oauth_provider.py). The only layer
-                  allowed to cross all boundaries.
+                  application_graph.py (`build_application_graph`: every non-web object the main service runs,
+                  shared by `main()` and the tests) + adapter factories + MCP wiring (mcp_setup.py,
+                  mcp_sdk_oauth_provider.py). The only layer allowed to cross all boundaries.
   locales/      — Per-language UI strings (uk/en/fr/es.py), loaded by FileLocalizationAdapter.
   config/       — EnvironmentConfig, Settings, AuthConfig.   utils/ — logger, telemetry, debug_logger, file_conversion.
   web/          — Quart app (OAuth + Cabinet UI + MCP consent). Endpoint families: /auth/* (login + connect
                   gmail/google-tasks/microsoft-todo), /api/gmail/*, /api/tasks/*, /api/user/* (facts, timezone,
                   location, language, reminders, deep-research, platforms/invites), /webhook/microsoft-tasks/<id>,
                   /cabinet*, /mcp/consent, deep_research_webhooks, /health.
-main.py         — Bootstrap: ServiceContainer + UserAgentFactory + remote MCP server (dedicated
-                  SearchEnrichmentService, build_mcp_components, ASGI dispatcher via hypercorn) + graceful shutdown.
+main.py         — Bootstrap: telemetry, settings, the Firestore client, `build_application_graph` (composition/),
+                  then the web layer: blueprints, voice, remote MCP server (dedicated SearchEnrichmentService,
+                  build_mcp_components, ASGI dispatcher via hypercorn), `/worker` + graceful shutdown.
 sandbox_main.py — Untrusted-content sandbox entry point (supervisor + `--serve`), its own Cloud Run service,
                   image `Dockerfile.sandbox`; imports nothing from infrastructure/agents/services/handlers (image closure).
 docx_generator/ — Node.js project (docx npm lib); NodeDocxRunner writes temp scripts here. Not a Python package.
@@ -1163,7 +1166,7 @@ the environment's service-account credentials. A missing CLI does NOT mean the d
 
 ## What NOT to Do
 
-- Do not add DI containers (dependency-injector etc.) — manual DI in main.py.
+- Do not add DI containers (dependency-injector etc.) — manual DI in `src/composition/` (`application_graph.py`).
 - Do not create ports for cleanliness — only when there's a real need.
 - Do not commit .env, *-admin-key.json, service-account*.json.
 - Do not touch `archive/` — this is deprecated legacy code.

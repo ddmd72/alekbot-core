@@ -1,7 +1,6 @@
 import sys
 import os
 import signal
-import logging
 import asyncio
 
 from src.config.settings import load_settings

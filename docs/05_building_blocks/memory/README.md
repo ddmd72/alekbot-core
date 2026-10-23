@@ -485,7 +485,7 @@ cache read raises, and the call is not opened on an empty context (`lelik_person
 
 `get_user_context(query, alternate_phrasing, keywords)` (`src/composition/mcp_setup.py:255-332`) calls
 `enrich_context` directly (no model, no Router) with phrase 2 = alternate phrasing or the query, dedup at 0.98, total
-30 (`main.py:1291-1298`), as the token's account. The answer groups facts by domain, one line each (`mcp_setup.py:128-144`).
+30 (`main.py`, the MCP `SearchEnrichmentService`), as the token's account. The answer groups facts by domain, one line each (`mcp_setup.py:128-144`).
 
 ### 4.8 The Cabinet fact page
 

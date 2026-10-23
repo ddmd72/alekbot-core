@@ -247,7 +247,7 @@ class LanguagePreferenceService(LanguageServicePort):
 - `profile_repo: AgentProfileRepository` — writes USER override doc via `set_override_tokens()`
 - `prompt_builder: PromptBuilderPort` — cache invalidation
 - `notification_service: UserNotificationService` — alert on language change (optional)
-- `_ensure_agents: Callable` — `agent_factory.ensure_agents_for_user` (wired post-init in main.py)
+- `_ensure_agents: Callable` — `agent_factory.ensure_agents_for_user` (attached by `build_application_graph`)
 - `system_default_language: LanguageCode` — resolved from `SYSTEM_DEFAULT_LANGUAGE` env var
 
 **Wiring note (main.py):** `notification_service` and `_ensure_agents` are set via
