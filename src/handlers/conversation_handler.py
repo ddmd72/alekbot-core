@@ -144,8 +144,6 @@ class ConversationHandler(ConversationHandlerPort):
         rich_content_service: Optional[RichContentService] = None,
         notification_service: Optional[UserNotificationService] = None,
         doc_delivery_service: Optional[DocumentDeliveryService] = None,
-        indexed_email_repo: Optional[Any] = None,
-        user_repo: Optional[Any] = None,
         # `$consolidate` runner: ConsolidationService.consolidate_now, wired in composition/.
         overflow_callback: Optional[Callable[..., Coroutine[Any, Any, ConsolidationRun]]] = None,
         localization: Optional[LocalizationService] = None,
@@ -169,8 +167,6 @@ class ConversationHandler(ConversationHandlerPort):
         self._rich_content_service = rich_content_service
         self._notification_service = notification_service
         self._doc_delivery_service = doc_delivery_service
-        self._indexed_email_repo = indexed_email_repo
-        self._user_repo = user_repo
         self._overflow_callback = overflow_callback
         self._localization = localization
         self._fallback_service = fallback_service
