@@ -505,6 +505,14 @@ class EnvironmentConfig:
         return f"{prefix}worker_task_dedup"
 
     @property
+    def memory_write_leases_collection(self) -> str:
+        """
+        Per-account memory-write lease, doc id = account id (FACT_LIFECYCLE_RFC D9). No TTL policy:
+        the field is `lease_until`, never `expires_at`. Dev: development_memory_write_leases
+        """
+        return f"{self.firestore_collection_prefix}memory_write_leases"
+
+    @property
     def long_turns_collection(self) -> str:
         """
         Long chat turns (LONG_RUNNING_TURNS_RFC §5.4). Dev: development_long_turns
