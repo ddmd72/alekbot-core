@@ -269,6 +269,9 @@ class QuickResponseAgent(BaseAgent):
                 smart_response.text = self._sanitize_response(smart_response.text)
 
             # An answer the user would see as nothing is a failure, not a silent success.
+            if (not smart_response.text.strip() and delegation_result.async_dispatches):
+                logger.info("empty_text_after_async agent=%s intents=%s",
+                            self.agent_id, delegation_result.async_dispatches)
             if (not smart_response.text.strip() and final_rich is None
                     and not delegation_result.delivery_items
                     and not delegation_result.async_dispatches):
