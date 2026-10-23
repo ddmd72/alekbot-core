@@ -48,6 +48,9 @@ def check_fact(doc_id: str, doc: dict[str, Any]) -> list[str]:
     reported = doc.get("reported_date")
     if reported is not None and not isinstance(reported, datetime):
         found.append("reported_date_not_timestamp")
+    # The version-chain check reads `last_updated` as a timestamp; a missing or malformed one hides a document from it.
+    if not isinstance(doc.get("last_updated"), datetime):
+        found.append("last_updated_not_timestamp")
     # A vector missing, empty or stored as a plain array (the repo writers wrap it in Vector) is invisible to find_nearest.
     for name in VECTOR_FIELDS:
         if not _is_vector(doc.get(name)):
@@ -78,6 +81,10 @@ def check_version_chain(
     """Class -> ids of the documents whose version pointers are wrong (`superseded_by`, `replaces_fact_id`, `version`).
 
     A target is looked up among the given documents, so a partial read (`--limit`) reports false dangling pointers.
+    `superseded_by_cycle` lists the documents on a `superseded_by` cycle (a self-pointer included), not those leading
+    into one. `superseded_by_on_open_doc` is the pointer on a document whose state is not superseded (a rollback leaves
+    them); `superseded_by_not_pointing_back` is a same-lineage successor that does not name the document in
+    `replaces_fact_id` (a merge successor lives in another lineage and is exempt).
     A document closed without `superseded_by` is a violation only when it was last written at or after `s2_cutoff`;
     earlier ones (and all of them without a cutoff) go to a counted class in `COUNTED_CLASSES`.
     """
@@ -91,12 +98,18 @@ def check_version_chain(
     for doc_id, doc in members:
         successor_id = doc.get("superseded_by")
         if successor_id:
-            successor = by_id.get(successor_id)
+            successor = _lookup(by_id, successor_id)
             if successor is None or successor.get("account_id") != doc.get("account_id"):
                 flag("superseded_by_dangling", doc_id)
+            elif successor_id != doc_id and successor.get("lineage_id") == doc.get("lineage_id") \
+                    and successor.get("replaces_fact_id") != doc_id:
+                flag("superseded_by_not_pointing_back", doc_id)
+            state = _state(doc)
+            if state is not None and state is not FactState.SUPERSEDED:
+                flag("superseded_by_on_open_doc", doc_id)
         predecessor_id = doc.get("replaces_fact_id")
         if predecessor_id:
-            predecessor = by_id.get(predecessor_id)
+            predecessor = _lookup(by_id, predecessor_id)
             if predecessor is None:
                 flag("replaces_target_missing", doc_id)
             else:
@@ -109,6 +122,9 @@ def check_version_chain(
         if _state(doc) is FactState.SUPERSEDED and not successor_id:
             late = s2_cutoff is not None and _written_at_or_after(doc.get("last_updated"), s2_cutoff)
             flag("superseded_without_successor" if late else "superseded_without_successor_pre_s2", doc_id)
+    cyclic = _cycle_members(by_id)
+    if cyclic:
+        found["superseded_by_cycle"] = [doc_id for doc_id, _ in members if doc_id in cyclic]
     return {**found, **_duplicate_versions(members), **_stale_heads(members)}
 
 
@@ -120,12 +136,41 @@ def check_across(
     return {**check_lineages(members), **check_version_chain(members, s2_cutoff)}
 
 
+def s2_data_present(docs: Iterable[tuple[str, dict[str, Any]]]) -> bool:
+    """Whether any document carries a version pointer: the fields exist only once S2 has written."""
+    return any(doc.get("superseded_by") or doc.get("replaces_fact_id") for _, doc in docs)
+
+
+def _lookup(by_id: dict[str, dict[str, Any]], target: Any) -> Optional[dict[str, Any]]:
+    return by_id.get(target) if isinstance(target, str) else None
+
+
+def _cycle_members(by_id: dict[str, dict[str, Any]]) -> set[str]:
+    """Ids on a cycle of `superseded_by` pointers among the given documents."""
+    on_cycle: set[str] = set()
+    done: set[str] = set()
+    for start in by_id:
+        path: list[str] = []
+        position: dict[str, int] = {}
+        current: Any = start
+        while isinstance(current, str) and current in by_id and current not in done:
+            if current in position:
+                on_cycle |= set(path[position[current]:])
+                break
+            position[current] = len(path)
+            path.append(current)
+            current = by_id[current].get("superseded_by")
+        done |= set(path)
+    return on_cycle
+
+
 def _is_next_version(older: Any, newer: Any) -> bool:
     return isinstance(older, int) and isinstance(newer, int) and newer == older + 1
 
 
 def _written_at_or_after(moment: Any, cutoff: datetime) -> bool:
-    """False for an absent or non-timestamp value (`invalid_entity` reports that); a naive timestamp reads as UTC."""
+    """False for an absent or non-timestamp value (`check_fact` reports that as `last_updated_not_timestamp`); a naive
+    timestamp reads as UTC."""
     if not isinstance(moment, datetime):
         return False
     return _aware(moment) >= _aware(cutoff)
@@ -146,9 +191,9 @@ def _duplicate_versions(members: list[tuple[str, dict[str, Any]]]) -> dict[str, 
 
 
 def _stale_heads(members: list[tuple[str, dict[str, Any]]]) -> dict[str, list[str]]:
-    """`lineage_head_not_highest_version`: every document of a lineage that has a not-superseded document below its
-    highest version (so the highest one is closed, or a lower version was never closed). A lineage whose documents are
-    all superseded (merged away) is clean."""
+    """`lineage_open_below_highest_version`: every document of a lineage that has a not-superseded document below its
+    highest version. Two shapes: the highest version is closed while a lower one is open, and the highest is open while
+    a lower one was never closed. A lineage whose documents are all superseded (merged away) is clean."""
     lineages: dict[Any, list[tuple[str, int, bool]]] = defaultdict(list)
     for doc_id, doc in members:
         if doc.get("lineage_id") is not None and isinstance(doc.get("version"), int):
@@ -158,7 +203,7 @@ def _stale_heads(members: list[tuple[str, dict[str, Any]]]) -> dict[str, list[st
         top = max(version for _, version, _ in versions)
         if any(version < top and not closed for _, version, closed in versions):
             ids.extend(doc_id for doc_id, _, _ in versions)
-    return {"lineage_head_not_highest_version": ids} if ids else {}
+    return {"lineage_open_below_highest_version": ids} if ids else {}
 
 
 def _state(doc: dict[str, Any]) -> FactState | None:

@@ -66,7 +66,7 @@ def test_superseded_by_naming_a_document_of_another_account():
 
 def test_superseded_by_is_checked_whatever_the_state():
     docs = [d("a", state="invalidated", superseded_by="gone")]
-    assert chain(*docs) == {"superseded_by_dangling": ["a"]}
+    assert chain(*docs) == {"superseded_by_dangling": ["a"], "superseded_by_on_open_doc": ["a"]}
 
 
 def test_replaces_fact_id_naming_a_document_that_does_not_exist():
@@ -121,38 +121,128 @@ def test_superseded_without_successor_written_after_the_cutoff():
 
 def test_a_lineage_whose_highest_version_is_closed_while_a_lower_one_is_open():
     docs = [d("v1", version=1), closed("v2", "gone", version=2)]
-    assert chain(*docs) == {"superseded_by_dangling": ["v2"], "lineage_head_not_highest_version": ["v1", "v2"]}
+    assert chain(*docs) == {"superseded_by_dangling": ["v2"], "lineage_open_below_highest_version": ["v1", "v2"]}
 
 
 def test_a_closed_highest_version_with_an_open_lower_one_names_the_whole_lineage():
     docs = [d("v1", version=1), closed("v2", "v1", version=2), d("other", lineage="L2")]
-    assert chain(*docs)["lineage_head_not_highest_version"] == ["v1", "v2"]
+    assert chain(*docs)["lineage_open_below_highest_version"] == ["v1", "v2"]
 
 
 def test_a_lower_version_that_was_never_closed_below_an_open_head():
     docs = [d("v1", version=1, is_current=False, state="archived"), d("v2", version=2, replaces_fact_id="v1")]
     found = chain(*docs)
-    assert found["lineage_head_not_highest_version"] == ["v1", "v2"]
+    assert found["lineage_open_below_highest_version"] == ["v1", "v2"]
 
 
-def test_a_closed_version_above_an_open_lower_one_is_a_head_violation_not_a_replaces_one():
-    docs = [closed("v1", "v2", version=3), d("v2", version=2)]
-    assert chain(*docs) == {"lineage_head_not_highest_version": ["v1", "v2"]}
+def test_a_closed_version_above_an_open_lower_one_is_a_head_violation():
+    docs = [closed("v1", "v2", version=3), d("v2", version=2, replaces_fact_id="v1")]
+    assert set(chain(*docs)) == {"lineage_open_below_highest_version", "replaces_version_mismatch"}
 
 
 def test_a_fully_superseded_lineage_is_clean():
-    docs = [closed("v1", "v2", version=1), closed("v2", "m", version=2), d("m", lineage="LM")]
+    docs = [closed("v1", "v2", version=1), closed("v2", "m", version=2, replaces_fact_id="v1"), d("m", lineage="LM")]
     assert chain(*docs) == {}
 
 
 def test_an_open_head_above_closed_versions_is_clean():
-    docs = [closed("v1", "v2", version=1), closed("v2", "v3", version=2), d("v3", version=3, replaces_fact_id="v2")]
+    docs = [closed("v1", "v2", version=1), closed("v2", "v3", version=2, replaces_fact_id="v1"),
+            d("v3", version=3, replaces_fact_id="v2")]
     assert chain(*docs) == {}
 
 
 def test_documents_without_a_version_do_not_take_part_in_the_head_rule():
     docs = [d("v1", version=None), closed("v2", "v1", version=2)]
-    assert "lineage_head_not_highest_version" not in chain(*docs)
+    assert "lineage_open_below_highest_version" not in chain(*docs)
+
+
+# ------------------------------------------------------------------------- cycles, back-pointers, open documents
+
+def test_a_document_pointing_at_itself():
+    assert chain(closed("a", "a")) == {"superseded_by_cycle": ["a"]}
+
+
+@pytest.mark.parametrize("size", [2, 3])
+def test_a_cycle_of_superseded_by_pointers_across_lineages(size):
+    ids = [f"c{i}" for i in range(size)]
+    docs = [closed(ids[i], ids[(i + 1) % size], lineage=f"L{i}") for i in range(size)]
+    assert chain(*docs) == {"superseded_by_cycle": ids}
+
+
+def test_only_the_documents_on_the_cycle_are_listed_not_those_leading_into_it():
+    docs = [closed("in", "a", lineage="L0"), closed("a", "b", lineage="L1"), closed("b", "a", lineage="L2")]
+    assert chain(*docs) == {"superseded_by_cycle": ["a", "b"]}
+
+
+def test_a_long_acyclic_superseded_by_chain_is_clean():
+    docs = [closed(f"m{i}", f"m{i + 1}", lineage=f"L{i}") for i in range(60)] + [d("m60", lineage="L60")]
+    assert chain(*docs) == {}
+
+
+def test_a_pointer_that_is_not_a_string_is_dangling_not_a_crash():
+    docs = [closed("a", ["x"]), d("b", lineage="L2", replaces_fact_id={"y": 1})]
+    assert chain(*docs) == {"superseded_by_dangling": ["a"], "replaces_target_missing": ["b"]}
+
+
+def test_a_same_lineage_successor_that_does_not_name_the_document():
+    docs = [closed("v1", "v2"), d("v2", version=2)]
+    assert chain(*docs) == {"superseded_by_not_pointing_back": ["v1"]}
+
+
+def test_a_same_lineage_successor_naming_another_document():
+    docs = [closed("v1", "v2"), d("v2", version=2, replaces_fact_id="elsewhere")]
+    assert set(chain(*docs)) == {"superseded_by_not_pointing_back", "replaces_target_missing"}
+
+
+def test_a_merge_successor_in_another_lineage_needs_no_back_pointer():
+    assert chain(closed("a", "m", lineage="LA"), d("m", lineage="LM")) == {}
+
+
+def test_a_current_document_with_a_superseded_by():
+    docs = [d("a", lineage="LA", superseded_by="m"), d("m", lineage="LM")]
+    assert chain(*docs) == {"superseded_by_on_open_doc": ["a"]}
+
+
+@pytest.mark.parametrize("state", ["invalidated", "archived", "stale", "current"])
+def test_every_state_but_superseded_with_a_superseded_by_is_an_open_document(state):
+    docs = [d("a", lineage="LA", state=state, is_current=False, superseded_by="m"), d("m", lineage="LM")]
+    assert chain(*docs) == {"superseded_by_on_open_doc": ["a"]}
+
+
+def test_a_superseded_document_with_a_superseded_by_is_not_an_open_document():
+    assert "superseded_by_on_open_doc" not in chain(closed("a", "m", lineage="LA"), d("m", lineage="LM"))
+
+
+def test_an_unreadable_state_is_not_reported_as_an_open_document():
+    assert chain(d("a", lineage="LA", state="bogus", superseded_by="m"), d("m", lineage="LM")) == {}
+
+
+# --------------------------------------------------------------------------------------- last_updated per document
+
+def stored(**over):
+    holder = FactStore()
+    put_raw(holder, "f1", "x")
+    return {**holder.docs["f1"], **over}
+
+
+def test_a_stored_document_has_a_timestamp_last_updated():
+    assert check_fact("f1", stored()) == []
+
+
+@pytest.mark.parametrize("value", ["2026-04-01T00:00:00Z", 5])
+def test_last_updated_that_is_not_a_timestamp(value):
+    # pydantic coerces these, so only this class reports them
+    assert check_fact("f1", stored(last_updated=value)) == ["last_updated_not_timestamp"]
+
+
+def test_a_null_last_updated_is_reported_beside_the_entity_error():
+    assert check_fact("f1", stored(last_updated=None)) == ["last_updated_not_timestamp", "invalid_entity:last_updated"]
+
+
+def test_a_missing_last_updated_is_reported():
+    doc = stored()
+    del doc["last_updated"]
+    assert check_fact("f1", doc) == ["last_updated_not_timestamp"]
 
 
 # ------------------------------------------------------------------------------------- the cutoff counting rule
@@ -212,7 +302,7 @@ def test_check_across_reports_the_lineage_class_beside_the_chain_classes():
     docs = [d("a", is_current=True), d("b", version=2, is_current=True), closed("c", "gone", lineage="L9")]
     assert check_across(docs, CUTOFF) == {
         "lineage_multiple_current": ["a", "b"], "superseded_by_dangling": ["c"],
-        "lineage_head_not_highest_version": ["a", "b"],
+        "lineage_open_below_highest_version": ["a", "b"],
     }
 
 
@@ -243,6 +333,27 @@ async def test_the_runner_without_a_cutoff_flags_nothing_of_that_kind(tmp_path, 
     assert report["counted"]["superseded_without_successor_pre_s2"]["count"] == 1
     out = capsys.readouterr().out
     assert "superseded_without_successor_pre_s2: 1 (counted, not a violation)" in out and "new" not in out.replace("data_audit", "")
+
+
+async def test_the_runner_warns_when_pointers_exist_and_no_cutoff_was_given(tmp_path, capsys):
+    store = FactStore()
+    store.docs["a"] = {**_stored("a"), "state": "superseded", "is_current": False, "valid_to": AFTER, "superseded_by": "b"}
+    store.docs["b"] = _stored("b")
+    report = json.loads((await runner.run(store.db, "facts", FACTS, tmp_path, now=NOW)).read_text())
+    assert report["warnings"] == ["superseded_without_successor not judged: version pointers exist, pass --s2-cutoff"]
+    assert "warning: superseded_without_successor not judged" in capsys.readouterr().out
+
+
+async def test_the_runner_does_not_warn_with_a_cutoff_or_before_any_pointer_exists(tmp_path, capsys):
+    store = FactStore()
+    store.docs["a"] = {**_stored("a"), "state": "superseded", "is_current": False, "valid_to": AFTER, "superseded_by": "b"}
+    store.docs["b"] = _stored("b")
+    with_cutoff = json.loads((await runner.run(store.db, "facts", FACTS, tmp_path, now=NOW, s2_cutoff=CUTOFF)).read_text())
+    pre_s2 = FactStore()
+    pre_s2.docs["old"] = {**_stored("old"), "state": "superseded", "is_current": False, "valid_to": BEFORE}
+    quiet = json.loads((await runner.run(pre_s2.db, "facts", FACTS, tmp_path, now=NOW + timedelta(seconds=1))).read_text())
+    assert with_cutoff["warnings"] == [] and quiet["warnings"] == []
+    assert "warning" not in capsys.readouterr().out
 
 
 def _stored(doc_id):
@@ -320,7 +431,7 @@ async def test_documents_written_by_s2_versions_and_merges_are_clean(tmp_path):
     assert check_across(kept, CUTOFF) == {"superseded_without_successor_pre_s2": ["f-legacy"]}   # no head violation
 
     report = json.loads((await runner.run(store.db, "facts", FACTS, tmp_path, now=NOW, s2_cutoff=CUTOFF)).read_text())
-    assert report["documents"] == 10 and report["classes"] == {}
+    assert report["documents"] == 10 and report["classes"] == {} and report["warnings"] == []
     assert list(report["counted"]) == ["superseded_without_successor_pre_s2"]
 
 
