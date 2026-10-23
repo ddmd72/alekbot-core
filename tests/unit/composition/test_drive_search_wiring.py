@@ -59,6 +59,7 @@ def test_agent_accepts_search():
 def test_cabinet_gets_search_and_the_drive_queue():
     params = inspect.signature(create_user_cabinet_blueprint).parameters
     assert {"drive_search_service", "drive_task_queue"} <= set(params)
+    # main() still calls the Cabinet factory; the container now reaches it through the application graph (P9 T2).
     main = _MAIN.read_text(encoding="utf-8")
-    assert "drive_search_service=container.drive_search_service" in main
-    assert "drive_task_queue=container.drive_task_queue" in main
+    assert "drive_search_service=app.container.drive_search_service" in main
+    assert "drive_task_queue=app.container.drive_task_queue" in main

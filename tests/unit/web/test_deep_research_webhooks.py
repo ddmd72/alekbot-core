@@ -135,8 +135,8 @@ class TestOpenAIWebhookChannelPropagation:
     # aggregates output[].content[] output_text items; no `output` array reaches the delivery any more.
 
 
-def _call_kwargs(func_name: str) -> list:
-    tree = ast.parse((Path(__file__).resolve().parents[3] / "main.py").read_text())
+def _call_kwargs(func_name: str, source: str = "main.py") -> list:
+    tree = ast.parse((Path(__file__).resolve().parents[3] / source).read_text())
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
             func = node.func
@@ -159,12 +159,13 @@ class TestFactoryWiring:
         """R12.3 (round files lost for the OpenAI DR path): media_storage must reach the OpenAI
         delivery. Delivery now runs in WorkerHandler, so main.py must pass media_storage= (and the
         link service, task queue and notification service delivery uses) to WorkerHandler, and the
-        webhook factory must still get its task queue and retrieval callable."""
-        worker_kwargs = _call_kwargs("WorkerHandler")
-        assert worker_kwargs, "WorkerHandler(...) call not found in main.py"
+        webhook factory must still get its task queue and retrieval callable. WorkerHandler is built by
+        build_application_graph (P9 T2); the webhook factory is still called in main.py."""
+        worker_kwargs = _call_kwargs("WorkerHandler", "src/composition/application_graph.py")
+        assert worker_kwargs, "WorkerHandler(...) call not found in application_graph.py"
         for kw in ("media_storage", "link_service", "task_dispatch", "notification_service",
                    "deep_research_fetch"):
-            assert kw in worker_kwargs, f"main.py must pass {kw}= to WorkerHandler; got {worker_kwargs}"
+            assert kw in worker_kwargs, f"application_graph.py must pass {kw}= to WorkerHandler; got {worker_kwargs}"
 
         factory_kwargs = _call_kwargs("create_deep_research_webhooks_blueprint")
         assert factory_kwargs, "create_deep_research_webhooks_blueprint(...) call not found in main.py"
