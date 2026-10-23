@@ -153,6 +153,8 @@ def test_taxonomy_date_rules_say_before_today_a_horizon_counts_from_reported_dat
     assert "whose date is before Today is past" in text and "on or before Today is past" not in text
     assert "A plan for today is not over yet: give a short horizon" in text
     assert "A horizon counts from reported_date, not from Today: reported_date + N days must end at least two days after Today" in text
+    assert ("If it would not: a larger N when the fact may still hold, else history ({kind: none}) or noise (DISCARD)"
+            in text)
 
 
 def test_taxonomy_be_dated_asks_for_the_message_time_in_iso_form_with_its_offset():
@@ -160,8 +162,9 @@ def test_taxonomy_be_dated_asks_for_the_message_time_in_iso_form_with_its_offset
     assert "in ISO form with its offset, e.g. 2026-10-22T12:00:00+02:00" in text
 
 
-def test_a_date_view_copied_back_is_history_once_its_date_is_today_or_past():
-    assert "unless its date is on or before Today: then the fact is history ({kind: none})" in body("CONSOLIDATION_TOOLS")
+def test_a_date_view_copied_back_is_history_once_past_and_a_short_horizon_on_the_day():
+    assert ("unless its date is before Today (then the fact is history, {kind: none}) or is Today (then a short horizon)"
+            in body("CONSOLIDATION_TOOLS"))
 
 
 @pytest.mark.parametrize("token", ["CONSOLIDATION_TAXONOMY", "CONSOLIDATION_COGNITIVE_PROCESS"])
