@@ -107,6 +107,8 @@ def test_a_parameter_of_an_outer_function_is_a_forwarder_inside_a_nested_one():
     "async def f(q):\n    await q.enqueue_worker_task(make(), {})",
     "async def f(q):\n    await q.enqueue_worker_task(unknown_name, {})",
     "def f():\n    return {'task_type': Kinds.A}",
+    "def f(payload):\n    payload['task_type'] = 'late'",
+    "def f():\n    return dict(task_type='late')",
     "async def f(q):\n    await q.enqueue_worker_task()",
 ])
 def test_a_form_the_extractor_does_not_understand_fails_loudly(source):
