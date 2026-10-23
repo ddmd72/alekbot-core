@@ -133,6 +133,7 @@ class FooAgent(BaseAgent):
         user_id: Optional[str] = None,
     ) -> None:
         super().__init__(config)
+        self._set_execution_context(execution_context)  # without it, cross-provider failover and breaker accounting are dead
         self._llm = execution_context.provider
         self.model_name = execution_context.model_name
         self.prompt_builder = prompt_builder
@@ -380,6 +381,15 @@ _LAZY_AGENT_IDS = {..., "foo": "foo_agent"}
 
 No cache dict or eviction changes needed — lazy agents are tracked automatically via
 `_lazy_agent_ids`. The coordinator triggers creation on first delegation via `AgentFactoryPort`.
+
+#### Wiring guards (P9)
+
+- `tests/unit/agents/test_agents_set_execution_context.py` fails when a `BaseAgent` subclass takes `execution_context` and never calls
+  `self._set_execution_context(...)` (Step 4); an agent that deliberately has no fallback goes on its reasoned allowlist, not around it.
+- The two ledgers in `tests/unit/composition/` (`wiring_none_ledger.txt`, `wiring_instance_ledger.txt`; `tests/CLAUDE.md` -> "The production
+  graph") fail when a new agent leaves an attribute `None` in the production graph, or when a new adapter or service adds an instance. Wire
+  the dependency in `build_application_graph`; a ledger line is a reviewer's decision. They are `slow`: run them with `RUN_SLOW_TESTS=1`
+  (`make ci` does).
 
 ### Step 6 — `tests/unit/agents/test_foo_agent.py`
 

@@ -95,3 +95,41 @@ is simply the first time it was exercised in production.
 - If `DocGeneratorAgent`'s multi-turn loop starts timing out in a way that suggests its per-turn
   SDK-default budget is now the bottleneck, that's a separate, deliberate design question (what
   budget each of the 5 turns should get) — not a copy of this fix.
+
+## Addendum 2026-10-23 (P9, D8): five more agents wired, two parked
+
+The production-graph tests (`tests/unit/composition/wiring_none_ledger.txt`) showed that the 2026-10-07 fix was not
+the whole class: seven more agents call `_call_llm`, have a `fallback` in `AgentProviderStrategy.STRATEGIES`, and keep only
+`self._llm = execution_context.provider`. `_agent_execution_context` stayed `None`, so no cross-provider failover and no
+breaker accounting.
+
+- **Fixed (`self._set_execution_context(execution_context)` right after `super().__init__`, as above):** `WebSearchAgent`
+  (openai to gemini; its own docstring already assumed the failover), `DomainResearcherAgent` and `TutorAgent` (openai to
+  gemini), `TasksAgent` and `LelikSummarizerAgent` (it had no strategy entry of its own, so `quick`'s claude to gemini
+  applied; by the owner ruling below it now has its own entry with no fallback, so it keeps only breaker accounting).
+  **`TasksAgent` is a partial case:** its default provider is gemini, and `AgentContextBuilder.build` resolves no fallback
+  when the fallback equals the provider (`agent_context_builder.py:419`), so a default-config user gains only breaker
+  accounting and the fail-fast check while Gemini's breaker is open; the failover is real only when the user picks claude.
+  Tests: `test_specialist_provider_failover.py` (each agent, real constructor, primary down, the fallback answers, the
+  breaker counts, an open breaker skips the primary).
+- **Owner ruling 2026-10-23 (question Q6): no cross-provider fallback for `ConsolidationAgent` and `TutorExtractorAgent`.**
+  They write memory (facts, companion records); a Claude outage must fail and retry later rather than write memory with
+  another model: memory quality over availability. `STRATEGIES["consolidation"]` and `STRATEGIES["tutor_extractor"]` now
+  have `"fallback": None` (`test_consolidation_strategies_have_no_fallback.py`), so they are `by-design` in the None ledger and on
+  the allowlist of `test_agents_set_execution_context.py`, like the other agents with no real failover.
+- **Owner ruling 2026-10-23 (question Q3): no cross-provider fallback for `LelikSummarizerAgent` either, a conscious
+  trade-off.** Losing an end-of-call note is accepted over the alternative: the note almost never carries critical
+  information, and a real fallback would mean a second summarizer (its own prompt, its own quality bar), not just a
+  second model behind the same prompt. The failure is loud, not silent: `/voice/submit-transcript` logs it and posts
+  an ops alert, so the rate can be watched (roadmap 19c); there is no retry. `STRATEGIES["lelik_summarizer"]` is new,
+  with quick's providers (claude default, so the primary model does not change) and `"fallback": None`
+  (`test_lelik_summarizer_has_no_fallback.py`). The agent keeps `_set_execution_context`, so it still counts toward
+  its provider's breaker and fails fast (`llm_no_fallback`) while that breaker is open.
+- **Not part of D8:** agents whose strategy has no real failover (`fallback: None`, or the fallback equals the only
+  allowed provider: compute, facts_memory, image and video generation, maps_search, web_search_light, email_search,
+  email_classifier) would gain only breaker accounting, which also makes them fail fast while a provider's breaker is
+  open. That is a behaviour change and an owner decision; they are `by-design` on the same allowlist.
+- **Guard:** `test_agents_set_execution_context.py` reads every `BaseAgent` subclass whose own `__init__` takes
+  `execution_context` and requires the `_set_execution_context` call (or a hand-over to `super().__init__`), with a reasoned
+  allowlist whose stale entries fail. It reaches agents that are built per call (companion extractors, indexer and job
+  agents), which no graph walk sees.

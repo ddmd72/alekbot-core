@@ -251,7 +251,7 @@ logged and the run goes on without it, `consolidation_agent.py:226-234`) and dis
 agent also accepts `consolidate` (Stage 1–2b only), `consolidate_cluster` and `consolidate_email` (`:186-189`); the
 queue and `$consolidate` always send `consolidate_full`.
 
-- **Model:** agent type `consolidation`, default provider Claude (fallback Gemini, `src/services/agent_context_builder.py:56-61`)
+- **Model:** agent type `consolidation`, default provider Claude, no cross-provider fallback (`"fallback": None` in `src/services/agent_context_builder.py`; owner ruling 2026-10-23, P9 D8: a memory write never moves to another model on an outage; the declared Gemini fallback was dead before that, the agent never stored its execution context)
   at tier PERFORMANCE (`src/domain/user.py:82`), which on Claude is `claude-opus-5-5` unless the live env var
   `CLAUDE_PERFORMANCE_MODEL` pins another model (`src/adapters/claude_adapter.py:166-167,249-252`; `make claude-model`
   shows the live value). A user's `agent_providers` / `agent_tiers` can override. Thinking `medium`, 64 000 output
@@ -485,7 +485,7 @@ cache read raises, and the call is not opened on an empty context (`lelik_person
 
 `get_user_context(query, alternate_phrasing, keywords)` (`src/composition/mcp_setup.py:255-332`) calls
 `enrich_context` directly (no model, no Router) with phrase 2 = alternate phrasing or the query, dedup at 0.98, total
-30 (`main.py:1291-1298`), as the token's account. The answer groups facts by domain, one line each (`mcp_setup.py:128-144`).
+30 (`main.py`, the MCP `SearchEnrichmentService`), as the token's account. The answer groups facts by domain, one line each (`mcp_setup.py:128-144`).
 
 ### 4.8 The Cabinet fact page
 
@@ -558,7 +558,7 @@ uses its own copy of the serializer (same rules as §3 step 3).
 | enqueue of the batch fails at overflow | logged `Error in overflow routing` (`overflow_routing_service.py:64-69`) | — | **lost**: the messages were already cut from the session | no |
 | batch stored but the Cloud Task enqueue fails | logged | — | waits in the queue | the hourly sweep |
 | two runs of one user at once | not prevented (§3 step 3): both may search before either writes | duplicates or conflicting updates possible | two tasks that start together can both take the same pending batch (read, then mark `processing`, no transaction, `consolidation_service.py:99-110`); otherwise each takes a different one | — |
-| provider failover | `_call_llm` fails over to Gemini only before the first tool call; after it the transcript is locked to one provider (`src/agents/CLAUDE.md` → Transcript integrity) | — | — | same-provider retries |
+| provider failover | none for consolidation: a Claude outage fails the pass and the batch is retried later (owner ruling 2026-10-23; the transcript is locked to one provider after the first tool call anyway, `src/agents/CLAUDE.md` → Transcript integrity) | — | — | same-provider retries |
 
 ---
 

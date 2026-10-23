@@ -42,10 +42,10 @@ from src.services.deep_research_delivery import deliver_deep_research
 from src.utils.logger import logger, quiet_third_party_loggers
 
 quiet_third_party_loggers()
-from src.composition.memory_telemetry_setup import build_memory_telemetry
-from src.domain.memory_telemetry import SCOPE_WORKER_TASK
-from src.utils.memory_scope import memory_scope
-from src.utils.telemetry import init_telemetry
+from src.composition.memory_telemetry_setup import build_memory_telemetry  # noqa: E402  # quiet_third_party_loggers() must run first
+from src.domain.memory_telemetry import SCOPE_WORKER_TASK  # noqa: E402  # quiet_third_party_loggers() must run first
+from src.utils.memory_scope import memory_scope  # noqa: E402  # quiet_third_party_loggers() must run first
+from src.utils.telemetry import init_telemetry  # noqa: E402  # quiet_third_party_loggers() must run first
 
 
 def _build_account_repo() -> FirestoreAccountRepository:

@@ -83,8 +83,8 @@ from src.services.drive_indexing_service import DriveIndexingService
 from src.utils.logger import logger, quiet_third_party_loggers
 
 quiet_third_party_loggers()
-from src.web.worker_oidc_verifier import parse_sa_emails
-from src.web.indexer_worker_app import create_indexer_worker_blueprint, indexer_audiences, worker_oidc_gate
+from src.web.worker_oidc_verifier import parse_sa_emails  # noqa: E402  # quiet_third_party_loggers() must run first
+from src.web.indexer_worker_app import create_indexer_worker_blueprint, indexer_audiences, worker_oidc_gate  # noqa: E402  # quiet_third_party_loggers() must run first
 
 # Cloud Run allows ~10 s between SIGTERM and SIGKILL (a revision rollout on every deploy).
 # `serve_until_shutdown` waits this long for an in-flight tick, then cancels it and waits for its

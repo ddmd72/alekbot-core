@@ -11,7 +11,7 @@ class ProviderRegistry(Generic[T]):
       ProviderRegistry[LLMPort]   — LLM providers (gemini, claude, grok, openai)
       ProviderRegistry[DeepResearchPort] — async job providers (gemini, openai deep research)
       ProviderRegistry[ImageGenerationPort] — image-rendering providers (grok), registered
-        in main.py; resolved via AgentContextBuilder.resolve_image_generation_context()
+        in build_application_graph; resolved via AgentContextBuilder.resolve_image_generation_context()
 
     Pattern: register(name, impl) at bootstrap → get(name) at runtime.
     """

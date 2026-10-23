@@ -8,11 +8,11 @@ Port for audio-to-text transcription (mp3, wav, m4a, ogg → plain text).
 
 Audio transcription is a system boundary (external speech recognition service).
 The port allows swapping implementations without changing ConversationHandler and
-file_conversion_service: just create a new adapter and wire it in main.py.
+file_conversion_service: just create a new adapter and wire it in build_application_graph.
 
 ## Current status: LIVE
 
-`OpenAITranscriptionAdapter` is wired in main.py when OPENAI_API_KEY is set; without a
+`OpenAITranscriptionAdapter` is wired in build_application_graph when OPENAI_API_KEY is set; without a
 key the port stays None and ConversationHandler sends an honest "transcription
 unavailable" alert.
 

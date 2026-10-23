@@ -226,9 +226,11 @@ class TestThroughHandle:
 
 
 def test_main_py_wires_fetch_and_store_into_worker_handler():
+    # The WorkerHandler the main service serves is built by build_application_graph (P9 T2).
     import ast
     from pathlib import Path
-    tree = ast.parse((Path(__file__).resolve().parents[3] / "main.py").read_text())
+    source = Path(__file__).resolve().parents[3] / "src" / "composition" / "application_graph.py"
+    tree = ast.parse(source.read_text())
     kwargs = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "WorkerHandler":

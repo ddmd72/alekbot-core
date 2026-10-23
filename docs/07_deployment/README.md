@@ -1068,3 +1068,44 @@ a deploy:
    gcloud tasks queues update agent-tasks-dev --location=us-central1 \
      --log-sampling-ratio=1.0 --project=<PROJECT_ID>
    ```
+
+## After deploying P9 (application graph)
+
+The main service is now built by `build_application_graph` (`docs/04_solution_strategy/decisions/application_graph_builder.md`,
+RFC `TEST_COVERAGE_SYSTEMIC_RFC.md` "Built (P9)"). The tests build the same function, but they cannot see Cloud Run itself, so the
+first deploy gets a short owner check. About 15 minutes; the costs are one HTML page, one search and one short call.
+
+**Before the deploy:** note the serving revision (`gcloud run services describe alek-bot-dev --region=us-central1 --project=<PROJECT_ID>
+--format='value(status.traffic[0].revisionName)'`). That name is the rollback target.
+
+**Rollback.** `gcloud run services update-traffic alek-bot-dev --region=us-central1 --project=<PROJECT_ID> --to-revisions=<prev>=100`.
+It is state-safe: P9 adds no persisted field, collection or index, and a queued async payload may carry a transcript in `file_content`,
+a field the old revision already reads.
+
+**The `:latest` trap, after a failed deploy and after a traffic rollback.** `:latest` points at the new image either way. Every
+`gcloud run services update` creates a new revision from that image, and so does every Makefile target that wraps it (warm/cold,
+the provider kill-switches `claude-`/`openai-`/`dr-rollback` and `-forward`). With traffic pinned to the old revision, Cloud Run gives
+that new revision 0 %, so a kill-switch silently does nothing until traffic is moved, and a later `--to-latest` serves the bad
+image with the switch applied. This comes from the Cloud Run documentation, not from a live check. Rule: after a failed deploy or a
+traffic rollback, run no `services update` and no Makefile switch until the fix is deployed forward; if one is unavoidable, follow it
+with an explicit `update-traffic`.
+
+**The check, in order:**
+1. **Startup lines.** Read the lines of the new revision from `🚀 ALEK BOT MAIN() CALLED` to `🚀 Starting shared app`, and the same
+   slice of the previous revision, and compare them as sets: `gcloud logging read 'resource.type="cloud_run_revision" AND
+   resource.labels.revision_name="<rev>"' --project=<PROJECT_ID> --freshness=1d --order=asc --format='value(timestamp,textPayload)'`.
+   Only the order and the `⏱️` timings may differ (RFC "Built (P9)", declared deltas).
+2. **Not configured.** In the new slice grep `not configured|disabled|skipped`. Each hit must be on the expected list: the features the
+   deploy leaves off (see `wiring_none_ledger.txt`, reasons `off-in-prod` and `optional-knob`).
+3. **Scheduler.** Run `fire_due_reminders` and `start_drive_sync` (`gcloud scheduler jobs run alek-bot-dev-<job> --location=us-central1
+   --project=<PROJECT_ID>`), then find each request in the request log (`httpRequest.requestUrl:"/worker"`): status 200.
+4. **Chat.** One Slack DM and one Telegram message, both answered.
+5. **Documents.** Ask for an HTML page; the link arrives.
+6. **Search.** One question that needs a web search (exercises the agents that now fail over, P9 D8).
+7. **Cabinet.** Open the facts list.
+8. **Voice.** One short Cabinet call; when it ends, the `📞` summary appears in chat. No test runs the moved voice closures.
+9. **Watch for 48 h.** `make fetch-logs K=3000`, then grep `llm_fallback|llm_no_fallback|llm_both_open|llm_fallback_failed` and count
+    breaker alerts against the previous week. Failover lines carry no agent type, and `prompt_content`/Logfire record the primary
+    provider for a call that a fallback served, so attribute a line through its Logfire trace. Also grep
+    `summary consumer failed`: the end-of-call summarizer has no fallback by decision, so a provider failure loses that
+    call's note (an ops alert is posted each time).

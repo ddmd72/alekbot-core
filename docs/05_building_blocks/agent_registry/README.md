@@ -117,7 +117,7 @@ def get_available_intents_for(self, descriptor: AgentDescriptor) -> List[Dict[st
 
 ### 3.4 Current Registry (as of 2026-04-06)
 
-All descriptors registered via `main.py` at startup. `GcpTaskQueue` only instantiated in HTTP mode.
+All descriptors registered by `build_application_graph` (`src/composition/application_graph.py`) at startup. `GcpTaskQueue` only instantiated in HTTP mode.
 Agents marked `eager=False` are **not** instantiated per user until first delegation — see §3.5.
 
 | Agent ID | Intent(s) | Mode | `internal` | `eager` | Caller |
@@ -162,7 +162,7 @@ and lazy-loads if `eager=False`.
 `create_agent_on_demand(agent_type, user_id) -> bool`. `UserAgentFactory` implements it.
 The coordinator depends on the port (not on the factory class), preserving hexagonal layering.
 
-**Wiring:** `main.py` calls `coordinator.set_agent_factory(agent_factory)` after both objects
+**Wiring:** `build_application_graph` calls `coordinator.set_agent_factory(agent_factory)` after both objects
 exist. Before this call, lazy loading is a no-op (factory is `None`).
 
 **Concurrency:** per-user `asyncio.Lock` prevents duplicate instantiation.
@@ -196,7 +196,7 @@ Available intents are injected at runtime:
 - QuickAgent calls `coordinator.get_available_intents_for(self._descriptor)` — filtered by its
   own `allowed_intents` (currently `None` → same result as Smart).
 
-When a new agent is registered in `main.py` with `internal=False`, both agents automatically see
+When a new agent is registered in `agent_manifest.py` with `internal=False`, both agents automatically see
 the new intent — no code change required in either agent.
 
 ### 4.1 Memory-First Parallel Optimization
@@ -409,7 +409,7 @@ FOO = AgentDescriptor(
 ALL_DESCRIPTORS = [..., FOO]
 ```
 
-`main.py` registers `ALL_DESCRIPTORS` automatically. Both Quick and Smart see the new intent
+`build_application_graph` registers `ALL_DESCRIPTORS` automatically. Both Quick and Smart see the new intent
 immediately — no changes to either orchestrator.
 
 ### Step 2 — `src/infrastructure/agent_config.py`
@@ -635,7 +635,7 @@ make test-e2e-all   # Quick and Smart delegate correctly to the new agent
 - `src/adapters/gcp_task_queue.py` — Cloud Tasks enqueuing implementation
 - `src/adapters/claude_adapter.py` — Claude adapter. Model tiers: ECO=`claude-haiku-5-5`, BALANCED=`claude-haiku-5-5` (both were Haiku 4.5 until 2026-10-08; `CLAUDE_SMALL_MODEL` env repoints the small tiers), PERFORMANCE=`claude-sonnet-5-5`, ULTRA=`claude-fable-5-1` (since 2026-10-03; see decisions/model_refresh_2026_10.md). Adaptive thinking + `output_config.effort` are gated on `_THINKING_MODELS = ("claude-sonnet", "claude-opus", "claude-haiku-5")` substring tuple — both parameters are silently dropped when the resolved model is Haiku 4.5 (verified against `models.retrieve(...).capabilities.effort.supported`; Haiku 4.5 returns `False` and the API rejects with HTTP 400; Haiku 5.5 returns `True`). The same substring gate now also lives in `claude_deep_research_runner_agent.py` (unified 2026-05-30 to fix divergence). `max_tokens` reads from `LLMRequest.max_tokens` (default 16,000). SDK pin: `anthropic >= 0.97.0`.
 - `src/adapters/gemini_adapter.py` — Gemini adapter. Maps `LLMRequest.thinking` → `ThinkingConfig(thinking_level=LOW/MEDIUM/HIGH)`. `use_code_execution=True` injects `types.Tool(code_execution=...)` internally.
-- `main.py` — registers `ALL_DESCRIPTORS` into `AgentRegistry` at startup (1 loop, no inline declarations)
+- `src/composition/application_graph.py` — registers `ALL_DESCRIPTORS` into `AgentRegistry` at startup (1 loop, no inline declarations)
 - Firestore token: `PROTOCOL_SMART_AGENT_SELECTION` — delegation rules for SmartAgent
 - Firestore token: `PROTOCOL_QUICK_AGENT_SELECTION` — delegation rules for QuickAgent
 - Firestore token: `OUTPUT_FORMAT_MEMORY_SEARCH` — key formulation output constraints (prompt-level)
