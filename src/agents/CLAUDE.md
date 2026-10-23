@@ -591,8 +591,9 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   Bound agents: plain text response, no terminal tool, no remap, no fanout.
   `DelegationResult` carries: `text` (also the text written beside a terminal call), `terminal_tool_args`,
   `total_tokens`, `delivery_items`, `history_contexts`, `structured_data`, `messages`, `failed`,
-  `async_dispatches` (successfully dispatched ASYNC intents; an orchestrator turn that has one is not an
-  `empty_answer` — the user gets the document, and a retry would send a second report).
+  `async_dispatches` (work dispatched that the user will receive later: ASYNC intents, and SYNC intents that
+  acknowledge and deliver in the background; an orchestrator turn that has one is not an `empty_answer` —
+  the user gets the result, a retry would send a second one; the skip logs INFO `empty_text_after_async`).
   The engine logs `terminal_sync_sibling` when a SYNC call is co-emitted with the terminal one (log only).
   **Intent fan-out** (`intent_fanout`): declarative 1:N dispatch-time expansion. Configured via
   `FanoutSpec(intents, hint)` on `AgentDescriptor`. When LLM dispatches an intent that has a

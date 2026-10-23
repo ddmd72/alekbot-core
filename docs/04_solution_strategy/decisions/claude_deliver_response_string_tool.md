@@ -155,9 +155,11 @@ What the build settled beyond the requirements above.
   Tutor, on every provider. In chat that means the Quick fallback plus an ops alert; in `notify()` it returns
   `delivered=False`, so Cloud Tasks retries. Tutor shows the error reaction instead of "No response from
   model.".
-- **Refinement: an async dispatch is not empty.** A turn that successfully dispatched an ASYNC intent
-  (`DelegationResult.async_dispatches`) is not an `empty_answer`: the user receives the document, and a retry
-  would re-run it and send a second report.
+- **Refinement: dispatched work is not empty.** A turn that dispatched work the user will receive later
+  (`DelegationResult.async_dispatches`: ASYNC intents, and SYNC intents that acknowledge and deliver in the
+  background, such as deep research and video generation) is not an `empty_answer`: the user receives the
+  result, and a retry would re-run it and send a second one. A skipped `empty_answer` logs INFO
+  `empty_text_after_async`.
 - **Grok behaviour change.** A terminal call with empty args `{}` plus text beside it now shows that text
   (it used to be an empty reply). The engine carries text written beside a terminal call in
   `DelegationResult.text`.
