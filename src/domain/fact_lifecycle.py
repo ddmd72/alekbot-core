@@ -4,7 +4,7 @@ from datetime import datetime, time, timedelta
 from typing import AbstractSet, Any, Dict, Final, List, Mapping, Optional, Sequence, Tuple
 
 from .entities import ExpiryKind, FactDomain, FactEntity, FactState, FactType
-from .exceptions import FactExpiryError, FactResolutionError
+from .exceptions import FactBornDueError, FactExpiryError, FactResolutionError
 from .fact_expiry import EXPIRY_NONE, NOTHING_WRITTEN, Expiry, as_expiry_kind
 from .local_time import local_date, local_moment, zone_or_utc
 
@@ -129,7 +129,7 @@ def born_due(
             f"the fact goes to review on {local_date(review_on, timezone).isoformat()}"
         )
         return {**fields, "expires_at": review_on}, note
-    raise FactExpiryError(
+    raise FactBornDueError(
         f"counted from when the owner said it ({local_date(reported_date, timezone).isoformat()}), a horizon of "
         f"{fields.get('ttl_days')} days {'ended' if expires <= now else 'ends'} {local_date(expires, timezone).isoformat()}: "
         f"give at least {_min_horizon_days(reported_date, now)} days, rewrite the fact as history with {{kind: none}}, "
@@ -137,18 +137,18 @@ def born_due(
     )
 
 
-def _date_refusal(expires: datetime, reported_date: datetime, now: datetime, timezone: str) -> FactExpiryError:
+def _date_refusal(expires: datetime, reported_date: datetime, now: datetime, timezone: str) -> FactBornDueError:
     last_day = local_date(expires - timedelta(microseconds=1), timezone)
     today = local_date(now, timezone)
     if last_day < today:
-        return FactExpiryError(
+        return FactBornDueError(
             f"the date {last_day.isoformat()} is past (today is {today.isoformat()} in {timezone}): DISCARD the "
             "candidate if it no longer matters, or rewrite the fact as what happened (past tense, the outcome if "
             f"known) with {{kind: none}}. {NOTHING_WRITTEN}"
         )
     # A date after today can land here only on a 23-hour DST day, in its last hour.
     plan = "a plan for today is not over yet" if last_day == today else f"a plan ending {last_day.isoformat()} is too close"
-    return FactExpiryError(
+    return FactBornDueError(
         f"{plan}: give a short horizon of at least "
         f"{_min_horizon_days(reported_date, now)} days so it is reviewed after it happened. {NOTHING_WRITTEN}"
     )
