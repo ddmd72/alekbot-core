@@ -8,16 +8,18 @@ by updating this file.
 
 Design records: `docs/10_rfcs/DELIBERATE_FACT_MANAGEMENT_RFC.md` (taxonomy, tools, cognitive process),
 `docs/10_rfcs/CLUSTER_REVIEW_RFC.md` (Stage 2a), `docs/10_rfcs/STANDING_DIRECTIVES_RFC.md` (Stage 2b),
-`docs/10_rfcs/MEMORY_FACT_CONFIRMATION_RFC.md` (`$memory save`), `docs/10_rfcs/FACT_LIFECYCLE_RFC.md` (S1 done, S2–S5
-not built), decisions `docs/04_solution_strategy/decisions/{fact_s1_defects,standing_directives,directive_applicability_gate,memory_facts_owner_confirmed,consolidation_one_batch_per_task,consolidation_failed_batch_bounded,sonnet55_adaptive_thinking_stall,consolidation_provider_model_eval}.md`.
+`docs/10_rfcs/MEMORY_FACT_CONFIRMATION_RFC.md` (`$memory save`), `docs/10_rfcs/FACT_LIFECYCLE_RFC.md` (S1 and S2 built,
+S3–S5 not built), decisions `docs/04_solution_strategy/decisions/{fact_s1_defects,fact_versions_one_writer,standing_directives,directive_applicability_gate,memory_facts_owner_confirmed,consolidation_one_batch_per_task,consolidation_failed_batch_bounded,sonnet55_adaptive_thinking_stall,consolidation_provider_model_eval}.md`.
 
 ## 0. How to answer questions about memory
 
 | Question | Read |
 |---|---|
 | What is in memory; what a fact holds; what `domain`, `temporal_class`, `state`, `context_priority` mean | §2 |
-| What `is_current`, `valid_to`, `lineage_id`, `version` mean today; what an update or a merge does to them | §2.3, §2.4 |
+| What `is_current`, `valid_to`, `lineage_id`, `version`, `superseded_by` mean today; what an update or a merge does to them | §2.3, §2.4 |
+| Why an update gave the fact a new id; whether the old wording is kept; why an old id still works | §2.4, §2.5, §9.3 |
 | When does a conversation become facts; why nothing happened after I told it something | §3 steps 1–3, §7 |
+| What the memory-write lease is; why a consolidation task waited or ran twice a few minutes apart | §3 step 3, §6, §7 |
 | What the consolidator sees (whose words, which text of the bot's replies) and how it decides create / update / merge / discard | §3 steps 4–5 |
 | Why the bot remembered something wrong, or something it said itself (echo trap) | §3 step 5, §9.3 |
 | What Stage 2a (cluster review) and Stage 2b (directive review) do and when they run | §3 steps 6–7 |
@@ -34,10 +36,11 @@ not built), decisions `docs/04_solution_strategy/decisions/{fact_s1_defects,stan
 | Which model consolidates; what a batch costs; where cost is recorded | §8 |
 | How to see what consolidation did in a given batch; which log lines, BigQuery, Logfire | §9.1, §9.4 |
 | Why the bot did not remember X | §9.2 |
+| Why an update, a merge or a Cabinet delete did not apply ("changed concurrently", "merged into") | §6, §5.2, §9.2 |
 | Why a reminder's or a system note's text became a fact | §9.3 |
 | Which batch wrote a given fact | §9.4 (step 0) |
 | Owner scripts, dry-run benches, the data audit, the prompt snapshot and its vocabulary tests | §9.5–§9.7 |
-| Expiry, janitor, review pass, owner questions, real versions | §10 (not built) |
+| Expiry, janitor, review pass, owner questions | §10 (not built) |
 | Where a piece of code lives | §11 |
 
 ---
@@ -61,10 +64,11 @@ invalidate a fact from the Cabinet (§5.2); that rebuilds the baseline at once.
 
 | Store | Collection | What it holds | Written by |
 |---|---|---|---|
-| Facts | `{prefix}domain_facts_v2` (`src/config/environment.py:114-120`) | one document per fact (an update overwrites it, §2.4), three 768-dim vectors each | consolidation tools (§3), Cabinet invalidate (§5.2) |
+| Facts | `{prefix}domain_facts_v2` (`src/config/environment.py:114-120`) | one document per fact **version** (a content change adds a document, a lifecycle change edits one, §2.4), three 768-dim vectors each | consolidation tools (§3), Cabinet invalidate (§5.2) |
 | Sessions | `{prefix}sessions` (`environment.py:455-463`), doc id `{user_id}:{channel_id}` | the channel's recent messages (the sliding window) | `ConversationHandler`, notifications, `$memory save` |
 | Consolidation queue | `{prefix}consolidation_queue` (`environment.py:465-472`) | batches cut from sessions, until consolidated | overflow routing (§3 step 3), `$consolidate` |
-| Baseline cache | `{prefix}user_context`, doc id = account id (`environment.py:516-523`) | `biographical_facts`, `principles`, `directives` lists | `refresh_biographical_context_cache` (§3 step 9) |
+| Baseline cache | `{prefix}user_context`, doc id = account id (`environment.py:524-531`) | `biographical_facts`, `principles`, `directives` lists | `refresh_biographical_context_cache` (§3 step 9) |
+| Memory-write lease | `{prefix}memory_write_leases`, doc id = account id (`environment.py:507-513`) | `lease_owner`, `lease_until`, `acquired_at`; no TTL policy | `ConsolidationService`, one lease per batch (§3 step 3) |
 | Memory drafts | `{prefix}memory_fact_drafts`, doc id `{user_id}:{code}` (`environment.py:350-354`) | facts Smart proposed, 7-day TTL | `propose_memory_facts` (§5.1) |
 
 ### 1.3 The actors
@@ -73,11 +77,12 @@ invalidate a fact from the Cabinet (§5.2); that rebuilds the baseline at once.
 |---|---|---|
 | `FirestoreSessionStore` | appends messages, cuts overflow batches | `src/adapters/firestore_session_store.py` |
 | `OverflowRoutingService` | sends a batch to Alek's queue or a companion's | `src/services/overflow_routing_service.py` |
-| `ConsolidationService` | takes one pending batch, runs the agent, deletes or retries the batch | `src/services/consolidation_service.py` |
+| `ConsolidationService` | takes the account's memory-write lease, takes one pending batch, runs the agent, deletes or retries the batch; defers itself when the lease is taken | `src/services/consolidation_service.py` |
+| `FirestoreMemoryWriteLease` | the lease: one memory-writing run per account | `src/adapters/firestore_memory_write_lease.py` |
 | `ConsolidationAgent` | the model loop, all stages | `src/agents/consolidation_agent.py` |
-| `FactManagementAdapter` | the tools: search, create, update, merge | `src/adapters/fact_management_adapter.py` |
+| `FactManagementAdapter` | the tools: search, create, update, merge; follows stale ids forward, writes under preconditions | `src/adapters/fact_management_adapter.py` |
 | `FactWriteService` | builds a `FactEntity` with its three vectors and stores it | `src/services/fact_write_service.py` |
-| `FirestoreFactRepository` | every fact query; the baseline cache document | `src/adapters/firestore_repo.py` |
+| `FirestoreFactRepository` | every fact query; the version, merge and in-place transactions; forward resolution; the baseline cache document | `src/adapters/firestore_repo.py` |
 | `BiographicalContextService` | chooses the baseline | `src/services/biographical_context_service.py` |
 | `SearchEnrichmentService` | multi-vector search + RRF | `src/services/search_enrichment_service.py` |
 | Router, Smart, `FactsMemoryAgent`, Lelik, MCP | readers (§4) | §11 |
@@ -96,7 +101,7 @@ like any other message.
 
 ### 2.1 The fields that matter
 
-`FactEntity` (`src/domain/entities.py:97-174`):
+`FactEntity` (`src/domain/entities.py:101-179`):
 
 | Field | Meaning today |
 |---|---|
@@ -104,19 +109,19 @@ like any other message.
 | `account_id`, `created_by_user_id` | tenant (every query filters `account_id`); author |
 | `text` | the fact, one self-contained sentence; the only thing most readers show |
 | `vector`, `tags_vector`, `metadata_vector` | the three embeddings (§2.6) |
-| `tags` | keywords; `mindset` makes the fact a principle (§4.1); `consolidated` is added to every fact, `anchor` to principles (`fact_write_service.py:142-148`) |
-| `type` | `state`, `event`, `principle`, `system`, `alert` (`entities.py:7-12`); the consolidator does not set it, so it defaults to `event` (`fact_management_adapter.py:181`) |
+| `tags` | keywords; `mindset` makes the fact a principle (§4.1); `consolidated` is added to every fact, `anchor` to principles (`fact_write_service.py:153-157`); an update keeps both (§2.4) |
+| `type` | `state`, `event`, `principle`, `system`, `alert` (`entities.py:7-12`); the consolidator does not set it, so it defaults to `event` (`fact_management_adapter.py:207`) |
 | `metadata` | structured values (numbers, dates) |
 | `domain`, `temporal_class`, `state`, `context_priority` | the four axes (§2.2) |
 | `context` | a short label for why it was recorded; shown by `search_memory` |
 | `reported_date` | when the fact was told; shown by `search_memory` as `reported: YYYY-MM-DD` |
-| `created_at` | ordering of the baseline and the domain channel |
-| `version`, `lineage_id`, `is_current`, `valid_from`, `valid_to` | §2.3–§2.4 |
-| `ttl_days`, `expires_at`, `replaces_fact_id`, `last_updated` | written, read by no code (expiry is §10) |
+| `created_at` | ordering of the baseline and the domain channel; a version copies it from the document it replaces, so it is the fact's first mention |
+| `version`, `lineage_id`, `replaces_fact_id`, `superseded_by`, `is_current`, `valid_from`, `valid_to` | §2.3–§2.4 |
+| `ttl_days`, `expires_at`, `last_updated` | written, read by no code (expiry is §10) |
 | `visibility` | defaults to `account_shared`; never filtered on read: every member of an account sees every fact |
 
 The adapter also stores `context_priority_rank` (critical 1 … archival 5) next to the entity for ordering
-(`firestore_repo.py:32-38`, written at `:167-169` and `:433-435`).
+(`firestore_repo.py:38-44`, written by `_to_document`, `:176-184`, for every new document).
 
 ### 2.2 The four axes
 
@@ -124,8 +129,8 @@ The adapter also stores `context_priority_rank` (critical 1 … archival 5) next
 |---|---|---|
 | `domain` | `biographical`, `possession`, `health`, `medical_records`, `location`, `work`, `network`, `preference`, `agent_directive`, `skill`, `project`, `finance`, `education`, `legal`, `entertainment`, `communication` (`:18-35`) | baseline order (biographical first), standing directives (`agent_directive`), Router domain channel, Lelik's filter |
 | `temporal_class` | `permanent`, `stable`, `dynamic`, `ephemeral` (`:38-43`) | none; shown to the consolidator. The prompt's TTLs (90 / 14 days) are not enforced by any code |
-| `state` | `current`, `stale`, `archived`, `superseded`, `invalidated` (`:46-52`) | **the only visibility switch**: every reader filters `state == "current"` (`firestore_repo.py:207,261,367,459,589,827`). No code ever sets `stale` |
-| `context_priority` | `critical`, `high`, `medium`, `low`, `archival` (`:55-61`) | baseline order; `archival` (rank 5) is never in the baseline or the rulebook (`firestore_repo.py:467`) |
+| `state` | `current`, `stale`, `archived`, `superseded`, `invalidated` (`:46-52`) | **the only visibility switch**: every reader filters `state == "current"` (`firestore_repo.py:232,286,400,471,661,899`). No code ever sets `stale` |
+| `context_priority` | `critical`, `high`, `medium`, `low`, `archival` (`:55-61`) | baseline order; `archival` (rank 5) is never in the baseline or the rulebook (`firestore_repo.py:479`) |
 
 The model writes these in upper case; `normalize_fact_taxonomy` lowercases them before the enums parse
 (`entities.py:83-94`). A value outside the enum fails the tool call (§6). The prompt (as mirrored in `prompts_snapshot/` on main) tells the model to use
@@ -134,7 +139,7 @@ of 87 written priorities was `historical` (`decisions/fact_s1_defects.md`); the 
 
 ### 2.3 States and the SCD2 flags
 
-`domain/fact_lifecycle.py:10-25` maps a state to its flags; every retirement path uses it (adapter update and merge,
+`domain/fact_lifecycle.py:11-26` maps a state to its flags; every retirement path uses it (adapter update and merge,
 Cabinet invalidate, the directive backstop):
 
 | State | `is_current` | `valid_to` | Typical cause |
@@ -142,38 +147,86 @@ Cabinet invalidate, the directive backstop):
 | `current`, `stale` | true | none | created; `stale` is never set |
 | `archived` | true | now | "was true, no longer" (the prompt's Negation rule) |
 | `invalidated` | true | now | "was never true", Stage 2b removal, Cabinet, backstop |
-| `superseded` | **false** | now | a merge source, or the model marks a compound fact superseded after splitting it |
+| `superseded` | **false** | now | a document replaced by a newer version of its lineage, a merge source, or a compound fact the model split (it must name the fact that replaces it, `superseded_by`; the call is refused without it) |
 
-`is_current` means "latest document of its lineage", not "visible". Visibility is `state` alone.
+`is_current` means "latest document of its lineage", not "visible". Visibility is `state` alone. No `src/` code reads `is_current`; the data audit checks it (§9.6).
 
 ### 2.4 Updates, merges, versions, lineage
 
-- **An update overwrites the document in place.** `update_fact` changes `text`, `tags` (replaced wholesale), `metadata`
-  (merged key by key), `temporal_class`, `state`, `reported_date` (`fact_management_adapter.py:283-343`). It cannot
-  change `domain` or `context_priority`: those need a new fact. The old text is gone; there is no history of versions
-  (TD-4; real versions are FACT_LIFECYCLE S2, §10).
-- **`version` counts content changes**: it rises when text, tags, metadata or `temporal_class` change, not on a
-  state-only update (`:312-336`). A content change also resets `reported_date` to now unless the call sends one
-  (`:337-341`).
-- **Vectors follow content**: any change to text, tags or metadata re-embeds all three before anything is written
-  (`:317-322`); an embedding failure aborts the update with nothing stored.
-- **A merge is a new fact with a new lineage.** `merge_facts` first marks each source `superseded` (skipping a source
-  of another account or one not found), then creates the merged fact through `FactWriteService` with a fresh
-  `lineage_id` (`fact_management_adapter.py:376-430`, `fact_write_service.py:169`). If the create fails after the supersedes, the sources stay
-  superseded without a successor (S1 residual, `decisions/fact_s1_defects.md`).
-- Concurrent tool calls of one model turn on the same fact are serialised by a process-local lock (`fact_management_adapter.py:218-231`).
+A fact is a **lineage**: the documents that share one `lineage_id`, told apart by `version`. Exactly one of them is
+the live one. Two kinds of write exist (`fact_update_plan.py:110-153`):
+
+- **A content change is a new document.** If an `update_fact` changes the text, the tags, the metadata or the
+  `temporal_class`, the store writes a new document: new `id`, same `lineage_id`, `version` + 1,
+  `replaces_fact_id` = the old id, `created_at` copied from the old one, `valid_from` now, and `reported_date` = the
+  value the call sent, else now (until FACT_LIFECYCLE S3). The old document is closed in the **same transaction**:
+  `state=superseded`, `is_current=false`, `valid_to` now, `superseded_by` = the new id
+  (`firestore_repo.py:562-587`, `fact_lifecycle.py:73-75`). The result's `fact_id` is the **new** id.
+  "Tags changed" compares the lists as multisets, so resending the stored tags in another order is not a change.
+- **A lifecycle change stays in place.** A call that only changes `state` or `reported_date` (or changes nothing)
+  writes just those fields and `last_updated` onto the live document; `version` and the id stay
+  (`fact_update_plan.py:168-178`, `firestore_repo.py:589-603`; only the keys of `IN_PLACE_FIELDS`,
+  `fact_lifecycle.py:34`, can be written this way). Re-applying the stored state leaves `valid_to` alone. A state change
+  together with a content change goes into the new version.
+- **`domain` and `context_priority` cannot be changed by an update**: the tool has no such fields. A different domain
+  means a new fact (Stage 2b demotes a directive by creating a `preference` fact and invalidating the directive).
+- **Retiring a fact for another one needs the other one.** `state=SUPERSEDED` needs `superseded_by`, the id of the
+  replacing fact (resolved forward like any id, and it must be a different fact). Without it, or together with a
+  content key, the call is refused (`fact_update.py:24-53`).
+- **Tags.** The system tags `consolidated` and `anchor` survive a tags update (appended at the end, in stored order).
+  `tags: null`, `tags: []` and an empty `content` are refused: an empty field never destroys data
+  (`fact_update.py:56-71`).
+- **Everything is checked before anything is embedded or written**: enums, dates, tags, content, on create, update and
+  merge (`fact_update.py`, `new_fact_attributes.py:213-256`). One bad fact fails a whole `add_facts_batch` call (the
+  legacy v2 path) before any embedding. A fact cannot be created or merged into `state=superseded`.
+- **Vectors follow content.** All three are re-embedded when the three embedding texts change (§2.6), before
+  anything is written (`_complete_version`, `fact_management_adapter.py:309-326`); an embedding failure fails the call
+  with nothing stored. A `temporal_class`-only version copies the old vectors. After a conflict the retry reuses an
+  embedding made for the same texts.
+- **A stale id still works.** The model reuses ids from an earlier search, and the consolidator often writes one fact
+  twice in a pass. `update_fact` and `merge_facts` follow `superseded_by` from the id they got to the live document
+  (`resolve_current`, `firestore_repo.py:541-560`, one hop at a time through `forward_step`, `fact_lifecycle.py:41-70`).
+  They stop with an error in these cases: the chain leaves the lineage (the fact was **merged** into another lineage:
+  "merged into <id>; search again"), a superseded document has no successor (every document closed before S2),
+  the end is `archived`, `invalidated` or `stale`, or the chain is longer than 50 hops. The adapter returns each as
+  `status: "failed"` with that message (§6). Only a `current` document can be updated by the consolidator
+  (`CONSOLIDATION_ACCEPTS`); the Cabinet also accepts archived, invalidated and stale ones (`CABINET_ACCEPTS`, §5.2).
+- **Writes carry a precondition, not a lock.** Every write reads the document and writes only if its `update_time` is
+  unchanged. On a conflict the adapter resolves again and tries once more; a second conflict is a failed result
+  ("changed concurrently; search again"). Two calls of one turn on the same fact therefore settle in the store, across
+  processes. A content change and an archive of one fact in one turn: the archive has no embedding to wait for, so it
+  normally commits first and the content call then fails with "fact X is archived". Two content changes both apply, in
+  commit order (the later is version 3).
+- **A merge is one transaction.** `merge_facts` resolves every source forward, builds the merged fact (new id, new
+  lineage, three vectors) and then, in one transaction, creates it and closes every source with
+  `superseded_by` = the merged id (`fact_management_adapter.py:367-408`, `firestore_repo.py:562-587`). A failure writes
+  nothing, so the sources stay live. A missing or foreign source is skipped; no usable source is
+  "Failed to supersede any facts"; a source that ends in another lineage or in a non-current state fails the whole
+  merge; a source that moved forward between the two attempts fails it too ("source changed; search again").
+- **History.** The old wording stays in the closed document. `get_lineage(account_id, lineage_id)` returns the
+  versions by `version`, without vectors (`firestore_repo.py:515-528`); nothing in the product calls it yet.
+  `get_latest_fact_by_lineage` returns the highest version that is not superseded (`:530-539`). History starts at the
+  deploy: the 442 documents superseded before it (of 1112 on 2026-10-23) have no `superseded_by`.
+- **One more version per retry.** A consolidation batch that fails and is retried runs Stage 1 again over facts it
+  already wrote; an update it repeats on the live version can add one more version document (§6).
+- `consolidate_cluster` (`consolidation_agent.py:432`) has no live caller: nothing in `src/` sends it, only the dry-run
+  scripts reach it. It runs without the lease and without the run tracker, so it has no failure refresh (§3 step 9). If
+  it ever gets a caller it needs both.
 
 ### 2.5 Tenancy
 
-Every read filters `account_id`. `update_fact` and `merge_facts` load by id and answer `not_found` / skip when the fact
-belongs to another account (`fact_management_adapter.py:272-281,385-390`). Cabinet invalidate checks the account and
-returns 403 (`firestore_repo.py:291-303`). `visibility` is not enforced (owner, 2026-10-21).
+Every read filters `account_id`. `resolve_current` returns nothing for a document of another account, decided before it
+follows any pointer, so `update_fact` answers `not_found` (the same words as for a missing id) and `merge_facts` skips
+the source; a pointer that leads into another account is "cannot be resolved" and never names the foreign id
+(`firestore_repo.py:541-560`, `fact_lifecycle.py:54-55`). A `superseded_by` successor that is missing or foreign is
+"successor fact not found". Cabinet invalidate checks the stored account of the id it is given and returns 403
+(`firestore_repo.py:316-322`). `visibility` is not enforced (owner, 2026-10-21).
 
 ### 2.6 The three vectors
 
-`domain/fact_embedding.py:11-18` defines the texts, shared by creation and re-embedding: `text`; `tags` joined (system
+`domain/fact_embedding.py:9-17` defines the texts, shared by creation and re-embedding: `text`; `tags` joined (system
 tags `consolidated`/`anchor` left out; the text when no tag is left); `metadata` as JSON (the text when empty). All
-three are embedded with `RETRIEVAL_DOCUMENT` in one batch call (`fact_write_service.py:259-261`), model
+three are embedded with `RETRIEVAL_DOCUMENT` in one batch call (`fact_write_service.py:181-187`), model
 `gemini-embedding-2` at 768 dimensions (`src/adapters/gemini_embedding_adapter.py`). Searches embed queries with
 `RETRIEVAL_QUERY` (`search_enrichment_service.py:123`).
 
@@ -216,17 +269,46 @@ The cut batch goes to `OverflowRoutingService.route_overflow` as a background ta
    (`src/adapters/gcp_task_queue.py:408-438`).
 
 `/worker` → `WorkerHandler._handle_consolidation` (`src/handlers/worker_handler.py:444-460`) →
-`ConsolidationService.process_user_batches(max_batches=1)` (`consolidation_service.py:64-185`):
+`ConsolidationService.process_user_batches(max_batches=1)` (`consolidation_service.py:110-121`, the loop `_run`, `:141-166`).
+Each batch runs under the account's **memory-write lease** (`_consolidate_one`, `:199-216`):
 
-- resets zombies first: any `processing` batch older than 1800 s goes back to `retry_pending` with attempts 0
-  (`reset_recoverable_batches`, `firestore_consolidation_queue.py:100`). It never touches a `failed` batch: only the
-  hourly sweep revives those (below);
+- **takes the lease.** One lease per account, in `{prefix}memory_write_leases`, a fresh random owner per batch,
+  held for the 15-minute run timeout plus a 60 s margin = 16 min (`domain/memory_write_lease.py:5-16`, adapter
+  `firestore_memory_write_lease.py:23-46`). Any unexpired lease means "busy", even one this same service took a moment
+  ago. So two users of one account, two tasks of one user and `$consolidate` all queue behind each other. Why:
+  every fact write is a precondition write (§2.4), but two runs searching and deciding at once still produce duplicates
+  or contradicting decisions; one writer per account removes that (`decisions/fact_versions_one_writer.md`);
+- **busy: it defers itself.** If the user has any batch that is `pending`, `retry_pending` or `processing`
+  (`has_open_batches`, `firestore_consolidation_queue.py:100-109`), the run enqueues a `consolidation` task for the user
+  with a 120 s delay and returns having done nothing; the worker does **not** enqueue another one itself
+  (`_defer`, `consolidation_service.py:319-331`). The deferral is named by a 120 s time bucket
+  (`consolidation-defer:<user>:<bucket>`), so tasks that lose at the same time share one deferral, and a loser that
+  loses again lands in the next bucket. With no open batch a busy run just stops;
+- **resets zombies.** Under the lease, a `processing` batch older than **60 s** goes back to `retry_pending` with
+  attempts 0 (`reset_recoverable_batches(zombie_after_s=60)`, `firestore_consolidation_queue.py:111-190`): holding the
+  lease means every earlier run has ended or its lease has expired, and every run marks its batch at least 60 s before
+  its lease ends. The hourly sweep has no lease and keeps the old 1800 s threshold. Neither touches a `failed` batch:
+  only the sweep revives those (below);
 - takes the **oldest** pending batch (`pending` or `retry_pending`, `order_by created_at`, `:37-44`; the composite
-  index in `config/firestore.indexes.json` must be `READY`);
-- marks it `processing`, runs the agent with `consolidate_full`, and on success **deletes the batch**;
+  index in `config/firestore.indexes.json` must be `READY`). With less than 60 s of the run budget left it starts
+  nothing: the batch stays pending, the lease is released and a deferral is enqueued (`:239-240`);
+- marks it `processing`, runs the agent with `consolidate_full`, the time left on the lease as its timeout and a single
+  attempt (no whole-run transient retry, `base_agent.py:559-570`), and on success **deletes the batch** (`_process_one_batch`, `:230-288`);
+- **releases the lease** in a `finally` (only the owner that took it can release it). A failed release is logged and
+  ignored, since the lease expires anyway; a failed acquire, open-batch check or deferral enqueue raises, so the worker
+  answers 5xx and Cloud Tasks retries. An error inside the batch is logged (ERROR, `Unhandled error in batch processing`)
+  and swallowed;
 - one batch per task: if more remain, the worker enqueues the next task at once (`worker_handler.py:457-459`; why:
   `decisions/consolidation_one_batch_per_task.md` — Cloud Run throttles CPU after a response, so each batch gets its
-  own request).
+  own request). A deferral returns "no more", so a deferred task does not start a second chain.
+- a user with no account id cannot be leased: the oldest pending batch is marked `failed` ("user has no account"),
+  logged as `CONSOLIDATION_FAILED`, and there is no 5xx or retry loop (`_account_to_lease`, `:168-182`).
+
+There is **no per-write fence**: nothing checks the lease before each fact write. The run is bounded by its timeout
+instead (the agent stops at `lease_until` − 60 s); a commit already on the wire at the moment of cancellation may land
+shortly after, which the margin covers. A holder whose lease expired and was taken over logs `release found another
+owner` (WARNING) when it releases; a release that finds no lease document at all stays silent, although it can mean
+"our lease expired, was taken, and was released" (`firestore_memory_write_lease.py:48-64`).
 
 An hourly sweep (`sweep_consolidation`, Cloud Scheduler at minute 17, `docs/07_deployment/SCHEDULERS.md`) takes every
 user with any batch left in the queue (`worker_handler.py:462-484`). For each it first **revives that user's `failed`
@@ -237,17 +319,18 @@ so one batch costs at most 4 rounds × 3 attempts = 12 paid attempts (`decisions
 Past the cap it stays `failed` with its messages in the queue document, and the service logs one
 `CONSOLIDATION_GAVE_UP` (§6, §9.1).
 
-**Runs of one user are not serialised.** Consolidation tasks go to the shared tasks queue (`gcp_task_queue.py:434-436`)
-with no per-user lock: an overflow during a live run enqueues another task, which takes the next pending batch (the
-live one is `processing`) and runs beside it. How many tasks the queue dispatches at once is set on the queue itself,
-not in the repo; it is not verified here.
+**Runs of one account are serialised by the lease.** Until Facts S2, consolidation tasks ran side by side with no
+per-user lock: an overflow during a live run enqueued another task that took the next batch and ran beside it, and two
+tasks that started together could take the same batch. Now the second task defers (above). The worst case after a crash
+is a wait of up to 16 minutes (§7); how many tasks the queue dispatches at once is still set on the queue itself, not in
+the repo.
 
 ### Step 4 — the consolidation run
 
-`ConsolidationAgent.execute` (`consolidation_agent.py:191-266`) needs `account_id` from the request context, loads the
+`ConsolidationAgent.execute` (`consolidation_agent.py:205-280`) needs `account_id` from the request context, loads the
 baseline cache (`get_biographical_context_cached`, the whole cache: facts, principles, directives; a failed read is
-logged and the run goes on without it, `consolidation_agent.py:226-234`) and dispatches
-`consolidate_full` → Stage 1, 2a, 2b (`_execute_deliberate_process_v3`, `:677-768`), then Stage 3 (`_handle_consolidate_full`, `:612-686`). The
+logged and the run goes on without it, `consolidation_agent.py:240-248`) and dispatches
+`consolidate_full` → Stage 1, 2a, 2b (`_execute_deliberate_process_v3`, `:747-844`), then Stage 3 (`_handle_consolidate_full`, `:638-712`). The
 agent also accepts `consolidate` (Stage 1–2b only), `consolidate_cluster` and `consolidate_email` (`:186-189`); the
 queue and `$consolidate` always send `consolidate_full`.
 
@@ -255,34 +338,35 @@ queue and `$consolidate` always send `consolidate_full`.
   at tier PERFORMANCE (`src/domain/user.py:82`), which on Claude is `claude-opus-5-5` unless the live env var
   `CLAUDE_PERFORMANCE_MODEL` pins another model (`src/adapters/claude_adapter.py:166-167,249-252`; `make claude-model`
   shows the live value). A user's `agent_providers` / `agent_tiers` can override. Thinking `medium`, 64 000 output
-  tokens, 15 turns per pass, 15-minute agent timeout (`src/infrastructure/agent_config.py:166-190`).
+  tokens, 15 turns per pass, 15-minute agent timeout (`src/infrastructure/agent_config.py:166-190`); the service passes the run only what is left of its lease (lease end − 60 s − now), so a run ends before its lease does.
 - **Prompt:** one system prompt per pass, built by `PromptBuilder.build_for_agent(agent_type="consolidation",
   include_directives=False)`. The profile `prompts_snapshot/profiles/consolidation.yaml` assembles six tokens in order:
   `CONSOLIDATION_TAXONOMY`, `_COGNITIVE_PROCESS`, `_TOOLS`, `_EXAMPLES`, `_POLICIES`, `_OUTPUT_SPEC` (blueprint
   `consolidation_agent_v1`). Then a `knowledge_base {}` block with the baseline facts and, in Stage 1 only, the
   conversation (`src/services/prompt_v3/prompt_assembly_service.py:449-459`). Standing directives are never in this
   prompt as rules: the consolidator curates them as records (Stage 2b).
-- **Loop:** `_run_consolidation_loop` (`consolidation_agent.py:839-936`): each turn sends the whole history with the five tool
-  declarations; tool calls of one turn run in parallel (`:1226-1232`); a turn with no tool call is the final report.
+- **Loop:** `_run_consolidation_loop` (`consolidation_agent.py:920-1021`): each turn sends the whole history with the five tool
+  declarations; tool calls of one turn run in parallel (`:1318`); a turn with no tool call is the final report. The loop takes
+  the fact-management port as an argument; each run passes its own tracker (below), and the agent's own port is never swapped.
 
 ### Step 5 — Stage 1: conversation → facts
 
 The conversation sits in the system prompt as lines `User (Oct 22, 10:00 UTC): …` / `Assistant (…): …`
 (`src/services/prompt_v3/context_formatter.py:52-63`); the user message is just "Begin deliberate consolidation."
-(`consolidation_agent.py:723-729`). The token's 8 steps: extract candidates → classify on the four axes → **search
+(`consolidation_agent.py:793`). The token's 8 steps: extract candidates → classify on the four axes → **search
 once per candidate** → analyse → decide → execute → verify → report (`CONSOLIDATION_COGNITIVE_PROCESS.groovy`).
 
-| Tool | What the code does (`consolidation_agent.py:1130-1224`, adapter `fact_management_adapter.py`) |
+| Tool | What the code does (`consolidation_agent.py:1200-1318`, adapter `fact_management_adapter.py`) |
 |---|---|
-| `search_existing_facts(keywords, primary_query, alternative_query, limit=20)` | `enrich_context` with 6 vector channels (phrase 2 = alternative, else primary), per-channel limits 7/10/10, total `limit`, **no semantic dedup** (`fact_management_adapter.py:89-100`); returns id, text, domain, temporal class, state, priority, tags, metadata, reported date, version. `similarity` is **null** for every vector hit (§4.3) |
-| `create_fact(content, fact_attributes)` | requires `domain`, `temporal_class`, `context_priority` (`fact_management_adapter.py:165-173`); state defaults to `current`, priority to `medium`; written **without deduplication** (`skip_deduplication=True`, `fact_management_adapter.py:192-197`) |
-| `update_fact(fact_id, updates)` | §2.4 |
-| `merge_facts(fact_ids, merged_content, fact_attributes)` | §2.4 |
-| `count_words(text)` | word count against the 40-word fact limit (`consolidation_agent.py:1198-1210`) |
+| `search_existing_facts(keywords, primary_query, alternative_query, limit=20)` | `enrich_context` with 6 vector channels (phrase 2 = alternative, else primary), per-channel limits 7/10/10, total `limit`, **no semantic dedup** (`fact_management_adapter.py:86-97`); returns id, text, domain, temporal class, state, priority, tags, metadata, reported date, version. `similarity` is **null** for every vector hit (§4.3) |
+| `create_fact(content, fact_attributes)` | requires `domain`, `temporal_class`, `context_priority` (`fact_management_adapter.py:162-170`); state defaults to `current`, priority to `medium`; written **without deduplication** (`skip_deduplication=True`, `fact_management_adapter.py:177-182`) |
+| `update_fact(fact_id, updates)` | a content change writes a new version and returns its id; a state or date change edits the document in place; a stale id is followed forward; `superseded_by` is required with state `superseded` (§2.4, `fact_management_adapter.py:218-291`) |
+| `merge_facts(fact_ids, merged_content, fact_attributes)` | one transaction: the merged fact (new lineage) is created and every source closed with `superseded_by` (§2.4, `fact_management_adapter.py:328-420`) |
+| `count_words(text)` | word count against the 40-word fact limit (`consolidation_agent.py:1286-1297`) |
 
 **Deduplication is the model's decision.** Code does not reject a near-duplicate on this path; the prompt makes the
 model search first and DISCARD (no tool call) what is already known. The number-aware 0.96 dedup of
-`add_fact_if_unique` (`firestore_repo.py:550-641`) runs only on the legacy v2 path (`prompt_version="v2"`), which is
+`add_fact_if_unique` (`firestore_repo.py:622-713`) runs only on the legacy v2 path (`prompt_version="v2"`), which is
 not live.
 
 **Rules that decide what is stored** (prompt tokens, mirrored in `prompts_snapshot/tokens/system/`):
@@ -295,48 +379,64 @@ not live.
   (biographical, preference) needs explicit correction; negations → `update_fact` to `invalidated` ("never true") or
   `archived` ("no longer true").
 - `Size_Triggers_Review`: an existing fact over 40 words is split before an update (create the atoms, mark the old one
-  `superseded`).
+  `superseded`). The prompt tokens (mirrored in `prompts_snapshot/`) do not yet say that the old fact needs its
+  `superseded_by`, so until S3 rewrites them such a `SUPERSEDED` call is refused (§6); measured at about 2 tool errors a month.
 - `Directive_Maintenance` (TAXONOMY): `agent_directive` only when the rule is about **how the agent behaves** AND is
   **in force across most requests**; a conditional agent rule becomes `preference` (§4.2).
 
-The tracker `_TrackingFactManagement` records every fact Stage 1 created, updated or merged (`consolidation_agent.py:47-96`).
+**The run tracker.** `_execute_deliberate_process_v3` makes one `_TrackingFactManagement` per run (`consolidation_agent.py:47-110`,
+`:789`) and passes it to Stage 1, Stage 2a, Stage 2b and the directive backstop as the tools' port. Two passes of one
+agent instance can therefore no longer record each other's writes. It records only what the store reports as written:
+`changed` holds `(id, text)` for a created fact, a merged fact and a **content** update (the id of the version
+written, from the result); `wrote` is set by any successful write, a state-only update included. A `not_found`,
+`failed` or refused result records nothing. `changed` seeds Stage 2a; it is not "every id that changed": a tags-only or
+metadata-only version has a new id and is not in it.
 
 ### Step 6 — Stage 2a: cluster review (only if Stage 1 wrote)
 
-Skipped when Stage 1 wrote nothing (`consolidation_agent.py:738-740`). "Wrote" means created, merged, or updated with
-new `content`: the tracker ignores an update without `content` (`consolidation_agent.py:78-86`), so a Stage 1 that only
-archives or invalidates facts skips Stage 2a. For each written fact it searches the store (words longer than 3
+Skipped when Stage 1 wrote nothing (`consolidation_agent.py:809`). "Wrote" means created, merged, or updated with
+new `content` (`changed` of the run tracker, snapshotted right after Stage 1, `:800`; the tracker ignores an update
+without `content`, `:87-98`), so a Stage 1 that only archives or invalidates facts skips Stage 2a. The cluster holds the
+**current** documents the search returns, so a fact Stage 1 versioned appears with its new id and text. For each written fact it searches the store (words longer than 3
 characters among the first 10 as keywords, the text as phrase, limit 20), unions the hits by id, sorts by length and keeps 30
-(`_build_review_cluster`, `:947-993`). A fresh loop gets the "FACT CLUSTER REVIEW" message: merge repeats, decompose
-compounds, fix inconsistencies, no fact over 40 words, keep numbers and dates (`:1086-1113`). It sees no conversation.
+(`_build_review_cluster`, `:1032-1078`). A fresh loop gets the "FACT CLUSTER REVIEW" message: merge repeats, decompose
+compounds, fix inconsistencies, no fact over 40 words, keep numbers and dates (`_build_cluster_message`, `:1171-1198`). It sees no conversation.
 
 ### Step 7 — Stage 2b: the directive rulebook (every run)
 
-Unconditional, even when Stage 1 did nothing (`consolidation_agent.py:764-766`); a no-op only when the rulebook is
-empty. It reads up to 40 current non-archival `agent_directive` facts (`_review_directives`, `:770-815`) and sends the whole rulebook with the "STANDING DIRECTIVES REVIEW" message
-(`:996-1083`): one checklist line per record (`scope_ok`, `reminder_dup`, `unusable`), then per record DEMOTE
+Unconditional, even when Stage 1 did nothing (`consolidation_agent.py:836`); a no-op only when the rulebook is
+empty. It reads up to 40 current non-archival `agent_directive` facts (`_review_directives`, `:846-893`) and sends the whole rulebook with the "STANDING DIRECTIVES REVIEW" message
+(`_build_directive_review_message`, `:1081-1168`): one checklist line per record (`scope_ok`, `reminder_dup`, `unusable`), then per record DEMOTE
 (create a `preference` fact stating the condition + invalidate the directive), INVALIDATE, MERGE, or rewrite to the
 target form (imperative, English, terse, one rule), hard cap 15. Then the **code backstop** `_enforce_directive_cap`
-(`:817-837`): if more than 15 current directives remain, the ones after the 15th in (priority, newest first) order are
+(`:895-918`, through the run's tracker): if more than 15 current directives remain, the ones after the 15th in (priority, newest first) order are
 invalidated. Run-to-run results differ on identical input (`decisions/directive_applicability_gate.md` § Variance).
 
 ### Step 8 — Stage 3: indexed emails
 
-Runs only after Stage 1–2 succeeded (`consolidation_agent.py:612-686`). **Best-effort:** it runs under what is left of
+Runs only after Stage 1–2 succeeded (`consolidation_agent.py:638-712`). **Best-effort:** it runs under what is left of
 the agent's 15-minute budget minus a 30 s margin (`_stage3_budget_s`, `_STAGE3_MARGIN_S`); with under 30 s left it is
 skipped with an INFO line. A Stage 3 error or its timeout is logged as one ERROR line (`Stage 3 (email) failed` /
 `timed out`) and the batch still succeeds: Stage 1 does not re-run, and the emails stay unconsolidated for the next run.
 Cancellation is not caught. Up to 100 unconsolidated `IndexedEmail` facts (1 pass,
 `agent_config.py:186-187`) go to a fresh loop as a numbered candidate list under a "[system_alert] … scanned the
-user's email inbox" message; afterwards all of them are marked consolidated, whatever the model did (`consolidation_agent.py:540-586`).
+user's email inbox" message; afterwards all of them are marked consolidated, whatever the model did (`consolidation_agent.py:516-626`).
 Skipped when the repository is not wired or nothing is pending.
 
 ### Step 9 — the baseline is rebuilt; the batch is deleted
 
 After Stage 1–2b, `refresh_biographical_context_cache` rebuilds the `{prefix}user_context` document
-(`consolidation_agent.py:326-337`, `firestore_repo.py:643-707`); Stage 3 rebuilds it again when it processed emails.
+(`consolidation_agent.py:340-351`, `firestore_repo.py:715-779`); Stage 3 rebuilds it again when it processed emails.
 The refresh logs and swallows its own errors. `ConsolidationService` then deletes the batch (§3 step 3). The Cabinet
 invalidate (§5.2) calls the same refresh.
+
+**A run that fails after it wrote refreshes too.** Stages 1–2b run inside a `try/finally`: if the run did not finish and
+its tracker saw a write (`wrote`), the `finally` rebuilds the cache (`consolidation_agent.py:789-844`); Stage 3 does the
+same when a pass wrote and it did not reach its own refresh (`:559-617`). Before, a failed run left the cache with the
+replaced version's id and text next to the new version, until the next consolidation. A run that failed without writing
+does not refresh. The same `finally` also runs when the run is cancelled by its timeout, which is close to the lease
+margin: that is a cache rebuild (one read, one cache-document write), not a fact write, so it does not break the
+one-writer rule. The retried batch can add one more version of a fact (§2.4).
 
 ### Step 10 — the next conversation
 
@@ -349,7 +449,7 @@ is written. Whether it is in the baseline depends on §4.1.
 `ConsolidationPassStats` (`src/domain/consolidation_pass_stats.py`) counts each pass's tool calls (no arguments, no
 fact text, 8 characters of the user id):
 - 🚨 permanent: a pass that uses all 15 turns without a final report logs an ERROR and posts to the ops sink (`:108-115`,
-  `consolidation_agent.py:933-936`). The pass returns no operations; the writes it made stay.
+  `consolidation_agent.py:973-976`). The pass returns no operations; the writes it made stay.
 - 📊 temporary: while `CONSOLIDATION_STATS_ALERTS` is on (`os.getenv`, default on), every pass that ends with a report
   posts one line: pass label (`stage1`, `stage2a`, `stage2b`, `email`, `cluster`), model, effort, turns, tool counts,
   repeated turns, writes, report ops, seconds, per-turn sequence (`:98-106`).
@@ -373,13 +473,13 @@ the drive agents; DeepResearch passes no account id, so it gets none either (`de
    (`src/domain/settings.py:49-50`). The consolidator passes its own limits, resolved per user when its agents are
    built (user profile → account defaults → system default, `src/composition/user_agent_factory.py:364-371`), and an
    explicit limit wins over the service's own account-level resolution (`biographical_context_service.py:109-138`,
-   `firestore_repo.py:677-683`). The consolidator passes those limits, so the user-level settings apply to its refresh. The Cabinet invalidate (§5.2)
+   `firestore_repo.py:749-755`). The consolidator passes those limits, so the user-level settings apply to its refresh. The Cabinet invalidate (§5.2)
    also refreshes, with **no** explicit limits: the service then resolves account defaults → system default, so a
    user-level override is not applied to that rebuild. An account with no `account_defaults` resolves to the system
    limits (the fallback is `UserBotConfig()`; it used to be `SearchConfig()`, which made the resolution raise and the
    refresh silently never write).
 2. Up to 65 current, non-archival `biographical` facts, ordered by priority rank then newest first
-   (`get_active_facts_ordered`, `firestore_repo.py:440-495`).
+   (`get_active_facts_ordered`, `firestore_repo.py:452-507`).
 3. If fewer than 65, fill from the 65 top facts of all domains in the same order, minus those already taken and minus
    directives (`biographical_context_service.py:162-171`). So other domains enter only when biographical facts leave room.
 4. Facts tagged `mindset` become **principles** (up to 20; extras are dropped, not moved to facts); the rest are facts
@@ -402,7 +502,7 @@ under the note "Dates = when recorded … conversation history takes precedence 
 **When it changes:** at the end of a consolidation run (§3 step 9) and right after a Cabinet invalidate (§5.2).
 
 **When the read fails.** A missing or empty cache document reads as no facts. A backend failure is logged and
-re-raised (`firestore_repo.py:779-781`): Smart, Quick, the Router and `PromptBuilder` catch it and answer without the
+re-raised (`firestore_repo.py:851-853`): Smart, Quick, the Router and `PromptBuilder` catch it and answer without the
 baseline (`smart_response_agent.py:435`, `quick_response_agent.py:187`, `router_agent.py:319-328`,
 `prompt_builder.py:158-162`); Lelik fails the call closed (§4.6); the consolidator runs without it (§3 step 4).
 
@@ -453,7 +553,7 @@ cache at once (§5.2).
 
 Scores: Firestore returns no distance in this projection, so `relevance_score` is `None` for every vector hit (only
 the domain channel sets 1.0, `search_enrichment_service.py:397,452`). Ranking uses ranks, not scores. A process-wide semaphore caps parallel
-`find_nearest` calls at 30 (`firestore_repo.py:44`).
+`find_nearest` calls at 30 (`firestore_repo.py:50`).
 
 ### 4.4 The Router's prefetch (every message)
 
@@ -485,12 +585,16 @@ cache read raises, and the call is not opened on an empty context (`lelik_person
 
 `get_user_context(query, alternate_phrasing, keywords)` (`src/composition/mcp_setup.py:255-332`) calls
 `enrich_context` directly (no model, no Router) with phrase 2 = alternate phrasing or the query, dedup at 0.98, total
-30 (`main.py:1291-1298`), as the token's account. The answer groups facts by domain, one line each (`mcp_setup.py:128-144`).
+30 (`main.py:1294-1301`), as the token's account. The answer groups facts by domain, one line each (`mcp_setup.py:128-144`).
 
 ### 4.8 The Cabinet fact page
 
-Read routes (`src/web/user_cabinet_app.py:766-847`): all current facts; a paginated browser, newest first, optional
+Read routes (`src/web/user_cabinet_app.py:767-848`): all current facts; a paginated browser, newest first, optional
 domain filter; a single-vector search over `vector` (50 results). They show text, domain, type and created date.
+The page holds fact ids, and a version write changes the id. A stale id still works for a delete (§5.2).
+**Pagination tie.** The browser pages by a cursor on `created_at`, ties broken by document id
+(`firestore_repo.py:266-314`). A version copies `created_at` from the document it replaces, so a fact that was versioned
+between two page loads can show twice, or be missed once, at a page boundary; reload the list.
 
 ---
 
@@ -506,8 +610,8 @@ let procedures and file notes become facts and directives (`decisions/memory_fac
    text passes the security validator; a flagged fact rejects the proposal (`src/services/memory_fact_service.py:79-92`).
 2. The draft is stored under a 4-hex-character code for 7 days with the session it came from (`:30-41`,
    `firestore_memory_fact_draft_repository.py:19`). The owner gets the facts as `memory-facts.txt` and a separate
-   `$memory save <code>` message (`conversation_handler.py:397-420`).
-3. Pasting the command (`_handle_memory_command`, `conversation_handler.py:1820+`) runs `MemoryFactService.confirm`
+   `$memory save <code>` message (`conversation_handler.py:392-415`).
+3. Pasting the command (`_handle_memory_command`, `conversation_handler.py:1834+`) runs `MemoryFactService.confirm`
    (`memory_fact_service.py:43-77`): it appends a **user/model pair** to the origin session — the user part
    "[System: the owner reviewed and confirmed these facts … read from: <sources>.]" plus one line per fact
    (`memory_fact.py:66-80`) — and only then deletes the draft. A failed append keeps the draft for a retry.
@@ -516,23 +620,52 @@ let procedures and file notes become facts and directives (`decisions/memory_fac
 
 ### 5.2 Cabinet invalidate
 
-`POST /api/user/facts/<id>/invalidate` (`user_cabinet_app.py:849-872`) → `invalidate_fact` (`firestore_repo.py:291-303`):
-account check, `state=invalidated`, `valid_to` and `last_updated` now. Search stops returning it at once. **The route
-then rebuilds the baseline** with `refresh_biographical_context_cache(owner_id=account_id)` (§3 step 9), so the fact
-leaves the next prompt too. A refresh failure is logged (ERROR, `Fact <id> invalidated but the biographical cache
-refresh failed`) and the invalidate still returns 200; the baseline then keeps the fact until the next consolidation
-run. A failed invalidate (404 / 403) does not touch the cache.
+`POST /api/user/facts/<id>/invalidate` (`user_cabinet_app.py:850-877`) → `invalidate_fact` (`firestore_repo.py:316-337`):
+the id must exist (else 404) and its stored account must be the caller's (else 403). Then the repository
+**follows the id forward** to the fact that is live now (`CABINET_ACCEPTS`: every state except `superseded`, so the owner
+can still delete a fact the consolidator archived meanwhile) and sets `state=invalidated`, `valid_to` and `last_updated`
+on that document, in place, under the `update_time` precondition. A page loaded before the consolidator versioned the
+fact therefore deletes the **current version**, not a closed document; before, it would have re-opened the old
+document and left two `is_current` documents in one lineage. On a conflict it resolves once more.
+Search stops returning the fact at once. **The route then rebuilds the baseline** with
+`refresh_biographical_context_cache(owner_id=account_id)` (§3 step 9), so the fact leaves the next prompt too. A refresh
+failure is logged (ERROR, `Fact <id> invalidated but the biographical cache refresh failed`) and the invalidate still
+returns 200; the baseline then keeps the fact until the next consolidation run.
+
+Failures: a fact that was **merged** into another lineage, a closed document with no successor (any document closed
+before S2), a chain longer than 50 hops, or a second conflict is **409** (`FactResolutionError` / `FactWriteConflict`,
+caught before the `ValueError` → 404 branch, `user_cabinet_app.py:869-872`). The JSON carries the technical message
+(for example "fact X was merged into Y; search again") and the route logs it as a WARNING
+(`Fact <id> not invalidated: …`). The Cabinet page does not show that message: on a 409 it shows "This fact changed in
+the meantime; the list was reloaded." and reloads the list (`cabinet.html:3526-3531`). A failed invalidate (404 / 403 /
+409) does not touch the cache. Cabinet invalidate does not take the memory-write lease: it writes one document under a
+precondition.
 
 ### 5.3 The directive cap backstop
 
-§3 step 7. It writes through the same `update_fact` (state only, so no version bump, no re-embed).
+§3 step 7. It writes through the same `update_fact`, on the run's tracker (state only, so it edits the document in
+place: same id, no version, no re-embed).
 
 ### 5.4 `$consolidate`
 
-`ConversationHandler` (`conversation_handler.py:1506-1600`) cuts the oldest `batch_size` messages of the current
+`ConversationHandler` (`conversation_handler.py:1522-1614`) cuts the oldest `batch_size` messages of the current
 session (the user's `consolidation_batch_size` override, else 50), queues them, saves the trimmed session, posts a
-"started" note, then processes **all** pending batches of the user in the same request and notifies the channel. It
-uses its own copy of the serializer (same rules as §3 step 3).
+"started" note, then calls `ConsolidationService.consolidate_now` (`consolidation_service.py:123-139`, handed over by
+the adapter factories as `overflow_callback`). It processes **at most one batch** inside the request, because the chat
+request is a Cloud Task with an 1800 s deadline and two batches at the 16-minute lease bound would exceed it. That is
+the **oldest** pending batch of the user, which after a backlog is not necessarily this command's. If more remain,
+`consolidate_now` enqueues the next consolidation task, as the worker does. It uses its own copy of the serializer
+(same rules as §3 step 3).
+
+The reply is honest about what happened (`_consolidate_outcome`, `conversation_handler.py:1469-1487`). It never says "N
+messages were processed". It says the command's messages were queued and then one of: "N batch(es) consolidated now";
+"no batch was consolidated in this request"; "queued behind another memory run in progress, it continues in the
+background" (the lease was taken, §3 step 3); plus "The rest continues in the background" when more batches wait. With no
+task queue (a local run) it says instead that nothing runs in the background and the owner should send `$consolidate`
+again. If `consolidate_now` raises (lease acquire, deferral or continuation enqueue), the owner gets "Memory consolidation
+stopped with an error. The command's messages are queued; a later run picks up whatever is left" and the error is logged
+(`[Librarian] $consolidate failed`); the batch is already in the queue and the hourly sweep finds it. Without a wired
+service the command only enqueues.
 
 ---
 
@@ -541,23 +674,32 @@ uses its own copy of the serializer (same rules as §3 step 3).
 | Where | What happens | Facts | Batch | Retried? |
 |---|---|---|---|---|
 | tool call ok | result JSON back to the model | written at once | — | — |
-| `search_existing_facts` fails (embedding, Firestore) | the adapter catches everything and returns `[]` (`fact_management_adapter.py:138-142`), which the model reads as "no match" | a duplicate of an existing fact may be created | — | no |
-| a tool raises past the adapter | `{"error": …}` returned to the model (`consolidation_agent.py:1219-1224`); rarely reached, since create, update and merge catch their own errors and return `status: failed` | nothing of that call | — | the model may retry in a later turn |
-| `create_fact` missing a required attribute | `status: failed`, message names the fields (`fact_management_adapter.py:165-173`) | none | — | the model may retry |
-| bad enum (`domain`, `state`, `temporal_class`, `context_priority`, e.g. `HISTORICAL`) | `ValueError` caught → `status: failed` with the message (`fact_management_adapter.py:210-216,250-256`; `fact_write_service.py:156-163`) | none for that call | — | the model may retry |
-| `update_fact` on an unknown or foreign id | `status: not_found` (`fact_management_adapter.py:263-281`) | none | — | — |
-| `merge_facts` with no source supersedable | `status: failed` (`fact_management_adapter.py:398-406`) | none | — | — |
-| `merge_facts` create fails after the supersedes | `status: failed` | **sources stay superseded, no successor** | — | no |
-| final report not JSON | parsed loosely, else `[]` (`consolidation_agent.py:1370-1420`) | writes stand | succeeds | no (the report is cosmetic) |
-| a pass hits 15 turns | 🚨, pass returns `[]` (`consolidation_agent.py:933-936`) | writes so far stand; candidates not yet written are lost | **succeeds and is deleted** | no |
-| Stage 1/2a/2b raises (provider down after retries, prompt build fails, timeout of 15 min) | `AgentResponse.failure` | writes so far stand | attempts +1 → `retry_pending`; the worker re-enqueues at once; at 3 → `failed` + `CONSOLIDATION_FAILED` log (`consolidation_service.py:138-171`) | yes, the whole batch; Stage 1 runs again over facts it already wrote (the model should find and discard them) |
-| Stage 3 raises, or runs past its share of the budget | caught in `_handle_consolidate_full`: one ERROR line (`Stage 3 (email) failed` / `timed out`); with under 30 s of budget left it is skipped with an INFO line (`consolidation_agent.py:632-672`) | Stage 1–2b writes stand | **succeeds and is deleted** | no: the emails stay unconsolidated and the next run picks them up |
-| batch `failed` (3 attempts) | the per-task path never revives it (it only resets zombies), so a newer batch is taken next (`get_pending_batches` selects `pending` / `retry_pending` only). The hourly sweep revives it: `retry_pending`, attempts 0, `revivals` +1, at most 3 revivals (`firestore_consolidation_queue.py:100-176`). If the round after the 3rd revival fails too, the service logs one `❌ [Librarian] CONSOLIDATION_GAVE_UP batch_id=… user_id=<8> revivals=3 messages=n` and the batch stays `failed` in the queue with its messages; nothing revives it again (the owner decides) | each attempt pays for the stages that ran before the failure; at most 12 attempts in a batch's life | bounded: 12 attempts, then given up | yes, up to the cap |
-| worker crashes mid-batch | batch stays `processing`; after 1800 s it is a zombie and is reset | partial writes stand | retried | yes |
-| baseline refresh fails | logged, swallowed (`firestore_repo.py:703-707`) | stored | succeeds | old baseline until the next run |
+| `search_existing_facts` fails (embedding, Firestore) | the adapter catches everything and returns `[]` (`fact_management_adapter.py:135-139`), which the model reads as "no match" | a duplicate of an existing fact may be created | — | no |
+| a tool raises past the adapter | `{"error": …}` returned to the model (`consolidation_agent.py:1263-1268`); rarely reached, since create, update and merge catch their own errors and return `status: failed` | nothing of that call | — | the model may retry in a later turn |
+| `create_fact` missing a required attribute | `status: failed`, message names the fields (`fact_management_adapter.py:162-170`) | none | — | the model may retry |
+| bad value (an enum such as `domain`, `state`, `temporal_class`, `context_priority` e.g. `HISTORICAL`; a malformed date, `tags: null` or `[]`, empty `content`; `state=superseded` on a create or merge; `superseded_by` missing, or given without `superseded`) | checked **before** any embedding or write; the `ValueError` is caught → `status: failed` with the message (`fact_management_adapter.py:192-198,244-250,353-355`; `new_fact_attributes.py:213-256`, `fact_update.py:24-53`). One bad fact fails a whole legacy `add_facts_batch` call | none for that call | — | the model may retry |
+| `update_fact` on an unknown or foreign id | `status: not_found` (`fact_management_adapter.py:261-264`), the same words for both | none | — | — |
+| `update_fact` or `merge_facts` with an id the store has moved on from (versioned) | the id is followed forward and the call lands on the live document; the result's `fact_id` is the id of the document written (§2.4) | written on the live version | — | — |
+| `update_fact` or `merge_facts` with an id that cannot be followed to a `current` fact | `status: failed`: "was merged into <id>; search again", "was superseded and its successor is unknown" (every document closed before S2), "is archived/invalidated/stale", "more than 50 forward hops", or "cannot be resolved" (the chain left the account; no foreign id named) (`fact_lifecycle.py:41-70`) | none | — | the model searches again |
+| `update_fact` or `merge_facts` and the document changed under the write | resolved and written once more; a second conflict is `status: failed`, "changed concurrently; search again". A merge whose source moved forward between the two attempts fails "source changed; search again" | none | — | the model searches again |
+| `update_fact` with `state=superseded` and a missing or foreign successor | `status: failed`, "successor fact not found" (nothing named), or the successor's own resolution error | none | — | the model may retry |
+| `merge_facts` with no source supersedable | `status: failed`, "Failed to supersede any facts" (`fact_management_adapter.py:387-389`), with no embedding call | none | — | — |
+| `merge_facts` fails (bad value, embedding error, conflict, a source that ends elsewhere) | `status: failed`. The merged fact and the closing of the sources are one transaction (§2.4), so nothing is half done | none; **every source stays live** | — | the model may retry |
+| final report not JSON | parsed loosely, else `[]` (`consolidation_agent.py:1415-1465`) | writes stand | succeeds | no (the report is cosmetic) |
+| a pass hits 15 turns | 🚨, pass returns `[]` (`consolidation_agent.py:973-976`) | writes so far stand; candidates not yet written are lost | **succeeds and is deleted** | no |
+| Stage 1/2a/2b raises (provider down after retries, prompt build fails, timeout of 15 min) | `AgentResponse.failure` | writes so far stand | attempts +1 → `retry_pending`; the worker re-enqueues at once; at 3 → `failed` + `CONSOLIDATION_FAILED` log (`consolidation_service.py:276-311`) | yes, the whole batch; Stage 1 runs again over facts it already wrote (the model should find and discard them); an update it repeats on the live version can add one more version document. The cache is rebuilt after a failed run that wrote (§3 step 9) |
+| Stage 3 raises, or runs past its share of the budget | caught in `_handle_consolidate_full`: one ERROR line (`Stage 3 (email) failed` / `timed out`); with under 30 s of budget left it is skipped with an INFO line (`consolidation_agent.py:658-698`) | Stage 1–2b writes stand | **succeeds and is deleted** | no: the emails stay unconsolidated and the next run picks them up |
+| batch `failed` (3 attempts) | the per-task path never revives it (it only resets zombies), so a newer batch is taken next (`get_pending_batches` selects `pending` / `retry_pending` only). The hourly sweep revives it: `retry_pending`, attempts 0, `revivals` +1, at most 3 revivals (`firestore_consolidation_queue.py:111-190`). If the round after the 3rd revival fails too, the service logs one `❌ [Librarian] CONSOLIDATION_GAVE_UP batch_id=… user_id=<8> revivals=3 messages=n` and the batch stays `failed` in the queue with its messages; nothing revives it again (the owner decides) | each attempt pays for the stages that ran before the failure; at most 12 attempts in a batch's life | bounded: 12 attempts, then given up | yes, up to the cap |
+| worker crashes mid-batch | batch stays `processing` and the lease is not released | partial writes stand | the next tasks of that account defer every 120 s (§3 step 3) until the lease expires (at most 16 min after it was taken); the winner then resets the batch (older than 60 s) to `retry_pending` and runs it. Without a lease (the sweep) the threshold is 1800 s | yes |
+| baseline refresh fails | logged, swallowed (`firestore_repo.py:775-779`) | stored | succeeds | old baseline until the next run |
 | enqueue of the batch fails at overflow | logged `Error in overflow routing` (`overflow_routing_service.py:64-69`) | — | **lost**: the messages were already cut from the session | no |
 | batch stored but the Cloud Task enqueue fails | logged | — | waits in the queue | the hourly sweep |
-| two runs of one user at once | not prevented (§3 step 3): both may search before either writes | duplicates or conflicting updates possible | two tasks that start together can both take the same pending batch (read, then mark `processing`, no transaction, `consolidation_service.py:99-110`); otherwise each takes a different one | — |
+| two runs of one account at once | prevented by the memory-write lease (§3 step 3): the second finds it taken and defers itself (a named task, 120 s later) | none from the loser | the loser does nothing; the winner owns the batch | yes, by the deferral |
+| lease taken and the user has no open batch | the loser stops; nothing to do | — | — | — |
+| less than 60 s of the run budget left when the batch would start | the batch stays `pending`, the lease is released, a deferral is enqueued (`consolidation_service.py:239-240`) | none | untouched | yes |
+| lease acquire, open-batch check or deferral enqueue fails | the error propagates, the worker answers 5xx | none | untouched | yes, Cloud Tasks retries |
+| lease release fails | WARNING `releasing the memory-write lease failed`; the lease expires on its own | stored | succeeds | — |
+| user has no account id | the oldest pending batch is marked `failed` ("user has no account"), `CONSOLIDATION_FAILED` is logged (`consolidation_service.py:313-317`) | none | `failed` | no 5xx loop; the sweep's bounded revivals fail it again at no model cost |
 | provider failover | `_call_llm` fails over to Gemini only before the first tool call; after it the transcript is locked to one provider (`src/agents/CLAUDE.md` → Transcript integrity) | — | — | same-provider retries |
 
 ---
@@ -583,14 +725,26 @@ uses its own copy of the serializer (same rules as §3 step 3).
 **A correction** ("I moved to Valencia").
 - Before consolidation: the baseline still says the old city; the bot sees the correction only in recent history, and
   the baseline note says history wins on conflict.
-- At consolidation: the consolidator searches, finds the old fact and either updates it in place (version +1, the old
-  text is gone, vectors recomputed) or archives it and creates a new one. A stable identity fact needs an explicit
+- At consolidation: the consolidator searches, finds the old fact and either updates it (a new version document: the new
+  text, version +1, vectors recomputed; the old document is closed and keeps the old wording) or archives it and creates a
+  new one. A stable identity fact needs an explicit
   correction (`Core_Identity_Caution`).
 - After the run: search returns the new text at once; the baseline shows it from the next message.
 
-**A Cabinet invalidate.** Search stops returning the fact immediately, and the route rebuilds the baseline cache in the
+**A Cabinet invalidate.** (On a page loaded before the fact was versioned, it deletes the current version, §5.2.) Search stops returning the fact immediately, and the route rebuilds the baseline cache in the
 same request, so the next message no longer has it (if the rebuild fails, the baseline keeps it until the next
 consolidation run).
+
+**A consolidation task that finds the account busy.**
+1. *Minute 0:* an overflow enqueues a `consolidation` task while another run holds the account's lease (taken at most
+   16 minutes earlier, normally a few minutes).
+2. *Seconds later:* the task finds the lease taken, sees an open batch, enqueues a deferral for 120 s later and ends.
+   Tasks that lose in the same two minutes share that one deferral.
+3. *Every 2 minutes after that:* the deferral tries again; the first one that finds the lease free takes it and runs the
+   oldest batch. The worker then enqueues the next task at once while batches remain.
+4. *After a crash:* the holder's lease stays until it expires (at most 16 minutes after it was taken). Deferrals keep
+   trying every 2 minutes; the first after the expiry resets the stuck `processing` batch (older than 60 s) and runs it. So
+   a crashed run delays its account's memory by up to about 18 minutes, and nothing is lost or run twice.
 
 **A directive** ("always answer in bullet points").
 - Consolidated with its batch (above). Stage 1 classifies it: `agent_directive` only if it is about agent behaviour
@@ -648,16 +802,19 @@ Log lines, in pipeline order:
 - `❄️ Overflow batch #n for <session>… (extracted=50, remaining=…)`, `🔔 Triggering overflow callback` (session store)
 - `📦 [Overflow] Created batch <batch_id>`, `📬 [Overflow] Consolidation task enqueued`; loss: `❌ Error in overflow routing`
 - `♻️ Reset N stale PROCESSING batches` / `♻️ Revived N FAILED batches` (sweep only) / `⏳ Skipped N live PROCESSING batches`
+- `[MemoryWriteLease] busy for account <8>` (INFO, a task found the lease taken), `⏳ [Librarian] lease busy: deferred consolidation for user <8>` or `… less than the lease margin left: deferred …` (INFO, one named deferral task enqueued), `[Librarian] lease busy, no queue to defer to` (WARNING, local runs only), `[Librarian] releasing the memory-write lease failed` (WARNING), `[MemoryWriteLease] release found another owner` (WARNING: a run outlived its lease and was taken over)
 - `📦 [Librarian] Processing batch <batch_id> (<n> messages)`
 - `👨‍🏫 [ConsolidationAgent] Turn i/15`, `Stage 1 done: N ops, M facts written`, `Stage 2a: reviewing cluster of N facts`,
   `Stage 2b: reviewing N directives`, `⚖️ … Directive cap backstop`, `⚠️ … Max turns reached without final report`
 - `🔧 [FactManagement] create_fact() TOOL CALL:` (content length and metadata keys only; fact text, queries and metadata values are not logged), `✅ … Updated fact <id8> to version N`,
-  `🔀 … Merging N facts`, `❌ Tool <name> failed`
+  `🔀 … Merging N facts`, `❌ Tool <name> failed`; the version rules (§2.4): `⚠️ [FactManagement] Cannot resolve fact <id8>: …` (merged, ended, no successor), `Fact <id8> conflicted on write (attempt n)` and `… changed concurrently twice; update refused`, `Merge refused: …`, `A merge source moved forward between attempts`
 - `✅ [BiographicalContext] Cache refreshed for <acct>: N facts, M principles, K directives`
 - `✅ [Librarian] Batch <batch_id> consolidated: stage1_ops=…, email_batches=… → DELETED`; or
   `⚠️ [Librarian] Batch <batch_id> failed (attempt n/3)`; or `❌ [Librarian] CONSOLIDATION_FAILED batch_id=… attempts=3 …`; or, once per batch, when the last allowed round failed
   `❌ [Librarian] CONSOLIDATION_GAVE_UP batch_id=… user_id=<8> revivals=3 …` (the batch stays `failed`; grep this to find batches that need the owner)
   Stage 3: `Stage 3 (email) failed` / `timed out` (ERROR, batch still succeeds), `Stage 3 skipped` (INFO)
+- `[Librarian] $consolidate failed for user <8>` (ERROR) and `[Librarian] no queue for the continuation` (WARNING, local runs): the `$consolidate` path (§5.4)
+- Cabinet: `Fact <id> not invalidated: FactResolutionError|FactWriteConflict: …` (WARNING, the 409 of §5.2)
 - `[Worker] sweep_consolidation complete: swept=N` (each swept user's FAILED batches were revived first)
 - search: `🔍 [SearchEnrichment] Final: N facts (semantic_dedup: …, bio_dedup: …)`, `🔍 [find_nearest] START/DONE`
 
@@ -668,7 +825,9 @@ Log lines, in pipeline order:
 3. Was the batch consumed? Grep the batch id: `DELETED`, `failed`, or still in `{prefix}consolidation_queue`.
 4. What did Stage 1 decide? BigQuery `prompt_content` for that run: the candidate list, the searches, the DISCARD
    reasons in the thinking and the final report. Usual reasons: echo trap, Trivial_Exclusions, judged a duplicate.
-5. Is the fact stored but not `current` (archived, invalidated, superseded)? Readers show only `current`.
+5. Is the fact stored but not `current` (archived, invalidated, superseded)? Readers show only `current`. A fact that was
+   updated is a **chain**: the closed document keeps the old wording and its `superseded_by` leads to the live one (§2.4),
+   so look for the newest `version` of its `lineage_id`.
 6. Stored and current but not used: not in the baseline (§4.1 selection), and this message's prefetch did not rank it
    (§4.3). Try `search_memory` with other words; check its domain and priority.
 
@@ -677,8 +836,9 @@ Log lines, in pipeline order:
 - From the bot's own words: a bot reply reaches the consolidator only as its summary (§3 step 1); `Domain_Scope`
   forbids storing assistant statements unless the user adds new information. When this happens it is a model error;
   the run's BigQuery rows show which message it came from.
-- A stale value: no expiry exists (§10); `temporal_class` TTLs are not enforced. An update overwrote the text in place
-  and the earlier wording is gone (§2.4).
+- A stale value: no expiry exists (§10); `temporal_class` TTLs are not enforced. An update wrote a new version; the
+  earlier wording stays in the closed document of the lineage (`get_lineage`, or follow `replaces_fact_id` back in
+  the Firestore console) (§2.4). History starts at the S2 deploy: older updates overwrote the text and it is gone.
 - From an email: Stage 3 writes facts from indexed emails (§3 step 8).
 - From a system note (a known gap, current behaviour): notes the system writes into history are stored as
   `role="user"` messages — every `notify()` alert with the default `save_history=True`
@@ -719,15 +879,34 @@ refresh is stubbed, but the model calls are real (paid) and may be recorded in t
 confirmed-facts script says so in its header). Each needs the owner's OK, credentials and `.env`. Exports go to
 gitignored folders only.
 
-### 9.6 The data audit (added by the data-audit PR)
+### 9.6 The data audit
 
-`python -m scripts.data_audit.run facts [--account <id>] [--limit N]` (branch `claude/gallant-mendel-ocl9xp-p21`,
-not on main at the time of writing) streams the facts collection read-only and checks every stored document against
-the invariants: stored `id` equals the document id, `account_id` and `state` present and valid, `is_current` /
-`valid_to` matching `state` (§2.3), `created_at` present, `reported_date` a timestamp, all three vectors stored as
-vectors, the document parses as a `FactEntity`, and no lineage with more than one `is_current` document. It prints
-counts only and writes the offending ids per class to `scripts/memory/data_audit_facts_<time>.json` (gitignored; no
-text or vectors). Run it after any migration or backfill.
+`python -m scripts.data_audit.run facts [--account <id>] [--limit N] [--s2-cutoff <ISO time>]` streams the facts
+collection read-only and checks every stored document against the invariants: stored `id` equals the document id,
+`account_id` and `state` present and valid, `is_current` / `valid_to` matching `state` (§2.3), `created_at` present,
+`reported_date` and `last_updated` timestamps, all three vectors stored as vectors, the document parses as a
+`FactEntity`, and no lineage with more than one `is_current` document. It prints counts only and writes the offending
+ids per class to `scripts/memory/data_audit_facts_<time>.json` (gitignored; no text or vectors). Run it after any
+migration or backfill.
+
+**Version-chain classes (Facts S2, `scripts/data_audit/facts.py`).** `superseded_by_dangling` (the target is missing or
+in another account), `superseded_by_cycle`, `superseded_by_not_pointing_back` (a same-lineage successor that does not
+name the document in `replaces_fact_id`; a merge successor is another lineage and exempt), `superseded_by_on_open_doc`
+(a pointer on a document that is not superseded), `replaces_target_missing`, `replaces_lineage_mismatch`,
+`replaces_version_mismatch` (the target is not at version − 1), `replaces_not_pointing_back`, `version_not_unique`,
+`lineage_open_below_highest_version` (a lineage with a not-closed document below its highest version), and
+`superseded_without_successor`.
+
+`--s2-cutoff` splits the last one. A superseded document without `superseded_by` that was last written **before** the
+cutoff is counted under `superseded_without_successor_pre_s2` and is not a violation: those are the documents closed before
+S2 (442 on 2026-10-23). One written at or after it is a violation. The cutoff is the time the **last old-revision
+consolidation request ended** (after the queue was paused and drained), not the time of the deploy command, or a
+document the old revision closed in the mixed window is reported as a post-S2 violation (`docs/07_deployment/README.md`).
+With no cutoff, and version pointers present, the report says the class was not judged. `--limit` and `--account`
+make the cross-document classes unreliable (a target outside the read looks dangling).
+
+After a rollback, old code that edits a version document in place bumps its `version` and keeps `replaces_fact_id`, so
+`replaces_version_mismatch` fires. That is the right signal: a text was lost.
 
 ### 9.7 The prompt snapshot and its vocabulary tests
 
@@ -743,15 +922,18 @@ merges and the tokens are uploaded, the live prompt says `HISTORICAL` (§2.2).
 
 ## 10. Not built yet
 
-`docs/10_rfcs/FACT_LIFECYCLE_RFC.md` (rev 2, accepted 2026-10-21) — S1 (defect fixes) is live; S2–S5 land together:
-- **S2** real versions (a new document per content change, `superseded_by`), one writer, transactions, validation
-  before any write.
+`docs/10_rfcs/FACT_LIFECYCLE_RFC.md` (rev 2, accepted 2026-10-21) — S1 (defect fixes) is live. **S2 is built** on the
+branch that carries S2–S5 (real versions with `superseded_by`, validation before any write, preconditioned writes, the
+memory-write lease, the run tracker as a parameter; §2.4, §3 step 3, §5.2; `decisions/fact_versions_one_writer.md`)
+and goes live with S3–S5, which deploy together. Still to come:
 - **S3** expiry decided from the content (date / horizon / none), a daily zero-LLM janitor (log-only first),
-  `HISTORICAL` → `ARCHIVAL`, prompt changes.
-- **S4** a review pass over overdue facts and questions to the owner in chat.
+  `HISTORICAL` → `ARCHIVAL`, prompt changes. The S3 prompt work must also name a successor wherever a prompt still tells
+  the model to retire a split fact with `SUPERSEDED` alone (S2 refuses that; §6).
+- **S4** a review pass over overdue facts and questions to the owner in chat (it will take the same lease).
 - **S5** one-time classification of all current facts, review dry run, janitor on.
 
-Until then: nothing expires, `stale` is never set, updates overwrite in place.
+Until the S3–S5 deploy: nothing expires and `stale` is never set. S2 does not ship alone: it refuses `SUPERSEDED` without
+a successor while the live consolidation prompts still tell the model to retire a split fact that way.
 
 ---
 
@@ -759,8 +941,13 @@ Until then: nothing expires, `stale` is never set, updates overwrite in place.
 
 | File | Role |
 |---|---|
-| `src/domain/entities.py` | `FactEntity`, the four enums, `normalize_fact_taxonomy` |
-| `src/domain/fact_lifecycle.py` | state → `is_current` / `valid_to` |
+| `src/domain/entities.py` | `FactEntity` (with `superseded_by`), the four enums, `normalize_fact_taxonomy`, `FACT_SYSTEM_TAGS` |
+| `src/domain/fact_lifecycle.py` | state → `is_current` / `valid_to`; forward resolution (`forward_step`), the accepted end states per caller, `IN_PLACE_FIELDS`, `closure_fields` |
+| `src/domain/fact_update.py`, `src/domain/fact_update_plan.py` | `update_fact` arguments parsed and validated; the plan: version document or in-place fields |
+| `src/domain/new_fact_attributes.py`, `src/domain/fact_argument_parsing.py` | a new fact's arguments parsed before any embedding; enum and date parsing |
+| `src/domain/stored_fact.py`, `src/domain/consolidation_run.py` | a document with its change token; the outcome of one consolidation request |
+| `src/domain/memory_write_lease.py` | lease margin, deferral delay, `lease_until`, the run timeout left, the deferral bucket |
+| `src/domain/exceptions.py` | `FactResolutionError`, `FactWriteConflict`, `InPlaceFieldRefused` (none is a `ValueError`) |
 | `src/domain/fact_embedding.py` | the three embedding texts |
 | `src/domain/consolidation.py` | `ConsolidationBatch` (with `revivals`), `BatchStatus`, `MAX_FAILED_REVIVALS` |
 | `src/domain/consolidation_serialization.py` | messages → batch (summary vs full text) |
@@ -770,18 +957,19 @@ Until then: nothing expires, `stale` is never set, updates overwrite in place.
 | `src/domain/memory_fact.py` | `$memory save` draft, preview and history pair |
 | `src/adapters/firestore_session_store.py` | sessions, sliding window, 90-day TTL |
 | `src/services/overflow_routing_service.py` | batch → Alek's queue or a companion's |
-| `src/adapters/firestore_consolidation_queue.py` | queue, oldest first, zombie reset, bounded failed revival (`revive_failed`), sweep query |
+| `src/adapters/firestore_consolidation_queue.py` | queue, oldest first, zombie reset (threshold per caller), bounded failed revival (`revive_failed`), `has_open_batches`, sweep query |
 | `src/adapters/gcp_task_queue.py` | `enqueue_consolidation_task` |
 | `src/handlers/worker_handler.py` | `consolidation`, `sweep_consolidation` (revives FAILED, then enqueues) |
-| `src/services/consolidation_service.py` | one batch: run, delete or retry; `revive_failed_batches` (sweep); the give-up log |
-| `src/handlers/consolidation_handler.py` | shim used by `$consolidate` |
+| `src/services/consolidation_service.py` | one batch under the lease: run, delete or retry; deferral; `consolidate_now` (`$consolidate`); `revive_failed_batches` (sweep); the give-up log |
+| `src/ports/memory_write_lease.py`, `src/adapters/firestore_memory_write_lease.py` | the per-account lease (acquire, release by owner token) |
 | `src/agents/consolidation_agent.py` | all stages, tools, loop, backstop, cluster and directive messages |
 | `src/infrastructure/agent_config.py` | `ConsolidationAgentConfig`, `MemorySearchAgentConfig`, Router and Smart windows |
+| `main.py` (`:683-692`), `src/composition/{slack,telegram}_adapter_factory.py` | the one `ConsolidationService` is built here, with the lease, the task queue and the 900 s run timeout; the chat adapters get its `consolidate_now` |
 | `src/composition/user_agent_factory.py` | builds the consolidator, the per-user `SearchEnrichmentService`, MemorySearch |
 | `src/services/agent_context_builder.py`, `src/domain/user.py` | provider and tier per agent |
 | `src/ports/fact_management_port.py`, `src/adapters/fact_management_adapter.py` | consolidator tools |
-| `src/ports/fact_write_port.py`, `src/services/fact_write_service.py` | fact creation with vectors |
-| `src/ports/repository.py`, `src/adapters/firestore_repo.py` | every fact query, the cache document, Cabinet invalidate |
+| `src/ports/fact_write_port.py`, `src/services/fact_write_service.py` | fact creation with vectors (`build_facts` embeds and builds, `add_facts_batch` also stores) |
+| `src/ports/repository.py`, `src/adapters/firestore_repo.py` | every fact query, the cache document, Cabinet invalidate; `resolve_current`, `write_superseding`, `update_fact_fields`, `get_lineage` |
 | `src/services/biographical_context_service.py`, `src/services/configuration_service.py` | baseline selection and limits |
 | `src/services/prompt_builder.py`, `src/services/prompt_v3/{prompt_assembly_service,biographical_formatter,context_formatter}.py` | channel split, rendering of baseline, directives, conversation |
 | `src/ports/search_enrichment_port.py`, `src/services/search_enrichment_service.py` | multi-channel search |
@@ -791,10 +979,10 @@ Until then: nothing expires, `stale` is never set, updates overwrite in place.
 | `src/services/lelik_persona_service.py` | Lelik's facts |
 | `src/composition/mcp_setup.py` | `get_user_context` |
 | `src/infrastructure/memory_fact_tools.py`, `src/services/memory_fact_service.py`, `src/adapters/firestore_memory_fact_draft_repository.py` | `$memory save` |
-| `src/handlers/conversation_handler.py` | `$consolidate`, `$memory save`, memory preview delivery |
-| `src/web/user_cabinet_app.py` | Cabinet fact routes (invalidate rebuilds the baseline) |
+| `src/handlers/conversation_handler.py` | `$consolidate` (and its outcome wording), `$memory save`, memory preview delivery |
+| `src/web/user_cabinet_app.py` | Cabinet fact routes (invalidate follows the id forward, answers 409, rebuilds the baseline) |
 | `prompts_snapshot/{profiles/consolidation.yaml,blueprints/consolidation_agent_v1.yaml,tokens/system/CONSOLIDATION_*.groovy}` | the consolidation prompt (mirror) |
-| `scripts/consolidation/`, `scripts/data_audit/` (PR) | benches, audit |
+| `scripts/consolidation/`, `scripts/data_audit/` | benches; the audit with the version-chain classes (§9.6) |
 
 Stale code comments, out of scope for this document (`src/`): `ConsolidationAgent._review_directives` says "hard cap of
 10" and `biographical_context_service.py:155` says "soft cap ~12" (the code uses 15); the `BiographicalContextService`
