@@ -53,8 +53,8 @@ from src.domain.fact_lifecycle import (
 )
 from src.domain.fact_lifecycle_day import COUNTER_FIELDS, FactLifecycleDay, check_snapshot
 from src.domain.fact_lifecycle_sweep import stale_fields
-from src.domain.fact_write_context import FactWriteContext
-from src.domain.owner_timezone import resolve_owner_timezone
+from src.domain.fact_write_context import NO_READABLE_SOURCE_NOTE, FactWriteContext
+from src.domain.owner_timezone import failure_reason, owner_to_read, owner_zone
 from src.domain.prompt_v3.slot import OwnerType
 from src.domain.prompt_v3.token import Token, TokenCategory, TokenClass, TokenId
 from src.domain.search import EnrichedFact, consolidation_hit
@@ -688,7 +688,7 @@ class CostMeter:
 # ------------------------------------------------------------------------------------------------ owner zone
 
 async def owner_timezone(account_repo: Any, user_repo: Any, account_id: str, override: Optional[str] = None) -> str:
-    """The account owner's IANA zone, resolved by the rule `ConsolidationService` uses (`resolve_owner_timezone`; any
+    """The account owner's IANA zone, resolved by the rule `ConsolidationService` uses (`domain/owner_timezone.py`, same reads; any
     missing step or failure gives UTC with one warning). `override` (`--timezone`) wins and must be a zone."""
     if override:
         try:
@@ -696,10 +696,16 @@ async def owner_timezone(account_repo: Any, user_repo: Any, account_id: str, ove
         except (KeyError, ValueError, OSError) as exc:
             raise ValueError(f"--timezone {override!r} is not an IANA zone") from exc
         return override
-    resolved = await resolve_owner_timezone(account_id, account_repo.get_account, user_repo.get_user)
-    if resolved.unresolved is not None:
-        return _unresolved(account_id, resolved.unresolved)
-    return resolved.zone
+    try:
+        step = owner_to_read(await account_repo.get_account(account_id))
+        if step.owner_id is None:
+            return _unresolved(account_id, step.unresolved or "")
+        resolved = owner_zone(await user_repo.get_user(step.owner_id))
+        if resolved.unresolved is not None:
+            return _unresolved(account_id, resolved.unresolved)
+        return resolved.zone
+    except Exception as exc:
+        return _unresolved(account_id, failure_reason(exc))
 
 
 def _unresolved(account_id: str, why: str) -> str:
@@ -1057,6 +1063,7 @@ class DryRunKit:
             "reported_date_form": reported_date_form(reported_sent),
             "cleanup": not context.model_dates,
             "derived_from_named": derived_from_count(derived_from),
+            "derived_from_unreadable": False,
         }
         self.rows.append(row)
         result = await call
@@ -1076,6 +1083,7 @@ class DryRunKit:
             "reported_date_chosen": None if stored is None else stored.reported_date.isoformat(),
             "state_stored": None if stored is None else stored.state.value,
             "notes": result.get("note"),
+            "derived_from_unreadable": NO_READABLE_SOURCE_NOTE in (result.get("note") or ""),
         })
         return result
 
@@ -1089,7 +1097,8 @@ class DryRunKit:
             total.update(counted)
         undated: Counter = Counter(
             row["pass"] for row in self.rows
-            if row["action"] == "create" and row["status"] == "created" and row["cleanup"] and not row["derived_from_named"]
+            if row["action"] == "create" and row["status"] == "created" and row["cleanup"]
+            and (not row["derived_from_named"] or row["derived_from_unreadable"])
         )
         return {
             "generated_at": datetime.now(timezone.utc).isoformat(),

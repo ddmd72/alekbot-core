@@ -29,7 +29,7 @@ from ..domain.memory_write_lease import (
     defer_bucket,
     lease_until,
 )
-from ..domain.owner_timezone import resolve_owner_timezone
+from ..domain.owner_timezone import failure_reason, owner_to_read, owner_zone
 from ..domain.request_context import RequestContext
 from ..ports.account_repository import AccountRepository
 from ..ports.consolidation_queue import ConsolidationQueue
@@ -203,14 +203,20 @@ class ConsolidationService:
         """The account owner's IANA zone, once per run; the account comes from the profile only and the zone never
         decides it. Any missing step, an invalid zone or a failing repository gives UTC and one WARNING: a store hiccup
         never fails a batch."""
-        resolved = await resolve_owner_timezone(account_id, self._account_repo.get_account, self._user_repo.get_user)
-        if resolved.owner_count > 1:
-            logger.warning(
-                "[Librarian] account %s has %d owners; the timezone of the first is used", account_id[:8], resolved.owner_count,
-            )
-        if resolved.unresolved is not None:
-            return self._zone_unresolved(account_id, resolved.unresolved)
-        return resolved.zone
+        try:
+            step = owner_to_read(await self._account_repo.get_account(account_id))
+            if step.owner_id is None:
+                return self._zone_unresolved(account_id, step.unresolved or "")
+            if step.owner_count > 1:
+                logger.warning(
+                    "[Librarian] account %s has %d owners; the timezone of the first is used", account_id[:8], step.owner_count,
+                )
+            resolved = owner_zone(await self._user_repo.get_user(step.owner_id))
+            if resolved.unresolved is not None:
+                return self._zone_unresolved(account_id, resolved.unresolved)
+            return resolved.zone
+        except Exception as exc:
+            return self._zone_unresolved(account_id, failure_reason(exc))
 
     @staticmethod
     def _zone_unresolved(account_id: str, why: str) -> str:
