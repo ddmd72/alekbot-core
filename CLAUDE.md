@@ -156,6 +156,8 @@ index` (full); `codegraph status` shows index health.
   empty key in that dict is chased into Secret Manager on each boot.
   The sandbox knobs are of this kind: `SANDBOX_RENDER`, `SANDBOX_RENDER_URL` (main service); `SANDBOX_URL`,
   `SANDBOX_CALLERS_RENDER`, `SANDBOX_RECYCLE`, `SANDBOX_WORK_ROOT`, `SANDBOX_OUTPUT_ROOT`, `SANDBOX_ENGINE_USER` (render service).
+  So is `FACT_LIFECYCLE_SWEEP_DRY_RUN` (main service): the fact janitor is log-only unless it is an explicit off value
+  (`0`, `false`, `no`, `off`); the deploy never sets it, S5 does, only on the owner's word.
 
 ## What and Why
 
@@ -282,7 +284,7 @@ stale `running` jobs.
   `deep_research_failed`, `deep_research_webhook_event`, `fire_due_reminders`,
   `execute_reminder`, `setup_microsoft_todo`, `reindex_task_list`, `renew_task_subscriptions`,
   `renew_all_task_subscriptions`, `start_daily_email_review`, `daily_email_review`,
-  `billing_daily_summary`, `repair_email_embeddings`, `start_drive_sync`. Full reference:
+  `billing_daily_summary`, `fact_lifecycle_sweep`, `repair_email_embeddings`, `start_drive_sync`. Full reference:
   `docs/07_deployment/SCHEDULERS.md`.
   `WorkerHandler` is the only dispatcher: `telegram_update` and a queued Slack event (no `task_type`; `event` +
   `session_id`) go to the adapters attached by the builder (`build_application_graph`);
@@ -529,6 +531,10 @@ user parts `p.consolidation_text or p.text` (`consolidation_text` is legacy, see
 **Loop alerts:** a pass that hits the turn cap without a final report posts a 🚨 ops alert (`AlertSinkPort`);
 while `CONSOLIDATION_STATS_ALERTS` (`os.getenv`, default on, temporary since 2026-10-20) is on, every pass
 posts a 📊 stats line. See `decisions/sonnet55_adaptive_thinking_stall.md`.
+**Expiry and the janitor (Facts S3, built, ships with S4–S5):** the consolidator's writes carry an `expiry` (`date` / `horizon` /
+`none`) that code turns into `expires_at` in the owner's timezone (map §2.7); a daily zero-LLM janitor (`fact_lifecycle_sweep`)
+stales due facts behind a breaker and is **log-only until S5**; never a TTL policy on the facts collection (a test scans the
+tree). See `decisions/fact_expiry_and_janitor.md`, map §5.5.
 
 **Memory facts the owner confirms** — the bot never writes to memory itself. The consolidator reads
 every user message as the owner's own words, so the removed `save_to_memory` intent let bot-written
