@@ -1628,6 +1628,8 @@ class TestReviewDirectives:
     async def test_backstop_invalidates_lowest_priority_tail(self):
         """Backstop invalidates the tail beyond the cap (ordered priority ASC → tail = least essential)."""
         fm = AsyncMock(spec=FactManagementPort)
+        # The port's success shape: since Facts S3 (plan §3.20) an op is reported only for status "updated".
+        fm.update_fact.side_effect = lambda fact_id, updates, **_: {"fact_id": fact_id, "status": "updated"}
         agent, repo, _, _ = _make_agent(fact_management=fm)
         cap = agent.DIRECTIVE_HARD_CAP
         ordered = [self._directive(f"d{i}", f"rule {i}") for i in range(cap + 2)]  # 2 over cap
