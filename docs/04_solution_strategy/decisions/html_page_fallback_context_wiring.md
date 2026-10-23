@@ -108,10 +108,11 @@ breaker accounting.
   (all gemini fallback) and `LelikSummarizerAgent` (no strategy entry of its own, so `quick`'s claude to gemini applies).
   Tests: `test_specialist_provider_failover.py` (each agent, real constructor, primary down, the fallback answers, the
   breaker counts, an open breaker skips the primary).
-- **Parked for the owner (question Q6):** `ConsolidationAgent` and `TutorExtractorAgent` write memory (facts, companion
-  records). Turning their declared Gemini fallback on means a Claude outage writes memory with another model instead of
-  failing and retrying later: a product choice. Ledgered as `defect:D8-owner` and listed on the allowlist of
-  `test_agents_set_execution_context.py`.
+- **Owner ruling 2026-10-23 (question Q6): no cross-provider fallback for `ConsolidationAgent` and `TutorExtractorAgent`.**
+  They write memory (facts, companion records); a Claude outage must fail and retry later rather than write memory with
+  another model: memory quality over availability. `STRATEGIES["consolidation"]` and `STRATEGIES["tutor_extractor"]` now
+  have `"fallback": None` (`test_consolidation_strategies_have_no_fallback.py`), so they are `by-design` in the None ledger and on
+  the allowlist of `test_agents_set_execution_context.py`, like the other agents with no real failover.
 - **Not part of D8:** agents whose strategy has no real failover (`fallback: None`, or the fallback equals the only
   allowed provider: compute, facts_memory, image and video generation, maps_search, web_search_light, email_search,
   email_classifier) would gain only breaker accounting, which also makes them fail fast while a provider's breaker is

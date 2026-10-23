@@ -434,10 +434,9 @@ def test_a_defect_line_carries_its_id():
     assert entry.reason == "defect:D8"
 
 
-def test_an_owner_pending_defect_is_a_defect_reason():
-    [entry] = wiring_ledger.parse("Owner.x  # defect:D8-owner the fix is a product choice, question Q6\n")
-
-    assert entry.reason == "defect:D8-owner"
+def test_a_reason_with_a_suffix_after_the_defect_id_is_refused():
+    with pytest.raises(ValueError, match="line 1"):
+        wiring_ledger.parse("Owner.x  # defect:D8-owner the fix waits for the owner\n")
 
 
 def test_the_instance_ledger_fails_both_ways_on_a_count_and_on_a_class():

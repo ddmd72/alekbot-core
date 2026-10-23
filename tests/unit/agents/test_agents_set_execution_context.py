@@ -23,8 +23,8 @@ from src.agents.base_agent import BaseAgent
 
 NO_REAL_FAILOVER = ("by-design no real failover: STRATEGIES fallback is {fallback}, so a context would add only breaker "
                     "accounting, a behaviour change that is an owner decision (decisions/html_page_fallback_context_wiring.md)")
-OWNER_Q6 = ("defect:D8-owner STRATEGIES declares a Gemini fallback but the agent writes memory: with the fallback on, a Claude "
-            "outage writes {what} with another model instead of failing and retrying later; the owner decides (question Q6)")
+OWNER_RULING = ("by-design no cross-provider fallback by owner ruling 2026-10-23 (P9 D8): memory quality over availability, so "
+                "STRATEGIES[{strategy}] has fallback None and the agent writes {what} only with its own provider")
 
 ALLOWED_WITHOUT: Dict[str, str] = {
     "ComputeAgent": NO_REAL_FAILOVER.format(fallback='None (agent_context_builder.py "compute")'),
@@ -35,8 +35,8 @@ ALLOWED_WITHOUT: Dict[str, str] = {
     "WebSearchLightAgent": NO_REAL_FAILOVER.format(fallback='None (agent_context_builder.py "web_search_light")'),
     "EmailSearchAgent": NO_REAL_FAILOVER.format(fallback='gemini, equal to its only allowed provider (agent_context_builder.py "email_search")'),
     "EmailClassificationAgent": NO_REAL_FAILOVER.format(fallback='gemini, equal to its only allowed provider (agent_context_builder.py "email_classifier")'),
-    "ConsolidationAgent": OWNER_Q6.format(what="facts"),
-    "TutorExtractorAgent": OWNER_Q6.format(what="companion records"),
+    "ConsolidationAgent": OWNER_RULING.format(strategy='"consolidation"', what="facts"),
+    "TutorExtractorAgent": OWNER_RULING.format(strategy='"tutor_extractor"', what="companion records"),
 }
 
 
@@ -86,7 +86,7 @@ def test_every_agent_with_an_execution_context_hands_it_to_the_base_class():
 
 @pytest.mark.parametrize("name", sorted(ALLOWED_WITHOUT))
 def test_every_allowed_reason_uses_the_vocabulary(name):
-    assert ALLOWED_WITHOUT[name].startswith(("by-design", "defect:D8-owner"))
+    assert ALLOWED_WITHOUT[name].startswith("by-design")
 
 
 @pytest.mark.parametrize("fixed", ["WebSearchAgent", "TasksAgent", "DomainResearcherAgent", "TutorAgent", "LelikSummarizerAgent"])
