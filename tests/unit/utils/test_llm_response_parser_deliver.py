@@ -237,3 +237,42 @@ class TestTextBesideTerminalCall:
     def test_blank_text_does_not_replace(self):
         text, _, _, _ = extract_structured_response({"full_response": ""}, "   ")
         assert text == ""
+
+
+class TestNonStringFields:
+
+    def test_grok_path_non_string_full_response_does_not_raise(self):
+        assert extract_structured_response({"full_response": 5}, "") == (5, None, None, [])
+        assert extract_structured_response({"full_response": ["a"]}, "ignored")[0] == ["a"]
+
+    @pytest.mark.parametrize("raw", [
+        {"full_response": 5},
+        '{"full_response": 5}',
+        {"full_response": ["a"]},
+    ])
+    def test_envelope_non_string_full_response_does_not_raise(self, raw):
+        text, _, _, _ = extract_structured_response({"response": raw}, "")
+        assert text == raw["full_response"] if isinstance(raw, dict) else text == 5
+
+    @pytest.mark.parametrize("raw", [
+        {"response_summary": 5},
+        '{"response_summary": 5}',
+        {"response_summary": ["a"]},
+    ])
+    def test_envelope_non_string_summary_does_not_raise(self, raw):
+        _, summary, _, _ = extract_structured_response({"response": raw}, "")
+        assert summary == (raw["response_summary"] if isinstance(raw, dict) else 5)
+
+
+class TestTextBesideUnusableDeliver:
+
+    @pytest.mark.parametrize("resp", [{"full_response": ""}, {"foo": 1}, True])
+    def test_text_fills_user_text(self, resp):
+        text, summary, rich, links = extract_structured_response({"response": resp}, "Beside")
+        assert (text, summary, rich, links) == ("Beside", None, None, [])
+
+    def test_beside_envelope_without_full_response_gives_empty_string(self):
+        text, summary, _, _ = extract_structured_response(
+            {"full_response": ""}, '{"response_summary": "s"}'
+        )
+        assert text == "" and summary is None

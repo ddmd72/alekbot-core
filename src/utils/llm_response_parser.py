@@ -119,9 +119,9 @@ def _envelope_fields(data: dict) -> _ParsedTuple:
 
     # Normalize literal \n sequences that Claude sometimes double-escapes in JSON output.
     # The model outputs \\n (which json.loads decodes to literal backslash+n instead of newline).
-    if user_text:
+    if user_text and isinstance(user_text, str):
         user_text = user_text.replace("\\n", "\n")
-    if history_summary:
+    if history_summary and isinstance(history_summary, str):
         history_summary = history_summary.replace("\\n", "\n")
     rich_data = data.get("rich_content")
 
@@ -279,8 +279,10 @@ def extract_structured_response(
         result = (user_text, summary, rich_content, link_list)
 
     user_text, summary, rich_content, link_list = result
-    if not (user_text or "").strip() and text and text.strip():
-        beside = parse_llm_response(text)[0]
+    empty = user_text is None or (isinstance(user_text, str) and not user_text.strip())
+    if empty and text and text.strip():
+        # `or ""`: the beside-text may be an envelope without full_response (None).
+        beside = parse_llm_response(text)[0] or ""
         logger.info(
             "[LlmResponseParse] terminal answer empty, using text beside the call",
             extra={"event": "terminal_text_used"},
