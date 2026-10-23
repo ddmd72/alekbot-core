@@ -561,6 +561,8 @@ Both `FactManagementAdapter` and `FirestoreFactManagementAdapter` call this inst
 
 ## Pattern 11: Callback Injection for Cross-Handler Decoupling
 
+
+
 ### Problem
 
 `ConversationHandler` runs consolidation for the `$consolidate` command, but importing the consolidation code would

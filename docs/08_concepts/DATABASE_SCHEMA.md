@@ -257,7 +257,12 @@ What the fact fields mean (versions, `lineage_id`, `state`, expiry) is explained
     
     "confidence": 0.95
   },
-  "lineage_id": "lineage_abc...",       // Links versions of same fact
+  
+
+  
+  
+  
+  
 
   
   that says what the collection holds and its document id.
@@ -266,7 +271,7 @@ What the fact fields mean (versions, `lineage_id`, `state`, expiry) is explained
   
 
   
-  // Written by FirestoreFactRepository on every add_fact/update_fact.
+  
   
   
 }
@@ -285,7 +290,7 @@ What the fact fields mean (versions, `lineage_id`, `state`, expiry) is explained
   
   
   
-- **Lineage History:** `lineage_id` + `created_at` (DESC)
+
 
 
 
@@ -498,6 +503,21 @@ What the fact fields mean (versions, `lineage_id`, `state`, expiry) is explained
   
   
   .0,
+  
+}
+```
+
+
+
+  
+  
+  
+
+
+```json
+{
+  
+  
   
 }
 ```
@@ -731,7 +751,8 @@ What the fact fields mean (versions, `lineage_id`, `state`, expiry) is explained
 
 
 | :----- | :------ | :------ | :-- | :--- |
-| `lineage_id` ASC, `created_at` DESC | `get_lineage()`, `get_latest_fact_by_lineage()` | Retrieve full SCD2 version history of a fact. ORDER BY created_at DESC = latest version first. | ✅ | ✅ |
+
+
 
 ---
 

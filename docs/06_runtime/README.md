@@ -339,11 +339,6 @@ sequenceDiagram
     
     
     participant W as /worker
-    participant CH as ConsolidationHandler
-    
-    
-    
-
     
     
     
@@ -352,9 +347,15 @@ sequenceDiagram
     
     
     
+    
 
     
-    W->>CH: process_user_batches_on_overflow(user_id)
+    
+    
+
+    
+    
+    
     
     
 
@@ -376,7 +377,7 @@ sequenceDiagram
 
 
 
-latency. See `src/handlers/consolidation_handler.py` for implementation.
+
 
 
 

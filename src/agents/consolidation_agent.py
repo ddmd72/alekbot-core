@@ -527,7 +527,7 @@ class ConsolidationAgent(BaseAgent):
 
         Fetches unconsolidated email facts from IndexedEmailRepository, formats them as
         candidates, runs ConsolidationAgent LLM loop (Stage 1 only), marks as consolidated.
-        Mirrors the old _run_email_triage_pass logic from consolidation_handler.py.
+        Mirrors the old _run_email_triage_pass logic of the retired consolidation handler.
         """
         if self._indexed_email_repo is None:
             logger.info("📧 [ConsolidationAgent] No indexed_email_repo — email triage skipped")

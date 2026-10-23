@@ -181,7 +181,7 @@ Sends system alerts to the user's active Slack/Telegram channel when background 
 |---|---|
 | `email_indexing` | `EmailIndexingService.run_indexing_page()` |
 | `email_indexing_watchdog` | `EmailIndexingService.run_watchdog()` |
-| `consolidation` | `process_user_batches_on_overflow()` |
+| `consolidation` | `ConsolidationService.process_user_batches()` |
 | `agent_execution` | `AgentWorkerHandler` (ASYNC agent tasks) |
 
 ---
