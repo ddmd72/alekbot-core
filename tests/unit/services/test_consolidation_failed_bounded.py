@@ -5,6 +5,7 @@ agent coordinator (the LLM boundary) is scripted.
 Decision: docs/04_solution_strategy/decisions/consolidation_failed_batch_bounded.md
 """
 import logging
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -53,7 +54,12 @@ def service(queue, coordinator):
     # The real memory-write lease on the evaluating fake (FACT_LIFECYCLE_RFC D9): each task takes and releases it.
     lease = FirestoreMemoryWriteLease(EvalDb(), EnvironmentConfig())
     return ConsolidationService(queue=queue, coordinator=coordinator, agent_factory=factory,
-                                lease=lease, run_timeout_s=900.0)
+                                lease=lease, run_timeout_s=900.0, user_repo=_Profiles())
+
+
+class _Profiles:
+    async def get_user(self, user_id):
+        return SimpleNamespace(account_id="acc-1")
 
 
 async def _put(queue, batch_id, created_at, status=BatchStatus.PENDING, **extra):

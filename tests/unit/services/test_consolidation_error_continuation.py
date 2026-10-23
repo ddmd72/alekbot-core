@@ -50,6 +50,11 @@ class AgentFactory:
         return None
 
 
+class UserRepo:
+    async def get_user(self, user_id):
+        return SimpleNamespace(account_id=ACC)
+
+
 @pytest.fixture
 def db():
     return EvalDb()
@@ -74,8 +79,8 @@ def continuations():
 def service(db, queue, coordinator, continuations):
     return ConsolidationService(
         queue=queue, coordinator=coordinator, agent_factory=AgentFactory(),
-        lease=FirestoreMemoryWriteLease(db, EnvironmentConfig()), run_timeout_s=900.0, task_queue=continuations,
-        clock=lambda: NOW,
+        lease=FirestoreMemoryWriteLease(db, EnvironmentConfig()), run_timeout_s=900.0, user_repo=UserRepo(),
+        task_queue=continuations, clock=lambda: NOW,
     )
 
 
@@ -230,7 +235,8 @@ async def test_a_setup_error_is_a_failed_run(queue, coordinator, db):
 
     service = ConsolidationService(
         queue=queue, coordinator=coordinator, agent_factory=BrokenFactory(),
-        lease=FirestoreMemoryWriteLease(db, EnvironmentConfig()), run_timeout_s=900.0, clock=lambda: NOW,
+        lease=FirestoreMemoryWriteLease(db, EnvironmentConfig()), run_timeout_s=900.0, user_repo=UserRepo(),
+        clock=lambda: NOW,
     )
 
     assert await service.consolidate_now(USER) == ConsolidationRun(failed=1)

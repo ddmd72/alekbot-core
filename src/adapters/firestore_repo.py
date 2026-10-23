@@ -314,16 +314,24 @@ class FirestoreFactRepository(FactRepository):
         return results, next_cursor
 
     async def invalidate_fact(self, fact_id: str, account_id: str) -> None:
-        """Mark a fact invalidated, following a superseded id to its current version. Security: account_id verified."""
+        """Mark a fact invalidated, following a superseded id to its current version unless that version has another
+        text than the one the page showed (FactResolutionError, the route's 409). Security: account_id verified."""
         doc = await self.facts_col.document(fact_id).get()
         if not doc.exists:
             raise ValueError(f"Fact not found: {fact_id}")
-        if doc.to_dict().get("account_id") != account_id:
+        shown = doc.to_dict()
+        if shown.get("account_id") != account_id:
             raise PermissionError("Not authorized to modify this fact")
         for attempt in (1, 2):
             stored = await self.resolve_current(fact_id, account_id, CABINET_ACCEPTS)
             if stored is None:
                 raise ValueError(f"Fact not found: {fact_id}")
+            # A version is closed with its own text kept, so `shown` is what the owner's page displayed. A newer
+            # text was never seen: refuse and let the page reload instead of deleting it (owner, 2026-10-23).
+            if stored.fact.id != fact_id and stored.fact.text != shown.get("text"):
+                raise FactResolutionError(
+                    f"fact {fact_id} was rewritten after the page loaded; reload", current_id=stored.fact.id,
+                )
             now = datetime.datetime.now(datetime.timezone.utc)
             fields = {**lifecycle_fields(FactState.INVALIDATED, now), "last_updated": now}
             try:

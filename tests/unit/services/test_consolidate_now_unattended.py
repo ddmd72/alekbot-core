@@ -1,5 +1,6 @@
 """Facts S2 · T7 review m2: `consolidate_now` marks a run `unattended` when a deferral or continuation had no task queue to
 go to (local runs), so `$consolidate` does not promise "in the background"."""
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 from src.domain.agent import AgentResponse
@@ -22,8 +23,13 @@ def _service(*, task_queue, lease_free):
     coordinator = MagicMock(route_message=AsyncMock(return_value=AgentResponse.success("b1", "agent", {})))
     return ConsolidationService(
         queue=queue, coordinator=coordinator, agent_factory=MagicMock(ensure_agents_for_user=AsyncMock()),
-        lease=lease, run_timeout_s=900.0, task_queue=task_queue,
+        lease=lease, run_timeout_s=900.0, user_repo=_Profiles(), task_queue=task_queue,
     )
+
+
+class _Profiles:
+    async def get_user(self, user_id):
+        return SimpleNamespace(account_id="acc-1")
 
 
 async def test_a_busy_lease_without_a_task_queue_is_a_deferred_run_marked_unattended():

@@ -459,14 +459,19 @@ async def test_falsy_account_with_no_batch_does_nothing(make_service, db, env, c
     assert coordinator.messages == []
 
 
-async def test_a_user_without_a_profile_leases_under_the_user_id(make_service, queue, coordinator, db, env):
+async def test_a_user_without_a_profile_fails_the_batch_and_never_leases_under_the_user_id(
+    make_service, queue, coordinator, db, env, tasks,
+):
+    # owner, 2026-10-23: personal data is never written under the user id; the batch fails instead
     service = make_service(user_repo=UserRepo({}))
     await _put(queue, "b1")
 
     await service.process_user_batches(USER, max_batches=1)
 
-    assert coordinator.routed == ["b1"]
-    assert db.collection(env.memory_write_leases_collection).txn_versions.get(USER) is not None
+    assert coordinator.routed == [] and tasks.attempts == []
+    doc = await _doc(queue, "b1")
+    assert doc["status"] == BatchStatus.FAILED.value and doc["last_error"] == "user has no profile"
+    assert db.collection(env.memory_write_leases_collection).txn_versions.get(USER) is None
 
 
 # ------------------------------------------------------------------------------------------------ no task queue

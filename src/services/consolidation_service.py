@@ -33,10 +33,12 @@ from ..domain.request_context import RequestContext
 from ..ports.consolidation_queue import ConsolidationQueue
 from ..ports.memory_write_lease import MemoryWriteLeasePort
 from ..ports.task_queue import TaskQueue
+from ..ports.user_repository import UserRepository
 from ..utils.logger import logger
 
 _INTENT_CONSOLIDATE_FULL = "consolidate_full"  # mirrors Intent.CONSOLIDATE_FULL
 _NO_ACCOUNT_ERROR = "user has no account"
+_NO_PROFILE_ERROR = "user has no profile"
 _DEFERRAL_DEADLINE_S = 1800  # same Cloud Tasks dispatch deadline as enqueue_consolidation_task
 _MARGIN_S = LEASE_MARGIN.total_seconds()
 
@@ -72,9 +74,9 @@ class ConsolidationService:
         agent_factory: Any,  # UserAgentFactory
         lease: MemoryWriteLeasePort,
         run_timeout_s: float,
+        user_repo: UserRepository,
         task_queue: Optional[TaskQueue] = None,
         indexed_email_repo: Optional[object] = None,
-        user_repo: Optional[object] = None,
         clock: Callable[[], datetime] = _utcnow,
     ) -> None:
         if run_timeout_s <= _MARGIN_S:
@@ -173,16 +175,20 @@ class ConsolidationService:
 
     async def _account_to_lease(self, user_id: str) -> Optional[str]:
         """The user's account, or None when the run stops here. A setup error is logged and swallowed, as it
-        always was; a blank account fails the oldest batch instead of leaving a 5xx retry loop."""
+        always was. The account comes from the profile only: a missing profile or a blank account fails the oldest
+        batch instead of leaving a 5xx retry loop, and nothing is ever written under the user id (owner, 2026-10-23;
+        the agents can still be cached when the profile is gone)."""
         try:
             await self._agent_factory.ensure_agents_for_user(user_id)
 
-            user_profile = await self._user_repo.get_user(user_id) if self._user_repo else None
-            account_id = user_profile.account_id if user_profile else user_id
-            if not account_id:
-                await self._fail_oldest_batch_without_account(user_id)
+            user_profile = await self._user_repo.get_user(user_id)
+            if user_profile is None:
+                await self._fail_oldest_batch(user_id, _NO_PROFILE_ERROR)
                 return None
-            return account_id
+            if not user_profile.account_id:
+                await self._fail_oldest_batch(user_id, _NO_ACCOUNT_ERROR)
+                return None
+            return user_profile.account_id
         except Exception as exc:
             self._log_unhandled(user_id, exc)
             return None
@@ -332,11 +338,11 @@ class ConsolidationService:
                 len(batch.messages),
             )
 
-    async def _fail_oldest_batch_without_account(self, user_id: str) -> None:
+    async def _fail_oldest_batch(self, user_id: str, reason: str) -> None:
         """No account to lease: fail the batch instead of leaving a 5xx retry loop (nothing can be written)."""
         batches = await self._queue.get_pending_batches(user_id=user_id, limit=1)
         if batches:
-            await self._mark_failed(batches[0], batches[0].attempts, _NO_ACCOUNT_ERROR)
+            await self._mark_failed(batches[0], batches[0].attempts, reason)
 
     async def _defer(self, user_id: str, now: datetime, reason: str) -> None:
         """One task per user and bucket, so concurrent losers share it and a loser that loses again lands later."""

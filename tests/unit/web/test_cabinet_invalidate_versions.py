@@ -1,5 +1,6 @@
 """Facts S2 · T7: Cabinet invalidate over versions, through the real route, repository and adapter on the evaluating
-Firestore fake. A stale id follows to the current version (200); an id that cannot be followed is a 409 with the
+Firestore fake. A stale id follows to the current version when its text is unchanged (200); an id that cannot be
+followed, or whose current version has another text (owner, 2026-10-23), is a 409 with the
 message and nothing written (not a 404: neither error is a ValueError, and the clause order keeps it so)."""
 import copy
 from unittest.mock import AsyncMock, MagicMock
@@ -44,9 +45,12 @@ def repo(store):
     return FirestoreFactRepository(store.db, make_env_config(), embedding_service=store.embedder)
 
 
-async def test_a_stale_id_invalidates_the_current_version(store, repo):
+async def test_a_stale_id_whose_text_is_unchanged_invalidates_the_current_version(store, repo):
+    # a tags-only version keeps the text the page showed (owner, 2026-10-23); a newer text is refused,
+    # test_fact_invalidate_shown_text.py
     old = (await store.adapter.create_fact("likes tea", _META))["fact_id"]
-    new = (await store.adapter.update_fact(old, {"content": "likes black tea"}, ACC))["fact_id"]
+    new = (await store.adapter.update_fact(old, {"tags": ["tea", "black"]}, ACC))["fact_id"]
+    assert new != old and store.docs[new]["text"] == store.docs[old]["text"] == "likes tea"
 
     status, body = await _invalidate(repo, old)
 

@@ -1,6 +1,6 @@
 # RFC: Fact lifecycle — expiry decided by content, a daily janitor, a periodic review pass, owner questions, real versions
 
-**Status:** Accepted for implementation (owner, 2026-10-21): rev 2, independent review applied, owner confirmations in §8. S1 is live; **S2 is built** (2026-10-23, on the S2–S5 branch, not deployed; see "S2 as built" in §9); S3–S5 are not built.
+**Status:** Accepted for implementation (owner, 2026-10-21): rev 2, independent review applied, owner confirmations in §8. S1 is live; **S2 is built** (2026-10-23, on the S2–S5 branch, not deployed; see "S2 as built" in §9); **S3 is in progress** (see "S3 as built" in §9); S4–S5 are not built.
 Rev 1 had owner decisions Q1–Q4; two adversarial reviews (code paths; rollout and steady state) and a binding
 arbitration produced this revision. Slice S1 (§9) is merged and deployed; S2 is built and deploys with S3–S5; the rest is not built.
 **Supersedes, once accepted:** `DELIBERATE_FACT_MANAGEMENT_RFC.md` §2.2 axis 2 "Lifecycle Transitions", §4.4 (default
@@ -736,7 +736,19 @@ Where the built code differs from the S2 plan:
 - Writes are bounded by the run timeout (lease end − margin), not fenced per write; a commit in flight at cancellation may land shortly after, which the margin covers (`decisions/fact_versions_one_writer.md`).
 - After an internal error in a batch the chain of next tasks continues only when the broken batch is no longer `pending` and another batch waits; otherwise the hourly sweep retries it. `ConsolidationRun` also has `failed`, and `$consolidate` words a failed batch as "A batch failed and stays queued; it will be retried later" instead of "nothing done".
 - The Cabinet invalidate route no longer wraps the cache refresh in its own `except`: the port contract says the refresh never raises (the repository logs and swallows its failures).
-- **Open owner decision (F1 S-1).** A Cabinet delete from a page loaded before the fact was rewritten invalidates the **current version**, whose text the owner never saw (RFC D8 as written; the UI says "Fact deleted"). A proposal to answer 409 and reload when the text changed is waiting for the owner; until it is decided, the behaviour stands as written in D8.
+- **Owner decision (F1 S-1), decided 2026-10-23, built in S3** (below): a Cabinet delete from a page loaded before the fact was rewritten no longer invalidates a current version whose text the owner never saw; until then the behaviour was D8 as written.
+
+
+**S3 as built (in progress).** Built so far on the S2–S5 branch, both owner decisions of 2026-10-23:
+- **Cabinet delete of a stale row (F1 S-1).** `invalidate_fact` follows the id forward as in D8, but when the walk moved
+  and the version it ends on has a different text from the requested document (a closed version keeps its own text, so
+  that is what the page showed), it raises `FactResolutionError` ("rewritten after the page loaded; reload"); the route
+  answers 409 and the page reloads. Nothing is written. A newer version with the same text is invalidated at once. The
+  check runs on both attempts, so a version written between the resolve and the write is caught too.
+- **A consolidation batch whose user has no profile fails.** The account comes from the profile only: a missing profile
+  (possible while the user's agents are still cached) fails the oldest pending batch ("user has no profile"), like a blank
+  account; no lease is taken under the user id and nothing is written. `user_repo` is a required argument of
+  `ConsolidationService`. Before, the run leased and wrote under `account_id = user_id`.
 
 Cites in this RFC that had moved or were wrong:
 
@@ -745,7 +757,7 @@ Cites in this RFC that had moved or were wrong:
 | lock `fact_management_adapter.py:219-231` | the lock is deleted; preconditions in `firestore_repo.py:562-603` |
 | merge supersede `:376-395`, create `:425-430` | one transaction, `fact_management_adapter.py:386-427` |
 | `get_lineage` `firestore_repo.py:519-532`; latest `:534-564` | `:515-528`; `:530-539` |
-| Cabinet invalidate `firestore_repo.py:307-319` | `:316-337` |
+| Cabinet invalidate `firestore_repo.py:307-319` | `:316-344` |
 | tracker swap `consolidation_agent.py:748-759` | gone: the tracker is a parameter, `:789` |
 | anchors looked up at `consolidation_agent.py:1529,1541` | one reader, `_get_existing_anchors_list`, `consolidation_agent.py:1591`, on the v2 path only |
 | D5: the fact id is "in the consolidator's own prompt" | false: `BiographicalFactsFormatter` renders no id; cache ids are read only by enrichment's baseline dedup (`search_enrichment_service.py:214-231`) and by the cache build |
