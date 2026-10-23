@@ -11,9 +11,10 @@ from src.adapters.firestore_repo import FirestoreFactRepository
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
 from tests.support.fact_kit import ACC, USER
 from tests.support.fact_store import INDEXES_FILE, FactStore, make_env_config
+from tests.support.fact_write import EXPIRY_NONE, ctx
 
 _META = {"account_id": ACC, "user_id": USER, "domain": "biographical", "temporal_class": "stable",
-         "context_priority": "medium", "tags": ["tea"], "metadata": {}, "type": "event"}
+         "context_priority": "medium", "tags": ["tea"], "metadata": {}, "type": "event", "expiry": EXPIRY_NONE}
 
 
 def _app(fact_repo):
@@ -34,8 +35,9 @@ def store():
 
 async def test_a_row_whose_text_was_rewritten_is_a_409_and_nothing_is_written(store):
     repo = FirestoreFactRepository(store.db, make_env_config(), embedding_service=store.embedder)
-    shown = (await store.adapter.create_fact("likes tea", _META))["fact_id"]
-    rewritten = (await store.adapter.update_fact(shown, {"content": "likes green tea"}, ACC))["fact_id"]
+    shown = (await store.adapter.create_fact("likes tea", _META, context=ctx()))["fact_id"]
+    rewritten = (await store.adapter.update_fact(
+        shown, {"content": "likes green tea", "expiry": EXPIRY_NONE}, ACC, context=ctx()))["fact_id"]
     before = copy.deepcopy(store.docs)
 
     async with _app(repo).test_client() as client:

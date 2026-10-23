@@ -19,6 +19,7 @@ from src.domain.email import IndexingJob
 from src.web import user_cabinet_app
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
 from tests.support.fact_store import FactStore
+from tests.support.fact_write import EXPIRY_NONE, ctx
 from tests.support.firestore_eval import EvalDb
 from tests.unit.web.gate_fakes import Tripwire, access_token, forged_token, session_service
 
@@ -163,7 +164,8 @@ class TestForeignReminder:
 async def _stranger_fact(w: World) -> str:
     res = await w.facts.adapter.create_fact("mother is Maria", {
         "account_id": STRANGER[1], "user_id": STRANGER[0], "domain": "biographical", "temporal_class": "stable",
-        "context_priority": "medium", "tags": ["family"], "metadata": {}, "type": "event"})
+        "context_priority": "medium", "tags": ["family"], "metadata": {}, "type": "event", "expiry": EXPIRY_NONE},
+        context=ctx())
     assert res["status"] == "created", res
     return res["fact_id"]
 

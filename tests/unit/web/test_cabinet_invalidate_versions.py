@@ -13,9 +13,10 @@ from src.domain.exceptions import FactResolutionError, FactWriteConflict
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
 from tests.support.fact_kit import ACC, USER
 from tests.support.fact_store import INDEXES_FILE, FactStore, make_env_config
+from tests.support.fact_write import EXPIRY_NONE, ctx
 
 _META = {"account_id": ACC, "user_id": USER, "domain": "biographical", "temporal_class": "stable",
-         "context_priority": "medium", "tags": ["tea"], "metadata": {}, "type": "event"}
+         "context_priority": "medium", "tags": ["tea"], "metadata": {}, "type": "event", "expiry": EXPIRY_NONE}
 
 
 def _app(fact_repo):
@@ -48,8 +49,9 @@ def repo(store):
 async def test_a_stale_id_whose_text_is_unchanged_invalidates_the_current_version(store, repo):
     # a tags-only version keeps the text the page showed (owner, 2026-10-23); a newer text is refused,
     # test_fact_invalidate_shown_text.py
-    old = (await store.adapter.create_fact("likes tea", _META))["fact_id"]
-    new = (await store.adapter.update_fact(old, {"tags": ["tea", "black"]}, ACC))["fact_id"]
+    old = (await store.adapter.create_fact("likes tea", _META, context=ctx()))["fact_id"]
+    new = (await store.adapter.update_fact(
+        old, {"tags": ["tea", "black"], "expiry": EXPIRY_NONE}, ACC, context=ctx()))["fact_id"]
     assert new != old and store.docs[new]["text"] == store.docs[old]["text"] == "likes tea"
 
     status, body = await _invalidate(repo, old)
@@ -60,8 +62,8 @@ async def test_a_stale_id_whose_text_is_unchanged_invalidates_the_current_versio
 
 
 async def test_a_merged_source_is_a_409_with_the_message_and_nothing_written(store, repo):
-    source = (await store.adapter.create_fact("likes tea", _META))["fact_id"]
-    merged = (await store.adapter.merge_facts([source], "likes tea daily", _META))["new_fact_id"]
+    source = (await store.adapter.create_fact("likes tea", _META, context=ctx()))["fact_id"]
+    merged = (await store.adapter.merge_facts([source], "likes tea daily", _META, context=ctx()))["new_fact_id"]
     before = copy.deepcopy(store.docs)
 
     status, body = await _invalidate(repo, source)
