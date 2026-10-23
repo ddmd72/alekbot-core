@@ -53,7 +53,7 @@ User Cabinet is a single-page application served at `/cabinet`. It authenticates
 └──────────────┘  └────────────────────┘
 ```
 
-**Composition root:** `main.py` injects adapters — `FirestoreFactRepository` and `GeminiEmbeddingAdapter` — typed as ports.
+**Composition root:** `build_application_graph` (`src/composition/application_graph.py`) injects adapters — `FirestoreFactRepository` and `GeminiEmbeddingAdapter` — typed as ports.
 
 ---
 

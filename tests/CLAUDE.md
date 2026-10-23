@@ -12,6 +12,7 @@ This table is the one place that says which test command to run when. Other docs
 | Before every commit | `make check`, once (not after every edit) | lint + mypy + the unit suite without `slow` tests + the offline G2 test |
 | Before you call a package done, and whenever you report coverage | `make ci` | everything in `make check` + `slow` tests + the coverage gates (per file and per layer); CI runs exactly this on every PR |
 | Package done-check (RFC §5) | `python -m tests.support.semantic_mutants --module <src.module> --tests <test paths>` | every mutant killed or ruled equivalent by the reviewer |
+| Wiring done-check (P9) | `python -m tests.support.semantic_mutants --module <src.composition.X or main> --operators wiring --equivalent tests/unit/composition/wiring_equivalent_mutants.txt --tests <the P9 test files>` | the command is spelled out in "The production graph" below; about 9-10 s per mutant |
 | Only when the task needs them | `make test-integration`, `make test-e2e-all` | some integration tests and all e2e tests call real services |
 | Fake against the real thing (P5) | `FIRESTORE_EMULATOR_HOST=127.0.0.1:8085 pytest tests/unit/support/test_firestore_parity.py`, and `make test-cloud` | the parity scenarios on the Firestore emulator, and on the test database (see below) |
 | Wall-clock tests | `make test-timing`, by hand (CI runs it after a merge to `main`) | `timing` tests only |
@@ -97,6 +98,51 @@ Extending the fake with a new Firestore feature = a new scenario in `tests/suppo
   imported by some test, or listed with a reason in `tests/unit/untested_modules_allowlist.txt`. A new module needs a
   test, not an allowlist line. The list only shrinks: the test fails when a listed module is now imported. The check is `slow`,
   so it fails only in `make ci`.
+
+## The production graph: wiring and reachability (P9)
+
+The main service's non-web objects are built by `build_application_graph(config, db_client)` (`src/composition/application_graph.py`);
+`main()` calls the same function, so a test that builds it tests production's wiring, not a copy.
+
+- **The sealed environment** (`tests/support/prod_env.py`): `seal()` empties `os.environ` to a keep-list, then
+  `apply_deploy_env()` sets what the `alek-bot-dev` step of `cloudbuild-dev.yaml` sets (its `--set-env-vars`, its `--set-secrets`
+  names with shaped fakes, `K_SERVICE`, the build substitutions) and the real `load_settings()` runs. The `.env` file is never read.
+  A test that needs the deploy's values uses this, never a hand-made `config` dict.
+- **The fixture** (`prod_graph`, imported from `tests/support/prod_graph.py`): the built and started graph over the H1 fake and a recording Cloud Tasks
+  client, with one user's eager and lazy agents built. Use it for any "is X wired in production" question.
+- **Which tests are slow, and what that means for you.** Only the tests that build the graph (each builds it, starts it and builds one user's
+  eager and every lazy agent) or boot `main()` (and send every trigger) are `slow`; the guards that read source (the execution-context test,
+  the main.py construction allowlist, the checker self-tests) are not. A forgotten dependency therefore shows up as an unledgered `None`
+  in `make ci` or with `RUN_SLOW_TESTS=1`, **not in `make check`**; a bare `pytest <file>` skips those tests silently.
+- **The boot test** (`tests/unit/test_main_boots_offline.py`): runs the real `main()` offline, pins the full `url_map`
+  (`main_boots_offline_url_map.txt`) and the keywords of every blueprint factory call, and sends every trigger through `/worker`
+  against a pinned per-type table. `tests/unit/test_worker_triggers.py` ties the scheduler script and the enqueue sites to
+  `WorkerHandler`'s branches; `tests/unit/test_main_construction_allowlist.py` limits what `main.py` may construct itself.
+- **The ledgers** (`tests/unit/composition/wiring_none_ledger.txt`, `wiring_instance_ledger.txt`; checks in `tests/support/wiring_ledger.py`):
+  every `None` the walk finds and every instance count is listed with a reason; both fail **both ways** (an unlisted `None` or count,
+  and a listed line whose `None` or count is gone). The reason is one of `off-in-prod`, `optional-knob`, `lazy`, `runtime`,
+  `by-design`, `defect:<id>`, followed by evidence of at least two words. Adding a line is a decision for the reviewer, not a way to make a
+  test pass; a `defect:` line is a wiring fault someone owns. Line forms:
+  - `wiring_none_ledger.txt`: `<key>  # <reason> <evidence>`, the key a path from `app` (exact), `Class.attr` (None on every walked
+    instance of the class) or `Class.attr*` (any instance may be None; refused on adapter, service, handler and composition classes);
+  - `wiring_instance_ledger.txt`: `<module.Class> <count>  # <reason> <evidence>`; a count above 1 names where each instance is built.
+- **Mutation** (`wire-drop` replaces one argument or dict value with `None`; `call-skip` drops one `attach_*`, `register_*` or `set_*`
+  call). The done-check for the builder and `main.py`, one run per module, in the background (a full set of about 950 mutants takes about
+  2.5-3 hours; each mutant runs the graph tests in a child process):
+  ```bash
+  for m in src.composition.application_graph main src.composition.service_container src.composition.user_agent_factory \
+           src.composition.slack_adapter_factory src.composition.telegram_adapter_factory; do
+    python -m tests.support.semantic_mutants --module "$m" --operators wiring \
+      --equivalent tests/unit/composition/wiring_equivalent_mutants.txt \
+      --tests tests/unit/test_main_boots_offline.py tests/unit/test_worker_triggers.py \
+              tests/unit/composition/test_application_graph_wiring.py tests/unit/composition/test_application_graph_values.py \
+              tests/unit/test_main_wiring_values.py
+  done
+  ```
+  A survivor gets a new assertion in a new file; the reviewer alone rules a mutant equivalent in `wiring_equivalent_mutants.txt`.
+- **Not covered, by decision:** a wrong but non-None object of the right type; producer and consumer payload fields that disagree;
+  an enqueue literal in dead code; the rollback env switches; the wiring of `indexer_main`, `job_main`, `relay_main`; a secret that is
+  empty in Secret Manager; the four env reads made at import time, before the seal. They are listed in the RFC's "Built (P9)" note.
 
 ## Mutation check: the done-criterion for a package
 

@@ -9,8 +9,9 @@ their ``summary`` numbers (never an average of per-file percentages).
 
 Why layers and not only the global number: a global ``--cov-fail-under`` lets a 98 % domain hide a 60 % web layer,
 and a file no test imports is absent from a plain report. ``.coveragerc`` lists every ``src/`` file (including
-the ones nobody imported, at 0 %) and the root entry points; an entry point that no test imports (today ``main.py``)
-is not in the data at all, so it is counted here as 0 % from its source with coverage.py's own parser.
+the ones nobody imported, at 0 %) and the root entry points; an entry point that no test imports (none today;
+``main.py`` was one until P9) is not in the data at all, so it is counted here as 0 % from its source with
+coverage.py's own parser.
 
 THE RULE (same as the per-file table in check_coverage_thresholds.py): a floor only rises. Never lower one without
 the owner's explicit per-layer OK. Each floor is the lowest value observed minus NOISE_PP, rounded DOWN to one
@@ -57,12 +58,12 @@ FLOORS: Dict[str, float] = {
     "src/infrastructure": 96.3,
     "src/agents": 94.5,
     "src/services": 91.3,
-    "src/handlers": 91.6,
-    "src/adapters": 82.8,
+    "src/handlers": 92.7,
+    "src/adapters": 83.5,
     "src/web": 75.2,
-    "src/composition": 90.4,
-    "src (other)": 70.1,
-    "root entry points": 33.9,
+    "src/composition": 94.1,
+    "src (other)": 74.4,
+    "root entry points": 76.0,
 }
 
 RISE_MARGIN = 0.5

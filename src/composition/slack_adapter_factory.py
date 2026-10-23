@@ -68,6 +68,7 @@ class SlackAdapterFactory:
         skill_service=None,
         memory_fact_service=None,
         long_turn_service=None,
+        doc_delivery_service=None,
     ) -> SlackAdapter:
         """
         Create appropriate Slack adapter based on environment configuration.
@@ -130,6 +131,7 @@ class SlackAdapterFactory:
             skill_service=skill_service,
             memory_fact_service=memory_fact_service,
             long_turn_service=long_turn_service,
+            doc_delivery_service=doc_delivery_service,
         )
 
         if not db_client:

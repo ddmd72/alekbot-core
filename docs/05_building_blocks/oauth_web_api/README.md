@@ -517,35 +517,16 @@ async def add_cors_headers(response):
 
 ### Startup Sequence
 
-```python
-# main.py:215-250
-async def main():
-    # 1. Initialize services
-    auth_service = AuthenticationService(...)
-    session_service = SessionService(...)
-    auth_registry = AuthProviderRegistry(...)
-
-    # 2. Create OAuth app
-    oauth_app = create_oauth_app(
-        auth_service=auth_service,
-        session_service=session_service,
-        auth_registry=auth_registry,
-        auth_config=auth_config,
-    )
-
-    # 3. Run OAuth app in parallel with Slack bot
-    async def run_oauth_app():
-        await oauth_app.run_task(host="0.0.0.0", port=5001)
-
-    asyncio.create_task(run_oauth_app())
-    logger.info("✅ OAuth Web App started on port 5001")
-```
+`build_application_graph` (`src/composition/application_graph.py`) builds `AuthenticationService`, `SessionService`,
+`AuthProviderRegistry`, `AuthConfig` and the invite and connect-flow services, and returns them as typed fields of
+`ApplicationGraph`. `main()` (`main.py`) passes them to `create_oauth_blueprint(...)` and registers the blueprint on the
+Quart app next to the Slack, Cabinet, webhook and voice blueprints.
 
 ### Dependency Graph
 
 ```
-main.py
-  └─> create_oauth_app()
+main.py (main)
+  └─> create_oauth_blueprint()   (fed by build_application_graph)
        ├─> AuthenticationService (domain logic)
        │    ├─> AuthProviderRegistry
        │    │    └─> FirebaseAuthAdapter

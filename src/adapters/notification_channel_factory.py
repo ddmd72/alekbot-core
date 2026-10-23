@@ -2,7 +2,7 @@
 NotificationChannelFactory — creates ResponseChannels for background notifications.
 
 Platform-specific channel creation is delegated to registered factory callables,
-injected from the composition layer (main.py). This adapter has no knowledge of
+injected from the composition layer (build_application_graph). This adapter has no knowledge of
 concrete platform implementations.
 """
 from typing import Callable, Dict, Optional

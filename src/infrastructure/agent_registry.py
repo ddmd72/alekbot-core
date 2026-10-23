@@ -12,7 +12,7 @@ AgentDescriptor has two parts:
   B) requirements   — what this agent needs to function (allowed_intents filter, intent_remap)
 
 Orchestrators (Quick, Smart) construct their own descriptor at init time to declare B.
-Specialists register their descriptor in main.py to publish A.
+Specialists register their descriptor in agent_manifest.py (registered by build_application_graph) to publish A.
 """
 
 from enum import Enum
