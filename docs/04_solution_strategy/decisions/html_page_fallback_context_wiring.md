@@ -104,8 +104,11 @@ the whole class: seven more agents call `_call_llm`, have a `fallback` in `Agent
 breaker accounting.
 
 - **Fixed (`self._set_execution_context(execution_context)` right after `super().__init__`, as above):** `WebSearchAgent`
-  (openai to gemini; its own docstring already assumed the failover), `TasksAgent`, `DomainResearcherAgent`, `TutorAgent`
-  (all gemini fallback) and `LelikSummarizerAgent` (no strategy entry of its own, so `quick`'s claude to gemini applies).
+  (openai to gemini; its own docstring already assumed the failover), `DomainResearcherAgent` and `TutorAgent` (openai to
+  gemini), `TasksAgent` and `LelikSummarizerAgent` (no strategy entry of its own, so `quick`'s claude to gemini applies).
+  **`TasksAgent` is a partial case:** its default provider is gemini, and `AgentContextBuilder.build` resolves no fallback
+  when the fallback equals the provider (`agent_context_builder.py:419`), so a default-config user gains only breaker
+  accounting and the fail-fast check while Gemini's breaker is open; the failover is real only when the user picks claude.
   Tests: `test_specialist_provider_failover.py` (each agent, real constructor, primary down, the fallback answers, the
   breaker counts, an open breaker skips the primary).
 - **Owner ruling 2026-10-23 (question Q6): no cross-provider fallback for `ConsolidationAgent` and `TutorExtractorAgent`.**
