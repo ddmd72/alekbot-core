@@ -42,12 +42,13 @@ class NewFactAttributes:
     notes: Tuple[str, ...] = ()
 
 
-def parse_new_fact(fact_data: Mapping[str, Any]) -> NewFactAttributes:
+def parse_new_fact(fact_data: Mapping[str, Any], timezone_name: Optional[str] = None) -> NewFactAttributes:
     """Validate one fact dict before any embedding or write. Raises ValueError with a message the model can act on.
 
     `content` wins over `text`. State SUPERSEDED is refused: a document must not be born closed with no successor.
     State STALE is refused: only the system marks a fact stale. An `expiry` is optional here (the caller decides when
     it is required); one sent with a state that closes the fact is dropped, with a note. A non-dict `metadata` is ignored.
+    `timezone_name` (the owner's zone) lets `reported_date` be the consolidator's own conversation stamp.
     """
     content = fact_data.get("content") or fact_data.get("text")
     if not isinstance(content, str) or not content.strip():
@@ -94,7 +95,7 @@ def parse_new_fact(fact_data: Mapping[str, Any]) -> NewFactAttributes:
             else ContextPriority.MEDIUM
         ),
         context=_validated("context", _OPTIONAL_STR, fact_data.get("context")),
-        reported_date=parse_reported_date(fact_data.get("reported_date")),
+        reported_date=parse_reported_date(fact_data.get("reported_date"), timezone_name),
         expiry=expiry,
         derived_from=_parse_derived_from(fact_data.get("derived_from")),
         notes=notes,

@@ -25,7 +25,9 @@ from ..agents.base_agent import BaseAgent
 from ..domain.agent import AgentMessage, AgentResponse, AgentConfig, AgentIntent, AgentStatus
 from ..ports.indexed_email_repository import IndexedEmailRepository
 from ..domain.entities import FactDomain
+from ..domain.fact_expiry import expiry_view
 from ..domain.fact_write_context import FactWriteContext, as_utc, span_of
+from ..domain.local_time import local_day, local_moment, local_stamp
 from ..domain.request_context import get_effective_account_id
 from ..ports.repository import FactRepository
 from ..ports.embedding_service import EmbeddingService
@@ -402,7 +404,7 @@ class ConsolidationAgent(BaseAgent):
                 logger.info("🧠 [ConsolidationAgent] Using v2 legacy process")
                 if messages:
                     results = await self._synthesize_session_facts_v2(
-                        messages, user_id, account_id, bio_context_raw
+                        messages, user_id, account_id, bio_context_raw, self._owner_timezone(message)
                     )
                 else:
                     logger.info("ℹ️  [ConsolidationAgent] No data to process")
@@ -531,14 +533,12 @@ class ConsolidationAgent(BaseAgent):
               OR {"limit": int}      — auto-fetch top-K by word count [not yet implemented]
         """
         try:
+            owner_timezone = self._owner_timezone(message)
             cluster = message.payload.get("cluster")
             if cluster is None:
                 limit = message.payload.get("limit", 10)
                 facts = await self._repo.get_longest_facts(account_id, limit=limit)
-                cluster = [
-                    {"fact_id": f.id, "content": f.text, "similarity": 0.0}
-                    for f in facts
-                ]
+                cluster = [self._cluster_entry(f, owner_timezone) for f in facts]
                 logger.info(
                     f"👨‍🏫 [ConsolidationAgent] consolidate_cluster auto-fetch: "
                     f"{len(cluster)} facts (limit={limit})"
@@ -569,7 +569,7 @@ class ConsolidationAgent(BaseAgent):
                 user_id=user_id,
                 account_id=account_id,
                 pass_label="cluster",
-                write_context=self._write_context("cluster", self._owner_timezone(message)),
+                write_context=self._write_context("cluster", owner_timezone),
             )
 
             facts_affected = sum(1 for op in ops if op.get("action") in ("CREATE", "UPDATE", "MERGE"))
@@ -670,7 +670,8 @@ class ConsolidationAgent(BaseAgent):
                     "[system_alert] The system has scanned the user's email inbox on their behalf "
                     "and selected candidates for inclusion in the fact database. "
                     "The selection contains noise. Evaluate the incoming data and process it "
-                    "according to your algorithm.\n\n"
+                    "according to your algorithm. Set reported_date to the candidate's `date`. "
+                    "Information whose date or horizon has already passed is history or noise.\n\n"
                     f"Candidates:\n{candidates_text}"
                 )
 
@@ -858,7 +859,7 @@ class ConsolidationAgent(BaseAgent):
             Dict with "operations" list (Stage 1 ops + Stage 2 ops combined)
         """
         span = self._times_span([t for t in (self._message_time(m) for m in messages) if t is not None], "message times")
-        structured_conversation = self._prepare_structured_conversation(messages)
+        structured_conversation = self._prepare_structured_conversation(messages, owner_timezone)
         conversation_history = [
             {
                 "role": item.get("role", "user"),
@@ -1043,9 +1044,19 @@ class ConsolidationAgent(BaseAgent):
 
     @staticmethod
     def _message_time(message: Dict[str, Any]) -> Any:
-        """The time a batch message carries (`created_at`, else `timestamp`), or None."""
-        value = message.get("created_at")
-        return value if value is not None else message.get("timestamp")
+        """The one time a batch message carries, for its stamp and for the batch span alike.
+
+        `created_at`, else `timestamp` (also when `created_at` is empty or unreadable). When neither is readable, the
+        first one present, so the caller counts it unreadable; None when there is none.
+        """
+        present = [v for v in (message.get("created_at"), message.get("timestamp")) if v is not None and v != ""]
+        for value in present:
+            try:
+                as_utc(value)
+            except (ValueError, TypeError, OverflowError, OSError):
+                continue
+            return value
+        return present[0] if present else None
 
     @staticmethod
     def _times_span(values: List[Any], what: str) -> Optional[Tuple[datetime, datetime]]:
@@ -1091,8 +1102,11 @@ class ConsolidationAgent(BaseAgent):
             user_id=user_id,
         )
         started = time.monotonic()
+        today = local_day(datetime.now(timezone.utc), write_context.timezone)
         history: List[Message] = [
-            Message(role="user", parts=[MessagePart(text=user_message_text)])
+            Message(role="user", parts=[MessagePart(
+                text=f"{user_message_text}\n\nToday: {today} ({write_context.timezone}, the owner's timezone)."
+            )])
         ]
 
         for turn in range(self.MAX_CONSOLIDATION_TURNS):
@@ -1254,8 +1268,10 @@ class ConsolidationAgent(BaseAgent):
             "  The content is worth keeping; the rulebook is the wrong place for it. Two calls,\n"
             "  in order:\n"
             "    create_fact(content=<the rule, rewritten to state the condition it applies\n"
-            "                under>, metadata={domain: \"PREFERENCE\", plus the temporal_class,\n"
-            "                context_priority and tags your schema requires})\n"
+            "                under>, fact_attributes={domain: \"PREFERENCE\", plus the temporal_class,\n"
+            "                context_priority, tags and expiry your schema requires (decide the\n"
+            "                expiry from the rewritten preference, with the kinds table), and\n"
+            "                derived_from: [\"<this directive's fact_id>\"]})\n"
             "    update_fact(<fact_id>, {state: \"invalidated\"})\n"
             "  `domain` cannot be changed in place, so create-then-invalidate is the only route.\n"
             "  Nothing is lost: preference facts reach the agent by relevance, on the requests\n"
@@ -1269,9 +1285,9 @@ class ConsolidationAgent(BaseAgent):
             "    update_fact(<fact_id>, {state: \"invalidated\"})\n\n"
             "  MERGE — two or more records state one rule twice, wholly or in part.\n"
             "    merge_facts(<fact_ids>, merged_content=<the single rule that replaces them,\n"
-            "                carrying every behavior the originals required>, metadata={the\n"
+            "                carrying every behavior the originals required>, fact_attributes={the\n"
             "                domain, temporal_class, context_priority and tags your schema\n"
-            "                requires})\n\n"
+            "                requires, and expiry: {kind: \"none\"} - directives are pinned to none})\n\n"
             "A clean rulebook is the goal, not a full one: removing a record is a normal outcome\n"
             "of this review, not a failure to preserve it.\n\n"
             "Optimisation objectives (apply every pass):\n"
@@ -1336,7 +1352,14 @@ class ConsolidationAgent(BaseAgent):
             "decomposed into atomic facts each under 40 words. Co-location is not a\n"
             "valid justification for exceeding this limit.\n\n"
             "Important: do not lose specific numeric values, dates, or amounts —\n"
-            "they are critical for long-term memory accuracy."
+            "they are critical for long-term memory accuracy.\n\n"
+            "Each fact shows `expiry`: the decision it carries in the shape you send it (null when none is\n"
+            "recorded), `due`: the day a horizon falls due, and `reported`: the day the owner last said it.\n"
+            "A horizon counts from `reported`; this pass cannot change `reported`. Give `expiry` only on a\n"
+            "create, a merge or a rewrite you make in this pass; do not send `expiry` for a fact you do not\n"
+            "otherwise change: facts with `expiry: null` are classified separately.\n"
+            "When you split a fact into parts, give each create_fact `derived_from: [\"<the split fact's id>\"]`;\n"
+            "a merge takes its date from its sources by itself."
         )
         lines = [alert, "", ""]
         for i, fact in enumerate(cluster, 1):
@@ -1344,9 +1367,33 @@ class ConsolidationAgent(BaseAgent):
                 "fact_id": fact.get("fact_id"),
                 "content": fact.get("content"),
                 "similarity": round(fact["similarity"], 3) if fact.get("similarity") is not None else None,
+                "expiry": fact.get("expiry"),
             }
+            if fact.get("due"):
+                obj["due"] = fact["due"]
+            obj["reported"] = ConsolidationAgent._reported_day(fact.get("reported_date"))
             lines.append(f"{i}. {json.dumps(obj, ensure_ascii=False)}")
         return "\n".join(lines)
+
+    @staticmethod
+    def _reported_day(stamp: Any) -> Optional[str]:
+        """The calendar day written in a `reported_date` already shown in the owner's offset; None when absent or unreadable."""
+        if not stamp:
+            return None
+        try:
+            return (stamp if isinstance(stamp, datetime) else datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))).date().isoformat()
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _cluster_entry(fact: Any, timezone: str) -> Dict[str, Any]:
+        """A stored fact as Stage 2a sees a search hit: its decision as `expiry` / `due`, `reported_date` in the owner's zone."""
+        expiry, due = expiry_view(fact.expiry_kind, fact.ttl_days, fact.expires_at, timezone)
+        reported = local_moment(fact.reported_date, timezone).isoformat(timespec="seconds") if fact.reported_date else None
+        return {
+            "fact_id": fact.id, "content": fact.text, "similarity": 0.0,
+            "expiry": expiry, "due": due, "reported_date": reported,
+        }
     
     async def _execute_fact_management_tools(
         self,
@@ -1693,14 +1740,15 @@ class ConsolidationAgent(BaseAgent):
                 conv_text += f"{normalized_role}: {text}\n"
         return conv_text
 
-    def _prepare_structured_conversation(self, messages: List[Dict]) -> List[Dict]:
+    def _prepare_structured_conversation(self, messages: List[Dict], timezone: str) -> List[Dict]:
         """
         Prepare structured conversation for VariableFormatter.
 
-        Returns list of dicts with normalized structure:
+        Returns list of dicts with normalized structure; the stamp is Smart's (`local_stamp`) in the owner's zone,
+        read from the same time the batch span uses, and "" when that time is unreadable:
         [
-            {"role": "user", "content": "text", "timestamp": "2026-01-31 11:44:16"},
-            {"role": "assistant", "content": "text", "timestamp": "2026-01-31 11:44:16"}
+            {"role": "user", "content": "text", "timestamp": "2026-01-31 Sat 11:44 CET"},
+            {"role": "assistant", "content": "text", "timestamp": "2026-01-31 Sat 11:44 CET"}
         ]
         """
         structured = []
@@ -1718,18 +1766,12 @@ class ConsolidationAgent(BaseAgent):
             if not text and "parts" in msg:
                 text = " ".join([p.get("text", "") for p in msg["parts"]])
 
-            # Timestamp handling
-            timestamp = msg.get('timestamp') or msg.get('created_at')
             time_str = ""
-            if timestamp:
+            moment = self._message_time(msg)
+            if moment is not None:
                 try:
-                    if isinstance(timestamp, (int, float)):
-                        dt = datetime.fromtimestamp(timestamp, tz=timezone.utc)
-                    else:
-                        dt = datetime.fromisoformat(str(timestamp).replace("Z", "+00:00"))
-                        dt = dt.astimezone(timezone.utc)
-                    time_str = dt.strftime("%b %d, %H:%M UTC")
-                except Exception:
+                    time_str = local_stamp(as_utc(moment), timezone)
+                except (ValueError, TypeError, OverflowError, OSError):
                     time_str = ""
 
             structured.append({
@@ -1759,11 +1801,12 @@ class ConsolidationAgent(BaseAgent):
         messages: List[Dict],
         user_id: str,
         account_id: str,
-        biographical_context: List[Dict] = None
+        biographical_context: List[Dict] = None,
+        owner_timezone: str = "UTC",
     ) -> Dict[str, Any]:
-        """Synthesize facts from raw messages using v2 prompt (legacy)."""
+        """Synthesize facts from raw messages using v2 prompt (legacy). Message times are shown in the owner's zone."""
         # 1. Prepare conversation history
-        structured_conversation = self._prepare_structured_conversation(messages)
+        structured_conversation = self._prepare_structured_conversation(messages, owner_timezone)
         conversation_history = [
             {
                 "role": item.get("role", "user"),

@@ -29,12 +29,13 @@ class ParsedFactUpdate:
     notes: Tuple[str, ...] = ()
 
 
-def parse_fact_update(updates: Mapping[str, Any]) -> ParsedFactUpdate:
+def parse_fact_update(updates: Mapping[str, Any], timezone_name: Optional[str] = None) -> ParsedFactUpdate:
     """Validate `updates` before any embedding or write. Raises ValueError with a message the model can act on.
 
     Unknown keys are ignored. A non-dict `metadata` is ignored. Empty `content`, `tags: null` and `tags: []` are
     refused: an empty field never destroys data. State STALE is refused (only the system marks a fact stale). An
     `expiry` sent with a closing state is dropped, with a note; any other `expiry` must parse (FactExpiryError).
+    `timezone_name` (the owner's zone) lets `reported_date` be the consolidator's own conversation stamp.
     """
     content = _parse_content(updates)
     tags = _parse_tags(updates)
@@ -49,7 +50,7 @@ def parse_fact_update(updates: Mapping[str, Any]) -> ParsedFactUpdate:
         raise ValueError(
             "only the system marks a fact stale; to retire a fact use ARCHIVED, INVALIDATED or SUPERSEDED"
         )
-    reported_date = parse_reported_date(updates.get("reported_date"))
+    reported_date = parse_reported_date(updates.get("reported_date"), timezone_name)
     superseded_by = _parse_superseded_by(updates)
     expiry, notes = _parse_update_expiry(updates, state)
 
