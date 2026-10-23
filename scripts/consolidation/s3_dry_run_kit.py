@@ -75,7 +75,6 @@ DEFAULT_REPORT = MEMORY_DIR / "s3_dry_run_report.json"
 SNAPSHOT_DIR = PROJECT_ROOT / "prompts_snapshot"
 DEFAULT_BUDGET_USD = 30.0
 MAX_OVERLAY_HOPS = 10
-REVIEW_CLUSTER_LIMIT = 30      # Stage 2a's own cap (`_build_review_cluster`)
 
 # The tokens S3 edits (the sixth, CONSOLIDATION_OUTPUT_SPEC, is unchanged and still comes from Firestore).
 S3_TOKEN_IDS: Tuple[str, ...] = (
@@ -151,6 +150,10 @@ class NoWriteFactRepository(FactRepository):
         """The pass's own copy of a document (written or changed in this run), else None."""
         doc = self._docs.get(fact_id)
         return doc.model_copy(deep=True) if doc is not None else None
+
+    def closed_count(self) -> int:
+        """How many overlay documents are not current (each can make a live search hit drop out or merge into another)."""
+        return sum(1 for doc in self._docs.values() if doc.state is not FactState.CURRENT)
 
     def forget_overlay(self) -> None:
         """Drop the pass's own documents so the next run starts from the live store; `writes` keeps the record."""
@@ -751,6 +754,21 @@ def hit_from_document(doc: FactEntity, hit: Dict[str, Any], timezone: str) -> Di
 
 # ------------------------------------------------------------------------------------------------ the write recorder
 
+class OwnFactsSearch:
+    """The search port Stage 2a's cluster builder sees on the kit: the real search, plus the facts the run wrote, each
+    returned (with relevance 1, as a fact finding itself) by the search of its own content."""
+
+    def __init__(self, inner: FactManagementPort, own: Dict[str, List[Dict[str, Any]]]) -> None:
+        self._inner = inner
+        self._own = own
+
+    async def search_existing_facts(
+        self, keywords: List[str], primary_query: str, alternative_query: str = "", limit: int = 20, *, timezone: str
+    ) -> List[Dict[str, Any]]:
+        hits = await self._inner.search_existing_facts(keywords, primary_query, alternative_query, limit, timezone=timezone)
+        return [*self._own.get(primary_query, []), *hits]
+
+
 class WriteRecorder(FactManagementPort):
     """Wraps the real adapter (built on the overlay): one report row per create, update and merge call."""
 
@@ -761,8 +779,10 @@ class WriteRecorder(FactManagementPort):
     async def search_existing_facts(
         self, keywords: List[str], primary_query: str, alternative_query: str = "", limit: int = 20, *, timezone: str
     ) -> List[Dict[str, Any]]:
-        hits = await self._inner.search_existing_facts(keywords, primary_query, alternative_query, limit, timezone=timezone)
-        return self._kit.correct_hits(hits, timezone)
+        spare = self._kit.repo.closed_count() if self._kit.repo else 0       # hits the correction will drop
+        hits = await self._inner.search_existing_facts(
+            keywords, primary_query, alternative_query, limit + spare, timezone=timezone)
+        return self._kit.correct_hits(hits, timezone)[:limit]
 
     async def create_fact(self, content: str, metadata: Dict[str, Any], *, context: FactWriteContext) -> Dict[str, Any]:
         return await self._kit.logged(
@@ -910,22 +930,21 @@ class DryRunKit:
         return out
 
     def _wrap_review_cluster(self, agent: Any) -> None:
-        """Stage 2a's cluster is built from searches, which cannot see this run's writes; production finds the facts the
-        run wrote (each finds itself). Put them, read back from the overlay, in front of what the searches found."""
-        build = agent._build_review_cluster
+        """Stage 2a's cluster is built from searches, which cannot see this run's writes; in production each fact the run
+        wrote finds itself. Run production's own `_build_review_cluster` (same merge, same sort by length, same cut) over
+        the searches with the run's facts, read back from the overlay, added as hits of their own content."""
+        from types import SimpleNamespace
 
         async def review_cluster(changed: Any, account_id: str, *, timezone: str) -> List[Dict[str, Any]]:
             from src.agents.consolidation_agent import ConsolidationAgent
 
-            found = await build(changed, account_id, timezone=timezone)
-            own: List[Dict[str, Any]] = []
-            for fact_id, _ in changed:
+            own: Dict[str, List[Dict[str, Any]]] = {}
+            for fact_id, content in changed:
                 doc = self.current_in_overlay(self.repo.overlay_document(fact_id)) if self.repo else None
-                if doc is not None and all(entry["fact_id"] != doc.id for entry in own):
-                    own.append({**ConsolidationAgent._cluster_entry(doc, timezone), "similarity": 1.0})
-            own_ids = {entry["fact_id"] for entry in own}
-            rest = [entry for entry in found if entry.get("fact_id") not in own_ids]
-            return (own + rest)[:max(REVIEW_CLUSTER_LIMIT, len(own))]
+                if doc is not None:
+                    own.setdefault(content, []).append({**ConsolidationAgent._cluster_entry(doc, timezone), "similarity": 1.0})
+            shim = SimpleNamespace(_fact_management=OwnFactsSearch(agent._fact_management, own))
+            return await ConsolidationAgent._build_review_cluster(shim, changed, account_id, timezone=timezone)
 
         agent._build_review_cluster = review_cluster
 

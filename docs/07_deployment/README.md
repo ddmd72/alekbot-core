@@ -1109,8 +1109,9 @@ and the gate lines.
 and domain reads see the live store only. So a fact a pass created is not found by a later search (Stage 2a's cluster is the one place seeded with the run's
 facts) and is not in the cache of the same run, and a fact born due in the run is not "due" to the janitor (the dry run does not run the janitor). Reads by
 id and the current-fact lists do see the pass's own writes. Search results are corrected for the run's own writes (a fact
-the run closed is dropped or replaced by its successor), and Stage 2a's cluster starts with the facts the run wrote, then
-the live neighbours the searches find, which is what production's cluster holds.
+the run closed is dropped or replaced by its successor; the search is asked for a few more hits to make up for them).
+Stage 2a's cluster is built by production's own rule (the 30 longest of the hits), with the facts the run wrote counted
+among the hits as a fact finds itself in production: a short new fact is cut when 30 longer neighbours are found.
 
 **Cost and the cap.** The kit's meter prices every call by the model the request names, keeps one ledger across all
 runs in `scripts/memory/s3_dry_run_spend.json` and refuses the next call when the cumulative spend would pass **$30**
