@@ -45,7 +45,7 @@ def local_date(moment: Union[float, datetime], timezone: str) -> date:
 
 
 def parse_local_stamp(text: str, timezone: str) -> Optional[datetime]:
-    """The moment a `local_stamp` in this zone names, or None.
+    """The moment (aware, UTC) a `local_stamp` in this zone names, or None.
 
     Only the exact stamp the zone would render is read: the weekday and the abbreviation must match that local time
     (the abbreviation also picks between the two readings of a repeated autumn hour).
@@ -64,5 +64,5 @@ def parse_local_stamp(text: str, timezone: str) -> Optional[datetime]:
         rendered = candidate.strftime("%Z") or timezone or "UTC"
         exists = candidate.astimezone(_UTC).astimezone(zone).replace(tzinfo=None) == naive  # not a skipped spring hour
         if exists and rendered == abbreviation and candidate.strftime("%a") == weekday:
-            return candidate
+            return candidate.astimezone(_UTC)
     return None
