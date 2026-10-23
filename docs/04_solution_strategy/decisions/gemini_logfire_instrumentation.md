@@ -103,3 +103,15 @@ adds only a log record with a null body.
   so a future break degrades telemetry, not traffic.
 - If logfire later fixes its shim, `logfire.instrument_google_genai()` becomes viable
   again — but there is no reason to switch back.
+
+## Update 2026-10-23 — the set moved to OTel 1.45.1 / logfire 5.2.0
+
+A security fix in `opentelemetry-api` (unbounded `tracestate` parsing, fixed in 1.45.1)
+forced the set forward. Every logfire up to 5.1.1 pins `opentelemetry-sdk<1.45`, so the
+move needs logfire 5.2.0, the first release that admits 1.45. New set: api/sdk 1.45.1,
+`opentelemetry-instrumentation` 0.66b1, logfire 5.2.0; the GCP exporter (1.14.0) and the
+google-genai instrumentor (1.0b1) are unchanged and verified to import on the new set.
+logfire 5.0's breaking changes do not reach `telemetry.py`: the removed `configure`
+arguments are not ones we pass, and OpenAI/Anthropic are instrumented with an explicit
+`version="latest"`, so the new default version does not apply. Gemini stays on the
+vendor instrumentor.
