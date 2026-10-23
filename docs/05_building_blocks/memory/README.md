@@ -977,8 +977,12 @@ not damage done by S2:
   and `lineage_open_below_highest_version`. The owner's delete did not apply and the current version is still shown;
   reload the Cabinet and delete the live fact from the list again. (A delete started from the stale row would hit the
   closed document, which is now `invalidated` and an accepted end state, and change nothing.) That delete does **not**
-  clear `lineage_multiple_current`: both documents of the lineage keep `is_current=true`. Set the closed document's
-  `is_current` back to false by hand in the Firestore console, or the class stays red.
+  clear `lineage_multiple_current`: both documents of the lineage keep `is_current=true`. Restore the closed document's S2
+  closure by hand in the Firestore console: set `state=superseded` **and** `is_current=false` together. Its
+  `superseded_by` and `valid_to` are still there, so `lineage_multiple_current`, `superseded_by_on_open_doc` and
+  `lineage_open_below_highest_version` all clear. Setting `is_current=false` alone on the `invalidated` document would
+  trade them for `is_current_mismatch`, because the audit requires `is_current=true` for `invalidated`
+  (`scripts/data_audit/facts.py:38-43`).
 
 Then re-run the audit with the **end of the roll-forward drain** as `--s2-cutoff`. **The cutoff moves only
 `superseded_without_successor`** (the old revision's closes then count as pre-S2). `replaces_version_mismatch`,
@@ -989,8 +993,12 @@ inside the rollback window: those are the expected ones, any other is real.
 A skipped drain (old and new revision consolidating together) shows as `lineage_multiple_current` plus
 `replaces_not_pointing_back`: an old-revision blind write re-opened an older version (it is `current` with no
 `superseded_by`). Do not delete either by reflex: the re-opened document carries the old run's own update, so it may hold
-the newest wording. Compare both texts and their `last_updated` in the console first, keep the newer wording, and
-delete (in the Cabinet) or close the other.
+the newest wording. Compare both texts and their `last_updated` in the console first. If the older document holds the
+newer wording, carry that wording over first (a correction in chat, consolidated onto the head). Then **close the
+re-opened older document by hand**: `state=superseded`, `is_current=false`, `valid_to` = now, `superseded_by` = the newer
+version's id. That restores the chain and clears `lineage_multiple_current`, `lineage_open_below_highest_version` and
+`replaces_not_pointing_back`. A Cabinet delete does not: it sets `invalidated` with `is_current=true`, so the lineage
+stays red.
 
 ### 9.7 The prompt snapshot and its vocabulary tests
 
