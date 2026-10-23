@@ -294,12 +294,19 @@ class FactManagementAdapter(FactManagementPort):
                     raise
                 continue
             logger.info(f"✅ [FactManagement] Updated fact {written.id[:8]} to version {written.version}")
-            return {
+            result = {
                 "fact_id": written.id,
                 "status": "updated",
                 "version": written.version,
                 "message": "Fact updated successfully",
             }
+            if stored.fact.id != fact_id:
+                result["resolved_from"] = fact_id
+                result["message"] = (
+                    f"Fact updated successfully; fact {fact_id} was replaced earlier, "
+                    f"so the update was applied to its current version {stored.fact.id}"
+                )
+            return result
 
     async def _with_resolved_successor(
         self, update: ParsedFactUpdate, stored: StoredFact, account_id: str

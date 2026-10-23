@@ -7,6 +7,7 @@ happened (a recorded write conflict, embedder call counts, the interfering write
 """
 import asyncio
 import copy
+import json
 from datetime import datetime, timezone
 
 import pytest
@@ -206,6 +207,27 @@ async def test_second_update_on_a_superseded_id_lands_on_the_current_version(sto
     in_place = await store.adapter.update_fact(fid, {"state": "STALE"}, ACC)
     assert in_place["fact_id"] == v3["fact_id"] and in_place["version"] == 3
     assert store.docs[v3["fact_id"]]["state"] == "stale" and len(store.docs) == 3
+
+
+@pytest.mark.parametrize("updates", [{"content": "mother is Valentyna Ivanivna"}, {"state": "STALE"}])
+async def test_an_update_forwarded_to_the_current_version_says_so(store, updates):
+    fid = await create(store)
+    v2 = (await store.adapter.update_fact(fid, {"content": "mother is Mariia"}, ACC))["fact_id"]
+
+    res = await store.adapter.update_fact(fid, updates, ACC)
+
+    assert set(res) == {"fact_id", "status", "version", "message", "resolved_from"}
+    assert res["status"] == "updated" and res["resolved_from"] == fid and res["fact_id"] != fid
+    assert v2 in res["message"] and "current version" in res["message"]
+    json.dumps(res)
+
+
+async def test_an_update_on_the_current_id_carries_no_resolved_from(store):
+    fid = await create(store)
+
+    res = await store.adapter.update_fact(fid, {"content": "mother is Mariia"}, ACC)
+
+    assert set(res) == {"fact_id", "status", "version", "message"} and res["message"] == "Fact updated successfully"
 
 
 async def test_update_on_a_merged_source_is_a_failed_result_naming_the_merged_id(store):
