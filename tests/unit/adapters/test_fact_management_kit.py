@@ -157,15 +157,19 @@ def _plain(doc):
 async def test_update_returns_the_result_dict_and_json(store):
     fid = await create(store)
     res = await store.adapter.update_fact(fid, {"content": "mother is Mariia"}, ACC)
-    assert set(res) == {"fact_id", "status", "version", "message"} and res["fact_id"] == fid
+    # Reviewer edit (facts S2, D8): `fact_id` is the document written, the new version, which replaces the argument.
+    assert set(res) == {"fact_id", "status", "version", "message"} and res["fact_id"] != fid
+    assert store.docs[res["fact_id"]]["replaces_fact_id"] == fid and res["version"] == 2
     json.dumps(res)
 
 
 async def test_update_tags_replaces_them_whole_and_recomputes_all_three_vectors(store):
     fid = await create(store)
-    await store.adapter.update_fact(fid, {"tags": ["relatives"]}, ACC)
-    doc = store.docs[fid]
-    assert doc["tags"] == ["relatives"] and doc["version"] == 2
+    res = await store.adapter.update_fact(fid, {"tags": ["relatives"]}, ACC)
+    # Reviewer edit (facts S2, D8): a new version document, and the system tag the update omits is kept at the end.
+    doc = store.docs[res["fact_id"]]
+    assert res["fact_id"] != fid and store.docs[fid]["tags"] == ["family", "mother", "consolidated"]
+    assert doc["tags"] == ["relatives", "consolidated"] and doc["version"] == 2
     for field, text in zip(("vector", "tags_vector", "metadata_vector"),
                            fact_embedding_texts("mother is Maria", ["relatives"], {"name": "Maria"})):
         assert stored_vector(doc[field]) == pytest.approx(embed(text))
@@ -173,15 +177,19 @@ async def test_update_tags_replaces_them_whole_and_recomputes_all_three_vectors(
 
 async def test_update_metadata_overwrites_a_shared_key_and_keeps_the_others(store):
     fid = await create(store, metadata={"name": "Maria", "city": "Springfield"})
-    await store.adapter.update_fact(fid, {"metadata": {"name": "Masha"}}, ACC)
-    assert store.docs[fid]["metadata"] == {"name": "Valya", "city": "Kyiv"}
+    res = await store.adapter.update_fact(fid, {"metadata": {"name": "Masha"}}, ACC)
+    # Reviewer edit (facts S2, D8): read through the returned id; the old version keeps its metadata.
+    assert store.docs[res["fact_id"]]["metadata"] == {"name": "Masha", "city": "Springfield"}
+    assert res["fact_id"] != fid and store.docs[fid]["metadata"] == {"name": "Maria", "city": "Springfield"}
 
 
 async def test_update_temporal_class_is_case_insensitive_bumps_version_and_keeps_vectors(store):
     fid = await create(store)
     before = _plain(store.docs[fid])
-    await store.adapter.update_fact(fid, {"temporal_class": "DYNAMIC"}, ACC)
-    doc = _plain(store.docs[fid])
+    res = await store.adapter.update_fact(fid, {"temporal_class": "DYNAMIC"}, ACC)
+    # Reviewer edit (facts S2, D8): a temporal_class change is a new version document, read through the returned id.
+    assert res["fact_id"] != fid
+    doc = _plain(store.docs[res["fact_id"]])
     assert doc["temporal_class"] == "dynamic" and doc["version"] == 2
     for field in ("vector", "tags_vector", "metadata_vector"):
         assert doc[field] == before[field]
@@ -216,31 +224,50 @@ async def test_update_sets_last_updated_on_every_update(store):
 
 async def test_update_reported_date_is_taken_from_an_iso_string_or_a_datetime(store):
     fid = await create(store)
-    await store.adapter.update_fact(fid, {"content": "edited", "reported_date": "2020-01-02T03:04:05Z"}, ACC)
-    assert store.docs[fid]["reported_date"] == datetime(2020, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+    # Reviewer edit (facts S2, D8): each content change is a new version document, read through the returned id; the
+    # second call names the first id and lands on the current version.
+    first = await store.adapter.update_fact(fid, {"content": "edited", "reported_date": "2020-01-02T03:04:05Z"}, ACC)
+    assert store.docs[first["fact_id"]]["reported_date"] == datetime(2020, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
     given = datetime(2021, 5, 6, 7, 8, 9, tzinfo=timezone.utc)
-    await store.adapter.update_fact(fid, {"content": "edited again", "reported_date": given}, ACC)
-    assert store.docs[fid]["reported_date"] == given and store.docs[fid]["version"] == 3
+    second = await store.adapter.update_fact(fid, {"content": "edited again", "reported_date": given}, ACC)
+    assert store.docs[second["fact_id"]]["reported_date"] == given and store.docs[second["fact_id"]]["version"] == 3
 
 
 @pytest.mark.parametrize("state,is_current,closed", [
     ("CURRENT", True, False), ("STALE", True, False), ("ARCHIVED", True, True), ("INVALIDATED", True, True),
     ("SUPERSEDED", False, True)])
 async def test_update_state_applies_the_lifecycle_fields(store, state, is_current, closed):
+    # Reviewer edit (facts S2, D8): the state is applied to a current fact. The old first step (archive, then move on)
+    # is refused for the consolidator now, which only accepts a current end (pinned in test_fact_versions_roundtrip.py::
+    # test_update_on_an_archived_fact_is_refused). SUPERSEDED needs its successor. The write stays in place, with no
+    # embedding and the stored vectors, version and id (covers the retired mock tests of state-only updates).
     fid = await create(store)
-    await store.adapter.update_fact(fid, {"state": "ARCHIVED"}, ACC)
-    await store.adapter.update_fact(fid, {"state": state}, ACC)
-    doc = store.docs[fid]
+    successor = await create(store, "mother is Mariya")
+    before = _plain(store.docs[fid])
+    store.adapter._embedding = FailingEmbedder()
+    updates = {"state": state, "superseded_by": successor} if state == "SUPERSEDED" else {"state": state}
+    res = await store.adapter.update_fact(fid, updates, ACC)
+    assert (res["status"], res["fact_id"], res["version"]) == ("updated", fid, 1) and len(store.docs) == 2
+    doc = _plain(store.docs[fid])
     assert doc["state"] == state.lower() and doc["is_current"] is is_current and (doc["valid_to"] is not None) is closed
+    assert doc["superseded_by"] == (successor if state == "SUPERSEDED" else None)
+    for field in ("vector", "tags_vector", "metadata_vector", "text", "version", "reported_date"):
+        assert doc[field] == before[field], field
 
 
 async def test_repeating_an_update_changes_only_last_updated(store):
+    # Reviewer edit (facts S2, D8): the first call writes version 2; the repeat names the old id, lands on version 2 and
+    # changes only its last_updated, in place.
     fid = await create(store)
-    await store.adapter.update_fact(fid, {"content": "mother is Valentyna", "tags": ["family"]}, ACC)
-    first = _plain(store.docs[fid])
-    await store.adapter.update_fact(fid, {"content": "mother is Valentyna", "tags": ["family"]}, ACC)
-    second = _plain(store.docs[fid])
+    res = await store.adapter.update_fact(fid, {"content": "mother is Valentyna", "tags": ["family"]}, ACC)
+    v2 = res["fact_id"]
+    first = _plain(store.docs[v2])
+    old = _plain(store.docs[fid])
+    again = await store.adapter.update_fact(fid, {"content": "mother is Valentyna", "tags": ["family"]}, ACC)
+    assert (again["fact_id"], again["version"]) == (v2, 2) and len(store.docs) == 2
+    second = _plain(store.docs[v2])
     assert {k for k in second if second[k] != first[k]} == {"last_updated"}
+    assert _plain(store.docs[fid]) == old
 
 
 async def test_update_of_a_missing_fact_or_another_accounts_fact_is_not_found_and_writes_nothing(store):
@@ -258,9 +285,13 @@ async def test_update_of_a_legacy_owner_id_document_belongs_to_the_owner(store):
     before = snapshot(store)
     assert (await store.adapter.update_fact("old", {"content": "edited"}, OTHER))["status"] == "not_found"
     assert store.docs == before
-    assert (await store.adapter.update_fact("old", {"content": "edited"}, ACC))["status"] == "updated"
-    doc = store.docs["old"]
+    res = await store.adapter.update_fact("old", {"content": "edited"}, ACC)
+    assert res["status"] == "updated"
+    # Reviewer edit (facts S2, D8): the content goes to a new version document, written with the migrated ownership
+    # fields; the legacy document is closed field-masked, so it keeps owner_id (observed; 0 live owner_id documents).
+    doc = store.docs[res["fact_id"]]
     assert (doc["account_id"], doc["created_by_user_id"], doc["text"]) == (ACC, ACC, "edited") and "owner_id" not in doc
+    assert (store.docs["old"]["state"], store.docs["old"]["superseded_by"]) == ("superseded", res["fact_id"])
 
 
 async def test_update_with_an_embedding_failure_fails_and_writes_nothing(store):
@@ -328,27 +359,21 @@ async def test_merge_never_raises_and_a_failed_creation_is_a_failed_result(store
     json.dumps(res)
 
 
-async def test_merge_reports_only_the_sources_it_superseded(store, monkeypatch):
+async def test_a_backend_failure_on_one_source_fails_the_whole_merge_and_writes_nothing(store):
+    # Reviewer edit (facts S2, D3): was test_merge_reports_only_the_sources_it_superseded, which pinned a partial merge
+    # (source a superseded, b failed). The merge is one transaction now: the backend failing on b writes nothing.
     a = await create(store, "likes tea")
     b = await create(store, "likes green tea")
-    b_before = copy.deepcopy(store.docs[b])
-    real_update = store.repo.update_fact
-
-    async def update_unless_b(fact):
-        if fact.id == b:
-            raise RuntimeError("backend down")
-        await real_update(fact)
-
-    monkeypatch.setattr(store.repo, "update_fact", update_unless_b)
+    before = snapshot(store)
+    store.db.raise_on_txn_read(FACTS, b, RuntimeError("backend down"))
     res = await store.adapter.merge_facts([a, b], "likes tea daily", meta())
-    assert res["status"] == "merged" and res["old_fact_ids"] == [a]
-    assert store.docs[b] == b_before and store.docs[a]["state"] == "superseded"
+    assert res["status"] == "failed" and res["old_fact_ids"] == [] and res["new_fact_id"] is None
+    assert "backend down" in res["message"]
+    assert store.docs == before
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
-    "known defect: merge_facts supersedes the sources before the merged fact is created, so a failed creation leaves "
-    "them superseded — src/adapters/fact_management_adapter.py:376-430 (facts S2; P4 T2 arbiter defect 1)"))
 async def test_a_failed_merge_leaves_every_source_unchanged(store):
+    # Reviewer edit (facts S2, D3): the strict xfail marker is removed; the defect is fixed by the one-transaction merge.
     a = await create(store, "likes tea")
     b = await create(store, "likes green tea")
     before = snapshot(store)
@@ -366,14 +391,16 @@ async def test_merge_needs_only_account_and_user_in_the_metadata(store):
     assert new["domain"] is None and new["temporal_class"] is None and new["context_priority"] == "medium"
 
 
-async def test_merge_twice_supersedes_again_and_creates_another_merged_fact(store):
+async def test_merge_twice_fails_the_second_time_naming_the_first_merged_fact(store):
+    # Reviewer edit (facts S2, D8 + delta D-5): was test_merge_twice_supersedes_again_and_creates_another_merged_fact.
+    # The source resolves forward into the first merged fact's lineage, so the second merge fails and writes nothing.
     a = await create(store, "likes tea")
     first = await store.adapter.merge_facts([a], "likes tea daily", meta())
-    valid_to = store.docs[a]["valid_to"]
+    before = snapshot(store)
     second = await store.adapter.merge_facts([a], "likes tea daily", meta())
-    assert second["status"] == "merged" and second["old_fact_ids"] == [a]
-    assert second["new_fact_id"] != first["new_fact_id"] and len(store.docs) == 3
-    assert store.docs[a]["state"] == "superseded" and store.docs[a]["valid_to"] > valid_to
+    assert second["status"] == "failed" and second["old_fact_ids"] == [] and second["new_fact_id"] is None
+    assert second["message"] == f"fact {a} was merged into {first['new_fact_id']}; search again"
+    assert store.docs == before and len(store.docs) == 2
 
 
 # --------------------------------------------------------------------------------------- search_existing_facts
