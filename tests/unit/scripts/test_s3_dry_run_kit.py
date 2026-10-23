@@ -4,7 +4,9 @@ The live store is the evaluating Firestore fake behind the real repository; the 
 `FactManagementAdapter` and the real agent loop run on top of it with a scripted LLM boundary. Every assertion reads
 stored state (the live documents, the overlay's reads, the report), not a call.
 """
+import asyncio
 import copy
+import hashlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,9 +22,13 @@ from scripts.consolidation.s3_dry_run_kit import (
     BudgetExceeded,
     CostMeter,
     DryRunKit,
+    KitNotPrepared,
+    LedgerBusy,
     NoWriteFactRepository,
     NoWriteIndexedEmails,
+    PathOutsideMemory,
     RecordingCounters,
+    SnapshotTokenError,
     SnapshotTokenOverlay,
     StatsSink,
     UnpricedModel,
@@ -36,9 +42,14 @@ from src.config.environment import EnvironmentConfig
 from src.domain.entities import FactState
 from src.domain.exceptions import FactResolutionError, FactWriteConflict, InPlaceFieldRefused
 from src.domain.fact_lifecycle import CONSOLIDATION_ACCEPTS
+from src.domain.agent import AgentIntent, AgentMessage
 from src.domain.llm import LLMResponse, ToolCall, UsageMetadata
+from src.domain.prompt_v3.profile_slot import ProfileToken
+from src.domain.prompt_v3.slot import OwnerType
+from src.domain.request_context import RequestContext
 from src.domain.prompt_v3.token import Token, TokenCategory, TokenClass, TokenId
 from src.ports.prompt_v3.token_repository import TokenRepository
+from src.ports.repository import FactRepository
 from src.ports.search_enrichment_port import SearchEnrichmentPort
 from src.ports.security_port import RiskLevel, SecurityPort, TrustZone, ValidationResult
 from tests.support.fact_kit import ACC, USER, put_raw
@@ -57,6 +68,39 @@ def store():
     return FactStore(indexes=INDEXES_FILE)
 
 
+@pytest.fixture(autouse=True)
+def memory_dir(tmp_path, monkeypatch):
+    """The kit writes only under scripts/memory; the tests point that at their own temp directory."""
+    monkeypatch.setattr(kit_module, "MEMORY_DIR", tmp_path)
+    return tmp_path
+
+
+_LIVE_WRITES = frozenset({
+    "add_fact", "add_fact_if_unique", "write_superseding", "update_fact_fields", "invalidate_fact", "stale_due_fact",
+    "refresh_biographical_context_cache",
+})
+assert _LIVE_WRITES <= FactRepository.__abstractmethods__
+
+
+def _forwarded(name):
+    async def read(self, *args, **kwargs):
+        await asyncio.sleep(0)                       # a real store yields on every read
+        return await getattr(self._real, name)(*args, **kwargs)
+    return read
+
+
+def _refused(name):
+    async def write(self, *args, **kwargs):
+        raise AssertionError(f"a live write reached the real repository: {name}")
+    return write
+
+
+GuardedRepo = type("GuardedRepo", (FactRepository,), {
+    "__init__": lambda self, real: setattr(self, "_real", real),
+    **{n: (_refused(n) if n in _LIVE_WRITES else _forwarded(n)) for n in FactRepository.__abstractmethods__},
+})
+
+
 def meta(**over: Any) -> Dict[str, Any]:
     base = {
         "account_id": ACC, "user_id": USER, "domain": "biographical", "temporal_class": "stable",
@@ -73,12 +117,12 @@ async def seed(store: FactStore, text: str, **over: Any) -> str:
 
 
 def live_state(store: FactStore):
-    """The raw live documents and their change stamps: what 'byte-identical' means for the fake."""
-    return copy.deepcopy(store.docs), dict(store.db.collection(FACTS).versions)
+    """Every collection of the fake with its raw documents and change stamps: what 'byte-identical' means."""
+    return {name: (copy.deepcopy(col.docs), dict(col.versions)) for name, col in store.db.cols.items() if col.docs}
 
 
 def kit_adapter(store: FactStore):
-    repo = NoWriteFactRepository(store.repo)
+    repo = NoWriteFactRepository(GuardedRepo(store.repo))
     adapter = FactManagementAdapter(repo, store.embedder, store.write, AsyncMock(spec=SearchEnrichmentPort))
     return repo, adapter
 
@@ -273,9 +317,9 @@ async def test_mark_consolidated_writes_nothing_and_the_live_emails_are_still_un
 # ----------------------------------------------------------------------------------------------- owner zone
 
 
-async def test_the_owner_zone_is_resolved_like_the_service_and_lands_in_the_context_and_the_write_contexts():
+async def test_the_owner_zone_is_resolved_like_the_service_and_lands_in_the_context_and_the_write_contexts(tmp_path):
     accounts, users = Accounts(account(**{OWNER: "owner"})), Users(profile(OWNER, tz="Asia/Tokyo"))
-    kit = DryRunKit(ledger_path=Path("unused.json"))
+    kit = DryRunKit(ledger_path=tmp_path / "spend.json")
 
     assert await kit.resolve_timezone(Accounts(), users, ACCOUNT) == "UTC"          # unknown account
     assert await kit.resolve_timezone(accounts, users, ACCOUNT) == "Asia/Tokyo"
@@ -392,6 +436,7 @@ async def test_the_meter_aborts_at_the_cap_and_keeps_the_ledger_across_runs(tmp_
         await first._call_llm(request)           # $0.03 spent + a $0.03 call would pass $0.05
     assert made == [1]
     assert run_one.aborted and run_one.spent_usd == pytest.approx(0.03)
+    run_one.close()
 
     second, _ = priced_agent(made)
     run_two = CostMeter(ledger, budget_usd=0.05)  # a new process reads the ledger
@@ -399,6 +444,7 @@ async def test_the_meter_aborts_at_the_cap_and_keeps_the_ledger_across_runs(tmp_
     with pytest.raises(BudgetExceeded):
         await second._call_llm(request)
     assert len(made) == 1 and run_two.spent_usd == pytest.approx(0.03)
+    run_two.close()
 
     third, _ = priced_agent(made)
     run_three = CostMeter(ledger, budget_usd=1.0)
@@ -410,6 +456,7 @@ async def test_the_meter_aborts_at_the_cap_and_keeps_the_ledger_across_runs(tmp_
     assert len(data["runs"]) == 2 and [r["calls"] for r in data["runs"]] == [1, 1]
     assert data["by_model"][SONNET]["calls"] == 2
     assert run_three.run_usd == pytest.approx(0.03) and not run_three.aborted
+    run_three.close()
 
 
 async def test_the_meter_stops_a_model_without_a_price_before_the_call(tmp_path):
@@ -473,15 +520,45 @@ def scripted(*responses: LLMResponse):
     return script
 
 
-def kit_agent(store: FactStore, tmp_path: Path, *responses: LLMResponse):
-    agent = make_agent(store, scripted(*responses))
+class FakeProfiles:
+    """The agent-profile store: the consolidation profile lists `listed` tokens; `overrides` maps an owner level to
+    {token id: ProfileToken}."""
+
+    def __init__(self, listed=S3_TOKEN_IDS, non_overridable=True, overrides=None):
+        self.tokens = {tid: ProfileToken.from_dict(tid, {"order": 10 * i, "non_overridable": non_overridable})
+                       for i, tid in enumerate(listed, 1)}
+        self.overrides = overrides or {}
+
+    async def get_agent_profile(self, agent_type):
+        assert agent_type == "consolidation"
+        return SimpleNamespace(blueprint_id="consolidation_agent_v1", tokens=self.tokens)
+
+    async def get_override_tokens(self, level, owner_id):
+        return self.overrides.get(level, {})
+
+
+def assembly(real_tokens=None, **profile_options):
+    service = SimpleNamespace(token_repo=real_tokens or HeldTokens(held("CONSOLIDATION_OUTPUT_SPEC")),
+                              security_port=AllowAll(), profile_repo=FakeProfiles(**profile_options), cleared=0)
+    service.invalidate_cache = lambda: setattr(service, "cleared", service.cleared + 1)
+    return service
+
+
+async def kit_agent(store: FactStore, tmp_path: Path, *responses: LLMResponse, email_repo=None, live_repo=None,
+                    snapshot_dir=None, service=None, prepare: bool = True):
+    agent = make_agent(store, scripted(*responses), email_repo=email_repo)
     agent.model_name = SONNET
+    agent.prompt_builder.assembly_service = service or assembly()
+    if live_repo is not None:
+        agent._repo = live_repo
     live_db = EvalDb()
     agent._lifecycle_counters = FirestoreFactLifecycleCounters(live_db, EnvironmentConfig())
     agent._live_counters_db = live_db
-    kit = DryRunKit(ledger_path=tmp_path / "spend.json", snapshot_dir=kit_module.SNAPSHOT_DIR)
+    kit = DryRunKit(ledger_path=tmp_path / "spend.json", snapshot_dir=snapshot_dir or kit_module.SNAPSHOT_DIR)
     kit.timezone = "UTC"
     kit.install(agent)
+    if prepare:
+        await kit.prepare(USER, ACC)
     return agent, kit
 
 
@@ -494,7 +571,7 @@ async def run_pass(agent, label: str = "stage1", timezone_name: str = "UTC", mod
 
 async def test_a_pass_with_an_expiry_error_leaves_the_live_counters_untouched_and_the_recording_fake_holds_it(store, tmp_path):
     missing = metered(calls(create("walks daily", expiry=OMIT)))
-    agent, kit = kit_agent(store, tmp_path, missing, answered())
+    agent, kit = await kit_agent(store, tmp_path, missing, answered())
 
     ops = await run_pass(agent)
 
@@ -518,7 +595,7 @@ async def test_the_pass_writes_into_the_overlay_only_and_the_report_has_one_row_
         create("hotel booked", reported_date="2026-10-22T12:00:00+02:00", expiry=horizon(30)),
         ToolCall(name="update_fact", args={"fact_id": seeded, "updates": {"state": "archived", "expiry": horizon(9)}}),
     ))
-    agent, kit = kit_agent(store, tmp_path, stage1, answered())
+    agent, kit = await kit_agent(store, tmp_path, stage1, answered())
 
     await run_pass(agent)
 
@@ -539,7 +616,7 @@ async def test_the_pass_writes_into_the_overlay_only_and_the_report_has_one_row_
 
 
 async def test_a_failing_store_shows_as_a_failed_row_with_nothing_stored(store, tmp_path):
-    agent, kit = kit_agent(store, tmp_path, answered())
+    agent, kit = await kit_agent(store, tmp_path, answered())
 
     async def broken(*args, **kwargs):
         raise RuntimeError("boom")
@@ -560,7 +637,7 @@ async def test_the_report_counts_naive_reported_dates_per_pass_and_in_total_over
         create("walks daily", reported_date="2026-10-21T08:00", expiry=EXPIRY_NONE),
         ToolCall(name="update_fact", args={"fact_id": compound, "updates": {"reported_date": "2026-10-20"}}),
     ))
-    agent, kit = kit_agent(store, tmp_path, first, answered(), second, answered())
+    agent, kit = await kit_agent(store, tmp_path, first, answered(), second, answered())
 
     await run_pass(agent, "stage1")
     await run_pass(agent, "stage2a", model_dates=False)
@@ -576,8 +653,7 @@ async def test_the_report_counts_naive_reported_dates_per_pass_and_in_total_over
 
 
 async def test_install_puts_the_snapshot_overlay_on_the_prompt_builder_and_the_store_under_the_agent(store, tmp_path):
-    service = SimpleNamespace(token_repo=HeldTokens(held("CONSOLIDATION_TOOLS")), security_port=AllowAll(), cleared=0)
-    service.invalidate_cache = lambda: setattr(service, "cleared", service.cleared + 1)
+    service = assembly(HeldTokens(held("CONSOLIDATION_TOOLS")))
     agent = make_agent(store, scripted(answered()))
     agent.model_name = SONNET
     agent.prompt_builder.assembly_service = service
@@ -595,3 +671,267 @@ async def test_install_puts_the_snapshot_overlay_on_the_prompt_builder_and_the_s
         kit.install(agent)
     await agent._repo.refresh_biographical_context_cache(ACC)
     assert kit.repo.writes == [{"kind": "refresh_biographical_context_cache"}]
+
+
+# ----------------------------------------------------------------------------------------------- M1: no live write service
+
+
+async def test_a_v2_agent_is_refused_and_no_write_service_under_a_v3_agent_holds_the_live_repository(store, tmp_path):
+    old = make_agent(store, scripted(answered()))
+    old.prompt_version = "v2"
+    old.prompt_builder.assembly_service = assembly()
+    kit = DryRunKit(ledger_path=tmp_path / "old.json")
+
+    with pytest.raises(ValueError, match="v3"):
+        kit.install(old)
+    assert old._repo is store.repo and not kit._installed                         # nothing was swapped
+
+    agent, kit = await kit_agent(store, tmp_path, answered())
+    assert agent._fact_write_service._repo is kit.repo
+    assert agent._fact_management._inner._fact_write_service._repo is kit.repo
+    assert agent._fact_management._inner._repo is kit.repo
+
+
+async def test_the_write_service_under_the_agent_cannot_reach_the_live_store(store, tmp_path):
+    guarded = GuardedRepo(store.repo)
+    agent, kit = await kit_agent(store, tmp_path, answered(), live_repo=guarded)
+    before = live_state(store)
+    fact = {"content": "walks daily", "tags": ["t"], "type": "event", "domain": "biographical",
+            "temporal_class": "stable", "context_priority": "medium", "metadata": {}, "expiry": EXPIRY_NONE}
+
+    saved, skipped, ids = await agent._fact_write_service.add_facts_batch(ACC, USER, [fact])       # the v2 path's write
+
+    assert (saved, skipped) == (1, 0) and ids == []
+    assert live_state(store) == before
+    assert [w["kind"] for w in kit.repo.writes] == ["add_fact_if_unique"]
+
+
+# ----------------------------------------------------------------------------------------------- M2: the snapshot tokens
+
+
+async def test_install_refuses_an_agent_without_an_assembly_service(store, tmp_path):
+    agent = make_agent(store, scripted(answered()))
+    agent.prompt_builder.assembly_service = None
+
+    with pytest.raises(ValueError, match="assembly"):
+        DryRunKit(ledger_path=tmp_path / "spend.json").install(agent)
+    assert agent._repo is store.repo
+
+
+async def test_a_missing_snapshot_file_fails_before_any_model_call(store, tmp_path):
+    agent, kit = await kit_agent(store, tmp_path, answered(), snapshot_dir=tmp_path / "empty", prepare=False)
+
+    with pytest.raises(SnapshotTokenError, match="CONSOLIDATION_COGNITIVE_PROCESS"):
+        await kit.prepare(USER, ACC)
+    with pytest.raises(KitNotPrepared):
+        await run_pass(agent)
+
+    assert agent.requests == [] and kit.meter.calls == 0
+
+
+async def test_a_token_the_security_port_refuses_fails_prepare_instead_of_dropping_from_the_prompt(store, tmp_path):
+    class Refusing(AllowAll):
+        async def validate(self, text, context, zone=TrustZone.UNTRUSTED):
+            return ValidationResult(sanitized_text=text, risk_level=RiskLevel.CRITICAL, risk_score=1.0,
+                                    patterns_detected=["x"], action_taken="blocked", metadata={})
+
+    service = assembly()
+    service.security_port = Refusing()
+    agent, kit = await kit_agent(store, tmp_path, answered(), service=service, prepare=False)
+
+    with pytest.raises(SnapshotTokenError):
+        await kit.prepare(USER, ACC)
+
+
+async def test_a_profile_that_does_not_list_an_s3_token_is_refused(store, tmp_path):
+    service = assembly(listed=[t for t in S3_TOKEN_IDS if t != "CONSOLIDATION_TOOLS"])
+    agent, kit = await kit_agent(store, tmp_path, answered(), service=service, prepare=False)
+
+    with pytest.raises(SnapshotTokenError, match="CONSOLIDATION_TOOLS"):
+        await kit.prepare(USER, ACC)
+
+
+def override_token() -> Token:
+    taxonomy = kit_module._serializer().token_from_file(
+        (kit_module.SNAPSHOT_DIR / "tokens" / "system" / "CONSOLIDATION_TAXONOMY.groovy").read_text(encoding="utf-8"))
+    return Token(id=TokenId("MY_TAXONOMY"), category=TokenCategory(taxonomy["category"]),
+                 class_=TokenClass(taxonomy["class"]), content="mine", metadata={})
+
+
+async def test_an_override_that_would_replace_a_snapshot_token_is_refused(store, tmp_path):
+    service = assembly(HeldTokens(held("CONSOLIDATION_OUTPUT_SPEC"), override_token()), non_overridable=False,
+                       overrides={OwnerType.USER: {"MY_TAXONOMY": ProfileToken.from_dict("MY_TAXONOMY", {"order": 10})}})
+    agent, kit = await kit_agent(store, tmp_path, answered(), service=service, prepare=False)
+
+    with pytest.raises(SnapshotTokenError, match="user override .*MY_TAXONOMY.*CONSOLIDATION_TAXONOMY"):
+        await kit.prepare(USER, ACC)
+    with pytest.raises(KitNotPrepared):
+        await run_pass(agent)
+
+
+async def test_an_override_the_profile_blocks_is_recorded_not_refused(store, tmp_path):
+    service = assembly(HeldTokens(held("CONSOLIDATION_OUTPUT_SPEC"), override_token()), non_overridable=True,
+                       overrides={OwnerType.ACCOUNT: {"MY_TAXONOMY": ProfileToken.from_dict("MY_TAXONOMY", {"order": 10})}})
+    agent, kit = await kit_agent(store, tmp_path, answered(), service=service)
+
+    assert kit.report()["overrides_blocked"] == [
+        {"level": "account", "override": "MY_TAXONOMY", "replaces": "CONSOLIDATION_TAXONOMY"}]
+
+
+async def test_the_report_lists_the_five_served_tokens_with_the_hash_of_their_snapshot_body(store, tmp_path):
+    agent, kit = await kit_agent(store, tmp_path, answered())
+
+    served = kit.report()["served_tokens"]
+
+    assert [t["id"] for t in served] == list(S3_TOKEN_IDS)
+    for entry in served:
+        assert entry["sha256"] == hashlib.sha256(snapshot_body(entry["id"]).encode("utf-8")).hexdigest()
+
+
+# ----------------------------------------------------------------------------------------------- M3: one write at a time
+
+
+async def test_two_concurrent_writes_to_the_same_fact_one_wins_and_the_other_conflicts(store):
+    first = await seed(store, "alpha fact")
+    repo, _ = kit_adapter(store)
+    stored = await repo.resolve_current(first, ACC, CONSOLIDATION_ACCEPTS)
+    now = datetime(2026, 10, 3, tzinfo=timezone.utc)
+
+    results = await asyncio.gather(
+        repo.write_superseding(stored.fact.model_copy(update={"id": "v-a", "version": 2}), [stored], now, actor="a"),
+        repo.write_superseding(stored.fact.model_copy(update={"id": "v-b", "version": 2}), [stored], now, actor="b"),
+        return_exceptions=True,
+    )
+
+    assert sorted(type(r).__name__ for r in results) == ["FactWriteConflict", "NoneType"]
+    winner = "v-a" if results[0] is None else "v-b"
+    assert (await repo.get_fact_by_id(first)).superseded_by == winner
+    assert [await repo.get_fact_by_id(v) is not None for v in ("v-a", "v-b")].count(True) == 1
+    assert [w["new_id"] for w in repo.writes] == [winner]
+
+
+async def test_a_content_update_and_a_merge_of_the_same_fact_in_one_turn_cannot_both_close_it(store):
+    first, second = await seed(store, "alpha fact"), await seed(store, "beta fact")
+    repo, adapter = kit_adapter(store)
+    context = ctx(actor="stage1", timezone="UTC")
+
+    updated, merged = await asyncio.gather(
+        adapter.update_fact(first, {"content": "alpha, newer", "expiry": EXPIRY_NONE}, ACC, context=context),
+        adapter.merge_facts([first, second], "alpha and beta", meta(), context=context),
+    )
+
+    closing = [r for r in (updated, merged) if r["status"] in ("updated", "merged")]
+    assert len(closing) >= 1
+    successors = {w["new_id"] for w in repo.writes if first in w["replaced"]}
+    assert len(successors) == 1                                    # one successor of the fact, as a transaction would leave
+    assert (await repo.get_fact_by_id(first)).superseded_by in successors
+
+
+# ----------------------------------------------------------------------------------------------- T1, T2, L4: emails and the live store
+
+
+def email_store():
+    store = FactStore()
+    env = SimpleNamespace(domain_email_facts_collection="eval_email_facts", email_indexing_state_collection="eval_email_state")
+    return store, FirestoreIndexedEmailRepository(store.db, env)
+
+
+async def run_email_pass(agent, batches: int, size: int):
+    message = AgentMessage(
+        task_id="t", sender="s", recipient="r", intent=AgentIntent.DELEGATE,
+        payload={"task": "consolidate_email", "number_of_batches": batches, "batch_size": size},
+        context={"user_id": USER, "owner_timezone": "UTC"},
+    )
+    with RequestContext(user_id=USER, account_id=ACC):
+        return await agent.execute(message)
+
+
+async def test_the_email_pass_on_the_kit_marks_nothing_live_and_reads_each_email_once(tmp_path):
+    store, live_emails = email_store()
+    await live_emails.save_batch([email("e1", datetime(2026, 10, 10, 9, 0), datetime(2026, 10, 13, 1)),
+                                  email("e2", datetime(2026, 10, 12, 9, 0), datetime(2026, 10, 13, 2))])
+    before = live_state(store)
+    agent, kit = await kit_agent(
+        store, tmp_path, metered(calls(create("flight booked"))), answered(), metered(calls(create("hotel booked"))),
+        answered(), email_repo=live_emails)
+
+    response = await run_email_pass(agent, batches=3, size=1)
+
+    assert response.status.value == "success" and response.result["batches_processed"] == 2     # e1, then e2, then none
+    assert live_state(store) == before                                                          # no mark, no fact, live
+    assert [e.email_id for e in await live_emails.get_unconsolidated_batch(USER)] == ["e1", "e2"]
+    assert [(w["kind"], w["email_ids"]) for w in kit.emails.writes] == [("mark_consolidated", ["e1"]), ("mark_consolidated", ["e2"])]
+    assert kit.report()["email_writes"] == {"mark_consolidated": 2}
+    assert [r["pass"] for r in kit.rows] == ["email", "email"] and [p["pass"] for p in kit.passes] == ["email", "email"]
+
+
+async def test_marked_emails_are_hidden_from_later_reads_of_the_same_run():
+    store, live_emails = email_store()
+    await live_emails.save_batch([email(f"e{i}", datetime(2026, 10, 10, i), datetime(2026, 10, 13, i)) for i in range(1, 4)])
+    emails = NoWriteIndexedEmails(live_emails)
+
+    first = await emails.get_unconsolidated_batch(USER, limit=2)
+    await emails.mark_consolidated(USER, [e.email_id for e in first], datetime(2026, 10, 25, tzinfo=timezone.utc))
+    second = await emails.get_unconsolidated_batch(USER, limit=2)
+
+    assert [e.email_id for e in first] == ["e1", "e2"] and [e.email_id for e in second] == ["e3"]
+    assert len(await live_emails.get_unconsolidated_batch(USER)) == 3
+    assert await emails.get_unconsolidated_batch("another-user") == []
+
+
+async def test_a_cluster_pass_that_refreshes_the_biographical_cache_writes_nothing_live(store, tmp_path):
+    await seed(store, "walks daily and reads at night, and cooks on sundays")
+    await seed(store, "cooks on sundays")
+    before = live_state(store)
+    agent, kit = await kit_agent(store, tmp_path, metered(calls(create("walks daily", expiry=EXPIRY_NONE))), answered(),
+                                 live_repo=GuardedRepo(store.repo))
+    message = AgentMessage(task_id="t", sender="s", recipient="r", intent=AgentIntent.DELEGATE,
+                           payload={"task": "consolidate_cluster", "limit": 5},
+                           context={"user_id": USER, "owner_timezone": "UTC"})
+
+    with RequestContext(user_id=USER, account_id=ACC):
+        response = await agent.execute(message)
+
+    assert response.status.value == "success", response.error
+    assert live_state(store) == before
+    assert [w["kind"] for w in kit.repo.writes] == ["add_fact", "refresh_biographical_context_cache"]
+    assert [(r["pass"], r["status"]) for r in kit.rows] == [("cluster", "created")]
+
+
+# ----------------------------------------------------------------------------------------------- L2, L3: the ledger and the paths
+
+
+def test_a_second_run_cannot_start_while_the_ledger_is_held_and_can_after_it_is_released(tmp_path):
+    ledger = tmp_path / "spend.json"
+    first = CostMeter(ledger)
+
+    with pytest.raises(LedgerBusy, match="one bench at a time"):
+        CostMeter(ledger)
+    with pytest.raises(LedgerBusy):
+        DryRunKit(ledger_path=ledger)
+    first.close()
+    DryRunKit(ledger_path=ledger).close()
+
+
+def test_the_kit_refuses_any_path_outside_scripts_memory(tmp_path, monkeypatch):
+    real_memory = kit_module.PROJECT_ROOT / "scripts" / "memory"
+    monkeypatch.setattr(kit_module, "MEMORY_DIR", real_memory)
+
+    with pytest.raises(PathOutsideMemory):
+        CostMeter(tmp_path / "spend.json")
+    with pytest.raises(PathOutsideMemory):
+        CostMeter(real_memory / ".." / "spend.json")                     # an escape through ..
+    outside = DryRunKit.__new__(DryRunKit)
+    outside.meter = SimpleNamespace(close=lambda: None)
+    with pytest.raises(PathOutsideMemory):
+        DryRunKit.write_report(outside, tmp_path / "report.json")
+    assert not (tmp_path / "report.json").exists() and not (tmp_path / "spend.json.lock").exists()
+
+
+def test_a_report_path_inside_the_memory_directory_is_written(tmp_path):
+    kit = DryRunKit(ledger_path=tmp_path / "spend.json")
+
+    written = kit.write_report(tmp_path / "nested" / "report.json")
+
+    assert json.loads(written.read_text(encoding="utf-8"))["served_tokens"] == []
+    kit.close()
