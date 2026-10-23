@@ -239,8 +239,8 @@ async def main():
 
                 async def _voice_summary_consumer(*, call_id, user_id, account_id, transcript_text, turns):
                     # LelikSummarizerAgent-backed consumer (Task 15). Reuses
-                    # companion_extractor_runner (constructed above, "Initializing
-                    # Companion Extraction pipeline") the same way tutor batches do,
+                    # companion_extractor_runner (built by build_application_graph,
+                    # "Initializing Companion Extraction pipeline") the same way tutor batches do,
                     # just with companion_type="voice" — turns are already
                     # {"request_text", "response_text", ...} dicts (see
                     # HttpCallControlPlaneAdapter.submit_transcript), the same
