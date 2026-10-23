@@ -42,6 +42,12 @@ Usage:
     python scripts/consolidation/test_directive_review_dryrun.py --runs 3
     python scripts/consolidation/test_directive_review_dryrun.py --prompt new --runs 3
     python scripts/consolidation/test_directive_review_dryrun.py --prompt both --runs 3
+    python scripts/consolidation/test_directive_review_dryrun.py --s3-kit --runs 2
+
+`--s3-kit` (Facts S3, plan T12b) runs the production Stage 2b (`_review_directives`, pass label and actor `stage2b`, the
+owner's zone) on the dry-run kit. Every run starts from the live rulebook again (the kit forgets its own writes between
+runs), so the runs stay comparable. The candidate variants (`--prompt new|both`, `--stage1 new`) are not part of the S3
+dry run and are refused with it. Without the flag the bench behaves as it always did.
 
 Pre-conditions:
     .env must have: DEV_USER_ID, DEV_ACCOUNT_ID, FIRESTORE_DATABASE + provider keys.
@@ -56,15 +62,12 @@ import sys
 import time
 import uuid
 from collections import Counter
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-
-from dotenv import load_dotenv
-
-load_dotenv()
 
 from google.cloud import firestore
 
@@ -86,6 +89,14 @@ from src.ports.fact_management_port import FactManagementPort
 # consolidation system prompt, so Stage 2b receives it too — patching it here changes what
 # both stages see, without writing to development_prompt_components.
 from scripts.consolidation.test_stage1_classification_dryrun import patch_prompt
+from scripts.consolidation.s3_bench_support import (
+    add_s3_arguments,
+    biographical_facts,
+    build_agent,
+    kit_session,
+    load_env,
+    print_rows,
+)
 
 
 def pin_provider(agent, container, config, provider_name: str,
@@ -533,6 +544,134 @@ async def bench_prompt(
     return {"variant": label, "runs": per_run}
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# S3 kit mode: the production Stage 2b on the dry-run kit
+# ─────────────────────────────────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class ReviewCall:
+    """What one Stage 2b run is called with: the ids, the biographical facts and the `stage2b` write context."""
+
+    user_id: str
+    account_id: str
+    biographical_facts: List[Dict[str, Any]]
+    write_context: FactWriteContext
+
+
+def build_review_call(kit, bio_facts: List[Dict], user_id: str, account_id: str) -> ReviewCall:
+    """The S3 bench's call: `_review_directives` with the `stage2b` context (actor `stage2b`) in the owner's zone."""
+    return ReviewCall(user_id, account_id, bio_facts, kit.write_context("stage2b"))
+
+
+class OperationRecorder(FactManagementPort):
+    """Passes every call to the kit's port and keeps the operations that were written, in the shape `classify_run` reads."""
+
+    def __init__(self, inner: FactManagementPort) -> None:
+        self._inner = inner
+        self.operations: List[Dict[str, Any]] = []
+
+    async def search_existing_facts(
+        self, keywords: List[str], primary_query: str, alternative_query: str = "", limit: int = 20, *, timezone: str
+    ) -> List[Dict[str, Any]]:
+        return await self._inner.search_existing_facts(keywords, primary_query, alternative_query, limit, timezone=timezone)
+
+    async def create_fact(self, content: str, metadata: Dict[str, Any], *, context: FactWriteContext) -> Dict[str, Any]:
+        result = await self._inner.create_fact(content, metadata, context=context)
+        if result.get("status") == "created":
+            self.operations.append({
+                "action": "CREATE", "fact_id": result.get("fact_id"), "content": content,
+                "domain": str(metadata.get("domain", "?")).lower(),
+            })
+        return result
+
+    async def update_fact(
+        self, fact_id: str, updates: Dict[str, Any], account_id: str, *, context: FactWriteContext
+    ) -> Dict[str, Any]:
+        result = await self._inner.update_fact(fact_id, updates, account_id, context=context)
+        if result.get("status") == "updated":
+            state = str(updates.get("state", "")).lower()
+            self.operations.append({
+                "action": "INVALIDATE" if state == "invalidated" else "UPDATE", "fact_id": fact_id,
+                "content": updates.get("content", ""), "state": state,
+            })
+        return result
+
+    async def merge_facts(
+        self, fact_ids: List[str], merged_content: str, metadata: Dict[str, Any], *, context: FactWriteContext
+    ) -> Dict[str, Any]:
+        result = await self._inner.merge_facts(fact_ids, merged_content, metadata, context=context)
+        if result.get("status") == "merged":
+            self.operations.append({
+                "action": "MERGE", "fact_id": result.get("new_fact_id"), "old_ids": fact_ids, "content": merged_content,
+            })
+        return result
+
+
+def print_kit_run(rulebook: Dict[str, str], verdicts: Dict[str, Dict], elapsed: float, cost_usd: float) -> None:
+    counts = Counter(v["verdict"] for v in verdicts.values())
+    print(f"\n    ── run summary: {elapsed:.1f}s · ${cost_usd:.2f}")
+    print("       " + "  ".join(
+        f"{k}:{counts.get(k, 0)}" for k in ["UNTOUCHED", "REWRITTEN", "DEMOTED", "INVALIDATED", "MERGED"]
+    ))
+    for fid, verdict in verdicts.items():
+        if verdict["verdict"] != "UNTOUCHED":
+            print(f"       [{verdict['verdict']:11}] {fid[:8]}")
+
+
+async def main_s3_kit(runs: int, provider: str, tier: str, args) -> None:
+    print(f"\n{'='*70}\nSTAGE 2b DIRECTIVE REVIEW ON THE S3 KIT (no write reaches the live store)\n{'='*70}")
+    user_id, account_id = args.user_id, args.account_id
+    handles = await build_agent(user_id)
+    agent = handles.agent
+    if provider:
+        profile = await handles.user_repo.get_user(user_id)
+        if not profile:
+            print(f"  ERROR: user {user_id} not found — cannot pin a provider.")
+            return
+        print(f"  provider pinned: {provider} @ {tier} → {pin_provider(agent, handles.container, profile.config, provider, PerformanceTier(tier))}")
+    run_env = {
+        "provider": getattr(getattr(agent, "_agent_execution_context", None), "provider_name", None),
+        "model": getattr(agent, "model_name", None),
+        "thinking": getattr(agent, "THINKING_EFFORT", None),
+    }
+    print(f"  model: {run_env['model']}  |  provider: {run_env['provider']}  |  thinking: {run_env['thinking']}")
+    bio_facts = await biographical_facts(handles, account_id)
+
+    async with kit_session(handles, args, user_id, account_id, "directive_review") as (kit, extra):
+        directives = await agent._repo.get_active_facts_ordered(
+            account_id, domain=FactDomain.AGENT_DIRECTIVE.value, limit=ConsolidationAgent.DIRECTIVE_REVIEW_FETCH_LIMIT,
+        )
+        if not directives:
+            print("  rulebook is empty — Stage 2b is a no-op. Nothing to bench.")
+            return
+        rulebook = {d.id: d.text for d in directives}
+        print(f"\n  current rulebook: {len(rulebook)} directives (hard cap {ConsolidationAgent.DIRECTIVE_HARD_CAP})")
+        extra.update({"environment": run_env, "rulebook_size": len(rulebook), "runs": []})
+
+        run_verdicts: List[Dict[str, Dict]] = []
+        for index in range(runs):
+            kit.new_run()
+            call = build_review_call(kit, bio_facts, user_id, account_id)
+            recorder = OperationRecorder(agent._fact_management)
+            first_pass, first_row, spent = len(kit.passes), len(kit.rows), kit.meter.run_usd
+            print(f"\n  ── run {index + 1} ──")
+            started = time.time()
+            async with RequestContext(user_id=user_id, account_id=account_id):
+                await agent._review_directives(
+                    call.user_id, call.account_id, call.biographical_facts, call.write_context, fact_management=recorder,
+                )
+            elapsed = time.time() - started
+            verdicts = classify_run(rulebook, recorder.operations)
+            print_kit_run(rulebook, verdicts, elapsed, kit.meter.run_usd - spent)
+            print_rows(kit.rows[first_row:])
+            run_verdicts.append(verdicts)
+            extra["runs"].append({
+                "run": index + 1, "elapsed_s": round(elapsed, 1), "passes": [first_pass, len(kit.passes)],
+                "rows": [first_row, len(kit.rows)], "verdicts": {fid: v["verdict"] for fid, v in verdicts.items()},
+            })
+        print_churn_report(rulebook, run_verdicts)
+
+
 async def main(runs: int, prompt: str, provider: str, tier: str, user_id: str, account_id: str) -> None:
     print(f"\n{'='*70}")
     print("STAGE 2b DIRECTIVE REVIEW — DRY-RUN (nothing is written)")
@@ -660,6 +799,7 @@ async def main(runs: int, prompt: str, provider: str, tier: str, user_id: str, a
 
 
 if __name__ == "__main__":
+    load_env()
     parser = argparse.ArgumentParser(description="Stage 2b directive-review dry-run bench")
     parser.add_argument("--runs", type=int, default=1,
                         help="passes per prompt variant over the SAME input (2+ measures churn)")
@@ -675,11 +815,17 @@ if __name__ == "__main__":
                         help="tier used with --provider (claude ultra = opus)")
     parser.add_argument("--user-id", default=os.getenv("DEV_USER_ID"))
     parser.add_argument("--account-id", default=os.getenv("DEV_ACCOUNT_ID"))
+    add_s3_arguments(parser)
     args = parser.parse_args()
 
     if not args.user_id or not args.account_id:
         print("ERROR: set DEV_USER_ID / DEV_ACCOUNT_ID in .env or pass --user-id/--account-id")
         sys.exit(1)
 
-    STAGE1_NEW = args.stage1 == 'new'
-    asyncio.run(main(args.runs, args.prompt, args.provider, args.tier, args.user_id, args.account_id))
+    if args.s3_kit:
+        if args.prompt != "baseline" or args.stage1 != "baseline":
+            parser.error("--s3-kit runs the production Stage 2b: --prompt new|both and --stage1 new are not part of it")
+        asyncio.run(main_s3_kit(args.runs, args.provider, args.tier, args))
+    else:
+        STAGE1_NEW = args.stage1 == 'new'
+        asyncio.run(main(args.runs, args.prompt, args.provider, args.tier, args.user_id, args.account_id))

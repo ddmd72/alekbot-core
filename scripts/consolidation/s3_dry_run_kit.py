@@ -143,6 +143,11 @@ class NoWriteFactRepository(FactRepository):
     def _record(self, kind: str, **info: Any) -> None:
         self.writes.append({"kind": kind, **info})
 
+    def forget_overlay(self) -> None:
+        """Drop the pass's own documents so the next run starts from the live store; `writes` keeps the record."""
+        self._docs.clear()
+        self._tokens.clear()
+
     def _put(self, fact: FactEntity) -> None:
         self._docs[fact.id] = fact.model_copy(deep=True)
         self._tokens[fact.id] = ("overlay", next(self._clock))
@@ -789,6 +794,11 @@ class DryRunKit:
 
     def close(self) -> None:
         self.meter.close()
+
+    def new_run(self) -> None:
+        """Start a run on the live state again (a bench that replays one input needs every run to see the same store)."""
+        if self.repo is not None:
+            self.repo.forget_overlay()
 
     async def resolve_timezone(self, account_repo: Any, user_repo: Any, account_id: str, override: Optional[str] = None) -> str:
         self.timezone = await owner_timezone(account_repo, user_repo, account_id, override)

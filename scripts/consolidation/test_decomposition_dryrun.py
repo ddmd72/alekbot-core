@@ -13,6 +13,12 @@ Usage:
     python scripts/consolidation/test_decomposition_dryrun.py
     python scripts/consolidation/test_decomposition_dryrun.py --limit 30 --min-words 40
     python scripts/consolidation/test_decomposition_dryrun.py --user-id <uid> --account-id <aid>
+    python scripts/consolidation/test_decomposition_dryrun.py --s3-kit --limit 10
+
+`--s3-kit` (Facts S3, plan T12b) runs a real Stage 1 `consolidate` over the size-review message (the size gate lives in
+Stage 1), then a real `consolidate_cluster` pass (pass label and actor `cluster`) over an explicit cluster built from the
+facts Stage 1 wrote and their search results, both on the dry-run kit; a report lands in `scripts/memory/`. `--message`
+supplies the Stage 1 text as before. Without the flag the bench behaves as it always did.
 
 Pre-conditions:
     .env must have: DEV_USER_ID, DEV_ACCOUNT_ID, FIRESTORE_DATABASE, GEMINI_API_KEY
@@ -33,10 +39,6 @@ from typing import Any, Dict, List, Optional
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from dotenv import load_dotenv
-
-load_dotenv()
-
 from google.cloud import firestore
 
 from src.adapters.firestore_account_repo import FirestoreAccountRepository
@@ -49,6 +51,19 @@ from src.infrastructure.agent_coordinator import AgentCoordinator
 from src.domain.fact_write_context import FactWriteContext
 from src.ports.fact_management_port import FactManagementPort
 from src.composition.user_agent_factory import UserAgentFactory
+
+from scripts.consolidation.s3_bench_support import (
+    add_s3_arguments,
+    biographical_facts,
+    build_agent,
+    cluster_from_search,
+    execute,
+    kit_message,
+    kit_session,
+    load_env,
+    print_rows,
+    written_entries,
+)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -432,6 +447,71 @@ def save_results(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# S3 kit mode: Stage 1 (the size gate), then a real `consolidate_cluster` pass
+# ─────────────────────────────────────────────────────────────────────────────
+
+def build_size_review_message(kit, text: str, bio_facts: List[Dict], user_id: str, account_id: str):
+    """The S3 bench's Stage 1 step: the size review sent as a `consolidate` (the size gate lives in Stage 1)."""
+    return kit_message(
+        kit, sender="decomposition_dryrun_script", user_id=user_id, account_id=account_id, task="consolidate",
+        payload={"messages": [{"role": "user", "text": text, "timestamp": time.time()}],
+                 "biographical_context": bio_facts},
+        session_id="decomposition_stage1",
+    )
+
+
+def build_stage2_cluster_message(kit, cluster: List[Dict[str, Any]], bio_facts: List[Dict], user_id: str, account_id: str):
+    """The S3 bench's stage-2 step: a `consolidate_cluster` pass over an explicit cluster (pass label and actor `cluster`)."""
+    return kit_message(
+        kit, sender="decomposition_dryrun_script", user_id=user_id, account_id=account_id, task="consolidate_cluster",
+        payload={"cluster": cluster, "biographical_context": bio_facts}, session_id="decomposition_stage2",
+    )
+
+
+async def main_s3_kit(limit: int, min_words: int, args, raw_message: Optional[str] = None) -> None:
+    print(f"\n{'='*65}\nFACT DECOMPOSITION ON THE S3 KIT (Stage 1, then a consolidate_cluster pass)\n{'='*65}")
+    user_id, account_id = args.user_id, args.account_id
+    handles = await build_agent(user_id)
+    analysed = 0
+    if raw_message:
+        text = raw_message
+    else:
+        facts = await fetch_long_facts(handles.container.repository, account_id, min_words, limit)
+        if not facts:
+            print(f"No facts found with >{min_words} words. Nothing to process.")
+            return
+        text, analysed = build_user_message(facts), len(facts)
+    bio_facts = await biographical_facts(handles, account_id)
+    agent = handles.agent
+
+    async with kit_session(handles, args, user_id, account_id, "decomposition") as (kit, extra):
+        extra.update({"model": agent.model_name, "facts_analyzed": analysed, "min_words": min_words})
+        first_row = len(kit.rows)
+        await execute(agent, build_size_review_message(kit, text, bio_facts, user_id, account_id),
+                      user_id, account_id, "Stage 1 size review")
+        print("\n--- Stage 1 ---")
+        print_rows(kit.rows[first_row:])
+        extra["stage1"] = {"passes": len(kit.passes), "rows": [first_row, len(kit.rows)]}
+
+        entries = await written_entries(kit, first_row, kit.timezone)
+        if not entries:
+            print("\nStage 1 left no written fact current: no cluster to review, no stage-2 step.")
+            extra["stage2"] = None
+            return
+        cluster = await cluster_from_search(
+            agent._fact_management.search_existing_facts, [e["content"] for e in entries], entries, kit.timezone,
+            user_id=user_id, account_id=account_id,
+        )
+        print(f"\n--- Stage 2: consolidate_cluster over {len(cluster)} facts ---")
+        first_pass, second_row = len(kit.passes), len(kit.rows)
+        await execute(agent, build_stage2_cluster_message(kit, cluster, bio_facts, user_id, account_id),
+                      user_id, account_id, "consolidate_cluster")
+        print_rows(kit.rows[second_row:])
+        extra["stage2"] = {"cluster_size": len(cluster), "passes": [first_pass, len(kit.passes)],
+                           "rows": [second_row, len(kit.rows)]}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Main
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -647,6 +727,7 @@ async def main(
 
 
 if __name__ == "__main__":
+    load_env()
     parser = argparse.ArgumentParser(
         description="ConsolidationAgent dry-run: review long facts for decomposition"
     )
@@ -677,6 +758,7 @@ if __name__ == "__main__":
         default=None,
         help="Raw user message to send instead of fetching long facts from Firestore",
     )
+    add_s3_arguments(parser)
     args = parser.parse_args()
 
     if not args.user_id:
@@ -686,12 +768,15 @@ if __name__ == "__main__":
         print("ERROR: account_id required. Set DEV_ACCOUNT_ID in .env or pass --account-id")
         sys.exit(1)
 
-    asyncio.run(
-        main(
-            limit=args.limit,
-            min_words=args.min_words,
-            user_id=args.user_id,
-            account_id=args.account_id,
-            raw_message=args.message,
+    if args.s3_kit:
+        asyncio.run(main_s3_kit(args.limit, args.min_words, args, raw_message=args.message))
+    else:
+        asyncio.run(
+            main(
+                limit=args.limit,
+                min_words=args.min_words,
+                user_id=args.user_id,
+                account_id=args.account_id,
+                raw_message=args.message,
+            )
         )
-    )
