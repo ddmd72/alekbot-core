@@ -194,7 +194,9 @@ async def test_temporal_class_only_update_is_a_version(store):
     {},
 ])
 async def test_state_only_reported_date_only_and_empty_updates_stay_in_place_with_version_unchanged(store, updates):
-    fid = await create(store)
+    # Reviewer edit (facts S3, T4a): an update never moves reported_date back (D2, S3-D2; plan §3.5), so the fact is
+    # created before STALE_DATE; the reported_date-only update then moves it forward to STALE_DATE, in place.
+    fid = await create(store, reported_date="2019-06-01T00:00:00Z")
     before = snapshot(store)[fid]
 
     res = await store.adapter.update_fact(fid, updates, ACC)

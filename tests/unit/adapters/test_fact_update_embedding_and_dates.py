@@ -85,7 +85,9 @@ async def test_a_temporal_class_change_is_a_version_without_an_embedding(store):
 
 async def test_a_state_change_with_an_explicit_reported_date_applies_both_in_place(store):
     # was test_fact_management_adapter.py::test_state_only_update_with_explicit_reported_date_applies_it
-    fid = await create(store)
+    # Reviewer edit (facts S3, T4a): an update never moves reported_date back (D2, S3-D2; plan §3.5), so the fact is
+    # created before the sent date, which is then applied with the state in the same in-place write.
+    fid = await create(store, reported_date="2019-06-01T00:00:00Z")
     embedder = counting(store)
     res = await store.adapter.update_fact(fid, {"state": "ARCHIVED", "reported_date": "2020-01-02T03:04:05Z"}, ACC)
     assert (res["status"], res["fact_id"], res["version"]) == ("updated", fid, 1) and list(store.docs) == [fid]
