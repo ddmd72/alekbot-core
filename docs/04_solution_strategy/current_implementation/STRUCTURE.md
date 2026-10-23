@@ -318,7 +318,8 @@ The core application follows **Hexagonal Architecture (Ports & Adapters)** with 
 -   **`gcp_task_queue.py`**: GCP Cloud Tasks adapter implementing `TaskQueue`.
 -   **`firestore_account_repo.py`**: Firestore implementation of `AccountRepository`.
 -   **`firestore_consolidation_queue.py`**: 🆕 Manages batches of messages for cold-storage processing.
--   **`fact_management_adapter.py`**: 🆕 `FactManagementAdapter` — implements `FactManagementPort`. Orchestrates `FactRepository`, `EmbeddingService`, `FactWriteService`, `SearchEnrichmentService` for deliberate fact management (search/create/update/merge/discard). Per-user — created via `ServiceContainer.create_fact_management_adapter()`.
+-   **`firestore_memory_write_lease.py`**: 🆕 `FirestoreMemoryWriteLease` — the per-account memory-write lease (`{prefix}memory_write_leases`); `ConsolidationService` takes it once per batch.
+-   **`fact_management_adapter.py`**: 🆕 `FactManagementAdapter` — implements `FactManagementPort`. Orchestrates `FactRepository`, `EmbeddingService`, `FactWriteService`, `SearchEnrichmentService` for deliberate fact management (search/create/update/merge/discard). A content change writes a new fact version and a merge is one transaction (Facts S2). Per-user — created via `ServiceContainer.create_fact_management_adapter()`.
 -   **`firestore_dedup_store.py`**: 🆕 Deduplication store for external events (e.g., Slack retry attempts).
 -   **`firestore_quota_service.py`**: Firestore implementation of `QuotaService`. Takes `AccountRepository` via DI; calls `increment_account_usage(account_id, tokens, cost)` directly — no user→account lookup.
 -   **`firestore_repo.py`**: Firestore implementation of `FactRepository`. Supports SCD Type 2 and native vector search. Receives `SmartDeduplicationService` via DI (no lazy imports).
@@ -413,7 +414,8 @@ The core application follows **Hexagonal Architecture (Ports & Adapters)** with 
 -   **`fact_write_port.py`**: `FactWritePort` ABC — injected into `ConsolidationAgent`, `FactManagementAdapter`, and `UserAgentFactory`. Implemented by `FactWriteService`.
 -   **`search_enrichment_port.py`**: `SearchEnrichmentPort` ABC — injected into `RouterAgent`, `MemorySearchAgent`, and `FactManagementAdapter`. Implemented by `SearchEnrichmentService`.
 -   **`fact_management_port.py`**: `FactManagementPort` ABC. Deliberate fact management (search, create, merge, discard). Adapter: `FactManagementAdapter`.
--   **`consolidation_queue.py`**: `ConsolidationQueue` ABC. Batch queue management (enqueue, get pending, update status, cleanup). Adapter: `FirestoreConsolidationQueue`.
+-   **`consolidation_queue.py`**: `ConsolidationQueue` ABC. Batch queue management (enqueue, get pending, update status, cleanup, `has_open_batches`). Adapter: `FirestoreConsolidationQueue`.
+-   **`memory_write_lease.py`**: `MemoryWriteLeasePort` ABC — acquire and release the per-account lease. Adapter: `FirestoreMemoryWriteLease`.
 
 **Infrastructure Ports:**
 -   **`log_sink.py`**: Port for structured logging sinks. Adapter: `GcpLogSink`.
