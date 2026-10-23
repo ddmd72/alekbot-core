@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field as dataclass_field
 from enum import Enum
-from typing import Dict, TYPE_CHECKING, Optional, Tuple
+from typing import Dict, List, TYPE_CHECKING, Optional, Tuple
 from .language import LanguageCode
 from datetime import date, datetime, timezone
 from uuid import uuid4
@@ -9,6 +9,9 @@ from pydantic import BaseModel, Field
 # Avoid circular import: user.py imports billing.py
 if TYPE_CHECKING:
     from .user import UserBotConfig
+
+
+_OWNER_ROLE = "owner"  # the stored value of ports.iam_port.Role.OWNER (the domain cannot import ports)
 
 
 class AccountTier(str, Enum):
@@ -138,6 +141,10 @@ class BillingAccount(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     is_active: bool = True
+
+    def owner_user_ids(self) -> List[str]:
+        """The users whose IAM role is `owner` (the value of `Role.OWNER`), sorted; empty when there is none."""
+        return sorted(user_id for user_id, role in self.iam_policy.items() if role == _OWNER_ROLE)
 
 
 # ---------------------------------------------------------------------------

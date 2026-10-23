@@ -19,6 +19,7 @@ from src.domain.consolidation import BatchStatus, ConsolidationBatch
 from src.domain.consolidation_run import ConsolidationRun
 from src.domain.request_context import get_current_account_id
 from src.services.consolidation_service import ConsolidationService
+from tests.support.account_owners import OwnedAccounts
 from tests.support.firestore_eval import EvalDb
 
 USER = "user-abcdef123"
@@ -69,7 +70,7 @@ def coordinator():
 def service(queue, db, env, coordinator):
     return ConsolidationService(
         queue=queue, coordinator=coordinator, agent_factory=CachedAgents(), lease=FirestoreMemoryWriteLease(db, env),
-        run_timeout_s=900.0, user_repo=NoProfiles(),
+        run_timeout_s=900.0, user_repo=NoProfiles(), account_repo=OwnedAccounts({"acc-1": USER}),
     )
 
 
@@ -120,5 +121,5 @@ def test_the_user_repository_is_required(queue, db, env, coordinator):
     with pytest.raises(TypeError, match="user_repo"):
         ConsolidationService(
             queue=queue, coordinator=coordinator, agent_factory=CachedAgents(),
-            lease=FirestoreMemoryWriteLease(db, env), run_timeout_s=900.0,
+            lease=FirestoreMemoryWriteLease(db, env), run_timeout_s=900.0, account_repo=OwnedAccounts({}),
         )

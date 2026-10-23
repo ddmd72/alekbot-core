@@ -18,6 +18,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Callable, Optional
+from zoneinfo import ZoneInfo
 
 from ..domain.agent import AgentMessage, AgentIntent, AgentStatus
 from ..domain.consolidation import MAX_BATCH_ATTEMPTS, MAX_FAILED_REVIVALS, BatchStatus, ConsolidationBatch
@@ -30,6 +31,7 @@ from ..domain.memory_write_lease import (
     lease_until,
 )
 from ..domain.request_context import RequestContext
+from ..ports.account_repository import AccountRepository
 from ..ports.consolidation_queue import ConsolidationQueue
 from ..ports.memory_write_lease import MemoryWriteLeasePort
 from ..ports.task_queue import TaskQueue
@@ -39,6 +41,7 @@ from ..utils.logger import logger
 _INTENT_CONSOLIDATE_FULL = "consolidate_full"  # mirrors Intent.CONSOLIDATE_FULL
 _NO_ACCOUNT_ERROR = "user has no account"
 _NO_PROFILE_ERROR = "user has no profile"
+_FALLBACK_TIMEZONE = "UTC"
 _DEFERRAL_DEADLINE_S = 1800  # same Cloud Tasks dispatch deadline as enqueue_consolidation_task
 _MARGIN_S = LEASE_MARGIN.total_seconds()
 
@@ -75,6 +78,7 @@ class ConsolidationService:
         lease: MemoryWriteLeasePort,
         run_timeout_s: float,
         user_repo: UserRepository,
+        account_repo: AccountRepository,
         task_queue: Optional[TaskQueue] = None,
         indexed_email_repo: Optional[object] = None,
         clock: Callable[[], datetime] = _utcnow,
@@ -89,6 +93,7 @@ class ConsolidationService:
         self._task_queue = task_queue
         self._indexed_email_repo = indexed_email_repo
         self._user_repo = user_repo
+        self._account_repo = account_repo
         self._clock = clock
 
     async def find_stuck_users(self) -> list[str]:
@@ -150,12 +155,13 @@ class ConsolidationService:
         if account_id is None:
             return ConsolidationRun(failed=1)
 
+        owner_timezone = await self._owner_timezone(account_id)
         processed = 0
         touched: list[str] = []
         failed = 0
         step = _Step.NOTHING_PENDING
         while max_batches is None or processed < max_batches:
-            step = await self._consolidate_one(user_id, account_id, touched)
+            step = await self._consolidate_one(user_id, account_id, owner_timezone, touched)
             if step is _Step.CONSOLIDATED:
                 processed += 1
             elif step is _Step.DEFERRED:
@@ -193,6 +199,35 @@ class ConsolidationService:
             self._log_unhandled(user_id, exc)
             return None
 
+    async def _owner_timezone(self, account_id: str) -> str:
+        """The account owner's IANA zone, once per run; the account comes from the profile only and the zone never
+        decides it. Any missing step, an invalid zone or a failing repository gives UTC and one WARNING: a store hiccup
+        never fails a batch."""
+        try:
+            account = await self._account_repo.get_account(account_id)
+            if account is None:
+                return self._zone_unresolved(account_id, "account not found")
+            owners = account.owner_user_ids()
+            if not owners:
+                return self._zone_unresolved(account_id, "account has no owner")
+            if len(owners) > 1:
+                logger.warning(
+                    "[Librarian] account %s has %d owners; the timezone of the first is used", account_id[:8], len(owners),
+                )
+            owner = await self._user_repo.get_user(owners[0])
+            if owner is None:
+                return self._zone_unresolved(account_id, "owner has no profile")
+            zone = owner.config.timezone
+            ZoneInfo(zone)
+            return zone
+        except Exception as exc:
+            return self._zone_unresolved(account_id, f"{type(exc).__name__}: {exc}")
+
+    @staticmethod
+    def _zone_unresolved(account_id: str, why: str) -> str:
+        logger.warning("[Librarian] owner timezone unresolved for account %s: %s; using UTC", account_id[:8], why)
+        return _FALLBACK_TIMEZONE
+
     async def _has_other_pending(self, user_id: str, touched: list[str]) -> bool:
         """After an internal error: whether the chain can go on. It can when a batch other than the one that broke is
         waiting and the broken one is no longer pending (marked PROCESSING, so the zombie reset bounds it). A broken
@@ -223,7 +258,7 @@ class ConsolidationService:
             user_id, exc, exc_info=True,
         )
 
-    async def _consolidate_one(self, user_id: str, account_id: str, touched: list[str]) -> _Step:
+    async def _consolidate_one(self, user_id: str, account_id: str, owner_timezone: str, touched: list[str]) -> _Step:
         """One batch under a fresh lease. Lease and deferral-queue errors propagate; a release error does not."""
         owner = uuid.uuid4().hex
         now = self._clock()
@@ -234,7 +269,7 @@ class ConsolidationService:
             await self._defer(user_id, now, "lease busy")
             return _Step.DEFERRED
         try:
-            step = await self._consolidate_leased(user_id, account_id, until, touched)
+            step = await self._consolidate_leased(user_id, account_id, owner_timezone, until, touched)
             if step is _Step.NO_TIME:
                 await self._defer(user_id, now, "less than the lease margin left")
                 return _Step.DEFERRED
@@ -242,19 +277,21 @@ class ConsolidationService:
         finally:
             await self._release(account_id, owner)
 
-    async def _consolidate_leased(self, user_id: str, account_id: str, until: datetime, touched: list[str]) -> _Step:
+    async def _consolidate_leased(
+        self, user_id: str, account_id: str, owner_timezone: str, until: datetime, touched: list[str],
+    ) -> _Step:
         try:
             async with RequestContext(user_id=user_id, account_id=account_id):
                 logger.debug(
                     "✅ RequestContext set: user_id=%s, account_id=%s",
                     user_id[:8], account_id[:12],
                 )
-                return await self._process_one_batch(user_id, until, touched)
+                return await self._process_one_batch(user_id, owner_timezone, until, touched)
         except Exception as exc:
             self._log_unhandled(user_id, exc)
             return _Step.ERROR
 
-    async def _process_one_batch(self, user_id: str, until: datetime, touched: list[str]) -> _Step:
+    async def _process_one_batch(self, user_id: str, owner_timezone: str, until: datetime, touched: list[str]) -> _Step:
         await self._queue.reset_recoverable_batches(user_id, zombie_after_s=_MARGIN_S)
 
         batches = await self._queue.get_pending_batches(user_id=user_id, limit=1)
@@ -284,7 +321,7 @@ class ConsolidationService:
                 "batch_id": batch.batch_id,
                 "messages": batch.messages,
             },
-            context={"user_id": batch.user_id, "suppress_transient_retry": True},
+            context={"user_id": batch.user_id, "suppress_transient_retry": True, "owner_timezone": owner_timezone},
             timeout_ms=int(agent_timeout_s(until, self._clock()) * 1000),
         )
 
