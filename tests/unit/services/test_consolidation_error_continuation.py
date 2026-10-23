@@ -13,7 +13,9 @@ from src.config.environment import EnvironmentConfig
 from src.domain.agent import AgentResponse
 from src.domain.consolidation import BatchStatus, ConsolidationBatch
 from src.domain.consolidation_run import ConsolidationRun
+from src.domain.user import UserBotConfig
 from src.services.consolidation_service import ConsolidationService
+from tests.support.account_owners import OwnedAccounts
 from tests.support.firestore_eval import EvalDb
 
 USER = "user-abcdef123"
@@ -52,7 +54,7 @@ class AgentFactory:
 
 class UserRepo:
     async def get_user(self, user_id):
-        return SimpleNamespace(account_id=ACC)
+        return SimpleNamespace(account_id=ACC, config=UserBotConfig())
 
 
 @pytest.fixture
@@ -80,6 +82,7 @@ def service(db, queue, coordinator, continuations):
     return ConsolidationService(
         queue=queue, coordinator=coordinator, agent_factory=AgentFactory(),
         lease=FirestoreMemoryWriteLease(db, EnvironmentConfig()), run_timeout_s=900.0, user_repo=UserRepo(),
+        account_repo=OwnedAccounts({ACC: USER}),
         task_queue=continuations, clock=lambda: NOW,
     )
 
@@ -236,6 +239,7 @@ async def test_a_setup_error_is_a_failed_run(queue, coordinator, db):
     service = ConsolidationService(
         queue=queue, coordinator=coordinator, agent_factory=BrokenFactory(),
         lease=FirestoreMemoryWriteLease(db, EnvironmentConfig()), run_timeout_s=900.0, user_repo=UserRepo(),
+        account_repo=OwnedAccounts({ACC: USER}),
         clock=lambda: NOW,
     )
 
