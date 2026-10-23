@@ -15,4 +15,4 @@
 - A janitor lease or a per-day run mark: per fact the `update_time` precondition makes a double write a conflict; only the per-run cap could be exceeded by two overlapping runs, so do not trigger a run by hand while the 09:30 run is going.
 - A Scheduler retry: a retry after the 180 s deadline could overlap a running sweep.
 
-**Revise when** S4 wires the last successful review into the breaker (interval + 72 h, RFC D6) and enqueues the review, a second janitor writer appears, or the per-run cap proves too low or high after the S5 log-only period.
+**Revise when** S4 wires the last successful review into the breaker (interval + 72 h, RFC D6) and enqueues the review, S4 adds an overlap guard for the janitor (a run mark), a second janitor writer appears, or the per-run cap proves too low or high after the S5 log-only period.

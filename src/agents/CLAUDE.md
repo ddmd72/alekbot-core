@@ -260,7 +260,7 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     in the owner's zone (`message.context["owner_timezone"]`, UTC when absent), the same `local_stamp` Smart's
     `_inject_timestamps` calls; `_message_time` is the one reader for a line's stamp and the span. Never format a time inline.
   - **Stats lines.** `ConsolidationPassStats` records each turn's tool outcomes (`ok` / `error` / `expiry` / `born_due`): the 📊
-    and 🚨 lines end with `tool-error turns N (expiry N[, born due N], abandoned M)`. An abandoned refusal (an `expiry` refusal
+    line and the turn-limit 🚨 carry `tool-error turns N (expiry N[, born due N], abandoned M)`. An abandoned refusal (an `expiry` refusal
     no later success answers) posts a 🚨 **also with `CONSOLIDATION_STATS_ALERTS` off**, and the pass's expiry errors are added to
     the account's day, both in a `finally` capped at 10 s (`CLOSE_OUT_TIMEOUT_S`, best effort, never raises). `_enforce_directive_cap`
     reports no op and posts a 🚨 when the backstop's update is not `updated`.

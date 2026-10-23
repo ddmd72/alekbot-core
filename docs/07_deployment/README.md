@@ -1059,8 +1059,8 @@ and the audit. (The section keeps its S2 name; other documents link to it.)
 
 **Do not ship this yet.** S2 and S3 are built; S4 and S5 are not, and their steps (the review pass, the classify step, the
 janitor-on switch) are added here when they are. **The S2–S5 branch reaches `main` only in the switch window**: a deploy
-ships all of `main`, and S2 is safe only with this procedure and with S3's prompts (S3's code needs them too: without the five
-tokens every create the model sends lacks the `expiry` the new code requires). If it merges earlier, the first
+ships all of `main`, and S2 is safe only with this procedure and with S3's prompts (S3's code needs them too: the old tokens never mention `expiry` and still offer `ttl_days`, so
+creates are refused far more often; only the tool schema asks for it). If it merges earlier, the first
 deploy from `main` after the merge must follow this procedure, whoever runs it.
 
 **Order: step 0 parity run → 1 indexes `READY` → M model dry run (S3, from your Mac) → 2 pause → 3 drain → 4 prompt upload → 5 switch → 6 resume → 6a stamp the legacy stale facts → 7 audit.** The janitor job is created by the switch, in log-only mode; the S5 handover below says what comes after.
@@ -1092,6 +1092,7 @@ deploy from `main` after the merge must follow this procedure, whoever runs it.
    index), and above all for the **facts collection**: its `expires_at` is a decision, the janitor stales and never deletes,
    so a Firestore TTL policy on it would erase facts on the day they expire. No TTL policy may be declared for it or for the two lifecycle collections; no
    such command is written anywhere in this repository, and a test (`tests/unit/test_facts_have_no_ttl_policy.py`) fails on one.
+
 **Step M: the model dry run of the S3 prompts (mandatory, owner Q8; from your Mac, before the pause).** It runs the five S3
 consolidation prompt tokens and the code-built messages against your real facts and a real model, and reports what the
 new rules did, before anything is uploaded or deployed. Nothing it does is written to your data.
@@ -1204,7 +1205,7 @@ what is left of the $30. The fix is on the branch before the pause.
    live tokens still tell the model to retire a split fact with `SUPERSEDED` alone, which S2 refuses, offer `ttl_days`
    and never mention `expiry`, which the new code requires. Tokens uploaded first are harmless to the old
    revision (it ignores an unknown `superseded_by`); tokens uploaded after the new revision's first
-   run leave S2 and S3 running on the old prompts for up to a day, costing tool-error turns on every create.
+   run leave S2 and S3 running on the old prompts for up to a day, costing tool-error turns on creates.
 5. **Switch traffic** to the new revision (the normal deploy). The deploy builds the image inside the paused window, so
    Telegram, reminders and async runs wait for the build as well; build during a quiet hour, or accept the longer pause.
    The deploy also creates the Scheduler job `alek-bot-dev-fact-lifecycle-sweep` (`30 9 * * *` Europe/Madrid, 180 s, no
@@ -1251,12 +1252,17 @@ expected classes, and the memory map §9.6 says which and how to repair them:
   over first, then close the re-opened older document by hand; a Cabinet delete does not clear it).
 
 **Rollback with S3 in the bundle.** Add the Scheduler job to the procedure: **pause `alek-bot-dev-fact-lifecycle-sweep`
-first** (the old revision answers 400 to an unknown `fact_lifecycle_sweep` task type, which only makes noise). While the
+first** with
+`gcloud scheduler jobs pause alek-bot-dev-fact-lifecycle-sweep --location=us-central1 --project=<PROJECT_ID>`
+(the old revision answers 400 to an unknown `fact_lifecycle_sweep` task type, which only makes noise). While the
 janitor is log-only (every state before the S5 janitor-on) it has staled nothing, so nothing is hidden. **After a
 janitor-on** (S5), pause the job first and expect facts the janitor staled before the rollback to stay hidden on the old
 revision with no review: they are not `current`, so no reader returns them. The revert is by hand: find them by their last
 trail entry (`actor: janitor`, in `lifecycle_events`) and set them `current` again (state, `is_current` true, `valid_to`
-none, and clear `stale_since`); the baseline picks them up at the next consolidation run. The S3 tokens can stay uploaded: the old revision copies only the
+none, and clear `stale_since`); the baseline picks them up at the next consolidation run. They keep their past `expires_at`:
+after the roll-forward a janitor that is on stales them again at its next run. To keep one, also give it a new expiry (or null
+its `expires_at` and `expiry_kind`, which leaves it for S5's filtered re-classify), or keep the job paused until they are
+re-classified. The S3 tokens can stay uploaded: the old revision copies only the
 keys it knows from a create or an update, so it drops `expiry` and `derived_from`. Every document the old revision writes in
 the window is a full `set()` of the old model, so it **loses `expiry_kind`, `stale_since` and `lifecycle_events` and keeps a
 stale `expires_at`**; the janitor skips such a fact (a due fact with no `expiry_kind` is never staled, counted
@@ -1264,7 +1270,9 @@ stale `expires_at`**; the janitor skips such a fact (a due fact with no `expiry_
 
 **Roll-forward.** After the drain, list the current documents whose `expiry_kind` is null and whose `last_updated` lies inside
 the rollback window, and re-classify them (S5's classify accepts a filtered set; **S5 note**: it must). Until then those
-facts carry no expiry decision and are never staled. Re-run the audit with the **end of the roll-forward drain** as
+facts carry no expiry decision and are never staled. **Resume the janitor job after the switch:**
+`gcloud scheduler jobs resume alek-bot-dev-fact-lifecycle-sweep --location=us-central1 --project=<PROJECT_ID>`. The deploy
+updates the job's fields but does not resume a paused job, so without this the janitor silently never runs again. Re-run the audit with the **end of the roll-forward drain** as
 `--s2-cutoff`. **The cutoff moves only `superseded_without_successor`.** The other classes stay listed: match their ids
 against documents last written inside the rollback window; those are the expected ones, any other is real.
 
@@ -1276,7 +1284,11 @@ revives a fact or asks the owner when unsure); (2) the **review dry run** (RFC �
 (3) the janitor stays **log-only on the classified facts for as long as needed**: the owner reads `would_stale` per account,
 `deferred` and the breaker each morning in the 🧹 line; (4) the janitor is switched on **only on the owner's word**: add
 `FACT_LIFECYCLE_SWEEP_DRY_RUN=0` to the main service's `--set-env-vars` in `cloudbuild-dev.yaml` and deploy (that flag
-replaces every variable, so a switch set only on the running revision is lost at the next deploy). Even then a run stales at
+replaces every variable, so a switch set only on the running revision is lost at the next deploy). The edit goes to `main`
+through a PR like any change: a deploy reads the working tree, so an uncommitted edit ships once and is lost at the next
+deploy from `main`, which silently puts the janitor back in log-only. To stop the janitor at once, pause the job (the
+command in the rollback paragraph above); to go back to log-only, remove the variable (a PR and a deploy). S5 may instead
+carry the switch as a cloudbuild substitution fed by a deploy-only `.env` key, like `_DRIVE_UPGRADE_PASS`. Even then a run stales at
 most `50 − backlog` facts per account (oldest expiry first, the rest `deferred`), and until S4 wires the last successful review
 the breaker holds an account that has any stale fact. These steps are S5's; nothing in S3 performs them.
 
@@ -1290,8 +1302,9 @@ switch. Growth: 72 content updates a month at about 20 KB a document, about 1.4 
 **Prompts are S3's.** Before S3 the live consolidation tokens tell the model to retire a split fact with `SUPERSEDED` alone,
 which S2 refuses without `superseded_by`: `CONSOLIDATION_COGNITIVE_PROCESS.groovy:97`, `CONSOLIDATION_TAXONOMY.groovy:246,358`,
 `CONSOLIDATION_OUTPUT_SPEC.groovy:32`, and the code-built Stage 2a message ("decomposed, with the original superseded"). S3
-names the successor in the five edited tokens and the code-built Stage 2a message (create the parts first, then supersede
-with `superseded_by`); the `OUTPUT_SPEC` line is the final-report convention, not a tool-call instruction, and stays. The
+names the successor in the five edited tokens (create the parts first, then supersede with `superseded_by`); the code-built
+Stage 2a message still says "decomposed, with the original superseded" and asks for `derived_from` on each part, so the
+successor rule reaches that pass through the tokens and the tool schema (`superseded_by` is required with `SUPERSEDED`); the `OUTPUT_SPEC` line is the final-report convention, not a tool-call instruction, and stays. The
 same-day token upload of RFC §7.1 (step 4) puts them live. S2–S5 ship together, so live prompts never meet S2 code alone;
 measured cost if they ever did: about 2 tool errors a month.
 
