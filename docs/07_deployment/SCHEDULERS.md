@@ -266,8 +266,11 @@ Failure handling: a failure other than a write conflict stops the run, is logged
 a retry after the 180 s deadline could overlap a run still going, and each run computes its headroom from the backlog before
 it, so two overlapping runs can stale up to twice the cap. For the same reason **do not trigger the job by hand while the 09:30
 run is going** (the manual triggers in the root `CLAUDE.md` are for other times of day); a hand run at another time is safe: the
-last run of the day replaces the day's snapshot, and the 🧹 line is posted once per day. The next day's run catches up after a
-failure. The job takes no lease and is not a Cloud Task, so there is no task-claim record. The collections it writes
+last run of the day replaces the day's snapshot, and the 🧹 line is posted once per **UTC day**, so a hand run before 09:30
+Madrid on the same UTC day takes the day's line and the scheduled run then posts none (its numbers are in the snapshot). Unlike
+the fan-out jobs under "Two deadlines", the sweep does its work inside the Scheduler's own request: a run past 180 s shows as a
+failed attempt in Scheduler while it goes on, which is the overlap the no-retry rule guards against. The next day's run
+catches up after a failure. The job takes no lease and is not a Cloud Task, so there is no task-claim record. The collections it writes
 (`{prefix}fact_lifecycle_daily`, `{prefix}fact_lifecycle_lines`) carry no field named `expires_at` and **no TTL policy**.
 
 ---
