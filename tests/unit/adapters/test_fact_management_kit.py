@@ -93,11 +93,18 @@ async def test_create_fact_with_an_unknown_type_is_an_event(store):
     assert store.docs[fid]["type"] == "event"
 
 
-@pytest.mark.parametrize("state", ["current", "archived", "invalidated", "superseded"])
+@pytest.mark.parametrize("state", ["current", "archived", "invalidated"])
 async def test_create_fact_is_current_with_no_valid_to_whatever_the_state(store, state):
     fid = await create(store, state=state)
     doc = store.docs[fid]
     assert doc["state"] == state and doc["is_current"] is True and doc["valid_to"] is None
+
+
+async def test_create_fact_refuses_state_superseded_and_writes_nothing(store):
+    # Reviewer edit (facts S2, D-2): was the [superseded] case above; a fact cannot be born superseded without a successor.
+    res = await store.adapter.create_fact("mother is Valentina", meta(state="superseded"))
+    assert res["status"] == "failed" and res["fact_id"] is None and "SUPERSEDED" in res["message"]
+    assert store.docs == {}
 
 
 async def test_create_fact_twice_creates_two_facts_with_new_lineages(store):

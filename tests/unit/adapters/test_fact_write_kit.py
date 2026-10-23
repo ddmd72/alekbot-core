@@ -197,9 +197,23 @@ async def test_an_embedding_failure_stores_nothing(store):
     assert store.docs == {}
 
 
-async def test_a_later_failure_keeps_the_facts_already_stored(store):
+async def test_a_later_failure_keeps_the_facts_already_stored(store, monkeypatch):
+    # Reviewer edit (facts S2, D3/D-13): a bad value anywhere is now refused before any write, so the write failure that
+    # keeps the facts already stored is a backend failure on a later fact; the bad-value case stores nothing.
     with pytest.raises(ValueError):
         await add(store, [{"text": "first fact"}, {"text": "second fact", "domain": "astrology"}, {"text": "third fact"}])
+    assert store.docs == {}
+
+    real_add = store.repo.add_fact
+
+    async def fail_on_second(fact):
+        if fact.text == "second fact":
+            raise RuntimeError("backend down")
+        return await real_add(fact)
+
+    monkeypatch.setattr(store.repo, "add_fact", fail_on_second)
+    with pytest.raises(RuntimeError):
+        await add(store, [{"text": "first fact"}, {"text": "second fact"}, {"text": "third fact"}])
     assert [d["text"] for d in store.docs.values()] == ["first fact"]
 
 

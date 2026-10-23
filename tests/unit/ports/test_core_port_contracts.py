@@ -424,11 +424,12 @@ class TestFactWritePortContract:
         assert getattr(FactWritePort.add_facts_batch, "__isabstractmethod__", False)
 
     def test_all_abstract_methods_count(self):
+        # Reviewer edit (facts S2 T3): build_facts added (embed and build, store nothing) for the atomic merge.
         abstract_methods = {
             name for name, method in inspect.getmembers(FactWritePort)
             if getattr(method, "__isabstractmethod__", False)
         }
-        assert len(abstract_methods) == 1, f"Expected 1 abstract method, got {abstract_methods}"
+        assert abstract_methods == {"add_facts_batch", "build_facts"}, f"Expected 2 abstract methods, got {abstract_methods}"
 
     def test_add_facts_batch_signature(self):
         sig = inspect.signature(FactWritePort.add_facts_batch)
