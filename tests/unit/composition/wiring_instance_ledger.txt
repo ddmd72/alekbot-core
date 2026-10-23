@@ -1,0 +1,130 @@
+# Instances per adapter and service class in the container-owned part of the production graph (the walk does not enter a BaseAgent).
+# Read by test_application_graph_wiring.py; it fails both ways (a class not listed, a count that differs).
+# Line: <module.Class> <count>  # <reason> <evidence>. A count above 1 names where each instance is built; a duplicate construction is the #148 class.
+
+src.adapters.bigquery_prompt_content_adapter.BigQueryPromptContentAdapter 1  # by-design single instance
+src.adapters.claude_adapter.ClaudeAdapter 1  # by-design single instance
+src.adapters.claude_deep_research_adapter.ClaudeDeepResearchAdapter 1  # by-design single instance
+src.adapters.cloud_run_jobs_adapter.CloudRunJobsAdapter 1  # by-design single instance
+src.adapters.dateutil_recurrence_adapter.DateutilRecurrenceAdapter 1  # by-design single instance
+src.adapters.file_localization_adapter.FileLocalizationAdapter 1  # by-design single instance
+src.adapters.firebase_auth_adapter.FirebaseAuthAdapter 1  # by-design single instance
+src.adapters.firestore_account_repo.FirestoreAccountRepository 1  # by-design single instance
+src.adapters.firestore_agent_note_adapter.FirestoreAgentNoteAdapter 1  # by-design single instance
+src.adapters.firestore_channel_binding_adapter.FirestoreChannelBindingAdapter 1  # by-design single instance
+src.adapters.firestore_companion_cache_repository.FirestoreCompanionCacheRepository 1  # by-design single instance
+src.adapters.firestore_companion_extraction_queue.FirestoreCompanionExtractionQueue 1  # by-design single instance
+src.adapters.firestore_companion_memory_repository.FirestoreCompanionMemoryRepository 1  # by-design single instance
+src.adapters.firestore_consolidation_queue.FirestoreConsolidationQueue 1  # by-design single instance
+src.adapters.firestore_dedup_store.FirestoreDedupStore 3  # by-design three stores on three TTLs: worker daily-review marks (application_graph.py WorkerHandler), deep-research webhook claims, Telegram update dedup
+src.adapters.firestore_drive_index_repo.FirestoreDriveIndexRepository 1  # by-design single instance
+src.adapters.firestore_drive_mirror_repo.FirestoreDriveMirrorRepository 1  # by-design single instance
+src.adapters.firestore_email_exclusions_adapter.FirestoreEmailExclusionsAdapter 1  # by-design single instance
+src.adapters.firestore_email_job_repo.FirestoreEmailJobRepository 1  # by-design single instance
+src.adapters.firestore_indexed_email_repo.FirestoreIndexedEmailRepository 1  # by-design single instance
+src.adapters.firestore_invite_code_repo.FirestoreInviteCodeRepository 1  # by-design single instance
+src.adapters.firestore_long_turn_registry.FirestoreLongTurnRegistry 1  # by-design single instance
+src.adapters.firestore_memory_fact_draft_repository.FirestoreMemoryFactDraftRepository 1  # by-design single instance
+src.adapters.firestore_notification_state_adapter.FirestoreNotificationStateAdapter 1  # by-design single instance
+src.adapters.firestore_oauth_credentials_adapter.FirestoreOAuthCredentialsAdapter 1  # by-design single instance
+src.adapters.firestore_prompt_repository.FirestorePromptComponentRepository 1  # by-design single instance
+src.adapters.firestore_quota_service.FirestoreQuotaService 1  # by-design single instance
+src.adapters.firestore_repo.FirestoreFactRepository 1  # by-design single instance
+src.adapters.firestore_session_store.FirestoreSessionStore 1  # by-design single instance
+src.adapters.firestore_short_link_repository.FirestoreShortLinkRepository 1  # by-design single instance
+src.adapters.firestore_skill_repository.FirestoreSkillRepository 1  # by-design single instance
+src.adapters.firestore_task_claim_store.FirestoreTaskClaimStore 1  # by-design single instance
+src.adapters.firestore_task_config_repository.FirestoreTaskConfigRepository 1  # by-design single instance
+src.adapters.firestore_task_search_index.FirestoreTaskSearchIndex 1  # by-design single instance
+src.adapters.firestore_user_repo.FirestoreUserRepository 2  # by-design the graph's user_repo plus a second stateless one inside DriveSearchService (service_container.py:211)
+src.adapters.firestore_whitelist_repo.FirestoreWhitelistRepository 1  # by-design single instance
+src.adapters.gcp_task_queue.GcpTaskQueue 3  # by-design agent-tasks queue (application_graph.py), drive-sync queue (drive_indexing_setup.py:65), Slack intake queue (slack_adapter_factory.py:149)
+src.adapters.gcs_file_storage_adapter.GcsFileStorageAdapter 1  # by-design single instance
+src.adapters.gcs_media_adapter.GcsMediaAdapter 3  # by-design graph media_storage, the container's, and the Slack factory's own storage_adapter (slack_adapter_factory.py:102), all stateless clients on one bucket
+src.adapters.gcs_workspace_adapter.GcsWorkspaceAdapter 1  # by-design single instance
+src.adapters.gemini_adapter.GeminiAdapter 1  # by-design single instance
+src.adapters.gemini_embedding_adapter.GeminiEmbeddingAdapter 1  # by-design single instance
+src.adapters.gmail_provider_adapter.GmailProviderAdapter 1  # by-design single instance
+src.adapters.grok_adapter.GrokAdapter 1  # by-design single instance
+src.adapters.grok_image_adapter.GrokImageAdapter 1  # by-design single instance
+src.adapters.grok_video_adapter.GrokVideoAdapter 1  # by-design single instance
+src.adapters.groovy_prompt_assembler.GroovyPromptAssembler 1  # by-design single instance
+src.adapters.in_memory_provider_resilience.InMemoryProviderResilience 1  # by-design single instance
+src.adapters.microsoft.graph_auth.MicrosoftGraphTokenProvider 2  # by-design one for To Do (todo_adapter.py:110), one for OneDrive (onedrive_adapter.py:231), refresh shared by provider key
+src.adapters.microsoft.onedrive_adapter.OneDriveAdapter 1  # by-design single instance
+src.adapters.microsoft.todo_adapter.MicrosoftToDoAdapter 1  # by-design single instance
+src.adapters.notification_channel_factory.NotificationChannelFactory 1  # by-design single instance
+src.adapters.openai_adapter.OpenAIAdapter 1  # by-design single instance
+src.adapters.openai_deep_research_adapter.OpenAIDeepResearchAdapter 1  # by-design single instance
+src.adapters.openai_transcription_adapter.OpenAITranscriptionAdapter 1  # by-design single instance
+src.adapters.playwright_html_renderer.PlaywrightHtmlRenderer 1  # by-design single instance
+src.adapters.prompt_v3.firestore_agent_profile_repository.FirestoreAgentProfileRepository 1  # by-design single instance
+src.adapters.prompt_v3.firestore_blueprint_repository.FirestoreBlueprintRepository 1  # by-design single instance
+src.adapters.prompt_v3.firestore_token_repository.FirestoreTokenRepository 1  # by-design single instance
+src.adapters.security.composite_adapter.CompositeAdapter 3  # by-design assembly service, memory fact service, skill service each get their own (service_container.py:384,392, prompt_assembly_setup.py:29)
+src.adapters.security.regex_adapter.RegexSecurityAdapter 3  # by-design one inside each of the three CompositeAdapters, stateless
+src.adapters.slack.channel_history.SlackChannelHistorySource 1  # by-design single instance
+src.adapters.slack.http_adapter.HTTPModeAdapter 1  # by-design single instance
+src.adapters.slack.media_adapter.SlackMediaAdapter 2  # by-design the Slack factory's for rich content and the graph's for notification media (application_graph.py), stateless clients
+src.adapters.slack.webhook_adapter.SlackWebhookAdapter 1  # by-design single instance
+src.adapters.telegram.media_adapter.TelegramMediaAdapter 2  # by-design the Telegram factory's for rich content and the graph's for notification media (application_graph.py), stateless clients
+src.adapters.telegram.webhook_adapter.TelegramWebhookAdapter 1  # by-design single instance
+src.adapters.twilio_telephony_adapter.TwilioTelephonyAdapter 1  # by-design single instance
+src.adapters.unsplash_adapter.UnsplashAdapter 1  # by-design single instance
+src.adapters.xml_prompt_assembler.XmlPromptAssembler 1  # by-design single instance
+src.services.agent_context_builder.AgentContextBuilder 1  # by-design single instance
+src.services.agent_fallback_service.AgentFallbackService 1  # by-design single instance
+src.services.alerting_llm_proxy.AlertingLLMProxy 1  # by-design single instance
+src.services.auth_provider_registry.AuthProviderRegistry 1  # by-design single instance
+src.services.authentication_service.AuthenticationService 1  # by-design single instance
+src.services.biographical_context_service.BiographicalContextService 1  # by-design single instance
+src.services.channel_binding_service.ChannelBindingService 1  # by-design single instance
+src.services.companion_context_assembler_service.CompanionContextAssemblerService 1  # by-design single instance
+src.services.companion_extraction_service.CompanionExtractionService 1  # by-design single instance
+src.services.companion_window_resolver.CompanionWindowResolver 1  # by-design single instance
+src.services.configuration_service.ConfigurationService 1  # by-design single instance
+src.services.consolidation_service.ConsolidationService 1  # by-design single instance
+src.services.deep_research_drive_copy_service.DeepResearchDriveCopyService 1  # by-design single instance
+src.services.document_delivery_service.DocumentDeliveryService 1  # by-design single instance
+src.services.drive_search_service.DriveSearchService 1  # by-design single instance
+src.services.drive_sync_scheduler_service.DriveSyncSchedulerService 1  # by-design single instance
+src.services.email_embedding_repair_service.EmailEmbeddingRepairService 1  # by-design single instance
+src.services.email_indexing_service.EmailIndexingService 1  # by-design single instance
+src.services.email_review_service.EmailReviewService 1  # by-design single instance
+src.services.email_search_service.EmailSearchService 1  # by-design single instance
+src.services.fact_write_service.FactWriteService 1  # by-design single instance
+src.services.file_access_token_service.FileAccessTokenService 1  # by-design single instance
+src.services.file_conversion_service.FileConversionService 1  # by-design single instance
+src.services.file_link_service.FileLinkService 1  # by-design single instance
+src.services.file_upload_service.FileUploadService 1  # by-design single instance
+src.services.google_oauth_service.GoogleOAuthService 2  # by-design Gmail scopes and Google Tasks scope, two flows (application_graph.py)
+src.services.history_summary_service.HistorySummaryService 1  # by-design single instance
+src.services.iam_service.IAMService 1  # by-design single instance
+src.services.invite_code_service.InviteCodeService 1  # by-design single instance
+src.services.language_preference_service.LanguagePreferenceService 1  # by-design single instance
+src.services.localization_service.LocalizationService 1  # by-design single instance
+src.services.long_turn_service.LongTurnService 1  # by-design single instance
+src.services.memory_fact_service.MemoryFactService 1  # by-design single instance
+src.services.overflow_routing_service.OverflowRoutingService 1  # by-design single instance
+src.services.prompt_builder.PromptBuilder 1  # by-design single instance
+src.services.prompt_builder.UserPromptBuilder 1  # by-design single instance
+src.services.prompt_cache_strategy.PromptCacheStrategy 1  # by-design single instance
+src.services.prompt_component_service.PromptComponentService 1  # by-design single instance
+src.services.prompt_v3.biographical_formatter.BiographicalFactsFormatter 1  # by-design single instance
+src.services.prompt_v3.context_formatter.ContextFormatter 1  # by-design single instance
+src.services.prompt_v3.prompt_assembly_service.PromptAssemblyService 1  # by-design single instance
+src.services.provider_breaker_alerter.ProviderBreakerAlerter 1  # by-design single instance
+src.services.provider_registry.ProviderRegistry 4  # by-design LLM, deep-research jobs, image and video registries
+src.services.reminders_service.RemindersService 1  # by-design single instance
+src.services.rich_content_service.RichContentService 2  # by-design one per platform, Slack and Telegram
+src.services.search_enrichment_service.SearchEnrichmentService 2  # by-design the companion context assembler's and the per-user one in the agent factory cache (user_agent_factory.py:388)
+src.services.session_service.SessionService 1  # by-design single instance
+src.services.short_link_service.ShortLinkService 1  # by-design single instance
+src.services.skill_file_resolver.SkillFileResolver 1  # by-design single instance
+src.services.skill_service.SkillService 1  # by-design single instance
+src.services.task_dispatch_service.TaskDispatchService 1  # by-design single instance
+src.services.task_indexing_service.TaskIndexingService 1  # by-design single instance
+src.services.task_setup_service.TaskSetupService 1  # by-design single instance
+src.services.user_drive_service.UserDriveService 1  # by-design single instance
+src.services.user_notification_service.UserNotificationService 1  # by-design single instance
+src.services.workspace_service.WorkspaceService 1  # by-design single instance
