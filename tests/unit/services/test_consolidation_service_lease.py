@@ -221,7 +221,7 @@ async def test_a_run_holds_the_account_lease_with_a_fresh_owner_per_batch_and_re
     else:
         assert coordinator.routed == ["b1"]          # a failed or crashed batch ends the run
     if outcome == "exception":
-        assert returned is False, "a crash is swallowed and reports no continuation"
+        assert returned is True, "a crash is swallowed; the other pending batch (b2) keeps the chain going"
     assert _lease_doc(db, env) is None, "released"
 
 
