@@ -95,3 +95,28 @@ is simply the first time it was exercised in production.
 - If `DocGeneratorAgent`'s multi-turn loop starts timing out in a way that suggests its per-turn
   SDK-default budget is now the bottleneck, that's a separate, deliberate design question (what
   budget each of the 5 turns should get) — not a copy of this fix.
+
+## Addendum 2026-10-23 (P9, D8): five more agents wired, two parked
+
+The production-graph tests (`tests/unit/composition/wiring_none_ledger.txt`) showed that the 2026-10-07 fix was not
+the whole class: seven more agents call `_call_llm`, have a `fallback` in `AgentProviderStrategy.STRATEGIES`, and keep only
+`self._llm = execution_context.provider`. `_agent_execution_context` stayed `None`, so no cross-provider failover and no
+breaker accounting.
+
+- **Fixed (`self._set_execution_context(execution_context)` right after `super().__init__`, as above):** `WebSearchAgent`
+  (openai to gemini; its own docstring already assumed the failover), `TasksAgent`, `DomainResearcherAgent`, `TutorAgent`
+  (all gemini fallback) and `LelikSummarizerAgent` (no strategy entry of its own, so `quick`'s claude to gemini applies).
+  Tests: `test_specialist_provider_failover.py` (each agent, real constructor, primary down, the fallback answers, the
+  breaker counts, an open breaker skips the primary).
+- **Parked for the owner (question Q6):** `ConsolidationAgent` and `TutorExtractorAgent` write memory (facts, companion
+  records). Turning their declared Gemini fallback on means a Claude outage writes memory with another model instead of
+  failing and retrying later: a product choice. Ledgered as `defect:D8-owner` and listed on the allowlist of
+  `test_agents_set_execution_context.py`.
+- **Not part of D8:** agents whose strategy has no real failover (`fallback: None`, or the fallback equals the only
+  allowed provider: compute, facts_memory, image and video generation, maps_search, web_search_light, email_search,
+  email_classifier) would gain only breaker accounting, which also makes them fail fast while a provider's breaker is
+  open. That is a behaviour change and an owner decision; they are `by-design` on the same allowlist.
+- **Guard:** `test_agents_set_execution_context.py` reads every `BaseAgent` subclass whose own `__init__` takes
+  `execution_context` and requires the `_set_execution_context` call (or a hand-over to `super().__init__`), with a reasoned
+  allowlist whose stale entries fail. It reaches agents that are built per call (companion extractors, indexer and job
+  agents), which no graph walk sees.

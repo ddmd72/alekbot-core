@@ -434,6 +434,12 @@ def test_a_defect_line_carries_its_id():
     assert entry.reason == "defect:D8"
 
 
+def test_an_owner_pending_defect_is_a_defect_reason():
+    [entry] = wiring_ledger.parse("Owner.x  # defect:D8-owner the fix is a product choice, question Q6\n")
+
+    assert entry.reason == "defect:D8-owner"
+
+
 def test_the_instance_ledger_fails_both_ways_on_a_count_and_on_a_class():
     entries = wiring_ledger.parse("src.a.One 1  # by-design single instance\nsrc.a.Two 2  # by-design two stores\n")
 

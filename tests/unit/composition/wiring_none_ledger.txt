@@ -73,13 +73,9 @@ EmailClassificationAgent._quota_service  # defect:D2 usage of the classifier is 
 EmailClassificationAgent.coordinator  # defect:D2 no coordinator injected into the classifier (service_container.py:303-312)
 ConversationHandler.security_port  # defect:D6 no caller passes security_port= to ConversationHandler, so its output check is dead code (conversation_handler.py:568; other security_port= uses in service_container.py:384,392 feed other services)
 
-# ---- new in T4: a declared provider fallback that cannot run
-# These agents call _call_llm and AgentProviderStrategy.STRATEGIES declares a "fallback" for them, but their constructors
-# never call BaseAgent._set_execution_context(), so _call_llm reads ctx = None: no breaker accounting, no cross-provider
-# failover (base_agent.py:957-958, 1098-1099). The same root cause as decisions/html_page_fallback_context_wiring.md,
-# which fixed four agents on 2026-10-07 and left these.
-WebSearchAgent._agent_execution_context  # defect:D8 STRATEGIES["web_search"] fallback gemini (agent_context_builder.py:50-55), constructor web_search_agent.py:83-90 sets no context
-ConsolidationAgent._agent_execution_context  # defect:D8 STRATEGIES["consolidation"] fallback gemini (agent_context_builder.py:56-61), constructor consolidation_agent.py:164-166
-TasksAgent._agent_execution_context  # defect:D8 STRATEGIES["tasks"] fallback gemini (agent_context_builder.py:121-126), constructor tasks_agent.py:344-346
-DomainResearcherAgent._agent_execution_context  # defect:D8 STRATEGIES["domain_researcher"] fallback gemini (agent_context_builder.py:134-139), constructor domain_researcher_agent.py:46-53
-TutorAgent._agent_execution_context  # defect:D8 STRATEGIES["tutor"] fallback gemini (agent_context_builder.py:143-148), constructor tutor_agent.py:81-90
+# ---- D8: a declared provider fallback that cannot run
+# web_search, tasks, domain_researcher, tutor and lelik_summarizer were fixed in P9 (they call _set_execution_context now, see
+# decisions/html_page_fallback_context_wiring.md addendum). consolidation and tutor_extractor are parked for the owner: they
+# write memory, so turning the fallback on changes which model writes it (question Q6). tests/unit/agents/
+# test_agents_set_execution_context.py lists both on its allowlist.
+ConsolidationAgent._agent_execution_context  # defect:D8-owner STRATEGIES["consolidation"] declares fallback gemini (agent_context_builder.py:56-61) but the agent writes facts: with the fallback on, a Claude outage writes memory with another model instead of failing and retrying later; owner question Q6 (constructor consolidation_agent.py:164-166)
