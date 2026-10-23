@@ -12,7 +12,7 @@ from google.api_core.exceptions import NotFound
 
 
 class FakeCloudTasksClient:
-    """One instance per `GcpTaskQueue`; `instances` lists them in construction order."""
+    """One instance per `GcpTaskQueue`; `instances` lists them in construction order (tests replace it through `monkeypatch`)."""
 
     instances: List["FakeCloudTasksClient"] = []
 
@@ -55,7 +55,3 @@ class FakeCloudTasksClient:
     def created_bodies(self) -> List[Dict[str, Any]]:
         """The decoded JSON body of every task created through this client."""
         return [json.loads(r["task"]["http_request"]["body"]) for r in self.create_task_requests]
-
-    @classmethod
-    def reset(cls) -> None:
-        cls.instances = []
