@@ -18,12 +18,13 @@ import asyncio
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime, timezone
 from dataclasses import dataclass
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..agents.base_agent import BaseAgent
 from ..domain.agent import AgentMessage, AgentResponse, AgentConfig, AgentIntent, AgentStatus
 from ..ports.indexed_email_repository import IndexedEmailRepository
 from ..domain.entities import FactDomain
-from ..domain.fact_write_context import FactWriteContext
+from ..domain.fact_write_context import FactWriteContext, as_utc, span_of
 from ..domain.request_context import get_effective_account_id
 from ..ports.repository import FactRepository
 from ..ports.embedding_service import EmbeddingService
@@ -43,6 +44,17 @@ class ToolResponse:
     """Internal container for fact management tool results."""
     name: str
     result_str: str
+
+
+def _with_top_level_expiry(args: Dict[str, Any], container: str) -> Any:
+    """`args[container]` with a top-level `expiry` moved in when the nested one is absent (a nested one wins).
+
+    A container that is not a dict is returned as it came, so the write refuses it as before.
+    """
+    inner = args.get(container, {})
+    if "expiry" not in args or not isinstance(inner, dict) or "expiry" in inner:
+        return inner
+    return {**inner, "expiry": args["expiry"]}
 
 
 class _TrackingFactManagement(FactManagementPort):
@@ -314,7 +326,8 @@ class ConsolidationAgent(BaseAgent):
                     messages=messages,
                     user_id=user_id,
                     account_id=account_id,
-                    bio_context_raw=bio_context_raw
+                    bio_context_raw=bio_context_raw,
+                    owner_timezone=self._owner_timezone(message),
                 )
             else:
                 logger.info("🧠 [ConsolidationAgent] Using v2 legacy process")
@@ -487,7 +500,7 @@ class ConsolidationAgent(BaseAgent):
                 user_id=user_id,
                 account_id=account_id,
                 pass_label="cluster",
-                write_context=self._write_context("cluster"),
+                write_context=self._write_context("cluster", self._owner_timezone(message)),
             )
 
             facts_affected = sum(1 for op in ops if op.get("action") in ("CREATE", "UPDATE", "MERGE"))
@@ -565,6 +578,7 @@ class ConsolidationAgent(BaseAgent):
         batches_processed = 0
         tracker = _TrackingFactManagement(self._fact_management)
         refreshed = False
+        owner_timezone = self._owner_timezone(message)
 
         try:
             for pass_num in range(1, n_passes + 1):
@@ -598,7 +612,9 @@ class ConsolidationAgent(BaseAgent):
                     account_id=account_id,
                     pass_label="email",
                     fact_management=tracker,
-                    write_context=self._write_context("email"),
+                    write_context=self._write_context(
+                        "email", owner_timezone, self._times_span([e.email_date for e in emails], "email dates")
+                    ),
                 )
 
                 now = datetime.now(timezone.utc)
@@ -757,7 +773,8 @@ class ConsolidationAgent(BaseAgent):
         messages: List[Dict],
         user_id: str,
         account_id: str,
-        bio_context_raw: List[Dict]
+        bio_context_raw: List[Dict],
+        owner_timezone: str = "UTC",
     ) -> Dict[str, Any]:
         """
         Two-stage deliberate fact management process (v3).
@@ -766,9 +783,12 @@ class ConsolidationAgent(BaseAgent):
         Stage 2: cluster review — for each written fact, semantic search → merge cluster
                  → second LLM pass with RFC cluster prompt (no co-location exception).
 
+        `owner_timezone` and the span of the batch's message times make the write context of every pass.
+
         Returns:
             Dict with "operations" list (Stage 1 ops + Stage 2 ops combined)
         """
+        span = self._times_span([t for t in (self._message_time(m) for m in messages) if t is not None], "message times")
         structured_conversation = self._prepare_structured_conversation(messages)
         conversation_history = [
             {
@@ -804,7 +824,7 @@ class ConsolidationAgent(BaseAgent):
                 account_id=account_id,
                 pass_label="stage1",
                 fact_management=tracker,
-                write_context=self._write_context("stage1"),
+                write_context=self._write_context("stage1", owner_timezone, span),
             )
             stage1_changed = list(tracker.changed)
 
@@ -816,7 +836,7 @@ class ConsolidationAgent(BaseAgent):
             # Stage 2a: inline fact-cluster review (skip if disabled or nothing was written)
             ops2: List[Dict[str, Any]] = []
             if self.INLINE_CLUSTER_REVIEW and stage1_changed:
-                context_2a = self._write_context("stage2a")
+                context_2a = self._write_context("stage2a", owner_timezone, span)
                 cluster = await self._build_review_cluster(stage1_changed, account_id, timezone=context_2a.timezone)
                 if cluster:
                     logger.info(
@@ -845,7 +865,8 @@ class ConsolidationAgent(BaseAgent):
             # Stage 2b: directive rulebook review — UNCONDITIONAL (living-organism curation).
             # Runs every consolidation regardless of Stage 1 changes; sees the FULL rulebook.
             ops_dir = await self._review_directives(
-                user_id, account_id, biographical_facts, self._write_context("stage2b"), fact_management=tracker
+                user_id, account_id, biographical_facts, self._write_context("stage2b", owner_timezone, span),
+                fact_management=tracker
             )
             finished = True
             return {"operations": ops1 + ops2 + ops_dir}
@@ -939,6 +960,37 @@ class ConsolidationAgent(BaseAgent):
         return FactWriteContext(
             actor=pass_label, timezone=timezone, span=span, model_dates=pass_label in ("stage1", "email")
         )
+
+    @staticmethod
+    def _owner_timezone(message: AgentMessage) -> str:
+        """The owner's zone the service resolved (`message.context["owner_timezone"]`); UTC when absent or not a zone."""
+        zone = message.context.get("owner_timezone") or "UTC"
+        try:
+            ZoneInfo(zone)
+        except (ZoneInfoNotFoundError, KeyError, ValueError, OSError, TypeError):
+            logger.warning("⚠️ [ConsolidationAgent] owner_timezone is not a zone (%s); using UTC", type(zone).__name__)
+            return "UTC"
+        return zone
+
+    @staticmethod
+    def _message_time(message: Dict[str, Any]) -> Any:
+        """The time a batch message carries (`created_at`, else `timestamp`), or None."""
+        value = message.get("created_at")
+        return value if value is not None else message.get("timestamp")
+
+    @staticmethod
+    def _times_span(values: List[Any], what: str) -> Optional[Tuple[datetime, datetime]]:
+        """(earliest, latest) of the readable times among `values`; an unreadable one is left out and counted in a log line."""
+        readable: List[datetime] = []
+        unreadable = 0
+        for value in values:
+            try:
+                readable.append(as_utc(value))
+            except (ValueError, TypeError, OverflowError, OSError):
+                unreadable += 1
+        if unreadable:
+            logger.warning(f"⚠️ [ConsolidationAgent] {unreadable} of {len(values)} {what} unreadable; left out of the span")
+        return span_of(readable)
 
     async def _run_consolidation_loop(
         self,
@@ -1276,7 +1328,7 @@ class ConsolidationAgent(BaseAgent):
                     )
 
                 elif tool_call.name == "create_fact":
-                    fact_attributes = tool_call.args.get("fact_attributes", {})
+                    fact_attributes = _with_top_level_expiry(tool_call.args, "fact_attributes")
                     fact_attributes["account_id"] = account_id
                     fact_attributes["user_id"] = user_id
 
@@ -1293,7 +1345,7 @@ class ConsolidationAgent(BaseAgent):
                 elif tool_call.name == "update_fact":
                     result = await port.update_fact(
                         fact_id=tool_call.args.get("fact_id", ""),
-                        updates=tool_call.args.get("updates", {}),
+                        updates=_with_top_level_expiry(tool_call.args, "updates"),
                         account_id=account_id,
                         context=write_context,
                     )
@@ -1303,7 +1355,7 @@ class ConsolidationAgent(BaseAgent):
                     )
 
                 elif tool_call.name == "merge_facts":
-                    fact_attributes = tool_call.args.get("fact_attributes", {})
+                    fact_attributes = _with_top_level_expiry(tool_call.args, "fact_attributes")
                     fact_attributes["account_id"] = account_id
                     fact_attributes["user_id"] = user_id
 
