@@ -156,7 +156,7 @@ async def test_stage_2a_keeps_production_rule_the_thirty_longest_so_short_writes
         async with RequestContext(user_id=USER, account_id=ACC):                       # as the cluster builder calls it
             hits = await agent._fact_management.search_existing_facts(
                 [w for w in content.split()[:10] if len(w) > 3], content, "", 20, timezone="UTC")
-        for hit in hits:
+        for hit in hits[:19]:                           # the run's own fact takes one of the 20 places (T12b R3)
             found[hit["fact_id"]] = hit
     expected = sorted(found.values(), key=words, reverse=True)[:30]
     assert len(found) > 30                                                             # enough long hits to fill the cluster
