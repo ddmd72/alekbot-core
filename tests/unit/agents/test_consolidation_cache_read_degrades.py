@@ -32,6 +32,7 @@ async def test_keep_alive_touch_failure_does_not_abort_the_pass(monkeypatch):
 
     result = await agent._run_consolidation_loop(
         user_message_text="begin", system_prompt="SYS", user_id=_USER_ID, account_id=_ACCOUNT_ID,
+        write_context=agent._write_context("stage1"),
     )
 
     assert result == [{"action": "CREATE"}]
