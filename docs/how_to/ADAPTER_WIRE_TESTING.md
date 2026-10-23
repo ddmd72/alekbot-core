@@ -108,6 +108,8 @@ FORCE_TOOL_USE_SENDS_CORRECT_MODE.validate("claude", stub.captured_kwargs)
 | `FORCE_TOOL_USE_SENDS_CORRECT_MODE` | claude, gemini, grok, openai |
 | `GROUNDING_INJECTS_SEARCH_TOOL` | claude, gemini, grok, openai |
 | `FORCE_TOOL_USE_WITHOUT_TOOLS_OMITS_TOOL_CHOICE` | claude, grok, openai |
+| `SCHEMA_WITH_CLIENT_TOOLS_USES_DELIVER_TOOL` | claude, grok |
+| `SCHEMA_WITHOUT_TOOLS_USES_NATIVE_FORMAT` | claude |
 
 ## Adding a New Rule
 

@@ -1,7 +1,7 @@
 # Claude ends structured tool loops through a string `deliver_response` tool
 
 **Date:** 2026-10-23
-**Status:** Accepted, not built. **Supersedes part of** `sonnet55_adaptive_thinking_stall.md` (its "no
+**Status:** Accepted, built (branch feat/claude-deliver-response), not deployed. **Supersedes part of** `sonnet55_adaptive_thinking_stall.md` (its "no
 workaround in our adapter" stance, for structured tool loops only) and **part of**
 `claude_schema_respond_tool.md` (`output_config.format` stays the path for schema requests without
 client tools; requests with tools move to the tool below).
@@ -145,3 +145,30 @@ That keeps the args a dict whatever the model sends, and the text and deliver pa
 - The answer is JSON escaped inside a JSON string, so it costs extra output tokens. Measure after deploy.
 - Optional owner follow-up: reword `OUTPUT_FORMAT_JSON` ("RAW JSON only, first char '{'") for the tool
   path. It is not changed here, because prompt uploads are owner-run.
+
+## Implementation notes (2026-10-23)
+
+What the build settled beyond the requirements above.
+
+- **Owner decision, same day: an empty answer is a failure on all providers.** An orchestrator turn that ends
+  with empty user text, no rich content and no delivery items fails as `empty_answer`, for Smart, Quick and
+  Tutor, on every provider. In chat that means the Quick fallback plus an ops alert; in `notify()` it returns
+  `delivered=False`, so Cloud Tasks retries. Tutor shows the error reaction instead of "No response from
+  model.".
+- **Refinement: an async dispatch is not empty.** A turn that successfully dispatched an ASYNC intent
+  (`DelegationResult.async_dispatches`) is not an `empty_answer`: the user receives the document, and a retry
+  would re-run it and send a second report.
+- **Grok behaviour change.** A terminal call with empty args `{}` plus text beside it now shows that text
+  (it used to be an empty reply). The engine carries text written beside a terminal call in
+  `DelegationResult.text`.
+- **Two ERROR events on an empty deliver answer.** The parser logs `llm_response_parse outcome=unparseable
+  source=deliver`, and the agent logs `empty_answer`. Count alerts accordingly: one incident, two events.
+- **Truncation drops every tool call of the response**, not only `deliver_response`. An orphan `tool_use`
+  would get a 400 on the next request. The adapter logs `llm_response_parse outcome=truncated source=deliver`.
+- **One parser.** The adapter returns the string unparsed; `extract_structured_response` parses it with
+  `parse_llm_response`. Each parse logs one `llm_response_parse` event (`parsed` / `first_object` /
+  `repaired` / `unparseable` / `truncated`).
+- **Sync sibling.** A SYNC call co-emitted with `deliver_response` is logged as `terminal_sync_sibling`; the
+  behaviour of `terminal_tool_co_emitted_calls.md` is unchanged.
+- **Quick** passes `terminal_tool="deliver_response"` and reads its answer through
+  `extract_structured_response`, like Smart and Tutor.

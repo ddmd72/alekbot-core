@@ -210,6 +210,9 @@ mandatory before team/multi-user rollout.
 >
 > Standing lesson: "this branch is unreachable" is a statement about the *current* adapter set,
 > not about the engine. A new provider can revive it without touching the engine at all.
+>
+> Update 2026-10-23: Claude also synthesizes `deliver_response` (one string parameter) for schema +
+> client-tool requests, and Quick and Tutor pass the terminal tool too. Still do not delete.
 
 - **Problem (as originally written — the premise is now false):** Smart passes `terminal_tool="deliver_response"` to `DelegationEngine`
   (`smart_response_agent.py:376`), but **no adapter declares a `deliver_response` tool**. On every
