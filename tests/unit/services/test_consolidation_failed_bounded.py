@@ -10,6 +10,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from src.adapters.firestore_consolidation_queue import FirestoreConsolidationQueue
+from src.adapters.firestore_memory_write_lease import FirestoreMemoryWriteLease
+from src.config.environment import EnvironmentConfig
 from src.domain.agent import AgentResponse
 from src.domain.consolidation import MAX_FAILED_REVIVALS, BatchStatus, ConsolidationBatch
 from src.services.consolidation_service import ConsolidationService
@@ -48,7 +50,10 @@ def coordinator():
 def service(queue, coordinator):
     factory = MagicMock()
     factory.ensure_agents_for_user = AsyncMock()
-    return ConsolidationService(queue=queue, coordinator=coordinator, agent_factory=factory)
+    # The real memory-write lease on the evaluating fake (FACT_LIFECYCLE_RFC D9): each task takes and releases it.
+    lease = FirestoreMemoryWriteLease(EvalDb(), EnvironmentConfig())
+    return ConsolidationService(queue=queue, coordinator=coordinator, agent_factory=factory,
+                                lease=lease, run_timeout_s=900.0)
 
 
 async def _put(queue, batch_id, created_at, status=BatchStatus.PENDING, **extra):
