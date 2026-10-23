@@ -24,12 +24,19 @@ The success value of `except-success` follows the enclosing function's return an
 
 A second, opt-in operator set (`operators="wiring"`, CLI `--operators wiring`) replaces the default set above for
 modules that only wire things together (the composition root); the default set and its numbering are untouched:
-  wire-drop       one non-constant value replaced by `None`: a keyword value or a positional argument of a call to a
-                  CamelCase callable or a `create_*`/`build_*` function, or the value of a
-                  dict literal anywhere in the module. Constants (numbers, strings, booleans, `None`, `-1`, an
-                  f-string without a placeholder), `*args` and `**kwargs` are never mutated.
+  wire-drop       one non-constant value replaced by `None`, at three kinds of site:
+                  - a keyword value or a positional argument of a call to a CamelCase callable or a `create_*`/`build_*`
+                    function (a leading `_` is ignored; `create_task` and `*Error`/`*Exception` constructors are not
+                    wiring calls);
+                  - the value of a dict literal anywhere in the module;
+                  - the value of `obj.attr = value`, `obj` not `self`/`cls` (single target; post-construction injection).
+                  Constants are never mutated: numbers, strings, booleans, `None`, `-1`, an f-string without a
+                  placeholder, and a list/tuple/set/dict of constants (an empty display too). `*args`, `**kwargs` and
+                  `**spread` entries are left alone.
   call-skip       one statement-level call (awaited or not) whose attribute name is `attach_*`, `register_*`, `set_*`
-                  or `register` replaced by `pass`; a call on a logger (a name in the receiver contains "log") is left alone
+                  or `register` (a leading `_` is ignored) replaced by `pass`; a call on a logger is left alone: the
+                  receiver is named `logger`, `log`, `logging` or `*_logger` (a leading `_` allowed), or is a
+                  `getLogger(..)` call. Any other receiver name is mutated.
 
 A mutant that is semantically identical to the original (an `order_by` whose order nothing observes, a skipped write
 to a throwaway object) is "equivalent": a reviewer rules it out in the driver's --equivalent file; the tool never does.
