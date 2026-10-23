@@ -12,8 +12,8 @@ from tests.support.fact_lifecycle_world import FUTURE, NOW, PAST, JanitorWorld
 
 DAY = NOW.date()
 YESTERDAY = DAY - timedelta(days=1)
-EMPTY_RUN = {"accounts": 0, "due": 0, "staled": 0, "would_stale": 0, "conflicts": 0, "no_decision": 0,
-             "breaker_tripped": 0, "dry_run": True}
+EMPTY_RUN = {"accounts": 0, "due": 0, "staled": 0, "would_stale": 0, "deferred": 0, "conflicts": 0,
+             "no_decision": 0, "breaker_tripped": 0, "dry_run": True}
 
 
 def snapshot_of(world, account=ACC):
@@ -43,8 +43,8 @@ async def test_it_stales_every_due_current_fact_of_every_account_and_nothing_els
 
     result = await world.service.sweep()
 
-    assert result == {"accounts": 2, "due": 2, "staled": 2, "would_stale": 0, "conflicts": 0, "no_decision": 0,
-                      "breaker_tripped": 0, "dry_run": False}
+    assert result == {"accounts": 2, "due": 2, "staled": 2, "would_stale": 0, "deferred": 0, "conflicts": 0,
+                      "no_decision": 0, "breaker_tripped": 0, "dry_run": False}
     for fact_id in (due_a, due_b):
         doc = world.docs[fact_id]
         assert doc["state"] == "stale" and doc["stale_since"] == NOW and doc["last_updated"] == NOW
@@ -68,11 +68,13 @@ async def test_a_run_is_idempotent_the_next_one_finds_nothing_due_and_adds_one_e
 
 async def test_every_fact_of_a_long_due_list_is_handled():
     world = JanitorWorld()
-    ids = [await world.seed_due(f"f{i}", account=ACC if i % 2 else OTHER) for i in range(120)]
+    # 120 due facts over three accounts, 40 each: a long due list, each account under the per-run cap (S3-D10)
+    accounts = (ACC, OTHER, "acc-3")
+    ids = [await world.seed_due(f"f{i}", account=accounts[i % 3]) for i in range(120)]
 
     result = await world.service.sweep()
 
-    assert (result["due"], result["staled"], result["accounts"]) == (120, 120, 2)
+    assert (result["due"], result["staled"], result["accounts"], result["deferred"]) == (120, 120, 3, 0)
     assert {world.docs[i]["state"] for i in ids} == {"stale"}
 
 
@@ -349,7 +351,7 @@ async def test_the_line_is_posted_after_the_run_with_that_runs_numbers_once_the_
     (line,) = world.sink.texts
     assert line == (
         "🧹 Fact lifecycle — run 2026-10-23 07:30 UTC\n"
-        "acc-1: due 2 (new 2, no decision 0) | staled 2 / would stale 0 | conflicts 0 | breaker ok"
+        "acc-1: due 2 (new 2, no decision 0) | staled 2 / would stale 0 / deferred 0 | conflicts 0 | breaker ok"
         " | backlog 0 | expiry tool errors yesterday 0"
     )
 
