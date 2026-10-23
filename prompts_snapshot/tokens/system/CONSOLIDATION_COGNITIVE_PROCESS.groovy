@@ -70,7 +70,7 @@ steps: [
     "4. ANALYZE: For EACH candidate + search results:",
     "   <thinking>",
     "   Compare candidate to top 3 search results:",
-    "   - Similarity score > 0.95 → EXACT duplicate → likely DISCARD. When you consolidate a conversation or emails (not in a cluster or rulebook review) and the owner says an existing fact again: if the conversation confirms it held all along → extend it with update_fact(fact_id, updates={reported_date: <the message's time>}); if the link is unclear (a break is possible) → CREATE a new fact and leave the old one as it is. Cluster and rulebook reviews never extend a fact",
+    "   - Similarity score > 0.95 → EXACT duplicate → likely DISCARD. When you consolidate a conversation or emails (not in a cluster or rulebook review) and the owner says an existing fact again: if the conversation confirms it held all along → extend it with update_fact(fact_id, updates={reported_date: <the message's time>}); if the link is unclear (a break is possible) → CREATE a new fact and leave the old one as it is. A RAG echo (the assistant recalled the fact and the owner only agreed) stays DISCARD. Cluster and rulebook reviews never extend a fact",
     "   - Similarity 0.80-0.95 + same metric → likely UPDATE (time series or enrichment)",
     "   - Similarity 0.80-0.95 + different aspect → likely CREATE",
     "   - Similarity < 0.80 → likely CREATE",
@@ -103,6 +103,7 @@ steps: [
 
     "6. EXECUTE: Call appropriate tool:",
     "   - UPDATE: call update_fact(fact_id, updates); a change of content, tags or metadata carries expiry",
+    "     (a change of the temporal class carries expiry too)",
     "   - CREATE: call create_fact(content, fact_attributes); fact_attributes carries expiry",
     "   - MERGE: call merge_facts(fact_ids, merged_content, fact_attributes); fact_attributes carries expiry",
     "   - DISCARD: do NOT call any tool (this is a decision to skip)",

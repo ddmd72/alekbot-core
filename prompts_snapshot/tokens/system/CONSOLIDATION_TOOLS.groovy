@@ -23,7 +23,7 @@ uploaded_by: local_script
 
     returns: "List[Dict] with structure: {fact_id: UUID (REQUIRED for update_fact/merge_facts), content: str, domain: str, temporal_class: str, state: str, tags: List[str], reported_date: str, expiry: dict, due: str, similarity: float}"
 
-    result_notes: "expiry is the fact's stored decision in the shape you send it: {kind: date, date}, {kind: horizon, days} or {kind: none}; null when none is recorded. due is the local day a horizon falls due. reported_date is when the owner last said the fact, with his offset. Copy an expiry back unchanged to keep it."
+    result_notes: "expiry is the fact's stored decision in the shape you send it: {kind: date, date}, {kind: horizon, days} or {kind: none}; null when none is recorded. due is the local day a horizon falls due. reported_date is when the owner last said the fact, with his offset. Copy an expiry back unchanged to keep it, unless its date is on or before Today: then the fact is history ({kind: none})."
 
     usage_example: '''
     results = search_existing_facts(
@@ -44,7 +44,7 @@ uploaded_by: local_script
             temporal_class: "TemporalClass (PERMANENT, STABLE, DYNAMIC, EPHEMERAL)"
             state: "FactState (default: CURRENT). A new fact is CURRENT; a fact closed at birth is ARCHIVED or INVALIDATED and carries no expiry. stale is set by the system; superseded only through update_fact"
             context_priority: "ContextPriority (CRITICAL, HIGH, MEDIUM, LOW, ARCHIVAL)"
-            expiry: "REQUIRED. When the fact stops being current, decided from its content with the kinds table: {kind: date, date: YYYY-MM-DD} the last day it holds, {kind: horizon, days: N} review if the owner has not said it again within N days, {kind: none} history, stable or permanent. Directives and principles: none"
+            expiry: "REQUIRED. When the fact stops being current, decided from its content with the kinds table: {kind: date, date: YYYY-MM-DD} the last day it holds, {kind: horizon, days: N} review if the owner has not said it again within N days, {kind: none} history, stable or permanent. Directives, principles and mindset facts: none"
             tags: "List[str] - General classifications (domain keywords, dates)"
             metadata: "Dict - Structured data (numeric values, specific dates, details)"
             context: "Optional temporal context (e.g., 'Q1 2026 project')"
