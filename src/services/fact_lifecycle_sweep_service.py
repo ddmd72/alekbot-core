@@ -30,7 +30,7 @@ def _utcnow() -> datetime:
 
 
 class FactLifecycleSweepService:
-    FAILURE_ALERT_TIMEOUT_S = 10.0     # a hung sink may not hold the original error (or a cancellation) longer
+    FAILURE_ALERT_TIMEOUT_S = 10.0     # cap of every ops post: a hung sink holds neither a run, nor its error, nor a cancellation
 
     def __init__(
         self,
@@ -59,7 +59,7 @@ class FactLifecycleSweepService:
         except Exception as error:
             where = progress["stage"] + (f" of account {progress['account'][:8]}" if progress["account"] else "")
             logger.error(f"[FactLifecycle] the run failed ({type(error).__name__}) at {where}", exc_info=True)
-            await self._post_failure(
+            await self._post(
                 f"🚨 Fact lifecycle run failed ({type(error).__name__}) at {where}. Nothing after it ran."
             )
             raise
@@ -205,19 +205,15 @@ class FactLifecycleSweepService:
             return
         await self._post(line)
 
-    async def _post_failure(self, text: str) -> None:
-        """The run-failed alert, capped: a timeout is a WARNING, the caller re-raises the original error, and a
-        cancellation (not an Exception) propagates."""
-        try:
-            await asyncio.wait_for(self._post(text), timeout=self.FAILURE_ALERT_TIMEOUT_S)
-        except asyncio.TimeoutError:
-            logger.warning(f"[FactLifecycle] the run-failed alert was cut after {self.FAILURE_ALERT_TIMEOUT_S:.0f}s")
-
     async def _post(self, text: str) -> None:
+        """One ops message, best effort and capped: a failure or a timeout is a WARNING and the run goes on; a
+        cancellation (not an Exception) propagates."""
         if self._alert_sink is None:
             return
         try:
-            await self._alert_sink.post(text)
+            await asyncio.wait_for(self._alert_sink.post(text), timeout=self.FAILURE_ALERT_TIMEOUT_S)
+        except asyncio.TimeoutError:
+            logger.warning(f"[FactLifecycle] an ops message was cut after {self.FAILURE_ALERT_TIMEOUT_S:g}s")
         except Exception as error:
             logger.warning(f"[FactLifecycle] an ops message was not delivered ({type(error).__name__})")
 

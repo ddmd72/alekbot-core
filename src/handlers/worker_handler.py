@@ -34,7 +34,7 @@ Supported task_types:
   - video_generation_polling      → poll VideoGenerationPort job, deliver via deliver_video()
   - fact_lifecycle_sweep          → the fact janitor (FACT_LIFECYCLE_RFC D4): stale every current fact whose `expires_at`
                                      has passed, unless the account's breaker is tripped; log-only until
-                                     `FACT_LIFECYCLE_SWEEP_DRY_RUN=0`. Cron, daily 09:30 Europe/Madrid; a failed run answers 500
+                                     `FACT_LIFECYCLE_SWEEP_DRY_RUN=0`. Cron, daily 09:30 Europe/Madrid, not retried; a failed run answers 500
   - start_drive_sync              → fan-out: DriveSyncSchedulerService enqueues one drive_sync tick per
                                      user on the drive queue (the indexer service runs it), raises the
                                      staleness alert and the one reconnect notice (USER_DRIVE_INDEXING_RFC
@@ -1252,7 +1252,8 @@ class WorkerHandler:
     async def _handle_fact_lifecycle_sweep(self) -> Tuple[dict, int]:
         """Run the fact janitor once. Called by Cloud Scheduler daily at 09:30 Europe/Madrid.
 
-        A failed run is logged with its type and answered 500, so Scheduler retries and a Cloud Tasks claim is released.
+        A failed run is logged with its type and answered 500 (a Cloud Tasks claim is released). The Scheduler job sets no retry,
+        on purpose: a retry could overlap a running sweep. The service's 🚨 reports the failure; the next day's run catches up.
         """
         if self._fact_lifecycle_sweep is None:
             logger.warning("[Worker] fact_lifecycle_sweep: sweep service not configured")
