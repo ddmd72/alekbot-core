@@ -468,10 +468,9 @@ def build_stage2_cluster_message(kit, cluster: List[Dict[str, Any]], bio_facts: 
     )
 
 
-async def main_s3_kit(limit: int, min_words: int, args, raw_message: Optional[str] = None) -> None:
+async def run_s3_kit(handles, limit: int, min_words: int, args, raw_message: Optional[str] = None) -> None:
     print(f"\n{'='*65}\nFACT DECOMPOSITION ON THE S3 KIT (Stage 1, then a consolidate_cluster pass)\n{'='*65}")
     user_id, account_id = args.user_id, args.account_id
-    handles = await build_agent(user_id)
     analysed = 0
     if raw_message:
         text = raw_message
@@ -509,6 +508,10 @@ async def main_s3_kit(limit: int, min_words: int, args, raw_message: Optional[st
         print_rows(kit.rows[second_row:])
         extra["stage2"] = {"cluster_size": len(cluster), "passes": [first_pass, len(kit.passes)],
                            "rows": [second_row, len(kit.rows)]}
+
+
+async def main_s3_kit(limit: int, min_words: int, args, raw_message: Optional[str] = None) -> None:
+    await run_s3_kit(await build_agent(args.user_id), limit, min_words, args, raw_message)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

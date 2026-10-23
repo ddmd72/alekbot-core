@@ -269,10 +269,9 @@ async def has_unconsolidated_emails(email_repo, user_id: str) -> bool:
     return bool(await email_repo.get_unconsolidated_batch(user_id, limit=1))
 
 
-async def main_s3_kit(limit: int, args) -> None:
+async def run_s3_kit(handles, limit: int, args) -> None:
     print(f"\n{'='*65}\nEMAIL CONSOLIDATION ON THE S3 KIT (consolidate_email pass, no email marked)\n{'='*65}")
     user_id, account_id = args.user_id, args.account_id
-    handles = await build_agent(user_id)
     if handles.agent._indexed_email_repo is None:
         print("ERROR: the agent has no indexed-email repository: nothing to run.")
         return
@@ -293,6 +292,10 @@ async def main_s3_kit(limit: int, args) -> None:
         print_rows(kit.rows[first_row:])
         print(f"  emails the kit would have marked consolidated: "
               f"{sum(len(w['email_ids']) for w in (kit.emails.writes if kit.emails else []))} (none marked live)")
+
+
+async def main_s3_kit(limit: int, args) -> None:
+    await run_s3_kit(await build_agent(args.user_id), limit, args)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

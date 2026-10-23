@@ -42,7 +42,11 @@ def add_s3_arguments(parser: Any) -> None:
 
 
 def load_env() -> None:
-    """Read `.env` (the benches call this first thing in `__main__`, never at import)."""
+    """Read the dotenv file (the benches call this first thing in `__main__`, never at import).
+
+    Values the `src` modules read once at import (`ENABLE_GROUNDING_ATTRIBUTION`, `DEEP_RESEARCH_SECOND_PASS` in
+    `agent_config.py`, `LOG_TRACE_CONTEXT` in `logger.py`) no longer see the dotenv file in a bench run; none of them
+    affects consolidation (the last only changes the console log format)."""
     from dotenv import load_dotenv
 
     load_dotenv()

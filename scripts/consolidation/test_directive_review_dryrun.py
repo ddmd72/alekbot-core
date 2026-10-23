@@ -559,7 +559,10 @@ class ReviewCall:
 
 
 def build_review_call(kit, bio_facts: List[Dict], user_id: str, account_id: str) -> ReviewCall:
-    """The S3 bench's call: `_review_directives` with the `stage2b` context (actor `stage2b`) in the owner's zone."""
+    """The S3 bench's call: `_review_directives` with the `stage2b` context (actor `stage2b`) in the owner's zone.
+
+    The context has no batch span (production passes the batch's message span): a demotion without a readable
+    `derived_from` is dated "now" here and at the batch end there, a few hours apart; that is on the safe side."""
     return ReviewCall(user_id, account_id, bio_facts, kit.write_context("stage2b"))
 
 
@@ -618,10 +621,9 @@ def print_kit_run(rulebook: Dict[str, str], verdicts: Dict[str, Dict], elapsed: 
             print(f"       [{verdict['verdict']:11}] {fid[:8]}")
 
 
-async def main_s3_kit(runs: int, provider: str, tier: str, args) -> None:
+async def run_s3_kit(handles, runs: int, provider: str, tier: str, args) -> None:
     print(f"\n{'='*70}\nSTAGE 2b DIRECTIVE REVIEW ON THE S3 KIT (no write reaches the live store)\n{'='*70}")
     user_id, account_id = args.user_id, args.account_id
-    handles = await build_agent(user_id)
     agent = handles.agent
     if provider:
         profile = await handles.user_repo.get_user(user_id)
@@ -670,6 +672,10 @@ async def main_s3_kit(runs: int, provider: str, tier: str, args) -> None:
                 "rows": [first_row, len(kit.rows)], "verdicts": {fid: v["verdict"] for fid, v in verdicts.items()},
             })
         print_churn_report(rulebook, run_verdicts)
+
+
+async def main_s3_kit(runs: int, provider: str, tier: str, args) -> None:
+    await run_s3_kit(await build_agent(args.user_id), runs, provider, tier, args)
 
 
 async def main(runs: int, prompt: str, provider: str, tier: str, user_id: str, account_id: str) -> None:
